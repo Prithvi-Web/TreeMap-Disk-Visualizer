@@ -1,0 +1,63 @@
+name: Build & Release
+
+# Builds TreeMap installers for macOS and Windows, then attaches them to a
+# GitHub Release. Triggers when you push a version tag (e.g. v1.0.0) or when
+# you click "Run workflow" in the Actions tab.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed so the action can create the Release and upload files
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            script: dist:mac
+          - os: windows-latest
+            script: dist:win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the installer
+        run: npm run ${{ matrix.script }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No paid signing certificates configured, so skip code signing.
+          # Downloaders will see a one-time "unidentified developer" prompt.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload installers to the Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.dmg
+            release/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save installers as workflow artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: TreeMap-${{ matrix.os }}
+          path: |
+            release/*.dmg
+            release/*.exe

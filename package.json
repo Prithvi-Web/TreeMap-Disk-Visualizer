@@ -2,12 +2,18 @@
   "name": "treemap",
   "version": "1.0.0",
   "description": "TreeMap — a GrandPerspective-style disk space visualizer for macOS, Linux and Windows",
-  "main": "dist/index.js",
+  "author": "Prithvi-Web",
+  "main": "electron/main.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "app": "npm run build && electron .",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux"
   },
   "engines": {
     "node": ">=20"
@@ -19,7 +25,42 @@
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^20.17.0",
+    "electron": "^31.7.0",
+    "electron-builder": "^24.13.3",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
+  },
+  "build": {
+    "appId": "com.prithviweb.treemap",
+    "productName": "TreeMap",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "public/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.png",
+      "darkModeSupport": true
+    },
+    "win": {
+      "target": ["nsis"],
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Utility",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

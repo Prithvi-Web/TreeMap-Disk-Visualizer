@@ -11,8 +11,25 @@ Scan any folder and see exactly what's eating your disk:
 
 Built with Node.js + Express 5 + TypeScript on the backend and a single zero-dependency
 `index.html` on the frontend (hand-coded Canvas 2D — no React, no D3, no Chart.js).
+Ships both as a web app and as a downloadable **desktop app** (Electron) for
+macOS and Windows.
 
-## Setup in 3 commands
+## Download the app (for users)
+
+Grab the latest installer from the [**Releases page**](https://github.com/Prithvi-Web/Treemap/releases):
+
+- **macOS** — `TreeMap-x.y.z-arm64.dmg`. Open it, drag TreeMap to Applications, launch it.
+- **Windows** — `TreeMap Setup x.y.z.exe`. Run it and follow the installer.
+
+> **First-launch security prompt:** because the app isn't signed with a paid
+> developer certificate, your OS shows a one-time warning.
+> **macOS:** right-click the app → **Open** → **Open**. **Windows:** click
+> **More info** → **Run anyway**. After the first launch it opens normally.
+
+No Node.js or setup required — the desktop app is self-contained and scans the
+disk of the computer it runs on.
+
+## Run from source / web mode (3 commands)
 
 ```bash
 npm install
@@ -27,6 +44,37 @@ Then open **http://127.0.0.1:4280** in your browser.
 Requires **Node.js 20+**. On Linux, trash support uses `gio` (preinstalled on
 GNOME/KDE distros). On macOS it uses Finder via `osascript`; on Windows, the
 Recycle Bin via PowerShell.
+
+## Build the desktop app
+
+```bash
+npm install
+npm run app          # build + launch the desktop app locally
+npm run dist:mac     # produce a macOS .dmg in release/
+npm run dist:win     # produce a Windows installer in release/
+```
+
+> You can only build the macOS app on a Mac and the Windows app on Windows.
+> To get **both** without owning both machines, use the automated release
+> below — GitHub builds them for you.
+
+## Publish a new version (automated)
+
+A GitHub Actions workflow (`.github/workflows/release.yml`) builds the macOS
+**and** Windows installers on GitHub's servers and attaches them to a Release.
+
+To cut a release:
+
+1. Bump the `version` in `package.json` (e.g. `1.0.1`).
+2. Create a **tag** that matches, prefixed with `v` (e.g. `v1.0.1`), and push it.
+   In GitHub Desktop: **Repository → Push**, then on github.com go to
+   **Releases → Draft a new release → Choose a tag →** type `v1.0.1` → **Publish**.
+3. The workflow runs automatically, builds both installers, and uploads them to
+   that Release. After a few minutes the download links appear on the Releases page.
+
+You can also trigger a test build anytime from the repo's **Actions** tab →
+**Build & Release → Run workflow** (installers are saved as downloadable
+artifacts instead of a Release).
 
 ## API overview
 

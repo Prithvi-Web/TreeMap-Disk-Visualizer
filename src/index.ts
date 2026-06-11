@@ -1,56 +1,43 @@
-import express from 'express';
 import path from 'path';
-import http from 'http';
-import { scanRouter, drainSseClients, activeSseCount } from './api/scanRoutes';
-import { fileRouter } from './api/fileRoutes';
-import { systemRouter } from './api/systemRoutes';
-import { rateLimiter } from './middleware/rateLimiter';
-import { errorHandler, notFoundHandler } from './middleware/errorHandler';
-import { cancelAllScans } from './services/diskScanner';
+import { startServer, activeSseCount, RunningServer } from './server';
+
+/**
+ * Standalone web-server entry point (`npm start`).
+ * The Electron desktop build uses electron/main.js instead, which calls
+ * startServer() directly.
+ */
 
 const PORT = Number(process.env.PORT) || 4280;
 const HOST = process.env.HOST || '127.0.0.1';
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
-const app = express();
+let running: RunningServer | null = null;
 
-// This is a local tool; trust no proxies (req.ip = socket address).
-app.set('trust proxy', false);
-app.disable('x-powered-by');
-
-app.use(express.json({ limit: '1mb' }));
-app.use('/api', rateLimiter);
-
-app.use('/api', scanRouter);
-app.use('/api', fileRouter);
-app.use('/api', systemRouter);
-
-// Frontend: one static file, served from /public.
-app.use(express.static(path.join(__dirname, '..', 'public'), { index: 'index.html' }));
-
-app.use('/api', notFoundHandler);
-app.use(errorHandler);
-
-const server = http.createServer(app);
-server.listen(PORT, HOST, () => {
-  console.log(`TreeMap running → http://${HOST}:${PORT}`);
-});
+startServer({ port: PORT, host: HOST, publicDir: PUBLIC_DIR })
+  .then((r) => {
+    running = r;
+    console.log(`TreeMap running → http://${HOST}:${r.port}`);
+  })
+  .catch((err: unknown) => {
+    console.error('[treemap] failed to start:', err);
+    process.exit(1);
+  });
 
 /* ------------------------- Graceful shutdown ------------------------- */
 
 let shuttingDown = false;
-
 function shutdown(signal: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n[treemap] ${signal} received — draining ${activeSseCount()} SSE stream(s)…`);
+  running?.shutdown();
 
-  cancelAllScans(); // stop walkers cooperatively
-  drainSseClients(); // send 'shutdown' event, then end each stream
-
-  server.close(() => {
+  const done = (): void => {
     console.log('[treemap] all connections closed, bye');
     process.exit(0);
-  });
+  };
+  if (running) running.server.close(done);
+  else done();
 
   // Hard deadline in case a keep-alive socket refuses to die.
   setTimeout(() => {
