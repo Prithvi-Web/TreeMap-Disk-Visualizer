@@ -1,4 +1,4 @@
-# TreeMap 🟩🟨🟥
+#TreeMap 🟩🟨🟥
 
 A GrandPerspective-style **disk space visualizer** for macOS, Linux and Windows.
 
