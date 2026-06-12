@@ -4,412 +4,562 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TreeMap — Disk Space Visualizer</title>
+<script>
+/* Apply saved theme before first paint to avoid a flash. */
+document.documentElement.dataset.theme =
+  localStorage.getItem('tm-theme') ||
+  (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+</script>
 <style>
 /* ════════════════════════════ Design tokens ════════════════════════════ */
 :root {
-  --glass-bg:       rgba(28, 28, 30, 0.75);
-  --glass-bg-light: rgba(44, 44, 46, 0.60);
-  --glass-border:   rgba(255, 255, 255, 0.12);
-  --glass-shine:    rgba(255, 255, 255, 0.06);
-  --accent-blue:    #0A84FF;
-  --accent-teal:    #30D158;
-  --accent-amber:   #FFD60A;
-  --accent-red:     #FF453A;
-  --text-primary:   rgba(255,255,255,0.92);
-  --text-secondary: rgba(255,255,255,0.55);
-  --text-tertiary:  rgba(255,255,255,0.30);
-  --radius: 16px;
+  --accent:        #0A84FF;
+  --accent-soft:   rgba(10,132,255,0.16);
+  --accent-glow:   rgba(10,132,255,0.35);
+  --ok:            #30D158;
+  --warn:          #FFD60A;
+  --danger:        #FF453A;
+  --danger-soft:   rgba(255,69,58,0.14);
+
+  --bg-0:          #08080b;
+  --bg-1:          #0e0e13;
+  --surface-1:     rgba(255,255,255,0.045);
+  --surface-2:     rgba(255,255,255,0.08);
+  --surface-3:     rgba(255,255,255,0.12);
+  --glass:         rgba(22,22,28,0.66);
+  --glass-strong:  rgba(20,20,26,0.92);
+  --hairline:      rgba(255,255,255,0.09);
+  --hairline-2:    rgba(255,255,255,0.16);
+  --shine:         rgba(255,255,255,0.07);
+
+  --text-1:        rgba(255,255,255,0.93);
+  --text-2:        rgba(255,255,255,0.62);
+  --text-3:        rgba(255,255,255,0.42);
+
+  --tm-canvas-bg:  rgba(0,0,0,0.28);
+  --scrim:         rgba(0,0,0,0.55);
+  --skeleton-a:    rgba(255,255,255,0.05);
+  --skeleton-b:    rgba(255,255,255,0.10);
+
+  --r-lg: 18px; --r-md: 12px; --r-sm: 9px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-1: 150ms; --dur-2: 240ms; --dur-3: 380ms;
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-2: 0 8px 28px rgba(0,0,0,0.38);
+  --shadow-3: 0 24px 70px rgba(0,0,0,0.5);
+  --blob-opacity: 0.55;
 }
+:root[data-theme="light"] {
+  --bg-0:          #eef0f4;
+  --bg-1:          #f6f7f9;
+  --surface-1:     rgba(10,15,30,0.04);
+  --surface-2:     rgba(10,15,30,0.07);
+  --surface-3:     rgba(10,15,30,0.11);
+  --glass:         rgba(255,255,255,0.66);
+  --glass-strong:  rgba(252,252,254,0.95);
+  --hairline:      rgba(10,15,30,0.10);
+  --hairline-2:    rgba(10,15,30,0.18);
+  --shine:         rgba(255,255,255,0.65);
+
+  --text-1:        rgba(10,12,20,0.92);
+  --text-2:        rgba(10,12,20,0.60);
+  --text-3:        rgba(10,12,20,0.42);
+
+  --tm-canvas-bg:  rgba(10,15,30,0.05);
+  --scrim:         rgba(20,24,38,0.38);
+  --skeleton-a:    rgba(10,15,30,0.05);
+  --skeleton-b:    rgba(10,15,30,0.10);
+
+  --shadow-1: 0 1px 2px rgba(20,24,40,0.08);
+  --shadow-2: 0 8px 28px rgba(20,24,40,0.12);
+  --shadow-3: 0 24px 70px rgba(20,24,40,0.18);
+  --blob-opacity: 0.4;
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { height: 100%; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
-  color: var(--text-primary);
-  background:
-    radial-gradient(1200px 800px at 15% -10%, rgba(10,132,255,0.10), transparent 60%),
-    radial-gradient(1000px 700px at 95% 10%, rgba(94,92,230,0.08), transparent 55%),
-    radial-gradient(900px 900px at 50% 110%, rgba(48,209,88,0.05), transparent 60%),
-    linear-gradient(180deg, #101014 0%, #0a0a0d 100%);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  font-size: 14px;
+  color: var(--text-1);
+  background: linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 100%);
   background-attachment: fixed;
   min-width: 1024px;
   overflow-x: auto;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 button { font-family: inherit; color: inherit; }
-::selection { background: rgba(10,132,255,0.4); }
+::selection { background: var(--accent-soft); }
+.num { font-variant-numeric: tabular-nums; }
 
-/* ════════════════════════════ Glass primitives ════════════════════════════ */
+/* Ambient background field */
+.blob { position: fixed; border-radius: 50%; filter: blur(90px); pointer-events: none; z-index: -1; opacity: var(--blob-opacity); }
+.blob.b1 { width: 560px; height: 560px; top: -180px; left: -120px;
+  background: radial-gradient(circle, rgba(10,132,255,0.18), transparent 65%); animation: drift1 26s var(--ease) infinite alternate; }
+.blob.b2 { width: 640px; height: 640px; top: 30%; right: -220px;
+  background: radial-gradient(circle, rgba(94,92,230,0.14), transparent 65%); animation: drift2 32s var(--ease) infinite alternate; }
+.blob.b3 { width: 480px; height: 480px; bottom: -200px; left: 30%;
+  background: radial-gradient(circle, rgba(48,209,88,0.10), transparent 65%); animation: drift1 38s var(--ease) infinite alternate-reverse; }
+@keyframes drift1 { from { transform: translate(0,0); } to { transform: translate(70px, 50px); } }
+@keyframes drift2 { from { transform: translate(0,0); } to { transform: translate(-80px, -60px); } }
+
+/* ════════════════════════════ Primitives ════════════════════════════ */
 .glass {
-  background: var(--glass-bg);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius);
-  box-shadow: inset 0 1px 0 var(--glass-shine), 0 8px 32px rgba(0,0,0,0.35);
+  background: var(--glass);
+  backdrop-filter: blur(24px) saturate(170%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-2);
 }
-.glass-light {
-  background: var(--glass-bg-light);
-  backdrop-filter: blur(16px) saturate(160%);
-  -webkit-backdrop-filter: blur(16px) saturate(160%);
-  border: 1px solid var(--glass-border);
-  border-radius: 12px;
-  box-shadow: inset 0 1px 0 var(--glass-shine);
+.tile {
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  box-shadow: inset 0 1px 0 var(--shine);
 }
 .btn {
-  display: inline-flex; align-items: center; gap: 6px; justify-content: center;
-  padding: 8px 16px; border-radius: 10px; border: 1px solid var(--glass-border);
-  background: var(--glass-bg-light); color: var(--text-primary);
-  font-size: 13px; font-weight: 500; cursor: pointer;
-  transition: all 200ms ease;
-  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  display: inline-flex; align-items: center; gap: 7px; justify-content: center;
+  min-height: 36px; padding: 0 15px; border-radius: var(--r-sm);
+  border: 1px solid var(--hairline); background: var(--surface-2);
+  color: var(--text-1); font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
+              opacity var(--dur-1) var(--ease), box-shadow var(--dur-2) var(--ease);
 }
-.btn:hover { background: rgba(64,64,68,0.7); border-color: rgba(255,255,255,0.22); }
-.btn:active { transform: scale(0.97); }
-.btn:focus-visible, input:focus-visible, [tabindex]:focus-visible, select:focus-visible {
-  outline: 2px solid var(--accent-blue); outline-offset: 2px;
+.btn:hover { background: var(--surface-3); border-color: var(--hairline-2); }
+.btn:active { opacity: 0.78; }
+.btn-primary {
+  background: var(--accent); border-color: transparent; color: #fff;
+  box-shadow: 0 4px 18px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,0.25);
 }
-.btn-primary { background: var(--accent-blue); border-color: transparent; color: #fff; }
-.btn-primary:hover { background: #2492ff; }
-.btn-danger { background: rgba(255,69,58,0.18); border-color: rgba(255,69,58,0.4); color: #ff7a70; }
-.btn-danger:hover { background: rgba(255,69,58,0.3); }
+.btn-primary:hover { background: #2492ff; box-shadow: 0 6px 24px var(--accent-glow); }
+.btn-danger { background: var(--danger-soft); border-color: rgba(255,69,58,0.38); color: #ff6b61; }
+:root[data-theme="light"] .btn-danger { color: #d63a30; }
+.btn-danger:hover { background: rgba(255,69,58,0.24); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
-input[type="text"], input[type="number"], select {
-  background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 10px;
-  color: var(--text-primary); font-size: 13px; padding: 8px 12px; font-family: inherit;
-  transition: border-color 200ms ease;
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 8px; border: 1px solid transparent;
+  background: transparent; color: var(--text-2); cursor: pointer;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+  flex: none;
 }
-input[type="text"]:hover, input[type="number"]:hover { border-color: rgba(255,255,255,0.22); }
-input[type="checkbox"] { accent-color: var(--accent-blue); width: 15px; height: 15px; cursor: pointer; }
-select { cursor: pointer; }
-select option { background: #1c1c1e; }
+.icon-btn:hover { background: var(--surface-2); color: var(--text-1); }
+.icon-btn.danger:hover { background: var(--danger-soft); color: #ff6b61; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+input[type="text"], input[type="number"], select {
+  background: var(--surface-1); border: 1px solid var(--hairline); border-radius: var(--r-sm);
+  color: var(--text-1); font-size: 13px; padding: 9px 12px; font-family: inherit;
+  transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
+  min-height: 36px;
+}
+input:hover, select:hover { border-color: var(--hairline-2); }
+input:focus, select:focus { border-color: var(--accent); outline: none; background: var(--surface-2); }
+input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+select { cursor: pointer; appearance: none; -webkit-appearance: none; padding-right: 28px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-2) 50%), linear-gradient(135deg, var(--text-2) 50%, transparent 50%);
+  background-position: calc(100% - 16px) 55%, calc(100% - 11px) 55%;
+  background-size: 5px 5px; background-repeat: no-repeat; }
+select option { background: var(--glass-strong); color: var(--text-1); }
+.ic { display: inline-block; vertical-align: -3px; flex: none; }
+.chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 8px; flex: none;
+  background: color-mix(in srgb, var(--tint) 15%, transparent);
+  color: var(--tint);
+}
+.skeleton { position: relative; overflow: hidden; background: var(--skeleton-a); border-radius: 8px; }
+.skeleton::after { content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, var(--skeleton-b), transparent);
+  animation: shimmer 1.4s ease infinite; }
+@keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
 
 /* ════════════════════════════ Header ════════════════════════════ */
 header {
-  display: flex; align-items: center; gap: 20px;
-  padding: 14px 24px; position: sticky; top: 0; z-index: 50;
-  background: rgba(16,16,20,0.7); backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border-bottom: 1px solid var(--glass-border);
+  display: flex; align-items: center; gap: 18px;
+  padding: 12px 24px; position: sticky; top: 0; z-index: 50;
+  background: color-mix(in srgb, var(--bg-1) 72%, transparent);
+  backdrop-filter: blur(24px) saturate(170%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  border-bottom: 1px solid var(--hairline);
 }
-.logo { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 700; letter-spacing: -0.2px; }
-.logo svg { display: block; }
-.logo span small { font-weight: 400; color: var(--text-secondary); font-size: 12px; margin-left: 8px; }
+.logo { display: flex; align-items: center; gap: 11px; font-size: 16px; font-weight: 700; letter-spacing: -0.2px; }
+.logo .sub { font-weight: 400; color: var(--text-3); font-size: 12px; margin-left: 2px; }
 .tabbar {
-  display: flex; background: rgba(0,0,0,0.35); border: 1px solid var(--glass-border);
-  border-radius: 12px; padding: 3px; gap: 2px; margin: 0 auto;
+  display: flex; background: var(--surface-1); border: 1px solid var(--hairline);
+  border-radius: 11px; padding: 3px; gap: 2px; margin: 0 auto;
 }
 .tabbar button {
-  border: none; background: transparent; color: var(--text-secondary);
-  font-size: 13px; font-weight: 500; padding: 7px 22px; border-radius: 9px; cursor: pointer;
-  transition: all 200ms ease;
+  display: inline-flex; align-items: center; gap: 7px;
+  border: none; background: transparent; color: var(--text-2);
+  font-size: 13px; font-weight: 500; padding: 7px 18px; border-radius: 8px; cursor: pointer;
+  transition: color var(--dur-1) var(--ease), background var(--dur-2) var(--ease);
 }
-.tabbar button:hover { color: var(--text-primary); }
+.tabbar button:hover { color: var(--text-1); }
 .tabbar button[aria-selected="true"] {
-  background: var(--glass-bg-light); color: var(--text-primary);
-  box-shadow: inset 0 1px 0 var(--glass-shine), 0 2px 8px rgba(0,0,0,0.3);
+  background: var(--surface-3); color: var(--text-1);
+  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-1);
 }
-.header-right { display: flex; gap: 10px; align-items: center; }
+.header-right { display: flex; gap: 8px; align-items: center; }
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#headerSpin { display: none; color: var(--accent); }
+#headerSpin.on { display: inline-flex; }
 
-/* ════════════════════════════ Views layout ════════════════════════════ */
-main { padding: 20px 24px 40px; max-width: 1680px; margin: 0 auto; position: relative; }
-.view { display: none; animation: viewIn 250ms ease; }
+/* ════════════════════════════ Layout ════════════════════════════ */
+main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: relative; }
+.view { display: none; animation: viewIn var(--dur-3) var(--ease); }
 .view.active { display: block; }
-@keyframes viewIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes viewIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* ── Empty state ── */
-#emptyState {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  min-height: 60vh; text-align: center; gap: 18px;
-}
-#emptyState .big-logo { filter: drop-shadow(0 12px 40px rgba(10,132,255,0.35)); animation: float 5s ease-in-out infinite; }
+#emptyState { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 66vh; text-align: center; gap: 14px; }
+#emptyState .mark { filter: drop-shadow(0 16px 50px var(--accent-glow)); animation: float 6s ease-in-out infinite; }
 @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
-#emptyState h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
-#emptyState p { color: var(--text-secondary); font-size: 14px; max-width: 420px; line-height: 1.5; }
+#emptyState h1 { font-size: 30px; font-weight: 700; letter-spacing: -0.6px; margin-top: 8px; }
+#emptyState p { color: var(--text-2); font-size: 14px; max-width: 460px; line-height: 1.6; }
+.feature-row { display: flex; gap: 14px; margin: 14px 0 6px; }
+.feature { display: flex; align-items: center; gap: 9px; padding: 10px 16px; font-size: 12.5px; color: var(--text-2);
+  background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 99px; }
+.feature .ic { color: var(--accent); }
 
 /* ── Dashboard ── */
-.dash-grid { display: grid; grid-template-columns: 2fr 3fr; gap: 18px; align-items: start; }
+.dash-grid { display: grid; grid-template-columns: 5fr 7fr; gap: 18px; align-items: start; }
 .dash-col { display: flex; flex-direction: column; gap: 18px; }
-.card { padding: 20px; }
-.card h2 {
-  font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px;
-  color: var(--text-secondary); margin-bottom: 16px;
-}
-.sys-row { display: flex; gap: 22px; align-items: center; }
-.ring-wrap { position: relative; width: 130px; height: 130px; flex: none; }
+.card { padding: 22px; }
+.card h2 { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1px; color: var(--text-2); margin-bottom: 18px; }
+.card h2 .ic { color: var(--text-3); }
+.sys-row { display: flex; gap: 26px; align-items: center; }
+.ring-wrap { position: relative; width: 132px; height: 132px; flex: none; }
 .ring-wrap svg { transform: rotate(-90deg); }
-.ring-bg { fill: none; stroke: rgba(255,255,255,0.08); stroke-width: 11; }
-.ring-fg {
-  fill: none; stroke: url(#ringGrad); stroke-width: 11; stroke-linecap: round;
-  transition: stroke-dashoffset 1.2s cubic-bezier(0.22, 1, 0.36, 1);
-}
+.ring-bg { fill: none; stroke: var(--surface-2); stroke-width: 10; }
+.ring-fg { fill: none; stroke: url(#ringGrad); stroke-width: 10; stroke-linecap: round;
+  transition: stroke-dashoffset 1.3s var(--ease); }
 .ring-label { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.ring-label b { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
-.ring-label span { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; }
-.sys-facts { display: flex; flex-direction: column; gap: 8px; font-size: 13px; min-width: 0; }
+.ring-label b { font-size: 24px; font-weight: 700; letter-spacing: -0.6px; }
+.ring-label span { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 1.2px; margin-top: 2px; }
+.sys-facts { display: flex; flex-direction: column; gap: 9px; font-size: 13px; min-width: 0; flex: 1; }
 .sys-facts .fact { display: flex; justify-content: space-between; gap: 18px; }
-.sys-facts .fact span { color: var(--text-secondary); }
+.sys-facts .fact span { color: var(--text-2); }
 .sys-facts .fact b { font-weight: 600; white-space: nowrap; }
 
 .scan-row { display: flex; gap: 8px; }
-.scan-row input { flex: 1; min-width: 0; }
-.scan-status { margin-top: 14px; font-size: 12.5px; color: var(--text-secondary); min-height: 18px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.scan-status.error { color: #ff7a70; }
-.progress-track {
-  margin-top: 10px; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.08);
-  overflow: hidden; display: none;
-}
+.scan-row .field { position: relative; flex: 1; min-width: 0; }
+.scan-row .field .ic { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
+.scan-row input { width: 100%; padding-left: 34px; }
+.scan-status { margin-top: 14px; font-size: 12.5px; color: var(--text-2); min-height: 18px;
+  display: flex; align-items: center; gap: 7px; }
+.scan-status.error { color: #ff6b61; }
+.scan-meta { margin-top: 5px; font-size: 11.5px; color: var(--text-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 15px; }
+.progress-track { margin-top: 12px; height: 5px; border-radius: 3px; background: var(--surface-2);
+  overflow: hidden; display: none; }
 .progress-track.active { display: block; }
-.progress-fill {
-  height: 100%; width: 40%; border-radius: 3px;
-  background: linear-gradient(90deg, var(--accent-blue), #5e9dff);
-  animation: indeterminate 1.3s ease-in-out infinite;
-}
+.progress-fill { height: 100%; width: 40%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), #5e9dff);
+  animation: indeterminate 1.3s var(--ease) infinite; }
 @keyframes indeterminate { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+
 .quick-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.stat-tile { padding: 12px 14px; }
+.stat-tile { padding: 14px 16px; display: flex; align-items: center; gap: 13px; }
+.stat-tile .chip { width: 36px; height: 36px; border-radius: 10px; }
 .stat-tile .v { font-size: 19px; font-weight: 700; letter-spacing: -0.4px; }
-.stat-tile .v.small { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.stat-tile .k { font-size: 11px; color: var(--text-secondary); margin-top: 3px; }
+.stat-tile .v.small { font-size: 13px; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat-tile .k { font-size: 11px; color: var(--text-2); margin-top: 2px; }
 
-.donut-row { display: flex; gap: 18px; align-items: center; }
+.donut-row { display: flex; gap: 22px; align-items: center; }
 #donutCanvas { flex: none; }
-.donut-legend { display: flex; flex-direction: column; gap: 7px; font-size: 12.5px; flex: 1; min-width: 0; }
-.donut-legend .li { display: flex; align-items: center; gap: 8px; padding: 2px 6px; border-radius: 6px; transition: background 200ms ease; }
-.donut-legend .li.hl { background: rgba(255,255,255,0.07); }
-.donut-legend .dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
-.donut-legend .ext { font-weight: 600; }
-.donut-legend .sz { margin-left: auto; color: var(--text-secondary); white-space: nowrap; }
+.donut-legend { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; flex: 1; min-width: 0; }
+.donut-legend .li { display: flex; align-items: center; gap: 9px; padding: 5px 8px; border-radius: 7px;
+  transition: background var(--dur-1) var(--ease); cursor: default; }
+.donut-legend .li.hl { background: var(--surface-2); }
+.donut-legend .dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.donut-legend .ext { font-weight: 600; min-width: 52px; }
+.donut-legend .cnt { color: var(--text-3); font-size: 11.5px; }
+.donut-legend .sz { margin-left: auto; color: var(--text-2); white-space: nowrap; }
 
-.bigfile { display: flex; align-items: center; gap: 12px; padding: 9px 10px; border-radius: 10px; transition: background 200ms ease; }
-.bigfile:hover { background: rgba(255,255,255,0.05); }
+.bigfile { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: var(--r-sm);
+  transition: background var(--dur-1) var(--ease); }
+.bigfile:hover { background: var(--surface-1); }
 .bigfile .meta { flex: 1; min-width: 0; }
 .bigfile .nm { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bigfile .pth { font-size: 11px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
-.bigfile .bar-track { width: 90px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.08); flex: none; }
+.bigfile .pth { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; text-align: left; }
+.bigfile .bar-track { width: 84px; height: 4px; border-radius: 2px; background: var(--surface-2); flex: none; }
 .bigfile .bar { height: 100%; border-radius: 2px; }
-.size-badge {
-  font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 7px; flex: none;
-  background: rgba(255,255,255,0.08); white-space: nowrap;
-}
-.icon-btn {
-  border: none; background: transparent; border-radius: 8px; cursor: pointer;
-  width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
-  font-size: 14px; opacity: 0.6; transition: all 200ms ease; flex: none;
-}
-.icon-btn:hover { opacity: 1; background: rgba(255,69,58,0.18); }
+.bigfile .actions { display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-1) var(--ease); }
+.bigfile:hover .actions, .bigfile:focus-within .actions { opacity: 1; }
+.size-badge { font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 7px; flex: none;
+  background: var(--surface-2); white-space: nowrap; }
 
 /* ── Treemap view ── */
-.crumbs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 13px; margin-bottom: 12px; min-height: 30px; }
-.crumbs button {
-  border: none; background: transparent; color: var(--accent-blue); cursor: pointer;
-  font-size: 13px; padding: 4px 8px; border-radius: 7px; transition: background 200ms ease;
-  max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.crumbs button:hover { background: rgba(10,132,255,0.14); }
-.crumbs button[aria-current="true"] { color: var(--text-primary); font-weight: 600; pointer-events: none; }
-.crumbs .sep { color: var(--text-tertiary); }
+.tm-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; min-height: 36px; }
+.crumbs { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; font-size: 13px; min-width: 0; }
+.crumbs button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid transparent;
+  background: transparent; color: var(--accent); cursor: pointer; font-size: 12.5px; font-weight: 500;
+  padding: 5px 10px; border-radius: 7px; transition: background var(--dur-1) var(--ease);
+  max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crumbs button:hover { background: var(--accent-soft); }
+.crumbs button[aria-current="true"] { color: var(--text-1); background: var(--surface-2);
+  border-color: var(--hairline); pointer-events: none; }
+.crumbs .sep { color: var(--text-3); display: inline-flex; }
+.tm-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.tm-controls label { font-size: 12px; color: var(--text-2); }
 #treemapWrap { position: relative; overflow: hidden; padding: 10px; }
-#treemapZoom { transition: transform 220ms ease, opacity 220ms ease; transform-origin: center; }
-#treemapZoom.zooming { transform: scale(1.06); opacity: 0; }
-#treemapCanvas { display: block; width: 100%; border-radius: 8px; cursor: default; }
-.legend-strip { display: flex; align-items: center; gap: 14px; margin-top: 12px; font-size: 11.5px; color: var(--text-secondary); padding: 0 4px; }
-.legend-grad { flex: 1; max-width: 360px; height: 8px; border-radius: 4px;
-  background: linear-gradient(90deg, var(--accent-teal), var(--accent-amber), var(--accent-red)); }
+#treemapZoom { transition: transform var(--dur-2) var(--ease), opacity var(--dur-2) var(--ease); transform-origin: center; }
+#treemapZoom.zooming { transform: scale(1.05); opacity: 0; }
+#treemapCanvas { display: block; width: 100%; border-radius: 10px; cursor: default; }
+.tm-foot { display: flex; align-items: center; gap: 16px; margin-top: 12px; font-size: 11.5px; color: var(--text-2); padding: 0 4px; }
+.legend-grad { width: 220px; height: 7px; border-radius: 4px;
+  background: linear-gradient(90deg, var(--ok), var(--warn), var(--danger)); }
+.tm-foot .hint { margin-left: auto; color: var(--text-3); display: flex; align-items: center; gap: 6px; }
 
 /* ── Grid view ── */
 .grid-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.grid-toolbar .field { position: relative; }
+.grid-toolbar .field .ic { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
+#gridSearch { width: 210px; padding-left: 32px; }
 .grid-toolbar .spacer { flex: 1; }
-.grid-toolbar label { font-size: 12px; color: var(--text-secondary); }
-#gridScroll { position: relative; height: calc(100vh - 250px); min-height: 420px; overflow-y: auto; padding: 10px; }
+.grid-toolbar label { font-size: 12px; color: var(--text-2); }
+#gridScroll { position: relative; height: calc(100vh - 256px); min-height: 420px; overflow-y: auto; padding: 10px; }
 #gridInner { position: relative; }
-.gcell {
-  position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 4px; padding: 8px; cursor: pointer; user-select: none;
-  transition: transform 200ms ease, border-color 200ms ease, background 200ms ease;
-}
-.gcell:hover { transform: scale(1.04); border-color: rgba(255,255,255,0.3); z-index: 2; }
-.gcell.selected { border-color: var(--accent-blue); background: rgba(10,132,255,0.16); box-shadow: 0 0 0 1px var(--accent-blue), inset 0 1px 0 var(--glass-shine); }
-.gcell .ic { line-height: 1; }
+.gcell { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 5px; padding: 8px; cursor: pointer; user-select: none;
+  background: var(--surface-1); border: 1px solid var(--hairline); border-radius: var(--r-md);
+  box-shadow: inset 0 1px 0 var(--shine);
+  transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease),
+              transform var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease); }
+.gcell:hover { transform: translateY(-2px); border-color: var(--hairline-2); background: var(--surface-2);
+  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-2); z-index: 2; }
+.gcell:active { transform: translateY(0); }
+.gcell.selected { border-color: var(--accent); background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent), inset 0 1px 0 var(--shine); }
+.gcell .sel-mark { position: absolute; top: 7px; left: 7px; width: 17px; height: 17px; border-radius: 50%;
+  background: var(--accent); color: #fff; display: none; align-items: center; justify-content: center; }
+.gcell.selected .sel-mark { display: inline-flex; }
 .gcell .nm { font-size: 11px; font-weight: 500; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gcell .sz { font-size: 10px; color: var(--text-secondary); }
-.gcell .tier { position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; border-radius: 50%; }
-#selectionBar {
-  position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(90px);
-  display: flex; align-items: center; gap: 16px; padding: 12px 20px; z-index: 60;
-  transition: transform 250ms cubic-bezier(0.22, 1, 0.36, 1); font-size: 13px;
-}
+.gcell .sz { font-size: 10px; color: var(--text-2); }
+.gcell .badge { position: absolute; top: 7px; right: 7px; font-size: 9.5px; font-weight: 600; color: var(--text-2);
+  background: var(--surface-2); border-radius: 99px; padding: 2px 7px; }
+.grid-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; color: var(--text-2); font-size: 13px; }
+.grid-empty .ic { color: var(--text-3); }
+
+#selectionBar { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(96px);
+  display: flex; align-items: center; gap: 14px; padding: 11px 18px; z-index: 60;
+  transition: transform var(--dur-3) var(--ease); font-size: 13px; }
 #selectionBar.visible { transform: translateX(-50%) translateY(0); }
 
 /* ── Modals ── */
-.modal-backdrop {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100;
+.modal-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 100;
   display: none; align-items: center; justify-content: center;
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  animation: fadeIn 200ms ease;
-}
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  animation: fadeIn var(--dur-2) var(--ease); }
 .modal-backdrop.open { display: flex; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-.modal { width: 640px; max-width: 92vw; max-height: 84vh; display: flex; flex-direction: column; animation: sheetIn 250ms cubic-bezier(0.22,1,0.36,1);
-  /* Nested backdrop-filters don't compose in most engines, so modals need a more opaque base than regular glass cards. */
-  background: rgba(28, 28, 30, 0.96); }
-@keyframes sheetIn { from { transform: translateY(26px) scale(0.98); opacity: 0; } to { transform: none; opacity: 1; } }
-.modal-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px 0; }
-.modal-head h3 { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+.modal { width: 660px; max-width: 92vw; max-height: 84vh; display: flex; flex-direction: column;
+  animation: sheetIn var(--dur-3) var(--ease); background: var(--glass-strong);
+  backdrop-filter: blur(28px) saturate(160%); -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid var(--hairline-2); border-radius: var(--r-lg);
+  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-3); }
+@keyframes sheetIn { from { transform: translateY(28px) scale(0.97); opacity: 0; } to { transform: none; opacity: 1; } }
+.modal-head { display: flex; align-items: center; gap: 10px; padding: 20px 22px 0; }
+.modal-head h3 { display: flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
+.modal-head .close-x { margin-left: auto; }
 .modal-body { padding: 16px 22px; overflow-y: auto; flex: 1; }
-.modal-foot { padding: 14px 22px 20px; display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--glass-border); }
-.close-x { border: none; background: rgba(255,255,255,0.08); width: 28px; height: 28px; border-radius: 50%;
-  cursor: pointer; font-size: 13px; color: var(--text-secondary); transition: all 200ms ease; }
-.close-x:hover { background: rgba(255,255,255,0.16); color: var(--text-primary); }
+.modal-foot { padding: 14px 22px 20px; display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--hairline); }
+.close-x { border: none; background: var(--surface-2); width: 28px; height: 28px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--text-2); transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
+.close-x:hover { background: var(--surface-3); color: var(--text-1); }
 .rule-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; font-size: 13.5px; }
-.rule-row input[type="number"] { width: 84px; }
+.rule-row .ic { color: var(--text-3); }
+.rule-row input[type="number"] { width: 88px; }
 .rule-row input[type="text"] { flex: 1; }
-.clean-list { margin-top: 8px; max-height: 280px; overflow-y: auto; border: 1px solid var(--glass-border); border-radius: 10px; }
-.clean-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 12.5px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.clean-list { margin-top: 8px; max-height: 270px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--r-md); }
+.clean-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 12.5px;
+  border-bottom: 1px solid var(--hairline); }
 .clean-item:last-child { border-bottom: none; }
 .clean-item .meta { flex: 1; min-width: 0; }
 .clean-item .nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.clean-item .pth { font-size: 10.5px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
-.muted { color: var(--text-secondary); font-size: 12.5px; }
+.clean-item .pth { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; text-align: left; }
+.clean-item .dt { color: var(--text-3); font-size: 11px; white-space: nowrap; }
+.muted { color: var(--text-2); font-size: 12.5px; }
+#cleanProgress { display: none; margin-top: 12px; }
+#cleanProgress.on { display: block; }
+#cleanProgress .track { height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+#cleanProgress .fill { height: 100%; width: 0%; border-radius: 3px; background: var(--danger);
+  transition: width var(--dur-2) var(--ease); }
 
 /* Browse picker */
-.browse-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--glass-border); border-radius: 10px; margin-top: 10px; }
+.browse-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--r-md); margin-top: 12px; }
 .browse-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: none;
-  background: transparent; padding: 9px 14px; font-size: 13px; cursor: pointer; color: var(--text-primary);
-  border-bottom: 1px solid rgba(255,255,255,0.05); transition: background 150ms ease; }
-.browse-item:hover { background: rgba(10,132,255,0.12); }
-.browse-item .hid { color: var(--text-tertiary); }
-.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
-.chip { font-size: 11.5px; padding: 5px 11px; border-radius: 99px; border: 1px solid var(--glass-border);
-  background: var(--glass-bg-light); cursor: pointer; color: var(--text-secondary); transition: all 200ms ease; }
-.chip:hover { color: var(--text-primary); border-color: var(--accent-blue); }
+  background: transparent; padding: 9px 14px; font-size: 13px; cursor: pointer; color: var(--text-1);
+  border-bottom: 1px solid var(--hairline); transition: background var(--dur-1) var(--ease); }
+.browse-item:hover { background: var(--accent-soft); }
+.browse-item .ic { color: var(--accent); }
+.browse-item .hid { color: var(--text-3); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 6px 12px;
+  border-radius: 99px; border: 1px solid var(--hairline); background: var(--surface-1); cursor: pointer;
+  color: var(--text-2); transition: color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease); }
+.pill:hover { color: var(--text-1); border-color: var(--accent); }
 
-/* ── Tooltip / context menu / toasts ── */
-#tooltip {
-  position: fixed; z-index: 200; pointer-events: none; display: none;
-  padding: 10px 13px; font-size: 12px; max-width: 380px; border-radius: 10px;
-}
-#tooltip .t-name { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
-#tooltip .t-line { color: var(--text-secondary); margin-top: 2px; word-break: break-all; }
-#ctxMenu { position: fixed; z-index: 210; min-width: 200px; padding: 5px; display: none; }
-#ctxMenu button {
-  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; border: none;
-  background: transparent; color: var(--text-primary); font-size: 13px; padding: 8px 12px;
-  border-radius: 8px; cursor: pointer; transition: background 150ms ease;
-}
-#ctxMenu button:hover { background: rgba(10,132,255,0.85); color: #fff; }
-#ctxMenu button.danger:hover { background: rgba(255,69,58,0.85); }
-#toasts { position: fixed; top: 70px; right: 22px; z-index: 300; display: flex; flex-direction: column; gap: 10px; }
-.toast {
-  padding: 12px 18px; font-size: 13px; display: flex; gap: 10px; align-items: center; max-width: 380px;
-  animation: toastIn 300ms cubic-bezier(0.22,1,0.36,1);
-}
-.toast.out { opacity: 0; transform: translateX(20px); transition: all 300ms ease; }
-@keyframes toastIn { from { opacity: 0; transform: translateX(30px); } to { opacity: 1; transform: none; } }
-.toast.error { border-color: rgba(255,69,58,0.5); }
-.toast.success { border-color: rgba(48,209,88,0.4); }
+/* ── Floating: tooltip / menu / toasts ── */
+#tooltip { position: fixed; z-index: 200; pointer-events: none; display: none;
+  padding: 11px 13px; font-size: 12px; max-width: 380px;
+  background: var(--glass-strong); border: 1px solid var(--hairline-2); border-radius: var(--r-md);
+  box-shadow: var(--shadow-2); }
+#tooltip .t-head { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; margin-bottom: 5px; }
+#tooltip .t-line { color: var(--text-2); margin-top: 3px; word-break: break-all; line-height: 1.45; }
+#tooltip .t-strong { color: var(--text-1); font-weight: 600; }
+#ctxMenu { position: fixed; z-index: 210; min-width: 210px; padding: 5px; display: none;
+  background: var(--glass-strong); border: 1px solid var(--hairline-2); border-radius: var(--r-md);
+  box-shadow: var(--shadow-3); }
+#ctxMenu button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: none;
+  background: transparent; color: var(--text-1); font-size: 13px; padding: 8px 11px;
+  border-radius: 8px; cursor: pointer; transition: background var(--dur-1) var(--ease); }
+#ctxMenu button .ic { color: var(--text-2); }
+#ctxMenu button:hover { background: var(--accent); color: #fff; }
+#ctxMenu button:hover .ic { color: #fff; }
+#ctxMenu button.danger:hover { background: var(--danger); }
+#ctxMenu .div { height: 1px; background: var(--hairline); margin: 4px 8px; }
+#toasts { position: fixed; top: 68px; right: 22px; z-index: 300; display: flex; flex-direction: column; gap: 10px; }
+.toast { display: flex; gap: 10px; align-items: flex-start; padding: 12px 16px; font-size: 13px; max-width: 380px;
+  background: var(--glass-strong); border: 1px solid var(--hairline-2); border-radius: var(--r-md);
+  box-shadow: var(--shadow-2); animation: toastIn var(--dur-3) var(--ease); line-height: 1.45; }
+.toast .ic { margin-top: 1px; }
+.toast.success .ic { color: var(--ok); }
+.toast.error .ic { color: var(--danger); }
+.toast.out { opacity: 0; transform: translateX(16px); transition: all var(--dur-2) var(--ease); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
 
 @media (max-width: 1240px) {
   .dash-grid { grid-template-columns: 1fr 1fr; }
   .quick-stats { grid-template-columns: 1fr; }
 }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
 </style>
 </head>
 <body>
+<div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
 
 <header>
   <div class="logo">
     <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
-      <rect x="1" y="1" width="14" height="24" rx="3.5" fill="#30D158" opacity="0.92"/>
-      <rect x="17" y="1" width="8" height="14" rx="3" fill="#FFD60A" opacity="0.92"/>
-      <rect x="17" y="17" width="8" height="8" rx="3" fill="#FF453A" opacity="0.92"/>
+      <rect x="1" y="1" width="14" height="24" rx="4" fill="#30D158"/>
+      <rect x="17" y="1" width="8" height="14" rx="3.5" fill="#FFD60A"/>
+      <rect x="17" y="17" width="8" height="8" rx="3.5" fill="#FF453A"/>
     </svg>
-    <span>TreeMap<small>Disk Space Visualizer</small></span>
+    <span>TreeMap<span class="sub">Disk Space Visualizer</span></span>
   </div>
   <nav class="tabbar" role="tablist" aria-label="Views">
-    <button role="tab" aria-selected="true" data-view="dashboard">Dashboard</button>
-    <button role="tab" aria-selected="false" data-view="treemap">Treemap</button>
-    <button role="tab" aria-selected="false" data-view="grid">Grid</button>
+    <button role="tab" aria-selected="true" data-view="dashboard"><span data-icon="dashboard"></span>Dashboard</button>
+    <button role="tab" aria-selected="false" data-view="treemap"><span data-icon="treemap"></span>Treemap</button>
+    <button role="tab" aria-selected="false" data-view="grid"><span data-icon="grid"></span>Grid</button>
   </nav>
   <div class="header-right">
-    <button class="btn" id="cleanupBtn" title="Find and trash old or large files">🧹 Clean Up</button>
+    <span id="headerSpin" aria-hidden="true"></span>
+    <button class="icon-btn" id="themeToggle" aria-label="Toggle light or dark theme" title="Toggle theme"></button>
+    <button class="btn" id="cleanupBtn" title="Find and trash old or large files"><span data-icon="sparkles"></span>Clean Up</button>
   </div>
 </header>
 
 <main>
   <!-- ═══════════ Empty state ═══════════ -->
   <section id="emptyState">
-    <svg class="big-logo" width="96" height="96" viewBox="0 0 26 26" aria-hidden="true">
-      <rect x="1" y="1" width="14" height="24" rx="3.5" fill="#30D158" opacity="0.92"/>
-      <rect x="17" y="1" width="8" height="14" rx="3" fill="#FFD60A" opacity="0.92"/>
-      <rect x="17" y="17" width="8" height="8" rx="3" fill="#FF453A" opacity="0.92"/>
+    <svg class="mark" width="92" height="92" viewBox="0 0 26 26" aria-hidden="true">
+      <rect x="1" y="1" width="14" height="24" rx="4" fill="#30D158"/>
+      <rect x="17" y="1" width="8" height="14" rx="3.5" fill="#FFD60A"/>
+      <rect x="17" y="17" width="8" height="8" rx="3.5" fill="#FF453A"/>
     </svg>
-    <h1>Welcome to TreeMap</h1>
-    <p>See exactly what's eating your disk. Scan any folder to get a GrandPerspective-style treemap, a size-proportional grid, and one-click clean-up — files always go to the Trash, never deleted outright.</p>
-    <button class="btn btn-primary" id="emptyBrowseBtn" style="font-size:14px;padding:10px 26px;">Choose a folder to get started</button>
+    <h1>See what's eating your disk</h1>
+    <p>Scan any folder for a GrandPerspective-style treemap, a size-proportional grid, and safe one-click clean-up. Files go to the Trash — never deleted outright.</p>
+    <div class="feature-row">
+      <span class="feature"><span data-icon="zap"></span>500k files / min</span>
+      <span class="feature"><span data-icon="shield"></span>Trash-only deletes</span>
+      <span class="feature"><span data-icon="eyeOff"></span>No tracking, fully local</span>
+    </div>
+    <button class="btn btn-primary" id="emptyBrowseBtn" style="font-size:14px;min-height:44px;padding:0 26px;">
+      <span data-icon="folder"></span>Choose a folder to get started
+    </button>
   </section>
 
   <!-- ═══════════ Dashboard ═══════════ -->
   <section class="view" id="view-dashboard" role="tabpanel" aria-label="Dashboard" hidden>
     <div class="dash-grid">
       <div class="dash-col">
-        <div class="card glass" id="sysCard">
-          <h2>System</h2>
+        <div class="card glass">
+          <h2><span data-icon="hardDrive"></span>System</h2>
           <div class="sys-row">
             <div class="ring-wrap">
-              <svg width="130" height="130" viewBox="0 0 130 130">
+              <svg width="132" height="132" viewBox="0 0 132 132">
                 <defs>
                   <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                     <stop offset="0%" stop-color="#0A84FF"/><stop offset="100%" stop-color="#5E5CE6"/>
                   </linearGradient>
                 </defs>
-                <circle class="ring-bg" cx="65" cy="65" r="54"/>
-                <circle class="ring-fg" id="ringFg" cx="65" cy="65" r="54" stroke-dasharray="339.3" stroke-dashoffset="339.3"/>
+                <circle class="ring-bg" cx="66" cy="66" r="55"/>
+                <circle class="ring-fg" id="ringFg" cx="66" cy="66" r="55" stroke-dasharray="345.6" stroke-dashoffset="345.6"/>
               </svg>
-              <div class="ring-label"><b id="ringPct">–</b><span>used</span></div>
+              <div class="ring-label"><b id="ringPct" class="num">–</b><span>used</span></div>
             </div>
             <div class="sys-facts">
               <div class="fact"><span>Host</span><b id="sysHost">–</b></div>
               <div class="fact"><span>Platform</span><b id="sysPlatform">–</b></div>
-              <div class="fact"><span>Total disk</span><b id="sysTotal">–</b></div>
-              <div class="fact"><span>Free</span><b id="sysFree">–</b></div>
-              <div class="fact"><span>Used</span><b id="sysUsed">–</b></div>
+              <div class="fact"><span>Total disk</span><b id="sysTotal" class="num">–</b></div>
+              <div class="fact"><span>Free</span><b id="sysFree" class="num">–</b></div>
+              <div class="fact"><span>Used</span><b id="sysUsed" class="num">–</b></div>
             </div>
           </div>
         </div>
 
         <div class="card glass">
-          <h2>Scan a Folder</h2>
+          <h2><span data-icon="play"></span>Scan a Folder</h2>
           <div class="scan-row">
-            <input type="text" id="pathInput" placeholder="/Users/you/Documents" aria-label="Folder to scan">
+            <div class="field">
+              <span data-icon="folder"></span>
+              <input type="text" id="pathInput" placeholder="/Users/you/Documents" aria-label="Folder to scan" autocomplete="off" spellcheck="false">
+            </div>
             <button class="btn" id="browseBtn">Browse…</button>
-            <button class="btn btn-primary" id="scanBtn">Start Scan</button>
+            <button class="btn btn-primary" id="scanBtn"><span data-icon="play"></span>Scan</button>
           </div>
-          <div class="scan-status" id="scanStatus">No scan yet.</div>
+          <div class="scan-status" id="scanStatus">No scan yet — pick a folder above.</div>
+          <div class="scan-meta num" id="scanMeta"></div>
           <div class="progress-track" id="progressTrack"><div class="progress-fill"></div></div>
         </div>
 
         <div class="card glass">
-          <h2>Quick Stats</h2>
+          <h2><span data-icon="activity"></span>Quick Stats</h2>
           <div class="quick-stats">
-            <div class="stat-tile glass-light"><div class="v" id="statFiles">–</div><div class="k">Files</div></div>
-            <div class="stat-tile glass-light"><div class="v" id="statDirs">–</div><div class="k">Folders</div></div>
-            <div class="stat-tile glass-light"><div class="v small" id="statLargest">–</div><div class="k">Largest file</div></div>
-            <div class="stat-tile glass-light"><div class="v small" id="statLastScan">–</div><div class="k">Last scan</div></div>
+            <div class="stat-tile tile"><span class="chip" style="--tint:#0A84FF"><span data-icon="file"></span></span>
+              <div><div class="v num" id="statFiles">–</div><div class="k">Files</div></div></div>
+            <div class="stat-tile tile"><span class="chip" style="--tint:#30D158"><span data-icon="folder"></span></span>
+              <div><div class="v num" id="statDirs">–</div><div class="k">Folders</div></div></div>
+            <div class="stat-tile tile"><span class="chip" style="--tint:#FF9F0A"><span data-icon="trendUp"></span></span>
+              <div><div class="v small" id="statLargest">–</div><div class="k">Largest file</div></div></div>
+            <div class="stat-tile tile"><span class="chip" style="--tint:#BF5AF2"><span data-icon="clock"></span></span>
+              <div><div class="v small num" id="statLastScan">–</div><div class="k">Last scan</div></div></div>
           </div>
         </div>
       </div>
 
       <div class="dash-col">
         <div class="card glass">
-          <h2>File Types by Size</h2>
+          <h2><span data-icon="pie"></span>File Types by Size</h2>
           <div class="donut-row">
             <canvas id="donutCanvas" width="230" height="230" aria-label="File type breakdown donut chart" role="img"></canvas>
             <div class="donut-legend" id="donutLegend"><div class="muted">Run a scan to see the breakdown.</div></div>
           </div>
         </div>
         <div class="card glass">
-          <h2>Largest Files</h2>
+          <h2><span data-icon="trendUp"></span>Largest Files</h2>
           <div id="bigFiles"><div class="muted">Run a scan to find your biggest files.</div></div>
         </div>
       </div>
@@ -418,23 +568,38 @@ main { padding: 20px 24px 40px; max-width: 1680px; margin: 0 auto; position: rel
 
   <!-- ═══════════ Treemap ═══════════ -->
   <section class="view" id="view-treemap" role="tabpanel" aria-label="Treemap" hidden>
-    <div class="crumbs" id="tmCrumbs"></div>
+    <div class="tm-toolbar">
+      <div class="crumbs" id="tmCrumbs"></div>
+      <div class="tm-controls">
+        <label for="tmDepth">Depth</label>
+        <select id="tmDepth" aria-label="Treemap depth">
+          <option value="2">2</option><option value="3">3</option>
+          <option value="4" selected>4</option><option value="5">5</option><option value="6">6</option>
+        </select>
+        <button class="icon-btn" id="tmRefresh" aria-label="Re-render treemap" title="Re-render"></button>
+      </div>
+    </div>
     <div class="glass" id="treemapWrap">
       <div id="treemapZoom"><canvas id="treemapCanvas" tabindex="0" aria-label="Disk usage treemap. Click a directory to drill in, Escape to go up."></canvas></div>
     </div>
-    <div class="legend-strip">
+    <div class="tm-foot">
       <span>1 MB</span><div class="legend-grad"></div><span>10 GB+</span>
-      <span style="margin-left:18px;">▢ darker = deeper in the folder tree · click a folder to drill in · right-click for actions</span>
+      <span class="num" id="tmStatus"></span>
+      <span class="hint"><span data-icon="mouse"></span>click a folder to drill in · right-click for actions · Esc to go up</span>
     </div>
   </section>
 
   <!-- ═══════════ Grid ═══════════ -->
   <section class="view" id="view-grid" role="tabpanel" aria-label="Grid" hidden>
     <div class="grid-toolbar">
-      <button class="btn" id="gridUpBtn" title="Go up one folder (Escape)">←</button>
-      <div class="crumbs" id="gridCrumbs" style="margin:0;"></div>
+      <button class="btn" id="gridUpBtn" title="Go up one folder (Escape)" aria-label="Go up one folder"><span data-icon="arrowUp"></span></button>
+      <div class="crumbs" id="gridCrumbs"></div>
       <div class="spacer"></div>
-      <label for="gridSort">Sort by</label>
+      <div class="field">
+        <span data-icon="search"></span>
+        <input type="text" id="gridSearch" placeholder="Filter files…  ( / )" aria-label="Filter files by name" autocomplete="off">
+      </div>
+      <label for="gridSort">Sort</label>
       <select id="gridSort" aria-label="Sort grid by">
         <option value="size">Size</option>
         <option value="name">Name</option>
@@ -448,52 +613,53 @@ main { padding: 20px 24px 40px; max-width: 1680px; margin: 0 auto; position: rel
 
 <!-- ═══════════ Selection toolbar ═══════════ -->
 <div class="glass" id="selectionBar">
-  <span id="selInfo">0 items selected</span>
-  <button class="btn btn-danger" id="selTrashBtn">Move to Trash</button>
+  <span id="selInfo" class="num">0 items selected</span>
+  <button class="btn btn-danger" id="selTrashBtn"><span data-icon="trash"></span>Move to Trash</button>
   <button class="btn" id="selClearBtn">Clear</button>
 </div>
 
 <!-- ═══════════ Clean Up modal ═══════════ -->
 <div class="modal-backdrop" id="cleanModal" role="dialog" aria-modal="true" aria-labelledby="cleanTitle">
-  <div class="modal glass">
+  <div class="modal">
     <div class="modal-head">
-      <h3 id="cleanTitle">🧹 Clean Up</h3>
-      <button class="close-x" data-close="cleanModal" aria-label="Close">✕</button>
+      <h3 id="cleanTitle"><span data-icon="sparkles"></span>Clean Up</h3>
+      <button class="close-x" data-close="cleanModal" aria-label="Close"><span data-icon="x"></span></button>
     </div>
     <div class="modal-body">
       <div class="muted" style="margin-bottom:6px;">Files matching <b>all</b> enabled rules are listed below. Nothing is removed until you confirm — and everything goes to the system Trash, recoverable any time.</div>
       <div class="rule-row">
-        <input type="checkbox" id="ruleAgeOn" checked> <label for="ruleAgeOn">Older than</label>
-        <input type="number" id="ruleAgeDays" value="180" min="0"> <span class="muted">days</span>
+        <input type="checkbox" id="ruleAgeOn" checked> <span data-icon="clock"></span><label for="ruleAgeOn">Older than</label>
+        <input type="number" id="ruleAgeDays" value="180" min="0" aria-label="Days"> <span class="muted">days</span>
       </div>
       <div class="rule-row">
-        <input type="checkbox" id="ruleSizeOn" checked> <label for="ruleSizeOn">Larger than</label>
-        <input type="number" id="ruleSizeMb" value="100" min="0"> <span class="muted">MB</span>
+        <input type="checkbox" id="ruleSizeOn" checked> <span data-icon="trendUp"></span><label for="ruleSizeOn">Larger than</label>
+        <input type="number" id="ruleSizeMb" value="100" min="0" aria-label="Megabytes"> <span class="muted">MB</span>
       </div>
       <div class="rule-row">
-        <input type="checkbox" id="ruleExtOn"> <label for="ruleExtOn">Extensions</label>
-        <input type="text" id="ruleExts" placeholder="log, tmp, dmg, zip">
+        <input type="checkbox" id="ruleExtOn"> <span data-icon="file"></span><label for="ruleExtOn">Extensions</label>
+        <input type="text" id="ruleExts" placeholder="log, tmp, dmg, zip" aria-label="Extensions, comma separated">
       </div>
       <div class="rule-row">
-        <input type="checkbox" id="ruleDupOn"> <label for="ruleDupOn">Duplicates only <span class="muted">(same name + size elsewhere in the scan)</span></label>
+        <input type="checkbox" id="ruleDupOn"> <span data-icon="copy"></span><label for="ruleDupOn">Duplicates only <span class="muted">(same name + size elsewhere)</span></label>
       </div>
-      <button class="btn" id="cleanFindBtn" style="margin-top:4px;">Find matching files</button>
+      <button class="btn" id="cleanFindBtn" style="margin-top:4px;"><span data-icon="search"></span>Find matching files</button>
       <div id="cleanResults"></div>
+      <div id="cleanProgress"><div class="track"><div class="fill" id="cleanProgressFill"></div></div></div>
     </div>
     <div class="modal-foot">
-      <span class="muted" id="cleanSummary"></span>
+      <span class="muted num" id="cleanSummary"></span>
       <div style="flex:1"></div>
-      <button class="btn btn-danger" id="cleanConfirmBtn" disabled>Move to Trash</button>
+      <button class="btn btn-danger" id="cleanConfirmBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
     </div>
   </div>
 </div>
 
 <!-- ═══════════ Browse modal ═══════════ -->
 <div class="modal-backdrop" id="browseModal" role="dialog" aria-modal="true" aria-labelledby="browseTitle">
-  <div class="modal glass" style="width:560px;">
+  <div class="modal" style="width:560px;">
     <div class="modal-head">
-      <h3 id="browseTitle">Choose a folder</h3>
-      <button class="close-x" data-close="browseModal" aria-label="Close">✕</button>
+      <h3 id="browseTitle"><span data-icon="folder"></span>Choose a folder</h3>
+      <button class="close-x" data-close="browseModal" aria-label="Close"><span data-icon="x"></span></button>
     </div>
     <div class="modal-body">
       <div class="muted" id="browseCurrent" style="word-break:break-all;"></div>
@@ -502,23 +668,43 @@ main { padding: 20px 24px 40px; max-width: 1680px; margin: 0 auto; position: rel
     </div>
     <div class="modal-foot">
       <div style="flex:1"></div>
-      <button class="btn btn-primary" id="browseUseBtn">Use this folder</button>
+      <button class="btn btn-primary" id="browseUseBtn"><span data-icon="check"></span>Scan this folder</button>
     </div>
   </div>
 </div>
 
-<div class="glass" id="tooltip" role="tooltip"></div>
-<div class="glass" id="ctxMenu" role="menu"></div>
+<!-- ═══════════ Confirm modal ═══════════ -->
+<div class="modal-backdrop" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+  <div class="modal" style="width:430px;">
+    <div class="modal-head">
+      <h3 id="confirmTitle"><span data-icon="trash"></span>Move to Trash?</h3>
+      <button class="close-x" data-close="confirmModal" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="muted" id="confirmText" style="font-size:13.5px;line-height:1.55;"></div>
+    </div>
+    <div class="modal-foot">
+      <div style="flex:1"></div>
+      <button class="btn" data-close="confirmModal">Cancel</button>
+      <button class="btn btn-danger" id="confirmOk"><span data-icon="trash"></span>Move to Trash</button>
+    </div>
+  </div>
+</div>
+
+<div id="tooltip" role="tooltip"></div>
+<div id="ctxMenu" role="menu"></div>
 <div id="toasts" aria-live="polite"></div>
 
 <script>
 'use strict';
 /* ═══════════════════════════════════════════════════════════════════════
-   TreeMap frontend — zero dependencies, hand-rolled canvas + virtual grid.
+   TreeMap frontend 2.0 — zero dependencies. Hand-rolled SVG icon system,
+   buffered cushion-treemap canvas, virtual grid, paired light/dark themes.
    ═══════════════════════════════════════════════════════════════════════ */
 
 /* ───────────────────────────── Utilities ───────────────────────────── */
 const $ = (id) => document.getElementById(id);
+const REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const UNITS = ['B','KB','MB','GB','TB','PB'];
 function formatBytes(n, d = 1) {
   if (!Number.isFinite(n) || n < 0) return '0 B';
@@ -535,6 +721,7 @@ function formatDate(ms) {
   if (!ms) return '–';
   return new Date(ms).toLocaleDateString(undefined, { year:'numeric', month:'short', day:'numeric' });
 }
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
 async function api(url, options) {
   const res = await fetch(url, options);
   let body = null;
@@ -547,25 +734,83 @@ async function api(url, options) {
   }
   return body;
 }
-
-/* Size → color tier: teal (small) → amber (medium) → red (large), log scale 1 MB … 10 GB. */
-const TIER_LO = Math.log10(1048576), TIER_HI = Math.log10(10 * 1024 ** 3);
-function hexToRgb(h) { return [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]; }
-const C_TEAL = hexToRgb('#30D158'), C_AMBER = hexToRgb('#FFD60A'), C_RED = hexToRgb('#FF453A');
-function mix(a, b, t) { return a.map((v, i) => Math.round(v + (b[i] - v) * t)); }
-function sizeTier(bytes) { // 0..1 along the teal→red scale
-  if (bytes <= 0) return 0;
-  return Math.max(0, Math.min(1, (Math.log10(bytes) - TIER_LO) / (TIER_HI - TIER_LO)));
+/** Animated count-up for stat numbers (skipped under reduced motion). */
+function countUp(el, target, fmt = formatCount) {
+  const from = Number(el.dataset.v || 0);
+  el.dataset.v = target;
+  if (REDUCED || !Number.isFinite(target) || target === from) { el.textContent = fmt(target); return; }
+  const t0 = performance.now(), dur = 500;
+  const tick = (t) => {
+    const p = Math.min(1, (t - t0) / dur);
+    const e = 1 - Math.pow(1 - p, 3);
+    el.textContent = fmt(Math.round(from + (target - from) * e));
+    if (p < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
 }
-function sizeColor(bytes, alpha = 1) {
-  const t = sizeTier(bytes);
-  const rgb = t < 0.5 ? mix(C_TEAL, C_AMBER, t * 2) : mix(C_AMBER, C_RED, (t - 0.5) * 2);
-  return `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
-}
 
-const ICONS = {
-  dir:'📁', image:'🖼️', video:'🎬', audio:'🎵', archive:'📦', code:'📝',
-  pdf:'📕', doc:'📄', app:'⚙️', disk:'💿', font:'🔤', file:'📄'
+/* ───────────────────────────── Icon system (Lucide-style strokes) ───────────────────────────── */
+const PATHS = {
+  dashboard: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+  treemap: '<rect x="3" y="3" width="9" height="18" rx="1.5"/><rect x="15" y="3" width="6" height="8" rx="1.5"/><rect x="15" y="14" width="6" height="7" rx="1.5"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
+  doc: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
+  video: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m10 9 5 3-5 3V9z"/>',
+  audio: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
+  code: '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
+  box: '<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+  disc: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="2.5"/>',
+  type: '<polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/>',
+  trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
+  external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  copy: '<rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  sparkles: '<path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3z"/>',
+  chevronRight: '<path d="m9 18 6-6-6-6"/>',
+  arrowUp: '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  checkCircle: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  hardDrive: '<line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/>',
+  play: '<path d="M6 3l14 9-14 9V3z"/>',
+  loader: '<path d="M21 12a9 9 0 1 1-6.22-8.56"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  trendUp: '<path d="M16 7h6v6"/><path d="m22 7-8.5 8.5-5-5L2 17"/>',
+  pie: '<path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>',
+  activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  zap: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+  eyeOff: '<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/>',
+  mouse: '<rect x="5" y="2" width="14" height="20" rx="7"/><path d="M12 6v4"/>',
+};
+function icon(name, size = 16, cls = '') {
+  return `<svg class="ic ${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PATHS[name] || PATHS.file}</svg>`;
+}
+/* Hydrate every <span data-icon="…"> placeholder in static HTML. */
+document.querySelectorAll('[data-icon]').forEach(el => { el.outerHTML = icon(el.dataset.icon, el.dataset.size ? +el.dataset.size : 16); });
+
+/* File-kind mapping: icon + tint per extension family. */
+const KIND = {
+  dir:     { icon: 'folder',  tint: '#0A84FF' },
+  image:   { icon: 'image',   tint: '#64D2FF' },
+  video:   { icon: 'video',   tint: '#BF5AF2' },
+  audio:   { icon: 'audio',   tint: '#FF375F' },
+  archive: { icon: 'archive', tint: '#FF9F0A' },
+  code:    { icon: 'code',    tint: '#30D158' },
+  pdf:     { icon: 'doc',     tint: '#FF453A' },
+  doc:     { icon: 'doc',     tint: '#0A84FF' },
+  app:     { icon: 'box',     tint: '#5E5CE6' },
+  disk:    { icon: 'disc',    tint: '#FFD60A' },
+  font:    { icon: 'type',    tint: '#98989D' },
+  file:    { icon: 'file',    tint: '#8E8E93' },
 };
 const EXT_KIND = {};
 [['png jpg jpeg gif webp heic svg bmp tiff raw ico','image'],
@@ -576,18 +821,51 @@ const EXT_KIND = {};
  ['pdf','pdf'], ['doc docx txt rtf pages xls xlsx numbers ppt pptx key csv','doc'],
  ['app exe msi bin','app'], ['dmg iso img','disk'], ['ttf otf woff woff2','font'],
 ].forEach(([exts, kind]) => exts.split(' ').forEach(e => EXT_KIND[e] = kind));
-function iconFor(node) {
-  if (node.type === 'dir') return ICONS.dir;
-  return ICONS[EXT_KIND[node.extension] || 'file'];
+function kindFor(node) {
+  if (node.type === 'dir') return KIND.dir;
+  return KIND[EXT_KIND[node.extension] || 'file'];
 }
+function chipFor(node, size = 15) {
+  const k = kindFor(node);
+  return `<span class="chip" style="--tint:${k.tint}">${icon(k.icon, size)}</span>`;
+}
+
+/* ───────────────────────────── Theme ───────────────────────────── */
+function applyThemeButton() {
+  const dark = document.documentElement.dataset.theme !== 'light';
+  $('themeToggle').innerHTML = icon(dark ? 'sun' : 'moon', 16);
+}
+$('themeToggle').addEventListener('click', () => {
+  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem('tm-theme', next);
+  applyThemeButton();
+  if (state.treemap.nodes.length && state.view === 'treemap') drawTreemap();
+  if (state.donut.segs.length) drawDonut(1);
+});
+applyThemeButton();
 
 /* ───────────────────────────── Toasts ───────────────────────────── */
 function toast(msg, kind = 'success', ms = 4200) {
   const el = document.createElement('div');
-  el.className = 'glass toast ' + kind;
-  el.innerHTML = (kind === 'error' ? '⚠️ ' : '✅ ') + escapeHtml(msg);
+  el.className = 'toast ' + kind;
+  el.innerHTML = icon(kind === 'error' ? 'alert' : 'checkCircle', 16) + '<span>' + escapeHtml(msg) + '</span>';
   $('toasts').appendChild(el);
-  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 350); }, ms);
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 320); }, ms);
+}
+
+/* ───────────────────────────── Size → color scale ───────────────────────────── */
+const TIER_LO = Math.log10(1048576), TIER_HI = Math.log10(10 * 1024 ** 3);
+function hexToRgb(h) { return [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]; }
+const C_TEAL = hexToRgb('#30D158'), C_AMBER = hexToRgb('#FFD60A'), C_RED = hexToRgb('#FF453A');
+function mix(a, b, t) { return a.map((v, i) => Math.round(v + (b[i] - v) * t)); }
+function sizeRgb(bytes) {
+  const t = bytes <= 0 ? 0 : Math.max(0, Math.min(1, (Math.log10(bytes) - TIER_LO) / (TIER_HI - TIER_LO)));
+  return t < 0.5 ? mix(C_TEAL, C_AMBER, t * 2) : mix(C_AMBER, C_RED, (t - 0.5) * 2);
+}
+function sizeColor(bytes, alpha = 1) {
+  const c = sizeRgb(bytes);
+  return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
 }
 
 /* ───────────────────────────── App state ───────────────────────────── */
@@ -596,15 +874,15 @@ const state = {
   system: null,
   scanId: null,
   scanning: false,
-  es: null,                  // active EventSource
-  root: null,                // FileNode tree
-  pathIndex: new Map(),      // path -> FileNode
-  lastScan: null,            // { when, durationMs }
+  es: null,
+  root: null,
+  pathIndex: new Map(),
+  lastScan: null,
   largest: [],
   types: [],
-  treemap: { rootPath: null, rootName: '', nodes: [], pxRects: [], hover: null },
-  grid: { path: null, sort: 'size', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
-  donut: { segs: [], hover: -1 },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4 },
+  grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
+  donut: { segs: [], hover: -1, animated: false },
 };
 
 function indexTree(root) {
@@ -653,8 +931,8 @@ async function loadSystem() {
     const used = sys.totalDisk - sys.freeDisk;
     $('sysUsed').textContent = formatBytes(used);
     const pct = sys.totalDisk > 0 ? used / sys.totalDisk : 0;
-    $('ringPct').textContent = Math.round(pct * 100) + '%';
-    const C = 2 * Math.PI * 54;
+    countUp($('ringPct'), Math.round(pct * 100), (v) => v + '%');
+    const C = 2 * Math.PI * 55;
     requestAnimationFrame(() => { $('ringFg').style.strokeDashoffset = String(C * (1 - pct)); });
     if (!$('pathInput').value) $('pathInput').value = sys.homeDir;
   } catch (e) {
@@ -666,6 +944,9 @@ async function loadSystem() {
 function closeEventSource() {
   if (state.es) { state.es.close(); state.es = null; }
 }
+function skeletonRows(n, h = 38) {
+  return Array.from({ length: n }, () => `<div class="skeleton" style="height:${h}px;margin:8px 0;"></div>`).join('');
+}
 
 async function startScan(path) {
   if (state.scanning) { toast('A scan is already running', 'error'); return; }
@@ -675,8 +956,12 @@ async function startScan(path) {
   try {
     state.scanning = true;
     $('scanBtn').disabled = true;
+    $('headerSpin').classList.add('on');
+    $('headerSpin').innerHTML = icon('loader', 15, REDUCED ? '' : 'spin');
     $('progressTrack').classList.add('active');
-    status.textContent = 'Starting scan…';
+    status.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + '<span>Starting scan…</span>';
+    $('bigFiles').innerHTML = skeletonRows(6);
+    $('donutLegend').innerHTML = skeletonRows(5, 24);
     $('emptyState').style.display = 'none';
     switchView('dashboard');
 
@@ -693,7 +978,12 @@ async function startScan(path) {
     es.onmessage = async (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.type === 'progress') {
-        status.textContent = `Scanning… ${formatCount(msg.scanned)} files · ${msg.currentPath}`;
+        const secs = (performance.now() - t0) / 1000;
+        const rate = secs > 0.2 ? Math.round(msg.scanned / secs) : 0;
+        status.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') +
+          `<span class="num">Scanning… <b>${formatCount(msg.scanned)}</b> items` +
+          (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`;
+        $('scanMeta').textContent = msg.currentPath;
       } else if (msg.type === 'complete') {
         closeEventSource();
         let root = msg.root;
@@ -711,7 +1001,6 @@ async function startScan(path) {
       }
     };
     es.onerror = async () => {
-      // Connection dropped — the scan may still have finished; check once.
       closeEventSource();
       try {
         const r = await api(`/api/scan/${scanId}/result`);
@@ -724,21 +1013,27 @@ async function startScan(path) {
   }
 }
 
-function failScan(message) {
+function endScanChrome() {
   state.scanning = false;
   $('scanBtn').disabled = false;
+  $('headerSpin').classList.remove('on');
   $('progressTrack').classList.remove('active');
+  $('scanMeta').textContent = '';
+}
+
+function failScan(message) {
+  endScanChrome();
   const status = $('scanStatus');
   status.classList.add('error');
-  status.textContent = '⚠ ' + message;
+  status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(message) + '</span>';
+  if (!state.largest.length) $('bigFiles').innerHTML = '<div class="muted">Run a scan to find your biggest files.</div>';
+  if (!state.types.length) $('donutLegend').innerHTML = '<div class="muted">Run a scan to see the breakdown.</div>';
   toast(message, 'error');
   switchView(state.view);
 }
 
 async function finishScan(root, durationMs) {
-  state.scanning = false;
-  $('scanBtn').disabled = false;
-  $('progressTrack').classList.remove('active');
+  endScanChrome();
   state.root = root;
   indexTree(root);
   state.lastScan = { when: Date.now(), durationMs };
@@ -753,14 +1048,13 @@ async function finishScan(root, durationMs) {
     else dirs++;
   }
   $('scanStatus').classList.remove('error');
-  $('scanStatus').textContent =
-    `Scanned ${formatCount(files)} files in ${(durationMs / 1000).toFixed(1)}s — ${formatBytes(root.size)} in ${root.path}`;
-  $('statFiles').textContent = formatCount(files);
-  $('statDirs').textContent = formatCount(dirs);
+  $('scanStatus').innerHTML = icon('checkCircle', 14) +
+    `<span class="num">Scanned <b>${formatCount(files)}</b> files in ${(durationMs / 1000).toFixed(1)}s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`;
+  countUp($('statFiles'), files);
+  countUp($('statDirs'), dirs);
   $('statLargest').textContent = largest ? `${largest.name} · ${formatBytes(largest.size)}` : '–';
   $('statLastScan').textContent = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
 
-  // Server-side aggregations for the dashboard.
   try {
     const [lf, ft] = await Promise.all([
       api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`),
@@ -769,6 +1063,7 @@ async function finishScan(root, durationMs) {
     state.largest = lf.files; state.types = ft.types;
   } catch (e) { toast('Could not load stats: ' + e.message, 'error'); }
   renderBigFiles();
+  state.donut.animated = false;
   renderDonut();
   if (state.view === 'treemap') loadTreemap(root.path);
   if (state.view === 'grid') renderGrid();
@@ -790,24 +1085,28 @@ function renderBigFiles() {
   if (!state.largest.length) { host.innerHTML = '<div class="muted">No files found.</div>'; return; }
   const max = state.largest[0].size || 1;
   host.innerHTML = state.largest.map((f, i) => `
-    <div class="bigfile" data-i="${i}">
-      <span style="font-size:16px;">${iconFor(f)}</span>
+    <div class="bigfile">
+      ${chipFor(f)}
       <div class="meta">
         <div class="nm" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
         <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
       </div>
       <div class="bar-track"><div class="bar" style="width:${Math.max(4, (f.size / max) * 100)}%;background:${sizeColor(f.size)};"></div></div>
-      <span class="size-badge" style="color:${sizeColor(f.size)};">${formatBytes(f.size)}</span>
-      <button class="icon-btn" data-trash="${escapeHtml(f.path)}" title="Move to Trash" aria-label="Move ${escapeHtml(f.name)} to Trash">🗑️</button>
+      <span class="size-badge num" style="color:${sizeColor(f.size)};">${formatBytes(f.size)}</span>
+      <span class="actions">
+        <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 14)}</button>
+        <button class="icon-btn danger" data-trash="${escapeHtml(f.path)}" title="Move to Trash" aria-label="Move ${escapeHtml(f.name)} to Trash">${icon('trash', 14)}</button>
+      </span>
     </div>`).join('');
   host.querySelectorAll('[data-trash]').forEach(btn =>
-    btn.addEventListener('click', () => trashPaths([btn.dataset.trash])));
+    btn.addEventListener('click', () => confirmTrash([btn.dataset.trash])));
+  host.querySelectorAll('[data-reveal]').forEach(btn =>
+    btn.addEventListener('click', () => openInOS(btn.dataset.reveal, true)));
 }
 
 /* ───────────────────────────── Dashboard: donut chart ───────────────────────────── */
 const DONUT_COLORS = ['#0A84FF','#30D158','#FFD60A','#FF9F0A','#FF453A','#BF5AF2','#64D2FF','#5E5CE6'];
 function renderDonut() {
-  const canvas = $('donutCanvas');
   const legend = $('donutLegend');
   const top = state.types.slice(0, 8);
   if (!top.length) { legend.innerHTML = '<div class="muted">Run a scan to see the breakdown.</div>'; return; }
@@ -816,28 +1115,41 @@ function renderDonut() {
   let angle = -Math.PI / 2;
   state.donut.segs = top.map((t, i) => {
     const span = (t.totalSize / total) * Math.PI * 2;
-    const seg = { ...t, start: angle, end: angle + span, color: DONUT_COLORS[i % DONUT_COLORS.length] };
+    const seg = { ...t, start: angle, end: angle + span, pct: t.totalSize / total, color: DONUT_COLORS[i % DONUT_COLORS.length] };
     angle += span;
     return seg;
   });
-  drawDonut();
   legend.innerHTML = state.donut.segs.map((s, i) => `
     <div class="li" data-i="${i}">
       <span class="dot" style="background:${s.color}"></span>
-      <span class="ext">.${escapeHtml(s.ext)}</span>
-      <span class="muted">${formatCount(s.count)} files</span>
-      <span class="sz">${formatBytes(s.totalSize)}</span>
+      <span class="ext">${s.ext === '(none)' ? 'no ext' : '.' + escapeHtml(s.ext)}</span>
+      <span class="cnt num">${formatCount(s.count)} files · ${(s.pct * 100).toFixed(1)}%</span>
+      <span class="sz num">${formatBytes(s.totalSize)}</span>
     </div>`).join('');
   legend.querySelectorAll('.li').forEach(li => {
-    li.addEventListener('mouseenter', () => { state.donut.hover = +li.dataset.i; drawDonut(); highlightLegend(); });
-    li.addEventListener('mouseleave', () => { state.donut.hover = -1; drawDonut(); highlightLegend(); });
+    li.addEventListener('mouseenter', () => { state.donut.hover = +li.dataset.i; drawDonut(1); highlightLegend(); });
+    li.addEventListener('mouseleave', () => { state.donut.hover = -1; drawDonut(1); highlightLegend(); });
   });
+
+  if (!state.donut.animated && !REDUCED) {
+    state.donut.animated = true;
+    const t0 = performance.now(), dur = 700;
+    const tick = (t) => {
+      const p = Math.min(1, (t - t0) / dur);
+      drawDonut(1 - Math.pow(1 - p, 3));
+      if (p < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  } else {
+    state.donut.animated = true;
+    drawDonut(1);
+  }
 }
 function highlightLegend() {
   $('donutLegend').querySelectorAll('.li').forEach(li =>
     li.classList.toggle('hl', +li.dataset.i === state.donut.hover));
 }
-function drawDonut() {
+function drawDonut(progress = 1) {
   const canvas = $('donutCanvas');
   const dpr = window.devicePixelRatio || 1;
   const cssW = 230;
@@ -846,82 +1158,88 @@ function drawDonut() {
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssW);
-  const cx = cssW / 2, cy = cssW / 2, R = 96, r = 62;
+  const cx = cssW / 2, cy = cssW / 2, R = 96, r = 63;
+  const sweepLimit = -Math.PI / 2 + Math.PI * 2 * progress;
   state.donut.segs.forEach((s, i) => {
+    const end = Math.min(s.end, sweepLimit);
+    if (end <= s.start) return;
     const hl = i === state.donut.hover;
     const outer = hl ? R + 5 : R;
-    // Inset creates the gap between segments — clamp it so a tiny segment
-    // can't produce a negative span (which canvas arc() draws as a full circle).
-    const inset = Math.min(0.012, (s.end - s.start) / 4);
+    const inset = Math.min(0.012, (end - s.start) / 4);
     ctx.beginPath();
-    ctx.arc(cx, cy, outer, s.start + inset, s.end - inset);
-    ctx.arc(cx, cy, r, s.end - inset, s.start + inset, true);
+    ctx.arc(cx, cy, outer, s.start + inset, end - inset);
+    ctx.arc(cx, cy, r, end - inset, s.start + inset, true);
     ctx.closePath();
     ctx.fillStyle = s.color;
-    ctx.globalAlpha = state.donut.hover === -1 || hl ? 1 : 0.35;
+    ctx.globalAlpha = state.donut.hover === -1 || hl ? 1 : 0.32;
     ctx.fill();
   });
   ctx.globalAlpha = 1;
   const sel = state.donut.segs[state.donut.hover];
-  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.fillStyle = cssVar('--text-1');
   ctx.textAlign = 'center';
   ctx.font = '600 17px -apple-system, sans-serif';
-  ctx.fillText(sel ? '.' + sel.ext : 'Top types', cx, cy - 2);
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.fillText(sel ? (sel.ext === '(none)' ? 'no ext' : '.' + sel.ext) : 'Top types', cx, cy - 3);
+  ctx.fillStyle = cssVar('--text-2');
   ctx.font = '12px -apple-system, sans-serif';
   const totalAll = state.donut.segs.reduce((s, t) => s + t.totalSize, 0);
-  ctx.fillText(sel ? formatBytes(sel.totalSize) : formatBytes(totalAll), cx, cy + 17);
+  ctx.fillText(sel ? `${formatBytes(sel.totalSize)} · ${(sel.pct * 100).toFixed(1)}%` : formatBytes(totalAll), cx, cy + 16);
 }
 $('donutCanvas').addEventListener('mousemove', (e) => {
   const rect = e.currentTarget.getBoundingClientRect();
   const x = e.clientX - rect.left - 115, y = e.clientY - rect.top - 115;
   const dist = Math.hypot(x, y);
   let hover = -1;
-  if (dist >= 62 && dist <= 101) {
+  if (dist >= 63 && dist <= 101) {
     let a = Math.atan2(y, x);
-    // Segments start at -π/2 and wind clockwise up to 3π/2 — normalize into that range.
     if (a < -Math.PI / 2) a += Math.PI * 2;
     hover = state.donut.segs.findIndex(s => a >= s.start && a < s.end);
   }
-  if (hover !== state.donut.hover) { state.donut.hover = hover; drawDonut(); highlightLegend(); }
+  if (hover !== state.donut.hover) { state.donut.hover = hover; drawDonut(1); highlightLegend(); }
 });
-$('donutCanvas').addEventListener('mouseleave', () => { state.donut.hover = -1; drawDonut(); highlightLegend(); });
+$('donutCanvas').addEventListener('mouseleave', () => { state.donut.hover = -1; drawDonut(1); highlightLegend(); });
 
 /* ───────────────────────────── Treemap view ───────────────────────────── */
 const tmCanvas = $('treemapCanvas');
 const tmCtx = tmCanvas.getContext('2d');
+/* Offscreen buffer: the full cushion render happens once per layout/theme;
+   hover frames just blit the buffer + draw a highlight, keeping mousemove cheap. */
+const tmBuffer = document.createElement('canvas');
+const tmBufCtx = tmBuffer.getContext('2d');
 
 async function loadTreemap(rootPath, animate = false) {
   if (!state.scanId) return;
   const zoom = $('treemapZoom');
-  if (animate) zoom.classList.add('zooming');
+  if (animate && !REDUCED) zoom.classList.add('zooming');
   try {
-    const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=4&minSize=4096&root=${encodeURIComponent(rootPath)}`);
+    const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(rootPath)}`);
     state.treemap.rootPath = data.root.path;
     state.treemap.rootName = data.root.name;
     state.treemap.rootSize = data.root.size;
     state.treemap.nodes = data.nodes;
-    renderCrumbs();
+    state.treemap.hover = null;
+    renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
     drawTreemap();
   } catch (e) {
     toast('Treemap failed: ' + e.message, 'error');
   } finally {
-    if (animate) requestAnimationFrame(() => requestAnimationFrame(() => zoom.classList.remove('zooming')));
+    if (animate && !REDUCED) requestAnimationFrame(() => requestAnimationFrame(() => zoom.classList.remove('zooming')));
   }
 }
 
-function renderCrumbs() {
-  const host = $('tmCrumbs');
-  const crumbs = breadcrumbsFor(state.treemap.rootPath);
+/** Shared breadcrumb renderer (treemap + grid). */
+function renderCrumbs(host, path, onPick) {
+  const crumbs = breadcrumbsFor(path);
   host.innerHTML = crumbs.map((c, i) => {
     const cur = i === crumbs.length - 1;
-    return `${i ? '<span class="sep">›</span>' : ''}<button data-p="${escapeHtml(c.path)}" aria-current="${cur}" title="${escapeHtml(c.path)}">${escapeHtml(c.name)}</button>`;
+    return `${i ? '<span class="sep">' + icon('chevronRight', 12) + '</span>' : ''}` +
+      `<button data-p="${escapeHtml(c.path)}" aria-current="${cur}" title="${escapeHtml(c.path)}">` +
+      `${i === 0 ? icon('hardDrive', 13) : ''}${escapeHtml(c.name)}</button>`;
   }).join('');
   host.querySelectorAll('button').forEach(b =>
-    b.addEventListener('click', () => loadTreemap(b.dataset.p, true)));
+    b.addEventListener('click', () => onPick(b.dataset.p)));
 }
 
-/** Crumb list from the scan root down to `path`. */
 function breadcrumbsFor(path) {
   const root = state.root;
   if (!root) return [];
@@ -940,69 +1258,127 @@ function breadcrumbsFor(path) {
 function drawTreemap() {
   const wrap = $('treemapWrap');
   const cssW = wrap.clientWidth - 20;
-  const cssH = Math.max(420, window.innerHeight - 290);
+  const cssH = Math.max(420, window.innerHeight - 300);
   const dpr = window.devicePixelRatio || 1;
   tmCanvas.style.width = cssW + 'px';
   tmCanvas.style.height = cssH + 'px';
-  if (tmCanvas.width !== Math.round(cssW * dpr)) tmCanvas.width = Math.round(cssW * dpr);
-  if (tmCanvas.height !== Math.round(cssH * dpr)) tmCanvas.height = Math.round(cssH * dpr);
-  tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  tmCtx.clearRect(0, 0, cssW, cssH);
-  tmCtx.fillStyle = 'rgba(0,0,0,0.25)';
-  tmCtx.fillRect(0, 0, cssW, cssH);
+  const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
+  if (tmCanvas.width !== pw) tmCanvas.width = pw;
+  if (tmCanvas.height !== ph) tmCanvas.height = ph;
+  if (tmBuffer.width !== pw) tmBuffer.width = pw;
+  if (tmBuffer.height !== ph) tmBuffer.height = ph;
+
+  const ctx = tmBufCtx;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+  ctx.fillStyle = cssVar('--tm-canvas-bg');
+  ctx.fillRect(0, 0, cssW, cssH);
 
   const px = [];
   for (const n of state.treemap.nodes) {
     const x = (n.x / 100) * cssW, y = (n.y / 100) * cssH;
     const w = (n.w / 100) * cssW, h = (n.h / 100) * cssH;
-    if (w * h < 1) continue;            // skip sub-pixel rectangles entirely
-    if (n.expanded) { px.push({ n, x, y, w, h, frame: true }); continue; }
-    px.push({ n, x, y, w, h, frame: false });
+    if (w * h < 1) continue;
+    px.push({ n, x, y, w, h, frame: n.expanded });
   }
   state.treemap.pxRects = px;
 
-  // Pass 1: leaf fills (files + collapsed dirs).
+  // Pass 1: cushion-shaded leaf fills.
   for (const r of px) {
     if (r.frame) continue;
-    const depthFade = Math.max(0.55, 1 - r.n.depth * 0.09);
-    tmCtx.fillStyle = sizeColor(r.n.size, 0.88 * depthFade);
-    tmCtx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
+    const base = sizeRgb(r.n.size);
+    const depthFade = Math.max(0.55, 1 - r.n.depth * 0.08);
+    const top = mix(base, [255,255,255], 0.16);
+    const bot = mix(base, [0,0,0], 0.22);
+    const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
+    g.addColorStop(0, `rgba(${top[0]},${top[1]},${top[2]},${0.95 * depthFade})`);
+    g.addColorStop(1, `rgba(${bot[0]},${bot[1]},${bot[2]},${0.95 * depthFade})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
     if (r.w > 6 && r.h > 6) {
-      tmCtx.strokeStyle = 'rgba(0,0,0,0.35)';
-      tmCtx.lineWidth = 1;
-      tmCtx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(r.x + 1, r.y + 1); ctx.lineTo(r.x + r.w - 1, r.y + 1);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
     }
   }
-  // Pass 2: directory frames on top so structure reads through.
+  // Pass 2: directory frames.
   for (const r of px) {
     if (!r.frame) continue;
-    tmCtx.strokeStyle = `rgba(255,255,255,${Math.max(0.12, 0.3 - r.n.depth * 0.05)})`;
-    tmCtx.lineWidth = r.n.depth <= 1 ? 1.5 : 1;
-    tmCtx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+    ctx.strokeStyle = `rgba(255,255,255,${Math.max(0.12, 0.3 - r.n.depth * 0.05)})`;
+    ctx.lineWidth = r.n.depth <= 1 ? 1.5 : 1;
+    ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
   }
-  // Pass 3: labels — only when the rectangle is wide enough (≥ 40 px).
-  tmCtx.textBaseline = 'top';
+  // Pass 3: top-level directory name tags.
+  ctx.textBaseline = 'middle';
+  for (const r of px) {
+    if (!r.frame || r.n.depth !== 1 || r.w < 90 || r.h < 44) continue;
+    const label = r.n.name;
+    ctx.font = '600 10.5px -apple-system, sans-serif';
+    const tw = Math.min(ctx.measureText(label).width, r.w - 26);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    roundRect(ctx, r.x + 5, r.y + 5, tw + 14, 18, 9);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.fillText(label, r.x + 12, r.y + 14.5, r.w - 26);
+  }
+  // Pass 4: leaf labels (only when ≥ 40 px wide).
+  ctx.textBaseline = 'top';
   for (const r of px) {
     if (r.frame || r.w < 40 || r.h < 15) continue;
     const label = r.n.name;
-    tmCtx.font = '500 11px -apple-system, sans-serif';
-    tmCtx.fillStyle = 'rgba(0,0,0,0.78)';
+    ctx.font = '500 11px -apple-system, sans-serif';
+    ctx.fillStyle = 'rgba(0,0,0,0.78)';
     const maxChars = Math.floor((r.w - 10) / 6.2);
     const text = label.length > maxChars ? label.slice(0, Math.max(1, maxChars - 1)) + '…' : label;
-    tmCtx.fillText(text, r.x + 5, r.y + 4, r.w - 10);
+    ctx.fillText(text, r.x + 5, r.y + 4, r.w - 10);
     if (r.h > 30) {
-      tmCtx.fillStyle = 'rgba(0,0,0,0.55)';
-      tmCtx.font = '10px -apple-system, sans-serif';
-      tmCtx.fillText(formatBytes(r.n.size), r.x + 5, r.y + 17, r.w - 10);
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.font = '10px -apple-system, sans-serif';
+      ctx.fillText(formatBytes(r.n.size), r.x + 5, r.y + 17, r.w - 10);
     }
+  }
+
+  presentTreemap();
+  $('tmStatus').textContent =
+    `${formatCount(state.treemap.nodes.length)} nodes · ${formatCount(px.length)} drawn · ${formatBytes(state.treemap.rootSize)} total`;
+}
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/** Blit the buffer, then draw the hover highlight on top. */
+function presentTreemap() {
+  const dpr = window.devicePixelRatio || 1;
+  tmCtx.setTransform(1, 0, 0, 1, 0, 0);
+  tmCtx.clearRect(0, 0, tmCanvas.width, tmCanvas.height);
+  tmCtx.drawImage(tmBuffer, 0, 0);
+  const h = state.treemap.hover;
+  if (h) {
+    tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    tmCtx.fillStyle = 'rgba(255,255,255,0.10)';
+    tmCtx.fillRect(h.x, h.y, h.w, h.h);
+    tmCtx.strokeStyle = cssVar('--accent') || '#0A84FF';
+    tmCtx.lineWidth = 2;
+    tmCtx.strokeRect(h.x + 1, h.y + 1, h.w - 2, h.h - 2);
   }
 }
 
-function treemapHit(clientX, clientY) {
+function treemapHit(clientX, clientY, leavesOnly = false) {
   const rect = tmCanvas.getBoundingClientRect();
   const x = clientX - rect.left, y = clientY - rect.top;
   let best = null;
   for (const r of state.treemap.pxRects) {
+    if (leavesOnly && r.frame) continue;
     if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
       if (!best || r.n.depth > best.n.depth) best = r;
     }
@@ -1015,46 +1391,50 @@ tmCanvas.addEventListener('mousemove', (e) => {
   if (tmRaf) return;
   tmRaf = requestAnimationFrame(() => {
     tmRaf = 0;
-    const hitFrame = treemapHit(e.clientX, e.clientY);
-    // For tooltips prefer leaves; frames only when nothing else is under the cursor.
-    const leaf = leafAt(e.clientX, e.clientY) || hitFrame;
+    const leaf = treemapHit(e.clientX, e.clientY, true) || treemapHit(e.clientX, e.clientY);
+    if (leaf !== state.treemap.hover) {
+      state.treemap.hover = leaf;
+      presentTreemap();
+    }
     if (leaf) {
       tmCanvas.style.cursor = leaf.n.type === 'dir' ? 'pointer' : 'default';
-      showTooltip(e.clientX, e.clientY, leaf.n);
+      const pct = state.treemap.rootSize > 0 ? (leaf.n.size / state.treemap.rootSize) * 100 : 0;
+      showTooltip(e.clientX, e.clientY, leaf.n, pct);
     } else { tmCanvas.style.cursor = 'default'; hideTooltip(); }
   });
 });
-function leafAt(cx, cy) {
-  const rect = tmCanvas.getBoundingClientRect();
-  const x = cx - rect.left, y = cy - rect.top;
-  let best = null;
-  for (const r of state.treemap.pxRects) {
-    if (r.frame) continue;
-    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
-      if (!best || r.n.depth > best.n.depth) best = r;
-    }
-  }
-  return best;
-}
-tmCanvas.addEventListener('mouseleave', hideTooltip);
+tmCanvas.addEventListener('mouseleave', () => {
+  state.treemap.hover = null;
+  presentTreemap();
+  hideTooltip();
+});
 tmCanvas.addEventListener('click', (e) => {
   const hit = treemapHit(e.clientX, e.clientY);
   if (hit && hit.n.type === 'dir') { hideTooltip(); loadTreemap(hit.n.path, true); }
 });
 tmCanvas.addEventListener('contextmenu', (e) => {
   e.preventDefault();
-  const hit = leafAt(e.clientX, e.clientY) || treemapHit(e.clientX, e.clientY);
+  const hit = treemapHit(e.clientX, e.clientY, true) || treemapHit(e.clientX, e.clientY);
   if (hit) showCtxMenu(e.clientX, e.clientY, hit.n);
 });
+$('tmDepth').addEventListener('change', (e) => {
+  state.treemap.maxDepth = +e.target.value;
+  if (state.treemap.rootPath) loadTreemap(state.treemap.rootPath);
+});
+$('tmRefresh').innerHTML = icon('refresh', 15);
+$('tmRefresh').addEventListener('click', () => { if (state.treemap.rootPath) loadTreemap(state.treemap.rootPath); });
 window.addEventListener('resize', () => { if (state.view === 'treemap' && state.treemap.nodes.length) drawTreemap(); });
 
 /* ───────────────────────────── Tooltip ───────────────────────────── */
-function showTooltip(x, y, node) {
+function showTooltip(x, y, node, pctOfRoot = null) {
   const tip = $('tooltip');
+  const k = kindFor(node);
   tip.innerHTML = `
-    <div class="t-name">${iconFor(node)} ${escapeHtml(node.name)}</div>
+    <div class="t-head"><span style="color:${k.tint};display:inline-flex;">${icon(k.icon, 15)}</span>${escapeHtml(node.name)}</div>
     <div class="t-line">${escapeHtml(node.path)}</div>
-    <div class="t-line"><b style="color:${sizeColor(node.size)}">${formatBytes(node.size)}</b> · modified ${formatDate(node.modifiedAt)}</div>`;
+    <div class="t-line num"><span class="t-strong" style="color:${sizeColor(node.size)}">${formatBytes(node.size)}</span>` +
+    (pctOfRoot !== null && pctOfRoot >= 0.05 ? ` · ${pctOfRoot.toFixed(1)}% of this view` : '') +
+    ` · modified ${formatDate(node.modifiedAt)}</div>`;
   tip.style.display = 'block';
   const pad = 14;
   const w = tip.offsetWidth, h = tip.offsetHeight;
@@ -1071,18 +1451,19 @@ function showCtxMenu(x, y, node) {
            : state.system && state.system.platform === 'win32' ? 'Explorer' : 'file manager';
   const menu = $('ctxMenu');
   menu.innerHTML = `
-    <button data-act="open">📂 Open in ${fm}</button>
-    <button data-act="copy">📋 Copy path</button>
-    <button data-act="trash" class="danger">🗑️ Move to Trash</button>`;
+    <button data-act="open">${icon('external', 15)}Open in ${fm}</button>
+    <button data-act="copy">${icon('copy', 15)}Copy path</button>
+    <div class="div"></div>
+    <button data-act="trash" class="danger">${icon('trash', 15)}Move to Trash</button>`;
   menu.style.display = 'block';
-  menu.style.left = Math.min(x, window.innerWidth - 220) + 'px';
-  menu.style.top = Math.min(y, window.innerHeight - 140) + 'px';
+  menu.style.left = Math.min(x, window.innerWidth - 230) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - 160) + 'px';
   menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     const act = b.dataset.act;
     hideCtxMenu();
     if (act === 'open') openInOS(ctxTarget.path, true);
     if (act === 'copy') copyPath(ctxTarget.path);
-    if (act === 'trash') trashPaths([ctxTarget.path]);
+    if (act === 'trash') confirmTrash([ctxTarget.path]);
   }));
 }
 function hideCtxMenu() { $('ctxMenu').style.display = 'none'; }
@@ -1106,7 +1487,24 @@ async function copyPath(path) {
   }
 }
 
-/* ───────────────────────────── Trash operations ───────────────────────────── */
+/* ───────────────────────────── Trash (confirm + execute) ───────────────────────────── */
+let confirmPaths = [];
+function confirmTrash(paths) {
+  if (!paths.length) return;
+  confirmPaths = paths;
+  const total = paths.reduce((s, p) => s + (state.pathIndex.get(p)?.size ?? 0), 0);
+  const first = state.pathIndex.get(paths[0]);
+  $('confirmText').innerHTML = paths.length === 1
+    ? `Move <b>${escapeHtml(first ? first.name : paths[0])}</b> (${formatBytes(total)}) to the Trash?<br><span style="color:var(--text-3)">You can restore it from the Trash at any time.</span>`
+    : `Move <b>${paths.length} items</b> (${formatBytes(total)} total) to the Trash?<br><span style="color:var(--text-3)">You can restore them from the Trash at any time.</span>`;
+  $('confirmModal').classList.add('open');
+}
+$('confirmOk').addEventListener('click', async () => {
+  closeModal('confirmModal');
+  await trashPaths(confirmPaths);
+  confirmPaths = [];
+});
+
 async function trashPaths(paths, { silent = false } = {}) {
   if (!paths.length) return { deleted: [], failed: [] };
   const recovered = paths.reduce((s, p) => s + (state.pathIndex.get(p)?.size ?? 0), 0);
@@ -1117,7 +1515,7 @@ async function trashPaths(paths, { silent = false } = {}) {
     });
     if (!silent) {
       if (result.deleted.length) {
-        toast(`Moved ${result.deleted.length} ${result.deleted.length === 1 ? 'file' : 'files'} to Trash — ${formatBytes(recovered)} recovered`);
+        toast(`Moved ${result.deleted.length} ${result.deleted.length === 1 ? 'item' : 'items'} to Trash — ${formatBytes(recovered)} recovered`);
       }
       if (result.failed.length) {
         toast(`${result.failed.length} failed: ${result.failed[0].reason}`, 'error');
@@ -1142,7 +1540,9 @@ const gridInner = $('gridInner');
 function gridItems() {
   const node = state.pathIndex.get(state.grid.path);
   if (!node || !node.children) return [];
-  const items = [...node.children];
+  let items = [...node.children];
+  const q = state.grid.query.trim().toLowerCase();
+  if (q) items = items.filter(it => it.name.toLowerCase().includes(q));
   const s = state.grid.sort;
   items.sort((a, b) =>
     s === 'name' ? a.name.localeCompare(b.name, undefined, { sensitivity:'base' }) :
@@ -1158,8 +1558,6 @@ function layoutGrid(items) {
   const layout = [];
   let x = 0, y = 0, rowH = 0;
   for (const it of items) {
-    // Square side: base + sqrt of the size ratio × extra (sub-linear so
-    // mid-size files stay visible next to giants).
     const side = Math.round(Math.min(MAX_SQ, MIN_SQ + Math.sqrt(it.size / maxSize) * (MAX_SQ - MIN_SQ)));
     if (x + side > width && x > 0) { x = 0; y += rowH + GAP; rowH = 0; }
     layout.push({ it, x, y, side });
@@ -1167,18 +1565,30 @@ function layoutGrid(items) {
     rowH = Math.max(rowH, side);
   }
   state.grid.layout = layout;
-  state.grid.totalH = y + rowH + GAP;
+  state.grid.totalH = layout.length ? y + rowH + GAP : 0;
 }
 
 function renderGrid() {
-  layoutGrid(gridItems());
+  const items = gridItems();
+  layoutGrid(items);
   gridInner.style.height = state.grid.totalH + 'px';
-  state.grid.rangeStart = 0; state.grid.rangeEnd = -1; // force re-render
+  state.grid.rangeStart = 0; state.grid.rangeEnd = -1;
   renderGridWindow(true);
-  renderGridCrumbs();
+  renderCrumbs($('gridCrumbs'), state.grid.path, (p) => {
+    state.grid.path = p; state.grid.selection.clear(); updateSelectionBar(); renderGrid();
+  });
+  const existing = gridScroll.querySelector('.grid-empty');
+  if (existing) existing.remove();
+  if (!items.length) {
+    const q = state.grid.query.trim();
+    const div = document.createElement('div');
+    div.className = 'grid-empty';
+    div.innerHTML = icon(q ? 'search' : 'folder', 30) +
+      `<span>${q ? `No files match “${escapeHtml(q)}”` : 'This folder is empty'}</span>`;
+    gridScroll.appendChild(div);
+  }
 }
 
-/** Virtual scroll: only mount cells inside viewport ± 200 px. */
 function renderGridWindow(force = false) {
   const top = gridScroll.scrollTop - 200;
   const bottom = gridScroll.scrollTop + gridScroll.clientHeight + 200;
@@ -1195,23 +1605,25 @@ function renderGridWindow(force = false) {
   const frag = document.createDocumentFragment();
   for (let i = start; i <= end; i++) {
     const { it, x, y, side } = layout[i];
+    const k = kindFor(it);
     const cell = document.createElement('div');
-    cell.className = 'gcell glass-light' + (state.grid.selection.has(it.path) ? ' selected' : '');
+    cell.className = 'gcell' + (state.grid.selection.has(it.path) ? ' selected' : '');
     cell.tabIndex = 0;
     cell.dataset.i = i;
     cell.setAttribute('role', 'button');
-    cell.setAttribute('aria-label', `${it.name}, ${formatBytes(it.size)}`);
+    cell.setAttribute('aria-label', `${it.name}, ${formatBytes(it.size)}${it.type === 'dir' ? ', folder' : ''}`);
     cell.style.cssText = `left:${x}px;top:${y}px;width:${side}px;height:${side}px;`;
-    const iconPx = Math.max(16, Math.min(54, side * 0.32));
+    const iconPx = Math.max(17, Math.min(46, Math.round(side * 0.3)));
     cell.innerHTML = `
-      <span class="tier" style="background:${sizeColor(it.size)}"></span>
-      <span class="ic" style="font-size:${iconPx}px">${iconFor(it)}</span>
+      <span class="sel-mark">${icon('check', 11)}</span>
+      ${it.type === 'dir' && it.children && side >= 84 ? `<span class="badge num">${formatCount(it.children.length)}</span>` : ''}
+      <span style="color:${k.tint};display:inline-flex;">${icon(k.icon, iconPx)}</span>
       ${side >= 64 ? `<span class="nm">${escapeHtml(it.name)}</span>` : ''}
-      ${side >= 84 ? `<span class="sz">${formatBytes(it.size)}</span>` : ''}`;
+      ${side >= 84 ? `<span class="sz num">${formatBytes(it.size)}</span>` : ''}`;
     cell.addEventListener('click', (e) => onCellClick(e, i));
     cell.addEventListener('dblclick', () => { if (it.type === 'file') openInOS(it.path, false); });
     cell.addEventListener('contextmenu', (e) => { e.preventDefault(); showCtxMenu(e.clientX, e.clientY, it); });
-    cell.addEventListener('mouseenter', (e) => {
+    cell.addEventListener('mouseenter', () => {
       const r = cell.getBoundingClientRect();
       showTooltip(r.right, r.top, it);
     });
@@ -1253,16 +1665,6 @@ function onCellClick(e, i) {
   renderGridWindow(true);
 }
 
-function renderGridCrumbs() {
-  const host = $('gridCrumbs');
-  const crumbs = breadcrumbsFor(state.grid.path);
-  host.innerHTML = crumbs.map((c, i) => {
-    const cur = i === crumbs.length - 1;
-    return `${i ? '<span class="sep">›</span>' : ''}<button data-p="${escapeHtml(c.path)}" aria-current="${cur}" title="${escapeHtml(c.path)}">${escapeHtml(c.name)}</button>`;
-  }).join('');
-  host.querySelectorAll('button').forEach(b =>
-    b.addEventListener('click', () => { state.grid.path = b.dataset.p; state.grid.selection.clear(); updateSelectionBar(); renderGrid(); }));
-}
 $('gridUpBtn').addEventListener('click', gridUp);
 function gridUp() {
   const crumbs = breadcrumbsFor(state.grid.path);
@@ -1273,9 +1675,13 @@ function gridUp() {
   }
 }
 $('gridSort').addEventListener('change', (e) => { state.grid.sort = e.target.value; renderGrid(); });
+let searchDeb = 0;
+$('gridSearch').addEventListener('input', (e) => {
+  clearTimeout(searchDeb);
+  searchDeb = setTimeout(() => { state.grid.query = e.target.value; renderGrid(); }, 140);
+});
 window.addEventListener('resize', () => { if (state.view === 'grid' && state.root) renderGrid(); });
 
-/* Selection toolbar */
 function updateSelectionBar() {
   const sel = state.grid.selection;
   const bar = $('selectionBar');
@@ -1286,7 +1692,7 @@ function updateSelectionBar() {
   bar.classList.add('visible');
 }
 $('selClearBtn').addEventListener('click', () => { state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true); });
-$('selTrashBtn').addEventListener('click', () => trashPaths([...state.grid.selection]));
+$('selTrashBtn').addEventListener('click', () => confirmTrash([...state.grid.selection]));
 
 /* ───────────────────────────── Browse modal ───────────────────────────── */
 let browsePath = null;
@@ -1294,8 +1700,8 @@ async function openBrowse(start) {
   $('browseModal').classList.add('open');
   const chips = $('browseChips');
   chips.innerHTML = (state.system?.commonDirs ?? []).map(d =>
-    `<button class="chip" data-p="${escapeHtml(d)}">${escapeHtml(d.split(/[\\/]/).pop() || d)}</button>`).join('');
-  chips.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => browseTo(c.dataset.p)));
+    `<button class="pill" data-p="${escapeHtml(d)}">${icon('folder', 12)}${escapeHtml(d.split(/[\\/]/).pop() || d)}</button>`).join('');
+  chips.querySelectorAll('.pill').forEach(c => c.addEventListener('click', () => browseTo(c.dataset.p)));
   await browseTo(start || state.system?.homeDir || '/');
 }
 async function browseTo(path) {
@@ -1305,9 +1711,9 @@ async function browseTo(path) {
     $('browseCurrent').textContent = data.path;
     const list = $('browseList');
     const rows = [];
-    if (data.parent) rows.push(`<button class="browse-item" data-p="${escapeHtml(data.parent)}">⬆️ <b>..</b></button>`);
+    if (data.parent) rows.push(`<button class="browse-item" data-p="${escapeHtml(data.parent)}">${icon('arrowUp', 14)} <b>..</b></button>`);
     rows.push(...data.dirs.map(d =>
-      `<button class="browse-item" data-p="${escapeHtml(d.path)}"><span>📁</span> <span class="${d.isHidden ? 'hid' : ''}">${escapeHtml(d.name)}</span></button>`));
+      `<button class="browse-item" data-p="${escapeHtml(d.path)}">${icon('folder', 14)} <span class="${d.isHidden ? 'hid' : ''}">${escapeHtml(d.name)}</span></button>`));
     list.innerHTML = rows.join('') || '<div class="muted" style="padding:14px;">No subfolders.</div>';
     list.querySelectorAll('.browse-item').forEach(b => b.addEventListener('click', () => browseTo(b.dataset.p)));
   } catch (e) {
@@ -1329,6 +1735,7 @@ $('cleanupBtn').addEventListener('click', () => {
   $('cleanResults').innerHTML = '';
   $('cleanSummary').textContent = '';
   $('cleanConfirmBtn').disabled = true;
+  $('cleanProgress').classList.remove('on');
   cleanMatches = [];
   $('cleanModal').classList.add('open');
 });
@@ -1345,12 +1752,11 @@ $('cleanFindBtn').addEventListener('click', () => {
   const files = [];
   for (const n of state.pathIndex.values()) if (n.type === 'file') files.push(n);
 
-  // Duplicate heuristic: same basename + identical byte size, seen 2+ times.
   let dupKeys = null;
   if (dupOn) {
     const counts = new Map();
     for (const f of files) {
-      const k = f.name + ' ' + f.size;
+      const k = f.name + ' ' + f.size;
       counts.set(k, (counts.get(k) || 0) + 1);
     }
     dupKeys = new Set([...counts.entries()].filter(([, c]) => c > 1).map(([k]) => k));
@@ -1360,13 +1766,13 @@ $('cleanFindBtn').addEventListener('click', () => {
     if (ageOn && now - f.modifiedAt < maxAgeMs) return false;
     if (sizeOn && f.size < minBytes) return false;
     if (extOn && exts.size && !exts.has(f.extension || '')) return false;
-    if (dupOn && !dupKeys.has(f.name + ' ' + f.size)) return false;
+    if (dupOn && !dupKeys.has(f.name + ' ' + f.size)) return false;
     return true;
   }).sort((a, b) => b.size - a.size).slice(0, 500);
 
   const host = $('cleanResults');
   if (!cleanMatches.length) {
-    host.innerHTML = '<div class="muted" style="padding:12px 2px;">No files match these rules. 🎉</div>';
+    host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:14px 2px;">${icon('checkCircle', 15)} No files match these rules — nice and tidy.</div>`;
     $('cleanConfirmBtn').disabled = true;
     $('cleanSummary').textContent = '';
     return;
@@ -1379,13 +1785,13 @@ $('cleanFindBtn').addEventListener('click', () => {
     cleanMatches.map((f, i) => `
       <div class="clean-item">
         <input type="checkbox" class="clean-ck" data-i="${i}" checked aria-label="Select ${escapeHtml(f.name)}">
-        <span>${iconFor(f)}</span>
+        ${chipFor(f, 13)}
         <div class="meta">
           <div class="nm">${escapeHtml(f.name)}</div>
           <div class="pth">${escapeHtml(f.path)}</div>
         </div>
-        <span class="muted">${formatDate(f.modifiedAt)}</span>
-        <span class="size-badge" style="color:${sizeColor(f.size)}">${formatBytes(f.size)}</span>
+        <span class="dt num">${formatDate(f.modifiedAt)}</span>
+        <span class="size-badge num" style="color:${sizeColor(f.size)}">${formatBytes(f.size)}</span>
       </div>`).join('') + '</div>';
   $('cleanAll').addEventListener('change', (e) => {
     host.querySelectorAll('.clean-ck').forEach(ck => { ck.checked = e.target.checked; });
@@ -1403,7 +1809,7 @@ function updateCleanSummary() {
   const total = sel.reduce((s, f) => s + f.size, 0);
   $('cleanSummary').textContent = sel.length ? `${sel.length} files — ${formatBytes(total)} will be recovered` : '';
   $('cleanConfirmBtn').disabled = !sel.length;
-  $('cleanConfirmBtn').textContent = sel.length ? `Move ${sel.length} item${sel.length > 1 ? 's' : ''} to Trash` : 'Move to Trash';
+  $('cleanConfirmBtn').innerHTML = icon('trash', 14) + (sel.length ? `Move ${sel.length} item${sel.length > 1 ? 's' : ''} to Trash` : 'Move to Trash');
 }
 
 $('cleanConfirmBtn').addEventListener('click', async () => {
@@ -1412,14 +1818,15 @@ $('cleanConfirmBtn').addEventListener('click', async () => {
   const totalBytes = files.reduce((s, f) => s + f.size, 0);
   const btn = $('cleanConfirmBtn');
   btn.disabled = true;
+  $('cleanProgress').classList.add('on');
   let done = 0, failed = 0;
-  // Chunked so each request stays small and progress is visible.
   for (let i = 0; i < files.length; i += 20) {
     const chunk = files.slice(i, i + 20).map(f => f.path);
     const result = await trashPaths(chunk, { silent: true });
     done += result.deleted.length;
     failed += result.failed.length;
-    btn.textContent = `Deleting… ${done + failed}/${files.length}`;
+    $('cleanProgressFill').style.width = Math.round(((done + failed) / files.length) * 100) + '%';
+    btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Deleting… ${done + failed}/${files.length}`;
   }
   closeModal('cleanModal');
   if (done) toast(`Moved ${done} files to Trash — ${formatBytes(totalBytes)} recovered`);
@@ -1438,18 +1845,26 @@ document.querySelectorAll('.modal-backdrop').forEach(bd =>
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
-  if (mod && e.key.toLowerCase() === 'r') {           // ⌘R → rescan
+  if (mod && e.key.toLowerCase() === 'r') {
     if (state.root) { e.preventDefault(); rescan(); }
     return;
   }
-  if (mod && (e.key === 'Backspace' || e.key === 'Delete')) {  // ⌘⌫ → trash selection
-    if (!typing && state.grid.selection.size) { e.preventDefault(); trashPaths([...state.grid.selection]); }
+  if (mod && (e.key === 'Backspace' || e.key === 'Delete')) {
+    if (!typing && state.grid.selection.size) { e.preventDefault(); confirmTrash([...state.grid.selection]); }
+    return;
+  }
+  if (e.key === '/' && !typing && state.view === 'grid') {
+    e.preventDefault();
+    $('gridSearch').focus();
     return;
   }
   if (e.key === 'Escape') {
     const openModal = document.querySelector('.modal-backdrop.open');
     if (openModal) { openModal.classList.remove('open'); return; }
     if ($('ctxMenu').style.display === 'block') { hideCtxMenu(); return; }
+    if (typing && document.activeElement === $('gridSearch') && $('gridSearch').value) {
+      $('gridSearch').value = ''; state.grid.query = ''; renderGrid(); return;
+    }
     if (state.view === 'treemap' && state.root && state.treemap.rootPath !== state.root.path) {
       const crumbs = breadcrumbsFor(state.treemap.rootPath);
       if (crumbs.length > 1) loadTreemap(crumbs[crumbs.length - 2].path, true);
