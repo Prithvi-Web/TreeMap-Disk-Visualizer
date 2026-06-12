@@ -308,6 +308,9 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
 .crumbs .sep { color: var(--text-3); display: inline-flex; }
 .tm-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .tm-controls label { font-size: 12px; color: var(--text-2); }
+.tm-controls .field { position: relative; }
+.tm-controls .field .ic { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
+#tmSearch { width: 200px; padding-left: 32px; }
 #treemapWrap { position: relative; overflow: hidden; padding: 10px; }
 #treemapZoom { transition: transform var(--dur-2) var(--ease), opacity var(--dur-2) var(--ease); transform-origin: center; }
 #treemapZoom.zooming { transform: scale(1.05); opacity: 0; }
@@ -438,9 +441,85 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
 .toast.out { opacity: 0; transform: translateX(16px); transition: all var(--dur-2) var(--ease); }
 @keyframes toastIn { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
 
+/* ── Duplicates view ── */
+.dup-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.dup-toolbar .spacer { flex: 1; }
+.dup-toolbar label { font-size: 12px; color: var(--text-2); }
+.dup-summary { font-size: 13px; color: var(--text-2); }
+.dup-summary b { color: var(--text-1); }
+.dup-list { display: flex; flex-direction: column; gap: 12px; }
+.dup-group { padding: 0; overflow: hidden; }
+.dup-head { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: pointer; user-select: none;
+  transition: background var(--dur-1) var(--ease); }
+.dup-head:hover { background: var(--surface-1); }
+.dup-head .meta { flex: 1; min-width: 0; }
+.dup-head .nm { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dup-head .sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+.dup-head .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap; }
+.dup-head .chev { transition: transform var(--dur-2) var(--ease); color: var(--text-3); display: inline-flex; }
+.dup-group.open .dup-head .chev { transform: rotate(90deg); }
+.dup-files { display: none; border-top: 1px solid var(--hairline); }
+.dup-group.open .dup-files { display: block; }
+.dup-file { display: flex; align-items: center; gap: 10px; padding: 8px 16px; font-size: 12.5px;
+  border-bottom: 1px solid var(--hairline); }
+.dup-file:last-child { border-bottom: none; }
+.dup-file .pth { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; text-align: left; color: var(--text-2); }
+.dup-file .tag { font-size: 10px; font-weight: 600; color: var(--ok); border: 1px solid rgba(48,209,88,0.4);
+  padding: 1px 7px; border-radius: 99px; white-space: nowrap; }
+.dup-file .dt { color: var(--text-3); font-size: 11px; white-space: nowrap; }
+.dup-progress { display: flex; flex-direction: column; gap: 12px; align-items: center; padding: 60px 0; color: var(--text-2); }
+.dup-progress .track { width: 320px; height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.dup-progress .fill { height: 100%; width: 0%; border-radius: 3px; background: var(--accent); transition: width 300ms var(--ease); }
+
+/* ── Trends view ── */
+.trends-grid { display: grid; grid-template-columns: 7fr 5fr; gap: 18px; align-items: start; }
+.trends-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.trends-toolbar label { font-size: 12px; color: var(--text-2); }
+.trends-toolbar select { max-width: 430px; }
+#trendChart { display: block; width: 100%; border-radius: 10px; }
+.delta-row { display: flex; align-items: center; gap: 11px; padding: 8px 10px; border-radius: var(--r-sm);
+  font-size: 12.5px; transition: background var(--dur-1) var(--ease); }
+.delta-row:hover { background: var(--surface-1); }
+.delta-row .meta { flex: 1; min-width: 0; }
+.delta-row .nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.delta-row .bar-track { width: 74px; height: 4px; border-radius: 2px; background: var(--surface-2); flex: none; }
+.delta-row .bar { height: 100%; border-radius: 2px; }
+.delta-badge { font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 7px; white-space: nowrap;
+  background: var(--surface-2); }
+.delta-badge.up { color: #ff6b61; }
+.delta-badge.down { color: var(--ok); }
+:root[data-theme="light"] .delta-badge.up { color: #d63a30; }
+:root[data-theme="light"] .delta-badge.down { color: #1f9d45; }
+
+/* ── Settings modal ── */
+.set-h { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1px; color: var(--text-2); margin-bottom: 8px; }
+.set-h .ic { color: var(--text-3); }
+.sched-row { display: grid; grid-template-columns: 1fr 96px 92px 76px 30px 30px; gap: 8px;
+  align-items: center; margin-bottom: 8px; }
+.sched-row.sched-head { font-size: 11px; margin-bottom: 4px; }
+.sched-row input[type="checkbox"] { justify-self: center; }
+.ign-row { display: grid; grid-template-columns: 1fr 200px 30px; gap: 8px; align-items: center; margin-bottom: 8px; }
+
+/* ── Segmented control (Clean Up panes, Compare modes) ── */
+.seg { display: inline-flex; background: var(--surface-1); border: 1px solid var(--hairline);
+  border-radius: 10px; padding: 3px; gap: 2px; }
+.seg button { border: none; background: transparent; color: var(--text-2); font-size: 12.5px; font-weight: 500;
+  padding: 6px 14px; border-radius: 7px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  transition: color var(--dur-1) var(--ease), background var(--dur-2) var(--ease); }
+.seg button:hover { color: var(--text-1); }
+.seg button[aria-selected="true"] { background: var(--surface-3); color: var(--text-1);
+  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-1); }
+
+@media (max-width: 1360px) {
+  .logo .sub { display: none; }
+  .tabbar button { padding: 7px 13px; }
+}
 @media (max-width: 1240px) {
   .dash-grid { grid-template-columns: 1fr 1fr; }
   .quick-stats { grid-template-columns: 1fr; }
+  .trends-grid { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
@@ -463,10 +542,14 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
     <button role="tab" aria-selected="true" data-view="dashboard"><span data-icon="dashboard"></span>Dashboard</button>
     <button role="tab" aria-selected="false" data-view="treemap"><span data-icon="treemap"></span>Treemap</button>
     <button role="tab" aria-selected="false" data-view="grid"><span data-icon="grid"></span>Grid</button>
+    <button role="tab" aria-selected="false" data-view="duplicates"><span data-icon="copy"></span>Duplicates</button>
+    <button role="tab" aria-selected="false" data-view="trends"><span data-icon="trendUp"></span>Trends</button>
+    <button role="tab" aria-selected="false" data-view="compare"><span data-icon="diff"></span>Compare</button>
   </nav>
   <div class="header-right">
     <span id="headerSpin" aria-hidden="true"></span>
     <button class="icon-btn" id="themeToggle" aria-label="Toggle light or dark theme" title="Toggle theme"></button>
+    <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings — schedules & ignore list"></button>
     <button class="btn" id="cleanupBtn" title="Find and trash old or large files"><span data-icon="sparkles"></span>Clean Up</button>
   </div>
 </header>
@@ -562,6 +645,10 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
           <h2><span data-icon="trendUp"></span>Largest Files</h2>
           <div id="bigFiles"><div class="muted">Run a scan to find your biggest files.</div></div>
         </div>
+        <div class="card glass">
+          <h2><span data-icon="folder"></span>Largest Folders</h2>
+          <div id="bigFolders"><div class="muted">Run a scan to find your biggest folders.</div></div>
+        </div>
       </div>
     </div>
   </section>
@@ -569,14 +656,20 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
   <!-- ═══════════ Treemap ═══════════ -->
   <section class="view" id="view-treemap" role="tabpanel" aria-label="Treemap" hidden>
     <div class="tm-toolbar">
+      <button class="btn" id="tmUpBtn" title="Zoom out one level (Escape)" aria-label="Zoom out one level"><span data-icon="arrowUp"></span></button>
       <div class="crumbs" id="tmCrumbs"></div>
       <div class="tm-controls">
+        <div class="field">
+          <span data-icon="search"></span>
+          <input type="text" id="tmSearch" placeholder="Highlight… (name or *.zip)" aria-label="Highlight matching files in the treemap" autocomplete="off" spellcheck="false">
+        </div>
         <label for="tmDepth">Depth</label>
         <select id="tmDepth" aria-label="Treemap depth">
           <option value="2">2</option><option value="3">3</option>
           <option value="4" selected>4</option><option value="5">5</option><option value="6">6</option>
         </select>
         <button class="icon-btn" id="tmRefresh" aria-label="Re-render treemap" title="Re-render"></button>
+        <button class="btn" id="tmExportBtn" title="Download the treemap as an image"><span data-icon="download"></span>Export</button>
       </div>
     </div>
     <div class="glass" id="treemapWrap">
@@ -609,6 +702,57 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
     </div>
     <div class="glass" id="gridScroll"><div id="gridInner"></div></div>
   </section>
+
+  <!-- ═══════════ Duplicates ═══════════ -->
+  <section class="view" id="view-duplicates" role="tabpanel" aria-label="Duplicates" hidden>
+    <div class="dup-toolbar">
+      <span class="dup-summary" id="dupSummary">Scanning for duplicates…</span>
+      <div class="spacer"></div>
+      <label for="dupMinSize">Ignore files under</label>
+      <select id="dupMinSize" aria-label="Minimum file size for duplicate detection">
+        <option value="1024">1 KB</option>
+        <option value="102400" selected>100 KB</option>
+        <option value="1048576">1 MB</option>
+        <option value="10485760">10 MB</option>
+      </select>
+      <button class="btn" id="dupAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
+      <button class="btn btn-danger" id="dupTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
+    </div>
+    <div id="dupBody"></div>
+  </section>
+
+  <!-- ═══════════ Trends ═══════════ -->
+  <section class="view" id="view-trends" role="tabpanel" aria-label="Trends" hidden>
+    <div class="trends-toolbar">
+      <label for="trendRoot">Folder</label>
+      <select id="trendRoot" aria-label="Folder to show history for"></select>
+      <span class="muted" id="trendInfo"></span>
+    </div>
+    <div class="trends-grid">
+      <div class="card glass">
+        <h2><span data-icon="trendUp"></span>Total Size Over Time</h2>
+        <canvas id="trendChart" height="300" aria-label="Folder size history chart" role="img"></canvas>
+      </div>
+      <div class="card glass">
+        <h2><span data-icon="activity"></span>Since Previous Scan</h2>
+        <div id="trendDeltas"><div class="muted">Scan the same folder twice to see what grew or shrank.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ Compare ═══════════ -->
+  <section class="view" id="view-compare" role="tabpanel" aria-label="Compare" hidden>
+    <div class="trends-toolbar">
+      <label for="cmpA">Before</label>
+      <select id="cmpA" aria-label="Older scan or snapshot"></select>
+      <span class="muted">→</span>
+      <label for="cmpB">After</label>
+      <select id="cmpB" aria-label="Newer scan or snapshot"></select>
+      <button class="btn btn-primary" id="cmpRunBtn"><span data-icon="diff"></span>Compare</button>
+      <span class="muted" id="cmpInfo"></span>
+    </div>
+    <div id="cmpBody"><div class="card glass"><div class="muted">Pick two scans of the same folder — scans from this session give a full file-level diff; history snapshots compare top-level folders.</div></div></div>
+  </section>
 </main>
 
 <!-- ═══════════ Selection toolbar ═══════════ -->
@@ -626,24 +770,41 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
       <button class="close-x" data-close="cleanModal" aria-label="Close"><span data-icon="x"></span></button>
     </div>
     <div class="modal-body">
-      <div class="muted" style="margin-bottom:6px;">Files matching <b>all</b> enabled rules are listed below. Nothing is removed until you confirm — and everything goes to the system Trash, recoverable any time.</div>
-      <div class="rule-row">
-        <input type="checkbox" id="ruleAgeOn" checked> <span data-icon="clock"></span><label for="ruleAgeOn">Older than</label>
-        <input type="number" id="ruleAgeDays" value="180" min="0" aria-label="Days"> <span class="muted">days</span>
+      <div class="seg" id="cleanSeg" role="tablist" aria-label="Clean Up modes" style="margin-bottom:12px;">
+        <button role="tab" aria-selected="true" data-pane="rules"><span data-icon="search"></span>Custom Rules</button>
+        <button role="tab" aria-selected="false" data-pane="smart"><span data-icon="sparkles"></span>Smart Suggestions</button>
+        <button role="tab" aria-selected="false" data-pane="empty"><span data-icon="folder"></span>Empty Folders</button>
       </div>
-      <div class="rule-row">
-        <input type="checkbox" id="ruleSizeOn" checked> <span data-icon="trendUp"></span><label for="ruleSizeOn">Larger than</label>
-        <input type="number" id="ruleSizeMb" value="100" min="0" aria-label="Megabytes"> <span class="muted">MB</span>
+      <div class="muted" style="margin-bottom:6px;">Nothing is removed until you confirm — and everything goes to the system Trash, recoverable any time.</div>
+      <div id="cleanPaneRules">
+        <div class="rule-row">
+          <input type="checkbox" id="ruleAgeOn" checked> <span data-icon="clock"></span><label for="ruleAgeOn">Older than</label>
+          <input type="number" id="ruleAgeDays" value="180" min="0" aria-label="Days"> <span class="muted">days</span>
+        </div>
+        <div class="rule-row">
+          <input type="checkbox" id="ruleSizeOn" checked> <span data-icon="trendUp"></span><label for="ruleSizeOn">Larger than</label>
+          <input type="number" id="ruleSizeMb" value="100" min="0" aria-label="Megabytes"> <span class="muted">MB</span>
+        </div>
+        <div class="rule-row">
+          <input type="checkbox" id="ruleExtOn"> <span data-icon="file"></span><label for="ruleExtOn">Extensions</label>
+          <input type="text" id="ruleExts" placeholder="log, tmp, dmg, zip" aria-label="Extensions, comma separated">
+        </div>
+        <div class="rule-row">
+          <input type="checkbox" id="ruleDupOn"> <span data-icon="copy"></span><label for="ruleDupOn">Duplicates only <span class="muted">(same name + size elsewhere)</span></label>
+        </div>
+        <button class="btn" id="cleanFindBtn" style="margin-top:4px;"><span data-icon="search"></span>Find matching files</button>
+        <div id="cleanResults"></div>
       </div>
-      <div class="rule-row">
-        <input type="checkbox" id="ruleExtOn"> <span data-icon="file"></span><label for="ruleExtOn">Extensions</label>
-        <input type="text" id="ruleExts" placeholder="log, tmp, dmg, zip" aria-label="Extensions, comma separated">
+      <div id="cleanPaneSmart" style="display:none;">
+        <div id="smartResults"></div>
       </div>
-      <div class="rule-row">
-        <input type="checkbox" id="ruleDupOn"> <span data-icon="copy"></span><label for="ruleDupOn">Duplicates only <span class="muted">(same name + size elsewhere)</span></label>
+      <div id="cleanPaneEmpty" style="display:none;">
+        <div class="rule-row">
+          <input type="checkbox" id="emptyIgnoreJunk" checked>
+          <label for="emptyIgnoreJunk">Treat folders holding only junk files (.DS_Store, Thumbs.db) as empty</label>
+        </div>
+        <div id="emptyResults"></div>
       </div>
-      <button class="btn" id="cleanFindBtn" style="margin-top:4px;"><span data-icon="search"></span>Find matching files</button>
-      <div id="cleanResults"></div>
       <div id="cleanProgress"><div class="track"><div class="fill" id="cleanProgressFill"></div></div></div>
     </div>
     <div class="modal-foot">
@@ -687,6 +848,33 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
       <div style="flex:1"></div>
       <button class="btn" data-close="confirmModal">Cancel</button>
       <button class="btn btn-danger" id="confirmOk"><span data-icon="trash"></span>Move to Trash</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ Settings modal ═══════════ -->
+<div class="modal-backdrop" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <div class="modal" style="width:740px;">
+    <div class="modal-head">
+      <h3 id="settingsTitle"><span data-icon="settings"></span>Settings</h3>
+      <button class="close-x" data-close="settingsModal" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="set-h"><span data-icon="calendar"></span>Scheduled scans</div>
+      <div class="muted" style="margin-bottom:10px;">TreeMap re-scans these folders on a schedule while the app is running, and alerts you when a folder grows past your threshold since the previous scan. Every run is also saved to Trends.</div>
+      <div id="schedList"></div>
+      <button class="btn" id="schedAddBtn"><span data-icon="plus"></span>Add scheduled scan</button>
+
+      <div class="set-h" style="margin-top:22px;"><span data-icon="ban"></span>Ignore list</div>
+      <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely (faster scans); <b>Don't suggest</b> keeps them out of Smart Suggestions only. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/**/dist</b>.</div>
+      <div id="ignoreList"></div>
+      <button class="btn" id="ignoreAddBtn"><span data-icon="plus"></span>Add pattern</button>
+    </div>
+    <div class="modal-foot">
+      <span class="muted" id="settingsStatus"></span>
+      <div style="flex:1"></div>
+      <button class="btn" data-close="settingsModal">Cancel</button>
+      <button class="btn btn-primary" id="settingsSaveBtn"><span data-icon="check"></span>Save</button>
     </div>
   </div>
 </div>
@@ -790,6 +978,13 @@ const PATHS = {
   shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
   eyeOff: '<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/>',
   mouse: '<rect x="5" y="2" width="14" height="20" rx="7"/><path d="M12 6v4"/>',
+  diff: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  settings: '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  ban: '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
 };
 function icon(name, size = 16, cls = '') {
   return `<svg class="ic ${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PATHS[name] || PATHS.file}</svg>`;
@@ -880,9 +1075,13 @@ const state = {
   lastScan: null,
   largest: [],
   types: [],
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4 },
+  bigFolders: [],
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0 },
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   donut: { segs: [], hover: -1, animated: false },
+  dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
+  trends: { roots: [], path: null, snapshots: [], points: [], hover: -1 },
+  compare: { options: [], result: null },
 };
 
 function indexTree(root) {
@@ -900,7 +1099,9 @@ const tabs = document.querySelectorAll('.tabbar button');
 tabs.forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
 function switchView(name) {
   state.view = name;
-  const empty = !state.root && !state.scanning;
+  // Trends + Compare read persisted history, so they work without a scan.
+  const standalone = name === 'trends' || name === 'compare';
+  const empty = !state.root && !state.scanning && !standalone;
   tabs.forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === name)));
   document.querySelectorAll('.view').forEach(v => {
     const on = !empty && v.id === 'view-' + name;
@@ -917,6 +1118,9 @@ function switchView(name) {
     if (!state.grid.path || !state.pathIndex.has(state.grid.path)) state.grid.path = state.root.path;
     renderGrid();
   }
+  if (name === 'duplicates' && state.scanId && state.root) loadDuplicates();
+  if (name === 'trends') loadTrends();
+  if (name === 'compare') loadCompareOptions();
 }
 
 /* ───────────────────────────── System info ───────────────────────────── */
@@ -961,6 +1165,7 @@ async function startScan(path) {
     $('progressTrack').classList.add('active');
     status.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + '<span>Starting scan…</span>';
     $('bigFiles').innerHTML = skeletonRows(6);
+    $('bigFolders').innerHTML = skeletonRows(6);
     $('donutLegend').innerHTML = skeletonRows(5, 24);
     $('emptyState').style.display = 'none';
     switchView('dashboard');
@@ -1027,6 +1232,7 @@ function failScan(message) {
   status.classList.add('error');
   status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(message) + '</span>';
   if (!state.largest.length) $('bigFiles').innerHTML = '<div class="muted">Run a scan to find your biggest files.</div>';
+  if (!state.bigFolders.length) $('bigFolders').innerHTML = '<div class="muted">Run a scan to find your biggest folders.</div>';
   if (!state.types.length) $('donutLegend').innerHTML = '<div class="muted">Run a scan to see the breakdown.</div>';
   toast(message, 'error');
   switchView(state.view);
@@ -1055,14 +1261,17 @@ async function finishScan(root, durationMs) {
   $('statLargest').textContent = largest ? `${largest.name} · ${formatBytes(largest.size)}` : '–';
   $('statLastScan').textContent = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
 
+  state.dup = { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 };
   try {
-    const [lf, ft] = await Promise.all([
+    const [lf, ft, lfo] = await Promise.all([
       api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`),
       api(`/api/file-types?scanId=${state.scanId}`),
+      api(`/api/large-folders?scanId=${state.scanId}&limit=10`),
     ]);
-    state.largest = lf.files; state.types = ft.types;
+    state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders;
   } catch (e) { toast('Could not load stats: ' + e.message, 'error'); }
   renderBigFiles();
+  renderBigFolders();
   state.donut.animated = false;
   renderDonut();
   if (state.view === 'treemap') loadTreemap(root.path);
@@ -1102,6 +1311,34 @@ function renderBigFiles() {
     btn.addEventListener('click', () => confirmTrash([btn.dataset.trash])));
   host.querySelectorAll('[data-reveal]').forEach(btn =>
     btn.addEventListener('click', () => openInOS(btn.dataset.reveal, true)));
+}
+
+/* ───────────────────────────── Dashboard: largest folders ───────────────────────────── */
+function renderBigFolders() {
+  const host = $('bigFolders');
+  const folders = state.bigFolders || [];
+  if (!folders.length) { host.innerHTML = '<div class="muted">No folders above 1 MB found.</div>'; return; }
+  const max = folders[0].size || 1;
+  host.innerHTML = folders.map(f => `
+    <div class="bigfile" data-jump="${escapeHtml(f.path)}" style="cursor:pointer;" role="button" tabindex="0"
+         aria-label="Open ${escapeHtml(f.name)} in the treemap">
+      ${chipFor({ type: 'dir' })}
+      <div class="meta">
+        <div class="nm" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+        <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
+      </div>
+      <span class="cnt muted num" style="white-space:nowrap;">${formatCount(f.fileCount)} files</span>
+      <div class="bar-track"><div class="bar" style="width:${Math.max(4, (f.size / max) * 100)}%;background:${sizeColor(f.size)};"></div></div>
+      <span class="size-badge num" style="color:${sizeColor(f.size)};">${formatBytes(f.size)}</span>
+    </div>`).join('');
+  host.querySelectorAll('[data-jump]').forEach(row => {
+    const jump = () => {
+      state.treemap.rootPath = row.dataset.jump;
+      switchView('treemap');
+    };
+    row.addEventListener('click', jump);
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jump(); } });
+  });
 }
 
 /* ───────────────────────────── Dashboard: donut chart ───────────────────────────── */
@@ -1206,6 +1443,10 @@ const tmCtx = tmCanvas.getContext('2d');
    hover frames just blit the buffer + draw a highlight, keeping mousemove cheap. */
 const tmBuffer = document.createElement('canvas');
 const tmBufCtx = tmBuffer.getContext('2d');
+/* Second overlay buffer for search dim/highlight, so typing and hovering
+   never re-render the cushion pass. */
+const tmSearchBuffer = document.createElement('canvas');
+const tmSearchCtx = tmSearchBuffer.getContext('2d');
 
 async function loadTreemap(rootPath, animate = false) {
   if (!state.scanId) return;
@@ -1219,6 +1460,7 @@ async function loadTreemap(rootPath, animate = false) {
     state.treemap.nodes = data.nodes;
     state.treemap.hover = null;
     renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
+    $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
     drawTreemap();
   } catch (e) {
     toast('Treemap failed: ' + e.message, 'error');
@@ -1342,9 +1584,60 @@ function drawTreemap() {
     }
   }
 
+  renderSearchOverlay();
   presentTreemap();
-  $('tmStatus').textContent =
-    `${formatCount(state.treemap.nodes.length)} nodes · ${formatCount(px.length)} drawn · ${formatBytes(state.treemap.rootSize)} total`;
+}
+
+/* ── Search/filter: highlight matches, dim the rest — no re-layout. ── */
+function treemapMatch(n, q) {
+  if (q.startsWith('*.')) return n.type === 'file' && (n.extension || '') === q.slice(2);
+  if (q.startsWith('.') && q.length > 1) return n.type === 'file' && (n.extension || '') === q.slice(1);
+  return n.name.toLowerCase().includes(q);
+}
+
+function renderSearchOverlay() {
+  if (tmSearchBuffer.width !== tmBuffer.width) tmSearchBuffer.width = tmBuffer.width;
+  if (tmSearchBuffer.height !== tmBuffer.height) tmSearchBuffer.height = tmBuffer.height;
+  const dpr = window.devicePixelRatio || 1;
+  const ctx = tmSearchCtx;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, tmSearchBuffer.width, tmSearchBuffer.height);
+
+  const q = state.treemap.query.trim().toLowerCase();
+  state.treemap.matches = 0;
+  updateTmStatus();
+  if (!q) return;
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const dark = document.documentElement.dataset.theme !== 'light';
+  const scrim = dark ? 'rgba(8,8,11,0.78)' : 'rgba(238,240,244,0.82)';
+  const accent = cssVar('--accent') || '#0A84FF';
+  let matches = 0;
+
+  // Dim non-matching leaves first, then outline matches on top.
+  for (const r of state.treemap.pxRects) {
+    if (r.frame) continue;
+    if (!treemapMatch(r.n, q)) {
+      ctx.fillStyle = scrim;
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+    }
+  }
+  for (const r of state.treemap.pxRects) {
+    if (!treemapMatch(r.n, q)) continue;
+    matches++;
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = r.frame ? 2.5 : 1.5;
+    ctx.strokeRect(r.x + 0.75, r.y + 0.75, Math.max(1, r.w - 1.5), Math.max(1, r.h - 1.5));
+  }
+  state.treemap.matches = matches;
+  updateTmStatus();
+}
+
+function updateTmStatus() {
+  const q = state.treemap.query.trim();
+  $('tmStatus').textContent = q
+    ? `${formatCount(state.treemap.matches)} match${state.treemap.matches === 1 ? '' : 'es'} for “${q}” · ${formatBytes(state.treemap.rootSize)} total`
+    : `${formatCount(state.treemap.nodes.length)} nodes · ${formatCount(state.treemap.pxRects.length)} drawn · ${formatBytes(state.treemap.rootSize)} total`;
 }
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -1356,12 +1649,13 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-/** Blit the buffer, then draw the hover highlight on top. */
+/** Blit the buffers (base + search overlay), then the hover highlight. */
 function presentTreemap() {
   const dpr = window.devicePixelRatio || 1;
   tmCtx.setTransform(1, 0, 0, 1, 0, 0);
   tmCtx.clearRect(0, 0, tmCanvas.width, tmCanvas.height);
   tmCtx.drawImage(tmBuffer, 0, 0);
+  if (state.treemap.query.trim()) tmCtx.drawImage(tmSearchBuffer, 0, 0);
   const h = state.treemap.hover;
   if (h) {
     tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1424,6 +1718,129 @@ $('tmDepth').addEventListener('change', (e) => {
 $('tmRefresh').innerHTML = icon('refresh', 15);
 $('tmRefresh').addEventListener('click', () => { if (state.treemap.rootPath) loadTreemap(state.treemap.rootPath); });
 window.addEventListener('resize', () => { if (state.view === 'treemap' && state.treemap.nodes.length) drawTreemap(); });
+
+/* ── Zoom out (button, breadcrumbs already handle jumps) ── */
+function treemapUp() {
+  if (!state.root || !state.treemap.rootPath || state.treemap.rootPath === state.root.path) return;
+  const crumbs = breadcrumbsFor(state.treemap.rootPath);
+  if (crumbs.length > 1) loadTreemap(crumbs[crumbs.length - 2].path, true);
+}
+$('tmUpBtn').addEventListener('click', treemapUp);
+
+/* ── Search box ── */
+let tmSearchDeb = 0;
+$('tmSearch').addEventListener('input', (e) => {
+  clearTimeout(tmSearchDeb);
+  tmSearchDeb = setTimeout(() => {
+    state.treemap.query = e.target.value;
+    renderSearchOverlay();
+    presentTreemap();
+  }, 120);
+});
+
+/* ── Export PNG / SVG ── */
+$('tmExportBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!state.treemap.pxRects.length) { toast('Render a treemap first', 'error'); return; }
+  const menu = $('ctxMenu');
+  menu.innerHTML = `
+    <button data-exp="png">${icon('image', 15)}PNG image</button>
+    <button data-exp="svg">${icon('code', 15)}SVG vector</button>`;
+  menu.style.display = 'block';
+  const r = e.currentTarget.getBoundingClientRect();
+  menu.style.left = Math.min(r.left, window.innerWidth - 230) + 'px';
+  menu.style.top = (r.bottom + 6) + 'px';
+  menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    hideCtxMenu();
+    if (b.dataset.exp === 'png') exportTreemapPNG();
+    else exportTreemapSVG();
+  }));
+});
+
+function exportFileName(ext) {
+  const base = (state.treemap.rootName || 'treemap').replace(/[^\w.-]+/g, '_');
+  const d = new Date(), pad = (n) => String(n).padStart(2, '0');
+  return `treemap-${base}-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.${ext}`;
+}
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function exportTreemapPNG() {
+  const out = document.createElement('canvas');
+  out.width = tmBuffer.width;
+  out.height = tmBuffer.height;
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = cssVar('--bg-1') || '#0e0e13';
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(tmBuffer, 0, 0);
+  if (state.treemap.query.trim()) ctx.drawImage(tmSearchBuffer, 0, 0);
+  out.toBlob((blob) => {
+    if (!blob) { toast('PNG export failed', 'error'); return; }
+    downloadBlob(blob, exportFileName('png'));
+    toast('Treemap saved as PNG');
+  }, 'image/png');
+}
+
+function exportTreemapSVG() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.round(tmBuffer.width / dpr);
+  const h = Math.round(tmBuffer.height / dpr);
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" font-family="-apple-system, 'Segoe UI', Helvetica, sans-serif">`,
+    `<rect width="${w}" height="${h}" fill="${cssVar('--bg-1') || '#0e0e13'}"/>`,
+  ];
+  // Leaf fills (with native tooltips via <title>).
+  for (const r of state.treemap.pxRects) {
+    if (r.frame) continue;
+    const c = sizeRgb(r.n.size);
+    const fade = Math.max(0.55, 1 - r.n.depth * 0.08);
+    parts.push(
+      `<rect x="${r.x.toFixed(1)}" y="${r.y.toFixed(1)}" width="${Math.max(1, r.w - 1).toFixed(1)}" height="${Math.max(1, r.h - 1).toFixed(1)}" ` +
+      `fill="rgb(${c[0]},${c[1]},${c[2]})" fill-opacity="${(0.95 * fade).toFixed(2)}" stroke="rgba(0,0,0,0.35)" stroke-width="1">` +
+      `<title>${esc(r.n.path)} — ${esc(formatBytes(r.n.size))}</title></rect>`
+    );
+  }
+  // Directory frames.
+  for (const r of state.treemap.pxRects) {
+    if (!r.frame) continue;
+    const alpha = Math.max(0.12, 0.3 - r.n.depth * 0.05).toFixed(2);
+    parts.push(
+      `<rect x="${r.x.toFixed(1)}" y="${r.y.toFixed(1)}" width="${r.w.toFixed(1)}" height="${r.h.toFixed(1)}" ` +
+      `fill="none" stroke="rgba(255,255,255,${alpha})" stroke-width="${r.n.depth <= 1 ? 1.5 : 1}"/>`
+    );
+  }
+  // Labels — same visibility thresholds as the canvas renderer.
+  for (const r of state.treemap.pxRects) {
+    if (r.frame || r.w < 40 || r.h < 15) continue;
+    const maxChars = Math.floor((r.w - 10) / 6.2);
+    const label = r.n.name.length > maxChars ? r.n.name.slice(0, Math.max(1, maxChars - 1)) + '…' : r.n.name;
+    parts.push(`<text x="${(r.x + 5).toFixed(1)}" y="${(r.y + 13).toFixed(1)}" font-size="11" font-weight="500" fill="rgba(0,0,0,0.78)">${esc(label)}</text>`);
+    if (r.h > 30) {
+      parts.push(`<text x="${(r.x + 5).toFixed(1)}" y="${(r.y + 26).toFixed(1)}" font-size="10" fill="rgba(0,0,0,0.55)">${esc(formatBytes(r.n.size))}</text>`);
+    }
+  }
+  // Top-level directory name tags.
+  for (const r of state.treemap.pxRects) {
+    if (!r.frame || r.n.depth !== 1 || r.w < 90 || r.h < 44) continue;
+    const maxChars = Math.floor((r.w - 26) / 6.2);
+    const label = r.n.name.length > maxChars ? r.n.name.slice(0, Math.max(1, maxChars - 1)) + '…' : r.n.name;
+    const tagW = Math.min(r.w - 12, label.length * 6.2 + 14);
+    parts.push(`<rect x="${(r.x + 5).toFixed(1)}" y="${(r.y + 5).toFixed(1)}" width="${tagW.toFixed(1)}" height="18" rx="9" fill="rgba(0,0,0,0.5)"/>`);
+    parts.push(`<text x="${(r.x + 12).toFixed(1)}" y="${(r.y + 18).toFixed(1)}" font-size="10.5" font-weight="600" fill="rgba(255,255,255,0.92)">${esc(label)}</text>`);
+  }
+  parts.push('</svg>');
+  downloadBlob(new Blob([parts.join('\n')], { type: 'image/svg+xml' }), exportFileName('svg'));
+  toast('Treemap saved as SVG');
+}
 
 /* ───────────────────────────── Tooltip ───────────────────────────── */
 function showTooltip(x, y, node, pctOfRoot = null) {
@@ -1694,6 +2111,406 @@ function updateSelectionBar() {
 $('selClearBtn').addEventListener('click', () => { state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true); });
 $('selTrashBtn').addEventListener('click', () => confirmTrash([...state.grid.selection]));
 
+/* ───────────────────────────── Duplicates view ───────────────────────────── */
+async function loadDuplicates(force = false) {
+  if (!state.scanId || !state.root) return;
+  const key = state.scanId + ':' + $('dupMinSize').value;
+  if (!force && state.dup.loadedFor === key && state.dup.status === 'complete') { renderDuplicates(); return; }
+  state.dup.loadedFor = key;
+  state.dup.status = 'loading';
+  state.dup.selection.clear();
+  clearTimeout(state.dup.pollTimer);
+  $('dupSummary').textContent = 'Looking for duplicates…';
+  updateDupToolbar();
+  $('dupBody').innerHTML = `<div class="card glass dup-progress">${icon('loader', 22, REDUCED ? '' : 'spin')}
+    <span id="dupProgText">Comparing file sizes…</span>
+    <div class="track"><div class="fill" id="dupProgFill"></div></div></div>`;
+
+  const poll = async () => {
+    if (state.dup.loadedFor !== key) return; // a newer request superseded this one
+    try {
+      const data = await api(`/api/duplicates?scanId=${state.scanId}&minSize=${$('dupMinSize').value}`);
+      if (data.status === 'running') {
+        const t = $('dupProgText'), f = $('dupProgFill');
+        if (t) t.textContent = data.toHash
+          ? `Hashing candidates… ${formatCount(data.hashed)} / ${formatCount(data.toHash)} files`
+          : 'Comparing file sizes…';
+        if (f && data.toHash) f.style.width = Math.round((data.hashed / data.toHash) * 100) + '%';
+        state.dup.pollTimer = setTimeout(poll, 700);
+        return;
+      }
+      state.dup.status = 'complete';
+      state.dup.groups = data.groups;
+      state.dup.groupCount = data.groupCount;
+      state.dup.totalReclaimable = data.totalReclaimable;
+      renderDuplicates();
+    } catch (e) {
+      state.dup.status = 'error';
+      $('dupSummary').textContent = '';
+      $('dupBody').innerHTML = `<div class="card glass"><div class="muted">Duplicate search failed: ${escapeHtml(e.message)}</div></div>`;
+    }
+  };
+  poll();
+}
+
+function renderDuplicates() {
+  const body = $('dupBody');
+  const groups = state.dup.groups;
+  if (!groups.length) {
+    $('dupSummary').textContent = 'No duplicates found.';
+    body.innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No duplicate files above the size threshold — nothing to reclaim.</div></div>`;
+    updateDupToolbar();
+    return;
+  }
+  $('dupSummary').innerHTML =
+    `<b>${formatCount(state.dup.groupCount)}</b> duplicate groups — up to <b>${formatBytes(state.dup.totalReclaimable)}</b> reclaimable` +
+    (state.dup.groupCount > groups.length ? ` <span class="num">(top ${groups.length} shown)</span>` : '');
+  body.innerHTML = '<div class="dup-list">' + groups.map((g, gi) => {
+    const ext = (g.files[0].name.split('.').pop() || '').toLowerCase();
+    return `
+    <div class="dup-group glass" data-g="${gi}">
+      <div class="dup-head" role="button" tabindex="0" aria-expanded="false">
+        <span class="chev">${icon('chevronRight', 14)}</span>
+        ${chipFor({ type: 'file', extension: ext })}
+        <div class="meta">
+          <div class="nm">${escapeHtml(g.files[0].name)}</div>
+          <div class="sub num">${g.count} copies × ${formatBytes(g.size)} · sha-256 ${g.hash.slice(0, 12)}…</div>
+        </div>
+        <span class="reclaim num">+${formatBytes(g.reclaimable)} reclaimable</span>
+      </div>
+      <div class="dup-files">` + g.files.map((f, fi) => `
+        <div class="dup-file">
+          <input type="checkbox" class="dup-ck" data-p="${escapeHtml(f.path)}" aria-label="Select ${escapeHtml(f.path)}">
+          ${fi === 0 ? '<span class="tag">newest</span>' : ''}
+          <span class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</span>
+          <span class="dt num">${formatDate(f.modifiedAt)}</span>
+          <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
+        </div>`).join('') + `
+      </div>
+    </div>`;
+  }).join('') + '</div>';
+
+  body.querySelectorAll('.dup-head').forEach(head => {
+    const toggle = () => {
+      const g = head.closest('.dup-group');
+      head.setAttribute('aria-expanded', String(g.classList.toggle('open')));
+    };
+    head.addEventListener('click', (e) => { if (e.target.closest('input,button')) return; toggle(); });
+    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
+  body.querySelectorAll('.dup-ck').forEach(ck => {
+    ck.checked = state.dup.selection.has(ck.dataset.p);
+    ck.addEventListener('change', () => {
+      if (ck.checked) state.dup.selection.add(ck.dataset.p);
+      else state.dup.selection.delete(ck.dataset.p);
+      updateDupToolbar();
+    });
+  });
+  body.querySelectorAll('[data-reveal]').forEach(b => b.addEventListener('click', () => openInOS(b.dataset.reveal, true)));
+  updateDupToolbar();
+}
+
+function updateDupToolbar() {
+  const n = state.dup.selection.size;
+  let total = 0;
+  for (const p of state.dup.selection) total += state.pathIndex.get(p)?.size ?? 0;
+  $('dupTrashBtn').disabled = !n;
+  $('dupTrashBtn').innerHTML = icon('trash', 14) + (n ? `Move ${n} to Trash (${formatBytes(total)})` : 'Move to Trash');
+}
+
+$('dupAutoBtn').addEventListener('click', () => {
+  if (state.dup.status !== 'complete' || !state.dup.groups.length) return;
+  state.dup.selection.clear();
+  state.dup.groups.forEach(g => g.files.slice(1).forEach(f => state.dup.selection.add(f.path)));
+  $('dupBody').querySelectorAll('.dup-group').forEach(g => {
+    g.classList.add('open');
+    g.querySelector('.dup-head').setAttribute('aria-expanded', 'true');
+  });
+  $('dupBody').querySelectorAll('.dup-ck').forEach(ck => { ck.checked = state.dup.selection.has(ck.dataset.p); });
+  updateDupToolbar();
+  toast(`Selected ${state.dup.selection.size} extra copies — the newest copy in each group is kept`);
+});
+$('dupTrashBtn').addEventListener('click', () => {
+  for (const g of state.dup.groups) {
+    if (g.files.every(f => state.dup.selection.has(f.path))) {
+      toast(`All ${g.count} copies of “${g.files[0].name}” are selected — keep at least one`, 'error');
+      return;
+    }
+  }
+  confirmTrash([...state.dup.selection]);
+});
+$('dupMinSize').addEventListener('change', () => loadDuplicates(true));
+
+/* ───────────────────────────── Trends view ───────────────────────────── */
+async function loadTrends() {
+  try {
+    const { roots } = await api('/api/snapshots');
+    state.trends.roots = roots;
+    const sel = $('trendRoot');
+    if (!roots.length) {
+      sel.innerHTML = '<option>No history yet</option>';
+      sel.disabled = true;
+      $('trendInfo').textContent = '';
+      state.trends.snapshots = [];
+      drawTrendChart();
+      $('trendDeltas').innerHTML = '<div class="muted">Finish a scan and history starts building automatically — every scan saves a snapshot.</div>';
+      return;
+    }
+    sel.disabled = false;
+    const has = (p) => roots.some(r => r.rootPath === p);
+    const preferred = (state.root && has(state.root.path) && state.root.path) ||
+                      (state.trends.path && has(state.trends.path) && state.trends.path) ||
+                      roots[0].rootPath;
+    sel.innerHTML = roots.map(r =>
+      `<option value="${escapeHtml(r.rootPath)}"${r.rootPath === preferred ? ' selected' : ''}>${escapeHtml(r.rootPath)} · ${r.count} snapshot${r.count > 1 ? 's' : ''}</option>`).join('');
+    state.trends.path = preferred;
+    await loadTrendData();
+  } catch (e) { toast('Could not load history: ' + e.message, 'error'); }
+}
+
+async function loadTrendData() {
+  const { snapshots } = await api('/api/snapshots?path=' + encodeURIComponent(state.trends.path));
+  state.trends.snapshots = snapshots;
+  state.trends.hover = -1;
+  $('trendInfo').textContent = snapshots.length
+    ? `latest: ${formatBytes(snapshots[snapshots.length - 1].totalSize)} · ${formatCount(snapshots[snapshots.length - 1].fileCount)} files`
+    : '';
+  drawTrendChart();
+  renderTrendDeltas();
+}
+$('trendRoot').addEventListener('change', (e) => {
+  state.trends.path = e.target.value;
+  loadTrendData().catch(err => toast(err.message, 'error'));
+});
+
+function drawTrendChart() {
+  const canvas = $('trendChart');
+  if (!canvas.parentElement || state.view !== 'trends') { /* draw anyway when hidden — cheap */ }
+  const cssW = Math.max(320, (canvas.parentElement?.clientWidth || 600) - 44);
+  const cssH = 300;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.style.width = cssW + 'px'; canvas.style.height = cssH + 'px';
+  canvas.width = Math.round(cssW * dpr); canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const snaps = state.trends.snapshots;
+  state.trends.points = [];
+  if (!snaps.length) {
+    ctx.fillStyle = cssVar('--text-3');
+    ctx.font = '13px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('No snapshots yet — finish a scan to start tracking.', cssW / 2, cssH / 2);
+    return;
+  }
+
+  const padL = 64, padR = 18, padT = 16, padB = 30;
+  const w = cssW - padL - padR, h = cssH - padT - padB;
+  const maxS = (Math.max(...snaps.map(s => s.totalSize)) || 1) * 1.08;
+  const t0 = snaps[0].takenAt, t1 = snaps[snaps.length - 1].takenAt;
+  const span = Math.max(1, t1 - t0);
+  const X = (t) => snaps.length === 1 ? padL + w / 2 : padL + ((t - t0) / span) * w;
+  const Y = (s) => padT + h - (s / maxS) * h;
+
+  ctx.strokeStyle = cssVar('--hairline');
+  ctx.fillStyle = cssVar('--text-3');
+  ctx.font = '10.5px -apple-system, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const v = (maxS / 4) * i, y = Y(v);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(cssW - padR, y); ctx.stroke();
+    ctx.fillText(v === 0 ? '0 B' : formatBytes(v, 1), padL - 8, y + 3.5);
+  }
+  ctx.textAlign = 'center';
+  ctx.fillText(formatDate(t0), padL + 30, cssH - 10);
+  if (snaps.length > 1) ctx.fillText(formatDate(t1), cssW - padR - 30, cssH - 10);
+
+  const pts = snaps.map(s => ({ x: X(s.takenAt), y: Y(s.totalSize), s }));
+  state.trends.points = pts;
+  const accent = cssVar('--accent') || '#0A84FF';
+
+  if (pts.length > 1) {
+    const grad = ctx.createLinearGradient(0, padT, 0, padT + h);
+    grad.addColorStop(0, 'rgba(10,132,255,0.26)');
+    grad.addColorStop(1, 'rgba(10,132,255,0.02)');
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, padT + h);
+    pts.forEach(p => ctx.lineTo(p.x, p.y));
+    ctx.lineTo(pts[pts.length - 1].x, padT + h);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.beginPath();
+    pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+  pts.forEach((p, i) => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, i === state.trends.hover ? 5 : 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = accent;
+    ctx.fill();
+    ctx.strokeStyle = cssVar('--bg-1') || '#0e0e13';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  });
+}
+
+$('trendChart').addEventListener('mousemove', (e) => {
+  const rect = e.currentTarget.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  let best = -1, bd = 28;
+  state.trends.points.forEach((p, i) => {
+    const d = Math.abs(p.x - x);
+    if (d < bd) { bd = d; best = i; }
+  });
+  if (best !== state.trends.hover) { state.trends.hover = best; drawTrendChart(); }
+  if (best >= 0) {
+    const s = state.trends.points[best].s;
+    const tip = $('tooltip');
+    tip.innerHTML = `<div class="t-head">${icon('clock', 14)}${new Date(s.takenAt).toLocaleString()}</div>
+      <div class="t-line num"><span class="t-strong">${formatBytes(s.totalSize)}</span> · ${formatCount(s.fileCount)} files · ${formatCount(s.dirCount)} folders</div>`;
+    tip.style.display = 'block';
+    tip.style.left = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 10) + 'px';
+    tip.style.top = (e.clientY - tip.offsetHeight - 12) + 'px';
+  } else hideTooltip();
+});
+$('trendChart').addEventListener('mouseleave', () => { state.trends.hover = -1; drawTrendChart(); hideTooltip(); });
+window.addEventListener('resize', () => { if (state.view === 'trends') drawTrendChart(); });
+
+async function renderTrendDeltas() {
+  const host = $('trendDeltas');
+  const snaps = state.trends.snapshots;
+  if (snaps.length < 2) {
+    host.innerHTML = '<div class="muted">Scan this folder again later — what grew or shrank will show up here.</div>';
+    return;
+  }
+  const a = snaps[snaps.length - 2], b = snaps[snaps.length - 1];
+  try {
+    const diff = await api(`/api/snapshots/compare?a=${a.id}&b=${b.id}`);
+    const up = diff.totalDelta >= 0;
+    const head = `<div class="muted" style="margin-bottom:10px;" >${formatDate(a.takenAt)} → ${formatDate(b.takenAt)} — total ${up ? 'grew' : 'shrank'} by
+      <b class="num" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(diff.totalDelta))}</b></div>`;
+    if (!diff.entries.length) { host.innerHTML = head + '<div class="muted">No top-level changes between the last two snapshots.</div>'; return; }
+    const maxD = Math.abs(diff.entries[0].delta) || 1;
+    host.innerHTML = head + diff.entries.slice(0, 12).map(en => deltaRow(en, maxD)).join('');
+  } catch (e) {
+    host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+/** Shared red/green delta row (Trends + Compare). */
+function deltaRow(en, maxD) {
+  const up = en.delta > 0;
+  const label = en.sizeA === null ? 'new' : en.sizeB === null ? 'removed' : up ? 'grew' : 'shrank';
+  const ext = en.type === 'file' ? (en.name.split('.').pop() || '').toLowerCase() : undefined;
+  return `
+    <div class="delta-row" title="${escapeHtml(en.path)}">
+      ${chipFor({ type: en.type, extension: ext }, 13)}
+      <div class="meta"><div class="nm">${escapeHtml(en.name)} <span class="muted">· ${label}</span></div></div>
+      <div class="bar-track"><div class="bar" style="width:${Math.max(5, (Math.abs(en.delta) / maxD) * 100)}%;background:${up ? '#FF453A' : '#30D158'};"></div></div>
+      <span class="delta-badge num ${up ? 'up' : 'down'}">${up ? '+' : '−'}${formatBytes(Math.abs(en.delta))}</span>
+    </div>`;
+}
+
+/* ───────────────────────────── Compare view ───────────────────────────── */
+async function loadCompareOptions() {
+  try {
+    const [scansRes, snapsRes] = await Promise.all([api('/api/scans'), api('/api/snapshots?all=true')]);
+    const options = [];
+    for (const s of scansRes.scans) {
+      options.push({ kind: 'scan', id: s.scanId, rootPath: s.rootPath, when: s.finishedAt, size: s.totalSize });
+    }
+    for (const sn of snapsRes.snapshots) {
+      options.push({ kind: 'snap', id: sn.id, rootPath: sn.rootPath, when: sn.takenAt, size: sn.totalSize });
+    }
+    state.compare.options = options;
+    if (!options.length) {
+      $('cmpA').innerHTML = $('cmpB').innerHTML = '<option>No scans yet</option>';
+      $('cmpA').disabled = $('cmpB').disabled = true;
+      return;
+    }
+    $('cmpA').disabled = $('cmpB').disabled = false;
+
+    const byRoot = new Map();
+    for (const o of options) {
+      if (!byRoot.has(o.rootPath)) byRoot.set(o.rootPath, []);
+      byRoot.get(o.rootPath).push(o);
+    }
+    const label = (o) => `${o.kind === 'scan' ? 'Scan (full diff)' : 'History'} · ${new Date(o.when).toLocaleString()} · ${formatBytes(o.size)}`;
+    const html = [...byRoot.entries()].map(([root, list]) =>
+      `<optgroup label="${escapeHtml(root)}">` +
+      list.sort((x, y) => y.when - x.when).map(o =>
+        `<option value="${o.kind}:${o.id}">${escapeHtml(label(o))}</option>`).join('') +
+      '</optgroup>').join('');
+    $('cmpA').innerHTML = html;
+    $('cmpB').innerHTML = html;
+
+    // Defaults: newest two entries of the current (or first) root, older → newer.
+    const rootKey = state.root && byRoot.has(state.root.path) ? state.root.path : [...byRoot.keys()][0];
+    const list = byRoot.get(rootKey).sort((x, y) => y.when - x.when);
+    $('cmpB').value = `${list[0].kind}:${list[0].id}`;
+    if (list.length > 1) $('cmpA').value = `${list[1].kind}:${list[1].id}`;
+    $('cmpInfo').textContent = list.length < 2 ? 'Only one record of this folder so far — scan it again to have something to compare.' : '';
+  } catch (e) {
+    toast('Could not load scans: ' + e.message, 'error');
+  }
+}
+
+function parseCmp(value) {
+  const i = value.indexOf(':');
+  if (i < 0) return null;
+  const kind = value.slice(0, i), id = value.slice(i + 1);
+  return state.compare.options.find(o => o.kind === kind && o.id === id) || null;
+}
+
+$('cmpRunBtn').addEventListener('click', async () => {
+  const a = parseCmp($('cmpA').value), b = parseCmp($('cmpB').value);
+  if (!a || !b) { toast('Pick two scans to compare', 'error'); return; }
+  if (a.rootPath !== b.rootPath) { toast('Both picks must cover the same folder', 'error'); return; }
+  if (a.kind === b.kind && a.id === b.id) { toast('Pick two different scans', 'error'); return; }
+  if (a.kind !== b.kind) {
+    toast('Mixing a live scan with a history snapshot isn’t supported — pick two of the same kind', 'error');
+    return;
+  }
+  const body = $('cmpBody');
+  body.innerHTML = `<div class="card glass dup-progress">${icon('loader', 20, REDUCED ? '' : 'spin')}<span>Comparing…</span></div>`;
+  try {
+    if (a.kind === 'scan') {
+      const diff = await api(`/api/compare?scanIdA=${a.id}&scanIdB=${b.id}`);
+      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: diff.truncated, deep: true, whenA: a.when, whenB: b.when });
+    } else {
+      const diff = await api(`/api/snapshots/compare?a=${a.id}&b=${b.id}`);
+      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: false, deep: false, whenA: diff.a.takenAt, whenB: diff.b.takenAt });
+    }
+  } catch (e) {
+    body.innerHTML = `<div class="card glass"><div class="muted">Compare failed: ${escapeHtml(e.message)}</div></div>`;
+  }
+});
+
+function renderCompare(r) {
+  const counts = { added: 0, removed: 0, grew: 0, shrank: 0 };
+  for (const en of r.entries) {
+    counts[en.sizeA === null ? 'added' : en.sizeB === null ? 'removed' : en.delta > 0 ? 'grew' : 'shrank']++;
+  }
+  const up = r.totalDelta >= 0;
+  const maxD = Math.abs(r.entries[0]?.delta ?? 0) || 1;
+  $('cmpBody').innerHTML = `
+    <div class="card glass">
+      <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>${new Date(r.whenA).toLocaleString()} → ${new Date(r.whenB).toLocaleString()}${r.deep ? '' : ' · top-level folders only'}</h2>
+      <div class="muted num" style="margin-bottom:12px;">Total ${up ? 'grew' : 'shrank'} by
+        <b style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(r.totalDelta))}</b>
+        &nbsp;·&nbsp; ${counts.added} added · ${counts.removed} removed · ${counts.grew} grew · ${counts.shrank} shrank${r.truncated ? ' · biggest 1,000 shown' : ''}</div>
+      ${r.entries.length
+        ? r.entries.slice(0, 200).map(en => deltaRow(en, maxD)).join('')
+        : `<div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No differences — nothing changed between these two.</div>`}
+    </div>`;
+}
+
 /* ───────────────────────────── Browse modal ───────────────────────────── */
 let browsePath = null;
 async function openBrowse(start) {
@@ -1729,16 +2546,121 @@ $('browseUseBtn').addEventListener('click', () => {
 });
 
 /* ───────────────────────────── Clean Up modal ───────────────────────────── */
-let cleanMatches = [];
+let cleanMatches = [];   // Custom Rules pane — matched file nodes
+let emptyFolders = [];   // Empty Folders pane — { name, path }
+let smartGroups = [];    // Smart Suggestions pane — rule groups from the API
+let cleanPane = 'rules';
+
 $('cleanupBtn').addEventListener('click', () => {
   if (!state.root) { toast('Run a scan first', 'error'); return; }
   $('cleanResults').innerHTML = '';
+  $('smartResults').innerHTML = '';
+  $('emptyResults').innerHTML = '';
   $('cleanSummary').textContent = '';
   $('cleanConfirmBtn').disabled = true;
   $('cleanProgress').classList.remove('on');
-  cleanMatches = [];
+  $('cleanProgressFill').style.width = '0%';
+  cleanMatches = []; emptyFolders = []; smartGroups = [];
+  setCleanPane('rules', true);
   $('cleanModal').classList.add('open');
 });
+
+$('cleanSeg').querySelectorAll('button').forEach(b =>
+  b.addEventListener('click', () => setCleanPane(b.dataset.pane)));
+
+function setCleanPane(pane, skipLoad = false) {
+  cleanPane = pane;
+  $('cleanSeg').querySelectorAll('button').forEach(b =>
+    b.setAttribute('aria-selected', String(b.dataset.pane === pane)));
+  $('cleanPaneRules').style.display = pane === 'rules' ? '' : 'none';
+  $('cleanPaneSmart').style.display = pane === 'smart' ? '' : 'none';
+  $('cleanPaneEmpty').style.display = pane === 'empty' ? '' : 'none';
+  updateCleanSummary();
+  if (!skipLoad && pane === 'empty' && !emptyFolders.length) loadEmptyFolders();
+  if (!skipLoad && pane === 'smart' && !smartGroups.length) loadSmartSuggestions();
+}
+
+/* ── Empty Folders pane ── */
+async function loadEmptyFolders() {
+  const host = $('emptyResults');
+  host.innerHTML = skeletonRows(4, 30);
+  try {
+    const data = await api(`/api/empty-folders?scanId=${state.scanId}&ignoreJunk=${$('emptyIgnoreJunk').checked}`);
+    emptyFolders = data.folders;
+    if (!emptyFolders.length) {
+      host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon('checkCircle', 15)} No empty folders found — tidy already.</div>`;
+      updateCleanSummary();
+      return;
+    }
+    host.innerHTML = `
+      <div class="rule-row">
+        <input type="checkbox" id="emptyAll" checked>
+        <label for="emptyAll" class="muted">Select all — ${emptyFolders.length} top-level empty folder${emptyFolders.length > 1 ? 's' : ''}${data.totalCount > emptyFolders.length ? ` (${formatCount(data.totalCount)} counting nested ones)` : ''}</label>
+      </div>
+      <div class="clean-list">` + emptyFolders.map((f, i) => `
+        <div class="clean-item">
+          <input type="checkbox" class="empty-ck" data-i="${i}" checked aria-label="Select ${escapeHtml(f.name)}">
+          ${chipFor({ type: 'dir' }, 13)}
+          <div class="meta">
+            <div class="nm">${escapeHtml(f.name)}</div>
+            <div class="pth">${escapeHtml(f.path)}</div>
+          </div>
+        </div>`).join('') + '</div>';
+    $('emptyAll').addEventListener('change', (e) => {
+      host.querySelectorAll('.empty-ck').forEach(ck => { ck.checked = e.target.checked; });
+      updateCleanSummary();
+    });
+    host.querySelectorAll('.empty-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
+    updateCleanSummary();
+  } catch (e) {
+    host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
+  }
+}
+$('emptyIgnoreJunk').addEventListener('change', () => { emptyFolders = []; loadEmptyFolders(); });
+
+/* ── Smart Suggestions pane ── */
+async function loadSmartSuggestions() {
+  const host = $('smartResults');
+  host.innerHTML = skeletonRows(4, 34);
+  try {
+    const data = await api(`/api/cleanup/suggestions?scanId=${state.scanId}`);
+    smartGroups = data.groups;
+    if (!smartGroups.length) {
+      host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon('checkCircle', 15)} Nothing in this scan matches the common-junk rules.</div>`;
+      updateCleanSummary();
+      return;
+    }
+    host.innerHTML = `<div class="muted" style="margin-bottom:8px;">Found by ${smartGroups.length} rule${smartGroups.length > 1 ? 's' : ''} — nothing is pre-selected, tick what you want gone.</div>` +
+      smartGroups.map((g, gi) => `
+      <div style="margin-bottom:14px;">
+        <div class="rule-row" style="padding:6px 0;">
+          <input type="checkbox" class="smart-all" data-g="${gi}" aria-label="Select all in ${escapeHtml(g.title)}">
+          <b>${escapeHtml(g.title)}</b>
+          <span class="muted" style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(g.description)}</span>
+          <span class="size-badge num" style="color:${sizeColor(g.totalSize)}">${g.items.length} · ${formatBytes(g.totalSize)}</span>
+        </div>
+        <div class="clean-list">` + g.items.map((it, i) => `
+          <div class="clean-item">
+            <input type="checkbox" class="smart-ck" data-g="${gi}" data-i="${i}" aria-label="Select ${escapeHtml(it.path)}">
+            ${chipFor({ type: it.type, extension: it.type === 'file' ? (it.name.split('.').pop() || '').toLowerCase() : undefined }, 13)}
+            <div class="meta">
+              <div class="nm">${escapeHtml(it.name)}</div>
+              <div class="pth">${escapeHtml(it.path)}</div>
+            </div>
+            <span class="dt num">${formatDate(it.modifiedAt)}</span>
+            <span class="size-badge num">${formatBytes(it.size)}</span>
+          </div>`).join('') + `</div>
+      </div>`).join('');
+    host.querySelectorAll('.smart-all').forEach(all => all.addEventListener('change', () => {
+      host.querySelectorAll(`.smart-ck[data-g="${all.dataset.g}"]`).forEach(ck => { ck.checked = all.checked; });
+      updateCleanSummary();
+    }));
+    host.querySelectorAll('.smart-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
+    updateCleanSummary();
+  } catch (e) {
+    host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
+  }
+}
 
 $('cleanFindBtn').addEventListener('click', () => {
   const ageOn = $('ruleAgeOn').checked, sizeOn = $('ruleSizeOn').checked;
@@ -1801,38 +2723,196 @@ $('cleanFindBtn').addEventListener('click', () => {
   updateCleanSummary();
 });
 
-function selectedCleanFiles() {
-  return [...document.querySelectorAll('.clean-ck')].filter(ck => ck.checked).map(ck => cleanMatches[+ck.dataset.i]);
+/** Selected paths + recoverable bytes for whichever pane is showing. */
+function activeCleanSelection() {
+  if (cleanPane === 'rules') {
+    const files = [...document.querySelectorAll('#cleanResults .clean-ck')]
+      .filter(ck => ck.checked).map(ck => cleanMatches[+ck.dataset.i]);
+    return { paths: files.map(f => f.path), bytes: files.reduce((s, f) => s + f.size, 0), noun: 'file' };
+  }
+  if (cleanPane === 'empty') {
+    const sel = [...document.querySelectorAll('#emptyResults .empty-ck')]
+      .filter(ck => ck.checked).map(ck => emptyFolders[+ck.dataset.i]);
+    return { paths: sel.map(f => f.path), bytes: 0, noun: 'empty folder' };
+  }
+  const paths = []; let bytes = 0;
+  document.querySelectorAll('#smartResults .smart-ck').forEach(ck => {
+    if (!ck.checked) return;
+    const it = smartGroups[+ck.dataset.g].items[+ck.dataset.i];
+    paths.push(it.path); bytes += it.size;
+  });
+  return { paths, bytes, noun: 'item' };
 }
+
 function updateCleanSummary() {
-  const sel = selectedCleanFiles();
-  const total = sel.reduce((s, f) => s + f.size, 0);
-  $('cleanSummary').textContent = sel.length ? `${sel.length} files — ${formatBytes(total)} will be recovered` : '';
-  $('cleanConfirmBtn').disabled = !sel.length;
-  $('cleanConfirmBtn').innerHTML = icon('trash', 14) + (sel.length ? `Move ${sel.length} item${sel.length > 1 ? 's' : ''} to Trash` : 'Move to Trash');
+  const { paths, bytes, noun } = activeCleanSelection();
+  $('cleanSummary').textContent = paths.length
+    ? `${paths.length} ${noun}${paths.length > 1 ? 's' : ''}${bytes ? ` — ${formatBytes(bytes)} will be recovered` : ''}`
+    : '';
+  $('cleanConfirmBtn').disabled = !paths.length;
+  $('cleanConfirmBtn').innerHTML = icon('trash', 14) +
+    (paths.length ? `Move ${paths.length} to Trash` : 'Move to Trash');
 }
 
 $('cleanConfirmBtn').addEventListener('click', async () => {
-  const files = selectedCleanFiles();
-  if (!files.length) return;
-  const totalBytes = files.reduce((s, f) => s + f.size, 0);
+  const { paths, bytes } = activeCleanSelection();
+  if (!paths.length) return;
   const btn = $('cleanConfirmBtn');
   btn.disabled = true;
   $('cleanProgress').classList.add('on');
   let done = 0, failed = 0;
-  for (let i = 0; i < files.length; i += 20) {
-    const chunk = files.slice(i, i + 20).map(f => f.path);
+  for (let i = 0; i < paths.length; i += 20) {
+    const chunk = paths.slice(i, i + 20);
     const result = await trashPaths(chunk, { silent: true });
     done += result.deleted.length;
     failed += result.failed.length;
-    $('cleanProgressFill').style.width = Math.round(((done + failed) / files.length) * 100) + '%';
-    btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Deleting… ${done + failed}/${files.length}`;
+    $('cleanProgressFill').style.width = Math.round(((done + failed) / paths.length) * 100) + '%';
+    btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Deleting… ${done + failed}/${paths.length}`;
   }
   closeModal('cleanModal');
-  if (done) toast(`Moved ${done} files to Trash — ${formatBytes(totalBytes)} recovered`);
-  if (failed) toast(`${failed} files could not be trashed`, 'error');
+  if (done) toast(`Moved ${done} item${done > 1 ? 's' : ''} to Trash${bytes ? ` — ${formatBytes(bytes)} recovered` : ''}`);
+  if (failed) toast(`${failed} could not be trashed`, 'error');
   if (done) rescan();
 });
+
+/* ───────────────────────────── Settings modal ───────────────────────────── */
+let settingsData = { ignore: [], schedules: [] };
+$('settingsBtn').innerHTML = icon('settings', 16);
+$('settingsBtn').addEventListener('click', async () => {
+  $('settingsModal').classList.add('open');
+  $('settingsStatus').textContent = '';
+  try {
+    settingsData = await api('/api/settings');
+  } catch (e) {
+    toast('Could not load settings: ' + e.message, 'error');
+    settingsData = { ignore: [], schedules: [] };
+  }
+  renderSchedules();
+  renderIgnores();
+});
+
+const SCHED_HOURS = [6, 12, 24, 48, 168];
+function renderSchedules() {
+  const host = $('schedList');
+  const rows = settingsData.schedules;
+  if (!rows.length) {
+    host.innerHTML = '<div class="muted" style="padding:4px 0 10px;">No scheduled scans yet.</div>';
+    return;
+  }
+  host.innerHTML = `
+    <div class="sched-row sched-head muted" aria-hidden="true">
+      <span>Folder</span><span>Every</span><span>Alert if +GB</span><span>or +%</span><span>On</span><span></span>
+    </div>` + rows.map((s, i) => {
+    const hours = SCHED_HOURS.includes(s.intervalHours) ? SCHED_HOURS : [s.intervalHours, ...SCHED_HOURS];
+    return `
+    <div class="sched-row">
+      <input type="text" class="s-path" data-i="${i}" value="${escapeHtml(s.path)}" placeholder="/Users/you/Documents" spellcheck="false" aria-label="Folder to scan on a schedule">
+      <select class="s-int" aria-label="Scan interval">
+        ${hours.map(h => `<option value="${h}"${s.intervalHours === h ? ' selected' : ''}>${h === 168 ? 'week' : h + ' h'}</option>`).join('')}
+      </select>
+      <input type="number" class="s-gb" min="0" step="0.5" value="${s.thresholdBytes ? (s.thresholdBytes / 1073741824).toFixed(1) : ''}" placeholder="–" aria-label="Alert threshold in gigabytes">
+      <input type="number" class="s-pct" min="0" value="${s.thresholdPct ?? ''}" placeholder="–" aria-label="Alert threshold in percent">
+      <input type="checkbox" class="s-on"${s.enabled ? ' checked' : ''} aria-label="Schedule enabled">
+      <button class="icon-btn danger s-del" data-i="${i}" aria-label="Remove this schedule" title="Remove">${icon('trash', 14)}</button>
+    </div>`;
+  }).join('');
+  host.querySelectorAll('.s-del').forEach(b => b.addEventListener('click', () => {
+    collectSettingsForms();
+    settingsData.schedules.splice(+b.dataset.i, 1);
+    renderSchedules();
+  }));
+}
+
+function renderIgnores() {
+  const host = $('ignoreList');
+  const rows = settingsData.ignore;
+  if (!rows.length) {
+    host.innerHTML = '<div class="muted" style="padding:4px 0 10px;">Nothing ignored — everything gets scanned and suggested.</div>';
+    return;
+  }
+  host.innerHTML = rows.map((e, i) => `
+    <div class="ign-row">
+      <input type="text" class="i-pat" data-i="${i}" value="${escapeHtml(e.pattern)}" placeholder="node_modules, *.iso, ~/Library …" spellcheck="false" aria-label="Pattern to ignore">
+      <select class="i-scope" aria-label="Where this pattern applies">
+        <option value="scan"${e.scope === 'scan' ? ' selected' : ''}>Don't scan</option>
+        <option value="suggest"${e.scope === 'suggest' ? ' selected' : ''}>Don't suggest</option>
+        <option value="both"${e.scope === 'both' ? ' selected' : ''}>Both</option>
+      </select>
+      <button class="icon-btn danger i-del" data-i="${i}" aria-label="Remove this pattern" title="Remove">${icon('trash', 14)}</button>
+    </div>`).join('');
+  host.querySelectorAll('.i-del').forEach(b => b.addEventListener('click', () => {
+    collectSettingsForms();
+    settingsData.ignore.splice(+b.dataset.i, 1);
+    renderIgnores();
+  }));
+}
+
+/** Read the form rows back into settingsData (before add/remove/save). */
+function collectSettingsForms() {
+  document.querySelectorAll('#schedList .sched-row:not(.sched-head)').forEach(row => {
+    const s = settingsData.schedules[+row.querySelector('.s-path').dataset.i];
+    if (!s) return;
+    s.path = row.querySelector('.s-path').value.trim();
+    s.intervalHours = +row.querySelector('.s-int').value;
+    const gb = parseFloat(row.querySelector('.s-gb').value);
+    s.thresholdBytes = Number.isFinite(gb) && gb > 0 ? Math.round(gb * 1073741824) : undefined;
+    const pct = parseFloat(row.querySelector('.s-pct').value);
+    s.thresholdPct = Number.isFinite(pct) && pct > 0 ? pct : undefined;
+    s.enabled = row.querySelector('.s-on').checked;
+  });
+  document.querySelectorAll('#ignoreList .ign-row').forEach(row => {
+    const e = settingsData.ignore[+row.querySelector('.i-pat').dataset.i];
+    if (!e) return;
+    e.pattern = row.querySelector('.i-pat').value.trim();
+    e.scope = row.querySelector('.i-scope').value;
+  });
+}
+
+$('schedAddBtn').addEventListener('click', () => {
+  collectSettingsForms();
+  settingsData.schedules.push({
+    id: '',
+    path: state.root ? state.root.path : (state.system?.homeDir || ''),
+    intervalHours: 24,
+    enabled: true,
+  });
+  renderSchedules();
+});
+$('ignoreAddBtn').addEventListener('click', () => {
+  collectSettingsForms();
+  settingsData.ignore.push({ pattern: '', scope: 'both' });
+  renderIgnores();
+});
+
+$('settingsSaveBtn').addEventListener('click', async () => {
+  collectSettingsForms();
+  const schedules = settingsData.schedules.filter(s => s.path);
+  const ignore = settingsData.ignore.filter(e => e.pattern);
+  try {
+    settingsData = await api('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schedules, ignore }),
+    });
+    renderSchedules();
+    renderIgnores();
+    $('settingsStatus').textContent = 'Saved';
+    toast('Settings saved — ignore rules apply from the next scan');
+    setTimeout(() => { if ($('settingsStatus').textContent === 'Saved') $('settingsStatus').textContent = ''; }, 2500);
+  } catch (e) {
+    toast('Save failed: ' + e.message, 'error');
+  }
+});
+
+/* ── Growth notifications from scheduled scans (poll once a minute) ── */
+let lastNotifPoll = Date.now();
+setInterval(async () => {
+  try {
+    const data = await api('/api/notifications?since=' + lastNotifPoll);
+    lastNotifPoll = data.now;
+    for (const n of data.notifications) toast(n.message, 'error', 12000);
+  } catch { /* server unreachable — the next poll will catch up */ }
+}, 60_000);
 
 /* ───────────────────────────── Modal plumbing ───────────────────────────── */
 function closeModal(id) { $(id).classList.remove('open'); }
@@ -1865,15 +2945,45 @@ document.addEventListener('keydown', (e) => {
     if (typing && document.activeElement === $('gridSearch') && $('gridSearch').value) {
       $('gridSearch').value = ''; state.grid.query = ''; renderGrid(); return;
     }
+    if (typing && document.activeElement === $('tmSearch') && $('tmSearch').value) {
+      $('tmSearch').value = ''; state.treemap.query = '';
+      renderSearchOverlay(); presentTreemap(); return;
+    }
     if (state.view === 'treemap' && state.root && state.treemap.rootPath !== state.root.path) {
-      const crumbs = breadcrumbsFor(state.treemap.rootPath);
-      if (crumbs.length > 1) loadTreemap(crumbs[crumbs.length - 2].path, true);
+      treemapUp();
       return;
     }
     if (state.view === 'grid') {
       if (state.grid.selection.size) { state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true); }
       else gridUp();
     }
+  }
+});
+
+/* ───────────────────────────── Desktop integration ───────────────────────────── */
+/* In the Electron build, a preload bridge (window.treemapDesktop) lets us
+   resolve dropped files to real paths and receive dock-drop / CLI scans. */
+if (window.treemapDesktop) {
+  window.treemapDesktop.onScanPath((p) => {
+    if (!p) return;
+    $('pathInput').value = p;
+    startScan(p);
+  });
+}
+window.addEventListener('dragover', (e) => { e.preventDefault(); });
+window.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!file) return;
+  if (!window.treemapDesktop) {
+    toast('Drag & drop scanning works in the desktop app — use Browse here', 'error');
+    return;
+  }
+  const raw = window.treemapDesktop.getPathForFile(file);
+  const dir = raw ? await window.treemapDesktop.resolveScanPath(raw) : null;
+  if (dir) {
+    $('pathInput').value = dir;
+    startScan(dir);
   }
 });
 

@@ -1,7 +1,10 @@
 import { promises as fsp, Dirent } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { FileNode, ScanResult } from '../models/types';
+import { FileNode, ScanResult, LargeFolder, EmptyFoldersResult, CompareEntry } from '../models/types';
+import { saveSnapshot } from './snapshots';
+import { getIgnoreMatchers } from './settings';
+import { CompiledIgnore, matchesAny } from '../utils/glob';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -66,6 +69,9 @@ export async function startScan(rootPath: string): Promise<ScanResult> {
   // Fail fast on unreadable/nonexistent roots so the API can 4xx properly.
   const rootStat = await fsp.lstat(rootPath);
 
+  // User-configured "don't scan" patterns; a settings problem never blocks a scan.
+  const ignore = await getIgnoreMatchers('scan').catch(() => [] as CompiledIgnore[]);
+
   const scan: ScanResult = {
     scanId: crypto.randomUUID(),
     rootPath,
@@ -81,7 +87,7 @@ export async function startScan(rootPath: string): Promise<ScanResult> {
   scans.set(scan.scanId, scan);
 
   // Fire and forget — errors land on the record, never as unhandled rejections.
-  void walk(scan, rootStat.isDirectory()).catch((err: unknown) => {
+  void walk(scan, rootStat.isDirectory(), ignore).catch((err: unknown) => {
     scan.status = 'error';
     scan.error = err instanceof Error ? err.message : String(err);
     scan.finishedAt = Date.now();
@@ -108,7 +114,7 @@ function makeNode(fullPath: string, name: string, isDir: boolean, size: number, 
   return node;
 }
 
-async function walk(scan: ScanResult, rootIsDir: boolean): Promise<void> {
+async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore[]): Promise<void> {
   const rootStat = await fsp.lstat(scan.rootPath);
   const root = makeNode(
     scan.rootPath,
@@ -122,7 +128,7 @@ async function walk(scan: ScanResult, rootIsDir: boolean): Promise<void> {
   else scan.fileCount = 1;
 
   if (rootIsDir) {
-    await drainQueue(scan, [root]);
+    await drainQueue(scan, [root], ignore);
   }
   if (scan.cancelled) return;
 
@@ -131,13 +137,19 @@ async function walk(scan: ScanResult, rootIsDir: boolean): Promise<void> {
   scan.status = 'complete';
   scan.finishedAt = Date.now();
   scan.currentPath = scan.rootPath;
+
+  // Record a history snapshot so Trends works without any user action.
+  // Failures here must never fail the scan itself.
+  void saveSnapshot(scan).catch((err: unknown) => {
+    console.error('[treemap] snapshot save failed:', err);
+  });
 }
 
 /**
  * Worker pool: up to CONCURRENCY directories are listed at the same time.
  * Resolves when the queue is empty and every worker has finished.
  */
-function drainQueue(scan: ScanResult, initial: FileNode[]): Promise<void> {
+function drainQueue(scan: ScanResult, initial: FileNode[], ignore: CompiledIgnore[]): Promise<void> {
   const queue: FileNode[] = [...initial];
   let active = 0;
 
@@ -150,7 +162,7 @@ function drainQueue(scan: ScanResult, initial: FileNode[]): Promise<void> {
       while (active < CONCURRENCY && queue.length > 0) {
         const dirNode = queue.shift()!;
         active++;
-        processDirectory(scan, dirNode, queue)
+        processDirectory(scan, dirNode, queue, ignore)
           .catch((err: unknown) => reject(err))
           .finally(() => {
             active--;
@@ -169,7 +181,12 @@ function drainQueue(scan: ScanResult, initial: FileNode[]): Promise<void> {
  * Permission errors are swallowed per-directory: the dir simply stays empty
  * rather than failing the whole scan.
  */
-async function processDirectory(scan: ScanResult, dirNode: FileNode, queue: FileNode[]): Promise<void> {
+async function processDirectory(
+  scan: ScanResult,
+  dirNode: FileNode,
+  queue: FileNode[],
+  ignore: CompiledIgnore[]
+): Promise<void> {
   if (scan.cancelled) return;
 
   let entries: Dirent[];
@@ -181,6 +198,11 @@ async function processDirectory(scan: ScanResult, dirNode: FileNode, queue: File
 
   scan.currentPath = dirNode.path;
   const children = dirNode.children!;
+
+  // Honor the user's "don't scan" list before paying for any lstat calls.
+  if (ignore.length > 0) {
+    entries = entries.filter((ent) => !matchesAny(ignore, path.join(dirNode.path, ent.name), ent.name));
+  }
 
   for (let i = 0; i < entries.length; i += STAT_BATCH) {
     if (scan.cancelled) return;
@@ -259,6 +281,132 @@ export function collectLargestFiles(root: FileNode, limit: number, minSize: numb
     extension: f.extension,
     modifiedAt: f.modifiedAt,
   }));
+}
+
+export function collectLargestFolders(root: FileNode, limit: number, minSize: number): LargeFolder[] {
+  const found: LargeFolder[] = [];
+  // Recursive visit returns the subtree's file count so each folder's
+  // recursive count is computed in the same single pass as the walk.
+  const visit = (node: FileNode): number => {
+    if (node.type === 'file') return 1;
+    let count = 0;
+    if (node.children) for (const c of node.children) count += visit(c);
+    if (node !== root && node.size >= minSize) {
+      found.push({
+        name: node.name,
+        path: node.path,
+        size: node.size,
+        fileCount: count,
+        modifiedAt: node.modifiedAt,
+      });
+    }
+    return count;
+  };
+  visit(root);
+  return found.sort((a, b) => b.size - a.size).slice(0, limit);
+}
+
+/** Junk files that don't stop a folder from counting as empty. */
+const JUNK_FILES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini', '.localized']);
+const EMPTY_FOLDERS_CAP = 1000;
+
+/**
+ * Find recursively-empty directories: no files anywhere below (only other
+ * empty dirs). With `ignoreJunk`, OS metadata files like .DS_Store don't
+ * count as content. Returns only the topmost empty dirs — trashing those
+ * removes everything beneath them anyway.
+ */
+export function collectEmptyFolders(root: FileNode, ignoreJunk: boolean): EmptyFoldersResult {
+  const isJunk = (n: FileNode): boolean => ignoreJunk && JUNK_FILES.has(n.name.toLowerCase());
+  const emptyDirs = new Set<FileNode>();
+
+  // Pass 1, bottom-up: a dir is empty when every child is junk or an empty dir.
+  const compute = (node: FileNode): boolean => {
+    if (node.type === 'file') return isJunk(node);
+    let empty = true;
+    if (node.children) {
+      for (const c of node.children) {
+        if (!compute(c)) empty = false;
+      }
+    }
+    if (empty) emptyDirs.add(node);
+    return empty;
+  };
+  compute(root);
+  emptyDirs.delete(root); // never offer to trash the scanned root itself
+
+  // Pass 2, top-down: report only topmost empty dirs (their whole subtree is
+  // empty, so trashing the top one is sufficient) and stop descending there.
+  const topmost: { name: string; path: string }[] = [];
+  let truncated = false;
+  const walk = (node: FileNode): void => {
+    if (!node.children) return;
+    for (const c of node.children) {
+      if (c.type !== 'dir') continue;
+      if (emptyDirs.has(c)) {
+        if (topmost.length < EMPTY_FOLDERS_CAP) topmost.push({ name: c.name, path: c.path });
+        else truncated = true;
+      } else {
+        walk(c);
+      }
+    }
+  };
+  walk(root);
+
+  return { folders: topmost, totalCount: emptyDirs.size, truncated };
+}
+
+const COMPARE_CAP = 1000;
+
+/**
+ * Structural diff of two scans of the same root. Subtrees present in only
+ * one scan collapse to a single added/removed entry (a new node_modules is
+ * one row, not ten thousand); files present in both are emitted when their
+ * size changed. Directories present in both are never emitted themselves —
+ * their change is fully explained by the child entries.
+ */
+export function compareTrees(rootA: FileNode, rootB: FileNode): { entries: CompareEntry[]; truncated: boolean } {
+  const entries: CompareEntry[] = [];
+
+  const emit = (node: FileNode, sizeA: number | null, sizeB: number | null): void => {
+    const delta = (sizeB ?? 0) - (sizeA ?? 0);
+    if (delta === 0 && sizeA !== null && sizeB !== null) return;
+    entries.push({
+      path: node.path,
+      name: node.name,
+      type: node.type,
+      sizeA,
+      sizeB,
+      delta,
+      change: sizeA === null ? 'added' : sizeB === null ? 'removed' : delta > 0 ? 'grew' : 'shrank',
+    });
+  };
+
+  const recurse = (a: FileNode, b: FileNode): void => {
+    const aChildren = new Map<string, FileNode>();
+    for (const c of a.children ?? []) aChildren.set(c.name, c);
+
+    for (const cb of b.children ?? []) {
+      const ca = aChildren.get(cb.name);
+      if (!ca) {
+        emit(cb, null, cb.size); // appeared between scans
+        continue;
+      }
+      aChildren.delete(cb.name);
+      if (ca.type === 'dir' && cb.type === 'dir') {
+        recurse(ca, cb);
+      } else if (ca.size !== cb.size || ca.type !== cb.type) {
+        emit(cb, ca.size, cb.size);
+      }
+    }
+    for (const ca of aChildren.values()) {
+      emit(ca, ca.size, null); // disappeared between scans
+    }
+  };
+
+  recurse(rootA, rootB);
+  entries.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
+  return { entries: entries.slice(0, COMPARE_CAP), truncated: entries.length > COMPARE_CAP };
 }
 
 export function collectFileTypes(root: FileNode) {

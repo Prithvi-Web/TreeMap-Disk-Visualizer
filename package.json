@@ -1,6 +1,6 @@
 {
   "name": "treemap",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "TreeMap — a GrandPerspective-style disk space visualizer for macOS, Linux and Windows",
   "author": "Prithvi-Web",
   "main": "electron/main.js",
@@ -20,6 +20,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "electron-updater": "^6.3.9",
     "express": "^5.1.0"
   },
   "devDependencies": {
@@ -43,11 +44,26 @@
       "electron/**/*",
       "package.json"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "Prithvi-Web",
+      "repo": "Treemap"
+    },
     "mac": {
-      "target": ["dmg"],
+      "target": ["dmg", "zip"],
       "category": "public.app-category.utilities",
       "icon": "build/icon.png",
-      "darkModeSupport": true
+      "darkModeSupport": true,
+      "extendInfo": {
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "Folder",
+            "CFBundleTypeRole": "Viewer",
+            "LSItemContentTypes": ["public.folder"],
+            "LSHandlerRank": "Alternate"
+          }
+        ]
+      }
     },
     "win": {
       "target": ["nsis"],

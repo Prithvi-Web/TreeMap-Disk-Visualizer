@@ -49,7 +49,8 @@ export function activeSseCount(): number {
 
 /* ------------------------------ Routes ------------------------------ */
 
-function requireScan(_req: Request, idSource: unknown): ScanResult {
+/** Shared with insightRoutes: resolve a scanId or 404 cleanly. */
+export function requireScan(_req: Request, idSource: unknown): ScanResult {
   const scan = getScan(String(idSource ?? ''));
   if (!scan) {
     throw new AppError(404, 'SCAN_NOT_FOUND', 'Unknown or expired scanId');
@@ -208,7 +209,7 @@ scanRouter.get('/file-types', (req: Request, res: Response) => {
   res.json({ types: collectFileTypes(scan.root) });
 });
 
-function clampInt(raw: unknown, fallback: number, min: number, max: number): number {
+export function clampInt(raw: unknown, fallback: number, min: number, max: number): number {
   const n = Number.parseInt(String(raw ?? ''), 10);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, n));

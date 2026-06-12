@@ -101,6 +101,186 @@ export interface LargeFile {
   modifiedAt: number;
 }
 
+export interface LargeFolder {
+  name: string;
+  path: string;
+  size: number;
+  /** Recursive file count. */
+  fileCount: number;
+  modifiedAt: number;
+}
+
+/* ---------- Duplicate finder ---------- */
+
+/** One group of content-identical files. */
+export interface DuplicateGroup {
+  /** Full SHA-256 of the content (hex). */
+  hash: string;
+  /** Size of one copy, bytes. */
+  size: number;
+  count: number;
+  /** Bytes freed by keeping a single copy: size × (count − 1). */
+  reclaimable: number;
+  /** Newest first. */
+  files: { name: string; path: string; modifiedAt: number }[];
+}
+
+export type DuplicateJobStatus = 'running' | 'complete' | 'error';
+
+/** Mutable record of one background hashing job (per scanId). */
+export interface DuplicateJob {
+  scanId: string;
+  status: DuplicateJobStatus;
+  /** Files below this many bytes were not considered. */
+  minSize: number;
+  /** Hashing progress for the UI. */
+  hashed: number;
+  toHash: number;
+  cancelled: boolean;
+  /** Populated once status === 'complete' (top groups by reclaimable). */
+  groups?: DuplicateGroup[];
+  groupCount?: number;
+  totalReclaimable?: number;
+  error?: string;
+  startedAt: number;
+  finishedAt?: number;
+}
+
+/* ---------- Empty folders ---------- */
+
+export interface EmptyFoldersResult {
+  /** Topmost recursively-empty dirs (parents themselves not empty). */
+  folders: { name: string; path: string }[];
+  /** All empty dirs found, including those nested inside the ones above. */
+  totalCount: number;
+  truncated: boolean;
+}
+
+/* ---------- Snapshots (size history / Trends) ---------- */
+
+export interface SnapshotTopEntry {
+  name: string;
+  path: string;
+  size: number;
+  type: 'file' | 'dir';
+}
+
+/** Lightweight persisted record of one completed scan. */
+export interface Snapshot {
+  id: string;
+  rootPath: string;
+  takenAt: number;
+  totalSize: number;
+  fileCount: number;
+  dirCount: number;
+  /** Direct children of the root at scan time, largest first. */
+  topEntries: SnapshotTopEntry[];
+}
+
+export interface SnapshotRef {
+  id: string;
+  takenAt: number;
+  totalSize: number;
+}
+
+export interface SnapshotDeltaEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'dir';
+  /** null = entry did not exist in that snapshot. */
+  sizeA: number | null;
+  sizeB: number | null;
+  delta: number;
+}
+
+export interface SnapshotDiff {
+  a: SnapshotRef;
+  b: SnapshotRef;
+  rootPath: string;
+  totalDelta: number;
+  entries: SnapshotDeltaEntry[];
+}
+
+/* ---------- Scan comparison ---------- */
+
+export type CompareChange = 'added' | 'removed' | 'grew' | 'shrank';
+
+export interface CompareEntry {
+  path: string;
+  name: string;
+  type: 'file' | 'dir';
+  sizeA: number | null;
+  sizeB: number | null;
+  delta: number;
+  change: CompareChange;
+}
+
+export interface CompareResult {
+  scanIdA: string;
+  scanIdB: string;
+  rootPath: string;
+  totalDelta: number;
+  entries: CompareEntry[];
+  truncated: boolean;
+}
+
+/* ---------- Settings: ignore list + scheduled scans ---------- */
+
+export type IgnoreScope = 'scan' | 'suggest' | 'both';
+
+export interface IgnoreEntry {
+  /** Absolute path, path glob, or bare name glob (e.g. "node_modules", "*.iso"). */
+  pattern: string;
+  /** 'scan' = skip while walking; 'suggest' = hide from cleanup suggestions. */
+  scope: IgnoreScope;
+}
+
+export interface ScheduleConfig {
+  id: string;
+  path: string;
+  /** Hours between runs, e.g. 24 = daily. */
+  intervalHours: number;
+  /** Alert when growth since the previous snapshot exceeds either bound. */
+  thresholdPct?: number;
+  thresholdBytes?: number;
+  enabled: boolean;
+  lastRunAt?: number;
+}
+
+export interface AppSettings {
+  ignore: IgnoreEntry[];
+  schedules: ScheduleConfig[];
+}
+
+/** Emitted when a scheduled scan crosses its growth threshold. */
+export interface GrowthNotification {
+  id: string;
+  path: string;
+  at: number;
+  message: string;
+  prevSize: number;
+  newSize: number;
+  delta: number;
+}
+
+/* ---------- Smart cleanup suggestions ---------- */
+
+export interface CleanupSuggestionItem {
+  name: string;
+  path: string;
+  size: number;
+  type: 'file' | 'dir';
+  modifiedAt: number;
+}
+
+export interface CleanupSuggestionGroup {
+  id: string;
+  title: string;
+  description: string;
+  items: CleanupSuggestionItem[];
+  totalSize: number;
+}
+
 /** Uniform API error body. */
 export interface ApiError {
   error: string;

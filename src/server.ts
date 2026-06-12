@@ -4,9 +4,13 @@ import http from 'http';
 import { scanRouter, drainSseClients, activeSseCount } from './api/scanRoutes';
 import { fileRouter } from './api/fileRoutes';
 import { systemRouter } from './api/systemRoutes';
+import { insightRouter } from './api/insightRoutes';
+import { settingsRouter } from './api/settingsRoutes';
 import { rateLimiter } from './middleware/rateLimiter';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { cancelAllScans } from './services/diskScanner';
+import { cancelAllDuplicateJobs } from './services/duplicateFinder';
+import { startScheduler, stopScheduler } from './services/scheduler';
 
 /**
  * Builds the Express app. Kept separate from the listen() call so the same
@@ -29,6 +33,8 @@ export function createApp(publicDir: string): express.Express {
   app.use('/api', scanRouter);
   app.use('/api', fileRouter);
   app.use('/api', systemRouter);
+  app.use('/api', insightRouter);
+  app.use('/api', settingsRouter);
 
   // Frontend: the single-file UI.
   app.use(express.static(publicDir, { index: 'index.html' }));
@@ -63,11 +69,16 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
   const shutdown = (): void => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stopScheduler(); // no new scheduled scans
     cancelAllScans(); // stop walkers cooperatively
+    cancelAllDuplicateJobs(); // stop background hashing
     drainSseClients(); // send 'shutdown' event, then end each stream
     server.close();
     // Don't process.exit here — the caller (CLI or Electron) decides that.
   };
+
+  // Recurring scans (and their growth alerts) live for the server's lifetime.
+  startScheduler();
 
   return new Promise<RunningServer>((resolve, reject) => {
     server.once('error', reject);
