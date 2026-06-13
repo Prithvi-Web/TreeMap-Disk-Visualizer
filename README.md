@@ -27,9 +27,17 @@ Grab the latest installer from the [**Releases page**](https://github.com/Prithv
 - **Windows** — `TreeMap Setup x.y.z.exe`. Run it and follow the installer.
 
 > **First-launch security prompt:** because the app isn't signed with a paid
-> developer certificate, your OS shows a one-time warning.
+> Apple/Microsoft developer certificate, your OS shows a one-time warning.
 > **macOS:** right-click the app → **Open** → **Open**. **Windows:** click
 > **More info** → **Run anyway**. After the first launch it opens normally.
+>
+> **macOS says "TreeMap is damaged and can't be opened"?** That happens when the
+> download's quarantine flag is still set. Clear it once, then launch normally —
+> open **Terminal** and paste:
+>
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/TreeMap.app
+> ```
 
 No Node.js or setup required — the desktop app is self-contained and scans the
 disk of the computer it runs on.

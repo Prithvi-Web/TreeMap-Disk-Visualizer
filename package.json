@@ -1,6 +1,6 @@
 {
   "name": "treemap",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "TreeMap — a GrandPerspective-style disk space visualizer for macOS, Linux and Windows",
   "author": "Prithvi-Web",
   "main": "electron/main.js",
@@ -34,6 +34,7 @@
   "build": {
     "appId": "com.prithviweb.treemap",
     "productName": "TreeMap",
+    "afterPack": "scripts/afterPack.js",
     "directories": {
       "output": "release",
       "buildResources": "build"
