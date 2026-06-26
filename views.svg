@@ -1,0 +1,52 @@
+<svg width="1280" height="150" viewBox="0 0 1280 150" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="chip" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#101a2e"/>
+      <stop offset="1" stop-color="#0c1424"/>
+    </linearGradient>
+  </defs>
+  <g font-size="15" font-weight="700">
+    <!-- row of 8 view chips -->
+    <g transform="translate(20,18)">
+      <rect width="290" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#2dd4bf"/>
+      <text x="48" y="31" fill="#dbe4f3">📊 Dashboard</text>
+    </g>
+    <g transform="translate(320,18)">
+      <rect width="290" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#fbbf24"/>
+      <text x="48" y="31" fill="#dbe4f3">🗺️ Treemap</text>
+    </g>
+    <g transform="translate(620,18)">
+      <rect width="290" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#f43f5e"/>
+      <text x="48" y="31" fill="#dbe4f3">🔲 Grid</text>
+    </g>
+    <g transform="translate(920,18)">
+      <rect width="340" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#34d399"/>
+      <text x="48" y="31" fill="#dbe4f3">🧬 Duplicates</text>
+    </g>
+
+    <g transform="translate(20,80)">
+      <rect width="290" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#facc15"/>
+      <text x="48" y="31" fill="#dbe4f3">📈 Trends</text>
+    </g>
+    <g transform="translate(320,80)">
+      <rect width="290" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#22d3ee"/>
+      <text x="48" y="31" fill="#dbe4f3">🔀 Compare</text>
+    </g>
+    <g transform="translate(620,80)">
+      <rect width="290" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#fb7185"/>
+      <text x="48" y="31" fill="#dbe4f3">🧹 Clean&#160;Up</text>
+    </g>
+    <g transform="translate(920,80)">
+      <rect width="340" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#fbbf24"/>
+      <text x="48" y="31" fill="#dbe4f3">⏰ Scheduled&#160;+&#160;🚫 Ignore</text>
+    </g>
+  </g>
+</svg>

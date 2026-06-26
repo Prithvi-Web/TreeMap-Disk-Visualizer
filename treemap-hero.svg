@@ -1,0 +1,116 @@
+<svg width="1280" height="440" viewBox="0 0 1280 440" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="440" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="0.55" stop-color="#0e1729"/>
+      <stop offset="1" stop-color="#0a0f1c"/>
+    </linearGradient>
+    <radialGradient id="glowT" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#2dd4bf" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#2dd4bf" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowR" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#f43f5e" stop-opacity="0.40"/>
+      <stop offset="1" stop-color="#f43f5e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2dd4bf"/>
+      <stop offset="0.5" stop-color="#fbbf24"/>
+      <stop offset="1" stop-color="#f43f5e"/>
+    </linearGradient>
+    <linearGradient id="word" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#cbd5e1"/>
+    </linearGradient>
+    <pattern id="grid" width="34" height="34" patternUnits="userSpaceOnUse">
+      <path d="M34 0H0V34" fill="none" stroke="#1c2740" stroke-width="1"/>
+    </pattern>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+    <clipPath id="round"><rect x="0" y="0" width="1280" height="440" rx="20"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#round)">
+    <rect width="1280" height="440" fill="url(#bg)"/>
+    <rect width="1280" height="440" fill="url(#grid)" opacity="0.6"/>
+    <circle cx="120" cy="80" r="320" fill="url(#glowT)"/>
+    <circle cx="1180" cy="400" r="340" fill="url(#glowR)"/>
+
+    <!-- LEFT: wordmark + copy -->
+    <g transform="translate(72,118)">
+      <!-- legend dots -->
+      <g>
+        <circle cx="6" cy="-44" r="6" fill="#2dd4bf"/>
+        <circle cx="28" cy="-44" r="6" fill="#fbbf24"/>
+        <circle cx="50" cy="-44" r="6" fill="#f43f5e"/>
+        <text x="70" y="-39" fill="#7c8aa5" font-size="14" letter-spacing="3" font-weight="600">DISK&#160;SPACE&#160;VISUALIZER</text>
+      </g>
+
+      <text x="0" y="36" fill="url(#word)" font-size="92" font-weight="800" letter-spacing="-2">TreeMap</text>
+
+      <text x="2" y="92" fill="#e2e8f0" font-size="27" font-weight="600">See exactly what's eating your disk.</text>
+      <text x="2" y="128" fill="#8a99b5" font-size="17">Squarified treemaps · duplicate hunting · one-click cleanup —</text>
+      <text x="2" y="152" fill="#8a99b5" font-size="17">for macOS, Linux &amp; Windows. Nothing leaves your machine.</text>
+
+      <!-- pseudo buttons -->
+      <g transform="translate(2,186)">
+        <rect x="0" y="0" width="186" height="46" rx="10" fill="#2dd4bf"/>
+        <text x="93" y="29" text-anchor="middle" fill="#06281f" font-size="16" font-weight="700">⬇  Download app</text>
+        <rect x="202" y="0" width="168" height="46" rx="10" fill="none" stroke="#33415c" stroke-width="1.5"/>
+        <text x="286" y="29" text-anchor="middle" fill="#c7d2e4" font-size="16" font-weight="600">npm start</text>
+      </g>
+    </g>
+
+    <!-- RIGHT: live treemap panel -->
+    <g transform="translate(744,40)" filter="url(#soft)">
+      <rect x="0" y="0" width="472" height="360" rx="16" fill="#0c1424" stroke="#1f2c47" stroke-width="1.5"/>
+      <!-- window chrome -->
+      <circle cx="22" cy="24" r="6" fill="#f43f5e"/>
+      <circle cx="42" cy="24" r="6" fill="#fbbf24"/>
+      <circle cx="62" cy="24" r="6" fill="#2dd4bf"/>
+      <text x="236" y="29" text-anchor="middle" fill="#5f6f8c" font-size="13" font-weight="600">~/Projects&#160;&#160;·&#160;&#160;48.2&#160;GB</text>
+
+      <!-- treemap blocks (squarified-ish) -->
+      <g transform="translate(16,48)" stroke="#0c1424" stroke-width="3">
+        <!-- big red -->
+        <rect x="0" y="0" width="232" height="180" rx="6" fill="#f43f5e"/>
+        <text x="14" y="26" fill="#3a0a14" font-size="15" font-weight="700">node_modules</text>
+        <text x="14" y="46" fill="#5e1320" font-size="12">21.4 GB</text>
+
+        <!-- amber tall -->
+        <rect x="236" y="0" width="204" height="104" rx="6" fill="#fbbf24"/>
+        <text x="250" y="26" fill="#4a3404" font-size="14" font-weight="700">video-assets</text>
+        <text x="250" y="45" fill="#6b4c08" font-size="12">9.8 GB</text>
+
+        <!-- teal mid -->
+        <rect x="236" y="108" width="120" height="72" rx="6" fill="#2dd4bf"/>
+        <text x="248" y="132" fill="#063a31" font-size="12" font-weight="700">.git</text>
+        <text x="248" y="150" fill="#0a5447" font-size="11">5.1 GB</text>
+
+        <!-- small amber -->
+        <rect x="360" y="108" width="80" height="72" rx="6" fill="#f59e0b"/>
+        <text x="370" y="132" fill="#4a3404" font-size="11" font-weight="700">build</text>
+
+        <!-- bottom row -->
+        <rect x="0" y="184" width="150" height="92" rx="6" fill="#22c1a8"/>
+        <text x="13" y="208" fill="#063a31" font-size="13" font-weight="700">cache</text>
+        <text x="13" y="226" fill="#0a5447" font-size="11">3.3 GB</text>
+
+        <rect x="154" y="184" width="120" height="92" rx="6" fill="#34d399"/>
+        <text x="166" y="208" fill="#063a31" font-size="12" font-weight="700">photos</text>
+
+        <rect x="278" y="184" width="88" height="92" rx="6" fill="#facc15"/>
+        <rect x="370" y="184" width="70" height="44" rx="6" fill="#fb7185"/>
+        <rect x="370" y="232" width="70" height="44" rx="6" fill="#5eead4"/>
+      </g>
+
+      <!-- footer scale -->
+      <rect x="16" y="332" width="440" height="6" rx="3" fill="url(#bar)"/>
+      <text x="16" y="324" fill="#5f6f8c" font-size="11">smaller</text>
+      <text x="456" y="324" text-anchor="end" fill="#5f6f8c" font-size="11">LARGER</text>
+    </g>
+  </g>
+
+  <rect x="0.5" y="0.5" width="1279" height="439" rx="20" fill="none" stroke="#1f2c47" stroke-width="1"/>
+</svg>
