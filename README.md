@@ -1,144 +1,240 @@
-# TreeMap 🟩🟨🟥
+<div align="center">
+🟩🟨🟥 TreeMap
 
-A GrandPerspective-style **disk space visualizer** for macOS, Linux and Windows.
+See exactly what's eating your disk.
 
-Scan any folder and see exactly what's eating your disk:
+A GrandPerspective-style disk-space visualizer for macOS, Linux & Windows.
+Point it at any folder and watch every byte light up — color-coded, drillable, and one click away from the Trash.
 
-- **Dashboard** — disk usage ring, live scan progress, file-type donut chart, top-10 largest files **and folders** (click a folder to jump into the treemap)
-- **Treemap** — squarified treemap of every file, sized by bytes, colored teal → amber → red by size; click folders to drill in, breadcrumbs + zoom-out button to climb back up, a search box that highlights matches (`report`, `*.zip`), and one-click **PNG / SVG export**
-- **Grid** — size-proportional icon grid with multi-select, sorting and virtual scrolling
-- **Duplicates** — finds true duplicate files (size + streamed SHA-256 content hash), grouped with reclaimable space per group; auto-select keeps the newest copy of each
-- **Trends** — every scan saves a lightweight snapshot, charted over time per folder, with a "what grew / shrank since last scan" breakdown
-- **Compare** — pick any two scans of the same folder for a file-level diff: added, removed, grew, shrank
-- **Clean Up** — three modes: custom rules (old / huge / by extension / duplicated), **Smart Suggestions** (`node_modules`, build output, browser & developer caches, old Downloads, OS junk — with macOS/Windows/Linux-specific paths), and **Empty Folders**. Everything goes to the system **Trash** (never hard-deleted — always recoverable)
-- **Scheduled scans** — re-scan folders on a schedule with growth-threshold alerts (native notifications in the desktop app)
-- **Ignore list** — "don't scan" and/or "don't suggest" patterns: full paths, names like `node_modules`, or globs like `*.iso` and `~/projects/**/dist`
+<br>
+Show Image
+Show Image
+Show Image
+Show Image
 
-Built with Node.js + Express 5 + TypeScript on the backend and a single zero-dependency
-`index.html` on the frontend (hand-coded Canvas 2D — no React, no D3, no Chart.js).
-Ships both as a web app and as a downloadable **desktop app** (Electron) for
-macOS and Windows.
+<br>
+Show Image
+Show Image
+Show Image
+Show Image
+Show Image
+Show Image
 
-## Download the app (for users)
+<br>
+Download ·
+Features ·
+Run from source ·
+API ·
+Safety
 
-Grab the latest installer from the [**Releases page**](https://github.com/Prithvi-Web/Treemap/releases):
+</div>
+<br>
 
-- **macOS** — `TreeMap-x.y.z-arm64.dmg`. Open it, drag TreeMap to Applications, launch it.
-- **Windows** — `TreeMap Setup x.y.z.exe`. Run it and follow the installer.
+[!TIP]
+No Node. No setup. No telemetry. The desktop app is fully self-contained and scans the
+disk of the machine it runs on. Deleted files always go to your system Trash — nothing is
+ever hard-deleted, so every action is recoverable.
 
-> **First-launch security prompt:** because the app isn't signed with a paid
-> Apple/Microsoft developer certificate, your OS shows a one-time warning.
-> **macOS:** right-click the app → **Open** → **Open**. **Windows:** click
-> **More info** → **Run anyway**. After the first launch it opens normally.
->
-> **macOS says "TreeMap is damaged and can't be opened"?** That happens when the
-> download's quarantine flag is still set. Clear it once, then launch normally —
-> open **Terminal** and paste:
->
-> ```bash
-> xattr -dr com.apple.quarantine /Applications/TreeMap.app
-> ```
 
-No Node.js or setup required — the desktop app is self-contained and scans the
-disk of the computer it runs on.
 
-### Desktop extras
+<br>
+text        ┌────────────────────────────┬──────────────┬────────┐
+        │                            │              │  .iso  │
+        │       node_modules         │   Photos     ├────────┤
+        │       2.4 GB  🟥           │   1.1 GB 🟨  │  logs  │
+        │                            │              ├──┬─────┤
+        ├──────────────┬─────────────┼──────┬───────┤▓▓│ ░░░ │
+        │  build/  🟨  │  cache/ 🟩  │ .git │ docs  │▓▓│ ░░░ │
+        └──────────────┴─────────────┴──────┴───────┴──┴─────┘
+            biggest ───────────────────────────────► smallest
 
-- **Menu bar / tray icon** with live free-disk stats and quick actions (open app, scan home folder, quit). Closing the window keeps TreeMap in the tray so scheduled scans keep running — quit from the tray menu.
-- **Drag & drop** a folder onto the window or the dock icon to scan it instantly.
-- **Auto-updates** from GitHub Releases (Windows; asks before restarting). On macOS, auto-update requires a code-signed build, so unsigned builds simply skip it — grab new versions from the Releases page.
-- **Growth alerts** from scheduled scans arrive as native notifications.
+<br>
+✨ What's inside
 
-## Run from source / web mode (3 commands)
+TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Eight views, one zero-dependency frontend.
 
-```bash
-npm install
+<table>
+<tr>
+<td width="50%" valign="top">
+📊 Dashboard
+
+Disk-usage ring, live scan progress, file-type donut chart, and the top-10 largest files and folders. Click a folder to leap straight into the treemap.
+
+</td>
+<td width="50%" valign="top">
+🗺️ Treemap
+
+A squarified treemap of every file, sized by bytes and colored teal → amber → red. Drill into folders, climb back with breadcrumbs + zoom-out, search with highlights (report, *.zip), and export PNG / SVG in one click.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+🔲 Grid
+
+A size-proportional icon grid with multi-select, sorting, and virtual scrolling — buttery even on huge folders.
+
+</td>
+<td width="50%" valign="top">
+🧬 Duplicates
+
+Finds true duplicates (size + streamed SHA-256), grouped with reclaimable space per group. Auto-select keeps the newest copy of each.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+📈 Trends
+
+Every scan saves a lightweight snapshot, charted over time per folder — with a clear "what grew / what shrank since last scan" breakdown.
+
+</td>
+<td width="50%" valign="top">
+🔀 Compare
+
+Pick any two scans of the same folder for a file-level diff: added, removed, grew, shrank. Subtrees collapse to one row instead of thousands.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+🧹 Clean Up
+
+Three modes — custom rules (old / huge / by extension / duplicated), Smart Suggestions (node_modules, build output, caches, old Downloads, OS junk, OS-aware paths), and Empty Folders. Everything → Trash.
+
+</td>
+<td width="50%" valign="top">
+⏰ Scheduled scans + 🚫 Ignore list
+
+Re-scan folders on a schedule with growth-threshold alerts (native desktop notifications). Tell it what to skip with paths, names, or globs like *.iso and ~/projects/**/dist.
+
+</td>
+</tr>
+</table>
+<br>
+🏗️ How it's built
+
+Node.js + Express 5 + TypeScript on the backend. A single, zero-dependency index.html on the frontend — hand-coded Canvas 2D, no React, no D3, no Chart.js. Ships as a web app and a downloadable Electron desktop app for macOS and Windows.
+
+<br>
+⬇️ Download the app (for users)
+
+Grab the latest installer from the Releases page:
+
+PlatformFileHow🍎 macOSTreeMap-x.y.z-arm64.dmgOpen it, drag TreeMap to Applications, launch.🪟 WindowsTreeMap Setup x.y.z.exeRun it and follow the installer.
+
+
+[!IMPORTANT]
+First-launch security prompt. Because the app isn't signed with a paid Apple/Microsoft
+developer certificate, your OS shows a one-time warning.
+
+
+macOS: right-click the app → Open → Open
+Windows: click More info → Run anyway
+
+
+After the first launch it opens normally.
+
+
+
+<details>
+<summary><b>🛠️ macOS says "TreeMap is damaged and can't be opened"?</b></summary>
+<br>
+That happens when the download's quarantine flag is still set. Clear it once, then launch normally — open Terminal and paste:
+
+bashxattr -dr com.apple.quarantine /Applications/TreeMap.app
+
+</details>
+
+No Node.js or setup required — the desktop app is self-contained and scans the disk of the computer it runs on.
+
+
+
+🖥️ Desktop extras
+
+
+📌 Menu bar / tray icon with live free-disk stats and quick actions (open app, scan home folder, quit). Close the window and TreeMap stays in the tray so scheduled scans keep running — quit from the tray menu.
+🖱️ Drag & drop a folder onto the window or dock icon to scan it instantly.
+🔄 Auto-updates from GitHub Releases (Windows; asks before restarting). On macOS, auto-update needs a code-signed build, so unsigned builds skip it — grab new versions from Releases.
+🔔 Growth alerts from scheduled scans arrive as native notifications.
+
+
+<br>
+🚀 Run from source / web mode (3 commands)
+
+bashnpm install
 npm run build
 npm start
-```
 
-Then open **http://127.0.0.1:4280** in your browser.
+Then open http://127.0.0.1:4280 in your browser.
 
-> For development with auto-reload: `npm run dev`
 
-Requires **Node.js 20+**. On Linux, trash support uses `gio` (preinstalled on
-GNOME/KDE distros). On macOS it uses Finder via `osascript`; on Windows, the
-Recycle Bin via PowerShell.
+💡 For development with auto-reload: npm run dev
 
-## Build the desktop app
 
-```bash
-npm install
+
+Requires Node.js 20+. Trash support uses gio on Linux (preinstalled on GNOME/KDE), Finder via osascript on macOS, and the Recycle Bin via PowerShell on Windows.
+
+<br>
+📦 Build the desktop app
+
+bashnpm install
 npm run app          # build + launch the desktop app locally
 npm run dist:mac     # produce a macOS .dmg in release/
 npm run dist:win     # produce a Windows installer in release/
-```
 
-> You can only build the macOS app on a Mac and the Windows app on Windows.
-> To get **both** without owning both machines, use the automated release
-> below — GitHub builds them for you.
 
-## Publish a new version (automated)
+⚠️ You can only build the macOS app on a Mac and the Windows app on Windows.
+To get both without owning both machines, use the automated release below — GitHub builds them for you.
 
-A GitHub Actions workflow (`.github/workflows/release.yml`) builds the macOS
-**and** Windows installers on GitHub's servers and attaches them to a Release —
-including the `latest*.yml` metadata files the in-app auto-updater checks.
+
+
+<br>
+🤖 Publish a new version (automated)
+
+A GitHub Actions workflow (.github/workflows/release.yml) builds the macOS and Windows installers on GitHub's servers and attaches them to a Release — including the latest*.yml metadata the in-app auto-updater checks.
 
 To cut a release:
 
-1. Bump the `version` in `package.json` (e.g. `1.2.1`).
-2. Create a **tag** that matches, prefixed with `v` (e.g. `v1.2.1`), and push it.
-   In GitHub Desktop: **Repository → Push**, then on github.com go to
-   **Releases → Draft a new release → Choose a tag →** type `v1.2.1` → **Publish**.
-3. The workflow runs automatically, builds both installers, and uploads them to
-   that Release. After a few minutes the download links appear on the Releases page.
 
-You can also trigger a test build anytime from the repo's **Actions** tab →
-**Build & Release → Run workflow** (installers are saved as downloadable
-artifacts instead of a Release).
+Bump the version in package.json (e.g. 1.2.1).
+Create a matching tag prefixed with v (e.g. v1.2.1) and push it.
+In GitHub Desktop: Repository → Push, then on github.com: Releases → Draft a new release → Choose a tag → type v1.2.1 → Publish.
+The workflow runs automatically, builds both installers, and uploads them. After a few minutes the download links appear on the Releases page.
 
-## API overview
 
-| Endpoint | Description |
-|---|---|
-| `POST /api/scan` | Start scanning a folder → `{ scanId }` |
-| `GET /api/scan/:id/progress` | Live scan progress (Server-Sent Events) |
-| `GET /api/scan/:id/result` | Full file tree (202 while running) |
-| `GET /api/scan/:id/treemap` | Pre-computed squarified treemap layout |
-| `GET /api/scans` | Completed scans currently in memory |
-| `GET /api/large-files?scanId=` | Top N largest files |
-| `GET /api/large-folders?scanId=` | Top N largest folders (recursive sizes) |
-| `GET /api/file-types?scanId=` | Size breakdown by extension |
-| `GET /api/duplicates?scanId=` | Duplicate groups (starts hashing; poll until complete) |
-| `GET /api/empty-folders?scanId=` | Recursively empty folders (`ignoreJunk` configurable) |
-| `GET /api/compare?scanIdA=&scanIdB=` | File-level diff of two scans of the same root |
-| `GET /api/snapshots` | Scan history: roots, per-root snapshots (`?path=`), or all (`?all=true`) |
-| `GET /api/snapshots/compare?a=&b=` | Top-level deltas between two snapshots |
-| `GET /api/cleanup/suggestions?scanId=` | Smart cleanup suggestions (OS-aware rules) |
-| `GET /api/settings` / `PUT /api/settings` | Ignore list + scheduled scans |
-| `GET /api/notifications` | Growth alerts from scheduled scans |
-| `GET /api/system` | Disk totals, platform, suggested folders |
-| `GET /api/fs/list?path=` | Folder browser (powers the path picker) |
-| `DELETE /api/files` | Move files to the system trash |
-| `POST /api/files/open` | Open / reveal a path in Finder & co. |
 
-## Safety
+🧪 You can also trigger a test build anytime from Actions → Build & Release → Run workflow (installers are saved as downloadable artifacts instead of a Release).
 
-- Paths are sanitized and traversal-proofed; system dirs (`/proc`, `/sys`, `/dev`,
-  `/run`, `C:\Windows\System32`, …) are blocked outright
-- Trash/open endpoints only accept paths **inside a folder you scanned**
-- Deletes always go through the OS trash — undo from Finder/Explorer any time
-- The Duplicates view refuses to trash *every* copy in a group — at least one stays
-- Token-bucket rate limiting (10 req/s per IP), graceful SIGTERM shutdown that
-  drains live SSE streams and stops background hashing & scheduled scans
-- Scan results live in memory only and auto-expire after 30 minutes; history
-  snapshots and settings are small JSON files in the platform app-data folder
-  (`~/Library/Application Support/TreeMap`, `%APPDATA%\TreeMap`, or `~/.config/treemap`)
 
-## Project layout
 
-```
-src/
+<br>
+🔌 API overview
+
+<details>
+<summary><b>Click to expand the full endpoint table</b></summary>
+<br>
+EndpointDescriptionPOST /api/scanStart scanning a folder → { scanId }GET /api/scan/:id/progressLive scan progress (Server-Sent Events)GET /api/scan/:id/resultFull file tree (202 while running)GET /api/scan/:id/treemapPre-computed squarified treemap layoutGET /api/scansCompleted scans currently in memoryGET /api/large-files?scanId=Top N largest filesGET /api/large-folders?scanId=Top N largest folders (recursive sizes)GET /api/file-types?scanId=Size breakdown by extensionGET /api/duplicates?scanId=Duplicate groups (starts hashing; poll until complete)GET /api/empty-folders?scanId=Recursively empty folders (ignoreJunk configurable)GET /api/compare?scanIdA=&scanIdB=File-level diff of two scans of the same rootGET /api/snapshotsScan history: roots, per-root snapshots (?path=), or all (?all=true)GET /api/snapshots/compare?a=&b=Top-level deltas between two snapshotsGET /api/cleanup/suggestions?scanId=Smart cleanup suggestions (OS-aware rules)GET /api/settings · PUT /api/settingsIgnore list + scheduled scansGET /api/notificationsGrowth alerts from scheduled scansGET /api/systemDisk totals, platform, suggested foldersGET /api/fs/list?path=Folder browser (powers the path picker)DELETE /api/filesMove files to the system trashPOST /api/files/openOpen / reveal a path in Finder & co.
+
+</details>
+<br>
+🛡️ Safety
+
+Disk tools should never lose your data. TreeMap is built defensively:
+
+
+🔒 Paths are sanitized and traversal-proofed; system dirs (/proc, /sys, /dev, /run, C:\Windows\System32, …) are blocked outright.
+🎯 Trash/open endpoints only accept paths inside a folder you scanned.
+♻️ Deletes always go through the OS Trash — undo from Finder/Explorer any time.
+🧬 The Duplicates view refuses to trash every copy in a group — at least one always stays.
+🚦 Token-bucket rate limiting (10 req/s per IP), plus graceful SIGTERM shutdown that drains live SSE streams and stops background hashing & scheduled scans.
+⏳ Scan results live in memory only and auto-expire after 30 minutes; history snapshots and settings are small JSON files in the platform app-data folder (~/Library/Application Support/TreeMap, %APPDATA%\TreeMap, or ~/.config/treemap).
+
+
+<br>
+🗂️ Project layout
+
+textsrc/
   api/          Express routes (scan, files, system, insights, settings)
   services/     DiskScanner (8-way concurrent walker), Cleaner (trash/open),
                 DuplicateFinder (staged hashing), Snapshots (Trends history),
@@ -155,18 +251,25 @@ public/
   index.html    The entire frontend (inline CSS + JS, zero dependencies)
 scripts/
   gen-tray-icon.js  One-time generator for the tray template icons
-```
 
-## Design decisions worth knowing
+<br>
+🧠 Design decisions worth knowing
 
-- **Snapshots are automatic** — one is saved at the end of every successful scan,
-  so Trends needs no setup. Only totals + top-level entry sizes are stored
-  (a few KB each, capped at 200 per folder).
-- **The scheduler is a 60-second `setInterval`**, not `node-cron` — hour-level
-  granularity doesn't justify a dependency. Schedules fire while the app runs
-  (the desktop app keeps running in the tray).
-- **Duplicate detection is staged** (size → first 64 KB hash → full SHA-256) so
-  scans with hundreds of thousands of files finish hashing in seconds, and only
-  true content matches are reported.
-- **Compare collapses subtrees**: a deleted or added folder shows as one row,
-  not thousands of file rows.
+
+Snapshots are automatic — one is saved after every successful scan, so Trends needs zero setup. Only totals + top-level entry sizes are stored (a few KB each, capped at 200 per folder).
+The scheduler is a 60-second setInterval, not node-cron — hour-level granularity doesn't justify a dependency. Schedules fire while the app runs (the desktop app keeps running in the tray).
+Duplicate detection is staged (size → first 64 KB hash → full SHA-256) so scans with hundreds of thousands of files finish hashing in seconds, and only true content matches are reported.
+Compare collapses subtrees — a deleted or added folder shows as one row, not thousands of file rows.
+
+
+<br>
+
+<div align="center">
+Found this useful?
+
+⭐ Star the repo to support development · 🍴 Fork it to make it yours · 🐛 Open an issue if something breaks
+
+<br>
+TreeMap — built with 🟩🟨🟥 by Prithvi-Web
+
+</div>
