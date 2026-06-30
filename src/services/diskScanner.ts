@@ -362,6 +362,7 @@ async function processDirectory(
         scan.cloudFiles = (scan.cloudFiles ?? 0) + 1;
         scan.cloudBytes = (scan.cloudBytes ?? 0) + child.size;
       }
+      if (child.type === 'dir' && child.name === '.git') dirNode.gitRepo = true;
       children.push(child);
       scan.scanned++;
       if (child.type === 'dir') {

@@ -171,6 +171,7 @@ export function buildTreemap(root: FileNode, options: TreemapOptions): TreemapNo
         w: r.w,
         h: r.h,
         cloudPlaceholder: child.cloudPlaceholder,
+        gitRepo: child.gitRepo,
       });
 
       if (canExpand) {

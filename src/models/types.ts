@@ -25,6 +25,8 @@ export interface FileNode {
   cloudPlaceholder?: boolean;
   /** Cloud provider detected for a placeholder, when inferable from the path. */
   cloudProvider?: 'icloud' | 'onedrive' | 'dropbox';
+  /** Directory that is a git repository root (directly contains a .git directory). */
+  gitRepo?: boolean;
 }
 
 export type ScanStatus = 'running' | 'complete' | 'error';
@@ -83,6 +85,8 @@ export interface TreemapNode {
   h: number;
   /** Cloud placeholder/stub (online-only file) — rendered with a cloud marker. */
   cloudPlaceholder?: boolean;
+  /** Git repository root — rendered with a branch marker. */
+  gitRepo?: boolean;
 }
 
 /** Events streamed over the SSE progress endpoint. */

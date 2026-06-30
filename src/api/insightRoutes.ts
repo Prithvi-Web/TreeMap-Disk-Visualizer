@@ -14,7 +14,8 @@ import {
   getSnapshot,
   diffSnapshots,
 } from '../services/snapshots';
-import { guardQueryPath } from '../middleware/pathGuard';
+import { guardQueryPath, guardBodyPath, requireInsideScanRoot } from '../middleware/pathGuard';
+import { findGitRepos, runGitGc } from '../services/gitScanner';
 import { AppError } from '../middleware/errorHandler';
 import { CompareResult, ScanResult } from '../models/types';
 
@@ -78,6 +79,21 @@ insightRouter.get('/empty-folders', (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const ignoreJunk = String(req.query.ignoreJunk ?? 'true') !== 'false';
   res.json(collectEmptyFolders(scan.root, ignoreJunk));
+});
+
+/** GET /api/git/repos?scanId= — pack/loose/LFS breakdown of every .git in the scan. */
+insightRouter.get('/git/repos', (req: Request, res: Response) => {
+  const scan = requireCompleteScan(req, req.query.scanId);
+  res.json({ repos: findGitRepos(scan.root) });
+});
+
+/** POST /api/git/gc { path, confirm:true } — run `git gc` in a scanned repo. */
+insightRouter.post('/git/gc', guardBodyPath, requireInsideScanRoot, async (req: Request, res: Response) => {
+  const { path: repoPath, confirm } = req.body as { path: string; confirm?: boolean };
+  if (confirm !== true) {
+    throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } to run git gc');
+  }
+  res.json(await runGitGc(repoPath));
 });
 
 /** GET /api/scans — completed scans currently in memory (Compare picker). */
