@@ -7,6 +7,7 @@ import {
   compareTrees,
 } from '../services/diskScanner';
 import { getDuplicateJob } from '../services/duplicateFinder';
+import { getNearDupeJob } from '../services/perceptualDupes';
 import {
   listSnapshots,
   listSnapshotRoots,
@@ -62,6 +63,39 @@ insightRouter.get('/duplicates', (req: Request, res: Response) => {
     groups: job.groups ?? [],
     groupCount: job.groupCount ?? 0,
     totalReclaimable: job.totalReclaimable ?? 0,
+    tookMs: (job.finishedAt ?? job.startedAt) - job.startedAt,
+  });
+});
+
+/**
+ * GET /api/near-duplicates?scanId=&threshold=10
+ * Perceptual (dHash) near-duplicate image detection (Feature 12). Poll like
+ * /duplicates: 202 + progress while hashing, 200 + clusters when done.
+ * When no image decoder is available, returns 200 with available:false.
+ */
+insightRouter.get('/near-duplicates', (req: Request, res: Response) => {
+  const scan = requireCompleteScan(req, req.query.scanId);
+  const threshold = clampInt(req.query.threshold, 10, 0, 32);
+
+  const job = getNearDupeJob(scan, threshold);
+  if (job.status === 'running') {
+    res.status(202).json({ status: 'running', hashed: job.hashed, toHash: job.toHash });
+    return;
+  }
+  if (job.status === 'error') {
+    throw new AppError(500, 'NEAR_DUPLICATES_FAILED', job.error ?? 'Near-duplicate detection failed');
+  }
+  res.json({
+    status: 'complete',
+    scanId: scan.scanId,
+    threshold: job.threshold,
+    available: job.available,
+    decoder: job.decoder,
+    reason: job.reason,
+    clusters: job.clusters ?? [],
+    clusterCount: job.clusterCount ?? 0,
+    totalReclaimable: job.totalReclaimable ?? 0,
+    truncated: job.truncated ?? false,
     tookMs: (job.finishedAt ?? job.startedAt) - job.startedAt,
   });
 });

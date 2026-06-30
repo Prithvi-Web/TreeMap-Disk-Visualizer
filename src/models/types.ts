@@ -174,6 +174,55 @@ export interface DuplicateJob {
   finishedAt?: number;
 }
 
+/* ---------- Perceptual / near-duplicate images (Feature 12) ---------- */
+
+/** One image inside a near-duplicate cluster. */
+export interface NearDupeFile {
+  name: string;
+  path: string;
+  size: number;
+  modifiedAt: number;
+  /** Hamming distance (0–64) of this image's dHash from the cluster's newest image. */
+  distance: number;
+}
+
+/** A group of perceptually-similar images (resized / re-encoded / screenshot copies). */
+export interface NearDupeCluster {
+  /** Newest first; the newest copy is the one kept by "auto-select all but newest". */
+  files: NearDupeFile[];
+  count: number;
+  /** Bytes freed by keeping only the newest copy: total − newest. */
+  reclaimableBytes: number;
+}
+
+export type NearDupeJobStatus = 'running' | 'complete' | 'error';
+
+/** Background dHash + clustering job, one per (scanId, threshold). */
+export interface NearDupeJob {
+  scanId: string;
+  status: NearDupeJobStatus;
+  /** Max Hamming distance for two images to be considered near-duplicates. */
+  threshold: number;
+  /** Image decoder actually used, or 'none' when none was available. */
+  decoder: 'sharp' | 'ffmpeg' | 'none';
+  /** False when no image decoder could be loaded — the UI shows a hint instead of clusters. */
+  available: boolean;
+  reason?: string;
+  /** Hashing progress for the UI. */
+  hashed: number;
+  toHash: number;
+  cancelled: boolean;
+  /** Populated once status === 'complete' (top clusters by reclaimable bytes). */
+  clusters?: NearDupeCluster[];
+  clusterCount?: number;
+  totalReclaimable?: number;
+  /** True when more images existed than the clustering cap allowed. */
+  truncated?: boolean;
+  error?: string;
+  startedAt: number;
+  finishedAt?: number;
+}
+
 /* ---------- Empty folders ---------- */
 
 export interface EmptyFoldersResult {

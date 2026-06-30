@@ -10,6 +10,7 @@ import { rateLimiter } from './middleware/rateLimiter';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { cancelAllScans } from './services/diskScanner';
 import { cancelAllDuplicateJobs } from './services/duplicateFinder';
+import { cancelAllNearDupeJobs } from './services/perceptualDupes';
 import { startScheduler, stopScheduler } from './services/scheduler';
 
 /**
@@ -72,6 +73,7 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
     stopScheduler(); // no new scheduled scans
     cancelAllScans(); // stop walkers cooperatively
     cancelAllDuplicateJobs(); // stop background hashing
+    cancelAllNearDupeJobs(); // stop background image fingerprinting
     drainSseClients(); // send 'shutdown' event, then end each stream
     server.close();
     // Don't process.exit here — the caller (CLI or Electron) decides that.

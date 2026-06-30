@@ -597,6 +597,30 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .dup-progress .track { width: 320px; height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .dup-progress .fill { height: 100%; width: 0%; border-radius: 3px; background: var(--accent); transition: width 300ms var(--ease); }
 
+/* ── Near-duplicate images ── */
+.nd-list { display: flex; flex-direction: column; gap: 12px; }
+.nd-cluster { padding: 13px 16px 16px; }
+.nd-chead { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.nd-chead .nd-count { font-size: 13px; font-weight: 600; }
+.nd-chead .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap; margin-left: auto; }
+.nd-strip { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.nd-item { flex: 0 0 132px; width: 132px; }
+.nd-thumbwrap { position: relative; display: block; width: 132px; height: 100px; border-radius: 9px; overflow: hidden;
+  background: var(--surface-2); border: 1px solid var(--hairline); cursor: pointer; }
+.nd-thumbwrap.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.nd-thumb { width: 100%; height: 100%; object-fit: cover; display: block; background: var(--surface-2); }
+.nd-thumb.broken { display: flex; align-items: center; justify-content: center; color: var(--text-3); }
+.nd-ck { position: absolute; top: 7px; left: 7px; z-index: 2; width: 17px; height: 17px; cursor: pointer; accent-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.35); border-radius: 4px; }
+.nd-badge { position: absolute; bottom: 6px; right: 6px; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 99px;
+  background: rgba(0,0,0,0.62); color: #fff; backdrop-filter: blur(3px); }
+.nd-badge.new { background: rgba(48,209,88,0.85); }
+.nd-info { margin-top: 7px; }
+.nd-info .nm { font-size: 11.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nd-info .sub { font-size: 10.5px; color: var(--text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nd-info .acts { display: flex; gap: 4px; margin-top: 5px; }
+.nd-note { font-size: 12px; color: var(--text-3); margin-bottom: 10px; display: flex; align-items: center; gap: 7px; }
+
 /* ── Trends view ── */
 .trends-grid { display: grid; grid-template-columns: 7fr 5fr; gap: 18px; align-items: start; }
 .trends-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -857,20 +881,41 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 
   <!-- ═══════════ Duplicates ═══════════ -->
   <section class="view" id="view-duplicates" role="tabpanel" aria-label="Duplicates" hidden>
-    <div class="dup-toolbar">
-      <span class="dup-summary" id="dupSummary">Scanning for duplicates…</span>
-      <div class="spacer"></div>
-      <label for="dupMinSize">Ignore files under</label>
-      <select id="dupMinSize" aria-label="Minimum file size for duplicate detection">
-        <option value="1024">1 KB</option>
-        <option value="102400" selected>100 KB</option>
-        <option value="1048576">1 MB</option>
-        <option value="10485760">10 MB</option>
-      </select>
-      <button class="btn" id="dupAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
-      <button class="btn btn-danger" id="dupTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
+    <div class="seg" id="dupModeSeg" role="tablist" aria-label="Duplicate detection mode" style="margin-bottom:13px;">
+      <button role="tab" aria-selected="true" data-dupmode="exact"><span data-icon="copy"></span>Exact</button>
+      <button role="tab" aria-selected="false" data-dupmode="near"><span data-icon="image"></span>Near-Duplicate Images</button>
     </div>
-    <div id="dupBody"></div>
+    <div id="dupPaneExact">
+      <div class="dup-toolbar">
+        <span class="dup-summary" id="dupSummary">Scanning for duplicates…</span>
+        <div class="spacer"></div>
+        <label for="dupMinSize">Ignore files under</label>
+        <select id="dupMinSize" aria-label="Minimum file size for duplicate detection">
+          <option value="1024">1 KB</option>
+          <option value="102400" selected>100 KB</option>
+          <option value="1048576">1 MB</option>
+          <option value="10485760">10 MB</option>
+        </select>
+        <button class="btn" id="dupAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
+        <button class="btn btn-danger" id="dupTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
+      </div>
+      <div id="dupBody"></div>
+    </div>
+    <div id="dupPaneNear" hidden>
+      <div class="dup-toolbar">
+        <span class="dup-summary" id="ndSummary">Looking for similar images…</span>
+        <div class="spacer"></div>
+        <label for="ndThreshold">Match</label>
+        <select id="ndThreshold" aria-label="How similar images must be to be grouped">
+          <option value="6">Very similar</option>
+          <option value="10" selected>Similar</option>
+          <option value="14">Loosely similar</option>
+        </select>
+        <button class="btn" id="ndAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
+        <button class="btn btn-danger" id="ndTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
+      </div>
+      <div id="ndBody"></div>
+    </div>
   </section>
 
   <!-- ═══════════ Trends ═══════════ -->
@@ -1337,6 +1382,8 @@ const state = {
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   donut: { segs: [], hover: -1, animated: false },
   dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
+  dupMode: 'exact',
+  near: { loadedFor: null, status: 'idle', clusters: [], clusterCount: 0, totalReclaimable: 0, available: true, truncated: false, selection: new Set(), pollTimer: 0 },
   trends: { roots: [], path: null, snapshots: [], points: [], hover: -1 },
   compare: { options: [], result: null },
 };
@@ -1376,7 +1423,9 @@ function switchView(name) {
     if (!state.grid.path || !state.pathIndex.has(state.grid.path)) state.grid.path = state.root.path;
     renderGrid();
   }
-  if (name === 'duplicates' && state.scanId && state.root) loadDuplicates();
+  if (name === 'duplicates' && state.scanId && state.root) {
+    if (state.dupMode === 'near') loadNearDupes(); else loadDuplicates();
+  }
   if (name === 'trends') loadTrends();
   if (name === 'compare') loadCompareOptions();
 }
@@ -3279,6 +3328,178 @@ $('dupTrashBtn').addEventListener('click', () => {
   confirmTrash([...state.dup.selection]);
 });
 $('dupMinSize').addEventListener('change', () => loadDuplicates(true));
+
+/* ── Near-duplicate images (Feature 12) ── */
+function setDupMode(mode) {
+  state.dupMode = mode;
+  $('dupModeSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.dupmode === mode)));
+  $('dupPaneExact').hidden = mode !== 'exact';
+  $('dupPaneNear').hidden = mode !== 'near';
+  if (!state.scanId || !state.root) return;
+  if (mode === 'near') loadNearDupes(); else loadDuplicates();
+}
+$('dupModeSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  setDupMode(b.dataset.dupmode);
+});
+
+async function loadNearDupes(force = false) {
+  if (!state.scanId || !state.root) return;
+  const key = state.scanId + ':' + $('ndThreshold').value;
+  if (!force && state.near.loadedFor === key && state.near.status === 'complete') { renderNearDupes(); return; }
+  state.near.loadedFor = key;
+  state.near.status = 'loading';
+  state.near.selection.clear();
+  clearTimeout(state.near.pollTimer);
+  $('ndSummary').textContent = 'Looking for similar images…';
+  updateNdToolbar();
+  $('ndBody').innerHTML = `<div class="card glass dup-progress">${icon('loader', 22, REDUCED ? '' : 'spin')}
+    <span id="ndProgText">Finding image files…</span>
+    <div class="track"><div class="fill" id="ndProgFill"></div></div></div>`;
+
+  const poll = async () => {
+    if (state.near.loadedFor !== key) return; // a newer request superseded this one
+    try {
+      const data = await api(`/api/near-duplicates?scanId=${state.scanId}&threshold=${$('ndThreshold').value}`);
+      if (data.status === 'running') {
+        const t = $('ndProgText'), f = $('ndProgFill');
+        if (t) t.textContent = data.toHash
+          ? `Fingerprinting images… ${formatCount(data.hashed)} / ${formatCount(data.toHash)}`
+          : 'Finding image files…';
+        if (f && data.toHash) f.style.width = Math.round((data.hashed / data.toHash) * 100) + '%';
+        state.near.pollTimer = setTimeout(poll, 700);
+        return;
+      }
+      state.near.status = 'complete';
+      state.near.available = data.available;
+      state.near.reason = data.reason;
+      state.near.clusters = data.clusters;
+      state.near.clusterCount = data.clusterCount;
+      state.near.totalReclaimable = data.totalReclaimable;
+      state.near.truncated = data.truncated;
+      renderNearDupes();
+    } catch (e) {
+      state.near.status = 'error';
+      $('ndSummary').textContent = '';
+      $('ndBody').innerHTML = `<div class="card glass"><div class="muted">Image scan failed: ${escapeHtml(e.message)}</div></div>`;
+    }
+  };
+  poll();
+}
+
+function renderNearDupes() {
+  const body = $('ndBody');
+  const n = state.near;
+  if (!n.available) {
+    $('ndSummary').textContent = '';
+    body.innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('image', 15)} ${escapeHtml(n.reason || 'Near-duplicate image detection is unavailable on this system.')}</div></div>`;
+    updateNdToolbar();
+    return;
+  }
+  const clusters = n.clusters;
+  if (!clusters.length) {
+    $('ndSummary').textContent = 'No near-duplicate images found.';
+    body.innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No similar images above the match threshold — your image library looks tidy.</div></div>`;
+    updateNdToolbar();
+    return;
+  }
+  $('ndSummary').innerHTML =
+    `<b>${formatCount(n.clusterCount)}</b> similar-image ${n.clusterCount === 1 ? 'group' : 'groups'} — up to <b>${formatBytes(n.totalReclaimable)}</b> reclaimable` +
+    (n.clusterCount > clusters.length ? ` <span class="num">(top ${clusters.length} shown)</span>` : '');
+  const note = n.truncated
+    ? `<div class="nd-note">${icon('alert', 14)} Only the largest images were compared — some smaller images may not be grouped.</div>` : '';
+  body.innerHTML = note + '<div class="nd-list">' + clusters.map((c, ci) => {
+    const strip = c.files.map((f, fi) => {
+      const enc = encodeURIComponent(f.path);
+      const badge = fi === 0
+        ? '<span class="nd-badge new">newest</span>'
+        : `<span class="nd-badge" title="${f.distance} bits different from the newest copy">Δ${f.distance}</span>`;
+      return `
+      <div class="nd-item">
+        <div class="nd-thumbwrap" data-p="${escapeHtml(f.path)}" role="button" tabindex="0" aria-label="Toggle ${escapeHtml(f.name)}">
+          <input type="checkbox" class="nd-ck" data-p="${escapeHtml(f.path)}" aria-label="Select ${escapeHtml(f.name)}">
+          <img class="nd-thumb" loading="lazy" decoding="async" src="/api/files/preview?path=${enc}" alt="${escapeHtml(f.name)}">
+          ${badge}
+        </div>
+        <div class="nd-info">
+          <div class="nm" title="${escapeHtml(f.path)}">${escapeHtml(f.name)}</div>
+          <div class="sub num">${formatBytes(f.size)} · ${formatDate(f.modifiedAt)}</div>
+          <div class="acts">
+            <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
+            <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    return `
+    <div class="nd-cluster glass" data-c="${ci}">
+      <div class="nd-chead">
+        ${icon('image', 15)}
+        <span class="nd-count">${c.count} similar images</span>
+        <span class="reclaim num">+${formatBytes(c.reclaimableBytes)} reclaimable</span>
+      </div>
+      <div class="nd-strip">${strip}</div>
+    </div>`;
+  }).join('') + '</div>';
+
+  const syncWrap = (ck) => { const w = ck.closest('.nd-thumbwrap'); if (w) w.classList.toggle('sel', ck.checked); };
+  body.querySelectorAll('.nd-ck').forEach(ck => {
+    ck.checked = n.selection.has(ck.dataset.p);
+    syncWrap(ck);
+    ck.addEventListener('change', () => {
+      if (ck.checked) n.selection.add(ck.dataset.p); else n.selection.delete(ck.dataset.p);
+      syncWrap(ck);
+      updateNdToolbar();
+    });
+  });
+  body.querySelectorAll('.nd-thumbwrap').forEach(wrap => {
+    const toggle = () => { const ck = wrap.querySelector('.nd-ck'); ck.checked = !ck.checked; ck.dispatchEvent(new Event('change')); };
+    wrap.addEventListener('click', (e) => { if (e.target.closest('input')) return; e.preventDefault(); toggle(); });
+    wrap.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
+  body.querySelectorAll('.nd-thumb').forEach(img => {
+    img.addEventListener('error', () => {
+      const ph = document.createElement('div');
+      ph.className = 'nd-thumb broken';
+      ph.innerHTML = icon('image', 22);
+      img.replaceWith(ph);
+    });
+  });
+  body.querySelectorAll('[data-reveal]').forEach(b =>
+    b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openInOS(b.dataset.reveal, true); }));
+  refreshCartButtons();
+  updateNdToolbar();
+}
+
+function updateNdToolbar() {
+  const count = state.near.selection.size;
+  let total = 0;
+  for (const p of state.near.selection) total += state.pathIndex.get(p)?.size ?? 0;
+  $('ndTrashBtn').disabled = !count;
+  $('ndTrashBtn').innerHTML = icon('trash', 14) + (count ? `Move ${count} to Trash (${formatBytes(total)})` : 'Move to Trash');
+}
+
+$('ndAutoBtn').addEventListener('click', () => {
+  if (state.near.status !== 'complete' || !state.near.clusters.length) return;
+  state.near.selection.clear();
+  state.near.clusters.forEach(c => c.files.slice(1).forEach(f => state.near.selection.add(f.path)));
+  $('ndBody').querySelectorAll('.nd-ck').forEach(ck => {
+    ck.checked = state.near.selection.has(ck.dataset.p);
+    const w = ck.closest('.nd-thumbwrap'); if (w) w.classList.toggle('sel', ck.checked);
+  });
+  updateNdToolbar();
+  toast(`Selected ${state.near.selection.size} extra ${state.near.selection.size === 1 ? 'copy' : 'copies'} — the newest image in each group is kept`);
+});
+$('ndTrashBtn').addEventListener('click', () => {
+  for (const c of state.near.clusters) {
+    if (c.files.every(f => state.near.selection.has(f.path))) {
+      toast(`Every image in a group is selected — keep at least one`, 'error');
+      return;
+    }
+  }
+  confirmTrash([...state.near.selection]);
+});
+$('ndThreshold').addEventListener('change', () => loadNearDupes(true));
 
 /* ───────────────────────────── Trends view ───────────────────────────── */
 async function loadTrends() {

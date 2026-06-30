@@ -111,6 +111,7 @@ artifacts instead of a Release).
 | `GET /api/large-folders?scanId=` | Top N largest folders (recursive sizes) |
 | `GET /api/file-types?scanId=` | Size breakdown by extension |
 | `GET /api/duplicates?scanId=` | Duplicate groups (starts hashing; poll until complete) |
+| `GET /api/near-duplicates?scanId=&threshold=10` | Perceptual (dHash) near-duplicate image clusters; poll until complete |
 | `GET /api/empty-folders?scanId=` | Recursively empty folders (`ignoreJunk` configurable) |
 | `GET /api/compare?scanIdA=&scanIdB=` | File-level diff of two scans of the same root |
 | `GET /api/snapshots` | Scan history: roots, per-root snapshots (`?path=`), or all (`?all=true`) |
