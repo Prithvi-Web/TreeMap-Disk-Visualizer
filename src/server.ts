@@ -6,6 +6,9 @@ import { fileRouter } from './api/fileRoutes';
 import { systemRouter } from './api/systemRoutes';
 import { insightRouter } from './api/insightRoutes';
 import { settingsRouter } from './api/settingsRoutes';
+import { cleanerRouter } from './api/cleanerRoutes';
+import { appRouter } from './api/appRoutes';
+import { maintenanceRouter } from './api/maintenanceRoutes';
 import { rateLimiter } from './middleware/rateLimiter';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { cancelAllScans } from './services/diskScanner';
@@ -35,6 +38,9 @@ export function createApp(publicDir: string): express.Express {
   app.use('/api', systemRouter);
   app.use('/api', insightRouter);
   app.use('/api', settingsRouter);
+  app.use('/api', cleanerRouter);
+  app.use('/api', appRouter);
+  app.use('/api', maintenanceRouter);
 
   // Frontend: the single-file UI.
   app.use(express.static(publicDir, { index: 'index.html' }));

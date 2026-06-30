@@ -281,6 +281,114 @@ export interface CleanupSuggestionGroup {
   totalSize: number;
 }
 
+/* ---------- Clean the Mac (well-known macOS junk locations) ---------- */
+
+/** One macOS junk category, paired with the scan that backs its deletes. */
+export interface MacCleanCategoryResult {
+  id: string;
+  title: string;
+  description: string;
+  /** Absolute directory this category scanned. */
+  path: string;
+  /** Scan whose root is `path`; poll /api/scan/:scanId/result for sizes. */
+  scanId: string;
+}
+
+/* ---------- Applications: Uninstaller + Updater ---------- */
+
+/** One installed macOS application (top-level *.app in /Applications or ~/Applications). */
+export interface AppSummary {
+  /** Display name (the .app filename without the extension). */
+  name: string;
+  /** Absolute path to the .app bundle. */
+  path: string;
+  /** CFBundleIdentifier, or null if the Info.plist lacks one. */
+  bundleId: string | null;
+  /** CFBundleShortVersionString (falls back to CFBundleVersion), or null. */
+  version: string | null;
+  /** CFBundleExecutable — used for exact running-process detection. */
+  executable: string | null;
+  /** Base64 PNG data URI of the app's icon, or null if none. */
+  icon: string | null;
+}
+
+/** One support-file an app leaves behind under ~/Library. */
+export interface AppLeftover {
+  /** Basename of the leftover file/folder. */
+  name: string;
+  /** Absolute path (always inside ~/Library). */
+  path: string;
+  /** Which ~/Library subfolder it lives in, e.g. "Caches", "Preferences". */
+  category: string;
+  /** Bytes, from the registered scan. */
+  size: number;
+}
+
+/** Result of analyzing one app for uninstall: the bundle + its leftovers. */
+export interface AppLeftoversResult {
+  app: {
+    name: string;
+    path: string;
+    bundleId: string | null;
+    version: string | null;
+    icon: string | null;
+    size: number;
+    /** True when a process with the bundle's executable name is running. */
+    running: boolean;
+  };
+  leftovers: AppLeftover[];
+  /** App bundle + every leftover, bytes. */
+  totalSize: number;
+}
+
+/** One Homebrew cask with an available update. */
+export interface OutdatedCask {
+  /** Homebrew token (used for `brew upgrade --cask <token>`). */
+  token: string;
+  name: string;
+  installedVersion: string | null;
+  latestVersion: string | null;
+  /** Base64 PNG icon of the matching installed app, or null. */
+  icon: string | null;
+}
+
+/** Outcome of a single `brew upgrade --cask` run. */
+export interface BrewUpgradeResult {
+  ok: boolean;
+  token: string;
+  /** Last line of brew's stdout (success) or stderr (failure). */
+  message: string;
+}
+
+/* ---------- Activity hub (Dashboard lifetime stats) ---------- */
+
+export type ActivityKind = 'fast-clean' | 'system-junk' | 'uninstall' | 'update' | 'large-old';
+
+/** One recorded cleaner action. */
+export interface ActivityEvent {
+  /** Unix epoch ms. */
+  at: number;
+  kind: ActivityKind;
+  /** Human label, e.g. an app name or "application caches". */
+  label: string;
+  /** Bytes moved to Trash / recovered (0 for updates). */
+  bytes: number;
+  /** Count of items affected (paths trashed, casks updated, …). */
+  items: number;
+}
+
+/** Persisted cumulative activity + recent log. */
+export interface ActivitySummary {
+  /** When the first event was recorded (drives "since {date}"); null when empty. */
+  firstRecordedAt: number | null;
+  totalBytesRecovered: number;
+  junkItemsCleaned: number;
+  appsUninstalled: number;
+  programsUpdated: number;
+  /** Newest first, capped. */
+  log: ActivityEvent[];
+}
+
 /** Uniform API error body. */
 export interface ApiError {
   error: string;

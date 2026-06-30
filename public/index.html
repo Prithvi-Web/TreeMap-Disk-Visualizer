@@ -86,6 +86,8 @@ body {
   background-attachment: fixed;
   min-width: 1024px;
   overflow-x: auto;
+  overflow-y: scroll; /* always reserve the scrollbar so header/controls never shift between views */
+  scrollbar-gutter: stable;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -177,12 +179,11 @@ select option { background: var(--glass-strong); color: var(--text-1); }
 
 /* ════════════════════════════ Header ════════════════════════════ */
 header {
-  display: flex; align-items: center; gap: 18px;
-  padding: 12px 24px; position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; gap: 18px; height: 58px; box-sizing: border-box;
+  margin-left: 242px; padding: 12px 24px; position: sticky; top: 0; z-index: 50;
   background: color-mix(in srgb, var(--bg-1) 72%, transparent);
   backdrop-filter: blur(24px) saturate(170%);
   -webkit-backdrop-filter: blur(24px) saturate(170%);
-  border-bottom: 1px solid var(--hairline);
 }
 .logo { display: flex; align-items: center; gap: 11px; font-size: 16px; font-weight: 700; letter-spacing: -0.2px; }
 .logo .sub { font-weight: 400; color: var(--text-3); font-size: 12px; margin-left: 2px; }
@@ -201,14 +202,72 @@ header {
   background: var(--surface-3); color: var(--text-1);
   box-shadow: inset 0 1px 0 var(--shine), var(--shadow-1);
 }
-.header-right { display: flex; gap: 8px; align-items: center; }
+.header-right { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+
+/* ════════════════════════════ Sidebar (CleanMyMac-style) ════════════════════════════ */
+.sidebar {
+  position: fixed; top: 14px; left: 14px; bottom: 14px; width: 214px; z-index: 40;
+  overflow-y: auto; padding: 0 8px 16px;
+  border: 1px solid var(--hairline); border-radius: 16px;
+  background: var(--surface-1);
+  box-shadow: var(--shadow-1);
+}
+/* Logo keeps the original size (26px mark, 16px wordmark). Pushed down off the
+   container's rounded top edge, with a hairline separating it from the tabs. */
+.side-logo { align-items: center; gap: 11px; font-size: 16px; padding: 18px 8px 16px; margin: 0 4px 12px;
+  border-bottom: 1px solid var(--hairline); }
+.side-logo svg { flex: none; }
+.side-group { margin-top: 14px; }
+.side-head {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-3); padding: 4px 10px 6px;
+}
+.side-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; border: none; background: transparent;
+  color: var(--text-2); text-align: left; font: inherit; font-size: 13.5px; font-weight: 500;
+  padding: 8px 10px; border-radius: 9px; cursor: pointer; margin-bottom: 1px;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+.side-item .ic { color: var(--text-3); flex: none; }
+.side-item:hover:not(:disabled) { background: var(--surface-3); color: var(--text-1); }
+.side-item[aria-current="true"] {
+  background: var(--surface-3); color: var(--text-1);
+  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-1);
+}
+.side-item[aria-current="true"] .ic { color: var(--accent); }
+.side-item:disabled { opacity: 0.4; cursor: default; }
+.mnt-row { display: flex; align-items: center; gap: 13px; padding: 11px 4px; border-top: 1px solid var(--hairline); }
+.mnt-row:first-of-type { border-top: none; }
+.mnt-ico { position: relative; width: 34px; height: 34px; border-radius: 9px; flex: none; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-1); border: 1px solid var(--hairline); color: var(--text-2); font-weight: 700; font-size: 14px; }
+.mnt-appico { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.mnt-text { flex: 1; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.mnt-text b { font-size: 13.5px; font-weight: 600; }
+.mnt-text span { font-size: 12px; color: var(--text-3); line-height: 1.4; }
+.mnt-status { font-size: 12px; text-align: right; max-width: 230px; color: var(--text-3); }
+.mnt-scroll { max-height: 360px; overflow-y: auto; margin: 0 -4px; padding: 0 4px; }
+/* iOS-style toggle switch */
+.switch { position: relative; width: 40px; height: 24px; flex: none; }
+.switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; z-index: 1; }
+.switch .track { position: absolute; inset: 0; border-radius: 999px; background: var(--surface-3);
+  transition: background var(--dur-2) var(--ease); }
+.switch .track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform var(--dur-2) var(--ease); }
+.switch input:checked + .track { background: var(--accent); }
+.switch input:checked + .track::after { transform: translateX(16px); }
+.switch input:disabled { cursor: default; }
+.side-soon {
+  margin-left: auto; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em;
+  color: var(--text-3); border: 1px solid var(--hairline); border-radius: 5px; padding: 1px 5px;
+}
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 #headerSpin { display: none; color: var(--accent); }
 #headerSpin.on { display: inline-flex; }
 
 /* ════════════════════════════ Layout ════════════════════════════ */
-main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: relative; }
+main { padding: 16px 28px 48px; max-width: 1680px; margin: 0 0 0 242px; position: relative; }
 .view { display: none; animation: viewIn var(--dur-3) var(--ease); }
 .view.active { display: block; }
 @keyframes viewIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -362,6 +421,48 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   animation: fadeIn var(--dur-2) var(--ease); }
 .modal-backdrop.open { display: flex; }
+.fc-item { display: flex; align-items: center; gap: 12px; padding: 13px 15px; border: 1px solid var(--hairline);
+  border-radius: 12px; background: var(--surface-1); cursor: pointer; margin: 0;
+  transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease); }
+.fc-item:hover { background: var(--surface-3); border-color: var(--hairline-strong, var(--hairline)); }
+.fc-item input[type=checkbox] { width: 18px; height: 18px; flex: none; accent-color: var(--accent); cursor: pointer; }
+.fc-text { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.fc-text b { font-size: 14px; font-weight: 600; }
+.fc-size { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13.5px; color: var(--text-2); }
+.fc-hero { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; min-height: 66vh; gap: 2px; padding: 12px 0; }
+.fc-panel { width: 100%; display: flex; flex-direction: column; align-items: center; }
+.fc-off { display: none !important; }
+.fc-mark { width: 74px; height: 74px; border-radius: 20px; display: flex; align-items: center; justify-content: center;
+  background: var(--surface-1); border: 1px solid var(--hairline); color: var(--accent); }
+.fc-mark .ic { width: 38px; height: 38px; }
+.fc-mark.fc-done { color: #30D158; }
+.fc-title { font-size: 30px; font-weight: 700; letter-spacing: -0.6px; margin: 12px 0 4px; }
+.fc-sub { color: var(--text-3); font-size: 13px; line-height: 1.5; margin: 0 0 16px; }
+.fc-opts { width: 100%; max-width: 720px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; text-align: left; }
+.fc-rlist { width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.fc-status { font-size: 12px; color: var(--text-3); min-height: 16px; margin: 2px 0 0; }
+.fc-cta { position: relative; margin-top: 18px; width: 112px; height: 112px; border-radius: 50%; cursor: pointer;
+  border: 2px solid var(--accent); color: var(--text-1);
+  background: radial-gradient(circle at 50% 34%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 70%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 8%, transparent);
+  transition: transform var(--dur-1) var(--ease), box-shadow var(--dur-2) var(--ease), opacity var(--dur-1) var(--ease); }
+.fc-cta:hover:not(:disabled) { transform: scale(1.04); box-shadow: 0 0 0 11px color-mix(in srgb, var(--accent) 13%, transparent); }
+.fc-cta:disabled { opacity: 0.45; cursor: default; }
+.fc-cta-main { font-size: 18px; font-weight: 600; }
+.fc-cta-sub { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+/* While cleaning, a light sweeps around the whole ring (no inner spinner icon). */
+.fc-cta.cleaning, .fc-cta.cleaning:disabled { opacity: 1; cursor: default; }
+.fc-cta.cleaning .fc-cta-main, .fc-cta.cleaning .fc-cta-sub { opacity: 0; }
+.fc-cta.cleaning::after {
+  content: ''; position: absolute; inset: -3px; border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0deg, var(--accent) 90deg, transparent 210deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+  animation: fcSpin 0.9s linear infinite;
+}
+@keyframes fcSpin { to { transform: rotate(360deg); } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .modal { width: 660px; max-width: 92vw; max-height: 84vh; display: flex; flex-direction: column;
   animation: sheetIn var(--dur-3) var(--ease); background: var(--glass-strong);
@@ -524,35 +625,110 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* ════════════════════════════ Applications: Uninstaller + Updater ════════════════════════════ */
+.apps-wrap { display: grid; grid-template-columns: 320px 1fr; gap: 16px; align-items: start; }
+.apps-list-card, .apps-detail-card { min-height: 64vh; }
+.apps-search { display: flex; align-items: center; gap: 8px; background: var(--surface-1);
+  border: 1px solid var(--hairline); border-radius: 9px; padding: 7px 11px; margin: 6px 0 10px; }
+.apps-search .ic { color: var(--text-3); flex: none; }
+.apps-search input { border: none; background: transparent; color: var(--text-1); font: inherit; font-size: 13px; width: 100%; outline: none; }
+.apps-list { display: flex; flex-direction: column; gap: 2px; max-height: 60vh; overflow-y: auto; }
+.app-row { display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 9px; cursor: pointer;
+  border: 1px solid transparent; transition: background var(--dur-1) var(--ease); }
+.app-row:hover { background: var(--surface-3); }
+.app-row[aria-pressed="true"] { background: var(--surface-3); border-color: var(--hairline); }
+.app-row .meta, .upd-row .meta { flex: 1; min-width: 0; }
+.app-row .nm { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-row .sub { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-tile { width: 30px; height: 30px; border-radius: 7px; flex: none; display: flex; align-items: center; justify-content: center;
+  background: var(--surface-3); color: var(--text-2); font-weight: 700; font-size: 12px; letter-spacing: -0.02em; overflow: hidden; }
+.app-tile img { width: 100%; height: 100%; object-fit: contain; }
+.app-tile:has(img) { background: transparent; }
+.apps-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  min-height: 48vh; color: var(--text-3); text-align: center; }
+/* A class-level `display` beats the UA `[hidden]` rule — pin hidden explicitly. */
+.apps-empty[hidden] { display: none; }
+.apps-empty .ic { color: var(--text-3); }
+.lo-head { display: flex; align-items: center; gap: 13px; padding-bottom: 13px; border-bottom: 1px solid var(--hairline); margin-bottom: 8px; }
+.lo-head .app-tile { width: 46px; height: 46px; border-radius: 11px; font-size: 17px; }
+.lo-title { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+.lo-sub { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lo-row { display: flex; align-items: center; gap: 11px; padding: 9px 4px; border-bottom: 1px solid var(--hairline); font-size: 12.5px; }
+.lo-row:last-of-type { border-bottom: none; }
+.lo-row input[type=checkbox] { width: 16px; height: 16px; flex: none; accent-color: var(--accent); cursor: pointer; }
+.lo-row .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lo-row .cat { font-size: 10.5px; color: var(--text-3); }
+.lo-row .sz { font-variant-numeric: tabular-nums; font-weight: 600; flex: none; }
+.lo-row .rev { opacity: 0; transition: opacity var(--dur-1) var(--ease); }
+.lo-row:hover .rev, .lo-head .rev { opacity: 1; }
+.icon-link { border: none; background: transparent; color: var(--text-3); cursor: pointer; padding: 3px; border-radius: 6px;
+  display: inline-flex; flex: none; transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
+.icon-link:hover { color: var(--text-1); background: var(--surface-3); }
+.lo-foot { display: flex; align-items: center; gap: 13px; margin-top: 16px; }
+.warn-banner { display: flex; align-items: center; gap: 8px; margin: 4px 0 12px;
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent); color: var(--danger);
+  border-radius: 9px; padding: 9px 12px; font-size: 12.5px; }
+.warn-banner .ic { flex: none; }
+.upd-card { max-width: 760px; }
+.upd-row { display: flex; align-items: center; gap: 12px; padding: 11px 4px; border-bottom: 1px solid var(--hairline); }
+.upd-row:last-child { border-bottom: none; }
+.upd-row .nm { font-size: 13.5px; font-weight: 500; }
+.upd-row .ver { font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+@media (max-width: 900px) { .apps-wrap { grid-template-columns: 1fr; } .apps-list-card, .apps-detail-card { min-height: 0; } }
 </style>
 </head>
 <body>
 <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
 
 <header>
-  <div class="logo">
+  <div class="header-right">
+    <span id="headerSpin" aria-hidden="true"></span>
+    <button class="icon-btn" id="themeToggle" aria-label="Toggle light or dark theme" title="Toggle theme"><span data-icon="moon"></span></button>
+    <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings — schedules & ignore list"><span data-icon="settings"></span></button>
+  </div>
+</header>
+
+<aside class="sidebar" role="navigation" aria-label="Sections">
+  <div class="logo side-logo">
     <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
       <rect x="1" y="1" width="14" height="24" rx="4" fill="#30D158"/>
       <rect x="17" y="1" width="8" height="14" rx="3.5" fill="#FFD60A"/>
       <rect x="17" y="17" width="8" height="8" rx="3.5" fill="#FF453A"/>
     </svg>
-    <span>TreeMap<span class="sub">Disk Space Visualizer</span></span>
+    <span>TreeMap</span>
   </div>
-  <nav class="tabbar" role="tablist" aria-label="Views">
-    <button role="tab" aria-selected="true" data-view="dashboard"><span data-icon="dashboard"></span>Dashboard</button>
-    <button role="tab" aria-selected="false" data-view="treemap"><span data-icon="treemap"></span>Treemap</button>
-    <button role="tab" aria-selected="false" data-view="grid"><span data-icon="grid"></span>Grid</button>
-    <button role="tab" aria-selected="false" data-view="duplicates"><span data-icon="copy"></span>Duplicates</button>
-    <button role="tab" aria-selected="false" data-view="trends"><span data-icon="trendUp"></span>Trends</button>
-    <button role="tab" aria-selected="false" data-view="compare"><span data-icon="diff"></span>Compare</button>
-  </nav>
-  <div class="header-right">
-    <span id="headerSpin" aria-hidden="true"></span>
-    <button class="icon-btn" id="themeToggle" aria-label="Toggle light or dark theme" title="Toggle theme"></button>
-    <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings — schedules & ignore list"></button>
-    <button class="btn" id="cleanupBtn" title="Find and trash old or large files"><span data-icon="sparkles"></span>Clean Up</button>
+  <button class="side-item" data-view="dashboard"><span data-icon="dashboard"></span>Dashboard</button>
+  <button class="side-item" data-view="fastclean"><span data-icon="sparkles"></span>Smart Scan</button>
+
+  <div class="side-group">
+    <div class="side-head">Cleanup</div>
+    <button class="side-item" disabled><span data-icon="hardDrive"></span>System Junk<span class="side-soon">soon</span></button>
+    <button class="side-item" disabled><span data-icon="trash"></span>Trash<span class="side-soon">soon</span></button>
   </div>
-</header>
+
+  <div class="side-group">
+    <div class="side-head">Speed</div>
+    <button class="side-item" data-view="maintenance"><span data-icon="settings"></span>Performance</button>
+  </div>
+
+  <div class="side-group">
+    <div class="side-head">Applications</div>
+    <button class="side-item" data-view="apps"><span data-icon="box"></span>Uninstaller</button>
+    <button class="side-item" data-view="updater"><span data-icon="refresh"></span>Updater</button>
+  </div>
+
+  <div class="side-group">
+    <div class="side-head">Files</div>
+    <button class="side-item" data-view="treemap"><span data-icon="treemap"></span>Treemap</button>
+    <button class="side-item" data-view="grid"><span data-icon="grid"></span>Grid</button>
+    <button class="side-item" disabled><span data-icon="clock"></span>Large &amp; Old<span class="side-soon">soon</span></button>
+    <button class="side-item" data-view="duplicates"><span data-icon="copy"></span>Duplicates</button>
+    <button class="side-item" data-view="compare"><span data-icon="diff"></span>Compare</button>
+    <button class="side-item" data-view="trends"><span data-icon="trendUp"></span>Trends</button>
+  </div>
+</aside>
 
 <main>
   <!-- ═══════════ Empty state ═══════════ -->
@@ -753,6 +929,72 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
     </div>
     <div id="cmpBody"><div class="card glass"><div class="muted">Pick two scans of the same folder — scans from this session give a full file-level diff; history snapshots compare top-level folders.</div></div></div>
   </section>
+
+  <!-- ═══════════ Fast Clean (Cleaner) ═══════════ -->
+  <section class="view" id="view-fastclean" role="tabpanel" aria-label="Smart Scan" hidden>
+    <div class="fc-hero">
+      <div class="fc-mark" id="fcMark"><span data-icon="sparkles" data-size="42"></span></div>
+      <h1 class="fc-title">Smart Scan</h1>
+      <p class="fc-sub" id="fcSub">Free up space — empties the Bin and clears application caches.</p>
+      <div class="fc-status" id="fcStatus"></div>
+      <button class="fc-cta" id="fcCleanBtn" disabled><span class="fc-cta-main">Clean</span><span class="fc-cta-sub" id="fcCtaSize"></span></button>
+    </div>
+  </section>
+
+  <!-- ═══════════ Uninstaller (Applications) ═══════════ -->
+  <section class="view" id="view-apps" role="tabpanel" aria-label="Uninstaller" hidden>
+    <div class="apps-wrap">
+      <div class="card glass apps-list-card">
+        <h2><span data-icon="box"></span>Applications</h2>
+        <div class="apps-search">
+          <span data-icon="search"></span>
+          <input type="text" id="appsSearch" placeholder="Search by app or developer…" aria-label="Search applications" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="apps-list" id="appsList"></div>
+      </div>
+      <div class="card glass apps-detail-card">
+        <div class="apps-empty" id="appsDetailEmpty"><span data-icon="box" data-size="34"></span><p class="muted">Select an app to see what it leaves behind.</p></div>
+        <div id="appsDetailBody" hidden></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ Updater (Applications) ═══════════ -->
+  <section class="view" id="view-updater" role="tabpanel" aria-label="Updater" hidden>
+    <div style="max-width:780px;margin:0 auto;">
+      <div class="card glass">
+        <h2><span data-icon="refresh"></span>Updater<span class="muted" style="font-weight:400;margin-left:6px;">Homebrew casks</span></h2>
+        <div id="updBody"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ Maintenance (Speed) ═══════════ -->
+  <section class="view" id="view-maintenance" role="tabpanel" aria-label="Performance" hidden>
+    <div style="max-width:780px;margin:0 auto;">
+      <div class="card glass" style="margin-bottom:16px;">
+        <h2><span data-icon="zap"></span>Login Items</h2>
+        <div class="muted" style="margin:-2px 0 10px;">Apps that open automatically when you log in. Turn one off to stop it (Apple system services aren't shown).</div>
+        <div id="mntLoginItems" class="mnt-scroll"><div class="muted">Loading…</div></div>
+      </div>
+      <div class="card glass">
+        <h2><span data-icon="settings"></span>Maintenance</h2>
+        <div class="muted" style="margin:-2px 0 8px;">Safe, no-password upkeep tasks.</div>
+        <div class="mnt-row">
+          <div class="mnt-ico"><span data-icon="refresh" data-size="17"></span></div>
+          <div class="mnt-text"><b>Flush DNS cache</b><span>Clears the resolver cache — fixes stale or unresolving domains.</span></div>
+          <span class="mnt-status" id="mntStatus-flush-dns"></span>
+          <button class="btn btn-primary" data-mnt="flush-dns">Run</button>
+        </div>
+        <div class="mnt-row">
+          <div class="mnt-ico"><span data-icon="box" data-size="17"></span></div>
+          <div class="mnt-text"><b>Rebuild Launch Services</b><span>Fixes duplicate or wrong "Open With" app associations.</span></div>
+          <span class="mnt-status" id="mntStatus-rebuild-launchservices"></span>
+          <button class="btn btn-primary" data-mnt="rebuild-launchservices">Run</button>
+        </div>
+      </div>
+    </div>
+  </section>
 </main>
 
 <!-- ═══════════ Selection toolbar ═══════════ -->
@@ -848,6 +1090,24 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
       <div style="flex:1"></div>
       <button class="btn" data-close="confirmModal">Cancel</button>
       <button class="btn btn-danger" id="confirmOk"><span data-icon="trash"></span>Move to Trash</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ Permanent-delete confirm (Empty Bin) ═══════════ -->
+<div class="modal-backdrop" id="permModal" role="dialog" aria-modal="true" aria-labelledby="permTitle">
+  <div class="modal" style="width:440px;">
+    <div class="modal-head">
+      <h3 id="permTitle"><span data-icon="alert"></span>Empty the Bin?</h3>
+      <button class="close-x" data-close="permModal" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="muted" id="permText" style="font-size:13.5px;line-height:1.55;"></div>
+    </div>
+    <div class="modal-foot">
+      <div style="flex:1"></div>
+      <button class="btn" data-close="permModal">Cancel</button>
+      <button class="btn btn-danger" id="permOk"><span data-icon="trash"></span>Empty permanently</button>
     </div>
   </div>
 </div>
@@ -1082,6 +1342,9 @@ const state = {
   dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
   trends: { roots: [], path: null, snapshots: [], points: [], hover: -1 },
   compare: { options: [], result: null },
+  fastclean: { loaded: false, cacheScanId: null, trashScanId: null, cachePaths: [], cacheSize: 0, binSize: 0, exclude: [], cleaning: false },
+  apps: { loaded: false, items: [], selected: null, leftovers: null, sel: new Set() },
+  updater: {},
 };
 
 function indexTree(root) {
@@ -1095,14 +1358,16 @@ function indexTree(root) {
 }
 
 /* ───────────────────────────── View switching ───────────────────────────── */
-const tabs = document.querySelectorAll('.tabbar button');
+const tabs = document.querySelectorAll('.side-item[data-view]');
 tabs.forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
 function switchView(name) {
   state.view = name;
-  // Trends + Compare read persisted history, so they work without a scan.
-  const standalone = name === 'trends' || name === 'compare';
+  // Trends + Compare read persisted history; Fast Clean is system-wide — all
+  // work without a folder scan.
+  const standalone = name === 'trends' || name === 'compare' || name === 'fastclean'
+    || name === 'apps' || name === 'updater' || name === 'maintenance';
   const empty = !state.root && !state.scanning && !standalone;
-  tabs.forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === name)));
+  tabs.forEach(b => b.setAttribute('aria-current', String(b.dataset.view === name)));
   document.querySelectorAll('.view').forEach(v => {
     const on = !empty && v.id === 'view-' + name;
     v.classList.toggle('active', on);
@@ -1121,6 +1386,10 @@ function switchView(name) {
   if (name === 'duplicates' && state.scanId && state.root) loadDuplicates();
   if (name === 'trends') loadTrends();
   if (name === 'compare') loadCompareOptions();
+  if (name === 'fastclean') loadFastClean();
+  if (name === 'apps') loadApps();
+  if (name === 'updater') loadUpdater();
+  if (name === 'maintenance') loadMaintenance();
 }
 
 /* ───────────────────────────── System info ───────────────────────────── */
@@ -1905,26 +2174,38 @@ async function copyPath(path) {
 }
 
 /* ───────────────────────────── Trash (confirm + execute) ───────────────────────────── */
-let confirmPaths = [];
-function confirmTrash(paths) {
+/* Sizes/names normally come from the scanned tree (state.pathIndex). Tools whose
+   paths aren't in that tree (e.g. the Uninstaller) pass a `sizeHint`/`labels` Map
+   so the confirm modal + "recovered" toast stay correct without mutating shared
+   scan state. `onDone(result)` runs after a confirmed trash; when supplied it
+   suppresses the default folder rescan (the tool refreshes itself instead). */
+let confirmPaths = [], confirmOpts = {};
+function trashSizeOf(p, sizeHint) {
+  const hinted = sizeHint && sizeHint.get(p);
+  return hinted ?? (state.pathIndex.get(p)?.size ?? 0);
+}
+function confirmTrash(paths, opts = {}) {
   if (!paths.length) return;
-  confirmPaths = paths;
-  const total = paths.reduce((s, p) => s + (state.pathIndex.get(p)?.size ?? 0), 0);
-  const first = state.pathIndex.get(paths[0]);
+  confirmPaths = paths; confirmOpts = opts;
+  const total = paths.reduce((s, p) => s + trashSizeOf(p, opts.sizeHint), 0);
+  const firstName = (opts.labels && opts.labels.get(paths[0]))
+    || state.pathIndex.get(paths[0])?.name || paths[0];
   $('confirmText').innerHTML = paths.length === 1
-    ? `Move <b>${escapeHtml(first ? first.name : paths[0])}</b> (${formatBytes(total)}) to the Trash?<br><span style="color:var(--text-3)">You can restore it from the Trash at any time.</span>`
+    ? `Move <b>${escapeHtml(firstName)}</b> (${formatBytes(total)}) to the Trash?<br><span style="color:var(--text-3)">You can restore it from the Trash at any time.</span>`
     : `Move <b>${paths.length} items</b> (${formatBytes(total)} total) to the Trash?<br><span style="color:var(--text-3)">You can restore them from the Trash at any time.</span>`;
   $('confirmModal').classList.add('open');
 }
 $('confirmOk').addEventListener('click', async () => {
   closeModal('confirmModal');
-  await trashPaths(confirmPaths);
-  confirmPaths = [];
+  const opts = confirmOpts;
+  const result = await trashPaths(confirmPaths, { sizeHint: opts.sizeHint, skipRescan: !!opts.onDone });
+  if (opts.onDone) opts.onDone(result);
+  confirmPaths = []; confirmOpts = {};
 });
 
-async function trashPaths(paths, { silent = false } = {}) {
+async function trashPaths(paths, { silent = false, sizeHint = null, skipRescan = false } = {}) {
   if (!paths.length) return { deleted: [], failed: [] };
-  const recovered = paths.reduce((s, p) => s + (state.pathIndex.get(p)?.size ?? 0), 0);
+  const recovered = paths.reduce((s, p) => s + trashSizeOf(p, sizeHint), 0);
   try {
     const result = await api('/api/files', {
       method: 'DELETE', headers: { 'Content-Type': 'application/json' },
@@ -1937,7 +2218,7 @@ async function trashPaths(paths, { silent = false } = {}) {
       if (result.failed.length) {
         toast(`${result.failed.length} failed: ${result.failed[0].reason}`, 'error');
       }
-      if (result.deleted.length) rescan();
+      if (result.deleted.length && !skipRescan) rescan();
     }
     return result;
   } catch (e) {
@@ -1948,6 +2229,449 @@ async function trashPaths(paths, { silent = false } = {}) {
 function rescan() {
   if (state.root && !state.scanning) startScan(state.root.path);
 }
+
+/* ───────────────────────────── Applications: Uninstaller ─────────────────────────────
+   Lists installed apps; selecting one analyzes its ~/Library leftovers. Every
+   offered path was registered by GET /api/apps/leftovers (which startScans the
+   bundle + each leftover), so DELETE /api/files and reveal authorize them. */
+function appInitials(name) {
+  return (name || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 2).toUpperCase() || '?';
+}
+/* App-icon tile: real bundle icon when available, letter-tile fallback. The
+   data URI is produced server-side; on a load error we drop back to initials. */
+function appTile(icon, name) {
+  const initials = appInitials(name);
+  return icon
+    ? `<span class="app-tile"><img alt="" src="${icon}" onerror="this.parentNode.textContent='${initials}'"></span>`
+    : `<span class="app-tile">${initials}</span>`;
+}
+async function loadApps() {
+  const a = state.apps;
+  if (state.system && state.system.platform !== 'darwin') {
+    $('appsList').innerHTML = '<p class="muted" style="padding:10px;">The Uninstaller is available on macOS only.</p>';
+    return;
+  }
+  if (a.loaded) { renderAppsList(); return; }
+  $('appsList').innerHTML = skeletonRows(8, 44);
+  try {
+    const { apps } = await api('/api/apps');
+    a.items = apps || []; a.loaded = true;
+    renderAppsList();
+  } catch (e) {
+    a.loaded = false;
+    $('appsList').innerHTML = `<p class="muted" style="padding:10px;">Could not list apps: ${escapeHtml(e.message)}</p>`;
+  }
+}
+function renderAppsList() {
+  const a = state.apps;
+  const q = ($('appsSearch').value || '').trim().toLowerCase();
+  const items = q
+    ? a.items.filter(x => x.name.toLowerCase().includes(q) || (x.bundleId || '').toLowerCase().includes(q))
+    : a.items;
+  if (!a.items.length) { $('appsList').innerHTML = '<p class="muted" style="padding:10px;">No applications found.</p>'; return; }
+  if (!items.length) { $('appsList').innerHTML = '<p class="muted" style="padding:10px;">No matching apps.</p>'; return; }
+  $('appsList').innerHTML = items.map(app => `
+    <div class="app-row" role="button" tabindex="0" data-path="${escapeHtml(app.path)}" aria-pressed="${app.path === a.selected}">
+      ${appTile(app.icon, app.name)}
+      <div class="meta"><div class="nm">${escapeHtml(app.name)}</div>
+        <div class="sub">${escapeHtml(app.version ? 'v' + app.version : (app.bundleId || ''))}</div></div>
+    </div>`).join('');
+  $('appsList').querySelectorAll('.app-row').forEach(row => {
+    const open = () => selectApp(row.dataset.path);
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  });
+}
+async function selectApp(appPath) {
+  const a = state.apps;
+  a.selected = appPath; a.leftovers = null;
+  renderAppsList();
+  $('appsDetailEmpty').hidden = true;
+  const body = $('appsDetailBody');
+  body.hidden = false;
+  body.innerHTML = skeletonRows(6, 34);
+  try {
+    const data = await api('/api/apps/leftovers?path=' + encodeURIComponent(appPath));
+    if (a.selected !== appPath) return; // superseded by another click
+    a.leftovers = data;
+    renderLeftovers();
+  } catch (e) {
+    body.innerHTML = `<p class="muted" style="padding:6px;">Could not analyze this app: ${escapeHtml(e.message)}</p>`;
+  }
+}
+function renderLeftovers() {
+  const data = state.apps.leftovers;
+  if (!data) return;
+  const app = data.app, rows = data.leftovers;
+  const warn = app.running
+    ? `<div class="warn-banner">${icon('alert', 16)}<span><b>${escapeHtml(app.name)}</b> is running — quit it first, then move it to the Trash.</span></div>`
+    : '';
+  $('appsDetailBody').innerHTML = `
+    <div class="lo-head">
+      ${appTile(app.icon, app.name)}
+      <div style="flex:1;min-width:0;">
+        <div class="lo-title">${escapeHtml(app.name)}</div>
+        <div class="lo-sub">${app.version ? 'v' + escapeHtml(app.version) + ' · ' : ''}${escapeHtml(app.bundleId || 'no bundle id')}</div>
+      </div>
+      <button class="icon-link rev" title="Reveal in Finder" data-reveal="${escapeHtml(app.path)}">${icon('external', 16)}</button>
+    </div>
+    ${warn}
+    <div class="lo-row" style="font-weight:600;">
+      <input type="checkbox" id="loApp" ${app.running ? 'disabled' : 'checked'}>
+      <div class="meta"><div class="nm">${escapeHtml(app.name)}.app</div><div class="cat">${app.running ? 'Application · quit to remove' : 'Application'}</div></div>
+      <span class="sz" style="color:${sizeColor(app.size)}">${formatBytes(app.size)}</span>
+      <span style="width:23px;flex:none;"></span>
+    </div>
+    ${rows.length ? rows.map((r, i) => `
+      <div class="lo-row">
+        <input type="checkbox" class="lo-cb" data-i="${i}" checked>
+        <div class="meta"><div class="nm">${escapeHtml(r.name)}</div><div class="cat">${escapeHtml(r.category)}</div></div>
+        <span class="sz" style="color:${sizeColor(r.size)}">${formatBytes(r.size)}</span>
+        <button class="icon-link rev" title="Reveal in Finder" data-reveal="${escapeHtml(r.path)}">${icon('external', 15)}</button>
+      </div>`).join('') : '<p class="muted" style="padding:10px 4px;">No leftover files found — clean install.</p>'}
+    <div class="lo-foot">
+      <button class="btn btn-danger" id="loTrashBtn"><span></span></button>
+      <span class="muted" id="loTotal"></span>
+    </div>`;
+  const body = $('appsDetailBody');
+  body.querySelectorAll('[data-reveal]').forEach(b => b.addEventListener('click', () => openInOS(b.dataset.reveal, true)));
+  const cbs = () => Array.from(body.querySelectorAll('.lo-cb'));
+  const update = () => {
+    let total = 0; const sel = [];
+    if ($('loApp').checked) { total += app.size; sel.push(app.path); }
+    cbs().forEach(cb => { if (cb.checked) { total += rows[+cb.dataset.i].size; sel.push(rows[+cb.dataset.i].path); } });
+    state.apps.sel = new Set(sel);
+    $('loTotal').textContent = sel.length ? `${sel.length} item${sel.length > 1 ? 's' : ''} · ${formatBytes(total)}` : 'Nothing selected';
+    $('loTrashBtn').disabled = !sel.length;
+    $('loTrashBtn').innerHTML = icon('trash', 15) + (sel.length ? `Uninstall (${sel.length})` : 'Uninstall');
+  };
+  $('loApp').addEventListener('change', update);
+  cbs().forEach(cb => cb.addEventListener('change', update));
+  $('loTrashBtn').addEventListener('click', trashApp);
+  update();
+}
+function trashApp() {
+  const data = state.apps.leftovers;
+  if (!data) return;
+  const app = data.app;
+  const paths = [...state.apps.sel];
+  if (!paths.length) return;
+  if (app.running && state.apps.sel.has(app.path)) {
+    toast(`Quit ${app.name} before moving it to the Trash.`, 'error');
+    return;
+  }
+  const sizeHint = new Map(), labels = new Map();
+  sizeHint.set(app.path, app.size); labels.set(app.path, app.name + '.app');
+  data.leftovers.forEach(r => { sizeHint.set(r.path, r.size); labels.set(r.path, r.name); });
+  confirmTrash(paths, {
+    sizeHint, labels,
+    onDone: (result) => {
+      if (!result.deleted.length) return;
+      state.apps.loaded = false; state.apps.selected = null; state.apps.leftovers = null;
+      $('appsDetailBody').hidden = true; $('appsDetailEmpty').hidden = false;
+      loadApps();
+    },
+  });
+}
+
+/* ───────────────────────────── Applications: Updater (Homebrew) ───────────────────────────── */
+async function loadUpdater() {
+  const body = $('updBody');
+  if (state.system && state.system.platform !== 'darwin') {
+    body.innerHTML = '<p class="muted" style="padding:8px 0;">The Updater is available on macOS only.</p>';
+    return;
+  }
+  body.innerHTML = skeletonRows(4, 44);
+  try {
+    const data = await api('/api/updater');
+    if (!data.available) {
+      body.innerHTML = `<div class="apps-empty" style="min-height:34vh;">${icon('refresh', 34)}<p class="muted">Homebrew not found.<br>The Updater checks your Homebrew casks for updates — install Homebrew to use it.</p></div>`;
+      return;
+    }
+    renderUpdater(data.casks || []);
+  } catch (e) {
+    body.innerHTML = `<p class="muted" style="padding:8px 0;">Could not check for updates: ${escapeHtml(e.message)}</p>`;
+  }
+}
+function renderUpdater(casks) {
+  const body = $('updBody');
+  if (!casks.length) {
+    body.innerHTML = `<div class="apps-empty" style="min-height:34vh;">${icon('checkCircle', 34)}<p class="muted">Everything's up to date.</p></div>`;
+    return;
+  }
+  body.innerHTML = `<p class="muted" style="margin:2px 0 12px;">${casks.length} ${casks.length === 1 ? 'cask has' : 'casks have'} updates available.</p>` +
+    casks.map(c => `
+      <div class="upd-row" data-token="${escapeHtml(c.token)}">
+        ${appTile(c.icon, c.name)}
+        <div class="meta"><div class="nm">${escapeHtml(c.name)}</div>
+          <div class="ver">${escapeHtml(c.installedVersion || '?')} → ${escapeHtml(c.latestVersion || 'latest')}</div></div>
+        <button class="btn upd-btn">${icon('download', 14)}Update</button>
+      </div>`).join('');
+  body.querySelectorAll('.upd-row').forEach(row => {
+    row.querySelector('.upd-btn').addEventListener('click', () => runUpgrade(row.dataset.token, row));
+  });
+}
+async function runUpgrade(token, row) {
+  const btn = row.querySelector('.upd-btn');
+  btn.disabled = true;
+  btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + 'Updating…';
+  try {
+    const r = await api('/api/updater/upgrade', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    if (r.ok) {
+      btn.innerHTML = icon('check', 14) + 'Updated';
+      row.style.opacity = '0.55';
+      toast(`Updated ${token}`);
+    } else {
+      btn.disabled = false; btn.innerHTML = icon('download', 14) + 'Update';
+      toast(`Update failed: ${r.message}`, 'error');
+    }
+  } catch (e) {
+    btn.disabled = false; btn.innerHTML = icon('download', 14) + 'Update';
+    toast('Update failed: ' + e.message, 'error');
+  }
+}
+if ($('appsSearch')) $('appsSearch').addEventListener('input', renderAppsList);
+
+/* ───────────────────────────── Fast Clean (Cleaner) ───────────────────────────── */
+let permResolve = null;
+function confirmPermanent(text) {
+  $('permText').innerHTML = text;
+  $('permModal').classList.add('open');
+  return new Promise(res => { permResolve = res; });
+}
+function resolvePerm(v) { if (permResolve) { const r = permResolve; permResolve = null; r(v); } }
+$('permOk').addEventListener('click', () => { closeModal('permModal'); resolvePerm(true); });
+// Any dismissal (Cancel, X, or backdrop) resolves the promise as "cancelled".
+$('permModal').addEventListener('click', (e) => {
+  if (e.target.id === 'permModal' || e.target.closest('[data-close="permModal"]')) resolvePerm(false);
+});
+
+async function openFdaSettings() {
+  try { await api('/api/cleaner/open-fda', { method: 'POST' }); } catch (e) { /* best effort */ }
+}
+
+/** Poll a scan's /result until it completes; hand the final body (or null) to onDone. */
+function pollScanSize(scanId, onDone, tries = 0) {
+  api(`/api/scan/${scanId}/result`).then(d => {
+    if (d.status === 'running') {
+      if (tries > 850) { onDone(null); return; } // ~10 min safety cap
+      setTimeout(() => pollScanSize(scanId, onDone, tries + 1), 700);
+      return;
+    }
+    onDone(d);
+  }).catch(() => onDone(null));
+}
+
+function setFcStatus(text) { $('fcStatus').textContent = text || ''; }
+function setFcMark(name, done) {
+  const m = $('fcMark');
+  m.classList.toggle('fc-done', !!done);
+  m.innerHTML = icon(name, 42);
+}
+function fcTotal() {
+  const fc = state.fastclean;
+  return fc.cacheSize + (fc.trashAccessible ? fc.binSize : 0);
+}
+function refreshFcButton() {
+  const fc = state.fastclean;
+  if (fc.cleaning) return; // don't clobber the cleaning ring
+  const total = fcTotal();
+  const btn = $('fcCleanBtn');
+  btn.disabled = total <= 0;
+  btn.querySelector('.fc-cta-main').textContent = 'Clean';
+  $('fcCtaSize').textContent = total > 0 ? formatBytes(total) : '';
+}
+
+/** Reset to the ready state (sparkles mark, default copy, disabled button). */
+function resetFc() {
+  const fc = state.fastclean;
+  fc.cleaning = false;
+  const btn = $('fcCleanBtn');
+  btn.classList.remove('cleaning');
+  btn.disabled = true;
+  btn.querySelector('.fc-cta-main').textContent = 'Clean';
+  $('fcCtaSize').textContent = '';
+  setFcMark('sparkles', false);
+  setFcStatus('');
+  $('fcSub').textContent = 'Free up space — empties the Bin and clears application caches.';
+}
+
+async function loadFastClean() {
+  resetFc();
+  const fc = state.fastclean;
+  fc.binSize = 0; fc.cacheSize = 0; fc.cachePaths = [];
+  if (state.system && state.system.platform !== 'darwin') {
+    $('fcSub').textContent = 'Smart Scan is available on macOS only.';
+    return;
+  }
+  try {
+    const data = await api('/api/cleaner/fast-clean');
+    fc.cacheScanId = data.cache.scanId;
+    fc.trashScanId = data.trash.scanId;
+    fc.exclude = (data.exclude || []).map(s => s.toLowerCase());
+    fc.trashAccessible = data.trash.accessible !== false;
+
+    if (!fc.trashAccessible) {
+      // ~/.Trash is TCC-protected and we lack Full Disk Access.
+      $('fcSub').innerHTML = 'Clears application caches. <a href="#" id="fcGrant" style="color:var(--accent);text-decoration:none;">Grant Full Disk Access</a> to also empty the Bin.';
+      $('fcGrant').addEventListener('click', (e) => {
+        e.preventDefault(); openFdaSettings();
+        toast('Add TreeMap (or your terminal) under Full Disk Access, then reopen Smart Scan.');
+      });
+    } else {
+      pollScanSize(fc.trashScanId, (d) => { fc.binSize = d && d.root ? d.root.size : 0; refreshFcButton(); });
+    }
+    pollScanSize(fc.cacheScanId, (d) => {
+      const kids = d && d.root && d.root.children ? d.root.children : [];
+      const keep = kids.filter(c => !fc.exclude.includes(c.name.toLowerCase()));
+      fc.cachePaths = keep.map(c => c.path);
+      fc.cacheSize = keep.reduce((s, c) => s + c.size, 0);
+      refreshFcButton();
+    });
+  } catch (e) {
+    $('fcSub').textContent = 'Could not start Smart Scan: ' + e.message;
+  }
+}
+
+async function fastCleanRun() {
+  const fc = state.fastclean;
+  if (fc.cleaning || fcTotal() <= 0) return;
+  const doBin = fc.trashAccessible && fc.binSize > 0;
+  const doCache = fc.cacheSize > 0 && fc.cachePaths.length > 0;
+
+  // The one permanent op gets an explicit, non-recoverable confirm.
+  if (doBin) {
+    const ok = await confirmPermanent(
+      `This permanently empties your Bin${fc.binSize ? ` (${formatBytes(fc.binSize)})` : ''} and clears application caches to the Trash.<br><span style="color:var(--danger)">Emptying the Bin can't be undone.</span>`);
+    if (!ok) return;
+  }
+
+  fc.cleaning = true;
+  const btn = $('fcCleanBtn');
+  btn.disabled = true;
+  btn.classList.add('cleaning'); // light sweeps around the ring; button text hidden via CSS
+  const done = [];
+  let recovered = 0;
+
+  // Empty Bin FIRST, then trash caches — so freshly-trashed caches aren't purged.
+  if (doBin) {
+    setFcStatus('Emptying the Bin…');
+    try {
+      await api('/api/cleaner/empty-trash', { method: 'POST' });
+      recovered += fc.binSize; done.push('Bin emptied');
+    } catch (e) {
+      if (e.code === 'FULL_DISK_ACCESS_REQUIRED') { toast(e.message, 'error'); openFdaSettings(); }
+      else toast('Empty Bin failed: ' + e.message, 'error');
+    }
+  }
+
+  if (doCache) {
+    setFcStatus('Clearing application caches…');
+    let deleted = 0, failed = 0;
+    for (let i = 0; i < fc.cachePaths.length; i += 400) {
+      const chunk = fc.cachePaths.slice(i, i + 400);
+      try {
+        const r = await api('/api/files', {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paths: chunk }),
+        });
+        deleted += r.deleted.length; failed += r.failed.length;
+      } catch (e) { failed += chunk.length; }
+    }
+    recovered += fc.cacheSize;
+    done.push(`${deleted} cache item${deleted === 1 ? '' : 's'} cleared`);
+    if (failed) toast(`${failed} cache item${failed === 1 ? '' : 's'} couldn't be cleared — grant Full Disk Access to clear more.`, 'error');
+  }
+
+  // Finished — in place: checkmark on the mark, updated copy, button shows "Done".
+  fc.cleaning = false;
+  btn.classList.remove('cleaning');
+  setFcStatus('');
+  setFcMark('checkCircle', true);
+  $('fcSub').textContent = recovered ? `${formatBytes(recovered)} freed — ${done.join(' · ')}.` : 'Nothing needed cleaning.';
+  btn.querySelector('.fc-cta-main').textContent = 'Done';
+  $('fcCtaSize').textContent = '';
+  btn.disabled = true;
+  if (recovered) toast(`Smart Scan — ${formatBytes(recovered)} freed`);
+}
+if ($('fcCleanBtn')) {
+  $('fcCleanBtn').addEventListener('click', fastCleanRun);
+}
+
+/* ───────────────────────────── Maintenance (Speed) ───────────────────────────── */
+async function runMnt(btn) {
+  const action = btn.dataset.mnt;
+  const statusEl = $('mntStatus-' + action);
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + 'Running…';
+  if (statusEl) statusEl.textContent = '';
+  try {
+    const r = await api('/api/maintenance/run', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+    if (statusEl) { statusEl.style.color = r.ok ? '#30D158' : 'var(--danger)'; statusEl.textContent = r.message; }
+    toast(r.message, r.ok ? 'success' : 'error');
+  } catch (e) {
+    if (statusEl) { statusEl.style.color = 'var(--danger)'; statusEl.textContent = e.message; }
+    toast('Maintenance failed: ' + e.message, 'error');
+  }
+  btn.disabled = false;
+  btn.innerHTML = orig;
+}
+
+async function loadMaintenance() {
+  document.querySelectorAll('.mnt-status').forEach(s => { s.textContent = ''; });
+  const box = $('mntLoginItems');
+  if (!box) return;
+  if (state.system && state.system.platform !== 'darwin') {
+    box.innerHTML = '<div class="muted">Login items are managed on macOS only.</div>';
+    return;
+  }
+  box.innerHTML = '<div class="muted">Loading…</div>';
+  try {
+    const { items } = await api('/api/maintenance/login-items');
+    if (!items.length) { box.innerHTML = '<div class="muted">No user login items — nothing opens at login.</div>'; return; }
+    box.innerHTML = items.map(it => {
+      const letter = escapeHtml((it.name.trim()[0] || '?').toUpperCase());
+      const iconUrl = `/api/maintenance/app-icon?path=${encodeURIComponent(it.path)}`;
+      return `
+      <div class="mnt-row">
+        <div class="mnt-ico">${letter}<img class="mnt-appico" src="${iconUrl}" alt="" onerror="this.remove()"></div>
+        <div class="mnt-text"><b>${escapeHtml(it.name)}</b></div>
+        <label class="switch">
+          <input type="checkbox" class="mnt-toggle" ${it.enabled ? 'checked' : ''} data-name="${escapeHtml(it.name)}" data-path="${escapeHtml(it.path)}">
+          <span class="track"></span>
+        </label>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    box.innerHTML = `<div class="muted">${escapeHtml(e.code === 'AUTOMATION_DENIED' ? e.message : 'Could not load login items: ' + e.message)}</div>`;
+  }
+}
+
+document.querySelectorAll('[data-mnt]').forEach(b => b.addEventListener('click', () => runMnt(b)));
+$('mntLoginItems')?.addEventListener('change', async (e) => {
+  const cb = e.target.closest('.mnt-toggle');
+  if (!cb) return;
+  const name = cb.dataset.name, path = cb.dataset.path, enabled = cb.checked;
+  cb.disabled = true;
+  try {
+    await api('/api/maintenance/login-items', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, path, enabled }),
+    });
+    toast(`${name} will ${enabled ? 'open' : 'not open'} at login`);
+  } catch (err) {
+    cb.checked = !enabled;
+    toast(err.message, 'error');
+  }
+  cb.disabled = false;
+});
 
 /* ───────────────────────────── Grid view ───────────────────────────── */
 const GAP = 12, MIN_SQ = 48, MAX_SQ = 256;
@@ -2551,7 +3275,7 @@ let emptyFolders = [];   // Empty Folders pane — { name, path }
 let smartGroups = [];    // Smart Suggestions pane — rule groups from the API
 let cleanPane = 'rules';
 
-$('cleanupBtn').addEventListener('click', () => {
+$('cleanupBtn')?.addEventListener('click', () => {
   if (!state.root) { toast('Run a scan first', 'error'); return; }
   $('cleanResults').innerHTML = '';
   $('smartResults').innerHTML = '';
