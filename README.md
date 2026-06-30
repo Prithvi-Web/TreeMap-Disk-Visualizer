@@ -101,10 +101,11 @@ artifacts instead of a Release).
 
 | Endpoint | Description |
 |---|---|
-| `POST /api/scan` | Start scanning a folder → `{ scanId }` |
+| `POST /api/scan` | Start scanning a folder (`{ path, incremental? }`) → `{ scanId }` |
 | `GET /api/scan/:id/progress` | Live scan progress (Server-Sent Events) |
 | `GET /api/scan/:id/result` | Full file tree (202 while running) |
 | `GET /api/scan/:id/treemap` | Pre-computed squarified treemap layout |
+| `GET /api/scan/:id/stats` | Scan counters incl. fast-rescan cache usage (`cachedDirs`, `walkedDirs`) |
 | `GET /api/scans` | Completed scans currently in memory |
 | `GET /api/large-files?scanId=` | Top N largest files |
 | `GET /api/large-folders?scanId=` | Top N largest folders (recursive sizes) |
@@ -118,9 +119,11 @@ artifacts instead of a Release).
 | `GET /api/settings` / `PUT /api/settings` | Ignore list + scheduled scans |
 | `GET /api/notifications` | Growth alerts from scheduled scans |
 | `GET /api/system` | Disk totals, platform, suggested folders |
+| `GET /api/trash/size` | System Trash / Recycle Bin size, item count, and contents |
 | `GET /api/fs/list?path=` | Folder browser (powers the path picker) |
 | `DELETE /api/files` | Move files to the system trash |
 | `POST /api/files/open` | Open / reveal a path in Finder & co. |
+| `GET /api/files/preview?path=` | Quick-look preview: image stream, text head, or metadata |
 
 ## Safety
 
