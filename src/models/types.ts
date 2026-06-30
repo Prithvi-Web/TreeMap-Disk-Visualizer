@@ -411,6 +411,8 @@ export interface BrewUpgradeResult {
   token: string;
   /** Last line of brew's stdout (success) or stderr (failure). */
   message: string;
+  /** Update needs an admin password — finish it interactively in Terminal. */
+  needsTerminal?: boolean;
 }
 
 /* ---------- Activity hub (Dashboard lifetime stats) ---------- */

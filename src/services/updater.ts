@@ -444,8 +444,29 @@ export async function upgradeCaskAdopt(token: string): Promise<BrewUpgradeResult
     return { ok: true, token, message: lastLine(stdout) || 'Updated' };
   } catch (err) {
     const e = err as NodeJS.ErrnoException & ExecResult;
+    const detail = (e.stderr || '') + (e.stdout || '');
+    // pkg/system casks need an admin password, and replacing a permission-locked
+    // or root-owned bundle needs elevated rights — neither is possible from the
+    // background server. Both are finished interactively in Terminal instead.
+    if (/password is required|sudo:|requires? a password|administrator|permission denied|apply2files|EACCES|not writable|Operation not permitted/i.test(detail)) {
+      return { ok: false, token, message: 'Needs admin permission — finishing in Terminal.', needsTerminal: true };
+    }
     return { ok: false, token, message: lastLine(e.stderr || '') || (e.message || 'upgrade failed').trim() };
   }
+}
+
+/** Open Terminal and run the cask update there, so the user can enter their
+ *  admin password interactively. Token is validated by the caller. */
+export async function upgradeCaskInTerminal(token: string): Promise<void> {
+  const brew = (await brewPath()) || 'brew';
+  const cmd = `${brew} install --cask --force ${token}`;
+  const esc = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  await execFileP('/usr/bin/osascript', [
+    '-e', 'tell application "Terminal"',
+    '-e', 'activate',
+    '-e', `do script "${esc}"`,
+    '-e', 'end tell',
+  ], 10000);
 }
 
 /** Every installed app, each tagged with an update if one is detectable. */

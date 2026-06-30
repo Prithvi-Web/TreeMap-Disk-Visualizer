@@ -2652,6 +2652,20 @@ async function runCaskUpgrade(token, row) {
       row.style.opacity = '0.55';
       recordActivity({ kind: 'update', label: name });
       toast(`Updated ${name}`);
+    } else if (r.needsTerminal) {
+      // pkg / permission-locked cask — finish it in Terminal where the user can
+      // authenticate. Open Terminal with the brew command and guide them.
+      btn.innerHTML = icon('external', 14) + 'In Terminal';
+      try {
+        await api('/api/updater/cask-terminal', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+        });
+        toast(`${name} needs admin permission — finishing in Terminal. Enter your password there, then refresh.`);
+      } catch (e2) {
+        btn.disabled = false; btn.innerHTML = icon('download', 14) + 'Update';
+        toast('Could not open Terminal: ' + e2.message, 'error');
+      }
     } else {
       btn.disabled = false; btn.innerHTML = icon('download', 14) + 'Update';
       toast(`Update failed: ${r.message}`, 'error');

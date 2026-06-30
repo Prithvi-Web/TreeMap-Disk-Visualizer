@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import path from 'path';
 import { listInstalledApps, findLeftovers, appRoots } from '../services/apps';
 import {
-  brewAvailable, masAvailable, upgradeMas, openApp, appUpdates, upgradeCaskAdopt,
+  brewAvailable, masAvailable, upgradeMas, openApp, appUpdates, upgradeCaskAdopt, upgradeCaskInTerminal,
 } from '../services/updater';
 import { guardQueryPath } from '../middleware/pathGuard';
 import { isInside } from '../utils/pathSanitizer';
@@ -80,6 +80,17 @@ appRouter.post('/updater/cask-upgrade', async (req: Request, res: Response) => {
     throw new AppError(400, 'INVALID_TOKEN', 'Invalid Homebrew cask token');
   }
   res.json(await upgradeCaskAdopt(token));
+});
+
+/** POST /api/updater/cask-terminal { token } — finish a sudo-needing cask update in Terminal. */
+appRouter.post('/updater/cask-terminal', async (req: Request, res: Response) => {
+  requireMac();
+  const token = (req.body as { token?: unknown } | undefined)?.token;
+  if (typeof token !== 'string' || !/^[a-z0-9][a-z0-9@+._-]*$/i.test(token)) {
+    throw new AppError(400, 'INVALID_TOKEN', 'Invalid Homebrew cask token');
+  }
+  await upgradeCaskInTerminal(token);
+  res.json({ opened: true });
 });
 
 /** POST /api/updater/mas-upgrade { id } — `mas upgrade <id>`. */
