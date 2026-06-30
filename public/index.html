@@ -443,6 +443,16 @@ body.preview-open #cartDock { right: 348px; }
 .fast-rescan input { accent-color: var(--accent); margin: 0; }
 .fast-rescan .ic { color: var(--accent); }
 
+/* ── Keyboard shortcuts overlay (Feature 6) ── */
+.kbd-sec { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-3); margin: 2px 0 11px; }
+.kbd-sec + .kbd-grid + .kbd-sec { margin-top: 18px; }
+.kbd-grid { display: grid; grid-template-columns: 132px 1fr; gap: 9px 16px; align-items: center; font-size: 13px; }
+.kbd-grid > div:nth-child(odd) { display: flex; gap: 5px; }
+.kbd-grid > div:nth-child(even) { color: var(--text-2); }
+kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 23px; padding: 0 7px;
+  font: 11.5px ui-monospace, 'SF Mono', Menlo, monospace; color: var(--text-1); background: var(--surface-2);
+  border: 1px solid var(--hairline-2); border-radius: 6px; box-shadow: inset 0 -1.5px 0 var(--hairline); }
+
 /* ── Modals ── */
 .modal-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 100;
   display: none; align-items: center; justify-content: center;
@@ -978,6 +988,34 @@ body.preview-open #cartDock { right: 348px; }
 </div>
 
 <div id="tooltip" role="tooltip"></div>
+<!-- ═══════════ Keyboard shortcuts (Feature 6) ═══════════ -->
+<div class="modal-backdrop" id="shortcutsModal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+  <div class="modal" style="width:540px;max-width:92vw;">
+    <div class="modal-head">
+      <h3><span data-icon="keyboard" data-size="18"></span>Keyboard shortcuts</h3>
+      <button class="close-x" data-close="shortcutsModal" aria-label="Close"><span data-icon="x" data-size="14"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="kbd-sec">Treemap &amp; Sunburst</div>
+      <div class="kbd-grid">
+        <div><kbd>h</kbd><kbd>←</kbd></div><div>Zoom out one level</div>
+        <div><kbd>j</kbd><kbd>↓</kbd></div><div>Select next cell</div>
+        <div><kbd>k</kbd><kbd>↑</kbd></div><div>Select previous cell</div>
+        <div><kbd>l</kbd><kbd>→</kbd><kbd>↵</kbd></div><div>Drill into folder / preview file</div>
+        <div><kbd>c</kbd></div><div>Add selected to the cleanup cart</div>
+        <div><kbd>p</kbd></div><div>Quick-look the selected file</div>
+        <div><kbd>/</kbd></div><div>Focus the search box</div>
+        <div><kbd>Esc</kbd></div><div>Clear selection · close panel · zoom out</div>
+      </div>
+      <div class="kbd-sec">Anywhere</div>
+      <div class="kbd-grid">
+        <div><kbd>⌘</kbd><kbd>R</kbd></div><div>Rescan the current folder</div>
+        <div><kbd>?</kbd></div><div>Show this help</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════ Cleanup cart (Feature 2) ═══════════ -->
 <div id="cartDock">
   <div id="cartPanel" class="glass">
@@ -1119,6 +1157,7 @@ const PATHS = {
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   ban: '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
   cart: '<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.5 2.5h2l2.6 12.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6l1.6-7.4H5.1"/>',
+  keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M10 14h4"/>',
 };
 function icon(name, size = 16, cls = '') {
   return `<svg class="ic ${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PATHS[name] || PATHS.file}</svg>`;
@@ -1228,7 +1267,7 @@ const state = {
   largest: [],
   types: [],
   bigFolders: [],
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null },
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   donut: { segs: [], hover: -1, animated: false },
   dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
@@ -1631,6 +1670,7 @@ let tmLoadSeq = 0;
 async function loadTreemap(rootPath, animate = false) {
   if (!state.scanId) return;
   const seq = ++tmLoadSeq;
+  state.treemap.kbSel = null;
   const zoom = $('treemapZoom');
   if (animate && !REDUCED) zoom.classList.add('zooming');
   try {
@@ -1875,6 +1915,16 @@ function presentTreemap() {
     tmCtx.lineWidth = 2;
     tmCtx.strokeRect(h.x + 1, h.y + 1, h.w - 2, h.h - 2);
   }
+  const ks = state.treemap.kbSel;
+  if (ks) {
+    const pr = state.treemap.pxRects.find((p) => p.n.path === ks.path);
+    if (pr) {
+      tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      tmCtx.setLineDash([6, 3]); tmCtx.strokeStyle = '#fff'; tmCtx.lineWidth = 2;
+      tmCtx.strokeRect(pr.x + 1.5, pr.y + 1.5, Math.max(1, pr.w - 3), Math.max(1, pr.h - 3));
+      tmCtx.setLineDash([]);
+    }
+  }
 }
 
 function treemapHit(clientX, clientY, leavesOnly = false) {
@@ -2090,6 +2140,16 @@ function presentSunburst() {
     tmCtx.lineWidth = 2;
     tmCtx.stroke();
   }
+  const ks = state.treemap.kbSel;
+  if (ks) {
+    const arc = state.treemap.arcs.find((a) => a.n.path === ks.path);
+    if (arc) {
+      tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      sectorPath(tmCtx, arc.cx, arc.cy, arc.rInner, arc.rOuter, arc.a0, arc.a1);
+      tmCtx.setLineDash([6, 3]); tmCtx.strokeStyle = '#fff'; tmCtx.lineWidth = 2;
+      tmCtx.stroke(); tmCtx.setLineDash([]);
+    }
+  }
 }
 
 function angInRange(t, a0, a1) {
@@ -2134,6 +2194,64 @@ $('tmViewSeg').addEventListener('click', (e) => {
   if (btn) setTreemapView(btn.dataset.vm);
 });
 setTreemapView(state.treemap.mode); // reflect persisted choice on load
+
+/* ───────────────────────────── Keyboard-first navigation (Feature 6) ───────────────────────────── */
+function kbSiblings() {
+  const root = state.pathIndex.get(state.treemap.rootPath) || state.root;
+  if (!root || !root.children) return [];
+  return [...root.children].filter((c) => c.size > 0).sort((a, b) => b.size - a.size);
+}
+function kbShowTip(node) {
+  const rect = tmCanvas.getBoundingClientRect();
+  let cx, cy;
+  if (isSun()) {
+    const arc = state.treemap.arcs.find((a) => a.n.path === node.path);
+    if (!arc) { hideTooltip(); return; }
+    const mid = (arc.a0 + arc.a1) / 2, rMid = (arc.rInner + arc.rOuter) / 2;
+    cx = rect.left + arc.cx + Math.cos(mid) * rMid;
+    cy = rect.top + arc.cy + Math.sin(mid) * rMid;
+  } else {
+    const pr = state.treemap.pxRects.find((p) => p.n.path === node.path);
+    if (!pr) { hideTooltip(); return; }
+    cx = rect.left + pr.x + pr.w / 2;
+    cy = rect.top + pr.y + Math.min(pr.h / 2, 38);
+  }
+  const pct = state.treemap.rootSize > 0 ? (node.size / state.treemap.rootSize) * 100 : 0;
+  showTooltip(cx, cy, node, pct);
+}
+function kbSelect(node) {
+  state.treemap.kbSel = node || null;
+  presentView();
+  if (node) kbShowTip(node); else hideTooltip();
+}
+function kbMove(delta) {
+  const sibs = kbSiblings();
+  if (!sibs.length) return;
+  let idx = state.treemap.kbSel ? sibs.findIndex((s) => s.path === state.treemap.kbSel.path) : -1;
+  idx = idx < 0 ? (delta > 0 ? 0 : sibs.length - 1) : Math.max(0, Math.min(sibs.length - 1, idx + delta));
+  kbSelect(sibs[idx]);
+}
+async function kbDrill() {
+  const sel = state.treemap.kbSel;
+  if (!sel) { const sibs = kbSiblings(); if (sibs.length) kbSelect(sibs[0]); return; }
+  if (sel.type === 'dir') {
+    await loadTreemap(sel.path, true);
+    kbSelect(kbSiblings()[0] || null);
+  } else {
+    openPreview(sel);
+  }
+}
+async function kbUp() {
+  const root = state.root;
+  if (!root || !state.treemap.rootPath || state.treemap.rootPath === root.path) return;
+  const oldRoot = state.treemap.rootPath;
+  const crumbs = breadcrumbsFor(oldRoot);
+  const parent = crumbs.length > 1 ? crumbs[crumbs.length - 2].path : root.path;
+  await loadTreemap(parent, true);
+  const sibs = kbSiblings();
+  kbSelect(sibs.find((s) => s.path === oldRoot) || sibs[0] || null);
+}
+function toggleShortcuts() { $('shortcutsModal').classList.toggle('open'); }
 
 /* ── Zoom out (button, breadcrumbs already handle jumps) ── */
 function treemapUp() {
@@ -3554,6 +3672,7 @@ document.querySelectorAll('.modal-backdrop').forEach(bd =>
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  if (e.key === '?' && !typing && !mod) { e.preventDefault(); toggleShortcuts(); return; }
   if (mod && e.key.toLowerCase() === 'r') {
     if (state.root) { e.preventDefault(); rescan(); }
     return;
@@ -3567,6 +3686,18 @@ document.addEventListener('keydown', (e) => {
     $('gridSearch').focus();
     return;
   }
+  // Feature 6 — keyboard navigation in the treemap / sunburst view.
+  if (state.view === 'treemap' && !typing && !mod && state.treemap.rootPath) {
+    switch (e.key) {
+      case '/': e.preventDefault(); $('tmSearch').focus(); return;
+      case 'h': case 'ArrowLeft': e.preventDefault(); kbUp(); return;
+      case 'j': case 'ArrowDown': e.preventDefault(); kbMove(1); return;
+      case 'k': case 'ArrowUp': e.preventDefault(); kbMove(-1); return;
+      case 'l': case 'ArrowRight': case 'Enter': e.preventDefault(); kbDrill(); return;
+      case 'c': if (state.treemap.kbSel) { e.preventDefault(); cartToggle(state.treemap.kbSel.path); } return;
+      case 'p': if (state.treemap.kbSel && state.treemap.kbSel.type === 'file') { e.preventDefault(); openPreview(state.treemap.kbSel); } return;
+    }
+  }
   if (e.key === 'Escape') {
     const openModal = document.querySelector('.modal-backdrop.open');
     if (openModal) { openModal.classList.remove('open'); return; }
@@ -3579,6 +3710,9 @@ document.addEventListener('keydown', (e) => {
       $('tmSearch').value = ''; state.treemap.query = '';
       if (isSun()) presentSunburst(); else { renderSearchOverlay(); presentTreemap(); }
       return;
+    }
+    if (state.view === 'treemap' && state.treemap.kbSel) {
+      state.treemap.kbSel = null; presentView(); hideTooltip(); return;
     }
     if (state.view === 'treemap' && state.root && state.treemap.rootPath !== state.root.path) {
       treemapUp();
