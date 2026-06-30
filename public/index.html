@@ -731,6 +731,14 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
             <div class="snap-meta"><b id="snapCount">–</b><span id="snapHint" class="muted"></span></div>
             <button class="pill" id="snapPurgeBtn">Purge</button>
           </div>
+          <div class="snap-row" id="hardlinkRow" hidden>
+            <span class="ic" data-icon="copy" data-size="16"></span>
+            <div class="snap-meta"><b id="hardlinkText"></b><span class="muted">Counted once, so totals match what the OS reports.</span></div>
+          </div>
+          <div class="snap-row" id="cloudRow" hidden>
+            <span class="ic" data-icon="cloud" data-size="16"></span>
+            <div class="snap-meta"><b id="cloudText"></b><span class="muted">Stored in the cloud — local copies are safe to remove.</span></div>
+          </div>
         </div>
 
         <div class="card glass">
@@ -1203,6 +1211,8 @@ const PATHS = {
   ban: '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
   cart: '<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.5 2.5h2l2.6 12.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6l1.6-7.4H5.1"/>',
   keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M10 14h4"/>',
+  cloud: '<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>',
+  gitBranch: '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
 };
 function icon(name, size = 16, cls = '') {
   return `<svg class="ic ${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PATHS[name] || PATHS.file}</svg>`;
@@ -1305,6 +1315,7 @@ const state = {
   system: null,
   trash: null,
   snapshots: null,
+  scanStats: null,
   scanId: null,
   scanning: false,
   es: null,
@@ -1611,12 +1622,13 @@ async function finishScan(root, durationMs) {
 
   state.dup = { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 };
   try {
-    const [lf, ft, lfo] = await Promise.all([
+    const [lf, ft, lfo, stats] = await Promise.all([
       api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`),
       api(`/api/file-types?scanId=${state.scanId}`),
       api(`/api/large-folders?scanId=${state.scanId}&limit=10`),
+      api(`/api/scan/${state.scanId}/stats`),
     ]);
-    state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders;
+    state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders; state.scanStats = stats;
   } catch (e) { toast('Could not load stats: ' + e.message, 'error'); }
   renderBigFiles();
   renderBigFolders();
@@ -1627,6 +1639,26 @@ async function finishScan(root, durationMs) {
   switchView(state.view);
   toast(`Scan complete — ${formatBytes(root.size)} across ${formatCount(files)} files`);
   renderGrowthProjection();
+  renderDiskNotes();
+}
+
+/* Features 11 + 10 — hard-link / cloud-placeholder dashboard notes. */
+function renderDiskNotes() {
+  const s = state.scanStats || {};
+  const hl = $('hardlinkRow');
+  if (hl) {
+    if (s.hardlinkedFiles > 0) {
+      $('hardlinkText').textContent = `${formatCount(s.hardlinkedFiles)} hard-linked file${s.hardlinkedFiles === 1 ? '' : 's'} (${formatBytes(s.hardlinkedBytes)})`;
+      hl.hidden = false;
+    } else hl.hidden = true;
+  }
+  const cl = $('cloudRow');
+  if (cl) {
+    if (s.cloudFiles > 0) {
+      $('cloudText').textContent = `${formatCount(s.cloudFiles)} cloud placeholder${s.cloudFiles === 1 ? '' : 's'} (${formatBytes(s.cloudBytes)} online-only)`;
+      cl.hidden = false;
+    } else cl.hidden = true;
+  }
 }
 
 /* Feature 7 — "disk full in ~N days" projection from snapshot history. */

@@ -17,6 +17,14 @@ export interface FileNode {
   /** Unix epoch milliseconds of last modification. */
   modifiedAt: number;
   isHidden: boolean;
+  /** Hard-linked file whose inode was already counted — size set to 0 to avoid double-counting. */
+  hardlinkDuplicate?: boolean;
+  /** Symbolic link (recorded as a leaf, never followed). */
+  isSymlink?: boolean;
+  /** Cloud placeholder/stub: reports a logical size but occupies ~no disk blocks. */
+  cloudPlaceholder?: boolean;
+  /** Cloud provider detected for a placeholder, when inferable from the path. */
+  cloudProvider?: 'icloud' | 'onedrive' | 'dropbox';
 }
 
 export type ScanStatus = 'running' | 'complete' | 'error';
@@ -48,6 +56,14 @@ export interface ScanResult {
   cachedDirs?: number;
   /** Directories actually walked on disk. */
   walkedDirs?: number;
+  /** Files skipped as hard-link duplicates (counted once). */
+  hardlinkedFiles?: number;
+  /** Bytes those hard-link duplicates would have double-counted. */
+  hardlinkedBytes?: number;
+  /** Cloud placeholder files detected (size > 0 but ~0 disk blocks). */
+  cloudFiles?: number;
+  /** Logical bytes those cloud placeholders report but don't occupy on disk. */
+  cloudBytes?: number;
 }
 
 /** One rectangle of the squarified treemap, coordinates in percent (0–100). */

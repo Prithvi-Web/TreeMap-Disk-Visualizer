@@ -138,6 +138,10 @@ scanRouter.get('/scan/:scanId/result', (req: Request, res: Response) => {
     rootPath: scan.rootPath,
     fileCount: scan.fileCount,
     dirCount: scan.dirCount,
+    hardlinkedFiles: scan.hardlinkedFiles ?? 0,
+    hardlinkedBytes: scan.hardlinkedBytes ?? 0,
+    cloudFiles: scan.cloudFiles ?? 0,
+    cloudBytes: scan.cloudBytes ?? 0,
     startedAt: scan.startedAt,
     finishedAt: scan.finishedAt,
     root: scan.root,
@@ -156,6 +160,10 @@ scanRouter.get('/scan/:scanId/stats', (req: Request, res: Response) => {
     incremental: scan.incremental === true,
     cachedDirs: scan.cachedDirs ?? 0,
     walkedDirs: scan.walkedDirs ?? 0,
+    hardlinkedFiles: scan.hardlinkedFiles ?? 0,
+    hardlinkedBytes: scan.hardlinkedBytes ?? 0,
+    cloudFiles: scan.cloudFiles ?? 0,
+    cloudBytes: scan.cloudBytes ?? 0,
   });
 });
 

@@ -102,6 +102,10 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     incremental: !!cache,
     cachedDirs: 0,
     walkedDirs: 0,
+    hardlinkedFiles: 0,
+    hardlinkedBytes: 0,
+    cloudFiles: 0,
+    cloudBytes: 0,
   };
   scans.set(scan.scanId, scan);
 
@@ -190,6 +194,14 @@ function makeNode(fullPath: string, name: string, isDir: boolean, size: number, 
   return node;
 }
 
+/** Infer a cloud provider for a placeholder file from its path. */
+function cloudProviderFor(p: string): 'icloud' | 'onedrive' | 'dropbox' | undefined {
+  if (/Library\/Mobile Documents|com~apple~CloudDocs|\.icloud$/i.test(p)) return 'icloud';
+  if (/OneDrive/i.test(p)) return 'onedrive';
+  if (/Dropbox/i.test(p)) return 'dropbox';
+  return undefined;
+}
+
 async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore[], cache: Map<string, FileNode> | null): Promise<void> {
   const rootStat = await fsp.lstat(scan.rootPath);
   const root = makeNode(
@@ -204,7 +216,7 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
   else scan.fileCount = 1;
 
   if (rootIsDir) {
-    await drainQueue(scan, [root], ignore, cache);
+    await drainQueue(scan, [root], ignore, cache, new Set<string>());
   }
   if (scan.cancelled) return;
 
@@ -226,7 +238,7 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
  * Worker pool: up to CONCURRENCY directories are listed at the same time.
  * Resolves when the queue is empty and every worker has finished.
  */
-function drainQueue(scan: ScanResult, initial: FileNode[], ignore: CompiledIgnore[], cache: Map<string, FileNode> | null): Promise<void> {
+function drainQueue(scan: ScanResult, initial: FileNode[], ignore: CompiledIgnore[], cache: Map<string, FileNode> | null, seen: Set<string>): Promise<void> {
   const queue: FileNode[] = [...initial];
   let active = 0;
 
@@ -239,7 +251,7 @@ function drainQueue(scan: ScanResult, initial: FileNode[], ignore: CompiledIgnor
       while (active < CONCURRENCY && queue.length > 0) {
         const dirNode = queue.shift()!;
         active++;
-        processDirectory(scan, dirNode, queue, ignore, cache)
+        processDirectory(scan, dirNode, queue, ignore, cache, seen)
           .catch((err: unknown) => reject(err))
           .finally(() => {
             active--;
@@ -263,7 +275,8 @@ async function processDirectory(
   dirNode: FileNode,
   queue: FileNode[],
   ignore: CompiledIgnore[],
-  cache: Map<string, FileNode> | null
+  cache: Map<string, FileNode> | null,
+  seen: Set<string>
 ): Promise<void> {
   if (scan.cancelled) return;
 
@@ -306,18 +319,45 @@ async function processDirectory(
 
         if (ent.isDirectory() && !ent.isSymbolicLink()) {
           const stat = await fsp.lstat(fullPath);
-          return makeNode(fullPath, ent.name, true, 0, stat.mtimeMs);
+          return { node: makeNode(fullPath, ent.name, true, 0, stat.mtimeMs) };
         }
         // Files, symlinks (not followed — lstat reports the link itself),
         // sockets, fifos: record as a leaf with whatever size lstat reports.
         const stat = await fsp.lstat(fullPath);
-        return makeNode(fullPath, ent.name, false, stat.size, stat.mtimeMs);
+        const node = makeNode(fullPath, ent.name, false, stat.size, stat.mtimeMs);
+        if (ent.isSymbolicLink()) {
+          node.isSymlink = true;
+          return { node };
+        }
+        // A cloud placeholder reports a logical size but occupies ~no disk blocks.
+        if (node.size > 0 && stat.blocks === 0) {
+          node.cloudPlaceholder = true;
+          const provider = cloudProviderFor(fullPath);
+          if (provider) node.cloudProvider = provider;
+        }
+        // Hard-link key only when the link count says the inode is shared.
+        return { node, inoKey: stat.nlink > 1 ? `${stat.dev}:${stat.ino}` : undefined };
       })
     );
 
     for (const result of settled) {
       if (result.status !== 'fulfilled') continue; // entry vanished mid-scan
-      const child = result.value;
+      const { node: child, inoKey } = result.value;
+      // Dedup hard links sequentially so concurrent workers can't race the set.
+      if (inoKey) {
+        if (seen.has(inoKey)) {
+          child.hardlinkDuplicate = true;
+          scan.hardlinkedFiles = (scan.hardlinkedFiles ?? 0) + 1;
+          scan.hardlinkedBytes = (scan.hardlinkedBytes ?? 0) + child.size;
+          child.size = 0; // first occurrence already counted
+        } else {
+          seen.add(inoKey);
+        }
+      }
+      if (child.cloudPlaceholder) {
+        scan.cloudFiles = (scan.cloudFiles ?? 0) + 1;
+        scan.cloudBytes = (scan.cloudBytes ?? 0) + child.size;
+      }
       children.push(child);
       scan.scanned++;
       if (child.type === 'dir') {
