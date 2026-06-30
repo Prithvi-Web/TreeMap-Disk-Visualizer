@@ -406,6 +406,37 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
 #cartDock.open #cartTab .c-cta { color: var(--text-3); }
 .icon-btn.cartin { color: var(--accent); }
 
+/* ── Quick-look preview pane (Feature 4) ── */
+#previewPane { position: fixed; top: 58px; right: 0; bottom: 0; width: 330px; max-width: 88vw; z-index: 72;
+  display: flex; flex-direction: column; background: var(--glass-strong);
+  backdrop-filter: blur(22px) saturate(160%); -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border-left: 1px solid var(--hairline-2); box-shadow: var(--shadow-3);
+  transform: translateX(100%); transition: transform var(--dur-2) var(--ease); }
+#previewPane.open { transform: none; }
+.pv-head { display: flex; align-items: center; gap: 10px; padding: 13px 14px; border-bottom: 1px solid var(--hairline); }
+.pv-head .chip { flex: none; }
+.pv-meta { flex: 1; min-width: 0; }
+.pv-name { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-sub { font-size: 11px; color: var(--text-3); }
+.pv-head .close-x { flex: none; }
+.pv-body { flex: 1; overflow: auto; padding: 12px 14px; }
+.pv-body img { max-width: 100%; height: auto; border-radius: 8px; display: block; margin: 0 auto;
+  background-image: linear-gradient(45deg,rgba(127,127,127,.12) 25%,transparent 25%,transparent 75%,rgba(127,127,127,.12) 75%),linear-gradient(45deg,rgba(127,127,127,.12) 25%,transparent 25%,transparent 75%,rgba(127,127,127,.12) 75%);
+  background-size: 16px 16px; background-position: 0 0,8px 8px; }
+.pv-body pre { margin: 0; font: 11.5px/1.55 ui-monospace, 'SF Mono', Menlo, monospace; white-space: pre-wrap; word-break: break-word; color: var(--text-1); }
+.pv-empty { color: var(--text-3); font-size: 12.5px; text-align: center; padding: 26px 12px; line-height: 1.5; }
+.pv-trunc { color: var(--text-3); font-size: 10.5px; margin-top: 10px; text-align: center; }
+.pv-kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 12.5px; padding: 0 4px; }
+.pv-kv .k { color: var(--text-3); }
+.pv-foot { padding: 9px 14px; border-top: 1px solid var(--hairline); }
+.pv-foot .pth { font-size: 10.5px; color: var(--text-3); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.pv-body .tk-kw { color: #c792ea; } .pv-body .tk-str { color: #7fd88f; }
+.pv-body .tk-num { color: #f78c6c; } .pv-body .tk-com { color: var(--text-3); font-style: italic; }
+:root[data-theme="light"] .pv-body .tk-kw { color: #9c27b0; }
+:root[data-theme="light"] .pv-body .tk-str { color: #2e7d32; }
+:root[data-theme="light"] .pv-body .tk-num { color: #d84315; }
+body.preview-open #cartDock { right: 348px; }
+
 /* ── Modals ── */
 .modal-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 100;
   display: none; align-items: center; justify-content: center;
@@ -961,6 +992,17 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
     <span class="c-cta" id="cartTabCta">Review</span>
   </div>
 </div>
+
+<!-- ═══════════ Quick-look preview (Feature 4) ═══════════ -->
+<aside id="previewPane" aria-label="File preview" hidden>
+  <div class="pv-head">
+    <span class="pv-ic" id="pvIcon"></span>
+    <div class="pv-meta"><div class="pv-name" id="pvName"></div><div class="pv-sub num" id="pvSub"></div></div>
+    <button class="close-x" id="pvClose" aria-label="Close preview"><span data-icon="x" data-size="14"></span></button>
+  </div>
+  <div class="pv-body" id="pvBody"></div>
+  <div class="pv-foot"><span class="pth" id="pvFoot"></span></div>
+</aside>
 
 <div id="ctxMenu" role="menu"></div>
 <div id="toasts" aria-live="polite"></div>
@@ -1847,6 +1889,7 @@ tmCanvas.addEventListener('click', (e) => {
     return;
   }
   if (hit.n.type === 'dir') { hideTooltip(); loadTreemap(hit.n.path, true); }
+  else { hideTooltip(); openPreview(hit.n); }
 });
 tmCanvas.addEventListener('contextmenu', (e) => {
   e.preventDefault();
@@ -2212,6 +2255,7 @@ function showCtxMenu(x, y, node) {
   const inCart = cartHas(node.path);
   menu.innerHTML = `
     <button data-act="open">${icon('external', 15)}Open in ${fm}</button>
+    ${node.type === 'file' ? `<button data-act="preview">${icon('search', 15)}Quick Look</button>` : ''}
     <button data-act="copy">${icon('copy', 15)}Copy path</button>
     <button data-act="cart">${icon(inCart ? 'check' : 'cart', 15)}${inCart ? 'Remove from Cart' : 'Add to Cart'}</button>
     <div class="div"></div>
@@ -2223,6 +2267,7 @@ function showCtxMenu(x, y, node) {
     const act = b.dataset.act;
     hideCtxMenu();
     if (act === 'open') openInOS(ctxTarget.path, true);
+    if (act === 'preview') openPreview(ctxTarget);
     if (act === 'copy') copyPath(ctxTarget.path);
     if (act === 'cart') cartToggle(ctxTarget.path);
     if (act === 'trash') confirmTrash([ctxTarget.path]);
@@ -2392,6 +2437,109 @@ document.addEventListener('click', (e) => {
 });
 renderCart(); // reflect any persisted cart on load
 
+/* ───────────────────────────── Quick-look preview pane (Feature 4) ───────────────────────────── */
+const PV_IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif']);
+const PV_CODE_EXT = new Set(['js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'json', 'jsonc', 'py', 'rb', 'go', 'rs', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'java', 'kt', 'swift', 'php', 'lua', 'sh', 'bash', 'zsh', 'yml', 'yaml', 'toml', 'css', 'scss', 'less', 'html', 'htm', 'xml', 'sql', 'vue', 'svelte', 'gradle']);
+const PV_KW = new Set('const,let,var,function,return,if,else,for,while,do,switch,case,break,continue,import,export,default,from,as,class,new,await,async,def,lambda,self,public,private,protected,static,final,void,int,float,double,string,bool,boolean,true,false,null,nil,none,None,True,False,undefined,this,super,struct,enum,interface,type,typeof,instanceof,extends,implements,package,namespace,using,fn,mut,pub,impl,match,try,catch,finally,throw,throws,raise,yield,with,in,is,and,or,not'.split(','));
+
+function pvEsc(s) { return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function previewExt(node) { return (node.extension || node.name.split('.').pop() || '').toLowerCase(); }
+
+/** Tiny single-pass highlighter (comments, strings, numbers, keywords). */
+function highlightCode(src, ext) {
+  if (!PV_CODE_EXT.has(ext)) return pvEsc(src);
+  let out = '', i = 0; const n = src.length;
+  while (i < n) {
+    const c = src[i];
+    if ((c === '/' && src[i + 1] === '/') || (c === '#' && ext !== 'css' && ext !== 'scss')) {
+      let j = i; while (j < n && src[j] !== '\n') j++;
+      out += '<span class="tk-com">' + pvEsc(src.slice(i, j)) + '</span>'; i = j; continue;
+    }
+    if (c === '/' && src[i + 1] === '*') {
+      let j = i + 2; while (j < n && !(src[j] === '*' && src[j + 1] === '/')) j++; j = Math.min(n, j + 2);
+      out += '<span class="tk-com">' + pvEsc(src.slice(i, j)) + '</span>'; i = j; continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      let j = i + 1; while (j < n && src[j] !== c) { if (src[j] === '\\') j++; j++; } j = Math.min(n, j + 1);
+      out += '<span class="tk-str">' + pvEsc(src.slice(i, j)) + '</span>'; i = j; continue;
+    }
+    if (c >= '0' && c <= '9') {
+      let j = i; while (j < n && /[0-9a-fxA-FX._]/.test(src[j])) j++;
+      out += '<span class="tk-num">' + pvEsc(src.slice(i, j)) + '</span>'; i = j; continue;
+    }
+    if (/[A-Za-z_$]/.test(c)) {
+      let j = i; while (j < n && /[A-Za-z0-9_$]/.test(src[j])) j++;
+      const w = src.slice(i, j);
+      out += PV_KW.has(w) ? '<span class="tk-kw">' + pvEsc(w) + '</span>' : pvEsc(w);
+      i = j; continue;
+    }
+    out += pvEsc(c); i++;
+  }
+  return out;
+}
+
+let pvReqId = 0;
+function openPreview(node) {
+  if (!node || node.type !== 'file') return;
+  const pane = $('previewPane');
+  pane.hidden = false;
+  document.body.classList.add('preview-open');
+  requestAnimationFrame(() => pane.classList.add('open'));
+  const ext = previewExt(node);
+  $('pvIcon').innerHTML = chipFor({ type: 'file', extension: ext }, 16);
+  $('pvName').textContent = node.name; $('pvName').title = node.name;
+  $('pvSub').textContent = formatBytes(node.size) + ' · ' + formatDate(node.modifiedAt);
+  $('pvFoot').textContent = node.path; $('pvFoot').title = node.path;
+  const body = $('pvBody');
+  body.innerHTML = '<div class="pv-empty">Loading…</div>';
+  const reqId = ++pvReqId;
+  const url = `/api/files/preview?path=${encodeURIComponent(node.path)}`;
+
+  if (PV_IMG_EXT.has(ext)) {
+    const img = new Image();
+    img.alt = node.name;
+    img.onload = () => { if (reqId === pvReqId) { body.innerHTML = ''; body.appendChild(img); } };
+    img.onerror = () => { if (reqId === pvReqId) renderPreviewMeta(node); };
+    img.src = url;
+    return;
+  }
+  api(url).then((data) => {
+    if (reqId !== pvReqId) return;
+    if (data && data.type === 'text') {
+      body.innerHTML = `<pre>${highlightCode(data.content, ext)}</pre>` +
+        (data.truncated ? '<div class="pv-trunc">— first 8 KB shown —</div>' : '');
+      body.scrollTop = 0;
+    } else {
+      renderPreviewMeta(node, data);
+    }
+  }).catch((e) => {
+    if (reqId === pvReqId) body.innerHTML = `<div class="pv-empty">Can’t preview this file.<br>${escapeHtml(e.message)}</div>`;
+  });
+}
+
+function renderPreviewMeta(node, data) {
+  const ext = previewExt(node);
+  const reason = data && data.reason ? `<div class="pv-trunc">${escapeHtml(data.reason)}</div>` : '';
+  $('pvBody').innerHTML =
+    `<div style="text-align:center;padding:26px 0 18px;">${chipFor({ type: node.type, extension: ext }, 44)}</div>` +
+    `<div class="pv-kv">` +
+      `<span class="k">Type</span><span>${escapeHtml(ext ? ext.toUpperCase() + ' file' : 'File')}</span>` +
+      `<span class="k">Size</span><span>${formatBytes(node.size)}</span>` +
+      `<span class="k">Modified</span><span>${formatDate(node.modifiedAt)}</span>` +
+    `</div>` + reason +
+    `<div class="pv-empty">No inline preview for this file type.</div>`;
+}
+
+function closePreview() {
+  const pane = $('previewPane');
+  pane.classList.remove('open');
+  document.body.classList.remove('preview-open');
+  pvReqId++; // cancel any in-flight render
+  setTimeout(() => { if (!pane.classList.contains('open')) pane.hidden = true; }, 260);
+}
+function previewIsOpen() { const p = $('previewPane'); return p && !p.hidden && p.classList.contains('open'); }
+$('pvClose').addEventListener('click', closePreview);
+
 /* ───────────────────────────── Grid view ───────────────────────────── */
 const GAP = 12, MIN_SQ = 48, MAX_SQ = 256;
 const gridScroll = $('gridScroll');
@@ -2520,6 +2668,7 @@ function onCellClick(e, i) {
   } else {
     sel.clear(); sel.add(it.path);
     state.grid.anchor = i;
+    if (it.type === 'file') openPreview(it);
   }
   updateSelectionBar();
   renderGridWindow(true);
@@ -3389,12 +3538,14 @@ document.addEventListener('keydown', (e) => {
     const openModal = document.querySelector('.modal-backdrop.open');
     if (openModal) { openModal.classList.remove('open'); return; }
     if ($('ctxMenu').style.display === 'block') { hideCtxMenu(); return; }
+    if (previewIsOpen()) { closePreview(); return; }
     if (typing && document.activeElement === $('gridSearch') && $('gridSearch').value) {
       $('gridSearch').value = ''; state.grid.query = ''; renderGrid(); return;
     }
     if (typing && document.activeElement === $('tmSearch') && $('tmSearch').value) {
       $('tmSearch').value = ''; state.treemap.query = '';
-      renderSearchOverlay(); presentTreemap(); return;
+      if (isSun()) presentSunburst(); else { renderSearchOverlay(); presentTreemap(); }
+      return;
     }
     if (state.view === 'treemap' && state.root && state.treemap.rootPath !== state.root.path) {
       treemapUp();
