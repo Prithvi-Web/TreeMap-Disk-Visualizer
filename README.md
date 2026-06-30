@@ -10,7 +10,7 @@ Scan any folder and see exactly what's eating your disk:
 - **Duplicates** — finds true duplicate files (size + streamed SHA-256 content hash), grouped with reclaimable space per group; auto-select keeps the newest copy of each
 - **Trends** — every scan saves a lightweight snapshot, charted over time per folder, with a "what grew / shrank since last scan" breakdown
 - **Compare** — pick any two scans of the same folder for a file-level diff: added, removed, grew, shrank
-- **Clean Up** — three modes: custom rules (old / huge / by extension / duplicated), **Smart Suggestions** (`node_modules`, build output, browser & developer caches, old Downloads, OS junk — with macOS/Windows/Linux-specific paths), and **Empty Folders**. Everything goes to the system **Trash** (never hard-deleted — always recoverable)
+- **Clean Up** — three modes: custom rules (old / huge / by extension / duplicated), **Smart Suggestions**, and **Empty Folders**. Suggestions are grouped into **regenerable** (`node_modules`, Rust/Maven `target`, virtualenvs, framework build output — each gated on a sibling manifest and shown with the command that restores it, e.g. `npm install`), **cache** (browser & developer caches, with macOS/Windows/Linux-specific paths), and **junk** (OS metadata, old Downloads), each filterable by category. Everything goes to the system **Trash** (never hard-deleted — always recoverable)
 - **Scheduled scans** — re-scan folders on a schedule with growth-threshold alerts (native notifications in the desktop app)
 - **Ignore list** — "don't scan" and/or "don't suggest" patterns: full paths, names like `node_modules`, or globs like `*.iso` and `~/projects/**/dist`
 

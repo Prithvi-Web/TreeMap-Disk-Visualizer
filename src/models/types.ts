@@ -342,6 +342,13 @@ export interface GrowthNotification {
 
 /* ---------- Smart cleanup suggestions ---------- */
 
+/**
+ * regenerable — safe to delete and recreate from source/config (node_modules,
+ * build output, virtualenvs). cache — rebuilt automatically by a tool when next
+ * used (browser/dev caches). junk — OS-recreated metadata or stale downloads.
+ */
+export type SuggestionCategory = 'regenerable' | 'cache' | 'junk';
+
 export interface CleanupSuggestionItem {
   name: string;
   path: string;
@@ -356,6 +363,9 @@ export interface CleanupSuggestionGroup {
   description: string;
   items: CleanupSuggestionItem[];
   totalSize: number;
+  category: SuggestionCategory;
+  /** Command that recreates this group's contents (regenerable groups only). */
+  regenerateCmd?: string;
 }
 
 /** Uniform API error body. */

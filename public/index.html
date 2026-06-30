@@ -537,6 +537,23 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
   color: var(--text-2); transition: color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease); }
 .pill:hover { color: var(--text-1); border-color: var(--accent); }
 
+/* ── Smart Suggestions: category cards + regenerable badge (Feature 14) ── */
+.smart-filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 14px; }
+.smart-group { margin-bottom: 12px; padding: 11px 13px 12px; border: 1px solid var(--hairline);
+  border-radius: var(--r-md); background: var(--surface-1); }
+.smart-group .rule-row { padding: 4px 0 2px; }
+.smart-group .clean-list { background: var(--surface-1); }
+.smart-group.cat-regenerable { border-color: rgba(191,90,242,0.38); background: rgba(191,90,242,0.07); }
+.smart-group.cat-regenerable .clean-list { background: transparent; }
+.smart-desc { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--text-2); font-size: 12.5px; }
+.regen-cmd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; flex: none;
+  color: #d6a8ff; background: rgba(191,90,242,0.16); border: 1px solid rgba(191,90,242,0.36);
+  border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+.rc-lbl { color: var(--text-3); font-size: 11px; flex: none; margin-left: 1px; }
+:root[data-theme="light"] .smart-group.cat-regenerable { border-color: rgba(124,58,237,0.30); background: rgba(124,58,237,0.06); }
+:root[data-theme="light"] .regen-cmd { color: #7c3aed; background: rgba(124,58,237,0.10); border-color: rgba(124,58,237,0.28); }
+
 /* ── Floating: tooltip / menu / toasts ── */
 #tooltip { position: fixed; z-index: 200; pointer-events: none; display: none;
   padding: 11px 13px; font-size: 12px; max-width: 380px;
@@ -3931,13 +3948,22 @@ async function loadSmartSuggestions() {
       updateCleanSummary();
       return;
     }
+    const catLabel = { regenerable: 'Regenerables', cache: 'Caches', junk: 'Junk' };
+    const present = ['regenerable', 'cache', 'junk'].filter(c => smartGroups.some(g => g.category === c));
+    const filterPills = present.length > 1
+      ? `<div class="smart-filters" role="tablist" aria-label="Filter suggestions by type">
+          <button class="pill active" data-cat="all">All</button>` +
+          present.map(c => `<button class="pill" data-cat="${c}">${catLabel[c]}</button>`).join('') + `</div>`
+      : '';
     host.innerHTML = `<div class="muted" style="margin-bottom:8px;">Found by ${smartGroups.length} rule${smartGroups.length > 1 ? 's' : ''} — nothing is pre-selected, tick what you want gone.</div>` +
+      filterPills +
       smartGroups.map((g, gi) => `
-      <div style="margin-bottom:14px;">
-        <div class="rule-row" style="padding:6px 0;">
+      <div class="smart-group cat-${g.category}" data-cat="${g.category}">
+        <div class="rule-row">
           <input type="checkbox" class="smart-all" data-g="${gi}" aria-label="Select all in ${escapeHtml(g.title)}">
           <b>${escapeHtml(g.title)}</b>
-          <span class="muted" style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(g.description)}</span>
+          <span class="smart-desc">${escapeHtml(g.description)}</span>
+          ${g.regenerateCmd ? `<code class="regen-cmd" title="Restore with: ${escapeHtml(g.regenerateCmd)}">${escapeHtml(g.regenerateCmd)}</code><span class="rc-lbl">to restore</span>` : ''}
           <span class="size-badge num" style="color:${sizeColor(g.totalSize)}">${g.items.length} · ${formatBytes(g.totalSize)}</span>
         </div>
         <div class="clean-list">` + g.items.map((it, i) => `
@@ -3958,6 +3984,13 @@ async function loadSmartSuggestions() {
       updateCleanSummary();
     }));
     host.querySelectorAll('.smart-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
+    host.querySelectorAll('.smart-filters .pill').forEach(p => p.addEventListener('click', () => {
+      const cat = p.dataset.cat;
+      host.querySelectorAll('.smart-filters .pill').forEach(x => x.classList.toggle('active', x === p));
+      host.querySelectorAll('.smart-group').forEach(g => {
+        g.style.display = (cat === 'all' || g.dataset.cat === cat) ? '' : 'none';
+      });
+    }));
     refreshCartButtons();
     updateCleanSummary();
   } catch (e) {

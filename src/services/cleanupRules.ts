@@ -1,6 +1,6 @@
 import os from 'os';
 import path from 'path';
-import { FileNode, CleanupSuggestionGroup, CleanupSuggestionItem } from '../models/types';
+import { FileNode, CleanupSuggestionGroup, CleanupSuggestionItem, SuggestionCategory } from '../models/types';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 
 /**
@@ -8,11 +8,16 @@ import { CompiledIgnore, matchesAny } from '../utils/glob';
  * completed scan tree (so suggestions always sit inside a scanned root and
  * flow through the same trash-only delete path as everything else).
  *
- * Two kinds of rules:
- *  - name rules: directory/file basenames (node_modules, .DS_Store, …)
- *  - path rules: absolute OS-specific locations (browser caches, Xcode, …)
+ * Three kinds of rules, each tagged with a category the UI colours by:
+ *  - regenerable rules: project dirs that can be deleted and rebuilt from
+ *    source/config (node_modules, target, .venv, build output). Most are
+ *    gated on a sibling manifest (e.g. `target` only counts next to a
+ *    Cargo.toml) so an unrelated folder of the same name isn't flagged, and
+ *    each carries the command that restores it.
+ *  - name rules: directory/file basenames (build leftovers, .DS_Store, …).
+ *  - path rules: absolute OS-specific locations (browser caches, Xcode, …).
  *
- * A directory claimed by a rule is reported once and not descended into, so
+ * A directory claimed by any rule is reported once and not descended into, so
  * a nested node_modules never produces overlapping suggestions.
  */
 
@@ -21,47 +26,142 @@ const ITEMS_PER_RULE = 200;
 const OLD_DOWNLOAD_DAYS = 90;
 const OLD_DOWNLOAD_MIN_SIZE = 1_048_576; // 1 MB — skip noise
 
+/**
+ * Regenerable directories — safe to delete and recreate. `requiresSibling`
+ * gates the match on a manifest living beside the directory (so only a real
+ * toolchain dir matches); `regenerateCmd` is the command that restores it.
+ * Rules are tried in order and the first whose name + sibling match wins, so
+ * an ambiguous name like `target` resolves Rust-vs-Maven by its manifest.
+ * Rules sharing an `id` merge into one group (e.g. all web build dirs).
+ */
+interface RegenerableRule {
+  id: string;
+  title: string;
+  description: string;
+  names: Set<string>;
+  regenerateCmd: string;
+  /** Lowercased sibling basenames; a `foo.*` entry matches any `foo.<ext>`. Omit = always. */
+  requiresSibling?: string[];
+}
+
+const REGENERABLE_RULES: RegenerableRule[] = [
+  {
+    id: 'regen-node-modules',
+    title: 'node_modules',
+    description: 'JavaScript dependencies — restore any time',
+    names: new Set(['node_modules']),
+    regenerateCmd: 'npm install',
+  },
+  {
+    id: 'regen-python-venv',
+    title: 'Python virtualenv',
+    description: 'Virtual environment — recreate from the project manifest',
+    names: new Set(['.venv', 'venv', 'env']),
+    regenerateCmd: 'pip install -r requirements.txt',
+    requiresSibling: ['requirements.txt', 'pyproject.toml', 'pipfile', 'setup.py', 'setup.cfg', '.python-version'],
+  },
+  {
+    id: 'regen-pycache',
+    title: 'Python bytecode cache',
+    description: '__pycache__ — Python regenerates it automatically',
+    names: new Set(['__pycache__']),
+    regenerateCmd: 'automatic on next run',
+  },
+  {
+    id: 'regen-rust-target',
+    title: 'Rust build target',
+    description: 'Cargo build output and fetched crates',
+    names: new Set(['target']),
+    regenerateCmd: 'cargo build',
+    requiresSibling: ['cargo.toml'],
+  },
+  {
+    id: 'regen-maven-target',
+    title: 'Maven build target',
+    description: 'Maven build output',
+    names: new Set(['target']),
+    regenerateCmd: 'mvn package',
+    requiresSibling: ['pom.xml'],
+  },
+  {
+    id: 'regen-gradle-build',
+    title: 'Gradle build output',
+    description: 'Compiled output — rebuilt by the next Gradle build',
+    names: new Set(['build']),
+    regenerateCmd: 'gradle build',
+    requiresSibling: ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'],
+  },
+  {
+    id: 'regen-cocoapods',
+    title: 'CocoaPods',
+    description: 'Installed pods — restore with pod install',
+    names: new Set(['pods']),
+    regenerateCmd: 'pod install',
+    requiresSibling: ['podfile'],
+  },
+  {
+    id: 'regen-web-build',
+    title: 'Web framework build',
+    description: 'Framework build output — rebuilt by the next build',
+    names: new Set(['.next', '.nuxt', '.output', '.svelte-kit', '.angular']),
+    regenerateCmd: 'npm run build',
+  },
+  {
+    id: 'regen-web-build',
+    title: 'Web framework build',
+    description: 'Framework build output — rebuilt by the next build',
+    names: new Set(['dist']),
+    regenerateCmd: 'npm run build',
+    requiresSibling: ['package.json', 'next.config.*', 'nuxt.config.*', 'vite.config.*', 'svelte.config.*', 'angular.json'],
+  },
+];
+
 interface NameRule {
   id: string;
   title: string;
   description: string;
   type: 'dir' | 'file';
+  category: SuggestionCategory;
   names: Set<string>;
 }
 
 const NAME_RULES: NameRule[] = [
   {
-    id: 'node-modules',
-    title: 'node_modules',
-    description: 'JavaScript dependencies — safe to trash, reinstall with npm install',
-    type: 'dir',
-    names: new Set(['node_modules']),
-  },
-  {
     id: 'build-output',
     title: 'Build output',
     description: 'Compiled output folders — regenerated by the next build',
     type: 'dir',
-    names: new Set(['dist', '.next', '.nuxt', '.output', 'target', '.svelte-kit', '.angular']),
+    category: 'regenerable',
+    names: new Set(['dist', 'target', 'build']),
   },
   {
     id: 'tool-caches',
     title: 'Tool caches',
     description: 'Caches left by dev tools — rebuilt automatically when needed',
     type: 'dir',
-    names: new Set(['__pycache__', '.pytest_cache', '.mypy_cache', '.gradle', '.turbo', '.parcel-cache', '.eslintcache', 'coverage', '.venv', '.tox']),
+    category: 'cache',
+    names: new Set(['.pytest_cache', '.mypy_cache', '.ruff_cache', '.gradle', '.turbo', '.parcel-cache', '.eslintcache', 'coverage', '.venv', '.tox']),
   },
   {
     id: 'os-junk',
     title: 'OS junk files',
     description: 'Hidden metadata files the OS recreates on demand',
     type: 'file',
+    category: 'junk',
     names: new Set(['.ds_store', 'thumbs.db', 'desktop.ini']),
   },
 ];
 
+interface PathRule {
+  id: string;
+  title: string;
+  description: string;
+  category: SuggestionCategory;
+  prefixes: string[];
+}
+
 /** Absolute, OS-specific cache locations (matched as path prefixes). */
-function pathRules(): { id: string; title: string; description: string; prefixes: string[] }[] {
+function pathRules(): PathRule[] {
   const home = os.homedir();
   const j = (...parts: string[]) => path.join(...parts);
 
@@ -71,6 +171,7 @@ function pathRules(): { id: string; title: string; description: string; prefixes
         id: 'browser-caches',
         title: 'Browser caches',
         description: 'Chrome / Safari / Firefox caches — pages reload a bit slower once',
+        category: 'cache',
         prefixes: [
           j(home, 'Library', 'Caches', 'Google', 'Chrome'),
           j(home, 'Library', 'Caches', 'com.apple.Safari'),
@@ -83,6 +184,7 @@ function pathRules(): { id: string; title: string; description: string; prefixes
         id: 'dev-caches',
         title: 'Developer caches',
         description: 'Xcode and package-manager caches — rebuilt when next used',
+        category: 'cache',
         prefixes: [
           j(home, 'Library', 'Developer', 'Xcode', 'DerivedData'),
           j(home, 'Library', 'Developer', 'Xcode', 'iOS DeviceSupport'),
@@ -91,6 +193,9 @@ function pathRules(): { id: string; title: string; description: string; prefixes
           j(home, 'Library', 'Caches', 'pip'),
           j(home, 'Library', 'Caches', 'Yarn'),
           j(home, '.npm', '_cacache'),
+          j(home, '.m2', 'repository'),
+          j(home, '.cargo', 'registry'),
+          j(home, '.gradle', 'caches'),
         ],
       },
     ];
@@ -102,6 +207,7 @@ function pathRules(): { id: string; title: string; description: string; prefixes
         id: 'browser-caches',
         title: 'Browser caches',
         description: 'Chrome / Edge / Firefox caches — pages reload a bit slower once',
+        category: 'cache',
         prefixes: [
           j(local, 'Google', 'Chrome', 'User Data', 'Default', 'Cache'),
           j(local, 'Microsoft', 'Edge', 'User Data', 'Default', 'Cache'),
@@ -112,11 +218,14 @@ function pathRules(): { id: string; title: string; description: string; prefixes
         id: 'dev-caches',
         title: 'Developer caches',
         description: 'Package-manager and tool caches — rebuilt when next used',
+        category: 'cache',
         prefixes: [
           j(local, 'npm-cache'),
           j(local, 'Yarn', 'Cache'),
           j(local, 'pip', 'cache'),
           j(local, 'NuGet', 'Cache'),
+          j(home, '.m2', 'repository'),
+          j(home, '.cargo', 'registry'),
           j(local, 'Temp'),
         ],
       },
@@ -127,6 +236,7 @@ function pathRules(): { id: string; title: string; description: string; prefixes
       id: 'browser-caches',
       title: 'Browser caches',
       description: 'Chrome / Firefox caches — pages reload a bit slower once',
+      category: 'cache',
       prefixes: [
         j(home, '.cache', 'google-chrome'),
         j(home, '.cache', 'chromium'),
@@ -137,10 +247,14 @@ function pathRules(): { id: string; title: string; description: string; prefixes
       id: 'dev-caches',
       title: 'Developer caches',
       description: 'Package-manager and tool caches — rebuilt when next used',
+      category: 'cache',
       prefixes: [
         j(home, '.npm', '_cacache'),
         j(home, '.cache', 'yarn'),
         j(home, '.cache', 'pip'),
+        j(home, '.m2', 'repository'),
+        j(home, '.cargo', 'registry'),
+        j(home, '.gradle', 'caches'),
       ],
     },
   ];
@@ -150,16 +264,36 @@ function samePath(a: string, b: string): boolean {
   return process.platform === 'linux' ? a === b : a.toLowerCase() === b.toLowerCase();
 }
 
+/** True if any sibling basename matches a pattern (`foo.*` ⇒ any `foo.<ext>`). */
+function siblingPresent(siblings: Set<string>, patterns: string[]): boolean {
+  for (const pat of patterns) {
+    if (pat.endsWith('.*')) {
+      const prefix = pat.slice(0, -1); // keep trailing dot, e.g. "next.config."
+      for (const s of siblings) if (s.startsWith(prefix)) return true;
+    } else if (siblings.has(pat)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function collectCleanupSuggestions(root: FileNode, ignore: CompiledIgnore[]): CleanupSuggestionGroup[] {
   const downloadsDir = path.join(os.homedir(), 'Downloads');
   const oldDownloadCutoff = Date.now() - OLD_DOWNLOAD_DAYS * 86_400_000;
   const prefixRules = pathRules();
 
   const groups = new Map<string, CleanupSuggestionGroup>();
-  const add = (id: string, title: string, description: string, node: FileNode): void => {
+  const add = (
+    id: string,
+    title: string,
+    description: string,
+    category: SuggestionCategory,
+    node: FileNode,
+    regenerateCmd?: string,
+  ): void => {
     let group = groups.get(id);
     if (!group) {
-      group = { id, title, description, items: [], totalSize: 0 };
+      group = { id, title, description, items: [], totalSize: 0, category, regenerateCmd };
       groups.set(id, group);
     }
     group.totalSize += node.size;
@@ -176,21 +310,38 @@ export function collectCleanupSuggestions(root: FileNode, ignore: CompiledIgnore
 
   const visit = (node: FileNode): void => {
     if (!node.children) return;
+    // Sibling basenames in this directory — used to confirm regenerable dirs.
+    const siblings = new Set(node.children.map((c) => c.name.toLowerCase()));
+
     for (const child of node.children) {
       if (matchesAny(ignore, child.path, child.name)) continue; // user said hands off
 
       if (child.type === 'dir') {
         const lower = child.name.toLowerCase();
-        const nameRule = NAME_RULES.find((r) => r.type === 'dir' && r.names.has(lower));
-        if (nameRule && child.size > 0) {
-          add(nameRule.id, nameRule.title, nameRule.description, child);
+
+        // 1. Regenerable project dirs (sibling-gated) — most specific, checked first.
+        const regen = REGENERABLE_RULES.find(
+          (r) => r.names.has(lower) && (!r.requiresSibling || siblingPresent(siblings, r.requiresSibling)),
+        );
+        if (regen && child.size > 0) {
+          add(regen.id, regen.title, regen.description, 'regenerable', child, regen.regenerateCmd);
           continue; // claimed — don't descend
         }
-        const prefixRule = prefixRules.find((r) => r.prefixes.some((p) => samePath(p, child.path)));
-        if (prefixRule && child.size > 0) {
-          add(prefixRule.id, prefixRule.title, prefixRule.description, child);
+
+        // 2. Generic name rules (build leftovers without a manifest, tool caches).
+        const nameRule = NAME_RULES.find((r) => r.type === 'dir' && r.names.has(lower));
+        if (nameRule && child.size > 0) {
+          add(nameRule.id, nameRule.title, nameRule.description, nameRule.category, child);
           continue;
         }
+
+        // 3. Absolute OS cache locations.
+        const prefixRule = prefixRules.find((r) => r.prefixes.some((p) => samePath(p, child.path)));
+        if (prefixRule && child.size > 0) {
+          add(prefixRule.id, prefixRule.title, prefixRule.description, prefixRule.category, child);
+          continue;
+        }
+
         visit(child);
         continue;
       }
@@ -198,7 +349,7 @@ export function collectCleanupSuggestions(root: FileNode, ignore: CompiledIgnore
       const lower = child.name.toLowerCase();
       const fileRule = NAME_RULES.find((r) => r.type === 'file' && r.names.has(lower));
       if (fileRule) {
-        add(fileRule.id, fileRule.title, fileRule.description, child);
+        add(fileRule.id, fileRule.title, fileRule.description, fileRule.category, child);
         continue;
       }
       if (
@@ -210,7 +361,8 @@ export function collectCleanupSuggestions(root: FileNode, ignore: CompiledIgnore
           'old-downloads',
           'Old Downloads',
           `Files in Downloads untouched for ${OLD_DOWNLOAD_DAYS}+ days`,
-          child
+          'junk',
+          child,
         );
       }
     }
