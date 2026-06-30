@@ -310,6 +310,19 @@ export interface AppSummary {
   executable: string | null;
   /** Base64 PNG data URI of the app's icon, or null if none. */
   icon: string | null;
+  /** How this app updates: 'mas' = Mac App Store, 'self' = self-updating/unknown. */
+  updateSource: 'mas' | 'self';
+  /** Best-effort vendor website (from the bundle id), or null. */
+  website: string | null;
+}
+
+/** One non-Homebrew app in the Updater's "other apps" group. */
+export interface UpdaterOtherApp {
+  name: string;
+  path: string;
+  icon: string | null;
+  source: 'mas' | 'self';
+  website: string | null;
 }
 
 /** One support-file an app leaves behind under ~/Library. */

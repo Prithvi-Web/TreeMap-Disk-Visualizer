@@ -1,8 +1,8 @@
 import { execFile } from 'child_process';
 import { promises as fsp, constants as fsConstants } from 'fs';
 import path from 'path';
-import { appRoots, appIconDataUri } from './apps';
-import { OutdatedCask, BrewUpgradeResult } from '../models/types';
+import { appRoots, appIconDataUri, listInstalledApps } from './apps';
+import { OutdatedCask, BrewUpgradeResult, UpdaterOtherApp } from '../models/types';
 
 /**
  * updater — the macOS "Updater". A deliberately small, honest panel built on
@@ -150,6 +150,26 @@ export async function outdatedCasks(): Promise<OutdatedCask[]> {
     // a hard failure; the UI stays usable.
     return [];
   }
+}
+
+/**
+ * Installed apps that aren't Homebrew casks, tagged with how they update
+ * (Mac App Store vs self-updating). brew handles the actionable updates; this
+ * list lets the UI offer an App Store / website link for everything else, since
+ * most self-updating apps expose no externally-invokable update handler.
+ */
+export async function otherApps(casks: OutdatedCask[]): Promise<UpdaterOtherApp[]> {
+  const apps = await listInstalledApps();
+  const caskNames = new Set(casks.map((c) => normalizeToken(c.token)));
+  return apps
+    .filter((a) => !caskNames.has(normalizeToken(a.name)))
+    .map((a) => ({
+      name: a.name,
+      path: a.path,
+      icon: a.icon,
+      source: a.updateSource,
+      website: a.website,
+    }));
 }
 
 export async function upgradeCask(token: string): Promise<BrewUpgradeResult> {

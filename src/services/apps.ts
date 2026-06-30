@@ -97,14 +97,37 @@ async function readAppMeta(appPath: string): Promise<AppSummary> {
   const str = (v: unknown): string | null =>
     typeof v === 'string' && v.trim().length > 0 ? v : null;
 
+  const bundleId = str(info.CFBundleIdentifier);
+  // Mac App Store apps carry a receipt; everything else self-updates / unknown.
+  const masReceipt = path.join(appPath, 'Contents', '_MASReceipt', 'receipt');
+  const isMas = await fsp
+    .access(masReceipt)
+    .then(() => true)
+    .catch(() => false);
+
   return {
     name: base,
     path: appPath,
-    bundleId: str(info.CFBundleIdentifier),
+    bundleId,
     version: str(info.CFBundleShortVersionString) ?? str(info.CFBundleVersion),
     executable: str(info.CFBundleExecutable),
     icon: await appIconDataUri(appPath),
+    updateSource: isMas ? 'mas' : 'self',
+    website: websiteFromBundleId(bundleId),
   };
+}
+
+/** Best-effort vendor website from a reverse-DNS bundle id (com.google.Chrome → https://google.com). */
+function websiteFromBundleId(bundleId: string | null): string | null {
+  if (!bundleId) return null;
+  const parts = bundleId.split('.').filter(Boolean);
+  if (parts.length < 2) return null;
+  const TLDS = new Set(['com', 'org', 'net', 'io', 'co', 'app', 'dev', 'me', 'ai']);
+  const tld = parts[0].toLowerCase();
+  if (!TLDS.has(tld)) return null;
+  const domain = parts[1].toLowerCase();
+  if (!domain || domain === 'apple') return null; // Apple bundles have no useful vendor page
+  return `https://${domain}.${tld}`;
 }
 
 /** List installed apps. macOS only; cheap (no per-app sizing on this path). */

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import path from 'path';
 import { listInstalledApps, findLeftovers, appRoots } from '../services/apps';
-import { brewAvailable, outdatedCasks, upgradeCask } from '../services/updater';
+import { brewAvailable, outdatedCasks, upgradeCask, otherApps } from '../services/updater';
 import { guardQueryPath } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
 
@@ -56,13 +56,19 @@ appRouter.get(
   }
 );
 
-/** GET /api/updater — outdated Homebrew casks ({available:false} if no brew). */
+/**
+ * GET /api/updater — outdated Homebrew casks + the rest of the installed apps
+ * grouped by how they update (Mac App Store / self). `available` reflects brew
+ * (the only source we can actually action); `others` is offered even without it.
+ */
 appRouter.get('/updater', async (_req: Request, res: Response) => {
-  if (process.platform !== 'darwin' || !(await brewAvailable())) {
-    res.json({ available: false, casks: [] });
+  if (process.platform !== 'darwin') {
+    res.json({ available: false, casks: [], others: [] });
     return;
   }
-  res.json({ available: true, casks: await outdatedCasks() });
+  const hasBrew = await brewAvailable();
+  const casks = hasBrew ? await outdatedCasks() : [];
+  res.json({ available: hasBrew, casks, others: await otherApps(casks) });
 });
 
 /** POST /api/updater/upgrade { token } — `brew upgrade --cask <token>`. */

@@ -5,10 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TreeMap — Disk Space Visualizer</title>
 <script>
-/* Apply saved theme before first paint to avoid a flash. */
-document.documentElement.dataset.theme =
-  localStorage.getItem('tm-theme') ||
-  (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+/* Apply saved theme before first paint to avoid a flash. 'system' (or unset)
+   follows the OS; 'light'/'dark' are explicit. */
+(function () {
+  var pref = localStorage.getItem('tm-theme') || 'system';
+  var sysLight = window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches;
+  document.documentElement.dataset.theme =
+    pref === 'light' || pref === 'dark' ? pref : (sysLight ? 'light' : 'dark');
+})();
 </script>
 <style>
 /* ════════════════════════════ Design tokens ════════════════════════════ */
@@ -247,6 +251,16 @@ header {
 .mnt-text span { font-size: 12px; color: var(--text-3); line-height: 1.4; }
 .mnt-status { font-size: 12px; text-align: right; max-width: 230px; color: var(--text-3); }
 .mnt-scroll { max-height: 360px; overflow-y: auto; margin: 0 -4px; padding: 0 4px; }
+/* Preferences modal (tabbed) */
+.prefs-body { display: flex; gap: 0; padding: 0 !important; min-height: 360px; }
+.prefs-rail { width: 186px; flex: none; border-right: 1px solid var(--hairline); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; }
+.prefs-tab { display: flex; align-items: center; gap: 10px; width: 100%; border: none; background: transparent; color: var(--text-2); text-align: left; font: inherit; font-size: 13.5px; font-weight: 500; padding: 9px 11px; border-radius: 9px; cursor: pointer; }
+.prefs-tab .ic { color: var(--text-3); }
+.prefs-tab:hover { background: var(--surface-3); color: var(--text-1); }
+.prefs-tab[aria-selected="true"] { background: var(--surface-3); color: var(--text-1); box-shadow: inset 0 1px 0 var(--shine); }
+.prefs-tab[aria-selected="true"] .ic { color: var(--accent); }
+.prefs-content { flex: 1; padding: 20px 22px; min-width: 0; }
+.prefs-select { width: 240px; max-width: 100%; padding: 9px 12px; border-radius: 9px; border: 1px solid var(--hairline); background: var(--surface-1); color: var(--text-1); font: inherit; font-size: 13.5px; cursor: pointer; }
 /* iOS-style toggle switch */
 .switch { position: relative; width: 40px; height: 24px; flex: none; }
 .switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; z-index: 1; }
@@ -287,6 +301,12 @@ main { padding: 16px 28px 48px; max-width: 1680px; margin: 0 0 0 242px; position
 /* ── Dashboard ── */
 .dash-grid { display: grid; grid-template-columns: 5fr 7fr; gap: 18px; align-items: start; }
 .dash-col { display: flex; flex-direction: column; gap: 18px; }
+.act-log { display: flex; flex-direction: column; gap: 1px; max-height: 360px; overflow-y: auto; }
+.act-item { display: flex; align-items: center; gap: 10px; padding: 7px 4px; border-bottom: 1px solid var(--hairline); }
+.act-item:last-child { border-bottom: none; }
+.act-item .meta { min-width: 0; flex: 1; }
+.act-item .nm { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.act-item .sub { font-size: 11px; color: var(--text-3); }
 .card { padding: 22px; }
 .card h2 { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 1px; color: var(--text-2); margin-bottom: 18px; }
@@ -676,6 +696,10 @@ main { padding: 16px 28px 48px; max-width: 1680px; margin: 0 0 0 242px; position
 .upd-row:last-child { border-bottom: none; }
 .upd-row .nm { font-size: 13.5px; font-weight: 500; }
 .upd-row .ver { font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.upd-head { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--text-3); padding: 4px 2px 8px; }
+.upd-head .ic { color: var(--text-3); }
+.upd-link { text-decoration: none; }
 @media (max-width: 900px) { .apps-wrap { grid-template-columns: 1fr; } .apps-list-card, .apps-detail-card { min-height: 0; } }
 </style>
 </head>
@@ -811,6 +835,25 @@ main { padding: 16px 28px 48px; max-width: 1680px; margin: 0 0 0 242px; position
 
       <div class="dash-col">
         <div class="card glass">
+          <h2><span data-icon="sparkles"></span>Lifetime impact<span class="muted" id="actSince" style="font-weight:400;margin-left:6px;"></span></h2>
+          <div class="quick-stats">
+            <div class="stat-tile tile"><span class="chip" style="--tint:#30D158"><span data-icon="trash"></span></span>
+              <div><div class="v small num" id="actRecovered">–</div><div class="k">Moved to Trash</div></div></div>
+            <div class="stat-tile tile"><span class="chip" style="--tint:#0A84FF"><span data-icon="sparkles"></span></span>
+              <div><div class="v num" id="actJunk">–</div><div class="k">Junk items cleaned</div></div></div>
+            <div class="stat-tile tile"><span class="chip" style="--tint:#FF9F0A"><span data-icon="box"></span></span>
+              <div><div class="v num" id="actUninstalled">–</div><div class="k">Apps uninstalled</div></div></div>
+            <div class="stat-tile tile"><span class="chip" style="--tint:#BF5AF2"><span data-icon="refresh"></span></span>
+              <div><div class="v num" id="actUpdated">–</div><div class="k">Updates applied</div></div></div>
+          </div>
+        </div>
+
+        <div class="card glass">
+          <h2><span data-icon="clock"></span>Recent activity</h2>
+          <div id="actLog" class="act-log"></div>
+        </div>
+
+        <div class="card glass">
           <h2><span data-icon="pie"></span>File Types by Size</h2>
           <div class="donut-row">
             <canvas id="donutCanvas" width="230" height="230" aria-label="File type breakdown donut chart" role="img"></canvas>
@@ -934,8 +977,8 @@ main { padding: 16px 28px 48px; max-width: 1680px; margin: 0 0 0 242px; position
   <section class="view" id="view-fastclean" role="tabpanel" aria-label="Smart Scan" hidden>
     <div class="fc-hero">
       <div class="fc-mark" id="fcMark"><span data-icon="sparkles" data-size="42"></span></div>
-      <h1 class="fc-title">Smart Scan</h1>
-      <p class="fc-sub" id="fcSub">Free up space — empties the Bin and clears application caches.</p>
+      <h1 class="fc-title" data-i18n="smartScan">Smart Scan</h1>
+      <p class="fc-sub" id="fcSub" data-i18n="ssSub">Free up space — empties the Bin and clears application caches.</p>
       <div class="fc-status" id="fcStatus"></div>
       <button class="fc-cta" id="fcCleanBtn" disabled><span class="fc-cta-main">Clean</span><span class="fc-cta-sub" id="fcCtaSize"></span></button>
     </div>
@@ -1114,27 +1157,53 @@ main { padding: 16px 28px 48px; max-width: 1680px; margin: 0 0 0 242px; position
 
 <!-- ═══════════ Settings modal ═══════════ -->
 <div class="modal-backdrop" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-  <div class="modal" style="width:740px;">
+  <div class="modal prefs-modal" style="width:820px;">
     <div class="modal-head">
-      <h3 id="settingsTitle"><span data-icon="settings"></span>Settings</h3>
+      <h3 id="settingsTitle"><span data-icon="settings"></span><span data-i18n="prefs">Preferences</span></h3>
       <button class="close-x" data-close="settingsModal" aria-label="Close"><span data-icon="x"></span></button>
     </div>
-    <div class="modal-body">
-      <div class="set-h"><span data-icon="calendar"></span>Scheduled scans</div>
-      <div class="muted" style="margin-bottom:10px;">TreeMap re-scans these folders on a schedule while the app is running, and alerts you when a folder grows past your threshold since the previous scan. Every run is also saved to Trends.</div>
-      <div id="schedList"></div>
-      <button class="btn" id="schedAddBtn"><span data-icon="plus"></span>Add scheduled scan</button>
-
-      <div class="set-h" style="margin-top:22px;"><span data-icon="ban"></span>Ignore list</div>
-      <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely (faster scans); <b>Don't suggest</b> keeps them out of Smart Suggestions only. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/**/dist</b>.</div>
-      <div id="ignoreList"></div>
-      <button class="btn" id="ignoreAddBtn"><span data-icon="plus"></span>Add pattern</button>
+    <div class="modal-body prefs-body">
+      <nav class="prefs-rail" role="tablist" aria-label="Preferences">
+        <button class="prefs-tab" data-ptab="general" aria-selected="true"><span data-icon="settings"></span><span data-i18n="general">General</span></button>
+        <button class="prefs-tab" data-ptab="scheduler" aria-selected="false"><span data-icon="calendar"></span><span data-i18n="scheduler">Scheduler</span></button>
+        <button class="prefs-tab" data-ptab="ignore" aria-selected="false"><span data-icon="ban"></span><span data-i18n="ignoreList">Ignore List</span></button>
+      </nav>
+      <div class="prefs-content">
+        <div class="prefs-pane" data-pane="general">
+          <div class="set-h"><span data-icon="sun"></span><span data-i18n="appearance">Appearance</span></div>
+          <div class="seg" id="themeSeg" style="margin:6px 0 22px;">
+            <button data-theme-opt="light" data-i18n="light">Light</button>
+            <button data-theme-opt="dark" data-i18n="dark">Dark</button>
+            <button data-theme-opt="system" data-i18n="system">System</button>
+          </div>
+          <div class="set-h"><span data-icon="globe"></span><span data-i18n="language">Language</span></div>
+          <select id="langSelect" class="prefs-select" aria-label="Language">
+            <option value="en">English</option>
+            <option value="es">Español</option>
+            <option value="ru">Русский</option>
+            <option value="de">Deutsch</option>
+            <option value="fr">Français</option>
+          </select>
+        </div>
+        <div class="prefs-pane" data-pane="scheduler" hidden>
+          <div class="set-h"><span data-icon="calendar"></span><span data-i18n="scheduledScans">Scheduled scans</span></div>
+          <div class="muted" style="margin-bottom:10px;">TreeMap re-scans these folders on a schedule while the app is running, and alerts you when a folder grows past your threshold since the previous scan. Every run is also saved to Trends.</div>
+          <div id="schedList"></div>
+          <button class="btn" id="schedAddBtn"><span data-icon="plus"></span><span data-i18n="addSchedule">Add scheduled scan</span></button>
+        </div>
+        <div class="prefs-pane" data-pane="ignore" hidden>
+          <div class="set-h"><span data-icon="ban"></span><span data-i18n="ignoreList">Ignore list</span></div>
+          <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely (faster scans); <b>Don't suggest</b> keeps them out of Smart Suggestions only. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/**/dist</b>.</div>
+          <div id="ignoreList"></div>
+          <button class="btn" id="ignoreAddBtn"><span data-icon="plus"></span><span data-i18n="addPattern">Add pattern</span></button>
+        </div>
+      </div>
     </div>
     <div class="modal-foot">
       <span class="muted" id="settingsStatus"></span>
       <div style="flex:1"></div>
-      <button class="btn" data-close="settingsModal">Cancel</button>
-      <button class="btn btn-primary" id="settingsSaveBtn"><span data-icon="check"></span>Save</button>
+      <button class="btn" data-close="settingsModal" data-i18n="cancel">Cancel</button>
+      <button class="btn btn-primary" id="settingsSaveBtn"><span data-icon="check"></span><span data-i18n="save">Save</span></button>
     </div>
   </div>
 </div>
@@ -1245,6 +1314,7 @@ const PATHS = {
   calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   ban: '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
 };
 function icon(name, size = 16, cls = '') {
   return `<svg class="ic ${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PATHS[name] || PATHS.file}</svg>`;
@@ -1286,19 +1356,102 @@ function chipFor(node, size = 15) {
 }
 
 /* ───────────────────────────── Theme ───────────────────────────── */
-function applyThemeButton() {
+/* ───────────────────────────── Theme (light / dark / system) ───────────────────────────── */
+const sysDark = window.matchMedia && matchMedia('(prefers-color-scheme: dark)');
+function resolveTheme(mode) {
+  if (mode === 'light' || mode === 'dark') return mode;
+  return sysDark && sysDark.matches ? 'dark' : 'light';
+}
+function applyTheme(mode) {
+  localStorage.setItem('tm-theme', mode);
+  document.documentElement.dataset.theme = resolveTheme(mode);
   const dark = document.documentElement.dataset.theme !== 'light';
   $('themeToggle').innerHTML = icon(dark ? 'sun' : 'moon', 16);
-}
-$('themeToggle').addEventListener('click', () => {
-  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-  document.documentElement.dataset.theme = next;
-  localStorage.setItem('tm-theme', next);
-  applyThemeButton();
+  document.querySelectorAll('#themeSeg [data-theme-opt]').forEach(b =>
+    b.setAttribute('aria-selected', String(b.dataset.themeOpt === mode)));
   if (state.treemap.nodes.length && state.view === 'treemap') drawTreemap();
-  if (state.donut.segs.length) drawDonut(1);
+  if (state.donut && state.donut.segs.length) drawDonut(1);
+}
+let themeMode = localStorage.getItem('tm-theme') || 'system';
+// Header toggle flips between light/dark explicitly.
+$('themeToggle').addEventListener('click', () => {
+  themeMode = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  applyTheme(themeMode);
 });
-applyThemeButton();
+// Preferences 3-way control.
+document.querySelectorAll('#themeSeg [data-theme-opt]').forEach(b =>
+  b.addEventListener('click', () => { themeMode = b.dataset.themeOpt; applyTheme(themeMode); }));
+// Re-resolve when the OS theme changes and we're in 'system' mode.
+if (sysDark && sysDark.addEventListener) sysDark.addEventListener('change', () => { if (themeMode === 'system') applyTheme('system'); });
+applyTheme(themeMode);
+
+/* ───────────────────────────── Localization (i18n) ───────────────────────────── */
+const STRINGS = {
+  en: { clean:'Clean', done:'Done', run:'Run', ssSub:'Free up space — empties the Bin and clears application caches.' },
+  es: { dashboard:'Panel', smartScan:'Escaneo inteligente', cleanup:'Limpieza', systemJunk:'Basura del sistema', trash:'Papelera', speed:'Velocidad', performance:'Rendimiento', maintenance:'Mantenimiento', applications:'Aplicaciones', uninstaller:'Desinstalador', updater:'Actualizador', files:'Archivos', grid:'Cuadrícula', largeOld:'Grandes y antiguos', duplicates:'Duplicados', compare:'Comparar', trends:'Tendencias', soon:'pronto',
+    prefs:'Preferencias', general:'General', scheduler:'Programador', ignoreList:'Lista de exclusión', appearance:'Apariencia', language:'Idioma', light:'Claro', dark:'Oscuro', system:'Sistema', scheduledScans:'Escaneos programados', addSchedule:'Añadir escaneo programado', addPattern:'Añadir patrón', cancel:'Cancelar', save:'Guardar',
+    ssSub:'Libera espacio — vacía la Papelera y borra las cachés de las apps.', clean:'Limpiar', done:'Listo', loginItems:'Ítems de inicio', flushDns:'Vaciar caché DNS', rebuildLS:'Reconstruir Launch Services', run:'Ejecutar' },
+  ru: { dashboard:'Панель', smartScan:'Умное сканирование', cleanup:'Очистка', systemJunk:'Системный мусор', trash:'Корзина', speed:'Скорость', performance:'Производительность', maintenance:'Обслуживание', applications:'Приложения', uninstaller:'Деинсталлятор', updater:'Обновления', files:'Файлы', grid:'Сетка', largeOld:'Большие и старые', duplicates:'Дубликаты', compare:'Сравнить', trends:'Тренды', soon:'скоро',
+    prefs:'Настройки', general:'Общие', scheduler:'Планировщик', ignoreList:'Список исключений', appearance:'Оформление', language:'Язык', light:'Светлая', dark:'Тёмная', system:'Системная', scheduledScans:'Запланированные сканирования', addSchedule:'Добавить расписание', addPattern:'Добавить шаблон', cancel:'Отмена', save:'Сохранить',
+    ssSub:'Освободите место — очистка Корзины и кэша приложений.', clean:'Очистить', done:'Готово', loginItems:'Объекты входа', flushDns:'Очистить кэш DNS', rebuildLS:'Перестроить Launch Services', run:'Запустить' },
+  de: { dashboard:'Übersicht', smartScan:'Intelligenter Scan', cleanup:'Bereinigung', systemJunk:'Systemmüll', trash:'Papierkorb', speed:'Tempo', performance:'Leistung', maintenance:'Wartung', applications:'Programme', uninstaller:'Deinstallieren', updater:'Updater', files:'Dateien', grid:'Raster', largeOld:'Groß & alt', duplicates:'Duplikate', compare:'Vergleichen', trends:'Trends', soon:'bald',
+    prefs:'Einstellungen', general:'Allgemein', scheduler:'Zeitplan', ignoreList:'Ausschlussliste', appearance:'Erscheinungsbild', language:'Sprache', light:'Hell', dark:'Dunkel', system:'System', scheduledScans:'Geplante Scans', addSchedule:'Geplanten Scan hinzufügen', addPattern:'Muster hinzufügen', cancel:'Abbrechen', save:'Speichern',
+    ssSub:'Schaffe Platz — leert den Papierkorb und löscht App-Caches.', clean:'Bereinigen', done:'Fertig', loginItems:'Anmeldeobjekte', flushDns:'DNS-Cache leeren', rebuildLS:'Launch Services neu aufbauen', run:'Ausführen' },
+  fr: { dashboard:'Tableau de bord', smartScan:'Analyse intelligente', cleanup:'Nettoyage', systemJunk:'Fichiers inutiles', trash:'Corbeille', speed:'Vitesse', performance:'Performances', maintenance:'Maintenance', applications:'Applications', uninstaller:'Désinstaller', updater:'Mises à jour', files:'Fichiers', grid:'Grille', largeOld:'Volumineux & anciens', duplicates:'Doublons', compare:'Comparer', trends:'Tendances', soon:'bientôt',
+    prefs:'Préférences', general:'Général', scheduler:'Planificateur', ignoreList:"Liste d'exclusion", appearance:'Apparence', language:'Langue', light:'Clair', dark:'Sombre', system:'Système', scheduledScans:'Analyses planifiées', addSchedule:'Ajouter une analyse planifiée', addPattern:'Ajouter un motif', cancel:'Annuler', save:'Enregistrer',
+    ssSub:"Libérez de l'espace — vide la Corbeille et efface les caches des apps.", clean:'Nettoyer', done:'Terminé', loginItems:'Ouverture au démarrage', flushDns:'Vider le cache DNS', rebuildLS:'Reconstruire Launch Services', run:'Exécuter' },
+};
+function t(key) {
+  const lang = state.lang || 'en';
+  return (STRINGS[lang] && STRINGS[lang][key]) || key;
+}
+// Sidebar/header labels are translated from JS maps (no markup changes needed).
+const SIDE_VIEW_KEYS = { dashboard:'dashboard', fastclean:'smartScan', maintenance:'performance', apps:'uninstaller', updater:'updater', grid:'grid', duplicates:'duplicates', compare:'compare', trends:'trends' };
+const SIDE_TEXT_KEYS = { 'System Junk':'systemJunk', 'Trash':'trash', 'Large & Old':'largeOld' };
+const HEAD_KEYS = { 'Cleanup':'cleanup', 'Speed':'speed', 'Applications':'applications', 'Files':'files' };
+function firstTextNode(el) { for (const n of el.childNodes) { if (n.nodeType === 3 && n.textContent.trim()) return n; } return null; }
+function applyLang(lang) {
+  state.lang = STRINGS[lang] ? lang : 'en';
+  localStorage.setItem('tm-lang', state.lang);
+  document.documentElement.lang = state.lang;
+  const dict = STRINGS[state.lang] || {};
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.dataset.i18n;
+    if (!el.dataset.en) el.dataset.en = el.textContent; // capture the English source once
+    el.textContent = dict[k] != null ? dict[k] : el.dataset.en;
+  });
+  // Sidebar tool labels + soon badges.
+  document.querySelectorAll('.side-item').forEach(btn => {
+    const tn = firstTextNode(btn);
+    if (tn) {
+      if (!btn.dataset.en) btn.dataset.en = tn.textContent.trim();
+      const key = SIDE_VIEW_KEYS[btn.dataset.view] || SIDE_TEXT_KEYS[btn.dataset.en];
+      tn.textContent = key && dict[key] != null ? dict[key] : btn.dataset.en;
+    }
+    const soon = btn.querySelector('.side-soon');
+    if (soon) soon.textContent = dict.soon != null ? dict.soon : 'soon';
+  });
+  // Sidebar group headers.
+  document.querySelectorAll('.side-head').forEach(h => {
+    if (!h.dataset.en) h.dataset.en = h.textContent.trim();
+    const key = HEAD_KEYS[h.dataset.en];
+    h.textContent = key && dict[key] != null ? dict[key] : h.dataset.en;
+  });
+  const sel = $('langSelect'); if (sel) sel.value = state.lang;
+  // Re-render the live Smart Scan copy if it's showing.
+  if (state.view === 'fastclean' && typeof resetFc === 'function' && !state.fastclean.cleaning) {
+    $('fcSub').textContent = STRINGS[state.lang] && STRINGS[state.lang].ssSub ? STRINGS[state.lang].ssSub : ($('fcSub').dataset.en || $('fcSub').textContent);
+  }
+}
+state.lang = 'en';
+$('langSelect') && $('langSelect').addEventListener('change', e => applyLang(e.target.value));
+applyLang(localStorage.getItem('tm-lang') || (navigator.language || 'en').slice(0, 2));
+
+/* ───────────────────────────── Preferences tabs ───────────────────────────── */
+document.querySelectorAll('.prefs-tab').forEach(tab => tab.addEventListener('click', () => {
+  document.querySelectorAll('.prefs-tab').forEach(t => t.setAttribute('aria-selected', String(t === tab)));
+  document.querySelectorAll('.prefs-pane').forEach(p => { p.hidden = p.dataset.pane !== tab.dataset.ptab; });
+}));
 
 /* ───────────────────────────── Toasts ───────────────────────────── */
 function toast(msg, kind = 'success', ms = 4200) {
@@ -1390,6 +1543,7 @@ function switchView(name) {
   if (name === 'apps') loadApps();
   if (name === 'updater') loadUpdater();
   if (name === 'maintenance') loadMaintenance();
+  if (name === 'dashboard') loadActivity();
 }
 
 /* ───────────────────────────── System info ───────────────────────────── */
@@ -2363,51 +2517,124 @@ function trashApp() {
   const sizeHint = new Map(), labels = new Map();
   sizeHint.set(app.path, app.size); labels.set(app.path, app.name + '.app');
   data.leftovers.forEach(r => { sizeHint.set(r.path, r.size); labels.set(r.path, r.name); });
+  const appName = app.name;
   confirmTrash(paths, {
     sizeHint, labels,
     onDone: (result) => {
       if (!result.deleted.length) return;
+      const bytes = result.deleted.reduce((s, p) => s + (sizeHint.get(p) || 0), 0);
+      recordActivity({ kind: 'uninstall', label: appName, bytes, items: result.deleted.length });
       state.apps.loaded = false; state.apps.selected = null; state.apps.leftovers = null;
       $('appsDetailBody').hidden = true; $('appsDetailEmpty').hidden = false;
       loadApps();
     },
   });
 }
+/* Record a completed cleaner action to the Dashboard activity hub (fire-and-forget). */
+function recordActivity(delta) {
+  api('/api/activity', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(delta),
+  }).then(() => { if (typeof loadActivity === 'function') loadActivity(); }).catch(() => {});
+}
 
-/* ───────────────────────────── Applications: Updater (Homebrew) ───────────────────────────── */
+/* ───────────────────────────── Dashboard activity hub ───────────────────────────── */
+const ACT_TINT = { 'fast-clean':'#0A84FF','system-junk':'#30D158','uninstall':'#FF9F0A','update':'#BF5AF2','large-old':'#64D2FF' };
+const ACT_ICON = { 'fast-clean':'sparkles','system-junk':'hardDrive','uninstall':'box','update':'refresh','large-old':'clock' };
+const ACT_VERB = { 'fast-clean':'Cleaned','system-junk':'Cleaned','uninstall':'Uninstalled','update':'Updated','large-old':'Trashed' };
+function relTime(ms) {
+  const s = (Date.now() - ms) / 1000;
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+async function loadActivity() {
+  let a;
+  try { a = await api('/api/activity'); } catch { return; }
+  if ($('actJunk')) countUp($('actJunk'), a.junkItemsCleaned || 0);
+  if ($('actUninstalled')) countUp($('actUninstalled'), a.appsUninstalled || 0);
+  if ($('actUpdated')) countUp($('actUpdated'), a.programsUpdated || 0);
+  if ($('actRecovered')) $('actRecovered').textContent = formatBytes(a.totalBytesRecovered || 0);
+  if ($('actSince')) $('actSince').textContent = a.firstRecordedAt ? 'since ' + formatDate(a.firstRecordedAt) : '';
+  const log = Array.isArray(a.log) ? a.log : [];
+  if ($('actLog')) $('actLog').innerHTML = log.length
+    ? log.slice(0, 15).map(e => `
+      <div class="act-item">
+        <span class="chip" style="--tint:${ACT_TINT[e.kind] || '#8E8E93'}">${icon(ACT_ICON[e.kind] || 'activity', 14)}</span>
+        <div class="meta">
+          <div class="nm">${escapeHtml(ACT_VERB[e.kind] || 'Did')} ${escapeHtml(e.label || '')}${e.bytes ? ` · ${formatBytes(e.bytes)}` : ''}</div>
+          <div class="sub">${relTime(e.at)}</div>
+        </div>
+      </div>`).join('')
+    : '<div class="muted" style="padding:8px 2px;">No activity yet — clean, uninstall, or update to see it here.</div>';
+}
+
+/* ───────────────────────────── Applications: Updater ─────────────────────────────
+   Two groups: (1) Homebrew casks with real, one-click upgrades; (2) every other
+   installed app, which we can't update programmatically (no invokable handler) —
+   so we link out: Mac App Store apps → the App Store updates page, the rest →
+   their vendor website (best-effort from the bundle id). Honest, no fake "update". */
 async function loadUpdater() {
   const body = $('updBody');
   if (state.system && state.system.platform !== 'darwin') {
     body.innerHTML = '<p class="muted" style="padding:8px 0;">The Updater is available on macOS only.</p>';
     return;
   }
-  body.innerHTML = skeletonRows(4, 44);
+  body.innerHTML = skeletonRows(5, 44);
   try {
     const data = await api('/api/updater');
-    if (!data.available) {
-      body.innerHTML = `<div class="apps-empty" style="min-height:34vh;">${icon('refresh', 34)}<p class="muted">Homebrew not found.<br>The Updater checks your Homebrew casks for updates — install Homebrew to use it.</p></div>`;
-      return;
-    }
-    renderUpdater(data.casks || []);
+    renderUpdater(data);
   } catch (e) {
     body.innerHTML = `<p class="muted" style="padding:8px 0;">Could not check for updates: ${escapeHtml(e.message)}</p>`;
   }
 }
-function renderUpdater(casks) {
+function renderUpdater(data) {
   const body = $('updBody');
-  if (!casks.length) {
-    body.innerHTML = `<div class="apps-empty" style="min-height:34vh;">${icon('checkCircle', 34)}<p class="muted">Everything's up to date.</p></div>`;
+  const casks = data.casks || [];
+  const others = data.others || [];
+  const parts = [];
+
+  // ── Homebrew casks (actionable) ──
+  if (data.available) {
+    parts.push(`<div class="upd-head">${icon('download', 14)}Homebrew${casks.length ? ` · ${casks.length} update${casks.length === 1 ? '' : 's'}` : ''}</div>`);
+    parts.push(casks.length
+      ? casks.map(c => `
+        <div class="upd-row" data-token="${escapeHtml(c.token)}">
+          ${appTile(c.icon, c.name)}
+          <div class="meta"><div class="nm">${escapeHtml(c.name)}</div>
+            <div class="ver">${escapeHtml(c.installedVersion || '?')} → ${escapeHtml(c.latestVersion || 'latest')}</div></div>
+          <button class="btn upd-btn">${icon('download', 14)}Update</button>
+        </div>`).join('')
+      : `<div class="muted" style="padding:6px 2px 10px;">${icon('check', 13)} All casks up to date.</div>`);
+  }
+
+  // ── Everything else (link out) ──
+  if (others.length) {
+    parts.push(`<div class="upd-head" style="margin-top:18px;">${icon('box', 14)}Other apps · ${others.length}</div>`);
+    parts.push(`<p class="muted" style="margin:0 2px 8px;font-size:11.5px;">These update themselves when you open them — we link you to the source.</p>`);
+    parts.push(others.map(o => {
+      const action = o.source === 'mas'
+        ? `<a class="btn upd-link" href="macappstore://showUpdatesPage">${icon('refresh', 13)}App Store</a>`
+        : (o.website
+          ? `<a class="btn upd-link" href="${escapeHtml(o.website)}" target="_blank" rel="noopener noreferrer">${icon('external', 13)}Website</a>`
+          : `<span class="muted" style="font-size:11px;">self-updating</span>`);
+      const tag = o.source === 'mas' ? 'Mac App Store' : 'Self-updating';
+      return `
+        <div class="upd-row">
+          ${appTile(o.icon, o.name)}
+          <div class="meta"><div class="nm">${escapeHtml(o.name)}</div><div class="ver">${tag}</div></div>
+          ${action}
+        </div>`;
+    }).join(''));
+  }
+
+  if (!data.available && !others.length) {
+    body.innerHTML = `<div class="apps-empty" style="min-height:34vh;">${icon('refresh', 34)}<p class="muted">Nothing to update.<br>Install Homebrew to manage cask updates here.</p></div>`;
     return;
   }
-  body.innerHTML = `<p class="muted" style="margin:2px 0 12px;">${casks.length} ${casks.length === 1 ? 'cask has' : 'casks have'} updates available.</p>` +
-    casks.map(c => `
-      <div class="upd-row" data-token="${escapeHtml(c.token)}">
-        ${appTile(c.icon, c.name)}
-        <div class="meta"><div class="nm">${escapeHtml(c.name)}</div>
-          <div class="ver">${escapeHtml(c.installedVersion || '?')} → ${escapeHtml(c.latestVersion || 'latest')}</div></div>
-        <button class="btn upd-btn">${icon('download', 14)}Update</button>
-      </div>`).join('');
-  body.querySelectorAll('.upd-row').forEach(row => {
+  body.innerHTML = parts.join('');
+  body.querySelectorAll('.upd-row[data-token]').forEach(row => {
     row.querySelector('.upd-btn').addEventListener('click', () => runUpgrade(row.dataset.token, row));
   });
 }
@@ -2423,6 +2650,7 @@ async function runUpgrade(token, row) {
     if (r.ok) {
       btn.innerHTML = icon('check', 14) + 'Updated';
       row.style.opacity = '0.55';
+      recordActivity({ kind: 'update', label: token });
       toast(`Updated ${token}`);
     } else {
       btn.disabled = false; btn.innerHTML = icon('download', 14) + 'Update';
@@ -2481,7 +2709,7 @@ function refreshFcButton() {
   const total = fcTotal();
   const btn = $('fcCleanBtn');
   btn.disabled = total <= 0;
-  btn.querySelector('.fc-cta-main').textContent = 'Clean';
+  btn.querySelector('.fc-cta-main').textContent = t('clean');
   $('fcCtaSize').textContent = total > 0 ? formatBytes(total) : '';
 }
 
@@ -2492,11 +2720,11 @@ function resetFc() {
   const btn = $('fcCleanBtn');
   btn.classList.remove('cleaning');
   btn.disabled = true;
-  btn.querySelector('.fc-cta-main').textContent = 'Clean';
+  btn.querySelector('.fc-cta-main').textContent = t('clean');
   $('fcCtaSize').textContent = '';
   setFcMark('sparkles', false);
   setFcStatus('');
-  $('fcSub').textContent = 'Free up space — empties the Bin and clears application caches.';
+  $('fcSub').textContent = t('ssSub');
 }
 
 async function loadFastClean() {
@@ -2555,6 +2783,7 @@ async function fastCleanRun() {
   btn.classList.add('cleaning'); // light sweeps around the ring; button text hidden via CSS
   const done = [];
   let recovered = 0;
+  let cleanedItems = 0;
 
   // Empty Bin FIRST, then trash caches — so freshly-trashed caches aren't purged.
   if (doBin) {
@@ -2582,6 +2811,7 @@ async function fastCleanRun() {
       } catch (e) { failed += chunk.length; }
     }
     recovered += fc.cacheSize;
+    cleanedItems += deleted;
     done.push(`${deleted} cache item${deleted === 1 ? '' : 's'} cleared`);
     if (failed) toast(`${failed} cache item${failed === 1 ? '' : 's'} couldn't be cleared — grant Full Disk Access to clear more.`, 'error');
   }
@@ -2592,10 +2822,13 @@ async function fastCleanRun() {
   setFcStatus('');
   setFcMark('checkCircle', true);
   $('fcSub').textContent = recovered ? `${formatBytes(recovered)} freed — ${done.join(' · ')}.` : 'Nothing needed cleaning.';
-  btn.querySelector('.fc-cta-main').textContent = 'Done';
+  btn.querySelector('.fc-cta-main').textContent = t('done');
   $('fcCtaSize').textContent = '';
   btn.disabled = true;
   if (recovered) toast(`Smart Scan — ${formatBytes(recovered)} freed`);
+  if (recovered || cleanedItems) {
+    recordActivity({ kind: 'fast-clean', label: done.join(' · ') || 'cleanup', bytes: recovered, items: cleanedItems });
+  }
 }
 if ($('fcCleanBtn')) {
   $('fcCleanBtn').addEventListener('click', fastCleanRun);
