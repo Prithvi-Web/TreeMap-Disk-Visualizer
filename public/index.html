@@ -2740,20 +2740,44 @@ $('tmExportBtn').addEventListener('click', (e) => {
   e.stopPropagation();
   if (!state.treemap.pxRects.length && !state.treemap.arcs.length) { toast('Render something first', 'error'); return; }
   const menu = $('ctxMenu');
+  const canReport = !!(state.scanId && state.root);
   menu.innerHTML = `
     <button data-exp="png">${icon('image', 15)}PNG image</button>` +
     (isSun() ? '' : `
-    <button data-exp="svg">${icon('code', 15)}SVG vector</button>`);
+    <button data-exp="svg">${icon('code', 15)}SVG vector</button>`) +
+    (canReport ? `
+    <div class="div"></div>
+    <button data-exp="csv-files">${icon('file', 15)}CSV — all files</button>
+    <button data-exp="csv-folders">${icon('folder', 15)}CSV — all folders</button>
+    <button data-exp="pdf">${icon('download', 15)}PDF report</button>` : '');
   menu.style.display = 'block';
   const r = e.currentTarget.getBoundingClientRect();
   menu.style.left = Math.min(r.left, window.innerWidth - 230) + 'px';
-  menu.style.top = (r.bottom + 6) + 'px';
+  menu.style.top = Math.min(r.bottom + 6, window.innerHeight - menu.offsetHeight - 8) + 'px';
   menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     hideCtxMenu();
-    if (b.dataset.exp === 'png') exportTreemapPNG();
-    else exportTreemapSVG();
+    const exp = b.dataset.exp;
+    if (exp === 'png') exportTreemapPNG();
+    else if (exp === 'svg') exportTreemapSVG();
+    else if (exp === 'csv-files') downloadReport('csv', 'files');
+    else if (exp === 'csv-folders') downloadReport('csv', 'folders');
+    else if (exp === 'pdf') downloadReport('pdf');
   }));
 });
+
+/** Trigger a server-side report download (CSV / PDF) for the current scan. */
+function downloadReport(format, mode) {
+  if (!state.scanId) { toast('Run a scan first', 'error'); return; }
+  let url = `/api/scan/${encodeURIComponent(state.scanId)}/export?format=${format}`;
+  if (mode) url += `&mode=${mode}`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast(format === 'pdf' ? 'Building PDF report…' : 'Exporting CSV…');
+}
 
 function exportFileName(ext) {
   const base = (state.treemap.rootName || 'treemap').replace(/[^\w.-]+/g, '_');

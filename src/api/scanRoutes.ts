@@ -5,6 +5,7 @@ import { isInside } from '../utils/pathSanitizer';
 import { guardBodyPath, guardQueryPath } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
 import { getSettings } from '../services/settings';
+import { streamCsv, streamPdf } from '../services/reportExport';
 import { ScanResult, ScanEvent, BudgetStatus } from '../models/types';
 
 export const scanRouter = Router();
@@ -198,6 +199,33 @@ scanRouter.get('/scan/:scanId/budgets', async (req: Request, res: Response) => {
   }
   out.sort((a, b) => b.overBy - a.overBy);
   res.json({ scanId: scan.scanId, budgets: out });
+});
+
+/**
+ * GET /api/scan/:scanId/export?format=csv|pdf&mode=files|folders
+ * Downloads the scan as a report: streamed CSV of every file/folder, or a
+ * pdfmake text summary. Always sent as an attachment.
+ */
+scanRouter.get('/scan/:scanId/export', async (req: Request, res: Response) => {
+  const scan = requireScan(req, req.params.scanId);
+  if (scan.status === 'running') {
+    res.status(202).json({ status: 'running' });
+    return;
+  }
+  if (scan.status === 'error' || !scan.root) {
+    throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  }
+  const complete = scan as ScanResult & { root: NonNullable<ScanResult['root']> };
+  const format = String(req.query.format ?? 'csv');
+  if (format === 'pdf') {
+    await streamPdf(complete, res);
+    return;
+  }
+  if (format === 'csv') {
+    streamCsv(complete, req.query.mode === 'folders' ? 'folders' : 'files', res);
+    return;
+  }
+  throw new AppError(400, 'BAD_FORMAT', 'format must be "csv" or "pdf"');
 });
 
 /**

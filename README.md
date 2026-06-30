@@ -5,7 +5,7 @@ A GrandPerspective-style **disk space visualizer** for macOS, Linux and Windows.
 Scan any folder and see exactly what's eating your disk:
 
 - **Dashboard** — disk usage ring, live scan progress, file-type donut chart, top-10 largest files **and folders** (click a folder to jump into the treemap)
-- **Treemap** — squarified treemap of every file, sized by bytes, colored teal → amber → red by size; click folders to drill in, breadcrumbs + zoom-out button to climb back up, a search box that highlights matches (`report`, `*.zip`), and one-click **PNG / SVG export**
+- **Treemap** — squarified treemap of every file, sized by bytes, colored teal → amber → red by size; click folders to drill in, breadcrumbs + zoom-out button to climb back up, a search box that highlights matches (`report`, `*.zip`), and an **Export** menu — **PNG / SVG** of the chart, **CSV** of every file or folder, or a multi-page **PDF report** (disk summary, top-20 files/folders, file-type breakdown)
 - **Grid** — size-proportional icon grid with multi-select, sorting and virtual scrolling
 - **Duplicates** — finds true duplicate files (size + streamed SHA-256 content hash), grouped with reclaimable space per group; auto-select keeps the newest copy of each. A **Near-Duplicate Images** sub-tab catches resized / re-encoded / screenshot copies via a perceptual dHash
 - **Folder budgets** — pin a max size to any folder (right-click a treemap cell or breadcrumb); over-budget folders get a red dashed border in the treemap and a **Folder Budgets** widget on the dashboard showing how far over they are
@@ -108,6 +108,7 @@ artifacts instead of a Release).
 | `GET /api/scan/:id/treemap` | Pre-computed squarified treemap layout |
 | `GET /api/scan/:id/stats` | Scan counters incl. fast-rescan cache usage (`cachedDirs`, `walkedDirs`) |
 | `GET /api/scan/:id/budgets` | Saved folder budgets cross-referenced against this scan (`actualBytes`, `overBy`) |
+| `GET /api/scan/:id/export?format=csv&mode=files\|folders` / `format=pdf` | Download the scan as CSV (files or folders) or a PDF report |
 | `GET /api/scans` | Completed scans currently in memory |
 | `GET /api/large-files?scanId=` | Top N largest files |
 | `GET /api/large-folders?scanId=` | Top N largest folders (recursive sizes) |
