@@ -470,6 +470,15 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .trash-item .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .trash-item .sz { color: var(--text-2); white-space: nowrap; }
 
+/* ── OS snapshot accounting (Feature 9) ── */
+.snap-row { display: flex; align-items: center; gap: 11px; margin-top: 12px; padding: 10px 13px; border-radius: var(--r-md); border: 1px solid var(--hairline); background: var(--surface-1); font-size: 12.5px; }
+.snap-row[hidden] { display: none; }
+.snap-row .ic { color: var(--text-2); flex: none; }
+.snap-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.snap-meta b { font-weight: 600; }
+.snap-meta .muted { font-size: 10.5px; line-height: 1.35; }
+.snap-row .pill { flex: none; }
+
 /* ── Modals ── */
 .modal-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 100;
   display: none; align-items: center; justify-content: center;
@@ -717,6 +726,11 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
             </div>
           </div>
           <div class="growth-proj" id="growthProj" hidden></div>
+          <div class="snap-row" id="snapRow" hidden>
+            <span class="ic" data-icon="clock" data-size="16"></span>
+            <div class="snap-meta"><b id="snapCount">–</b><span id="snapHint" class="muted"></span></div>
+            <button class="pill" id="snapPurgeBtn">Purge</button>
+          </div>
         </div>
 
         <div class="card glass">
@@ -1290,6 +1304,7 @@ const state = {
   view: 'dashboard',
   system: null,
   trash: null,
+  snapshots: null,
   scanId: null,
   scanning: false,
   es: null,
@@ -1364,6 +1379,7 @@ async function loadSystem() {
     requestAnimationFrame(() => { $('ringFg').style.strokeDashoffset = String(C * (1 - pct)); });
     if (!$('pathInput').value) $('pathInput').value = sys.homeDir;
     loadTrash();
+    loadSnapshots();
   } catch (e) {
     toast('Could not load system info: ' + e.message, 'error');
   }
@@ -1400,6 +1416,39 @@ function openTrashModal() {
 }
 $('trashFact').addEventListener('click', openTrashModal);
 $('trashFact').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTrashModal(); } });
+
+/* Feature 9 — OS snapshot accounting. */
+async function loadSnapshots() {
+  try {
+    const s = await api('/api/system/snapshots');
+    state.snapshots = s;
+    const el = $('snapRow');
+    if (s && s.available && s.snapshots && s.snapshots.length > 0) {
+      const n = s.snapshots.length;
+      $('snapCount').textContent = `${formatCount(n)} local snapshot${n === 1 ? '' : 's'}` + (s.totalBytes ? ` · ~${formatBytes(s.totalBytes)}` : '');
+      $('snapHint').textContent = 'Hidden space from filesystem snapshots — Time Machine recreates these on the next backup, so purging is safe.';
+      $('snapPurgeBtn').hidden = !s.canPurge;
+      el.hidden = false;
+    } else {
+      el.hidden = true;
+    }
+  } catch { /* snapshot accounting is best-effort */ }
+}
+$('snapPurgeBtn').addEventListener('click', () => {
+  const n = state.snapshots && state.snapshots.snapshots ? state.snapshots.snapshots.length : 0;
+  $('confirmTitle').innerHTML = icon('clock', 18) + 'Purge local snapshots?';
+  $('confirmText').innerHTML = `Delete <b>${formatCount(n)} local snapshot${n === 1 ? '' : 's'}</b>?<br><span style="color:var(--text-3)">This frees the space they hold. Time Machine will create fresh ones on the next backup.</span>`;
+  onConfirmTrash = purgeSnapshotsAction;
+  $('confirmModal').classList.add('open');
+});
+async function purgeSnapshotsAction() {
+  try {
+    const r = await api('/api/system/snapshots/purge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) });
+    if (r.ok) toast(`Purged ${formatCount(r.deleted)} local snapshot${r.deleted === 1 ? '' : 's'}`);
+    else toast(`Purged ${r.deleted}, ${r.failed} failed`, r.failed ? 'error' : 'success');
+  } catch (e) { toast('Purge failed: ' + e.message, 'error'); }
+  loadSnapshots();
+}
 
 /** Inject a synthetic Trash cell at the top level of a home-folder treemap. */
 function maybeInjectTrash() {
@@ -2578,6 +2627,7 @@ let onConfirmTrash = null; // optional callback override for the shared confirm 
 function confirmTrash(paths) {
   if (!paths.length) return;
   onConfirmTrash = null;
+  $('confirmTitle').innerHTML = icon('trash', 18) + 'Move to Trash?';
   confirmPaths = paths;
   const total = paths.reduce((s, p) => s + (state.pathIndex.get(p)?.size ?? 0), 0);
   const first = state.pathIndex.get(paths[0]);
@@ -2686,6 +2736,7 @@ function cartTrashAll() {
     (missing
       ? `<br><span style="color:var(--text-3)">${missing} item${missing === 1 ? '' : 's'} not in the current scan will stay in the cart.</span>`
       : `<br><span style="color:var(--text-3)">You can restore them from the Trash at any time.</span>`);
+  $('confirmTitle').innerHTML = icon('trash', 18) + 'Move to Trash?';
   onConfirmTrash = cartExecuteTrash;
   $('confirmModal').classList.add('open');
 }

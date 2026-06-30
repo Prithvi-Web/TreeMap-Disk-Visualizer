@@ -6,6 +6,7 @@ import { guardQueryPath } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
 import { diskUsage } from '../services/diskUsage';
 import { getTrashInfo } from '../services/trash';
+import { getSnapshotAccounting, purgeSnapshots } from '../services/snapshotAccounting';
 import { SystemInfo } from '../models/types';
 
 export const systemRouter = Router();
@@ -50,6 +51,20 @@ systemRouter.get('/system', async (_req: Request, res: Response) => {
 /** GET /api/trash/size -> { totalBytes, itemCount, paths, items } across all trash locations. */
 systemRouter.get('/trash/size', async (_req: Request, res: Response) => {
   res.json(await getTrashInfo());
+});
+
+/** GET /api/system/snapshots -> OS snapshot accounting (APFS/Btrfs/VSS), best-effort. */
+systemRouter.get('/system/snapshots', async (_req: Request, res: Response) => {
+  res.json(await getSnapshotAccounting());
+});
+
+/** POST /api/system/snapshots/purge { confirm:true } -> delete local snapshots (macOS). */
+systemRouter.post('/system/snapshots/purge', async (req: Request, res: Response) => {
+  const { confirm } = req.body as { confirm?: boolean };
+  if (confirm !== true) {
+    throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } to purge local snapshots');
+  }
+  res.json(await purgeSnapshots());
 });
 
 /**
