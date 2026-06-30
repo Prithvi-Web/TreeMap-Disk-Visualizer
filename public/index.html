@@ -479,6 +479,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .snap-meta .muted { font-size: 10.5px; line-height: 1.35; }
 .snap-row .pill { flex: none; }
 .pill.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.git-bd { font-size: 11px; color: var(--text-2); white-space: nowrap; }
 
 /* ── Modals ── */
 .modal-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 100;
@@ -948,6 +949,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <div id="cleanResults"></div>
       </div>
       <div id="cleanPaneSmart" style="display:none;">
+        <div id="gitRepos"></div>
         <div id="smartResults"></div>
       </div>
       <div id="cleanPaneEmpty" style="display:none;">
@@ -2011,6 +2013,7 @@ function drawTreemap() {
   ctx.clearRect(0, 0, cssW, cssH);
   ctx.fillStyle = cssVar('--tm-canvas-bg');
   ctx.fillRect(0, 0, cssW, cssH);
+  ctx.textAlign = 'left'; // reset — sunburst leaves textAlign='center' on the shared buffer ctx
 
   const px = [];
   for (const n of state.treemap.nodes) {
@@ -2092,6 +2095,16 @@ function drawTreemap() {
     ctx.arc(bx + s * 0.55, by, s * 0.38, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillRect(bx - s * 0.35, by, s * 0.9, s * 0.45);
+  }
+
+  // Pass 6: git-repository markers (small branch glyph).
+  for (const r of px) {
+    if (!r.n.gitRepo || r.w < 70 || r.h < 40) continue;
+    const gx = r.x + r.w - 17, gy = r.y + 11;
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)'; ctx.fillStyle = 'rgba(255,255,255,0.92)'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(gx, gy + 5, 2.1, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(gx + 7, gy - 4, 2.1, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(gx, gy + 4); ctx.lineTo(gx, gy - 2); ctx.quadraticCurveTo(gx, gy - 4, gx + 5, gy - 4); ctx.stroke();
   }
 
   renderSearchOverlay();
@@ -3646,7 +3659,47 @@ async function loadEmptyFolders() {
 $('emptyIgnoreJunk').addEventListener('change', () => { emptyFolders = []; loadEmptyFolders(); });
 
 /* ── Smart Suggestions pane ── */
+/* Feature 13 — git repositories section + git gc. */
+async function renderGitRepos() {
+  const host = $('gitRepos');
+  if (!host || !state.scanId) return;
+  let repos = [];
+  try { ({ repos } = await api('/api/git/repos?scanId=' + state.scanId)); } catch { return; }
+  const notable = (repos || []).filter((r) => r.totalBytes > 1048576);
+  if (!notable.length) { host.innerHTML = ''; return; }
+  host.innerHTML = `<div style="margin-bottom:16px;">
+    <div class="rule-row" style="padding:6px 0;"><b style="display:inline-flex;align-items:center;gap:7px;">${icon('gitBranch', 15)}Git repositories</b><span class="muted" style="flex:1;margin-left:8px;">pack &amp; loose-object breakdown — run gc to compact</span></div>
+    <div class="clean-list">` + notable.map((r) => {
+      const name = r.repoPath.split(/[\\/]/).pop() || r.repoPath;
+      return `<div class="clean-item">
+        <div class="meta"><div class="nm">${escapeHtml(name)}</div><div class="pth">${escapeHtml(r.repoPath)}</div></div>
+        <span class="git-bd num">pack ${formatBytes(r.packBytes)} · loose ${formatBytes(r.looseObjectBytes)}${r.lfsBytes ? ` · LFS ${formatBytes(r.lfsBytes)}` : ''}</span>
+        <span class="size-badge num">${formatBytes(r.totalBytes)}</span>
+        ${r.canGC ? `<button class="pill" data-gc="${escapeHtml(r.repoPath)}">Run git gc</button>` : ''}
+      </div>`;
+    }).join('') + `</div></div>`;
+}
+async function runGitGcAction(repo) {
+  toast('Running git gc…');
+  try {
+    const r = await api('/api/git/gc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: repo, confirm: true }) });
+    if (r.ok) toast('git gc complete'); else toast('git gc failed: ' + (r.error || 'unknown'), 'error');
+  } catch (e) { toast('git gc failed: ' + e.message, 'error'); }
+  renderGitRepos();
+}
+document.addEventListener('click', (e) => {
+  const gc = e.target.closest('[data-gc]');
+  if (!gc) return;
+  const repo = gc.getAttribute('data-gc');
+  const name = repo.split(/[\\/]/).pop() || repo;
+  $('confirmTitle').innerHTML = icon('gitBranch', 18) + 'Run git gc?';
+  $('confirmText').innerHTML = `Run <b>git gc --aggressive</b> on <b>${escapeHtml(name)}</b>?<br><span style="color:var(--text-3)">Safe — it compacts the repo without changing any commits. Large repos can take a while.</span>`;
+  onConfirmTrash = () => runGitGcAction(repo);
+  $('confirmModal').classList.add('open');
+});
+
 async function loadSmartSuggestions() {
+  renderGitRepos();
   const host = $('smartResults');
   host.innerHTML = skeletonRows(4, 34);
   try {
