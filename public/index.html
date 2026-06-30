@@ -460,6 +460,16 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .growth-proj.warn { color: var(--warn); background: rgba(255,214,10,0.08); border-color: rgba(255,214,10,0.25); }
 .growth-proj.danger { color: var(--danger); background: rgba(255,69,58,0.09); border-color: rgba(255,69,58,0.28); }
 
+/* ── Trash awareness (Feature 8) ── */
+.fact-trash { cursor: pointer; }
+.fact-trash:hover b { color: var(--accent); }
+#trashModalMeta { color: var(--text-2); font-weight: 500; font-size: 13px; }
+.trash-list { max-height: 56vh; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--r-md); }
+.trash-item { display: flex; align-items: center; gap: 10px; padding: 9px 13px; font-size: 12.5px; border-bottom: 1px solid var(--hairline); }
+.trash-item:last-child { border-bottom: none; }
+.trash-item .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trash-item .sz { color: var(--text-2); white-space: nowrap; }
+
 /* ── Modals ── */
 .modal-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 100;
   display: none; align-items: center; justify-content: center;
@@ -703,6 +713,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
               <div class="fact"><span>Total disk</span><b id="sysTotal" class="num">–</b></div>
               <div class="fact"><span>Free</span><b id="sysFree" class="num">–</b></div>
               <div class="fact"><span>Used</span><b id="sysUsed" class="num">–</b></div>
+              <div class="fact fact-trash" id="trashFact" hidden role="button" tabindex="0" title="View Trash contents"><span>Trash</span><b id="sysTrash" class="num">–</b></div>
             </div>
           </div>
           <div class="growth-proj" id="growthProj" hidden></div>
@@ -996,6 +1007,18 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 </div>
 
 <div id="tooltip" role="tooltip"></div>
+<!-- ═══════════ Trash contents (Feature 8) ═══════════ -->
+<div class="modal-backdrop" id="trashModal" role="dialog" aria-modal="true" aria-label="Trash contents">
+  <div class="modal" style="width:560px;max-width:92vw;">
+    <div class="modal-head">
+      <h3><span data-icon="trash" data-size="17"></span>Trash <span class="num" id="trashModalMeta"></span></h3>
+      <button class="close-x" data-close="trashModal" aria-label="Close"><span data-icon="x" data-size="14"></span></button>
+    </div>
+    <div class="modal-body" id="trashModalBody"></div>
+    <div class="modal-foot"><span class="muted" style="flex:1;">Read-only view · empty the Trash from your file manager.</span></div>
+  </div>
+</div>
+
 <!-- ═══════════ Keyboard shortcuts (Feature 6) ═══════════ -->
 <div class="modal-backdrop" id="shortcutsModal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
   <div class="modal" style="width:540px;max-width:92vw;">
@@ -1266,6 +1289,7 @@ function cellRgb(n) {
 const state = {
   view: 'dashboard',
   system: null,
+  trash: null,
   scanId: null,
   scanning: false,
   es: null,
@@ -1339,9 +1363,62 @@ async function loadSystem() {
     const C = 2 * Math.PI * 55;
     requestAnimationFrame(() => { $('ringFg').style.strokeDashoffset = String(C * (1 - pct)); });
     if (!$('pathInput').value) $('pathInput').value = sys.homeDir;
+    loadTrash();
   } catch (e) {
     toast('Could not load system info: ' + e.message, 'error');
   }
+}
+
+/* Feature 8 — Trash awareness. */
+async function loadTrash() {
+  try {
+    const t = await api('/api/trash/size');
+    state.trash = t;
+    const el = $('trashFact');
+    if (t && t.totalBytes > 0) {
+      $('sysTrash').textContent = formatBytes(t.totalBytes) + (t.itemCount ? ` · ${formatCount(t.itemCount)}` : '');
+      el.hidden = false;
+    } else {
+      el.hidden = true;
+    }
+  } catch { /* trash sizing is best-effort */ }
+}
+function openTrashModal() {
+  const t = state.trash;
+  $('trashModalMeta').textContent = t ? `· ${formatBytes(t.totalBytes)} · ${formatCount(t.itemCount)} item${t.itemCount === 1 ? '' : 's'}` : '';
+  const body = $('trashModalBody');
+  if (!t || !t.items || !t.items.length) {
+    body.innerHTML = `<div class="muted" style="padding:18px 2px;display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} The Trash is empty.</div>`;
+  } else {
+    body.innerHTML = '<div class="trash-list">' + t.items.map((it) =>
+      `<div class="trash-item">${chipFor({ type: 'file', extension: (it.name.split('.').pop() || '').toLowerCase() }, 14)}` +
+      `<span class="nm" title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</span>` +
+      `<span class="sz num">${formatBytes(it.size)}</span></div>`
+    ).join('') + '</div>';
+  }
+  $('trashModal').classList.add('open');
+}
+$('trashFact').addEventListener('click', openTrashModal);
+$('trashFact').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTrashModal(); } });
+
+/** Inject a synthetic Trash cell at the top level of a home-folder treemap. */
+function maybeInjectTrash() {
+  if (state.treemap.mode !== 'treemap') return;
+  if (!state.root || !state.system || !state.trash) return;
+  if (state.treemap.rootPath !== state.root.path) return;
+  if (state.root.path !== state.system.homeDir) return;
+  const tb = state.trash.totalBytes;
+  if (!(tb > 0) || !state.treemap.nodes.length) return;
+  const rootSize = state.treemap.rootSize || state.root.size;
+  if (rootSize <= 0) return;
+  const frac = tb / (rootSize + tb);
+  const trashW = Math.max(6, Math.min(34, frac * 100)); // keep visible, never dominant
+  const scale = (100 - trashW) / 100;
+  for (const n of state.treemap.nodes) { n.x *= scale; n.w *= scale; }
+  state.treemap.nodes.push({
+    name: 'Trash', path: ' trash', size: tb, type: 'dir', modifiedAt: Date.now(),
+    depth: 1, expanded: false, isTrash: true, x: 100 - trashW, y: 0, w: trashW, h: 100,
+  });
 }
 
 /* ───────────────────────────── Scanning + SSE ───────────────────────────── */
@@ -1734,6 +1811,7 @@ async function loadTreemap(rootPath, animate = false) {
       state.treemap.hover = null;
       renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
       $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
+      maybeInjectTrash();
       drawTreemap();
     }
   } catch (e) {
@@ -1815,7 +1893,7 @@ function drawTreemap() {
   // Pass 1: cushion-shaded leaf fills.
   for (const r of px) {
     if (r.frame) continue;
-    const base = cellRgb(r.n);
+    const base = r.n.isTrash ? [108, 122, 137] : cellRgb(r.n); // distinct gray-blue for the Trash cell
     const depthFade = Math.max(0.55, 1 - r.n.depth * 0.08);
     const top = mix(base, [255,255,255], 0.16);
     const bot = mix(base, [0,0,0], 0.22);
@@ -2004,6 +2082,7 @@ tmCanvas.addEventListener('mouseleave', () => {
 tmCanvas.addEventListener('click', (e) => {
   const hit = viewHit(e.clientX, e.clientY);
   if (!hit) return;
+  if (hit.n && hit.n.isTrash) { hideTooltip(); openTrashModal(); return; }
   if (hit.center) { // sunburst centre disc → zoom out one level
     const crumbs = breadcrumbsFor(state.treemap.rootPath);
     if (crumbs.length > 1) { hideTooltip(); loadTreemap(crumbs[crumbs.length - 2].path, true); }
@@ -2015,6 +2094,7 @@ tmCanvas.addEventListener('click', (e) => {
 tmCanvas.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   const hit = viewHit(e.clientX, e.clientY, true);
+  if (hit && hit.n && hit.n.isTrash) { openTrashModal(); return; }
   if (hit && hit.n) showCtxMenu(e.clientX, e.clientY, hit.n);
 });
 $('tmDepth').addEventListener('change', (e) => {
@@ -2419,6 +2499,15 @@ function exportTreemapSVG() {
 /* ───────────────────────────── Tooltip ───────────────────────────── */
 function showTooltip(x, y, node, pctOfRoot = null) {
   const tip = $('tooltip');
+  if (node.isTrash) {
+    tip.innerHTML = `<div class="t-head"><span style="color:#8aa0b3;display:inline-flex;">${icon('trash', 15)}</span>Trash</div>` +
+      `<div class="t-line num"><span class="t-strong">${formatBytes(node.size)}</span> · click to view contents</div>`;
+    tip.style.display = 'block';
+    const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.min(x + pad, window.innerWidth - w - 10) + 'px';
+    tip.style.top = (y + pad + h > window.innerHeight - 10 ? y - h - 8 : y + pad) + 'px';
+    return;
+  }
   const k = kindFor(node);
   tip.innerHTML = `
     <div class="t-head"><span style="color:${k.tint};display:inline-flex;">${icon(k.icon, 15)}</span>${escapeHtml(node.name)}</div>

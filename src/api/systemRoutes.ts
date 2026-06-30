@@ -5,6 +5,7 @@ import path from 'path';
 import { guardQueryPath } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
 import { diskUsage } from '../services/diskUsage';
+import { getTrashInfo } from '../services/trash';
 import { SystemInfo } from '../models/types';
 
 export const systemRouter = Router();
@@ -44,6 +45,11 @@ systemRouter.get('/system', async (_req: Request, res: Response) => {
     commonDirs,
   };
   res.json(info);
+});
+
+/** GET /api/trash/size -> { totalBytes, itemCount, paths, items } across all trash locations. */
+systemRouter.get('/trash/size', async (_req: Request, res: Response) => {
+  res.json(await getTrashInfo());
 });
 
 /**
