@@ -42,6 +42,12 @@ export interface ScanResult {
   createdAt: number;
   /** Cooperative cancellation flag (set on shutdown/eviction). */
   cancelled: boolean;
+  /** True when this scan reused the on-disk mtime cache (fast rescan). */
+  incremental?: boolean;
+  /** Directories served from the cache (incremental scans only). */
+  cachedDirs?: number;
+  /** Directories actually walked on disk. */
+  walkedDirs?: number;
 }
 
 /** One rectangle of the squarified treemap, coordinates in percent (0–100). */

@@ -60,9 +60,9 @@ export function requireScan(_req: Request, idSource: unknown): ScanResult {
 
 /** POST /api/scan  { path } -> { scanId } */
 scanRouter.post('/scan', guardBodyPath, async (req: Request, res: Response) => {
-  const { path: scanPath } = req.body as { path: string };
-  const scan = await startScan(scanPath); // lstat failures -> errorHandler maps to 404/403
-  res.status(202).json({ scanId: scan.scanId });
+  const { path: scanPath, incremental } = req.body as { path: string; incremental?: boolean };
+  const scan = await startScan(scanPath, { incremental: incremental === true }); // lstat failures -> 404/403
+  res.status(202).json({ scanId: scan.scanId, incremental: scan.incremental === true });
 });
 
 /** GET /api/scan/:scanId/progress — Server-Sent Events stream. */
@@ -141,6 +141,21 @@ scanRouter.get('/scan/:scanId/result', (req: Request, res: Response) => {
     startedAt: scan.startedAt,
     finishedAt: scan.finishedAt,
     root: scan.root,
+  });
+});
+
+/** GET /api/scan/:scanId/stats — counters incl. incremental cache usage. */
+scanRouter.get('/scan/:scanId/stats', (req: Request, res: Response) => {
+  const scan = requireScan(req, req.params.scanId);
+  res.json({
+    scanId: scan.scanId,
+    status: scan.status,
+    scanned: scan.scanned,
+    fileCount: scan.fileCount,
+    dirCount: scan.dirCount,
+    incremental: scan.incremental === true,
+    cachedDirs: scan.cachedDirs ?? 0,
+    walkedDirs: scan.walkedDirs ?? 0,
   });
 });
 

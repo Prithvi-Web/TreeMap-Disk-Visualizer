@@ -437,6 +437,12 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
 :root[data-theme="light"] .pv-body .tk-num { color: #d84315; }
 body.preview-open #cartDock { right: 348px; }
 
+/* ── Fast (incremental) rescan toggle (Feature 5) ── */
+.fast-rescan { display: inline-flex; align-items: center; gap: 7px; margin-top: 11px; font-size: 12.5px; color: var(--text-2); cursor: pointer; user-select: none; }
+.fast-rescan[hidden] { display: none; }
+.fast-rescan input { accent-color: var(--accent); margin: 0; }
+.fast-rescan .ic { color: var(--accent); }
+
 /* ── Modals ── */
 .modal-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 100;
   display: none; align-items: center; justify-content: center;
@@ -694,6 +700,9 @@ body.preview-open #cartDock { right: 348px; }
             <button class="btn" id="browseBtn">Browse…</button>
             <button class="btn btn-primary" id="scanBtn"><span data-icon="play"></span>Scan</button>
           </div>
+          <label class="fast-rescan" id="fastRescanWrap" hidden>
+            <input type="checkbox" id="fastRescan"><span data-icon="zap" data-size="13"></span>Fast rescan — reuse cache for unchanged folders
+          </label>
           <div class="scan-status" id="scanStatus">No scan yet — pick a folder above.</div>
           <div class="scan-meta num" id="scanMeta"></div>
           <div class="progress-track" id="progressTrack"><div class="progress-fill"></div></div>
@@ -1296,7 +1305,24 @@ function skeletonRows(n, h = 38) {
   return Array.from({ length: n }, () => `<div class="skeleton" style="height:${h}px;margin:8px 0;"></div>`).join('');
 }
 
-async function startScan(path) {
+/* Feature 5 — fast (incremental) rescan helpers. */
+function scannedRoots() { try { return new Set(JSON.parse(localStorage.getItem('tm-scanned-roots') || '[]')); } catch { return new Set(); } }
+function rememberScannedRoot(p) { const s = scannedRoots(); s.add(p); localStorage.setItem('tm-scanned-roots', JSON.stringify([...s].slice(-60))); }
+function maybeShowFastRescan() {
+  const wrap = $('fastRescanWrap'); if (!wrap) return;
+  const p = $('pathInput').value.trim();
+  const known = !!p && scannedRoots().has(p);
+  wrap.hidden = !known;
+  $('fastRescan').checked = known;
+}
+async function showFastRescanStat(scanId) {
+  try {
+    const s = await api(`/api/scan/${scanId}/stats`);
+    if (s && s.cachedDirs > 0) toast(`Fast rescan — ${formatCount(s.cachedDirs)} folders reused from cache`);
+  } catch { /* stats are best-effort */ }
+}
+
+async function startScan(path, opts = {}) {
   if (state.scanning) { toast('A scan is already running', 'error'); return; }
   closeEventSource();
   const status = $('scanStatus');
@@ -1315,11 +1341,14 @@ async function startScan(path) {
     switchView('dashboard');
 
     const t0 = performance.now();
-    const { scanId } = await api('/api/scan', {
+    const resp = await api('/api/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path, incremental: !!opts.incremental }),
     });
+    const scanId = resp.scanId;
+    const fast = resp.incremental === true;
+    const fastTag = fast ? icon('zap', 12) + ' Fast rescan · ' : '';
     state.scanId = scanId;
 
     const es = new EventSource(`/api/scan/${scanId}/progress`);
@@ -1330,7 +1359,7 @@ async function startScan(path) {
         const secs = (performance.now() - t0) / 1000;
         const rate = secs > 0.2 ? Math.round(msg.scanned / secs) : 0;
         status.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') +
-          `<span class="num">Scanning… <b>${formatCount(msg.scanned)}</b> items` +
+          `<span class="num">${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
           (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`;
         $('scanMeta').textContent = msg.currentPath;
       } else if (msg.type === 'complete') {
@@ -1340,6 +1369,8 @@ async function startScan(path) {
           const r = await api(`/api/scan/${scanId}/result`);
           root = r.root;
         }
+        rememberScannedRoot(path);
+        if (fast) showFastRescanStat(scanId);
         finishScan(root, performance.now() - t0);
       } else if (msg.type === 'error') {
         closeEventSource();
@@ -1353,7 +1384,7 @@ async function startScan(path) {
       closeEventSource();
       try {
         const r = await api(`/api/scan/${scanId}/result`);
-        if (r.status === 'complete') { finishScan(r.root, performance.now() - t0); return; }
+        if (r.status === 'complete') { rememberScannedRoot(path); finishScan(r.root, performance.now() - t0); return; }
       } catch { /* fall through */ }
       failScan('Lost connection to the scan stream');
     };
@@ -1427,9 +1458,11 @@ async function finishScan(root, durationMs) {
 $('scanBtn').addEventListener('click', () => {
   const p = $('pathInput').value.trim();
   if (!p) { toast('Enter a folder path first', 'error'); return; }
-  startScan(p);
+  startScan(p, { incremental: !$('fastRescanWrap').hidden && $('fastRescan').checked });
 });
 $('pathInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('scanBtn').click(); });
+$('pathInput').addEventListener('input', maybeShowFastRescan);
+maybeShowFastRescan();
 window.addEventListener('beforeunload', closeEventSource);
 
 /* ───────────────────────────── Dashboard: largest files ───────────────────────────── */

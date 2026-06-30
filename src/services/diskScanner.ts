@@ -5,6 +5,7 @@ import { FileNode, ScanResult, LargeFolder, EmptyFoldersResult, CompareEntry } f
 import { saveSnapshot } from './snapshots';
 import { getIgnoreMatchers } from './settings';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
+import { readJsonFile, appDataDir } from './storage';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -63,7 +64,12 @@ export function cancelAllScans(): void {
  * Kick off a scan of `rootPath`. Returns the scan record immediately;
  * the walk continues in the background and mutates the record as it goes.
  */
-export async function startScan(rootPath: string): Promise<ScanResult> {
+export interface ScanOptions {
+  /** Reuse the on-disk mtime cache to skip unchanged subtrees (fast rescan). */
+  incremental?: boolean;
+}
+
+export async function startScan(rootPath: string, opts: ScanOptions = {}): Promise<ScanResult> {
   ensureEvictor();
 
   // Fail fast on unreadable/nonexistent roots so the API can 4xx properly.
@@ -71,6 +77,16 @@ export async function startScan(rootPath: string): Promise<ScanResult> {
 
   // User-configured "don't scan" patterns; a settings problem never blocks a scan.
   const ignore = await getIgnoreMatchers('scan').catch(() => [] as CompiledIgnore[]);
+
+  // Incremental rescan: load the previous tree so unchanged directories (same
+  // mtime) can be substituted from cache instead of re-walked.
+  let cache: Map<string, FileNode> | null = null;
+  if (opts.incremental) {
+    const cachedRoot = await readJsonFile<FileNode | null>(cacheFileName(rootPath), null);
+    if (cachedRoot && cachedRoot.path === rootPath && cachedRoot.type === 'dir') {
+      cache = buildDirCache(cachedRoot);
+    }
+  }
 
   const scan: ScanResult = {
     scanId: crypto.randomUUID(),
@@ -83,17 +99,77 @@ export async function startScan(rootPath: string): Promise<ScanResult> {
     startedAt: Date.now(),
     createdAt: Date.now(),
     cancelled: false,
+    incremental: !!cache,
+    cachedDirs: 0,
+    walkedDirs: 0,
   };
   scans.set(scan.scanId, scan);
 
   // Fire and forget — errors land on the record, never as unhandled rejections.
-  void walk(scan, rootStat.isDirectory(), ignore).catch((err: unknown) => {
+  void walk(scan, rootStat.isDirectory(), ignore, cache).catch((err: unknown) => {
     scan.status = 'error';
     scan.error = err instanceof Error ? err.message : String(err);
     scan.finishedAt = Date.now();
   });
 
   return scan;
+}
+
+/* ---------- Incremental (fast) rescan cache ---------- */
+
+const MTIME_CACHE_MAX_NODES = 300_000;
+
+/** Stable per-root cache filename in the app-data directory. */
+function cacheFileName(rootPath: string): string {
+  const h = crypto.createHash('sha1').update(rootPath).digest('hex').slice(0, 16);
+  return `mtime-cache-${h}.json`;
+}
+
+/** Index every directory of a cached tree by path for O(1) substitution. */
+function buildDirCache(root: FileNode): Map<string, FileNode> {
+  const map = new Map<string, FileNode>();
+  const stack: FileNode[] = [root];
+  while (stack.length) {
+    const n = stack.pop()!;
+    if (n.type === 'dir') {
+      map.set(n.path, n);
+      if (n.children) for (const c of n.children) stack.push(c);
+    }
+  }
+  return map;
+}
+
+/** Add a substituted (cached) subtree to the scan counters; returns dir count. */
+function tallyCachedSubtree(scan: ScanResult, dirNode: FileNode): number {
+  let dirs = 0;
+  const stack: FileNode[] = [...(dirNode.children ?? [])];
+  while (stack.length) {
+    const n = stack.pop()!;
+    scan.scanned++;
+    if (n.type === 'dir') {
+      scan.dirCount++;
+      dirs++;
+      if (n.children) for (const c of n.children) stack.push(c);
+    } else {
+      scan.fileCount++;
+    }
+  }
+  return dirs;
+}
+
+/** Persist the completed tree (compact JSON) so future fast rescans can reuse it. */
+async function saveMtimeCache(scan: ScanResult): Promise<void> {
+  if (!scan.root || scan.scanned > MTIME_CACHE_MAX_NODES) return;
+  try {
+    const dir = appDataDir();
+    await fsp.mkdir(dir, { recursive: true });
+    const file = path.join(dir, cacheFileName(scan.rootPath));
+    const tmp = file + '.tmp';
+    await fsp.writeFile(tmp, JSON.stringify(scan.root), 'utf8');
+    await fsp.rename(tmp, file);
+  } catch (err) {
+    console.error('[treemap] mtime-cache save failed:', err);
+  }
 }
 
 function makeNode(fullPath: string, name: string, isDir: boolean, size: number, mtimeMs: number): FileNode {
@@ -114,7 +190,7 @@ function makeNode(fullPath: string, name: string, isDir: boolean, size: number, 
   return node;
 }
 
-async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore[]): Promise<void> {
+async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore[], cache: Map<string, FileNode> | null): Promise<void> {
   const rootStat = await fsp.lstat(scan.rootPath);
   const root = makeNode(
     scan.rootPath,
@@ -128,7 +204,7 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
   else scan.fileCount = 1;
 
   if (rootIsDir) {
-    await drainQueue(scan, [root], ignore);
+    await drainQueue(scan, [root], ignore, cache);
   }
   if (scan.cancelled) return;
 
@@ -138,8 +214,9 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
   scan.finishedAt = Date.now();
   scan.currentPath = scan.rootPath;
 
-  // Record a history snapshot so Trends works without any user action.
+  // Persist the tree for future fast rescans, then snapshot for Trends.
   // Failures here must never fail the scan itself.
+  void saveMtimeCache(scan);
   void saveSnapshot(scan).catch((err: unknown) => {
     console.error('[treemap] snapshot save failed:', err);
   });
@@ -149,7 +226,7 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
  * Worker pool: up to CONCURRENCY directories are listed at the same time.
  * Resolves when the queue is empty and every worker has finished.
  */
-function drainQueue(scan: ScanResult, initial: FileNode[], ignore: CompiledIgnore[]): Promise<void> {
+function drainQueue(scan: ScanResult, initial: FileNode[], ignore: CompiledIgnore[], cache: Map<string, FileNode> | null): Promise<void> {
   const queue: FileNode[] = [...initial];
   let active = 0;
 
@@ -162,7 +239,7 @@ function drainQueue(scan: ScanResult, initial: FileNode[], ignore: CompiledIgnor
       while (active < CONCURRENCY && queue.length > 0) {
         const dirNode = queue.shift()!;
         active++;
-        processDirectory(scan, dirNode, queue, ignore)
+        processDirectory(scan, dirNode, queue, ignore, cache)
           .catch((err: unknown) => reject(err))
           .finally(() => {
             active--;
@@ -185,9 +262,24 @@ async function processDirectory(
   scan: ScanResult,
   dirNode: FileNode,
   queue: FileNode[],
-  ignore: CompiledIgnore[]
+  ignore: CompiledIgnore[],
+  cache: Map<string, FileNode> | null
 ): Promise<void> {
   if (scan.cancelled) return;
+
+  // Incremental: an unchanged directory (same mtime) keeps its cached subtree
+  // rather than being re-listed. Trades catching in-place content-size edits
+  // for near-instant repeat scans — hence opt-in, with full scan the default.
+  if (cache) {
+    const cached = cache.get(dirNode.path);
+    if (cached && cached.type === 'dir' && cached.children && cached.modifiedAt === dirNode.modifiedAt) {
+      dirNode.children = cached.children;
+      scan.currentPath = dirNode.path;
+      scan.cachedDirs = (scan.cachedDirs ?? 0) + 1 + tallyCachedSubtree(scan, dirNode);
+      return; // skip readdir + don't enqueue children
+    }
+  }
+  scan.walkedDirs = (scan.walkedDirs ?? 0) + 1;
 
   let entries: Dirent[];
   try {
