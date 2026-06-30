@@ -453,6 +453,13 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
   font: 11.5px ui-monospace, 'SF Mono', Menlo, monospace; color: var(--text-1); background: var(--surface-2);
   border: 1px solid var(--hairline-2); border-radius: 6px; box-shadow: inset 0 -1.5px 0 var(--hairline); }
 
+/* ── Growth-rate projection (Feature 7) ── */
+.growth-proj { display: flex; align-items: center; gap: 9px; margin-top: 14px; padding: 11px 13px; border-radius: var(--r-md); font-size: 12.5px; font-weight: 500; border: 1px solid var(--hairline); }
+.growth-proj[hidden] { display: none; }
+.growth-proj .ic { flex: none; }
+.growth-proj.warn { color: var(--warn); background: rgba(255,214,10,0.08); border-color: rgba(255,214,10,0.25); }
+.growth-proj.danger { color: var(--danger); background: rgba(255,69,58,0.09); border-color: rgba(255,69,58,0.28); }
+
 /* ── Modals ── */
 .modal-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 100;
   display: none; align-items: center; justify-content: center;
@@ -698,6 +705,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
               <div class="fact"><span>Used</span><b id="sysUsed" class="num">–</b></div>
             </div>
           </div>
+          <div class="growth-proj" id="growthProj" hidden></div>
         </div>
 
         <div class="card glass">
@@ -1492,6 +1500,36 @@ async function finishScan(root, durationMs) {
   if (state.view === 'grid') renderGrid();
   switchView(state.view);
   toast(`Scan complete — ${formatBytes(root.size)} across ${formatCount(files)} files`);
+  renderGrowthProjection();
+}
+
+/* Feature 7 — "disk full in ~N days" projection from snapshot history. */
+async function renderGrowthProjection() {
+  const el = $('growthProj');
+  if (!el) return;
+  el.hidden = true;
+  const root = state.root && state.root.path;
+  const free = state.system && state.system.freeDisk;
+  if (!root || !free) return;
+  let snaps;
+  try { ({ snapshots: snaps } = await api('/api/snapshots?path=' + encodeURIComponent(root))); }
+  catch { return; }
+  if (!snaps || snaps.length < 3) return;
+  // Least-squares slope of totalSize (bytes) over takenAt (ms).
+  const n = snaps.length;
+  const mx = snaps.reduce((s, p) => s + p.takenAt, 0) / n;
+  const my = snaps.reduce((s, p) => s + p.totalSize, 0) / n;
+  let num = 0, den = 0;
+  for (const p of snaps) { const dx = p.takenAt - mx; num += dx * (p.totalSize - my); den += dx * dx; }
+  if (den === 0) return;
+  const bytesPerDay = (num / den) * 86400000;
+  if (bytesPerDay <= 0) return; // shrinking or flat — nothing useful to warn about
+  const days = free / bytesPerDay;
+  if (!isFinite(days) || days <= 0 || days >= 365) return;
+  const d = Math.round(days);
+  el.className = 'growth-proj ' + (d < 30 ? 'danger' : 'warn');
+  el.innerHTML = icon('trendUp', 15) + `<span>At this growth rate, this disk is full in <b>~${formatCount(d)} day${d === 1 ? '' : 's'}</b></span>`;
+  el.hidden = false;
 }
 
 $('scanBtn').addEventListener('click', () => {
