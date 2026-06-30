@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireScan } from './scanRoutes';
 import { getSettings, updateSettings, getIgnoreMatchers } from '../services/settings';
 import { collectCleanupSuggestions } from '../services/cleanupRules';
+import { collectBrowserProfiles } from '../services/browserProfiles';
 import { listNotifications } from '../services/scheduler';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
@@ -64,6 +65,17 @@ settingsRouter.get('/cleanup/suggestions', async (req: Request, res: Response) =
   if (!scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   const ignore = await getIgnoreMatchers('suggest');
   res.json({ scanId: scan.scanId, groups: collectCleanupSuggestions(scan.root, ignore) });
+});
+
+/** GET /api/cleanup/browser-profiles?scanId= — per-profile cache breakdown. */
+settingsRouter.get('/cleanup/browser-profiles', (req: Request, res: Response) => {
+  const scan = requireScan(req, req.query.scanId);
+  if (scan.status === 'running') {
+    res.status(202).json({ status: 'running' });
+    return;
+  }
+  if (!scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  res.json({ scanId: scan.scanId, profiles: collectBrowserProfiles(scan.root) });
 });
 
 /** GET /api/notifications?since=<epoch ms> — scheduler growth alerts. */

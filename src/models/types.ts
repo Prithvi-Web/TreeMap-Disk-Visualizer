@@ -388,6 +388,26 @@ export interface CleanupSuggestionGroup {
   regenerateCmd?: string;
 }
 
+/* ---------- Browser profile drill-down (Feature 16) ---------- */
+
+/** One reclaimable cache/storage area inside a browser profile. */
+export interface BrowserCacheItem {
+  path: string;
+  bytes: number;
+  /** Human label, e.g. "HTTP Cache", "Service Worker Cache". */
+  label: string;
+}
+
+/** A detected browser profile with its broken-out cache sub-areas. */
+export interface BrowserProfileGroup {
+  browser: string;
+  profile: string;
+  /** Profile root path. */
+  path: string;
+  totalBytes: number;
+  items: BrowserCacheItem[];
+}
+
 /** Uniform API error body. */
 export interface ApiError {
   error: string;

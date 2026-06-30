@@ -11,7 +11,7 @@ Scan any folder and see exactly what's eating your disk:
 - **Folder budgets** — pin a max size to any folder (right-click a treemap cell or breadcrumb); over-budget folders get a red dashed border in the treemap and a **Folder Budgets** widget on the dashboard showing how far over they are
 - **Trends** — every scan saves a lightweight snapshot, charted over time per folder, with a "what grew / shrank since last scan" breakdown
 - **Compare** — pick any two scans of the same folder for a file-level diff: added, removed, grew, shrank
-- **Clean Up** — three modes: custom rules (old / huge / by extension / duplicated), **Smart Suggestions**, and **Empty Folders**. Suggestions are grouped into **regenerable** (`node_modules`, Rust/Maven `target`, virtualenvs, framework build output — each gated on a sibling manifest and shown with the command that restores it, e.g. `npm install`), **cache** (browser & developer caches, with macOS/Windows/Linux-specific paths), and **junk** (OS metadata, old Downloads), each filterable by category. Everything goes to the system **Trash** (never hard-deleted — always recoverable)
+- **Clean Up** — three modes: custom rules (old / huge / by extension / duplicated), **Smart Suggestions**, and **Empty Folders**. Suggestions are grouped into **regenerable** (`node_modules`, Rust/Maven `target`, virtualenvs, framework build output — each gated on a sibling manifest and shown with the command that restores it, e.g. `npm install`), **cache** (browser & developer caches, with macOS/Windows/Linux-specific paths), and **junk** (OS metadata, old Downloads), each filterable by category. **Browser profiles** (Chrome / Edge / Brave / Firefox / Safari) are broken out per profile into individual cache areas (HTTP cache, code cache, service-worker cache, IndexedDB, …) you can pick from. Everything goes to the system **Trash** (never hard-deleted — always recoverable)
 - **Scheduled scans** — re-scan folders on a schedule with growth-threshold alerts (native notifications in the desktop app)
 - **Ignore list** — "don't scan" and/or "don't suggest" patterns: full paths, names like `node_modules`, or globs like `*.iso` and `~/projects/**/dist`
 
@@ -118,7 +118,8 @@ artifacts instead of a Release).
 | `GET /api/compare?scanIdA=&scanIdB=` | File-level diff of two scans of the same root |
 | `GET /api/snapshots` | Scan history: roots, per-root snapshots (`?path=`), or all (`?all=true`) |
 | `GET /api/snapshots/compare?a=&b=` | Top-level deltas between two snapshots |
-| `GET /api/cleanup/suggestions?scanId=` | Smart cleanup suggestions (OS-aware rules) |
+| `GET /api/cleanup/suggestions?scanId=` | Smart cleanup suggestions (regenerable / cache / junk categories) |
+| `GET /api/cleanup/browser-profiles?scanId=` | Per-browser-profile cache breakdown (Chrome / Edge / Brave / Firefox / Safari) |
 | `GET /api/git/repos?scanId=` | Per-repo pack / loose-object / LFS breakdown of every .git |
 | `POST /api/git/gc` | Run `git gc` in a scanned repo (`{path, confirm:true}`) |
 | `GET /api/settings` / `PUT /api/settings` | Ignore list + scheduled scans + folder budgets |

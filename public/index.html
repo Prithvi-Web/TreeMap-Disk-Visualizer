@@ -576,6 +576,31 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 :root[data-theme="light"] .smart-group.cat-regenerable { border-color: rgba(124,58,237,0.30); background: rgba(124,58,237,0.06); }
 :root[data-theme="light"] .regen-cmd { color: #7c3aed; background: rgba(124,58,237,0.10); border-color: rgba(124,58,237,0.28); }
 
+/* ── Browser profile drill-down (Feature 16) ── */
+#browserProfiles { margin-bottom: 16px; }
+.bp-section-h { display: flex; align-items: center; gap: 7px; padding: 6px 0; font-size: 12.5px; }
+.bp-section-h b { display: inline-flex; align-items: center; gap: 7px; }
+.bp-acc { border: 1px solid var(--hairline); border-radius: var(--r-md); margin-bottom: 8px; overflow: hidden; background: var(--surface-1); }
+.bp-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer; user-select: none;
+  transition: background var(--dur-1) var(--ease); }
+.bp-head:hover { background: var(--surface-2); }
+.bp-fav { width: 18px; height: 18px; flex: none; display: inline-flex; }
+.bp-fav svg { width: 18px; height: 18px; display: block; }
+.bp-title { font-weight: 600; font-size: 13px; }
+.bp-title .prof { color: var(--text-3); font-weight: 400; margin-left: 6px; font-size: 12px; }
+.bp-head .spacer { flex: 1; }
+.bp-head .size-badge { flex: none; }
+.bp-head .chev { color: var(--text-3); display: inline-flex; transition: transform var(--dur-2) var(--ease); }
+.bp-acc.open .bp-head .chev { transform: rotate(90deg); }
+.bp-head input[type="checkbox"] { flex: none; }
+.bp-items { display: none; border-top: 1px solid var(--hairline); }
+.bp-acc.open .bp-items { display: block; }
+.bp-item { display: flex; align-items: center; gap: 10px; padding: 7px 12px 7px 14px; font-size: 12.5px;
+  border-bottom: 1px solid var(--hairline); }
+.bp-item:last-child { border-bottom: none; }
+.bp-item .lbl { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bp-item .pth { font-size: 10.5px; color: var(--text-3); }
+
 /* ── Floating: tooltip / menu / toasts ── */
 #tooltip { position: fixed; z-index: 200; pointer-events: none; display: none;
   padding: 11px 13px; font-size: 12px; max-width: 380px;
@@ -1038,6 +1063,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       </div>
       <div id="cleanPaneSmart" style="display:none;">
         <div id="gitRepos"></div>
+        <div id="browserProfiles"></div>
         <div id="smartResults"></div>
       </div>
       <div id="cleanPaneEmpty" style="display:none;">
@@ -1332,6 +1358,7 @@ const PATHS = {
   activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
   zap: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>',
   gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
   shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
   eyeOff: '<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/>',
   mouse: '<rect x="5" y="2" width="14" height="20" rx="7"/><path d="M12 6v4"/>',
@@ -4049,6 +4076,7 @@ $('cleanupBtn').addEventListener('click', () => {
   if (!state.root) { toast('Run a scan first', 'error'); return; }
   $('cleanResults').innerHTML = '';
   $('smartResults').innerHTML = '';
+  $('browserProfiles').innerHTML = '';
   $('emptyResults').innerHTML = '';
   $('cleanSummary').textContent = '';
   $('cleanConfirmBtn').disabled = true;
@@ -4153,15 +4181,99 @@ document.addEventListener('click', (e) => {
   $('confirmModal').classList.add('open');
 });
 
+/* ── Browser profile drill-down (Feature 16) — inline-SVG favicons, no external fetch ── */
+const BROWSER_FAV = {
+  Chrome: `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22" fill="#fff"/>` +
+    `<path d="M24 2a22 22 0 0 1 19.05 11H24a11 11 0 0 0-9.74 5.86L6.2 13.2A22 22 0 0 1 24 2Z" fill="#ea4335"/>` +
+    `<path d="M43.05 13A22 22 0 0 1 33.5 43.2L24.8 28.2A11 11 0 0 0 24 13Z" fill="#fbbc05"/>` +
+    `<path d="M33.5 43.2A22 22 0 0 1 6.2 13.2l8.06 14.66A11 11 0 0 0 24 35Z" fill="#34a853"/>` +
+    `<circle cx="24" cy="24" r="9.4" fill="#fff"/><circle cx="24" cy="24" r="7.2" fill="#4285f4"/></svg>`,
+  Chromium: `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22" fill="#fff"/>` +
+    `<path d="M24 2a22 22 0 0 1 19.05 11H24a11 11 0 0 0-9.74 5.86L6.2 13.2A22 22 0 0 1 24 2Z" fill="#9aa0a6"/>` +
+    `<path d="M43.05 13A22 22 0 0 1 33.5 43.2L24.8 28.2A11 11 0 0 0 24 13Z" fill="#5f6368"/>` +
+    `<path d="M33.5 43.2A22 22 0 0 1 6.2 13.2l8.06 14.66A11 11 0 0 0 24 35Z" fill="#80868b"/>` +
+    `<circle cx="24" cy="24" r="9.4" fill="#fff"/><circle cx="24" cy="24" r="7.2" fill="#4285f4"/></svg>`,
+  Edge: `<svg viewBox="0 0 48 48" aria-hidden="true"><defs>` +
+    `<linearGradient id="bpEdge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#37bdf2"/><stop offset="1" stop-color="#0a5cb8"/></linearGradient></defs>` +
+    `<circle cx="24" cy="24" r="22" fill="url(#bpEdge)"/>` +
+    `<path d="M12 31c1-9 9-16 19-14 5 1 8 5 8 9 0-10-8-17-17-17S5 16 5 25c0 6 3 11 8 13-2-2-3-4-1-7Z" fill="#fff" opacity="0.9"/></svg>`,
+  Brave: `<svg viewBox="0 0 48 48" aria-hidden="true">` +
+    `<path d="M24 3 39 9l2 7 3 4-3 9c-2 7-9 12-17 15-8-3-15-8-17-15l-3-9 3-4 2-7Z" fill="#fb542b"/>` +
+    `<path d="M24 14l6 5-3 9-3 3-3-3-3-9Z" fill="#fff" opacity="0.92"/></svg>`,
+  Firefox: `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="25" r="20" fill="#ff7139"/>` +
+    `<path d="M41 17c1 4 1 8-1 12-3 7-10 12-17 11-7-1-13-8-13-15 0-5 3-9 7-11-2 4 0 9 4 10-4-5-2-12 3-15-1 4 2 7 6 7-3-4 0-10 4-11 4-1 8 1 10 5l-3-2c2 2 3 5 4 7l-1 1c1 1 2 3 2 4Z" fill="#ffb340"/>` +
+    `<path d="M38 21c2 5 1 11-3 15-4 4-10 5-15 3 7 1 13-3 15-9 1-3 2-6 3-9Z" fill="#fd3e1a" opacity="0.55"/></svg>`,
+  Safari: `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22" fill="#19a0f4"/>` +
+    `<circle cx="24" cy="24" r="18" fill="#f1f5f9"/>` +
+    `<path d="M24 24 33 15 27 27Z" fill="#ff3b30"/><path d="M24 24 15 33 21 21Z" fill="#c2c8d0"/>` +
+    `<circle cx="24" cy="24" r="2" fill="#5a6470"/></svg>`,
+};
+function browserFav(name) { return BROWSER_FAV[name] || BROWSER_FAV.Chromium; }
+
+/** Render the per-profile browser cache accordions; returns true if any were shown. */
+async function renderBrowserProfiles() {
+  const host = $('browserProfiles');
+  if (!host || !state.scanId) return false;
+  let profiles = [];
+  try { ({ profiles } = await api('/api/cleanup/browser-profiles?scanId=' + state.scanId)); }
+  catch { host.innerHTML = ''; return false; }
+  if (!profiles.length) { host.innerHTML = ''; return false; }
+  const total = profiles.reduce((s, p) => s + p.totalBytes, 0);
+  host.innerHTML = `<div class="bp-section-h"><b>${icon('globe', 15)}Browser caches</b>` +
+    `<span class="muted" style="flex:1;margin-left:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${profiles.length} profile${profiles.length > 1 ? 's' : ''} · ${formatBytes(total)} — expand to pick what to clear</span></div>` +
+    profiles.map((p, pi) => {
+      const items = p.items.map((it) => `
+        <div class="bp-item">
+          <input type="checkbox" class="bp-ck" data-path="${escapeHtml(it.path)}" data-bytes="${it.bytes}" data-p="${pi}" aria-label="Select ${escapeHtml(it.label)}">
+          <span class="lbl">${escapeHtml(it.label)}</span>
+          <span class="size-badge num" style="color:${sizeColor(it.bytes)}">${formatBytes(it.bytes)}</span>
+          <button class="icon-btn" data-cart-add="${escapeHtml(it.path)}" aria-label="Add ${escapeHtml(it.label)} to cleanup cart">${icon('plus', 13)}</button>
+        </div>`).join('');
+      return `<div class="bp-acc" data-acc="${pi}">
+        <div class="bp-head" role="button" tabindex="0" aria-expanded="false">
+          <input type="checkbox" class="bp-all" data-p="${pi}" aria-label="Select all caches for ${escapeHtml(p.browser)} ${escapeHtml(p.profile)}">
+          <span class="bp-fav">${browserFav(p.browser)}</span>
+          <span class="bp-title">${escapeHtml(p.browser)}<span class="prof">${escapeHtml(p.profile)}</span></span>
+          <span class="spacer"></span>
+          <span class="size-badge num">${p.items.length} · ${formatBytes(p.totalBytes)}</span>
+          <span class="chev">${icon('chevronRight', 14)}</span>
+        </div>
+        <div class="bp-items">${items}</div>
+      </div>`;
+    }).join('');
+
+  host.querySelectorAll('.bp-head').forEach(head => {
+    const toggle = () => { const a = head.closest('.bp-acc'); head.setAttribute('aria-expanded', String(a.classList.toggle('open'))); };
+    head.addEventListener('click', (e) => { if (e.target.closest('input,button')) return; toggle(); });
+    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
+  host.querySelectorAll('.bp-all').forEach(all => all.addEventListener('change', () => {
+    host.querySelectorAll(`.bp-ck[data-p="${all.dataset.p}"]`).forEach(ck => { ck.checked = all.checked; });
+    all.indeterminate = false;
+    updateCleanSummary();
+  }));
+  host.querySelectorAll('.bp-ck').forEach(ck => ck.addEventListener('change', () => {
+    const p = ck.dataset.p;
+    const all = host.querySelector(`.bp-all[data-p="${p}"]`);
+    const cks = [...host.querySelectorAll(`.bp-ck[data-p="${p}"]`)];
+    if (all) { all.checked = cks.every(c => c.checked); all.indeterminate = !all.checked && cks.some(c => c.checked); }
+    updateCleanSummary();
+  }));
+  refreshCartButtons();
+  return true;
+}
+
 async function loadSmartSuggestions() {
   renderGitRepos();
+  const hadBrowsers = await renderBrowserProfiles();
   const host = $('smartResults');
   host.innerHTML = skeletonRows(4, 34);
   try {
     const data = await api(`/api/cleanup/suggestions?scanId=${state.scanId}`);
     smartGroups = data.groups;
     if (!smartGroups.length) {
-      host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon('checkCircle', 15)} Nothing in this scan matches the common-junk rules.</div>`;
+      host.innerHTML = hadBrowsers ? ''
+        : `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon('checkCircle', 15)} Nothing in this scan matches the common-junk rules.</div>`;
       updateCleanSummary();
       return;
     }
@@ -4293,6 +4405,11 @@ function activeCleanSelection() {
     if (!ck.checked) return;
     const it = smartGroups[+ck.dataset.g].items[+ck.dataset.i];
     paths.push(it.path); bytes += it.size;
+  });
+  // Browser-cache sub-items carry their own path + size (Feature 16).
+  document.querySelectorAll('#browserProfiles .bp-ck').forEach(ck => {
+    if (!ck.checked) return;
+    paths.push(ck.dataset.path); bytes += Number(ck.dataset.bytes) || 0;
   });
   return { paths, bytes, noun: 'item' };
 }
