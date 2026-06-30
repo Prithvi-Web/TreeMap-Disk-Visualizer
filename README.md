@@ -116,10 +116,14 @@ artifacts instead of a Release).
 | `GET /api/snapshots` | Scan history: roots, per-root snapshots (`?path=`), or all (`?all=true`) |
 | `GET /api/snapshots/compare?a=&b=` | Top-level deltas between two snapshots |
 | `GET /api/cleanup/suggestions?scanId=` | Smart cleanup suggestions (OS-aware rules) |
+| `GET /api/git/repos?scanId=` | Per-repo pack / loose-object / LFS breakdown of every .git |
+| `POST /api/git/gc` | Run `git gc` in a scanned repo (`{path, confirm:true}`) |
 | `GET /api/settings` / `PUT /api/settings` | Ignore list + scheduled scans |
 | `GET /api/notifications` | Growth alerts from scheduled scans |
 | `GET /api/system` | Disk totals, platform, suggested folders |
 | `GET /api/trash/size` | System Trash / Recycle Bin size, item count, and contents |
+| `GET /api/system/snapshots` | Local filesystem snapshots (APFS/Btrfs/VSS), best-effort |
+| `POST /api/system/snapshots/purge` | Delete local snapshots (macOS; `{confirm:true}`) |
 | `GET /api/fs/list?path=` | Folder browser (powers the path picker) |
 | `DELETE /api/files` | Move files to the system trash |
 | `POST /api/files/open` | Open / reveal a path in Finder & co. |
