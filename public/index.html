@@ -211,6 +211,7 @@ header {
 /* ════════════════════════════ Sidebar (CleanMyMac-style) ════════════════════════════ */
 .sidebar {
   position: fixed; top: 14px; left: 14px; bottom: 14px; width: 214px; z-index: 40;
+  display: flex; flex-direction: column;
   overflow-y: auto; padding: 0 8px 16px;
   border: 1px solid var(--hairline); border-radius: 16px;
   background: var(--surface-1);
@@ -240,12 +241,14 @@ header {
 }
 .side-item[aria-current="true"] .ic { color: var(--accent); }
 .side-item:disabled { opacity: 0.4; cursor: default; }
+.side-settings { margin-top: auto; }
 .mnt-row { display: flex; align-items: center; gap: 13px; padding: 11px 4px; border-top: 1px solid var(--hairline); }
 .mnt-row:first-of-type { border-top: none; }
 .mnt-ico { position: relative; width: 34px; height: 34px; border-radius: 9px; flex: none; overflow: hidden;
   display: flex; align-items: center; justify-content: center;
   background: var(--surface-1); border: 1px solid var(--hairline); color: var(--text-2); font-weight: 700; font-size: 14px; }
 .mnt-appico { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.mnt-off .mnt-ico, .mnt-off .mnt-text b { opacity: 0.5; }
 .mnt-text { flex: 1; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .mnt-text b { font-size: 13.5px; font-weight: 600; }
 .mnt-text span { font-size: 12px; color: var(--text-3); line-height: 1.4; }
@@ -260,7 +263,16 @@ header {
 .prefs-tab[aria-selected="true"] { background: var(--surface-3); color: var(--text-1); box-shadow: inset 0 1px 0 var(--shine); }
 .prefs-tab[aria-selected="true"] .ic { color: var(--accent); }
 .prefs-content { flex: 1; padding: 20px 22px; min-width: 0; }
-.prefs-select { width: 240px; max-width: 100%; padding: 9px 12px; border-radius: 9px; border: 1px solid var(--hairline); background: var(--surface-1); color: var(--text-1); font: inherit; font-size: 13.5px; cursor: pointer; }
+.lang-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-width: 400px; }
+.lang-opt { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--hairline);
+  border-radius: 11px; background: var(--surface-1); color: var(--text-1); font: inherit; font-size: 13.5px;
+  font-weight: 500; cursor: pointer; text-align: left;
+  transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease); }
+.lang-opt:hover { background: var(--surface-3); }
+.lang-opt[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.flag { width: 22px; height: 22px; flex: none; border-radius: 50%; overflow: hidden; display: block;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.14); }
+.flag svg { width: 100%; height: 100%; display: block; }
 /* iOS-style toggle switch */
 .switch { position: relative; width: 40px; height: 24px; flex: none; }
 .switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; z-index: 1; }
@@ -710,7 +722,6 @@ main { padding: 16px 28px 48px; max-width: 1680px; margin: 0 0 0 242px; position
   <div class="header-right">
     <span id="headerSpin" aria-hidden="true"></span>
     <button class="icon-btn" id="themeToggle" aria-label="Toggle light or dark theme" title="Toggle theme"><span data-icon="moon"></span></button>
-    <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings — schedules & ignore list"><span data-icon="settings"></span></button>
   </div>
 </header>
 
@@ -752,6 +763,8 @@ main { padding: 16px 28px 48px; max-width: 1680px; margin: 0 0 0 242px; position
     <button class="side-item" data-view="compare"><span data-icon="diff"></span>Compare</button>
     <button class="side-item" data-view="trends"><span data-icon="trendUp"></span>Trends</button>
   </div>
+
+  <button class="side-item side-settings" id="settingsBtn" aria-label="Preferences"><span data-icon="cog"></span><span data-i18n="prefs">Preferences</span></button>
 </aside>
 
 <main>
@@ -1004,11 +1017,8 @@ main { padding: 16px 28px 48px; max-width: 1680px; margin: 0 0 0 242px; position
 
   <!-- ═══════════ Updater (Applications) ═══════════ -->
   <section class="view" id="view-updater" role="tabpanel" aria-label="Updater" hidden>
-    <div style="max-width:780px;margin:0 auto;">
-      <div class="card glass">
-        <h2><span data-icon="refresh"></span>Updater<span class="muted" style="font-weight:400;margin-left:6px;">Homebrew casks</span></h2>
-        <div id="updBody"></div>
-      </div>
+    <div style="max-width:760px;margin:0 auto;">
+      <div id="updBody"></div>
     </div>
   </section>
 
@@ -1159,12 +1169,12 @@ main { padding: 16px 28px 48px; max-width: 1680px; margin: 0 0 0 242px; position
 <div class="modal-backdrop" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
   <div class="modal prefs-modal" style="width:820px;">
     <div class="modal-head">
-      <h3 id="settingsTitle"><span data-icon="settings"></span><span data-i18n="prefs">Preferences</span></h3>
+      <h3 id="settingsTitle"><span data-icon="cog"></span><span data-i18n="prefs">Preferences</span></h3>
       <button class="close-x" data-close="settingsModal" aria-label="Close"><span data-icon="x"></span></button>
     </div>
     <div class="modal-body prefs-body">
       <nav class="prefs-rail" role="tablist" aria-label="Preferences">
-        <button class="prefs-tab" data-ptab="general" aria-selected="true"><span data-icon="settings"></span><span data-i18n="general">General</span></button>
+        <button class="prefs-tab" data-ptab="general" aria-selected="true"><span data-icon="cog"></span><span data-i18n="general">General</span></button>
         <button class="prefs-tab" data-ptab="scheduler" aria-selected="false"><span data-icon="calendar"></span><span data-i18n="scheduler">Scheduler</span></button>
         <button class="prefs-tab" data-ptab="ignore" aria-selected="false"><span data-icon="ban"></span><span data-i18n="ignoreList">Ignore List</span></button>
       </nav>
@@ -1177,13 +1187,13 @@ main { padding: 16px 28px 48px; max-width: 1680px; margin: 0 0 0 242px; position
             <button data-theme-opt="system" data-i18n="system">System</button>
           </div>
           <div class="set-h"><span data-icon="globe"></span><span data-i18n="language">Language</span></div>
-          <select id="langSelect" class="prefs-select" aria-label="Language">
-            <option value="en">English</option>
-            <option value="es">Español</option>
-            <option value="ru">Русский</option>
-            <option value="de">Deutsch</option>
-            <option value="fr">Français</option>
-          </select>
+          <div class="lang-grid" id="langGrid">
+            <button class="lang-opt" data-lang="en"><span class="flag"><svg viewBox="0 0 22 22"><rect width="22" height="22" fill="#fff"/><rect x="9" width="4" height="22" fill="#CF142B"/><rect y="9" width="22" height="4" fill="#CF142B"/></svg></span>English</button>
+            <button class="lang-opt" data-lang="es"><span class="flag"><svg viewBox="0 0 22 22"><rect width="22" height="22" fill="#AA151B"/><rect y="5.5" width="22" height="11" fill="#F1BF00"/></svg></span>Español</button>
+            <button class="lang-opt" data-lang="ru"><span class="flag"><svg viewBox="0 0 22 22"><rect width="22" height="22" fill="#fff"/><rect y="7.33" width="22" height="7.34" fill="#0039A6"/><rect y="14.67" width="22" height="7.33" fill="#D52B1E"/></svg></span>Русский</button>
+            <button class="lang-opt" data-lang="de"><span class="flag"><svg viewBox="0 0 22 22"><rect width="22" height="22" fill="#FFCE00"/><rect width="22" height="7.33" fill="#000"/><rect y="7.33" width="22" height="7.34" fill="#DD0000"/></svg></span>Deutsch</button>
+            <button class="lang-opt" data-lang="fr"><span class="flag"><svg viewBox="0 0 22 22"><rect width="22" height="22" fill="#fff"/><rect width="7.33" height="22" fill="#0055A4"/><rect x="14.67" width="7.33" height="22" fill="#EF4135"/></svg></span>Français</button>
+          </div>
         </div>
         <div class="prefs-pane" data-pane="scheduler" hidden>
           <div class="set-h"><span data-icon="calendar"></span><span data-i18n="scheduledScans">Scheduled scans</span></div>
@@ -1315,6 +1325,7 @@ const PATHS = {
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   ban: '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
   globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+  cog: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
 };
 function icon(name, size = 16, cls = '') {
   return `<svg class="ic ${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PATHS[name] || PATHS.file}</svg>`;
@@ -1380,10 +1391,10 @@ $('themeToggle').addEventListener('click', () => {
 });
 // Preferences 3-way control.
 document.querySelectorAll('#themeSeg [data-theme-opt]').forEach(b =>
-  b.addEventListener('click', () => { themeMode = b.dataset.themeOpt; applyTheme(themeMode); }));
+  b.addEventListener('click', () => { themeMode = b.dataset.themeOpt; applyTheme(themeMode); toast('Appearance: ' + themeMode.charAt(0).toUpperCase() + themeMode.slice(1)); }));
 // Re-resolve when the OS theme changes and we're in 'system' mode.
 if (sysDark && sysDark.addEventListener) sysDark.addEventListener('change', () => { if (themeMode === 'system') applyTheme('system'); });
-applyTheme(themeMode);
+// applyTheme() is called after `state` is defined (it reads state.treemap/donut).
 
 /* ───────────────────────────── Localization (i18n) ───────────────────────────── */
 const STRINGS = {
@@ -1410,7 +1421,8 @@ const SIDE_VIEW_KEYS = { dashboard:'dashboard', fastclean:'smartScan', maintenan
 const SIDE_TEXT_KEYS = { 'System Junk':'systemJunk', 'Trash':'trash', 'Large & Old':'largeOld' };
 const HEAD_KEYS = { 'Cleanup':'cleanup', 'Speed':'speed', 'Applications':'applications', 'Files':'files' };
 function firstTextNode(el) { for (const n of el.childNodes) { if (n.nodeType === 3 && n.textContent.trim()) return n; } return null; }
-function applyLang(lang) {
+const LANG_NAMES = { en: 'English', es: 'Español', ru: 'Русский', de: 'Deutsch', fr: 'Français' };
+function applyLang(lang, announce) {
   state.lang = STRINGS[lang] ? lang : 'en';
   localStorage.setItem('tm-lang', state.lang);
   document.documentElement.lang = state.lang;
@@ -1437,15 +1449,15 @@ function applyLang(lang) {
     const key = HEAD_KEYS[h.dataset.en];
     h.textContent = key && dict[key] != null ? dict[key] : h.dataset.en;
   });
-  const sel = $('langSelect'); if (sel) sel.value = state.lang;
+  document.querySelectorAll('.lang-opt').forEach(o => o.setAttribute('aria-selected', String(o.dataset.lang === state.lang)));
+  if (announce) toast('Language: ' + (LANG_NAMES[state.lang] || state.lang));
   // Re-render the live Smart Scan copy if it's showing.
   if (state.view === 'fastclean' && typeof resetFc === 'function' && !state.fastclean.cleaning) {
     $('fcSub').textContent = STRINGS[state.lang] && STRINGS[state.lang].ssSub ? STRINGS[state.lang].ssSub : ($('fcSub').dataset.en || $('fcSub').textContent);
   }
 }
-state.lang = 'en';
-$('langSelect') && $('langSelect').addEventListener('change', e => applyLang(e.target.value));
-applyLang(localStorage.getItem('tm-lang') || (navigator.language || 'en').slice(0, 2));
+document.querySelectorAll('.lang-opt').forEach(o => o.addEventListener('click', () => applyLang(o.dataset.lang, true)));
+// applyLang() is called after `state` is defined.
 
 /* ───────────────────────────── Preferences tabs ───────────────────────────── */
 document.querySelectorAll('.prefs-tab').forEach(tab => tab.addEventListener('click', () => {
@@ -1498,7 +1510,12 @@ const state = {
   fastclean: { loaded: false, cacheScanId: null, trashScanId: null, cachePaths: [], cacheSize: 0, binSize: 0, exclude: [], cleaning: false },
   apps: { loaded: false, items: [], selected: null, leftovers: null, sel: new Set() },
   updater: {},
+  lang: 'en',
 };
+
+// Theme + language read `state`, so initialize them now that it exists.
+applyTheme(themeMode);
+applyLang(localStorage.getItem('tm-lang') || (navigator.language || 'en').slice(0, 2));
 
 function indexTree(root) {
   state.pathIndex.clear();
@@ -2458,7 +2475,7 @@ function renderLeftovers() {
   if (!data) return;
   const app = data.app, rows = data.leftovers;
   const warn = app.running
-    ? `<div class="warn-banner">${icon('alert', 16)}<span><b>${escapeHtml(app.name)}</b> is running — quit it first, then move it to the Trash.</span></div>`
+    ? `<div class="warn-banner">${icon('alert', 16)}<span>Quit <b>${escapeHtml(app.name)}</b> first to remove it.</span></div>`
     : '';
   $('appsDetailBody').innerHTML = `
     <div class="lo-head">
@@ -2591,67 +2608,50 @@ async function loadUpdater() {
 }
 function renderUpdater(data) {
   const body = $('updBody');
-  const casks = data.casks || [];
-  const others = data.others || [];
-  const parts = [];
-
-  // ── Homebrew casks (actionable) ──
-  if (data.available) {
-    parts.push(`<div class="upd-head">${icon('download', 14)}Homebrew${casks.length ? ` · ${casks.length} update${casks.length === 1 ? '' : 's'}` : ''}</div>`);
-    parts.push(casks.length
-      ? casks.map(c => `
-        <div class="upd-row" data-token="${escapeHtml(c.token)}">
-          ${appTile(c.icon, c.name)}
-          <div class="meta"><div class="nm">${escapeHtml(c.name)}</div>
-            <div class="ver">${escapeHtml(c.installedVersion || '?')} → ${escapeHtml(c.latestVersion || 'latest')}</div></div>
-          <button class="btn upd-btn">${icon('download', 14)}Update</button>
-        </div>`).join('')
-      : `<div class="muted" style="padding:6px 2px 10px;">${icon('check', 13)} All casks up to date.</div>`);
-  }
-
-  // ── Everything else (link out) ──
-  if (others.length) {
-    parts.push(`<div class="upd-head" style="margin-top:18px;">${icon('box', 14)}Other apps · ${others.length}</div>`);
-    parts.push(`<p class="muted" style="margin:0 2px 8px;font-size:11.5px;">These update themselves when you open them — we link you to the source.</p>`);
-    parts.push(others.map(o => {
-      const action = o.source === 'mas'
-        ? `<a class="btn upd-link" href="macappstore://showUpdatesPage">${icon('refresh', 13)}App Store</a>`
-        : (o.website
-          ? `<a class="btn upd-link" href="${escapeHtml(o.website)}" target="_blank" rel="noopener noreferrer">${icon('external', 13)}Website</a>`
-          : `<span class="muted" style="font-size:11px;">self-updating</span>`);
-      const tag = o.source === 'mas' ? 'Mac App Store' : 'Self-updating';
-      return `
-        <div class="upd-row">
-          ${appTile(o.icon, o.name)}
-          <div class="meta"><div class="nm">${escapeHtml(o.name)}</div><div class="ver">${tag}</div></div>
-          ${action}
-        </div>`;
-    }).join(''));
-  }
-
-  if (!data.available && !others.length) {
-    body.innerHTML = `<div class="apps-empty" style="min-height:34vh;">${icon('refresh', 34)}<p class="muted">Nothing to update.<br>Install Homebrew to manage cask updates here.</p></div>`;
+  // Only show apps that actually have an update available.
+  const updates = (data.apps || []).filter(a => a.update);
+  if (!updates.length) {
+    body.innerHTML = `<div class="apps-empty" style="min-height:46vh;">${icon('checkCircle', 38)}<p class="muted">Everything's up to date.</p></div>`;
     return;
   }
+  const parts = [`<div class="upd-head">${icon('box', 14)}${updates.length} update${updates.length === 1 ? '' : 's'} available</div>`];
+  parts.push(updates.map(a => {
+    const sub = `${escapeHtml(a.currentVersion || '?')} → ${escapeHtml(a.update.latestVersion || 'latest')}`;
+    const attr = a.update.kind === 'cask' ? `data-cask="${escapeHtml(a.update.token)}"`
+      : a.update.kind === 'mas' ? `data-mas="${escapeHtml(a.update.id)}"`
+      : `data-open="${escapeHtml(a.path)}"`;
+    const action = `<button class="btn btn-primary upd-act" ${attr}>${icon('download', 14)}Update</button>`;
+    return `
+      <div class="upd-row">
+        ${appTile(a.icon, a.name)}
+        <div class="meta"><div class="nm">${escapeHtml(a.name)}</div><div class="ver">${sub}</div></div>
+        ${action}
+      </div>`;
+  }).join(''));
+
   body.innerHTML = parts.join('');
-  body.querySelectorAll('.upd-row[data-token]').forEach(row => {
-    row.querySelector('.upd-btn').addEventListener('click', () => runUpgrade(row.dataset.token, row));
-  });
+  body.querySelectorAll('.upd-act[data-cask]').forEach(btn =>
+    btn.addEventListener('click', () => runCaskUpgrade(btn.dataset.cask, btn.closest('.upd-row'))));
+  body.querySelectorAll('.upd-act[data-mas]').forEach(btn =>
+    btn.addEventListener('click', () => runMasUpgrade(btn.dataset.mas, btn.closest('.upd-row'))));
+  body.querySelectorAll('.upd-act[data-open]').forEach(btn =>
+    btn.addEventListener('click', () => openUpdaterApp(btn.dataset.open, btn)));
 }
-async function runUpgrade(token, row) {
-  const btn = row.querySelector('.upd-btn');
+async function runCaskUpgrade(token, row) {
+  const btn = row.querySelector('.upd-act');
+  const name = row.querySelector('.nm').textContent;
   btn.disabled = true;
   btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + 'Updating…';
   try {
-    const r = await api('/api/updater/upgrade', {
+    const r = await api('/api/updater/cask-upgrade', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token }),
     });
     if (r.ok) {
       btn.innerHTML = icon('check', 14) + 'Updated';
       row.style.opacity = '0.55';
-      recordActivity({ kind: 'update', label: token });
-      toast(`Updated ${token}`);
+      recordActivity({ kind: 'update', label: name });
+      toast(`Updated ${name}`);
     } else {
       btn.disabled = false; btn.innerHTML = icon('download', 14) + 'Update';
       toast(`Update failed: ${r.message}`, 'error');
@@ -2660,6 +2660,45 @@ async function runUpgrade(token, row) {
     btn.disabled = false; btn.innerHTML = icon('download', 14) + 'Update';
     toast('Update failed: ' + e.message, 'error');
   }
+}
+async function runMasUpgrade(id, row) {
+  const btn = row.querySelector('.upd-act');
+  btn.disabled = true;
+  btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + 'Updating…';
+  try {
+    const r = await api('/api/updater/mas-upgrade', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    if (r.ok) {
+      btn.innerHTML = icon('check', 14) + 'Updated';
+      row.style.opacity = '0.55';
+      recordActivity({ kind: 'update', label: row.querySelector('.nm').textContent });
+      toast('Updated');
+    } else {
+      btn.disabled = false; btn.innerHTML = icon('download', 14) + 'Update';
+      toast(`Update failed: ${r.message}`, 'error');
+    }
+  } catch (e) {
+    btn.disabled = false; btn.innerHTML = icon('download', 14) + 'Update';
+    toast('Update failed: ' + e.message, 'error');
+  }
+}
+async function openUpdaterApp(path, btn) {
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = icon('loader', 13, REDUCED ? '' : 'spin') + 'Opening…';
+  try {
+    await api('/api/updater/open', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    toast("Opened — it'll check for updates on launch.");
+  } catch (e) {
+    toast('Could not open: ' + e.message, 'error');
+  }
+  btn.disabled = false;
+  btn.innerHTML = orig;
 }
 if ($('appsSearch')) $('appsSearch').addEventListener('input', renderAppsList);
 
@@ -2873,9 +2912,9 @@ async function loadMaintenance() {
       const letter = escapeHtml((it.name.trim()[0] || '?').toUpperCase());
       const iconUrl = `/api/maintenance/app-icon?path=${encodeURIComponent(it.path)}`;
       return `
-      <div class="mnt-row">
+      <div class="mnt-row${it.enabled ? '' : ' mnt-off'}">
         <div class="mnt-ico">${letter}<img class="mnt-appico" src="${iconUrl}" alt="" onerror="this.remove()"></div>
-        <div class="mnt-text"><b>${escapeHtml(it.name)}</b></div>
+        <div class="mnt-text"><b>${escapeHtml(it.name)}</b><span>${it.enabled ? 'Opens at login' : "Off — won't open at login"}</span></div>
         <label class="switch">
           <input type="checkbox" class="mnt-toggle" ${it.enabled ? 'checked' : ''} data-name="${escapeHtml(it.name)}" data-path="${escapeHtml(it.path)}">
           <span class="track"></span>
@@ -2892,12 +2931,19 @@ $('mntLoginItems')?.addEventListener('change', async (e) => {
   const cb = e.target.closest('.mnt-toggle');
   if (!cb) return;
   const name = cb.dataset.name, path = cb.dataset.path, enabled = cb.checked;
+  const row = cb.closest('.mnt-row');
   cb.disabled = true;
   try {
     await api('/api/maintenance/login-items', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, path, enabled }),
     });
+    // Reflect the new state in place (item stays listed, so it can be re-enabled).
+    if (row) {
+      row.classList.toggle('mnt-off', !enabled);
+      const sub = row.querySelector('.mnt-text span');
+      if (sub) sub.textContent = enabled ? 'Opens at login' : "Off — won't open at login";
+    }
     toast(`${name} will ${enabled ? 'open' : 'not open'} at login`);
   } catch (err) {
     cb.checked = !enabled;
@@ -3734,7 +3780,6 @@ $('cleanConfirmBtn').addEventListener('click', async () => {
 
 /* ───────────────────────────── Settings modal ───────────────────────────── */
 let settingsData = { ignore: [], schedules: [] };
-$('settingsBtn').innerHTML = icon('settings', 16);
 $('settingsBtn').addEventListener('click', async () => {
   $('settingsModal').classList.add('open');
   $('settingsStatus').textContent = '';
@@ -3853,9 +3898,8 @@ $('settingsSaveBtn').addEventListener('click', async () => {
     });
     renderSchedules();
     renderIgnores();
-    $('settingsStatus').textContent = 'Saved';
     toast('Settings saved — ignore rules apply from the next scan');
-    setTimeout(() => { if ($('settingsStatus').textContent === 'Saved') $('settingsStatus').textContent = ''; }, 2500);
+    closeModal('settingsModal');
   } catch (e) {
     toast('Save failed: ' + e.message, 'error');
   }

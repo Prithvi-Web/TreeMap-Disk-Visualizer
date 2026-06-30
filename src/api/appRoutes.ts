@@ -1,8 +1,11 @@
 import { Router, Request, Response } from 'express';
 import path from 'path';
 import { listInstalledApps, findLeftovers, appRoots } from '../services/apps';
-import { brewAvailable, outdatedCasks, upgradeCask, otherApps } from '../services/updater';
+import {
+  brewAvailable, masAvailable, upgradeMas, openApp, appUpdates, upgradeCaskAdopt,
+} from '../services/updater';
 import { guardQueryPath } from '../middleware/pathGuard';
+import { isInside } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
 
 /**
@@ -57,26 +60,49 @@ appRouter.get(
 );
 
 /**
- * GET /api/updater — outdated Homebrew casks + the rest of the installed apps
- * grouped by how they update (Mac App Store / self). `available` reflects brew
- * (the only source we can actually action); `others` is offered even without it.
+ * GET /api/updater — every installed app, each tagged with an available update
+ * detected from Homebrew's cask catalog, the Mac App Store (mas), or Sparkle.
  */
 appRouter.get('/updater', async (_req: Request, res: Response) => {
   if (process.platform !== 'darwin') {
-    res.json({ available: false, casks: [], others: [] });
+    res.json({ brewAvailable: false, masAvailable: false, apps: [] });
     return;
   }
-  const hasBrew = await brewAvailable();
-  const casks = hasBrew ? await outdatedCasks() : [];
-  res.json({ available: hasBrew, casks, others: await otherApps(casks) });
+  const [hasBrew, hasMas, apps] = await Promise.all([brewAvailable(), masAvailable(), appUpdates()]);
+  res.json({ brewAvailable: hasBrew, masAvailable: hasMas, apps });
 });
 
-/** POST /api/updater/upgrade { token } — `brew upgrade --cask <token>`. */
-appRouter.post('/updater/upgrade', async (req: Request, res: Response) => {
+/** POST /api/updater/cask-upgrade { token } — `brew install --cask --adopt --force <token>`. */
+appRouter.post('/updater/cask-upgrade', async (req: Request, res: Response) => {
   requireMac();
   const token = (req.body as { token?: unknown } | undefined)?.token;
   if (typeof token !== 'string' || !/^[a-z0-9][a-z0-9@+._-]*$/i.test(token)) {
     throw new AppError(400, 'INVALID_TOKEN', 'Invalid Homebrew cask token');
   }
-  res.json(await upgradeCask(token));
+  res.json(await upgradeCaskAdopt(token));
+});
+
+/** POST /api/updater/mas-upgrade { id } — `mas upgrade <id>`. */
+appRouter.post('/updater/mas-upgrade', async (req: Request, res: Response) => {
+  requireMac();
+  const id = (req.body as { id?: unknown } | undefined)?.id;
+  if (typeof id !== 'string' || !/^\d+$/.test(id)) {
+    throw new AppError(400, 'INVALID_ID', 'Invalid App Store id');
+  }
+  res.json(await upgradeMas(id));
+});
+
+/** POST /api/updater/open { path } — launch a .app so it runs its own updater. */
+appRouter.post('/updater/open', async (req: Request, res: Response) => {
+  requireMac();
+  const raw = (req.body as { path?: unknown } | undefined)?.path;
+  if (typeof raw !== 'string' || !raw.endsWith('.app')) {
+    throw new AppError(400, 'INVALID_PATH', 'Path must be an app bundle');
+  }
+  const inAppsDir = appRoots().some((root) => isInside(root, raw));
+  if (!inAppsDir) {
+    throw new AppError(403, 'OUTSIDE_APPS', 'Only apps in /Applications can be opened here');
+  }
+  await openApp(raw);
+  res.json({ opened: true });
 });

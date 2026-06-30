@@ -365,6 +365,46 @@ export interface OutdatedCask {
   icon: string | null;
 }
 
+/** How an installed app can be updated, when a newer version is available. */
+export interface AppUpdateInfo {
+  /** cask = `brew install --cask --adopt`, mas = `mas upgrade`, sparkle = launch the app. */
+  kind: 'cask' | 'mas' | 'sparkle';
+  /** Homebrew cask token (kind 'cask'). */
+  token?: string;
+  /** App Store id (kind 'mas'). */
+  id?: string;
+  latestVersion: string;
+}
+
+/** One installed app in the Updater, with an update if one is available. */
+export interface AppUpdate {
+  name: string;
+  path: string;
+  icon: string | null;
+  source: 'mas' | 'self';
+  currentVersion: string | null;
+  update: AppUpdateInfo | null;
+}
+
+/** A self-updating (Sparkle) app with a newer version available per its appcast. */
+export interface SparkleUpdate {
+  name: string;
+  path: string;
+  icon: string | null;
+  currentVersion: string;
+  latestVersion: string;
+}
+
+/** One Mac App Store app with an available update (via the `mas` CLI). */
+export interface MasUpdate {
+  /** App Store numeric id (used for `mas upgrade <id>`). */
+  id: string;
+  name: string;
+  installedVersion: string | null;
+  latestVersion: string | null;
+  icon: string | null;
+}
+
 /** Outcome of a single `brew upgrade --cask` run. */
 export interface BrewUpgradeResult {
   ok: boolean;
