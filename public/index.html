@@ -362,6 +362,50 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
   transition: transform var(--dur-3) var(--ease); font-size: 13px; }
 #selectionBar.visible { transform: translateX(-50%) translateY(0); }
 
+/* ── Cleanup cart (Feature 2) ── */
+#cartDock { position: fixed; right: 22px; bottom: 22px; z-index: 80; display: none;
+  flex-direction: column; align-items: stretch; gap: 10px; width: 366px; max-width: 92vw; }
+#cartDock.show { display: flex; }
+#cartPanel { display: none; flex-direction: column; max-height: 54vh; overflow: hidden;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-lg); box-shadow: var(--shadow-3);
+  animation: sheetIn var(--dur-3) var(--ease); }
+#cartDock.open #cartPanel { display: flex; }
+.cart-head { display: flex; align-items: center; gap: 9px; padding: 13px 15px; border-bottom: 1px solid var(--hairline); }
+.cart-head .ttl { font-size: 13.5px; font-weight: 700; letter-spacing: -0.2px; }
+.cart-head .num { color: var(--text-2); font-size: 12px; }
+.cart-head .close-x { margin-left: auto; }
+.cart-list { overflow-y: auto; flex: 1 1 auto; }
+.cart-empty { padding: 26px 16px; text-align: center; color: var(--text-3); font-size: 12.5px; line-height: 1.5; }
+.cart-item { display: flex; align-items: center; gap: 10px; padding: 8px 14px; font-size: 12.5px;
+  border-bottom: 1px solid var(--hairline); }
+.cart-item:last-child { border-bottom: none; }
+.cart-item .meta { flex: 1; min-width: 0; }
+.cart-item .nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cart-item .pth { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; direction: rtl; text-align: left; }
+.cart-item .sz { color: var(--text-2); white-space: nowrap; font-size: 11.5px; }
+.cart-item.missing { opacity: 0.5; }
+.cart-item .rm { border: none; background: var(--surface-2); color: var(--text-2); width: 22px; height: 22px;
+  border-radius: 50%; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex: none;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
+.cart-item .rm:hover { background: var(--danger); color: #fff; }
+.cart-foot { display: flex; align-items: center; gap: 10px; padding: 12px 15px; border-top: 1px solid var(--hairline); }
+.cart-foot .total { font-size: 12.5px; color: var(--text-2); }
+.cart-foot .total b { color: var(--text-1); }
+.cart-foot .btn-danger { margin-left: auto; }
+#cartTab { display: flex; align-items: center; gap: 9px; padding: 11px 16px; cursor: pointer;
+  border: 1px solid var(--hairline-2); border-radius: 999px; box-shadow: var(--shadow-2);
+  background: var(--glass-strong); backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+  font-size: 13px; color: var(--text-1); user-select: none; transition: border-color var(--dur-1) var(--ease); }
+#cartTab:hover { border-color: var(--accent); }
+#cartTab .ic { color: var(--accent); }
+#cartTab .c-count { font-weight: 700; }
+#cartTab .c-sep { color: var(--text-3); }
+#cartTab .c-total { color: var(--text-2); }
+#cartTab .c-cta { margin-left: auto; color: var(--accent); font-weight: 600; }
+#cartDock.open #cartTab .c-cta { color: var(--text-3); }
+.icon-btn.cartin { color: var(--accent); }
+
 /* ── Modals ── */
 .modal-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 100;
   display: none; align-items: center; justify-content: center;
@@ -890,6 +934,30 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
 </div>
 
 <div id="tooltip" role="tooltip"></div>
+<!-- ═══════════ Cleanup cart (Feature 2) ═══════════ -->
+<div id="cartDock">
+  <div id="cartPanel" class="glass">
+    <div class="cart-head">
+      <span class="ttl">Cleanup cart</span>
+      <span class="num" id="cartHeadCount"></span>
+      <button class="close-x" id="cartCollapse" aria-label="Collapse cart"><span data-icon="x" data-size="14"></span></button>
+    </div>
+    <div class="cart-list" id="cartList"></div>
+    <div class="cart-foot">
+      <span class="total" id="cartFootTotal"></span>
+      <button class="btn" id="cartClear">Clear</button>
+      <button class="btn btn-danger" id="cartTrash"><span data-icon="trash" data-size="14"></span>Move all to Trash</button>
+    </div>
+  </div>
+  <div id="cartTab" role="button" tabindex="0" aria-label="Open cleanup cart">
+    <span data-icon="cart" data-size="17"></span>
+    <span class="c-count" id="cartTabCount">0</span>
+    <span class="c-sep">·</span>
+    <span class="c-total num" id="cartTabTotal">0 B</span>
+    <span class="c-cta" id="cartTabCta">Review</span>
+  </div>
+</div>
+
 <div id="ctxMenu" role="menu"></div>
 <div id="toasts" aria-live="polite"></div>
 
@@ -995,6 +1063,7 @@ const PATHS = {
   calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   ban: '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
+  cart: '<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.5 2.5h2l2.6 12.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6l1.6-7.4H5.1"/>',
 };
 function icon(name, size = 16, cls = '') {
   return `<svg class="ic ${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PATHS[name] || PATHS.file}</svg>`;
@@ -1120,6 +1189,7 @@ function indexTree(root) {
     state.pathIndex.set(n.path, n);
     if (n.children) for (const c of n.children) stack.push(c);
   }
+  if (typeof renderCart === 'function') renderCart(); // refresh staged-item sizes against the new tree
 }
 
 /* ───────────────────────────── View switching ───────────────────────────── */
@@ -1331,6 +1401,7 @@ function renderBigFiles() {
       <div class="bar-track"><div class="bar" style="width:${Math.max(4, (f.size / max) * 100)}%;background:${sizeColor(f.size)};"></div></div>
       <span class="size-badge num" style="color:${sizeColor(f.size)};">${formatBytes(f.size)}</span>
       <span class="actions">
+        <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 14)}</button>
         <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 14)}</button>
         <button class="icon-btn danger" data-trash="${escapeHtml(f.path)}" title="Move to Trash" aria-label="Move ${escapeHtml(f.name)} to Trash">${icon('trash', 14)}</button>
       </span>
@@ -1339,6 +1410,7 @@ function renderBigFiles() {
     btn.addEventListener('click', () => confirmTrash([btn.dataset.trash])));
   host.querySelectorAll('[data-reveal]').forEach(btn =>
     btn.addEventListener('click', () => openInOS(btn.dataset.reveal, true)));
+  refreshCartButtons();
 }
 
 /* ───────────────────────────── Dashboard: largest folders ───────────────────────────── */
@@ -1923,9 +1995,11 @@ function showCtxMenu(x, y, node) {
   const fm = state.system && state.system.platform === 'darwin' ? 'Finder'
            : state.system && state.system.platform === 'win32' ? 'Explorer' : 'file manager';
   const menu = $('ctxMenu');
+  const inCart = cartHas(node.path);
   menu.innerHTML = `
     <button data-act="open">${icon('external', 15)}Open in ${fm}</button>
     <button data-act="copy">${icon('copy', 15)}Copy path</button>
+    <button data-act="cart">${icon(inCart ? 'check' : 'cart', 15)}${inCart ? 'Remove from Cart' : 'Add to Cart'}</button>
     <div class="div"></div>
     <button data-act="trash" class="danger">${icon('trash', 15)}Move to Trash</button>`;
   menu.style.display = 'block';
@@ -1936,6 +2010,7 @@ function showCtxMenu(x, y, node) {
     hideCtxMenu();
     if (act === 'open') openInOS(ctxTarget.path, true);
     if (act === 'copy') copyPath(ctxTarget.path);
+    if (act === 'cart') cartToggle(ctxTarget.path);
     if (act === 'trash') confirmTrash([ctxTarget.path]);
   }));
 }
@@ -1962,8 +2037,10 @@ async function copyPath(path) {
 
 /* ───────────────────────────── Trash (confirm + execute) ───────────────────────────── */
 let confirmPaths = [];
+let onConfirmTrash = null; // optional callback override for the shared confirm modal (used by the cart)
 function confirmTrash(paths) {
   if (!paths.length) return;
+  onConfirmTrash = null;
   confirmPaths = paths;
   const total = paths.reduce((s, p) => s + (state.pathIndex.get(p)?.size ?? 0), 0);
   const first = state.pathIndex.get(paths[0]);
@@ -1974,6 +2051,8 @@ function confirmTrash(paths) {
 }
 $('confirmOk').addEventListener('click', async () => {
   closeModal('confirmModal');
+  const cb = onConfirmTrash; onConfirmTrash = null;
+  if (cb) { await cb(); return; }
   await trashPaths(confirmPaths);
   confirmPaths = [];
 });
@@ -2004,6 +2083,100 @@ async function trashPaths(paths, { silent = false } = {}) {
 function rescan() {
   if (state.root && !state.scanning) startScan(state.root.path);
 }
+
+/* ───────────────────────────── Cleanup cart (Feature 2) ───────────────────────────── */
+state.cart = new Set();
+try { JSON.parse(localStorage.getItem('tm-cart') || '[]').forEach((p) => state.cart.add(p)); } catch {}
+
+function saveCart() { localStorage.setItem('tm-cart', JSON.stringify([...state.cart])); }
+function cartHas(p) { return state.cart.has(p); }
+function cartNode(p) { return state.pathIndex.get(p) || null; }
+function cartKnownPaths() { return [...state.cart].filter((p) => state.pathIndex.has(p)); }
+function cartTotalBytes() { return [...state.cart].reduce((s, p) => s + (cartNode(p)?.size ?? 0), 0); }
+function cartToggle(p) {
+  if (!p) return;
+  if (state.cart.has(p)) state.cart.delete(p); else state.cart.add(p);
+  saveCart(); renderCart(); refreshCartButtons();
+}
+function cartClear() { state.cart.clear(); saveCart(); renderCart(); refreshCartButtons(); }
+
+/** Sync the +/✓ state of every per-row "add to cart" button currently on screen. */
+function refreshCartButtons() {
+  document.querySelectorAll('[data-cart-add]').forEach((b) => {
+    const inIt = state.cart.has(b.getAttribute('data-cart-add'));
+    b.classList.toggle('cartin', inIt);
+    b.innerHTML = icon(inIt ? 'check' : 'plus', 14);
+    b.setAttribute('title', inIt ? 'Remove from cleanup cart' : 'Add to cleanup cart');
+  });
+}
+
+function renderCart() {
+  const dock = $('cartDock'); if (!dock) return;
+  const n = state.cart.size;
+  dock.classList.toggle('show', n > 0);
+  if (n === 0) dock.classList.remove('open');
+  const total = cartTotalBytes();
+  $('cartTabCount').textContent = String(n);
+  $('cartTabTotal').textContent = formatBytes(total);
+  $('cartHeadCount').textContent = n + ' item' + (n === 1 ? '' : 's');
+  $('cartFootTotal').innerHTML = `Reclaims <b>${formatBytes(total)}</b>`;
+  const list = $('cartList');
+  if (n === 0) {
+    list.innerHTML = '<div class="cart-empty">Your cart is empty.<br>Add files from any view to stage them for the Trash.</div>';
+    return;
+  }
+  list.innerHTML = [...state.cart].map((p) => {
+    const node = cartNode(p);
+    const name = node ? node.name : (p.split(/[\\/]/).pop() || p);
+    return `<div class="cart-item${node ? '' : ' missing'}">
+      <div class="meta"><div class="nm" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
+      <div class="pth" title="${escapeHtml(p)}">${escapeHtml(p)}</div></div>
+      <span class="sz num">${node ? formatBytes(node.size) : 'not in scan'}</span>
+      <button class="rm" data-cart-rm="${escapeHtml(p)}" aria-label="Remove ${escapeHtml(name)} from cart">${icon('x', 13)}</button>
+    </div>`;
+  }).join('');
+}
+
+function cartTrashAll() {
+  const known = cartKnownPaths();
+  const missing = state.cart.size - known.length;
+  if (!known.length) {
+    toast(missing ? 'Staged items aren’t in the current scan — rescan their folder first.' : 'Your cart is empty.', missing ? 'error' : 'success');
+    return;
+  }
+  const total = known.reduce((s, p) => s + (cartNode(p)?.size ?? 0), 0);
+  $('confirmText').innerHTML = `Move <b>${known.length} staged item${known.length === 1 ? '' : 's'}</b> (${formatBytes(total)}) to the Trash?` +
+    (missing
+      ? `<br><span style="color:var(--text-3)">${missing} item${missing === 1 ? '' : 's'} not in the current scan will stay in the cart.</span>`
+      : `<br><span style="color:var(--text-3)">You can restore them from the Trash at any time.</span>`);
+  onConfirmTrash = cartExecuteTrash;
+  $('confirmModal').classList.add('open');
+}
+async function cartExecuteTrash() {
+  const paths = cartKnownPaths();
+  const result = await trashPaths(paths, { silent: true });
+  // pathIndex is still the pre-rescan tree here, so sizes are valid.
+  const recovered = result.deleted.reduce((s, p) => s + (cartNode(p)?.size ?? 0), 0);
+  result.deleted.forEach((p) => state.cart.delete(p));
+  saveCart(); renderCart(); refreshCartButtons();
+  if (result.deleted.length) toast(`Moved ${result.deleted.length} item${result.deleted.length === 1 ? '' : 's'} to Trash — ${formatBytes(recovered)} recovered`);
+  if (result.failed.length) toast(`${result.failed.length} couldn’t be trashed: ${result.failed[0].reason}`, 'error');
+  if (result.deleted.length) rescan();
+}
+
+// Drawer + delegated row-button wiring.
+$('cartTab').addEventListener('click', () => $('cartDock').classList.toggle('open'));
+$('cartTab').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('cartDock').classList.toggle('open'); } });
+$('cartCollapse').addEventListener('click', () => $('cartDock').classList.remove('open'));
+$('cartClear').addEventListener('click', cartClear);
+$('cartTrash').addEventListener('click', cartTrashAll);
+document.addEventListener('click', (e) => {
+  const add = e.target.closest('[data-cart-add]');
+  if (add) { e.preventDefault(); e.stopPropagation(); cartToggle(add.getAttribute('data-cart-add')); return; }
+  const rm = e.target.closest('[data-cart-rm]');
+  if (rm) { e.preventDefault(); e.stopPropagation(); cartToggle(rm.getAttribute('data-cart-rm')); }
+});
+renderCart(); // reflect any persisted cart on load
 
 /* ───────────────────────────── Grid view ───────────────────────────── */
 const GAP = 12, MIN_SQ = 48, MAX_SQ = 256;
@@ -2240,6 +2413,7 @@ function renderDuplicates() {
           ${fi === 0 ? '<span class="tag">newest</span>' : ''}
           <span class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</span>
           <span class="dt num">${formatDate(f.modifiedAt)}</span>
+          <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
           <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
         </div>`).join('') + `
       </div>
@@ -2263,6 +2437,7 @@ function renderDuplicates() {
     });
   });
   body.querySelectorAll('[data-reveal]').forEach(b => b.addEventListener('click', () => openInOS(b.dataset.reveal, true)));
+  refreshCartButtons();
   updateDupToolbar();
 }
 
@@ -2705,6 +2880,7 @@ async function loadSmartSuggestions() {
             </div>
             <span class="dt num">${formatDate(it.modifiedAt)}</span>
             <span class="size-badge num">${formatBytes(it.size)}</span>
+            <button class="icon-btn" data-cart-add="${escapeHtml(it.path)}" aria-label="Add ${escapeHtml(it.name)} to cleanup cart">${icon('plus', 13)}</button>
           </div>`).join('') + `</div>
       </div>`).join('');
     host.querySelectorAll('.smart-all').forEach(all => all.addEventListener('change', () => {
@@ -2712,6 +2888,7 @@ async function loadSmartSuggestions() {
       updateCleanSummary();
     }));
     host.querySelectorAll('.smart-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
+    refreshCartButtons();
     updateCleanSummary();
   } catch (e) {
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
