@@ -329,11 +329,15 @@ async function processDirectory(
           node.isSymlink = true;
           return { node };
         }
-        // A cloud placeholder reports a logical size but occupies ~no disk blocks.
+        // A cloud placeholder reports a logical size but occupies ~no disk blocks
+        // AND lives under a known cloud-sync folder — so plain sparse files
+        // (VM images, DB files) are never mislabelled as "cloud-safe to delete".
         if (node.size > 0 && stat.blocks === 0) {
-          node.cloudPlaceholder = true;
           const provider = cloudProviderFor(fullPath);
-          if (provider) node.cloudProvider = provider;
+          if (provider) {
+            node.cloudPlaceholder = true;
+            node.cloudProvider = provider;
+          }
         }
         // Hard-link key only when the link count says the inode is shared.
         return { node, inoKey: stat.nlink > 1 ? `${stat.dev}:${stat.ino}` : undefined };

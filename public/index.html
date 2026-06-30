@@ -478,6 +478,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .snap-meta b { font-weight: 600; }
 .snap-meta .muted { font-size: 10.5px; line-height: 1.35; }
 .snap-row .pill { flex: none; }
+.pill.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 
 /* ── Modals ── */
 .modal-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 100;
@@ -817,6 +818,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
           <option value="2">2</option><option value="3">3</option>
           <option value="4" selected>4</option><option value="5">5</option><option value="6">6</option>
         </select>
+        <button class="pill" id="tmCloudToggle" hidden aria-pressed="false" title="Hide cloud placeholder files — show only bytes that are really on disk">Hide cloud</button>
         <button class="icon-btn" id="tmRefresh" aria-label="Re-render treemap" title="Re-render"></button>
         <button class="btn" id="tmExportBtn" title="Download the treemap as an image"><span data-icon="download"></span>Export</button>
       </div>
@@ -923,6 +925,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <button role="tab" aria-selected="true" data-pane="rules"><span data-icon="search"></span>Custom Rules</button>
         <button role="tab" aria-selected="false" data-pane="smart"><span data-icon="sparkles"></span>Smart Suggestions</button>
         <button role="tab" aria-selected="false" data-pane="empty"><span data-icon="folder"></span>Empty Folders</button>
+        <button role="tab" aria-selected="false" data-pane="cloud" id="cleanTabCloud" hidden><span data-icon="cloud"></span>Cloud-safe</button>
       </div>
       <div class="muted" style="margin-bottom:6px;">Nothing is removed until you confirm — and everything goes to the system Trash, recoverable any time.</div>
       <div id="cleanPaneRules">
@@ -953,6 +956,9 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
           <label for="emptyIgnoreJunk">Treat folders holding only junk files (.DS_Store, Thumbs.db) as empty</label>
         </div>
         <div id="emptyResults"></div>
+      </div>
+      <div id="cleanPaneCloud" style="display:none;">
+        <div id="cloudResults"></div>
       </div>
       <div id="cleanProgress"><div class="track"><div class="fill" id="cleanProgressFill"></div></div></div>
     </div>
@@ -1325,7 +1331,7 @@ const state = {
   largest: [],
   types: [],
   bigFolders: [],
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null, hideCloud: false },
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   donut: { segs: [], hover: -1, animated: false },
   dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
@@ -1659,6 +1665,50 @@ function renderDiskNotes() {
       cl.hidden = false;
     } else cl.hidden = true;
   }
+  const ct = $('tmCloudToggle');
+  if (ct) {
+    if (s.cloudFiles > 0) {
+      ct.hidden = false;
+    } else {
+      ct.hidden = true;
+      state.treemap.hideCloud = false;
+      ct.classList.remove('active');
+      ct.setAttribute('aria-pressed', 'false');
+    }
+  }
+  renderCloudSafe();
+}
+
+/* Feature 10 — "Cloud-safe deletes" list in the Clean Up modal. */
+function renderCloudSafe() {
+  const host = $('cloudResults');
+  const tab = $('cleanTabCloud');
+  if (!host) return;
+  const items = [];
+  for (const n of state.pathIndex.values()) {
+    if (n.type === 'file' && n.cloudPlaceholder) items.push(n);
+  }
+  if (tab) tab.hidden = items.length === 0;
+  if (!items.length) { host.innerHTML = ''; return; }
+  items.sort((a, b) => b.size - a.size);
+  const groups = {};
+  for (const n of items) { const p = n.cloudProvider || 'cloud'; (groups[p] = groups[p] || []).push(n); }
+  const label = { icloud: 'iCloud Drive', onedrive: 'OneDrive', dropbox: 'Dropbox', cloud: 'Cloud' };
+  const total = items.reduce((s, n) => s + n.size, 0);
+  host.innerHTML = `<div class="muted" style="margin-bottom:10px;">${formatCount(items.length)} online-only file${items.length === 1 ? '' : 's'} (${formatBytes(total)} logical). The cloud keeps the original, so removing the local copy is safe.</div>` +
+    Object.keys(groups).map((prov) => {
+      const list = groups[prov];
+      const gt = list.reduce((s, n) => s + n.size, 0);
+      return `<div style="margin-bottom:14px;">
+        <div class="rule-row" style="padding:6px 0;"><b>${label[prov] || 'Cloud'}</b><span class="size-badge num" style="margin-left:auto;">${formatCount(list.length)} · ${formatBytes(gt)}</span></div>
+        <div class="clean-list">` + list.slice(0, 300).map((n) =>
+          `<div class="clean-item">${chipFor(n, 13)}<div class="meta"><div class="nm">${escapeHtml(n.name)}</div><div class="pth">${escapeHtml(n.path)}</div></div>` +
+          `<span class="dt num">${formatDate(n.modifiedAt)}</span><span class="size-badge num">${formatBytes(n.size)}</span>` +
+          `<button class="icon-btn" data-cart-add="${escapeHtml(n.path)}" aria-label="Add ${escapeHtml(n.name)} to cleanup cart">${icon('plus', 13)}</button></div>`
+        ).join('') + `</div>
+      </div>`;
+    }).join('');
+  refreshCartButtons();
 }
 
 /* Feature 7 — "disk full in ~N days" projection from snapshot history. */
@@ -1964,6 +2014,7 @@ function drawTreemap() {
 
   const px = [];
   for (const n of state.treemap.nodes) {
+    if (state.treemap.hideCloud && n.cloudPlaceholder) continue;
     const x = (n.x / 100) * cssW, y = (n.y / 100) * cssH;
     const w = (n.w / 100) * cssW, h = (n.h / 100) * cssH;
     if (w * h < 1) continue;
@@ -2028,6 +2079,19 @@ function drawTreemap() {
       ctx.font = '10px -apple-system, sans-serif';
       ctx.fillText(formatBytes(r.n.size), r.x + 5, r.y + 17, r.w - 10);
     }
+  }
+
+  // Pass 5: cloud-placeholder markers (online-only files).
+  for (const r of px) {
+    if (r.frame || !r.n.cloudPlaceholder || r.w < 18 || r.h < 16) continue;
+    const bx = r.x + r.w - 12, by = r.y + 8, s = 7;
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.beginPath();
+    ctx.arc(bx - s * 0.35, by, s * 0.4, 0, Math.PI * 2);
+    ctx.arc(bx + s * 0.1, by - s * 0.28, s * 0.5, 0, Math.PI * 2);
+    ctx.arc(bx + s * 0.55, by, s * 0.38, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(bx - s * 0.35, by, s * 0.9, s * 0.45);
   }
 
   renderSearchOverlay();
@@ -2184,6 +2248,13 @@ $('tmDepth').addEventListener('change', (e) => {
 });
 $('tmRefresh').innerHTML = icon('refresh', 15);
 $('tmRefresh').addEventListener('click', () => { if (state.treemap.rootPath) loadTreemap(state.treemap.rootPath); });
+// Feature 10 — hide cloud placeholders (show only on-disk bytes).
+$('tmCloudToggle').addEventListener('click', () => {
+  state.treemap.hideCloud = !state.treemap.hideCloud;
+  $('tmCloudToggle').setAttribute('aria-pressed', String(state.treemap.hideCloud));
+  $('tmCloudToggle').classList.toggle('active', state.treemap.hideCloud);
+  if (state.treemap.rootPath) drawView();
+});
 // Feature 1 — Size/Age heatmap color mode toggle (persisted in localStorage).
 function setTreemapColorMode(mode) {
   mode = mode === 'age' ? 'age' : 'size';
@@ -2254,7 +2325,7 @@ function drawSunburst() {
     if (depth >= rings || node.type !== 'dir' || !node.children) return;
     const total = node.size;
     if (total <= 0) return;
-    const kids = node.children.filter((c) => c.size > 0).sort((a, b) => b.size - a.size);
+    const kids = node.children.filter((c) => c.size > 0 && !(state.treemap.hideCloud && c.cloudPlaceholder)).sort((a, b) => b.size - a.size);
     let a = a0;
     const span = a1 - a0;
     for (const c of kids) {
@@ -3530,6 +3601,7 @@ function setCleanPane(pane, skipLoad = false) {
   $('cleanPaneRules').style.display = pane === 'rules' ? '' : 'none';
   $('cleanPaneSmart').style.display = pane === 'smart' ? '' : 'none';
   $('cleanPaneEmpty').style.display = pane === 'empty' ? '' : 'none';
+  $('cleanPaneCloud').style.display = pane === 'cloud' ? '' : 'none';
   updateCleanSummary();
   if (!skipLoad && pane === 'empty' && !emptyFolders.length) loadEmptyFolders();
   if (!skipLoad && pane === 'smart' && !smartGroups.length) loadSmartSuggestions();

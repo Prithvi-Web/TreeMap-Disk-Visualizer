@@ -81,6 +81,8 @@ export interface TreemapNode {
   y: number;
   w: number;
   h: number;
+  /** Cloud placeholder/stub (online-only file) — rendered with a cloud marker. */
+  cloudPlaceholder?: boolean;
 }
 
 /** Events streamed over the SSE progress endpoint. */
