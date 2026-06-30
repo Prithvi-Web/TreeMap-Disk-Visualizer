@@ -460,6 +460,28 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .growth-proj.warn { color: var(--warn); background: rgba(255,214,10,0.08); border-color: rgba(255,214,10,0.25); }
 .growth-proj.danger { color: var(--danger); background: rgba(255,69,58,0.09); border-color: rgba(255,69,58,0.28); }
 
+/* ── Folder budgets (Feature 15) ── */
+.budget-folder { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--hairline);
+  border-radius: var(--r-md); background: var(--surface-1); }
+.budget-folder .ic { color: var(--accent); flex: none; }
+.budget-folder .meta { min-width: 0; }
+.budget-folder .nm { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.budget-folder .pth { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; text-align: left; }
+.budget-input { display: flex; gap: 8px; }
+.budget-input input { flex: 1; }
+.budget-input select { flex: none; width: 92px; }
+#budgetCard .budget-row { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-bottom: 1px solid var(--hairline); }
+#budgetCard .budget-row:last-child { border-bottom: none; }
+#budgetCard .budget-row .meta { flex: 1; min-width: 0; }
+#budgetCard .budget-row .nm { font-weight: 500; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#budgetCard .budget-row .bar-track { height: 5px; border-radius: 3px; background: var(--surface-2); margin-top: 5px; overflow: hidden; }
+#budgetCard .budget-row .bar { height: 100%; border-radius: 3px; }
+#budgetCard .budget-row .over { font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+#budgetCard .budget-row.is-over .over { color: var(--danger); }
+#budgetCard .budget-row.is-ok .over { color: var(--ok); }
+#budgetCard .budget-row .b-edit { flex: none; }
+
 /* ── Trash awareness (Feature 8) ── */
 .fact-trash { cursor: pointer; }
 .fact-trash:hover b { color: var(--accent); }
@@ -833,6 +855,10 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
           <h2><span data-icon="folder"></span>Largest Folders</h2>
           <div id="bigFolders"><div class="muted">Run a scan to find your biggest folders.</div></div>
         </div>
+        <div class="card glass" id="budgetCard" hidden>
+          <h2><span data-icon="gauge"></span>Folder Budgets</h2>
+          <div id="budgetList"></div>
+        </div>
       </div>
     </div>
   </section>
@@ -1071,6 +1097,42 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
   </div>
 </div>
 
+<!-- ═══════════ Budget modal (Feature 15) ═══════════ -->
+<div class="modal-backdrop" id="budgetModal" role="dialog" aria-modal="true" aria-labelledby="budgetTitle">
+  <div class="modal" style="width:440px;">
+    <div class="modal-head">
+      <h3 id="budgetTitle"><span data-icon="gauge"></span>Set folder budget</h3>
+      <button class="close-x" data-close="budgetModal" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="budget-folder">
+        <span data-icon="folder" data-size="16"></span>
+        <div class="meta">
+          <div class="nm" id="budgetFolderName">–</div>
+          <div class="pth" id="budgetFolderPath"></div>
+        </div>
+      </div>
+      <div class="muted" id="budgetCurrent" style="margin:11px 0 13px;font-size:12.5px;"></div>
+      <label for="budgetValue" class="muted" style="display:block;margin-bottom:7px;font-size:12.5px;">Warn me when this folder grows past</label>
+      <div class="budget-input">
+        <input type="number" id="budgetValue" min="0" step="any" placeholder="5" aria-label="Budget amount">
+        <select id="budgetUnit" aria-label="Budget unit">
+          <option value="1073741824" selected>GB</option>
+          <option value="1048576">MB</option>
+          <option value="1024">KB</option>
+          <option value="1">bytes</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-danger" id="budgetRemoveBtn" style="display:none;"><span data-icon="trash"></span>Remove</button>
+      <div style="flex:1"></div>
+      <button class="btn" data-close="budgetModal">Cancel</button>
+      <button class="btn btn-primary" id="budgetSaveBtn"><span data-icon="check"></span>Save budget</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════ Settings modal ═══════════ -->
 <div class="modal-backdrop" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
   <div class="modal" style="width:740px;">
@@ -1269,6 +1331,7 @@ const PATHS = {
   pie: '<path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>',
   activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
   zap: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>',
+  gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
   shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
   eyeOff: '<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/>',
   mouse: '<rect x="5" y="2" width="14" height="20" rx="7"/><path d="M12 6v4"/>',
@@ -1401,6 +1464,7 @@ const state = {
   dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
   dupMode: 'exact',
   near: { loadedFor: null, status: 'idle', clusters: [], clusterCount: 0, totalReclaimable: 0, available: true, truncated: false, selection: new Set(), pollTimer: 0 },
+  budgets: { list: [], overPaths: new Set() },
   trends: { roots: [], path: null, snapshots: [], points: [], hover: -1 },
   compare: { options: [], result: null },
 };
@@ -1714,6 +1778,7 @@ async function finishScan(root, durationMs) {
   toast(`Scan complete — ${formatBytes(root.size)} across ${formatCount(files)} files`);
   renderGrowthProjection();
   renderDiskNotes();
+  loadBudgets();
 }
 
 /* Features 11 + 10 — hard-link / cloud-placeholder dashboard notes. */
@@ -2029,8 +2094,15 @@ function renderCrumbs(host, path, onPick) {
       `<button data-p="${escapeHtml(c.path)}" aria-current="${cur}" title="${escapeHtml(c.path)}">` +
       `${i === 0 ? icon('hardDrive', 13) : ''}${escapeHtml(c.name)}</button>`;
   }).join('');
-  host.querySelectorAll('button').forEach(b =>
-    b.addEventListener('click', () => onPick(b.dataset.p)));
+  host.querySelectorAll('button').forEach(b => {
+    b.addEventListener('click', () => onPick(b.dataset.p));
+    // Right-click a breadcrumb folder to set/edit its budget (Feature 15).
+    b.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const node = state.pathIndex.get(b.dataset.p);
+      if (node && node.type === 'dir') openBudgetDialog(node);
+    });
+  });
 }
 
 function breadcrumbsFor(path) {
@@ -2254,6 +2326,20 @@ function presentTreemap() {
     tmCtx.strokeStyle = cssVar('--accent') || '#0A84FF';
     tmCtx.lineWidth = 2;
     tmCtx.strokeRect(h.x + 1, h.y + 1, h.w - 2, h.h - 2);
+  }
+  // Over-budget folders get a red dashed border (Feature 15).
+  const over = state.budgets.overPaths;
+  if (over && over.size) {
+    tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    tmCtx.setLineDash([5, 3]);
+    tmCtx.strokeStyle = cssVar('--danger') || '#FF453A';
+    tmCtx.lineWidth = 2;
+    for (const pr of state.treemap.pxRects) {
+      if (over.has(pr.n.path)) {
+        tmCtx.strokeRect(pr.x + 1.5, pr.y + 1.5, Math.max(1, pr.w - 3), Math.max(1, pr.h - 3));
+      }
+    }
+    tmCtx.setLineDash([]);
   }
   const ks = state.treemap.kbSel;
   if (ks) {
@@ -2762,16 +2848,20 @@ function showCtxMenu(x, y, node) {
            : state.system && state.system.platform === 'win32' ? 'Explorer' : 'file manager';
   const menu = $('ctxMenu');
   const inCart = cartHas(node.path);
+  const hasBudget = node.type === 'dir' && !!budgetFor(node.path);
   menu.innerHTML = `
     <button data-act="open">${icon('external', 15)}Open in ${fm}</button>
     ${node.type === 'file' ? `<button data-act="preview">${icon('search', 15)}Quick Look</button>` : ''}
     <button data-act="copy">${icon('copy', 15)}Copy path</button>
     <button data-act="cart">${icon(inCart ? 'check' : 'cart', 15)}${inCart ? 'Remove from Cart' : 'Add to Cart'}</button>
+    ${node.type === 'dir' ? `<div class="div"></div>
+    <button data-act="budget">${icon('gauge', 15)}${hasBudget ? 'Edit budget…' : 'Set budget…'}</button>
+    ${hasBudget ? `<button data-act="budget-remove">${icon('x', 15)}Remove budget</button>` : ''}` : ''}
     <div class="div"></div>
     <button data-act="trash" class="danger">${icon('trash', 15)}Move to Trash</button>`;
   menu.style.display = 'block';
   menu.style.left = Math.min(x, window.innerWidth - 230) + 'px';
-  menu.style.top = Math.min(y, window.innerHeight - 160) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + 'px';
   menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     const act = b.dataset.act;
     hideCtxMenu();
@@ -2779,6 +2869,8 @@ function showCtxMenu(x, y, node) {
     if (act === 'preview') openPreview(ctxTarget);
     if (act === 'copy') copyPath(ctxTarget.path);
     if (act === 'cart') cartToggle(ctxTarget.path);
+    if (act === 'budget') openBudgetDialog(ctxTarget);
+    if (act === 'budget-remove') removeBudget(ctxTarget.path);
     if (act === 'trash') confirmTrash([ctxTarget.path]);
   }));
 }
@@ -2852,6 +2944,131 @@ async function trashPaths(paths, { silent = false } = {}) {
 function rescan() {
   if (state.root && !state.scanning) startScan(state.root.path);
 }
+
+/* ───────────────────────────── Folder budgets (Feature 15) ───────────────────────────── */
+function budgetFor(path) { return state.budgets.list.find(b => b.path === path) || null; }
+
+/** Fetch budgets for the current scan, update the dashboard widget + treemap overlay. */
+async function loadBudgets() {
+  if (!state.scanId || !state.root) return;
+  try {
+    const data = await api(`/api/scan/${state.scanId}/budgets`);
+    state.budgets.list = data.budgets || [];
+  } catch { state.budgets.list = []; }
+  state.budgets.overPaths = new Set(state.budgets.list.filter(b => b.overBy > 0).map(b => b.path));
+  renderBudgetWidget();
+  if (state.view === 'treemap' && state.treemap.mode === 'treemap') presentView();
+}
+
+function renderBudgetWidget() {
+  const card = $('budgetCard'), list = $('budgetList');
+  if (!card || !list) return;
+  const items = state.budgets.list;
+  if (!items.length) { card.hidden = true; list.innerHTML = ''; return; }
+  card.hidden = false;
+  // Over-budget first (already sorted by overBy desc from the API).
+  list.innerHTML = items.map(b => {
+    const over = b.overBy > 0;
+    const pct = b.maxBytes > 0 ? Math.min(100, (b.actualBytes / b.maxBytes) * 100) : 100;
+    const barColor = over ? 'var(--danger)' : pct > 80 ? 'var(--warn)' : 'var(--ok)';
+    const label = over
+      ? `over by ${formatBytes(b.overBy)}`
+      : `${formatBytes(b.maxBytes - b.actualBytes)} left`;
+    return `<div class="budget-row ${over ? 'is-over' : 'is-ok'}" data-budget-path="${escapeHtml(b.path)}">
+      <div class="meta">
+        <div class="nm" title="${escapeHtml(b.path)}">${escapeHtml(b.name)}</div>
+        <div class="bar-track"><div class="bar" style="width:${pct.toFixed(1)}%;background:${barColor};"></div></div>
+      </div>
+      <div style="text-align:right;">
+        <div class="over">${over ? icon('alert', 12) + ' ' : ''}${label}</div>
+        <div class="muted num" style="font-size:10.5px;">${formatBytes(b.actualBytes)} / ${formatBytes(b.maxBytes)}</div>
+      </div>
+      <button class="icon-btn b-edit" data-budget-edit="${escapeHtml(b.path)}" title="Edit budget" aria-label="Edit budget for ${escapeHtml(b.name)}">${icon('gauge', 14)}</button>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('[data-budget-edit]').forEach(btn => btn.addEventListener('click', () => {
+    const node = state.pathIndex.get(btn.dataset.budgetEdit);
+    openBudgetDialog(node || { path: btn.dataset.budgetEdit, name: btn.dataset.budgetEdit.split('/').pop() || btn.dataset.budgetEdit, type: 'dir', size: null });
+  }));
+}
+
+let budgetTarget = null;
+function openBudgetDialog(node) {
+  if (!node) return;
+  budgetTarget = node;
+  const existing = budgetFor(node.path);
+  $('budgetFolderName').textContent = node.name || node.path;
+  $('budgetFolderPath').textContent = node.path;
+  const size = (typeof node.size === 'number') ? node.size : (state.pathIndex.get(node.path)?.size ?? null);
+  $('budgetCurrent').innerHTML = size != null
+    ? `Current size: <b>${formatBytes(size)}</b>`
+    : 'Current size unknown until the next scan.';
+  // Prefill with the existing budget (pick the friendliest unit) or a sensible default.
+  const unitSel = $('budgetUnit'), valIn = $('budgetValue');
+  if (existing) {
+    const unit = existing.maxBytes % 1073741824 === 0 ? 1073741824
+      : existing.maxBytes % 1048576 === 0 ? 1048576
+      : existing.maxBytes % 1024 === 0 ? 1024 : 1;
+    unitSel.value = String(unit);
+    valIn.value = String(existing.maxBytes / unit);
+  } else {
+    unitSel.value = '1073741824';
+    valIn.value = '';
+  }
+  $('budgetRemoveBtn').style.display = existing ? '' : 'none';
+  $('budgetModal').classList.add('open');
+  setTimeout(() => valIn.focus(), 30);
+}
+
+/** Persist the full budget list (merge/replace one path) via PUT /api/settings. */
+async function saveBudgetList(nextBudgets) {
+  const data = await api('/api/settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ budgets: nextBudgets }),
+  });
+  return data.budgets || [];
+}
+
+/** Read the full saved budget list (all paths, not just this scan's). */
+async function currentSavedBudgets() {
+  try {
+    const s = await api('/api/settings');
+    return (s.budgets || []).map(b => ({ path: b.path, maxBytes: b.maxBytes }));
+  } catch {
+    return state.budgets.list.map(b => ({ path: b.path, maxBytes: b.maxBytes }));
+  }
+}
+
+async function commitBudget() {
+  if (!budgetTarget) return;
+  const value = parseFloat($('budgetValue').value);
+  const unit = Number($('budgetUnit').value);
+  if (!Number.isFinite(value) || value <= 0) { toast('Enter a budget greater than zero', 'error'); return; }
+  const maxBytes = Math.round(value * unit);
+  const target = budgetTarget;
+  try {
+    const cur = await currentSavedBudgets();
+    const merged = [...cur.filter(b => b.path !== target.path), { path: target.path, maxBytes }];
+    await saveBudgetList(merged);
+    closeModal('budgetModal');
+    toast(`Budget set — ${target.name || target.path} ≤ ${formatBytes(maxBytes)}`);
+    await loadBudgets();
+  } catch (e) { toast('Could not save budget: ' + e.message, 'error'); }
+}
+
+async function removeBudget(path) {
+  try {
+    const cur = await currentSavedBudgets();
+    await saveBudgetList(cur.filter(b => b.path !== path));
+    closeModal('budgetModal');
+    toast('Budget removed');
+    await loadBudgets();
+  } catch (e) { toast('Could not remove budget: ' + e.message, 'error'); }
+}
+
+$('budgetSaveBtn').addEventListener('click', commitBudget);
+$('budgetRemoveBtn').addEventListener('click', () => { if (budgetTarget) removeBudget(budgetTarget.path); });
+$('budgetValue').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commitBudget(); } });
 
 /* ───────────────────────────── Cleanup cart (Feature 2) ───────────────────────────── */
 state.cart = new Set();

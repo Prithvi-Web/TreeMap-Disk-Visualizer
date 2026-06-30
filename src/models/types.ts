@@ -324,9 +324,29 @@ export interface ScheduleConfig {
   lastRunAt?: number;
 }
 
+/** A user-pinned maximum size for a folder (Feature 15). */
+export interface BudgetEntry {
+  /** Absolute folder path. */
+  path: string;
+  /** Budget ceiling in bytes. */
+  maxBytes: number;
+}
+
 export interface AppSettings {
   ignore: IgnoreEntry[];
   schedules: ScheduleConfig[];
+  budgets: BudgetEntry[];
+}
+
+/** A budget cross-referenced against a scan: how the folder measures up now. */
+export interface BudgetStatus {
+  path: string;
+  name: string;
+  maxBytes: number;
+  /** Recursive size of the folder in this scan. */
+  actualBytes: number;
+  /** actualBytes − maxBytes; positive means over budget. */
+  overBy: number;
 }
 
 /** Emitted when a scheduled scan crosses its growth threshold. */
