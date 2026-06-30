@@ -318,6 +318,12 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
 .tm-foot { display: flex; align-items: center; gap: 16px; margin-top: 12px; font-size: 11.5px; color: var(--text-2); padding: 0 4px; }
 .legend-grad { width: 220px; height: 7px; border-radius: 4px;
   background: linear-gradient(90deg, var(--ok), var(--warn), var(--danger)); }
+.tm-legend { display: flex; align-items: center; gap: 9px; }
+.tm-legend .legend-grad { width: 170px; }
+.tm-legend-bands { display: flex; align-items: center; gap: 13px; }
+.tm-legend-bands .ab { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.tm-legend .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.22); }
 .tm-foot .hint { margin-left: auto; color: var(--text-3); display: flex; align-items: center; gap: 6px; }
 
 /* ── Grid view ── */
@@ -663,6 +669,10 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
           <span data-icon="search"></span>
           <input type="text" id="tmSearch" placeholder="Highlight… (name or *.zip)" aria-label="Highlight matching files in the treemap" autocomplete="off" spellcheck="false">
         </div>
+        <div class="seg" id="tmColorSeg" role="tablist" aria-label="Treemap color mode">
+          <button type="button" data-mode="size" aria-selected="true" title="Color cells by file size">Size</button>
+          <button type="button" data-mode="age" aria-selected="false" title="Color cells by how recently modified">Age</button>
+        </div>
         <label for="tmDepth">Depth</label>
         <select id="tmDepth" aria-label="Treemap depth">
           <option value="2">2</option><option value="3">3</option>
@@ -676,7 +686,7 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
       <div id="treemapZoom"><canvas id="treemapCanvas" tabindex="0" aria-label="Disk usage treemap. Click a directory to drill in, Escape to go up."></canvas></div>
     </div>
     <div class="tm-foot">
-      <span>1 MB</span><div class="legend-grad"></div><span>10 GB+</span>
+      <div id="tmLegend" class="tm-legend"></div>
       <span class="num" id="tmStatus"></span>
       <span class="hint"><span data-icon="mouse"></span>click a folder to drill in · right-click for actions · Esc to go up</span>
     </div>
@@ -1063,6 +1073,24 @@ function sizeColor(bytes, alpha = 1) {
   return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
 }
 
+/* ── Age → color scale (heatmap mode): green = fresh … red = stale ── */
+const C_ORANGE = hexToRgb('#FF9F0A');
+const AGE_BANDS = [
+  { maxDays: 30,       rgb: C_TEAL,   label: '&lt; 30 days' },
+  { maxDays: 365,      rgb: C_AMBER,  label: '30–365 days' },
+  { maxDays: 730,      rgb: C_ORANGE, label: '1–2 years' },
+  { maxDays: Infinity, rgb: C_RED,    label: '&gt; 2 years' },
+];
+function ageRgb(modifiedAt) {
+  const days = (Date.now() - (modifiedAt || 0)) / 86400000;
+  for (const b of AGE_BANDS) if (days < b.maxDays) return b.rgb;
+  return C_RED;
+}
+/** Cell base color for the active treemap color mode ('size' | 'age'). */
+function cellRgb(n) {
+  return state.treemap.colorMode === 'age' ? ageRgb(n.modifiedAt) : sizeRgb(n.size);
+}
+
 /* ───────────────────────────── App state ───────────────────────────── */
 const state = {
   view: 'dashboard',
@@ -1076,7 +1104,7 @@ const state = {
   largest: [],
   types: [],
   bigFolders: [],
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0 },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size' },
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   donut: { segs: [], hover: -1, animated: false },
   dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
@@ -1497,6 +1525,19 @@ function breadcrumbsFor(path) {
   return crumbs;
 }
 
+/** Render the treemap footer legend for the active color mode. */
+function renderTmLegend() {
+  const host = $('tmLegend');
+  if (!host) return;
+  if (state.treemap.colorMode === 'age') {
+    host.innerHTML = '<div class="tm-legend-bands">' + AGE_BANDS.map((b) =>
+      `<span class="ab"><i class="sw" style="background:rgb(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]})"></i>${b.label}</span>`
+    ).join('') + '</div>';
+  } else {
+    host.innerHTML = '<span>1 MB</span><div class="legend-grad"></div><span>10 GB+</span>';
+  }
+}
+
 function drawTreemap() {
   const wrap = $('treemapWrap');
   const cssW = wrap.clientWidth - 20;
@@ -1528,7 +1569,7 @@ function drawTreemap() {
   // Pass 1: cushion-shaded leaf fills.
   for (const r of px) {
     if (r.frame) continue;
-    const base = sizeRgb(r.n.size);
+    const base = cellRgb(r.n);
     const depthFade = Math.max(0.55, 1 - r.n.depth * 0.08);
     const top = mix(base, [255,255,255], 0.16);
     const bot = mix(base, [0,0,0], 0.22);
@@ -1586,6 +1627,7 @@ function drawTreemap() {
 
   renderSearchOverlay();
   presentTreemap();
+  renderTmLegend();
 }
 
 /* ── Search/filter: highlight matches, dim the rest — no re-layout. ── */
@@ -1717,6 +1759,20 @@ $('tmDepth').addEventListener('change', (e) => {
 });
 $('tmRefresh').innerHTML = icon('refresh', 15);
 $('tmRefresh').addEventListener('click', () => { if (state.treemap.rootPath) loadTreemap(state.treemap.rootPath); });
+// Feature 1 — Size/Age heatmap color mode toggle (persisted in localStorage).
+function setTreemapColorMode(mode) {
+  mode = mode === 'age' ? 'age' : 'size';
+  state.treemap.colorMode = mode;
+  localStorage.setItem('tm-colormode', mode);
+  for (const b of $('tmColorSeg').querySelectorAll('button'))
+    b.setAttribute('aria-selected', String(b.dataset.mode === mode));
+  if (state.treemap.nodes.length) drawTreemap(); else renderTmLegend();
+}
+$('tmColorSeg').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-mode]');
+  if (btn) setTreemapColorMode(btn.dataset.mode);
+});
+setTreemapColorMode(state.treemap.colorMode); // reflect persisted choice on load
 window.addEventListener('resize', () => { if (state.view === 'treemap' && state.treemap.nodes.length) drawTreemap(); });
 
 /* ── Zoom out (button, breadcrumbs already handle jumps) ── */
