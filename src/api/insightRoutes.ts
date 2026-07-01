@@ -7,6 +7,7 @@ import {
   compareTrees,
 } from '../services/diskScanner';
 import { getDuplicateJob } from '../services/duplicateFinder';
+import { getNearDupeJob } from '../services/perceptualDupes';
 import {
   listSnapshots,
   listSnapshotRoots,
@@ -14,7 +15,8 @@ import {
   getSnapshot,
   diffSnapshots,
 } from '../services/snapshots';
-import { guardQueryPath } from '../middleware/pathGuard';
+import { guardQueryPath, guardBodyPath, requireInsideScanRoot } from '../middleware/pathGuard';
+import { findGitRepos, runGitGc } from '../services/gitScanner';
 import { AppError } from '../middleware/errorHandler';
 import { CompareResult, ScanResult } from '../models/types';
 
@@ -65,6 +67,39 @@ insightRouter.get('/duplicates', (req: Request, res: Response) => {
   });
 });
 
+/**
+ * GET /api/near-duplicates?scanId=&threshold=10
+ * Perceptual (dHash) near-duplicate image detection (Feature 12). Poll like
+ * /duplicates: 202 + progress while hashing, 200 + clusters when done.
+ * When no image decoder is available, returns 200 with available:false.
+ */
+insightRouter.get('/near-duplicates', (req: Request, res: Response) => {
+  const scan = requireCompleteScan(req, req.query.scanId);
+  const threshold = clampInt(req.query.threshold, 10, 0, 32);
+
+  const job = getNearDupeJob(scan, threshold);
+  if (job.status === 'running') {
+    res.status(202).json({ status: 'running', hashed: job.hashed, toHash: job.toHash });
+    return;
+  }
+  if (job.status === 'error') {
+    throw new AppError(500, 'NEAR_DUPLICATES_FAILED', job.error ?? 'Near-duplicate detection failed');
+  }
+  res.json({
+    status: 'complete',
+    scanId: scan.scanId,
+    threshold: job.threshold,
+    available: job.available,
+    decoder: job.decoder,
+    reason: job.reason,
+    clusters: job.clusters ?? [],
+    clusterCount: job.clusterCount ?? 0,
+    totalReclaimable: job.totalReclaimable ?? 0,
+    truncated: job.truncated ?? false,
+    tookMs: (job.finishedAt ?? job.startedAt) - job.startedAt,
+  });
+});
+
 /** GET /api/large-folders?scanId=&limit=20&minSize=1048576 */
 insightRouter.get('/large-folders', (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
@@ -78,6 +113,21 @@ insightRouter.get('/empty-folders', (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const ignoreJunk = String(req.query.ignoreJunk ?? 'true') !== 'false';
   res.json(collectEmptyFolders(scan.root, ignoreJunk));
+});
+
+/** GET /api/git/repos?scanId= — pack/loose/LFS breakdown of every .git in the scan. */
+insightRouter.get('/git/repos', (req: Request, res: Response) => {
+  const scan = requireCompleteScan(req, req.query.scanId);
+  res.json({ repos: findGitRepos(scan.root) });
+});
+
+/** POST /api/git/gc { path, confirm:true } — run `git gc` in a scanned repo. */
+insightRouter.post('/git/gc', guardBodyPath, requireInsideScanRoot, async (req: Request, res: Response) => {
+  const { path: repoPath, confirm } = req.body as { path: string; confirm?: boolean };
+  if (confirm !== true) {
+    throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } to run git gc');
+  }
+  res.json(await runGitGc(repoPath));
 });
 
 /** GET /api/scans — completed scans currently in memory (Compare picker). */

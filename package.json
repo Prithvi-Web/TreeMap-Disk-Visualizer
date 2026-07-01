@@ -21,11 +21,14 @@
   "license": "MIT",
   "dependencies": {
     "electron-updater": "^6.3.9",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "pdfmake": "^0.2.23",
+    "sharp": "^0.35.2"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^20.17.0",
+    "@types/pdfmake": "^0.3.3",
     "electron": "^31.7.0",
     "electron-builder": "^24.13.3",
     "tsx": "^4.19.0",
@@ -45,13 +48,21 @@
       "electron/**/*",
       "package.json"
     ],
+    "asarUnpack": [
+      "**/node_modules/sharp/**",
+      "**/node_modules/@img/**",
+      "**/node_modules/@foliojs-fork/**"
+    ],
     "publish": {
       "provider": "github",
       "owner": "Prithvi-Web",
       "repo": "Treemap"
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.utilities",
       "icon": "build/icon.png",
       "darkModeSupport": true,
@@ -60,18 +71,24 @@
           {
             "CFBundleTypeName": "Folder",
             "CFBundleTypeRole": "Viewer",
-            "LSItemContentTypes": ["public.folder"],
+            "LSItemContentTypes": [
+              "public.folder"
+            ],
             "LSHandlerRank": "Alternate"
           }
         ]
       }
     },
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "build/icon.png"
     },
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "category": "Utility",
       "icon": "build/icon.png"
     },

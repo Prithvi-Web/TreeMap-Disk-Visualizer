@@ -4,7 +4,9 @@ import { buildTreemap, findNodeByPath } from '../utils/treemap';
 import { isInside } from '../utils/pathSanitizer';
 import { guardBodyPath, guardQueryPath } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
-import { ScanResult, ScanEvent } from '../models/types';
+import { getSettings } from '../services/settings';
+import { streamCsv, streamPdf } from '../services/reportExport';
+import { ScanResult, ScanEvent, BudgetStatus } from '../models/types';
 
 export const scanRouter = Router();
 
@@ -60,9 +62,9 @@ export function requireScan(_req: Request, idSource: unknown): ScanResult {
 
 /** POST /api/scan  { path } -> { scanId } */
 scanRouter.post('/scan', guardBodyPath, async (req: Request, res: Response) => {
-  const { path: scanPath } = req.body as { path: string };
-  const scan = await startScan(scanPath); // lstat failures -> errorHandler maps to 404/403
-  res.status(202).json({ scanId: scan.scanId });
+  const { path: scanPath, incremental } = req.body as { path: string; incremental?: boolean };
+  const scan = await startScan(scanPath, { incremental: incremental === true }); // lstat failures -> 404/403
+  res.status(202).json({ scanId: scan.scanId, incremental: scan.incremental === true });
 });
 
 /** GET /api/scan/:scanId/progress — Server-Sent Events stream. */
@@ -138,10 +140,92 @@ scanRouter.get('/scan/:scanId/result', (req: Request, res: Response) => {
     rootPath: scan.rootPath,
     fileCount: scan.fileCount,
     dirCount: scan.dirCount,
+    hardlinkedFiles: scan.hardlinkedFiles ?? 0,
+    hardlinkedBytes: scan.hardlinkedBytes ?? 0,
+    cloudFiles: scan.cloudFiles ?? 0,
+    cloudBytes: scan.cloudBytes ?? 0,
     startedAt: scan.startedAt,
     finishedAt: scan.finishedAt,
     root: scan.root,
   });
+});
+
+/** GET /api/scan/:scanId/stats — counters incl. incremental cache usage. */
+scanRouter.get('/scan/:scanId/stats', (req: Request, res: Response) => {
+  const scan = requireScan(req, req.params.scanId);
+  res.json({
+    scanId: scan.scanId,
+    status: scan.status,
+    scanned: scan.scanned,
+    fileCount: scan.fileCount,
+    dirCount: scan.dirCount,
+    incremental: scan.incremental === true,
+    cachedDirs: scan.cachedDirs ?? 0,
+    walkedDirs: scan.walkedDirs ?? 0,
+    hardlinkedFiles: scan.hardlinkedFiles ?? 0,
+    hardlinkedBytes: scan.hardlinkedBytes ?? 0,
+    cloudFiles: scan.cloudFiles ?? 0,
+    cloudBytes: scan.cloudBytes ?? 0,
+  });
+});
+
+/**
+ * GET /api/scan/:scanId/budgets — saved folder budgets cross-referenced
+ * against this scan. Returns only budgets whose folder is inside the scanned
+ * root and present in the tree, each with its current size and overage.
+ */
+scanRouter.get('/scan/:scanId/budgets', async (req: Request, res: Response) => {
+  const scan = requireScan(req, req.params.scanId);
+  if (scan.status === 'running') {
+    res.status(202).json({ status: 'running' });
+    return;
+  }
+  if (scan.status === 'error' || !scan.root) {
+    throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  }
+  const { budgets } = await getSettings();
+  const out: BudgetStatus[] = [];
+  for (const b of budgets) {
+    if (b.path !== scan.rootPath && !isInside(scan.rootPath, b.path)) continue;
+    const node = findNodeByPath(scan.root, b.path);
+    if (!node || node.type !== 'dir') continue;
+    out.push({
+      path: b.path,
+      name: node.name,
+      maxBytes: b.maxBytes,
+      actualBytes: node.size,
+      overBy: node.size - b.maxBytes,
+    });
+  }
+  out.sort((a, b) => b.overBy - a.overBy);
+  res.json({ scanId: scan.scanId, budgets: out });
+});
+
+/**
+ * GET /api/scan/:scanId/export?format=csv|pdf&mode=files|folders
+ * Downloads the scan as a report: streamed CSV of every file/folder, or a
+ * pdfmake text summary. Always sent as an attachment.
+ */
+scanRouter.get('/scan/:scanId/export', async (req: Request, res: Response) => {
+  const scan = requireScan(req, req.params.scanId);
+  if (scan.status === 'running') {
+    res.status(202).json({ status: 'running' });
+    return;
+  }
+  if (scan.status === 'error' || !scan.root) {
+    throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  }
+  const complete = scan as ScanResult & { root: NonNullable<ScanResult['root']> };
+  const format = String(req.query.format ?? 'csv');
+  if (format === 'pdf') {
+    await streamPdf(complete, res);
+    return;
+  }
+  if (format === 'csv') {
+    streamCsv(complete, req.query.mode === 'folders' ? 'folders' : 'files', res);
+    return;
+  }
+  throw new AppError(400, 'BAD_FORMAT', 'format must be "csv" or "pdf"');
 });
 
 /**

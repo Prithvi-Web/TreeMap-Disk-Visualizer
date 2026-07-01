@@ -76,7 +76,7 @@ Disk-usage ring, live scan progress, file-type donut chart, and the **top-10 lar
 <td width="50%" valign="top">
 
 ### 🗺️ Treemap
-A squarified treemap of every file, sized by bytes and colored **teal → amber → red**. Drill into folders, climb back with breadcrumbs + zoom-out, search with highlights (`report`, `*.zip`), and **export PNG / SVG** in one click.
+A squarified treemap of every file, sized by bytes and colored **teal → amber → red**. Drill in, climb back with breadcrumbs + zoom-out, search with highlights (`report`, `*.zip`), pin **folder budgets** (over-budget folders get a red dashed border), and **export** the chart (PNG / SVG) or the whole scan (**CSV**, or a multi-page **PDF report**).
 
 </td>
 </tr>
@@ -90,7 +90,7 @@ A size-proportional icon grid with multi-select, sorting, and virtual scrolling 
 <td width="50%" valign="top">
 
 ### 🧬 Duplicates
-Finds **true** duplicates (size + streamed SHA-256), grouped with reclaimable space per group. Auto-select keeps the newest copy of each.
+Finds **true** duplicates (size + streamed SHA-256), grouped with reclaimable space per group. Auto-select keeps the newest copy of each. A **Near-Duplicate Images** tab catches resized, re-encoded and screenshot copies with a perceptual **dHash**.
 
 </td>
 </tr>
@@ -112,7 +112,7 @@ Pick any two scans of the same folder for a file-level diff: **added, removed, g
 <td width="50%" valign="top">
 
 ### 🧹 Clean Up
-Three modes — **custom rules** (old / huge / by extension / duplicated), **Smart Suggestions** (`node_modules`, build output, caches, old Downloads, OS junk, OS-aware paths), and **Empty Folders**. Everything → Trash.
+**Custom rules** (old / huge / by extension / duplicated), **Smart Suggestions** — sorted into **regenerable** (`node_modules`, Rust/Maven `target`, virtualenvs, build output — each shown with the command that restores it), **cache**, and **junk**, plus a per-profile **browser cache** breakdown (Chrome / Edge / Brave / Firefox / Safari) — and **Empty Folders**. Everything → Trash.
 
 </td>
 <td width="50%" valign="top">
@@ -237,20 +237,28 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 | `GET /api/scan/:id/progress` | Live scan progress (Server-Sent Events) |
 | `GET /api/scan/:id/result` | Full file tree (202 while running) |
 | `GET /api/scan/:id/treemap` | Pre-computed squarified treemap layout |
+| `GET /api/scan/:id/stats` | Scan counters incl. fast-rescan cache usage |
+| `GET /api/scan/:id/budgets` | Saved folder budgets cross-referenced against this scan |
+| `GET /api/scan/:id/export?format=csv\|pdf` | Download the scan as CSV (files / folders) or a PDF report |
 | `GET /api/scans` | Completed scans currently in memory |
 | `GET /api/large-files?scanId=` | Top N largest files |
 | `GET /api/large-folders?scanId=` | Top N largest folders (recursive sizes) |
 | `GET /api/file-types?scanId=` | Size breakdown by extension |
 | `GET /api/duplicates?scanId=` | Duplicate groups (starts hashing; poll until complete) |
+| `GET /api/near-duplicates?scanId=&threshold=` | Perceptual (dHash) near-duplicate image clusters |
 | `GET /api/empty-folders?scanId=` | Recursively empty folders (`ignoreJunk` configurable) |
 | `GET /api/compare?scanIdA=&scanIdB=` | File-level diff of two scans of the same root |
 | `GET /api/snapshots` | Scan history: roots, per-root snapshots (`?path=`), or all (`?all=true`) |
 | `GET /api/snapshots/compare?a=&b=` | Top-level deltas between two snapshots |
-| `GET /api/cleanup/suggestions?scanId=` | Smart cleanup suggestions (OS-aware rules) |
-| `GET /api/settings` · `PUT /api/settings` | Ignore list + scheduled scans |
+| `GET /api/cleanup/suggestions?scanId=` | Smart cleanup suggestions (regenerable / cache / junk) |
+| `GET /api/cleanup/browser-profiles?scanId=` | Per-browser-profile cache breakdown |
+| `GET /api/git/repos?scanId=` · `POST /api/git/gc` | Git pack/loose/LFS breakdown, and `git gc` a scanned repo |
+| `GET /api/system/snapshots` · `POST …/purge` | OS snapshot accounting (APFS / Btrfs / VSS) |
+| `GET /api/settings` · `PUT /api/settings` | Ignore list, scheduled scans + folder budgets |
 | `GET /api/notifications` | Growth alerts from scheduled scans |
-| `GET /api/system` | Disk totals, platform, suggested folders |
+| `GET /api/system` · `GET /api/trash/size` | Disk totals & platform; system Trash size |
 | `GET /api/fs/list?path=` | Folder browser (powers the path picker) |
+| `GET /api/files/preview?path=` | Quick-look preview (image / text / thumbnail) |
 | `DELETE /api/files` | Move files to the system trash |
 | `POST /api/files/open` | Open / reveal a path in Finder & co. |
 

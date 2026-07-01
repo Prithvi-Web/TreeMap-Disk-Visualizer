@@ -318,6 +318,12 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
 .tm-foot { display: flex; align-items: center; gap: 16px; margin-top: 12px; font-size: 11.5px; color: var(--text-2); padding: 0 4px; }
 .legend-grad { width: 220px; height: 7px; border-radius: 4px;
   background: linear-gradient(90deg, var(--ok), var(--warn), var(--danger)); }
+.tm-legend { display: flex; align-items: center; gap: 9px; }
+.tm-legend .legend-grad { width: 170px; }
+.tm-legend-bands { display: flex; align-items: center; gap: 13px; }
+.tm-legend-bands .ab { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.tm-legend .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.22); }
 .tm-foot .hint { margin-left: auto; color: var(--text-3); display: flex; align-items: center; gap: 6px; }
 
 /* ── Grid view ── */
@@ -355,6 +361,147 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
   display: flex; align-items: center; gap: 14px; padding: 11px 18px; z-index: 60;
   transition: transform var(--dur-3) var(--ease); font-size: 13px; }
 #selectionBar.visible { transform: translateX(-50%) translateY(0); }
+
+/* ── Cleanup cart (Feature 2) ── */
+#cartDock { position: fixed; right: 22px; bottom: 22px; z-index: 80; display: none;
+  flex-direction: column; align-items: stretch; gap: 10px; width: 366px; max-width: 92vw; }
+#cartDock.show { display: flex; }
+#cartPanel { display: none; flex-direction: column; max-height: 54vh; overflow: hidden;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-lg); box-shadow: var(--shadow-3);
+  animation: sheetIn var(--dur-3) var(--ease); }
+#cartDock.open #cartPanel { display: flex; }
+.cart-head { display: flex; align-items: center; gap: 9px; padding: 13px 15px; border-bottom: 1px solid var(--hairline); }
+.cart-head .ttl { font-size: 13.5px; font-weight: 700; letter-spacing: -0.2px; }
+.cart-head .num { color: var(--text-2); font-size: 12px; }
+.cart-head .close-x { margin-left: auto; }
+.cart-list { overflow-y: auto; flex: 1 1 auto; }
+.cart-empty { padding: 26px 16px; text-align: center; color: var(--text-3); font-size: 12.5px; line-height: 1.5; }
+.cart-item { display: flex; align-items: center; gap: 10px; padding: 8px 14px; font-size: 12.5px;
+  border-bottom: 1px solid var(--hairline); }
+.cart-item:last-child { border-bottom: none; }
+.cart-item .meta { flex: 1; min-width: 0; }
+.cart-item .nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cart-item .pth { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; direction: rtl; text-align: left; }
+.cart-item .sz { color: var(--text-2); white-space: nowrap; font-size: 11.5px; }
+.cart-item.missing { opacity: 0.5; }
+.cart-item .rm { border: none; background: var(--surface-2); color: var(--text-2); width: 22px; height: 22px;
+  border-radius: 50%; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex: none;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
+.cart-item .rm:hover { background: var(--danger); color: #fff; }
+.cart-foot { display: flex; align-items: center; gap: 10px; padding: 12px 15px; border-top: 1px solid var(--hairline); }
+.cart-foot .total { font-size: 12.5px; color: var(--text-2); }
+.cart-foot .total b { color: var(--text-1); }
+.cart-foot .btn-danger { margin-left: auto; }
+#cartTab { display: flex; align-items: center; gap: 9px; padding: 11px 16px; cursor: pointer;
+  border: 1px solid var(--hairline-2); border-radius: 999px; box-shadow: var(--shadow-2);
+  background: var(--glass-strong); backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+  font-size: 13px; color: var(--text-1); user-select: none; transition: border-color var(--dur-1) var(--ease); }
+#cartTab:hover { border-color: var(--accent); }
+#cartTab .ic { color: var(--accent); }
+#cartTab .c-count { font-weight: 700; }
+#cartTab .c-sep { color: var(--text-3); }
+#cartTab .c-total { color: var(--text-2); }
+#cartTab .c-cta { margin-left: auto; color: var(--accent); font-weight: 600; }
+#cartDock.open #cartTab .c-cta { color: var(--text-3); }
+.icon-btn.cartin { color: var(--accent); }
+
+/* ── Quick-look preview pane (Feature 4) ── */
+#previewPane { position: fixed; top: 58px; right: 0; bottom: 0; width: 330px; max-width: 88vw; z-index: 72;
+  display: flex; flex-direction: column; background: var(--glass-strong);
+  backdrop-filter: blur(22px) saturate(160%); -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border-left: 1px solid var(--hairline-2); box-shadow: var(--shadow-3);
+  transform: translateX(100%); transition: transform var(--dur-2) var(--ease); }
+#previewPane.open { transform: none; }
+.pv-head { display: flex; align-items: center; gap: 10px; padding: 13px 14px; border-bottom: 1px solid var(--hairline); }
+.pv-head .chip { flex: none; }
+.pv-meta { flex: 1; min-width: 0; }
+.pv-name { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-sub { font-size: 11px; color: var(--text-3); }
+.pv-head .close-x { flex: none; }
+.pv-body { flex: 1; overflow: auto; padding: 12px 14px; }
+.pv-body img { max-width: 100%; height: auto; border-radius: 8px; display: block; margin: 0 auto;
+  background-image: linear-gradient(45deg,rgba(127,127,127,.12) 25%,transparent 25%,transparent 75%,rgba(127,127,127,.12) 75%),linear-gradient(45deg,rgba(127,127,127,.12) 25%,transparent 25%,transparent 75%,rgba(127,127,127,.12) 75%);
+  background-size: 16px 16px; background-position: 0 0,8px 8px; }
+.pv-body pre { margin: 0; font: 11.5px/1.55 ui-monospace, 'SF Mono', Menlo, monospace; white-space: pre-wrap; word-break: break-word; color: var(--text-1); }
+.pv-empty { color: var(--text-3); font-size: 12.5px; text-align: center; padding: 26px 12px; line-height: 1.5; }
+.pv-trunc { color: var(--text-3); font-size: 10.5px; margin-top: 10px; text-align: center; }
+.pv-kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 12.5px; padding: 0 4px; }
+.pv-kv .k { color: var(--text-3); }
+.pv-foot { padding: 9px 14px; border-top: 1px solid var(--hairline); }
+.pv-foot .pth { font-size: 10.5px; color: var(--text-3); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.pv-body .tk-kw { color: #c792ea; } .pv-body .tk-str { color: #7fd88f; }
+.pv-body .tk-num { color: #f78c6c; } .pv-body .tk-com { color: var(--text-3); font-style: italic; }
+:root[data-theme="light"] .pv-body .tk-kw { color: #9c27b0; }
+:root[data-theme="light"] .pv-body .tk-str { color: #2e7d32; }
+:root[data-theme="light"] .pv-body .tk-num { color: #d84315; }
+body.preview-open #cartDock { right: 348px; }
+
+/* ── Fast (incremental) rescan toggle (Feature 5) ── */
+.fast-rescan { display: inline-flex; align-items: center; gap: 7px; margin-top: 11px; font-size: 12.5px; color: var(--text-2); cursor: pointer; user-select: none; }
+.fast-rescan[hidden] { display: none; }
+.fast-rescan input { accent-color: var(--accent); margin: 0; }
+.fast-rescan .ic { color: var(--accent); }
+
+/* ── Keyboard shortcuts overlay (Feature 6) ── */
+.kbd-sec { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-3); margin: 2px 0 11px; }
+.kbd-sec + .kbd-grid + .kbd-sec { margin-top: 18px; }
+.kbd-grid { display: grid; grid-template-columns: 132px 1fr; gap: 9px 16px; align-items: center; font-size: 13px; }
+.kbd-grid > div:nth-child(odd) { display: flex; gap: 5px; }
+.kbd-grid > div:nth-child(even) { color: var(--text-2); }
+kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 23px; padding: 0 7px;
+  font: 11.5px ui-monospace, 'SF Mono', Menlo, monospace; color: var(--text-1); background: var(--surface-2);
+  border: 1px solid var(--hairline-2); border-radius: 6px; box-shadow: inset 0 -1.5px 0 var(--hairline); }
+
+/* ── Growth-rate projection (Feature 7) ── */
+.growth-proj { display: flex; align-items: center; gap: 9px; margin-top: 14px; padding: 11px 13px; border-radius: var(--r-md); font-size: 12.5px; font-weight: 500; border: 1px solid var(--hairline); }
+.growth-proj[hidden] { display: none; }
+.growth-proj .ic { flex: none; }
+.growth-proj.warn { color: var(--warn); background: rgba(255,214,10,0.08); border-color: rgba(255,214,10,0.25); }
+.growth-proj.danger { color: var(--danger); background: rgba(255,69,58,0.09); border-color: rgba(255,69,58,0.28); }
+
+/* ── Folder budgets (Feature 15) ── */
+.budget-folder { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--hairline);
+  border-radius: var(--r-md); background: var(--surface-1); }
+.budget-folder .ic { color: var(--accent); flex: none; }
+.budget-folder .meta { min-width: 0; }
+.budget-folder .nm { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.budget-folder .pth { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; text-align: left; }
+.budget-input { display: flex; gap: 8px; }
+.budget-input input { flex: 1; }
+.budget-input select { flex: none; width: 92px; }
+#budgetCard .budget-row { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-bottom: 1px solid var(--hairline); }
+#budgetCard .budget-row:last-child { border-bottom: none; }
+#budgetCard .budget-row .meta { flex: 1; min-width: 0; }
+#budgetCard .budget-row .nm { font-weight: 500; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#budgetCard .budget-row .bar-track { height: 5px; border-radius: 3px; background: var(--surface-2); margin-top: 5px; overflow: hidden; }
+#budgetCard .budget-row .bar { height: 100%; border-radius: 3px; }
+#budgetCard .budget-row .over { font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+#budgetCard .budget-row.is-over .over { color: var(--danger); }
+#budgetCard .budget-row.is-ok .over { color: var(--ok); }
+#budgetCard .budget-row .b-edit { flex: none; }
+
+/* ── Trash awareness (Feature 8) ── */
+.fact-trash { cursor: pointer; }
+.fact-trash:hover b { color: var(--accent); }
+#trashModalMeta { color: var(--text-2); font-weight: 500; font-size: 13px; }
+.trash-list { max-height: 56vh; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--r-md); }
+.trash-item { display: flex; align-items: center; gap: 10px; padding: 9px 13px; font-size: 12.5px; border-bottom: 1px solid var(--hairline); }
+.trash-item:last-child { border-bottom: none; }
+.trash-item .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trash-item .sz { color: var(--text-2); white-space: nowrap; }
+
+/* ── OS snapshot accounting (Feature 9) ── */
+.snap-row { display: flex; align-items: center; gap: 11px; margin-top: 12px; padding: 10px 13px; border-radius: var(--r-md); border: 1px solid var(--hairline); background: var(--surface-1); font-size: 12.5px; }
+.snap-row[hidden] { display: none; }
+.snap-row .ic { color: var(--text-2); flex: none; }
+.snap-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.snap-meta b { font-weight: 600; }
+.snap-meta .muted { font-size: 10.5px; line-height: 1.35; }
+.snap-row .pill { flex: none; }
+.pill.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.git-bd { font-size: 11px; color: var(--text-2); white-space: nowrap; }
 
 /* ── Modals ── */
 .modal-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 100;
@@ -411,6 +558,48 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
   border-radius: 99px; border: 1px solid var(--hairline); background: var(--surface-1); cursor: pointer;
   color: var(--text-2); transition: color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease); }
 .pill:hover { color: var(--text-1); border-color: var(--accent); }
+
+/* ── Smart Suggestions: category cards + regenerable badge (Feature 14) ── */
+.smart-filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 14px; }
+.smart-group { margin-bottom: 12px; padding: 11px 13px 12px; border: 1px solid var(--hairline);
+  border-radius: var(--r-md); background: var(--surface-1); }
+.smart-group .rule-row { padding: 4px 0 2px; }
+.smart-group .clean-list { background: var(--surface-1); }
+.smart-group.cat-regenerable { border-color: rgba(191,90,242,0.38); background: rgba(191,90,242,0.07); }
+.smart-group.cat-regenerable .clean-list { background: transparent; }
+.smart-desc { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--text-2); font-size: 12.5px; }
+.regen-cmd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; flex: none;
+  color: #d6a8ff; background: rgba(191,90,242,0.16); border: 1px solid rgba(191,90,242,0.36);
+  border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+.rc-lbl { color: var(--text-3); font-size: 11px; flex: none; margin-left: 1px; }
+:root[data-theme="light"] .smart-group.cat-regenerable { border-color: rgba(124,58,237,0.30); background: rgba(124,58,237,0.06); }
+:root[data-theme="light"] .regen-cmd { color: #7c3aed; background: rgba(124,58,237,0.10); border-color: rgba(124,58,237,0.28); }
+
+/* ── Browser profile drill-down (Feature 16) ── */
+#browserProfiles { margin-bottom: 16px; }
+.bp-section-h { display: flex; align-items: center; gap: 7px; padding: 6px 0; font-size: 12.5px; }
+.bp-section-h b { display: inline-flex; align-items: center; gap: 7px; }
+.bp-acc { border: 1px solid var(--hairline); border-radius: var(--r-md); margin-bottom: 8px; overflow: hidden; background: var(--surface-1); }
+.bp-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer; user-select: none;
+  transition: background var(--dur-1) var(--ease); }
+.bp-head:hover { background: var(--surface-2); }
+.bp-fav { width: 18px; height: 18px; flex: none; display: inline-flex; }
+.bp-fav svg { width: 18px; height: 18px; display: block; }
+.bp-title { font-weight: 600; font-size: 13px; }
+.bp-title .prof { color: var(--text-3); font-weight: 400; margin-left: 6px; font-size: 12px; }
+.bp-head .spacer { flex: 1; }
+.bp-head .size-badge { flex: none; }
+.bp-head .chev { color: var(--text-3); display: inline-flex; transition: transform var(--dur-2) var(--ease); }
+.bp-acc.open .bp-head .chev { transform: rotate(90deg); }
+.bp-head input[type="checkbox"] { flex: none; }
+.bp-items { display: none; border-top: 1px solid var(--hairline); }
+.bp-acc.open .bp-items { display: block; }
+.bp-item { display: flex; align-items: center; gap: 10px; padding: 7px 12px 7px 14px; font-size: 12.5px;
+  border-bottom: 1px solid var(--hairline); }
+.bp-item:last-child { border-bottom: none; }
+.bp-item .lbl { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bp-item .pth { font-size: 10.5px; color: var(--text-3); }
 
 /* ── Floating: tooltip / menu / toasts ── */
 #tooltip { position: fixed; z-index: 200; pointer-events: none; display: none;
@@ -471,6 +660,30 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
 .dup-progress { display: flex; flex-direction: column; gap: 12px; align-items: center; padding: 60px 0; color: var(--text-2); }
 .dup-progress .track { width: 320px; height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .dup-progress .fill { height: 100%; width: 0%; border-radius: 3px; background: var(--accent); transition: width 300ms var(--ease); }
+
+/* ── Near-duplicate images ── */
+.nd-list { display: flex; flex-direction: column; gap: 12px; }
+.nd-cluster { padding: 13px 16px 16px; }
+.nd-chead { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.nd-chead .nd-count { font-size: 13px; font-weight: 600; }
+.nd-chead .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap; margin-left: auto; }
+.nd-strip { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.nd-item { flex: 0 0 132px; width: 132px; }
+.nd-thumbwrap { position: relative; display: block; width: 132px; height: 100px; border-radius: 9px; overflow: hidden;
+  background: var(--surface-2); border: 1px solid var(--hairline); cursor: pointer; }
+.nd-thumbwrap.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.nd-thumb { width: 100%; height: 100%; object-fit: cover; display: block; background: var(--surface-2); }
+.nd-thumb.broken { display: flex; align-items: center; justify-content: center; color: var(--text-3); }
+.nd-ck { position: absolute; top: 7px; left: 7px; z-index: 2; width: 17px; height: 17px; cursor: pointer; accent-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.35); border-radius: 4px; }
+.nd-badge { position: absolute; bottom: 6px; right: 6px; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 99px;
+  background: rgba(0,0,0,0.62); color: #fff; backdrop-filter: blur(3px); }
+.nd-badge.new { background: rgba(48,209,88,0.85); }
+.nd-info { margin-top: 7px; }
+.nd-info .nm { font-size: 11.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nd-info .sub { font-size: 10.5px; color: var(--text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nd-info .acts { display: flex; gap: 4px; margin-top: 5px; }
+.nd-note { font-size: 12px; color: var(--text-3); margin-bottom: 10px; display: flex; align-items: center; gap: 7px; }
 
 /* ── Trends view ── */
 .trends-grid { display: grid; grid-template-columns: 7fr 5fr; gap: 18px; align-items: start; }
@@ -599,7 +812,22 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
               <div class="fact"><span>Total disk</span><b id="sysTotal" class="num">–</b></div>
               <div class="fact"><span>Free</span><b id="sysFree" class="num">–</b></div>
               <div class="fact"><span>Used</span><b id="sysUsed" class="num">–</b></div>
+              <div class="fact fact-trash" id="trashFact" hidden role="button" tabindex="0" title="View Trash contents"><span>Trash</span><b id="sysTrash" class="num">–</b></div>
             </div>
+          </div>
+          <div class="growth-proj" id="growthProj" hidden></div>
+          <div class="snap-row" id="snapRow" hidden>
+            <span class="ic" data-icon="clock" data-size="16"></span>
+            <div class="snap-meta"><b id="snapCount">–</b><span id="snapHint" class="muted"></span></div>
+            <button class="pill" id="snapPurgeBtn">Purge</button>
+          </div>
+          <div class="snap-row" id="hardlinkRow" hidden>
+            <span class="ic" data-icon="copy" data-size="16"></span>
+            <div class="snap-meta"><b id="hardlinkText"></b><span class="muted">Counted once, so totals match what the OS reports.</span></div>
+          </div>
+          <div class="snap-row" id="cloudRow" hidden>
+            <span class="ic" data-icon="cloud" data-size="16"></span>
+            <div class="snap-meta"><b id="cloudText"></b><span class="muted">Stored in the cloud — local copies are safe to remove.</span></div>
           </div>
         </div>
 
@@ -613,6 +841,9 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
             <button class="btn" id="browseBtn">Browse…</button>
             <button class="btn btn-primary" id="scanBtn"><span data-icon="play"></span>Scan</button>
           </div>
+          <label class="fast-rescan" id="fastRescanWrap" hidden>
+            <input type="checkbox" id="fastRescan"><span data-icon="zap" data-size="13"></span>Fast rescan — reuse cache for unchanged folders
+          </label>
           <div class="scan-status" id="scanStatus">No scan yet — pick a folder above.</div>
           <div class="scan-meta num" id="scanMeta"></div>
           <div class="progress-track" id="progressTrack"><div class="progress-fill"></div></div>
@@ -649,6 +880,10 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
           <h2><span data-icon="folder"></span>Largest Folders</h2>
           <div id="bigFolders"><div class="muted">Run a scan to find your biggest folders.</div></div>
         </div>
+        <div class="card glass" id="budgetCard" hidden>
+          <h2><span data-icon="gauge"></span>Folder Budgets</h2>
+          <div id="budgetList"></div>
+        </div>
       </div>
     </div>
   </section>
@@ -659,15 +894,24 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
       <button class="btn" id="tmUpBtn" title="Zoom out one level (Escape)" aria-label="Zoom out one level"><span data-icon="arrowUp"></span></button>
       <div class="crumbs" id="tmCrumbs"></div>
       <div class="tm-controls">
+        <div class="seg" id="tmViewSeg" role="tablist" aria-label="Treemap or sunburst layout">
+          <button type="button" data-vm="treemap" aria-selected="true" title="Squarified treemap">Treemap</button>
+          <button type="button" data-vm="sunburst" aria-selected="false" title="Radial sunburst">Sunburst</button>
+        </div>
         <div class="field">
           <span data-icon="search"></span>
           <input type="text" id="tmSearch" placeholder="Highlight… (name or *.zip)" aria-label="Highlight matching files in the treemap" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="seg" id="tmColorSeg" role="tablist" aria-label="Treemap color mode">
+          <button type="button" data-mode="size" aria-selected="true" title="Color cells by file size">Size</button>
+          <button type="button" data-mode="age" aria-selected="false" title="Color cells by how recently modified">Age</button>
         </div>
         <label for="tmDepth">Depth</label>
         <select id="tmDepth" aria-label="Treemap depth">
           <option value="2">2</option><option value="3">3</option>
           <option value="4" selected>4</option><option value="5">5</option><option value="6">6</option>
         </select>
+        <button class="pill" id="tmCloudToggle" hidden aria-pressed="false" title="Hide cloud placeholder files — show only bytes that are really on disk">Hide cloud</button>
         <button class="icon-btn" id="tmRefresh" aria-label="Re-render treemap" title="Re-render"></button>
         <button class="btn" id="tmExportBtn" title="Download the treemap as an image"><span data-icon="download"></span>Export</button>
       </div>
@@ -676,7 +920,7 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
       <div id="treemapZoom"><canvas id="treemapCanvas" tabindex="0" aria-label="Disk usage treemap. Click a directory to drill in, Escape to go up."></canvas></div>
     </div>
     <div class="tm-foot">
-      <span>1 MB</span><div class="legend-grad"></div><span>10 GB+</span>
+      <div id="tmLegend" class="tm-legend"></div>
       <span class="num" id="tmStatus"></span>
       <span class="hint"><span data-icon="mouse"></span>click a folder to drill in · right-click for actions · Esc to go up</span>
     </div>
@@ -705,20 +949,41 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
 
   <!-- ═══════════ Duplicates ═══════════ -->
   <section class="view" id="view-duplicates" role="tabpanel" aria-label="Duplicates" hidden>
-    <div class="dup-toolbar">
-      <span class="dup-summary" id="dupSummary">Scanning for duplicates…</span>
-      <div class="spacer"></div>
-      <label for="dupMinSize">Ignore files under</label>
-      <select id="dupMinSize" aria-label="Minimum file size for duplicate detection">
-        <option value="1024">1 KB</option>
-        <option value="102400" selected>100 KB</option>
-        <option value="1048576">1 MB</option>
-        <option value="10485760">10 MB</option>
-      </select>
-      <button class="btn" id="dupAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
-      <button class="btn btn-danger" id="dupTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
+    <div class="seg" id="dupModeSeg" role="tablist" aria-label="Duplicate detection mode" style="margin-bottom:13px;">
+      <button role="tab" aria-selected="true" data-dupmode="exact"><span data-icon="copy"></span>Exact</button>
+      <button role="tab" aria-selected="false" data-dupmode="near"><span data-icon="image"></span>Near-Duplicate Images</button>
     </div>
-    <div id="dupBody"></div>
+    <div id="dupPaneExact">
+      <div class="dup-toolbar">
+        <span class="dup-summary" id="dupSummary">Scanning for duplicates…</span>
+        <div class="spacer"></div>
+        <label for="dupMinSize">Ignore files under</label>
+        <select id="dupMinSize" aria-label="Minimum file size for duplicate detection">
+          <option value="1024">1 KB</option>
+          <option value="102400" selected>100 KB</option>
+          <option value="1048576">1 MB</option>
+          <option value="10485760">10 MB</option>
+        </select>
+        <button class="btn" id="dupAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
+        <button class="btn btn-danger" id="dupTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
+      </div>
+      <div id="dupBody"></div>
+    </div>
+    <div id="dupPaneNear" hidden>
+      <div class="dup-toolbar">
+        <span class="dup-summary" id="ndSummary">Looking for similar images…</span>
+        <div class="spacer"></div>
+        <label for="ndThreshold">Match</label>
+        <select id="ndThreshold" aria-label="How similar images must be to be grouped">
+          <option value="6">Very similar</option>
+          <option value="10" selected>Similar</option>
+          <option value="14">Loosely similar</option>
+        </select>
+        <button class="btn" id="ndAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
+        <button class="btn btn-danger" id="ndTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
+      </div>
+      <div id="ndBody"></div>
+    </div>
   </section>
 
   <!-- ═══════════ Trends ═══════════ -->
@@ -774,6 +1039,7 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
         <button role="tab" aria-selected="true" data-pane="rules"><span data-icon="search"></span>Custom Rules</button>
         <button role="tab" aria-selected="false" data-pane="smart"><span data-icon="sparkles"></span>Smart Suggestions</button>
         <button role="tab" aria-selected="false" data-pane="empty"><span data-icon="folder"></span>Empty Folders</button>
+        <button role="tab" aria-selected="false" data-pane="cloud" id="cleanTabCloud" hidden><span data-icon="cloud"></span>Cloud-safe</button>
       </div>
       <div class="muted" style="margin-bottom:6px;">Nothing is removed until you confirm — and everything goes to the system Trash, recoverable any time.</div>
       <div id="cleanPaneRules">
@@ -796,6 +1062,8 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
         <div id="cleanResults"></div>
       </div>
       <div id="cleanPaneSmart" style="display:none;">
+        <div id="gitRepos"></div>
+        <div id="browserProfiles"></div>
         <div id="smartResults"></div>
       </div>
       <div id="cleanPaneEmpty" style="display:none;">
@@ -804,6 +1072,9 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
           <label for="emptyIgnoreJunk">Treat folders holding only junk files (.DS_Store, Thumbs.db) as empty</label>
         </div>
         <div id="emptyResults"></div>
+      </div>
+      <div id="cleanPaneCloud" style="display:none;">
+        <div id="cloudResults"></div>
       </div>
       <div id="cleanProgress"><div class="track"><div class="fill" id="cleanProgressFill"></div></div></div>
     </div>
@@ -852,6 +1123,42 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
   </div>
 </div>
 
+<!-- ═══════════ Budget modal (Feature 15) ═══════════ -->
+<div class="modal-backdrop" id="budgetModal" role="dialog" aria-modal="true" aria-labelledby="budgetTitle">
+  <div class="modal" style="width:440px;">
+    <div class="modal-head">
+      <h3 id="budgetTitle"><span data-icon="gauge"></span>Set folder budget</h3>
+      <button class="close-x" data-close="budgetModal" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="budget-folder">
+        <span data-icon="folder" data-size="16"></span>
+        <div class="meta">
+          <div class="nm" id="budgetFolderName">–</div>
+          <div class="pth" id="budgetFolderPath"></div>
+        </div>
+      </div>
+      <div class="muted" id="budgetCurrent" style="margin:11px 0 13px;font-size:12.5px;"></div>
+      <label for="budgetValue" class="muted" style="display:block;margin-bottom:7px;font-size:12.5px;">Warn me when this folder grows past</label>
+      <div class="budget-input">
+        <input type="number" id="budgetValue" min="0" step="any" placeholder="5" aria-label="Budget amount">
+        <select id="budgetUnit" aria-label="Budget unit">
+          <option value="1073741824" selected>GB</option>
+          <option value="1048576">MB</option>
+          <option value="1024">KB</option>
+          <option value="1">bytes</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-danger" id="budgetRemoveBtn" style="display:none;"><span data-icon="trash"></span>Remove</button>
+      <div style="flex:1"></div>
+      <button class="btn" data-close="budgetModal">Cancel</button>
+      <button class="btn btn-primary" id="budgetSaveBtn"><span data-icon="check"></span>Save budget</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════ Settings modal ═══════════ -->
 <div class="modal-backdrop" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
   <div class="modal" style="width:740px;">
@@ -880,6 +1187,81 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
 </div>
 
 <div id="tooltip" role="tooltip"></div>
+<!-- ═══════════ Trash contents (Feature 8) ═══════════ -->
+<div class="modal-backdrop" id="trashModal" role="dialog" aria-modal="true" aria-label="Trash contents">
+  <div class="modal" style="width:560px;max-width:92vw;">
+    <div class="modal-head">
+      <h3><span data-icon="trash" data-size="17"></span>Trash <span class="num" id="trashModalMeta"></span></h3>
+      <button class="close-x" data-close="trashModal" aria-label="Close"><span data-icon="x" data-size="14"></span></button>
+    </div>
+    <div class="modal-body" id="trashModalBody"></div>
+    <div class="modal-foot"><span class="muted" style="flex:1;">Read-only view · empty the Trash from your file manager.</span></div>
+  </div>
+</div>
+
+<!-- ═══════════ Keyboard shortcuts (Feature 6) ═══════════ -->
+<div class="modal-backdrop" id="shortcutsModal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+  <div class="modal" style="width:540px;max-width:92vw;">
+    <div class="modal-head">
+      <h3><span data-icon="keyboard" data-size="18"></span>Keyboard shortcuts</h3>
+      <button class="close-x" data-close="shortcutsModal" aria-label="Close"><span data-icon="x" data-size="14"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="kbd-sec">Treemap &amp; Sunburst</div>
+      <div class="kbd-grid">
+        <div><kbd>h</kbd><kbd>←</kbd></div><div>Zoom out one level</div>
+        <div><kbd>j</kbd><kbd>↓</kbd></div><div>Select next cell</div>
+        <div><kbd>k</kbd><kbd>↑</kbd></div><div>Select previous cell</div>
+        <div><kbd>l</kbd><kbd>→</kbd><kbd>↵</kbd></div><div>Drill into folder / preview file</div>
+        <div><kbd>c</kbd></div><div>Add selected to the cleanup cart</div>
+        <div><kbd>p</kbd></div><div>Quick-look the selected file</div>
+        <div><kbd>/</kbd></div><div>Focus the search box</div>
+        <div><kbd>Esc</kbd></div><div>Clear selection · close panel · zoom out</div>
+      </div>
+      <div class="kbd-sec">Anywhere</div>
+      <div class="kbd-grid">
+        <div><kbd>⌘</kbd><kbd>R</kbd></div><div>Rescan the current folder</div>
+        <div><kbd>?</kbd></div><div>Show this help</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ Cleanup cart (Feature 2) ═══════════ -->
+<div id="cartDock">
+  <div id="cartPanel" class="glass">
+    <div class="cart-head">
+      <span class="ttl">Cleanup cart</span>
+      <span class="num" id="cartHeadCount"></span>
+      <button class="close-x" id="cartCollapse" aria-label="Collapse cart"><span data-icon="x" data-size="14"></span></button>
+    </div>
+    <div class="cart-list" id="cartList"></div>
+    <div class="cart-foot">
+      <span class="total" id="cartFootTotal"></span>
+      <button class="btn" id="cartClear">Clear</button>
+      <button class="btn btn-danger" id="cartTrash"><span data-icon="trash" data-size="14"></span>Move all to Trash</button>
+    </div>
+  </div>
+  <div id="cartTab" role="button" tabindex="0" aria-label="Open cleanup cart">
+    <span data-icon="cart" data-size="17"></span>
+    <span class="c-count" id="cartTabCount">0</span>
+    <span class="c-sep">·</span>
+    <span class="c-total num" id="cartTabTotal">0 B</span>
+    <span class="c-cta" id="cartTabCta">Review</span>
+  </div>
+</div>
+
+<!-- ═══════════ Quick-look preview (Feature 4) ═══════════ -->
+<aside id="previewPane" aria-label="File preview" hidden>
+  <div class="pv-head">
+    <span class="pv-ic" id="pvIcon"></span>
+    <div class="pv-meta"><div class="pv-name" id="pvName"></div><div class="pv-sub num" id="pvSub"></div></div>
+    <button class="close-x" id="pvClose" aria-label="Close preview"><span data-icon="x" data-size="14"></span></button>
+  </div>
+  <div class="pv-body" id="pvBody"></div>
+  <div class="pv-foot"><span class="pth" id="pvFoot"></span></div>
+</aside>
+
 <div id="ctxMenu" role="menu"></div>
 <div id="toasts" aria-live="polite"></div>
 
@@ -975,6 +1357,8 @@ const PATHS = {
   pie: '<path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>',
   activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
   zap: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>',
+  gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
   shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
   eyeOff: '<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/>',
   mouse: '<rect x="5" y="2" width="14" height="20" rx="7"/><path d="M12 6v4"/>',
@@ -985,6 +1369,10 @@ const PATHS = {
   calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   ban: '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
+  cart: '<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.5 2.5h2l2.6 12.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6l1.6-7.4H5.1"/>',
+  keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M10 14h4"/>',
+  cloud: '<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>',
+  gitBranch: '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
 };
 function icon(name, size = 16, cls = '') {
   return `<svg class="ic ${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PATHS[name] || PATHS.file}</svg>`;
@@ -1063,10 +1451,31 @@ function sizeColor(bytes, alpha = 1) {
   return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
 }
 
+/* ── Age → color scale (heatmap mode): green = fresh … red = stale ── */
+const C_ORANGE = hexToRgb('#FF9F0A');
+const AGE_BANDS = [
+  { maxDays: 30,       rgb: C_TEAL,   label: '&lt; 30 days' },
+  { maxDays: 365,      rgb: C_AMBER,  label: '30–365 days' },
+  { maxDays: 730,      rgb: C_ORANGE, label: '1–2 years' },
+  { maxDays: Infinity, rgb: C_RED,    label: '&gt; 2 years' },
+];
+function ageRgb(modifiedAt) {
+  const days = (Date.now() - (modifiedAt || 0)) / 86400000;
+  for (const b of AGE_BANDS) if (days < b.maxDays) return b.rgb;
+  return C_RED;
+}
+/** Cell base color for the active treemap color mode ('size' | 'age'). */
+function cellRgb(n) {
+  return state.treemap.colorMode === 'age' ? ageRgb(n.modifiedAt) : sizeRgb(n.size);
+}
+
 /* ───────────────────────────── App state ───────────────────────────── */
 const state = {
   view: 'dashboard',
   system: null,
+  trash: null,
+  snapshots: null,
+  scanStats: null,
   scanId: null,
   scanning: false,
   es: null,
@@ -1076,10 +1485,13 @@ const state = {
   largest: [],
   types: [],
   bigFolders: [],
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0 },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null, hideCloud: false },
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   donut: { segs: [], hover: -1, animated: false },
   dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
+  dupMode: 'exact',
+  near: { loadedFor: null, status: 'idle', clusters: [], clusterCount: 0, totalReclaimable: 0, available: true, truncated: false, selection: new Set(), pollTimer: 0 },
+  budgets: { list: [], overPaths: new Set() },
   trends: { roots: [], path: null, snapshots: [], points: [], hover: -1 },
   compare: { options: [], result: null },
 };
@@ -1092,6 +1504,7 @@ function indexTree(root) {
     state.pathIndex.set(n.path, n);
     if (n.children) for (const c of n.children) stack.push(c);
   }
+  if (typeof renderCart === 'function') renderCart(); // refresh staged-item sizes against the new tree
 }
 
 /* ───────────────────────────── View switching ───────────────────────────── */
@@ -1118,7 +1531,9 @@ function switchView(name) {
     if (!state.grid.path || !state.pathIndex.has(state.grid.path)) state.grid.path = state.root.path;
     renderGrid();
   }
-  if (name === 'duplicates' && state.scanId && state.root) loadDuplicates();
+  if (name === 'duplicates' && state.scanId && state.root) {
+    if (state.dupMode === 'near') loadNearDupes(); else loadDuplicates();
+  }
   if (name === 'trends') loadTrends();
   if (name === 'compare') loadCompareOptions();
 }
@@ -1139,9 +1554,96 @@ async function loadSystem() {
     const C = 2 * Math.PI * 55;
     requestAnimationFrame(() => { $('ringFg').style.strokeDashoffset = String(C * (1 - pct)); });
     if (!$('pathInput').value) $('pathInput').value = sys.homeDir;
+    loadTrash();
+    loadSnapshots();
   } catch (e) {
     toast('Could not load system info: ' + e.message, 'error');
   }
+}
+
+/* Feature 8 — Trash awareness. */
+async function loadTrash() {
+  try {
+    const t = await api('/api/trash/size');
+    state.trash = t;
+    const el = $('trashFact');
+    if (t && t.totalBytes > 0) {
+      $('sysTrash').textContent = formatBytes(t.totalBytes) + (t.itemCount ? ` · ${formatCount(t.itemCount)}` : '');
+      el.hidden = false;
+    } else {
+      el.hidden = true;
+    }
+  } catch { /* trash sizing is best-effort */ }
+}
+function openTrashModal() {
+  const t = state.trash;
+  $('trashModalMeta').textContent = t ? `· ${formatBytes(t.totalBytes)} · ${formatCount(t.itemCount)} item${t.itemCount === 1 ? '' : 's'}` : '';
+  const body = $('trashModalBody');
+  if (!t || !t.items || !t.items.length) {
+    body.innerHTML = `<div class="muted" style="padding:18px 2px;display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} The Trash is empty.</div>`;
+  } else {
+    body.innerHTML = '<div class="trash-list">' + t.items.map((it) =>
+      `<div class="trash-item">${chipFor({ type: 'file', extension: (it.name.split('.').pop() || '').toLowerCase() }, 14)}` +
+      `<span class="nm" title="${escapeHtml(it.name)}">${escapeHtml(it.name)}</span>` +
+      `<span class="sz num">${formatBytes(it.size)}</span></div>`
+    ).join('') + '</div>';
+  }
+  $('trashModal').classList.add('open');
+}
+$('trashFact').addEventListener('click', openTrashModal);
+$('trashFact').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTrashModal(); } });
+
+/* Feature 9 — OS snapshot accounting. */
+async function loadSnapshots() {
+  try {
+    const s = await api('/api/system/snapshots');
+    state.snapshots = s;
+    const el = $('snapRow');
+    if (s && s.available && s.snapshots && s.snapshots.length > 0) {
+      const n = s.snapshots.length;
+      $('snapCount').textContent = `${formatCount(n)} local snapshot${n === 1 ? '' : 's'}` + (s.totalBytes ? ` · ~${formatBytes(s.totalBytes)}` : '');
+      $('snapHint').textContent = 'Hidden space from filesystem snapshots — Time Machine recreates these on the next backup, so purging is safe.';
+      $('snapPurgeBtn').hidden = !s.canPurge;
+      el.hidden = false;
+    } else {
+      el.hidden = true;
+    }
+  } catch { /* snapshot accounting is best-effort */ }
+}
+$('snapPurgeBtn').addEventListener('click', () => {
+  const n = state.snapshots && state.snapshots.snapshots ? state.snapshots.snapshots.length : 0;
+  $('confirmTitle').innerHTML = icon('clock', 18) + 'Purge local snapshots?';
+  $('confirmText').innerHTML = `Delete <b>${formatCount(n)} local snapshot${n === 1 ? '' : 's'}</b>?<br><span style="color:var(--text-3)">This frees the space they hold. Time Machine will create fresh ones on the next backup.</span>`;
+  onConfirmTrash = purgeSnapshotsAction;
+  $('confirmModal').classList.add('open');
+});
+async function purgeSnapshotsAction() {
+  try {
+    const r = await api('/api/system/snapshots/purge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) });
+    if (r.ok) toast(`Purged ${formatCount(r.deleted)} local snapshot${r.deleted === 1 ? '' : 's'}`);
+    else toast(`Purged ${r.deleted}, ${r.failed} failed`, r.failed ? 'error' : 'success');
+  } catch (e) { toast('Purge failed: ' + e.message, 'error'); }
+  loadSnapshots();
+}
+
+/** Inject a synthetic Trash cell at the top level of a home-folder treemap. */
+function maybeInjectTrash() {
+  if (state.treemap.mode !== 'treemap') return;
+  if (!state.root || !state.system || !state.trash) return;
+  if (state.treemap.rootPath !== state.root.path) return;
+  if (state.root.path !== state.system.homeDir) return;
+  const tb = state.trash.totalBytes;
+  if (!(tb > 0) || !state.treemap.nodes.length) return;
+  const rootSize = state.treemap.rootSize || state.root.size;
+  if (rootSize <= 0) return;
+  const frac = tb / (rootSize + tb);
+  const trashW = Math.max(6, Math.min(34, frac * 100)); // keep visible, never dominant
+  const scale = (100 - trashW) / 100;
+  for (const n of state.treemap.nodes) { n.x *= scale; n.w *= scale; }
+  state.treemap.nodes.push({
+    name: 'Trash', path: ' trash', size: tb, type: 'dir', modifiedAt: Date.now(),
+    depth: 1, expanded: false, isTrash: true, x: 100 - trashW, y: 0, w: trashW, h: 100,
+  });
 }
 
 /* ───────────────────────────── Scanning + SSE ───────────────────────────── */
@@ -1152,7 +1654,24 @@ function skeletonRows(n, h = 38) {
   return Array.from({ length: n }, () => `<div class="skeleton" style="height:${h}px;margin:8px 0;"></div>`).join('');
 }
 
-async function startScan(path) {
+/* Feature 5 — fast (incremental) rescan helpers. */
+function scannedRoots() { try { return new Set(JSON.parse(localStorage.getItem('tm-scanned-roots') || '[]')); } catch { return new Set(); } }
+function rememberScannedRoot(p) { const s = scannedRoots(); s.add(p); localStorage.setItem('tm-scanned-roots', JSON.stringify([...s].slice(-60))); }
+function maybeShowFastRescan() {
+  const wrap = $('fastRescanWrap'); if (!wrap) return;
+  const p = $('pathInput').value.trim();
+  const known = !!p && scannedRoots().has(p);
+  wrap.hidden = !known;
+  $('fastRescan').checked = known;
+}
+async function showFastRescanStat(scanId) {
+  try {
+    const s = await api(`/api/scan/${scanId}/stats`);
+    if (s && s.cachedDirs > 0) toast(`Fast rescan — ${formatCount(s.cachedDirs)} folders reused from cache`);
+  } catch { /* stats are best-effort */ }
+}
+
+async function startScan(path, opts = {}) {
   if (state.scanning) { toast('A scan is already running', 'error'); return; }
   closeEventSource();
   const status = $('scanStatus');
@@ -1171,11 +1690,14 @@ async function startScan(path) {
     switchView('dashboard');
 
     const t0 = performance.now();
-    const { scanId } = await api('/api/scan', {
+    const resp = await api('/api/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path, incremental: !!opts.incremental }),
     });
+    const scanId = resp.scanId;
+    const fast = resp.incremental === true;
+    const fastTag = fast ? icon('zap', 12) + ' Fast rescan · ' : '';
     state.scanId = scanId;
 
     const es = new EventSource(`/api/scan/${scanId}/progress`);
@@ -1186,7 +1708,7 @@ async function startScan(path) {
         const secs = (performance.now() - t0) / 1000;
         const rate = secs > 0.2 ? Math.round(msg.scanned / secs) : 0;
         status.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') +
-          `<span class="num">Scanning… <b>${formatCount(msg.scanned)}</b> items` +
+          `<span class="num">${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
           (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`;
         $('scanMeta').textContent = msg.currentPath;
       } else if (msg.type === 'complete') {
@@ -1196,6 +1718,8 @@ async function startScan(path) {
           const r = await api(`/api/scan/${scanId}/result`);
           root = r.root;
         }
+        rememberScannedRoot(path);
+        if (fast) showFastRescanStat(scanId);
         finishScan(root, performance.now() - t0);
       } else if (msg.type === 'error') {
         closeEventSource();
@@ -1209,7 +1733,7 @@ async function startScan(path) {
       closeEventSource();
       try {
         const r = await api(`/api/scan/${scanId}/result`);
-        if (r.status === 'complete') { finishScan(r.root, performance.now() - t0); return; }
+        if (r.status === 'complete') { rememberScannedRoot(path); finishScan(r.root, performance.now() - t0); return; }
       } catch { /* fall through */ }
       failScan('Lost connection to the scan stream');
     };
@@ -1263,12 +1787,13 @@ async function finishScan(root, durationMs) {
 
   state.dup = { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 };
   try {
-    const [lf, ft, lfo] = await Promise.all([
+    const [lf, ft, lfo, stats] = await Promise.all([
       api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`),
       api(`/api/file-types?scanId=${state.scanId}`),
       api(`/api/large-folders?scanId=${state.scanId}&limit=10`),
+      api(`/api/scan/${state.scanId}/stats`),
     ]);
-    state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders;
+    state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders; state.scanStats = stats;
   } catch (e) { toast('Could not load stats: ' + e.message, 'error'); }
   renderBigFiles();
   renderBigFolders();
@@ -1278,14 +1803,111 @@ async function finishScan(root, durationMs) {
   if (state.view === 'grid') renderGrid();
   switchView(state.view);
   toast(`Scan complete — ${formatBytes(root.size)} across ${formatCount(files)} files`);
+  renderGrowthProjection();
+  renderDiskNotes();
+  loadBudgets();
+}
+
+/* Features 11 + 10 — hard-link / cloud-placeholder dashboard notes. */
+function renderDiskNotes() {
+  const s = state.scanStats || {};
+  const hl = $('hardlinkRow');
+  if (hl) {
+    if (s.hardlinkedFiles > 0) {
+      $('hardlinkText').textContent = `${formatCount(s.hardlinkedFiles)} hard-linked file${s.hardlinkedFiles === 1 ? '' : 's'} (${formatBytes(s.hardlinkedBytes)})`;
+      hl.hidden = false;
+    } else hl.hidden = true;
+  }
+  const cl = $('cloudRow');
+  if (cl) {
+    if (s.cloudFiles > 0) {
+      $('cloudText').textContent = `${formatCount(s.cloudFiles)} cloud placeholder${s.cloudFiles === 1 ? '' : 's'} (${formatBytes(s.cloudBytes)} online-only)`;
+      cl.hidden = false;
+    } else cl.hidden = true;
+  }
+  const ct = $('tmCloudToggle');
+  if (ct) {
+    if (s.cloudFiles > 0) {
+      ct.hidden = false;
+    } else {
+      ct.hidden = true;
+      state.treemap.hideCloud = false;
+      ct.classList.remove('active');
+      ct.setAttribute('aria-pressed', 'false');
+    }
+  }
+  renderCloudSafe();
+}
+
+/* Feature 10 — "Cloud-safe deletes" list in the Clean Up modal. */
+function renderCloudSafe() {
+  const host = $('cloudResults');
+  const tab = $('cleanTabCloud');
+  if (!host) return;
+  const items = [];
+  for (const n of state.pathIndex.values()) {
+    if (n.type === 'file' && n.cloudPlaceholder) items.push(n);
+  }
+  if (tab) tab.hidden = items.length === 0;
+  if (!items.length) { host.innerHTML = ''; return; }
+  items.sort((a, b) => b.size - a.size);
+  const groups = {};
+  for (const n of items) { const p = n.cloudProvider || 'cloud'; (groups[p] = groups[p] || []).push(n); }
+  const label = { icloud: 'iCloud Drive', onedrive: 'OneDrive', dropbox: 'Dropbox', cloud: 'Cloud' };
+  const total = items.reduce((s, n) => s + n.size, 0);
+  host.innerHTML = `<div class="muted" style="margin-bottom:10px;">${formatCount(items.length)} online-only file${items.length === 1 ? '' : 's'} (${formatBytes(total)} logical). The cloud keeps the original, so removing the local copy is safe.</div>` +
+    Object.keys(groups).map((prov) => {
+      const list = groups[prov];
+      const gt = list.reduce((s, n) => s + n.size, 0);
+      return `<div style="margin-bottom:14px;">
+        <div class="rule-row" style="padding:6px 0;"><b>${label[prov] || 'Cloud'}</b><span class="size-badge num" style="margin-left:auto;">${formatCount(list.length)} · ${formatBytes(gt)}</span></div>
+        <div class="clean-list">` + list.slice(0, 300).map((n) =>
+          `<div class="clean-item">${chipFor(n, 13)}<div class="meta"><div class="nm">${escapeHtml(n.name)}</div><div class="pth">${escapeHtml(n.path)}</div></div>` +
+          `<span class="dt num">${formatDate(n.modifiedAt)}</span><span class="size-badge num">${formatBytes(n.size)}</span>` +
+          `<button class="icon-btn" data-cart-add="${escapeHtml(n.path)}" aria-label="Add ${escapeHtml(n.name)} to cleanup cart">${icon('plus', 13)}</button></div>`
+        ).join('') + `</div>
+      </div>`;
+    }).join('');
+  refreshCartButtons();
+}
+
+/* Feature 7 — "disk full in ~N days" projection from snapshot history. */
+async function renderGrowthProjection() {
+  const el = $('growthProj');
+  if (!el) return;
+  el.hidden = true;
+  const root = state.root && state.root.path;
+  const free = state.system && state.system.freeDisk;
+  if (!root || !free) return;
+  let snaps;
+  try { ({ snapshots: snaps } = await api('/api/snapshots?path=' + encodeURIComponent(root))); }
+  catch { return; }
+  if (!snaps || snaps.length < 3) return;
+  // Least-squares slope of totalSize (bytes) over takenAt (ms).
+  const n = snaps.length;
+  const mx = snaps.reduce((s, p) => s + p.takenAt, 0) / n;
+  const my = snaps.reduce((s, p) => s + p.totalSize, 0) / n;
+  let num = 0, den = 0;
+  for (const p of snaps) { const dx = p.takenAt - mx; num += dx * (p.totalSize - my); den += dx * dx; }
+  if (den === 0) return;
+  const bytesPerDay = (num / den) * 86400000;
+  if (bytesPerDay <= 0) return; // shrinking or flat — nothing useful to warn about
+  const days = free / bytesPerDay;
+  if (!isFinite(days) || days <= 0 || days >= 365) return;
+  const d = Math.round(days);
+  el.className = 'growth-proj ' + (d < 30 ? 'danger' : 'warn');
+  el.innerHTML = icon('trendUp', 15) + `<span>At this growth rate, this disk is full in <b>~${formatCount(d)} day${d === 1 ? '' : 's'}</b></span>`;
+  el.hidden = false;
 }
 
 $('scanBtn').addEventListener('click', () => {
   const p = $('pathInput').value.trim();
   if (!p) { toast('Enter a folder path first', 'error'); return; }
-  startScan(p);
+  startScan(p, { incremental: !$('fastRescanWrap').hidden && $('fastRescan').checked });
 });
 $('pathInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('scanBtn').click(); });
+$('pathInput').addEventListener('input', maybeShowFastRescan);
+maybeShowFastRescan();
 window.addEventListener('beforeunload', closeEventSource);
 
 /* ───────────────────────────── Dashboard: largest files ───────────────────────────── */
@@ -1303,6 +1925,7 @@ function renderBigFiles() {
       <div class="bar-track"><div class="bar" style="width:${Math.max(4, (f.size / max) * 100)}%;background:${sizeColor(f.size)};"></div></div>
       <span class="size-badge num" style="color:${sizeColor(f.size)};">${formatBytes(f.size)}</span>
       <span class="actions">
+        <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 14)}</button>
         <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 14)}</button>
         <button class="icon-btn danger" data-trash="${escapeHtml(f.path)}" title="Move to Trash" aria-label="Move ${escapeHtml(f.name)} to Trash">${icon('trash', 14)}</button>
       </span>
@@ -1311,6 +1934,7 @@ function renderBigFiles() {
     btn.addEventListener('click', () => confirmTrash([btn.dataset.trash])));
   host.querySelectorAll('[data-reveal]').forEach(btn =>
     btn.addEventListener('click', () => openInOS(btn.dataset.reveal, true)));
+  refreshCartButtons();
 }
 
 /* ───────────────────────────── Dashboard: largest folders ───────────────────────────── */
@@ -1448,20 +2072,39 @@ const tmBufCtx = tmBuffer.getContext('2d');
 const tmSearchBuffer = document.createElement('canvas');
 const tmSearchCtx = tmSearchBuffer.getContext('2d');
 
+let tmLoadSeq = 0;
 async function loadTreemap(rootPath, animate = false) {
   if (!state.scanId) return;
+  const seq = ++tmLoadSeq;
+  state.treemap.kbSel = null;
   const zoom = $('treemapZoom');
   if (animate && !REDUCED) zoom.classList.add('zooming');
   try {
-    const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(rootPath)}`);
-    state.treemap.rootPath = data.root.path;
-    state.treemap.rootName = data.root.name;
-    state.treemap.rootSize = data.root.size;
-    state.treemap.nodes = data.nodes;
-    state.treemap.hover = null;
-    renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
-    $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
-    drawTreemap();
+    if (state.treemap.mode === 'sunburst') {
+      // Sunburst lays out client-side from the in-memory tree — no fetch needed.
+      const node = state.pathIndex.get(rootPath) || state.root;
+      if (!node) return;
+      state.treemap.rootPath = node.path;
+      state.treemap.rootName = node.name;
+      state.treemap.rootSize = node.size;
+      state.treemap.nodes = [];
+      state.treemap.hover = null;
+      renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
+      $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
+      drawSunburst();
+    } else {
+      const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(rootPath)}`);
+      if (seq !== tmLoadSeq) return; // a newer view/root load has superseded this fetch
+      state.treemap.rootPath = data.root.path;
+      state.treemap.rootName = data.root.name;
+      state.treemap.rootSize = data.root.size;
+      state.treemap.nodes = data.nodes;
+      state.treemap.hover = null;
+      renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
+      $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
+      maybeInjectTrash();
+      drawTreemap();
+    }
   } catch (e) {
     toast('Treemap failed: ' + e.message, 'error');
   } finally {
@@ -1478,8 +2121,15 @@ function renderCrumbs(host, path, onPick) {
       `<button data-p="${escapeHtml(c.path)}" aria-current="${cur}" title="${escapeHtml(c.path)}">` +
       `${i === 0 ? icon('hardDrive', 13) : ''}${escapeHtml(c.name)}</button>`;
   }).join('');
-  host.querySelectorAll('button').forEach(b =>
-    b.addEventListener('click', () => onPick(b.dataset.p)));
+  host.querySelectorAll('button').forEach(b => {
+    b.addEventListener('click', () => onPick(b.dataset.p));
+    // Right-click a breadcrumb folder to set/edit its budget (Feature 15).
+    b.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const node = state.pathIndex.get(b.dataset.p);
+      if (node && node.type === 'dir') openBudgetDialog(node);
+    });
+  });
 }
 
 function breadcrumbsFor(path) {
@@ -1495,6 +2145,19 @@ function breadcrumbsFor(path) {
     crumbs.push({ name: part, path: acc });
   }
   return crumbs;
+}
+
+/** Render the treemap footer legend for the active color mode. */
+function renderTmLegend() {
+  const host = $('tmLegend');
+  if (!host) return;
+  if (state.treemap.colorMode === 'age') {
+    host.innerHTML = '<div class="tm-legend-bands">' + AGE_BANDS.map((b) =>
+      `<span class="ab"><i class="sw" style="background:rgb(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]})"></i>${b.label}</span>`
+    ).join('') + '</div>';
+  } else {
+    host.innerHTML = '<span>1 MB</span><div class="legend-grad"></div><span>10 GB+</span>';
+  }
 }
 
 function drawTreemap() {
@@ -1515,9 +2178,11 @@ function drawTreemap() {
   ctx.clearRect(0, 0, cssW, cssH);
   ctx.fillStyle = cssVar('--tm-canvas-bg');
   ctx.fillRect(0, 0, cssW, cssH);
+  ctx.textAlign = 'left'; // reset — sunburst leaves textAlign='center' on the shared buffer ctx
 
   const px = [];
   for (const n of state.treemap.nodes) {
+    if (state.treemap.hideCloud && n.cloudPlaceholder) continue;
     const x = (n.x / 100) * cssW, y = (n.y / 100) * cssH;
     const w = (n.w / 100) * cssW, h = (n.h / 100) * cssH;
     if (w * h < 1) continue;
@@ -1528,7 +2193,7 @@ function drawTreemap() {
   // Pass 1: cushion-shaded leaf fills.
   for (const r of px) {
     if (r.frame) continue;
-    const base = sizeRgb(r.n.size);
+    const base = r.n.isTrash ? [108, 122, 137] : cellRgb(r.n); // distinct gray-blue for the Trash cell
     const depthFade = Math.max(0.55, 1 - r.n.depth * 0.08);
     const top = mix(base, [255,255,255], 0.16);
     const bot = mix(base, [0,0,0], 0.22);
@@ -1584,8 +2249,32 @@ function drawTreemap() {
     }
   }
 
+  // Pass 5: cloud-placeholder markers (online-only files).
+  for (const r of px) {
+    if (r.frame || !r.n.cloudPlaceholder || r.w < 18 || r.h < 16) continue;
+    const bx = r.x + r.w - 12, by = r.y + 8, s = 7;
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.beginPath();
+    ctx.arc(bx - s * 0.35, by, s * 0.4, 0, Math.PI * 2);
+    ctx.arc(bx + s * 0.1, by - s * 0.28, s * 0.5, 0, Math.PI * 2);
+    ctx.arc(bx + s * 0.55, by, s * 0.38, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(bx - s * 0.35, by, s * 0.9, s * 0.45);
+  }
+
+  // Pass 6: git-repository markers (small branch glyph).
+  for (const r of px) {
+    if (!r.n.gitRepo || r.w < 70 || r.h < 40) continue;
+    const gx = r.x + r.w - 17, gy = r.y + 11;
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)'; ctx.fillStyle = 'rgba(255,255,255,0.92)'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(gx, gy + 5, 2.1, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(gx + 7, gy - 4, 2.1, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(gx, gy + 4); ctx.lineTo(gx, gy - 2); ctx.quadraticCurveTo(gx, gy - 4, gx + 5, gy - 4); ctx.stroke();
+  }
+
   renderSearchOverlay();
   presentTreemap();
+  renderTmLegend();
 }
 
 /* ── Search/filter: highlight matches, dim the rest — no re-layout. ── */
@@ -1665,6 +2354,30 @@ function presentTreemap() {
     tmCtx.lineWidth = 2;
     tmCtx.strokeRect(h.x + 1, h.y + 1, h.w - 2, h.h - 2);
   }
+  // Over-budget folders get a red dashed border (Feature 15).
+  const over = state.budgets.overPaths;
+  if (over && over.size) {
+    tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    tmCtx.setLineDash([5, 3]);
+    tmCtx.strokeStyle = cssVar('--danger') || '#FF453A';
+    tmCtx.lineWidth = 2;
+    for (const pr of state.treemap.pxRects) {
+      if (over.has(pr.n.path)) {
+        tmCtx.strokeRect(pr.x + 1.5, pr.y + 1.5, Math.max(1, pr.w - 3), Math.max(1, pr.h - 3));
+      }
+    }
+    tmCtx.setLineDash([]);
+  }
+  const ks = state.treemap.kbSel;
+  if (ks) {
+    const pr = state.treemap.pxRects.find((p) => p.n.path === ks.path);
+    if (pr) {
+      tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      tmCtx.setLineDash([6, 3]); tmCtx.strokeStyle = '#fff'; tmCtx.lineWidth = 2;
+      tmCtx.strokeRect(pr.x + 1.5, pr.y + 1.5, Math.max(1, pr.w - 3), Math.max(1, pr.h - 3));
+      tmCtx.setLineDash([]);
+    }
+  }
 }
 
 function treemapHit(clientX, clientY, leavesOnly = false) {
@@ -1685,31 +2398,41 @@ tmCanvas.addEventListener('mousemove', (e) => {
   if (tmRaf) return;
   tmRaf = requestAnimationFrame(() => {
     tmRaf = 0;
-    const leaf = treemapHit(e.clientX, e.clientY, true) || treemapHit(e.clientX, e.clientY);
-    if (leaf !== state.treemap.hover) {
-      state.treemap.hover = leaf;
-      presentTreemap();
+    const hit = viewHit(e.clientX, e.clientY, true);
+    const prevNode = state.treemap.hover && state.treemap.hover.n;
+    if ((hit && hit.n) !== prevNode) {
+      state.treemap.hover = hit;
+      presentView();
     }
-    if (leaf) {
-      tmCanvas.style.cursor = leaf.n.type === 'dir' ? 'pointer' : 'default';
-      const pct = state.treemap.rootSize > 0 ? (leaf.n.size / state.treemap.rootSize) * 100 : 0;
-      showTooltip(e.clientX, e.clientY, leaf.n, pct);
+    if (hit) {
+      tmCanvas.style.cursor = (hit.n.type === 'dir' || hit.center) ? 'pointer' : 'default';
+      const pct = state.treemap.rootSize > 0 ? (hit.n.size / state.treemap.rootSize) * 100 : 0;
+      showTooltip(e.clientX, e.clientY, hit.n, pct);
     } else { tmCanvas.style.cursor = 'default'; hideTooltip(); }
   });
 });
 tmCanvas.addEventListener('mouseleave', () => {
   state.treemap.hover = null;
-  presentTreemap();
+  presentView();
   hideTooltip();
 });
 tmCanvas.addEventListener('click', (e) => {
-  const hit = treemapHit(e.clientX, e.clientY);
-  if (hit && hit.n.type === 'dir') { hideTooltip(); loadTreemap(hit.n.path, true); }
+  const hit = viewHit(e.clientX, e.clientY);
+  if (!hit) return;
+  if (hit.n && hit.n.isTrash) { hideTooltip(); openTrashModal(); return; }
+  if (hit.center) { // sunburst centre disc → zoom out one level
+    const crumbs = breadcrumbsFor(state.treemap.rootPath);
+    if (crumbs.length > 1) { hideTooltip(); loadTreemap(crumbs[crumbs.length - 2].path, true); }
+    return;
+  }
+  if (hit.n.type === 'dir') { hideTooltip(); loadTreemap(hit.n.path, true); }
+  else { hideTooltip(); openPreview(hit.n); }
 });
 tmCanvas.addEventListener('contextmenu', (e) => {
   e.preventDefault();
-  const hit = treemapHit(e.clientX, e.clientY, true) || treemapHit(e.clientX, e.clientY);
-  if (hit) showCtxMenu(e.clientX, e.clientY, hit.n);
+  const hit = viewHit(e.clientX, e.clientY, true);
+  if (hit && hit.n && hit.n.isTrash) { openTrashModal(); return; }
+  if (hit && hit.n) showCtxMenu(e.clientX, e.clientY, hit.n);
 });
 $('tmDepth').addEventListener('change', (e) => {
   state.treemap.maxDepth = +e.target.value;
@@ -1717,7 +2440,280 @@ $('tmDepth').addEventListener('change', (e) => {
 });
 $('tmRefresh').innerHTML = icon('refresh', 15);
 $('tmRefresh').addEventListener('click', () => { if (state.treemap.rootPath) loadTreemap(state.treemap.rootPath); });
-window.addEventListener('resize', () => { if (state.view === 'treemap' && state.treemap.nodes.length) drawTreemap(); });
+// Feature 10 — hide cloud placeholders (show only on-disk bytes).
+$('tmCloudToggle').addEventListener('click', () => {
+  state.treemap.hideCloud = !state.treemap.hideCloud;
+  $('tmCloudToggle').setAttribute('aria-pressed', String(state.treemap.hideCloud));
+  $('tmCloudToggle').classList.toggle('active', state.treemap.hideCloud);
+  if (state.treemap.rootPath) drawView();
+});
+// Feature 1 — Size/Age heatmap color mode toggle (persisted in localStorage).
+function setTreemapColorMode(mode) {
+  mode = mode === 'age' ? 'age' : 'size';
+  state.treemap.colorMode = mode;
+  localStorage.setItem('tm-colormode', mode);
+  for (const b of $('tmColorSeg').querySelectorAll('button'))
+    b.setAttribute('aria-selected', String(b.dataset.mode === mode));
+  if (state.treemap.rootPath) drawView(); else renderTmLegend();
+}
+$('tmColorSeg').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-mode]');
+  if (btn) setTreemapColorMode(btn.dataset.mode);
+});
+setTreemapColorMode(state.treemap.colorMode); // reflect persisted choice on load
+window.addEventListener('resize', () => { if (state.view === 'treemap' && state.treemap.rootPath) drawView(); });
+
+/* ───────────────────────────── Sunburst / radial view (Feature 3) ───────────────────────────── */
+function isSun() { return state.treemap.mode === 'sunburst'; }
+function drawView() { isSun() ? drawSunburst() : drawTreemap(); }
+function presentView() { isSun() ? presentSunburst() : presentTreemap(); }
+function viewHit(cx, cy, leavesOnly) {
+  if (isSun()) return sunburstHit(cx, cy);
+  return leavesOnly ? (treemapHit(cx, cy, true) || treemapHit(cx, cy)) : treemapHit(cx, cy);
+}
+function sunRingCount() { return Math.max(2, Math.min(7, state.treemap.maxDepth)); }
+
+/** Annulus-sector sub-path from inner to outer radius across [a0,a1]. */
+function sectorPath(ctx, cx, cy, rInner, rOuter, a0, a1) {
+  ctx.beginPath();
+  ctx.arc(cx, cy, rOuter, a0, a1, false);
+  ctx.arc(cx, cy, rInner, a1, a0, true);
+  ctx.closePath();
+}
+
+function drawSunburst() {
+  const wrap = $('treemapWrap');
+  const cssW = wrap.clientWidth - 20;
+  const cssH = Math.max(420, window.innerHeight - 300);
+  const dpr = window.devicePixelRatio || 1;
+  tmCanvas.style.width = cssW + 'px';
+  tmCanvas.style.height = cssH + 'px';
+  const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
+  if (tmCanvas.width !== pw) tmCanvas.width = pw;
+  if (tmCanvas.height !== ph) tmCanvas.height = ph;
+  if (tmBuffer.width !== pw) tmBuffer.width = pw;
+  if (tmBuffer.height !== ph) tmBuffer.height = ph;
+
+  const ctx = tmBufCtx;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+  ctx.fillStyle = cssVar('--tm-canvas-bg');
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  const root = state.pathIndex.get(state.treemap.rootPath) || state.root;
+  if (!root) { state.treemap.arcs = []; state.treemap.sun = null; presentSunburst(); return; }
+
+  const cx = cssW / 2, cy = cssH / 2;
+  const rings = sunRingCount();
+  const outerR = Math.max(60, Math.min(cssW, cssH) / 2 - 18);
+  const innerR0 = outerR / (rings + 1);
+  const ringT = (outerR - innerR0) / rings;
+  const minAngle = (0.8 / 180) * Math.PI;
+  const START = -Math.PI / 2;
+
+  const arcs = [];
+  (function layout(node, depth, a0, a1) {
+    if (depth > 0) arcs.push({ n: node, depth, a0, a1 });
+    if (depth >= rings || node.type !== 'dir' || !node.children) return;
+    const total = node.size;
+    if (total <= 0) return;
+    const kids = node.children.filter((c) => c.size > 0 && !(state.treemap.hideCloud && c.cloudPlaceholder)).sort((a, b) => b.size - a.size);
+    let a = a0;
+    const span = a1 - a0;
+    for (const c of kids) {
+      const cSpan = (c.size / total) * span;
+      if (cSpan >= minAngle) layout(c, depth + 1, a, a + cSpan);
+      a += cSpan;
+    }
+  })(root, 0, START, START + Math.PI * 2);
+
+  arcs.sort((p, q) => p.depth - q.depth);
+  for (const arc of arcs) {
+    arc.cx = cx; arc.cy = cy;
+    arc.rInner = innerR0 + (arc.depth - 1) * ringT;
+    arc.rOuter = innerR0 + arc.depth * ringT;
+    const base = cellRgb(arc.n);
+    const col = mix(base, [12, 12, 16], Math.min(0.4, arc.depth * 0.07));
+    sectorPath(ctx, cx, cy, arc.rInner, arc.rOuter, arc.a0, arc.a1);
+    ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  // Labels on arcs wide enough to read.
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const arc of arcs) {
+    const sweep = arc.a1 - arc.a0;
+    const rMid = (arc.rInner + arc.rOuter) / 2;
+    if (sweep * rMid < 30 || ringT < 13) continue;
+    const mid = (arc.a0 + arc.a1) / 2;
+    ctx.save();
+    ctx.translate(cx + Math.cos(mid) * rMid, cy + Math.sin(mid) * rMid);
+    let rot = mid;
+    if (rot > Math.PI / 2 && rot < Math.PI * 1.5) rot += Math.PI;
+    ctx.rotate(rot);
+    ctx.font = '600 10px -apple-system, sans-serif';
+    ctx.fillStyle = 'rgba(0,0,0,0.82)';
+    const maxW = ringT - 7;
+    const label = arc.n.name;
+    ctx.fillText(label, 0, 0, maxW);
+    ctx.restore();
+  }
+
+  // Centre disc = current root (click to zoom out).
+  ctx.beginPath();
+  ctx.arc(cx, cy, innerR0, 0, Math.PI * 2);
+  ctx.fillStyle = cssVar('--surface-2') || '#1c1c22';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.fillStyle = cssVar('--text-1');
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = '600 12px -apple-system, sans-serif';
+  const cname = root.name.length > 16 ? root.name.slice(0, 15) + '…' : root.name;
+  ctx.fillText(cname, cx, cy - 7, innerR0 * 1.8);
+  ctx.fillStyle = cssVar('--text-2');
+  ctx.font = '10px -apple-system, sans-serif';
+  ctx.fillText(formatBytes(root.size), cx, cy + 9, innerR0 * 1.8);
+
+  state.treemap.arcs = arcs;
+  state.treemap.sun = { cx, cy, innerR0, outerR };
+  const st = $('tmStatus');
+  if (st) st.textContent = `${formatCount(arcs.length)} segments · ${rings} rings · ${formatBytes(root.size)} total`;
+
+  presentSunburst();
+  renderTmLegend();
+}
+
+function presentSunburst() {
+  const dpr = window.devicePixelRatio || 1;
+  tmCtx.setTransform(1, 0, 0, 1, 0, 0);
+  tmCtx.clearRect(0, 0, tmCanvas.width, tmCanvas.height);
+  tmCtx.drawImage(tmBuffer, 0, 0);
+  const h = state.treemap.hover;
+  if (h && h.arc) {
+    tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const a = h.arc;
+    sectorPath(tmCtx, a.cx, a.cy, a.rInner, a.rOuter, a.a0, a.a1);
+    tmCtx.fillStyle = 'rgba(255,255,255,0.16)';
+    tmCtx.fill();
+    tmCtx.strokeStyle = cssVar('--accent') || '#0A84FF';
+    tmCtx.lineWidth = 2;
+    tmCtx.stroke();
+  }
+  const ks = state.treemap.kbSel;
+  if (ks) {
+    const arc = state.treemap.arcs.find((a) => a.n.path === ks.path);
+    if (arc) {
+      tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      sectorPath(tmCtx, arc.cx, arc.cy, arc.rInner, arc.rOuter, arc.a0, arc.a1);
+      tmCtx.setLineDash([6, 3]); tmCtx.strokeStyle = '#fff'; tmCtx.lineWidth = 2;
+      tmCtx.stroke(); tmCtx.setLineDash([]);
+    }
+  }
+}
+
+function angInRange(t, a0, a1) {
+  const tau = Math.PI * 2;
+  const norm = (x) => ((x % tau) + tau) % tau;
+  t = norm(t); const s = norm(a0), e = norm(a1);
+  return s <= e ? (t >= s && t <= e) : (t >= s || t <= e);
+}
+function sunburstHit(clientX, clientY) {
+  const sun = state.treemap.sun;
+  if (!sun) return null;
+  const rect = tmCanvas.getBoundingClientRect();
+  const x = clientX - rect.left - sun.cx, y = clientY - rect.top - sun.cy;
+  const r = Math.hypot(x, y);
+  if (r <= sun.innerR0) {
+    const root = state.pathIndex.get(state.treemap.rootPath) || state.root;
+    return root ? { n: root, center: true } : null;
+  }
+  if (r > sun.outerR) return null;
+  const theta = Math.atan2(y, x);
+  let best = null;
+  for (const arc of state.treemap.arcs) {
+    if (r >= arc.rInner && r <= arc.rOuter && angInRange(theta, arc.a0, arc.a1)) {
+      if (!best || arc.depth > best.arc.depth) best = { n: arc.n, arc };
+    }
+  }
+  return best;
+}
+
+// View-mode toggle (Treemap ⇆ Sunburst), persisted in localStorage.
+function setTreemapView(mode) {
+  mode = mode === 'sunburst' ? 'sunburst' : 'treemap';
+  state.treemap.mode = mode;
+  localStorage.setItem('tm-viewmode', mode);
+  for (const b of $('tmViewSeg').querySelectorAll('button'))
+    b.setAttribute('aria-selected', String(b.dataset.vm === mode));
+  state.treemap.hover = null;
+  if (state.treemap.rootPath) loadTreemap(state.treemap.rootPath);
+}
+$('tmViewSeg').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-vm]');
+  if (btn) setTreemapView(btn.dataset.vm);
+});
+setTreemapView(state.treemap.mode); // reflect persisted choice on load
+
+/* ───────────────────────────── Keyboard-first navigation (Feature 6) ───────────────────────────── */
+function kbSiblings() {
+  const root = state.pathIndex.get(state.treemap.rootPath) || state.root;
+  if (!root || !root.children) return [];
+  return [...root.children].filter((c) => c.size > 0).sort((a, b) => b.size - a.size);
+}
+function kbShowTip(node) {
+  const rect = tmCanvas.getBoundingClientRect();
+  let cx, cy;
+  if (isSun()) {
+    const arc = state.treemap.arcs.find((a) => a.n.path === node.path);
+    if (!arc) { hideTooltip(); return; }
+    const mid = (arc.a0 + arc.a1) / 2, rMid = (arc.rInner + arc.rOuter) / 2;
+    cx = rect.left + arc.cx + Math.cos(mid) * rMid;
+    cy = rect.top + arc.cy + Math.sin(mid) * rMid;
+  } else {
+    const pr = state.treemap.pxRects.find((p) => p.n.path === node.path);
+    if (!pr) { hideTooltip(); return; }
+    cx = rect.left + pr.x + pr.w / 2;
+    cy = rect.top + pr.y + Math.min(pr.h / 2, 38);
+  }
+  const pct = state.treemap.rootSize > 0 ? (node.size / state.treemap.rootSize) * 100 : 0;
+  showTooltip(cx, cy, node, pct);
+}
+function kbSelect(node) {
+  state.treemap.kbSel = node || null;
+  presentView();
+  if (node) kbShowTip(node); else hideTooltip();
+}
+function kbMove(delta) {
+  const sibs = kbSiblings();
+  if (!sibs.length) return;
+  let idx = state.treemap.kbSel ? sibs.findIndex((s) => s.path === state.treemap.kbSel.path) : -1;
+  idx = idx < 0 ? (delta > 0 ? 0 : sibs.length - 1) : Math.max(0, Math.min(sibs.length - 1, idx + delta));
+  kbSelect(sibs[idx]);
+}
+async function kbDrill() {
+  const sel = state.treemap.kbSel;
+  if (!sel) { const sibs = kbSiblings(); if (sibs.length) kbSelect(sibs[0]); return; }
+  if (sel.type === 'dir') {
+    await loadTreemap(sel.path, true);
+    kbSelect(kbSiblings()[0] || null);
+  } else {
+    openPreview(sel);
+  }
+}
+async function kbUp() {
+  const root = state.root;
+  if (!root || !state.treemap.rootPath || state.treemap.rootPath === root.path) return;
+  const oldRoot = state.treemap.rootPath;
+  const crumbs = breadcrumbsFor(oldRoot);
+  const parent = crumbs.length > 1 ? crumbs[crumbs.length - 2].path : root.path;
+  await loadTreemap(parent, true);
+  const sibs = kbSiblings();
+  kbSelect(sibs.find((s) => s.path === oldRoot) || sibs[0] || null);
+}
+function toggleShortcuts() { $('shortcutsModal').classList.toggle('open'); }
 
 /* ── Zoom out (button, breadcrumbs already handle jumps) ── */
 function treemapUp() {
@@ -1733,6 +2729,7 @@ $('tmSearch').addEventListener('input', (e) => {
   clearTimeout(tmSearchDeb);
   tmSearchDeb = setTimeout(() => {
     state.treemap.query = e.target.value;
+    if (isSun()) { presentSunburst(); return; } // search highlight is treemap-only
     renderSearchOverlay();
     presentTreemap();
   }, 120);
@@ -1741,21 +2738,46 @@ $('tmSearch').addEventListener('input', (e) => {
 /* ── Export PNG / SVG ── */
 $('tmExportBtn').addEventListener('click', (e) => {
   e.stopPropagation();
-  if (!state.treemap.pxRects.length) { toast('Render a treemap first', 'error'); return; }
+  if (!state.treemap.pxRects.length && !state.treemap.arcs.length) { toast('Render something first', 'error'); return; }
   const menu = $('ctxMenu');
+  const canReport = !!(state.scanId && state.root);
   menu.innerHTML = `
-    <button data-exp="png">${icon('image', 15)}PNG image</button>
-    <button data-exp="svg">${icon('code', 15)}SVG vector</button>`;
+    <button data-exp="png">${icon('image', 15)}PNG image</button>` +
+    (isSun() ? '' : `
+    <button data-exp="svg">${icon('code', 15)}SVG vector</button>`) +
+    (canReport ? `
+    <div class="div"></div>
+    <button data-exp="csv-files">${icon('file', 15)}CSV — all files</button>
+    <button data-exp="csv-folders">${icon('folder', 15)}CSV — all folders</button>
+    <button data-exp="pdf">${icon('download', 15)}PDF report</button>` : '');
   menu.style.display = 'block';
   const r = e.currentTarget.getBoundingClientRect();
   menu.style.left = Math.min(r.left, window.innerWidth - 230) + 'px';
-  menu.style.top = (r.bottom + 6) + 'px';
+  menu.style.top = Math.min(r.bottom + 6, window.innerHeight - menu.offsetHeight - 8) + 'px';
   menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     hideCtxMenu();
-    if (b.dataset.exp === 'png') exportTreemapPNG();
-    else exportTreemapSVG();
+    const exp = b.dataset.exp;
+    if (exp === 'png') exportTreemapPNG();
+    else if (exp === 'svg') exportTreemapSVG();
+    else if (exp === 'csv-files') downloadReport('csv', 'files');
+    else if (exp === 'csv-folders') downloadReport('csv', 'folders');
+    else if (exp === 'pdf') downloadReport('pdf');
   }));
 });
+
+/** Trigger a server-side report download (CSV / PDF) for the current scan. */
+function downloadReport(format, mode) {
+  if (!state.scanId) { toast('Run a scan first', 'error'); return; }
+  let url = `/api/scan/${encodeURIComponent(state.scanId)}/export?format=${format}`;
+  if (mode) url += `&mode=${mode}`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast(format === 'pdf' ? 'Building PDF report…' : 'Exporting CSV…');
+}
 
 function exportFileName(ext) {
   const base = (state.treemap.rootName || 'treemap').replace(/[^\w.-]+/g, '_');
@@ -1781,7 +2803,7 @@ function exportTreemapPNG() {
   ctx.fillStyle = cssVar('--bg-1') || '#0e0e13';
   ctx.fillRect(0, 0, out.width, out.height);
   ctx.drawImage(tmBuffer, 0, 0);
-  if (state.treemap.query.trim()) ctx.drawImage(tmSearchBuffer, 0, 0);
+  if (!isSun() && state.treemap.query.trim()) ctx.drawImage(tmSearchBuffer, 0, 0);
   out.toBlob((blob) => {
     if (!blob) { toast('PNG export failed', 'error'); return; }
     downloadBlob(blob, exportFileName('png'));
@@ -1845,6 +2867,15 @@ function exportTreemapSVG() {
 /* ───────────────────────────── Tooltip ───────────────────────────── */
 function showTooltip(x, y, node, pctOfRoot = null) {
   const tip = $('tooltip');
+  if (node.isTrash) {
+    tip.innerHTML = `<div class="t-head"><span style="color:#8aa0b3;display:inline-flex;">${icon('trash', 15)}</span>Trash</div>` +
+      `<div class="t-line num"><span class="t-strong">${formatBytes(node.size)}</span> · click to view contents</div>`;
+    tip.style.display = 'block';
+    const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.min(x + pad, window.innerWidth - w - 10) + 'px';
+    tip.style.top = (y + pad + h > window.innerHeight - 10 ? y - h - 8 : y + pad) + 'px';
+    return;
+  }
   const k = kindFor(node);
   tip.innerHTML = `
     <div class="t-head"><span style="color:${k.tint};display:inline-flex;">${icon(k.icon, 15)}</span>${escapeHtml(node.name)}</div>
@@ -1867,19 +2898,30 @@ function showCtxMenu(x, y, node) {
   const fm = state.system && state.system.platform === 'darwin' ? 'Finder'
            : state.system && state.system.platform === 'win32' ? 'Explorer' : 'file manager';
   const menu = $('ctxMenu');
+  const inCart = cartHas(node.path);
+  const hasBudget = node.type === 'dir' && !!budgetFor(node.path);
   menu.innerHTML = `
     <button data-act="open">${icon('external', 15)}Open in ${fm}</button>
+    ${node.type === 'file' ? `<button data-act="preview">${icon('search', 15)}Quick Look</button>` : ''}
     <button data-act="copy">${icon('copy', 15)}Copy path</button>
+    <button data-act="cart">${icon(inCart ? 'check' : 'cart', 15)}${inCart ? 'Remove from Cart' : 'Add to Cart'}</button>
+    ${node.type === 'dir' ? `<div class="div"></div>
+    <button data-act="budget">${icon('gauge', 15)}${hasBudget ? 'Edit budget…' : 'Set budget…'}</button>
+    ${hasBudget ? `<button data-act="budget-remove">${icon('x', 15)}Remove budget</button>` : ''}` : ''}
     <div class="div"></div>
     <button data-act="trash" class="danger">${icon('trash', 15)}Move to Trash</button>`;
   menu.style.display = 'block';
   menu.style.left = Math.min(x, window.innerWidth - 230) + 'px';
-  menu.style.top = Math.min(y, window.innerHeight - 160) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + 'px';
   menu.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     const act = b.dataset.act;
     hideCtxMenu();
     if (act === 'open') openInOS(ctxTarget.path, true);
+    if (act === 'preview') openPreview(ctxTarget);
     if (act === 'copy') copyPath(ctxTarget.path);
+    if (act === 'cart') cartToggle(ctxTarget.path);
+    if (act === 'budget') openBudgetDialog(ctxTarget);
+    if (act === 'budget-remove') removeBudget(ctxTarget.path);
     if (act === 'trash') confirmTrash([ctxTarget.path]);
   }));
 }
@@ -1906,8 +2948,11 @@ async function copyPath(path) {
 
 /* ───────────────────────────── Trash (confirm + execute) ───────────────────────────── */
 let confirmPaths = [];
+let onConfirmTrash = null; // optional callback override for the shared confirm modal (used by the cart)
 function confirmTrash(paths) {
   if (!paths.length) return;
+  onConfirmTrash = null;
+  $('confirmTitle').innerHTML = icon('trash', 18) + 'Move to Trash?';
   confirmPaths = paths;
   const total = paths.reduce((s, p) => s + (state.pathIndex.get(p)?.size ?? 0), 0);
   const first = state.pathIndex.get(paths[0]);
@@ -1918,6 +2963,8 @@ function confirmTrash(paths) {
 }
 $('confirmOk').addEventListener('click', async () => {
   closeModal('confirmModal');
+  const cb = onConfirmTrash; onConfirmTrash = null;
+  if (cb) { await cb(); return; }
   await trashPaths(confirmPaths);
   confirmPaths = [];
 });
@@ -1948,6 +2995,329 @@ async function trashPaths(paths, { silent = false } = {}) {
 function rescan() {
   if (state.root && !state.scanning) startScan(state.root.path);
 }
+
+/* ───────────────────────────── Folder budgets (Feature 15) ───────────────────────────── */
+function budgetFor(path) { return state.budgets.list.find(b => b.path === path) || null; }
+
+/** Fetch budgets for the current scan, update the dashboard widget + treemap overlay. */
+async function loadBudgets() {
+  if (!state.scanId || !state.root) return;
+  try {
+    const data = await api(`/api/scan/${state.scanId}/budgets`);
+    state.budgets.list = data.budgets || [];
+  } catch { state.budgets.list = []; }
+  state.budgets.overPaths = new Set(state.budgets.list.filter(b => b.overBy > 0).map(b => b.path));
+  renderBudgetWidget();
+  if (state.view === 'treemap' && state.treemap.mode === 'treemap') presentView();
+}
+
+function renderBudgetWidget() {
+  const card = $('budgetCard'), list = $('budgetList');
+  if (!card || !list) return;
+  const items = state.budgets.list;
+  if (!items.length) { card.hidden = true; list.innerHTML = ''; return; }
+  card.hidden = false;
+  // Over-budget first (already sorted by overBy desc from the API).
+  list.innerHTML = items.map(b => {
+    const over = b.overBy > 0;
+    const pct = b.maxBytes > 0 ? Math.min(100, (b.actualBytes / b.maxBytes) * 100) : 100;
+    const barColor = over ? 'var(--danger)' : pct > 80 ? 'var(--warn)' : 'var(--ok)';
+    const label = over
+      ? `over by ${formatBytes(b.overBy)}`
+      : `${formatBytes(b.maxBytes - b.actualBytes)} left`;
+    return `<div class="budget-row ${over ? 'is-over' : 'is-ok'}" data-budget-path="${escapeHtml(b.path)}">
+      <div class="meta">
+        <div class="nm" title="${escapeHtml(b.path)}">${escapeHtml(b.name)}</div>
+        <div class="bar-track"><div class="bar" style="width:${pct.toFixed(1)}%;background:${barColor};"></div></div>
+      </div>
+      <div style="text-align:right;">
+        <div class="over">${over ? icon('alert', 12) + ' ' : ''}${label}</div>
+        <div class="muted num" style="font-size:10.5px;">${formatBytes(b.actualBytes)} / ${formatBytes(b.maxBytes)}</div>
+      </div>
+      <button class="icon-btn b-edit" data-budget-edit="${escapeHtml(b.path)}" title="Edit budget" aria-label="Edit budget for ${escapeHtml(b.name)}">${icon('gauge', 14)}</button>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('[data-budget-edit]').forEach(btn => btn.addEventListener('click', () => {
+    const node = state.pathIndex.get(btn.dataset.budgetEdit);
+    openBudgetDialog(node || { path: btn.dataset.budgetEdit, name: btn.dataset.budgetEdit.split('/').pop() || btn.dataset.budgetEdit, type: 'dir', size: null });
+  }));
+}
+
+let budgetTarget = null;
+function openBudgetDialog(node) {
+  if (!node) return;
+  budgetTarget = node;
+  const existing = budgetFor(node.path);
+  $('budgetFolderName').textContent = node.name || node.path;
+  $('budgetFolderPath').textContent = node.path;
+  const size = (typeof node.size === 'number') ? node.size : (state.pathIndex.get(node.path)?.size ?? null);
+  $('budgetCurrent').innerHTML = size != null
+    ? `Current size: <b>${formatBytes(size)}</b>`
+    : 'Current size unknown until the next scan.';
+  // Prefill with the existing budget (pick the friendliest unit) or a sensible default.
+  const unitSel = $('budgetUnit'), valIn = $('budgetValue');
+  if (existing) {
+    const unit = existing.maxBytes % 1073741824 === 0 ? 1073741824
+      : existing.maxBytes % 1048576 === 0 ? 1048576
+      : existing.maxBytes % 1024 === 0 ? 1024 : 1;
+    unitSel.value = String(unit);
+    valIn.value = String(existing.maxBytes / unit);
+  } else {
+    unitSel.value = '1073741824';
+    valIn.value = '';
+  }
+  $('budgetRemoveBtn').style.display = existing ? '' : 'none';
+  $('budgetModal').classList.add('open');
+  setTimeout(() => valIn.focus(), 30);
+}
+
+/** Persist the full budget list (merge/replace one path) via PUT /api/settings. */
+async function saveBudgetList(nextBudgets) {
+  const data = await api('/api/settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ budgets: nextBudgets }),
+  });
+  return data.budgets || [];
+}
+
+/** Read the full saved budget list (all paths, not just this scan's). */
+async function currentSavedBudgets() {
+  try {
+    const s = await api('/api/settings');
+    return (s.budgets || []).map(b => ({ path: b.path, maxBytes: b.maxBytes }));
+  } catch {
+    return state.budgets.list.map(b => ({ path: b.path, maxBytes: b.maxBytes }));
+  }
+}
+
+async function commitBudget() {
+  if (!budgetTarget) return;
+  const value = parseFloat($('budgetValue').value);
+  const unit = Number($('budgetUnit').value);
+  if (!Number.isFinite(value) || value <= 0) { toast('Enter a budget greater than zero', 'error'); return; }
+  const maxBytes = Math.round(value * unit);
+  const target = budgetTarget;
+  try {
+    const cur = await currentSavedBudgets();
+    const merged = [...cur.filter(b => b.path !== target.path), { path: target.path, maxBytes }];
+    await saveBudgetList(merged);
+    closeModal('budgetModal');
+    toast(`Budget set — ${target.name || target.path} ≤ ${formatBytes(maxBytes)}`);
+    await loadBudgets();
+  } catch (e) { toast('Could not save budget: ' + e.message, 'error'); }
+}
+
+async function removeBudget(path) {
+  try {
+    const cur = await currentSavedBudgets();
+    await saveBudgetList(cur.filter(b => b.path !== path));
+    closeModal('budgetModal');
+    toast('Budget removed');
+    await loadBudgets();
+  } catch (e) { toast('Could not remove budget: ' + e.message, 'error'); }
+}
+
+$('budgetSaveBtn').addEventListener('click', commitBudget);
+$('budgetRemoveBtn').addEventListener('click', () => { if (budgetTarget) removeBudget(budgetTarget.path); });
+$('budgetValue').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commitBudget(); } });
+
+/* ───────────────────────────── Cleanup cart (Feature 2) ───────────────────────────── */
+state.cart = new Set();
+try { JSON.parse(localStorage.getItem('tm-cart') || '[]').forEach((p) => state.cart.add(p)); } catch {}
+
+function saveCart() { localStorage.setItem('tm-cart', JSON.stringify([...state.cart])); }
+function cartHas(p) { return state.cart.has(p); }
+function cartNode(p) { return state.pathIndex.get(p) || null; }
+function cartKnownPaths() { return [...state.cart].filter((p) => state.pathIndex.has(p)); }
+function cartTotalBytes() { return [...state.cart].reduce((s, p) => s + (cartNode(p)?.size ?? 0), 0); }
+function cartToggle(p) {
+  if (!p) return;
+  if (state.cart.has(p)) state.cart.delete(p); else state.cart.add(p);
+  saveCart(); renderCart(); refreshCartButtons();
+}
+function cartClear() { state.cart.clear(); saveCart(); renderCart(); refreshCartButtons(); }
+
+/** Sync the +/✓ state of every per-row "add to cart" button currently on screen. */
+function refreshCartButtons() {
+  document.querySelectorAll('[data-cart-add]').forEach((b) => {
+    const inIt = state.cart.has(b.getAttribute('data-cart-add'));
+    b.classList.toggle('cartin', inIt);
+    b.innerHTML = icon(inIt ? 'check' : 'plus', 14);
+    b.setAttribute('title', inIt ? 'Remove from cleanup cart' : 'Add to cleanup cart');
+  });
+}
+
+function renderCart() {
+  const dock = $('cartDock'); if (!dock) return;
+  const n = state.cart.size;
+  dock.classList.toggle('show', n > 0);
+  if (n === 0) dock.classList.remove('open');
+  const total = cartTotalBytes();
+  $('cartTabCount').textContent = String(n);
+  $('cartTabTotal').textContent = formatBytes(total);
+  $('cartHeadCount').textContent = n + ' item' + (n === 1 ? '' : 's');
+  $('cartFootTotal').innerHTML = `Reclaims <b>${formatBytes(total)}</b>`;
+  const list = $('cartList');
+  if (n === 0) {
+    list.innerHTML = '<div class="cart-empty">Your cart is empty.<br>Add files from any view to stage them for the Trash.</div>';
+    return;
+  }
+  list.innerHTML = [...state.cart].map((p) => {
+    const node = cartNode(p);
+    const name = node ? node.name : (p.split(/[\\/]/).pop() || p);
+    return `<div class="cart-item${node ? '' : ' missing'}">
+      <div class="meta"><div class="nm" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
+      <div class="pth" title="${escapeHtml(p)}">${escapeHtml(p)}</div></div>
+      <span class="sz num">${node ? formatBytes(node.size) : 'not in scan'}</span>
+      <button class="rm" data-cart-rm="${escapeHtml(p)}" aria-label="Remove ${escapeHtml(name)} from cart">${icon('x', 13)}</button>
+    </div>`;
+  }).join('');
+}
+
+function cartTrashAll() {
+  const known = cartKnownPaths();
+  const missing = state.cart.size - known.length;
+  if (!known.length) {
+    toast(missing ? 'Staged items aren’t in the current scan — rescan their folder first.' : 'Your cart is empty.', missing ? 'error' : 'success');
+    return;
+  }
+  const total = known.reduce((s, p) => s + (cartNode(p)?.size ?? 0), 0);
+  $('confirmText').innerHTML = `Move <b>${known.length} staged item${known.length === 1 ? '' : 's'}</b> (${formatBytes(total)}) to the Trash?` +
+    (missing
+      ? `<br><span style="color:var(--text-3)">${missing} item${missing === 1 ? '' : 's'} not in the current scan will stay in the cart.</span>`
+      : `<br><span style="color:var(--text-3)">You can restore them from the Trash at any time.</span>`);
+  $('confirmTitle').innerHTML = icon('trash', 18) + 'Move to Trash?';
+  onConfirmTrash = cartExecuteTrash;
+  $('confirmModal').classList.add('open');
+}
+async function cartExecuteTrash() {
+  const paths = cartKnownPaths();
+  const result = await trashPaths(paths, { silent: true });
+  // pathIndex is still the pre-rescan tree here, so sizes are valid.
+  const recovered = result.deleted.reduce((s, p) => s + (cartNode(p)?.size ?? 0), 0);
+  result.deleted.forEach((p) => state.cart.delete(p));
+  saveCart(); renderCart(); refreshCartButtons();
+  if (result.deleted.length) toast(`Moved ${result.deleted.length} item${result.deleted.length === 1 ? '' : 's'} to Trash — ${formatBytes(recovered)} recovered`);
+  if (result.failed.length) toast(`${result.failed.length} couldn’t be trashed: ${result.failed[0].reason}`, 'error');
+  if (result.deleted.length) rescan();
+}
+
+// Drawer + delegated row-button wiring.
+$('cartTab').addEventListener('click', () => $('cartDock').classList.toggle('open'));
+$('cartTab').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('cartDock').classList.toggle('open'); } });
+$('cartCollapse').addEventListener('click', () => $('cartDock').classList.remove('open'));
+$('cartClear').addEventListener('click', cartClear);
+$('cartTrash').addEventListener('click', cartTrashAll);
+document.addEventListener('click', (e) => {
+  const add = e.target.closest('[data-cart-add]');
+  if (add) { e.preventDefault(); e.stopPropagation(); cartToggle(add.getAttribute('data-cart-add')); return; }
+  const rm = e.target.closest('[data-cart-rm]');
+  if (rm) { e.preventDefault(); e.stopPropagation(); cartToggle(rm.getAttribute('data-cart-rm')); }
+});
+renderCart(); // reflect any persisted cart on load
+
+/* ───────────────────────────── Quick-look preview pane (Feature 4) ───────────────────────────── */
+const PV_IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif']);
+const PV_CODE_EXT = new Set(['js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'json', 'jsonc', 'py', 'rb', 'go', 'rs', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'java', 'kt', 'swift', 'php', 'lua', 'sh', 'bash', 'zsh', 'yml', 'yaml', 'toml', 'css', 'scss', 'less', 'html', 'htm', 'xml', 'sql', 'vue', 'svelte', 'gradle']);
+const PV_KW = new Set('const,let,var,function,return,if,else,for,while,do,switch,case,break,continue,import,export,default,from,as,class,new,await,async,def,lambda,self,public,private,protected,static,final,void,int,float,double,string,bool,boolean,true,false,null,nil,none,None,True,False,undefined,this,super,struct,enum,interface,type,typeof,instanceof,extends,implements,package,namespace,using,fn,mut,pub,impl,match,try,catch,finally,throw,throws,raise,yield,with,in,is,and,or,not'.split(','));
+
+function pvEsc(s) { return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function previewExt(node) { return (node.extension || node.name.split('.').pop() || '').toLowerCase(); }
+
+/** Tiny single-pass highlighter (comments, strings, numbers, keywords). */
+function highlightCode(src, ext) {
+  if (!PV_CODE_EXT.has(ext)) return pvEsc(src);
+  let out = '', i = 0; const n = src.length;
+  while (i < n) {
+    const c = src[i];
+    if ((c === '/' && src[i + 1] === '/') || (c === '#' && ext !== 'css' && ext !== 'scss')) {
+      let j = i; while (j < n && src[j] !== '\n') j++;
+      out += '<span class="tk-com">' + pvEsc(src.slice(i, j)) + '</span>'; i = j; continue;
+    }
+    if (c === '/' && src[i + 1] === '*') {
+      let j = i + 2; while (j < n && !(src[j] === '*' && src[j + 1] === '/')) j++; j = Math.min(n, j + 2);
+      out += '<span class="tk-com">' + pvEsc(src.slice(i, j)) + '</span>'; i = j; continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      let j = i + 1; while (j < n && src[j] !== c) { if (src[j] === '\\') j++; j++; } j = Math.min(n, j + 1);
+      out += '<span class="tk-str">' + pvEsc(src.slice(i, j)) + '</span>'; i = j; continue;
+    }
+    if (c >= '0' && c <= '9') {
+      let j = i; while (j < n && /[0-9a-fxA-FX._]/.test(src[j])) j++;
+      out += '<span class="tk-num">' + pvEsc(src.slice(i, j)) + '</span>'; i = j; continue;
+    }
+    if (/[A-Za-z_$]/.test(c)) {
+      let j = i; while (j < n && /[A-Za-z0-9_$]/.test(src[j])) j++;
+      const w = src.slice(i, j);
+      out += PV_KW.has(w) ? '<span class="tk-kw">' + pvEsc(w) + '</span>' : pvEsc(w);
+      i = j; continue;
+    }
+    out += pvEsc(c); i++;
+  }
+  return out;
+}
+
+let pvReqId = 0;
+function openPreview(node) {
+  if (!node || node.type !== 'file') return;
+  const pane = $('previewPane');
+  pane.hidden = false;
+  document.body.classList.add('preview-open');
+  requestAnimationFrame(() => pane.classList.add('open'));
+  const ext = previewExt(node);
+  $('pvIcon').innerHTML = chipFor({ type: 'file', extension: ext }, 16);
+  $('pvName').textContent = node.name; $('pvName').title = node.name;
+  $('pvSub').textContent = formatBytes(node.size) + ' · ' + formatDate(node.modifiedAt);
+  $('pvFoot').textContent = node.path; $('pvFoot').title = node.path;
+  const body = $('pvBody');
+  body.innerHTML = '<div class="pv-empty">Loading…</div>';
+  const reqId = ++pvReqId;
+  const url = `/api/files/preview?path=${encodeURIComponent(node.path)}`;
+
+  if (PV_IMG_EXT.has(ext)) {
+    const img = new Image();
+    img.alt = node.name;
+    img.onload = () => { if (reqId === pvReqId) { body.innerHTML = ''; body.appendChild(img); } };
+    img.onerror = () => { if (reqId === pvReqId) renderPreviewMeta(node); };
+    img.src = url;
+    return;
+  }
+  api(url).then((data) => {
+    if (reqId !== pvReqId) return;
+    if (data && data.type === 'text') {
+      body.innerHTML = `<pre>${highlightCode(data.content, ext)}</pre>` +
+        (data.truncated ? '<div class="pv-trunc">— first 8 KB shown —</div>' : '');
+      body.scrollTop = 0;
+    } else {
+      renderPreviewMeta(node, data);
+    }
+  }).catch((e) => {
+    if (reqId === pvReqId) body.innerHTML = `<div class="pv-empty">Can’t preview this file.<br>${escapeHtml(e.message)}</div>`;
+  });
+}
+
+function renderPreviewMeta(node, data) {
+  const ext = previewExt(node);
+  const reason = data && data.reason ? `<div class="pv-trunc">${escapeHtml(data.reason)}</div>` : '';
+  $('pvBody').innerHTML =
+    `<div style="text-align:center;padding:26px 0 18px;">${chipFor({ type: node.type, extension: ext }, 44)}</div>` +
+    `<div class="pv-kv">` +
+      `<span class="k">Type</span><span>${escapeHtml(ext ? ext.toUpperCase() + ' file' : 'File')}</span>` +
+      `<span class="k">Size</span><span>${formatBytes(node.size)}</span>` +
+      `<span class="k">Modified</span><span>${formatDate(node.modifiedAt)}</span>` +
+    `</div>` + reason +
+    `<div class="pv-empty">No inline preview for this file type.</div>`;
+}
+
+function closePreview() {
+  const pane = $('previewPane');
+  pane.classList.remove('open');
+  document.body.classList.remove('preview-open');
+  pvReqId++; // cancel any in-flight render
+  setTimeout(() => { if (!pane.classList.contains('open')) pane.hidden = true; }, 260);
+}
+function previewIsOpen() { const p = $('previewPane'); return p && !p.hidden && p.classList.contains('open'); }
+$('pvClose').addEventListener('click', closePreview);
 
 /* ───────────────────────────── Grid view ───────────────────────────── */
 const GAP = 12, MIN_SQ = 48, MAX_SQ = 256;
@@ -2077,6 +3447,7 @@ function onCellClick(e, i) {
   } else {
     sel.clear(); sel.add(it.path);
     state.grid.anchor = i;
+    if (it.type === 'file') openPreview(it);
   }
   updateSelectionBar();
   renderGridWindow(true);
@@ -2184,6 +3555,7 @@ function renderDuplicates() {
           ${fi === 0 ? '<span class="tag">newest</span>' : ''}
           <span class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</span>
           <span class="dt num">${formatDate(f.modifiedAt)}</span>
+          <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
           <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
         </div>`).join('') + `
       </div>
@@ -2207,6 +3579,7 @@ function renderDuplicates() {
     });
   });
   body.querySelectorAll('[data-reveal]').forEach(b => b.addEventListener('click', () => openInOS(b.dataset.reveal, true)));
+  refreshCartButtons();
   updateDupToolbar();
 }
 
@@ -2240,6 +3613,178 @@ $('dupTrashBtn').addEventListener('click', () => {
   confirmTrash([...state.dup.selection]);
 });
 $('dupMinSize').addEventListener('change', () => loadDuplicates(true));
+
+/* ── Near-duplicate images (Feature 12) ── */
+function setDupMode(mode) {
+  state.dupMode = mode;
+  $('dupModeSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.dupmode === mode)));
+  $('dupPaneExact').hidden = mode !== 'exact';
+  $('dupPaneNear').hidden = mode !== 'near';
+  if (!state.scanId || !state.root) return;
+  if (mode === 'near') loadNearDupes(); else loadDuplicates();
+}
+$('dupModeSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  setDupMode(b.dataset.dupmode);
+});
+
+async function loadNearDupes(force = false) {
+  if (!state.scanId || !state.root) return;
+  const key = state.scanId + ':' + $('ndThreshold').value;
+  if (!force && state.near.loadedFor === key && state.near.status === 'complete') { renderNearDupes(); return; }
+  state.near.loadedFor = key;
+  state.near.status = 'loading';
+  state.near.selection.clear();
+  clearTimeout(state.near.pollTimer);
+  $('ndSummary').textContent = 'Looking for similar images…';
+  updateNdToolbar();
+  $('ndBody').innerHTML = `<div class="card glass dup-progress">${icon('loader', 22, REDUCED ? '' : 'spin')}
+    <span id="ndProgText">Finding image files…</span>
+    <div class="track"><div class="fill" id="ndProgFill"></div></div></div>`;
+
+  const poll = async () => {
+    if (state.near.loadedFor !== key) return; // a newer request superseded this one
+    try {
+      const data = await api(`/api/near-duplicates?scanId=${state.scanId}&threshold=${$('ndThreshold').value}`);
+      if (data.status === 'running') {
+        const t = $('ndProgText'), f = $('ndProgFill');
+        if (t) t.textContent = data.toHash
+          ? `Fingerprinting images… ${formatCount(data.hashed)} / ${formatCount(data.toHash)}`
+          : 'Finding image files…';
+        if (f && data.toHash) f.style.width = Math.round((data.hashed / data.toHash) * 100) + '%';
+        state.near.pollTimer = setTimeout(poll, 700);
+        return;
+      }
+      state.near.status = 'complete';
+      state.near.available = data.available;
+      state.near.reason = data.reason;
+      state.near.clusters = data.clusters;
+      state.near.clusterCount = data.clusterCount;
+      state.near.totalReclaimable = data.totalReclaimable;
+      state.near.truncated = data.truncated;
+      renderNearDupes();
+    } catch (e) {
+      state.near.status = 'error';
+      $('ndSummary').textContent = '';
+      $('ndBody').innerHTML = `<div class="card glass"><div class="muted">Image scan failed: ${escapeHtml(e.message)}</div></div>`;
+    }
+  };
+  poll();
+}
+
+function renderNearDupes() {
+  const body = $('ndBody');
+  const n = state.near;
+  if (!n.available) {
+    $('ndSummary').textContent = '';
+    body.innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('image', 15)} ${escapeHtml(n.reason || 'Near-duplicate image detection is unavailable on this system.')}</div></div>`;
+    updateNdToolbar();
+    return;
+  }
+  const clusters = n.clusters;
+  if (!clusters.length) {
+    $('ndSummary').textContent = 'No near-duplicate images found.';
+    body.innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No similar images above the match threshold — your image library looks tidy.</div></div>`;
+    updateNdToolbar();
+    return;
+  }
+  $('ndSummary').innerHTML =
+    `<b>${formatCount(n.clusterCount)}</b> similar-image ${n.clusterCount === 1 ? 'group' : 'groups'} — up to <b>${formatBytes(n.totalReclaimable)}</b> reclaimable` +
+    (n.clusterCount > clusters.length ? ` <span class="num">(top ${clusters.length} shown)</span>` : '');
+  const note = n.truncated
+    ? `<div class="nd-note">${icon('alert', 14)} Only the largest images were compared — some smaller images may not be grouped.</div>` : '';
+  body.innerHTML = note + '<div class="nd-list">' + clusters.map((c, ci) => {
+    const strip = c.files.map((f, fi) => {
+      const enc = encodeURIComponent(f.path);
+      const badge = fi === 0
+        ? '<span class="nd-badge new">newest</span>'
+        : `<span class="nd-badge" title="${f.distance} bits different from the newest copy">Δ${f.distance}</span>`;
+      return `
+      <div class="nd-item">
+        <div class="nd-thumbwrap" data-p="${escapeHtml(f.path)}" role="button" tabindex="0" aria-label="Toggle ${escapeHtml(f.name)}">
+          <input type="checkbox" class="nd-ck" data-p="${escapeHtml(f.path)}" aria-label="Select ${escapeHtml(f.name)}">
+          <img class="nd-thumb" loading="lazy" decoding="async" src="/api/files/preview?path=${enc}&thumb=1" alt="${escapeHtml(f.name)}">
+          ${badge}
+        </div>
+        <div class="nd-info">
+          <div class="nm" title="${escapeHtml(f.path)}">${escapeHtml(f.name)}</div>
+          <div class="sub num">${formatBytes(f.size)} · ${formatDate(f.modifiedAt)}</div>
+          <div class="acts">
+            <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
+            <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    return `
+    <div class="nd-cluster glass" data-c="${ci}">
+      <div class="nd-chead">
+        ${icon('image', 15)}
+        <span class="nd-count">${c.count} similar images</span>
+        <span class="reclaim num">+${formatBytes(c.reclaimableBytes)} reclaimable</span>
+      </div>
+      <div class="nd-strip">${strip}</div>
+    </div>`;
+  }).join('') + '</div>';
+
+  const syncWrap = (ck) => { const w = ck.closest('.nd-thumbwrap'); if (w) w.classList.toggle('sel', ck.checked); };
+  body.querySelectorAll('.nd-ck').forEach(ck => {
+    ck.checked = n.selection.has(ck.dataset.p);
+    syncWrap(ck);
+    ck.addEventListener('change', () => {
+      if (ck.checked) n.selection.add(ck.dataset.p); else n.selection.delete(ck.dataset.p);
+      syncWrap(ck);
+      updateNdToolbar();
+    });
+  });
+  body.querySelectorAll('.nd-thumbwrap').forEach(wrap => {
+    const toggle = () => { const ck = wrap.querySelector('.nd-ck'); ck.checked = !ck.checked; ck.dispatchEvent(new Event('change')); };
+    wrap.addEventListener('click', (e) => { if (e.target.closest('input')) return; e.preventDefault(); toggle(); });
+    wrap.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
+  body.querySelectorAll('.nd-thumb').forEach(img => {
+    img.addEventListener('error', () => {
+      const ph = document.createElement('div');
+      ph.className = 'nd-thumb broken';
+      ph.innerHTML = icon('image', 22);
+      img.replaceWith(ph);
+    });
+  });
+  body.querySelectorAll('[data-reveal]').forEach(b =>
+    b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openInOS(b.dataset.reveal, true); }));
+  refreshCartButtons();
+  updateNdToolbar();
+}
+
+function updateNdToolbar() {
+  const count = state.near.selection.size;
+  let total = 0;
+  for (const p of state.near.selection) total += state.pathIndex.get(p)?.size ?? 0;
+  $('ndTrashBtn').disabled = !count;
+  $('ndTrashBtn').innerHTML = icon('trash', 14) + (count ? `Move ${count} to Trash (${formatBytes(total)})` : 'Move to Trash');
+}
+
+$('ndAutoBtn').addEventListener('click', () => {
+  if (state.near.status !== 'complete' || !state.near.clusters.length) return;
+  state.near.selection.clear();
+  state.near.clusters.forEach(c => c.files.slice(1).forEach(f => state.near.selection.add(f.path)));
+  $('ndBody').querySelectorAll('.nd-ck').forEach(ck => {
+    ck.checked = state.near.selection.has(ck.dataset.p);
+    const w = ck.closest('.nd-thumbwrap'); if (w) w.classList.toggle('sel', ck.checked);
+  });
+  updateNdToolbar();
+  toast(`Selected ${state.near.selection.size} extra ${state.near.selection.size === 1 ? 'copy' : 'copies'} — the newest image in each group is kept`);
+});
+$('ndTrashBtn').addEventListener('click', () => {
+  for (const c of state.near.clusters) {
+    if (c.files.every(f => state.near.selection.has(f.path))) {
+      toast(`Every image in a group is selected — keep at least one`, 'error');
+      return;
+    }
+  }
+  confirmTrash([...state.near.selection]);
+});
+$('ndThreshold').addEventListener('change', () => loadNearDupes(true));
 
 /* ───────────────────────────── Trends view ───────────────────────────── */
 async function loadTrends() {
@@ -2555,6 +4100,7 @@ $('cleanupBtn').addEventListener('click', () => {
   if (!state.root) { toast('Run a scan first', 'error'); return; }
   $('cleanResults').innerHTML = '';
   $('smartResults').innerHTML = '';
+  $('browserProfiles').innerHTML = '';
   $('emptyResults').innerHTML = '';
   $('cleanSummary').textContent = '';
   $('cleanConfirmBtn').disabled = true;
@@ -2575,6 +4121,7 @@ function setCleanPane(pane, skipLoad = false) {
   $('cleanPaneRules').style.display = pane === 'rules' ? '' : 'none';
   $('cleanPaneSmart').style.display = pane === 'smart' ? '' : 'none';
   $('cleanPaneEmpty').style.display = pane === 'empty' ? '' : 'none';
+  $('cleanPaneCloud').style.display = pane === 'cloud' ? '' : 'none';
   updateCleanSummary();
   if (!skipLoad && pane === 'empty' && !emptyFolders.length) loadEmptyFolders();
   if (!skipLoad && pane === 'smart' && !smartGroups.length) loadSmartSuggestions();
@@ -2619,24 +4166,157 @@ async function loadEmptyFolders() {
 $('emptyIgnoreJunk').addEventListener('change', () => { emptyFolders = []; loadEmptyFolders(); });
 
 /* ── Smart Suggestions pane ── */
+/* Feature 13 — git repositories section + git gc. */
+async function renderGitRepos() {
+  const host = $('gitRepos');
+  if (!host || !state.scanId) return;
+  let repos = [];
+  try { ({ repos } = await api('/api/git/repos?scanId=' + state.scanId)); } catch { return; }
+  const notable = (repos || []).filter((r) => r.totalBytes > 1048576);
+  if (!notable.length) { host.innerHTML = ''; return; }
+  host.innerHTML = `<div style="margin-bottom:16px;">
+    <div class="rule-row" style="padding:6px 0;"><b style="display:inline-flex;align-items:center;gap:7px;">${icon('gitBranch', 15)}Git repositories</b><span class="muted" style="flex:1;margin-left:8px;">pack &amp; loose-object breakdown — run gc to compact</span></div>
+    <div class="clean-list">` + notable.map((r) => {
+      const name = r.repoPath.split(/[\\/]/).pop() || r.repoPath;
+      return `<div class="clean-item">
+        <div class="meta"><div class="nm">${escapeHtml(name)}</div><div class="pth">${escapeHtml(r.repoPath)}</div></div>
+        <span class="git-bd num">pack ${formatBytes(r.packBytes)} · loose ${formatBytes(r.looseObjectBytes)}${r.lfsBytes ? ` · LFS ${formatBytes(r.lfsBytes)}` : ''}</span>
+        <span class="size-badge num">${formatBytes(r.totalBytes)}</span>
+        ${r.canGC ? `<button class="pill" data-gc="${escapeHtml(r.repoPath)}">Run git gc</button>` : ''}
+      </div>`;
+    }).join('') + `</div></div>`;
+}
+async function runGitGcAction(repo) {
+  toast('Running git gc…');
+  try {
+    const r = await api('/api/git/gc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: repo, confirm: true }) });
+    if (r.ok) toast('git gc complete'); else toast('git gc failed: ' + (r.error || 'unknown'), 'error');
+  } catch (e) { toast('git gc failed: ' + e.message, 'error'); }
+  renderGitRepos();
+}
+document.addEventListener('click', (e) => {
+  const gc = e.target.closest('[data-gc]');
+  if (!gc) return;
+  const repo = gc.getAttribute('data-gc');
+  const name = repo.split(/[\\/]/).pop() || repo;
+  $('confirmTitle').innerHTML = icon('gitBranch', 18) + 'Run git gc?';
+  $('confirmText').innerHTML = `Run <b>git gc --aggressive</b> on <b>${escapeHtml(name)}</b>?<br><span style="color:var(--text-3)">Safe — it compacts the repo without changing any commits. Large repos can take a while.</span>`;
+  onConfirmTrash = () => runGitGcAction(repo);
+  $('confirmModal').classList.add('open');
+});
+
+/* ── Browser profile drill-down (Feature 16) — inline-SVG favicons, no external fetch ── */
+const BROWSER_FAV = {
+  Chrome: `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22" fill="#fff"/>` +
+    `<path d="M24 2a22 22 0 0 1 19.05 11H24a11 11 0 0 0-9.74 5.86L6.2 13.2A22 22 0 0 1 24 2Z" fill="#ea4335"/>` +
+    `<path d="M43.05 13A22 22 0 0 1 33.5 43.2L24.8 28.2A11 11 0 0 0 24 13Z" fill="#fbbc05"/>` +
+    `<path d="M33.5 43.2A22 22 0 0 1 6.2 13.2l8.06 14.66A11 11 0 0 0 24 35Z" fill="#34a853"/>` +
+    `<circle cx="24" cy="24" r="9.4" fill="#fff"/><circle cx="24" cy="24" r="7.2" fill="#4285f4"/></svg>`,
+  Chromium: `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22" fill="#fff"/>` +
+    `<path d="M24 2a22 22 0 0 1 19.05 11H24a11 11 0 0 0-9.74 5.86L6.2 13.2A22 22 0 0 1 24 2Z" fill="#9aa0a6"/>` +
+    `<path d="M43.05 13A22 22 0 0 1 33.5 43.2L24.8 28.2A11 11 0 0 0 24 13Z" fill="#5f6368"/>` +
+    `<path d="M33.5 43.2A22 22 0 0 1 6.2 13.2l8.06 14.66A11 11 0 0 0 24 35Z" fill="#80868b"/>` +
+    `<circle cx="24" cy="24" r="9.4" fill="#fff"/><circle cx="24" cy="24" r="7.2" fill="#4285f4"/></svg>`,
+  Edge: `<svg viewBox="0 0 48 48" aria-hidden="true"><defs>` +
+    `<linearGradient id="bpEdge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#37bdf2"/><stop offset="1" stop-color="#0a5cb8"/></linearGradient></defs>` +
+    `<circle cx="24" cy="24" r="22" fill="url(#bpEdge)"/>` +
+    `<path d="M12 31c1-9 9-16 19-14 5 1 8 5 8 9 0-10-8-17-17-17S5 16 5 25c0 6 3 11 8 13-2-2-3-4-1-7Z" fill="#fff" opacity="0.9"/></svg>`,
+  Brave: `<svg viewBox="0 0 48 48" aria-hidden="true">` +
+    `<path d="M24 3 39 9l2 7 3 4-3 9c-2 7-9 12-17 15-8-3-15-8-17-15l-3-9 3-4 2-7Z" fill="#fb542b"/>` +
+    `<path d="M24 14l6 5-3 9-3 3-3-3-3-9Z" fill="#fff" opacity="0.92"/></svg>`,
+  Firefox: `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="25" r="20" fill="#ff7139"/>` +
+    `<path d="M41 17c1 4 1 8-1 12-3 7-10 12-17 11-7-1-13-8-13-15 0-5 3-9 7-11-2 4 0 9 4 10-4-5-2-12 3-15-1 4 2 7 6 7-3-4 0-10 4-11 4-1 8 1 10 5l-3-2c2 2 3 5 4 7l-1 1c1 1 2 3 2 4Z" fill="#ffb340"/>` +
+    `<path d="M38 21c2 5 1 11-3 15-4 4-10 5-15 3 7 1 13-3 15-9 1-3 2-6 3-9Z" fill="#fd3e1a" opacity="0.55"/></svg>`,
+  Safari: `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22" fill="#19a0f4"/>` +
+    `<circle cx="24" cy="24" r="18" fill="#f1f5f9"/>` +
+    `<path d="M24 24 33 15 27 27Z" fill="#ff3b30"/><path d="M24 24 15 33 21 21Z" fill="#c2c8d0"/>` +
+    `<circle cx="24" cy="24" r="2" fill="#5a6470"/></svg>`,
+};
+function browserFav(name) { return BROWSER_FAV[name] || BROWSER_FAV.Chromium; }
+
+/** Render the per-profile browser cache accordions; returns true if any were shown. */
+async function renderBrowserProfiles() {
+  const host = $('browserProfiles');
+  if (!host || !state.scanId) return false;
+  let profiles = [];
+  try { ({ profiles } = await api('/api/cleanup/browser-profiles?scanId=' + state.scanId)); }
+  catch { host.innerHTML = ''; return false; }
+  if (!profiles.length) { host.innerHTML = ''; return false; }
+  const total = profiles.reduce((s, p) => s + p.totalBytes, 0);
+  host.innerHTML = `<div class="bp-section-h"><b>${icon('globe', 15)}Browser caches</b>` +
+    `<span class="muted" style="flex:1;margin-left:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${profiles.length} profile${profiles.length > 1 ? 's' : ''} · ${formatBytes(total)} — expand to pick what to clear</span></div>` +
+    profiles.map((p, pi) => {
+      const items = p.items.map((it) => `
+        <div class="bp-item">
+          <input type="checkbox" class="bp-ck" data-path="${escapeHtml(it.path)}" data-bytes="${it.bytes}" data-p="${pi}" aria-label="Select ${escapeHtml(it.label)}">
+          <span class="lbl">${escapeHtml(it.label)}</span>
+          <span class="size-badge num" style="color:${sizeColor(it.bytes)}">${formatBytes(it.bytes)}</span>
+          <button class="icon-btn" data-cart-add="${escapeHtml(it.path)}" aria-label="Add ${escapeHtml(it.label)} to cleanup cart">${icon('plus', 13)}</button>
+        </div>`).join('');
+      return `<div class="bp-acc" data-acc="${pi}">
+        <div class="bp-head" role="button" tabindex="0" aria-expanded="false">
+          <input type="checkbox" class="bp-all" data-p="${pi}" aria-label="Select all caches for ${escapeHtml(p.browser)} ${escapeHtml(p.profile)}">
+          <span class="bp-fav">${browserFav(p.browser)}</span>
+          <span class="bp-title">${escapeHtml(p.browser)}<span class="prof">${escapeHtml(p.profile)}</span></span>
+          <span class="spacer"></span>
+          <span class="size-badge num">${p.items.length} · ${formatBytes(p.totalBytes)}</span>
+          <span class="chev">${icon('chevronRight', 14)}</span>
+        </div>
+        <div class="bp-items">${items}</div>
+      </div>`;
+    }).join('');
+
+  host.querySelectorAll('.bp-head').forEach(head => {
+    const toggle = () => { const a = head.closest('.bp-acc'); head.setAttribute('aria-expanded', String(a.classList.toggle('open'))); };
+    head.addEventListener('click', (e) => { if (e.target.closest('input,button')) return; toggle(); });
+    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
+  host.querySelectorAll('.bp-all').forEach(all => all.addEventListener('change', () => {
+    host.querySelectorAll(`.bp-ck[data-p="${all.dataset.p}"]`).forEach(ck => { ck.checked = all.checked; });
+    all.indeterminate = false;
+    updateCleanSummary();
+  }));
+  host.querySelectorAll('.bp-ck').forEach(ck => ck.addEventListener('change', () => {
+    const p = ck.dataset.p;
+    const all = host.querySelector(`.bp-all[data-p="${p}"]`);
+    const cks = [...host.querySelectorAll(`.bp-ck[data-p="${p}"]`)];
+    if (all) { all.checked = cks.every(c => c.checked); all.indeterminate = !all.checked && cks.some(c => c.checked); }
+    updateCleanSummary();
+  }));
+  refreshCartButtons();
+  return true;
+}
+
 async function loadSmartSuggestions() {
+  renderGitRepos();
+  const hadBrowsers = await renderBrowserProfiles();
   const host = $('smartResults');
   host.innerHTML = skeletonRows(4, 34);
   try {
     const data = await api(`/api/cleanup/suggestions?scanId=${state.scanId}`);
     smartGroups = data.groups;
     if (!smartGroups.length) {
-      host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon('checkCircle', 15)} Nothing in this scan matches the common-junk rules.</div>`;
+      host.innerHTML = hadBrowsers ? ''
+        : `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon('checkCircle', 15)} Nothing in this scan matches the common-junk rules.</div>`;
       updateCleanSummary();
       return;
     }
+    const catLabel = { regenerable: 'Regenerables', cache: 'Caches', junk: 'Junk' };
+    const present = ['regenerable', 'cache', 'junk'].filter(c => smartGroups.some(g => g.category === c));
+    const filterPills = present.length > 1
+      ? `<div class="smart-filters" role="tablist" aria-label="Filter suggestions by type">
+          <button class="pill active" data-cat="all">All</button>` +
+          present.map(c => `<button class="pill" data-cat="${c}">${catLabel[c]}</button>`).join('') + `</div>`
+      : '';
     host.innerHTML = `<div class="muted" style="margin-bottom:8px;">Found by ${smartGroups.length} rule${smartGroups.length > 1 ? 's' : ''} — nothing is pre-selected, tick what you want gone.</div>` +
+      filterPills +
       smartGroups.map((g, gi) => `
-      <div style="margin-bottom:14px;">
-        <div class="rule-row" style="padding:6px 0;">
+      <div class="smart-group cat-${g.category}" data-cat="${g.category}">
+        <div class="rule-row">
           <input type="checkbox" class="smart-all" data-g="${gi}" aria-label="Select all in ${escapeHtml(g.title)}">
           <b>${escapeHtml(g.title)}</b>
-          <span class="muted" style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(g.description)}</span>
+          <span class="smart-desc">${escapeHtml(g.description)}</span>
+          ${g.regenerateCmd ? `<code class="regen-cmd" title="Restore with: ${escapeHtml(g.regenerateCmd)}">${escapeHtml(g.regenerateCmd)}</code><span class="rc-lbl">to restore</span>` : ''}
           <span class="size-badge num" style="color:${sizeColor(g.totalSize)}">${g.items.length} · ${formatBytes(g.totalSize)}</span>
         </div>
         <div class="clean-list">` + g.items.map((it, i) => `
@@ -2649,6 +4329,7 @@ async function loadSmartSuggestions() {
             </div>
             <span class="dt num">${formatDate(it.modifiedAt)}</span>
             <span class="size-badge num">${formatBytes(it.size)}</span>
+            <button class="icon-btn" data-cart-add="${escapeHtml(it.path)}" aria-label="Add ${escapeHtml(it.name)} to cleanup cart">${icon('plus', 13)}</button>
           </div>`).join('') + `</div>
       </div>`).join('');
     host.querySelectorAll('.smart-all').forEach(all => all.addEventListener('change', () => {
@@ -2656,6 +4337,14 @@ async function loadSmartSuggestions() {
       updateCleanSummary();
     }));
     host.querySelectorAll('.smart-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
+    host.querySelectorAll('.smart-filters .pill').forEach(p => p.addEventListener('click', () => {
+      const cat = p.dataset.cat;
+      host.querySelectorAll('.smart-filters .pill').forEach(x => x.classList.toggle('active', x === p));
+      host.querySelectorAll('.smart-group').forEach(g => {
+        g.style.display = (cat === 'all' || g.dataset.cat === cat) ? '' : 'none';
+      });
+    }));
+    refreshCartButtons();
     updateCleanSummary();
   } catch (e) {
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
@@ -2740,6 +4429,11 @@ function activeCleanSelection() {
     if (!ck.checked) return;
     const it = smartGroups[+ck.dataset.g].items[+ck.dataset.i];
     paths.push(it.path); bytes += it.size;
+  });
+  // Browser-cache sub-items carry their own path + size (Feature 16).
+  document.querySelectorAll('#browserProfiles .bp-ck').forEach(ck => {
+    if (!ck.checked) return;
+    paths.push(ck.dataset.path); bytes += Number(ck.dataset.bytes) || 0;
   });
   return { paths, bytes, noun: 'item' };
 }
@@ -2925,6 +4619,7 @@ document.querySelectorAll('.modal-backdrop').forEach(bd =>
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  if (e.key === '?' && !typing && !mod) { e.preventDefault(); toggleShortcuts(); return; }
   if (mod && e.key.toLowerCase() === 'r') {
     if (state.root) { e.preventDefault(); rescan(); }
     return;
@@ -2938,16 +4633,33 @@ document.addEventListener('keydown', (e) => {
     $('gridSearch').focus();
     return;
   }
+  // Feature 6 — keyboard navigation in the treemap / sunburst view.
+  if (state.view === 'treemap' && !typing && !mod && state.treemap.rootPath) {
+    switch (e.key) {
+      case '/': e.preventDefault(); $('tmSearch').focus(); return;
+      case 'h': case 'ArrowLeft': e.preventDefault(); kbUp(); return;
+      case 'j': case 'ArrowDown': e.preventDefault(); kbMove(1); return;
+      case 'k': case 'ArrowUp': e.preventDefault(); kbMove(-1); return;
+      case 'l': case 'ArrowRight': case 'Enter': e.preventDefault(); kbDrill(); return;
+      case 'c': if (state.treemap.kbSel) { e.preventDefault(); cartToggle(state.treemap.kbSel.path); } return;
+      case 'p': if (state.treemap.kbSel && state.treemap.kbSel.type === 'file') { e.preventDefault(); openPreview(state.treemap.kbSel); } return;
+    }
+  }
   if (e.key === 'Escape') {
     const openModal = document.querySelector('.modal-backdrop.open');
     if (openModal) { openModal.classList.remove('open'); return; }
     if ($('ctxMenu').style.display === 'block') { hideCtxMenu(); return; }
+    if (previewIsOpen()) { closePreview(); return; }
     if (typing && document.activeElement === $('gridSearch') && $('gridSearch').value) {
       $('gridSearch').value = ''; state.grid.query = ''; renderGrid(); return;
     }
     if (typing && document.activeElement === $('tmSearch') && $('tmSearch').value) {
       $('tmSearch').value = ''; state.treemap.query = '';
-      renderSearchOverlay(); presentTreemap(); return;
+      if (isSun()) presentSunburst(); else { renderSearchOverlay(); presentTreemap(); }
+      return;
+    }
+    if (state.view === 'treemap' && state.treemap.kbSel) {
+      state.treemap.kbSel = null; presentView(); hideTooltip(); return;
     }
     if (state.view === 'treemap' && state.root && state.treemap.rootPath !== state.root.path) {
       treemapUp();

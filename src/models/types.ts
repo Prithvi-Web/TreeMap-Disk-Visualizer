@@ -17,6 +17,16 @@ export interface FileNode {
   /** Unix epoch milliseconds of last modification. */
   modifiedAt: number;
   isHidden: boolean;
+  /** Hard-linked file whose inode was already counted — size set to 0 to avoid double-counting. */
+  hardlinkDuplicate?: boolean;
+  /** Symbolic link (recorded as a leaf, never followed). */
+  isSymlink?: boolean;
+  /** Cloud placeholder/stub: reports a logical size but occupies ~no disk blocks. */
+  cloudPlaceholder?: boolean;
+  /** Cloud provider detected for a placeholder, when inferable from the path. */
+  cloudProvider?: 'icloud' | 'onedrive' | 'dropbox';
+  /** Directory that is a git repository root (directly contains a .git directory). */
+  gitRepo?: boolean;
 }
 
 export type ScanStatus = 'running' | 'complete' | 'error';
@@ -42,6 +52,20 @@ export interface ScanResult {
   createdAt: number;
   /** Cooperative cancellation flag (set on shutdown/eviction). */
   cancelled: boolean;
+  /** True when this scan reused the on-disk mtime cache (fast rescan). */
+  incremental?: boolean;
+  /** Directories served from the cache (incremental scans only). */
+  cachedDirs?: number;
+  /** Directories actually walked on disk. */
+  walkedDirs?: number;
+  /** Files skipped as hard-link duplicates (counted once). */
+  hardlinkedFiles?: number;
+  /** Bytes those hard-link duplicates would have double-counted. */
+  hardlinkedBytes?: number;
+  /** Cloud placeholder files detected (size > 0 but ~0 disk blocks). */
+  cloudFiles?: number;
+  /** Logical bytes those cloud placeholders report but don't occupy on disk. */
+  cloudBytes?: number;
 }
 
 /** One rectangle of the squarified treemap, coordinates in percent (0–100). */
@@ -59,6 +83,10 @@ export interface TreemapNode {
   y: number;
   w: number;
   h: number;
+  /** Cloud placeholder/stub (online-only file) — rendered with a cloud marker. */
+  cloudPlaceholder?: boolean;
+  /** Git repository root — rendered with a branch marker. */
+  gitRepo?: boolean;
 }
 
 /** Events streamed over the SSE progress endpoint. */
@@ -141,6 +169,55 @@ export interface DuplicateJob {
   groups?: DuplicateGroup[];
   groupCount?: number;
   totalReclaimable?: number;
+  error?: string;
+  startedAt: number;
+  finishedAt?: number;
+}
+
+/* ---------- Perceptual / near-duplicate images (Feature 12) ---------- */
+
+/** One image inside a near-duplicate cluster. */
+export interface NearDupeFile {
+  name: string;
+  path: string;
+  size: number;
+  modifiedAt: number;
+  /** Hamming distance (0–64) of this image's dHash from the cluster's newest image. */
+  distance: number;
+}
+
+/** A group of perceptually-similar images (resized / re-encoded / screenshot copies). */
+export interface NearDupeCluster {
+  /** Newest first; the newest copy is the one kept by "auto-select all but newest". */
+  files: NearDupeFile[];
+  count: number;
+  /** Bytes freed by keeping only the newest copy: total − newest. */
+  reclaimableBytes: number;
+}
+
+export type NearDupeJobStatus = 'running' | 'complete' | 'error';
+
+/** Background dHash + clustering job, one per (scanId, threshold). */
+export interface NearDupeJob {
+  scanId: string;
+  status: NearDupeJobStatus;
+  /** Max Hamming distance for two images to be considered near-duplicates. */
+  threshold: number;
+  /** Image decoder actually used, or 'none' when none was available. */
+  decoder: 'sharp' | 'ffmpeg' | 'none';
+  /** False when no image decoder could be loaded — the UI shows a hint instead of clusters. */
+  available: boolean;
+  reason?: string;
+  /** Hashing progress for the UI. */
+  hashed: number;
+  toHash: number;
+  cancelled: boolean;
+  /** Populated once status === 'complete' (top clusters by reclaimable bytes). */
+  clusters?: NearDupeCluster[];
+  clusterCount?: number;
+  totalReclaimable?: number;
+  /** True when more images existed than the clustering cap allowed. */
+  truncated?: boolean;
   error?: string;
   startedAt: number;
   finishedAt?: number;
@@ -247,9 +324,29 @@ export interface ScheduleConfig {
   lastRunAt?: number;
 }
 
+/** A user-pinned maximum size for a folder (Feature 15). */
+export interface BudgetEntry {
+  /** Absolute folder path. */
+  path: string;
+  /** Budget ceiling in bytes. */
+  maxBytes: number;
+}
+
 export interface AppSettings {
   ignore: IgnoreEntry[];
   schedules: ScheduleConfig[];
+  budgets: BudgetEntry[];
+}
+
+/** A budget cross-referenced against a scan: how the folder measures up now. */
+export interface BudgetStatus {
+  path: string;
+  name: string;
+  maxBytes: number;
+  /** Recursive size of the folder in this scan. */
+  actualBytes: number;
+  /** actualBytes − maxBytes; positive means over budget. */
+  overBy: number;
 }
 
 /** Emitted when a scheduled scan crosses its growth threshold. */
@@ -265,6 +362,13 @@ export interface GrowthNotification {
 
 /* ---------- Smart cleanup suggestions ---------- */
 
+/**
+ * regenerable — safe to delete and recreate from source/config (node_modules,
+ * build output, virtualenvs). cache — rebuilt automatically by a tool when next
+ * used (browser/dev caches). junk — OS-recreated metadata or stale downloads.
+ */
+export type SuggestionCategory = 'regenerable' | 'cache' | 'junk';
+
 export interface CleanupSuggestionItem {
   name: string;
   path: string;
@@ -279,6 +383,29 @@ export interface CleanupSuggestionGroup {
   description: string;
   items: CleanupSuggestionItem[];
   totalSize: number;
+  category: SuggestionCategory;
+  /** Command that recreates this group's contents (regenerable groups only). */
+  regenerateCmd?: string;
+}
+
+/* ---------- Browser profile drill-down (Feature 16) ---------- */
+
+/** One reclaimable cache/storage area inside a browser profile. */
+export interface BrowserCacheItem {
+  path: string;
+  bytes: number;
+  /** Human label, e.g. "HTTP Cache", "Service Worker Cache". */
+  label: string;
+}
+
+/** A detected browser profile with its broken-out cache sub-areas. */
+export interface BrowserProfileGroup {
+  browser: string;
+  profile: string;
+  /** Profile root path. */
+  path: string;
+  totalBytes: number;
+  items: BrowserCacheItem[];
 }
 
 /** Uniform API error body. */

@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { AppSettings, IgnoreEntry, ScheduleConfig, IgnoreScope } from '../models/types';
+import { AppSettings, IgnoreEntry, ScheduleConfig, IgnoreScope, BudgetEntry } from '../models/types';
 import { readJsonFile, writeJsonFile } from './storage';
 import { compileIgnoreList, CompiledIgnore } from '../utils/glob';
 
@@ -12,6 +12,7 @@ import { compileIgnoreList, CompiledIgnore } from '../utils/glob';
 const SETTINGS_FILE = 'settings.json';
 const MAX_IGNORE = 100;
 const MAX_SCHEDULES = 20;
+const MAX_BUDGETS = 100;
 const SCOPES: IgnoreScope[] = ['scan', 'suggest', 'both'];
 
 let cache: AppSettings | null = null;
@@ -55,20 +56,41 @@ function clampOptional(v: unknown, min: number, max: number): number | undefined
   return Math.min(max, Math.max(min, n));
 }
 
+/** One budget per path (last write wins), with a positive integer ceiling. */
+function normalizeBudgets(raw: unknown): BudgetEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const byPath = new Map<string, BudgetEntry>();
+  for (const entry of raw.slice(0, MAX_BUDGETS * 4)) {
+    const e = entry as Partial<BudgetEntry>;
+    if (typeof e?.path !== 'string') continue;
+    const path = e.path.trim().slice(0, 1000);
+    const maxBytes = Number(e.maxBytes);
+    if (!path || path.includes('\0') || !Number.isFinite(maxBytes) || maxBytes <= 0) continue;
+    byPath.set(path, { path, maxBytes: Math.round(maxBytes) });
+    if (byPath.size >= MAX_BUDGETS) break;
+  }
+  return [...byPath.values()];
+}
+
 export async function getSettings(): Promise<AppSettings> {
   if (!cache) {
     const raw = await readJsonFile<Partial<AppSettings>>(SETTINGS_FILE, {});
-    cache = { ignore: normalizeIgnore(raw.ignore), schedules: normalizeSchedules(raw.schedules) };
+    cache = {
+      ignore: normalizeIgnore(raw.ignore),
+      schedules: normalizeSchedules(raw.schedules),
+      budgets: normalizeBudgets(raw.budgets),
+    };
   }
   return cache;
 }
 
 /** Replace ignore list and/or schedules (input is re-validated here). */
-export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown }): Promise<AppSettings> {
+export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown }): Promise<AppSettings> {
   const current = await getSettings();
   const next: AppSettings = {
     ignore: patch.ignore !== undefined ? normalizeIgnore(patch.ignore) : current.ignore,
     schedules: patch.schedules !== undefined ? normalizeSchedules(patch.schedules) : current.schedules,
+    budgets: patch.budgets !== undefined ? normalizeBudgets(patch.budgets) : current.budgets,
   };
   // Preserve lastRunAt across edits that didn't intend to reset it.
   if (patch.schedules !== undefined) {
