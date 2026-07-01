@@ -132,7 +132,7 @@ artifacts instead of a Release).
 | `GET /api/fs/list?path=` | Folder browser (powers the path picker) |
 | `DELETE /api/files` | Move files to the system trash |
 | `POST /api/files/open` | Open / reveal a path in Finder & co. |
-| `GET /api/files/preview?path=` | Quick-look preview: image stream, text head, or metadata |
+| `GET /api/files/preview?path=` | Quick-look preview: image stream, text head, or metadata (`&thumb=1` returns a small WebP thumbnail for any raster image) |
 
 ## Safety
 

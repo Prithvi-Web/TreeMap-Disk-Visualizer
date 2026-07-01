@@ -273,6 +273,25 @@ async function detectDecoder(): Promise<NearDupeJob['decoder']> {
   return decoderCache;
 }
 
+/**
+ * Render a small WebP thumbnail of any raster image sharp can decode (incl.
+ * TIFF/BMP/HEIC that browsers can't show inline). Returns null if sharp is
+ * unavailable or the image can't be decoded — callers fall back gracefully.
+ */
+export async function makeThumbnail(filePath: string, size = 256): Promise<Buffer | null> {
+  const sharp = loadSharp();
+  if (!sharp) return null;
+  try {
+    return await sharp(filePath, { failOn: 'none', animated: false })
+      .rotate() // honour EXIF orientation
+      .resize(size, size, { fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 72 })
+      .toBuffer();
+  } catch {
+    return null;
+  }
+}
+
 /** Decode one image to a dHash, or null if it can't be read/decoded. */
 async function hashImage(filePath: string, decoder: NearDupeJob['decoder']): Promise<DHash | null> {
   try {

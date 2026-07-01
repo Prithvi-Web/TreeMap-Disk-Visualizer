@@ -10,6 +10,7 @@ import {
   insideAnyScanRoot,
 } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
+import { makeThumbnail } from '../services/perceptualDupes';
 
 export const fileRouter = Router();
 
@@ -51,6 +52,9 @@ const PREVIEW_TEXT_EXT = new Set([
 const PREVIEW_MAX_IMAGE = 10 * 1024 * 1024;
 const PREVIEW_TEXT_BYTES = 8192;
 const PREVIEW_NAME_TEXT = new Set(['dockerfile', 'makefile', 'license', 'readme', '.gitignore', '.env']);
+/** Raster formats sharp can turn into a WebP thumbnail (?thumb) for the near-dupe strip. */
+const THUMB_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif', 'heic', 'heif', 'avif']);
+const THUMB_MAX_INPUT = 60 * 1024 * 1024; // sharp decodes into memory — cap the source size
 
 /** Heuristic: NUL byte or >10% control chars ⇒ treat as binary, not text. */
 function looksBinary(buf: Buffer): boolean {
@@ -91,6 +95,20 @@ fileRouter.get('/files/preview', guardQueryPath('path'), async (req: Request, re
 
   const ext = pathMod.extname(target).slice(1).toLowerCase();
   const baseName = pathMod.basename(target).toLowerCase();
+
+  // Thumbnail mode: transcode any decodable raster image to a small WebP so
+  // even TIFF/HEIC/BMP (which browsers won't show inline) appear in the
+  // near-duplicate strip. Falls through to normal handling if sharp can't.
+  if (req.query.thumb !== undefined && THUMB_EXT.has(ext) && st.size <= THUMB_MAX_INPUT) {
+    const thumb = await makeThumbnail(target, 256);
+    if (thumb) {
+      res.setHeader('Content-Type', 'image/webp');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.end(thumb);
+      return;
+    }
+  }
 
   // Images stream inline up to the cap.
   if (PREVIEW_IMAGE_MIME[ext]) {

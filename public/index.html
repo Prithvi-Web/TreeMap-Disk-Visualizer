@@ -3703,7 +3703,7 @@ function renderNearDupes() {
       <div class="nd-item">
         <div class="nd-thumbwrap" data-p="${escapeHtml(f.path)}" role="button" tabindex="0" aria-label="Toggle ${escapeHtml(f.name)}">
           <input type="checkbox" class="nd-ck" data-p="${escapeHtml(f.path)}" aria-label="Select ${escapeHtml(f.name)}">
-          <img class="nd-thumb" loading="lazy" decoding="async" src="/api/files/preview?path=${enc}" alt="${escapeHtml(f.name)}">
+          <img class="nd-thumb" loading="lazy" decoding="async" src="/api/files/preview?path=${enc}&thumb=1" alt="${escapeHtml(f.name)}">
           ${badge}
         </div>
         <div class="nd-info">
