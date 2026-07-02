@@ -626,6 +626,13 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 #liveFeed .lf-row .up { color: #30D158; flex: none; }
 #liveFeed .lf-row .down { color: #FF453A; flex: none; }
 
+/* ── Offloaded tab (Feature 24) ── */
+.offl-unmounted .bp-head { opacity: 0.55; }
+.offl-unmounted .bp-items { opacity: 0.55; }
+.offl-restored { opacity: 0.55; }
+#offloadBody .bp-item .pth { flex: none; }
+#offloadBody .bp-item .dt { flex: none; font-size: 11px; color: var(--text-3); }
+
 /* ── Time-slider treemap (Feature 20) ── */
 .tm-timebar { display: flex; align-items: center; gap: 12px; padding: 8px 14px; margin-bottom: 10px; border-radius: var(--r-md); }
 .tm-timebar input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
@@ -789,6 +796,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     <button role="tab" aria-selected="false" data-view="duplicates"><span data-icon="copy"></span>Duplicates</button>
     <button role="tab" aria-selected="false" data-view="trends"><span data-icon="trendUp"></span>Trends</button>
     <button role="tab" aria-selected="false" data-view="compare"><span data-icon="diff"></span>Compare</button>
+    <button role="tab" aria-selected="false" data-view="offloaded"><span data-icon="archive"></span>Offloaded</button>
   </nav>
   <div class="header-right">
     <span id="headerSpin" aria-hidden="true"></span>
@@ -1017,6 +1025,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
           <option value="10485760">10 MB</option>
         </select>
         <button class="btn" id="dupAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
+        <button class="btn" id="dupOffloadBtn" disabled title="Copy the selected duplicates to another drive, verify, then trash them locally"><span data-icon="archive"></span>Offload…</button>
         <button class="btn btn-danger" id="dupTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
       </div>
       <div id="dupBody"></div>
@@ -1070,13 +1079,51 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     </div>
     <div id="cmpBody"><div class="card glass"><div class="muted">Pick two scans of the same folder — scans from this session give a full file-level diff; history snapshots compare top-level folders.</div></div></div>
   </section>
+
+  <!-- ═══════════ Offloaded ═══════════ -->
+  <section class="view" id="view-offloaded" role="tabpanel" aria-label="Offloaded" hidden>
+    <div class="card glass">
+      <h2><span data-icon="archive"></span>Offloaded Files</h2>
+      <div class="apps-info muted" id="offloadInfo"></div>
+      <div class="rule-row" style="margin-bottom:10px;">
+        <div class="field" style="flex:1;max-width:420px;">
+          <span data-icon="search"></span>
+          <input type="text" id="offloadSearch" placeholder="Search by name or original path…" aria-label="Search offloaded files" autocomplete="off">
+        </div>
+      </div>
+      <div id="offloadBody"><div class="muted">Nothing offloaded yet — right-click any file or folder and choose <b>Offload…</b> to move it to another drive with copy-and-verify safety.</div></div>
+    </div>
+  </section>
 </main>
 
 <!-- ═══════════ Selection toolbar ═══════════ -->
 <div class="glass" id="selectionBar">
   <span id="selInfo" class="num">0 items selected</span>
+  <button class="btn" id="selOffloadBtn" title="Copy to another drive, verify, then move the originals to the Trash"><span data-icon="archive"></span>Offload…</button>
   <button class="btn btn-danger" id="selTrashBtn"><span data-icon="trash"></span>Move to Trash</button>
   <button class="btn" id="selClearBtn">Clear</button>
+</div>
+
+<!-- ═══════════ Offload progress (Feature 24) ═══════════ -->
+<div class="modal-backdrop" id="offloadModal" role="dialog" aria-modal="true" aria-labelledby="offloadTitle">
+  <div class="modal" style="width:520px;">
+    <div class="modal-head">
+      <h3 id="offloadTitle"><span data-icon="archive"></span>Offloading…</h3>
+    </div>
+    <div class="modal-body">
+      <div class="muted" id="offloadPhase" style="margin-bottom:8px;">Checking…</div>
+      <div class="progress-track active" style="position:static;height:6px;border-radius:3px;overflow:hidden;background:var(--surface-2);">
+        <div id="offloadBar" style="height:100%;width:0%;background:var(--accent);transition:width .3s ease;"></div>
+      </div>
+      <div class="muted num" id="offloadStats" style="margin-top:8px;"></div>
+      <div class="muted" id="offloadCurrent" style="margin-top:4px;word-break:break-all;font-size:11.5px;"></div>
+    </div>
+    <div class="modal-foot">
+      <span class="muted" style="font-size:11.5px;">Nothing is removed until every copy is verified.</span>
+      <div style="flex:1"></div>
+      <button class="btn" id="offloadCancelBtn"><span data-icon="x"></span>Cancel</button>
+    </div>
+  </div>
 </div>
 
 <!-- ═══════════ Clean Up modal ═══════════ -->
@@ -1572,6 +1619,7 @@ const state = {
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   apps: { loadedFor: null, list: [], otherBytes: 0, totalBytes: 0, appsFolderScanned: false },
   live: { on: false, wanted: false, es: null, engine: '', idleMinutes: 10, pulses: new Map(), window: [], dirty: 0, feedTimer: 0, relayoutTimer: 0, pulseRaf: 0 },
+  offload: { index: null, q: '' },
   donut: { segs: [], hover: -1, animated: false },
   dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
   dupMode: 'exact',
@@ -1597,8 +1645,8 @@ const tabs = document.querySelectorAll('.tabbar button');
 tabs.forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
 function switchView(name) {
   state.view = name;
-  // Trends + Compare read persisted history, so they work without a scan.
-  const standalone = name === 'trends' || name === 'compare';
+  // Trends + Compare + Offloaded read persisted history, so they work without a scan.
+  const standalone = name === 'trends' || name === 'compare' || name === 'offloaded';
   const empty = !state.root && !state.scanning && !standalone;
   tabs.forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === name)));
   document.querySelectorAll('.view').forEach(v => {
@@ -1622,6 +1670,7 @@ function switchView(name) {
   }
   if (name === 'trends') loadTrends();
   if (name === 'compare') loadCompareOptions();
+  if (name === 'offloaded') loadOffloadIndex();
 }
 
 /* ───────────────────────────── System info ───────────────────────────── */
@@ -3545,6 +3594,7 @@ function showCtxMenu(x, y, node) {
     ${node.type === 'file' ? `<button data-act="preview">${icon('search', 15)}Quick Look</button>` : ''}
     <button data-act="copy">${icon('copy', 15)}Copy path</button>
     <button data-act="cart">${icon(inCart ? 'check' : 'cart', 15)}${inCart ? 'Remove from Cart' : 'Add to Cart'}</button>
+    ${node.isTrash ? '' : `<button data-act="offload">${icon('archive', 15)}Offload…</button>`}
     ${node.type === 'dir' ? `<div class="div"></div>
     <button data-act="budget">${icon('gauge', 15)}${hasBudget ? 'Edit budget…' : 'Set budget…'}</button>
     ${hasBudget ? `<button data-act="budget-remove">${icon('x', 15)}Remove budget</button>` : ''}` : ''}
@@ -3560,6 +3610,7 @@ function showCtxMenu(x, y, node) {
     if (act === 'preview') openPreview(ctxTarget);
     if (act === 'copy') copyPath(ctxTarget.path);
     if (act === 'cart') cartToggle(ctxTarget.path);
+    if (act === 'offload') startOffloadFlow([ctxTarget.path]);
     if (act === 'budget') openBudgetDialog(ctxTarget);
     if (act === 'budget-remove') removeBudget(ctxTarget.path);
     if (act === 'trash') confirmTrash([ctxTarget.path]);
@@ -3585,6 +3636,175 @@ async function copyPath(path) {
     document.execCommand('copy'); ta.remove(); toast('Path copied');
   }
 }
+
+/* ───────────────────────────── Offload (Feature 24) ───────────────────────────── */
+const OFFLOAD_PHASE_LABEL = {
+  checking: 'Checking free space…',
+  copying: 'Copying…',
+  verifying: 'Verifying the copy…',
+  trashing: 'All copies verified — moving originals to the Trash…',
+  'rolling-back': 'Undoing partial copies…',
+  done: 'Done',
+};
+let offloadJobId = null;
+
+/** Entry point for every "Offload…" action: pick a destination, then run. */
+function startOffloadFlow(paths) {
+  if (!paths.length) return;
+  if (!state.scanId || !state.root) { toast('Run a scan first', 'error'); return; }
+  hideCtxMenu();
+  openBrowse(null, (dest) => runOffloadJob(paths, dest), 'Offload to…');
+}
+
+async function runOffloadJob(paths, dest) {
+  try {
+    const resp = await api('/api/offload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scanId: state.scanId, paths, dest }),
+    });
+    watchOffloadJob(resp.jobId, 'Offloading…', () => {
+      toast('Offloaded and verified — originals are in the Trash');
+      loadOffloadIndex();
+      rescan();
+    });
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function runRestoreJob(ids) {
+  try {
+    const resp = await api('/api/offload/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    watchOffloadJob(resp.jobId, 'Restoring…', () => {
+      toast('Restored and verified');
+      loadOffloadIndex();
+    });
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+/** Progress modal driven by the job's SSE stream. */
+function watchOffloadJob(jobId, title, onComplete) {
+  offloadJobId = jobId;
+  $('offloadTitle').innerHTML = icon('archive', 18) + title;
+  $('offloadPhase').textContent = OFFLOAD_PHASE_LABEL.checking;
+  $('offloadBar').style.width = '0%';
+  $('offloadStats').textContent = '';
+  $('offloadCurrent').textContent = '';
+  $('offloadModal').classList.add('open');
+  const es = new EventSource(`/api/offload/${jobId}/progress`);
+  const done = () => { es.close(); offloadJobId = null; closeModal('offloadModal'); };
+  es.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    if (ev.type === 'progress') {
+      $('offloadPhase').textContent = OFFLOAD_PHASE_LABEL[ev.phase] || ev.phase;
+      const pct = ev.bytesTotal > 0 ? (ev.bytesDone / ev.bytesTotal) * 100 : 0;
+      $('offloadBar').style.width = pct.toFixed(1) + '%';
+      $('offloadStats').textContent = `${formatCount(ev.filesDone)} of ${formatCount(ev.fileCount)} files · ${formatBytes(ev.bytesDone)} of ${formatBytes(ev.bytesTotal)}`;
+      $('offloadCurrent').textContent = ev.currentPath;
+    } else if (ev.type === 'complete') {
+      done();
+      onComplete(ev);
+    } else if (ev.type === 'error') {
+      done();
+      toast(ev.message, 'error', 8000);
+      loadOffloadIndex();
+    } else if (ev.type === 'cancelled') {
+      done();
+      toast('Offload cancelled — everything rolled back, nothing was deleted');
+    } else if (ev.type === 'shutdown') {
+      done();
+      toast('Server shutting down — the job rolled back safely', 'error');
+    }
+  };
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED) {
+      done();
+      toast('Lost the progress stream — check the Offloaded tab for the result', 'error');
+    }
+  };
+}
+$('offloadCancelBtn').addEventListener('click', () => {
+  if (!offloadJobId) { closeModal('offloadModal'); return; }
+  api(`/api/offload/${offloadJobId}/cancel`, { method: 'POST' }).catch(() => {});
+});
+$('selOffloadBtn').addEventListener('click', () => startOffloadFlow([...state.grid.selection]));
+$('dupOffloadBtn').addEventListener('click', () => startOffloadFlow([...state.dup.selection]));
+
+/* ── Offloaded tab ── */
+async function loadOffloadIndex() {
+  try {
+    state.offload.index = await api('/api/offload/index');
+  } catch (e) {
+    $('offloadBody').innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  renderOffloadIndex();
+}
+
+function renderOffloadIndex() {
+  const host = $('offloadBody');
+  const idx = state.offload.index;
+  if (!idx || !idx.entries.length) {
+    $('offloadInfo').textContent = '';
+    host.innerHTML = '<div class="muted">Nothing offloaded yet — right-click any file or folder and choose <b>Offload…</b> to move it to another drive with copy-and-verify safety.</div>';
+    return;
+  }
+  const q = state.offload.q.trim().toLowerCase();
+  const active = idx.entries.filter(e => !e.restoredAt);
+  $('offloadInfo').innerHTML = `<span class="num">${formatCount(active.length)}</span> offloaded file${active.length === 1 ? '' : 's'} across ${idx.destinations.length} destination${idx.destinations.length === 1 ? '' : 's'} — <span class="num">${formatBytes(active.reduce((s, e) => s + e.size, 0))}</span> freed locally.`;
+
+  host.innerHTML = idx.destinations.map((d, di) => {
+    const entries = idx.entries.filter(e => e.destRoot === d.root &&
+      (!q || e.name.toLowerCase().includes(q) || e.originalPath.toLowerCase().includes(q)));
+    if (q && !entries.length) return '';
+    const rows = entries.map(e => `
+      <div class="bp-item${e.restoredAt ? ' offl-restored' : ''}">
+        ${chipFor({ type: 'file', extension: (e.name.split('.').pop() || '').toLowerCase() }, 13)}
+        <div class="meta" style="flex:1;min-width:0;">
+          <div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(e.name)}${e.restoredAt ? ` <span class="muted">· restored ${formatDate(e.restoredAt)}</span>` : ''}</div>
+          <div class="pth" title="was ${escapeHtml(e.originalPath)}">was ${escapeHtml(e.originalPath)}</div>
+        </div>
+        <span class="dt num">${formatDate(e.offloadedAt)}</span>
+        <span class="size-badge num">${formatBytes(e.size)}</span>
+        ${e.restoredAt ? '' : `
+          <button class="icon-btn" data-offl-reveal="${escapeHtml(e.id)}" title="Reveal at the destination" aria-label="Reveal ${escapeHtml(e.name)} at its destination" ${d.mounted ? '' : 'disabled'}>${icon('external', 13)}</button>
+          <button class="pill" data-offl-restore="${escapeHtml(e.id)}" title="Copy back to the original location and verify" ${d.mounted ? '' : 'disabled'}>Restore</button>`}
+      </div>`).join('');
+    return `
+      <div class="bp-acc offl-acc${d.mounted ? '' : ' offl-unmounted'}" data-acc="${di}">
+        <div class="bp-head" role="button" tabindex="0" aria-expanded="false">
+          <span class="chip" style="--tint:${d.mounted ? '#30D158' : '#8E8E93'}">${icon('hardDrive', 15)}</span>
+          <span class="bp-title">${escapeHtml(d.root)}<span class="prof">${d.mounted ? `${formatCount(d.activeCount)} file${d.activeCount === 1 ? '' : 's'}` : `not connected — last seen ${d.lastSeenAt ? formatDate(d.lastSeenAt) : 'never'}`}</span></span>
+          <span class="spacer"></span>
+          <span class="size-badge num">${formatBytes(d.totalBytes)}</span>
+          <span class="chev">${icon('chevronRight', 14)}</span>
+        </div>
+        <div class="bp-items">${rows || '<div class="bp-item muted">No matches here.</div>'}</div>
+      </div>`;
+  }).join('') || '<div class="muted" style="padding:10px 2px;">No offloaded files match that search.</div>';
+
+  host.querySelectorAll('.offl-acc .bp-head').forEach(head => {
+    const toggle = () => { const a = head.closest('.bp-acc'); head.setAttribute('aria-expanded', String(a.classList.toggle('open'))); };
+    head.addEventListener('click', (e) => { if (e.target.closest('button')) return; toggle(); });
+    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
+  if (q) host.querySelectorAll('.offl-acc').forEach(a => a.classList.add('open'));
+  host.querySelectorAll('[data-offl-reveal]').forEach(b => b.addEventListener('click', () =>
+    api('/api/offload/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: b.dataset.offlReveal }) })
+      .catch(e => toast(e.message, 'error'))));
+  host.querySelectorAll('[data-offl-restore]').forEach(b => b.addEventListener('click', () => runRestoreJob([b.dataset.offlRestore])));
+}
+$('offloadSearch').addEventListener('input', () => {
+  state.offload.q = $('offloadSearch').value;
+  renderOffloadIndex();
+});
 
 /* ───────────────────────────── Trash (confirm + execute) ───────────────────────────── */
 let confirmPaths = [];
@@ -4333,6 +4553,7 @@ function updateDupToolbar() {
   for (const p of state.dup.selection) total += state.pathIndex.get(p)?.size ?? 0;
   $('dupTrashBtn').disabled = !n;
   $('dupTrashBtn').innerHTML = icon('trash', 14) + (n ? `Move ${n} to Trash (${formatBytes(total)})` : 'Move to Trash');
+  $('dupOffloadBtn').disabled = !n;
 }
 
 $('dupAutoBtn').addEventListener('click', () => {
@@ -4802,7 +5023,10 @@ function renderCompare(r) {
 
 /* ───────────────────────────── Browse modal ───────────────────────────── */
 let browsePath = null;
-async function openBrowse(start) {
+let browseOnPick = null; // when set, "Use this folder" hands the path to this instead of scanning
+async function openBrowse(start, onPick = null, title = null) {
+  browseOnPick = onPick;
+  $('browseTitle').innerHTML = icon('folder', 18) + (title || 'Choose a folder');
   $('browseModal').classList.add('open');
   const chips = $('browseChips');
   chips.innerHTML = (state.system?.commonDirs ?? []).map(d =>
@@ -4829,9 +5053,13 @@ async function browseTo(path) {
 $('browseBtn').addEventListener('click', () => openBrowse($('pathInput').value.trim() || null));
 $('emptyBrowseBtn').addEventListener('click', () => openBrowse(null));
 $('browseUseBtn').addEventListener('click', () => {
-  if (browsePath) $('pathInput').value = browsePath;
+  const pick = browseOnPick;
+  browseOnPick = null;
   closeModal('browseModal');
-  if (browsePath) startScan(browsePath);
+  if (!browsePath) return;
+  if (pick) { pick(browsePath); return; }
+  $('pathInput').value = browsePath;
+  startScan(browsePath);
 });
 
 /* ───────────────────────────── Clean Up modal ───────────────────────────── */
