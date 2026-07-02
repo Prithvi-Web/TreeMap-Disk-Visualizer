@@ -2463,6 +2463,24 @@ function drawTreemap() {
     ctx.beginPath(); ctx.moveTo(gx, gy + 4); ctx.lineTo(gx, gy - 2); ctx.quadraticCurveTo(gx, gy - 4, gx + 5, gy - 4); ctx.stroke();
   }
 
+  // Pass 7: container badges (Feature 23) — drillable archives get a dashed
+  // indigo border and a small box glyph. Virtual entries inside stay plain.
+  for (const r of px) {
+    if (!r.n.container || r.n.virtual) continue;
+    ctx.strokeStyle = 'rgba(94,92,230,0.9)';
+    ctx.setLineDash([5, 3]);
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(r.x + 1.5, r.y + 1.5, Math.max(1, r.w - 3), Math.max(1, r.h - 3));
+    ctx.setLineDash([]);
+    if (r.w > 40 && r.h > 34) {
+      const bx = r.x + r.w - 15, by = r.y + r.h - 15;
+      ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+      ctx.lineWidth = 1.3;
+      ctx.strokeRect(bx, by, 9, 8);
+      ctx.beginPath(); ctx.moveTo(bx, by + 2.5); ctx.lineTo(bx + 9, by + 2.5); ctx.stroke();
+    }
+  }
+
   renderSearchOverlay();
   presentTreemap();
   renderTmLegend();
@@ -2623,9 +2641,39 @@ tmCanvas.addEventListener('click', (e) => {
     if (crumbs.length > 1) { hideTooltip(); loadTreemap(crumbs[crumbs.length - 2].path, true); }
     return;
   }
+  // Feature 23 — containers drill into their virtual contents.
+  if (hit.n.container && hit.n.type === 'file' && !hit.n.virtual) { hideTooltip(); expandContainerNode(hit.n); return; }
   if (hit.n.type === 'dir') { hideTooltip(); loadTreemap(hit.n.path, true); }
-  else { hideTooltip(); openPreview(hit.n); }
+  else if (!hit.n.virtual) { hideTooltip(); openPreview(hit.n); }
 });
+
+/** Feature 23 — open a container: parse once server-side, then drill in. */
+async function expandContainerNode(n) {
+  const node = state.pathIndex.get(n.path);
+  if (node && node.children && node.children.length) { loadTreemap(n.path, true); return; }
+  $('tmStatus').textContent = `Opening ${n.name}…`;
+  try {
+    const resp = await api('/api/container/expand', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scanId: state.scanId, path: n.path }),
+    });
+    if (node) {
+      node.children = resp.children;
+      const stack = [...resp.children];
+      while (stack.length) {
+        const c = stack.pop();
+        state.pathIndex.set(c.path, c);
+        if (c.children) stack.push(...c.children);
+      }
+    }
+    toast(`Opened ${n.name} — ${formatCount(resp.entryCount)} entr${resp.entryCount === 1 ? 'y' : 'ies'}${resp.truncated ? ' (largest shown)' : ''}`);
+    loadTreemap(n.path, true);
+  } catch (e) {
+    updateTmStatus();
+    toast(e.message, 'error');
+  }
+}
 tmCanvas.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   if (state.treemap.history.active) return; // historical paths may no longer exist
@@ -3026,7 +3074,7 @@ function layoutSunburstArcs(root, geo) {
   const arcs = [];
   (function layout(node, depth, a0, a1) {
     if (depth > 0) arcs.push({ n: node, depth, a0, a1 });
-    if (depth >= geo.rings || node.type !== 'dir' || !node.children) return;
+    if (depth >= geo.rings || (node.type !== 'dir' && !node.container) || !node.children) return;
     const total = node.size;
     if (total <= 0) return;
     const kids = node.children.filter((c) => c.size > 0 && !(state.treemap.hideCloud && c.cloudPlaceholder)).sort((a, b) => b.size - a.size);
@@ -3459,6 +3507,8 @@ function showTooltip(x, y, node, pctOfRoot = null) {
     <div class="t-line">${escapeHtml(node.path)}</div>
     <div class="t-line num"><span class="t-strong" style="color:${sizeColor(node.size)}">${formatBytes(node.size)}</span>` +
     (pctOfRoot !== null && pctOfRoot >= 0.05 ? ` · ${pctOfRoot.toFixed(1)}% of this view` : '') +
+    (node.logicalSize ? ` · ${formatBytes(node.logicalSize)} uncompressed` : '') +
+    (node.container && !node.children ? ' · click to look inside' : '') +
     ` · modified ${formatDate(node.modifiedAt)}</div>`;
   tip.style.display = 'block';
   const pad = 14;
@@ -3475,6 +3525,19 @@ function showCtxMenu(x, y, node) {
   const fm = state.system && state.system.platform === 'darwin' ? 'Finder'
            : state.system && state.system.platform === 'win32' ? 'Explorer' : 'file manager';
   const menu = $('ctxMenu');
+  // Entries inside a container exist in its listing, not on disk — the only
+  // sensible action is copying the path; trash/open the container itself.
+  if (node.virtual) {
+    menu.innerHTML = `
+      <button data-act="copy">${icon('copy', 15)}Copy path</button>
+      <div class="div"></div>
+      <button disabled style="opacity:.55;cursor:default">${icon('archive', 15)}Inside an archive — act on the archive itself</button>`;
+    menu.style.display = 'block';
+    menu.style.left = Math.min(x, window.innerWidth - 230) + 'px';
+    menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + 'px';
+    menu.querySelector('[data-act="copy"]').addEventListener('click', () => { hideCtxMenu(); copyPath(node.path); });
+    return;
+  }
   const inCart = cartHas(node.path);
   const hasBudget = node.type === 'dir' && !!budgetFor(node.path);
   menu.innerHTML = `
