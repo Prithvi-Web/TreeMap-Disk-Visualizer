@@ -3,6 +3,7 @@ import { GrowthNotification, ScheduleConfig } from '../models/types';
 import { startScan, getScan } from './diskScanner';
 import { getSettings, patchSchedule } from './settings';
 import { listSnapshots } from './snapshots';
+import { getForecast } from './forecast';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { formatBytes } from '../utils/formatBytes';
 
@@ -73,6 +74,48 @@ async function tick(): Promise<void> {
   }
 }
 
+/** Record a notification and fan it out to native handlers. */
+function pushNotification(n: Omit<GrowthNotification, 'id' | 'at'>): void {
+  const notification: GrowthNotification = { id: crypto.randomUUID(), at: Date.now(), ...n };
+  notifications.push(notification);
+  if (notifications.length > MAX_NOTIFICATIONS) notifications.shift();
+  for (const fn of alertHandlers) {
+    try {
+      fn(notification);
+    } catch {
+      /* a broken handler must not break the scheduler */
+    }
+  }
+}
+
+/** Per root, don't repeat the disk-full warning more often than this. */
+const FORECAST_REALERT_MS = 20 * 3_600_000;
+const lastForecastAlert = new Map<string, number>();
+
+/** After a scheduled scan: warn when the disk-full forecast crosses the threshold. */
+async function maybeForecastAlert(target: string): Promise<void> {
+  try {
+    const { forecastThresholdDays } = await getSettings();
+    const f = await getForecast(target);
+    if (f.status !== 'ok' || f.fullInDays === undefined || f.fullInDays > forecastThresholdDays) return;
+    const last = lastForecastAlert.get(target) ?? 0;
+    if (Date.now() - last < FORECAST_REALERT_MS) return;
+    lastForecastAlert.set(target, Date.now());
+    const days = Math.max(1, Math.round(f.fullInDays));
+    const culprits = f.topGrowers.slice(0, 3).map((g) => g.name).join(', ');
+    pushNotification({
+      path: target,
+      message: `At current growth, the disk holding ${target} is full in ~${days} day${days === 1 ? '' : 's'}` +
+        (culprits ? ` — top culprits: ${culprits}` : ''),
+      prevSize: f.freeBytes,
+      newSize: f.freeBytes,
+      delta: f.bytesPerDay,
+    });
+  } catch {
+    /* forecasting is best-effort — never fail the scheduled scan */
+  }
+}
+
 async function runScheduled(sched: ScheduleConfig): Promise<void> {
   // Stamp lastRunAt up front so a failing path can't retry every minute.
   await patchSchedule(sched.id, { lastRunAt: Date.now() });
@@ -85,6 +128,8 @@ async function runScheduled(sched: ScheduleConfig): Promise<void> {
   await waitForScan(scan.scanId);
   const done = getScan(scan.scanId);
   if (!done || done.status !== 'complete' || !done.root) return;
+
+  await maybeForecastAlert(target);
   if (!prev) return; // first record of this folder — nothing to compare against
 
   const delta = done.root.size - prev.totalSize;
@@ -93,24 +138,13 @@ async function runScheduled(sched: ScheduleConfig): Promise<void> {
   const overPct = sched.thresholdPct !== undefined && pct >= sched.thresholdPct;
   if (!overBytes && !overPct) return;
 
-  const notification: GrowthNotification = {
-    id: crypto.randomUUID(),
+  pushNotification({
     path: target,
-    at: Date.now(),
     message: `${target} grew by ${formatBytes(delta)} (${pct.toFixed(1)}%) since the previous scan`,
     prevSize: prev.totalSize,
     newSize: done.root.size,
     delta,
-  };
-  notifications.push(notification);
-  if (notifications.length > MAX_NOTIFICATIONS) notifications.shift();
-  for (const fn of alertHandlers) {
-    try {
-      fn(notification);
-    } catch {
-      /* a broken handler must not break the scheduler */
-    }
-  }
+  });
 }
 
 function waitForScan(scanId: string): Promise<void> {

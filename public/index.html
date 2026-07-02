@@ -1207,6 +1207,14 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       <div id="schedList"></div>
       <button class="btn" id="schedAddBtn"><span data-icon="plus"></span>Add scheduled scan</button>
 
+      <div class="set-h" style="margin-top:22px;"><span data-icon="trendUp"></span>Disk-full forecast</div>
+      <div class="muted" style="margin-bottom:10px;">Scheduled scans also project when the disk will fill up (needs 5+ scans across 2+ days). You'll get a notification when the forecast drops below:</div>
+      <div class="rule-row">
+        <span data-icon="clock"></span><label for="forecastDays">Warn within</label>
+        <input type="number" id="forecastDays" min="1" max="365" value="30" aria-label="Forecast warning threshold in days">
+        <span class="muted">days of the disk filling up</span>
+      </div>
+
       <div class="set-h" style="margin-top:22px;"><span data-icon="ban"></span>Ignore list</div>
       <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely (faster scans); <b>Don't suggest</b> keeps them out of Smart Suggestions only. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/**/dist</b>.</div>
       <div id="ignoreList"></div>
@@ -1940,32 +1948,41 @@ function renderCloudSafe() {
 }
 
 /* Feature 7 — "disk full in ~N days" projection from snapshot history. */
+/* Feature 21 — disk-full forecast (server-side fit with honesty gates). */
 async function renderGrowthProjection() {
   const el = $('growthProj');
   if (!el) return;
   el.hidden = true;
-  const root = state.root && state.root.path;
-  const free = state.system && state.system.freeDisk;
-  if (!root || !free) return;
-  let snaps;
-  try { ({ snapshots: snaps } = await api('/api/snapshots?path=' + encodeURIComponent(root))); }
+  if (!state.root) return;
+  let f;
+  try { f = await api('/api/forecast?path=' + encodeURIComponent(state.root.path)); }
   catch { return; }
-  if (!snaps || snaps.length < 3) return;
-  // Least-squares slope of totalSize (bytes) over takenAt (ms).
-  const n = snaps.length;
-  const mx = snaps.reduce((s, p) => s + p.takenAt, 0) / n;
-  const my = snaps.reduce((s, p) => s + p.totalSize, 0) / n;
-  let num = 0, den = 0;
-  for (const p of snaps) { const dx = p.takenAt - mx; num += dx * (p.totalSize - my); den += dx * dx; }
-  if (den === 0) return;
-  const bytesPerDay = (num / den) * 86400000;
-  if (bytesPerDay <= 0) return; // shrinking or flat — nothing useful to warn about
-  const days = free / bytesPerDay;
-  if (!isFinite(days) || days <= 0 || days >= 365) return;
-  const d = Math.round(days);
-  el.className = 'growth-proj ' + (d < 30 ? 'danger' : 'warn');
-  el.innerHTML = icon('trendUp', 15) + `<span>At this growth rate, this disk is full in <b>~${formatCount(d)} day${d === 1 ? '' : 's'}</b></span>`;
-  el.hidden = false;
+
+  if (f.status === 'ok' && f.fullInDays) {
+    const d = Math.max(1, Math.round(f.fullInDays));
+    if (d >= 365) return; // a year+ out isn't worth a warning banner
+    const culprits = (f.topGrowers || []).slice(0, 3)
+      .map(g => `${g.name} +${formatBytes(g.bytesPerDay)}/day`).join(' · ');
+    el.className = 'growth-proj ' + (d < 30 ? 'danger' : 'warn');
+    el.innerHTML = icon('trendUp', 15) +
+      `<span>At current growth (+${formatBytes(f.bytesPerDay)}/day), this disk is full in <b>~${formatCount(d)} day${d === 1 ? '' : 's'}</b>` +
+      (culprits ? ` — top culprits: ${escapeHtml(culprits)}` : '') + `</span>`;
+    el.hidden = false;
+    return;
+  }
+  if (f.status === 'insufficient') {
+    // Honest placeholder: the feature exists, the history doesn't yet.
+    el.className = 'growth-proj';
+    el.innerHTML = icon('clock', 15) + `<span class="muted">Disk-full forecast: ${escapeHtml(f.reason || 'not enough history yet — keep scanning.')}</span>`;
+    el.hidden = false;
+    return;
+  }
+  if (f.status === 'erratic' || f.status === 'shrinking' || f.status === 'stable') {
+    el.className = 'growth-proj';
+    el.innerHTML = icon(f.status === 'erratic' ? 'alert' : 'checkCircle', 15) +
+      `<span class="muted">Disk-full forecast: ${escapeHtml(f.reason || '')}</span>`;
+    el.hidden = false;
+  }
 }
 
 $('scanBtn').addEventListener('click', () => {
@@ -4893,6 +4910,7 @@ $('settingsBtn').addEventListener('click', async () => {
   }
   renderSchedules();
   renderIgnores();
+  $('forecastDays').value = settingsData.forecastThresholdDays ?? 30;
 });
 
 const SCHED_HOURS = [6, 12, 24, 48, 168];
@@ -4992,14 +5010,16 @@ $('settingsSaveBtn').addEventListener('click', async () => {
   collectSettingsForms();
   const schedules = settingsData.schedules.filter(s => s.path);
   const ignore = settingsData.ignore.filter(e => e.pattern);
+  const forecastThresholdDays = Math.min(365, Math.max(1, Math.round(Number($('forecastDays').value) || 30)));
   try {
     settingsData = await api('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schedules, ignore }),
+      body: JSON.stringify({ schedules, ignore, forecastThresholdDays }),
     });
     renderSchedules();
     renderIgnores();
+    $('forecastDays').value = settingsData.forecastThresholdDays ?? 30;
     $('settingsStatus').textContent = 'Saved';
     toast('Settings saved — ignore rules apply from the next scan');
     setTimeout(() => { if ($('settingsStatus').textContent === 'Saved') $('settingsStatus').textContent = ''; }, 2500);
