@@ -70,7 +70,7 @@ TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Nine views,
 <td width="50%" valign="top">
 
 ### 📊 Dashboard
-Disk-usage ring, live scan progress, file-type donut chart, and the **top-10 largest files _and folders_**. Click a folder to leap straight into the treemap.
+Disk-usage ring, live scan progress, file-type donut chart, and the **top-10 largest files _and folders_**. Click a folder to leap straight into the treemap. A **disk-full forecast** projects from your scan history — *"At current growth (+5.4 GB/day), this disk is full in ~58 days — top culprits: …"* — and is honest when it can't know: too little history, erratic growth, or shrinking usage all say so instead of inventing a number.
 
 </td>
 <td width="50%" valign="top">
@@ -126,7 +126,7 @@ Pick any two scans of the same folder for a file-level diff: **added, removed, g
 <td width="50%" valign="top">
 
 ### ⏰ Scheduled scans + 🚫 Ignore list
-Re-scan folders on a schedule with **growth-threshold alerts** (native desktop notifications). Tell it what to skip with paths, names, or globs like `*.iso` and `~/projects/**/dist`.
+Re-scan folders on a schedule with **growth-threshold alerts** and **disk-full forecast warnings** (native desktop notifications; the forecast horizon is configurable in Settings, default 30 days). Tell it what to skip with paths, names, or globs like `*.iso` and `~/projects/**/dist`.
 
 </td>
 </tr>
@@ -260,6 +260,7 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 | `GET /api/snapshots` | Scan history: roots, per-root snapshots (`?path=`), or all (`?all=true`) |
 | `GET /api/snapshots/compare?a=&b=` | Top-level deltas between two snapshots |
 | `GET /api/snapshots/tree?path=&at=` | Historical treemap closest to a timestamp (time slider), with grew/shrank data |
+| `GET /api/forecast?path=` | Disk-full projection: days until full, confidence, top growers — honest when history is thin |
 | `GET /api/cleanup/suggestions?scanId=` | Smart cleanup suggestions (regenerable / cache / junk) |
 | `GET /api/cleanup/browser-profiles?scanId=` | Per-browser-profile cache breakdown |
 | `GET /api/git/repos?scanId=` · `POST /api/git/gc` | Git pack/loose/LFS breakdown, and `git gc` a scanned repo |
@@ -297,7 +298,8 @@ src/
   services/     DiskScanner (adaptive concurrent walker), Cleaner (trash/open),
                 DuplicateFinder (staged hashing), Snapshots (Trends history),
                 CleanupRules (smart suggestions), AppAttribution (per-app storage),
-                Scheduler (recurring scans), Settings, Storage (app-data JSON), DiskUsage
+                Forecast (disk-full projection), Scheduler (recurring scans),
+                Settings, Storage (app-data JSON), DiskUsage
   models/       Shared TypeScript interfaces
   utils/        formatBytes, squarified treemap, path sanitizer, glob matcher
   middleware/   errorHandler, rateLimiter, pathGuard
