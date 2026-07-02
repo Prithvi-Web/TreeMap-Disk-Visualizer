@@ -611,6 +611,11 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 #appsBody .other-row .bp-head { cursor: default; }
 #appsBody .other-row .bp-head:hover { background: none; }
 
+/* ── Time-slider treemap (Feature 20) ── */
+.tm-timebar { display: flex; align-items: center; gap: 12px; padding: 8px 14px; margin-bottom: 10px; border-radius: var(--r-md); }
+.tm-timebar input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
+.tm-timebar .tm-timelabel { font-size: 12px; color: var(--text-2); white-space: nowrap; min-width: 170px; text-align: right; }
+
 /* ── Floating: tooltip / menu / toasts ── */
 #tooltip { position: fixed; z-index: 200; pointer-events: none; display: none;
   padding: 11px 13px; font-size: 12px; max-width: 380px;
@@ -930,6 +935,12 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <button class="icon-btn" id="tmRefresh" aria-label="Re-render treemap" title="Re-render"></button>
         <button class="btn" id="tmExportBtn" title="Download the treemap as an image"><span data-icon="download"></span>Export</button>
       </div>
+    </div>
+    <div class="tm-timebar glass" id="tmTimebar" hidden>
+      <span data-icon="clock" data-size="14"></span>
+      <input type="range" id="tmTimeSlider" min="0" max="0" step="1" value="0" aria-label="Scrub through this folder's scan history">
+      <span class="tm-timelabel num" id="tmTimeLabel">Live</span>
+      <button class="pill" id="tmDiffToggle" aria-pressed="false" title="Tint what grew green and what shrank red, compared with the previous snapshot">Diff</button>
     </div>
     <div class="glass" id="treemapWrap">
       <div id="treemapZoom"><canvas id="treemapCanvas" tabindex="0" aria-label="Disk usage treemap. Click a directory to drill in, Escape to go up."></canvas></div>
@@ -1488,8 +1499,23 @@ function ageRgb(modifiedAt) {
   for (const b of AGE_BANDS) if (days < b.maxDays) return b.rgb;
   return C_RED;
 }
-/** Cell base color for the active treemap color mode ('size' | 'age'). */
+/* ── Diff overlay (time slider): green = grew, red = shrank vs previous snapshot ── */
+const C_DIFF_SAME = [116, 122, 134];
+function diffRgb(n) {
+  if (n.prevSize === undefined) return C_DIFF_SAME; // no earlier snapshot to compare with
+  if (n.prevSize === null) return C_TEAL;           // didn't exist before — pure growth
+  const delta = n.size - n.prevSize;
+  if (Math.abs(delta) <= Math.max(4096, n.prevSize * 0.005)) return C_DIFF_SAME;
+  return delta > 0 ? C_TEAL : C_RED;
+}
+
+/** Cell base color for the active treemap color mode ('size' | 'age' | history diff). */
 function cellRgb(n) {
+  if (state.treemap.history.active) {
+    // Age coloring is meaningless on snapshots (every node carries the
+    // snapshot time), so history shows size — or the diff overlay.
+    return state.treemap.history.diff ? diffRgb(n) : sizeRgb(n.size);
+  }
   return state.treemap.colorMode === 'age' ? ageRgb(n.modifiedAt) : sizeRgb(n.size);
 }
 
@@ -1509,7 +1535,7 @@ const state = {
   largest: [],
   types: [],
   bigFolders: [],
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null, hideCloud: false },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0 } },
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   apps: { loadedFor: null, list: [], otherBytes: 0, totalBytes: 0, appsFolderScanned: false },
   donut: { segs: [], hover: -1, animated: false },
@@ -1833,6 +1859,9 @@ async function finishScan(root, durationMs) {
   renderGrowthProjection();
   renderDiskNotes();
   loadBudgets();
+  // The snapshot (and its time-slider tree) is saved asynchronously after the
+  // scan completes — pick it up once it lands.
+  setTimeout(() => { if (state.view === 'treemap') refreshTimebar(); }, 1500);
 }
 
 /* Features 11 + 10 — hard-link / cloud-placeholder dashboard notes. */
@@ -2145,6 +2174,8 @@ async function loadTreemap(rootPath, animate = false) {
       state.treemap.hover = null;
       renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
       $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
+      exitHistoryState();
+      refreshTimebar();
       drawSunburst();
     } else {
       const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(rootPath)}`);
@@ -2157,6 +2188,8 @@ async function loadTreemap(rootPath, animate = false) {
       renderCrumbs($('tmCrumbs'), state.treemap.rootPath, (p) => loadTreemap(p, true));
       $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
       maybeInjectTrash();
+      exitHistoryState();
+      refreshTimebar();
       drawTreemap();
     }
   } catch (e) {
@@ -2205,6 +2238,17 @@ function breadcrumbsFor(path) {
 function renderTmLegend() {
   const host = $('tmLegend');
   if (!host) return;
+  if (state.treemap.history.active && state.treemap.history.diff) {
+    const bands = [
+      { rgb: C_TEAL, label: 'grew' },
+      { rgb: C_RED, label: 'shrank' },
+      { rgb: C_DIFF_SAME, label: 'unchanged' },
+    ];
+    host.innerHTML = '<div class="tm-legend-bands">' + bands.map((b) =>
+      `<span class="ab"><i class="sw" style="background:rgb(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]})"></i>${b.label}</span>`
+    ).join('') + '</div>';
+    return;
+  }
   if (state.treemap.colorMode === 'age') {
     host.innerHTML = '<div class="tm-legend-bands">' + AGE_BANDS.map((b) =>
       `<span class="ab"><i class="sw" style="background:rgb(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]})"></i>${b.label}</span>`
@@ -2272,6 +2316,18 @@ function drawTreemap() {
     ctx.strokeStyle = `rgba(255,255,255,${Math.max(0.12, 0.3 - r.n.depth * 0.05)})`;
     ctx.lineWidth = r.n.depth <= 1 ? 1.5 : 1;
     ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+  }
+  // Pass 2.5: diff wash over expanded directories (history diff mode only).
+  // A folder's own growth/shrinkage must show even when its visible children
+  // didn't change — e.g. it shrank because a child was deleted outright.
+  if (state.treemap.history.active && state.treemap.history.diff) {
+    for (const r of px) {
+      if (!r.frame) continue;
+      const c = diffRgb(r.n);
+      if (c === C_DIFF_SAME) continue;
+      ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},0.3)`;
+      ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
+    }
   }
   // Pass 3: top-level directory name tags.
   ctx.textBaseline = 'middle';
@@ -2378,6 +2434,11 @@ function renderSearchOverlay() {
 
 function updateTmStatus() {
   const q = state.treemap.query.trim();
+  if (state.treemap.history.active && !q) {
+    const when = new Date(state.treemap.history.viewingAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    $('tmStatus').textContent = `Viewing ${when} · ${formatBytes(state.treemap.rootSize)} — drag the slider to Live to interact`;
+    return;
+  }
   $('tmStatus').textContent = q
     ? `${formatCount(state.treemap.matches)} match${state.treemap.matches === 1 ? '' : 'es'} for “${q}” · ${formatBytes(state.treemap.rootSize)} total`
     : `${formatCount(state.treemap.nodes.length)} nodes · ${formatCount(state.treemap.pxRects.length)} drawn · ${formatBytes(state.treemap.rootSize)} total`;
@@ -2471,6 +2532,7 @@ tmCanvas.addEventListener('mouseleave', () => {
   hideTooltip();
 });
 tmCanvas.addEventListener('click', (e) => {
+  if (state.treemap.history.active) { hideTooltip(); return; } // historical view — read-only
   const hit = viewHit(e.clientX, e.clientY);
   if (!hit) return;
   if (hit.n && hit.n.isTrash) { hideTooltip(); openTrashModal(); return; }
@@ -2484,6 +2546,7 @@ tmCanvas.addEventListener('click', (e) => {
 });
 tmCanvas.addEventListener('contextmenu', (e) => {
   e.preventDefault();
+  if (state.treemap.history.active) return; // historical paths may no longer exist
   const hit = viewHit(e.clientX, e.clientY, true);
   if (hit && hit.n && hit.n.isTrash) { openTrashModal(); return; }
   if (hit && hit.n) showCtxMenu(e.clientX, e.clientY, hit.n);
@@ -2516,6 +2579,129 @@ $('tmColorSeg').addEventListener('click', (e) => {
 });
 setTreemapColorMode(state.treemap.colorMode); // reflect persisted choice on load
 window.addEventListener('resize', () => { if (state.view === 'treemap' && state.treemap.rootPath) drawView(); });
+
+/* ── Feature 20 — time-slider treemap: scrub through snapshot history ── */
+const HISTORY_CACHE_MAX = 40;
+
+/** Drop history mode without reloading (called whenever a live layout lands). */
+function exitHistoryState() {
+  const h = state.treemap.history;
+  h.active = false;
+  h.seq++; // invalidate any in-flight history fetch
+  const slider = $('tmTimeSlider');
+  if (slider) { slider.value = slider.max; }
+  updateTimeLabel();
+}
+
+/**
+ * Show/refresh the slider. History scrubbing works at the scan root only
+ * (snapshot trees are stored per scanned root), so the bar hides while
+ * drilled into a subfolder or in sunburst mode.
+ */
+async function refreshTimebar() {
+  const bar = $('tmTimebar');
+  if (!bar) return;
+  const h = state.treemap.history;
+  if (isSun() || !state.root || state.treemap.rootPath !== state.root.path) { bar.hidden = true; return; }
+  try {
+    const data = await api('/api/snapshots?path=' + encodeURIComponent(state.root.path));
+    h.snaps = (data.snapshots || []).filter((s) => s.hasTree);
+  } catch { h.snaps = []; }
+  // The newest snapshot is the scan you're looking at — history needs two.
+  if (h.snaps.length < 2) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const slider = $('tmTimeSlider');
+  slider.max = String(h.snaps.length);
+  if (!h.active) slider.value = slider.max;
+  updateTimeLabel();
+}
+
+function updateTimeLabel() {
+  const h = state.treemap.history;
+  const label = $('tmTimeLabel');
+  if (!label) return;
+  const i = Number($('tmTimeSlider').value);
+  if (i >= h.snaps.length || !h.snaps[i]) { label.textContent = 'Live'; return; }
+  const s = h.snaps[i];
+  label.textContent = `${new Date(s.takenAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${formatBytes(s.totalSize)}`;
+}
+
+/** Scrub to slider position i (h.snaps.length = Live). */
+async function setHistoryIndex(i) {
+  const h = state.treemap.history;
+  h.index = i;
+  if (i >= h.snaps.length) {
+    if (h.active && state.root) loadTreemap(state.root.path); // back to the live tree
+    return;
+  }
+  const snap = h.snaps[i];
+  const seq = ++h.seq;
+  try {
+    let layout = h.cache.get(snap.id);
+    if (!layout) {
+      layout = await api(`/api/snapshots/tree?path=${encodeURIComponent(state.root.path)}&at=${snap.takenAt}`);
+      h.cache.set(snap.id, layout);
+      if (h.cache.size > HISTORY_CACHE_MAX) h.cache.delete(h.cache.keys().next().value);
+    }
+    if (seq !== h.seq || state.view !== 'treemap' || isSun()) return; // superseded
+    h.active = true;
+    h.viewingAt = layout.snapshot.takenAt;
+    state.treemap.rootSize = layout.root.size;
+    state.treemap.hover = null;
+    state.treemap.kbSel = null;
+    animateTreemapTo(layout.nodes);
+    updateTimeLabel();
+  } catch (e) {
+    toast('Could not load that point in time: ' + e.message, 'error');
+  }
+}
+
+/** Canvas interpolation: morph the current rectangles into `newNodes`. */
+let tmAnimFrame = 0;
+function animateTreemapTo(newNodes) {
+  cancelAnimationFrame(tmAnimFrame);
+  if (REDUCED || !state.treemap.nodes.length) {
+    state.treemap.nodes = newNodes;
+    drawTreemap();
+    return;
+  }
+  const oldByPath = new Map(state.treemap.nodes.map((n) => [n.path, n]));
+  const from = newNodes.map((n) => {
+    const o = oldByPath.get(n.path);
+    // Entries with no previous rectangle bloom out of their own centre.
+    return o ? { x: o.x, y: o.y, w: o.w, h: o.h } : { x: n.x + n.w / 2, y: n.y + n.h / 2, w: 0, h: 0 };
+  });
+  const t0 = performance.now(), dur = 260;
+  const tick = (t) => {
+    const p = Math.min(1, (t - t0) / dur);
+    const e = 1 - Math.pow(1 - p, 3);
+    state.treemap.nodes = newNodes.map((n, i) => ({
+      ...n,
+      x: from[i].x + (n.x - from[i].x) * e,
+      y: from[i].y + (n.y - from[i].y) * e,
+      w: from[i].w + (n.w - from[i].w) * e,
+      h: from[i].h + (n.h - from[i].h) * e,
+    }));
+    drawTreemap();
+    if (p < 1) tmAnimFrame = requestAnimationFrame(tick);
+    else { state.treemap.nodes = newNodes; drawTreemap(); }
+  };
+  tmAnimFrame = requestAnimationFrame(tick);
+}
+
+let tmTimeDebounce = 0;
+$('tmTimeSlider').addEventListener('input', () => {
+  updateTimeLabel(); // label tracks the thumb instantly
+  clearTimeout(tmTimeDebounce);
+  tmTimeDebounce = setTimeout(() => setHistoryIndex(Number($('tmTimeSlider').value)), 120);
+});
+$('tmDiffToggle').addEventListener('click', () => {
+  const h = state.treemap.history;
+  h.diff = !h.diff;
+  $('tmDiffToggle').classList.toggle('active', h.diff);
+  $('tmDiffToggle').setAttribute('aria-pressed', String(h.diff));
+  if (state.treemap.rootPath) drawView(); else renderTmLegend();
+});
 
 /* ───────────────────────────── Sunburst / radial view (Feature 3) ───────────────────────────── */
 function isSun() { return state.treemap.mode === 'sunburst'; }
@@ -4792,7 +4978,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   // Feature 6 — keyboard navigation in the treemap / sunburst view.
-  if (state.view === 'treemap' && !typing && !mod && state.treemap.rootPath) {
+  if (state.view === 'treemap' && !typing && !mod && state.treemap.rootPath && !state.treemap.history.active) {
     switch (e.key) {
       case '/': e.preventDefault(); $('tmSearch').focus(); return;
       case 'h': case 'ArrowLeft': e.preventDefault(); kbUp(); return;
@@ -4814,6 +5000,12 @@ document.addEventListener('keydown', (e) => {
     if (typing && document.activeElement === $('tmSearch') && $('tmSearch').value) {
       $('tmSearch').value = ''; state.treemap.query = '';
       if (isSun()) presentSunburst(); else { renderSearchOverlay(); presentTreemap(); }
+      return;
+    }
+    if (state.view === 'treemap' && state.treemap.history.active) {
+      const slider = $('tmTimeSlider');
+      slider.value = slider.max;
+      setHistoryIndex(Number(slider.max)); // Escape brings you back to Live
       return;
     }
     if (state.view === 'treemap' && state.treemap.kbSel) {
