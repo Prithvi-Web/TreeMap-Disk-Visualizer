@@ -26,9 +26,9 @@ settingsRouter.get('/settings', async (_req: Request, res: Response) => {
  * the same rules as scan paths.
  */
 settingsRouter.put('/settings', async (req: Request, res: Response) => {
-  const body = req.body as { ignore?: unknown; schedules?: unknown; budgets?: unknown };
-  if (body.ignore === undefined && body.schedules === undefined && body.budgets === undefined) {
-    throw new AppError(400, 'NOTHING_TO_UPDATE', 'Body must include "ignore", "schedules" and/or "budgets"');
+  const body = req.body as { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown };
+  if (body.ignore === undefined && body.schedules === undefined && body.budgets === undefined && body.forecastThresholdDays === undefined) {
+    throw new AppError(400, 'NOTHING_TO_UPDATE', 'Body must include "ignore", "schedules", "budgets" and/or "forecastThresholdDays"');
   }
   if (body.schedules !== undefined) {
     if (!Array.isArray(body.schedules)) {

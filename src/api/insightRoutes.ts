@@ -20,6 +20,7 @@ import {
 import { buildTreemap } from '../utils/treemap';
 import { guardQueryPath, guardBodyPath, requireInsideScanRoot } from '../middleware/pathGuard';
 import { getAppAttribution } from '../services/appAttribution';
+import { getForecast } from '../services/forecast';
 import { findGitRepos, runGitGc } from '../services/gitScanner';
 import { AppError } from '../middleware/errorHandler';
 import { CompareResult, FileNode, ScanResult } from '../models/types';
@@ -242,6 +243,17 @@ insightRouter.get('/snapshots/tree', guardQueryPath('path'), async (req: Request
     nodes,
     tree: root,
   });
+});
+
+/**
+ * GET /api/forecast?path= — disk-full projection for a tracked root, from
+ * its snapshot history plus the volume's free space. Honest by design:
+ * status explains itself when there's no trustworthy number.
+ */
+insightRouter.get('/forecast', guardQueryPath('path'), async (req: Request, res: Response) => {
+  const rootPath = req.query.path as string | undefined;
+  if (!rootPath) throw new AppError(400, 'PATH_REQUIRED', 'A "path" query parameter is required');
+  res.json(await getForecast(rootPath));
 });
 
 /** GET /api/snapshots/compare?a=<id>&b=<id> — deltas between two snapshots. */

@@ -72,6 +72,13 @@ function normalizeBudgets(raw: unknown): BudgetEntry[] {
   return [...byPath.values()];
 }
 
+/** Forecast alert threshold: 1–365 days, defaulting to 30. */
+function normalizeForecastDays(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 30;
+  return Math.min(365, Math.max(1, Math.round(n)));
+}
+
 export async function getSettings(): Promise<AppSettings> {
   if (!cache) {
     const raw = await readJsonFile<Partial<AppSettings>>(SETTINGS_FILE, {});
@@ -79,18 +86,22 @@ export async function getSettings(): Promise<AppSettings> {
       ignore: normalizeIgnore(raw.ignore),
       schedules: normalizeSchedules(raw.schedules),
       budgets: normalizeBudgets(raw.budgets),
+      forecastThresholdDays: normalizeForecastDays(raw.forecastThresholdDays),
     };
   }
   return cache;
 }
 
 /** Replace ignore list and/or schedules (input is re-validated here). */
-export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown }): Promise<AppSettings> {
+export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown }): Promise<AppSettings> {
   const current = await getSettings();
   const next: AppSettings = {
     ignore: patch.ignore !== undefined ? normalizeIgnore(patch.ignore) : current.ignore,
     schedules: patch.schedules !== undefined ? normalizeSchedules(patch.schedules) : current.schedules,
     budgets: patch.budgets !== undefined ? normalizeBudgets(patch.budgets) : current.budgets,
+    forecastThresholdDays: patch.forecastThresholdDays !== undefined
+      ? normalizeForecastDays(patch.forecastThresholdDays)
+      : current.forecastThresholdDays,
   };
   // Preserve lastRunAt across edits that didn't intend to reset it.
   if (patch.schedules !== undefined) {
