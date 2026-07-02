@@ -55,12 +55,12 @@
 
 <br>
 
-## ✨ The nine views
+## ✨ The ten views
 
-TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Nine views, one zero-dependency frontend.
+TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Ten views, one zero-dependency frontend.
 
 <div align="center">
-  <img src="views.svg" width="100%" alt="The nine views: Dashboard, Treemap, Grid, Apps, Duplicates, Trends, Compare, Clean Up, Scheduled + Ignore">
+  <img src="views.svg" width="100%" alt="The ten views: Dashboard, Treemap, Grid, Apps, Duplicates, Trends, Compare, Clean Up, Offloaded, Scheduled + Ignore">
 </div>
 
 <br>
@@ -123,6 +123,12 @@ Pick any two scans of the same folder for a file-level diff: **added, removed, g
 </td>
 </tr>
 <tr>
+<td width="50%" valign="top">
+
+### 📤 Offloaded
+The third option next to *keep* and *trash*: **Offload…** copies files to another drive, **verifies every byte** (SHA-256, read back from the destination), and only then moves the originals to the Trash — never a bare move; any failure rolls back cleanly. This tab is the searchable index of everything offloaded, with per-destination totals, reveal-on-destination, and verified **Restore**. Unplugged drives show grayed out with a last-seen date.
+
+</td>
 <td width="50%" valign="top">
 
 ### ⏰ Scheduled scans + 🚫 Ignore list
@@ -263,6 +269,8 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 | `GET /api/forecast?path=` | Disk-full projection: days until full, confidence, top growers — honest when history is thin |
 | `GET /api/watch/:scanId` | Live disk activity (Server-Sent Events): per-second batches of `{ path, delta, kind }` |
 | `POST /api/container/expand` | List a container's contents (zip/jar/tar/tgz/iso/docker) as virtual treemap children — never extracts |
+| `POST /api/offload` · `GET /api/offload/:id/progress` | Copy → SHA-256 verify → trash originals, to another drive (SSE progress, cancellable with rollback) |
+| `GET /api/offload/index` · `POST /api/offload/restore` | Searchable offload catalog (mount-aware) and verified restore |
 | `GET /api/cleanup/suggestions?scanId=` | Smart cleanup suggestions (regenerable / cache / junk) |
 | `GET /api/cleanup/browser-profiles?scanId=` | Per-browser-profile cache breakdown |
 | `GET /api/git/repos?scanId=` · `POST /api/git/gc` | Git pack/loose/LFS breakdown, and `git gc` a scanned repo |
@@ -286,6 +294,7 @@ Disk tools should never lose your data. TreeMap is built defensively:
 - 🔒 Paths are sanitized and traversal-proofed; system dirs (`/proc`, `/sys`, `/dev`, `/run`, `C:\Windows\System32`, …) are blocked outright.
 - 🎯 Trash/open endpoints only accept paths **inside a folder you scanned** — and never paths *inside an archive* (only the archive itself can be trashed).
 - ♻️ Deletes always go through the OS Trash — undo from Finder/Explorer any time.
+- 📤 Offload never bare-moves: copy first, verify every byte against a SHA-256 read back from the destination, and only then trash the originals — any failure rolls back with local data untouched.
 - 🧬 The Duplicates view refuses to trash *every* copy in a group — at least one always stays.
 - 🚦 Token-bucket rate limiting (10 req/s per IP), plus graceful SIGTERM shutdown that drains live SSE streams and stops background hashing, scheduled scans & live-activity watchers.
 - ⏳ Scan results live in memory only and auto-expire after 30 minutes; history snapshots and settings are small JSON files in the platform app-data folder (`~/Library/Application Support/TreeMap`, `%APPDATA%\TreeMap`, or `~/.config/treemap`).
@@ -301,8 +310,8 @@ src/
                 DuplicateFinder (staged hashing), Snapshots (Trends history),
                 CleanupRules (smart suggestions), AppAttribution (per-app storage),
                 Forecast (disk-full projection), Watcher (live activity),
-                ContainerScanner (archive drill-down), Scheduler (recurring scans),
-                Settings, Storage (app-data JSON), DiskUsage
+                ContainerScanner (archive drill-down), Offload (copy-verify-trash),
+                Scheduler (recurring scans), Settings, Storage (app-data JSON), DiskUsage
   models/       Shared TypeScript interfaces
   utils/        formatBytes, squarified treemap, path sanitizer, glob matcher
   middleware/   errorHandler, rateLimiter, pathGuard

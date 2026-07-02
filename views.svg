@@ -34,22 +34,27 @@
     </g>
 
     <g transform="translate(20,80)">
-      <rect width="290" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+      <rect width="220" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#facc15"/>
       <text x="48" y="31" fill="#dbe4f3">📈 Trends</text>
     </g>
-    <g transform="translate(320,80)">
-      <rect width="290" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
+    <g transform="translate(250,80)">
+      <rect width="220" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#22d3ee"/>
       <text x="48" y="31" fill="#dbe4f3">🔀 Compare</text>
     </g>
-    <g transform="translate(620,80)">
-      <rect width="290" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
+    <g transform="translate(480,80)">
+      <rect width="220" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#fb7185"/>
       <text x="48" y="31" fill="#dbe4f3">🧹 Clean&#160;Up</text>
     </g>
-    <g transform="translate(920,80)">
-      <rect width="340" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+    <g transform="translate(710,80)">
+      <rect width="230" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#2dd4bf"/>
+      <text x="48" y="31" fill="#dbe4f3">📤 Offloaded</text>
+    </g>
+    <g transform="translate(950,80)">
+      <rect width="310" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#fbbf24"/>
       <text x="48" y="31" fill="#dbe4f3">⏰ Scheduled&#160;+&#160;🚫 Ignore</text>
     </g>
