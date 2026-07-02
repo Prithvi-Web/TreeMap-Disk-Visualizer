@@ -1,6 +1,6 @@
 {
   "name": "treemap",
-  "version": "1.3.0",
+  "version": "2.0.0",
   "description": "TreeMap — a GrandPerspective-style disk space visualizer for macOS, Linux and Windows",
   "author": "Prithvi-Web",
   "main": "electron/main.js",
