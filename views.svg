@@ -6,24 +6,29 @@
     </linearGradient>
   </defs>
   <g font-size="15" font-weight="700">
-    <!-- row of 8 view chips -->
+    <!-- row of 5 view chips -->
     <g transform="translate(20,18)">
-      <rect width="290" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
+      <rect width="235" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#2dd4bf"/>
       <text x="48" y="31" fill="#dbe4f3">📊 Dashboard</text>
     </g>
-    <g transform="translate(320,18)">
-      <rect width="290" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+    <g transform="translate(270,18)">
+      <rect width="235" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#fbbf24"/>
       <text x="48" y="31" fill="#dbe4f3">🗺️ Treemap</text>
     </g>
-    <g transform="translate(620,18)">
-      <rect width="290" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
+    <g transform="translate(520,18)">
+      <rect width="235" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#f43f5e"/>
       <text x="48" y="31" fill="#dbe4f3">🔲 Grid</text>
     </g>
-    <g transform="translate(920,18)">
-      <rect width="340" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
+    <g transform="translate(770,18)">
+      <rect width="235" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#a78bfa"/>
+      <text x="48" y="31" fill="#dbe4f3">📦 Apps</text>
+    </g>
+    <g transform="translate(1020,18)">
+      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#34d399"/>
       <text x="48" y="31" fill="#dbe4f3">🧬 Duplicates</text>
     </g>
