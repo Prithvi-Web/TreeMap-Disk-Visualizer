@@ -215,6 +215,8 @@ insightRouter.get('/snapshots/tree', guardQueryPath('path'), async (req: Request
   const root = inflateSnapshotTree(found.tree, rootPath, found.snapshot.takenAt);
   const nodes = buildTreemap(root, { maxDepth: 3, minSize: 0, maxNodes: 20_000 });
 
+  // Diff data for both renderers: prevSize on the flat treemap nodes and on
+  // the tree itself (the sunburst lays out client-side from the tree).
   if (found.prev) {
     const prevSizes = new Map<string, number>();
     const walk = (n: FileNode): void => {
@@ -223,6 +225,11 @@ insightRouter.get('/snapshots/tree', guardQueryPath('path'), async (req: Request
     };
     walk(inflateSnapshotTree(found.prev.tree, rootPath, found.prev.snapshot.takenAt));
     for (const n of nodes) n.prevSize = prevSizes.get(n.path) ?? null;
+    const annotate = (n: FileNode & { prevSize?: number | null }): void => {
+      n.prevSize = prevSizes.get(n.path) ?? null;
+      if (n.children) for (const c of n.children) annotate(c);
+    };
+    annotate(root);
   }
 
   res.json({
@@ -233,6 +240,7 @@ insightRouter.get('/snapshots/tree', guardQueryPath('path'), async (req: Request
     maxDepth: 3,
     minSize: 0,
     nodes,
+    tree: root,
   });
 });
 

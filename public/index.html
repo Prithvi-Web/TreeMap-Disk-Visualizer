@@ -1535,7 +1535,7 @@ const state = {
   largest: [],
   types: [],
   bigFolders: [],
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0 } },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null } },
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   apps: { loadedFor: null, list: [], otherBytes: 0, totalBytes: 0, appsFolderScanned: false },
   donut: { segs: [], hover: -1, animated: false },
@@ -2587,6 +2587,7 @@ const HISTORY_CACHE_MAX = 40;
 function exitHistoryState() {
   const h = state.treemap.history;
   h.active = false;
+  h.tree = null;
   h.seq++; // invalidate any in-flight history fetch
   const slider = $('tmTimeSlider');
   if (slider) { slider.value = slider.max; }
@@ -2596,13 +2597,13 @@ function exitHistoryState() {
 /**
  * Show/refresh the slider. History scrubbing works at the scan root only
  * (snapshot trees are stored per scanned root), so the bar hides while
- * drilled into a subfolder or in sunburst mode.
+ * drilled into a subfolder. Treemap and sunburst modes both scrub.
  */
 async function refreshTimebar() {
   const bar = $('tmTimebar');
   if (!bar) return;
   const h = state.treemap.history;
-  if (isSun() || !state.root || state.treemap.rootPath !== state.root.path) { bar.hidden = true; return; }
+  if (!state.root || state.treemap.rootPath !== state.root.path) { bar.hidden = true; return; }
   try {
     const data = await api('/api/snapshots?path=' + encodeURIComponent(state.root.path));
     h.snaps = (data.snapshots || []).filter((s) => s.hasTree);
@@ -2638,18 +2639,20 @@ async function setHistoryIndex(i) {
   const seq = ++h.seq;
   try {
     let layout = h.cache.get(snap.id);
-    if (!layout) {
+    if (!layout || !layout.tree) { // missing or from an older response shape
       layout = await api(`/api/snapshots/tree?path=${encodeURIComponent(state.root.path)}&at=${snap.takenAt}`);
       h.cache.set(snap.id, layout);
       if (h.cache.size > HISTORY_CACHE_MAX) h.cache.delete(h.cache.keys().next().value);
     }
-    if (seq !== h.seq || state.view !== 'treemap' || isSun()) return; // superseded
+    if (seq !== h.seq || state.view !== 'treemap') return; // superseded
     h.active = true;
     h.viewingAt = layout.snapshot.takenAt;
+    h.tree = layout.tree || null;
     state.treemap.rootSize = layout.root.size;
     state.treemap.hover = null;
     state.treemap.kbSel = null;
-    animateTreemapTo(layout.nodes);
+    if (isSun()) animateSunburstTo(layout.tree);
+    else animateTreemapTo(layout.nodes);
     updateTimeLabel();
   } catch (e) {
     toast('Could not load that point in time: ' + e.message, 'error');
@@ -2721,7 +2724,14 @@ function sectorPath(ctx, cx, cy, rInner, rOuter, a0, a1) {
   ctx.closePath();
 }
 
-function drawSunburst() {
+/** Live or historical (time slider) tree the sunburst should draw. */
+function sunburstRoot() {
+  if (state.treemap.history.active && state.treemap.history.tree) return state.treemap.history.tree;
+  return state.pathIndex.get(state.treemap.rootPath) || state.root;
+}
+
+/** Size the canvas + buffer for the sunburst; returns the shared geometry. */
+function sunburstGeometry() {
   const wrap = $('treemapWrap');
   const cssW = wrap.clientWidth - 20;
   const cssH = Math.max(420, window.innerHeight - 300);
@@ -2733,28 +2743,20 @@ function drawSunburst() {
   if (tmCanvas.height !== ph) tmCanvas.height = ph;
   if (tmBuffer.width !== pw) tmBuffer.width = pw;
   if (tmBuffer.height !== ph) tmBuffer.height = ph;
-
-  const ctx = tmBufCtx;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, cssW, cssH);
-  ctx.fillStyle = cssVar('--tm-canvas-bg');
-  ctx.fillRect(0, 0, cssW, cssH);
-
-  const root = state.pathIndex.get(state.treemap.rootPath) || state.root;
-  if (!root) { state.treemap.arcs = []; state.treemap.sun = null; presentSunburst(); return; }
-
-  const cx = cssW / 2, cy = cssH / 2;
   const rings = sunRingCount();
   const outerR = Math.max(60, Math.min(cssW, cssH) / 2 - 18);
   const innerR0 = outerR / (rings + 1);
-  const ringT = (outerR - innerR0) / rings;
+  return { cssW, cssH, dpr, cx: cssW / 2, cy: cssH / 2, rings, outerR, innerR0, ringT: (outerR - innerR0) / rings };
+}
+
+/** Angular layout of `root` into arcs with final radii — no drawing. */
+function layoutSunburstArcs(root, geo) {
   const minAngle = (0.8 / 180) * Math.PI;
   const START = -Math.PI / 2;
-
   const arcs = [];
   (function layout(node, depth, a0, a1) {
     if (depth > 0) arcs.push({ n: node, depth, a0, a1 });
-    if (depth >= rings || node.type !== 'dir' || !node.children) return;
+    if (depth >= geo.rings || node.type !== 'dir' || !node.children) return;
     const total = node.size;
     if (total <= 0) return;
     const kids = node.children.filter((c) => c.size > 0 && !(state.treemap.hideCloud && c.cloudPlaceholder)).sort((a, b) => b.size - a.size);
@@ -2769,12 +2771,25 @@ function drawSunburst() {
 
   arcs.sort((p, q) => p.depth - q.depth);
   for (const arc of arcs) {
-    arc.cx = cx; arc.cy = cy;
-    arc.rInner = innerR0 + (arc.depth - 1) * ringT;
-    arc.rOuter = innerR0 + arc.depth * ringT;
+    arc.cx = geo.cx; arc.cy = geo.cy;
+    arc.rInner = geo.innerR0 + (arc.depth - 1) * geo.ringT;
+    arc.rOuter = geo.innerR0 + arc.depth * geo.ringT;
+  }
+  return arcs;
+}
+
+/** Draw one full sunburst frame from prepared arcs (live draw and time-slider animation). */
+function renderSunburstFrame(root, arcs, geo) {
+  const ctx = tmBufCtx;
+  ctx.setTransform(geo.dpr, 0, 0, geo.dpr, 0, 0);
+  ctx.clearRect(0, 0, geo.cssW, geo.cssH);
+  ctx.fillStyle = cssVar('--tm-canvas-bg');
+  ctx.fillRect(0, 0, geo.cssW, geo.cssH);
+
+  for (const arc of arcs) {
     const base = cellRgb(arc.n);
     const col = mix(base, [12, 12, 16], Math.min(0.4, arc.depth * 0.07));
-    sectorPath(ctx, cx, cy, arc.rInner, arc.rOuter, arc.a0, arc.a1);
+    sectorPath(ctx, arc.cx, arc.cy, arc.rInner, arc.rOuter, arc.a0, arc.a1);
     ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
     ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.35)';
@@ -2787,16 +2802,16 @@ function drawSunburst() {
   for (const arc of arcs) {
     const sweep = arc.a1 - arc.a0;
     const rMid = (arc.rInner + arc.rOuter) / 2;
-    if (sweep * rMid < 30 || ringT < 13) continue;
+    if (sweep * rMid < 30 || geo.ringT < 13) continue;
     const mid = (arc.a0 + arc.a1) / 2;
     ctx.save();
-    ctx.translate(cx + Math.cos(mid) * rMid, cy + Math.sin(mid) * rMid);
+    ctx.translate(arc.cx + Math.cos(mid) * rMid, arc.cy + Math.sin(mid) * rMid);
     let rot = mid;
     if (rot > Math.PI / 2 && rot < Math.PI * 1.5) rot += Math.PI;
     ctx.rotate(rot);
     ctx.font = '600 10px -apple-system, sans-serif';
     ctx.fillStyle = 'rgba(0,0,0,0.82)';
-    const maxW = ringT - 7;
+    const maxW = geo.ringT - 7;
     const label = arc.n.name;
     ctx.fillText(label, 0, 0, maxW);
     ctx.restore();
@@ -2804,7 +2819,7 @@ function drawSunburst() {
 
   // Centre disc = current root (click to zoom out).
   ctx.beginPath();
-  ctx.arc(cx, cy, innerR0, 0, Math.PI * 2);
+  ctx.arc(geo.cx, geo.cy, geo.innerR0, 0, Math.PI * 2);
   ctx.fillStyle = cssVar('--surface-2') || '#1c1c22';
   ctx.fill();
   ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth = 1; ctx.stroke();
@@ -2812,18 +2827,69 @@ function drawSunburst() {
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.font = '600 12px -apple-system, sans-serif';
   const cname = root.name.length > 16 ? root.name.slice(0, 15) + '…' : root.name;
-  ctx.fillText(cname, cx, cy - 7, innerR0 * 1.8);
+  ctx.fillText(cname, geo.cx, geo.cy - 7, geo.innerR0 * 1.8);
   ctx.fillStyle = cssVar('--text-2');
   ctx.font = '10px -apple-system, sans-serif';
-  ctx.fillText(formatBytes(root.size), cx, cy + 9, innerR0 * 1.8);
+  ctx.fillText(formatBytes(root.size), geo.cx, geo.cy + 9, geo.innerR0 * 1.8);
 
   state.treemap.arcs = arcs;
-  state.treemap.sun = { cx, cy, innerR0, outerR };
+  state.treemap.sun = { cx: geo.cx, cy: geo.cy, innerR0: geo.innerR0, outerR: geo.outerR };
   const st = $('tmStatus');
-  if (st) st.textContent = `${formatCount(arcs.length)} segments · ${rings} rings · ${formatBytes(root.size)} total`;
+  if (st) {
+    st.textContent = state.treemap.history.active
+      ? `Viewing ${new Date(state.treemap.history.viewingAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${formatBytes(root.size)} — drag the slider to Live to interact`
+      : `${formatCount(arcs.length)} segments · ${geo.rings} rings · ${formatBytes(root.size)} total`;
+  }
 
   presentSunburst();
   renderTmLegend();
+}
+
+function drawSunburst() {
+  const geo = sunburstGeometry();
+  const root = sunburstRoot();
+  if (!root) {
+    const ctx = tmBufCtx;
+    ctx.setTransform(geo.dpr, 0, 0, geo.dpr, 0, 0);
+    ctx.clearRect(0, 0, geo.cssW, geo.cssH);
+    ctx.fillStyle = cssVar('--tm-canvas-bg');
+    ctx.fillRect(0, 0, geo.cssW, geo.cssH);
+    state.treemap.arcs = []; state.treemap.sun = null;
+    presentSunburst();
+    return;
+  }
+  renderSunburstFrame(root, layoutSunburstArcs(root, geo), geo);
+}
+
+/** Time-slider canvas interpolation: sweep the arcs into `newRoot`'s layout. */
+function animateSunburstTo(newRoot) {
+  cancelAnimationFrame(tmAnimFrame);
+  const geo = sunburstGeometry();
+  const target = layoutSunburstArcs(newRoot, geo);
+  if (REDUCED || !state.treemap.arcs.length) { renderSunburstFrame(newRoot, target, geo); return; }
+  const oldByPath = new Map(state.treemap.arcs.map((a) => [a.n.path, a]));
+  const from = target.map((t) => {
+    const o = oldByPath.get(t.n.path);
+    if (o) return { a0: o.a0, a1: o.a1, rInner: o.rInner, rOuter: o.rOuter };
+    const mid = (t.a0 + t.a1) / 2; // new entries sweep open from their midpoint
+    return { a0: mid, a1: mid, rInner: t.rInner, rOuter: t.rOuter };
+  });
+  const t0 = performance.now(), dur = 260;
+  const tick = (t) => {
+    const p = Math.min(1, (t - t0) / dur);
+    const e = 1 - Math.pow(1 - p, 3);
+    const frame = target.map((a, i) => ({
+      ...a,
+      a0: from[i].a0 + (a.a0 - from[i].a0) * e,
+      a1: from[i].a1 + (a.a1 - from[i].a1) * e,
+      rInner: from[i].rInner + (a.rInner - from[i].rInner) * e,
+      rOuter: from[i].rOuter + (a.rOuter - from[i].rOuter) * e,
+    }));
+    renderSunburstFrame(newRoot, frame, geo);
+    if (p < 1) tmAnimFrame = requestAnimationFrame(tick);
+    else renderSunburstFrame(newRoot, target, geo);
+  };
+  tmAnimFrame = requestAnimationFrame(tick);
 }
 
 function presentSunburst() {
@@ -2867,7 +2933,7 @@ function sunburstHit(clientX, clientY) {
   const x = clientX - rect.left - sun.cx, y = clientY - rect.top - sun.cy;
   const r = Math.hypot(x, y);
   if (r <= sun.innerR0) {
-    const root = state.pathIndex.get(state.treemap.rootPath) || state.root;
+    const root = sunburstRoot();
     return root ? { n: root, center: true } : null;
   }
   if (r > sun.outerR) return null;
