@@ -8,12 +8,14 @@ import { systemRouter } from './api/systemRoutes';
 import { insightRouter } from './api/insightRoutes';
 import { settingsRouter } from './api/settingsRoutes';
 import { watchRouter, drainWatchClients } from './api/watchRoutes';
+import { offloadRouter, drainOffloadClients } from './api/offloadRoutes';
 import { rateLimiter } from './middleware/rateLimiter';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { cancelAllScans } from './services/diskScanner';
 import { cancelAllDuplicateJobs } from './services/duplicateFinder';
 import { cancelAllNearDupeJobs } from './services/perceptualDupes';
 import { stopAllWatchers } from './services/watcher';
+import { cancelAllOffloadJobs } from './services/offload';
 import { startScheduler, stopScheduler } from './services/scheduler';
 
 /**
@@ -40,6 +42,7 @@ export function createApp(publicDir: string): express.Express {
   app.use('/api', insightRouter);
   app.use('/api', settingsRouter);
   app.use('/api', watchRouter);
+  app.use('/api', offloadRouter);
 
   // Frontend: the single-file UI.
   app.use(express.static(publicDir, { index: 'index.html' }));
@@ -79,8 +82,10 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
     cancelAllDuplicateJobs(); // stop background hashing
     cancelAllNearDupeJobs(); // stop background image fingerprinting
     stopAllWatchers(); // close live-activity watchers ('paused' to clients)
+    cancelAllOffloadJobs(); // in-flight copies roll back cooperatively
     drainSseClients(); // send 'shutdown' event, then end each stream
     drainWatchClients(); // end live-activity streams
+    drainOffloadClients(); // end offload progress streams
     server.close();
     // Don't process.exit here — the caller (CLI or Electron) decides that.
   };
