@@ -57,7 +57,7 @@
     "publish": {
       "provider": "github",
       "owner": "Prithvi-Web",
-      "repo": "Treemap"
+      "repo": "TreeMap-Disk-Visualizer"
     },
     "mac": {
       "target": [

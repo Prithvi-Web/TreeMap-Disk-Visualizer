@@ -2,16 +2,16 @@
 
 <div align="center">
 
-<a href="https://github.com/Prithvi-Web/Treemap/releases">
+<a href="https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/releases">
   <img src="treemap-hero.svg" alt="TreeMap — a disk-space visualizer that shows exactly what's eating your disk" width="100%">
 </a>
 
 <br><br>
 
 <!-- primary CTAs -->
-<a href="https://github.com/Prithvi-Web/Treemap/releases"><img src="https://img.shields.io/badge/⬇_Download-Latest_Release-2dd4bf?style=for-the-badge&labelColor=0b1220" alt="Download"></a>&nbsp;
-<a href="https://github.com/Prithvi-Web/Treemap/stargazers"><img src="https://img.shields.io/github/stars/Prithvi-Web/Treemap?style=for-the-badge&label=Star&labelColor=0b1220&color=fbbf24" alt="Stars"></a>&nbsp;
-<a href="https://github.com/Prithvi-Web/Treemap/fork"><img src="https://img.shields.io/github/forks/Prithvi-Web/Treemap?style=for-the-badge&label=Fork&labelColor=0b1220&color=f43f5e" alt="Forks"></a>
+<a href="https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/releases"><img src="https://img.shields.io/badge/⬇_Download-Latest_Release-2dd4bf?style=for-the-badge&labelColor=0b1220" alt="Download"></a>&nbsp;
+<a href="https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/stargazers"><img src="https://img.shields.io/github/stars/Prithvi-Web/TreeMap-Disk-Visualizer?style=for-the-badge&label=Star&labelColor=0b1220&color=fbbf24" alt="Stars"></a>&nbsp;
+<a href="https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/fork"><img src="https://img.shields.io/github/forks/Prithvi-Web/TreeMap-Disk-Visualizer?style=for-the-badge&label=Fork&labelColor=0b1220&color=f43f5e" alt="Forks"></a>
 
 <br><br>
 
@@ -144,7 +144,7 @@ Re-scan folders on a schedule with **growth-threshold alerts** and **disk-full f
 
 ## ⬇️ Download the app (for users)
 
-Grab the latest installer from the [**Releases page**](https://github.com/Prithvi-Web/Treemap/releases):
+Grab the latest installer from the [**Releases page**](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/releases):
 
 <table>
 <tr><th>Platform</th><th>File</th><th>How</th></tr>
@@ -345,9 +345,9 @@ scripts/
 
 ### Found this useful?
 
-<a href="https://github.com/Prithvi-Web/Treemap/stargazers"><img src="https://img.shields.io/badge/⭐_Star_the_repo-fbbf24?style=for-the-badge&labelColor=0b1220" alt="Star"></a>&nbsp;
-<a href="https://github.com/Prithvi-Web/Treemap/fork"><img src="https://img.shields.io/badge/🍴_Fork_it-f43f5e?style=for-the-badge&labelColor=0b1220" alt="Fork"></a>&nbsp;
-<a href="https://github.com/Prithvi-Web/Treemap/issues"><img src="https://img.shields.io/badge/🐛_Open_an_issue-2dd4bf?style=for-the-badge&labelColor=0b1220" alt="Issues"></a>
+<a href="https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/stargazers"><img src="https://img.shields.io/badge/⭐_Star_the_repo-fbbf24?style=for-the-badge&labelColor=0b1220" alt="Star"></a>&nbsp;
+<a href="https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/fork"><img src="https://img.shields.io/badge/🍴_Fork_it-f43f5e?style=for-the-badge&labelColor=0b1220" alt="Fork"></a>&nbsp;
+<a href="https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/issues"><img src="https://img.shields.io/badge/🐛_Open_an_issue-2dd4bf?style=for-the-badge&labelColor=0b1220" alt="Issues"></a>
 
 <br><br>
 
