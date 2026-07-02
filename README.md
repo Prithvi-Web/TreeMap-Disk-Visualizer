@@ -55,12 +55,12 @@
 
 <br>
 
-## ✨ The eight views
+## ✨ The nine views
 
-TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Eight views, one zero-dependency frontend.
+TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Nine views, one zero-dependency frontend.
 
 <div align="center">
-  <img src="views.svg" width="100%" alt="The eight views: Dashboard, Treemap, Grid, Duplicates, Trends, Compare, Clean Up, Scheduled + Ignore">
+  <img src="views.svg" width="100%" alt="The nine views: Dashboard, Treemap, Grid, Apps, Duplicates, Trends, Compare, Clean Up, Scheduled + Ignore">
 </div>
 
 <br>
@@ -89,32 +89,40 @@ A size-proportional icon grid with multi-select, sorting, and virtual scrolling 
 </td>
 <td width="50%" valign="top">
 
-### 🧬 Duplicates
-Finds **true** duplicates (size + streamed SHA-256), grouped with reclaimable space per group. Auto-select keeps the newest copy of each. A **Near-Duplicate Images** tab catches resized, re-encoded and screenshot copies with a perceptual **dHash**.
+### 📦 Apps
+**How much disk does each application own?** Every app's total, split into **app / caches / data / logs**, with a **"Clear caches safely"** button (Trash-only, never touches your data) and click-through into the treemap. Files no app owns land in an honest "Everything else" bucket, so the totals always match the scan.
 
 </td>
 </tr>
 <tr>
+<td width="50%" valign="top">
+
+### 🧬 Duplicates
+Finds **true** duplicates (size + streamed SHA-256), grouped with reclaimable space per group. Auto-select keeps the newest copy of each. A **Near-Duplicate Images** tab catches resized, re-encoded and screenshot copies with a perceptual **dHash**.
+
+</td>
 <td width="50%" valign="top">
 
 ### 📈 Trends
 Every scan saves a lightweight snapshot, charted over time per folder — with a clear **"what grew / what shrank since last scan"** breakdown.
 
 </td>
+</tr>
+<tr>
 <td width="50%" valign="top">
 
 ### 🔀 Compare
 Pick any two scans of the same folder for a file-level diff: **added, removed, grew, shrank.** Subtrees collapse to one row instead of thousands.
 
 </td>
-</tr>
-<tr>
 <td width="50%" valign="top">
 
 ### 🧹 Clean Up
 **Custom rules** (old / huge / by extension / duplicated), **Smart Suggestions** — sorted into **regenerable** (`node_modules`, Rust/Maven `target`, virtualenvs, build output — each shown with the command that restores it), **cache**, and **junk**, plus a per-profile **browser cache** breakdown (Chrome / Edge / Brave / Firefox / Safari) — and **Empty Folders**. Everything → Trash.
 
 </td>
+</tr>
+<tr>
 <td width="50%" valign="top">
 
 ### ⏰ Scheduled scans + 🚫 Ignore list
@@ -244,6 +252,7 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 | `GET /api/large-files?scanId=` | Top N largest files |
 | `GET /api/large-folders?scanId=` | Top N largest folders (recursive sizes) |
 | `GET /api/file-types?scanId=` | Size breakdown by extension |
+| `GET /api/apps?scanId=` | Per-app storage attribution: totals, app / cache / data / logs breakdown, safe-to-clear bytes |
 | `GET /api/duplicates?scanId=` | Duplicate groups (starts hashing; poll until complete) |
 | `GET /api/near-duplicates?scanId=&threshold=` | Perceptual (dHash) near-duplicate image clusters |
 | `GET /api/empty-folders?scanId=` | Recursively empty folders (`ignoreJunk` configurable) |
@@ -286,8 +295,8 @@ src/
   api/          Express routes (scan, files, system, insights, settings)
   services/     DiskScanner (8-way concurrent walker), Cleaner (trash/open),
                 DuplicateFinder (staged hashing), Snapshots (Trends history),
-                CleanupRules (smart suggestions), Scheduler (recurring scans),
-                Settings, Storage (app-data JSON), DiskUsage
+                CleanupRules (smart suggestions), AppAttribution (per-app storage),
+                Scheduler (recurring scans), Settings, Storage (app-data JSON), DiskUsage
   models/       Shared TypeScript interfaces
   utils/        formatBytes, squarified treemap, path sanitizer, glob matcher
   middleware/   errorHandler, rateLimiter, pathGuard

@@ -2,6 +2,7 @@ import os from 'os';
 import path from 'path';
 import { FileNode, CleanupSuggestionGroup, CleanupSuggestionItem, SuggestionCategory } from '../models/types';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
+import { samePath, winLocalAppData } from '../utils/osPaths';
 
 /**
  * cleanupRules — well-known reclaimable disk space, matched against a
@@ -201,7 +202,7 @@ function pathRules(): PathRule[] {
     ];
   }
   if (process.platform === 'win32') {
-    const local = process.env.LOCALAPPDATA || j(home, 'AppData', 'Local');
+    const local = winLocalAppData();
     return [
       {
         id: 'browser-caches',
@@ -258,10 +259,6 @@ function pathRules(): PathRule[] {
       ],
     },
   ];
-}
-
-function samePath(a: string, b: string): boolean {
-  return process.platform === 'linux' ? a === b : a.toLowerCase() === b.toLowerCase();
 }
 
 /** True if any sibling basename matches a pattern (`foo.*` ⇒ any `foo.<ext>`). */

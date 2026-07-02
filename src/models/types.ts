@@ -388,6 +388,49 @@ export interface CleanupSuggestionGroup {
   regenerateCmd?: string;
 }
 
+/* ---------- Per-app storage attribution (Apps tab) ---------- */
+
+/** Where an app's bytes live: the app itself, rebuildable caches, user data, or logs. */
+export type AppCategory = 'app' | 'cache' | 'data' | 'logs';
+
+/** One directory (or .app bundle) attributed to an application. */
+export interface AppLocation {
+  path: string;
+  bytes: number;
+  category: AppCategory;
+  /** Human label for the breakdown list, e.g. "Application Support". */
+  label: string;
+}
+
+/** One application with everything the scan attributes to it. */
+export interface AppEntry {
+  /** Display name, e.g. "Google Chrome". */
+  name: string;
+  /** Merge key: bundle id on macOS when known, else a normalized name. */
+  id: string;
+  totalBytes: number;
+  /** Byte totals per category (only categories that are present). */
+  bytesByCategory: Partial<Record<AppCategory, number>>;
+  /** Largest attributed locations, size-sorted. */
+  locations: AppLocation[];
+  /** Bytes freed by "Clear caches safely" (cache + log locations only). */
+  safeToClearBytes: number;
+  /** The cache/log paths that button moves to the Trash. */
+  safeToClearPaths: string[];
+}
+
+export interface AppAttributionResult {
+  scanId: string;
+  /** Largest first. */
+  apps: AppEntry[];
+  /** Bytes in the scan no application claimed ("Everything else"). */
+  otherBytes: number;
+  /** Scan root size — apps + otherBytes always sum to exactly this. */
+  totalBytes: number;
+  /** False when the OS application folders weren't inside this scan. */
+  appsFolderScanned: boolean;
+}
+
 /* ---------- Browser profile drill-down (Feature 16) ---------- */
 
 /** One reclaimable cache/storage area inside a browser profile. */
