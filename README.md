@@ -76,7 +76,7 @@ Disk-usage ring, live scan progress, file-type donut chart, and the **top-10 lar
 <td width="50%" valign="top">
 
 ### 🗺️ Treemap
-A squarified treemap of every file, sized by bytes and colored **teal → amber → red**. Drill in, climb back with breadcrumbs + zoom-out, search with highlights (`report`, `*.zip`), pin **folder budgets** (over-budget folders get a red dashed border), and **export** the chart (PNG / SVG) or the whole scan (**CSV**, or a multi-page **PDF report**).
+A squarified treemap of every file, sized by bytes and colored **teal → amber → red**. Drill in, climb back with breadcrumbs + zoom-out, search with highlights (`report`, `*.zip`), pin **folder budgets** (over-budget folders get a red dashed border), and **export** the chart (PNG / SVG) or the whole scan (**CSV**, or a multi-page **PDF report**). A **time slider** appears once a folder has scan history: scrub to any past scan and watch the map morph — in the treemap *and* the sunburst — with a **diff overlay** tinting what grew green and what shrank red.
 
 </td>
 </tr>
@@ -259,6 +259,7 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 | `GET /api/compare?scanIdA=&scanIdB=` | File-level diff of two scans of the same root |
 | `GET /api/snapshots` | Scan history: roots, per-root snapshots (`?path=`), or all (`?all=true`) |
 | `GET /api/snapshots/compare?a=&b=` | Top-level deltas between two snapshots |
+| `GET /api/snapshots/tree?path=&at=` | Historical treemap closest to a timestamp (time slider), with grew/shrank data |
 | `GET /api/cleanup/suggestions?scanId=` | Smart cleanup suggestions (regenerable / cache / junk) |
 | `GET /api/cleanup/browser-profiles?scanId=` | Per-browser-profile cache breakdown |
 | `GET /api/git/repos?scanId=` · `POST /api/git/gc` | Git pack/loose/LFS breakdown, and `git gc` a scanned repo |
@@ -313,7 +314,7 @@ scripts/
 ## 🧠 Design decisions worth knowing
 
 - **Scan speed is a threadpool problem, not a walker problem.** Every async `lstat`/`readdir` runs on libuv's threadpool, which defaults to 4 threads — that, not the walker's concurrency, was the bottleneck. TreeMap sizes the pool to 2× cores (≤ 16) before it spins up; measured on APFS this scans ~1.6× faster, while 32 threads is *slower* than 4 (kernel metadata-lock contention). The dashboard shows which engine ran and how long the scan took.
-- **Snapshots are automatic** — one is saved after every successful scan, so Trends needs zero setup. Only totals + top-level entry sizes are stored (a few KB each, capped at 200 per folder).
+- **Snapshots are automatic** — one is saved after every successful scan, so Trends needs zero setup. Totals + top-level entries live in `snapshots.json` (a few KB each, capped at 200 per folder); the time slider's shallow trees (≤ 3 levels, ~100 KB budget each) sit in separate per-root files so the main history file stays tiny.
 - **The scheduler is a 60-second `setInterval`**, not `node-cron` — hour-level granularity doesn't justify a dependency. Schedules fire while the app runs (the desktop app keeps running in the tray).
 - **Duplicate detection is staged** (size → first 64 KB hash → full SHA-256) so scans with hundreds of thousands of files finish hashing in seconds, and only true content matches are reported.
 - **Compare collapses subtrees** — a deleted or added folder shows as one row, not thousands of file rows.

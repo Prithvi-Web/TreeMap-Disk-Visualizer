@@ -13,13 +13,16 @@ import {
   listSnapshotRoots,
   listAllSnapshotsSlim,
   getSnapshot,
+  getSnapshotTreeAt,
+  inflateSnapshotTree,
   diffSnapshots,
 } from '../services/snapshots';
+import { buildTreemap } from '../utils/treemap';
 import { guardQueryPath, guardBodyPath, requireInsideScanRoot } from '../middleware/pathGuard';
 import { getAppAttribution } from '../services/appAttribution';
 import { findGitRepos, runGitGc } from '../services/gitScanner';
 import { AppError } from '../middleware/errorHandler';
-import { CompareResult, ScanResult } from '../models/types';
+import { CompareResult, FileNode, ScanResult } from '../models/types';
 
 /**
  * insightRoutes — analysis endpoints layered on top of completed scans:
@@ -191,6 +194,54 @@ insightRouter.get('/snapshots', guardQueryPath('path'), async (req: Request, res
   } else {
     res.json({ roots: await listSnapshotRoots() });
   }
+});
+
+/**
+ * GET /api/snapshots/tree?path=&at= — historical treemap (time slider).
+ * Serves the stored snapshot tree closest to `at` in exactly the shape of
+ * /api/scan/:id/treemap, so the live renderer draws it unmodified. Each node
+ * carries prevSize (size in the previous snapshot; null = didn't exist) for
+ * the diff overlay.
+ */
+insightRouter.get('/snapshots/tree', guardQueryPath('path'), async (req: Request, res: Response) => {
+  const rootPath = req.query.path as string | undefined;
+  if (!rootPath) throw new AppError(400, 'PATH_REQUIRED', 'A "path" query parameter is required');
+  const at = Number(req.query.at);
+  if (!Number.isFinite(at)) throw new AppError(400, 'AT_REQUIRED', '"at" must be a unix-ms timestamp');
+
+  const found = await getSnapshotTreeAt(rootPath, at);
+  if (!found) throw new AppError(404, 'NO_SNAPSHOT_TREE', 'No snapshot trees recorded for that folder yet — rescan it to start history');
+
+  const root = inflateSnapshotTree(found.tree, rootPath, found.snapshot.takenAt);
+  const nodes = buildTreemap(root, { maxDepth: 3, minSize: 0, maxNodes: 20_000 });
+
+  // Diff data for both renderers: prevSize on the flat treemap nodes and on
+  // the tree itself (the sunburst lays out client-side from the tree).
+  if (found.prev) {
+    const prevSizes = new Map<string, number>();
+    const walk = (n: FileNode): void => {
+      prevSizes.set(n.path, n.size);
+      if (n.children) for (const c of n.children) walk(c);
+    };
+    walk(inflateSnapshotTree(found.prev.tree, rootPath, found.prev.snapshot.takenAt));
+    for (const n of nodes) n.prevSize = prevSizes.get(n.path) ?? null;
+    const annotate = (n: FileNode & { prevSize?: number | null }): void => {
+      n.prevSize = prevSizes.get(n.path) ?? null;
+      if (n.children) for (const c of n.children) annotate(c);
+    };
+    annotate(root);
+  }
+
+  res.json({
+    snapshot: { id: found.snapshot.id, takenAt: found.snapshot.takenAt, totalSize: found.snapshot.totalSize },
+    prevTakenAt: found.prev ? found.prev.snapshot.takenAt : null,
+    root: { name: root.name, path: root.path, size: root.size, modifiedAt: root.modifiedAt },
+    scanRootPath: rootPath,
+    maxDepth: 3,
+    minSize: 0,
+    nodes,
+    tree: root,
+  });
 });
 
 /** GET /api/snapshots/compare?a=<id>&b=<id> — deltas between two snapshots. */
