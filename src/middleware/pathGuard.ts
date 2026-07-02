@@ -66,6 +66,12 @@ export function requireInsideScanRoot(req: Request, _res: Response, next: NextFu
   const body = req.body as { path?: string; paths?: string[] };
   const candidates = body.paths ?? (body.path !== undefined ? [body.path] : []);
   for (const p of candidates) {
+    // Cloud entries never touch this filesystem — their deletes go through
+    // POST /api/cloud/trash to the provider's own trash.
+    if (p.startsWith('cloud://')) {
+      next(new AppError(403, 'CLOUD_PATH', `"${p}" lives in a cloud account — use the provider's trash instead`));
+      return;
+    }
     if (!insideAnyScanRoot(p)) {
       next(
         new AppError(

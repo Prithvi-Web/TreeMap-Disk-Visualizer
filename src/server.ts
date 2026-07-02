@@ -9,6 +9,8 @@ import { insightRouter } from './api/insightRoutes';
 import { settingsRouter } from './api/settingsRoutes';
 import { watchRouter, drainWatchClients } from './api/watchRoutes';
 import { offloadRouter, drainOffloadClients } from './api/offloadRoutes';
+import { cloudRouter } from './api/cloudRoutes';
+import { stopOAuth } from './services/cloud/oauth';
 import { rateLimiter } from './middleware/rateLimiter';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { cancelAllScans } from './services/diskScanner';
@@ -43,6 +45,7 @@ export function createApp(publicDir: string): express.Express {
   app.use('/api', settingsRouter);
   app.use('/api', watchRouter);
   app.use('/api', offloadRouter);
+  app.use('/api', cloudRouter);
 
   // Frontend: the single-file UI.
   app.use(express.static(publicDir, { index: 'index.html' }));
@@ -83,6 +86,7 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
     cancelAllNearDupeJobs(); // stop background image fingerprinting
     stopAllWatchers(); // close live-activity watchers ('paused' to clients)
     cancelAllOffloadJobs(); // in-flight copies roll back cooperatively
+    stopOAuth(); // close any pending sign-in listener
     drainSseClients(); // send 'shutdown' event, then end each stream
     drainWatchClients(); // end live-activity streams
     drainOffloadClients(); // end offload progress streams

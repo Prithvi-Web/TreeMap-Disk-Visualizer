@@ -49,6 +49,15 @@ export function sanitizePath(input: unknown): string {
     throw new PathRejectedError('Path contains a null byte', 'PATH_INVALID');
   }
 
+  // Cloud-scan paths (cloud://provider/...) are pure identifiers: they never
+  // reach the filesystem, so they skip resolution — but not validation.
+  if (input.startsWith('cloud://')) {
+    if (!/^cloud:\/\/[a-z]+(\/[^\0]*)?$/.test(input) || input.includes('..')) {
+      throw new PathRejectedError('Malformed cloud path', 'PATH_INVALID');
+    }
+    return input;
+  }
+
   let p = input.trim();
   if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
     p = path.join(os.homedir(), p.slice(1));

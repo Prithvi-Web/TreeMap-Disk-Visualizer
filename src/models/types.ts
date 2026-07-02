@@ -29,6 +29,8 @@ export interface FileNode {
   gitRepo?: boolean;
   /** Drillable container (archive, disk image, Docker data, Photos library). */
   container?: ContainerKind;
+  /** Provider file id for nodes of a cloud scan (drives provider-trash). */
+  cloudId?: string;
   /** Lives inside a container — listed, not on disk; excluded from trash/open. */
   virtual?: boolean;
   /** Uncompressed size for archive entries whose treemap size was scaled. */
@@ -62,7 +64,7 @@ export interface ScanResult {
   /** Cooperative cancellation flag (set on shutdown/eviction). */
   cancelled: boolean;
   /** Which enumeration engine produced this scan (dashboard note). */
-  engine?: 'walker' | 'turbo-walker' | 'ntfs-mft';
+  engine?: 'walker' | 'turbo-walker' | 'ntfs-mft' | 'cloud';
   /** libuv threadpool size the scan ran with. */
   ioThreads?: number;
   /** True when this scan reused the on-disk mtime cache (fast rescan). */
@@ -372,6 +374,13 @@ export interface BudgetEntry {
   maxBytes: number;
 }
 
+/** Bring-your-own OAuth app credentials for one cloud provider. */
+export interface CloudCredentials {
+  clientId: string;
+  /** Google desktop clients also use a (non-confidential) secret. */
+  clientSecret?: string;
+}
+
 export interface AppSettings {
   ignore: IgnoreEntry[];
   schedules: ScheduleConfig[];
@@ -380,6 +389,8 @@ export interface AppSettings {
   forecastThresholdDays: number;
   /** Live activity mode auto-pauses after this many minutes without events. */
   watchIdleMinutes: number;
+  /** Cloud provider app credentials (tokens live in cloud-tokens.json). */
+  cloud: Partial<Record<'gdrive' | 'dropbox' | 'onedrive', CloudCredentials>>;
 }
 
 /** A budget cross-referenced against a scan: how the folder measures up now. */
