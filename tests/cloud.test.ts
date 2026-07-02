@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'crypto';
-import { gdriveFilesToTree, dropboxEntriesToTree, onedriveItemsToTree } from '../src/services/cloud/providers';
+import { gdriveFilesToTree, dropboxEntriesToTree, onedriveItemsToTree, retryDelayMs } from '../src/services/cloud/providers';
 import { makePkce } from '../src/services/cloud/oauth';
 
 /** Cloud provider tree mapping — the master prompt's "provider tree mapping" tests. */
@@ -76,6 +76,27 @@ test('onedrive: delta items link via parentReference and skip deleted', () => {
   assert.equal(work.size, 4000);
   assert.equal(work.children![0].path, 'cloud://onedrive/Work/plan.xlsx');
   assert.ok(!JSON.stringify(tree).includes('old.tmp'));
+});
+
+test('retry policy: rate limits and server errors back off, client errors never', () => {
+  // 429 honors Retry-After
+  assert.equal(retryDelayMs(429, 1, '3', ''), 3000);
+  // 5xx backs off exponentially (jitter ≤ 250ms on top of the base)
+  const d1 = retryDelayMs(503, 1, null, '');
+  const d2 = retryDelayMs(503, 2, null, '');
+  assert.ok(d1 >= 500 && d1 < 800, `attempt1 ~500ms, got ${d1}`);
+  assert.ok(d2 >= 1000 && d2 < 1300, `attempt2 ~1000ms, got ${d2}`);
+  // Google's rate-limit-flavored 403 is transient…
+  assert.ok(retryDelayMs(403, 1, null, '{"reason":"userRateLimitExceeded"}') !== null);
+  // …but a plain 403 (permissions) is not
+  assert.equal(retryDelayMs(403, 1, null, '{"error":"insufficient permissions"}'), null);
+  // 4xx client mistakes never retry
+  assert.equal(retryDelayMs(400, 1, null, ''), null);
+  assert.equal(retryDelayMs(404, 1, null, ''), null);
+  // attempts are capped
+  assert.equal(retryDelayMs(429, 4, '1', ''), null);
+  // Retry-After is clamped so a hostile header can't stall a scan
+  assert.equal(retryDelayMs(429, 1, '9999', ''), 30_000);
 });
 
 test('pkce: challenge is the base64url SHA-256 of the verifier', () => {

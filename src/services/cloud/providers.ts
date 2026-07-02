@@ -38,18 +38,59 @@ export interface CloudProvider {
 
 const env = (key: string, fallback: string): string => process.env[key] || fallback;
 
+/** No single provider call may hang the scan — hard timeout per request. */
+const FETCH_TIMEOUT_MS = 30_000;
+const MAX_ATTEMPTS = 4;
+
+/**
+ * When (and how long) to wait before retrying a failed provider call.
+ * Returns null for "don't retry". Honors Retry-After; treats 429, 5xx and
+ * Google's rate-limit-flavored 403s as transient. Pure — tested.
+ */
+export function retryDelayMs(status: number, attempt: number, retryAfter: string | null, bodyText: string): number | null {
+  if (attempt >= MAX_ATTEMPTS) return null;
+  const rateLimited403 = status === 403 && /rate.?limit(ed)?|userratelimit|quotaexceeded/i.test(bodyText);
+  if (status !== 429 && status < 500 && !rateLimited403) return null;
+  const ra = Number(retryAfter);
+  if (Number.isFinite(ra) && ra > 0) return Math.min(30_000, ra * 1000);
+  return Math.min(20_000, 500 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 250);
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 async function apiJson(url: string, token: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
-  const resp = await fetch(url, {
-    ...init,
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) },
-  });
-  if (resp.status === 401) throw new AppError(401, 'CLOUD_AUTH', 'The provider rejected the sign-in — reconnect in Settings');
-  if (!resp.ok) {
-    const text = (await resp.text().catch(() => '')).slice(0, 200);
-    throw new AppError(502, 'CLOUD_API', `The provider returned ${resp.status}: ${text}`);
+  let lastNetworkError = '';
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let resp: Response;
+    try {
+      resp = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+      });
+    } catch (err) {
+      // Network blip or timeout — transient by definition.
+      lastNetworkError = err instanceof Error ? (err.name === 'TimeoutError' ? 'timed out' : err.message) : String(err);
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(500 * 2 ** (attempt - 1));
+        continue;
+      }
+      throw new AppError(502, 'CLOUD_NETWORK', `Couldn't reach the provider (${lastNetworkError.slice(0, 120)}) — check your connection and try again`);
+    }
+    if (resp.status === 401) throw new AppError(401, 'CLOUD_AUTH', 'The provider rejected the sign-in — reconnect in Settings');
+    if (!resp.ok && resp.status !== 204) {
+      const text = (await resp.text().catch(() => '')).slice(0, 300);
+      const delay = retryDelayMs(resp.status, attempt, resp.headers.get('retry-after'), text);
+      if (delay !== null) {
+        await sleep(delay);
+        continue;
+      }
+      throw new AppError(502, 'CLOUD_API', `The provider returned ${resp.status}: ${text.slice(0, 200)}`);
+    }
+    if (resp.status === 204) return {};
+    return (await resp.json()) as Record<string, unknown>;
   }
-  if (resp.status === 204) return {};
-  return (await resp.json()) as Record<string, unknown>;
+  throw new AppError(502, 'CLOUD_API', 'The provider kept rate-limiting — try again in a minute');
 }
 
 export function cloudRootPath(id: CloudProviderId): string {
@@ -341,13 +382,7 @@ const onedrive: CloudProvider = {
   },
   async trash(token, cloudId) {
     const base = env('TM_ONEDRIVE_API', 'https://graph.microsoft.com/v1.0');
-    const resp = await fetch(`${base}/me/drive/items/${encodeURIComponent(cloudId)}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!resp.ok && resp.status !== 204) {
-      throw new AppError(502, 'CLOUD_API', `OneDrive returned ${resp.status}`);
-    }
+    await apiJson(`${base}/me/drive/items/${encodeURIComponent(cloudId)}`, token, { method: 'DELETE' });
   },
 };
 
@@ -372,7 +407,7 @@ export async function credentialsFor(provider: CloudProvider): Promise<{ clientI
 }
 
 /** Access token, refreshed if needed — the one gateway every call goes through. */
-export async function tokenFor(provider: CloudProvider): Promise<string> {
+export async function tokenFor(provider: CloudProvider, force = false): Promise<string> {
   const { clientId, clientSecret } = await credentialsFor(provider);
-  return freshAccessToken(provider.id, provider.tokenUrl, clientId, clientSecret);
+  return freshAccessToken(provider.id, provider.tokenUrl, clientId, clientSecret, force);
 }

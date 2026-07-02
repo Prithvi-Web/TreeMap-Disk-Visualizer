@@ -192,10 +192,16 @@ async function completeWithRedirect(redirect: URL): Promise<void> {
 export async function finishAuthManually(input: string): Promise<string> {
   if (!pending) throw new AppError(409, 'NO_AUTH_PENDING', 'Start the connection first, then paste the code');
   const trimmed = input.trim();
-  if (/^https?:\/\//i.test(trimmed)) {
-    await completeWithRedirect(new URL(trimmed));
-  } else {
-    await exchangeCode(trimmed);
+  try {
+    if (/^https?:\/\//i.test(trimmed)) {
+      await completeWithRedirect(new URL(trimmed));
+    } else {
+      await exchangeCode(trimmed);
+    }
+  } catch (err) {
+    // Surface the provider's own explanation, not a generic 500.
+    if (err instanceof AppError) throw err;
+    throw new AppError(400, 'AUTH_FAILED', err instanceof Error ? err.message : String(err));
   }
   const provider = pending.providerId;
   stopLoopback();
@@ -217,6 +223,7 @@ async function exchangeCode(code: string): Promise<void> {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
+    signal: AbortSignal.timeout(20_000),
   });
   const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
   if (!resp.ok || typeof json.access_token !== 'string') {
@@ -231,17 +238,25 @@ async function exchangeCode(code: string): Promise<void> {
 
 /* ---------------- refresh ---------------- */
 
-/** A valid access token for this provider, refreshing if within a minute of expiry. */
+/**
+ * A valid access token for this provider, refreshing if within a minute of
+ * expiry. `force` refreshes unconditionally — used after a provider 401s a
+ * token that still looked fresh (clock skew, revocation-and-reissue).
+ */
 export async function freshAccessToken(
   providerId: string,
   tokenUrl: string,
   clientId: string,
   clientSecret?: string,
+  force = false,
 ): Promise<string> {
   const tokens = await getTokens(providerId);
   if (!tokens) throw new AppError(401, 'NOT_CONNECTED', 'That account is not connected');
-  if (!tokens.expiresAt || tokens.expiresAt - Date.now() > 60_000) return tokens.accessToken;
-  if (!tokens.refreshToken) return tokens.accessToken; // provider gave no refresh token — use until it 401s
+  if (!force && (!tokens.expiresAt || tokens.expiresAt - Date.now() > 60_000)) return tokens.accessToken;
+  if (!tokens.refreshToken) {
+    if (force) throw new AppError(401, 'REFRESH_FAILED', 'The sign-in expired and no refresh token was granted — reconnect the account in Settings');
+    return tokens.accessToken; // provider gave no refresh token — use until it 401s
+  }
 
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
@@ -253,6 +268,9 @@ export async function freshAccessToken(
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
+    signal: AbortSignal.timeout(20_000),
+  }).catch((err: Error) => {
+    throw new AppError(502, 'CLOUD_NETWORK', `Couldn't reach the provider to refresh the sign-in (${err.name === 'TimeoutError' ? 'timed out' : err.message})`);
   });
   const json = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
   if (!resp.ok || typeof json.access_token !== 'string') {

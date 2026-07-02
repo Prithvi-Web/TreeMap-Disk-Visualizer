@@ -21,7 +21,20 @@ export async function startCloudScan(providerId: string): Promise<ScanResult> {
 
   void (async () => {
     try {
-      const root = await provider.listTree(token, scan);
+      let root: FileNode;
+      try {
+        root = await provider.listTree(token, scan);
+      } catch (err) {
+        // A token can 401 mid-listing even when it looked fresh (clock skew,
+        // revoke-and-reissue). Force one refresh and restart the listing.
+        if (err instanceof AppError && err.code === 'CLOUD_AUTH' && !scan.cancelled) {
+          const retryToken = await tokenFor(provider, true);
+          scan.scanned = 0;
+          root = await provider.listTree(retryToken, scan);
+        } else {
+          throw err;
+        }
+      }
       if (scan.cancelled) return;
       scan.root = root;
       scan.status = 'complete';
