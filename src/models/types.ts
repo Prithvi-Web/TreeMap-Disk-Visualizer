@@ -404,6 +404,54 @@ export interface GrowthNotification {
   delta: number;
 }
 
+/* ---------- Offload (copy → verify → trash; the third option) ---------- */
+
+/** One offloaded file, persisted in the manifest. */
+export interface OffloadEntry {
+  id: string;
+  /** Basename, for search and display. */
+  name: string;
+  originalPath: string;
+  destPath: string;
+  /** The destination folder the user picked (grouping + mount checks). */
+  destRoot: string;
+  size: number;
+  /** Full SHA-256 of the content (hex) — verified on offload and restore. */
+  hash: string;
+  offloadedAt: number;
+  /** Set once the entry has been copied back and re-verified. */
+  restoredAt?: number;
+}
+
+export type OffloadJobStatus = 'running' | 'complete' | 'error' | 'cancelled';
+export type OffloadPhase = 'checking' | 'copying' | 'verifying' | 'trashing' | 'rolling-back' | 'done';
+
+/** Mutable record of one offload/restore job (progress via SSE). */
+export interface OffloadJob {
+  jobId: string;
+  kind: 'offload' | 'restore';
+  status: OffloadJobStatus;
+  phase: OffloadPhase;
+  destRoot: string;
+  fileCount: number;
+  filesDone: number;
+  bytesTotal: number;
+  bytesDone: number;
+  currentPath: string;
+  error?: string;
+  cancelled: boolean;
+  startedAt: number;
+  finishedAt?: number;
+}
+
+/** Events streamed over the offload SSE progress endpoint. */
+export type OffloadStreamEvent =
+  | { type: 'progress'; phase: OffloadPhase; filesDone: number; fileCount: number; bytesDone: number; bytesTotal: number; currentPath: string }
+  | { type: 'complete'; filesDone: number; bytesDone: number }
+  | { type: 'error'; message: string }
+  | { type: 'cancelled' }
+  | { type: 'shutdown' };
+
 /* ---------- Live disk activity (Watcher) ---------- */
 
 export type WatchEventKind = 'created' | 'modified' | 'deleted';
