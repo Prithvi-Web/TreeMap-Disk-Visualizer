@@ -1957,6 +1957,14 @@ function renderBigFiles() {
     btn.addEventListener('click', () => confirmTrash([btn.dataset.trash])));
   host.querySelectorAll('[data-reveal]').forEach(btn =>
     btn.addEventListener('click', () => openInOS(btn.dataset.reveal, true)));
+  host.querySelectorAll('.bigfile').forEach((row, i) => {
+    row.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const f = state.largest[i];
+      if (!f) return;
+      showCtxMenu(e.clientX, e.clientY, state.pathIndex.get(f.path) || { ...f, type: 'file' });
+    });
+  });
   refreshCartButtons();
 }
 
@@ -1985,6 +1993,13 @@ function renderBigFolders() {
     };
     row.addEventListener('click', jump);
     row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jump(); } });
+    row.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const p = row.dataset.jump;
+      const node = state.pathIndex.get(p) ||
+        { path: p, name: p.split(/[\\/]/).pop() || p, type: 'dir', modifiedAt: 0 };
+      showCtxMenu(e.clientX, e.clientY, node);
+    });
   });
 }
 
@@ -3563,10 +3578,11 @@ function renderApps() {
         <span class="chev">${icon('chevronRight', 14)}</span>
       </div>
       <div class="bp-items">` + a.locations.map(loc => `
-        <div class="bp-item" role="button" tabindex="0" data-jump="${escapeHtml(loc.path)}" title="Show ${escapeHtml(loc.path)} in the treemap">
+        <div class="bp-item" role="button" tabindex="0" data-jump="${escapeHtml(loc.path)}" title="Show ${escapeHtml(loc.path)} in the treemap — right-click for actions">
           <span class="cat">${APP_CAT_LABEL[loc.category]}</span>
           <span class="lbl">${escapeHtml(loc.path)}</span>
           <span class="size-badge num" style="color:${sizeColor(loc.bytes)}">${formatBytes(loc.bytes)}</span>
+          <button class="icon-btn" data-cart-add="${escapeHtml(loc.path)}" aria-label="Add ${escapeHtml(loc.path)} to cleanup cart">${icon('plus', 13)}</button>
         </div>`).join('') + `
       </div>
     </div>`).join('') + `
@@ -3595,9 +3611,17 @@ function renderApps() {
       state.treemap.rootPath = row.dataset.jump;
       switchView('treemap');
     };
-    row.addEventListener('click', jump);
+    row.addEventListener('click', (e) => { if (e.target.closest('button')) return; jump(); });
     row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jump(); } });
+    row.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const p = row.dataset.jump;
+      const node = state.pathIndex.get(p) ||
+        { path: p, name: p.split(/[\\/]/).pop() || p, type: 'dir', modifiedAt: 0 };
+      showCtxMenu(e.clientX, e.clientY, node);
+    });
   });
+  refreshCartButtons();
 }
 
 /* ───────────────────────────── Duplicates view ───────────────────────────── */
