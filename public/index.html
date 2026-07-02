@@ -601,6 +601,16 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .bp-item .lbl { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bp-item .pth { font-size: 10.5px; color: var(--text-3); }
 
+/* ── Apps tab (Feature 18 — per-app storage attribution) ── */
+.apps-info { font-size: 12.5px; margin: -6px 0 12px; }
+#appsBody .bar-track { width: 84px; height: 4px; border-radius: 2px; background: var(--surface-2); flex: none; }
+#appsBody .bar { height: 100%; border-radius: 2px; }
+#appsBody .bp-item .cat { flex: none; width: 96px; font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
+#appsBody .bp-item[data-jump] { cursor: pointer; }
+#appsBody .bp-item[data-jump]:hover { background: var(--surface-2); }
+#appsBody .other-row .bp-head { cursor: default; }
+#appsBody .other-row .bp-head:hover { background: none; }
+
 /* ── Floating: tooltip / menu / toasts ── */
 #tooltip { position: fixed; z-index: 200; pointer-events: none; display: none;
   padding: 11px 13px; font-size: 12px; max-width: 380px;
@@ -755,6 +765,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     <button role="tab" aria-selected="true" data-view="dashboard"><span data-icon="dashboard"></span>Dashboard</button>
     <button role="tab" aria-selected="false" data-view="treemap"><span data-icon="treemap"></span>Treemap</button>
     <button role="tab" aria-selected="false" data-view="grid"><span data-icon="grid"></span>Grid</button>
+    <button role="tab" aria-selected="false" data-view="apps"><span data-icon="box"></span>Apps</button>
     <button role="tab" aria-selected="false" data-view="duplicates"><span data-icon="copy"></span>Duplicates</button>
     <button role="tab" aria-selected="false" data-view="trends"><span data-icon="trendUp"></span>Trends</button>
     <button role="tab" aria-selected="false" data-view="compare"><span data-icon="diff"></span>Compare</button>
@@ -945,6 +956,15 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       </select>
     </div>
     <div class="glass" id="gridScroll"><div id="gridInner"></div></div>
+  </section>
+
+  <!-- ═══════════ Apps ═══════════ -->
+  <section class="view" id="view-apps" role="tabpanel" aria-label="Apps" hidden>
+    <div class="card glass">
+      <h2><span data-icon="box"></span>Storage by Application</h2>
+      <div class="apps-info muted" id="appsInfo"></div>
+      <div id="appsBody"><div class="muted">Run a scan to see how much disk each application owns.</div></div>
+    </div>
   </section>
 
   <!-- ═══════════ Duplicates ═══════════ -->
@@ -1487,6 +1507,7 @@ const state = {
   bigFolders: [],
   treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null, hideCloud: false },
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
+  apps: { loadedFor: null, list: [], otherBytes: 0, totalBytes: 0, appsFolderScanned: false },
   donut: { segs: [], hover: -1, animated: false },
   dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
   dupMode: 'exact',
@@ -1531,6 +1552,7 @@ function switchView(name) {
     if (!state.grid.path || !state.pathIndex.has(state.grid.path)) state.grid.path = state.root.path;
     renderGrid();
   }
+  if (name === 'apps' && state.scanId && state.root) loadApps();
   if (name === 'duplicates' && state.scanId && state.root) {
     if (state.dupMode === 'near') loadNearDupes(); else loadDuplicates();
   }
@@ -1786,6 +1808,7 @@ async function finishScan(root, durationMs) {
   $('statLastScan').textContent = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
 
   state.dup = { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 };
+  state.apps.loadedFor = null;
   try {
     const [lf, ft, lfo, stats] = await Promise.all([
       api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`),
@@ -3481,6 +3504,101 @@ function updateSelectionBar() {
 }
 $('selClearBtn').addEventListener('click', () => { state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true); });
 $('selTrashBtn').addEventListener('click', () => confirmTrash([...state.grid.selection]));
+
+/* ───────────────────────────── Apps view (Feature 18) ───────────────────────────── */
+const APP_CAT_LABEL = { app: 'App', cache: 'Caches', data: 'Data', logs: 'Logs' };
+
+async function loadApps(force = false) {
+  if (!state.scanId || !state.root) return;
+  if (!force && state.apps.loadedFor === state.scanId) { renderApps(); return; }
+  const host = $('appsBody');
+  host.innerHTML = skeletonRows(8, 42);
+  $('appsInfo').textContent = '';
+  try {
+    const data = await api('/api/apps?scanId=' + state.scanId);
+    state.apps.list = data.apps || [];
+    state.apps.otherBytes = data.otherBytes;
+    state.apps.totalBytes = data.totalBytes;
+    state.apps.appsFolderScanned = data.appsFolderScanned;
+    state.apps.loadedFor = state.scanId;
+    renderApps();
+  } catch (e) {
+    host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+/** Short per-category summary for an app's header row, e.g. "caches 1.2 GB · data 3.4 GB". */
+function appCatSummary(app) {
+  return ['app', 'cache', 'data', 'logs']
+    .filter(c => app.bytesByCategory[c] > 0)
+    .map(c => `${APP_CAT_LABEL[c].toLowerCase()} ${formatBytes(app.bytesByCategory[c])}`)
+    .join(' · ');
+}
+
+function renderApps() {
+  const host = $('appsBody');
+  const apps = state.apps.list;
+  const attributed = state.apps.totalBytes - state.apps.otherBytes;
+  const hint = !state.apps.appsFolderScanned && apps.length
+    ? ' The system-wide applications folder wasn’t inside this scan — scan the whole disk to count the apps themselves.'
+    : '';
+  $('appsInfo').innerHTML = state.root
+    ? `Based on your scan of <b>${escapeHtml(state.root.path)}</b>` +
+      (apps.length ? ` — <span class="num">${apps.length}</span> apps own <span class="num">${formatBytes(attributed)}</span> of ${formatBytes(state.apps.totalBytes)}.${hint}` : '.')
+    : '';
+  if (!apps.length) {
+    host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon('search', 15)} No application folders inside this scan — scan your home folder or the whole disk to see per-app storage.</div>`;
+    return;
+  }
+  const max = apps[0].totalBytes || 1;
+  host.innerHTML = apps.map((a, i) => `
+    <div class="bp-acc app-acc" data-acc="${i}">
+      <div class="bp-head" role="button" tabindex="0" aria-expanded="false">
+        <span class="chip" style="--tint:#5E5CE6">${icon('box', 15)}</span>
+        <span class="bp-title">${escapeHtml(a.name)}<span class="prof">${appCatSummary(a)}</span></span>
+        <span class="spacer"></span>
+        ${a.safeToClearBytes >= 1048576 ? `<button class="pill app-clear" data-i="${i}" title="Move this app's caches and logs to the Trash — never its data or the app itself">Clear ${formatBytes(a.safeToClearBytes)} safely</button>` : ''}
+        <div class="bar-track"><div class="bar" style="width:${Math.max(4, (a.totalBytes / max) * 100)}%;background:${sizeColor(a.totalBytes)};"></div></div>
+        <span class="size-badge num" style="color:${sizeColor(a.totalBytes)}">${formatBytes(a.totalBytes)}</span>
+        <span class="chev">${icon('chevronRight', 14)}</span>
+      </div>
+      <div class="bp-items">` + a.locations.map(loc => `
+        <div class="bp-item" role="button" tabindex="0" data-jump="${escapeHtml(loc.path)}" title="Show ${escapeHtml(loc.path)} in the treemap">
+          <span class="cat">${APP_CAT_LABEL[loc.category]}</span>
+          <span class="lbl">${escapeHtml(loc.path)}</span>
+          <span class="size-badge num" style="color:${sizeColor(loc.bytes)}">${formatBytes(loc.bytes)}</span>
+        </div>`).join('') + `
+      </div>
+    </div>`).join('') + `
+    <div class="bp-acc other-row">
+      <div class="bp-head" tabindex="-1">
+        <span class="chip" style="--tint:#8E8E93">${icon('file', 15)}</span>
+        <span class="bp-title">Everything else<span class="prof">files not owned by any application</span></span>
+        <span class="spacer"></span>
+        <div class="bar-track"><div class="bar" style="width:${Math.max(4, (state.apps.otherBytes / max) * 100)}%;background:${sizeColor(state.apps.otherBytes)};"></div></div>
+        <span class="size-badge num" style="color:${sizeColor(state.apps.otherBytes)}">${formatBytes(state.apps.otherBytes)}</span>
+      </div>
+    </div>`;
+
+  host.querySelectorAll('.app-acc .bp-head').forEach(head => {
+    const toggle = () => { const a = head.closest('.bp-acc'); head.setAttribute('aria-expanded', String(a.classList.toggle('open'))); };
+    head.addEventListener('click', (e) => { if (e.target.closest('button')) return; toggle(); });
+    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
+  host.querySelectorAll('.app-clear').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const app = state.apps.list[+btn.dataset.i];
+    if (app && app.safeToClearPaths.length) confirmTrash(app.safeToClearPaths);
+  }));
+  host.querySelectorAll('[data-jump]').forEach(row => {
+    const jump = () => {
+      state.treemap.rootPath = row.dataset.jump;
+      switchView('treemap');
+    };
+    row.addEventListener('click', jump);
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jump(); } });
+  });
+}
 
 /* ───────────────────────────── Duplicates view ───────────────────────────── */
 async function loadDuplicates(force = false) {
