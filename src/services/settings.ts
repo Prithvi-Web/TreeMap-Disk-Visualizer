@@ -79,6 +79,13 @@ function normalizeForecastDays(raw: unknown): number {
   return Math.min(365, Math.max(1, Math.round(n)));
 }
 
+/** Live-mode idle auto-pause: 1–120 minutes, defaulting to 10. */
+function normalizeWatchIdle(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 10;
+  return Math.min(120, Math.max(1, Math.round(n)));
+}
+
 export async function getSettings(): Promise<AppSettings> {
   if (!cache) {
     const raw = await readJsonFile<Partial<AppSettings>>(SETTINGS_FILE, {});
@@ -87,13 +94,14 @@ export async function getSettings(): Promise<AppSettings> {
       schedules: normalizeSchedules(raw.schedules),
       budgets: normalizeBudgets(raw.budgets),
       forecastThresholdDays: normalizeForecastDays(raw.forecastThresholdDays),
+      watchIdleMinutes: normalizeWatchIdle(raw.watchIdleMinutes),
     };
   }
   return cache;
 }
 
 /** Replace ignore list and/or schedules (input is re-validated here). */
-export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown }): Promise<AppSettings> {
+export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown }): Promise<AppSettings> {
   const current = await getSettings();
   const next: AppSettings = {
     ignore: patch.ignore !== undefined ? normalizeIgnore(patch.ignore) : current.ignore,
@@ -102,6 +110,9 @@ export async function updateSettings(patch: { ignore?: unknown; schedules?: unkn
     forecastThresholdDays: patch.forecastThresholdDays !== undefined
       ? normalizeForecastDays(patch.forecastThresholdDays)
       : current.forecastThresholdDays,
+    watchIdleMinutes: patch.watchIdleMinutes !== undefined
+      ? normalizeWatchIdle(patch.watchIdleMinutes)
+      : current.watchIdleMinutes,
   };
   // Preserve lastRunAt across edits that didn't intend to reset it.
   if (patch.schedules !== undefined) {
