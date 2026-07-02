@@ -8,6 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "app": "npm run build && electron .",
     "dist": "npm run build && electron-builder",
