@@ -27,7 +27,16 @@ export interface FileNode {
   cloudProvider?: 'icloud' | 'onedrive' | 'dropbox';
   /** Directory that is a git repository root (directly contains a .git directory). */
   gitRepo?: boolean;
+  /** Drillable container (archive, disk image, Docker data, Photos library). */
+  container?: ContainerKind;
+  /** Lives inside a container — listed, not on disk; excluded from trash/open. */
+  virtual?: boolean;
+  /** Uncompressed size for archive entries whose treemap size was scaled. */
+  logicalSize?: number;
 }
+
+/** Containers the treemap can drill into. */
+export type ContainerKind = 'zip' | 'tar' | 'tgz' | 'iso' | 'dmg' | 'photos' | 'docker';
 
 export type ScanStatus = 'running' | 'complete' | 'error';
 
@@ -91,6 +100,12 @@ export interface TreemapNode {
   cloudPlaceholder?: boolean;
   /** Git repository root — rendered with a branch marker. */
   gitRepo?: boolean;
+  /** Drillable container — rendered with a distinct border/badge. */
+  container?: ContainerKind;
+  /** Inside a container: read-only, no trash/open. */
+  virtual?: boolean;
+  /** Uncompressed size for scaled archive entries (tooltips). */
+  logicalSize?: number;
   /**
    * Historical layouts only (time slider): size in the previous snapshot,
    * or null when the entry didn't exist yet — drives the diff overlay.
