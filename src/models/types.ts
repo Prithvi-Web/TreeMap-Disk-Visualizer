@@ -52,6 +52,10 @@ export interface ScanResult {
   createdAt: number;
   /** Cooperative cancellation flag (set on shutdown/eviction). */
   cancelled: boolean;
+  /** Which enumeration engine produced this scan (dashboard note). */
+  engine?: 'walker' | 'turbo-walker' | 'ntfs-mft';
+  /** libuv threadpool size the scan ran with. */
+  ioThreads?: number;
   /** True when this scan reused the on-disk mtime cache (fast rescan). */
   incremental?: boolean;
   /** Directories served from the cache (incremental scans only). */

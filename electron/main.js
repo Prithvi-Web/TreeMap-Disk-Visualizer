@@ -13,6 +13,13 @@
  *    restarting; updates require a code-signed build on macOS, so failures
  *    there are logged and otherwise ignored.
  */
+// libuv threadpool: sized before anything can start it — every async fs call
+// (the disk scanner's lstat/readdir storm) runs on this pool, and the default
+// of 4 threads is the scan-speed bottleneck. Mirrors src/utils/ioThreads.ts.
+if (!Number(process.env.UV_THREADPOOL_SIZE)) {
+  process.env.UV_THREADPOOL_SIZE = String(Math.min(16, Math.max(8, require('os').cpus().length * 2)));
+}
+
 const { app, BrowserWindow, Tray, Menu, Notification, shell, ipcMain, dialog, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');

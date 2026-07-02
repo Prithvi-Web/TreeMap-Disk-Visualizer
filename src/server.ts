@@ -1,3 +1,4 @@
+import './utils/ioThreads'; // must be first: sizes the fs threadpool before it exists
 import express from 'express';
 import path from 'path';
 import http from 'http';
