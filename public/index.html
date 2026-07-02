@@ -1789,7 +1789,36 @@ async function startScan(path, opts = {}) {
 
     const es = new EventSource(`/api/scan/${scanId}/progress`);
     state.es = es;
+    // Watchdog: SSE can stall silently through proxies (no error event, no
+    // frames). If the stream goes quiet mid-scan, poll the result directly.
+    let lastSseAt = performance.now();
+    let finished = false;
+    const watchdog = setInterval(async () => {
+      if (!state.scanning || finished) { clearInterval(watchdog); return; }
+      if (performance.now() - lastSseAt < 6000) return;
+      try {
+        const r = await api(`/api/scan/${scanId}/result`);
+        if (r.status === 'complete' && !finished) {
+          finished = true;
+          clearInterval(watchdog);
+          closeEventSource();
+          rememberScannedRoot(path);
+          if (fast) showFastRescanStat(scanId);
+          finishScan(r.root, performance.now() - t0);
+        }
+      } catch (e) {
+        if (e.status === 500 && !finished) { // the scan itself failed server-side
+          finished = true;
+          clearInterval(watchdog);
+          closeEventSource();
+          failScan(e.message);
+        }
+        /* otherwise: still running or transient — keep waiting */
+      }
+    }, 3000);
     es.onmessage = async (ev) => {
+      lastSseAt = performance.now();
+      if (finished) return;
       const msg = JSON.parse(ev.data);
       if (msg.type === 'progress') {
         const secs = (performance.now() - t0) / 1000;
@@ -1799,6 +1828,8 @@ async function startScan(path, opts = {}) {
           (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`;
         $('scanMeta').textContent = msg.currentPath;
       } else if (msg.type === 'complete') {
+        finished = true;
+        clearInterval(watchdog);
         closeEventSource();
         let root = msg.root;
         if (!root) {
@@ -1809,20 +1840,25 @@ async function startScan(path, opts = {}) {
         if (fast) showFastRescanStat(scanId);
         finishScan(root, performance.now() - t0);
       } else if (msg.type === 'error') {
+        finished = true;
+        clearInterval(watchdog);
         closeEventSource();
         failScan(msg.message);
       } else if (msg.type === 'shutdown') {
+        finished = true;
+        clearInterval(watchdog);
         closeEventSource();
         failScan('Server is shutting down');
       }
     };
-    es.onerror = async () => {
-      closeEventSource();
-      try {
-        const r = await api(`/api/scan/${scanId}/result`);
-        if (r.status === 'complete') { rememberScannedRoot(path); finishScan(r.root, performance.now() - t0); return; }
-      } catch { /* fall through */ }
-      failScan('Lost connection to the scan stream');
+    es.onerror = () => {
+      if (finished) return;
+      // Transient drops auto-reconnect; a permanently closed stream just
+      // hands completion over to the watchdog's result polling.
+      if (es.readyState === EventSource.CLOSED) {
+        closeEventSource();
+        lastSseAt = 0; // let the watchdog take over immediately
+      }
     };
   } catch (e) {
     failScan(e.message);
