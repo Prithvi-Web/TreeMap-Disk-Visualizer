@@ -16,6 +16,7 @@ import {
   diffSnapshots,
 } from '../services/snapshots';
 import { guardQueryPath, guardBodyPath, requireInsideScanRoot } from '../middleware/pathGuard';
+import { getAppAttribution } from '../services/appAttribution';
 import { findGitRepos, runGitGc } from '../services/gitScanner';
 import { AppError } from '../middleware/errorHandler';
 import { CompareResult, ScanResult } from '../models/types';
@@ -98,6 +99,15 @@ insightRouter.get('/near-duplicates', (req: Request, res: Response) => {
     truncated: job.truncated ?? false,
     tookMs: (job.finishedAt ?? job.startedAt) - job.startedAt,
   });
+});
+
+/**
+ * GET /api/apps?scanId= — per-application storage attribution (Apps tab).
+ * Read-only tree walk over the completed scan; cached per scan.
+ */
+insightRouter.get('/apps', async (req: Request, res: Response) => {
+  const scan = requireCompleteScan(req, req.query.scanId);
+  res.json(await getAppAttribution(scan));
 });
 
 /** GET /api/large-folders?scanId=&limit=20&minSize=1048576 */
