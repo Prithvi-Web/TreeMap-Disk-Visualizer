@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { sanitizePath, isInside } from '../utils/pathSanitizer';
 import { allScans } from '../services/diskScanner';
+import { isVirtualPath } from '../services/containerScanner';
 import { AppError } from './errorHandler';
 
 /**
@@ -71,6 +72,18 @@ export function requireInsideScanRoot(req: Request, _res: Response, next: NextFu
           403,
           'OUTSIDE_SCAN_ROOT',
           `"${p}" is outside every scanned root — scan its folder first`
+        )
+      );
+      return;
+    }
+    // Entries inside a container exist in its directory listing, not on
+    // disk — only the container itself can be trashed or opened.
+    if (isVirtualPath(p)) {
+      next(
+        new AppError(
+          403,
+          'VIRTUAL_PATH',
+          `"${p}" is inside an archive — act on the archive itself instead`
         )
       );
       return;
