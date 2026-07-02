@@ -256,7 +256,9 @@ scanRouter.get('/scan/:scanId/treemap', guardQueryPath('root'), (req: Request, r
     }
     const found = findNodeByPath(scan.root, rootParam);
     if (!found) throw new AppError(404, 'PATH_NOT_FOUND', 'That path is not in this scan');
-    if (found.type !== 'dir') throw new AppError(400, 'NOT_A_DIRECTORY', 'Treemap root must be a directory');
+    if (found.type !== 'dir' && !(found.container && found.children?.length)) {
+      throw new AppError(400, 'NOT_A_DIRECTORY', 'Treemap root must be a directory or an opened container');
+    }
     root = found;
   }
 

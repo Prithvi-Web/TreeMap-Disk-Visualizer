@@ -128,7 +128,8 @@ export function buildTreemap(root: FileNode, options: TreemapOptions): TreemapNo
 
   while (queue.length > 0 && out.length < maxNodes) {
     const { node, rect, depth } = queue.shift()!;
-    if (node.type !== 'dir' || !node.children || node.children.length === 0) continue;
+    // Expanded containers are file nodes carrying virtual children.
+    if ((node.type !== 'dir' && !node.container) || !node.children || node.children.length === 0) continue;
     if (node.size <= 0 || rect.w <= 0 || rect.h <= 0) continue;
 
     const children = node.children
@@ -149,7 +150,8 @@ export function buildTreemap(root: FileNode, options: TreemapOptions): TreemapNo
       if (r.w <= 0 || r.h <= 0) continue;
 
       const canExpand =
-        child.type === 'dir' &&
+        // Expanded containers are files that carry virtual children.
+        (child.type === 'dir' || !!child.container) &&
         depth + 1 < maxDepth &&
         !!child.children &&
         child.children.length > 0 &&
@@ -172,6 +174,9 @@ export function buildTreemap(root: FileNode, options: TreemapOptions): TreemapNo
         h: r.h,
         cloudPlaceholder: child.cloudPlaceholder,
         gitRepo: child.gitRepo,
+        container: child.container,
+        virtual: child.virtual,
+        logicalSize: child.logicalSize,
       });
 
       if (canExpand) {
@@ -186,7 +191,8 @@ export function buildTreemap(root: FileNode, options: TreemapOptions): TreemapNo
 /** Locate the node with exactly this path inside a scanned tree, or null. */
 export function findNodeByPath(root: FileNode, targetPath: string): FileNode | null {
   if (root.path === targetPath) return root;
-  if (root.type !== 'dir' || !root.children) return null;
+  // Expanded containers are file nodes whose children are virtual entries.
+  if ((root.type !== 'dir' && !root.container) || !root.children) return null;
   // The target must live under a child whose path prefixes it.
   for (const child of root.children) {
     if (targetPath === child.path || targetPath.startsWith(child.path + sep(child.path))) {

@@ -7,6 +7,8 @@ import { getIgnoreMatchers } from './settings';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { readJsonFile, appDataDir } from './storage';
 import { IO_THREADS } from '../utils/ioThreads';
+import { detectContainerKind } from '../utils/containerKind';
+import { forgetScan } from './containerScanner';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -47,6 +49,7 @@ function ensureEvictor(): void {
       if (now - scan.createdAt > SCAN_TTL_MS) {
         scan.cancelled = true;
         scans.delete(id);
+        forgetScan(id); // drop its expanded-container registry too
       }
     }
   }, EVICT_INTERVAL_MS);
@@ -199,6 +202,8 @@ function makeNode(fullPath: string, name: string, isDir: boolean, size: number, 
     const ext = path.extname(name).toLowerCase().replace(/^\./, '');
     if (ext) node.extension = ext;
   }
+  const container = detectContainerKind(name, isDir);
+  if (container) node.container = container;
   return node;
 }
 

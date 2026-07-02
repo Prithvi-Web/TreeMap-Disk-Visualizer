@@ -21,6 +21,7 @@ import { buildTreemap } from '../utils/treemap';
 import { guardQueryPath, guardBodyPath, requireInsideScanRoot } from '../middleware/pathGuard';
 import { getAppAttribution } from '../services/appAttribution';
 import { getForecast } from '../services/forecast';
+import { expandContainer } from '../services/containerScanner';
 import { findGitRepos, runGitGc } from '../services/gitScanner';
 import { AppError } from '../middleware/errorHandler';
 import { CompareResult, FileNode, ScanResult } from '../models/types';
@@ -142,6 +143,17 @@ insightRouter.post('/git/gc', guardBodyPath, requireInsideScanRoot, async (req: 
     throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } to run git gc');
   }
   res.json(await runGitGc(repoPath));
+});
+
+/**
+ * POST /api/container/expand { scanId, path } — list a container's contents
+ * (zip/jar/tar/tgz/iso/docker) and graft them into the scan as virtual
+ * children. Lazy: first click parses (in a worker), repeats hit the cache.
+ */
+insightRouter.post('/container/expand', guardBodyPath, requireInsideScanRoot, async (req: Request, res: Response) => {
+  const { scanId, path: containerPath } = req.body as { scanId?: unknown; path: string };
+  const scan = requireCompleteScan(req, scanId);
+  res.json(await expandContainer(scan, containerPath));
 });
 
 /** GET /api/scans — completed scans currently in memory (Compare picker). */
