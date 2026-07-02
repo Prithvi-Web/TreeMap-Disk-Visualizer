@@ -789,7 +789,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     <h1>See what's eating your disk</h1>
     <p>Scan any folder for a GrandPerspective-style treemap, a size-proportional grid, and safe one-click clean-up. Files go to the Trash — never deleted outright.</p>
     <div class="feature-row">
-      <span class="feature"><span data-icon="zap"></span>500k files / min</span>
+      <span class="feature"><span data-icon="zap"></span>2M+ items / min</span>
       <span class="feature"><span data-icon="shield"></span>Trash-only deletes</span>
       <span class="feature"><span data-icon="eyeOff"></span>No tracking, fully local</span>
     </div>
@@ -839,6 +839,10 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
           <div class="snap-row" id="cloudRow" hidden>
             <span class="ic" data-icon="cloud" data-size="16"></span>
             <div class="snap-meta"><b id="cloudText"></b><span class="muted">Stored in the cloud — local copies are safe to remove.</span></div>
+          </div>
+          <div class="snap-row" id="engineRow" hidden>
+            <span class="ic" data-icon="zap" data-size="16"></span>
+            <div class="snap-meta"><b id="engineText"></b><span class="muted" id="engineHint"></span></div>
           </div>
         </div>
 
@@ -1858,6 +1862,18 @@ function renderDiskNotes() {
       ct.classList.remove('active');
       ct.setAttribute('aria-pressed', 'false');
     }
+  }
+  // Feature 19 — which scan engine ran, and how fast.
+  const en = $('engineRow');
+  if (en) {
+    if (s.engine && s.durationMs > 0) {
+      const label = { 'turbo-walker': 'Turbo walker', 'ntfs-mft': 'NTFS MFT reader', walker: 'Standard walker' }[s.engine] || s.engine;
+      $('engineText').textContent = `${label} — scanned ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s`;
+      $('engineHint').textContent = s.ioThreads > 4
+        ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
+        : '';
+      en.hidden = false;
+    } else en.hidden = true;
   }
   renderCloudSafe();
 }
