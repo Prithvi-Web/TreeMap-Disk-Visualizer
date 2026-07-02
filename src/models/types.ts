@@ -363,6 +363,8 @@ export interface AppSettings {
   budgets: BudgetEntry[];
   /** Scheduled scans warn when the disk-full forecast drops below this many days. */
   forecastThresholdDays: number;
+  /** Live activity mode auto-pauses after this many minutes without events. */
+  watchIdleMinutes: number;
 }
 
 /** A budget cross-referenced against a scan: how the folder measures up now. */
@@ -386,6 +388,26 @@ export interface GrowthNotification {
   newSize: number;
   delta: number;
 }
+
+/* ---------- Live disk activity (Watcher) ---------- */
+
+export type WatchEventKind = 'created' | 'modified' | 'deleted';
+
+/** One batched filesystem change, streamed over the watch SSE. */
+export interface WatchEvent {
+  path: string;
+  kind: WatchEventKind;
+  /** Bytes gained (positive) or lost since the last known size. */
+  delta: number;
+  /** Current size (0 when deleted). */
+  size: number;
+}
+
+/** Frames streamed over GET /api/watch/:scanId. */
+export type WatchStreamEvent =
+  | { type: 'init'; idleMinutes: number; engine: 'recursive' | 'top-levels' }
+  | { type: 'activity'; at: number; events: WatchEvent[] }
+  | { type: 'paused'; reason: 'idle' | 'shutdown' };
 
 /* ---------- Disk-full forecasting ---------- */
 
