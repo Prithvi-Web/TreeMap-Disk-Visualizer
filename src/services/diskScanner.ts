@@ -6,6 +6,7 @@ import { saveSnapshot } from './snapshots';
 import { getIgnoreMatchers } from './settings';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { readJsonFile, appDataDir } from './storage';
+import { IO_THREADS } from '../utils/ioThreads';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -13,15 +14,20 @@ import { readJsonFile, appDataDir } from './storage';
  * Design:
  *  - A queue of directory nodes is drained by up to CONCURRENCY workers.
  *  - Each worker readdir()s one directory, lstat()s its file entries in
- *    small parallel batches, and pushes child directories back on the queue.
+ *    parallel batches, and pushes child directories back on the queue.
  *  - Everything is promise-based, so the event loop is never blocked; the
  *    batch size keeps the number of in-flight fs operations bounded
  *    (back-pressure) instead of fanning out the whole tree at once.
  *  - Directory sizes are summed bottom-up in a single pass at the end.
+ *
+ * Speed comes from parallelism in libuv's threadpool (sized by ioThreads —
+ * the "turbo" engine), so worker count and batch size scale with it: enough
+ * in-flight lstats to keep every I/O thread busy, not so many that memory
+ * or the event loop suffer.
  */
 
-const CONCURRENCY = 8;
-const STAT_BATCH = 32;
+const CONCURRENCY = Math.min(32, Math.max(8, IO_THREADS));
+const STAT_BATCH = IO_THREADS > 4 ? 64 : 32;
 /** Yield to the event loop after this many entries so SSE stays responsive. */
 const YIELD_EVERY = 2000;
 
@@ -99,6 +105,8 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     startedAt: Date.now(),
     createdAt: Date.now(),
     cancelled: false,
+    engine: IO_THREADS > 4 ? 'turbo-walker' : 'walker',
+    ioThreads: IO_THREADS,
     incremental: !!cache,
     cachedDirs: 0,
     walkedDirs: 0,

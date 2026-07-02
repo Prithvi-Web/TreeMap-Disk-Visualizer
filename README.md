@@ -245,7 +245,7 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 | `GET /api/scan/:id/progress` | Live scan progress (Server-Sent Events) |
 | `GET /api/scan/:id/result` | Full file tree (202 while running) |
 | `GET /api/scan/:id/treemap` | Pre-computed squarified treemap layout |
-| `GET /api/scan/:id/stats` | Scan counters incl. fast-rescan cache usage |
+| `GET /api/scan/:id/stats` | Scan counters incl. engine, duration & fast-rescan cache usage |
 | `GET /api/scan/:id/budgets` | Saved folder budgets cross-referenced against this scan |
 | `GET /api/scan/:id/export?format=csv\|pdf` | Download the scan as CSV (files / folders) or a PDF report |
 | `GET /api/scans` | Completed scans currently in memory |
@@ -293,7 +293,7 @@ Disk tools should never lose your data. TreeMap is built defensively:
 ```text
 src/
   api/          Express routes (scan, files, system, insights, settings)
-  services/     DiskScanner (8-way concurrent walker), Cleaner (trash/open),
+  services/     DiskScanner (adaptive concurrent walker), Cleaner (trash/open),
                 DuplicateFinder (staged hashing), Snapshots (Trends history),
                 CleanupRules (smart suggestions), AppAttribution (per-app storage),
                 Scheduler (recurring scans), Settings, Storage (app-data JSON), DiskUsage
@@ -312,6 +312,7 @@ scripts/
 
 ## 🧠 Design decisions worth knowing
 
+- **Scan speed is a threadpool problem, not a walker problem.** Every async `lstat`/`readdir` runs on libuv's threadpool, which defaults to 4 threads — that, not the walker's concurrency, was the bottleneck. TreeMap sizes the pool to 2× cores (≤ 16) before it spins up; measured on APFS this scans ~1.6× faster, while 32 threads is *slower* than 4 (kernel metadata-lock contention). The dashboard shows which engine ran and how long the scan took.
 - **Snapshots are automatic** — one is saved after every successful scan, so Trends needs zero setup. Only totals + top-level entry sizes are stored (a few KB each, capped at 200 per folder).
 - **The scheduler is a 60-second `setInterval`**, not `node-cron` — hour-level granularity doesn't justify a dependency. Schedules fire while the app runs (the desktop app keeps running in the tray).
 - **Duplicate detection is staged** (size → first 64 KB hash → full SHA-256) so scans with hundreds of thousands of files finish hashing in seconds, and only true content matches are reported.
