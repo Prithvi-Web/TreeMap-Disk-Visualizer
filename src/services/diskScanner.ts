@@ -70,6 +70,29 @@ export function cancelAllScans(): void {
 }
 
 /**
+ * Register an externally-driven scan (cloud providers) in the same store,
+ * so progress SSE, results, treemap and every downstream view work on it
+ * exactly as they do on a disk scan.
+ */
+export function createScanRecord(rootPath: string): ScanResult {
+  ensureEvictor();
+  const scan: ScanResult = {
+    scanId: crypto.randomUUID(),
+    rootPath,
+    status: 'running',
+    scanned: 0,
+    fileCount: 0,
+    dirCount: 0,
+    currentPath: rootPath,
+    startedAt: Date.now(),
+    createdAt: Date.now(),
+    cancelled: false,
+  };
+  scans.set(scan.scanId, scan);
+  return scan;
+}
+
+/**
  * Kick off a scan of `rootPath`. Returns the scan record immediately;
  * the walk continues in the background and mutates the record as it goes.
  */

@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { AppSettings, IgnoreEntry, ScheduleConfig, IgnoreScope, BudgetEntry } from '../models/types';
+import { AppSettings, IgnoreEntry, ScheduleConfig, IgnoreScope, BudgetEntry, CloudCredentials } from '../models/types';
 import { readJsonFile, writeJsonFile } from './storage';
 import { compileIgnoreList, CompiledIgnore } from '../utils/glob';
 
@@ -86,6 +86,23 @@ function normalizeWatchIdle(raw: unknown): number {
   return Math.min(120, Math.max(1, Math.round(n)));
 }
 
+const CLOUD_PROVIDERS = ['gdrive', 'dropbox', 'onedrive'] as const;
+
+/** Cloud app credentials: plain strings per provider, empty entries dropped. */
+function normalizeCloud(raw: unknown): AppSettings['cloud'] {
+  const out: AppSettings['cloud'] = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const id of CLOUD_PROVIDERS) {
+    const c = (raw as Record<string, Partial<CloudCredentials>>)[id];
+    if (!c || typeof c.clientId !== 'string') continue;
+    const clientId = c.clientId.trim().slice(0, 300);
+    if (!clientId) continue;
+    const clientSecret = typeof c.clientSecret === 'string' ? c.clientSecret.trim().slice(0, 300) : '';
+    out[id] = { clientId, ...(clientSecret ? { clientSecret } : {}) };
+  }
+  return out;
+}
+
 export async function getSettings(): Promise<AppSettings> {
   if (!cache) {
     const raw = await readJsonFile<Partial<AppSettings>>(SETTINGS_FILE, {});
@@ -95,13 +112,14 @@ export async function getSettings(): Promise<AppSettings> {
       budgets: normalizeBudgets(raw.budgets),
       forecastThresholdDays: normalizeForecastDays(raw.forecastThresholdDays),
       watchIdleMinutes: normalizeWatchIdle(raw.watchIdleMinutes),
+      cloud: normalizeCloud(raw.cloud),
     };
   }
   return cache;
 }
 
 /** Replace ignore list and/or schedules (input is re-validated here). */
-export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown }): Promise<AppSettings> {
+export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; cloud?: unknown }): Promise<AppSettings> {
   const current = await getSettings();
   const next: AppSettings = {
     ignore: patch.ignore !== undefined ? normalizeIgnore(patch.ignore) : current.ignore,
@@ -113,6 +131,7 @@ export async function updateSettings(patch: { ignore?: unknown; schedules?: unkn
     watchIdleMinutes: patch.watchIdleMinutes !== undefined
       ? normalizeWatchIdle(patch.watchIdleMinutes)
       : current.watchIdleMinutes,
+    cloud: patch.cloud !== undefined ? normalizeCloud(patch.cloud) : current.cloud,
   };
   // Preserve lastRunAt across edits that didn't intend to reset it.
   if (patch.schedules !== undefined) {

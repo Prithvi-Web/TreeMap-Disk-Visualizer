@@ -77,6 +77,8 @@ document.documentElement.dataset.theme =
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
+/* The hidden attribute must always win, even over class display rules. */
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -626,6 +628,16 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 #liveFeed .lf-row .up { color: #30D158; flex: none; }
 #liveFeed .lf-row .down { color: #FF453A; flex: none; }
 
+/* ── All storage + cloud accounts (Feature 25) ── */
+.storage-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: var(--r-sm); }
+.storage-row .meta { flex: 1; min-width: 0; }
+.storage-row .nm { font-weight: 600; font-size: 13px; }
+.storage-row .pth { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.storage-row .bar-track { width: 84px; height: 4px; border-radius: 2px; background: var(--surface-2); flex: none; }
+.storage-row .bar { height: 100%; border-radius: 2px; }
+.cloud-row { border: 1px solid var(--hairline); border-radius: var(--r-md); padding: 8px 10px; margin-bottom: 8px; }
+#cloudRedirectUri { font-size: 11px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
 /* ── Offloaded tab (Feature 24) ── */
 .offl-unmounted .bp-head { opacity: 0.55; }
 .offl-unmounted .bp-items { opacity: 0.55; }
@@ -922,6 +934,10 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <div class="card glass">
           <h2><span data-icon="folder"></span>Largest Folders</h2>
           <div id="bigFolders"><div class="muted">Run a scan to find your biggest folders.</div></div>
+        </div>
+        <div class="card glass" id="allStorageCard">
+          <h2><span data-icon="hardDrive"></span>All Storage</h2>
+          <div id="allStorageList"><div class="muted">Local disk and any connected cloud accounts appear here.</div></div>
         </div>
         <div class="card glass" id="budgetCard" hidden>
           <h2><span data-icon="gauge"></span>Folder Budgets</h2>
@@ -1287,6 +1303,10 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <span class="muted">minutes without disk activity</span>
       </div>
 
+      <div class="set-h" style="margin-top:22px;"><span data-icon="cloud"></span>Cloud accounts</div>
+      <div class="muted" style="margin-bottom:10px;">Scan your own Google Drive, Dropbox or OneDrive in the same treemap — <b>metadata only, no file contents are ever downloaded</b>, and sign-in tokens never leave this computer. Bring your own (free) API app: create one in the provider's developer console with redirect URI <code id="cloudRedirectUri">http://127.0.0.1:53682/oauth/callback</code>, then paste its client ID below.</div>
+      <div id="cloudAccounts"></div>
+
       <div class="set-h" style="margin-top:22px;"><span data-icon="ban"></span>Ignore list</div>
       <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely (faster scans); <b>Don't suggest</b> keeps them out of Smart Suggestions only. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/**/dist</b>.</div>
       <div id="ignoreList"></div>
@@ -1620,6 +1640,7 @@ const state = {
   apps: { loadedFor: null, list: [], otherBytes: 0, totalBytes: 0, appsFolderScanned: false },
   live: { on: false, wanted: false, es: null, engine: '', idleMinutes: 10, pulses: new Map(), window: [], dirty: 0, feedTimer: 0, relayoutTimer: 0, pulseRaf: 0 },
   offload: { index: null, q: '' },
+  cloud: { providers: [], loaded: false },
   donut: { segs: [], hover: -1, animated: false },
   dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
   dupMode: 'exact',
@@ -1666,7 +1687,14 @@ function switchView(name) {
   }
   if (name === 'apps' && state.scanId && state.root) loadApps();
   if (name === 'duplicates' && state.scanId && state.root) {
-    if (state.dupMode === 'near') loadNearDupes(); else loadDuplicates();
+    if (isCloudScan()) {
+      const provider = cloudProviderOfScan();
+      const msg = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('cloud', 15)} Duplicate detection reads file contents, and cloud scans never download any — it's disabled for ${escapeHtml(provider.name)}.</div></div>`;
+      $('dupBody').innerHTML = msg;
+      $('ndBody').innerHTML = msg;
+      $('dupSummary').textContent = 'Not available for cloud scans.';
+      $('ndSummary').textContent = 'Not available for cloud scans.';
+    } else if (state.dupMode === 'near') loadNearDupes(); else loadDuplicates();
   }
   if (name === 'trends') loadTrends();
   if (name === 'compare') loadCompareOptions();
@@ -1691,6 +1719,7 @@ async function loadSystem() {
     if (!$('pathInput').value) $('pathInput').value = sys.homeDir;
     loadTrash();
     loadSnapshots();
+    loadCloudStatus(); // reads local token state; network only for connected accounts
   } catch (e) {
     toast('Could not load system info: ' + e.message, 'error');
   }
@@ -1806,109 +1835,137 @@ async function showFastRescanStat(scanId) {
   } catch { /* stats are best-effort */ }
 }
 
+/** Shared scanning chrome: spinners, skeletons, dashboard switch. */
+function beginScanChrome() {
+  state.scanning = true;
+  $('scanBtn').disabled = true;
+  $('headerSpin').classList.add('on');
+  $('headerSpin').innerHTML = icon('loader', 15, REDUCED ? '' : 'spin');
+  $('progressTrack').classList.add('active');
+  $('scanStatus').classList.remove('error');
+  $('scanStatus').innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + '<span>Starting scan…</span>';
+  $('bigFiles').innerHTML = skeletonRows(6);
+  $('bigFolders').innerHTML = skeletonRows(6);
+  $('donutLegend').innerHTML = skeletonRows(5, 24);
+  $('emptyState').style.display = 'none';
+  switchView('dashboard');
+}
+
 async function startScan(path, opts = {}) {
   if (state.scanning) { toast('A scan is already running', 'error'); return; }
   closeEventSource();
   disableLive({ keepWanted: true }); // the new scanId gets a fresh watch session
-  const status = $('scanStatus');
-  status.classList.remove('error');
   try {
-    state.scanning = true;
-    $('scanBtn').disabled = true;
-    $('headerSpin').classList.add('on');
-    $('headerSpin').innerHTML = icon('loader', 15, REDUCED ? '' : 'spin');
-    $('progressTrack').classList.add('active');
-    status.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + '<span>Starting scan…</span>';
-    $('bigFiles').innerHTML = skeletonRows(6);
-    $('bigFolders').innerHTML = skeletonRows(6);
-    $('donutLegend').innerHTML = skeletonRows(5, 24);
-    $('emptyState').style.display = 'none';
-    switchView('dashboard');
-
+    beginScanChrome();
     const t0 = performance.now();
     const resp = await api('/api/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path, incremental: !!opts.incremental }),
     });
-    const scanId = resp.scanId;
-    const fast = resp.incremental === true;
-    const fastTag = fast ? icon('zap', 12) + ' Fast rescan · ' : '';
-    state.scanId = scanId;
+    followScanProgress(resp.scanId, path, resp.incremental === true, t0);
+  } catch (e) {
+    failScan(e.message);
+  }
+}
 
-    const es = new EventSource(`/api/scan/${scanId}/progress`);
-    state.es = es;
-    // Watchdog: SSE can stall silently through proxies (no error event, no
-    // frames). If the stream goes quiet mid-scan, poll the result directly.
-    let lastSseAt = performance.now();
-    let finished = false;
-    const watchdog = setInterval(async () => {
-      if (!state.scanning || finished) { clearInterval(watchdog); return; }
-      if (performance.now() - lastSseAt < 6000) return;
-      try {
-        const r = await api(`/api/scan/${scanId}/result`);
-        if (r.status === 'complete' && !finished) {
-          finished = true;
-          clearInterval(watchdog);
-          closeEventSource();
-          rememberScannedRoot(path);
-          if (fast) showFastRescanStat(scanId);
-          finishScan(r.root, performance.now() - t0);
-        }
-      } catch (e) {
-        if (e.status === 500 && !finished) { // the scan itself failed server-side
-          finished = true;
-          clearInterval(watchdog);
-          closeEventSource();
-          failScan(e.message);
-        }
-        /* otherwise: still running or transient — keep waiting */
-      }
-    }, 3000);
-    es.onmessage = async (ev) => {
-      lastSseAt = performance.now();
-      if (finished) return;
-      const msg = JSON.parse(ev.data);
-      if (msg.type === 'progress') {
-        const secs = (performance.now() - t0) / 1000;
-        const rate = secs > 0.2 ? Math.round(msg.scanned / secs) : 0;
-        status.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') +
-          `<span class="num">${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
-          (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`;
-        $('scanMeta').textContent = msg.currentPath;
-      } else if (msg.type === 'complete') {
+/** Follow a running scan (disk or cloud) over SSE, with the stall watchdog. */
+function followScanProgress(scanId, path, fast, t0) {
+  const status = $('scanStatus');
+  const fastTag = fast ? icon('zap', 12) + ' Fast rescan · ' : '';
+  const isCloud = path.startsWith('cloud://');
+  state.scanId = scanId;
+
+  const es = new EventSource(`/api/scan/${scanId}/progress`);
+  state.es = es;
+  // Watchdog: SSE can stall silently through proxies (no error event, no
+  // frames). If the stream goes quiet mid-scan, poll the result directly.
+  let lastSseAt = performance.now();
+  let finished = false;
+  const watchdog = setInterval(async () => {
+    if (!state.scanning || finished) { clearInterval(watchdog); return; }
+    if (performance.now() - lastSseAt < 6000) return;
+    try {
+      const r = await api(`/api/scan/${scanId}/result`);
+      if (r.status === 'complete' && !finished) {
         finished = true;
         clearInterval(watchdog);
         closeEventSource();
-        let root = msg.root;
-        if (!root) {
-          const r = await api(`/api/scan/${scanId}/result`);
-          root = r.root;
-        }
-        rememberScannedRoot(path);
+        if (!isCloud) rememberScannedRoot(path);
         if (fast) showFastRescanStat(scanId);
-        finishScan(root, performance.now() - t0);
-      } else if (msg.type === 'error') {
+        finishScan(r.root, performance.now() - t0);
+      }
+    } catch (e) {
+      if (e.status === 500 && !finished) { // the scan itself failed server-side
         finished = true;
         clearInterval(watchdog);
         closeEventSource();
-        failScan(msg.message);
-      } else if (msg.type === 'shutdown') {
-        finished = true;
-        clearInterval(watchdog);
-        closeEventSource();
-        failScan('Server is shutting down');
+        failScan(e.message);
       }
-    };
-    es.onerror = () => {
-      if (finished) return;
-      // Transient drops auto-reconnect; a permanently closed stream just
-      // hands completion over to the watchdog's result polling.
-      if (es.readyState === EventSource.CLOSED) {
-        closeEventSource();
-        lastSseAt = 0; // let the watchdog take over immediately
+      /* otherwise: still running or transient — keep waiting */
+    }
+  }, 3000);
+  es.onmessage = async (ev) => {
+    lastSseAt = performance.now();
+    if (finished) return;
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'progress') {
+      const secs = (performance.now() - t0) / 1000;
+      const rate = secs > 0.2 ? Math.round(msg.scanned / secs) : 0;
+      status.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') +
+        `<span class="num">${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
+        (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`;
+      $('scanMeta').textContent = msg.currentPath;
+    } else if (msg.type === 'complete') {
+      finished = true;
+      clearInterval(watchdog);
+      closeEventSource();
+      let root = msg.root;
+      if (!root) {
+        const r = await api(`/api/scan/${scanId}/result`);
+        root = r.root;
       }
-    };
+      if (!isCloud) rememberScannedRoot(path);
+      if (fast) showFastRescanStat(scanId);
+      finishScan(root, performance.now() - t0);
+    } else if (msg.type === 'error') {
+      finished = true;
+      clearInterval(watchdog);
+      closeEventSource();
+      failScan(msg.message);
+    } else if (msg.type === 'shutdown') {
+      finished = true;
+      clearInterval(watchdog);
+      closeEventSource();
+      failScan('Server is shutting down');
+    }
+  };
+  es.onerror = () => {
+    if (finished) return;
+    // Transient drops auto-reconnect; a permanently closed stream just
+    // hands completion over to the watchdog's result polling.
+    if (es.readyState === EventSource.CLOSED) {
+      closeEventSource();
+      lastSseAt = 0; // let the watchdog take over immediately
+    }
+  };
+}
+
+/** Scan a connected cloud account — registers and follows like a disk scan. */
+async function startCloudScan(providerId, providerName) {
+  if (state.scanning) { toast('A scan is already running', 'error'); return; }
+  closeEventSource();
+  disableLive({ keepWanted: false }); // watching makes no sense on a cloud tree
+  try {
+    beginScanChrome();
+    $('scanStatus').innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `<span>Listing ${escapeHtml(providerName)}…</span>`;
+    const t0 = performance.now();
+    const resp = await api('/api/cloud/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: providerId }),
+    });
+    followScanProgress(resp.scanId, 'cloud://' + providerId, false, t0);
   } catch (e) {
     failScan(e.message);
   }
@@ -2017,7 +2074,7 @@ function renderDiskNotes() {
   const en = $('engineRow');
   if (en) {
     if (s.engine && s.durationMs > 0) {
-      const label = { 'turbo-walker': 'Turbo walker', 'ntfs-mft': 'NTFS MFT reader', walker: 'Standard walker' }[s.engine] || s.engine;
+      const label = { 'turbo-walker': 'Turbo walker', 'ntfs-mft': 'NTFS MFT reader', walker: 'Standard walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
       $('engineText').textContent = `${label} — scanned ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s`;
       $('engineHint').textContent = s.ioThreads > 4
         ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
@@ -2066,7 +2123,7 @@ async function renderGrowthProjection() {
   const el = $('growthProj');
   if (!el) return;
   el.hidden = true;
-  if (!state.root) return;
+  if (!state.root || isCloudScan()) return; // the disk-full forecast is about this disk
   let f;
   try { f = await api('/api/forecast?path=' + encodeURIComponent(state.root.path)); }
   catch { return; }
@@ -2781,6 +2838,7 @@ function exitHistoryState() {
 async function refreshTimebar() {
   const bar = $('tmTimebar');
   if (!bar) return;
+  $('tmLiveToggle').hidden = isCloudScan(); // live watching is local-disk only
   const h = state.treemap.history;
   if (!state.root || state.treemap.rootPath !== state.root.path) { bar.hidden = true; return; }
   try {
@@ -3008,6 +3066,7 @@ async function liveRelayout() {
 function enableLive() {
   const live = state.live;
   if (live.on || !state.scanId || !state.root) return;
+  if (isCloudScan()) { toast('Live mode watches your local disk — cloud accounts can’t stream changes', 'error'); return; }
   if (state.treemap.history.active) {
     const slider = $('tmTimeSlider');
     slider.value = slider.max;
@@ -3574,6 +3633,21 @@ function showCtxMenu(x, y, node) {
   const fm = state.system && state.system.platform === 'darwin' ? 'Finder'
            : state.system && state.system.platform === 'win32' ? 'Explorer' : 'file manager';
   const menu = $('ctxMenu');
+  // Cloud entries: copy the path or send to the provider's trash — nothing
+  // else exists for a file that isn't on this disk.
+  if (node.path.startsWith('cloud://')) {
+    const provider = cloudProviderOfScan();
+    menu.innerHTML = `
+      <button data-act="copy">${icon('copy', 15)}Copy path</button>
+      <div class="div"></div>
+      <button data-act="cloudtrash" class="danger">${icon('trash', 15)}Move to ${escapeHtml(provider.name)}'s trash</button>`;
+    menu.style.display = 'block';
+    menu.style.left = Math.min(x, window.innerWidth - 230) + 'px';
+    menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + 'px';
+    menu.querySelector('[data-act="copy"]').addEventListener('click', () => { hideCtxMenu(); copyPath(node.path); });
+    menu.querySelector('[data-act="cloudtrash"]').addEventListener('click', () => { hideCtxMenu(); confirmTrash([node.path]); });
+    return;
+  }
   // Entries inside a container exist in its listing, not on disk — the only
   // sensible action is copying the path; trash/open the container itself.
   if (node.virtual) {
@@ -3637,6 +3711,88 @@ async function copyPath(path) {
   }
 }
 
+/* ───────────────────────────── Cloud accounts (Feature 25) ───────────────────────────── */
+function isCloudScan() { return !!state.root && state.root.path.startsWith('cloud://'); }
+function cloudProviderOfScan() {
+  const p = state.cloud.providers.find(pr => state.root && state.root.path === 'cloud://' + pr.id);
+  return p || { id: (state.root?.path || '').replace('cloud://', ''), name: 'cloud', trashLabel: 'the provider’s trash' };
+}
+
+/** Local-only unless an account is connected — the phase's feature flag. */
+async function loadCloudStatus() {
+  try {
+    const data = await api('/api/cloud/status');
+    state.cloud.providers = data.providers || [];
+    state.cloud.loaded = true;
+  } catch { state.cloud.providers = []; }
+  renderAllStorage();
+}
+
+function renderAllStorage() {
+  const host = $('allStorageList');
+  if (!host) return;
+  const rows = [];
+  if (state.system) {
+    const used = state.system.totalDisk - state.system.freeDisk;
+    const pct = state.system.totalDisk > 0 ? (used / state.system.totalDisk) * 100 : 0;
+    rows.push(`
+      <div class="storage-row">
+        <span class="chip" style="--tint:#0A84FF">${icon('hardDrive', 15)}</span>
+        <div class="meta"><div class="nm">This Mac</div><div class="pth num">${formatBytes(used)} of ${formatBytes(state.system.totalDisk)}</div></div>
+        <div class="bar-track"><div class="bar" style="width:${Math.max(2, pct)}%;background:${pct > 85 ? '#FF453A' : '#0A84FF'};"></div></div>
+        <button class="pill" data-storage-scan-local="1">Scan</button>
+      </div>`);
+  }
+  const connected = state.cloud.providers.filter(p => p.connected);
+  for (const p of connected) {
+    const q = p.quota || { used: 0, total: 0 };
+    const pct = q.total > 0 ? (q.used / q.total) * 100 : 0;
+    rows.push(`
+      <div class="storage-row">
+        <span class="chip" style="--tint:#64D2FF">${icon('cloud', 15)}</span>
+        <div class="meta"><div class="nm">${escapeHtml(p.name)}</div><div class="pth num">${p.account ? escapeHtml(p.account) + ' · ' : ''}${q.total ? `${formatBytes(q.used)} of ${formatBytes(q.total)}` : formatBytes(q.used)}</div></div>
+        <div class="bar-track"><div class="bar" style="width:${Math.max(2, pct)}%;background:${pct > 85 ? '#FF453A' : '#64D2FF'};"></div></div>
+        <button class="pill" data-cloud-scan="${p.id}" data-cloud-name="${escapeHtml(p.name)}">Scan</button>
+      </div>`);
+  }
+  if (!connected.length) {
+    rows.push(`<div class="muted" style="padding:6px 2px;font-size:12px;">${icon('cloud', 13)} Connect Google Drive, Dropbox or OneDrive in Settings to see and scan them here — nothing talks to the internet until you do.</div>`);
+  }
+  host.innerHTML = rows.join('');
+  host.querySelectorAll('[data-cloud-scan]').forEach(b =>
+    b.addEventListener('click', () => startCloudScan(b.dataset.cloudScan, b.dataset.cloudName)));
+  host.querySelectorAll('[data-storage-scan-local]').forEach(b =>
+    b.addEventListener('click', () => { if (state.system) startScan(state.system.homeDir); }));
+}
+
+/** Provider-trash for cloud scans (mirrors the local trash-only rule). */
+async function cloudTrashPaths(paths) {
+  try {
+    const result = await api('/api/cloud/trash', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scanId: state.scanId, paths }),
+    });
+    for (const p of result.deleted) {
+      const node = state.pathIndex.get(p);
+      if (!node) continue;
+      applyLiveDelta({ path: p, kind: 'deleted', size: 0, delta: -node.size });
+      const parent = state.pathIndex.get(p.slice(0, p.lastIndexOf('/')));
+      if (parent && parent.children) parent.children = parent.children.filter(c => c.path !== p);
+      state.pathIndex.delete(p);
+    }
+    const provider = cloudProviderOfScan();
+    if (result.deleted.length) toast(`Moved ${result.deleted.length} item${result.deleted.length === 1 ? '' : 's'} to ${provider.name}'s trash`);
+    if (result.failed.length) toast(`${result.failed.length} failed: ${result.failed[0].reason}`, 'error');
+    state.grid.selection.clear();
+    updateSelectionBar();
+    if (state.view === 'treemap') loadTreemap(state.treemap.rootPath);
+    if (state.view === 'grid') renderGrid();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
 /* ───────────────────────────── Offload (Feature 24) ───────────────────────────── */
 const OFFLOAD_PHASE_LABEL = {
   checking: 'Checking free space…',
@@ -3652,6 +3808,7 @@ let offloadJobId = null;
 function startOffloadFlow(paths) {
   if (!paths.length) return;
   if (!state.scanId || !state.root) { toast('Run a scan first', 'error'); return; }
+  if (paths[0].startsWith('cloud://')) { toast('Offload moves local files to another drive — it doesn’t apply to cloud scans', 'error'); return; }
   hideCtxMenu();
   openBrowse(null, (dest) => runOffloadJob(paths, dest), 'Offload to…');
 }
@@ -3812,10 +3969,22 @@ let onConfirmTrash = null; // optional callback override for the shared confirm 
 function confirmTrash(paths) {
   if (!paths.length) return;
   onConfirmTrash = null;
-  $('confirmTitle').innerHTML = icon('trash', 18) + 'Move to Trash?';
   confirmPaths = paths;
   const total = paths.reduce((s, p) => s + (state.pathIndex.get(p)?.size ?? 0), 0);
   const first = state.pathIndex.get(paths[0]);
+  // Cloud scans: deletes go to the provider's own trash, never the local one.
+  if (paths[0].startsWith('cloud://')) {
+    const provider = cloudProviderOfScan();
+    $('confirmTitle').innerHTML = icon('trash', 18) + `Move to ${escapeHtml(provider.name)}'s trash?`;
+    $('confirmText').innerHTML = (paths.length === 1
+      ? `Move <b>${escapeHtml(first ? first.name : paths[0])}</b> (${formatBytes(total)}) to ${escapeHtml(provider.trashLabel)}?`
+      : `Move <b>${paths.length} items</b> (${formatBytes(total)} total) to ${escapeHtml(provider.trashLabel)}?`) +
+      `<br><span style="color:var(--text-3)">Restore any time from the provider's own trash.</span>`;
+    onConfirmTrash = () => cloudTrashPaths(paths);
+    $('confirmModal').classList.add('open');
+    return;
+  }
+  $('confirmTitle').innerHTML = icon('trash', 18) + 'Move to Trash?';
   $('confirmText').innerHTML = paths.length === 1
     ? `Move <b>${escapeHtml(first ? first.name : paths[0])}</b> (${formatBytes(total)}) to the Trash?<br><span style="color:var(--text-3)">You can restore it from the Trash at any time.</span>`
     : `Move <b>${paths.length} items</b> (${formatBytes(total)} total) to the Trash?<br><span style="color:var(--text-3)">You can restore them from the Trash at any time.</span>`;
@@ -4120,6 +4289,7 @@ function highlightCode(src, ext) {
 let pvReqId = 0;
 function openPreview(node) {
   if (!node || node.type !== 'file') return;
+  if (node.path.startsWith('cloud://')) { toast('Quick Look needs file contents — cloud scans never download any'); return; }
   const pane = $('previewPane');
   pane.hidden = false;
   document.body.classList.add('preview-open');
@@ -4337,6 +4507,7 @@ function updateSelectionBar() {
   let total = 0;
   for (const p of sel) total += state.pathIndex.get(p)?.size ?? 0;
   $('selInfo').innerHTML = `<b>${sel.size}</b> item${sel.size > 1 ? 's' : ''} selected — ${formatBytes(total)}`;
+  $('selOffloadBtn').hidden = isCloudScan(); // offload is a local-disk concept
   bar.classList.add('visible');
 }
 $('selClearBtn').addEventListener('click', () => { state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true); });
@@ -5455,9 +5626,116 @@ $('settingsBtn').addEventListener('click', async () => {
   }
   renderSchedules();
   renderIgnores();
+  renderCloudAccounts();
   $('forecastDays').value = settingsData.forecastThresholdDays ?? 30;
   $('watchIdleMin').value = settingsData.watchIdleMinutes ?? 10;
 });
+
+/* ── Cloud accounts (Feature 25) ── */
+function renderCloudAccounts() {
+  const host = $('cloudAccounts');
+  if (!host) return;
+  const creds = settingsData.cloud || {};
+  const providers = state.cloud.providers.length ? state.cloud.providers : [
+    { id: 'gdrive', name: 'Google Drive', needsClientSecret: true, configured: false, connected: false },
+    { id: 'dropbox', name: 'Dropbox', needsClientSecret: false, configured: false, connected: false },
+    { id: 'onedrive', name: 'OneDrive', needsClientSecret: false, configured: false, connected: false },
+  ];
+  host.innerHTML = providers.map(p => `
+    <div class="cloud-row" data-provider="${p.id}">
+      <div class="rule-row">
+        <span data-icon-inline>${icon('cloud', 15)}</span>
+        <b style="width:110px;">${escapeHtml(p.name)}</b>
+        <span class="muted" style="flex:1;">${p.connected ? `connected${p.account ? ' as <b>' + escapeHtml(p.account) + '</b>' : ''}` : 'not connected'}</span>
+        ${p.connected
+          ? `<button class="btn" data-cloud-disconnect="${p.id}">Disconnect</button>`
+          : `<button class="btn btn-primary" data-cloud-connect="${p.id}">Connect…</button>`}
+      </div>
+      ${p.connected ? '' : `
+      <div class="rule-row" style="margin-left:24px;">
+        <label class="muted">Client ID</label>
+        <input type="text" class="cc-id" style="flex:1;min-width:0;" value="${escapeHtml(creds[p.id]?.clientId || '')}" placeholder="from the ${escapeHtml(p.name)} developer console" spellcheck="false" aria-label="${escapeHtml(p.name)} client ID">
+        ${p.needsClientSecret ? `<label class="muted">Secret</label>
+        <input type="text" class="cc-secret" style="width:150px;" value="${escapeHtml(creds[p.id]?.clientSecret || '')}" placeholder="client secret" spellcheck="false" aria-label="${escapeHtml(p.name)} client secret">` : ''}
+      </div>
+      <div class="rule-row cloud-paste" data-paste="${p.id}" hidden style="margin-left:24px;">
+        <label class="muted">Didn't redirect back? Paste the code or URL:</label>
+        <input type="text" class="cc-paste" style="flex:1;min-width:0;" placeholder="paste the redirect URL or code here" spellcheck="false" aria-label="Pasted sign-in code">
+        <button class="btn cc-paste-go">Finish</button>
+      </div>`}
+    </div>`).join('');
+
+  host.querySelectorAll('[data-cloud-connect]').forEach(b => b.addEventListener('click', () => connectCloud(b.dataset.cloudConnect)));
+  host.querySelectorAll('[data-cloud-disconnect]').forEach(b => b.addEventListener('click', async () => {
+    try {
+      await api('/api/cloud/disconnect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: b.dataset.cloudDisconnect }) });
+      toast('Disconnected — the saved sign-in was wiped from this computer');
+      await loadCloudStatus();
+      renderCloudAccounts();
+    } catch (e) { toast(e.message, 'error'); }
+  }));
+  host.querySelectorAll('.cc-paste-go').forEach(b => b.addEventListener('click', async () => {
+    const row = b.closest('.cloud-paste');
+    try {
+      await api('/api/cloud/connect/manual', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: row.querySelector('.cc-paste').value }) });
+      toast('Connected');
+      await loadCloudStatus();
+      renderCloudAccounts();
+    } catch (e) { toast(e.message, 'error'); }
+  }));
+}
+
+function collectCloudCreds() {
+  const out = {};
+  document.querySelectorAll('#cloudAccounts .cloud-row').forEach(row => {
+    const id = row.dataset.provider;
+    const idInput = row.querySelector('.cc-id');
+    if (!idInput) { // connected rows keep their saved creds
+      if (settingsData.cloud?.[id]) out[id] = settingsData.cloud[id];
+      return;
+    }
+    const clientId = idInput.value.trim();
+    if (!clientId) return;
+    const secret = row.querySelector('.cc-secret');
+    out[id] = { clientId, ...(secret && secret.value.trim() ? { clientSecret: secret.value.trim() } : {}) };
+  });
+  return out;
+}
+
+let cloudConnectPoll = 0;
+async function connectCloud(providerId) {
+  try {
+    // Save the credentials first so the server can build the consent URL.
+    settingsData = await api('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cloud: collectCloudCreds() }),
+    });
+    const started = await api('/api/cloud/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: providerId }),
+    });
+    window.open(started.authorizeUrl, '_blank', 'noopener');
+    const pasteRow = document.querySelector(`.cloud-paste[data-paste="${providerId}"]`);
+    if (pasteRow) pasteRow.hidden = false;
+    toast('Approve access in the browser tab that just opened');
+    // The loopback listener completes silently — poll until it does.
+    clearInterval(cloudConnectPoll);
+    const t0 = Date.now();
+    cloudConnectPoll = setInterval(async () => {
+      if (Date.now() - t0 > 5 * 60_000) { clearInterval(cloudConnectPoll); return; }
+      await loadCloudStatus();
+      if (state.cloud.providers.find(p => p.id === providerId)?.connected) {
+        clearInterval(cloudConnectPoll);
+        toast('Connected ✓');
+        renderCloudAccounts();
+      }
+    }, 2500);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
 
 const SCHED_HOURS = [6, 12, 24, 48, 168];
 function renderSchedules() {
@@ -5558,11 +5836,12 @@ $('settingsSaveBtn').addEventListener('click', async () => {
   const ignore = settingsData.ignore.filter(e => e.pattern);
   const forecastThresholdDays = Math.min(365, Math.max(1, Math.round(Number($('forecastDays').value) || 30)));
   const watchIdleMinutes = Math.min(120, Math.max(1, Math.round(Number($('watchIdleMin').value) || 10)));
+  const cloud = collectCloudCreds();
   try {
     settingsData = await api('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schedules, ignore, forecastThresholdDays, watchIdleMinutes }),
+      body: JSON.stringify({ schedules, ignore, forecastThresholdDays, watchIdleMinutes, cloud }),
     });
     renderSchedules();
     renderIgnores();
