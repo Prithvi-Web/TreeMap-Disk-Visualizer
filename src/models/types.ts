@@ -91,6 +91,11 @@ export interface TreemapNode {
   cloudPlaceholder?: boolean;
   /** Git repository root — rendered with a branch marker. */
   gitRepo?: boolean;
+  /**
+   * Historical layouts only (time slider): size in the previous snapshot,
+   * or null when the entry didn't exist yet — drives the diff overlay.
+   */
+  prevSize?: number | null;
 }
 
 /** Events streamed over the SSE progress endpoint. */
@@ -256,6 +261,22 @@ export interface Snapshot {
   dirCount: number;
   /** Direct children of the root at scan time, largest first. */
   topEntries: SnapshotTopEntry[];
+  /** True when a deeper tree was stored for the time-slider treemap. */
+  hasTree?: boolean;
+}
+
+/**
+ * Compact stored subtree for the time-slider treemap: single-letter keys and
+ * name-only paths keep each snapshot's tree within its ~100 KB budget.
+ */
+export interface SnapshotTreeNode {
+  /** Basename. */
+  n: string;
+  /** Size in bytes. */
+  s: number;
+  /** Present (1) = directory. */
+  t?: 1;
+  c?: SnapshotTreeNode[];
 }
 
 export interface SnapshotRef {
