@@ -361,6 +361,8 @@ export interface AppSettings {
   ignore: IgnoreEntry[];
   schedules: ScheduleConfig[];
   budgets: BudgetEntry[];
+  /** Scheduled scans warn when the disk-full forecast drops below this many days. */
+  forecastThresholdDays: number;
 }
 
 /** A budget cross-referenced against a scan: how the folder measures up now. */
@@ -383,6 +385,42 @@ export interface GrowthNotification {
   prevSize: number;
   newSize: number;
   delta: number;
+}
+
+/* ---------- Disk-full forecasting ---------- */
+
+/**
+ * ok — a trustworthy projection exists. insufficient — too little history.
+ * stable/shrinking — no fill-up risk at the fitted rate. erratic — sizes
+ * bounce around too much for an honest number.
+ */
+export type ForecastStatus = 'ok' | 'insufficient' | 'stable' | 'shrinking' | 'erratic';
+
+/** A top-level folder among the fastest growers. */
+export interface ForecastGrower {
+  name: string;
+  path: string;
+  /** Fitted growth in bytes/day (recent-weighted). */
+  bytesPerDay: number;
+}
+
+export interface ForecastResult {
+  path: string;
+  status: ForecastStatus;
+  /** Days until the volume is full at the fitted rate — status 'ok' only. */
+  fullInDays?: number;
+  /** 0–1: fit quality × history richness × fit agreement. */
+  confidence: number;
+  /** Fitted growth of the whole root, bytes/day. */
+  bytesPerDay: number;
+  /** Free bytes on the volume containing the root. */
+  freeBytes: number;
+  snapshotCount: number;
+  /** History span in days. */
+  spanDays: number;
+  topGrowers: ForecastGrower[];
+  /** Human-readable explanation when status !== 'ok'. */
+  reason?: string;
 }
 
 /* ---------- Smart cleanup suggestions ---------- */
