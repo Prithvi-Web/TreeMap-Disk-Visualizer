@@ -103,7 +103,7 @@ function createWindow(port) {
     height: 880,
     minWidth: 1024,
     minHeight: 700,
-    backgroundColor: '#0a0a0d',
+    backgroundColor: '#05060a',
     show: false,
     title: 'TreeMap',
     webPreferences: {
