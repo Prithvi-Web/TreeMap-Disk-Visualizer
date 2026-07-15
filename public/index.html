@@ -6295,9 +6295,18 @@ loadSystem();
       pending.delete(el);
       delete el.__lg;
     }
+    /* Schedule any not-yet-built lens element in this subtree. Open/close is
+       always an attribute flip (.open class, hidden attr, style.display), so
+       watching attributes makes filter-building deterministic even where
+       ResizeObserver is suspended (hidden or occluded windows). */
+    function scheduleUnbuilt(el) {
+      if (el.__lg && !el.__lg.key) schedule(el);
+      if (el.querySelectorAll) el.querySelectorAll('.lg').forEach(c => { if (c.__lg && !c.__lg.key) schedule(c); });
+    }
     document.querySelectorAll(SELECTOR).forEach(attach);
     new MutationObserver(muts => {
       for (const m of muts) {
+        if (m.type === 'attributes') { scheduleUnbuilt(m.target); continue; }
         for (const n of m.addedNodes) {
           if (n.nodeType !== 1) continue;
           if (n.matches && n.matches(SELECTOR)) attach(n);
@@ -6309,7 +6318,7 @@ loadSystem();
           if (n.querySelectorAll) n.querySelectorAll('.lg').forEach(detach);
         }
       }
-    }).observe(document.body, { childList: true, subtree: true });
+    }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'] });
   } catch (err) {
     /* Lens is decoration — the frosted fallback is always in place. */
     console.warn('Liquid Glass engine disabled:', err);
