@@ -6251,14 +6251,19 @@ loadSystem();
       const sat = cs.getPropertyValue('--lg-sat').trim() || '185%';
       el.style.setProperty('--lg-backdrop', 'url(#' + st.id + ') blur(' + blur + ') saturate(' + sat + ')');
     }
+    let timer = 0;
     function flush() {
-      raf = 0;
-      pending.forEach(refresh);
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      if (timer) { clearTimeout(timer); timer = 0; }
+      pending.forEach(el => { try { refresh(el); } catch (e) { /* one bad element must not wedge the queue */ } });
       pending.clear();
     }
     function schedule(el) {
       pending.add(el);
+      /* rAF for visible pages; the timer covers hidden/occluded pages (tray launch,
+         background window) where rAF and ResizeObserver are suspended. */
       if (!raf) raf = requestAnimationFrame(flush);
+      if (!timer) timer = setTimeout(flush, 120);
     }
 
     const ro = new ResizeObserver(entries => { for (const e of entries) schedule(e.target); });
