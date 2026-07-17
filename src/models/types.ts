@@ -123,9 +123,33 @@ export interface TreemapNode {
 }
 
 /** Events streamed over the SSE progress endpoint. */
+/**
+ * The counters a client needs to paint headline numbers.
+ *
+ * All are O(1) reads off ScanResult — the walker maintains them during the walk
+ * — so they ride along on the 'complete' frame rather than costing a round-trip.
+ * That matters because a pruned tree cannot be counted client-side without
+ * under-reporting, so these are the *only* honest source for the headline.
+ */
+export interface ScanStats {
+  scanned: number;
+  fileCount: number;
+  dirCount: number;
+  engine: string;
+  ioThreads: number;
+  durationMs: number;
+  incremental: boolean;
+  cachedDirs: number;
+  walkedDirs: number;
+  hardlinkedFiles: number;
+  hardlinkedBytes: number;
+  cloudFiles: number;
+  cloudBytes: number;
+}
+
 export type ScanEvent =
   | { type: 'progress'; scanned: number; currentPath: string }
-  | { type: 'complete'; root: FileNode }
+  | { type: 'complete'; root: FileNode; stats: ScanStats }
   | { type: 'error'; message: string }
   | { type: 'shutdown' };
 

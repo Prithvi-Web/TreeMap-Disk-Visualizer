@@ -8,9 +8,31 @@ import { lookupNodes } from '../services/scanQueries';
 import { AppError } from '../middleware/errorHandler';
 import { getSettings } from '../services/settings';
 import { streamCsv, streamPdf } from '../services/reportExport';
-import { ScanResult, ScanEvent, BudgetStatus } from '../models/types';
+import { ScanResult, ScanEvent, ScanStats, BudgetStatus } from '../models/types';
 
 export const scanRouter = Router();
+
+/**
+ * The one place scan counters are shaped, shared by /stats and the SSE
+ * 'complete' frame so the two cannot drift apart.
+ */
+export function buildScanStats(scan: ScanResult): ScanStats {
+  return {
+    scanned: scan.scanned,
+    fileCount: scan.fileCount,
+    dirCount: scan.dirCount,
+    engine: scan.engine ?? 'walker',
+    ioThreads: scan.ioThreads ?? 0,
+    durationMs: scan.finishedAt ? scan.finishedAt - scan.startedAt : 0,
+    incremental: scan.incremental === true,
+    cachedDirs: scan.cachedDirs ?? 0,
+    walkedDirs: scan.walkedDirs ?? 0,
+    hardlinkedFiles: scan.hardlinkedFiles ?? 0,
+    hardlinkedBytes: scan.hardlinkedBytes ?? 0,
+    cloudFiles: scan.cloudFiles ?? 0,
+    cloudBytes: scan.cloudBytes ?? 0,
+  };
+}
 
 /**
  * Node budget for the tree handed to the UI.
@@ -131,7 +153,10 @@ scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
       // sseSend guard below stays as a backstop — pruning should mean it never
       // trips, but a timer throw would take the app down, so we keep the net.
       const { root } = pruneTree(scan.root, { maxNodes: PRUNE_MAX_NODES });
-      if (!sseSend(res, { type: 'complete', root })) {
+      // Counters ride along: a pruned tree can't be counted client-side, and
+      // making the client fetch them instead puts three full server-side tree
+      // walks in front of the headline paint.
+      if (!sseSend(res, { type: 'complete', root, stats: buildScanStats(scan) })) {
         sseSend(res, { type: 'error', message: treeTooLargeMessage(scan) });
       }
     } else {
@@ -267,23 +292,7 @@ scanRouter.post('/scan/:scanId/nodes', guardBodyPaths, (req: Request, res: Respo
 /** GET /api/scan/:scanId/stats — counters incl. incremental cache usage. */
 scanRouter.get('/scan/:scanId/stats', (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
-  res.json({
-    scanId: scan.scanId,
-    status: scan.status,
-    scanned: scan.scanned,
-    fileCount: scan.fileCount,
-    dirCount: scan.dirCount,
-    engine: scan.engine ?? 'walker',
-    ioThreads: scan.ioThreads ?? 0,
-    durationMs: scan.finishedAt ? scan.finishedAt - scan.startedAt : 0,
-    incremental: scan.incremental === true,
-    cachedDirs: scan.cachedDirs ?? 0,
-    walkedDirs: scan.walkedDirs ?? 0,
-    hardlinkedFiles: scan.hardlinkedFiles ?? 0,
-    hardlinkedBytes: scan.hardlinkedBytes ?? 0,
-    cloudFiles: scan.cloudFiles ?? 0,
-    cloudBytes: scan.cloudBytes ?? 0,
-  });
+  res.json({ scanId: scan.scanId, status: scan.status, ...buildScanStats(scan) });
 });
 
 /**
