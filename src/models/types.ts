@@ -71,7 +71,7 @@ export interface ScanResult {
   /** Cooperative cancellation flag (set on shutdown/eviction). */
   cancelled: boolean;
   /** Which enumeration engine produced this scan (dashboard note). */
-  engine?: 'walker' | 'turbo-walker' | 'ntfs-mft' | 'cloud';
+  engine?: 'walker' | 'turbo-walker' | 'gdu-turbo' | 'ntfs-mft' | 'cloud';
   /** libuv threadpool size the scan ran with. */
   ioThreads?: number;
   /** True when this scan reused the on-disk mtime cache (fast rescan). */

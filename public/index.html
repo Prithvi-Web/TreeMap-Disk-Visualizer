@@ -2361,11 +2361,15 @@ function renderDiskNotes() {
   const en = $('engineRow');
   if (en) {
     if (s.engine && s.durationMs > 0) {
-      const label = { 'turbo-walker': 'Turbo walker', 'ntfs-mft': 'NTFS MFT reader', walker: 'Standard walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
-      $('engineText').textContent = `${label} — scanned ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s`;
-      $('engineHint').textContent = s.ioThreads > 4
-        ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
-        : '';
+      const label = { 'gdu-turbo': 'Turbo engine (gdu)', 'turbo-walker': 'Turbo walker', 'ntfs-mft': 'NTFS MFT reader', walker: 'Standard walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
+      const rate = s.durationMs > 0 ? Math.round(s.scanned / (s.durationMs / 1000)) : 0;
+      $('engineText').textContent = `${label} — scanned ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s` +
+        (rate ? ` · ${formatCount(rate)}/s` : '');
+      $('engineHint').textContent = s.engine === 'gdu-turbo'
+        ? 'A bundled gdu subprocess per top-level folder — same counts as the built-in walker, measurably faster.'
+        : s.ioThreads > 4
+          ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
+          : '';
       en.hidden = false;
     } else en.hidden = true;
   }

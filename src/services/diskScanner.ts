@@ -9,6 +9,7 @@ import { readJsonFile, appDataDir } from './storage';
 import { IO_THREADS } from '../utils/ioThreads';
 import { detectContainerKind } from '../utils/containerKind';
 import { forgetScan } from './containerScanner';
+import { findGduBinary, gduScan } from './gduScanner';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -143,8 +144,63 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
   };
   scans.set(scan.scanId, scan);
 
+  /**
+   * The gdu turbo engine is preferred (~112-120k items/sec sharded, vs the
+   * walker's 69-97k) but only where it can be exactly as correct as the walker:
+   *
+   *  - directories only (a single-file "scan" isn't worth a subprocess);
+   *  - not incremental — the mtime cache is built around the walker's
+   *    per-directory reuse and gdu has no equivalent;
+   *  - no ignore list — gdu's -i/-I cannot faithfully express this app's glob
+   *    patterns, and quietly scanning something the user excluded is worse than
+   *    being slower. Fall back rather than approximate.
+   */
+  const gduEligible =
+    rootStat.isDirectory() &&
+    !cache &&
+    !opts.incremental &&
+    ignore.length === 0 &&
+    process.env.TREEMAP_NO_GDU !== '1';
+
   // Fire and forget — errors land on the record, never as unhandled rejections.
-  void walk(scan, rootStat.isDirectory(), ignore, cache).catch((err: unknown) => {
+  void (async () => {
+    if (gduEligible) {
+      try {
+        const bin = await findGduBinary();
+        if (bin) {
+          scan.engine = 'gdu-turbo';
+          const root = await gduScan(scan, bin, cloudProviderFor);
+          if (scan.cancelled) return;
+          scan.root = root;
+          scan.status = 'complete';
+          scan.finishedAt = Date.now();
+          scan.currentPath = scan.rootPath;
+          void saveMtimeCache(scan);
+          void saveSnapshot(scan).catch((err: unknown) => {
+            console.error('[treemap] snapshot save failed:', err);
+          });
+          return;
+        }
+      } catch (err) {
+        if (scan.cancelled) return; // cancellation is not a gdu failure
+        // gdu is strictly best-effort: a missing binary, a spawn failure, a
+        // non-zero exit or an oversized shard must never surface as a scan
+        // error. Log it and let the walker produce the scan.
+        console.warn(`[treemap] gdu engine unavailable, using walker: ${String(err)}`);
+        // Discard whatever the aborted attempt accumulated so the walker
+        // doesn't double-count on top of it.
+        scan.fileCount = 0;
+        scan.dirCount = 0;
+        scan.scanned = 0;
+        scan.hardlinkedFiles = 0;
+        scan.hardlinkedBytes = 0;
+        scan.cloudFiles = 0;
+        scan.cloudBytes = 0;
+      }
+      scan.engine = IO_THREADS > 4 ? 'turbo-walker' : 'walker';
+    }
+    await walk(scan, rootStat.isDirectory(), ignore, cache);
+  })().catch((err: unknown) => {
     scan.status = 'error';
     scan.error = err instanceof Error ? err.message : String(err);
     scan.finishedAt = Date.now();
