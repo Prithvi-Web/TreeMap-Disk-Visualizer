@@ -3,3 +3,6 @@ dist/
 release/
 *.log
 .DS_Store
+
+# Bundled gdu binary — fetched at build time by scripts/fetchGdu.js, never committed
+/gdu/
