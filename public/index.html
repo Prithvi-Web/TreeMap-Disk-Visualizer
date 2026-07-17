@@ -2145,7 +2145,7 @@ function followScanProgress(scanId, path, fast, t0) {
         closeEventSource();
         if (!isCloud) rememberScannedRoot(path);
         if (fast) showFastRescanStat(scanId);
-        finishScan(r.root, performance.now() - t0);
+        finishScan(r.root, performance.now() - t0, statsFromResult(r));
       }
     } catch (e) {
       if (e.status === 500 && !finished) { // the scan itself failed server-side
@@ -2173,13 +2173,15 @@ function followScanProgress(scanId, path, fast, t0) {
       clearInterval(watchdog);
       closeEventSource();
       let root = msg.root;
+      let stats = msg.stats;
       if (!root) {
         const r = await api(`/api/scan/${scanId}/result`);
         root = r.root;
+        stats = statsFromResult(r);
       }
       if (!isCloud) rememberScannedRoot(path);
       if (fast) showFastRescanStat(scanId);
-      finishScan(root, performance.now() - t0);
+      finishScan(root, performance.now() - t0, stats);
     } else if (msg.type === 'error') {
       finished = true;
       clearInterval(watchdog);
@@ -2243,7 +2245,23 @@ function failScan(message) {
   switchView(state.view);
 }
 
-async function finishScan(root, durationMs) {
+/**
+ * Build the ScanStats shape from a /result response, whose counters sit at the
+ * top level rather than under `stats`. Keeps the SSE path and the watchdog
+ * fallback painting from identical data.
+ */
+function statsFromResult(r) {
+  return {
+    scanned: r.scanned, fileCount: r.fileCount, dirCount: r.dirCount,
+    engine: r.engine, ioThreads: r.ioThreads,
+    durationMs: r.finishedAt && r.startedAt ? r.finishedAt - r.startedAt : 0,
+    incremental: !!r.incremental, cachedDirs: r.cachedDirs || 0, walkedDirs: r.walkedDirs || 0,
+    hardlinkedFiles: r.hardlinkedFiles || 0, hardlinkedBytes: r.hardlinkedBytes || 0,
+    cloudFiles: r.cloudFiles || 0, cloudBytes: r.cloudBytes || 0,
+  };
+}
+
+async function finishScan(root, durationMs, stats) {
   endScanChrome();
   state.root = root;
   indexTree(root);
@@ -2255,26 +2273,21 @@ async function finishScan(root, durationMs) {
 
   state.dup = { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 };
   state.apps.loadedFor = null;
-  state.scanStats = null;
-  try {
-    const [lf, ft, lfo, stats] = await Promise.all([
-      api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`),
-      api(`/api/file-types?scanId=${state.scanId}`),
-      api(`/api/large-folders?scanId=${state.scanId}&limit=10`),
-      api(`/api/scan/${state.scanId}/stats`),
-    ]);
-    state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders; state.scanStats = stats;
-    seedNodes(lf.files); // right-click/cart on a big file must resolve even if pruned away
-  } catch (e) { toast('Could not load stats: ' + e.message, 'error'); }
 
   // `root` is pruned to a node budget, so counting the tree we just indexed
-  // would under-report any large scan. Every headline number comes from the
-  // server, which holds the whole thing. root.size is exact even when pruned.
-  // If the fetch failed we say nothing rather than state a pruned count as
-  // fact — a wrong number is worse than a missing one.
-  const files = state.scanStats ? state.scanStats.fileCount : null;
-  const dirs = state.scanStats ? state.scanStats.dirCount : null;
-  const largest = state.largest[0] || null;
+  // would under-report any large scan. The counters come from the server, which
+  // holds the whole thing — and they arrive ON the complete frame, so painting
+  // costs no round-trip. root.size is exact even when pruned. If we somehow have
+  // no stats we say nothing rather than state a pruned count as fact — a wrong
+  // number is worse than a missing one.
+  //
+  // Everything from here to the paint must stay synchronous. The three list
+  // endpoints below each walk the whole tree server-side; awaiting them before
+  // the paint is what left a 4M-item scan looking frozen for ~2s after it had
+  // actually finished, and is why this build was rolled back on July 16.
+  state.scanStats = stats || null;
+  const files = stats ? stats.fileCount : null;
+  const dirs = stats ? stats.dirCount : null;
 
   $('scanStatus').classList.remove('error');
   $('scanStatus').innerHTML = icon('checkCircle', 14) +
@@ -2282,8 +2295,24 @@ async function finishScan(root, durationMs) {
     `in ${(durationMs / 1000).toFixed(1)}s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`;
   if (files !== null) countUp($('statFiles'), files);
   if (dirs !== null) countUp($('statDirs'), dirs);
-  $('statLargest').textContent = largest ? `${largest.name} · ${formatBytes(largest.size)}` : '–';
   $('statLastScan').textContent = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  renderDiskNotes();
+  toast(`Scan complete — ${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} files`}`);
+
+  // Painted. Now the expensive server-side walks, filling in behind it.
+  state.largest = []; state.types = []; state.bigFolders = [];
+  $('statLargest').textContent = '–';
+  try {
+    const [lf, ft, lfo] = await Promise.all([
+      api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`),
+      api(`/api/file-types?scanId=${state.scanId}`),
+      api(`/api/large-folders?scanId=${state.scanId}&limit=10`),
+    ]);
+    state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders;
+    seedNodes(lf.files); // right-click/cart on a big file must resolve even if pruned away
+    const largest = state.largest[0] || null;
+    $('statLargest').textContent = largest ? `${largest.name} · ${formatBytes(largest.size)}` : '–';
+  } catch (e) { toast('Could not load stats: ' + e.message, 'error'); }
 
   renderBigFiles();
   renderBigFolders();
@@ -2292,9 +2321,7 @@ async function finishScan(root, durationMs) {
   if (state.view === 'treemap') loadTreemap(root.path);
   if (state.view === 'grid') renderGrid();
   switchView(state.view);
-  toast(`Scan complete — ${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} files`}`);
   renderGrowthProjection();
-  renderDiskNotes();
   loadBudgets();
   // The snapshot (and its time-slider tree) is saved asynchronously after the
   // scan completes — pick it up once it lands.
