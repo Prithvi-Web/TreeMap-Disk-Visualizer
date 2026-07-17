@@ -142,20 +142,37 @@ Goal: 5M items reach a usable UI, and **scan→paint is not slower than stock**.
   `extension`, `container`, `gitRepo`.
 - **Preserved via gdu fields:** cloud-placeholder detection via `dsize`≈0 while
   `asize`>0; symlink flagging via `notreg`.
-- **Lost:** hardlink dedup (no inode in gdu output). Measured impact: `/Applications`
-  reports 30.64 GB vs the true 30.05 GB — **593 MB / 2% overcount** across 21,499
-  hardlinked files. The Claude Code folder has 51,971.
+- **Hardlink dedup is PRESERVED — the prompt (and §3 of this spec's first draft)
+  were wrong.** gdu emits `ino` (inode) plus `hlnkc: true`, and only when the link
+  count exceeds 1 — the same optimization the walker uses (`stat.nlink > 1`).
+  Verified against real output on `/Applications`: deduping on `ino` reproduces the
+  walker's total **byte-for-byte** (30,070,595,907 == 30,070,595,907) and the exact
+  same hardlink count (21,499 == 21,499). Naive counting overcounts by 592,938,708
+  bytes (1.972%) — so this must be implemented, not waived.
+  **Known limit:** gdu emits `ino` but no `dev`, so the key is inode-only. Within a
+  single volume (the overwhelming case — a home dir, `/Applications`) that is exact.
+  A scan spanning volumes could in principle collide two inodes across devices and
+  under-count. Documented rather than silently risked; revisit only if it shows up.
+- **Nothing is lost.** With dedup recovered, gdu mode reaches full parity with the
+  walker: `isHidden`, `extension`, `container`, `gitRepo` are all computable from
+  the name; `notreg` → `isSymlink`; `dsize` → `cloudPlaceholder`.
 - `engine: 'gdu-turbo'` on `ScanResult`, following the existing `'ntfs-mft'` pattern.
 - **Fallback is mandatory:** binary missing / spawn fails / non-zero exit → fall
   back to `walk()` transparently, log it, never surface as a scan error.
 - Cancellation: `scan.cancelled` kills the subprocess. Temp file deleted on success
   *and* failure.
 
-### Phase 3 — Honesty about accuracy (decided: badge)
+### Phase 3 — Honesty about accuracy (SUPERSEDED — no badge needed)
 
-Turbo scans display a badge: **"turbo scan — hardlinks counted once per link"**.
-We never silently print a total we know is 2% wrong. Exact-mode (walker) stays the
-default path for correctness-sensitive views.
+Originally: show a badge because gdu was believed to overcount hardlinks by 2%.
+**That premise was false** (see Phase 2 above) — gdu exposes `ino`/`hlnkc` and
+dedups byte-for-byte identically to the walker. There is no inaccuracy to
+disclose, so no badge ships. The user approved the badge on the false premise;
+the honest resolution is to make the number right rather than to caption a wrong
+one.
+
+What replaces it: a **regression test asserting gdu and walker totals agree
+exactly** on the same tree, so any future drift is caught rather than captioned.
 
 ### Phase 4 — Bundling
 
