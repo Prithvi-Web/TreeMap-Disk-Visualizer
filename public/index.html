@@ -2369,7 +2369,8 @@ function renderDiskNotes() {
       en.hidden = false;
     } else en.hidden = true;
   }
-  renderCloudSafe();
+  // renderCloudSafe() walks the whole tree server-side. It only fills the Clean
+  // Up modal, so it runs when that modal opens — not on every scan completion.
 }
 
 /* Feature 10 — "Cloud-safe deletes" list in the Clean Up modal. */
@@ -5635,6 +5636,10 @@ $('cleanupBtn').addEventListener('click', () => {
   cleanMatches = []; emptyFolders = []; smartGroups = [];
   setCleanPane('rules', true);
   $('cleanModal').classList.add('open');
+  // Walks the whole tree server-side, so it runs on open rather than on every
+  // scan completion. It also un-hides the Cloud-safe tab, which lives inside
+  // this modal — so gating it on open costs no visible affordance.
+  renderCloudSafe();
 });
 
 $('cleanSeg').querySelectorAll('button').forEach(b =>
