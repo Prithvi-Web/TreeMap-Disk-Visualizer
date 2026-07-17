@@ -596,6 +596,71 @@ verified live — before starting Phase 2.
 
 ---
 
+## Results — Task 5 gate: **PASSED**
+
+Measured in the real app (Express + browser), driving the app's own scan path and
+timing to the headline actually appearing in `#scanStatus`. Three runs each,
+medians reported. `complete→paint` is the metric the rollback was about: all three
+builds share a byte-identical walker, so it isolates the post-walk work.
+
+**Your typical scan — 167,595 objects, below the 250k prune threshold (so nothing
+is pruned and the same tree crosses in both builds):**
+
+| Build | complete→paint | total scan→paint |
+|---|---|---|
+| Stock v2.1.0 | 99ms | 3,276ms |
+| **Phase 1 (new)** | **65ms** | **2,934ms** — 10% faster than stock ✓ |
+
+**Large scan — 458,193 objects, above the threshold (pruning active):**
+
+| Build | scan→complete | complete→paint | total |
+|---|---|---|---|
+| Stock v2.1.0 | 14,431ms | 357ms | ~14,788ms |
+| Rolled back (`0eaecb2`) | 8,118ms | **804ms** | ~8,922ms |
+| **Phase 1 (new)** | 8,983ms | **108ms** | **~9,091ms** — 39% faster than stock ✓ |
+
+**The regression is confirmed and fixed.** The rolled-back build's `complete→paint`
+was 804ms vs stock's 357ms — 2.2× worse, and it scales with node count, so at 4M
+objects it is roughly 7 seconds of dead air after the scan has already finished.
+Phase 1 brings it to 108ms: **7.4× better than the rolled-back build and 3.3×
+better than stock.**
+
+Counts are exact in every run (408,498 files, matching the walker's own counter
+and `find | wc -l`).
+
+**One honest caveat:** at 167k the rolled-back build's penalty would have been only
+~0.2–0.4s, which does not by itself explain "so much slower". Run-to-run variance
+from background contention measured 40% on identical trees (4.74 / 5.15 / 6.60s),
+and remains the most likely explanation for the original 21.7s observation. The fix
+makes the question moot — the new build beats stock at both scales.
+
+### Live verification (Task 6, Step 4)
+
+- Counts **exact**: 408,498 files + 49,695 dirs = 458,193, matching
+  `find /Applications -mount | wc -l` exactly, while 45.4% of nodes were withheld.
+- Pruning active: 19,447 pruned dirs, browser holds exactly 250,000 nodes.
+- Drill-in into a withheld branch: **13ms**, size preserved exactly, `pruned`
+  cleared, and the "never both `children` and `pruned`" invariant held.
+- Clean Up modal: `/api/cleanup/cloud-safe` now fires **on open**, not on scan
+  completion. Cloud-safe tab correctly hidden (`/Applications` has 0 placeholders).
+- Treemap renders from pruned data: 4,249 nodes, 2,960 drawn, 28.0 GB total.
+- Largest-file tile fills in behind the headline as designed.
+
+### Correction to this plan's own Task 6
+
+"Cancel still works mid-scan" was **a false premise I wrote into this plan**,
+imported from the gdu prompt's mention of `scan.cancelled`. That flag is the
+*shutdown/eviction* mechanism (`cancelAllScans`, called only from `server.ts:84`
+on SIGTERM). Verified: **TreeMap has no user-facing scan cancel** — the only
+Cancel button is `offloadCancelBtn`, which belongs to offload jobs. Nothing to
+regress here.
+
+This is a real gap worth noting for later, not for Phase 1: a 5M-item scan will
+run ~45s with no way for the user to stop it. Worth adding when the turbo engine
+lands, since killing a subprocess is the natural moment to introduce it.
+
+---
+
 ## Out of scope for this plan
 
 - The gdu engine (Phase 2) — its own plan, written only after this gate passes.
