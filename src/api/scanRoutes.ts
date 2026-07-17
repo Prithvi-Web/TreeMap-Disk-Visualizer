@@ -1,14 +1,33 @@
 import { Router, Request, Response } from 'express';
 import { startScan, getScan, collectLargestFiles, collectFileTypes } from '../services/diskScanner';
 import { buildTreemap, findNodeByPath } from '../utils/treemap';
+import { pruneTree } from '../utils/pruneTree';
 import { isInside } from '../utils/pathSanitizer';
-import { guardBodyPath, guardQueryPath } from '../middleware/pathGuard';
+import { guardBodyPath, guardBodyPaths, guardQueryPath } from '../middleware/pathGuard';
+import { lookupNodes } from '../services/scanQueries';
 import { AppError } from '../middleware/errorHandler';
 import { getSettings } from '../services/settings';
 import { streamCsv, streamPdf } from '../services/reportExport';
 import { ScanResult, ScanEvent, BudgetStatus } from '../models/types';
 
 export const scanRouter = Router();
+
+/**
+ * Node budget for the tree handed to the UI.
+ *
+ * The browser holds this tree and builds a lookup entry per node, so the cap
+ * is about the *client's* memory, not just the ~512 MB string ceiling that
+ * JSON.stringify enforces. 250k nodes is roughly 50 MB of JSON and well under
+ * a second to serialize, parse and index — while a real 4M-object scan would
+ * be ~600-800 MB and cannot be handed over at all.
+ *
+ * Detail beyond this budget isn't lost, only deferred: pruned directories keep
+ * their true sizes and are fetched on demand from the subtree endpoint.
+ */
+export const PRUNE_MAX_NODES = 250_000;
+
+/** Default budget for one on-demand drill-in. */
+export const SUBTREE_MAX_NODES = 20_000;
 
 /* ---------- SSE client registry (drained on graceful shutdown) ---------- */
 
@@ -18,9 +37,33 @@ interface SseClient {
 }
 const sseClients = new Set<SseClient>();
 
-function sseSend(res: Response, event: ScanEvent): void {
-  // JSON.stringify never emits raw newlines, so one data: line is enough.
-  res.write(`data: ${JSON.stringify(event)}\n\n`);
+/**
+ * Write one SSE frame. Returns false — leaving the stream untouched — when the
+ * event is too large to serialize: V8 caps any single string at ~512 MB, which
+ * a 'complete' event carrying a tree of roughly 3.5M+ nodes exceeds. Callers
+ * must not let that throw, because this runs on a timer where an escaping
+ * exception is uncaught and takes the whole app down.
+ */
+function sseSend(res: Response, event: ScanEvent): boolean {
+  let frame: string;
+  try {
+    // JSON.stringify never emits raw newlines, so one data: line is enough.
+    frame = `data: ${JSON.stringify(event)}\n\n`;
+  } catch (err) {
+    if (err instanceof RangeError) return false;
+    throw err; // a real serialization bug, not a size limit
+  }
+  res.write(frame);
+  return true;
+}
+
+/** Why an oversized tree was refused, and what the user can do instead. */
+export function treeTooLargeMessage(scan: ScanResult): string {
+  const nodes = scan.fileCount + scan.dirCount || scan.scanned;
+  return (
+    `This scan is too large to display (${nodes.toLocaleString()} items). ` +
+    `Try scanning a specific folder instead of the whole drive.`
+  );
 }
 
 function closeClient(client: SseClient): void {
@@ -84,7 +127,13 @@ scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
 
   const finish = (): void => {
     if (scan.status === 'complete' && scan.root) {
-      sseSend(res, { type: 'complete', root: scan.root });
+      // Pruned: the full tree may be far larger than the UI can hold. The
+      // sseSend guard below stays as a backstop — pruning should mean it never
+      // trips, but a timer throw would take the app down, so we keep the net.
+      const { root } = pruneTree(scan.root, { maxNodes: PRUNE_MAX_NODES });
+      if (!sseSend(res, { type: 'complete', root })) {
+        sseSend(res, { type: 'error', message: treeTooLargeMessage(scan) });
+      }
     } else {
       sseSend(res, { type: 'error', message: scan.error ?? 'Scan failed' });
     }
@@ -92,17 +141,23 @@ scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
   };
 
   const timer = setInterval(() => {
-    if (scan.status !== 'running') {
-      finish();
-      return;
-    }
-    if (scan.scanned !== lastScanned) {
-      lastScanned = scan.scanned;
-      sseSend(res, { type: 'progress', scanned: scan.scanned, currentPath: scan.currentPath });
-      lastBeat = Date.now();
-    } else if (Date.now() - lastBeat > 10_000) {
-      res.write(': keep-alive\n\n'); // comment frame, ignored by EventSource
-      lastBeat = Date.now();
+    try {
+      if (scan.status !== 'running') {
+        finish();
+        return;
+      }
+      if (scan.scanned !== lastScanned) {
+        lastScanned = scan.scanned;
+        sseSend(res, { type: 'progress', scanned: scan.scanned, currentPath: scan.currentPath });
+        lastBeat = Date.now();
+      } else if (Date.now() - lastBeat > 10_000) {
+        res.write(': keep-alive\n\n'); // comment frame, ignored by EventSource
+        lastBeat = Date.now();
+      }
+    } catch {
+      // Nothing sits above a timer callback to catch a throw, so anything
+      // escaping would kill the process. Drop this client instead.
+      closeClient(client);
     }
   }, 150);
 
@@ -134,6 +189,10 @@ scanRouter.get('/scan/:scanId/result', (req: Request, res: Response) => {
   if (scan.status === 'error') {
     throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   }
+  // Pruned to the same budget as the SSE 'complete' event — this is the
+  // frontend's fallback path when the stream stalls, so it must hand over a
+  // tree of the same shape, not a 600 MB one that cannot be serialized.
+  const pruned = scan.root ? pruneTree(scan.root, { maxNodes: PRUNE_MAX_NODES }).root : scan.root;
   res.json({
     status: 'complete',
     scanId: scan.scanId,
@@ -146,8 +205,63 @@ scanRouter.get('/scan/:scanId/result', (req: Request, res: Response) => {
     cloudBytes: scan.cloudBytes ?? 0,
     startedAt: scan.startedAt,
     finishedAt: scan.finishedAt,
-    root: scan.root,
+    root: pruned,
   });
+});
+
+/**
+ * GET /api/scan/:scanId/subtree?path=<p>&maxNodes=N
+ *
+ * A bounded nested subtree rooted at `path` — the drill-in counterpart to the
+ * pruned tree sent on completion. The client grafts the result in when the
+ * user opens a directory whose children were withheld.
+ *
+ * The response obeys pruneTree's invariants: any directory carrying `children`
+ * carries all of them, and every `size` is the real recursive total.
+ */
+scanRouter.get('/scan/:scanId/subtree', guardQueryPath('path'), (req: Request, res: Response) => {
+  const scan = requireScan(req, req.params.scanId);
+  if (scan.status === 'running') {
+    res.status(202).json({ status: 'running', scanned: scan.scanned });
+    return;
+  }
+  if (scan.status === 'error' || !scan.root) {
+    throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  }
+
+  const target = String(req.query.path ?? scan.rootPath);
+  if (target !== scan.rootPath && !isInside(scan.rootPath, target)) {
+    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', 'path must be inside the scanned folder');
+  }
+  const node = findNodeByPath(scan.root, target);
+  if (!node) throw new AppError(404, 'PATH_NOT_FOUND', 'That path is not in this scan');
+
+  const maxNodes = clampInt(req.query.maxNodes, SUBTREE_MAX_NODES, 1, PRUNE_MAX_NODES);
+  const { root, nodes, prunedDirs } = pruneTree(node, { maxNodes });
+  res.json({ scanId: scan.scanId, root, nodes, prunedDirs });
+});
+
+/**
+ * POST /api/scan/:scanId/nodes  { paths: [...] }
+ *
+ * Resolve paths to node metadata. The UI holds paths it may not hold nodes for
+ * — the cleanup cart persists across sessions, and selection totals must not
+ * read a pruned-away node as zero bytes. A path that isn't in this scan comes
+ * back as null, which is a real answer rather than a silent zero.
+ *
+ * guardBodyPaths sanitizes each path and caps the batch at 500.
+ */
+scanRouter.post('/scan/:scanId/nodes', guardBodyPaths, (req: Request, res: Response) => {
+  const scan = requireScan(req, req.params.scanId);
+  if (scan.status === 'running') {
+    res.status(202).json({ status: 'running' });
+    return;
+  }
+  if (scan.status === 'error' || !scan.root) {
+    throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  }
+  const { paths } = req.body as { paths: string[] };
+  res.json({ scanId: scan.scanId, nodes: lookupNodes(scan.root, paths) });
 });
 
 /** GET /api/scan/:scanId/stats — counters incl. incremental cache usage. */

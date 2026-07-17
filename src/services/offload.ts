@@ -119,10 +119,16 @@ export function destNameFor(name: string, taken: Set<string>): string {
  * Expand selected nodes (files and folders) into a flat copy plan. Folder
  * selections keep their internal structure under a folder of the same name
  * at the destination. Pure over the scan tree — no filesystem access.
+ *
+ * `existingNames` are the entries already at `destDir`. Copies open with 'wx'
+ * and never clobber, so a name that is already taken there would fail the whole
+ * job with EEXIST — renaming around it (report.pdf → "report (offloaded 2).pdf")
+ * is what lets a second offload to the same drive succeed. Matching is
+ * case-insensitive because the destination is often FAT/exFAT or APFS.
  */
-export function planOffload(nodes: FileNode[], destDir: string): PlannedCopy[] {
+export function planOffload(nodes: FileNode[], destDir: string, existingNames: string[] = []): PlannedCopy[] {
   const plan: PlannedCopy[] = [];
-  const takenTop = new Set<string>();
+  const takenTop = new Set<string>(existingNames.map((n) => n.toLowerCase()));
   for (const node of nodes) {
     const topName = destNameFor(node.name, takenTop);
     takenTop.add(topName.toLowerCase());
@@ -261,7 +267,10 @@ export async function startOffload(
     throw new AppError(400, 'DEST_NOT_A_FOLDER', 'The destination must be an existing folder');
   }
 
-  const plan = planOffload(nodes, destDir);
+  // What's already on the drive, so a repeat offload renames around it instead
+  // of failing every copy with EEXIST.
+  const existingNames = await fsp.readdir(destDir).catch(() => [] as string[]);
+  const plan = planOffload(nodes, destDir, existingNames);
   if (plan.length === 0) throw new AppError(400, 'NOTHING_TO_OFFLOAD', 'The selection contains no files');
   if (plan.length > MAX_FILES_PER_JOB) {
     throw new AppError(400, 'TOO_MANY_FILES', `That's ${plan.length.toLocaleString()} files — offload at most ${MAX_FILES_PER_JOB.toLocaleString()} at a time`);

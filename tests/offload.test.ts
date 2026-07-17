@@ -59,6 +59,24 @@ test('planOffload keeps two same-named selections apart at the destination', () 
   assert.equal(plan[1].dest, path.join('/d', 'data (offloaded 2).csv'));
 });
 
+test('planOffload renames around files that already exist at the destination', () => {
+  // A previous offload (or a restore that left its copy behind) already put
+  // report.pdf on the drive — the new copy must not collide with it.
+  const plan = planOffload([file('/src/report.pdf', 9)], '/d', ['report.pdf']);
+  assert.equal(plan[0].dest, path.join('/d', 'report (offloaded 2).pdf'));
+});
+
+test('planOffload renames a whole folder around an existing destination folder', () => {
+  const sel = [dir('/src/Projects', [file('/src/Projects/a.txt', 1)])];
+  const plan = planOffload(sel, '/d', ['Projects']);
+  assert.deepEqual(plan.map((p) => p.dest), [path.join('/d', 'Projects (offloaded 2)', 'a.txt')]);
+});
+
+test('planOffload treats existing destination names case-insensitively', () => {
+  const plan = planOffload([file('/src/Notes.TXT', 1)], '/d', ['notes.txt']);
+  assert.equal(plan[0].dest, path.join('/d', 'Notes (offloaded 2).TXT'));
+});
+
 test('trimManifest drops restored entries before active ones', () => {
   const entry = (id: string, offloadedAt: number, restoredAt?: number): OffloadEntry => ({
     id, name: id, originalPath: '/' + id, destPath: '/d/' + id, destRoot: '/d',

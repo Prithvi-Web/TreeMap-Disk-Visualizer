@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
-import { requireScan } from './scanRoutes';
+import { requireScan, clampInt } from './scanRoutes';
 import { getSettings, updateSettings, getIgnoreMatchers } from '../services/settings';
 import { collectCleanupSuggestions } from '../services/cleanupRules';
+import { collectCloudPlaceholders, matchCustomRules, CustomRules } from '../services/scanQueries';
 import { collectBrowserProfiles } from '../services/browserProfiles';
 import { listNotifications } from '../services/scheduler';
 import { sanitizePath } from '../utils/pathSanitizer';
@@ -77,6 +78,61 @@ settingsRouter.get('/cleanup/browser-profiles', (req: Request, res: Response) =>
   }
   if (!scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   res.json({ scanId: scan.scanId, profiles: collectBrowserProfiles(scan.root) });
+});
+
+/**
+ * GET /api/cleanup/cloud-safe?scanId=&perProvider=300
+ *
+ * Online-only files, grouped by provider. Counts and byte totals are exact for
+ * the whole scan while the per-provider file lists are capped, so the UI can
+ * state its headline numbers truthfully. The browser holds a pruned tree and
+ * can no longer work this out for itself.
+ */
+settingsRouter.get('/cleanup/cloud-safe', (req: Request, res: Response) => {
+  const scan = requireScan(req, req.query.scanId);
+  if (scan.status === 'running') {
+    res.status(202).json({ status: 'running' });
+    return;
+  }
+  if (!scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  const perProvider = clampInt(req.query.perProvider, 300, 1, 2000);
+  res.json({ scanId: scan.scanId, ...collectCloudPlaceholders(scan.root, perProvider) });
+});
+
+/**
+ * GET /api/cleanup/rules?scanId=&maxAgeMs=&minBytes=&exts=jpg,png&dup=1&limit=500
+ *
+ * Files matching the user's custom Clean Up rules. Enabled rules are ANDed;
+ * omitted ones don't filter. `dup` means "this name+size occurs more than once
+ * in the scan", which is why it has to run here — the pruned tree the browser
+ * holds would miss most of the duplicates.
+ */
+settingsRouter.get('/cleanup/rules', (req: Request, res: Response) => {
+  const scan = requireScan(req, req.query.scanId);
+  if (scan.status === 'running') {
+    res.status(202).json({ status: 'running' });
+    return;
+  }
+  if (!scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+
+  const rules: CustomRules = {};
+  if (req.query.maxAgeMs !== undefined) rules.maxAgeMs = Math.max(0, Number(req.query.maxAgeMs) || 0);
+  if (req.query.minBytes !== undefined) rules.minBytes = Math.max(0, Number(req.query.minBytes) || 0);
+  if (typeof req.query.exts === 'string' && req.query.exts.trim()) {
+    rules.exts = req.query.exts
+      .split(',')
+      .map((s) => s.trim().toLowerCase().replace(/^\./, ''))
+      .filter(Boolean);
+  }
+  if (req.query.dup === '1' || req.query.dup === 'true') rules.dup = true;
+
+  // No rules would match the entire disk — never what the user meant.
+  if (rules.maxAgeMs === undefined && rules.minBytes === undefined && !rules.exts?.length && !rules.dup) {
+    throw new AppError(400, 'NO_RULES', 'Enable at least one rule');
+  }
+
+  const limit = clampInt(req.query.limit, 500, 1, 2000);
+  res.json({ scanId: scan.scanId, ...matchCustomRules(scan.root, rules, limit, Date.now()) });
 });
 
 /** GET /api/notifications?since=<epoch ms> — scheduler growth alerts. */

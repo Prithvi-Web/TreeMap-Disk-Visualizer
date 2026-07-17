@@ -1780,6 +1780,9 @@ const state = {
   es: null,
   root: null,
   pathIndex: new Map(),
+  // Nodes resolved from the server for paths the pruned tree doesn't carry.
+  // A path that isn't in the scan is cached as null — a real answer, not a miss.
+  nodeCache: new Map(),
   lastScan: null,
   largest: [],
   types: [],
@@ -1799,8 +1802,15 @@ const state = {
   compare: { options: [], result: null },
 };
 
+/**
+ * Index whatever tree we hold. The server prunes it to a node budget, so this
+ * is a partial index of a big scan, not a complete one: a path missing from it
+ * means "not shipped", NOT "not on disk". Use nodeFor()/ensureNodes() rather
+ * than reading pathIndex directly when a miss would change what the user sees.
+ */
 function indexTree(root) {
   state.pathIndex.clear();
+  state.nodeCache.clear(); // resolved against the previous scan; nothing carries over
   const stack = [root];
   while (stack.length) {
     const n = stack.pop();
@@ -1808,6 +1818,99 @@ function indexTree(root) {
     if (n.children) for (const c of n.children) stack.push(c);
   }
   if (typeof renderCart === 'function') renderCart(); // refresh staged-item sizes against the new tree
+}
+
+/** The node for `path`, from the tree we hold or from what we've resolved. */
+function nodeFor(p) {
+  return state.pathIndex.get(p) || state.nodeCache.get(p) || null;
+}
+
+/**
+ * Splice a fetched subtree into the tree we hold and index it, so later lookups
+ * resolve from memory. The fetched copy wins over anything we'd resolved
+ * piecemeal: it's the same server tree, but with structure attached.
+ */
+function graftSubtree(sub) {
+  const existing = state.pathIndex.get(sub.path);
+  if (existing) {
+    existing.children = sub.children;
+    if (sub.pruned) existing.pruned = true; else delete existing.pruned;
+  }
+  const target = existing || sub;
+  const stack = [target];
+  while (stack.length) {
+    const n = stack.pop();
+    state.pathIndex.set(n.path, n);
+    state.nodeCache.delete(n.path); // the tree outranks a standalone resolved copy
+    if (n.children) for (const c of n.children) stack.push(c);
+  }
+  return target;
+}
+
+/**
+ * Make sure we hold the children of `path`, fetching them if the server pruned
+ * this branch. Views that lay out from the tree (grid, sunburst) must call this
+ * before deciding a folder is empty — "we weren't sent it" is not "it's empty".
+ *
+ * `pruned` means exactly "children withheld", so anything without that mark is
+ * already complete (invariant 1) or is a leaf, and needs no request.
+ */
+async function ensureSubtree(path) {
+  if (!path) return null;
+  const have = state.pathIndex.get(path);
+  if (have && !have.pruned) return have;
+  const scanId = state.scanId;
+  if (!scanId) return have || null;
+  try {
+    // Paced: quick navigation can outrun the server's 10/s allowance, and a
+    // 429 here would leave the folder looking empty rather than unloaded.
+    const data = await apiPaced(`/api/scan/${scanId}/subtree?path=${encodeURIComponent(path)}`);
+    // A rescan during the fetch replaces the whole tree; grafting this answer
+    // would splice nodes from the old scan into the new one.
+    if (scanId !== state.scanId) return state.pathIndex.get(path) || null;
+    return data.root ? graftSubtree(data.root) : (state.pathIndex.get(path) || null);
+  } catch {
+    return state.pathIndex.get(path) || null; // may still be `pruned` — callers must respect that
+  }
+}
+
+/**
+ * Remember nodes that arrived in a server list (largest files, duplicates,
+ * cloud-safe, rule matches). They already carry their real sizes, so seeding
+ * them here lets the synchronous size readers resolve without a round trip —
+ * which matters for the selection toolbars, since those run on every click.
+ */
+function seedNodes(files) {
+  for (const f of files || []) {
+    if (f && f.path && !state.pathIndex.has(f.path)) state.nodeCache.set(f.path, f);
+  }
+}
+
+/**
+ * Resolve any of `paths` we don't already hold, so a pruned-away node is never
+ * mistaken for a missing one. Sizes and cart membership depend on this: reading
+ * an absent node as zero bytes would quietly under-report what the user is
+ * about to delete.
+ */
+async function ensureNodes(paths) {
+  const scanId = state.scanId;
+  if (!scanId) return;
+  const missing = [...new Set(paths)].filter((p) => !state.pathIndex.has(p) && !state.nodeCache.has(p));
+  if (!missing.length) return;
+  for (let i = 0; i < missing.length; i += 500) { // the endpoint caps a batch at 500
+    const chunk = missing.slice(i, i + 500);
+    try {
+      const r = await apiPaced(`/api/scan/${scanId}/nodes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: chunk }),
+      });
+      // A rescan during the fetch means these answers describe a tree that no
+      // longer exists — caching them would report stale sizes as current.
+      if (scanId !== state.scanId) return;
+      if (r.nodes) for (const p of chunk) state.nodeCache.set(p, r.nodes[p] || null);
+    } catch { /* unresolved: callers fall back to what they already hold */ }
+  }
 }
 
 /* ───────────────────────────── View switching ───────────────────────────── */
@@ -2150,21 +2253,9 @@ async function finishScan(root, durationMs) {
   state.grid.selection.clear();
   updateSelectionBar();
 
-  let files = 0, dirs = 0, largest = null;
-  for (const n of state.pathIndex.values()) {
-    if (n.type === 'file') { files++; if (!largest || n.size > largest.size) largest = n; }
-    else dirs++;
-  }
-  $('scanStatus').classList.remove('error');
-  $('scanStatus').innerHTML = icon('checkCircle', 14) +
-    `<span class="num">Scanned <b>${formatCount(files)}</b> files in ${(durationMs / 1000).toFixed(1)}s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`;
-  countUp($('statFiles'), files);
-  countUp($('statDirs'), dirs);
-  $('statLargest').textContent = largest ? `${largest.name} · ${formatBytes(largest.size)}` : '–';
-  $('statLastScan').textContent = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
-
   state.dup = { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 };
   state.apps.loadedFor = null;
+  state.scanStats = null;
   try {
     const [lf, ft, lfo, stats] = await Promise.all([
       api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`),
@@ -2173,7 +2264,27 @@ async function finishScan(root, durationMs) {
       api(`/api/scan/${state.scanId}/stats`),
     ]);
     state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders; state.scanStats = stats;
+    seedNodes(lf.files); // right-click/cart on a big file must resolve even if pruned away
   } catch (e) { toast('Could not load stats: ' + e.message, 'error'); }
+
+  // `root` is pruned to a node budget, so counting the tree we just indexed
+  // would under-report any large scan. Every headline number comes from the
+  // server, which holds the whole thing. root.size is exact even when pruned.
+  // If the fetch failed we say nothing rather than state a pruned count as
+  // fact — a wrong number is worse than a missing one.
+  const files = state.scanStats ? state.scanStats.fileCount : null;
+  const dirs = state.scanStats ? state.scanStats.dirCount : null;
+  const largest = state.largest[0] || null;
+
+  $('scanStatus').classList.remove('error');
+  $('scanStatus').innerHTML = icon('checkCircle', 14) +
+    `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> files `}` +
+    `in ${(durationMs / 1000).toFixed(1)}s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`;
+  if (files !== null) countUp($('statFiles'), files);
+  if (dirs !== null) countUp($('statDirs'), dirs);
+  $('statLargest').textContent = largest ? `${largest.name} · ${formatBytes(largest.size)}` : '–';
+  $('statLastScan').textContent = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+
   renderBigFiles();
   renderBigFolders();
   state.donut.animated = false;
@@ -2181,7 +2292,7 @@ async function finishScan(root, durationMs) {
   if (state.view === 'treemap') loadTreemap(root.path);
   if (state.view === 'grid') renderGrid();
   switchView(state.view);
-  toast(`Scan complete — ${formatBytes(root.size)} across ${formatCount(files)} files`);
+  toast(`Scan complete — ${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} files`}`);
   renderGrowthProjection();
   renderDiskNotes();
   loadBudgets();
@@ -2235,34 +2346,38 @@ function renderDiskNotes() {
 }
 
 /* Feature 10 — "Cloud-safe deletes" list in the Clean Up modal. */
-function renderCloudSafe() {
+async function renderCloudSafe() {
   const host = $('cloudResults');
   const tab = $('cleanTabCloud');
   if (!host) return;
-  const items = [];
-  for (const n of state.pathIndex.values()) {
-    if (n.type === 'file' && n.cloudPlaceholder) items.push(n);
-  }
-  if (tab) tab.hidden = items.length === 0;
-  if (!items.length) { host.innerHTML = ''; return; }
-  items.sort((a, b) => b.size - a.size);
-  const groups = {};
-  for (const n of items) { const p = n.cloudProvider || 'cloud'; (groups[p] = groups[p] || []).push(n); }
+  const hide = () => { if (tab) tab.hidden = true; host.innerHTML = ''; };
+  if (!state.scanId) { hide(); return; }
+
+  // The client tree is pruned to a node budget, so counting placeholders here
+  // would only see the part that came through. The server walks the whole scan:
+  // its counts and byte totals are exact, only the file lists are capped.
+  let data;
+  try {
+    data = await api(`/api/cleanup/cloud-safe?scanId=${state.scanId}`);
+  } catch { hide(); return; }
+  if (!data.groups) { hide(); return; } // 202 while a scan is still running
+
+  if (tab) tab.hidden = data.totalCount === 0;
+  if (!data.totalCount) { host.innerHTML = ''; return; }
+  for (const g of data.groups) seedNodes(g.files); // these get staged into the cart from here
+
   const label = { icloud: 'iCloud Drive', onedrive: 'OneDrive', dropbox: 'Dropbox', cloud: 'Cloud' };
-  const total = items.reduce((s, n) => s + n.size, 0);
-  host.innerHTML = `<div class="muted" style="margin-bottom:10px;">${formatCount(items.length)} online-only file${items.length === 1 ? '' : 's'} (${formatBytes(total)} logical). The cloud keeps the original, so removing the local copy is safe.</div>` +
-    Object.keys(groups).map((prov) => {
-      const list = groups[prov];
-      const gt = list.reduce((s, n) => s + n.size, 0);
-      return `<div style="margin-bottom:14px;">
-        <div class="rule-row" style="padding:6px 0;"><b>${label[prov] || 'Cloud'}</b><span class="size-badge num" style="margin-left:auto;">${formatCount(list.length)} · ${formatBytes(gt)}</span></div>
-        <div class="clean-list">` + list.slice(0, 300).map((n) =>
+  host.innerHTML = `<div class="muted" style="margin-bottom:10px;">${formatCount(data.totalCount)} online-only file${data.totalCount === 1 ? '' : 's'} (${formatBytes(data.totalSize)} logical). The cloud keeps the original, so removing the local copy is safe.</div>` +
+    data.groups.map((g) =>
+      `<div style="margin-bottom:14px;">
+        <div class="rule-row" style="padding:6px 0;"><b>${label[g.provider] || 'Cloud'}</b><span class="size-badge num" style="margin-left:auto;">${formatCount(g.count)} · ${formatBytes(g.totalSize)}</span></div>
+        <div class="clean-list">` + g.files.map((n) =>
           `<div class="clean-item">${chipFor(n, 13)}<div class="meta"><div class="nm">${escapeHtml(n.name)}</div><div class="pth">${escapeHtml(n.path)}</div></div>` +
           `<span class="dt num">${formatDate(n.modifiedAt)}</span><span class="size-badge num">${formatBytes(n.size)}</span>` +
           `<button class="icon-btn" data-cart-add="${escapeHtml(n.path)}" aria-label="Add ${escapeHtml(n.name)} to cleanup cart">${icon('plus', 13)}</button></div>`
         ).join('') + `</div>
-      </div>`;
-    }).join('');
+      </div>`
+    ).join('');
   refreshCartButtons();
 }
 
@@ -2343,7 +2458,7 @@ function renderBigFiles() {
       e.preventDefault();
       const f = state.largest[i];
       if (!f) return;
-      showCtxMenu(e.clientX, e.clientY, state.pathIndex.get(f.path) || { ...f, type: 'file' });
+      showCtxMenu(e.clientX, e.clientY, nodeFor(f.path) || { ...f, type: 'file' });
     });
   });
   refreshCartButtons();
@@ -2500,8 +2615,11 @@ async function loadTreemap(rootPath, animate = false) {
   if (animate && !REDUCED) zoom.classList.add('zooming');
   try {
     if (state.treemap.mode === 'sunburst') {
-      // Sunburst lays out client-side from the in-memory tree — no fetch needed.
-      const node = state.pathIndex.get(rootPath) || state.root;
+      // Sunburst lays out client-side from the in-memory tree, so unlike the
+      // treemap it needs the real children — fetch them if this branch was
+      // pruned, otherwise it draws a hollow ring for a folder full of files.
+      const node = (await ensureSubtree(rootPath)) || state.root;
+      if (seq !== tmLoadSeq) return; // superseded while fetching
       if (!node) return;
       state.treemap.rootPath = node.path;
       state.treemap.rootName = node.name;
@@ -2549,7 +2667,7 @@ function renderCrumbs(host, path, onPick) {
     // Right-click a breadcrumb folder to set/edit its budget (Feature 15).
     b.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      const node = state.pathIndex.get(b.dataset.p);
+      const node = nodeFor(b.dataset.p);
       if (node && node.type === 'dir') openBudgetDialog(node);
     });
   });
@@ -3917,18 +4035,35 @@ function renderAllStorage() {
 /** Provider-trash for cloud scans (mirrors the local trash-only rule). */
 async function cloudTrashPaths(paths) {
   try {
-    const result = await api('/api/cloud/trash', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scanId: state.scanId, paths }),
-    });
+    // Chunked for the same reason as trashPaths: the API bounds a request at
+    // 500 paths, but the user's selection is unbounded.
+    const result = { deleted: [], failed: [] };
+    for (let i = 0; i < paths.length; i += TRASH_CHUNK) {
+      const chunk = paths.slice(i, i + TRASH_CHUNK);
+      try {
+        const r = await apiPaced('/api/cloud/trash', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scanId: state.scanId, paths: chunk }),
+        });
+        result.deleted.push(...r.deleted);
+        result.failed.push(...r.failed);
+      } catch (e) {
+        for (const p of chunk) result.failed.push({ path: p, reason: e.message });
+      }
+    }
+    // The server already removed these from its own tree and shrank every
+    // ancestor (pruneNode in cloudScan.ts). This mirrors that into the tree we
+    // hold so sizes stay right until the next fetch. nodeFor, not pathIndex:
+    // a file trashed from a server-sourced list may have been pruned away, and
+    // skipping it would leave every ancestor reading too big.
     for (const p of result.deleted) {
-      const node = state.pathIndex.get(p);
-      if (!node) continue;
-      applyLiveDelta({ path: p, kind: 'deleted', size: 0, delta: -node.size });
+      const node = nodeFor(p);
+      if (node) applyLiveDelta({ path: p, kind: 'deleted', size: 0, delta: -node.size });
       const parent = state.pathIndex.get(p.slice(0, p.lastIndexOf('/')));
       if (parent && parent.children) parent.children = parent.children.filter(c => c.path !== p);
       state.pathIndex.delete(p);
+      state.nodeCache.delete(p);
     }
     const provider = cloudProviderOfScan();
     if (result.deleted.length) toast(`Moved ${result.deleted.length} item${result.deleted.length === 1 ? '' : 's'} to ${provider.name}'s trash`);
@@ -4115,12 +4250,15 @@ $('offloadSearch').addEventListener('input', () => {
 /* ───────────────────────────── Trash (confirm + execute) ───────────────────────────── */
 let confirmPaths = [];
 let onConfirmTrash = null; // optional callback override for the shared confirm modal (used by the cart)
-function confirmTrash(paths) {
+async function confirmTrash(paths) {
   if (!paths.length) return;
   onConfirmTrash = null;
   confirmPaths = paths;
-  const total = paths.reduce((s, p) => s + (state.pathIndex.get(p)?.size ?? 0), 0);
-  const first = state.pathIndex.get(paths[0]);
+  // These sizes are what the user is told they're freeing, so they must be
+  // real: a pruned-away node read as 0 would understate the total.
+  await ensureNodes(paths);
+  const total = paths.reduce((s, p) => s + (nodeFor(p)?.size ?? 0), 0);
+  const first = nodeFor(paths[0]);
   // Cloud scans: deletes go to the provider's own trash, never the local one.
   if (paths[0].startsWith('cloud://')) {
     const provider = cloudProviderOfScan();
@@ -4147,28 +4285,62 @@ $('confirmOk').addEventListener('click', async () => {
   confirmPaths = [];
 });
 
+/**
+ * The API sanitizes and bounds each request at 500 paths, so any selection is
+ * sent in chunks. There is no limit on how many items one action can trash —
+ * selecting 5,000 near-duplicates and hitting Trash works.
+ */
+const TRASH_CHUNK = 400;
+
+/**
+ * A request that rides out rate limiting. Bulk actions fire many chunks back to
+ * back, and the server allows a 20-request burst then 10/s. Chunks that return
+ * quickly (e.g. paths already gone) can outrun that — pacing is the client's
+ * job, and a 429 must never surface as "your delete failed".
+ */
+async function apiPaced(url, options, tries = 8) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await api(url, options);
+    } catch (e) {
+      if (e.status !== 429 || attempt >= tries) throw e;
+      await new Promise((r) => setTimeout(r, 250 * (attempt + 1))); // refill is 10/s
+    }
+  }
+}
+
 async function trashPaths(paths, { silent = false } = {}) {
   if (!paths.length) return { deleted: [], failed: [] };
-  const recovered = paths.reduce((s, p) => s + (state.pathIndex.get(p)?.size ?? 0), 0);
-  try {
-    const result = await api('/api/files', {
-      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths }),
-    });
-    if (!silent) {
-      if (result.deleted.length) {
-        toast(`Moved ${result.deleted.length} ${result.deleted.length === 1 ? 'item' : 'items'} to Trash — ${formatBytes(recovered)} recovered`);
-      }
-      if (result.failed.length) {
-        toast(`${result.failed.length} failed: ${result.failed[0].reason}`, 'error');
-      }
-      if (result.deleted.length) rescan();
+  await ensureNodes(paths); // real sizes for the "recovered" figure
+  const recovered = paths.reduce((s, p) => s + (nodeFor(p)?.size ?? 0), 0);
+
+  const deleted = [], failed = [];
+  // Per-chunk error handling: a later chunk failing must not discard the fact
+  // that earlier ones really were trashed.
+  for (let i = 0; i < paths.length; i += TRASH_CHUNK) {
+    const chunk = paths.slice(i, i + TRASH_CHUNK);
+    try {
+      const result = await apiPaced('/api/files', {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: chunk }),
+      });
+      deleted.push(...result.deleted);
+      failed.push(...result.failed);
+    } catch (e) {
+      for (const p of chunk) failed.push({ path: p, reason: e.message });
     }
-    return result;
-  } catch (e) {
-    if (!silent) toast('Trash failed: ' + e.message, 'error');
-    return { deleted: [], failed: paths.map(p => ({ path: p, reason: e.message })) };
   }
+
+  if (!silent) {
+    if (deleted.length) {
+      toast(`Moved ${deleted.length} ${deleted.length === 1 ? 'item' : 'items'} to Trash — ${formatBytes(recovered)} recovered`);
+    }
+    if (failed.length) {
+      toast(`${failed.length} failed: ${failed[0].reason}`, 'error');
+    }
+    if (deleted.length) rescan();
+  }
+  return { deleted, failed };
 }
 function rescan() {
   if (state.root && !state.scanning) startScan(state.root.path);
@@ -4183,6 +4355,9 @@ async function loadBudgets() {
   try {
     const data = await api(`/api/scan/${state.scanId}/budgets`);
     state.budgets.list = data.budgets || [];
+    // The server measured these folders exactly; seed them so the edit dialog
+    // can state a real size even when the folder itself was pruned away.
+    seedNodes(state.budgets.list.map((b) => ({ path: b.path, name: b.name, size: b.actualBytes, type: 'dir' })));
   } catch { state.budgets.list = []; }
   state.budgets.overPaths = new Set(state.budgets.list.filter(b => b.overBy > 0).map(b => b.path));
   renderBudgetWidget();
@@ -4216,7 +4391,7 @@ function renderBudgetWidget() {
     </div>`;
   }).join('');
   list.querySelectorAll('[data-budget-edit]').forEach(btn => btn.addEventListener('click', () => {
-    const node = state.pathIndex.get(btn.dataset.budgetEdit);
+    const node = nodeFor(btn.dataset.budgetEdit);
     openBudgetDialog(node || { path: btn.dataset.budgetEdit, name: btn.dataset.budgetEdit.split('/').pop() || btn.dataset.budgetEdit, type: 'dir', size: null });
   }));
 }
@@ -4228,7 +4403,7 @@ function openBudgetDialog(node) {
   const existing = budgetFor(node.path);
   $('budgetFolderName').textContent = node.name || node.path;
   $('budgetFolderPath').textContent = node.path;
-  const size = (typeof node.size === 'number') ? node.size : (state.pathIndex.get(node.path)?.size ?? null);
+  const size = (typeof node.size === 'number') ? node.size : (nodeFor(node.path)?.size ?? null);
   $('budgetCurrent').innerHTML = size != null
     ? `Current size: <b>${formatBytes(size)}</b>`
     : 'Current size unknown until the next scan.';
@@ -4305,8 +4480,10 @@ try { JSON.parse(localStorage.getItem('tm-cart') || '[]').forEach((p) => state.c
 
 function saveCart() { localStorage.setItem('tm-cart', JSON.stringify([...state.cart])); }
 function cartHas(p) { return state.cart.has(p); }
-function cartNode(p) { return state.pathIndex.get(p) || null; }
-function cartKnownPaths() { return [...state.cart].filter((p) => state.pathIndex.has(p)); }
+function cartNode(p) { return nodeFor(p); }
+// "Known" means the scan really contains it — not merely that the pruned tree
+// we were handed happened to include it. renderCart resolves these first.
+function cartKnownPaths() { return [...state.cart].filter((p) => nodeFor(p)); }
 function cartTotalBytes() { return [...state.cart].reduce((s, p) => s + (cartNode(p)?.size ?? 0), 0); }
 function cartToggle(p) {
   if (!p) return;
@@ -4325,8 +4502,12 @@ function refreshCartButtons() {
   });
 }
 
-function renderCart() {
+async function renderCart() {
   const dock = $('cartDock'); if (!dock) return;
+  // The cart persists across sessions and its items may sit in a part of the
+  // tree that was pruned away. Resolve them before reading any size, or a real
+  // staged file reads as "not in scan" and drops out of the delete.
+  await ensureNodes([...state.cart]);
   const n = state.cart.size;
   dock.classList.toggle('show', n > 0);
   if (n === 0) dock.classList.remove('open');
@@ -4352,7 +4533,11 @@ function renderCart() {
   }).join('');
 }
 
-function cartTrashAll() {
+async function cartTrashAll() {
+  // Resolve first. "Not in the current scan" must mean the scan really lacks
+  // it — not that we haven't asked yet. A rescan clears nodeCache, and
+  // renderCart's re-resolve is async, so this can be reached unresolved.
+  await ensureNodes([...state.cart]);
   const known = cartKnownPaths();
   const missing = state.cart.size - known.length;
   if (!known.length) {
@@ -4369,6 +4554,7 @@ function cartTrashAll() {
   $('confirmModal').classList.add('open');
 }
 async function cartExecuteTrash() {
+  await ensureNodes([...state.cart]); // same reason as cartTrashAll
   const paths = cartKnownPaths();
   const result = await trashPaths(paths, { silent: true });
   // pathIndex is still the pre-rescan tree here, so sizes are valid.
@@ -4534,7 +4720,21 @@ function layoutGrid(items) {
   state.grid.totalH = layout.length ? y + rowH + GAP : 0;
 }
 
-function renderGrid() {
+let gridSeq = 0;
+async function renderGrid() {
+  // This folder's children may have been pruned out of the tree we were sent.
+  // Fetch them before rendering, or an untouched folder reads as empty.
+  const seq = ++gridSeq;
+  await ensureSubtree(state.grid.path);
+  if (seq !== gridSeq) return; // a newer navigation superseded this one
+
+  // After ensureSubtree, either we hold this folder's children or we don't.
+  // Still `pruned`, or absent from the tree entirely, both mean the fetch never
+  // landed — and calling that "empty" is a lie about the user's disk. Guarded
+  // on scanId/path so the pre-scan state still shows the normal empty view.
+  const gridNode = state.pathIndex.get(state.grid.path);
+  const unloaded = !!state.scanId && !!state.grid.path && (!gridNode || !!gridNode.pruned);
+
   const items = gridItems();
   layoutGrid(items);
   gridInner.style.height = state.grid.totalH + 'px';
@@ -4549,8 +4749,10 @@ function renderGrid() {
     const q = state.grid.query.trim();
     const div = document.createElement('div');
     div.className = 'grid-empty';
-    div.innerHTML = icon(q ? 'search' : 'folder', 30) +
-      `<span>${q ? `No files match “${escapeHtml(q)}”` : 'This folder is empty'}</span>`;
+    div.innerHTML = unloaded && !q
+      ? icon('alert', 30) + '<span>Couldn’t load this folder — check your connection and try again</span>'
+      : icon(q ? 'search' : 'folder', 30) +
+        `<span>${q ? `No files match “${escapeHtml(q)}”` : 'This folder is empty'}</span>`;
     gridScroll.appendChild(div);
   }
 }
@@ -4654,7 +4856,7 @@ function updateSelectionBar() {
   const bar = $('selectionBar');
   if (!sel.size) { bar.classList.remove('visible'); return; }
   let total = 0;
-  for (const p of sel) total += state.pathIndex.get(p)?.size ?? 0;
+  for (const p of sel) total += nodeFor(p)?.size ?? 0;
   $('selInfo').innerHTML = `<b>${sel.size}</b> item${sel.size > 1 ? 's' : ''} selected — ${formatBytes(total)}`;
   $('selOffloadBtn').hidden = isCloudScan(); // offload is a local-disk concept
   bar.classList.add('visible');
@@ -4798,6 +5000,10 @@ async function loadDuplicates(force = false) {
       state.dup.groups = data.groups;
       state.dup.groupCount = data.groupCount;
       state.dup.totalReclaimable = data.totalReclaimable;
+      // A group's files carry no size of their own — every copy is g.size by
+      // definition. Seed them so selection totals are right even for copies the
+      // pruned tree left out.
+      for (const g of data.groups) seedNodes(g.files.map((f) => ({ ...f, size: g.size, type: 'file' })));
       renderDuplicates();
     } catch (e) {
       state.dup.status = 'error';
@@ -4870,7 +5076,7 @@ function renderDuplicates() {
 function updateDupToolbar() {
   const n = state.dup.selection.size;
   let total = 0;
-  for (const p of state.dup.selection) total += state.pathIndex.get(p)?.size ?? 0;
+  for (const p of state.dup.selection) total += nodeFor(p)?.size ?? 0;
   $('dupTrashBtn').disabled = !n;
   $('dupTrashBtn').innerHTML = icon('trash', 14) + (n ? `Move ${n} to Trash (${formatBytes(total)})` : 'Move to Trash');
   $('dupOffloadBtn').disabled = !n;
@@ -4944,6 +5150,7 @@ async function loadNearDupes(force = false) {
       state.near.available = data.available;
       state.near.reason = data.reason;
       state.near.clusters = data.clusters;
+      for (const c of data.clusters) seedNodes(c.files); // NearDupeFile carries its own size
       state.near.clusterCount = data.clusterCount;
       state.near.totalReclaimable = data.totalReclaimable;
       state.near.truncated = data.truncated;
@@ -5044,7 +5251,7 @@ function renderNearDupes() {
 function updateNdToolbar() {
   const count = state.near.selection.size;
   let total = 0;
-  for (const p of state.near.selection) total += state.pathIndex.get(p)?.size ?? 0;
+  for (const p of state.near.selection) total += nodeFor(p)?.size ?? 0;
   $('ndTrashBtn').disabled = !count;
   $('ndTrashBtn').innerHTML = icon('trash', 14) + (count ? `Move ${count} to Trash (${formatBytes(total)})` : 'Move to Trash');
 }
@@ -5643,35 +5850,40 @@ async function loadSmartSuggestions() {
   }
 }
 
-$('cleanFindBtn').addEventListener('click', () => {
+$('cleanFindBtn').addEventListener('click', async () => {
   const ageOn = $('ruleAgeOn').checked, sizeOn = $('ruleSizeOn').checked;
   const extOn = $('ruleExtOn').checked, dupOn = $('ruleDupOn').checked;
   const maxAgeMs = Number($('ruleAgeDays').value || 0) * 86400_000;
   const minBytes = Number($('ruleSizeMb').value || 0) * 1048576;
-  const exts = new Set($('ruleExts').value.split(',').map(s => s.trim().toLowerCase().replace(/^\./, '')).filter(Boolean));
+  const exts = $('ruleExts').value.split(',').map(s => s.trim().toLowerCase().replace(/^\./, '')).filter(Boolean);
   if (!ageOn && !sizeOn && !extOn && !dupOn) { toast('Enable at least one rule', 'error'); return; }
+  if (extOn && !exts.length && !ageOn && !sizeOn && !dupOn) { toast('Add at least one extension', 'error'); return; }
+  if (!state.scanId) { toast('Run a scan first', 'error'); return; }
 
-  const now = Date.now();
-  const files = [];
-  for (const n of state.pathIndex.values()) if (n.type === 'file') files.push(n);
+  // Matched server-side: the client tree is pruned, and the duplicate rule in
+  // particular asks whether a name+size repeats across the WHOLE scan — a
+  // question the part of the tree we hold cannot answer.
+  const q = new URLSearchParams({ scanId: state.scanId, limit: '500' });
+  if (ageOn) q.set('maxAgeMs', String(maxAgeMs));
+  if (sizeOn) q.set('minBytes', String(minBytes));
+  if (extOn && exts.length) q.set('exts', exts.join(','));
+  if (dupOn) q.set('dup', '1');
 
-  let dupKeys = null;
-  if (dupOn) {
-    const counts = new Map();
-    for (const f of files) {
-      const k = f.name + ' ' + f.size;
-      counts.set(k, (counts.get(k) || 0) + 1);
-    }
-    dupKeys = new Set([...counts.entries()].filter(([, c]) => c > 1).map(([k]) => k));
+  const findBtn = $('cleanFindBtn');
+  const findLabel = findBtn.innerHTML;
+  findBtn.disabled = true;
+  let data;
+  try {
+    data = await api('/api/cleanup/rules?' + q.toString());
+  } catch (e) {
+    toast(e.message, 'error');
+    return;
+  } finally {
+    findBtn.disabled = false;
+    findBtn.innerHTML = findLabel;
   }
-
-  cleanMatches = files.filter(f => {
-    if (ageOn && now - f.modifiedAt < maxAgeMs) return false;
-    if (sizeOn && f.size < minBytes) return false;
-    if (extOn && exts.size && !exts.has(f.extension || '')) return false;
-    if (dupOn && !dupKeys.has(f.name + ' ' + f.size)) return false;
-    return true;
-  }).sort((a, b) => b.size - a.size).slice(0, 500);
+  cleanMatches = data.files;
+  seedNodes(cleanMatches); // staged from here, so their sizes must resolve later
 
   const host = $('cleanResults');
   if (!cleanMatches.length) {
@@ -5682,7 +5894,7 @@ $('cleanFindBtn').addEventListener('click', () => {
   }
   host.innerHTML = `
     <div class="rule-row" style="margin-top:6px;">
-      <input type="checkbox" id="cleanAll" checked> <label for="cleanAll" class="muted">Select all (${cleanMatches.length}${cleanMatches.length === 500 ? ', largest shown' : ''})</label>
+      <input type="checkbox" id="cleanAll" checked> <label for="cleanAll" class="muted">Select all (${cleanMatches.length}${data.truncated ? ` of ${formatCount(data.matched)}, largest shown` : ''})</label>
     </div>
     <div class="clean-list">` +
     cleanMatches.map((f, i) => `

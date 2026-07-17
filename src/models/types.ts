@@ -12,6 +12,13 @@ export interface FileNode {
   type: 'file' | 'dir';
   /** Present only for directories. */
   children?: FileNode[];
+  /**
+   * Set by pruneTree: this directory has children in the real scan, but they
+   * were withheld to keep the payload bounded. `size` stays exact. Fetch
+   * GET /api/scan/:scanId/subtree?path=… to drill in.
+   * Invariant: a node never has both `children` and `pruned`.
+   */
+  pruned?: boolean;
   /** Lower-cased extension without the dot, e.g. "png". Files only. */
   extension?: string;
   /** Unix epoch milliseconds of last modification. */

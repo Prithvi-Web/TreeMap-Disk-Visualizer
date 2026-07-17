@@ -28,8 +28,6 @@ const IMAGE_EXT = new Set([
 const MIN_IMAGE_BYTES = 4 * 1024;
 /** Bound the O(n²) clustering; largest images are kept when over the cap. */
 const MAX_IMAGES = 8000;
-/** Response-size guard, mirroring the exact-duplicate finder. */
-const MAX_CLUSTERS = 500;
 
 /** dHash stored as two 32-bit halves so Hamming distance avoids slow BigInt. */
 type DHash = [hi: number, lo: number];
@@ -188,8 +186,12 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
 
   job.clusterCount = clusters.length;
   job.totalReclaimable = clusters.reduce((s, c) => s + c.reclaimableBytes, 0);
-  job.clusters = clusters.slice(0, MAX_CLUSTERS);
-  job.truncated = truncated;
+  // Every cluster is returned. MAX_IMAGES already bounds the input, so at most
+  // MAX_IMAGES/2 clusters can exist and the response is inherently capped —
+  // while slicing here dropped groups the user could act on WITHOUT setting
+  // `truncated`, so they simply vanished with nothing to indicate it.
+  job.clusters = clusters;
+  job.truncated = truncated; // reflects the MAX_IMAGES cap only
   job.status = 'complete';
   job.finishedAt = Date.now();
 }

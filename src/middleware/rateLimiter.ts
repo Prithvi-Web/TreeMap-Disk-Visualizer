@@ -31,6 +31,14 @@ const sweeper = setInterval(() => {
 }, SWEEP_INTERVAL_MS);
 sweeper.unref();
 
+/**
+ * Drop every bucket. Test-only: suites share one process, so without this an
+ * earlier suite's requests starve a later one into 429s that look like bugs.
+ */
+export function resetRateLimiter(): void {
+  buckets.clear();
+}
+
 export function rateLimiter(req: Request, res: Response, next: NextFunction): void {
   const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
   const now = Date.now();
