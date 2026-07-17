@@ -1,0 +1,13 @@
+[1,2,{"progname":"gdu","progver":"v5.36.1","timestamp":1784255815},
+[{"name":"/fx","mtime":1784255815},
+{"name":".hidden","asize":2,"dsize":4096,"mtime":1784255815},
+{"name":"a.txt","asize":5,"dsize":4096,"mtime":1784255815,"ino":58240928,"hlnkc":true},
+{"name":"hardlink.txt","asize":5,"dsize":4096,"mtime":1784255815,"ino":58240928,"hlnkc":true},
+{"name":"link.txt","asize":5,"mtime":1784255815,"notreg":true},
+{"name":"zero.bin","mtime":1784255815},
+[{"name":"sub","mtime":1784255815},
+{"name":"b.log","asize":3,"dsize":4096,"mtime":1784255815},
+[{"name":"deep","mtime":1784255815},
+{"name":"c.dat","asize":1,"dsize":4096,"mtime":1784255815}]],
+[{"name":"empty","mtime":1784255815}
+]]]
