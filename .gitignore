@@ -6,3 +6,6 @@ release/
 
 # Bundled gdu binary — fetched at build time by scripts/fetchGdu.js, never committed
 /gdu/
+
+# gdu binaries staged for bundling — fetched by scripts/fetchGdu.js, never committed
+/build/gdu/
