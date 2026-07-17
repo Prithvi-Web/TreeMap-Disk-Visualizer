@@ -1,7 +1,7 @@
 {
   "name": "treemap",
   "version": "2.1.0",
-  "description": "TreeMap — a GrandPerspective-style disk space visualizer for macOS, Linux and Windows",
+  "description": "TreeMap \u2014 a GrandPerspective-style disk space visualizer for macOS, Linux and Windows",
   "author": "Prithvi-Web",
   "main": "electron/main.js",
   "scripts": {
@@ -11,10 +11,12 @@
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "app": "npm run build && electron .",
-    "dist": "npm run build && electron-builder",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "npm run build && electron-builder --win",
-    "dist:linux": "npm run build && electron-builder --linux"
+    "dist": "npm run build && npm run fetch:gdu && electron-builder",
+    "dist:mac": "npm run build && npm run fetch:gdu && electron-builder --mac",
+    "dist:win": "npm run build && npm run fetch:gdu && electron-builder --win",
+    "dist:linux": "npm run build && npm run fetch:gdu && electron-builder --linux",
+    "fetch:gdu": "node scripts/fetchGdu.js",
+    "fetch:gdu:dev": "node scripts/fetchGdu.js --dev"
   },
   "engines": {
     "node": ">=20"
@@ -96,6 +98,19 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "extraResources": [
+      {
+        "from": "build/gdu/${os}-${arch}",
+        "to": "gdu",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "build/gdu/LICENSE.md",
+        "to": "gdu/LICENSE.md"
+      }
+    ]
   }
 }
