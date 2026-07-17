@@ -89,9 +89,17 @@ async function fetchTarget(target, sums, destDir) {
     fs.writeFileSync(archive, buf);
     fs.mkdirSync(destDir, { recursive: true });
 
-    if (asset.endsWith('.tgz')) {
-      execFileSync('tar', ['xzf', archive, '-C', tmp], { stdio: 'inherit' });
-    } else {
+    // bsdtar ships with macOS and Windows 10+ and extracts BOTH .tgz and .zip,
+    // so it is the one tool available on every runner this builds on. `unzip`
+    // is not reliably on PATH under windows-latest — and because a fetch
+    // failure is deliberately non-fatal, relying on it meant the Windows build
+    // would silently ship with no gdu and quietly fall back to the walker.
+    // GNU tar (Linux) cannot read zips, but the only zip asset is the Windows
+    // one, which is only ever fetched on Windows.
+    try {
+      execFileSync('tar', ['xf', archive, '-C', tmp], { stdio: 'inherit' });
+    } catch (err) {
+      if (!asset.endsWith('.zip')) throw err;
       execFileSync('unzip', ['-o', '-q', archive, '-d', tmp], { stdio: 'inherit' });
     }
 
