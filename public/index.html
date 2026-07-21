@@ -892,6 +892,16 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 :root[data-theme="light"] .delta-badge.up { color: #d63a30; }
 :root[data-theme="light"] .delta-badge.down { color: #1f9d45; }
 
+/* "What's new since last scan" banner (Dashboard) */
+.whatsnew { display: flex; align-items: center; gap: 10px; padding: 13px 18px; margin-bottom: 18px; }
+.whatsnew .wn-body { display: flex; align-items: center; gap: 12px 14px; flex-wrap: wrap; flex: 1; min-width: 0; cursor: pointer; border-radius: var(--r-sm); }
+.whatsnew .wn-body:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.whatsnew .wn-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; }
+.whatsnew .wn-title .ic { color: var(--accent); }
+.whatsnew .wn-ago { color: var(--text-3); font-weight: 400; }
+.whatsnew .wn-mover { color: var(--text-2); font-size: 12.5px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.whatsnew .delta-badge { background: var(--surface-1); }
+
 /* ── Settings modal ── */
 .set-h { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
   text-transform: uppercase; letter-spacing: 1px; color: var(--text-2); margin-bottom: 8px; }
@@ -989,6 +999,11 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 
   <!-- ═══════════ Dashboard ═══════════ -->
   <section class="view" id="view-dashboard" role="tabpanel" aria-label="Dashboard" hidden>
+    <!-- "What's new since last scan" — rendered only when this root has a prior snapshot -->
+    <div class="card glass whatsnew" id="whatsNewCard" hidden>
+      <div class="wn-body" id="whatsNewBody" role="button" tabindex="0" title="Open Trends for the full history"></div>
+      <button class="close-x" id="whatsNewClose" aria-label="Dismiss until the next scan"><span data-icon="x" data-size="14"></span></button>
+    </div>
     <div class="dash-grid">
       <div class="dash-col">
         <div class="card glass">
@@ -1157,6 +1172,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <option value="size">Size</option>
         <option value="name">Name</option>
         <option value="date">Date modified</option>
+        <option value="accessed">Last accessed</option>
         <option value="type">Type</option>
       </select>
     </div>
@@ -1479,7 +1495,10 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       <button class="close-x" data-close="trashModal" aria-label="Close"><span data-icon="x" data-size="14"></span></button>
     </div>
     <div class="modal-body" id="trashModalBody"></div>
-    <div class="modal-foot"><span class="muted" style="flex:1;">Read-only view · empty the Trash from your file manager.</span></div>
+    <div class="modal-foot">
+      <span class="muted" style="flex:1;">Items restore from here until the Trash is emptied.</span>
+      <button class="btn btn-danger" id="emptyTrashBtn"><span data-icon="trash" data-size="14"></span>Empty Trash…</button>
+    </div>
   </div>
 </div>
 
@@ -1493,18 +1512,27 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     <div class="modal-body">
       <div class="kbd-sec">Treemap &amp; Sunburst</div>
       <div class="kbd-grid">
-        <div><kbd>h</kbd><kbd>←</kbd></div><div>Zoom out one level</div>
+        <div><kbd>h</kbd><kbd>←</kbd><kbd>⌫</kbd></div><div>Zoom out one level</div>
         <div><kbd>j</kbd><kbd>↓</kbd></div><div>Select next cell</div>
         <div><kbd>k</kbd><kbd>↑</kbd></div><div>Select previous cell</div>
         <div><kbd>l</kbd><kbd>→</kbd><kbd>↵</kbd></div><div>Drill into folder / preview file</div>
         <div><kbd>c</kbd></div><div>Add selected to the cleanup cart</div>
         <div><kbd>p</kbd></div><div>Quick-look the selected file</div>
+        <div><kbd>Del</kbd></div><div>Move the selected cell to Trash</div>
         <div><kbd>/</kbd></div><div>Focus the search box</div>
         <div><kbd>Esc</kbd></div><div>Clear selection · close panel · zoom out</div>
+      </div>
+      <div class="kbd-sec">Grid</div>
+      <div class="kbd-grid">
+        <div><kbd>⌫</kbd></div><div>Up one folder</div>
+        <div><kbd>Del</kbd></div><div>Move the selection to Trash</div>
+        <div><kbd>/</kbd></div><div>Focus the filter box</div>
+        <div><kbd>Esc</kbd></div><div>Clear selection · up one folder</div>
       </div>
       <div class="kbd-sec">Anywhere</div>
       <div class="kbd-grid">
         <div><kbd>⌘</kbd><kbd>R</kbd></div><div>Rescan the current folder</div>
+        <div><kbd>⌘</kbd><kbd>⌫</kbd></div><div>Move the selection to Trash</div>
         <div><kbd>?</kbd></div><div>Show this help</div>
       </div>
     </div>
@@ -1655,6 +1683,7 @@ const PATHS = {
   ban: '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
   cart: '<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.5 2.5h2l2.6 12.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6l1.6-7.4H5.1"/>',
   keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M10 14h4"/>',
+  terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
   cloud: '<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>',
   gitBranch: '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
 };
@@ -1800,6 +1829,7 @@ const state = {
   budgets: { list: [], overPaths: new Set() },
   trends: { roots: [], path: null, snapshots: [], points: [], hover: -1 },
   compare: { options: [], result: null },
+  whatsNew: { seq: 0, dismissed: false },
 };
 
 /**
@@ -2004,10 +2034,39 @@ function openTrashModal() {
       `<span class="sz num">${formatBytes(it.size)}</span></div>`
     ).join('') + '</div>';
   }
+  $('emptyTrashBtn').disabled = !(t && t.itemCount > 0);
   $('trashModal').classList.add('open');
 }
 $('trashFact').addEventListener('click', openTrashModal);
 $('trashFact').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTrashModal(); } });
+
+/* Empty Trash — irreversible, so it goes through the standard confirm modal. */
+$('emptyTrashBtn').addEventListener('click', () => {
+  const t = state.trash;
+  if (!t || !t.itemCount) return;
+  closeModal('trashModal');
+  $('confirmTitle').innerHTML = icon('trash', 18) + 'Empty the Trash?';
+  $('confirmText').innerHTML =
+    `Permanently delete <b>${formatCount(t.itemCount)} item${t.itemCount === 1 ? '' : 's'}</b> (${formatBytes(t.totalBytes)})?` +
+    `<br><span style="color:var(--text-3)">This empties the system Trash and cannot be undone.</span>`;
+  onConfirmTrash = emptyTrashAction;
+  $('confirmModal').classList.add('open');
+});
+async function emptyTrashAction() {
+  toast('Emptying Trash…');
+  try {
+    const r = await api('/api/trash/empty', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }),
+    });
+    if (r.emptied) {
+      toast(r.freedBytes > 0 ? `Trash emptied — ${formatBytes(r.freedBytes)} freed` : 'Trash emptied');
+    } else {
+      const why = r.failed && r.failed.length ? r.failed[0].reason : 'some items could not be removed';
+      toast(`Emptied ${formatBytes(r.freedBytes)}, but ${why}`, 'error');
+    }
+  } catch (e) { toast('Could not empty the Trash: ' + e.message, 'error'); }
+  loadTrash(); // refresh the dashboard fact (and hide it once the Trash is empty)
+}
 
 /* Feature 9 — OS snapshot accounting. */
 async function loadSnapshots() {
@@ -2062,6 +2121,91 @@ function maybeInjectTrash() {
   });
 }
 
+/* ─────────────── "What's new since last scan" (Dashboard banner) ─────────────── */
+function timeAgo(ms) {
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 45) return 'moments ago';
+  const m = Math.round(s / 60);
+  if (m < 60) return m === 1 ? 'a minute ago' : `${m} minutes ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return h === 1 ? 'an hour ago' : `${h} hours ago`;
+  const d = Math.round(h / 24);
+  if (d < 7) return d === 1 ? 'yesterday' : `${d} days ago`;
+  const w = Math.round(d / 7);
+  if (w < 5) return w === 1 ? 'a week ago' : `${w} weeks ago`;
+  const mo = Math.round(d / 30);
+  if (mo < 12) return mo === 1 ? 'a month ago' : `${mo} months ago`;
+  const y = Math.round(d / 365);
+  return y === 1 ? 'a year ago' : `${y} years ago`;
+}
+
+/**
+ * After a completed scan, compare the two most recent snapshots of this root
+ * and summarize what changed. The scan's own snapshot is written async just
+ * after completion, so poll briefly until it lands — diffing a stale pair
+ * would report the previous scan's changes as this one's. First-ever scan of
+ * a folder (fewer than two snapshots) renders nothing at all.
+ */
+async function loadWhatsNew() {
+  const seq = ++state.whatsNew.seq;
+  state.whatsNew.dismissed = false;
+  $('whatsNewCard').hidden = true;
+  if (!state.root) return;
+  const rootPath = state.root.path;
+  const finishedBy = state.lastScan ? state.lastScan.when : Date.now();
+  try {
+    let snaps = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { snapshots } = await api('/api/snapshots?path=' + encodeURIComponent(rootPath));
+      if (seq !== state.whatsNew.seq) return; // a newer scan superseded this one
+      if (snapshots.length && snapshots[snapshots.length - 1].takenAt >= finishedBy - 5000) {
+        snaps = snapshots;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 700));
+    }
+    if (!snaps || snaps.length < 2) return;
+    const prev = snaps[snaps.length - 2], curr = snaps[snaps.length - 1];
+    const diff = await api(`/api/snapshots/compare?a=${encodeURIComponent(prev.id)}&b=${encodeURIComponent(curr.id)}`);
+    if (seq !== state.whatsNew.seq || state.whatsNew.dismissed) return;
+    renderWhatsNew(prev, curr, diff);
+  } catch { /* history is best-effort — no banner beats a wrong one */ }
+}
+
+function renderWhatsNew(prev, curr, diff) {
+  const bytes = diff.totalDelta;
+  const files = curr.fileCount - prev.fileCount;
+  // diff entries arrive sorted by |delta|, so the first grower is the biggest.
+  const mover = (diff.entries || []).find((e) => e.delta > 0) || null;
+  const ago = timeAgo(prev.takenAt);
+
+  const parts = [];
+  if (bytes !== 0) {
+    parts.push(`<span class="delta-badge num ${bytes > 0 ? 'up' : 'down'}">${bytes > 0 ? '+' : ''}${formatBytes(Math.abs(bytes))} ${bytes > 0 ? 'added' : 'freed'}</span>`);
+  }
+  if (files !== 0) {
+    parts.push(`<span class="delta-badge num ${files > 0 ? 'up' : 'down'}">${files > 0 ? '+' : ''}${formatCount(Math.abs(files))} file${Math.abs(files) === 1 ? '' : 's'} ${files > 0 ? 'added' : 'removed'}</span>`);
+  }
+  if (mover) {
+    parts.push(`<span class="wn-mover" title="${escapeHtml(mover.path)}">${escapeHtml(mover.name)} grew the most (+${formatBytes(mover.delta)})</span>`);
+  }
+  const headline = parts.length ? "What's new" : 'Nothing changed';
+  $('whatsNewBody').innerHTML =
+    `<span class="wn-title">${icon('sparkles', 15)}${headline} <span class="wn-ago">since your last scan ${escapeHtml(ago)}</span></span>` +
+    parts.join('');
+  $('whatsNewCard').hidden = false;
+}
+
+$('whatsNewClose').addEventListener('click', (e) => {
+  e.stopPropagation();
+  state.whatsNew.dismissed = true;
+  $('whatsNewCard').hidden = true;
+});
+$('whatsNewBody').addEventListener('click', () => switchView('trends'));
+$('whatsNewBody').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchView('trends'); }
+});
+
 /* ───────────────────────────── Scanning + SSE ───────────────────────────── */
 function closeEventSource() {
   if (state.es) { state.es.close(); state.es = null; }
@@ -2099,6 +2243,7 @@ function beginScanChrome() {
   $('bigFiles').innerHTML = skeletonRows(6);
   $('bigFolders').innerHTML = skeletonRows(6);
   $('donutLegend').innerHTML = skeletonRows(5, 24);
+  $('whatsNewCard').hidden = true; // last scan's summary is stale the moment a new one starts
   $('emptyState').style.display = 'none';
   switchView('dashboard');
 }
@@ -2300,6 +2445,7 @@ async function finishScan(root, durationMs, stats) {
   toast(`Scan complete — ${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} files`}`);
 
   // Painted. Now the expensive server-side walks, filling in behind it.
+  void loadWhatsNew(); // "what's new" banner — fetches its snapshots behind the paint too
   state.largest = []; state.types = []; state.bigFolders = [];
   $('statLargest').textContent = '–';
   try {
@@ -3781,6 +3927,8 @@ $('tmExportBtn').addEventListener('click', (e) => {
     <div class="div"></div>
     <button data-exp="csv-files">${icon('file', 15)}CSV — all files</button>
     <button data-exp="csv-folders">${icon('folder', 15)}CSV — all folders</button>
+    <button data-exp="xlsx-files">${icon('grid', 15)}Excel — all files</button>
+    <button data-exp="xlsx-folders">${icon('grid', 15)}Excel — all folders</button>
     <button data-exp="pdf">${icon('download', 15)}PDF report</button>` : '');
   menu.style.display = 'block';
   const r = e.currentTarget.getBoundingClientRect();
@@ -3793,6 +3941,8 @@ $('tmExportBtn').addEventListener('click', (e) => {
     else if (exp === 'svg') exportTreemapSVG();
     else if (exp === 'csv-files') downloadReport('csv', 'files');
     else if (exp === 'csv-folders') downloadReport('csv', 'folders');
+    else if (exp === 'xlsx-files') downloadReport('xlsx', 'files');
+    else if (exp === 'xlsx-folders') downloadReport('xlsx', 'folders');
     else if (exp === 'pdf') downloadReport('pdf');
   }));
 });
@@ -3808,7 +3958,7 @@ function downloadReport(format, mode) {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  toast(format === 'pdf' ? 'Building PDF report…' : 'Exporting CSV…');
+  toast(format === 'pdf' ? 'Building PDF report…' : format === 'xlsx' ? 'Building Excel workbook…' : 'Exporting CSV…');
 }
 
 function exportFileName(ext) {
@@ -3916,7 +4066,12 @@ function showTooltip(x, y, node, pctOfRoot = null) {
     (pctOfRoot !== null && pctOfRoot >= 0.05 ? ` · ${pctOfRoot.toFixed(1)}% of this view` : '') +
     (node.logicalSize ? ` · ${formatBytes(node.logicalSize)} uncompressed` : '') +
     (node.container && !node.children ? ' · click to look inside' : '') +
-    ` · modified ${formatDate(node.modifiedAt)}</div>`;
+    ` · modified ${formatDate(node.modifiedAt)}` +
+    // Only meaningful while sorting the grid by atime — and atime is best-effort
+    // (absent for gdu/cloud scans and noatime mounts), so missing shows as "—".
+    (state.view === 'grid' && state.grid.sort === 'accessed'
+      ? ` · accessed ${node.accessedAt ? formatDate(node.accessedAt) : '—'}` : '') +
+    `</div>`;
   tip.style.display = 'block';
   const pad = 14;
   const w = tip.offsetWidth, h = tip.offsetHeight;
@@ -3969,6 +4124,7 @@ function showCtxMenu(x, y, node) {
     <button data-act="cart">${icon(inCart ? 'check' : 'cart', 15)}${inCart ? 'Remove from Cart' : 'Add to Cart'}</button>
     ${node.isTrash ? '' : `<button data-act="offload">${icon('archive', 15)}Offload…</button>`}
     ${node.type === 'dir' ? `<div class="div"></div>
+    ${node.isTrash ? '' : `<button data-act="terminal">${icon('terminal', 15)}Open Terminal Here</button>`}
     <button data-act="budget">${icon('gauge', 15)}${hasBudget ? 'Edit budget…' : 'Set budget…'}</button>
     ${hasBudget ? `<button data-act="budget-remove">${icon('x', 15)}Remove budget</button>` : ''}` : ''}
     <div class="div"></div>
@@ -3982,6 +4138,7 @@ function showCtxMenu(x, y, node) {
     if (act === 'open') openInOS(ctxTarget.path, true);
     if (act === 'preview') openPreview(ctxTarget);
     if (act === 'copy') copyPath(ctxTarget.path);
+    if (act === 'terminal') openTerminal(ctxTarget.path);
     if (act === 'cart') cartToggle(ctxTarget.path);
     if (act === 'offload') startOffloadFlow([ctxTarget.path]);
     if (act === 'budget') openBudgetDialog(ctxTarget);
@@ -4008,6 +4165,15 @@ async function copyPath(path) {
     ta.value = path; document.body.appendChild(ta); ta.select();
     document.execCommand('copy'); ta.remove(); toast('Path copied');
   }
+}
+/** Open the OS terminal at a scanned folder — the window itself is the feedback. */
+async function openTerminal(path) {
+  try {
+    await api('/api/files/terminal', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+  } catch (e) { toast('Could not open a terminal: ' + e.message, 'error'); }
 }
 
 /* ───────────────────────────── Cloud accounts (Feature 25) ───────────────────────────── */
@@ -4731,6 +4897,9 @@ function gridItems() {
   items.sort((a, b) =>
     s === 'name' ? a.name.localeCompare(b.name, undefined, { sensitivity:'base' }) :
     s === 'date' ? b.modifiedAt - a.modifiedAt :
+    // atime is best-effort (gdu/cloud engines and noatime mounts never record
+    // it) — entries without one sink to the bottom instead of erroring.
+    s === 'accessed' ? ((b.accessedAt || 0) - (a.accessedAt || 0)) || b.size - a.size :
     s === 'type' ? (a.type !== b.type ? (a.type === 'dir' ? -1 : 1) : (a.extension || '').localeCompare(b.extension || '') || b.size - a.size) :
     b.size - a.size);
   return items;
@@ -6287,14 +6456,28 @@ document.addEventListener('keydown', (e) => {
     $('gridSearch').focus();
     return;
   }
+  // Plain Backspace / Delete in the grid — never while typing, and the
+  // Cmd/Ctrl-modified variants above keep working exactly as before.
+  if (!mod && !typing && state.view === 'grid' && state.root) {
+    if (e.key === 'Backspace') { e.preventDefault(); gridUp(); return; }
+    if (e.key === 'Delete' && state.grid.selection.size) {
+      e.preventDefault(); confirmTrash([...state.grid.selection]); return;
+    }
+  }
   // Feature 6 — keyboard navigation in the treemap / sunburst view.
   if (state.view === 'treemap' && !typing && !mod && state.treemap.rootPath && !state.treemap.history.active) {
     switch (e.key) {
       case '/': e.preventDefault(); $('tmSearch').focus(); return;
-      case 'h': case 'ArrowLeft': e.preventDefault(); kbUp(); return;
+      case 'h': case 'ArrowLeft': case 'Backspace': e.preventDefault(); kbUp(); return;
       case 'j': case 'ArrowDown': e.preventDefault(); kbMove(1); return;
       case 'k': case 'ArrowUp': e.preventDefault(); kbMove(-1); return;
       case 'l': case 'ArrowRight': case 'Enter': e.preventDefault(); kbDrill(); return;
+      case 'Delete':
+        // Synthetic Trash cell and in-archive entries can't be trashed.
+        if (state.treemap.kbSel && !state.treemap.kbSel.isTrash && !state.treemap.kbSel.virtual) {
+          e.preventDefault(); confirmTrash([state.treemap.kbSel.path]);
+        }
+        return;
       case 'c': if (state.treemap.kbSel) { e.preventDefault(); cartToggle(state.treemap.kbSel.path); } return;
       case 'p': if (state.treemap.kbSel && state.treemap.kbSel.type === 'file') { e.preventDefault(); openPreview(state.treemap.kbSel); } return;
     }
