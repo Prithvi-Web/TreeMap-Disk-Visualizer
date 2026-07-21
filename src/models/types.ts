@@ -23,6 +23,13 @@ export interface FileNode {
   extension?: string;
   /** Unix epoch milliseconds of last modification. */
   modifiedAt: number;
+  /**
+   * Unix epoch milliseconds of last access (stat.atimeMs). Recorded only by
+   * the disk walker; the gdu/cloud/container engines have no atime and omit
+   * it. Best-effort by nature: relatime/noatime mounts (and Windows defaults)
+   * make access times stale, so consumers must treat "missing" as normal.
+   */
+  accessedAt?: number;
   isHidden: boolean;
   /** Hard-linked file whose inode was already counted — size set to 0 to avoid double-counting. */
   hardlinkDuplicate?: boolean;

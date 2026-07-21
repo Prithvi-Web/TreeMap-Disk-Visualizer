@@ -266,7 +266,7 @@ async function saveMtimeCache(scan: ScanResult): Promise<void> {
   }
 }
 
-function makeNode(fullPath: string, name: string, isDir: boolean, size: number, mtimeMs: number): FileNode {
+function makeNode(fullPath: string, name: string, isDir: boolean, size: number, mtimeMs: number, atimeMs?: number): FileNode {
   const node: FileNode = {
     name,
     path: fullPath,
@@ -275,6 +275,9 @@ function makeNode(fullPath: string, name: string, isDir: boolean, size: number, 
     modifiedAt: Math.round(mtimeMs),
     isHidden: name.startsWith('.'),
   };
+  // atime === 0 means "never recorded" on several filesystems — omit rather
+  // than let a 1970 date surface anywhere.
+  if (atimeMs !== undefined && atimeMs > 0) node.accessedAt = Math.round(atimeMs);
   if (isDir) {
     node.children = [];
   } else {
@@ -301,7 +304,8 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
     path.basename(scan.rootPath) || scan.rootPath,
     rootIsDir,
     rootStat.size,
-    rootStat.mtimeMs
+    rootStat.mtimeMs,
+    rootStat.atimeMs
   );
   scan.scanned = 1;
   if (rootIsDir) scan.dirCount = 1;
@@ -411,12 +415,12 @@ async function processDirectory(
 
         if (ent.isDirectory() && !ent.isSymbolicLink()) {
           const stat = await fsp.lstat(fullPath);
-          return { node: makeNode(fullPath, ent.name, true, 0, stat.mtimeMs) };
+          return { node: makeNode(fullPath, ent.name, true, 0, stat.mtimeMs, stat.atimeMs) };
         }
         // Files, symlinks (not followed — lstat reports the link itself),
         // sockets, fifos: record as a leaf with whatever size lstat reports.
         const stat = await fsp.lstat(fullPath);
-        const node = makeNode(fullPath, ent.name, false, stat.size, stat.mtimeMs);
+        const node = makeNode(fullPath, ent.name, false, stat.size, stat.mtimeMs, stat.atimeMs);
         if (ent.isSymbolicLink()) {
           node.isSymlink = true;
           return { node };
