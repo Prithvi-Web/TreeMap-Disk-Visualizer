@@ -1,4 +1,4 @@
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promises as fsp } from 'fs';
 import { CleanResult } from '../models/types';
 
@@ -86,6 +86,89 @@ export async function moveToTrash(paths: string[]): Promise<CleanResult> {
     }
   }
   return { deleted, failed };
+}
+
+/**
+ * Candidate argv commands, tried in order, to open the platform's terminal at
+ * `dir`. Pure — exported so tests can assert the exact argv per platform
+ * without spawning anything.
+ *
+ *  - macOS: AppleScript embeds the path with appleScriptString() escaping and
+ *    then `quoted form of` single-quotes it for the shell, so spaces, quotes,
+ *    $() and backticks can never break out of the cd argument. `do script`
+ *    runs before `activate` so a cold-started Terminal opens one window, not
+ *    two. If Terminal automation was denied, `open -a Terminal <dir>` starts
+ *    a window already cd'd there without any Apple events.
+ *  - Windows: Windows Terminal first; the cmd.exe fallback passes the
+ *    directory as its own /D argv entry (empty title guards spaced paths).
+ *  - Linux: common emulators in order, each with its working-dir flag. xterm
+ *    has none, so a fixed `sh -c` script reads the target from $1 — the path
+ *    is never interpolated into shell text.
+ */
+export function terminalCommands(dir: string, platform: NodeJS.Platform = process.platform): { cmd: string; args: string[] }[] {
+  switch (platform) {
+    case 'darwin': {
+      const script =
+        `tell application "Terminal"\n` +
+        `do script "cd " & quoted form of "${appleScriptString(dir)}"\n` +
+        `activate\n` +
+        `end tell`;
+      return [
+        { cmd: 'osascript', args: ['-e', script] },
+        { cmd: 'open', args: ['-a', 'Terminal', dir] },
+      ];
+    }
+    case 'win32':
+      return [
+        { cmd: 'wt.exe', args: ['-d', dir] },
+        { cmd: 'cmd.exe', args: ['/c', 'start', '', '/D', dir, 'cmd.exe'] },
+      ];
+    default:
+      return [
+        { cmd: 'x-terminal-emulator', args: [`--working-directory=${dir}`] },
+        { cmd: 'gnome-terminal', args: [`--working-directory=${dir}`] },
+        { cmd: 'konsole', args: ['--workdir', dir] },
+        { cmd: 'xterm', args: ['-e', 'sh', '-c', 'cd "$1" && exec "${SHELL:-sh}"', 'sh', dir] },
+      ];
+  }
+}
+
+/**
+ * Launch one terminal candidate. Some emulators (konsole, xterm) stay in the
+ * foreground for the life of their window, so success is "spawned and still
+ * alive after a grace period (or exited 0)", not "exited" — waiting for exit
+ * would misread a perfectly good window as a timeout and open a second one.
+ */
+function launchTerminal(cmd: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true });
+    let settled = false;
+    const settle = (fn: () => void): void => { if (!settled) { settled = true; fn(); } };
+    child.once('error', (err) => settle(() => reject(err))); // ENOENT — not installed
+    child.once('exit', (code) => {
+      if (code === 0) settle(resolve);
+      else settle(() => reject(new Error(`${cmd} exited with code ${String(code)}`)));
+    });
+    setTimeout(() => settle(() => { child.unref(); resolve(); }), 1200);
+  });
+}
+
+/**
+ * Open the platform's terminal at `dirPath` (Open Terminal Here). Tries each
+ * candidate in order; one that is missing or exits nonzero falls through to
+ * the next. All argv arrays, no shell.
+ */
+export async function openTerminal(dirPath: string): Promise<void> {
+  const errors: string[] = [];
+  for (const { cmd, args } of terminalCommands(dirPath)) {
+    try {
+      await launchTerminal(cmd, args);
+      return;
+    } catch (err) {
+      errors.push(`${cmd}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  throw new Error(`No terminal emulator could be opened (${errors.join('; ')})`);
 }
 
 /**

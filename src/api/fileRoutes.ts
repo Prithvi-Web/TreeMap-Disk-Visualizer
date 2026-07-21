@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import pathMod from 'path';
-import { moveToTrash, openPath } from '../services/cleaner';
+import { moveToTrash, openPath, openTerminal } from '../services/cleaner';
 import {
   guardBodyPath,
   guardBodyPaths,
@@ -33,6 +33,31 @@ fileRouter.delete('/files', guardBodyPaths, requireInsideScanRoot, async (req: R
 fileRouter.post('/files/open', guardBodyPath, requireInsideScanRoot, async (req: Request, res: Response) => {
   const { path: target, reveal } = req.body as { path: string; reveal?: boolean };
   await openPath(target, reveal === true);
+  res.json({ opened: target });
+});
+
+/**
+ * POST /api/files/terminal  { path: string }
+ * Opens the platform's terminal at the directory (Open Terminal Here).
+ * Guarded like every path-taking endpoint — sanitized and confined to
+ * directories inside a scanned root; never launches anything for files.
+ */
+fileRouter.post('/files/terminal', guardBodyPath, requireInsideScanRoot, async (req: Request, res: Response) => {
+  const { path: target } = req.body as { path: string };
+  let st: fs.Stats;
+  try {
+    st = await fs.promises.lstat(target);
+  } catch {
+    throw new AppError(404, 'PATH_NOT_FOUND', 'That folder no longer exists');
+  }
+  if (!st.isDirectory()) {
+    throw new AppError(400, 'NOT_A_DIRECTORY', 'Open Terminal works on folders');
+  }
+  try {
+    await openTerminal(target);
+  } catch (err) {
+    throw new AppError(500, 'NO_TERMINAL', err instanceof Error ? err.message : 'No terminal emulator found');
+  }
   res.json({ opened: target });
 });
 
