@@ -1,4 +1,4 @@
-import { promises as fsp, Dirent } from 'fs';
+import { promises as fsp, Dirent, Stats } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { FileNode, ScanResult, LargeFolder, EmptyFoldersResult, CompareEntry } from '../models/types';
@@ -233,22 +233,39 @@ function buildDirCache(root: FileNode): Map<string, FileNode> {
   return map;
 }
 
-/** Add a substituted (cached) subtree to the scan counters; returns dir count. */
-function tallyCachedSubtree(scan: ScanResult, dirNode: FileNode): number {
-  let dirs = 0;
-  const stack: FileNode[] = [...(dirNode.children ?? [])];
-  while (stack.length) {
-    const n = stack.pop()!;
+/**
+ * A cached directory mtime "matches" the disk when equal to the millisecond —
+ * or, because gdu records whole seconds, when the cached value is
+ * second-aligned and the disk time truncates to that same second. Without the
+ * tolerance, a cache written by a gdu scan never matches anything and a fast
+ * rescan silently degrades into a full walk.
+ */
+export function mtimesMatch(cachedMs: number, freshMs: number): boolean {
+  const fresh = Math.round(freshMs);
+  if (cachedMs === fresh) return true;
+  return cachedMs % 1000 === 0 && Math.floor(fresh / 1000) * 1000 === cachedMs;
+}
+
+/**
+ * Reuse a validated directory's cached listing: count its direct children and
+ * enqueue each subdirectory for its own revalidation visit. Counter semantics
+ * mirror a fresh listing (scanned/dirCount/fileCount); as before, cloud and
+ * hardlink tallies are not re-derived from cached files — their sizes and
+ * flags ride along in the nodes themselves.
+ */
+function reuseCachedListing(scan: ScanResult, dirNode: FileNode, queue: FileNode[], revalidate: WeakSet<FileNode>): void {
+  scan.currentPath = dirNode.path;
+  scan.cachedDirs = (scan.cachedDirs ?? 0) + 1;
+  for (const child of dirNode.children!) {
     scan.scanned++;
-    if (n.type === 'dir') {
+    if (child.type === 'dir') {
       scan.dirCount++;
-      dirs++;
-      if (n.children) for (const c of n.children) stack.push(c);
+      revalidate.add(child);
+      queue.push(child);
     } else {
       scan.fileCount++;
     }
   }
-  return dirs;
 }
 
 /** Persist the completed tree (compact JSON) so future fast rescans can reuse it. */
@@ -312,7 +329,9 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
   else scan.fileCount = 1;
 
   if (rootIsDir) {
-    await drainQueue(scan, [root], ignore, cache, new Set<string>());
+    // Dirs reached through a cached parent's listing get one fresh lstat
+    // before their cached listing is trusted — membership is per-scan.
+    await drainQueue(scan, [root], ignore, cache, new Set<string>(), new WeakSet<FileNode>());
   }
   if (scan.cancelled) return;
 
@@ -334,7 +353,7 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
  * Worker pool: up to CONCURRENCY directories are listed at the same time.
  * Resolves when the queue is empty and every worker has finished.
  */
-function drainQueue(scan: ScanResult, initial: FileNode[], ignore: CompiledIgnore[], cache: Map<string, FileNode> | null, seen: Set<string>): Promise<void> {
+function drainQueue(scan: ScanResult, initial: FileNode[], ignore: CompiledIgnore[], cache: Map<string, FileNode> | null, seen: Set<string>, revalidate: WeakSet<FileNode>): Promise<void> {
   const queue: FileNode[] = [...initial];
   let active = 0;
 
@@ -347,7 +366,7 @@ function drainQueue(scan: ScanResult, initial: FileNode[], ignore: CompiledIgnor
       while (active < CONCURRENCY && queue.length > 0) {
         const dirNode = queue.shift()!;
         active++;
-        processDirectory(scan, dirNode, queue, ignore, cache, seen)
+        processDirectory(scan, dirNode, queue, ignore, cache, seen, revalidate)
           .catch((err: unknown) => reject(err))
           .finally(() => {
             active--;
@@ -372,20 +391,50 @@ async function processDirectory(
   queue: FileNode[],
   ignore: CompiledIgnore[],
   cache: Map<string, FileNode> | null,
-  seen: Set<string>
+  seen: Set<string>,
+  revalidate: WeakSet<FileNode>
 ): Promise<void> {
   if (scan.cancelled) return;
 
-  // Incremental: an unchanged directory (same mtime) keeps its cached subtree
-  // rather than being re-listed. Trades catching in-place content-size edits
-  // for near-instant repeat scans — hence opt-in, with full scan the default.
-  if (cache) {
+  // Incremental: a directory whose own mtime is unchanged keeps its cached
+  // LISTING (its direct entries — a create/delete/rename would have bumped
+  // the mtime), skipping the readdir and every per-file stat. Its
+  // subdirectories are still visited, one fresh lstat each: a dir's mtime
+  // lives in its own inode and never propagates upward, so substituting whole
+  // subtrees on an ancestor's mtime is what made fast rescans miss brand-new
+  // files in deep, unchanged-ancestor folders. In-place file edits (same
+  // name, new bytes) still go unnoticed — the documented trade-off that makes
+  // this opt-in.
+  if (revalidate.has(dirNode)) {
+    // Reached through a cached parent's listing, so its stats are the CACHE's
+    // word, not the disk's — validate before trusting its cached listing.
+    revalidate.delete(dirNode);
+    const cachedMtime = dirNode.modifiedAt;
+    let st: Stats;
+    try {
+      st = await fsp.lstat(dirNode.path);
+    } catch {
+      // Vanished since the cache was written. The parent's listing says it
+      // exists, so show it empty rather than invent stale contents — the
+      // parent's changed mtime makes the next rescan re-list it anyway.
+      dirNode.children = [];
+      return;
+    }
+    dirNode.modifiedAt = Math.round(st.mtimeMs);
+    if (st.atimeMs > 0) dirNode.accessedAt = Math.round(st.atimeMs);
+    else delete dirNode.accessedAt;
+    if (dirNode.children && mtimesMatch(cachedMtime, dirNode.modifiedAt)) {
+      reuseCachedListing(scan, dirNode, queue, revalidate);
+      return;
+    }
+    dirNode.children = []; // its listing changed — fall through and re-list
+  } else if (cache) {
+    // Freshly stat'ed by its parent: compare the disk's mtime to the cache's.
     const cached = cache.get(dirNode.path);
-    if (cached && cached.type === 'dir' && cached.children && cached.modifiedAt === dirNode.modifiedAt) {
+    if (cached && cached.type === 'dir' && cached.children && mtimesMatch(cached.modifiedAt, dirNode.modifiedAt)) {
       dirNode.children = cached.children;
-      scan.currentPath = dirNode.path;
-      scan.cachedDirs = (scan.cachedDirs ?? 0) + 1 + tallyCachedSubtree(scan, dirNode);
-      return; // skip readdir + don't enqueue children
+      reuseCachedListing(scan, dirNode, queue, revalidate);
+      return;
     }
   }
   scan.walkedDirs = (scan.walkedDirs ?? 0) + 1;
