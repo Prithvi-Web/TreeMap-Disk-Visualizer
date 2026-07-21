@@ -5,7 +5,7 @@ import path from 'path';
 import { guardQueryPath } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
 import { diskUsage } from '../services/diskUsage';
-import { getTrashInfo } from '../services/trash';
+import { getTrashInfo, emptyTrash } from '../services/trash';
 import { getSnapshotAccounting, purgeSnapshots } from '../services/snapshotAccounting';
 import { SystemInfo } from '../models/types';
 
@@ -51,6 +51,19 @@ systemRouter.get('/system', async (_req: Request, res: Response) => {
 /** GET /api/trash/size -> { totalBytes, itemCount, paths, items } across all trash locations. */
 systemRouter.get('/trash/size', async (_req: Request, res: Response) => {
   res.json(await getTrashInfo());
+});
+
+/**
+ * POST /api/trash/empty { confirm:true } -> empty the system Trash / Recycle
+ * Bin. Irreversible, so it demands the same explicit confirm flag as the
+ * snapshot purge — the UI additionally gates it behind a confirm dialog.
+ */
+systemRouter.post('/trash/empty', async (req: Request, res: Response) => {
+  const { confirm } = req.body as { confirm?: boolean };
+  if (confirm !== true) {
+    throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } to empty the Trash');
+  }
+  res.json(await emptyTrash());
 });
 
 /** GET /api/system/snapshots -> OS snapshot accounting (APFS/Btrfs/VSS), best-effort. */
