@@ -2243,7 +2243,10 @@ function beginScanChrome() {
   $('bigFiles').innerHTML = skeletonRows(6);
   $('bigFolders').innerHTML = skeletonRows(6);
   $('donutLegend').innerHTML = skeletonRows(5, 24);
-  $('whatsNewCard').hidden = true; // last scan's summary is stale the moment a new one starts
+  // The last scan's summary is stale the moment a new one starts — hide it and
+  // invalidate any in-flight snapshot poll so it can't repaint mid-scan.
+  state.whatsNew.seq++;
+  $('whatsNewCard').hidden = true;
   $('emptyState').style.display = 'none';
   switchView('dashboard');
 }
