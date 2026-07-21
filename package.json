@@ -1,7 +1,7 @@
 {
   "name": "treemap",
   "version": "2.2.0",
-  "description": "TreeMap \u2014 a GrandPerspective-style disk space visualizer for macOS, Linux and Windows",
+  "description": "TreeMap — a GrandPerspective-style disk space visualizer for macOS, Linux and Windows",
   "author": "Prithvi-Web",
   "main": "electron/main.js",
   "scripts": {
@@ -24,9 +24,15 @@
   "license": "MIT",
   "dependencies": {
     "electron-updater": "^6.3.9",
+    "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "pdfmake": "^0.2.23",
     "sharp": "^0.35.2"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

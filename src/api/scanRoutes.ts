@@ -7,7 +7,7 @@ import { guardBodyPath, guardBodyPaths, guardQueryPath } from '../middleware/pat
 import { lookupNodes } from '../services/scanQueries';
 import { AppError } from '../middleware/errorHandler';
 import { getSettings } from '../services/settings';
-import { streamCsv, streamPdf } from '../services/reportExport';
+import { streamCsv, streamPdf, streamXlsx } from '../services/reportExport';
 import { ScanResult, ScanEvent, ScanStats, BudgetStatus } from '../models/types';
 
 export const scanRouter = Router();
@@ -328,9 +328,9 @@ scanRouter.get('/scan/:scanId/budgets', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/scan/:scanId/export?format=csv|pdf&mode=files|folders
- * Downloads the scan as a report: streamed CSV of every file/folder, or a
- * pdfmake text summary. Always sent as an attachment.
+ * GET /api/scan/:scanId/export?format=csv|xlsx|pdf&mode=files|folders
+ * Downloads the scan as a report: streamed CSV or XLSX of every file/folder,
+ * or a pdfmake text summary. Always sent as an attachment.
  */
 scanRouter.get('/scan/:scanId/export', async (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
@@ -351,7 +351,11 @@ scanRouter.get('/scan/:scanId/export', async (req: Request, res: Response) => {
     streamCsv(complete, req.query.mode === 'folders' ? 'folders' : 'files', res);
     return;
   }
-  throw new AppError(400, 'BAD_FORMAT', 'format must be "csv" or "pdf"');
+  if (format === 'xlsx') {
+    await streamXlsx(complete, req.query.mode === 'folders' ? 'folders' : 'files', res);
+    return;
+  }
+  throw new AppError(400, 'BAD_FORMAT', 'format must be "csv", "xlsx" or "pdf"');
 });
 
 /**

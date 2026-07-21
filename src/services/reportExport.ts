@@ -1,6 +1,7 @@
 import type { Response } from 'express';
 import PdfPrinter from 'pdfmake/src/printer';
 import type { TDocumentDefinitions, Content, TableCell } from 'pdfmake/interfaces';
+import Excel from 'exceljs';
 import { FileNode, ScanResult } from '../models/types';
 import { collectLargestFiles, collectLargestFolders, collectFileTypes } from './diskScanner';
 import { diskUsage } from './diskUsage';
@@ -8,10 +9,10 @@ import { formatBytes } from '../utils/formatBytes';
 
 /**
  * reportExport — Feature 17. Turns a completed scan into a downloadable report:
- * streamed CSV of every file or folder, and a human-readable PDF summary built
- * with pdfmake's built-in Helvetica (no font files, so it works the same in the
- * packaged desktop app). The treemap image is intentionally not embedded — this
- * is a text report.
+ * streamed CSV or XLSX of every file or folder, and a human-readable PDF
+ * summary built with pdfmake's built-in Helvetica (no font files, so it works
+ * the same in the packaged desktop app). The treemap image is intentionally
+ * not embedded — this is a text report.
  */
 
 type CompleteScan = ScanResult & { root: NonNullable<ScanResult['root']> };
@@ -68,6 +69,104 @@ export function streamCsv(scan: CompleteScan, mode: 'files' | 'folders', res: Re
     walk(scan.root);
   }
   res.end();
+}
+
+/* ----------------------------- XLSX ----------------------------- */
+
+/** One worksheet row: Path, Bytes, Last Modified, Extension (files) / recursive file count (folders). */
+export type ReportRow = [string, number, Date | null, string | number];
+
+function rowDate(ms: number): Date | null {
+  const d = new Date(ms);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+/**
+ * The same rows the CSV emits, as typed values (bytes as numbers, dates as
+ * Dates) so spreadsheet cells sort and format natively. Pure and exported for
+ * tests. Folders mode is post-order, exactly like streamCsv, so every folder
+ * row carries its recursive file count.
+ */
+export function* reportRows(root: FileNode, mode: 'files' | 'folders'): Generator<ReportRow, void, void> {
+  if (mode === 'files') {
+    const stack: FileNode[] = [root];
+    while (stack.length) {
+      const n = stack.pop()!;
+      if (n.type === 'file') yield [n.path, n.size, rowDate(n.modifiedAt), n.extension ?? ''];
+      else if (n.children) for (const c of n.children) stack.push(c);
+    }
+    return;
+  }
+  yield* folderRows(root);
+}
+
+function* folderRows(node: FileNode): Generator<ReportRow, number, void> {
+  if (node.type === 'file') return 1;
+  let count = 0;
+  if (node.children) for (const c of node.children) count += yield* folderRows(c);
+  yield [node.path, node.size, rowDate(node.modifiedAt), count];
+  return count;
+}
+
+/** Excel caps a sheet at 1,048,576 rows — leave room for the header + truncation notice. */
+export const XLSX_MAX_DATA_ROWS = 1_048_574;
+
+/**
+ * Stream an .xlsx of every file or folder as an attachment. Uses exceljs's
+ * streaming WorkbookWriter so rows go out as they're built instead of holding
+ * a multi-million-row workbook in memory; backpressure from the response is
+ * honored between batches. Scans beyond Excel's row limit get a visible
+ * truncation notice rather than a silently short sheet.
+ */
+export async function streamXlsx(
+  scan: CompleteScan,
+  mode: 'files' | 'folders',
+  res: Response,
+  maxRows: number = XLSX_MAX_DATA_ROWS // injectable so tests can exercise truncation cheaply
+): Promise<void> {
+  res.status(200);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="treemap-${safeBase(scan)}-${mode}-${stamp()}.xlsx"`);
+
+  const wb = new Excel.stream.xlsx.WorkbookWriter({ stream: res, useStyles: true, useSharedStrings: false });
+  const ws = wb.addWorksheet(mode === 'files' ? 'Files' : 'Folders', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+  });
+  ws.columns = [
+    { width: 78 },
+    { width: 14 },
+    { width: 19, style: { numFmt: 'yyyy-mm-dd hh:mm' } },
+    { width: 12 },
+  ];
+  const header = ws.addRow(
+    mode === 'files' ? ['Path', 'Bytes', 'Last Modified', 'Extension'] : ['Path', 'Bytes', 'Last Modified', 'Files']
+  );
+  header.font = { bold: true };
+  header.commit();
+
+  let written = 0;
+  let truncated = false;
+  for (const row of reportRows(scan.root, mode)) {
+    if (written >= maxRows) { truncated = true; break; }
+    ws.addRow(row).commit();
+    written++;
+    // Every 16k rows, let a saturated response drain before piling on more.
+    if ((written & 0x3fff) === 0 && res.writableNeedDrain) {
+      await new Promise<void>((resolve) => {
+        const done = (): void => { res.off('drain', done); res.off('close', done); resolve(); };
+        res.once('drain', done);
+        res.once('close', done);
+      });
+      if (res.destroyed || res.writableEnded) return; // client went away mid-download
+    }
+  }
+  if (truncated) {
+    const note = ws.addRow([`— truncated at ${maxRows.toLocaleString()} rows (Excel's sheet limit); export CSV for the full list —`]);
+    note.font = { italic: true };
+    note.commit();
+  }
+  ws.commit();
+  await wb.commit();
 }
 
 /* ----------------------------- PDF ----------------------------- */
