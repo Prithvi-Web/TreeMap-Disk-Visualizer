@@ -4,6 +4,7 @@ import { saveSnapshot } from '../snapshots';
 import { providerById, tokenFor, cloudRootPath } from './providers';
 import { findNodeByPath } from '../../utils/treemap';
 import { AppError } from '../../middleware/errorHandler';
+import { buildStoreFromTree, ScanStore } from '../scanStore';
 
 /**
  * cloud/cloudScan — a cloud listing that REGISTERS AS A SCAN. The record
@@ -36,7 +37,9 @@ export async function startCloudScan(providerId: string): Promise<ScanResult> {
         }
       }
       if (scan.cancelled) return;
-      scan.root = root;
+      // Pack the listing: the provider's FileNode tree is bounded (one
+      // account's metadata), and once packed it can be dropped for GC.
+      scan.store = buildStoreFromTree(root, '/');
       scan.status = 'complete';
       scan.finishedAt = Date.now();
       scan.currentPath = scan.rootPath;
@@ -70,17 +73,40 @@ export async function trashCloudPaths(
   const failed: { path: string; reason: string }[] = [];
   for (const p of paths) {
     try {
-      const node = findNodeByPath(scan.root, p);
-      if (!node) throw new AppError(404, 'PATH_NOT_FOUND', 'not in this scan');
-      if (!node.cloudId) throw new AppError(400, 'NO_CLOUD_ID', 'this entry has no provider id');
-      await provider.trash(token, node.cloudId);
-      pruneNode(scan.root, p, node.size);
+      if (scan.store) {
+        await trashOneInStore(scan.store, provider.trash.bind(provider), token, p);
+      } else {
+        const node = findNodeByPath(scan.root, p);
+        if (!node) throw new AppError(404, 'PATH_NOT_FOUND', 'not in this scan');
+        if (!node.cloudId) throw new AppError(400, 'NO_CLOUD_ID', 'this entry has no provider id');
+        await provider.trash(token, node.cloudId);
+        pruneNode(scan.root, p, node.size);
+      }
       deleted.push(p);
     } catch (err) {
       failed.push({ path: p, reason: err instanceof Error ? err.message : String(err) });
     }
   }
   return { deleted, failed };
+}
+
+/** Trash one store-backed entry, then prune it and shrink every ancestor. */
+async function trashOneInStore(
+  store: ScanStore,
+  trash: (token: string, cloudId: string) => Promise<void>,
+  token: string,
+  p: string,
+): Promise<void> {
+  const id = store.findByPath(p);
+  if (id === -1) throw new AppError(404, 'PATH_NOT_FOUND', 'not in this scan');
+  const cloudId = store.cloudId(id);
+  if (!cloudId) throw new AppError(400, 'NO_CLOUD_ID', 'this entry has no provider id');
+  await trash(token, cloudId);
+  const size = store.size(id);
+  store.removeNode(id);
+  for (let a = store.parent(id); a !== -1; a = store.parent(a)) {
+    store.addToSize(a, -size);
+  }
 }
 
 /** Remove a node from the tree and shrink every ancestor by its size. */

@@ -1375,6 +1375,28 @@ export class PackedScanStore implements ScanStore {
   }
 }
 
+/**
+ * Pack a finished FileNode tree into a PackedScanStore — the bridge for
+ * producers that assemble bounded trees from external listings (cloud
+ * providers). The source tree is copied field-for-field, children in order,
+ * and can be dropped for GC as soon as this returns. Sizes are taken
+ * verbatim, so pre-summed dir totals survive unchanged.
+ */
+export function buildStoreFromTree(root: FileNode, sep?: string): PackedScanStore {
+  const storeSep = sep ?? (root.path.includes('\\') ? '\\' : '/');
+  const store = new PackedScanStore(root.path, storeSep, fileNodeToInput(root));
+  const build = (parentId: number, children: FileNode[] | undefined): void => {
+    if (!children) return;
+    for (const c of children) {
+      const id = store.addNode(parentId, fileNodeToInput(c));
+      build(id, c.children);
+    }
+  };
+  build(store.rootId, root.children);
+  store.finalize();
+  return store;
+}
+
 /** Every FileNode field, restated as a NodeInput (graft/cache ingestion). */
 export function fileNodeToInput(n: FileNode): NodeInput {
   return {

@@ -1,5 +1,6 @@
 import { FileNode } from '../models/types';
 import { detectContainerKind } from '../utils/containerKind';
+import { ScanStore, NodeInput, Flag } from './scanStore';
 
 /**
  * gdu's JSON export -> TreeMap's FileNode.
@@ -194,4 +195,125 @@ export function mapGduTree(
   }
 
   return { root: buildDir(dirNode, null), stats };
+}
+
+/**
+ * mapGduTree, but building straight into a ScanStore under `parentId` —
+ * no intermediate FileNode objects at all. Mapping rules are identical
+ * (hardlink dedup on inode alone, dsize-gated cloud detection, `.git`
+ * marking, the no-`path.join` string ops). Paths are only assembled for the
+ * few files that need a cloud-provider check; the store derives every other
+ * path from its parent chain.
+ *
+ * Returns the id of the shard's root dir plus the same stats as mapGduTree.
+ */
+export function mapGduTreeIntoStore(
+  doc: unknown,
+  rootPath: string,
+  store: ScanStore,
+  parentId: number,
+  opts: GduMapOptions = {},
+): { rootId: number; stats: GduMapStats } {
+  const stats: GduMapStats = {
+    fileCount: 0,
+    dirCount: 0,
+    hardlinkedFiles: 0,
+    hardlinkedBytes: 0,
+    cloudFiles: 0,
+    cloudBytes: 0,
+  };
+  const seen = opts.seenInodes ?? new Set<number>();
+  const cloudFor = opts.cloudProviderFor;
+
+  const arr = doc as unknown[];
+  const dirNode = (Array.isArray(arr) && typeof arr[0] === 'number' ? arr[3] : arr) as GduDir;
+
+  const rootAbs = rootPath.length > 1 && rootPath.endsWith('/') ? rootPath.slice(0, -1) : rootPath;
+
+  function addFile(o: GduFile, parentDirId: number, parentPath: string): void {
+    stats.fileCount++;
+    const name = o.name;
+    const size = o.asize || 0;
+
+    const input: NodeInput = {
+      name,
+      isDir: false,
+      size,
+      modifiedAt: o.mtime * 1000,
+      isHidden: name.charCodeAt(0) === 46,
+    };
+
+    // A leading dot is not an extension — matches path.extname('.bashrc') === ''.
+    const dot = name.lastIndexOf('.');
+    if (dot > 0 && dot < name.length - 1) input.extension = name.slice(dot + 1).toLowerCase();
+
+    const container = detectContainerKind(name, false);
+    if (container) input.container = container;
+
+    if (o.notreg) {
+      input.isSymlink = true;
+      store.addNode(parentDirId, input);
+      return;
+    }
+
+    if (o.hlnkc && o.ino !== undefined) {
+      if (seen.has(o.ino)) {
+        input.hardlinkDuplicate = true;
+        stats.hardlinkedFiles++;
+        stats.hardlinkedBytes += size;
+        input.size = 0; // the first occurrence already carried these bytes
+        store.addNode(parentDirId, input);
+        return;
+      }
+      seen.add(o.ino);
+    }
+
+    if (size > 0 && !o.dsize && cloudFor) {
+      const p = parentPath === '/' ? '/' + name : parentPath + '/' + name;
+      const provider = cloudFor(p);
+      if (provider) {
+        input.cloudPlaceholder = true;
+        input.cloudProvider = provider;
+        stats.cloudFiles++;
+        stats.cloudBytes += size;
+      }
+    }
+
+    store.addNode(parentDirId, input);
+  }
+
+  function addDir(d: GduDir, under: number, parentPath: string | null): number {
+    stats.dirCount++;
+    const meta = d[0];
+    const isRoot = parentPath === null;
+    const p = isRoot ? rootAbs : parentPath === '/' ? '/' + meta.name : parentPath + '/' + meta.name;
+    const name = isRoot ? rootAbs.slice(rootAbs.lastIndexOf('/') + 1) || rootAbs : meta.name;
+
+    const dirId = store.addNode(under, {
+      name,
+      isDir: true,
+      size: 0,
+      modifiedAt: meta.mtime * 1000,
+      isHidden: name.charCodeAt(0) === 46,
+      container: detectContainerKind(name, true),
+    });
+
+    let sawGit = false;
+    for (let i = 1; i < d.length; i++) {
+      const c = d[i];
+      if (Array.isArray(c)) {
+        const sub = c as GduDir;
+        if (sub[0].name === '.git') sawGit = true;
+        addDir(sub, dirId, p);
+      } else {
+        if ((c as GduFile).name === '.git') sawGit = true;
+        addFile(c as GduFile, dirId, p);
+      }
+    }
+    if (sawGit) store.setFlag(dirId, Flag.GitRepo, true);
+
+    return dirId;
+  }
+
+  return { rootId: addDir(dirNode, parentId, null), stats };
 }

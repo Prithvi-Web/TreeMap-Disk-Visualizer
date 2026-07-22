@@ -10,7 +10,7 @@ import { IO_THREADS } from '../utils/ioThreads';
 import { detectContainerKind } from '../utils/containerKind';
 import { neverDescend } from '../utils/mountBoundaries';
 import { forgetScan } from './containerScanner';
-import { findGduBinary, gduScan } from './gduScanner';
+import { findGduBinary, gduScanIntoStore } from './gduScanner';
 import { PackedScanStore, ScanStore, Flag, NodeInput, fileNodeToInput } from './scanStore';
 
 /**
@@ -247,9 +247,9 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         const bin = await findGduBinary();
         if (bin) {
           scan.engine = 'gdu-turbo';
-          const root = await gduScan(scan, bin, cloudProviderFor);
+          const store = await gduScanIntoStore(scan, bin, cloudProviderFor);
           if (scan.cancelled) return;
-          scan.root = root;
+          scan.store = store;
           scan.status = 'complete';
           scan.finishedAt = Date.now();
           scan.currentPath = scan.rootPath;

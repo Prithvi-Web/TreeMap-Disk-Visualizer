@@ -6,6 +6,7 @@ import { findNodeByPath } from '../utils/treemap';
 import { getSettings } from './settings';
 import { appDataDir } from './storage';
 import { isInside } from '../utils/pathSanitizer';
+import { ScanStore, Flag, NodeInput } from './scanStore';
 
 /**
  * Watcher — live disk activity for a completed scan (Live mode).
@@ -48,7 +49,9 @@ interface WatchSession {
   idleTimer: NodeJS.Timeout;
   lastActivityAt: number;
   idleMinutes: number;
-  root: FileNode;
+  /** Store-backed scans fold live changes into the store; legacy into the tree. */
+  store: ScanStore | null;
+  root: FileNode | null;
   stopped: boolean;
 }
 
@@ -79,6 +82,23 @@ export function mergePending(
 export function capFrame(events: WatchEvent[], max: number): WatchEvent[] {
   if (events.length <= max) return events;
   return [...events].sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, max);
+}
+
+/** topLevelDirs against a store-backed scan — same order, same cap. */
+export function topLevelDirsInStore(store: ScanStore, depth: number, cap: number): string[] {
+  const out: string[] = [store.rootPath];
+  const walk = (id: number, d: number): void => {
+    if (d >= depth) return;
+    for (const c of store.childIds(id)) {
+      if (out.length >= cap) return;
+      if (store.isDir(c)) {
+        out.push(store.path(c));
+        walk(c, d + 1);
+      }
+    }
+  };
+  walk(store.rootId, 0);
+  return out;
 }
 
 /** Directories of the top N levels of the scan tree (fallback watch targets). */
@@ -115,7 +135,10 @@ function attachWatchers(session: WatchSession): void {
     /* recursion unavailable on this platform — fall back to top levels */
   }
   session.engine = 'top-levels';
-  for (const dir of topLevelDirs(session.root, FALLBACK_DEPTH, MAX_FALLBACK_WATCHERS)) {
+  const fallbackDirs = session.store
+    ? topLevelDirsInStore(session.store, FALLBACK_DEPTH, MAX_FALLBACK_WATCHERS)
+    : topLevelDirs(session.root as FileNode, FALLBACK_DEPTH, MAX_FALLBACK_WATCHERS);
+  for (const dir of fallbackDirs) {
     try {
       const w = fs.watch(dir, { persistent: false }, handler(dir));
       w.on('error', () => { /* dir vanished — its parent will report it */ });
@@ -146,8 +169,13 @@ async function onRawEvent(session: WatchSession, absPath: string): Promise<void>
 
   let prev = session.knownSizes.get(absPath);
   if (prev === undefined) {
-    const node = findNodeByPath(session.root, absPath);
-    prev = node && node.type === 'file' ? node.size : 0;
+    if (session.store) {
+      const id = session.store.findByPath(absPath);
+      prev = id !== -1 && !session.store.isDir(id) ? session.store.size(id) : 0;
+    } else {
+      const node = findNodeByPath(session.root as FileNode, absPath);
+      prev = node && node.type === 'file' ? node.size : 0;
+    }
   }
   const kind: WatchEventKind = !exists ? 'deleted' : prev > 0 || session.knownSizes.has(absPath) ? 'modified' : 'created';
   if (kind === 'deleted' && prev === 0) return; // unknown file came and went
@@ -159,17 +187,23 @@ async function onRawEvent(session: WatchSession, absPath: string): Promise<void>
 }
 
 /**
- * Fold a live change into the in-memory scan tree, so treemap layouts
- * re-fetched during Live mode reflect what the disk is doing right now.
+ * Fold a live change into the in-memory scan (store or legacy tree), so
+ * treemap layouts re-fetched during Live mode reflect what the disk is
+ * doing right now.
  */
 function applyToTree(session: WatchSession, absPath: string, kind: WatchEventKind, size: number, delta: number): void {
   if (delta === 0 && kind !== 'deleted') return;
-  const node = findNodeByPath(session.root, absPath);
+  if (session.store) {
+    applyToStore(session.store, session.rootPath, absPath, kind, size, delta);
+    return;
+  }
+  const root = session.root as FileNode;
+  const node = findNodeByPath(root, absPath);
   if (node && node.type === 'file') {
     node.size = kind === 'deleted' ? 0 : size;
     node.modifiedAt = Date.now();
   } else if (!node && kind === 'created') {
-    const parent = findNodeByPath(session.root, path.dirname(absPath));
+    const parent = findNodeByPath(root, path.dirname(absPath));
     if (parent && parent.type === 'dir' && parent.children) {
       const name = path.basename(absPath);
       const child: FileNode = { name, path: absPath, size, type: 'file', modifiedAt: Date.now(), isHidden: name.startsWith('.') };
@@ -182,12 +216,44 @@ function applyToTree(session: WatchSession, absPath: string, kind: WatchEventKin
   let p = path.dirname(absPath);
   for (;;) {
     if (p === session.rootPath) {
-      session.root.size += delta;
+      root.size += delta;
       break;
     }
     if (!isInside(session.rootPath, p)) break;
-    const dir = findNodeByPath(session.root, p);
+    const dir = findNodeByPath(root, p);
     if (dir && dir.type === 'dir') dir.size += delta;
+    const up = path.dirname(p);
+    if (up === p) break;
+    p = up;
+  }
+}
+
+/** applyToTree for store-backed scans — same rules, id-based. */
+function applyToStore(store: ScanStore, rootPath: string, absPath: string, kind: WatchEventKind, size: number, delta: number): void {
+  const id = store.findByPath(absPath);
+  if (id !== -1 && !store.isDir(id)) {
+    store.setSize(id, kind === 'deleted' ? 0 : size);
+    store.setModifiedAt(id, Date.now());
+  } else if (id === -1 && kind === 'created') {
+    const parentId = store.findByPath(path.dirname(absPath));
+    if (parentId !== -1 && store.isDir(parentId) && store.hasChildArray(parentId)) {
+      const name = path.basename(absPath);
+      const input: NodeInput = { name, isDir: false, size, modifiedAt: Date.now(), isHidden: name.startsWith('.') };
+      const ext = path.extname(name).toLowerCase().replace(/^\./, '');
+      if (ext) input.extension = ext;
+      store.addNode(parentId, input);
+    }
+    // Parent dir newer than the scan — ancestors that do exist still get the delta.
+  }
+  let p = path.dirname(absPath);
+  for (;;) {
+    if (p === rootPath) {
+      store.addToSize(store.rootId, delta);
+      break;
+    }
+    if (!isInside(rootPath, p)) break;
+    const dirId = store.findByPath(p);
+    if (dirId !== -1 && store.flag(dirId, Flag.Dir)) store.addToSize(dirId, delta);
     const up = path.dirname(p);
     if (up === p) break;
     p = up;
@@ -247,7 +313,9 @@ export async function ensureWatchSession(scan: ScanResult & { root: FileNode }):
     }, IDLE_CHECK_MS),
     lastActivityAt: Date.now(),
     idleMinutes: watchIdleMinutes,
-    root: scan.root,
+    // Store first: touching scan.root on a store-backed scan materializes.
+    store: scan.store ?? null,
+    root: scan.store ? null : scan.root,
     stopped: false,
   };
   session.flushTimer.unref();

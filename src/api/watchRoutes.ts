@@ -51,7 +51,7 @@ watchRouter.get('/watch/:scanId', async (req: Request, res: Response) => {
   if (scan.status === 'running') {
     throw new AppError(409, 'SCAN_RUNNING', 'Wait for the scan to finish before watching it');
   }
-  if (scan.status === 'error' || !scan.root) {
+  if (scan.status === 'error' || (!scan.store && !scan.root)) {
     throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   }
 
