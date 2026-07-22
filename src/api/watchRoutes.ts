@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { requireScan } from './scanRoutes';
 import { ensureWatchSession, subscribe } from '../services/watcher';
+import { sseSend } from '../utils/sse';
 import { AppError } from '../middleware/errorHandler';
 import { FileNode, ScanResult, WatchStreamEvent } from '../models/types';
 
@@ -18,8 +19,9 @@ interface WatchClient {
 }
 const watchClients = new Set<WatchClient>();
 
+/** Typed front for the shared guarded SSE writer — never raw res.write. */
 function send(res: Response, frame: WatchStreamEvent): void {
-  res.write(`data: ${JSON.stringify(frame)}\n\n`);
+  sseSend(res, frame);
 }
 
 function closeClient(client: WatchClient): void {

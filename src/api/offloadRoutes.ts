@@ -11,6 +11,7 @@ import {
 import { openPath } from '../services/cleaner';
 import { guardBodyPaths, requireInsideScanRoot } from '../middleware/pathGuard';
 import { sanitizePath } from '../utils/pathSanitizer';
+import { sseSend } from '../utils/sse';
 import { AppError } from '../middleware/errorHandler';
 import { FileNode, OffloadJob, OffloadStreamEvent, ScanResult } from '../models/types';
 
@@ -29,8 +30,9 @@ interface OffloadSseClient {
 }
 const sseClients = new Set<OffloadSseClient>();
 
+/** Typed front for the shared guarded SSE writer — never raw res.write. */
 function send(res: Response, event: OffloadStreamEvent): void {
-  res.write(`data: ${JSON.stringify(event)}\n\n`);
+  sseSend(res, event);
 }
 
 function closeClient(client: OffloadSseClient): void {

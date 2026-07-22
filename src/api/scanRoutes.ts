@@ -8,6 +8,7 @@ import { lookupNodes } from '../services/scanQueries';
 import { AppError } from '../middleware/errorHandler';
 import { getSettings } from '../services/settings';
 import { streamCsv, streamPdf, streamXlsx } from '../services/reportExport';
+import { sseSend as sseWrite } from '../utils/sse';
 import { ScanResult, ScanEvent, ScanStats, BudgetStatus } from '../models/types';
 
 export const scanRouter = Router();
@@ -60,23 +61,13 @@ interface SseClient {
 const sseClients = new Set<SseClient>();
 
 /**
- * Write one SSE frame. Returns false — leaving the stream untouched — when the
- * event is too large to serialize: V8 caps any single string at ~512 MB, which
- * a 'complete' event carrying a tree of roughly 3.5M+ nodes exceeds. Callers
- * must not let that throw, because this runs on a timer where an escaping
- * exception is uncaught and takes the whole app down.
+ * Typed front for the shared guarded writer (src/utils/sse.ts) so every call
+ * site keeps ScanEvent union checking. The guard matters here: a 'complete'
+ * event carrying a ~3.5M+ node tree exceeds V8's ~512 MB string cap, and this
+ * runs on a timer where an escaping exception is uncaught.
  */
 function sseSend(res: Response, event: ScanEvent): boolean {
-  let frame: string;
-  try {
-    // JSON.stringify never emits raw newlines, so one data: line is enough.
-    frame = `data: ${JSON.stringify(event)}\n\n`;
-  } catch (err) {
-    if (err instanceof RangeError) return false;
-    throw err; // a real serialization bug, not a size limit
-  }
-  res.write(frame);
-  return true;
+  return sseWrite(res, event);
 }
 
 /** Why an oversized tree was refused, and what the user can do instead. */
