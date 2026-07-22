@@ -1,4 +1,5 @@
 import { FileNode, TreemapNode } from '../models/types';
+import { ScanStore, Flag } from '../services/scanStore';
 
 /**
  * Squarified treemap layout, implemented from scratch after
@@ -181,6 +182,92 @@ export function buildTreemap(root: FileNode, options: TreemapOptions): TreemapNo
 
       if (canExpand) {
         queue.push({ node: child, rect: r, depth: depth + 1 });
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * buildTreemap against a ScanStore, rooted at any node id — the scan path.
+ * The FileNode version above stays for historical snapshot trees (the time
+ * slider inflates bounded FileNode shapes by design). Same algorithm, same
+ * emitted fields, same BFS big-picture-first cap.
+ */
+export function buildTreemapFromStore(
+  store: ScanStore,
+  rootId: number,
+  options: TreemapOptions,
+): TreemapNode[] {
+  const { maxDepth, minSize, maxNodes } = options;
+  const out: TreemapNode[] = [];
+
+  interface Job {
+    id: number;
+    path: string;
+    rect: Rect;
+    depth: number;
+  }
+  const queue: Job[] = [{ id: rootId, path: store.path(rootId), rect: { x: 0, y: 0, w: 100, h: 100 }, depth: 0 }];
+
+  while (queue.length > 0 && out.length < maxNodes) {
+    const { id, path: nodePath, rect, depth } = queue.shift()!;
+    // Expanded containers are file nodes carrying virtual children.
+    if ((!store.isDir(id) && store.container(id) === undefined) || store.childCount(id) === 0) continue;
+    const nodeSize = store.size(id);
+    if (nodeSize <= 0 || rect.w <= 0 || rect.h <= 0) continue;
+
+    const children = store
+      .childIds(id)
+      .filter((c) => store.size(c) >= minSize && store.size(c) > 0)
+      .sort((a, b) => store.size(b) - store.size(a));
+    if (children.length === 0) continue;
+
+    // Scale child areas by their share of the *parent's* total size so the
+    // visual proportions stay truthful even when small files are filtered
+    // out (the filtered share simply remains empty space).
+    const rectArea = rect.w * rect.h;
+    const areas = children.map((c) => (store.size(c) / nodeSize) * rectArea);
+    const rects = squarify(areas, rect);
+
+    for (let k = 0; k < children.length && out.length < maxNodes; k++) {
+      const child = children[k];
+      const r = rects[k];
+      if (r.w <= 0 || r.h <= 0) continue;
+      const childPath = store.childPath(child, nodePath);
+
+      const canExpand =
+        // Expanded containers are files that carry virtual children.
+        (store.isDir(child) || store.container(child) !== undefined) &&
+        depth + 1 < maxDepth &&
+        store.childCount(child) > 0 &&
+        // Don't bother recursing into rectangles too small to subdivide.
+        r.w > 0.2 &&
+        r.h > 0.2;
+
+      out.push({
+        name: store.name(child),
+        path: childPath,
+        size: store.size(child),
+        type: store.nodeType(child),
+        extension: store.extension(child),
+        modifiedAt: store.modifiedAt(child),
+        depth: depth + 1,
+        expanded: canExpand,
+        x: r.x,
+        y: r.y,
+        w: r.w,
+        h: r.h,
+        cloudPlaceholder: store.flag(child, Flag.CloudPlaceholder) || undefined,
+        gitRepo: store.flag(child, Flag.GitRepo) || undefined,
+        container: store.container(child),
+        virtual: store.flag(child, Flag.Virtual) || undefined,
+        logicalSize: store.logicalSize(child),
+      });
+
+      if (canExpand) {
+        queue.push({ id: child, path: childPath, rect: r, depth: depth + 1 });
       }
     }
   }

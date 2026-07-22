@@ -20,6 +20,7 @@ import {
 import { buildTreemap } from '../utils/treemap';
 import { guardQueryPath, guardBodyPath, requireInsideScanRoot } from '../middleware/pathGuard';
 import { getAppAttribution } from '../services/appAttribution';
+import { storeOf } from '../services/scanStore';
 import { getForecast } from '../services/forecast';
 import { expandContainer } from '../services/containerScanner';
 import { findGitRepos, runGitGc } from '../services/gitScanner';
@@ -39,7 +40,7 @@ function requireCompleteScan(req: Request, idSource: unknown): ScanResult & { ro
   if (scan.status === 'running') {
     throw new AppError(409, 'SCAN_RUNNING', 'Scan is still running — try again when it completes');
   }
-  if (scan.status === 'error' || !scan.root) {
+  if (scan.status === 'error' || (!scan.store && !scan.root)) {
     throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   }
   return scan as ScanResult & { root: NonNullable<ScanResult['root']> };
@@ -120,20 +121,20 @@ insightRouter.get('/large-folders', (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const limit = clampInt(req.query.limit, 20, 1, 500);
   const minSize = clampInt(req.query.minSize, 1_048_576, 0, Number.MAX_SAFE_INTEGER);
-  res.json({ folders: collectLargestFolders(scan.root, limit, minSize) });
+  res.json({ folders: collectLargestFolders(storeOf(scan), limit, minSize) });
 });
 
 /** GET /api/empty-folders?scanId=&ignoreJunk=true */
 insightRouter.get('/empty-folders', (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const ignoreJunk = String(req.query.ignoreJunk ?? 'true') !== 'false';
-  res.json(collectEmptyFolders(scan.root, ignoreJunk));
+  res.json(collectEmptyFolders(storeOf(scan), ignoreJunk));
 });
 
 /** GET /api/git/repos?scanId= — pack/loose/LFS breakdown of every .git in the scan. */
 insightRouter.get('/git/repos', (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
-  res.json({ repos: findGitRepos(scan.root) });
+  res.json({ repos: findGitRepos(storeOf(scan)) });
 });
 
 /** POST /api/git/gc { path, confirm:true } — run `git gc` in a scanned repo. */
@@ -159,12 +160,12 @@ insightRouter.post('/container/expand', guardBodyPath, requireInsideScanRoot, as
 /** GET /api/scans — completed scans currently in memory (Compare picker). */
 insightRouter.get('/scans', (_req: Request, res: Response) => {
   const scans = allScans()
-    .filter((s) => s.status === 'complete' && s.root)
+    .filter((s) => s.status === 'complete' && s.store)
     .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
     .map((s) => ({
       scanId: s.scanId,
       rootPath: s.rootPath,
-      totalSize: s.root!.size,
+      totalSize: s.store!.size(s.store!.rootId),
       fileCount: s.fileCount,
       finishedAt: s.finishedAt,
     }));
@@ -181,12 +182,14 @@ insightRouter.get('/compare', (req: Request, res: Response) => {
   if (scanA.rootPath !== scanB.rootPath) {
     throw new AppError(400, 'ROOT_MISMATCH', 'Both scans must cover the same root path');
   }
-  const { entries, truncated } = compareTrees(scanA.root, scanB.root);
+  const storeA = storeOf(scanA);
+  const storeB = storeOf(scanB);
+  const { entries, truncated } = compareTrees(storeA, storeB);
   const result: CompareResult = {
     scanIdA: scanA.scanId,
     scanIdB: scanB.scanId,
     rootPath: scanA.rootPath,
-    totalDelta: scanB.root.size - scanA.root.size,
+    totalDelta: storeB.size(storeB.rootId) - storeA.size(storeA.rootId),
     entries,
     truncated,
   };

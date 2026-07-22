@@ -3,7 +3,6 @@ import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import {
-  FileNode,
   ScanResult,
   AppCategory,
   AppEntry,
@@ -12,6 +11,7 @@ import {
 } from '../models/types';
 import { isInside } from '../utils/pathSanitizer';
 import { winLocalAppData, winRoamingAppData, winProgramFilesDirs } from '../utils/osPaths';
+import { ScanStore, TreeSource, asStore, storeOf } from './scanStore';
 
 /**
  * AppAttribution — maps a completed scan tree to the applications that own
@@ -219,52 +219,53 @@ function accFor(apps: Map<string, AppAccumulator>, key: string, display: string,
  * clear paths (a data dir itself never is).
  */
 function splitClaim(
-  node: FileNode,
+  store: ScanStore,
+  id: number,
   defaultCat: AppCategory,
   addBytes: (cat: AppCategory, bytes: number) => void,
   addSafePath: (p: string, bytes: number) => void,
 ): void {
+  const size = store.size(id);
   if (defaultCat === 'app') {
-    addBytes('app', node.size); // an app bundle is one opaque unit
+    addBytes('app', size); // an app bundle is one opaque unit
     return;
   }
   if (defaultCat === 'cache' || defaultCat === 'logs') {
-    addBytes(defaultCat, node.size);
-    if (node.size > 0) addSafePath(node.path, node.size);
+    addBytes(defaultCat, size);
+    if (size > 0) addSafePath(store.path(id), size);
     return;
   }
   // data claim: pull cache/log subdirs out, rest stays data
-  let dataBytes = node.size;
-  const stack: FileNode[] = [node];
+  let dataBytes = size;
+  const stack: number[] = [id];
   while (stack.length) {
-    const cur = stack.pop()!;
-    if (!cur.children) continue;
-    for (const child of cur.children) {
-      if (child.type !== 'dir') continue;
-      const lower = child.name.toLowerCase();
+    const cur = stack.pop() as number;
+    store.forEachChild(cur, (child) => {
+      if (!store.isDir(child)) return;
+      const lower = store.name(child).toLowerCase();
       if (CACHE_DIR_NAMES.has(lower)) {
-        addBytes('cache', child.size);
-        dataBytes -= child.size;
-        if (child.size > 0) addSafePath(child.path, child.size);
+        addBytes('cache', store.size(child));
+        dataBytes -= store.size(child);
+        if (store.size(child) > 0) addSafePath(store.path(child), store.size(child));
       } else if (LOG_DIR_NAMES.has(lower)) {
-        addBytes('logs', child.size);
-        dataBytes -= child.size;
-        if (child.size > 0) addSafePath(child.path, child.size);
+        addBytes('logs', store.size(child));
+        dataBytes -= store.size(child);
+        if (store.size(child) > 0) addSafePath(store.path(child), store.size(child));
       } else {
         stack.push(child);
       }
-    }
+    });
   }
   addBytes('data', dataBytes);
 }
 
 /** Derive the app identity for one container child, or null to leave unclaimed. */
-function identityFor(child: FileNode, spec: ContainerSpec, ctx: AttributionContext):
+function identityFor(store: ScanStore, child: number, spec: ContainerSpec, ctx: AttributionContext):
   { key: string; display: string; id: string } | null {
-  const name = child.name;
+  const name = store.name(child);
   switch (spec.kind) {
     case 'appBundle': {
-      if (child.type !== 'dir' || !name.toLowerCase().endsWith('.app')) return null;
+      if (!store.isDir(child) || !name.toLowerCase().endsWith('.app')) return null;
       const base = name.slice(0, -4);
       const r = resolveName(base, ctx);
       return { key: r.key, display: r.display, id: normKey(base) };
@@ -282,7 +283,7 @@ function identityFor(child: FileNode, spec: ContainerSpec, ctx: AttributionConte
     }
     case 'bundleId':
     case 'appName': {
-      if (child.type !== 'dir') return null;
+      if (!store.isDir(child)) return null;
       const r = resolveName(name, ctx);
       return { key: r.key, display: r.display, id: name.toLowerCase() };
     }
@@ -293,7 +294,9 @@ function identityFor(child: FileNode, spec: ContainerSpec, ctx: AttributionConte
  * Attribute a scan tree to applications. Pure: everything OS-specific comes
  * in through `ctx`, so tests can exercise any platform's rules anywhere.
  */
-export function attributeTree(root: FileNode, ctx: AttributionContext): Omit<AppAttributionResult, 'scanId'> {
+export function attributeTree(source: TreeSource, ctx: AttributionContext): Omit<AppAttributionResult, 'scanId'> {
+  const store = asStore(source);
+  const join = (parent: string, child: number): string => store.childPath(child, parent);
   const containers = containersFor(ctx);
   const cmp = ctx.platform === 'linux'
     ? (a: string, b: string) => a === b
@@ -306,21 +309,22 @@ export function attributeTree(root: FileNode, ctx: AttributionContext): Omit<App
 
   const apps = new Map<string, AppAccumulator>();
 
-  const claim = (child: FileNode, spec: ContainerSpec, vendorPrefix?: string): void => {
-    const ident = identityFor(child, spec, ctx);
-    if (!ident || child.size <= 0) return;
+  const claim = (child: number, childPath: string, spec: ContainerSpec, vendorPrefix?: string): void => {
+    const ident = identityFor(store, child, spec, ctx);
+    if (!ident || store.size(child) <= 0) return;
     // A vendor dir (Google/Chrome) prefixes the app name unless curated already did.
     let display = ident.display;
-    if (vendorPrefix && !ctx.names.has(child.name.toLowerCase())) {
+    if (vendorPrefix && !ctx.names.has(store.name(child).toLowerCase())) {
       const combined = `${vendorPrefix} ${display}`;
       const curatedCombined = ctx.names.get(combined.toLowerCase());
       display = curatedCombined ?? combined;
     }
     const key = normKey(display);
     const acc = accFor(apps, key, display, ident.id);
-    acc.totalBytes += child.size;
-    acc.locations.push({ path: child.path, bytes: child.size, category: spec.category, label: spec.label });
+    acc.totalBytes += store.size(child);
+    acc.locations.push({ path: childPath, bytes: store.size(child), category: spec.category, label: spec.label });
     splitClaim(
+      store,
       child,
       spec.category,
       (cat, bytes) => { if (bytes > 0) acc.bytesByCategory.set(cat, (acc.bytesByCategory.get(cat) ?? 0) + bytes); },
@@ -330,45 +334,46 @@ export function attributeTree(root: FileNode, ctx: AttributionContext): Omit<App
     );
   };
 
-  const processContainer = (node: FileNode, spec: ContainerSpec): void => {
-    if (!node.children) return;
-    for (const child of node.children) {
-      if (child.type !== 'dir') continue; // stray files fall to "everything else"
+  const processContainer = (node: number, nodePath: string, spec: ContainerSpec): void => {
+    store.forEachChild(node, (child) => {
+      if (!store.isDir(child)) return; // stray files fall to "everything else"
+      const childPath = join(nodePath, child);
       // e.g. %LOCALAPPDATA%\Programs is a container nested inside a container
-      const nested = specAt(child.path);
-      if (nested) { processContainer(child, nested); continue; }
-      const lower = child.name.toLowerCase();
+      const nested = specAt(childPath);
+      if (nested) { processContainer(child, childPath, nested); return; }
+      const lower = store.name(child).toLowerCase();
       if (spec.kind === 'appBundle' && !lower.endsWith('.app')) {
         // e.g. /Applications/Utilities — one more level of bundles
-        if (child.children) {
-          for (const inner of child.children) {
-            if (inner.type === 'dir' && inner.name.toLowerCase().endsWith('.app')) claim(inner, spec);
+        store.forEachChild(child, (inner) => {
+          if (store.isDir(inner) && store.name(inner).toLowerCase().endsWith('.app')) {
+            claim(inner, join(childPath, inner), spec);
           }
-        }
-        continue;
+        });
+        return;
       }
       if (spec.kind === 'appName' && ctx.platform === 'win32' && WIN_APPDATA_SKIP.has(lower) && spec.category !== 'app') {
-        continue;
+        return;
       }
-      if ((spec.kind === 'appName' || spec.kind === 'bundleId') && VENDOR_DIRS.has(lower) && child.children) {
-        const vendor = prettify(child.name);
-        for (const inner of child.children) {
-          if (inner.type === 'dir') claim(inner, spec, vendor);
-        }
-        continue;
+      if ((spec.kind === 'appName' || spec.kind === 'bundleId') && VENDOR_DIRS.has(lower) && store.childCount(child) > 0) {
+        const vendor = prettify(store.name(child));
+        store.forEachChild(child, (inner) => {
+          if (store.isDir(inner)) claim(inner, join(childPath, inner), spec, vendor);
+        });
+        return;
       }
-      claim(child, spec);
-    }
+      claim(child, childPath, spec);
+    });
   };
 
   // Walk down from the scan root until container paths are hit.
-  const visit = (node: FileNode): void => {
-    const spec = specAt(node.path);
-    if (spec) { processContainer(node, spec); return; }
-    if (!node.children) return;
-    for (const child of node.children) if (child.type === 'dir') visit(child);
+  const visit = (node: number, nodePath: string): void => {
+    const spec = specAt(nodePath);
+    if (spec) { processContainer(node, nodePath, spec); return; }
+    store.forEachChild(node, (child) => {
+      if (store.isDir(child)) visit(child, join(nodePath, child));
+    });
   };
-  visit(root);
+  visit(store.rootId, store.rootPath);
 
   const entries: AppEntry[] = [...apps.values()]
     .sort((a, b) => b.totalBytes - a.totalBytes)
@@ -391,12 +396,12 @@ export function attributeTree(root: FileNode, ctx: AttributionContext): Omit<App
   // Platforms with no such folder (Linux) report true — nothing is missing.
   const systemAppDirs = containers.filter((c) => c.category === 'app' && !isInside(ctx.homeDir, c.path));
   const appsFolderScanned = systemAppDirs.length === 0
-    || systemAppDirs.some((c) => cmp(c.path, root.path) || isInside(root.path, c.path));
+    || systemAppDirs.some((c) => cmp(c.path, store.rootPath) || isInside(store.rootPath, c.path));
 
   return {
     apps: entries,
-    otherBytes: root.size - listedBytes,
-    totalBytes: root.size,
+    otherBytes: store.size(store.rootId) - listedBytes,
+    totalBytes: store.size(store.rootId),
     appsFolderScanned,
   };
 }
@@ -409,20 +414,20 @@ const plistCache = new Map<string, { bundleId?: string; display?: string }>();
 const PLIST_CONCURRENCY = 4;
 const PLIST_MAX_APPS = 400;
 
-/** Collect *.app bundle nodes sitting in Applications containers of the tree. */
-function collectAppBundles(root: FileNode, ctx: AttributionContext): FileNode[] {
-  const out: FileNode[] = [];
+/** Collect *.app bundle paths sitting in Applications containers of the scan. */
+function collectAppBundles(store: ScanStore, ctx: AttributionContext): { name: string; path: string }[] {
+  const out: { name: string; path: string }[] = [];
   const appDirs = containersFor(ctx).filter((c) => c.kind === 'appBundle').map((c) => c.path.toLowerCase());
-  const walk = (node: FileNode, inApps: boolean): void => {
-    if (!node.children) return;
-    const here = inApps || appDirs.includes(node.path.toLowerCase());
-    for (const child of node.children) {
-      if (child.type !== 'dir') continue;
-      if (here && child.name.toLowerCase().endsWith('.app')) out.push(child);
-      else if (out.length < PLIST_MAX_APPS) walk(child, here);
-    }
+  const walk = (node: number, nodePath: string, inApps: boolean): void => {
+    const here = inApps || appDirs.includes(nodePath.toLowerCase());
+    store.forEachChild(node, (child) => {
+      if (!store.isDir(child)) return;
+      const name = store.name(child);
+      if (here && name.toLowerCase().endsWith('.app')) out.push({ name, path: store.childPath(child, nodePath) });
+      else if (out.length < PLIST_MAX_APPS) walk(child, store.childPath(child, nodePath), here);
+    });
   };
-  walk(root, false);
+  walk(store.rootId, store.rootPath, false);
   return out.slice(0, PLIST_MAX_APPS);
 }
 
@@ -452,8 +457,8 @@ async function readPlistNames(appPath: string): Promise<{ bundleId?: string; dis
 }
 
 /** Augment the curated names map with real bundle ids from scanned .app bundles. */
-async function resolveMacNames(root: FileNode, ctx: AttributionContext): Promise<void> {
-  const bundles = collectAppBundles(root, ctx);
+async function resolveMacNames(store: ScanStore, ctx: AttributionContext): Promise<void> {
+  const bundles = collectAppBundles(store, ctx);
   let i = 0;
   const worker = async (): Promise<void> => {
     while (i < bundles.length) {
@@ -473,20 +478,19 @@ async function resolveMacNames(root: FileNode, ctx: AttributionContext): Promise
 /** Attribution results per scan; entries vanish with the scan itself. */
 const resultCache = new WeakMap<ScanResult, AppAttributionResult>();
 
-export async function getAppAttribution(
-  scan: ScanResult & { root: FileNode },
-): Promise<AppAttributionResult> {
+export async function getAppAttribution(scan: ScanResult): Promise<AppAttributionResult> {
   const cached = resultCache.get(scan);
   if (cached) return cached;
 
+  const store = storeOf(scan);
   const ctx: AttributionContext = {
     platform: process.platform,
     homeDir: os.homedir(),
     names: builtinNames(),
   };
-  if (ctx.platform === 'darwin') await resolveMacNames(scan.root, ctx);
+  if (ctx.platform === 'darwin') await resolveMacNames(store, ctx);
 
-  const result: AppAttributionResult = { scanId: scan.scanId, ...attributeTree(scan.root, ctx) };
+  const result: AppAttributionResult = { scanId: scan.scanId, ...attributeTree(store, ctx) };
   resultCache.set(scan, result);
   return result;
 }

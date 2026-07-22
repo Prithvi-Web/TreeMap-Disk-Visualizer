@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { createReadStream } from 'fs';
-import { FileNode, ScanResult, DuplicateGroup, DuplicateJob } from '../models/types';
+import { ScanResult, DuplicateGroup, DuplicateJob } from '../models/types';
+import { storeOf } from './scanStore';
 import { getScan } from './diskScanner';
 
 /**
@@ -67,44 +68,41 @@ export function getDuplicateJob(scan: ScanResult, minSize: number): DuplicateJob
 }
 
 async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void> {
-  if (!scan.root) throw new Error('Scan has no result tree');
+  if (!scan.store && !scan.root) throw new Error('Scan has no result tree');
+  const store = storeOf(scan);
 
   // Stage 1 — bucket every file by size; only same-size files can be equal.
-  const bySize = new Map<number, FileNode[]>();
-  const stack: FileNode[] = [scan.root];
-  while (stack.length > 0) {
-    const node = stack.pop()!;
-    if (node.type === 'file') {
-      if (node.size >= job.minSize) {
-        const bucket = bySize.get(node.size);
-        if (bucket) bucket.push(node);
-        else bySize.set(node.size, [node]);
-      }
-      continue;
+  // Buckets hold bare ids; a path only materializes when a file gets hashed.
+  const bySize = new Map<number, number[]>();
+  store.eachFile(store.rootId, (id) => {
+    const size = store.size(id);
+    if (size >= job.minSize) {
+      const bucket = bySize.get(size);
+      if (bucket) bucket.push(id);
+      else bySize.set(size, [id]);
     }
-    if (node.children) for (const c of node.children) stack.push(c);
-  }
+  });
 
-  const candidates: FileNode[][] = [];
+  const candidates: number[][] = [];
   for (const bucket of bySize.values()) {
     if (bucket.length > 1) candidates.push(bucket);
   }
   job.toHash = candidates.reduce((sum, b) => sum + b.length, 0);
 
   // Stage 2 — partial hash inside each size bucket.
-  const partialGroups: FileNode[][] = [];
+  const partialGroups: number[][] = [];
   for (const bucket of candidates) {
     if (job.cancelled) return;
-    const byPartial = new Map<string, FileNode[]>();
-    const hashes = await mapConcurrent(bucket, HASH_CONCURRENCY, (f) =>
-      hashFile(f.path, PARTIAL_BYTES).catch(() => null)
+    const byPartial = new Map<string, number[]>();
+    const hashes = await mapConcurrent(bucket, HASH_CONCURRENCY, (id) =>
+      hashFile(store.path(id), PARTIAL_BYTES).catch(() => null)
     );
-    bucket.forEach((file, i) => {
+    bucket.forEach((id, i) => {
       const h = hashes[i];
       if (h === null) return; // unreadable (vanished / permission) — drop it
       const group = byPartial.get(h);
-      if (group) group.push(file);
-      else byPartial.set(h, [file]);
+      if (group) group.push(id);
+      else byPartial.set(h, [id]);
     });
     for (const group of byPartial.values()) {
       if (group.length > 1) partialGroups.push(group);
@@ -115,34 +113,34 @@ async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void
   }
 
   // Stage 3 — full hash for groups that still match.
-  const byFull = new Map<string, FileNode[]>();
+  const byFull = new Map<string, number[]>();
   for (const group of partialGroups) {
     if (job.cancelled) return;
-    const hashes = await mapConcurrent(group, HASH_CONCURRENCY, (f) =>
-      hashFile(f.path).catch(() => null)
+    const hashes = await mapConcurrent(group, HASH_CONCURRENCY, (id) =>
+      hashFile(store.path(id)).catch(() => null)
     );
-    group.forEach((file, i) => {
+    group.forEach((id, i) => {
       const h = hashes[i];
       if (h === null) return;
-      const key = `${file.size}:${h}`;
+      const key = `${store.size(id)}:${h}`;
       const bucket = byFull.get(key);
-      if (bucket) bucket.push(file);
-      else byFull.set(key, [file]);
+      if (bucket) bucket.push(id);
+      else byFull.set(key, [id]);
     });
     job.hashed += group.length;
   }
 
   const groups: DuplicateGroup[] = [];
-  for (const [key, files] of byFull) {
-    if (files.length < 2) continue;
-    const size = files[0].size;
+  for (const [key, ids] of byFull) {
+    if (ids.length < 2) continue;
+    const size = store.size(ids[0]);
     groups.push({
       hash: key.slice(key.indexOf(':') + 1),
       size,
-      count: files.length,
-      reclaimable: size * (files.length - 1),
-      files: files
-        .map((f) => ({ name: f.name, path: f.path, modifiedAt: f.modifiedAt }))
+      count: ids.length,
+      reclaimable: size * (ids.length - 1),
+      files: ids
+        .map((id) => ({ name: store.name(id), path: store.path(id), modifiedAt: store.modifiedAt(id) }))
         .sort((a, b) => b.modifiedAt - a.modifiedAt),
     });
   }

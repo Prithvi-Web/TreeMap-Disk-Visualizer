@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { FileNode, ScanResult, Snapshot, SnapshotDiff, SnapshotDeltaEntry, SnapshotTreeNode } from '../models/types';
 import { readJsonFile, writeJsonFile } from './storage';
+import { ScanStore, TreeSource, asStore, storeOf } from './scanStore';
 
 /**
  * Snapshots — lightweight scan history persisted to snapshots.json in the
@@ -55,16 +56,17 @@ function treeFileName(rootPath: string): string {
  * directory's stored size always reflects its full recursive weight even
  * when its smaller children were dropped.
  */
-function compactTree(node: FileNode, depth: number, perDir: number): SnapshotTreeNode {
-  const out: SnapshotTreeNode = { n: node.name, s: node.size };
-  if (node.type === 'dir') {
+function compactTree(store: ScanStore, id: number, depth: number, perDir: number): SnapshotTreeNode {
+  const out: SnapshotTreeNode = { n: store.name(id), s: store.size(id) };
+  if (store.isDir(id)) {
     out.t = 1;
-    if (depth > 0 && node.children && node.children.length > 0) {
-      const kids = node.children
-        .filter((c) => c.size > 0)
-        .sort((a, b) => b.size - a.size)
+    if (depth > 0) {
+      const kids = store
+        .childIds(id)
+        .filter((c) => store.size(c) > 0)
+        .sort((a, b) => store.size(b) - store.size(a))
         .slice(0, perDir)
-        .map((c) => compactTree(c, depth - 1, perDir));
+        .map((c) => compactTree(store, c, depth - 1, perDir));
       if (kids.length) out.c = kids;
     }
   }
@@ -72,11 +74,12 @@ function compactTree(node: FileNode, depth: number, perDir: number): SnapshotTre
 }
 
 /** Build the stored tree, stepping down the shape ladder until it fits the budget. */
-export function buildSnapshotTree(root: FileNode): SnapshotTreeNode {
-  let tree = compactTree(root, TREE_SHAPES[0].depth, TREE_SHAPES[0].perDir);
+export function buildSnapshotTree(source: TreeSource): SnapshotTreeNode {
+  const store = asStore(source);
+  let tree = compactTree(store, store.rootId, TREE_SHAPES[0].depth, TREE_SHAPES[0].perDir);
   for (let i = 1; i < TREE_SHAPES.length; i++) {
     if (JSON.stringify(tree).length <= TREE_BYTE_BUDGET) break;
-    tree = compactTree(root, TREE_SHAPES[i].depth, TREE_SHAPES[i].perDir);
+    tree = compactTree(store, store.rootId, TREE_SHAPES[i].depth, TREE_SHAPES[i].perDir);
   }
   return tree;
 }
@@ -142,19 +145,21 @@ export async function getSnapshotTreeAt(rootPath: string, at: number): Promise<{
 
 /** Record a completed scan. Called automatically by the scanner. */
 export async function saveSnapshot(scan: ScanResult): Promise<Snapshot | null> {
-  if (scan.status !== 'complete' || !scan.root) return null;
+  if (scan.status !== 'complete' || (!scan.store && !scan.root)) return null;
+  const tree = storeOf(scan);
 
-  const topEntries = (scan.root.children ?? [])
-    .filter((c) => c.size > 0)
-    .sort((a, b) => b.size - a.size)
+  const topEntries = tree
+    .childIds(tree.rootId)
+    .filter((c) => tree.size(c) > 0)
+    .sort((a, b) => tree.size(b) - tree.size(a))
     .slice(0, MAX_TOP_ENTRIES)
-    .map((c) => ({ name: c.name, path: c.path, size: c.size, type: c.type }));
+    .map((c) => ({ name: tree.name(c), path: tree.path(c), size: tree.size(c), type: tree.nodeType(c) }));
 
   const snapshot: Snapshot = {
     id: crypto.randomUUID(),
     rootPath: scan.rootPath,
     takenAt: scan.finishedAt ?? Date.now(),
-    totalSize: scan.root.size,
+    totalSize: tree.size(tree.rootId),
     fileCount: scan.fileCount,
     dirCount: scan.dirCount,
     topEntries,
@@ -182,7 +187,7 @@ export async function saveSnapshot(scan: ScanResult): Promise<Snapshot | null> {
   try {
     const file = treeFileName(snapshot.rootPath);
     const trees = await readJsonFile<TreeStore>(file, {});
-    trees[snapshot.id] = buildSnapshotTree(scan.root);
+    trees[snapshot.id] = buildSnapshotTree(tree);
     const keep = new Set(store.snapshots.filter((s) => s.rootPath === snapshot.rootPath).map((s) => s.id));
     for (const id of Object.keys(trees)) if (!keep.has(id)) delete trees[id];
     await writeJsonFile(file, trees);

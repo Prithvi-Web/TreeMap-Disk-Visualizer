@@ -3,6 +3,7 @@ import { requireScan, clampInt } from './scanRoutes';
 import { getSettings, updateSettings, getIgnoreMatchers } from '../services/settings';
 import { collectCleanupSuggestions } from '../services/cleanupRules';
 import { collectCloudPlaceholders, matchCustomRules, CustomRules } from '../services/scanQueries';
+import { storeOf } from '../services/scanStore';
 import { collectBrowserProfiles } from '../services/browserProfiles';
 import { listNotifications } from '../services/scheduler';
 import { sanitizePath } from '../utils/pathSanitizer';
@@ -64,9 +65,9 @@ settingsRouter.get('/cleanup/suggestions', async (req: Request, res: Response) =
     res.status(202).json({ status: 'running' });
     return;
   }
-  if (!scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  if (!scan.store && !scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   const ignore = await getIgnoreMatchers('suggest');
-  res.json({ scanId: scan.scanId, groups: collectCleanupSuggestions(scan.root, ignore) });
+  res.json({ scanId: scan.scanId, groups: collectCleanupSuggestions(storeOf(scan), ignore) });
 });
 
 /** GET /api/cleanup/browser-profiles?scanId= — per-profile cache breakdown. */
@@ -76,8 +77,8 @@ settingsRouter.get('/cleanup/browser-profiles', (req: Request, res: Response) =>
     res.status(202).json({ status: 'running' });
     return;
   }
-  if (!scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
-  res.json({ scanId: scan.scanId, profiles: collectBrowserProfiles(scan.root) });
+  if (!scan.store && !scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  res.json({ scanId: scan.scanId, profiles: collectBrowserProfiles(storeOf(scan)) });
 });
 
 /**
@@ -94,9 +95,9 @@ settingsRouter.get('/cleanup/cloud-safe', (req: Request, res: Response) => {
     res.status(202).json({ status: 'running' });
     return;
   }
-  if (!scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  if (!scan.store && !scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   const perProvider = clampInt(req.query.perProvider, 300, 1, 2000);
-  res.json({ scanId: scan.scanId, ...collectCloudPlaceholders(scan.root, perProvider) });
+  res.json({ scanId: scan.scanId, ...collectCloudPlaceholders(storeOf(scan), perProvider) });
 });
 
 /**
@@ -113,7 +114,7 @@ settingsRouter.get('/cleanup/rules', (req: Request, res: Response) => {
     res.status(202).json({ status: 'running' });
     return;
   }
-  if (!scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  if (!scan.store && !scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
 
   const rules: CustomRules = {};
   if (req.query.maxAgeMs !== undefined) rules.maxAgeMs = Math.max(0, Number(req.query.maxAgeMs) || 0);
@@ -132,7 +133,7 @@ settingsRouter.get('/cleanup/rules', (req: Request, res: Response) => {
   }
 
   const limit = clampInt(req.query.limit, 500, 1, 2000);
-  res.json({ scanId: scan.scanId, ...matchCustomRules(scan.root, rules, limit, Date.now()) });
+  res.json({ scanId: scan.scanId, ...matchCustomRules(storeOf(scan), rules, limit, Date.now()) });
 });
 
 /** GET /api/notifications?since=<epoch ms> — scheduler growth alerts. */

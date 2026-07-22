@@ -2,20 +2,22 @@ import type { Response } from 'express';
 import PdfPrinter from 'pdfmake/src/printer';
 import type { TDocumentDefinitions, Content, TableCell } from 'pdfmake/interfaces';
 import Excel from 'exceljs';
-import { FileNode, ScanResult } from '../models/types';
+import { ScanResult } from '../models/types';
 import { collectLargestFiles, collectLargestFolders, collectFileTypes } from './diskScanner';
 import { diskUsage } from './diskUsage';
 import { formatBytes } from '../utils/formatBytes';
+import { ScanStore, TreeSource, asStore, storeOf } from './scanStore';
 
 /**
  * reportExport — Feature 17. Turns a completed scan into a downloadable report:
  * streamed CSV or XLSX of every file or folder, and a human-readable PDF
  * summary built with pdfmake's built-in Helvetica (no font files, so it works
  * the same in the packaged desktop app). The treemap image is intentionally
- * not embedded — this is a text report.
+ * not embedded — this is a text report. Rows stream straight off the scan's
+ * packed store; the whole tree is never buffered as objects.
  */
 
-type CompleteScan = ScanResult & { root: NonNullable<ScanResult['root']> };
+type CompleteScan = ScanResult;
 
 /* ----------------------------- CSV ----------------------------- */
 
@@ -23,19 +25,20 @@ function csvField(s: string): string {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-function iso(ms: number): string {
-  const d = new Date(ms);
-  return Number.isFinite(d.getTime()) ? d.toISOString() : '';
-}
-
 function safeBase(scan: CompleteScan): string {
-  return (scan.root.name || 'treemap').replace(/[^\w.-]+/g, '_').slice(0, 60) || 'treemap';
+  const store = storeOf(scan);
+  return (store.name(store.rootId) || 'treemap').replace(/[^\w.-]+/g, '_').slice(0, 60) || 'treemap';
 }
 
 function stamp(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+}
+
+function totalSize(scan: CompleteScan): number {
+  const store = storeOf(scan);
+  return store.size(store.rootId);
 }
 
 /** Stream a CSV of every file, or every folder (recursive sizes), as attachment. */
@@ -45,28 +48,9 @@ export function streamCsv(scan: CompleteScan, mode: 'files' | 'folders', res: Re
   res.setHeader('Content-Disposition', `attachment; filename="treemap-${safeBase(scan)}-${mode}-${stamp()}.csv"`);
   const write = (line: string): void => { res.write(line + '\r\n'); };
 
-  if (mode === 'files') {
-    write('Path,Bytes,Last Modified,Extension');
-    const stack: FileNode[] = [scan.root];
-    while (stack.length) {
-      const n = stack.pop()!;
-      if (n.type === 'file') {
-        write(`${csvField(n.path)},${n.size},${iso(n.modifiedAt)},${csvField(n.extension ?? '')}`);
-      } else if (n.children) {
-        for (const c of n.children) stack.push(c);
-      }
-    }
-  } else {
-    write('Path,Bytes,Last Modified,Files');
-    // Post-order so each folder is written with its recursive file count.
-    const walk = (node: FileNode): number => {
-      if (node.type === 'file') return 1;
-      let count = 0;
-      if (node.children) for (const c of node.children) count += walk(c);
-      write(`${csvField(node.path)},${node.size},${iso(node.modifiedAt)},${count}`);
-      return count;
-    };
-    walk(scan.root);
+  write(mode === 'files' ? 'Path,Bytes,Last Modified,Extension' : 'Path,Bytes,Last Modified,Files');
+  for (const row of reportRows(storeOf(scan), mode)) {
+    write(`${csvField(row[0])},${row[1]},${row[2] ? row[2].toISOString() : ''},${typeof row[3] === 'string' ? csvField(row[3]) : row[3]}`);
   }
   res.end();
 }
@@ -84,28 +68,45 @@ function rowDate(ms: number): Date | null {
 /**
  * The same rows the CSV emits, as typed values (bytes as numbers, dates as
  * Dates) so spreadsheet cells sort and format natively. Pure and exported for
- * tests. Folders mode is post-order, exactly like streamCsv, so every folder
- * row carries its recursive file count.
+ * tests. Folders mode is post-order, exactly like before, so every folder
+ * row carries its recursive file count. Traversal orders replicate the
+ * original stack/recursion exactly.
  */
-export function* reportRows(root: FileNode, mode: 'files' | 'folders'): Generator<ReportRow, void, void> {
+export function* reportRows(source: TreeSource, mode: 'files' | 'folders'): Generator<ReportRow, void, void> {
+  const store = asStore(source);
   if (mode === 'files') {
-    const stack: FileNode[] = [root];
+    // The original pushed children in order onto a pop-stack — last child
+    // first. Kept byte-for-byte so exports diff clean across versions.
+    const stack: number[] = [store.rootId];
     while (stack.length) {
-      const n = stack.pop()!;
-      if (n.type === 'file') yield [n.path, n.size, rowDate(n.modifiedAt), n.extension ?? ''];
-      else if (n.children) for (const c of n.children) stack.push(c);
+      const id = stack.pop() as number;
+      if (!store.isDir(id)) {
+        yield [store.path(id), store.size(id), rowDate(store.modifiedAt(id)), store.extension(id) ?? ''];
+      } else {
+        for (const c of store.childIds(id)) stack.push(c);
+      }
     }
     return;
   }
-  yield* folderRows(root);
-}
-
-function* folderRows(node: FileNode): Generator<ReportRow, number, void> {
-  if (node.type === 'file') return 1;
-  let count = 0;
-  if (node.children) for (const c of node.children) count += yield* folderRows(c);
-  yield [node.path, node.size, rowDate(node.modifiedAt), count];
-  return count;
+  // Post-order with explicit frames (no recursion on deep trees).
+  interface Frame { id: number; kids: number[]; next: number; count: number }
+  const frame = (id: number): Frame => ({ id, kids: store.isDir(id) ? store.childIds(id) : [], next: 0, count: 0 });
+  const stack: Frame[] = [frame(store.rootId)];
+  while (stack.length) {
+    const f = stack[stack.length - 1];
+    if (!store.isDir(f.id)) {
+      stack.pop();
+      if (stack.length) stack[stack.length - 1].count += 1;
+      continue;
+    }
+    if (f.next < f.kids.length) {
+      stack.push(frame(f.kids[f.next++]));
+      continue;
+    }
+    stack.pop();
+    yield [store.path(f.id), store.size(f.id), rowDate(store.modifiedAt(f.id)), f.count];
+    if (stack.length) stack[stack.length - 1].count += f.count;
+  }
 }
 
 /** Excel caps a sheet at 1,048,576 rows — leave room for the header + truncation notice. */
@@ -146,7 +147,7 @@ export async function streamXlsx(
 
   let written = 0;
   let truncated = false;
-  for (const row of reportRows(scan.root, mode)) {
+  for (const row of reportRows(storeOf(scan), mode)) {
     if (written >= maxRows) { truncated = true; break; }
     ws.addRow(row).commit();
     written++;
@@ -208,7 +209,7 @@ function buildDoc(
   const summaryRows: TableCell[][] = [
     [{ text: 'Scanned folder', style: 'k' }, { text: scan.rootPath, style: 'v' }],
     [{ text: 'Generated', style: 'k' }, { text: new Date().toLocaleString(), style: 'v' }],
-    [{ text: 'Total size', style: 'k' }, { text: formatBytes(scan.root.size), style: 'v' }],
+    [{ text: 'Total size', style: 'k' }, { text: formatBytes(totalSize(scan)), style: 'v' }],
     [{ text: 'Files', style: 'k' }, { text: scan.fileCount.toLocaleString(), style: 'v' }],
     [{ text: 'Folders', style: 'k' }, { text: scan.dirCount.toLocaleString(), style: 'v' }],
   ];
@@ -310,9 +311,10 @@ function buildDoc(
 
 /** Generate and stream the PDF report as an attachment. */
 export async function streamPdf(scan: CompleteScan, res: Response): Promise<void> {
-  const topFiles = collectLargestFiles(scan.root, 20, 1);
-  const topFolders = collectLargestFolders(scan.root, 20, 1);
-  const types = collectFileTypes(scan.root).slice(0, 15);
+  const store = storeOf(scan);
+  const topFiles = collectLargestFiles(store, 20, 1);
+  const topFolders = collectLargestFolders(store, 20, 1);
+  const types = collectFileTypes(store).slice(0, 15);
 
   let disk: { total: number; free: number } | null = null;
   try {

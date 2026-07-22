@@ -9,10 +9,10 @@ import {
   OffloadJob,
   ScanResult,
 } from '../models/types';
+import { storeOf, Flag } from './scanStore';
 import { readJsonFile, writeJsonFile } from './storage';
 import { moveToTrash } from './cleaner';
 import { diskUsage } from './diskUsage';
-import { findNodeByPath } from '../utils/treemap';
 import { isInside } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
 
@@ -239,19 +239,22 @@ async function rollback(created: string[], createdDirs: string[], job: OffloadJo
 /* ---------------- offload ---------------- */
 
 export async function startOffload(
-  scan: ScanResult & { root: FileNode },
+  scan: ScanResult,
   paths: string[],
   destDir: string,
 ): Promise<OffloadJob> {
   pruneJobs();
 
-  // Resolve every selected path in the scan tree (also rejects typos early).
+  // Resolve every selected path in the scan (also rejects typos early). Each
+  // selection materializes as a bounded subtree for the copy planner — the
+  // same magnitude as the plan itself, never the whole scan.
+  const store = storeOf(scan);
   const nodes: FileNode[] = [];
   for (const p of paths) {
-    const node = findNodeByPath(scan.root, p);
-    if (!node) throw new AppError(404, 'PATH_NOT_FOUND', `"${p}" is not in this scan`);
-    if (node.virtual) throw new AppError(403, 'VIRTUAL_PATH', 'Entries inside an archive can’t be offloaded — offload the archive itself');
-    nodes.push(node);
+    const id = store.findByPath(p);
+    if (id === -1) throw new AppError(404, 'PATH_NOT_FOUND', `"${p}" is not in this scan`);
+    if (store.flag(id, Flag.Virtual)) throw new AppError(403, 'VIRTUAL_PATH', 'Entries inside an archive can’t be offloaded — offload the archive itself');
+    nodes.push(store.prune(id, { maxNodes: Number.MAX_SAFE_INTEGER }).root);
   }
   // A destination inside a selected folder (or vice versa) would eat itself.
   for (const node of nodes) {

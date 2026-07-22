@@ -1,7 +1,7 @@
 import { FileNode } from '../models/types';
 import { findNodeByPath } from '../utils/treemap';
 import { pruneTree } from '../utils/pruneTree';
-import { ScanStore } from './scanStore';
+import { ScanStore, TreeSource, asStore, Flag } from './scanStore';
 
 /**
  * Aggregate queries the UI used to answer by walking the whole tree itself.
@@ -34,53 +34,42 @@ export interface FileHit {
   cloudPlaceholder?: boolean;
 }
 
-function project(n: FileNode): FileHit {
+function project(store: ScanStore, id: number): FileHit {
   return {
-    name: n.name,
-    path: n.path,
-    size: n.size,
+    name: store.name(id),
+    path: store.path(id),
+    size: store.size(id),
     type: 'file',
-    modifiedAt: n.modifiedAt,
-    extension: n.extension,
-    cloudProvider: n.cloudProvider,
-    cloudPlaceholder: n.cloudPlaceholder,
+    modifiedAt: store.modifiedAt(id),
+    extension: store.extension(id),
+    cloudProvider: store.cloudProvider(id),
+    cloudPlaceholder: store.flag(id, Flag.CloudPlaceholder) || undefined,
   };
-}
-
-/** Visit every real file in the scan, skipping container listings. */
-function eachFile(root: FileNode, fn: (n: FileNode) => void): void {
-  const visit = (node: FileNode): void => {
-    if (node.type === 'file') {
-      fn(node);
-      return;
-    }
-    if (node.children) for (const c of node.children) visit(c);
-  };
-  visit(root);
 }
 
 /**
  * Largest-N by size with flat memory — the same bounded insertion
  * collectLargestFiles uses, so a 4M-file scan never buffers 4M nodes.
+ * Holds bare ids plus their size, nothing heavier.
  */
 class TopN {
-  private items: FileNode[] = [];
+  private items: { id: number; size: number }[] = [];
   constructor(private readonly limit: number) {}
 
-  add(n: FileNode): void {
+  add(id: number, size: number): void {
     if (this.limit <= 0) return;
     const items = this.items;
     if (items.length < this.limit) {
-      items.push(n);
+      items.push({ id, size });
       if (items.length === this.limit) items.sort((a, b) => b.size - a.size);
-    } else if (n.size > items[items.length - 1].size) {
-      items[items.length - 1] = n;
+    } else if (size > items[items.length - 1].size) {
+      items[items.length - 1] = { id, size };
       items.sort((a, b) => b.size - a.size);
     }
   }
 
-  result(): FileNode[] {
-    return [...this.items].sort((a, b) => b.size - a.size);
+  result(): number[] {
+    return [...this.items].sort((a, b) => b.size - a.size).map((x) => x.id);
   }
 }
 
@@ -107,24 +96,26 @@ export interface CloudPlaceholderResult {
  * the whole scan; only the per-group file *lists* are capped, so the UI can
  * state "12,431 files (840 GB)" truthfully while rendering the top few hundred.
  */
-export function collectCloudPlaceholders(root: FileNode, perProvider: number): CloudPlaceholderResult {
+export function collectCloudPlaceholders(source: TreeSource, perProvider: number): CloudPlaceholderResult {
+  const store = asStore(source);
   const groups = new Map<string, { count: number; totalSize: number; top: TopN }>();
   let totalCount = 0;
   let totalSize = 0;
 
-  eachFile(root, (n) => {
-    if (!n.cloudPlaceholder) return;
+  store.eachFile(store.rootId, (id) => {
+    if (!store.flag(id, Flag.CloudPlaceholder)) return;
+    const size = store.size(id);
     totalCount++;
-    totalSize += n.size;
-    const key = n.cloudProvider ?? 'cloud';
+    totalSize += size;
+    const key = store.cloudProvider(id) ?? 'cloud';
     let g = groups.get(key);
     if (!g) {
       g = { count: 0, totalSize: 0, top: new TopN(perProvider) };
       groups.set(key, g);
     }
     g.count++;
-    g.totalSize += n.size;
-    g.top.add(n);
+    g.totalSize += size;
+    g.top.add(id, size);
   });
 
   return {
@@ -135,7 +126,7 @@ export function collectCloudPlaceholders(root: FileNode, perProvider: number): C
         provider,
         count: g.count,
         totalSize: g.totalSize,
-        files: g.top.result().map(project),
+        files: g.top.result().map((id) => project(store, id)),
       }))
       .sort((a, b) => b.totalSize - a.totalSize),
   };
@@ -163,8 +154,8 @@ export interface RuleMatchResult {
 }
 
 /** Duplicate identity, matching the UI's original rule: same name AND size. */
-function dupKey(n: FileNode): string {
-  return n.name + ' ' + n.size;
+function dupKeyOf(store: ScanStore, id: number): string {
+  return store.name(id) + ' ' + store.size(id);
 }
 
 /**
@@ -172,11 +163,12 @@ function dupKey(n: FileNode): string {
  * testable without freezing the clock.
  */
 export function matchCustomRules(
-  root: FileNode,
+  source: TreeSource,
   rules: CustomRules,
   limit: number,
   now: number,
 ): RuleMatchResult {
+  const store = asStore(source);
   const exts = new Set((rules.exts ?? []).filter(Boolean));
   const useAge = typeof rules.maxAgeMs === 'number';
   const useSize = typeof rules.minBytes === 'number';
@@ -187,8 +179,8 @@ export function matchCustomRules(
   let dupKeys: Set<string> | null = null;
   if (rules.dup) {
     const counts = new Map<string, number>();
-    eachFile(root, (n) => {
-      const k = dupKey(n);
+    store.eachFile(store.rootId, (id) => {
+      const k = dupKeyOf(store, id);
       counts.set(k, (counts.get(k) ?? 0) + 1);
     });
     dupKeys = new Set<string>();
@@ -198,16 +190,16 @@ export function matchCustomRules(
   const top = new TopN(limit);
   let matched = 0;
 
-  eachFile(root, (n) => {
-    if (useAge && now - n.modifiedAt < (rules.maxAgeMs as number)) return;
-    if (useSize && n.size < (rules.minBytes as number)) return;
-    if (useExt && !exts.has(n.extension ?? '')) return;
-    if (dupKeys && !dupKeys.has(dupKey(n))) return;
+  store.eachFile(store.rootId, (id) => {
+    if (useAge && now - store.modifiedAt(id) < (rules.maxAgeMs as number)) return;
+    if (useSize && store.size(id) < (rules.minBytes as number)) return;
+    if (useExt && !exts.has(store.extension(id) ?? '')) return;
+    if (dupKeys && !dupKeys.has(dupKeyOf(store, id))) return;
     matched++;
-    top.add(n);
+    top.add(id, store.size(id));
   });
 
-  return { files: top.result().map(project), matched, truncated: matched > limit };
+  return { files: top.result().map((id) => project(store, id)), matched, truncated: matched > limit };
 }
 
 /* ------------------------ Batch node lookup -------------------------- */

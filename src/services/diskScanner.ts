@@ -11,7 +11,7 @@ import { detectContainerKind } from '../utils/containerKind';
 import { neverDescend } from '../utils/mountBoundaries';
 import { forgetScan } from './containerScanner';
 import { findGduBinary, gduScanIntoStore } from './gduScanner';
-import { PackedScanStore, ScanStore, Flag, NodeInput, fileNodeToInput } from './scanStore';
+import { PackedScanStore, ScanStore, Flag, NodeInput, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -117,16 +117,15 @@ export function cancelAllScans(): void {
 }
 
 /**
- * Transitional bridge (Phase 3-4 of the packed-store rewrite): consumers not
- * yet migrated to ScanStore ids keep reading `scan.root` as before. For
- * store-backed scans the object tree materializes lazily and is cached until
- * a store mutation (e.g. a container graft) invalidates it; legacy producers
- * (gdu, cloud) assign a real tree through the setter. Removed in Phase 5.
+ * Compatibility accessor: every production scan's tree lives in `scan.store`,
+ * and no production code path reads or writes `scan.root` (the bounded
+ * mtime-cache write is the one sanctioned reader). Hand-assembled records
+ * (tests) may still assign a tree; it is kept verbatim and consumers reach it
+ * through storeOf(), which wraps it in the ObjectScanStore oracle — running
+ * the exact legacy logic against the exact assigned nodes.
  */
 function defineRootAccessor(scan: ScanResult): void {
   let legacy: FileNode | undefined;
-  let cached: FileNode | undefined;
-  let cachedVersion = -1;
   Object.defineProperty(scan, 'root', {
     enumerable: true,
     configurable: true,
@@ -134,11 +133,7 @@ function defineRootAccessor(scan: ScanResult): void {
       if (legacy) return legacy;
       const store = scan.store;
       if (!store) return undefined;
-      if (!cached || cachedVersion !== store.version) {
-        cached = store.prune(store.rootId, { maxNodes: Number.MAX_SAFE_INTEGER }).root;
-        cachedVersion = store.version;
-      }
-      return cached;
+      return store.prune(store.rootId, { maxNodes: Number.MAX_SAFE_INTEGER }).root;
     },
     set(value: FileNode | undefined) {
       legacy = value;
@@ -617,54 +612,67 @@ async function processDirectory(
 
 /* ---------- Aggregations over a completed scan ---------- */
 
-export function collectLargestFiles(root: FileNode, limit: number, minSize: number) {
-  const top: FileNode[] = [];
+export function collectLargestFiles(source: TreeSource, limit: number, minSize: number) {
+  const store = asStore(source);
+  interface Hit { id: number; size: number }
+  const top: Hit[] = [];
   // Simple bounded insertion keeps memory flat even for huge trees.
-  const visit = (node: FileNode): void => {
-    if (node.type === 'file') {
-      if (node.size < minSize) return;
-      if (top.length < limit) {
-        top.push(node);
-        if (top.length === limit) top.sort((a, b) => b.size - a.size);
-      } else if (node.size > top[top.length - 1].size) {
-        top[top.length - 1] = node;
-        top.sort((a, b) => b.size - a.size);
-      }
-      return;
+  store.eachFile(store.rootId, (id) => {
+    const size = store.size(id);
+    if (size < minSize) return;
+    if (top.length < limit) {
+      top.push({ id, size });
+      if (top.length === limit) top.sort((a, b) => b.size - a.size);
+    } else if (size > top[top.length - 1].size) {
+      top[top.length - 1] = { id, size };
+      top.sort((a, b) => b.size - a.size);
     }
-    if (node.children) for (const c of node.children) visit(c);
-  };
-  visit(root);
+  });
   top.sort((a, b) => b.size - a.size);
-  return top.map((f) => ({
-    name: f.name,
-    path: f.path,
-    size: f.size,
-    extension: f.extension,
-    modifiedAt: f.modifiedAt,
+  return top.map(({ id, size }) => ({
+    name: store.name(id),
+    path: store.path(id),
+    size,
+    extension: store.extension(id),
+    modifiedAt: store.modifiedAt(id),
   }));
 }
 
-export function collectLargestFolders(root: FileNode, limit: number, minSize: number): LargeFolder[] {
+export function collectLargestFolders(source: TreeSource, limit: number, minSize: number): LargeFolder[] {
+  const store = asStore(source);
   const found: LargeFolder[] = [];
-  // Recursive visit returns the subtree's file count so each folder's
-  // recursive count is computed in the same single pass as the walk.
-  const visit = (node: FileNode): number => {
-    if (node.type === 'file') return 1;
-    let count = 0;
-    if (node.children) for (const c of node.children) count += visit(c);
-    if (node !== root && node.size >= minSize) {
-      found.push({
-        name: node.name,
-        path: node.path,
-        size: node.size,
-        fileCount: count,
-        modifiedAt: node.modifiedAt,
-      });
+  // Post-order with an explicit stack (no recursion on deep trees): each
+  // frame accumulates its subtree's recursive file count as children finish.
+  interface Frame { id: number; kids: number[]; next: number; count: number }
+  const frame = (id: number): Frame => ({ id, kids: store.isDir(id) ? store.childIds(id) : [], next: 0, count: 0 });
+  const stack: Frame[] = [frame(store.rootId)];
+  while (stack.length) {
+    const f = stack[stack.length - 1];
+    if (!store.isDir(f.id)) {
+      // A file (containers included — their listings are not files on disk).
+      stack.pop();
+      if (stack.length) stack[stack.length - 1].count += 1;
+      continue;
     }
-    return count;
-  };
-  visit(root);
+    if (f.next < f.kids.length) {
+      stack.push(frame(f.kids[f.next++]));
+      continue;
+    }
+    stack.pop();
+    if (stack.length) {
+      const size = store.size(f.id);
+      if (size >= minSize) {
+        found.push({
+          name: store.name(f.id),
+          path: store.path(f.id),
+          size,
+          fileCount: f.count,
+          modifiedAt: store.modifiedAt(f.id),
+        });
+      }
+      stack[stack.length - 1].count += f.count;
+    }
+  }
   return found.sort((a, b) => b.size - a.size).slice(0, limit);
 }
 
@@ -678,44 +686,64 @@ const EMPTY_FOLDERS_CAP = 1000;
  * count as content. Returns only the topmost empty dirs — trashing those
  * removes everything beneath them anyway.
  */
-export function collectEmptyFolders(root: FileNode, ignoreJunk: boolean): EmptyFoldersResult {
-  const isJunk = (n: FileNode): boolean => ignoreJunk && JUNK_FILES.has(n.name.toLowerCase());
-  const emptyDirs = new Set<FileNode>();
+export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): EmptyFoldersResult {
+  const store = asStore(source);
 
-  // Pass 1, bottom-up: a dir is empty when every child is junk or an empty dir.
-  const compute = (node: FileNode): boolean => {
-    if (node.type === 'file') return isJunk(node);
-    let empty = true;
-    if (node.children) {
-      for (const c of node.children) {
-        if (!compute(c)) empty = false;
-      }
+  // Pass 1, bottom-up: a dir is empty when every child is junk or an empty
+  // dir. Reachability mirrors the original walk — descend through dirs only,
+  // so a container file's virtual listing never participates. Children carry
+  // higher ids than their parents (BFS layout; appends too), so one reverse
+  // pass over the reachable ids resolves children before parents.
+  const ordered: number[] = [];
+  {
+    const walk: number[] = [store.rootId];
+    while (walk.length) {
+      const id = walk.pop() as number;
+      ordered.push(id);
+      if (store.isDir(id)) for (const c of store.childIds(id)) walk.push(c);
     }
-    if (empty) emptyDirs.add(node);
-    return empty;
-  };
-  compute(root);
-  emptyDirs.delete(root); // never offer to trash the scanned root itself
+    ordered.sort((a, b) => a - b);
+  }
+  const empty = new Map<number, boolean>();
+  for (const id of ordered) {
+    empty.set(id, store.isDir(id) ? true : ignoreJunk && JUNK_FILES.has(store.name(id).toLowerCase()));
+  }
+  for (let i = ordered.length - 1; i >= 0; i--) {
+    const id = ordered[i];
+    if (id === store.rootId) continue;
+    const p = store.parent(id);
+    if (!empty.get(id) && empty.get(p)) empty.set(p, false);
+  }
+  let totalCount = 0;
+  for (const id of ordered) {
+    if (id !== store.rootId && store.isDir(id) && empty.get(id)) totalCount++;
+  }
 
   // Pass 2, top-down: report only topmost empty dirs (their whole subtree is
   // empty, so trashing the top one is sufficient) and stop descending there.
+  // Iterator frames reproduce the original recursion's emission order exactly
+  // (descend into a non-empty dir before examining its later siblings).
   const topmost: { name: string; path: string }[] = [];
   let truncated = false;
-  const walk = (node: FileNode): void => {
-    if (!node.children) return;
-    for (const c of node.children) {
-      if (c.type !== 'dir') continue;
-      if (emptyDirs.has(c)) {
-        if (topmost.length < EMPTY_FOLDERS_CAP) topmost.push({ name: c.name, path: c.path });
-        else truncated = true;
-      } else {
-        walk(c);
-      }
+  interface Frame { kids: number[]; next: number }
+  const stack: Frame[] = [{ kids: store.childIds(store.rootId), next: 0 }];
+  while (stack.length) {
+    const f = stack[stack.length - 1];
+    if (f.next >= f.kids.length) {
+      stack.pop();
+      continue;
     }
-  };
-  walk(root);
+    const c = f.kids[f.next++];
+    if (!store.isDir(c)) continue;
+    if (empty.get(c)) {
+      if (topmost.length < EMPTY_FOLDERS_CAP) topmost.push({ name: store.name(c), path: store.path(c) });
+      else truncated = true;
+    } else {
+      stack.push({ kids: store.childIds(c), next: 0 });
+    }
+  }
 
-  return { folders: topmost, totalCount: emptyDirs.size, truncated };
+  return { folders: topmost, totalCount, truncated };
 }
 
 const COMPARE_CAP = 1000;
@@ -727,16 +755,18 @@ const COMPARE_CAP = 1000;
  * size changed. Directories present in both are never emitted themselves —
  * their change is fully explained by the child entries.
  */
-export function compareTrees(rootA: FileNode, rootB: FileNode): { entries: CompareEntry[]; truncated: boolean } {
+export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entries: CompareEntry[]; truncated: boolean } {
+  const a = asStore(sourceA);
+  const b = asStore(sourceB);
   const entries: CompareEntry[] = [];
 
-  const emit = (node: FileNode, sizeA: number | null, sizeB: number | null): void => {
+  const emit = (store: ScanStore, id: number, childPath: string, sizeA: number | null, sizeB: number | null): void => {
     const delta = (sizeB ?? 0) - (sizeA ?? 0);
     if (delta === 0 && sizeA !== null && sizeB !== null) return;
     entries.push({
-      path: node.path,
-      name: node.name,
-      type: node.type,
+      path: childPath,
+      name: store.name(id),
+      type: store.nodeType(id),
       sizeA,
       sizeB,
       delta,
@@ -744,47 +774,47 @@ export function compareTrees(rootA: FileNode, rootB: FileNode): { entries: Compa
     });
   };
 
-  const recurse = (a: FileNode, b: FileNode): void => {
-    const aChildren = new Map<string, FileNode>();
-    for (const c of a.children ?? []) aChildren.set(c.name, c);
+  // Same recursion the object version used (depth = tree depth, as before);
+  // parent paths thread down so nothing walks parent chains per node.
+  const recurse = (aId: number, bId: number, dirPath: string): void => {
+    const aChildren = new Map<string, number>();
+    for (const c of a.childIds(aId)) aChildren.set(a.name(c), c);
 
-    for (const cb of b.children ?? []) {
-      const ca = aChildren.get(cb.name);
-      if (!ca) {
-        emit(cb, null, cb.size); // appeared between scans
+    for (const cb of b.childIds(bId)) {
+      const name = b.name(cb);
+      const childPath = b.childPath(cb, dirPath);
+      const ca = aChildren.get(name);
+      if (ca === undefined) {
+        emit(b, cb, childPath, null, b.size(cb)); // appeared between scans
         continue;
       }
-      aChildren.delete(cb.name);
-      if (ca.type === 'dir' && cb.type === 'dir') {
-        recurse(ca, cb);
-      } else if (ca.size !== cb.size || ca.type !== cb.type) {
-        emit(cb, ca.size, cb.size);
+      aChildren.delete(name);
+      if (a.isDir(ca) && b.isDir(cb)) {
+        recurse(ca, cb, childPath);
+      } else if (a.size(ca) !== b.size(cb) || a.nodeType(ca) !== b.nodeType(cb)) {
+        emit(b, cb, childPath, a.size(ca), b.size(cb));
       }
     }
-    for (const ca of aChildren.values()) {
-      emit(ca, ca.size, null); // disappeared between scans
+    for (const [name, ca] of aChildren) {
+      emit(a, ca, a.childPath(ca, dirPath), a.size(ca), null); // disappeared between scans
     }
   };
 
-  recurse(rootA, rootB);
+  recurse(a.rootId, b.rootId, b.rootPath);
   entries.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
   return { entries: entries.slice(0, COMPARE_CAP), truncated: entries.length > COMPARE_CAP };
 }
 
-export function collectFileTypes(root: FileNode) {
+export function collectFileTypes(source: TreeSource) {
+  const store = asStore(source);
   const byExt = new Map<string, { count: number; totalSize: number }>();
-  const visit = (node: FileNode): void => {
-    if (node.type === 'file') {
-      const ext = node.extension ?? '(none)';
-      const entry = byExt.get(ext) ?? { count: 0, totalSize: 0 };
-      entry.count++;
-      entry.totalSize += node.size;
-      byExt.set(ext, entry);
-      return;
-    }
-    if (node.children) for (const c of node.children) visit(c);
-  };
-  visit(root);
+  store.eachFile(store.rootId, (id) => {
+    const ext = store.extension(id) ?? '(none)';
+    const entry = byExt.get(ext) ?? { count: 0, totalSize: 0 };
+    entry.count++;
+    entry.totalSize += store.size(id);
+    byExt.set(ext, entry);
+  });
   return [...byExt.entries()]
     .map(([ext, v]) => ({ ext, count: v.count, totalSize: v.totalSize }))
     .sort((a, b) => b.totalSize - a.totalSize);

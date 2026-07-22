@@ -1,4 +1,5 @@
-import { FileNode, BrowserProfileGroup, BrowserCacheItem } from '../models/types';
+import { BrowserProfileGroup, BrowserCacheItem } from '../models/types';
+import { ScanStore, TreeSource, asStore } from './scanStore';
 
 /**
  * browserProfiles — Feature 16. Chrome/Edge/Brave/Chromium, Firefox and Safari
@@ -55,24 +56,28 @@ function browserFromPath(p: string): string | null {
   return null;
 }
 
-function dirChild(node: FileNode, name: string): FileNode | undefined {
-  return node.children?.find((c) => c.type === 'dir' && c.name === name);
+function dirChild(store: ScanStore, node: number, name: string): number {
+  let hit = -1;
+  store.forEachChild(node, (c) => {
+    if (hit === -1 && store.isDir(c) && store.name(c) === name) hit = c;
+  });
+  return hit;
 }
 
 /** Build a group from a profile dir given its candidate sub-areas, or null if none exist. */
-function buildGroup(browser: string, profileDir: FileNode, subPaths: SubPath[]): BrowserProfileGroup | null {
+function buildGroup(store: ScanStore, browser: string, profileDir: number, profilePath: string, subPaths: SubPath[]): BrowserProfileGroup | null {
   const items: BrowserCacheItem[] = [];
   for (const sp of subPaths) {
-    const child = dirChild(profileDir, sp.name);
-    if (child && child.size > 0) {
-      items.push({ path: child.path, bytes: child.size, label: sp.label });
+    const child = dirChild(store, profileDir, sp.name);
+    if (child !== -1 && store.size(child) > 0) {
+      items.push({ path: store.childPath(child, profilePath), bytes: store.size(child), label: sp.label });
     }
   }
   if (!items.length) return null;
   return {
     browser,
-    profile: profileDir.name,
-    path: profileDir.path,
+    profile: store.name(profileDir),
+    path: profilePath,
     totalBytes: items.reduce((sum, i) => sum + i.bytes, 0),
     items,
   };
@@ -82,19 +87,20 @@ function buildGroup(browser: string, profileDir: FileNode, subPaths: SubPath[]):
  * Walk the scan tree and surface every browser profile with reclaimable areas.
  * A profile dir is reported once and not descended into.
  */
-export function collectBrowserProfiles(root: FileNode): BrowserProfileGroup[] {
+export function collectBrowserProfiles(source: TreeSource): BrowserProfileGroup[] {
+  const store = asStore(source);
   const groups: BrowserProfileGroup[] = [];
-  const stack: FileNode[] = [root];
+  const stack: { id: number; path: string }[] = [{ id: store.rootId, path: store.rootPath }];
 
   while (stack.length) {
-    const node = stack.pop()!;
-    if (node.type !== 'dir') continue;
+    const { id, path: nodePath } = stack.pop()!;
+    if (!store.isDir(id)) continue;
 
-    const browser = browserFromPath(node.path);
+    const browser = browserFromPath(nodePath);
 
     // Chromium-family profile dir (Default / Profile N / …) under a chromium browser.
-    if (browser && browser !== 'Firefox' && browser !== 'Safari' && CHROMIUM_PROFILE_RE.test(node.name)) {
-      const group = buildGroup(browser, node, CHROMIUM_SUBPATHS);
+    if (browser && browser !== 'Firefox' && browser !== 'Safari' && CHROMIUM_PROFILE_RE.test(store.name(id))) {
+      const group = buildGroup(store, browser, id, nodePath, CHROMIUM_SUBPATHS);
       if (group) {
         groups.push(group);
         continue; // don't descend into a claimed profile
@@ -102,8 +108,8 @@ export function collectBrowserProfiles(root: FileNode): BrowserProfileGroup[] {
     }
 
     // Firefox profile dir: under a firefox/mozilla path and holding a cache2/storage area.
-    if (browser === 'Firefox' && (dirChild(node, 'cache2') || dirChild(node, 'storage') || dirChild(node, 'startupCache'))) {
-      const group = buildGroup('Firefox', node, FIREFOX_SUBPATHS);
+    if (browser === 'Firefox' && (dirChild(store, id, 'cache2') !== -1 || dirChild(store, id, 'storage') !== -1 || dirChild(store, id, 'startupCache') !== -1)) {
+      const group = buildGroup(store, 'Firefox', id, nodePath, FIREFOX_SUBPATHS);
       if (group) {
         groups.push(group);
         continue;
@@ -111,18 +117,18 @@ export function collectBrowserProfiles(root: FileNode): BrowserProfileGroup[] {
     }
 
     // Safari (macOS): the Caches bundle is a single reclaimable area.
-    if (browser === 'Safari' && /com\.apple\.safari$/i.test(node.path) && node.size > 0) {
+    if (browser === 'Safari' && /com\.apple\.safari$/i.test(nodePath) && store.size(id) > 0) {
       groups.push({
         browser: 'Safari',
         profile: 'Default',
-        path: node.path,
-        totalBytes: node.size,
-        items: [{ path: node.path, bytes: node.size, label: 'Website Cache' }],
+        path: nodePath,
+        totalBytes: store.size(id),
+        items: [{ path: nodePath, bytes: store.size(id), label: 'Website Cache' }],
       });
       continue;
     }
 
-    if (node.children) for (const c of node.children) stack.push(c);
+    store.forEachChild(id, (c) => stack.push({ id: c, path: store.childPath(c, nodePath) }));
   }
 
   // Biggest profiles first; stable order of items is preserved from detection.

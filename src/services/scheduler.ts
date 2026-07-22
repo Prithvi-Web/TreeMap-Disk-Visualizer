@@ -127,12 +127,13 @@ async function runScheduled(sched: ScheduleConfig): Promise<void> {
   const scan = await startScan(target);
   await waitForScan(scan.scanId);
   const done = getScan(scan.scanId);
-  if (!done || done.status !== 'complete' || !done.root) return;
+  if (!done || done.status !== 'complete' || !done.store) return;
 
   await maybeForecastAlert(target);
   if (!prev) return; // first record of this folder — nothing to compare against
 
-  const delta = done.root.size - prev.totalSize;
+  const newSize = done.store.size(done.store.rootId);
+  const delta = newSize - prev.totalSize;
   const pct = prev.totalSize > 0 ? (delta / prev.totalSize) * 100 : 0;
   const overBytes = sched.thresholdBytes !== undefined && delta >= sched.thresholdBytes;
   const overPct = sched.thresholdPct !== undefined && pct >= sched.thresholdPct;
@@ -142,7 +143,7 @@ async function runScheduled(sched: ScheduleConfig): Promise<void> {
     path: target,
     message: `${target} grew by ${formatBytes(delta)} (${pct.toFixed(1)}%) since the previous scan`,
     prevSize: prev.totalSize,
-    newSize: done.root.size,
+    newSize,
     delta,
   });
 }

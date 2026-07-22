@@ -1,6 +1,15 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { FileNode, ScanResult, NearDupeCluster, NearDupeJob } from '../models/types';
+import { ScanResult, NearDupeCluster, NearDupeJob } from '../models/types';
+import { storeOf, Flag } from './scanStore';
+
+/** The fields a candidate image needs once the cap has landed. */
+interface CandidateImage {
+  name: string;
+  path: string;
+  size: number;
+  modifiedAt: number;
+}
 import { getScan } from './diskScanner';
 
 /**
@@ -81,7 +90,8 @@ export function getNearDupeJob(scan: ScanResult, threshold: number): NearDupeJob
 }
 
 async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
-  if (!scan.root) throw new Error('Scan has no result tree');
+  if (!scan.store && !scan.root) throw new Error('Scan has no result tree');
+  const store = storeOf(scan);
 
   const decoder = await detectDecoder();
   job.decoder = decoder;
@@ -93,31 +103,28 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
   }
 
   // Collect candidate images, largest first; cap to bound the O(n²) pass.
-  const images: FileNode[] = [];
-  const stack: FileNode[] = [scan.root];
-  while (stack.length > 0) {
-    const node = stack.pop()!;
-    if (node.type === 'file') {
-      if (
-        node.size >= MIN_IMAGE_BYTES &&
-        !node.hardlinkDuplicate &&
-        !node.isSymlink &&
-        !node.cloudPlaceholder &&
-        node.extension &&
-        IMAGE_EXT.has(node.extension)
-      ) {
-        images.push(node);
-      }
-      continue;
-    }
-    if (node.children) for (const c of node.children) stack.push(c);
-  }
-  images.sort((a, b) => b.size - a.size);
+  // Candidates carry bare ids until the cap lands; only the kept set
+  // materializes names and paths.
+  const candidates: { id: number; size: number }[] = [];
+  store.eachFile(store.rootId, (id) => {
+    const size = store.size(id);
+    if (size < MIN_IMAGE_BYTES) return;
+    if (store.flag(id, Flag.HardlinkDup) || store.flag(id, Flag.Symlink) || store.flag(id, Flag.CloudPlaceholder)) return;
+    const ext = store.extension(id);
+    if (ext && IMAGE_EXT.has(ext)) candidates.push({ id, size });
+  });
+  candidates.sort((a, b) => b.size - a.size);
   let truncated = false;
-  if (images.length > MAX_IMAGES) {
-    images.length = MAX_IMAGES;
+  if (candidates.length > MAX_IMAGES) {
+    candidates.length = MAX_IMAGES;
     truncated = true;
   }
+  const images: CandidateImage[] = candidates.map(({ id, size }) => ({
+    name: store.name(id),
+    path: store.path(id),
+    size,
+    modifiedAt: store.modifiedAt(id),
+  }));
   job.toHash = images.length;
 
   // Hash each image; null = unreadable/undecodable (dropped silently).
@@ -125,7 +132,7 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
   const hashes = await mapConcurrent(images, concurrency, (f) => hashImage(f.path, decoder), job);
   if (job.cancelled) return;
 
-  type Entry = { file: FileNode; hash: DHash };
+  type Entry = { file: CandidateImage; hash: DHash };
   const entries: Entry[] = [];
   for (let i = 0; i < images.length; i++) {
     const h = hashes[i];
@@ -331,9 +338,9 @@ async function ffmpegGray(filePath: string): Promise<Buffer> {
  * Increments `job.hashed` as each finishes and bails early on cancellation.
  */
 async function mapConcurrent(
-  items: FileNode[],
+  items: CandidateImage[],
   limit: number,
-  fn: (item: FileNode) => Promise<DHash | null>,
+  fn: (item: CandidateImage) => Promise<DHash | null>,
   job: NearDupeJob
 ): Promise<(DHash | null)[]> {
   const results = new Array<DHash | null>(items.length).fill(null);

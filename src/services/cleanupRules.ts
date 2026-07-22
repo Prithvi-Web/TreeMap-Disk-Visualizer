@@ -1,6 +1,7 @@
 import os from 'os';
 import path from 'path';
-import { FileNode, CleanupSuggestionGroup, CleanupSuggestionItem, SuggestionCategory } from '../models/types';
+import { CleanupSuggestionGroup, CleanupSuggestionItem, SuggestionCategory } from '../models/types';
+import { ScanStore, TreeSource, asStore } from './scanStore';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { samePath, winLocalAppData } from '../utils/osPaths';
 
@@ -274,7 +275,8 @@ function siblingPresent(siblings: Set<string>, patterns: string[]): boolean {
   return false;
 }
 
-export function collectCleanupSuggestions(root: FileNode, ignore: CompiledIgnore[]): CleanupSuggestionGroup[] {
+export function collectCleanupSuggestions(source: TreeSource, ignore: CompiledIgnore[]): CleanupSuggestionGroup[] {
+  const store = asStore(source);
   const downloadsDir = path.join(os.homedir(), 'Downloads');
   const oldDownloadCutoff = Date.now() - OLD_DOWNLOAD_DAYS * 86_400_000;
   const prefixRules = pathRules();
@@ -285,7 +287,8 @@ export function collectCleanupSuggestions(root: FileNode, ignore: CompiledIgnore
     title: string,
     description: string,
     category: SuggestionCategory,
-    node: FileNode,
+    node: number,
+    nodePath: string,
     regenerateCmd?: string,
   ): void => {
     let group = groups.get(id);
@@ -293,66 +296,69 @@ export function collectCleanupSuggestions(root: FileNode, ignore: CompiledIgnore
       group = { id, title, description, items: [], totalSize: 0, category, regenerateCmd };
       groups.set(id, group);
     }
-    group.totalSize += node.size;
+    group.totalSize += store.size(node);
     if (group.items.length < ITEMS_PER_RULE) {
       group.items.push({
-        name: node.name,
-        path: node.path,
-        size: node.size,
-        type: node.type,
-        modifiedAt: node.modifiedAt,
+        name: store.name(node),
+        path: nodePath,
+        size: store.size(node),
+        type: store.nodeType(node),
+        modifiedAt: store.modifiedAt(node),
       } satisfies CleanupSuggestionItem);
     }
   };
 
-  const visit = (node: FileNode): void => {
-    if (!node.children) return;
+  const visit = (node: number, nodePath: string): void => {
+    const kids = store.childIds(node);
+    if (kids.length === 0) return;
     // Sibling basenames in this directory — used to confirm regenerable dirs.
-    const siblings = new Set(node.children.map((c) => c.name.toLowerCase()));
+    const siblings = new Set(kids.map((c) => store.name(c).toLowerCase()));
 
-    for (const child of node.children) {
-      if (matchesAny(ignore, child.path, child.name)) continue; // user said hands off
+    for (const child of kids) {
+      const name = store.name(child);
+      const childPath = store.childPath(child, nodePath);
+      if (matchesAny(ignore, childPath, name)) continue; // user said hands off
 
-      if (child.type === 'dir') {
-        const lower = child.name.toLowerCase();
+      if (store.isDir(child)) {
+        const lower = name.toLowerCase();
 
         // 1. Regenerable project dirs (sibling-gated) — most specific, checked first.
         const regen = REGENERABLE_RULES.find(
           (r) => r.names.has(lower) && (!r.requiresSibling || siblingPresent(siblings, r.requiresSibling)),
         );
-        if (regen && child.size > 0) {
-          add(regen.id, regen.title, regen.description, 'regenerable', child, regen.regenerateCmd);
+        if (regen && store.size(child) > 0) {
+          add(regen.id, regen.title, regen.description, 'regenerable', child, childPath, regen.regenerateCmd);
           continue; // claimed — don't descend
         }
 
         // 2. Generic name rules (build leftovers without a manifest, tool caches).
         const nameRule = NAME_RULES.find((r) => r.type === 'dir' && r.names.has(lower));
-        if (nameRule && child.size > 0) {
-          add(nameRule.id, nameRule.title, nameRule.description, nameRule.category, child);
+        if (nameRule && store.size(child) > 0) {
+          add(nameRule.id, nameRule.title, nameRule.description, nameRule.category, child, childPath);
           continue;
         }
 
         // 3. Absolute OS cache locations.
-        const prefixRule = prefixRules.find((r) => r.prefixes.some((p) => samePath(p, child.path)));
-        if (prefixRule && child.size > 0) {
-          add(prefixRule.id, prefixRule.title, prefixRule.description, prefixRule.category, child);
+        const prefixRule = prefixRules.find((r) => r.prefixes.some((p) => samePath(p, childPath)));
+        if (prefixRule && store.size(child) > 0) {
+          add(prefixRule.id, prefixRule.title, prefixRule.description, prefixRule.category, child, childPath);
           continue;
         }
 
-        visit(child);
+        visit(child, childPath);
         continue;
       }
 
-      const lower = child.name.toLowerCase();
+      const lower = name.toLowerCase();
       const fileRule = NAME_RULES.find((r) => r.type === 'file' && r.names.has(lower));
       if (fileRule) {
-        add(fileRule.id, fileRule.title, fileRule.description, fileRule.category, child);
+        add(fileRule.id, fileRule.title, fileRule.description, fileRule.category, child, childPath);
         continue;
       }
       if (
-        child.size >= OLD_DOWNLOAD_MIN_SIZE &&
-        child.modifiedAt < oldDownloadCutoff &&
-        (child.path.startsWith(downloadsDir + path.sep) || samePath(path.dirname(child.path), downloadsDir))
+        store.size(child) >= OLD_DOWNLOAD_MIN_SIZE &&
+        store.modifiedAt(child) < oldDownloadCutoff &&
+        (childPath.startsWith(downloadsDir + path.sep) || samePath(path.dirname(childPath), downloadsDir))
       ) {
         add(
           'old-downloads',
@@ -360,11 +366,12 @@ export function collectCleanupSuggestions(root: FileNode, ignore: CompiledIgnore
           `Files in Downloads untouched for ${OLD_DOWNLOAD_DAYS}+ days`,
           'junk',
           child,
+          childPath,
         );
       }
     }
   };
-  visit(root);
+  visit(store.rootId, store.rootPath);
 
   return [...groups.values()]
     .map((g) => ({ ...g, items: g.items.sort((a, b) => b.size - a.size) }))

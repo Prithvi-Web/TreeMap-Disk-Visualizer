@@ -126,7 +126,7 @@ cloudRouter.post('/cloud/scan', async (req: Request, res: Response) => {
 cloudRouter.post('/cloud/trash', guardBodyPaths, async (req: Request, res: Response) => {
   const body = req.body as { scanId?: unknown; paths: string[] };
   const scan = requireScan(req, body.scanId);
-  if (scan.status !== 'complete' || !scan.root) throw new AppError(409, 'SCAN_RUNNING', 'Wait for the scan to finish');
+  if (scan.status !== 'complete' || (!scan.store && !scan.root)) throw new AppError(409, 'SCAN_RUNNING', 'Wait for the scan to finish');
   if (!scan.rootPath.startsWith('cloud://')) {
     throw new AppError(400, 'NOT_A_CLOUD_SCAN', 'Use DELETE /api/files for local scans');
   }

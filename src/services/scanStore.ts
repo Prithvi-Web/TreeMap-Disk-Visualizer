@@ -101,6 +101,12 @@ export interface ScanStore {
   name(id: number): string;
   /** Full path, reconstructed exactly as the producer would have written it. */
   path(id: number): string;
+  /**
+   * The path of `child` given its parent's path is already known — O(1) on
+   * every implementation, and byte-exact even for wrapped legacy trees whose
+   * stored paths used inconsistent separators.
+   */
+  childPath(child: number, parentPath: string): string;
   size(id: number): number;
   isDir(id: number): boolean;
   nodeType(id: number): 'file' | 'dir';
@@ -348,8 +354,7 @@ export function pruneStore(store: ScanStore, id: number, options: PruneOptions):
     const kidIds = store.childIds(srcId);
     // Children reuse the parent's already-built path — O(1) per node instead
     // of an O(depth) walk, which is what keeps prune fast on packed stores.
-    const base = copy.path.endsWith(store.sep) ? copy.path : copy.path + store.sep;
-    const copies = kidIds.map((k) => materializeBare(store, k, base + store.name(k)));
+    const copies = kidIds.map((k) => materializeBare(store, k, store.childPath(k, copy.path)));
     copy.children = copies;
     delete copy.pruned; // invariant: never both
     prunedDirs--;
@@ -459,6 +464,10 @@ export class ObjectScanStore implements ScanStore {
 
   path(id: number): string {
     return this.node(id).path;
+  }
+
+  childPath(child: number, _parentPath: string): string {
+    return this.node(child).path;
   }
 
   size(id: number): number {
@@ -1050,6 +1059,10 @@ export class PackedScanStore implements ScanStore {
     return base + segments.join(this.sep);
   }
 
+  childPath(child: number, parentPath: string): string {
+    return parentPath.endsWith(this.sep) ? parentPath + this.name(child) : parentPath + this.sep + this.name(child);
+  }
+
   size(id: number): number {
     this.check(id);
     return this.sizeArr[id];
@@ -1373,6 +1386,34 @@ export class PackedScanStore implements ScanStore {
     if (flags & Flag.GitRepo) node.gitRepo = true;
     return node;
   }
+}
+
+/**
+ * Anything a tree consumer can be handed: a live ScanStore, or a plain
+ * FileNode tree (tests, historical snapshot trees). asStore() normalizes —
+ * a FileNode source is wrapped in the ObjectScanStore oracle, so every
+ * consumer has exactly one id-based implementation.
+ */
+export type TreeSource = FileNode | ScanStore;
+
+export function isScanStore(source: TreeSource): source is ScanStore {
+  return typeof (source as ScanStore).findByPath === 'function' && typeof (source as ScanStore).rootId === 'number';
+}
+
+export function asStore(source: TreeSource): ScanStore {
+  return isScanStore(source) ? source : ObjectScanStore.wrap(source);
+}
+
+/**
+ * The store for a scan record. Every completed scan carries one; the root
+ * fallback only exists for records assembled by hand (tests) — and reading
+ * `scan.root` on a store-backed record would materialize, so the store is
+ * always checked first.
+ */
+export function storeOf(scan: { store?: ScanStore; root?: FileNode }): ScanStore {
+  if (scan.store) return scan.store;
+  if (scan.root) return ObjectScanStore.wrap(scan.root);
+  throw new Error('scan has no store and no tree');
 }
 
 /**

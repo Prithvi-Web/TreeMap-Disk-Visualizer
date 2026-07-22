@@ -62,14 +62,14 @@ export function drainOffloadClients(): void {
 offloadRouter.post('/offload', guardBodyPaths, requireInsideScanRoot, async (req: Request, res: Response) => {
   const body = req.body as { scanId?: unknown; paths: string[]; dest?: unknown };
   const scan = requireScan(req, body.scanId);
-  if (scan.status !== 'complete' || !scan.root) {
+  if (scan.status !== 'complete' || (!scan.store && !scan.root)) {
     throw new AppError(409, 'SCAN_RUNNING', 'Wait for the scan to finish first');
   }
   if (typeof body.dest !== 'string' || !body.dest.trim()) {
     throw new AppError(400, 'DEST_REQUIRED', 'Pick a destination folder');
   }
   const dest = sanitizePath(body.dest);
-  const job = await startOffload(scan as ScanResult & { root: FileNode }, body.paths, dest);
+  const job = await startOffload(scan, body.paths, dest);
   res.status(202).json({ jobId: job.jobId });
 });
 
