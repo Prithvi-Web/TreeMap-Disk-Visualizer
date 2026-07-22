@@ -187,7 +187,9 @@ async function benchPacked(): Promise<void> {
   const before = mem();
   const t0 = performance.now();
 
-  const store = new PackedScanStore('/bench/bench-root', '/');
+  const store = new PackedScanStore('/bench/bench-root', '/', {
+    name: 'bench-root', isDir: true, size: 0, modifiedAt: 1700000000000, isHidden: false,
+  });
   generateTree(NODES, SEED, FANOUT, (n) =>
     n.parent < 0
       ? store.rootId

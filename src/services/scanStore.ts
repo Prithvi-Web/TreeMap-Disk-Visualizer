@@ -165,6 +165,12 @@ export interface ScanStore {
   prune(id: number, opts: PruneOptions): PruneResult;
   /** Metadata-only node — exactly pruneTree(node, {maxNodes: 1}).root. */
   materialize(id: number): FileNode;
+  /**
+   * Optional fast path for prune: one childless FileNode with the exact
+   * emitFileNode property order, reusing `knownPath` when the caller already
+   * built it. Implementations may omit it; pruneStore falls back to accessors.
+   */
+  bareNode?(id: number, knownPath?: string): FileNode;
 }
 
 /* --------------------- shared FileNode emission --------------------- */
@@ -280,10 +286,11 @@ class StoreSizeHeap {
 }
 
 /** Copy one store node to a childless FileNode (the copyNode equivalent). */
-function materializeBare(store: ScanStore, id: number): FileNode {
+function materializeBare(store: ScanStore, id: number, knownPath?: string): FileNode {
+  if (store.bareNode) return store.bareNode(id, knownPath);
   const bag: NodeBag = {
     name: store.name(id),
-    path: store.path(id),
+    path: knownPath ?? store.path(id),
     size: store.size(id),
     isDir: store.isDir(id),
     modifiedAt: store.modifiedAt(id),
@@ -337,7 +344,10 @@ export function pruneStore(store: ScanStore, id: number, options: PruneOptions):
     const { srcId, copy } = heap.pop() as StoreJob;
 
     const kidIds = store.childIds(srcId);
-    const copies = kidIds.map((k) => materializeBare(store, k));
+    // Children reuse the parent's already-built path — O(1) per node instead
+    // of an O(depth) walk, which is what keeps prune fast on packed stores.
+    const base = copy.path.endsWith(store.sep) ? copy.path : copy.path + store.sep;
+    const copies = kidIds.map((k) => materializeBare(store, k, base + store.name(k)));
     copy.children = copies;
     delete copy.pruned; // invariant: never both
     prunedDirs--;
@@ -651,4 +661,716 @@ export class ObjectScanStore implements ScanStore {
   materialize(id: number): FileNode {
     return pruneTree(this.node(id), { maxNodes: 1 }).root;
   }
+}
+
+/* --------------------- PackedScanStore (SoA) --------------------- */
+
+const CONTAINER_KINDS: readonly ContainerKind[] = ['zip', 'tar', 'tgz', 'iso', 'dmg', 'photos', 'docker'];
+const CONTAINER_ID: Record<string, number> = { zip: 1, tar: 2, tgz: 3, iso: 4, dmg: 5, photos: 6, docker: 7 };
+const CLOUD_PROVIDERS: readonly CloudProviderName[] = ['icloud', 'onedrive', 'dropbox'];
+const CLOUD_ID: Record<string, number> = { icloud: 1, onedrive: 2, dropbox: 3 };
+
+const utf8Encoder = new TextEncoder();
+const utf8Decoder = new TextDecoder();
+
+const INITIAL_CAP = 1024;
+const INITIAL_POOL = 16 * 1024;
+
+/**
+ * The packed Structure-of-Arrays store: one scan's whole tree in a handful of
+ * typed arrays (~40-60 bytes/node measured vs ~330 for the object tree), so a
+ * 100M-entry scan fits in RAM. Pure JS + TypedArrays — no native modules.
+ *
+ * Layout after finalize():
+ *  - Nodes are renumbered breadth-first, so every node's children occupy one
+ *    consecutive id range (childStart/childCount — no child list needed) and
+ *    `parent[id] < id` always holds, which makes sumSizes a single reverse
+ *    linear pass with no recursion and no stack-overflow risk on deep trees.
+ *  - Names live in one UTF-8 pool; a node's name is nameOff[id]..nameOff[id+1].
+ *    Paths are never stored — they reconstruct by walking parent links, which
+ *    removes the single biggest memory cost of the object tree.
+ *  - Rare fields (accessedAt, logicalSize, cloudId) are sparse or lazily
+ *    allocated so scans that never produce them never pay for them.
+ *  - Nodes added after finalize (container grafts, watcher-created files) hang
+ *    off a per-parent overflow list, appended after the ranged children so
+ *    insertion order — and therefore emitted JSON — is preserved.
+ *
+ * Ids are only stable after finalize(): producers must not hold ids across it.
+ */
+export class PackedScanStore implements ScanStore {
+  readonly rootId = 0;
+  readonly rootPath: string;
+  readonly sep: string;
+
+  private n = 0;
+  private cap = 0;
+  private finalized = false;
+
+  private parentArr!: Int32Array;
+  private sizeArr!: Float64Array;
+  private mtimeArr!: Float64Array;
+  private flagsArr!: Uint16Array;
+  private extArr!: Uint16Array;
+  private containerArr!: Uint8Array;
+  private cloudProvArr!: Uint8Array;
+  private nameOff!: Uint32Array; // length cap+1; name i = bytes [nameOff[i], nameOff[i+1])
+  private nameBytes!: Uint8Array;
+  private namePoolLen = 0;
+
+  /** Build-time adjacency (freed by finalize). */
+  private firstChild!: Int32Array | null;
+  private lastChild!: Int32Array | null;
+  private nextSibling!: Int32Array | null;
+
+  /** Post-finalize adjacency: consecutive ranges + per-parent overflow. */
+  private childStart!: Uint32Array;
+  private childCnt!: Uint32Array;
+  private extraChildren = new Map<number, number[]>();
+  /** Tombstoned children per parent, so childCount stays O(1)-ish honest. */
+  private removedUnder = new Map<number, number>();
+
+  /** Lazily allocated: only walker scans record atime. */
+  private atimeArr: Float64Array | null = null;
+  private logicalMap = new Map<number, number>();
+  private cloudIdMap = new Map<number, string>();
+
+  /** Interned extensions; index 0 = "no extension". */
+  private extDict: string[] = [''];
+  private extLookup = new Map<string, number>();
+  /** Overflow for the (never observed) >65535-distinct-extensions case. */
+  private extOverflow: Map<number, string> | null = null;
+
+  constructor(rootPath: string, sep: string, rootFields: NodeInput) {
+    this.rootPath = rootPath;
+    this.sep = sep;
+    this.allocate(INITIAL_CAP);
+    this.firstChild = new Int32Array(INITIAL_CAP).fill(-1);
+    this.lastChild = new Int32Array(INITIAL_CAP).fill(-1);
+    this.nextSibling = new Int32Array(INITIAL_CAP).fill(-1);
+    this.writeNode(-1, rootFields);
+  }
+
+  get count(): number {
+    return this.n;
+  }
+
+  /* ---------- storage plumbing ---------- */
+
+  private allocate(cap: number): void {
+    this.cap = cap;
+    this.parentArr = new Int32Array(cap);
+    this.sizeArr = new Float64Array(cap);
+    this.mtimeArr = new Float64Array(cap);
+    this.flagsArr = new Uint16Array(cap);
+    this.extArr = new Uint16Array(cap);
+    this.containerArr = new Uint8Array(cap);
+    this.cloudProvArr = new Uint8Array(cap);
+    this.nameOff = new Uint32Array(cap + 1);
+    this.nameBytes = new Uint8Array(INITIAL_POOL);
+  }
+
+  private grow(): void {
+    const cap = this.cap * 2;
+    const copy = <T extends Int32Array | Float64Array | Uint16Array | Uint8Array | Uint32Array>(
+      src: T,
+      dst: T,
+    ): T => {
+      dst.set(src as never);
+      return dst;
+    };
+    this.parentArr = copy(this.parentArr, new Int32Array(cap));
+    this.sizeArr = copy(this.sizeArr, new Float64Array(cap));
+    this.mtimeArr = copy(this.mtimeArr, new Float64Array(cap));
+    this.flagsArr = copy(this.flagsArr, new Uint16Array(cap));
+    this.extArr = copy(this.extArr, new Uint16Array(cap));
+    this.containerArr = copy(this.containerArr, new Uint8Array(cap));
+    this.cloudProvArr = copy(this.cloudProvArr, new Uint8Array(cap));
+    this.nameOff = copy(this.nameOff, new Uint32Array(cap + 1));
+    if (this.atimeArr) this.atimeArr = copy(this.atimeArr, new Float64Array(cap));
+    if (this.finalized) {
+      this.childStart = copy(this.childStart, new Uint32Array(cap));
+      this.childCnt = copy(this.childCnt, new Uint32Array(cap));
+    } else {
+      this.firstChild = copy(this.firstChild as Int32Array, new Int32Array(cap).fill(-1));
+      this.lastChild = copy(this.lastChild as Int32Array, new Int32Array(cap).fill(-1));
+      this.nextSibling = copy(this.nextSibling as Int32Array, new Int32Array(cap).fill(-1));
+    }
+    this.cap = cap;
+  }
+
+  private appendName(name: string): void {
+    // encodeInto with guaranteed headroom (UTF-8 is at most 3 bytes per UTF-16 unit).
+    const need = this.namePoolLen + name.length * 3;
+    if (need > this.nameBytes.length) {
+      let len = this.nameBytes.length;
+      while (len < need) len *= 2;
+      const bigger = new Uint8Array(len);
+      bigger.set(this.nameBytes);
+      this.nameBytes = bigger;
+    }
+    const { written } = utf8Encoder.encodeInto(name, this.nameBytes.subarray(this.namePoolLen));
+    this.namePoolLen += written;
+  }
+
+  private internExt(ext: string | undefined, id: number): number {
+    if (ext === undefined) return 0;
+    let extId = this.extLookup.get(ext);
+    if (extId === undefined) {
+      if (this.extDict.length >= 0xffff) {
+        (this.extOverflow ??= new Map()).set(id, ext);
+        return 0xffff;
+      }
+      extId = this.extDict.length;
+      this.extDict.push(ext);
+      this.extLookup.set(ext, extId);
+    }
+    return extId;
+  }
+
+  private writeNode(parent: number, fields: NodeInput): number {
+    if (this.n === this.cap) this.grow();
+    const id = this.n++;
+    this.parentArr[id] = parent;
+    this.sizeArr[id] = fields.size;
+    this.mtimeArr[id] = fields.modifiedAt;
+    let flags = 0;
+    if (fields.isDir) flags |= Flag.Dir | Flag.HasChildArray;
+    if (fields.isHidden) flags |= Flag.Hidden;
+    if (fields.hardlinkDuplicate) flags |= Flag.HardlinkDup;
+    if (fields.isSymlink) flags |= Flag.Symlink;
+    if (fields.cloudPlaceholder) flags |= Flag.CloudPlaceholder;
+    if (fields.gitRepo) flags |= Flag.GitRepo;
+    if (fields.virtual) flags |= Flag.Virtual;
+    if (fields.accessedAt !== undefined) {
+      flags |= Flag.HasAccessed;
+      (this.atimeArr ??= new Float64Array(this.cap))[id] = fields.accessedAt;
+    }
+    this.flagsArr[id] = flags;
+    this.extArr[id] = this.internExt(fields.extension, id);
+    this.containerArr[id] = fields.container ? (CONTAINER_ID[fields.container] ?? 0) : 0;
+    this.cloudProvArr[id] = fields.cloudProvider ? (CLOUD_ID[fields.cloudProvider] ?? 0) : 0;
+    if (fields.logicalSize !== undefined) this.logicalMap.set(id, fields.logicalSize);
+    if (fields.cloudId !== undefined) this.cloudIdMap.set(id, fields.cloudId);
+    this.appendName(fields.name);
+    this.nameOff[id + 1] = this.namePoolLen;
+    return id;
+  }
+
+  private check(id: number): void {
+    if (id < 0 || id >= this.n) throw new RangeError(`PackedScanStore: no node ${id}`);
+  }
+
+  /* ---------- build ---------- */
+
+  addNode(parent: number, fields: NodeInput): number {
+    this.check(parent);
+    const id = this.writeNode(parent, fields);
+    if (this.finalized) {
+      let extras = this.extraChildren.get(parent);
+      if (!extras) {
+        extras = [];
+        this.extraChildren.set(parent, extras);
+      }
+      extras.push(id);
+    } else {
+      const last = (this.lastChild as Int32Array)[parent];
+      if (last === -1) (this.firstChild as Int32Array)[parent] = id;
+      else (this.nextSibling as Int32Array)[last] = id;
+      (this.lastChild as Int32Array)[parent] = id;
+    }
+    return id;
+  }
+
+  finalize(): void {
+    if (this.finalized) return;
+    const n = this.n;
+    const first = this.firstChild as Int32Array;
+    const next = this.nextSibling as Int32Array;
+
+    // Breadth-first renumbering: children get consecutive new ids, assigned
+    // as their parent is visited, so ranges need no separate child list.
+    const bfsOld = new Uint32Array(n); // old id at each new position
+    const oldToNew = new Int32Array(n);
+    const childStart = new Uint32Array(n);
+    const childCnt = new Uint32Array(n);
+    let assigned = 1;
+    for (let newIdx = 0; newIdx < n; newIdx++) {
+      const old = bfsOld[newIdx];
+      childStart[newIdx] = assigned;
+      let cnt = 0;
+      for (let c = first[old]; c !== -1; c = next[c]) {
+        oldToNew[c] = assigned;
+        bfsOld[assigned] = c;
+        assigned++;
+        cnt++;
+      }
+      childCnt[newIdx] = cnt;
+    }
+
+    // Permute every column into right-sized arrays (also trims capacity).
+    const parentArr = new Int32Array(n);
+    const sizeArr = new Float64Array(n);
+    const mtimeArr = new Float64Array(n);
+    const flagsArr = new Uint16Array(n);
+    const extArr = new Uint16Array(n);
+    const containerArr = new Uint8Array(n);
+    const cloudProvArr = new Uint8Array(n);
+    const nameOff = new Uint32Array(n + 1);
+    const nameBytes = new Uint8Array(this.namePoolLen);
+    const atimeArr = this.atimeArr ? new Float64Array(n) : null;
+
+    let namePos = 0;
+    for (let newIdx = 0; newIdx < n; newIdx++) {
+      const old = bfsOld[newIdx];
+      parentArr[newIdx] = old === 0 ? -1 : oldToNew[this.parentArr[old]];
+      sizeArr[newIdx] = this.sizeArr[old];
+      mtimeArr[newIdx] = this.mtimeArr[old];
+      flagsArr[newIdx] = this.flagsArr[old];
+      extArr[newIdx] = this.extArr[old];
+      containerArr[newIdx] = this.containerArr[old];
+      cloudProvArr[newIdx] = this.cloudProvArr[old];
+      if (atimeArr) atimeArr[newIdx] = (this.atimeArr as Float64Array)[old];
+      const from = this.nameOff[old];
+      const to = this.nameOff[old + 1];
+      nameBytes.set(this.nameBytes.subarray(from, to), namePos);
+      nameOff[newIdx] = namePos;
+      namePos += to - from;
+    }
+    nameOff[n] = namePos;
+
+    if (this.logicalMap.size > 0) {
+      const rekeyed = new Map<number, number>();
+      for (const [old, v] of this.logicalMap) rekeyed.set(oldToNew[old], v);
+      this.logicalMap = rekeyed;
+    }
+    if (this.cloudIdMap.size > 0) {
+      const rekeyed = new Map<number, string>();
+      for (const [old, v] of this.cloudIdMap) rekeyed.set(oldToNew[old], v);
+      this.cloudIdMap = rekeyed;
+    }
+    if (this.extOverflow && this.extOverflow.size > 0) {
+      const rekeyed = new Map<number, string>();
+      for (const [old, v] of this.extOverflow) rekeyed.set(oldToNew[old], v);
+      this.extOverflow = rekeyed;
+    }
+
+    this.parentArr = parentArr;
+    this.sizeArr = sizeArr;
+    this.mtimeArr = mtimeArr;
+    this.flagsArr = flagsArr;
+    this.extArr = extArr;
+    this.containerArr = containerArr;
+    this.cloudProvArr = cloudProvArr;
+    this.nameOff = nameOff;
+    this.nameBytes = nameBytes;
+    this.namePoolLen = namePos;
+    this.atimeArr = atimeArr;
+    this.childStart = childStart;
+    this.childCnt = childCnt;
+    this.cap = n;
+    this.firstChild = null;
+    this.lastChild = null;
+    this.nextSibling = null;
+    this.finalized = true;
+  }
+
+  sumSizes(): void {
+    this.requireFinal();
+    const n = this.n;
+    const flags = this.flagsArr;
+    const sizes = this.sizeArr;
+    const parents = this.parentArr;
+    for (let id = 0; id < n; id++) {
+      if (flags[id] & Flag.Dir) sizes[id] = 0;
+    }
+    // parent[id] < id (BFS order; post-finalize appends also satisfy it), so
+    // one reverse pass sums every directory bottom-up. A child adds to its
+    // parent only when the parent is a dir — a container file keeps its own
+    // disk size no matter what virtual listing hangs beneath it.
+    for (let id = n - 1; id >= 1; id--) {
+      if (flags[id] & Flag.Removed) continue;
+      const p = parents[id];
+      if (flags[p] & Flag.Dir) sizes[p] += sizes[id];
+    }
+  }
+
+  private requireFinal(): void {
+    if (!this.finalized) throw new Error('PackedScanStore: finalize() first');
+  }
+
+  /* ---------- read ---------- */
+
+  name(id: number): string {
+    this.check(id);
+    const from = this.nameOff[id];
+    const to = this.nameOff[id + 1];
+    const len = to - from;
+    // Fast path: short ASCII names decode without a TextDecoder call.
+    if (len <= 32) {
+      let ascii = true;
+      for (let i = from; i < to; i++) {
+        if (this.nameBytes[i] > 127) {
+          ascii = false;
+          break;
+        }
+      }
+      if (ascii) {
+        let s = '';
+        for (let i = from; i < to; i++) s += String.fromCharCode(this.nameBytes[i]);
+        return s;
+      }
+    }
+    return utf8Decoder.decode(this.nameBytes.subarray(from, to));
+  }
+
+  path(id: number): string {
+    this.check(id);
+    if (id === this.rootId) return this.rootPath;
+    const segments: string[] = [];
+    for (let cur = id; cur !== this.rootId; cur = this.parentArr[cur]) {
+      segments.push(this.name(cur));
+    }
+    segments.reverse();
+    const base = this.rootPath.endsWith(this.sep) ? this.rootPath : this.rootPath + this.sep;
+    return base + segments.join(this.sep);
+  }
+
+  size(id: number): number {
+    this.check(id);
+    return this.sizeArr[id];
+  }
+
+  isDir(id: number): boolean {
+    this.check(id);
+    return (this.flagsArr[id] & Flag.Dir) !== 0;
+  }
+
+  nodeType(id: number): 'file' | 'dir' {
+    return this.isDir(id) ? 'dir' : 'file';
+  }
+
+  modifiedAt(id: number): number {
+    this.check(id);
+    return this.mtimeArr[id];
+  }
+
+  flag(id: number, f: Flag): boolean {
+    this.check(id);
+    return (this.flagsArr[id] & f) !== 0;
+  }
+
+  extension(id: number): string | undefined {
+    this.check(id);
+    const extId = this.extArr[id];
+    if (extId === 0) return undefined;
+    if (extId === 0xffff && this.extOverflow) {
+      const hit = this.extOverflow.get(id);
+      if (hit !== undefined) return hit;
+    }
+    return this.extDict[extId];
+  }
+
+  accessedAt(id: number): number | undefined {
+    this.check(id);
+    if (!(this.flagsArr[id] & Flag.HasAccessed) || !this.atimeArr) return undefined;
+    return this.atimeArr[id];
+  }
+
+  container(id: number): ContainerKind | undefined {
+    this.check(id);
+    const k = this.containerArr[id];
+    return k === 0 ? undefined : CONTAINER_KINDS[k - 1];
+  }
+
+  cloudProvider(id: number): CloudProviderName | undefined {
+    this.check(id);
+    const p = this.cloudProvArr[id];
+    return p === 0 ? undefined : CLOUD_PROVIDERS[p - 1];
+  }
+
+  cloudId(id: number): string | undefined {
+    this.check(id);
+    return this.cloudIdMap.get(id);
+  }
+
+  logicalSize(id: number): number | undefined {
+    this.check(id);
+    return this.logicalMap.get(id);
+  }
+
+  parent(id: number): number {
+    this.check(id);
+    return this.parentArr[id];
+  }
+
+  /* ---------- mutate ---------- */
+
+  setSize(id: number, size: number): void {
+    this.check(id);
+    this.sizeArr[id] = size;
+  }
+
+  setModifiedAt(id: number, ms: number): void {
+    this.check(id);
+    this.mtimeArr[id] = ms;
+  }
+
+  setAccessedAt(id: number, ms: number | undefined): void {
+    this.check(id);
+    if (ms === undefined) {
+      this.flagsArr[id] &= ~Flag.HasAccessed;
+      return;
+    }
+    (this.atimeArr ??= new Float64Array(this.cap))[id] = ms;
+    this.flagsArr[id] |= Flag.HasAccessed;
+  }
+
+  setFlag(id: number, f: Flag, on: boolean): void {
+    this.check(id);
+    if (f === Flag.Dir || f === Flag.HasChildArray || f === Flag.HasAccessed || f === Flag.Removed) {
+      throw new Error(`setFlag: flag ${f} is structural, not settable`);
+    }
+    if (on) this.flagsArr[id] |= f;
+    else this.flagsArr[id] &= ~f;
+  }
+
+  addToSize(id: number, delta: number): void {
+    this.check(id);
+    this.sizeArr[id] += delta;
+  }
+
+  removeNode(id: number): void {
+    this.check(id);
+    if (id === this.rootId) throw new Error('removeNode: cannot remove the root');
+    if (this.flagsArr[id] & Flag.Removed) return;
+    this.flagsArr[id] |= Flag.Removed;
+    const p = this.parentArr[id];
+    this.removedUnder.set(p, (this.removedUnder.get(p) ?? 0) + 1);
+  }
+
+  /* ---------- traverse ---------- */
+
+  childCount(id: number): number {
+    this.check(id);
+    this.requireFinal();
+    const ranged = id < this.childStart.length ? this.childCnt[id] : 0;
+    const extras = this.extraChildren.get(id)?.length ?? 0;
+    return ranged + extras - (this.removedUnder.get(id) ?? 0);
+  }
+
+  hasChildArray(id: number): boolean {
+    this.check(id);
+    return (this.flagsArr[id] & Flag.HasChildArray) !== 0;
+  }
+
+  childIds(id: number): number[] {
+    const out: number[] = [];
+    this.forEachChild(id, (c) => out.push(c));
+    return out;
+  }
+
+  forEachChild(id: number, fn: (child: number) => void): void {
+    this.check(id);
+    this.requireFinal();
+    const flags = this.flagsArr;
+    if (id < this.childStart.length) {
+      const start = this.childStart[id];
+      const end = start + this.childCnt[id];
+      for (let c = start; c < end; c++) {
+        if (!(flags[c] & Flag.Removed)) fn(c);
+      }
+    }
+    const extras = this.extraChildren.get(id);
+    if (extras) {
+      for (const c of extras) {
+        if (!(flags[c] & Flag.Removed)) fn(c);
+      }
+    }
+  }
+
+  childByName(id: number, name: string): number {
+    this.check(id);
+    this.requireFinal();
+    const bytes = utf8Encoder.encode(name);
+    let hit = -1;
+    this.forEachChild(id, (c) => {
+      if (hit === -1 && this.nameEquals(c, bytes)) hit = c;
+    });
+    return hit;
+  }
+
+  private nameEquals(id: number, bytes: Uint8Array): boolean {
+    const from = this.nameOff[id];
+    if (this.nameOff[id + 1] - from !== bytes.length) return false;
+    for (let i = 0; i < bytes.length; i++) {
+      if (this.nameBytes[from + i] !== bytes[i]) return false;
+    }
+    return true;
+  }
+
+  eachFile(id: number, fn: (fileId: number) => void): void {
+    this.check(id);
+    this.requireFinal();
+    // Iterative pre-order matching the recursive reference: files are visited
+    // and never descended into, so container listings stay invisible.
+    const stack: number[] = [id];
+    while (stack.length) {
+      const cur = stack.pop() as number;
+      if (!(this.flagsArr[cur] & Flag.Dir)) {
+        fn(cur);
+        continue;
+      }
+      const kids = this.childIds(cur);
+      for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+    }
+  }
+
+  eachNode(id: number, fn: (nodeId: number) => void): void {
+    this.check(id);
+    this.requireFinal();
+    const stack: number[] = [id];
+    while (stack.length) {
+      const cur = stack.pop() as number;
+      fn(cur);
+      const kids = this.childIds(cur);
+      for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+    }
+  }
+
+  /* ---------- lookup ---------- */
+
+  findByPath(path: string): number {
+    this.requireFinal();
+    if (path === this.rootPath) return this.rootId;
+    const base = this.rootPath.endsWith(this.sep) ? this.rootPath : this.rootPath + this.sep;
+    if (!path.startsWith(base)) return -1;
+    const segments = path.slice(base.length).split(this.sep).map((s) => utf8Encoder.encode(s));
+    if (segments.length === 0) return -1;
+
+    // Explicit-stack DFS with sibling backtracking (duplicate names resolve
+    // exactly as findNodeByPath does: first matching child whose subtree
+    // resolves wins), and no recursion so depth can't overflow the stack.
+    interface Frame {
+      node: number;
+      /** Candidate children of `node` matching segments[depth], in order. */
+      candidates: number[];
+      next: number;
+    }
+    const candidatesFor = (node: number, depth: number): number[] => {
+      // Only dirs and containers can be descended into (findNodeByPath's guard).
+      if (!(this.flagsArr[node] & Flag.Dir) && this.containerArr[node] === 0) return [];
+      if (!(this.flagsArr[node] & Flag.HasChildArray)) return [];
+      const seg = segments[depth];
+      const out: number[] = [];
+      this.forEachChild(node, (c) => {
+        if (this.nameEquals(c, seg)) out.push(c);
+      });
+      return out;
+    };
+
+    const stack: Frame[] = [{ node: this.rootId, candidates: candidatesFor(this.rootId, 0), next: 0 }];
+    while (stack.length) {
+      const frame = stack[stack.length - 1];
+      if (frame.next >= frame.candidates.length) {
+        stack.pop();
+        continue;
+      }
+      const child = frame.candidates[frame.next++];
+      if (stack.length === segments.length) return child;
+      stack.push({ node: child, candidates: candidatesFor(child, stack.length), next: 0 });
+    }
+    return -1;
+  }
+
+  /* ---------- graft ---------- */
+
+  ingestSubtree(parentId: number, children: FileNode[]): void {
+    this.check(parentId);
+    this.requireFinal();
+    if (this.childCount(parentId) > 0) {
+      throw new Error('ingestSubtree: parent already has children');
+    }
+    this.flagsArr[parentId] |= Flag.HasChildArray;
+    const graft = (parent: number, node: FileNode): void => {
+      const id = this.addNode(parent, fileNodeToInput(node));
+      if (node.children) {
+        this.flagsArr[id] |= Flag.HasChildArray;
+        for (const c of node.children) graft(id, c);
+      }
+    };
+    for (const c of children) graft(parentId, c);
+  }
+
+  /* ---------- materialize ---------- */
+
+  prune(id: number, opts: PruneOptions): PruneResult {
+    this.check(id);
+    this.requireFinal();
+    return pruneStore(this, id, opts);
+  }
+
+  materialize(id: number): FileNode {
+    return this.prune(id, { maxNodes: 1 }).root;
+  }
+
+  /**
+   * Column-direct materialization for prune's hot loop — no accessor calls,
+   * no intermediate bag. Property order matches emitFileNode exactly (the
+   * differential fuzz compares the two byte for byte).
+   */
+  bareNode(id: number, knownPath?: string): FileNode {
+    const flags = this.flagsArr[id];
+    const node: FileNode = {
+      name: this.name(id),
+      path: knownPath ?? this.path(id),
+      size: this.sizeArr[id],
+      type: flags & Flag.Dir ? 'dir' : 'file',
+      modifiedAt: this.mtimeArr[id],
+      isHidden: (flags & Flag.Hidden) !== 0,
+    };
+    if (flags & Flag.Virtual) {
+      node.virtual = true;
+      const logical = this.logicalMap.get(id);
+      if (logical !== undefined) node.logicalSize = logical;
+      const ext = this.extArr[id];
+      if (ext !== 0) node.extension = this.extension(id);
+      return node;
+    }
+    const cid = this.cloudIdMap.get(id);
+    if (cid !== undefined) node.cloudId = cid;
+    if (flags & Flag.HasAccessed && this.atimeArr) node.accessedAt = this.atimeArr[id];
+    const ext = this.extArr[id];
+    if (ext !== 0) node.extension = this.extension(id);
+    const kind = this.containerArr[id];
+    if (kind !== 0) node.container = CONTAINER_KINDS[kind - 1];
+    if (flags & Flag.Symlink) node.isSymlink = true;
+    if (flags & Flag.CloudPlaceholder) node.cloudPlaceholder = true;
+    const prov = this.cloudProvArr[id];
+    if (prov !== 0) node.cloudProvider = CLOUD_PROVIDERS[prov - 1];
+    if (flags & Flag.HardlinkDup) node.hardlinkDuplicate = true;
+    if (flags & Flag.GitRepo) node.gitRepo = true;
+    return node;
+  }
+}
+
+/** Every FileNode field, restated as a NodeInput (graft/cache ingestion). */
+export function fileNodeToInput(n: FileNode): NodeInput {
+  return {
+    name: n.name,
+    isDir: n.type === 'dir',
+    size: n.size,
+    modifiedAt: n.modifiedAt,
+    isHidden: n.isHidden,
+    extension: n.extension,
+    accessedAt: n.accessedAt,
+    hardlinkDuplicate: n.hardlinkDuplicate,
+    isSymlink: n.isSymlink,
+    cloudPlaceholder: n.cloudPlaceholder,
+    cloudProvider: n.cloudProvider,
+    gitRepo: n.gitRepo,
+    container: n.container,
+    cloudId: n.cloudId,
+    virtual: n.virtual,
+    logicalSize: n.logicalSize,
+  };
 }
