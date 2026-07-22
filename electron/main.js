@@ -211,27 +211,63 @@ function setupAutoUpdates() {
     return;
   }
 
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  if (process.platform === 'darwin') {
+    // This build is unsigned, and Squirrel.Mac refuses to install an update
+    // into an unsigned app. The old flow still downloaded updates and
+    // announced "restart to apply" — the install then silently failed,
+    // leaving people convinced they were current while old code kept
+    // running (issue #14 was filed from exactly that state, crashing on a
+    // bug fixed two releases earlier). On macOS: check only, then hand the
+    // user the real download.
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = false;
+    const offered = new Set();
+    autoUpdater.on('update-available', (info) => {
+      if (offered.has(info.version)) return; // one offer per version per run
+      offered.add(info.version);
+      dialog
+        .showMessageBox({
+          type: 'info',
+          buttons: ['Download Update', 'Later'],
+          defaultId: 0,
+          cancelId: 1,
+          message: `TreeMap ${info.version} is available.`,
+          detail:
+            `You have ${app.getVersion()}. TreeMap can't update itself on macOS, ` +
+            `so the download page will open — get "TreeMap-${info.version}-arm64.dmg", ` +
+            `open it, and drag TreeMap into Applications.`,
+        })
+        .then(({ response }) => {
+          if (response === 0) {
+            shell.openExternal('https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/releases/latest');
+          }
+        })
+        .catch(() => {});
+    });
+  } else {
+    // Windows (NSIS) installs unsigned updates fine — keep the full flow.
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
 
-  autoUpdater.on('update-downloaded', (info) => {
-    const message = `TreeMap ${info.version} has been downloaded.`;
-    dialog
-      .showMessageBox({
-        type: 'info',
-        buttons: ['Restart Now', 'Later'],
-        defaultId: 0,
-        cancelId: 1,
-        message,
-        detail: 'Restart to apply the update — or it installs automatically the next time you quit.',
-      })
-      .then(({ response }) => {
-        if (response === 0) autoUpdater.quitAndInstall();
-      })
-      .catch(() => {});
-  });
+    autoUpdater.on('update-downloaded', (info) => {
+      const message = `TreeMap ${info.version} has been downloaded.`;
+      dialog
+        .showMessageBox({
+          type: 'info',
+          buttons: ['Restart Now', 'Later'],
+          defaultId: 0,
+          cancelId: 1,
+          message,
+          detail: 'Restart to apply the update — or it installs automatically the next time you quit.',
+        })
+        .then(({ response }) => {
+          if (response === 0) autoUpdater.quitAndInstall();
+        })
+        .catch(() => {});
+    });
+  }
   autoUpdater.on('error', (err) => {
-    // Expected on macOS without code signing; never bother the user about it.
+    // A feed hiccup should never bother the user; log for diagnosis only.
     console.error('[treemap] auto-update error:', err?.message || err);
   });
 
@@ -242,6 +278,37 @@ function setupAutoUpdates() {
 }
 
 /* ───────────────────────────── App lifecycle ───────────────────────────── */
+
+// Last-resort net. Electron's default reaction to an uncaught main-process
+// exception is a modal error dialog PER THROW — from a timer that becomes an
+// unclosable dialog storm (that storm is what issue #14's reporter sat
+// through on v2.1.0). Every known throw path is guarded at its source; this
+// net exists so any future regression logs and surfaces once per run instead
+// of storming. Dev runs keep the loud default on purpose.
+if (app.isPackaged) {
+  let reported = false;
+  process.on('uncaughtException', (err) => {
+    console.error('[treemap] uncaught exception:', err);
+    if (reported) return;
+    reported = true;
+    try {
+      dialog
+        .showMessageBox({
+          type: 'error',
+          buttons: ['OK'],
+          message: 'TreeMap hit an unexpected error.',
+          detail: String((err && err.stack) || err),
+        })
+        .catch(() => {});
+    } catch {
+      /* dialog unavailable this early — the log line above still lands */
+    }
+  });
+  process.on('unhandledRejection', (reason) => {
+    // No dialog: rejections never storm, but they must not vanish either.
+    console.error('[treemap] unhandled rejection:', reason);
+  });
+}
 
 // A minimal app menu so standard shortcuts (Cmd+Q, Cmd+R, Copy/Paste) work.
 function buildMenu() {
