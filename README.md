@@ -309,7 +309,8 @@ Disk tools should never lose your data. TreeMap is built defensively:
 ```text
 src/
   api/          Express routes (scan, files, system, insights, settings)
-  services/     DiskScanner (adaptive concurrent walker), Cleaner (trash/open),
+  services/     ScanStore (packed Structure-of-Arrays scan memory),
+                DiskScanner (adaptive concurrent walker), Cleaner (trash/open),
                 DuplicateFinder (staged hashing), Snapshots (Trends history),
                 CleanupRules (smart suggestions), AppAttribution (per-app storage),
                 Forecast (disk-full projection), Watcher (live activity),
@@ -331,6 +332,7 @@ scripts/
 
 ## 🧠 Design decisions worth knowing
 
+- **A scan lives in a packed Structure-of-Arrays store, not a tree of objects.** Every scan used to be millions of JavaScript objects (~330 bytes each, measured) — which put a hard ceiling of a few million files on what fit in RAM. The tree now lives in a handful of typed arrays (`src/services/scanStore.ts`): names in one UTF-8 pool, children as contiguous id ranges laid out breadth-first, paths reconstructed on demand instead of stored. Measured cost: **~52 bytes per file** at 1M, 5M, 20M and 40M synthetic nodes — a 40M-item scan is ~2 GB of arrays, and a 100M-item scan projects to ~5 GB, on hardware where the object tree could not have held 20M. Summing every directory size is one reverse linear pass (28 ms for 5M nodes vs 2.2 s recursive), nothing recurses on pathological depth, and the browser notices nothing: the pruned JSON the API emits is byte-identical to the old tree — a golden test replays a fixture scan against responses recorded from the pre-rewrite server and compares the raw bytes. The store is pure JS + TypedArrays — no native modules, nothing new to package. (An on-disk SQLite tier behind the same interface remains a possible future for scans that must survive restarts; the packed store is the shipping default.) The one deliberate trade: handing 250k pruned nodes to the UI rebuilds path strings the old tree kept around, ~150 ms per handover on an operation that already spends ~170 ms serializing.
 - **Scan speed is a threadpool problem, not a walker problem.** Every async `lstat`/`readdir` runs on libuv's threadpool, which defaults to 4 threads — that, not the walker's concurrency, was the bottleneck. TreeMap sizes the pool to 2× cores (≤ 16) before it spins up; measured on APFS this scans ~1.6× faster, while 32 threads is *slower* than 4 (kernel metadata-lock contention). The dashboard shows which engine ran and how long the scan took.
 - **Snapshots are automatic** — one is saved after every successful scan, so Trends needs zero setup. Totals + top-level entries live in `snapshots.json` (a few KB each, capped at 200 per folder); the time slider's shallow trees (≤ 3 levels, ~100 KB budget each) sit in separate per-root files so the main history file stays tiny.
 - **The scheduler is a 60-second `setInterval`**, not `node-cron` — hour-level granularity doesn't justify a dependency. Schedules fire while the app runs (the desktop app keeps running in the tray).
