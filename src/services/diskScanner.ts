@@ -8,6 +8,7 @@ import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { readJsonFile, appDataDir } from './storage';
 import { IO_THREADS } from '../utils/ioThreads';
 import { detectContainerKind } from '../utils/containerKind';
+import { neverDescend } from '../utils/mountBoundaries';
 import { forgetScan } from './containerScanner';
 import { findGduBinary, gduScan } from './gduScanner';
 
@@ -34,11 +35,55 @@ const STAT_BATCH = IO_THREADS > 4 ? 64 : 32;
 /** Yield to the event loop after this many entries so SSE stays responsive. */
 const YIELD_EVERY = 2000;
 
-const SCAN_TTL_MS = 30 * 60 * 1000; // 30 minutes
+/**
+ * A directory that can't answer a listing (dead network mount, wedged
+ * permission broker) must cost one worker slot a bounded time — not the whole
+ * scan. The orphaned call keeps its libuv slot until the OS lets go, so this
+ * is a net for rare pathologies; the mount-boundary skip list keeps the scan
+ * from walking into the known ones at all.
+ */
+const READDIR_DEADLINE_MS = 30_000;
+
+function readdirWithDeadline(p: string): Promise<Dirent[] | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      console.warn(`[treemap] readdir gave up after ${READDIR_DEADLINE_MS / 1000}s: ${p}`);
+      resolve(null);
+    }, READDIR_DEADLINE_MS);
+    timer.unref();
+    fsp.readdir(p, { withFileTypes: true }).then(
+      (entries) => {
+        clearTimeout(timer);
+        resolve(entries);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(null); // EACCES / EPERM / ENOENT(race) — skip silently
+      },
+    );
+  });
+}
+
+const SCAN_TTL_MS = 30 * 60 * 1000; // 30 minutes after a scan settles
+/**
+ * A 'running' record left wedged by a driver that died (cloud scans register
+ * here too) must still be collected eventually — but at a horizon no real
+ * scan can hit, because evicting by age alone cancelled slow full-disk walks
+ * mid-flight: the record vanished while its status froze at 'running', the
+ * progress stream never finished, and the UI spun forever.
+ */
+const RUNNING_SCAN_HARD_CAP_MS = 6 * 60 * 60 * 1000;
 const EVICT_INTERVAL_MS = 60 * 1000;
 
 /** In-memory store of all scans, auto-evicted after 30 minutes. */
 const scans = new Map<string, ScanResult>();
+
+/** True when a scan's retention window has passed. Running scans only expire
+ *  at the wedge horizon; settled ones 30 minutes after they finished. */
+export function scanExpired(scan: ScanResult, now: number): boolean {
+  if (scan.status === 'running') return now - scan.createdAt > RUNNING_SCAN_HARD_CAP_MS;
+  return now - (scan.finishedAt ?? scan.createdAt) > SCAN_TTL_MS;
+}
 
 let evictTimer: NodeJS.Timeout | null = null;
 
@@ -47,7 +92,7 @@ function ensureEvictor(): void {
   evictTimer = setInterval(() => {
     const now = Date.now();
     for (const [id, scan] of scans) {
-      if (now - scan.createdAt > SCAN_TTL_MS) {
+      if (scanExpired(scan, now)) {
         scan.cancelled = true;
         scans.delete(id);
         forgetScan(id); // drop its expanded-container registry too
@@ -439,12 +484,9 @@ async function processDirectory(
   }
   scan.walkedDirs = (scan.walkedDirs ?? 0) + 1;
 
-  let entries: Dirent[];
-  try {
-    entries = await fsp.readdir(dirNode.path, { withFileTypes: true });
-  } catch {
-    return; // EACCES / EPERM / ENOENT(race) — skip silently
-  }
+  const listed = await readdirWithDeadline(dirNode.path);
+  if (!listed) return; // unreadable or unresponsive — the dir stays empty
+  let entries: Dirent[] = listed;
 
   scan.currentPath = dirNode.path;
   const children = dirNode.children!;
@@ -512,7 +554,10 @@ async function processDirectory(
       scan.scanned++;
       if (child.type === 'dir') {
         scan.dirCount++;
-        queue.push(child);
+        // Mount re-entry points and automount triggers stay visible as empty
+        // dirs but are never walked — descending double-counts the disk or
+        // blocks forever (see utils/mountBoundaries).
+        if (!neverDescend(child.path)) queue.push(child);
       } else {
         scan.fileCount++;
       }

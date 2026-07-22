@@ -2296,11 +2296,14 @@ function followScanProgress(scanId, path, fast, t0) {
         finishScan(r.root, performance.now() - t0, statsFromResult(r));
       }
     } catch (e) {
-      if (e.status === 500 && !finished) { // the scan itself failed server-side
+      // 500: the scan itself failed server-side. 404: the scan record is
+      // gone (evicted or the server restarted) — waiting longer can never
+      // succeed, so stop the spinner instead of polling forever.
+      if ((e.status === 500 || e.status === 404) && !finished) {
         finished = true;
         clearInterval(watchdog);
         closeEventSource();
-        failScan(e.message);
+        failScan(e.status === 404 ? 'The scan expired — please run it again.' : e.message);
       }
       /* otherwise: still running or transient — keep waiting */
     }

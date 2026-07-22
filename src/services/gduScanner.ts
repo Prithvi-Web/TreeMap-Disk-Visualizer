@@ -6,6 +6,7 @@ import path from 'node:path';
 import { FileNode, ScanResult } from '../models/types';
 import { mapGduTree } from './gduMapper';
 import { detectContainerKind } from '../utils/containerKind';
+import { neverDescend } from '../utils/mountBoundaries';
 
 /**
  * The gdu turbo engine.
@@ -34,6 +35,16 @@ import { detectContainerKind } from '../utils/containerKind';
 
 /** Refuse a shard whose JSON approaches V8's ~512 MB single-string ceiling. */
 const MAX_SHARD_BYTES = 450 * 1024 * 1024;
+
+/**
+ * Hard ceiling per gdu subprocess. gdu moves at ~112k+ items/sec, so five
+ * minutes covers a ~30M-item shard — nothing real gets close. What DOES
+ * happen without it: a blocking open() on an automount trigger or a dead
+ * mount parks gdu at 0% CPU forever and the scan never finishes. --no-cross
+ * prevents the known cases; this is the net for the unknown ones, and a
+ * timeout falls back to the walker like every other gdu failure.
+ */
+const SHARD_TIMEOUT_MS = 5 * 60 * 1000;
 
 export interface FindOptions {
   bundledPath?: string;
@@ -103,15 +114,27 @@ export function runGdu(
   bin: string,
   dir: string,
   outFile: string,
-  opts: { ignoreDirs?: string[] } = {},
+  opts: { ignoreDirs?: string[]; timeoutMs?: number } = {},
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const args = ['-n', '-o', outFile];
+    // -x: never cross filesystem boundaries — inside a shard this skips
+    // nested mounts (DMGs, /System/Volumes/*) that double-count the disk or
+    // hang on network I/O. Skipped mount roots simply don't appear in the
+    // shard's output, matching the walker's don't-descend behavior.
+    const args = ['-n', '-x', '-o', outFile];
     if (opts.ignoreDirs?.length) args.push('-i', opts.ignoreDirs.join(','));
     args.push(dir);
-    execFile(bin, args, { maxBuffer: 1 << 20 }, (err) => {
-      if (err) reject(new Error(`gdu failed: ${err.message}`));
-      else resolve();
+    const timeout = opts.timeoutMs ?? SHARD_TIMEOUT_MS;
+    execFile(bin, args, { maxBuffer: 1 << 20, timeout, killSignal: 'SIGKILL' }, (err) => {
+      if (err) {
+        reject(
+          new Error(
+            err.killed
+              ? `gdu timed out after ${Math.round(timeout / 60000)} min on ${dir} — likely a blocking mount`
+              : `gdu failed: ${err.message}`,
+          ),
+        );
+      } else resolve();
     });
   });
 }
@@ -204,10 +227,30 @@ export async function gduScan(
   try {
     const entries = await fsp.readdir(rootPath, { withFileTypes: true });
     const rootStat = await fsp.lstat(rootPath);
-    const dirs = entries.filter((e) => e.isDirectory() && !e.isSymbolicLink());
+    const childPath = (name: string): string => (rootPath === '/' ? '/' + name : rootPath + '/' + name);
+    const allDirs = entries.filter((e) => e.isDirectory() && !e.isSymbolicLink());
+    // Mount re-entry points and automount triggers never get a shard —
+    // spawning gdu against them double-counts the disk or blocks forever.
+    // They stay visible as empty dirs, exactly like the walker leaves them.
+    const dirs = allDirs.filter((e) => !neverDescend(childPath(e.name)));
 
     const children: FileNode[] = [];
     let total = 0;
+
+    for (const e of allDirs) {
+      const p = childPath(e.name);
+      if (!neverDescend(p)) continue;
+      children.push({
+        name: e.name,
+        path: p,
+        size: 0,
+        type: 'dir',
+        modifiedAt: Math.round(rootStat.mtimeMs),
+        isHidden: e.name.charCodeAt(0) === 46,
+        children: [],
+      });
+      scan.dirCount++;
+    }
 
     // Files directly under the root: few, so stat them rather than paying for a
     // whole extra gdu process. They share `seenInodes` with the shards below, so
@@ -232,7 +275,7 @@ export async function gduScan(
 
     for (let i = 0; i < dirs.length; i++) {
       if (scan.cancelled) throw new Error('cancelled');
-      const dirPath = rootPath === '/' ? '/' + dirs[i].name : rootPath + '/' + dirs[i].name;
+      const dirPath = childPath(dirs[i].name);
       scan.currentPath = dirPath;
 
       const outFile = path.join(tmpDir, `shard-${i}.json`);
