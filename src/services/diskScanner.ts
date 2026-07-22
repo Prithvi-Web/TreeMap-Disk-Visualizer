@@ -11,6 +11,7 @@ import { detectContainerKind } from '../utils/containerKind';
 import { neverDescend } from '../utils/mountBoundaries';
 import { forgetScan } from './containerScanner';
 import { findGduBinary, gduScan } from './gduScanner';
+import { PackedScanStore, ScanStore, Flag, NodeInput, fileNodeToInput } from './scanStore';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -116,6 +117,36 @@ export function cancelAllScans(): void {
 }
 
 /**
+ * Transitional bridge (Phase 3-4 of the packed-store rewrite): consumers not
+ * yet migrated to ScanStore ids keep reading `scan.root` as before. For
+ * store-backed scans the object tree materializes lazily and is cached until
+ * a store mutation (e.g. a container graft) invalidates it; legacy producers
+ * (gdu, cloud) assign a real tree through the setter. Removed in Phase 5.
+ */
+function defineRootAccessor(scan: ScanResult): void {
+  let legacy: FileNode | undefined;
+  let cached: FileNode | undefined;
+  let cachedVersion = -1;
+  Object.defineProperty(scan, 'root', {
+    enumerable: true,
+    configurable: true,
+    get(): FileNode | undefined {
+      if (legacy) return legacy;
+      const store = scan.store;
+      if (!store) return undefined;
+      if (!cached || cachedVersion !== store.version) {
+        cached = store.prune(store.rootId, { maxNodes: Number.MAX_SAFE_INTEGER }).root;
+        cachedVersion = store.version;
+      }
+      return cached;
+    },
+    set(value: FileNode | undefined) {
+      legacy = value;
+    },
+  });
+}
+
+/**
  * Register an externally-driven scan (cloud providers) in the same store,
  * so progress SSE, results, treemap and every downstream view work on it
  * exactly as they do on a disk scan.
@@ -134,6 +165,7 @@ export function createScanRecord(rootPath: string): ScanResult {
     createdAt: Date.now(),
     cancelled: false,
   };
+  defineRootAccessor(scan);
   scans.set(scan.scanId, scan);
   return scan;
 }
@@ -187,6 +219,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     cloudFiles: 0,
     cloudBytes: 0,
   };
+  defineRootAccessor(scan);
   scans.set(scan.scanId, scan);
 
   /**
@@ -292,21 +325,35 @@ export function mtimesMatch(cachedMs: number, freshMs: number): boolean {
 }
 
 /**
- * Reuse a validated directory's cached listing: count its direct children and
- * enqueue each subdirectory for its own revalidation visit. Counter semantics
- * mirror a fresh listing (scanned/dirCount/fileCount); as before, cloud and
- * hardlink tallies are not re-derived from cached files — their sizes and
- * flags ride along in the nodes themselves.
+ * One directory awaiting its listing. The walk works on store ids; the path
+ * rides along so nothing is reconstructed, and `cached` carries the fast-
+ * rescan candidate whose listing may substitute for a fresh readdir.
  */
-function reuseCachedListing(scan: ScanResult, dirNode: FileNode, queue: FileNode[], revalidate: WeakSet<FileNode>): void {
-  scan.currentPath = dirNode.path;
+interface DirJob {
+  id: number;
+  path: string;
+  /** Cached node for this dir (fast rescan) — its listing may be reused. */
+  cached: FileNode | null;
+  /** Reached through a cached parent's listing — lstat before trusting it. */
+  revalidate: boolean;
+}
+
+/**
+ * Reuse a validated directory's cached listing: build its direct children
+ * into the store and enqueue each subdirectory for its own revalidation
+ * visit. Counter semantics mirror a fresh listing (scanned/dirCount/
+ * fileCount); as before, cloud and hardlink tallies are not re-derived from
+ * cached files — their sizes and flags ride along in the nodes themselves.
+ */
+function reuseCachedListing(scan: ScanResult, store: ScanStore, dirId: number, dirPath: string, cachedChildren: FileNode[], queue: DirJob[]): void {
+  scan.currentPath = dirPath;
   scan.cachedDirs = (scan.cachedDirs ?? 0) + 1;
-  for (const child of dirNode.children!) {
+  for (const child of cachedChildren) {
     scan.scanned++;
+    const childId = store.addNode(dirId, fileNodeToInput(child));
     if (child.type === 'dir') {
       scan.dirCount++;
-      revalidate.add(child);
-      queue.push(child);
+      queue.push({ id: childId, path: child.path, cached: child, revalidate: true });
     } else {
       scan.fileCount++;
     }
@@ -315,40 +362,42 @@ function reuseCachedListing(scan: ScanResult, dirNode: FileNode, queue: FileNode
 
 /** Persist the completed tree (compact JSON) so future fast rescans can reuse it. */
 async function saveMtimeCache(scan: ScanResult): Promise<void> {
-  if (!scan.root || scan.scanned > MTIME_CACHE_MAX_NODES) return;
+  // Size gate first: for store-backed scans, reading `scan.root` materializes
+  // an object tree, so it must only ever happen under the 300k-node cap.
+  if (scan.scanned > MTIME_CACHE_MAX_NODES) return;
+  const tree = scan.root;
+  if (!tree) return;
   try {
     const dir = appDataDir();
     await fsp.mkdir(dir, { recursive: true });
     const file = path.join(dir, cacheFileName(scan.rootPath));
     const tmp = file + '.tmp';
-    await fsp.writeFile(tmp, JSON.stringify(scan.root), 'utf8');
+    await fsp.writeFile(tmp, JSON.stringify(tree), 'utf8');
     await fsp.rename(tmp, file);
   } catch (err) {
     console.error('[treemap] mtime-cache save failed:', err);
   }
 }
 
-function makeNode(fullPath: string, name: string, isDir: boolean, size: number, mtimeMs: number, atimeMs?: number): FileNode {
-  const node: FileNode = {
+/** Everything lstat tells us about one entry, shaped for store.addNode. */
+function statToInput(name: string, isDir: boolean, size: number, mtimeMs: number, atimeMs?: number): NodeInput {
+  const input: NodeInput = {
     name,
-    path: fullPath,
+    isDir,
     size: isDir ? 0 : size,
-    type: isDir ? 'dir' : 'file',
     modifiedAt: Math.round(mtimeMs),
     isHidden: name.startsWith('.'),
   };
   // atime === 0 means "never recorded" on several filesystems — omit rather
   // than let a 1970 date surface anywhere.
-  if (atimeMs !== undefined && atimeMs > 0) node.accessedAt = Math.round(atimeMs);
-  if (isDir) {
-    node.children = [];
-  } else {
+  if (atimeMs !== undefined && atimeMs > 0) input.accessedAt = Math.round(atimeMs);
+  if (!isDir) {
     const ext = path.extname(name).toLowerCase().replace(/^\./, '');
-    if (ext) node.extension = ext;
+    if (ext) input.extension = ext;
   }
   const container = detectContainerKind(name, isDir);
-  if (container) node.container = container;
-  return node;
+  if (container) input.container = container;
+  return input;
 }
 
 /** Infer a cloud provider for a placeholder file from its path. */
@@ -361,13 +410,10 @@ function cloudProviderFor(p: string): 'icloud' | 'onedrive' | 'dropbox' | undefi
 
 async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore[], cache: Map<string, FileNode> | null): Promise<void> {
   const rootStat = await fsp.lstat(scan.rootPath);
-  const root = makeNode(
+  const store = new PackedScanStore(
     scan.rootPath,
-    path.basename(scan.rootPath) || scan.rootPath,
-    rootIsDir,
-    rootStat.size,
-    rootStat.mtimeMs,
-    rootStat.atimeMs
+    path.sep,
+    statToInput(path.basename(scan.rootPath) || scan.rootPath, rootIsDir, rootStat.size, rootStat.mtimeMs, rootStat.atimeMs),
   );
   scan.scanned = 1;
   if (rootIsDir) scan.dirCount = 1;
@@ -376,12 +422,13 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
   if (rootIsDir) {
     // Dirs reached through a cached parent's listing get one fresh lstat
     // before their cached listing is trusted — membership is per-scan.
-    await drainQueue(scan, [root], ignore, cache, new Set<string>(), new WeakSet<FileNode>());
+    await drainQueue(scan, store, [{ id: store.rootId, path: scan.rootPath, cached: null, revalidate: false }], ignore, cache, new Set<string>());
   }
   if (scan.cancelled) return;
 
-  sumDirSizes(root);
-  scan.root = root;
+  store.finalize();
+  store.sumSizes();
+  scan.store = store;
   scan.status = 'complete';
   scan.finishedAt = Date.now();
   scan.currentPath = scan.rootPath;
@@ -398,8 +445,8 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
  * Worker pool: up to CONCURRENCY directories are listed at the same time.
  * Resolves when the queue is empty and every worker has finished.
  */
-function drainQueue(scan: ScanResult, initial: FileNode[], ignore: CompiledIgnore[], cache: Map<string, FileNode> | null, seen: Set<string>, revalidate: WeakSet<FileNode>): Promise<void> {
-  const queue: FileNode[] = [...initial];
+function drainQueue(scan: ScanResult, store: ScanStore, initial: DirJob[], ignore: CompiledIgnore[], cache: Map<string, FileNode> | null, seen: Set<string>): Promise<void> {
+  const queue: DirJob[] = [...initial];
   let active = 0;
 
   return new Promise<void>((resolve, reject) => {
@@ -409,9 +456,9 @@ function drainQueue(scan: ScanResult, initial: FileNode[], ignore: CompiledIgnor
         return;
       }
       while (active < CONCURRENCY && queue.length > 0) {
-        const dirNode = queue.shift()!;
+        const job = queue.shift()!;
         active++;
-        processDirectory(scan, dirNode, queue, ignore, cache, seen, revalidate)
+        processDirectory(scan, store, job, queue, ignore, cache, seen)
           .catch((err: unknown) => reject(err))
           .finally(() => {
             active--;
@@ -426,20 +473,21 @@ function drainQueue(scan: ScanResult, initial: FileNode[], ignore: CompiledIgnor
 }
 
 /**
- * List one directory, stat its entries, attach children, enqueue subdirs.
- * Permission errors are swallowed per-directory: the dir simply stays empty
- * rather than failing the whole scan.
+ * List one directory, stat its entries, add children to the store, enqueue
+ * subdirs. Permission errors are swallowed per-directory: the dir simply
+ * stays empty rather than failing the whole scan.
  */
 async function processDirectory(
   scan: ScanResult,
-  dirNode: FileNode,
-  queue: FileNode[],
+  store: ScanStore,
+  job: DirJob,
+  queue: DirJob[],
   ignore: CompiledIgnore[],
   cache: Map<string, FileNode> | null,
-  seen: Set<string>,
-  revalidate: WeakSet<FileNode>
+  seen: Set<string>
 ): Promise<void> {
   if (scan.cancelled) return;
+  const { id: dirId, path: dirPath } = job;
 
   // Incremental: a directory whose own mtime is unchanged keeps its cached
   // LISTING (its direct entries — a create/delete/rename would have bumped
@@ -450,50 +498,46 @@ async function processDirectory(
   // files in deep, unchanged-ancestor folders. In-place file edits (same
   // name, new bytes) still go unnoticed — the documented trade-off that makes
   // this opt-in.
-  if (revalidate.has(dirNode)) {
+  if (job.revalidate) {
     // Reached through a cached parent's listing, so its stats are the CACHE's
     // word, not the disk's — validate before trusting its cached listing.
-    revalidate.delete(dirNode);
-    const cachedMtime = dirNode.modifiedAt;
+    const cachedNode = job.cached as FileNode;
+    const cachedMtime = cachedNode.modifiedAt;
     let st: Stats;
     try {
-      st = await fsp.lstat(dirNode.path);
+      st = await fsp.lstat(dirPath);
     } catch {
       // Vanished since the cache was written. The parent's listing says it
       // exists, so show it empty rather than invent stale contents — the
       // parent's changed mtime makes the next rescan re-list it anyway.
-      dirNode.children = [];
       return;
     }
-    dirNode.modifiedAt = Math.round(st.mtimeMs);
-    if (st.atimeMs > 0) dirNode.accessedAt = Math.round(st.atimeMs);
-    else delete dirNode.accessedAt;
-    if (dirNode.children && mtimesMatch(cachedMtime, dirNode.modifiedAt)) {
-      reuseCachedListing(scan, dirNode, queue, revalidate);
+    store.setModifiedAt(dirId, Math.round(st.mtimeMs));
+    store.setAccessedAt(dirId, st.atimeMs > 0 ? Math.round(st.atimeMs) : undefined);
+    if (cachedNode.children && mtimesMatch(cachedMtime, Math.round(st.mtimeMs))) {
+      reuseCachedListing(scan, store, dirId, dirPath, cachedNode.children, queue);
       return;
     }
-    dirNode.children = []; // its listing changed — fall through and re-list
+    // Its listing changed — fall through and re-list from disk.
   } else if (cache) {
     // Freshly stat'ed by its parent: compare the disk's mtime to the cache's.
-    const cached = cache.get(dirNode.path);
-    if (cached && cached.type === 'dir' && cached.children && mtimesMatch(cached.modifiedAt, dirNode.modifiedAt)) {
-      dirNode.children = cached.children;
-      reuseCachedListing(scan, dirNode, queue, revalidate);
+    const cached = cache.get(dirPath);
+    if (cached && cached.type === 'dir' && cached.children && mtimesMatch(cached.modifiedAt, store.modifiedAt(dirId))) {
+      reuseCachedListing(scan, store, dirId, dirPath, cached.children, queue);
       return;
     }
   }
   scan.walkedDirs = (scan.walkedDirs ?? 0) + 1;
 
-  const listed = await readdirWithDeadline(dirNode.path);
+  const listed = await readdirWithDeadline(dirPath);
   if (!listed) return; // unreadable or unresponsive — the dir stays empty
   let entries: Dirent[] = listed;
 
-  scan.currentPath = dirNode.path;
-  const children = dirNode.children!;
+  scan.currentPath = dirPath;
 
   // Honor the user's "don't scan" list before paying for any lstat calls.
   if (ignore.length > 0) {
-    entries = entries.filter((ent) => !matchesAny(ignore, path.join(dirNode.path, ent.name), ent.name));
+    entries = entries.filter((ent) => !matchesAny(ignore, path.join(dirPath, ent.name), ent.name));
   }
 
   for (let i = 0; i < entries.length; i += STAT_BATCH) {
@@ -502,62 +546,62 @@ async function processDirectory(
 
     const settled = await Promise.allSettled(
       batch.map(async (ent) => {
-        const fullPath = path.join(dirNode.path, ent.name);
+        const fullPath = path.join(dirPath, ent.name);
 
         if (ent.isDirectory() && !ent.isSymbolicLink()) {
           const stat = await fsp.lstat(fullPath);
-          return { node: makeNode(fullPath, ent.name, true, 0, stat.mtimeMs, stat.atimeMs) };
+          return { input: statToInput(ent.name, true, 0, stat.mtimeMs, stat.atimeMs), fullPath, isDir: true };
         }
         // Files, symlinks (not followed — lstat reports the link itself),
         // sockets, fifos: record as a leaf with whatever size lstat reports.
         const stat = await fsp.lstat(fullPath);
-        const node = makeNode(fullPath, ent.name, false, stat.size, stat.mtimeMs, stat.atimeMs);
+        const input = statToInput(ent.name, false, stat.size, stat.mtimeMs, stat.atimeMs);
         if (ent.isSymbolicLink()) {
-          node.isSymlink = true;
-          return { node };
+          input.isSymlink = true;
+          return { input, fullPath, isDir: false };
         }
         // A cloud placeholder reports a logical size but occupies ~no disk blocks
         // AND lives under a known cloud-sync folder — so plain sparse files
         // (VM images, DB files) are never mislabelled as "cloud-safe to delete".
-        if (node.size > 0 && stat.blocks === 0) {
+        if (input.size > 0 && stat.blocks === 0) {
           const provider = cloudProviderFor(fullPath);
           if (provider) {
-            node.cloudPlaceholder = true;
-            node.cloudProvider = provider;
+            input.cloudPlaceholder = true;
+            input.cloudProvider = provider;
           }
         }
         // Hard-link key only when the link count says the inode is shared.
-        return { node, inoKey: stat.nlink > 1 ? `${stat.dev}:${stat.ino}` : undefined };
+        return { input, fullPath, isDir: false, inoKey: stat.nlink > 1 ? `${stat.dev}:${stat.ino}` : undefined };
       })
     );
 
     for (const result of settled) {
       if (result.status !== 'fulfilled') continue; // entry vanished mid-scan
-      const { node: child, inoKey } = result.value;
+      const { input, fullPath, isDir, inoKey } = result.value;
       // Dedup hard links sequentially so concurrent workers can't race the set.
       if (inoKey) {
         if (seen.has(inoKey)) {
-          child.hardlinkDuplicate = true;
+          input.hardlinkDuplicate = true;
           scan.hardlinkedFiles = (scan.hardlinkedFiles ?? 0) + 1;
-          scan.hardlinkedBytes = (scan.hardlinkedBytes ?? 0) + child.size;
-          child.size = 0; // first occurrence already counted
+          scan.hardlinkedBytes = (scan.hardlinkedBytes ?? 0) + input.size;
+          input.size = 0; // first occurrence already counted
         } else {
           seen.add(inoKey);
         }
       }
-      if (child.cloudPlaceholder) {
+      if (input.cloudPlaceholder) {
         scan.cloudFiles = (scan.cloudFiles ?? 0) + 1;
-        scan.cloudBytes = (scan.cloudBytes ?? 0) + child.size;
+        scan.cloudBytes = (scan.cloudBytes ?? 0) + input.size;
       }
-      if (child.type === 'dir' && child.name === '.git') dirNode.gitRepo = true;
-      children.push(child);
+      if (isDir && input.name === '.git') store.setFlag(dirId, Flag.GitRepo, true);
+      const childId = store.addNode(dirId, input);
       scan.scanned++;
-      if (child.type === 'dir') {
+      if (isDir) {
         scan.dirCount++;
         // Mount re-entry points and automount triggers stay visible as empty
         // dirs but are never walked — descending double-counts the disk or
         // blocks forever (see utils/mountBoundaries).
-        if (!neverDescend(child.path)) queue.push(child);
+        if (!neverDescend(fullPath)) queue.push({ id: childId, path: fullPath, cached: null, revalidate: false });
       } else {
         scan.fileCount++;
       }
@@ -569,15 +613,6 @@ async function processDirectory(
       await new Promise<void>((r) => setImmediate(r));
     }
   }
-}
-
-/** Bottom-up recursive sum: directory size = Σ children sizes. */
-function sumDirSizes(node: FileNode): number {
-  if (node.type === 'file' || !node.children) return node.size;
-  let total = 0;
-  for (const child of node.children) total += sumDirSizes(child);
-  node.size = total;
-  return total;
 }
 
 /* ---------- Aggregations over a completed scan ---------- */

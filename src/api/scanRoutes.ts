@@ -1,10 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { startScan, getScan, collectLargestFiles, collectFileTypes } from '../services/diskScanner';
 import { buildTreemap, findNodeByPath } from '../utils/treemap';
-import { pruneTree } from '../utils/pruneTree';
+import { pruneTree, PruneResult } from '../utils/pruneTree';
 import { isInside } from '../utils/pathSanitizer';
 import { guardBodyPath, guardBodyPaths, guardQueryPath } from '../middleware/pathGuard';
-import { lookupNodes } from '../services/scanQueries';
+import { lookupNodes, lookupNodesInStore } from '../services/scanQueries';
 import { AppError } from '../middleware/errorHandler';
 import { getSettings } from '../services/settings';
 import { streamCsv, streamPdf, streamXlsx } from '../services/reportExport';
@@ -139,11 +139,16 @@ scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
   let lastBeat = Date.now();
 
   const finish = (): void => {
-    if (scan.status === 'complete' && scan.root) {
+    if (scan.status === 'complete' && (scan.store || scan.root)) {
       // Pruned: the full tree may be far larger than the UI can hold. The
       // sseSend guard below stays as a backstop — pruning should mean it never
       // trips, but a timer throw would take the app down, so we keep the net.
-      const { root } = pruneTree(scan.root, { maxNodes: PRUNE_MAX_NODES });
+      // Store-backed scans prune straight off the packed store; the legacy
+      // branch serves engines not yet migrated. (`scan.store` is checked
+      // first: reading `scan.root` on a store-backed scan materializes.)
+      const { root } = scan.store
+        ? scan.store.prune(scan.store.rootId, { maxNodes: PRUNE_MAX_NODES })
+        : pruneTree(scan.root as NonNullable<typeof scan.root>, { maxNodes: PRUNE_MAX_NODES });
       // Counters ride along: a pruned tree can't be counted client-side, and
       // making the client fetch them instead puts three full server-side tree
       // walks in front of the headline paint.
@@ -208,7 +213,11 @@ scanRouter.get('/scan/:scanId/result', (req: Request, res: Response) => {
   // Pruned to the same budget as the SSE 'complete' event — this is the
   // frontend's fallback path when the stream stalls, so it must hand over a
   // tree of the same shape, not a 600 MB one that cannot be serialized.
-  const pruned = scan.root ? pruneTree(scan.root, { maxNodes: PRUNE_MAX_NODES }).root : scan.root;
+  const pruned = scan.store
+    ? scan.store.prune(scan.store.rootId, { maxNodes: PRUNE_MAX_NODES }).root
+    : scan.root
+      ? pruneTree(scan.root, { maxNodes: PRUNE_MAX_NODES }).root
+      : scan.root;
   res.json({
     status: 'complete',
     scanId: scan.scanId,
@@ -241,7 +250,7 @@ scanRouter.get('/scan/:scanId/subtree', guardQueryPath('path'), (req: Request, r
     res.status(202).json({ status: 'running', scanned: scan.scanned });
     return;
   }
-  if (scan.status === 'error' || !scan.root) {
+  if (scan.status === 'error' || (!scan.store && !scan.root)) {
     throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   }
 
@@ -249,12 +258,19 @@ scanRouter.get('/scan/:scanId/subtree', guardQueryPath('path'), (req: Request, r
   if (target !== scan.rootPath && !isInside(scan.rootPath, target)) {
     throw new AppError(403, 'OUTSIDE_SCAN_ROOT', 'path must be inside the scanned folder');
   }
-  const node = findNodeByPath(scan.root, target);
-  if (!node) throw new AppError(404, 'PATH_NOT_FOUND', 'That path is not in this scan');
-
   const maxNodes = clampInt(req.query.maxNodes, SUBTREE_MAX_NODES, 1, PRUNE_MAX_NODES);
-  const { root, nodes, prunedDirs } = pruneTree(node, { maxNodes });
-  res.json({ scanId: scan.scanId, root, nodes, prunedDirs });
+
+  let result: PruneResult;
+  if (scan.store) {
+    const nodeId = scan.store.findByPath(target);
+    if (nodeId === -1) throw new AppError(404, 'PATH_NOT_FOUND', 'That path is not in this scan');
+    result = scan.store.prune(nodeId, { maxNodes });
+  } else {
+    const node = findNodeByPath(scan.root as NonNullable<typeof scan.root>, target);
+    if (!node) throw new AppError(404, 'PATH_NOT_FOUND', 'That path is not in this scan');
+    result = pruneTree(node, { maxNodes });
+  }
+  res.json({ scanId: scan.scanId, root: result.root, nodes: result.nodes, prunedDirs: result.prunedDirs });
 });
 
 /**
@@ -273,11 +289,14 @@ scanRouter.post('/scan/:scanId/nodes', guardBodyPaths, (req: Request, res: Respo
     res.status(202).json({ status: 'running' });
     return;
   }
-  if (scan.status === 'error' || !scan.root) {
+  if (scan.status === 'error' || (!scan.store && !scan.root)) {
     throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   }
   const { paths } = req.body as { paths: string[] };
-  res.json({ scanId: scan.scanId, nodes: lookupNodes(scan.root, paths) });
+  const nodes = scan.store
+    ? lookupNodesInStore(scan.store, paths)
+    : lookupNodes(scan.root as NonNullable<typeof scan.root>, paths);
+  res.json({ scanId: scan.scanId, nodes });
 });
 
 /** GET /api/scan/:scanId/stats — counters incl. incremental cache usage. */

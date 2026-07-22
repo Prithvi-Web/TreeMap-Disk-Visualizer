@@ -7,6 +7,7 @@ import { detectContainerKind } from '../utils/containerKind';
 import { findNodeByPath } from '../utils/treemap';
 import { isInside } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
+import { ScanStore, Flag } from './scanStore';
 
 /**
  * ContainerScanner — makes opaque blobs drillable (Phase 6). Pluggable
@@ -227,7 +228,67 @@ export interface ExpandResult {
   children: FileNode[];
 }
 
+/** List a container's entries with the reader that matches its kind. */
+async function listEntries(kind: ContainerKind, containerPath: string): Promise<{ entries: ArchiveEntry[]; truncated: boolean }> {
+  if (kind === 'docker') {
+    return { entries: await listDocker(), truncated: false };
+  }
+  if (kind === 'iso') {
+    const listing = await listIso(containerPath);
+    return { entries: listing.entries, truncated: listing.truncated };
+  }
+  const listing = await parseInWorker(kind as 'zip' | 'tar' | 'tgz', containerPath);
+  return { entries: listing.entries, truncated: listing.truncated };
+}
+
+function registerExpanded(scanId: string, containerPath: string): void {
+  let reg = expanded.get(scanId);
+  if (!reg) { reg = new Set(); expanded.set(scanId, reg); }
+  reg.add(containerPath);
+}
+
+/** The full (bounded — containers cap at VIRTUAL_CAP entries) subtree under a store node. */
+function materializeChildren(store: ScanStore, id: number): FileNode[] {
+  return store.prune(id, { maxNodes: Number.MAX_SAFE_INTEGER }).root.children ?? [];
+}
+
+/** expandContainer for store-backed scans: grafts land in the store. */
+async function expandInStore(scan: ScanResult, store: ScanStore, containerPath: string): Promise<ExpandResult> {
+  const nodeId = store.findByPath(containerPath);
+  if (nodeId === -1) throw new AppError(404, 'PATH_NOT_FOUND', 'That path is not in this scan');
+  const kind = store.container(nodeId) ?? detectContainerKind(store.name(nodeId), store.isDir(nodeId));
+  if (!kind) throw new AppError(400, 'NOT_A_CONTAINER', 'That file is not a drillable container');
+  if (store.flag(nodeId, Flag.Virtual)) throw new AppError(422, 'NESTED_CONTAINER', 'Archives inside archives can’t be opened without extracting the outer one');
+
+  if (kind === 'photos') {
+    // A Photos library is a real directory bundle the scanner already walked.
+    return { path: containerPath, kind, entryCount: store.childCount(nodeId), truncated: false, cached: true, children: materializeChildren(store, nodeId) };
+  }
+  if (kind === 'dmg') {
+    throw new AppError(422, 'CONTAINER_UNSUPPORTED', 'macOS disk images can’t be listed without mounting them. The .dmg can still be trashed or opened whole.');
+  }
+  if (store.childCount(nodeId) > 0) {
+    return { path: containerPath, kind, entryCount: store.childCount(nodeId), truncated: false, cached: true, children: materializeChildren(store, nodeId) };
+  }
+
+  const { entries, truncated } = await listEntries(kind, containerPath);
+  const built = entriesToChildren(entries, containerPath, store.size(nodeId), Date.now());
+  store.ingestSubtree(nodeId, built.children); // graft — lives in the store for the scan's lifetime
+  registerExpanded(scan.scanId, containerPath);
+
+  return {
+    path: containerPath,
+    kind,
+    entryCount: built.entryCount,
+    truncated: truncated || built.truncated,
+    cached: false,
+    children: built.children,
+  };
+}
+
 export async function expandContainer(scan: ScanResult & { root: FileNode }, containerPath: string): Promise<ExpandResult> {
+  if (scan.store) return expandInStore(scan, scan.store, containerPath);
+
   const node = findNodeByPath(scan.root, containerPath);
   if (!node) throw new AppError(404, 'PATH_NOT_FOUND', 'That path is not in this scan');
   const kind = node.container ?? detectContainerKind(node.name, node.type === 'dir');
@@ -245,25 +306,10 @@ export async function expandContainer(scan: ScanResult & { root: FileNode }, con
     return { path: containerPath, kind, entryCount: node.children.length, truncated: false, cached: true, children: node.children };
   }
 
-  let entries: ArchiveEntry[];
-  let truncated = false;
-  if (kind === 'docker') {
-    entries = await listDocker();
-  } else if (kind === 'iso') {
-    const listing = await listIso(containerPath);
-    entries = listing.entries;
-    truncated = listing.truncated;
-  } else {
-    const listing = await parseInWorker(kind, containerPath);
-    entries = listing.entries;
-    truncated = listing.truncated;
-  }
-
+  const { entries, truncated } = await listEntries(kind, containerPath);
   const built = entriesToChildren(entries, containerPath, node.size, Date.now());
   node.children = built.children; // graft — cached in the scan result for its lifetime
-  let reg = expanded.get(scan.scanId);
-  if (!reg) { reg = new Set(); expanded.set(scan.scanId, reg); }
-  reg.add(containerPath);
+  registerExpanded(scan.scanId, containerPath);
 
   return {
     path: containerPath,

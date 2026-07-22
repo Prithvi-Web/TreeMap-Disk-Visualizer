@@ -1,6 +1,7 @@
 import { FileNode } from '../models/types';
 import { findNodeByPath } from '../utils/treemap';
 import { pruneTree } from '../utils/pruneTree';
+import { ScanStore } from './scanStore';
 
 /**
  * Aggregate queries the UI used to answer by walking the whole tree itself.
@@ -225,6 +226,16 @@ export function lookupNodes(root: FileNode, paths: string[]): Record<string, Fil
   for (const p of paths) {
     const node = findNodeByPath(root, p);
     out[p] = node ? pruneTree(node, { maxNodes: 1 }).root : null;
+  }
+  return out;
+}
+
+/** lookupNodes for store-backed scans — same shape, same absent-is-null answer. */
+export function lookupNodesInStore(store: ScanStore, paths: string[]): Record<string, FileNode | null> {
+  const out: Record<string, FileNode | null> = {};
+  for (const p of paths) {
+    const id = store.findByPath(p);
+    out[p] = id === -1 ? null : store.materialize(id);
   }
   return out;
 }

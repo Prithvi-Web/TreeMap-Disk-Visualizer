@@ -3,6 +3,8 @@
  * Every shape that crosses a service or API boundary lives here.
  */
 
+import type { ScanStore } from '../services/scanStore';
+
 /** A single file or directory in the scanned tree. */
 export interface FileNode {
   name: string;
@@ -67,6 +69,11 @@ export interface ScanResult {
   dirCount: number;
   /** Path the scanner most recently touched — used for progress UI. */
   currentPath: string;
+  /**
+   * The scan's tree, packed. Populated once status === 'complete' for scans
+   * produced by the disk walker (and, as producers migrate, every engine).
+   */
+  store?: ScanStore;
   /** Populated once status === 'complete'. */
   root?: FileNode;
   /** Populated once status === 'error'. */

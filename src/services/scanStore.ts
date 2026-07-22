@@ -80,6 +80,8 @@ export interface ScanStore {
   readonly rootPath: string;
   /** The scan's path separator ('/' or '\\'), fixed per scan. */
   readonly sep: string;
+  /** Bumped on every mutation — lets caches of materialized views invalidate. */
+  readonly version: number;
 
   /* ---------- build (producers) ---------- */
 
@@ -372,6 +374,7 @@ export class ObjectScanStore implements ScanStore {
   readonly rootId = 0;
   readonly rootPath: string;
   readonly sep: string;
+  version = 0;
 
   private nodes: FileNode[] = [];
   private ids = new Map<FileNode, number>();
@@ -423,6 +426,7 @@ export class ObjectScanStore implements ScanStore {
   /* ---------- build ---------- */
 
   addNode(parent: number, fields: NodeInput): number {
+    this.version++;
     const p = this.node(parent);
     const node = emitFileNode({ ...fields, path: joinPath(p.path, this.sep, fields.name) });
     if (fields.isDir) node.children = [];
@@ -436,6 +440,7 @@ export class ObjectScanStore implements ScanStore {
   }
 
   sumSizes(): void {
+    this.version++;
     const sum = (n: FileNode): number => {
       if (n.type === 'file' || !n.children) return n.size;
       let total = 0;
@@ -520,20 +525,24 @@ export class ObjectScanStore implements ScanStore {
   /* ---------- mutate ---------- */
 
   setSize(id: number, size: number): void {
+    this.version++;
     this.node(id).size = size;
   }
 
   setModifiedAt(id: number, ms: number): void {
+    this.version++;
     this.node(id).modifiedAt = ms;
   }
 
   setAccessedAt(id: number, ms: number | undefined): void {
+    this.version++;
     const n = this.node(id);
     if (ms === undefined) delete n.accessedAt;
     else n.accessedAt = ms;
   }
 
   setFlag(id: number, f: Flag, on: boolean): void {
+    this.version++;
     const n = this.node(id);
     switch (f) {
       case Flag.Hidden: n.isHidden = on; break;
@@ -548,12 +557,14 @@ export class ObjectScanStore implements ScanStore {
   }
 
   addToSize(id: number, delta: number): void {
+    this.version++;
     this.node(id).size += delta;
   }
 
   removeNode(id: number): void {
     if (id === this.rootId) throw new Error('removeNode: cannot remove the root');
     if (this.removed.has(id)) return;
+    this.version++;
     this.removed.add(id);
     const target = this.node(id);
     const parent = this.nodes[this.parents[id]];
@@ -643,6 +654,7 @@ export class ObjectScanStore implements ScanStore {
   /* ---------- graft ---------- */
 
   ingestSubtree(parentId: number, children: FileNode[]): void {
+    this.version++;
     const parent = this.node(parentId);
     if (parent.children && parent.children.length > 0) {
       throw new Error('ingestSubtree: parent already has children');
@@ -701,6 +713,7 @@ export class PackedScanStore implements ScanStore {
   readonly rootId = 0;
   readonly rootPath: string;
   readonly sep: string;
+  version = 0;
 
   private n = 0;
   private cap = 0;
@@ -863,6 +876,7 @@ export class PackedScanStore implements ScanStore {
   /* ---------- build ---------- */
 
   addNode(parent: number, fields: NodeInput): number {
+    this.version++;
     this.check(parent);
     const id = this.writeNode(parent, fields);
     if (this.finalized) {
@@ -975,6 +989,7 @@ export class PackedScanStore implements ScanStore {
   }
 
   sumSizes(): void {
+    this.version++;
     this.requireFinal();
     const n = this.n;
     const flags = this.flagsArr;
@@ -1106,16 +1121,19 @@ export class PackedScanStore implements ScanStore {
   /* ---------- mutate ---------- */
 
   setSize(id: number, size: number): void {
+    this.version++;
     this.check(id);
     this.sizeArr[id] = size;
   }
 
   setModifiedAt(id: number, ms: number): void {
+    this.version++;
     this.check(id);
     this.mtimeArr[id] = ms;
   }
 
   setAccessedAt(id: number, ms: number | undefined): void {
+    this.version++;
     this.check(id);
     if (ms === undefined) {
       this.flagsArr[id] &= ~Flag.HasAccessed;
@@ -1126,6 +1144,7 @@ export class PackedScanStore implements ScanStore {
   }
 
   setFlag(id: number, f: Flag, on: boolean): void {
+    this.version++;
     this.check(id);
     if (f === Flag.Dir || f === Flag.HasChildArray || f === Flag.HasAccessed || f === Flag.Removed) {
       throw new Error(`setFlag: flag ${f} is structural, not settable`);
@@ -1135,11 +1154,13 @@ export class PackedScanStore implements ScanStore {
   }
 
   addToSize(id: number, delta: number): void {
+    this.version++;
     this.check(id);
     this.sizeArr[id] += delta;
   }
 
   removeNode(id: number): void {
+    this.version++;
     this.check(id);
     if (id === this.rootId) throw new Error('removeNode: cannot remove the root');
     if (this.flagsArr[id] & Flag.Removed) return;
@@ -1285,6 +1306,7 @@ export class PackedScanStore implements ScanStore {
   /* ---------- graft ---------- */
 
   ingestSubtree(parentId: number, children: FileNode[]): void {
+    this.version++;
     this.check(parentId);
     this.requireFinal();
     if (this.childCount(parentId) > 0) {
