@@ -1152,6 +1152,7 @@
         padding: 8px 10px;
         border-radius: var(--r-sm);
         transition: background var(--dur-1) var(--ease);
+        position: relative;
       }
       .bigfile:hover {
         background: var(--surface-1);
@@ -1176,12 +1177,25 @@
         direction: rtl;
         text-align: left;
       }
+      /* File-count column: fixed width + right-aligned so folder bars share one start. */
+      .bigfile .cnt {
+        flex: none;
+        width: 12rem;
+        text-align: right;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+        margin-left: auto;
+      }
       .bigfile .bar-track {
         width: 84px;
         height: 4px;
         border-radius: 2px;
         background: var(--surface-2);
         flex: none;
+        margin-left: auto;
+      }
+      .bigfile .cnt + .bar-track {
+        margin-left: 0;
       }
       .bigfile .bar {
         height: 100%;
@@ -1192,6 +1206,14 @@
         gap: 2px;
         opacity: 0;
         transition: opacity var(--dur-1) var(--ease);
+        position: absolute;
+        right: 6px;
+        top: 50%;
+        transform: translateY(-50%);
+        background: var(--bg-1);
+        border-radius: var(--r-sm);
+        padding: 2px;
+        z-index: 1;
       }
       .bigfile:hover .actions,
       .bigfile:focus-within .actions {
@@ -1200,11 +1222,25 @@
       .size-badge {
         font-size: 11.5px;
         font-weight: 600;
-        padding: 3px 9px;
-        border-radius: 7px;
+        padding: 2px 7px;
+        border-radius: 6px;
         flex: none;
         background: var(--surface-2);
         white-space: nowrap;
+      }
+      /* Fixed column so bars stay aligned; pill inside hugs the label. */
+      .bigfile .size-col {
+        flex: none;
+        width: 5.25rem;
+        display: flex;
+        justify-content: flex-end;
+      }
+      .bigfile .size-col .size-badge {
+        min-width: 0;
+        width: max-content;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        box-sizing: border-box;
       }
 
       /* ── Treemap view ── */
@@ -1861,7 +1897,7 @@
         display: inline-flex;
         align-items: center;
         gap: 7px;
-        margin-top: 11px;
+        margin-top: 14px;
         font-size: 12.5px;
         color: var(--text-2);
         cursor: pointer;
@@ -1877,6 +1913,53 @@
       }
       .fast-rescan .ic {
         color: var(--accent);
+      }
+      /* Turbo NTFS checkbox + Rebuild index: match spacing above/below (scan-status). */
+      .scan-turbo-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px 12px;
+        margin-top: 14px;
+      }
+      .scan-turbo-row:not(:has(> :not([hidden]))) {
+        display: none;
+      }
+      .scan-turbo-row .fast-rescan {
+        margin-top: 0;
+      }
+      #ntfsMftRebuildBtn[hidden] {
+        display: none;
+      }
+      /* Popover API hint — solid, to the right of Rebuild so scan status stays readable. */
+      .ntfs-rebuild-tip {
+        box-sizing: border-box;
+        max-width: min(280px, calc(100vw - 24px));
+        padding: 10px 12px;
+        border: 1px solid var(--hairline-2);
+        border-radius: var(--r-sm);
+        background: #12141c;
+        color: var(--text-1);
+        font-size: 12px;
+        line-height: 1.45;
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.4),
+          0 12px 32px rgba(0, 0, 0, 0.55);
+        margin: 0;
+        inset: unset;
+        position-area: right;
+      }
+      :root[data-theme="light"] .ntfs-rebuild-tip {
+        background: #f4f5f8;
+        color: rgba(10, 12, 20, 0.92);
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.08),
+          0 12px 28px rgba(0, 0, 0, 0.14);
+      }
+      @supports not (position-area: right) {
+        .ntfs-rebuild-tip {
+          position: fixed;
+        }
       }
       #stopScanBtn[hidden] {
         display: none;
@@ -3682,22 +3765,35 @@
                 ></span
                 >Fast rescan — reuse cache for unchanged folders
               </label>
-              <label class="fast-rescan" id="ntfsMftScanWrap" hidden>
-                <input type="checkbox" id="ntfsMftScan" /><span
-                  data-icon="zap"
-                  data-size="13"
-                ></span
-                >Turbo NTFS scan (requires admin)
-              </label>
-              <button
-                type="button"
-                class="btn ghost"
-                id="ntfsMftRebuildBtn"
-                hidden
-                title="Delete the persisted warm index so the next Turbo scan re-reads the $MFT"
-              >
-                Rebuild NTFS index
-              </button>
+              <div class="scan-turbo-row">
+                <label class="fast-rescan" id="ntfsMftScanWrap" hidden>
+                  <input type="checkbox" id="ntfsMftScan" /><span
+                    data-icon="zap"
+                    data-size="13"
+                  ></span
+                  >Turbo NTFS scan (requires admin)
+                </label>
+                <button
+                  type="button"
+                  class="btn ghost"
+                  id="ntfsMftRebuildBtn"
+                  hidden
+                  interestfor="ntfsMftRebuildTip"
+                  aria-describedby="ntfsMftRebuildTip"
+                >
+                  Rebuild NTFS index
+                </button>
+                <div
+                  id="ntfsMftRebuildTip"
+                  class="ntfs-rebuild-tip"
+                  popover="hint"
+                  role="tooltip"
+                >
+                  Deletes the warm NTFS index for this volume. The next Turbo
+                  scan re-reads the $MFT from disk (slower cold pass) and builds
+                  a fresh index.
+                </div>
+              </div>
               <div class="scan-status" id="scanStatus">
                 No scan yet — pick a folder above.
               </div>
@@ -5181,6 +5277,7 @@
         scanStats: null,
         scanId: null,
         scanning: false,
+        pendingCancel: false,
         es: null,
         root: null,
         pathIndex: new Map(),
@@ -5557,7 +5654,85 @@
             }
           });
         }
+        wireNtfsMftRebuildPopover();
       }
+
+      /**
+       * MDN Popover API hover tip on Rebuild NTFS index.
+       * Solid tip placed to the RIGHT of the button so it never covers scan status.
+       */
+      function wireNtfsMftRebuildPopover() {
+        const btn = $("ntfsMftRebuildBtn");
+        const tip = $("ntfsMftRebuildTip");
+        if (!btn || !tip || tip.dataset.wired === "1") return;
+        if (typeof tip.showPopover !== "function") return;
+        tip.dataset.wired = "1";
+
+        function placeTipBesideButton() {
+          const r = btn.getBoundingClientRect();
+          const gap = 10;
+          tip.style.position = "fixed";
+          tip.style.margin = "0";
+          tip.style.inset = "auto";
+          tip.style.transform = "translateY(-50%)";
+          tip.style.top = `${Math.round(r.top + r.height / 2)}px`;
+          tip.style.left = `${Math.round(r.right + gap)}px`;
+          requestAnimationFrame(() => {
+            const tr = tip.getBoundingClientRect();
+            let top = r.top + r.height / 2;
+            let left = r.right + gap;
+            // Flip to the left if it would clip the right edge of the window.
+            if (tr.right > window.innerWidth - 8) {
+              tip.style.transform = "translate(-100%, -50%)";
+              left = r.left - gap;
+            }
+            if (tr.top < 8) top += 8 - tr.top;
+            if (tr.bottom > window.innerHeight - 8) {
+              top -= tr.bottom - (window.innerHeight - 8);
+            }
+            tip.style.top = `${Math.round(top)}px`;
+            tip.style.left = `${Math.round(left)}px`;
+          });
+        }
+
+        function showTip() {
+          if (btn.hidden) return;
+          try {
+            tip.showPopover({ source: btn });
+          } catch {
+            tip.showPopover();
+          }
+          placeTipBesideButton();
+        }
+
+        function hideTip() {
+          try {
+            tip.hidePopover();
+          } catch {
+            /* already closed */
+          }
+        }
+
+        let hideTimer = 0;
+        const scheduleHide = () => {
+          clearTimeout(hideTimer);
+          hideTimer = setTimeout(hideTip, 120);
+        };
+        const cancelHide = () => clearTimeout(hideTimer);
+        btn.addEventListener("pointerenter", () => {
+          cancelHide();
+          showTip();
+        });
+        btn.addEventListener("pointerleave", scheduleHide);
+        tip.addEventListener("pointerenter", cancelHide);
+        tip.addEventListener("pointerleave", scheduleHide);
+        btn.addEventListener("focus", showTip);
+        btn.addEventListener("blur", hideTip);
+        tip.addEventListener("toggle", (ev) => {
+          if (ev.newState === "open") placeTipBesideButton();
+        });
+      }
+
       function resolveScanOpts(opts = {}) {
         const incremental =
           opts.incremental != null
@@ -5999,14 +6174,17 @@
       }
 
       async function stopScan() {
-        const id = state.scanId;
-        if (!id || !state.scanning) return;
+        if (!state.scanning) return;
+        state.pendingCancel = true;
         const stop = $("stopScanBtn");
         if (stop) stop.disabled = true;
+        setScanStatusBusy("Stopping scan…");
+        const id = state.scanId;
+        if (!id) return; // followScanProgress will POST cancel once scanId arrives
         try {
           await api(`/api/scan/${id}/cancel`, { method: "POST" });
-          setScanStatusBusy("Stopping scan…");
         } catch (e) {
+          state.pendingCancel = false;
           if (stop) stop.disabled = false;
           toast(e.message || "Could not stop scan", "error");
         }
@@ -6017,6 +6195,7 @@
           toast("A scan is already running", "error");
           return;
         }
+        state.pendingCancel = false;
         closeEventSource();
         disableLive({ keepWanted: true }); // the new scanId gets a fresh watch session
         const resolved = resolveScanOpts(opts);
@@ -6037,6 +6216,13 @@
               ntfsMft: resolved.ntfsMft,
             }),
           });
+          if (state.pendingCancel) {
+            try {
+              await api(`/api/scan/${resp.scanId}/cancel`, { method: "POST" });
+            } catch {
+              /* still follow progress so cancelled SSE lands */
+            }
+          }
           followScanProgress(
             resp.scanId,
             path,
@@ -6066,6 +6252,11 @@
         state.scanId = scanId;
         state.scanOpts =
           requestedOpts || resolveScanOpts({ incremental: fast });
+        if (state.pendingCancel) {
+          void api(`/api/scan/${scanId}/cancel`, { method: "POST" }).catch(
+            () => {},
+          );
+        }
         let turboFallbackNoted = false;
 
         const es = new EventSource(`/api/scan/${scanId}/progress`);
@@ -6223,6 +6414,7 @@
 
       function endScanChrome() {
         state.scanning = false;
+        state.pendingCancel = false;
         $("scanBtn").disabled = false;
         $("scanBtn").hidden = false;
         const stop = $("stopScanBtn");
@@ -6639,7 +6831,7 @@
         <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
       </div>
       <div class="bar-track"><div class="bar" style="width:${Math.max(4, (f.size / max) * 100)}%;background:${sizeColor(f.size)};"></div></div>
-      <span class="size-badge num" style="color:${sizeColor(f.size)};">${formatBytes(f.size)}</span>
+      <span class="size-col"><span class="size-badge num" style="color:${sizeColor(f.size)};">${formatBytes(f.size)}</span></span>
       <span class="actions">
         <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon("plus", 14)}</button>
         <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon("external", 14)}</button>
@@ -6699,7 +6891,7 @@
       </div>
       <span class="cnt muted num" style="white-space:nowrap;">${formatCount(f.fileCount)} files</span>
       <div class="bar-track"><div class="bar" style="width:${Math.max(4, (f.size / max) * 100)}%;background:${sizeColor(f.size)};"></div></div>
-      <span class="size-badge num" style="color:${sizeColor(f.size)};">${formatBytes(f.size)}</span>
+      <span class="size-col"><span class="size-badge num" style="color:${sizeColor(f.size)};">${formatBytes(f.size)}</span></span>
     </div>`,
           )
           .join("");

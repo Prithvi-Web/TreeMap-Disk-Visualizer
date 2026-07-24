@@ -21,6 +21,7 @@ import {
   findNtfsMftBinary,
   ntfsMftScanIntoStore,
   isNtfsVolume,
+  NtfsMftCancelledError,
 } from "./ntfsMftScanner";
 import { mergeScanTimingExtras, recordScanTimingAsync } from "./scanTimingLog";
 import {
@@ -137,7 +138,16 @@ export function allScans(): ScanResult[] {
 }
 
 export function cancelAllScans(): void {
-  for (const scan of scans.values()) scan.cancelled = true;
+  for (const scan of scans.values()) {
+    if (scan.status !== "running") continue;
+    scan.cancelled = true;
+    try {
+      scan.abort?.();
+    } catch {
+      /* ignore */
+    }
+    scan.abort = undefined;
+  }
 }
 
 /** Cooperative cancel for one scan. The walker/gdu/ntfs engines poll
@@ -146,6 +156,15 @@ export function cancelScan(scanId: string): boolean {
   const scan = scans.get(scanId);
   if (!scan || scan.status !== "running") return false;
   scan.cancelled = true;
+  const abort = scan.abort;
+  if (abort) {
+    try {
+      abort();
+    } catch (err) {
+      console.warn("[treemap] scan abort handler failed:", err);
+    }
+    scan.abort = undefined;
+  }
   return true;
 }
 
@@ -153,6 +172,7 @@ export function cancelScan(scanId: string): boolean {
  *  stop waiting. Idempotent if status already left `running`. */
 export function finalizeCancelled(scan: ScanResult): void {
   if (scan.status !== "running") return;
+  scan.abort = undefined;
   scan.status = "cancelled";
   scan.finishedAt = Date.now();
   recordScanTimingAsync(scan);
@@ -345,7 +365,7 @@ export async function startScan(
         });
         return;
       } catch (err) {
-        if (scan.cancelled) {
+        if (err instanceof NtfsMftCancelledError || scan.cancelled) {
           finalizeCancelled(scan);
           return;
         }

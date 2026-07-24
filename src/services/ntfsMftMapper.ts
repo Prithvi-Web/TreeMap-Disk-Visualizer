@@ -176,6 +176,13 @@ export function buildNtfsMftStoreFromEdges(
         modifiedAt: edge.mtimeMs,
         isHidden,
       };
+      // Same rule as gduMapper/walker: a leading dot is not an extension
+      // (matches path.extname('.bashrc') === ''). Without this, File Types
+      // collapses every Turbo NTFS file into "no ext".
+      const dot = edge.name.lastIndexOf(".");
+      if (dot > 0 && dot < edge.name.length - 1) {
+        input.extension = edge.name.slice(dot + 1).toLowerCase();
+      }
 
       if (seenRecordNos.has(edge.recordNo)) {
         input.hardlinkDuplicate = true;

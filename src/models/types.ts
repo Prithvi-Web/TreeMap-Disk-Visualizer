@@ -91,6 +91,8 @@ export interface ScanResult {
   createdAt: number;
   /** Cooperative cancellation flag (set on shutdown/eviction). */
   cancelled: boolean;
+  /** Optional hard-abort (kill helper subprocess). Cleared when status leaves running. */
+  abort?: () => void;
   /** Which enumeration engine produced this scan (dashboard note). */
   engine?: "walker" | "turbo-walker" | "gdu-turbo" | "ntfs-mft" | "cloud";
   /** Why an opted-in engine (e.g. ntfs-mft) was abandoned — for UI diagnostics. */

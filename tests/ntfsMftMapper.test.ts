@@ -116,6 +116,16 @@ test("derives isHidden from a leading dot", () => {
   assert.equal(find(root, "a.txt")!.isHidden, false);
 });
 
+test("derives extension from the filename like walker/gdu (File Types chart)", () => {
+  const { root } = buildFxTree();
+  assert.equal(find(root, "a.txt")!.extension, "txt");
+  assert.equal(find(root, "b.log")!.extension, "log");
+  assert.equal(find(root, "c.dat")!.extension, "dat");
+  assert.equal(find(root, "zero.bin")!.extension, "bin");
+  // Leading-dot names have no extension — same as path.extname('.hidden').
+  assert.equal(find(root, ".hidden")!.extension, undefined);
+});
+
 test("parseNtfsMftEdgesDetailed reads _meta targetRecordNo and JSON unicode escapes", () => {
   const nd = [
     '{"_meta":true,"targetRecordNo":42}',

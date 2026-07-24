@@ -67,12 +67,25 @@ function flushPendingScans() {
   }
 }
 
-/** Directory args from a launch/second launch (Windows/Linux drag-onto-icon). */
+/**
+ * Directory args from a launch/second launch (Windows/Linux drag-onto-icon).
+ * Never treat Electron's app entry (`.` or the package root) as a scan target —
+ * `electron .` / `npm run app` would otherwise auto-scan the repo on every boot.
+ */
 function scanPathsFromArgv(argv) {
+  const appRoot = path.resolve(path.join(__dirname, '..'));
   return argv.slice(1).filter((arg) => {
-    if (arg.startsWith('-')) return false;
+    if (!arg || arg.startsWith('-')) return false;
+    if (arg === '.' || arg === '..') return false;
+    let resolved;
     try {
-      return fs.statSync(arg).isDirectory();
+      resolved = path.resolve(arg);
+    } catch {
+      return false;
+    }
+    if (resolved === appRoot || resolved === path.resolve(__dirname)) return false;
+    try {
+      return fs.statSync(resolved).isDirectory();
     } catch {
       return false;
     }
@@ -115,7 +128,10 @@ function createWindow(port) {
 
   mainWindow.loadURL(`http://127.0.0.1:${port}/`);
   mainWindow.once('ready-to-show', () => mainWindow.show());
-  mainWindow.webContents.once('did-finish-load', flushPendingScans);
+  // Flush only paths queued while the page was loading (tray / second-instance).
+  // Do NOT re-send argv boot scans on every Reload — that felt like "refresh
+  // auto-starts a scan".
+  mainWindow.webContents.on('did-finish-load', flushPendingScans);
 
   // Any external link (e.g. future "About") opens in the real browser, not in-app.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

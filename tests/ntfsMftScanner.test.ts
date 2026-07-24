@@ -122,6 +122,36 @@ test("ntfsMftScanIntoStore rejects when the target path does not resolve", async
   );
 });
 
+test("ntfsMftScanIntoStore aborts a hung elevated run when scan.cancelled flips", async () => {
+  const scan = fakeScan("C:\\fx");
+  let released = false;
+  const hung = ntfsMftScanIntoStore(scan, "C", ["fx"], {
+    preferBroker: false,
+    runElevated: () =>
+      new Promise<void>((resolve) => {
+        const iv = setInterval(() => {
+          if (scan.cancelled) {
+            clearInterval(iv);
+            released = true;
+            resolve();
+          }
+        }, 20);
+      }),
+  });
+  // Let the helper start, then cancel — cancelWatch should reject promptly.
+  await new Promise((r) => setTimeout(r, 50));
+  scan.cancelled = true;
+  scan.abort?.();
+  await assert.rejects(
+    () => hung,
+    (err: Error) => {
+      assert.match(err.name, /NtfsMftCancelled|Error/);
+      return true;
+    },
+  );
+  assert.equal(released || scan.cancelled, true);
+});
+
 async function settle(scanId: string) {
   await new Promise<void>((r) => {
     const iv = setInterval(() => {

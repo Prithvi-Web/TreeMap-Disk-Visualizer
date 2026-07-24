@@ -1,5 +1,5 @@
 import { execFile, spawn } from "child_process";
-import { promises as fsp } from "fs";
+import { existsSync, promises as fsp } from "fs";
 import path from "path";
 import { CleanResult } from "../models/types";
 
@@ -13,14 +13,25 @@ import { CleanResult } from "../models/types";
  */
 
 /** Windows recycle helper — SHFileOperation, not VB FileSystem (see script).
- *  Packaged builds load it from extraResources (asar is opaque to powershell.exe). */
+ *  Packaged builds load it from extraResources (asar is opaque to powershell.exe).
+ *  Under `electron .`, `process.resourcesPath` points at Electron's own resources,
+ *  not ours — so always fall back to the repo script when the packaged copy is
+ *  missing (same discipline as gduScanner.bundledCandidates). */
 export function windowsRecycleScriptPath(): string {
   const resources = (process as NodeJS.Process & { resourcesPath?: string })
     .resourcesPath;
+  const repoScript = path.join(
+    __dirname,
+    "..",
+    "..",
+    "scripts",
+    "sendToRecycleBin.ps1",
+  );
   if (resources) {
-    return path.join(resources, "scripts", "sendToRecycleBin.ps1");
+    const packaged = path.join(resources, "scripts", "sendToRecycleBin.ps1");
+    if (existsSync(packaged)) return packaged;
   }
-  return path.join(__dirname, "..", "..", "scripts", "sendToRecycleBin.ps1");
+  return repoScript;
 }
 
 function run(cmd: string, args: string[], timeoutMs = 15000): Promise<void> {

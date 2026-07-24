@@ -36,6 +36,30 @@ const execFileAsync = promisify(execFile);
  *  stops us from waiting forever if elevation or the helper wedges. */
 const ELEVATED_RUN_TIMEOUT_MS = 5 * 60 * 1000;
 
+export class NtfsMftCancelledError extends Error {
+  constructor(message = "cancelled") {
+    super(message);
+    this.name = "NtfsMftCancelledError";
+  }
+}
+
+function throwIfCancelled(scan: ScanResult): void {
+  if (scan.cancelled) throw new NtfsMftCancelledError();
+}
+
+/** Best-effort kill of the elevated helper so Stop does not wait for a full $MFT read. */
+async function killNtfsMftHelperProcesses(): Promise<void> {
+  if (process.platform !== "win32") return;
+  try {
+    await execFileAsync("taskkill", ["/F", "/IM", "ntfs-mft-scan.exe", "/T"], {
+      windowsHide: true,
+      timeout: 5_000,
+    });
+  } catch {
+    /* no matching process — fine */
+  }
+}
+
 /** A single drive letter, nothing else — the only value ever interpolated
  *  into the elevated PowerShell argument list, so it must be airtight. */
 export function isValidDriveLetter(s: string): boolean {
@@ -202,8 +226,11 @@ async function runElevatedViaUac(
   }
 }
 
-/** Prefer the standing elevated broker; fall back to per-scan UAC. */
+/** Prefer the standing elevated broker; fall back to per-scan UAC.
+ *  Races the helper against `scan.cancelled` so Stop can kill ntfs-mft-scan.exe
+ *  instead of waiting out a full $MFT read. */
 async function runHelper(
+  scan: ScanResult,
   binPath: string,
   args: string[],
   overrides: NtfsMftScanOverrides,
@@ -212,34 +239,64 @@ async function runHelper(
   rootRelative: string | null,
   logFile: string | null,
 ): Promise<"broker" | "uac"> {
-  const preferBroker = overrides.preferBroker !== false;
-  if (preferBroker && !overrides.runElevated) {
-    try {
-      if (overrides.runViaBroker) {
-        await overrides.runViaBroker(binPath, args);
+  throwIfCancelled(scan);
+  scan.abort = () => {
+    void killNtfsMftHelperProcesses();
+  };
+
+  let cancelTimer: ReturnType<typeof setInterval> | undefined;
+  const cancelWatch = new Promise<never>((_, reject) => {
+    cancelTimer = setInterval(() => {
+      if (!scan.cancelled) return;
+      if (cancelTimer) clearInterval(cancelTimer);
+      cancelTimer = undefined;
+      void killNtfsMftHelperProcesses().finally(() => {
+        reject(new NtfsMftCancelledError());
+      });
+    }, 200);
+  });
+
+  const run = async (): Promise<"broker" | "uac"> => {
+    const preferBroker = overrides.preferBroker !== false;
+    if (preferBroker && !overrides.runElevated) {
+      try {
+        if (overrides.runViaBroker) {
+          await overrides.runViaBroker(binPath, args);
+          return "broker";
+        }
+        await brokerRunHelper(binPath, args, ELEVATED_RUN_TIMEOUT_MS);
         return "broker";
+      } catch (err) {
+        throwIfCancelled(scan);
+        const reason = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[treemap] ntfs-mft: broker unavailable (${reason}) — falling back to per-scan UAC`,
+        );
       }
-      await brokerRunHelper(binPath, args, ELEVATED_RUN_TIMEOUT_MS);
-      return "broker";
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      console.warn(
-        `[treemap] ntfs-mft: broker unavailable (${reason}) — falling back to per-scan UAC`,
-      );
     }
-  }
-  if (overrides.runElevated) {
-    await overrides.runElevated(outFile, driveLetter);
+    if (overrides.runElevated) {
+      await overrides.runElevated(outFile, driveLetter);
+      return "uac";
+    }
+    await runElevatedViaUac(
+      outFile,
+      driveLetter,
+      binPath,
+      rootRelative,
+      logFile,
+    );
     return "uac";
+  };
+
+  try {
+    const runPromise = run();
+    // If cancel wins the race, the helper rejection must not become unhandled.
+    void runPromise.catch(() => {});
+    return await Promise.race([runPromise, cancelWatch]);
+  } finally {
+    if (cancelTimer) clearInterval(cancelTimer);
+    scan.abort = undefined;
   }
-  await runElevatedViaUac(
-    outFile,
-    driveLetter,
-    binPath,
-    rootRelative,
-    logFile,
-  );
-  return "uac";
 }
 
 export async function rebuildNtfsMftIndex(driveLetter: string): Promise<void> {
@@ -357,9 +414,7 @@ export async function ntfsMftScanIntoStore(
   }
 
   try {
-    const bin = overrides.runElevated
-      ? "test-bin"
-      : await findNtfsMftBinary();
+    const bin = overrides.runElevated ? "test-bin" : await findNtfsMftBinary();
     if (!overrides.runElevated && !bin) {
       throw new Error("ntfs-mft-scan binary not found");
     }
@@ -376,6 +431,7 @@ export async function ntfsMftScanIntoStore(
           () => "Checking NTFS journal (warm index)",
         );
         await runHelper(
+          scan,
           bin,
           ["--volume", driveLetter, "--usn-info", "--out", usnOut],
           overrides,
@@ -385,10 +441,7 @@ export async function ntfsMftScanIntoStore(
           null,
         );
         const usn = parseUsnInfoJson(await fsp.readFile(usnOut, "utf8"));
-        const strategy = decideRefreshStrategy(
-          loaded?.checkpoint ?? null,
-          usn,
-        );
+        const strategy = decideRefreshStrategy(loaded?.checkpoint ?? null, usn);
         console.info(
           `[treemap] ntfs-mft: refresh strategy=${strategy.strategy}` +
             ("reason" in strategy ? ` reason=${strategy.reason}` : ""),
@@ -400,6 +453,7 @@ export async function ntfsMftScanIntoStore(
           if (strategy.resumeFromUsn < usn.nextUsn) {
             const usnReadOut = path.join(tmpDir, "usn-read.ndjson");
             await runHelper(
+              scan,
               bin,
               [
                 "--volume",
@@ -445,6 +499,11 @@ export async function ntfsMftScanIntoStore(
           return finishStore(edgesByParent, targetRecordNo, freshness);
         }
       } catch (err) {
+        if (err instanceof NtfsMftCancelledError || scan.cancelled) {
+          throw err instanceof NtfsMftCancelledError
+            ? err
+            : new NtfsMftCancelledError();
+        }
         if (err instanceof JournalApplyGapError) {
           console.warn(
             `[treemap] ntfs-mft: journal apply gap — full reindex (${err.message})`,
@@ -465,6 +524,7 @@ export async function ntfsMftScanIntoStore(
       outFile,
       () => "Reading NTFS MFT",
     );
+    throwIfCancelled(scan);
     console.info(
       `[treemap] ntfs-mft: elevating ${bin} for volume ${driveLetter}:` +
         (rootRelative ? ` root=${rootRelative}` : " (whole volume)") +
@@ -482,6 +542,7 @@ export async function ntfsMftScanIntoStore(
     ];
     try {
       await runHelper(
+        scan,
         bin!,
         helperArgs,
         overrides,
@@ -496,6 +557,7 @@ export async function ntfsMftScanIntoStore(
     }
     await ingestHelperLog(Date.now() - tElev);
     const helperMs = Date.now() - tElev;
+    throwIfCancelled(scan);
     let outBytes = 0;
     try {
       outBytes = (await fsp.stat(outFile)).size;
@@ -516,6 +578,7 @@ export async function ntfsMftScanIntoStore(
     const tBuild0 = Date.now();
     const { edgesByParent, targetRecordNo: metaTarget } =
       await parseNtfsMftEdgesFile(outFile);
+    throwIfCancelled(scan);
     const targetRecordNo =
       metaTarget ?? resolveTargetRecord(edgesByParent, pathComponents);
     if (targetRecordNo === null) {
@@ -534,6 +597,7 @@ export async function ntfsMftScanIntoStore(
       };
       try {
         await runHelper(
+          scan,
           bin!,
           ["--volume", driveLetter, "--usn-info", "--out", usnOut],
           { ...overrides, preferBroker: overrides.preferBroker },
