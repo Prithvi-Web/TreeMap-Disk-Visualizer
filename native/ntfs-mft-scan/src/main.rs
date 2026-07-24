@@ -102,6 +102,59 @@ fn parse_args() -> Option<Args> {
     })
 }
 
+/// Vendored verbatim from `ntfs-reader` 0.4.5's `src/mft.rs`
+/// (`Mft::fixup_record`) — MIT OR Apache-2.0, Copyright (c) 2022 Matteo
+/// Bernacchia (https://github.com/kikijiki/ntfs-reader). That function is
+/// private to the crate (`fn fixup_record`, no `pub`), so it can't be called
+/// from here directly. Copied rather than reimplemented from scratch: this
+/// is NTFS's Update Sequence Array repair, and a subtly-wrong reimplementation
+/// would silently corrupt every record read back rather than fail loudly.
+/// See docs/superpowers/specs/2026-07-24-ntfs-mft-turbo-v2-design.md §3.
+fn fixup_record(record_number: u64, data: &mut [u8]) -> ntfs_reader::errors::NtfsReaderResult<()> {
+    use ntfs_reader::api::{NtfsFileRecordHeader, SECTOR_SIZE};
+    use ntfs_reader::errors::NtfsReaderError;
+
+    if data.len() < core::mem::size_of::<NtfsFileRecordHeader>() {
+        return Err(NtfsReaderError::CorruptMftRecord { number: record_number });
+    }
+    let header =
+        unsafe { core::ptr::read_unaligned(data.as_ptr() as *const NtfsFileRecordHeader) };
+
+    let usn_start = header.update_sequence_offset as usize;
+    if usn_start + 2 > data.len() {
+        return Err(NtfsReaderError::CorruptMftRecord { number: record_number });
+    }
+    let usa_start = usn_start + 2;
+    let usa_end =
+        usn_start.saturating_add((header.update_sequence_length as usize).saturating_mul(2));
+    if usa_end > data.len() {
+        return Err(NtfsReaderError::CorruptMftRecord { number: record_number });
+    }
+
+    let usn0 = data[usn_start];
+    let usn1 = data[usn_start + 1];
+
+    let mut sector_off = SECTOR_SIZE - 2;
+    for usa_off in (usa_start..usa_end).step_by(2) {
+        if sector_off + 2 > data.len() {
+            break;
+        }
+
+        let mut usa = [0u8; 2];
+        usa.copy_from_slice(&data[usa_off..usa_off + 2]);
+
+        let d0 = data[sector_off];
+        let d1 = data[sector_off + 1];
+        if d0 != usn0 || d1 != usn1 {
+            return Err(NtfsReaderError::CorruptMftRecord { number: record_number });
+        }
+
+        data[sector_off..sector_off + 2].copy_from_slice(&usa);
+        sector_off += SECTOR_SIZE;
+    }
+    Ok(())
+}
+
 /** Preference order when a record has multiple surviving names at the SAME
  *  parent (Posix+Win32 for one link): higher wins. */
 fn namespace_rank(ns: u8) -> u8 {
@@ -353,7 +406,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::write_json_string;
+    use super::{fixup_record, write_json_string};
 
     #[test]
     fn json_string_escapes_controls_not_rust_debug() {
@@ -365,5 +418,53 @@ mod tests {
         assert_eq!(s, "\"a\\\"b\\\\c\\n\\u0001\u{202e}\"");
         assert!(!s.contains("\\u{"));
         assert!(s.contains("\\u0001"));
+    }
+
+    #[test]
+    fn fixup_record_restores_sector_end_bytes_from_the_usa() {
+        // A minimal synthetic record: header + a 2-sector (1024-byte) body.
+        // update_sequence_offset points past the header; update_sequence_length
+        // is 3 (1 USN + 2 sector-fixup entries, matching a 1024-byte/2-sector
+        // record) per the real NTFS on-disk format.
+        let mut data = vec![0u8; 1024];
+        let usn_offset: u16 = 48; // arbitrary, past a real header's fixed fields
+        let usn_length: u16 = 3;
+        data[4..6].copy_from_slice(&usn_offset.to_le_bytes()); // update_sequence_offset
+        data[6..8].copy_from_slice(&usn_length.to_le_bytes()); // update_sequence_length
+
+        let usa_start = usn_offset as usize + 2;
+        // The USN marker value at usa_start-2..usa_start (index 0 of the USA)
+        let marker: [u8; 2] = [0xAB, 0xCD];
+        data[usn_offset as usize..usa_start].copy_from_slice(&marker);
+        // Two real sector-end bytes, saved in the USA, and the sector ends
+        // themselves overwritten with the marker (as NTFS does on disk).
+        let real_sector0: [u8; 2] = [0x11, 0x22];
+        let real_sector1: [u8; 2] = [0x33, 0x44];
+        data[usa_start..usa_start + 2].copy_from_slice(&real_sector0);
+        data[usa_start + 2..usa_start + 4].copy_from_slice(&real_sector1);
+        data[510..512].copy_from_slice(&marker); // sector 0 end, corrupted on-disk
+        data[1022..1024].copy_from_slice(&marker); // sector 1 end, corrupted on-disk
+
+        fixup_record(0, &mut data).expect("valid USA should fix up cleanly");
+
+        assert_eq!(&data[510..512], &real_sector0, "sector 0 end must be restored");
+        assert_eq!(&data[1022..1024], &real_sector1, "sector 1 end must be restored");
+    }
+
+    #[test]
+    fn fixup_record_rejects_a_sector_end_that_does_not_match_the_marker() {
+        let mut data = vec![0u8; 1024];
+        let usn_offset: u16 = 48;
+        let usn_length: u16 = 3;
+        data[4..6].copy_from_slice(&usn_offset.to_le_bytes());
+        data[6..8].copy_from_slice(&usn_length.to_le_bytes());
+        let usa_start = usn_offset as usize + 2;
+        data[usn_offset as usize..usa_start].copy_from_slice(&[0xAB, 0xCD]);
+        data[usa_start..usa_start + 4].copy_from_slice(&[0x11, 0x22, 0x33, 0x44]);
+        // Sector 0's last 2 bytes DON'T match the marker — corrupt/torn write.
+        data[510..512].copy_from_slice(&[0x00, 0x00]);
+
+        let result = fixup_record(0, &mut data);
+        assert!(result.is_err(), "a mismatched sector-end marker must be rejected, not silently accepted");
     }
 }
