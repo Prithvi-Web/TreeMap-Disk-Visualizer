@@ -10,8 +10,24 @@ import {
   parseNtfsMftEdgesFile,
   resolveTargetRecord,
   buildNtfsMftStoreFromEdges,
+  NtfsMftEdge,
 } from "./ntfsMftMapper";
 import { mergeScanTimingExtras, parseHelperPhaseLog } from "./scanTimingLog";
+import { brokerRunHelper, ensureBrokerRunning } from "./ntfsMftBrokerClient";
+import {
+  deleteVolumeIndex,
+  edgesToIndexRecords,
+  indexRecordsToEdgesByParent,
+  loadVolumeIndex,
+  parseUsnInfoJson,
+  parseUsnReadEvents,
+  saveVolumeIndex,
+  IndexFreshness,
+  JournalApplyGapError,
+  decideRefreshStrategy,
+  applyJournalEvents,
+  INDEX_FORMAT_VERSION,
+} from "./ntfsMftWarmPath";
 
 const execFileAsync = promisify(execFile);
 
@@ -112,6 +128,12 @@ export interface NtfsMftScanOverrides {
   /** Real implementation spawns ntfs-mft-scan.exe via UAC (PowerShell
    *  Start-Process -Verb RunAs). Tests inject a fake that writes NDJSON. */
   runElevated?: (outFile: string, driveLetter: string) => Promise<void>;
+  /** Skip warm-index path (tests / Rebuild index). */
+  forceCold?: boolean;
+  /** Injected broker runner — tests can force unreachable. */
+  runViaBroker?: (exe: string, args: string[]) => Promise<void>;
+  /** When false, never attempt the standing broker (tests). Default true. */
+  preferBroker?: boolean;
 }
 
 /**
@@ -180,6 +202,56 @@ async function runElevatedViaUac(
   }
 }
 
+/** Prefer the standing elevated broker; fall back to per-scan UAC. */
+async function runHelper(
+  binPath: string,
+  args: string[],
+  overrides: NtfsMftScanOverrides,
+  driveLetter: string,
+  outFile: string,
+  rootRelative: string | null,
+  logFile: string | null,
+): Promise<"broker" | "uac"> {
+  const preferBroker = overrides.preferBroker !== false;
+  if (preferBroker && !overrides.runElevated) {
+    try {
+      if (overrides.runViaBroker) {
+        await overrides.runViaBroker(binPath, args);
+        return "broker";
+      }
+      await brokerRunHelper(binPath, args, ELEVATED_RUN_TIMEOUT_MS);
+      return "broker";
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[treemap] ntfs-mft: broker unavailable (${reason}) — falling back to per-scan UAC`,
+      );
+    }
+  }
+  if (overrides.runElevated) {
+    await overrides.runElevated(outFile, driveLetter);
+    return "uac";
+  }
+  await runElevatedViaUac(
+    outFile,
+    driveLetter,
+    binPath,
+    rootRelative,
+    logFile,
+  );
+  return "uac";
+}
+
+export async function rebuildNtfsMftIndex(driveLetter: string): Promise<void> {
+  if (!isValidDriveLetter(driveLetter)) {
+    throw new Error(`invalid drive letter: ${driveLetter}`);
+  }
+  await deleteVolumeIndex(driveLetter);
+  console.info(
+    `[treemap] ntfs-mft: deleted persisted index for ${driveLetter}: (next Turbo scan will full-reindex)`,
+  );
+}
+
 /** Keep the SSE progress stream alive while the elevated helper runs with
  *  scanned===0 (otherwise the UI freezes at "0 items · 0.0s"). */
 function startNtfsMftHeartbeat(
@@ -209,6 +281,10 @@ function startNtfsMftHeartbeat(
  * Build a store for `scan.rootPath` (a folder under drive `driveLetter`,
  * split into `pathComponents` relative to the volume root) via a full-volume
  * MFT read. Throws on any failure — callers (Task 5) fall back to gdu/walker.
+ *
+ * Warm path (Plan #2): when a persisted index exists and the USN journal can
+ * be queried via the standing broker (or UAC fallback), apply incremental
+ * events instead of re-reading the $MFT.
  */
 export async function ntfsMftScanIntoStore(
   scan: ScanResult,
@@ -241,78 +317,11 @@ export async function ntfsMftScanIntoStore(
     });
   }
 
-  try {
-    if (overrides.runElevated) {
-      stopHeartbeat = startNtfsMftHeartbeat(
-        scan,
-        outFile,
-        () => "Reading NTFS MFT",
-      );
-      await overrides.runElevated(outFile, driveLetter);
-    } else {
-      const bin = await findNtfsMftBinary();
-      if (!bin) throw new Error("ntfs-mft-scan binary not found");
-      const rootRelative = ntfsMftRootArg(pathComponents);
-      console.info(
-        `[treemap] ntfs-mft: elevating ${bin} for volume ${driveLetter}:` +
-          (rootRelative ? ` root=${rootRelative}` : " (whole volume)") +
-          " (UAC)…",
-      );
-      stopHeartbeat = startNtfsMftHeartbeat(
-        scan,
-        outFile,
-        () => "Reading NTFS MFT (admin)",
-      );
-      const tElev = Date.now();
-      try {
-        await runElevatedViaUac(
-          outFile,
-          driveLetter,
-          bin,
-          rootRelative,
-          logFile,
-        );
-      } catch (err) {
-        await ingestHelperLog(Date.now() - tElev);
-        throw err;
-      }
-      await ingestHelperLog(Date.now() - tElev);
-      const helperMs = Date.now() - tElev;
-      let outBytes = 0;
-      try {
-        outBytes = (await fsp.stat(outFile)).size;
-      } catch {
-        /* ignore */
-      }
-      console.info(
-        `[treemap] ntfs-mft: helper finished in ${(helperMs / 1000).toFixed(1)}s` +
-          ` (${(outBytes / (1024 * 1024)).toFixed(1)} MB NDJSON)`,
-      );
-    }
-
-    stopHeartbeat?.();
-    stopHeartbeat = startNtfsMftHeartbeat(
-      scan,
-      outFile,
-      () => "Parsing MFT edges",
-    );
-    const tBuild0 = Date.now();
-    // Stream line-by-line — never load a multi-hundred-MB dump as one string.
-    const { edgesByParent, targetRecordNo: metaTarget } =
-      await parseNtfsMftEdgesFile(outFile);
-    const targetRecordNo =
-      metaTarget ?? resolveTargetRecord(edgesByParent, pathComponents);
-    if (targetRecordNo === null) {
-      throw new Error(`could not resolve ${scan.rootPath} in the MFT edge set`);
-    }
-
-    stopHeartbeat?.();
-    stopHeartbeat = startNtfsMftHeartbeat(
-      scan,
-      outFile,
-      () => "Building folder tree from MFT",
-    );
-
+  function finishStore(
+    edgesByParent: Map<number, NtfsMftEdge[]>,
+    targetRecordNo: number,
+    freshness: IndexFreshness,
+  ): ScanStore {
     const rootName = pathComponents.length
       ? pathComponents[pathComponents.length - 1]
       : `${driveLetter}:\\`;
@@ -323,7 +332,6 @@ export async function ntfsMftScanIntoStore(
       modifiedAt: Date.now(),
       isHidden: false,
     });
-
     const { stats } = buildNtfsMftStoreFromEdges(
       edgesByParent,
       targetRecordNo,
@@ -331,14 +339,242 @@ export async function ntfsMftScanIntoStore(
       store.rootId,
     );
     scan.fileCount = stats.fileCount;
-    scan.dirCount = stats.dirCount + 1; // +1 for the root itself
+    scan.dirCount = stats.dirCount + 1;
     scan.hardlinkedFiles = stats.hardlinkedFiles;
     scan.hardlinkedBytes = stats.hardlinkedBytes;
     scan.scanned = scan.fileCount + scan.dirCount;
     scan.currentPath = scan.rootPath;
-
+    scan.engineDetail =
+      freshness === "cold-mft"
+        ? "Fresh $MFT read (building/updating index)"
+        : freshness === "warm-incremental"
+          ? "Warm index + USN journal delta"
+          : "Warm persisted index (no journal changes)";
     store.finalize();
     store.sumSizes();
+    mergeScanTimingExtras(scan.scanId, { indexFreshness: freshness });
+    return store;
+  }
+
+  try {
+    const bin = overrides.runElevated
+      ? "test-bin"
+      : await findNtfsMftBinary();
+    if (!overrides.runElevated && !bin) {
+      throw new Error("ntfs-mft-scan binary not found");
+    }
+    const rootRelative = ntfsMftRootArg(pathComponents);
+
+    // --- Warm path --------------------------------------------------------
+    if (!overrides.forceCold && !overrides.runElevated && bin) {
+      try {
+        const loaded = await loadVolumeIndex(driveLetter);
+        const usnOut = path.join(tmpDir, "usn-info.json");
+        stopHeartbeat = startNtfsMftHeartbeat(
+          scan,
+          usnOut,
+          () => "Checking NTFS journal (warm index)",
+        );
+        await runHelper(
+          bin,
+          ["--volume", driveLetter, "--usn-info", "--out", usnOut],
+          overrides,
+          driveLetter,
+          usnOut,
+          null,
+          null,
+        );
+        const usn = parseUsnInfoJson(await fsp.readFile(usnOut, "utf8"));
+        const strategy = decideRefreshStrategy(
+          loaded?.checkpoint ?? null,
+          usn,
+        );
+        console.info(
+          `[treemap] ntfs-mft: refresh strategy=${strategy.strategy}` +
+            ("reason" in strategy ? ` reason=${strategy.reason}` : ""),
+        );
+
+        if (strategy.strategy === "incremental" && loaded) {
+          let records = loaded.records;
+          let freshness: IndexFreshness = "warm-index";
+          if (strategy.resumeFromUsn < usn.nextUsn) {
+            const usnReadOut = path.join(tmpDir, "usn-read.ndjson");
+            await runHelper(
+              bin,
+              [
+                "--volume",
+                driveLetter,
+                "--usn-read",
+                String(strategy.resumeFromUsn),
+                "--out",
+                usnReadOut,
+              ],
+              overrides,
+              driveLetter,
+              usnReadOut,
+              null,
+              null,
+            );
+            const { events, nextUsn } = parseUsnReadEvents(
+              await fsp.readFile(usnReadOut, "utf8"),
+            );
+            records = applyJournalEvents(records, events);
+            freshness = "warm-incremental";
+            await saveVolumeIndex(
+              driveLetter,
+              {
+                volumeSerialNumber: usn.volumeSerialNumber,
+                usnJournalId: usn.usnJournalId,
+                lastUsnProcessed: nextUsn ?? usn.nextUsn,
+                formatVersion: INDEX_FORMAT_VERSION,
+              },
+              records,
+            );
+          }
+          const edgesByParent = indexRecordsToEdgesByParent(records);
+          const targetRecordNo = resolveTargetRecord(
+            edgesByParent,
+            pathComponents,
+          );
+          if (targetRecordNo === null) {
+            throw new Error(
+              `could not resolve ${scan.rootPath} in the warm index`,
+            );
+          }
+          stopHeartbeat?.();
+          return finishStore(edgesByParent, targetRecordNo, freshness);
+        }
+      } catch (err) {
+        if (err instanceof JournalApplyGapError) {
+          console.warn(
+            `[treemap] ntfs-mft: journal apply gap — full reindex (${err.message})`,
+          );
+        } else {
+          const reason = err instanceof Error ? err.message : String(err);
+          console.warn(
+            `[treemap] ntfs-mft: warm path unavailable (${reason}) — cold $MFT read`,
+          );
+        }
+      }
+    }
+
+    // --- Cold path (full $MFT) --------------------------------------------
+    stopHeartbeat?.();
+    stopHeartbeat = startNtfsMftHeartbeat(
+      scan,
+      outFile,
+      () => "Reading NTFS MFT",
+    );
+    console.info(
+      `[treemap] ntfs-mft: elevating ${bin} for volume ${driveLetter}:` +
+        (rootRelative ? ` root=${rootRelative}` : " (whole volume)") +
+        "…",
+    );
+    const tElev = Date.now();
+    const helperArgs = [
+      "--volume",
+      driveLetter,
+      ...(rootRelative ? ["--root", rootRelative] : []),
+      "--out",
+      outFile,
+      "--log",
+      logFile,
+    ];
+    try {
+      await runHelper(
+        bin!,
+        helperArgs,
+        overrides,
+        driveLetter,
+        outFile,
+        rootRelative,
+        logFile,
+      );
+    } catch (err) {
+      await ingestHelperLog(Date.now() - tElev);
+      throw err;
+    }
+    await ingestHelperLog(Date.now() - tElev);
+    const helperMs = Date.now() - tElev;
+    let outBytes = 0;
+    try {
+      outBytes = (await fsp.stat(outFile)).size;
+    } catch {
+      /* ignore */
+    }
+    console.info(
+      `[treemap] ntfs-mft: helper finished in ${(helperMs / 1000).toFixed(1)}s` +
+        ` (${(outBytes / (1024 * 1024)).toFixed(1)} MB NDJSON)`,
+    );
+
+    stopHeartbeat?.();
+    stopHeartbeat = startNtfsMftHeartbeat(
+      scan,
+      outFile,
+      () => "Parsing MFT edges",
+    );
+    const tBuild0 = Date.now();
+    const { edgesByParent, targetRecordNo: metaTarget } =
+      await parseNtfsMftEdgesFile(outFile);
+    const targetRecordNo =
+      metaTarget ?? resolveTargetRecord(edgesByParent, pathComponents);
+    if (targetRecordNo === null) {
+      throw new Error(`could not resolve ${scan.rootPath} in the MFT edge set`);
+    }
+
+    // Persist index from this cold dump (subtree or whole volume).
+    try {
+      const records = edgesToIndexRecords(edgesByParent);
+      const usnOut = path.join(tmpDir, "usn-info-after.json");
+      let checkpoint = {
+        volumeSerialNumber: 0,
+        usnJournalId: 0n,
+        lastUsnProcessed: 0n,
+        formatVersion: INDEX_FORMAT_VERSION,
+      };
+      try {
+        await runHelper(
+          bin!,
+          ["--volume", driveLetter, "--usn-info", "--out", usnOut],
+          { ...overrides, preferBroker: overrides.preferBroker },
+          driveLetter,
+          usnOut,
+          null,
+          null,
+        );
+        const usn = parseUsnInfoJson(await fsp.readFile(usnOut, "utf8"));
+        checkpoint = {
+          volumeSerialNumber: usn.volumeSerialNumber,
+          usnJournalId: usn.usnJournalId,
+          lastUsnProcessed: usn.nextUsn,
+          formatVersion: INDEX_FORMAT_VERSION,
+        };
+      } catch (err) {
+        console.warn(
+          `[treemap] ntfs-mft: could not checkpoint USN after cold scan: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      await saveVolumeIndex(driveLetter, checkpoint, records);
+      console.info(
+        `[treemap] ntfs-mft: saved index ${records.length} records for ${driveLetter}:`,
+      );
+    } catch (err) {
+      console.warn(
+        `[treemap] ntfs-mft: index save failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    stopHeartbeat?.();
+    stopHeartbeat = startNtfsMftHeartbeat(
+      scan,
+      outFile,
+      () => "Building folder tree from MFT",
+    );
+    const store = finishStore(edgesByParent, targetRecordNo, "cold-mft");
     mergeScanTimingExtras(scan.scanId, {
       parseBuildMs: Date.now() - tBuild0,
     });
@@ -348,3 +584,6 @@ export async function ntfsMftScanIntoStore(
     await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 }
+
+// Re-export for tests / API
+export { ensureBrokerRunning, deleteVolumeIndex };

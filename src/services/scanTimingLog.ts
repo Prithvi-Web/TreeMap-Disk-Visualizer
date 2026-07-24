@@ -26,6 +26,7 @@ export interface ScanTimingExtras {
   helperMs?: number;
   ndjsonBytes?: number;
   parseBuildMs?: number;
+  indexFreshness?: "cold-mft" | "warm-index" | "warm-incremental";
 }
 
 export interface ScanTimingRecord {
