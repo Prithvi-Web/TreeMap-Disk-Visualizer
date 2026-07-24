@@ -102,10 +102,24 @@ throwaway short-name alias, corrupting size/count totals for nearly every
 file with a name longer than 8.3.
 
 **Fix:** the helper skips any `FileName` attribute whose `namespace` is pure
-`Dos` — keeping `Posix`, `Win32`, and `Win32AndDos` — before emitting a line.
-What survives per record is exactly its genuine set of names: one for an
-ordinary file, more than one only for a real hardlink. One line per
-surviving `(record, FileName attribute)` pair:
+`Dos` — keeping `Posix`, `Win32`, and `Win32AndDos`.
+
+**A third review caught a variant this doesn't fully cover on its own:** a
+`Posix`-namespace name can coexist with a `Win32` name for the *same single
+link at the same parent* (the historical case-sensitive-POSIX-subsystem
+counterpart to the DOS-alias case, not a second hardlink). Filtering by
+namespace alone isn't enough to catch this, because both `Posix` and `Win32`
+survive the Dos-only filter. The actual distinguishing signal is **parent**,
+not namespace: two genuine hardlinks always have different `parentRecordNo`
+values (you can't link a name to itself twice in the same directory), so
+edges are first grouped by `(recordNo, parentRecordNo)` and collapsed to one
+representative per group (preferring `Win32AndDos` > `Win32` > `Posix` when
+more than one namespace survives for the same parent) — *then* the
+remaining distinct-parent groups for a given `recordNo` are the genuine
+hardlink count. What survives is exactly a record's genuine set of names:
+one for an ordinary file, more than one only when it's actually linked from
+more than one parent. One line per surviving `(record, FileName attribute)`
+pair:
 
 ```json
 {"recordNo": 123456, "parentRecordNo": 5, "name": "report.docx", "size": 40960, "isDir": false, "mtimeMs": 1732000000000, "attrs": 0}
@@ -153,7 +167,13 @@ keep every surviving edge, not collapse them:
    scan (`C:\`) needs no lookup at all. A subfolder scan (`C:\Users\foo\
    Documents`) walks the path's components from record 5 down, at each step
    scanning `edgesByParent.get(currentRecordNo)` for a directory edge whose
-   `name` matches the next component.
+   `name` matches the next component — matched case-insensitively (NTFS is
+   case-insensitive-preserving by default; a literal `===` would fail to
+   resolve a real subfolder whenever the requested path's casing differs
+   from the on-disk name). If a component fails to resolve at all (e.g. the
+   folder was deleted between the initial `rootStat` check and the MFT
+   read), that's just another case covered by §3.6's "any failure falls
+   back" rule — no special handling needed beyond that.
 3. BFS/DFS from the target root's record number, following `edgesByParent.
    get(recordNo)` to enumerate children — parent-before-child, so every
    `store.addNode(parentId, ...)` call already has its parent inserted.
@@ -170,6 +190,23 @@ keep every surviving edge, not collapse them:
 The full-volume edge map (step 1) is discarded once the target subtree is
 built; only the constructed store is kept, same memory-release shape as
 gdu's per-shard JSON release.
+
+**Two edge cases raised in the third review, both accepted as documented
+limitations rather than engineered around:**
+
+- **Unallocated records are already excluded, no action needed.**
+  `ntfs-reader`'s `Mft::files()` already filters to in-use records via the
+  volume's own `$Bitmap` attribute (`record_exists()`) *and* each record's
+  own in-use flag (`is_used()`) — deleted-but-not-yet-overwritten records
+  never reach our NDJSON output in the first place.
+- **Reused record numbers mid-scan.** This is a single raw point-in-time
+  read, not a journal-consistent snapshot. If a file is deleted and its MFT
+  slot reallocated to an unrelated new file *during* the read window, that
+  slot's `recordNo` could — in principle — briefly appear to belong to two
+  things across the read. The practical effect would be a rare, benign
+  miscount (an unrelated file misread as a hardlink duplicate, self-correcting
+  on the next scan). Not engineered around for v1; noted so it isn't a
+  surprise if ever observed.
 
 ### 3.3 `src/services/ntfsMftScanner.ts`
 
@@ -377,3 +414,15 @@ surfaced a further bug neither review had caught.
 | "Mirrored verbatim" from gdu's eligibility list | `ignore.length === 0` was dropped; MFT enumeration has even less ability to honor ignore patterns than gdu does | §3.6: gate restored |
 | `targetVolumeIsNtfs` | Asserted as a bare boolean, no implementation, no existing helper in the codebase | §3.6: concrete `fsutil fsinfo volumeinfo` check |
 | One row per `FileName` attribute | **Not caught by either review** — found while fixing the row above. A DOS 8.3 short-name alias attribute (`namespace: Dos`) shares a record with its real `Win32` name for the *same single link*, not a second hardlink. `ntfs-reader` itself has a `get_best_file_name()` helper specifically because of this, confirming it's a real, known issue with this API rather than a hypothetical. Left unfixed, most long-named files would register a false hardlink duplicate against their own throwaway short-name alias | §3.1: skip `namespace: Dos`-only attributes at emission; §5: regression test for it |
+
+### Draft 3 review (third pass): APPROVED WITH SUGGESTIONS
+
+No architectural flaw found this time. Remaining gaps, folded into this
+version directly rather than triggering a fourth full review cycle:
+
+| Gap found | Fix applied |
+|---|---|
+| DOS-alias filter didn't cover the analogous `Posix`+`Win32` same-link-same-parent case | §3.1/§3.2: dedup key changed from namespace-based filtering alone to grouping by `(recordNo, parentRecordNo)` first — genuine hardlinks are identified by *distinct parents*, which the namespace value alone can't distinguish |
+| Path-resolution name matching's case-sensitivity was unstated | §3.2 step 2: explicit case-insensitive match, matching NTFS's default case-insensitive-preserving behavior |
+| Reused MFT record numbers mid-scan; whether unallocated records are filtered | §3.2: both addressed directly — unallocated records are already excluded by `ntfs-reader`'s own bitmap/is-used checks (confirmed in its source, no action needed); reused-record races are accepted as a rare, benign, self-correcting limitation of a point-in-time raw read |
+| `fsutil` invocation style | Reviewed and confirmed consistent with the existing argv-array-only discipline — no change needed |
