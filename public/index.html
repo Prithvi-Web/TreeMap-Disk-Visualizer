@@ -2330,6 +2330,24 @@ async function showFastRescanStat(scanId) {
   } catch { /* stats are best-effort */ }
 }
 
+/**
+ * Update #scanStatus while keeping the loader SVG in place. Rewriting
+ * innerHTML on every progress tick remounts the spinner and restarts its
+ * CSS animation mid-rotation (the "never completes a circle" jank).
+ */
+function setScanStatusBusy(spanHtml) {
+  const status = $('scanStatus');
+  status.classList.remove('error');
+  let spin = status.querySelector('svg.spin, svg.ic.spin');
+  let label = status.querySelector('[data-scan-label]');
+  if (!spin || !label) {
+    status.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') +
+      `<span data-scan-label>${spanHtml}</span>`;
+    return;
+  }
+  label.innerHTML = spanHtml;
+}
+
 /** Shared scanning chrome: spinners, skeletons, dashboard switch. */
 function beginScanChrome() {
   state.scanning = true;
@@ -2338,10 +2356,12 @@ function beginScanChrome() {
   const stop = $('stopScanBtn');
   if (stop) { stop.hidden = false; stop.disabled = false; }
   $('headerSpin').classList.add('on');
-  $('headerSpin').innerHTML = icon('loader', 15, REDUCED ? '' : 'spin');
+  // Mount header spinner once per scan — don't touch it again until end.
+  if (!$('headerSpin').querySelector('svg')) {
+    $('headerSpin').innerHTML = icon('loader', 15, REDUCED ? '' : 'spin');
+  }
   $('progressTrack').classList.add('active');
-  $('scanStatus').classList.remove('error');
-  $('scanStatus').innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + '<span>Starting scan…</span>';
+  setScanStatusBusy('Starting scan…');
   $('bigFiles').innerHTML = skeletonRows(6);
   $('bigFolders').innerHTML = skeletonRows(6);
   $('donutLegend').innerHTML = skeletonRows(5, 24);
@@ -2360,7 +2380,7 @@ async function stopScan() {
   if (stop) stop.disabled = true;
   try {
     await api(`/api/scan/${id}/cancel`, { method: 'POST' });
-    $('scanStatus').innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + '<span>Stopping scan…</span>';
+    setScanStatusBusy('Stopping scan…');
   } catch (e) {
     if (stop) stop.disabled = false;
     toast(e.message || 'Could not stop scan', 'error');
@@ -2375,9 +2395,10 @@ async function startScan(path, opts = {}) {
   try {
     beginScanChrome();
     updateScanOptsLog(resolved);
-    $('scanStatus').innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') +
-      `<span>Starting scan… · Turbo NTFS <b>${resolved.ntfsMft ? 'ON' : 'OFF'}</b>` +
-      (resolved.incremental ? ' · Fast rescan ON' : '') + '</span>';
+    setScanStatusBusy(
+      `Starting scan… · Turbo NTFS <b>${resolved.ntfsMft ? 'ON' : 'OFF'}</b>` +
+      (resolved.incremental ? ' · Fast rescan ON' : ''),
+    );
     const t0 = performance.now();
     const resp = await api('/api/scan', {
       method: 'POST',
@@ -2396,9 +2417,9 @@ async function startScan(path, opts = {}) {
 
 /** Follow a running scan (disk or cloud) over SSE, with the stall watchdog. */
 function followScanProgress(scanId, path, fast, t0, requestedOpts = null) {
-  const status = $('scanStatus');
-  const turboTag = requestedOpts?.ntfsMft ? icon('zap', 12) + ' Turbo NTFS requested · ' : '';
-  const fastTag = fast ? icon('zap', 12) + ' Fast rescan · ' : '';
+  // Text-only tags (no SVG) so progress updates don't remount icons either.
+  const turboTag = requestedOpts?.ntfsMft ? 'Turbo NTFS requested · ' : '';
+  const fastTag = fast ? 'Fast rescan · ' : '';
   const isCloud = path.startsWith('cloud://');
   state.scanId = scanId;
   state.scanOpts = requestedOpts || resolveScanOpts({ incremental: fast });
@@ -2448,9 +2469,10 @@ function followScanProgress(scanId, path, fast, t0, requestedOpts = null) {
     if (msg.type === 'progress') {
       const secs = (performance.now() - t0) / 1000;
       const rate = secs > 0.2 ? Math.round(msg.scanned / secs) : 0;
-      status.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') +
+      setScanStatusBusy(
         `<span class="num">${turboTag}${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
-        (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`;
+        (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`,
+      );
       const meta = $('scanMeta');
       meta.textContent = msg.currentPath || '';
       meta.title = msg.currentPath || ''; // full path on hover when ellipsized
@@ -2503,7 +2525,7 @@ async function startCloudScan(providerId, providerName) {
   disableLive({ keepWanted: false }); // watching makes no sense on a cloud tree
   try {
     beginScanChrome();
-    $('scanStatus').innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `<span>Listing ${escapeHtml(providerName)}…</span>`;
+    setScanStatusBusy(`Listing ${escapeHtml(providerName)}…`);
     const t0 = performance.now();
     const resp = await api('/api/cloud/scan', {
       method: 'POST',
