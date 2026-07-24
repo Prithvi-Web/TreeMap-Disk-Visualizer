@@ -11,17 +11,53 @@ import {
 } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
 import { makeThumbnail } from '../services/perceptualDupes';
+import { idempotency } from '../middleware/idempotency';
+import { getPolicy, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
+import { appendAudit, tokenIdFor } from '../services/audit';
 
 export const fileRouter = Router();
 
 /**
- * DELETE /api/files  { paths: string[] }
+ * DELETE /api/files  { paths: string[], dryRun?: boolean }
  * Moves every path to the system trash (never hard-deletes).
  * -> { deleted: string[], failed: { path, reason }[] }
+ * With dryRun: true, reports the exact manifest (paths + known bytes) and
+ * touches nothing; the response then carries `dryRun: true` instead.
+ * Honors an Idempotency-Key header so a retry can't double-trash.
  */
-fileRouter.delete('/files', guardBodyPaths, requireInsideScanRoot, async (req: Request, res: Response) => {
-  const { paths } = req.body as { paths: string[] };
+fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, async (req: Request, res: Response) => {
+  const { paths, dryRun } = req.body as { paths: string[]; dryRun?: boolean };
+  const sized = paths.map((p) => ({ path: p, bytes: knownSizeOf(p) }));
+  const totalKnownBytes = sized.reduce((sum, s) => sum + (s.bytes ?? 0), 0);
+
+  const policy = await getPolicy();
+  try {
+    assertPathsAllowed(policy, paths);
+    assertBytesCap(policy, totalKnownBytes);
+  } catch (err) {
+    if (err instanceof AppError) {
+      await appendAudit({ action: 'files.trash', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: totalKnownBytes, dryRun: dryRun === true, outcome: 'refused', code: err.code });
+    }
+    throw err;
+  }
+
+  if (dryRun === true) {
+    await appendAudit({ action: 'files.trash', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: totalKnownBytes, dryRun: true, outcome: 'ok' });
+    res.json({ dryRun: true, wouldTrash: sized, totalKnownBytes });
+    return;
+  }
+
   const result = await moveToTrash(paths);
+  await appendAudit({
+    action: 'files.trash',
+    source: 'http',
+    tokenId: tokenIdFor('http'),
+    paths,
+    bytes: totalKnownBytes,
+    dryRun: false,
+    outcome: result.failed.length === 0 ? 'ok' : 'error',
+    ...(result.failed.length > 0 ? { code: 'PARTIAL_FAILURE' } : {}),
+  });
   res.json(result);
 });
 

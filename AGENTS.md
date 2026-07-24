@@ -65,6 +65,38 @@ read-what-you-saw) permission to act.
   with a stable code. Rate limit: 10 req/s sustained per client (bursts to
   20), then `429 { code: "RATE_LIMITED" }`.
 
+## Safety rails for agents: dry runs, policy, audit, idempotency
+
+- **Dry runs.** `DELETE /api/files`, `POST /api/offload` and
+  `POST /api/offload/restore` accept `"dryRun": true` and return the **exact
+  manifest** — affected paths and bytes — while acting on nothing. A dry run
+  passes through every validation a real run would (path guards, policy,
+  offload planning), so "dry run succeeded" genuinely means "the real run
+  would act". **Always dry-run, show the user, then act.**
+- **Policy.** The human can create `agent-policy.json` in the app-data
+  directory (`GET /api/policy` shows the resolved policy and the file path):
+  ```json
+  {
+    "allowedRoots": ["/Users/me/Downloads"],
+    "protectedPaths": ["/Users/me/Documents/taxes"],
+    "maxBytesPerOperation": 10737418240
+  }
+  ```
+  `allowedRoots` confines both scanning and destruction; `protectedPaths` can
+  never be trashed/offloaded (nor anything containing them); the byte cap
+  refuses any single oversized operation. Violations are
+  `403 { code: "POLICY_ROOT_NOT_ALLOWED" | "POLICY_PROTECTED_PATH" |
+  "POLICY_BYTES_EXCEEDED" }`. An absent or empty file imposes nothing. The
+  policy is deliberately not writable through the API.
+- **Audit.** Every destructive request — executed, dry-run, or refused — is
+  appended to `audit.jsonl` (timestamp, action, source http/mcp, token id,
+  paths, bytes, outcome). `GET /api/audit?limit=100` reads it back, newest
+  first. The MCP tools write the same log.
+- **Idempotency.** Destructive endpoints honor an `Idempotency-Key` header:
+  repeating a successful request with the same key within ~10 minutes replays
+  the stored response (`Idempotency-Replayed: true`) instead of executing
+  again. Send one on every destructive call you might retry.
+
 ## MCP specifics
 
 - `scan_path` returns a `scanId` and waits (bounded) for completion; pass

@@ -4,6 +4,8 @@ import os from 'os';
 import path from 'path';
 import { guardQueryPath } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
+import { idempotency } from '../middleware/idempotency';
+import { appendAudit, tokenIdFor } from '../services/audit';
 import { diskUsage } from '../services/diskUsage';
 import { getTrashInfo, emptyTrash } from '../services/trash';
 import { getSnapshotAccounting, purgeSnapshots } from '../services/snapshotAccounting';
@@ -58,12 +60,14 @@ systemRouter.get('/trash/size', async (_req: Request, res: Response) => {
  * Bin. Irreversible, so it demands the same explicit confirm flag as the
  * snapshot purge — the UI additionally gates it behind a confirm dialog.
  */
-systemRouter.post('/trash/empty', async (req: Request, res: Response) => {
+systemRouter.post('/trash/empty', idempotency, async (req: Request, res: Response) => {
   const { confirm } = req.body as { confirm?: boolean };
   if (confirm !== true) {
     throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } to empty the Trash');
   }
-  res.json(await emptyTrash());
+  const result = await emptyTrash();
+  await appendAudit({ action: 'trash.empty', source: 'http', tokenId: tokenIdFor('http'), paths: [], bytes: null, dryRun: false, outcome: 'ok' });
+  res.json(result);
 });
 
 /** GET /api/system/snapshots -> OS snapshot accounting (APFS/Btrfs/VSS), best-effort. */
@@ -72,12 +76,14 @@ systemRouter.get('/system/snapshots', async (_req: Request, res: Response) => {
 });
 
 /** POST /api/system/snapshots/purge { confirm:true } -> delete local snapshots (macOS). */
-systemRouter.post('/system/snapshots/purge', async (req: Request, res: Response) => {
+systemRouter.post('/system/snapshots/purge', idempotency, async (req: Request, res: Response) => {
   const { confirm } = req.body as { confirm?: boolean };
   if (confirm !== true) {
     throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } to purge local snapshots');
   }
-  res.json(await purgeSnapshots());
+  const result = await purgeSnapshots();
+  await appendAudit({ action: 'snapshots.purge', source: 'http', tokenId: tokenIdFor('http'), paths: [], bytes: null, dryRun: false, outcome: 'ok' });
+  res.json(result);
 });
 
 /**

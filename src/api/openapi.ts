@@ -50,6 +50,16 @@ const queryParam = (name: string, description: string, schema: Json = { type: 's
   schema,
 });
 
+/** Destructive endpoints honor this header: retries replay, never re-execute. */
+const idempotencyHeader: Json = {
+  name: 'Idempotency-Key',
+  in: 'header',
+  required: false,
+  description:
+    'Optional. A repeat of a successful request with the same key (within ~10 minutes) replays the stored response instead of executing again; the replay carries an Idempotency-Replayed: true header.',
+  schema: { type: 'string' },
+};
+
 const scanIdQuery = queryParam('scanId', 'Id of a completed scan (from POST /api/scan)', { type: 'string' }, true);
 
 /* ------------------------------ responses ------------------------------ */
@@ -277,6 +287,51 @@ const schemas: Json = {
     },
     ['destinations', 'entries'],
   ),
+  AgentPolicy: obj(
+    {
+      allowedRoots: arr(str(), 'When non-empty, scans and destructive targets must lie inside one of these'),
+      protectedPaths: arr(str(), 'Never trashed or offloaded (nor anything containing them)'),
+      maxBytesPerOperation: nullable(int('Refuse a single destructive operation over this many bytes; null = no cap')),
+    },
+    ['allowedRoots', 'protectedPaths', 'maxBytesPerOperation'],
+    'User-editable guard rails (agent-policy.json in the app-data dir); empty file = no restriction',
+  ),
+  AuditEntry: obj(
+    {
+      at: int('Unix epoch ms'),
+      action: str("e.g. 'files.trash', 'offload.start', 'offload.restore', 'trash.empty'"),
+      source: { type: 'string', enum: ['http', 'mcp'] },
+      tokenId: str("Short digest of the configured token, or 'local' when auth is off"),
+      paths: arr(str()),
+      bytes: nullable(int('Known bytes involved, when the operation can tell')),
+      dryRun: bool(),
+      outcome: { type: 'string', enum: ['ok', 'refused', 'error'] },
+      code: str("Error/refusal code when outcome is not 'ok'"),
+    },
+    ['at', 'action', 'source', 'tokenId', 'paths', 'bytes', 'dryRun', 'outcome'],
+  ),
+  TrashDryRunManifest: obj(
+    {
+      dryRun: bool('Always true'),
+      wouldTrash: arr(obj({ path: str(), bytes: nullable(int('null when no scan knows this path')) }, ['path', 'bytes'])),
+      totalKnownBytes: int(),
+    },
+    ['dryRun', 'wouldTrash', 'totalKnownBytes'],
+    'What DELETE /api/files would do — nothing has been touched',
+  ),
+  OffloadDryRunManifest: obj(
+    {
+      dryRun: bool('Always true'),
+      fileCount: int(),
+      bytesTotal: int(),
+      dest: str(),
+      wouldTrashAfterVerify: arr(str(), 'The originals that would go to the Trash after every copy verifies'),
+      copies: arr(obj({ src: str(), dest: str(), size: int() }, ['src', 'dest', 'size']), 'First 100 planned copies'),
+      copiesTruncated: bool(),
+    },
+    ['dryRun', 'fileCount', 'bytesTotal', 'dest', 'wouldTrashAfterVerify', 'copies', 'copiesTruncated'],
+    'The exact plan a real offload would execute — nothing has been touched',
+  ),
   AppSettings: obj(
     {
       ignore: arr(obj({ pattern: str(), scope: { type: 'string', enum: ['scan', 'suggest', 'both'] } }, ['pattern', 'scope'])),
@@ -346,6 +401,25 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'meta',
     destructive: false,
     responses: { '200': jsonResponse('Capability manifest', opaque('See GET /api/capabilities')) },
+  },
+  {
+    method: 'get',
+    path: '/api/audit',
+    summary: 'The destructive-action audit log (JSONL in the app-data dir), newest first',
+    tag: 'meta',
+    destructive: false,
+    parameters: [queryParam('limit', '1–1000 (default 100)', int())],
+    responses: { '200': jsonResponse('Audit entries', obj({ entries: arr(ref('AuditEntry')) }, ['entries'])) },
+  },
+  {
+    method: 'get',
+    path: '/api/policy',
+    summary: 'The active agent policy and the file to edit it (read-only by design)',
+    tag: 'meta',
+    destructive: false,
+    responses: {
+      '200': jsonResponse('Policy', obj({ policy: ref('AgentPolicy'), file: str('Absolute path of agent-policy.json') }, ['policy', 'file'])),
+    },
   },
 
   /* ------------ scanning ------------ */
@@ -671,6 +745,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Run git gc in a scanned repository (requires confirm: true)',
     tag: 'insights',
     destructive: true,
+    parameters: [idempotencyHeader],
     requestBody: jsonBody(obj({ path: str('Repo path inside a scanned root'), confirm: bool('Must be true') }, ['path', 'confirm'])),
     responses: { '200': jsonResponse('gc result', opaque('Result of git gc')), '400': errorResponse('confirm missing'), '403': errorResponse('Outside every scanned root') },
   },
@@ -786,10 +861,19 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Move paths to the system Trash (never a hard delete); paths must be inside a scanned root',
     tag: 'files',
     destructive: true,
-    requestBody: jsonBody(obj({ paths: arr(str(), 'At most 500, each inside a scanned root') }, ['paths'])),
+    parameters: [idempotencyHeader],
+    requestBody: jsonBody(
+      obj(
+        {
+          paths: arr(str(), 'At most 500, each inside a scanned root'),
+          dryRun: bool('true = return the exact manifest (paths + known bytes) and touch nothing'),
+        },
+        ['paths'],
+      ),
+    ),
     responses: {
-      '200': jsonResponse('Per-path outcome', ref('CleanResult')),
-      '403': errorResponse('A path is outside every scanned root, cloud-hosted, or inside an archive'),
+      '200': jsonResponse('Per-path outcome, or the dry-run manifest', { oneOf: [ref('CleanResult'), ref('TrashDryRunManifest')] }),
+      '403': errorResponse('A path is outside every scanned root, cloud-hosted, inside an archive, or refused by agent-policy.json'),
     },
   },
   {
@@ -827,20 +911,23 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Copy → verify SHA-256 → only then trash the local originals; any failure rolls back',
     tag: 'offload',
     destructive: true,
+    parameters: [idempotencyHeader],
     requestBody: jsonBody(
       obj(
         {
           scanId: str('Completed scan the sources belong to'),
           paths: arr(str(), 'Sources inside the scanned root'),
           dest: str('Existing destination folder'),
+          dryRun: bool('true = return the exact copy plan, validated end-to-end, and touch nothing'),
         },
         ['scanId', 'paths', 'dest'],
       ),
     ),
     responses: {
+      '200': jsonResponse('Dry-run manifest (dryRun: true only)', ref('OffloadDryRunManifest')),
       '202': jsonResponse('Job started (progress via SSE)', obj({ jobId: str() }, ['jobId'])),
       '400': errorResponse('Bad destination / too many files / not enough space'),
-      '403': errorResponse('Sources outside every scanned root'),
+      '403': errorResponse('Sources outside every scanned root, or refused by agent-policy.json'),
     },
   },
   {
@@ -849,8 +936,31 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Copy offloaded files back to their original paths, re-verifying the recorded hash',
     tag: 'offload',
     destructive: true,
-    requestBody: jsonBody(obj({ ids: arr(str(), 'Offload entry ids, at most 500') }, ['ids'])),
-    responses: { '202': jsonResponse('Job started', obj({ jobId: str() }, ['jobId'])), '404': errorResponse('Nothing to restore') },
+    parameters: [idempotencyHeader],
+    requestBody: jsonBody(
+      obj(
+        {
+          ids: arr(str(), 'Offload entry ids, at most 500'),
+          dryRun: bool('true = list exactly what would be restored and touch nothing'),
+        },
+        ['ids'],
+      ),
+    ),
+    responses: {
+      '200': jsonResponse(
+        'Dry-run manifest (dryRun: true only)',
+        obj(
+          {
+            dryRun: bool('Always true'),
+            wouldRestore: arr(obj({ id: str(), name: str(), originalPath: str(), destPath: str(), size: int() }, ['id', 'name', 'originalPath', 'destPath', 'size'])),
+            bytesTotal: int(),
+          },
+          ['dryRun', 'wouldRestore', 'bytesTotal'],
+        ),
+      ),
+      '202': jsonResponse('Job started', obj({ jobId: str() }, ['jobId'])),
+      '404': errorResponse('Nothing to restore'),
+    },
   },
   {
     method: 'get',
@@ -911,6 +1021,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Empty the system Trash / Recycle Bin — irreversible; requires confirm: true',
     tag: 'system',
     destructive: true,
+    parameters: [idempotencyHeader],
     requestBody: jsonBody(obj({ confirm: bool('Must be true') }, ['confirm'])),
     responses: { '200': jsonResponse('Result', opaque('Per-location outcome')), '400': errorResponse('confirm missing') },
   },
@@ -928,6 +1039,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Delete local OS snapshots (macOS); requires confirm: true',
     tag: 'system',
     destructive: true,
+    parameters: [idempotencyHeader],
     requestBody: jsonBody(obj({ confirm: bool('Must be true') }, ['confirm'])),
     responses: { '200': jsonResponse('Result', opaque('Purge outcome')), '400': errorResponse('confirm missing') },
   },
@@ -1041,6 +1153,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: "Move cloud files to the provider's own trash (the cloud mirror of the trash-only rule)",
     tag: 'cloud',
     destructive: true,
+    parameters: [idempotencyHeader],
     requestBody: jsonBody(obj({ scanId: str('A cloud scan'), paths: arr(str(), 'cloud:// paths inside that scan') }, ['scanId', 'paths'])),
     responses: { '200': jsonResponse('Outcome', opaque('Per-path provider-trash outcome')), '403': errorResponse('Path outside this cloud scan') },
   },

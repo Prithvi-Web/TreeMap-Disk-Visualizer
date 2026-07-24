@@ -1,5 +1,10 @@
 import { Router, Request, Response } from 'express';
+import path from 'path';
 import { buildOpenApiDocument, ENDPOINTS } from './openapi';
+import { clampInt } from './scanRoutes';
+import { readAudit } from '../services/audit';
+import { getPolicy, POLICY_FILE } from '../services/policy';
+import { appDataDir } from '../services/storage';
 
 /**
  * metaRoutes — self-description for agents: the OpenAPI document and a
@@ -15,6 +20,21 @@ export const metaRouter = Router();
 /** GET /api/openapi.json — the OpenAPI 3 document. */
 metaRouter.get('/openapi.json', (_req: Request, res: Response) => {
   res.json(buildOpenApiDocument());
+});
+
+/** GET /api/audit?limit=100 — the destructive-action audit log, newest first. */
+metaRouter.get('/audit', async (req: Request, res: Response) => {
+  const limit = clampInt(req.query.limit, 100, 1, 1000);
+  res.json({ entries: await readAudit(limit) });
+});
+
+/**
+ * GET /api/policy — the active agent policy and where to edit it.
+ * Deliberately read-only: a policy an agent could rewrite for itself would
+ * be theatre. The human edits the JSON file.
+ */
+metaRouter.get('/policy', async (_req: Request, res: Response) => {
+  res.json({ policy: await getPolicy(), file: path.join(appDataDir(), POLICY_FILE) });
 });
 
 /** GET /api/capabilities — endpoints, safety model, and the intended workflow. */
@@ -52,6 +72,13 @@ metaRouter.get('/capabilities', (_req: Request, res: Response) => {
       cloudPaths: "cloud:// paths never touch the local filesystem; their deletes go to the provider's own trash",
       virtualPaths: 'Entries inside archives are listings, not files — only the archive itself can be acted on',
       offload: 'Offload copies, verifies SHA-256, and only then trashes originals; failures roll back completely',
+      dryRun:
+        'DELETE /api/files, POST /api/offload and POST /api/offload/restore accept dryRun: true — the exact manifest, nothing acted on',
+      policy:
+        'agent-policy.json (see GET /api/policy) can allowlist roots, protect paths forever, and cap bytes per operation; empty file = no restriction',
+      audit: 'Every destructive request (real, dry-run, refused) is appended to an audit log — GET /api/audit reads it back',
+      idempotency:
+        'Destructive endpoints honor an Idempotency-Key header: a retried request replays the stored response instead of executing twice',
     },
     workflow: [
       'POST /api/scan with { path } → { scanId }',

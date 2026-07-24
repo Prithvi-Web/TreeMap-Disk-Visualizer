@@ -660,3 +660,37 @@ export interface ApiError {
   error: string;
   code: string;
 }
+
+/* ---------- Agent-safety rails (policy + audit) ---------- */
+
+/**
+ * User-editable guard rails for destructive operations, persisted as
+ * agent-policy.json in the app-data directory. Every field defaults to
+ * "no restriction" so an absent or empty file means today's behavior.
+ */
+export interface AgentPolicy {
+  /** When non-empty, scans and destructive targets must lie inside one of these roots. */
+  allowedRoots: string[];
+  /** Paths that may never be trashed or offloaded (nor anything containing them). */
+  protectedPaths: string[];
+  /** Refuse a single destructive operation over this many bytes. null = no cap. */
+  maxBytesPerOperation: number | null;
+}
+
+/** One line of the append-only audit log (audit.jsonl in the app-data dir). */
+export interface AuditEntry {
+  /** Unix epoch ms. */
+  at: number;
+  /** e.g. "files.trash", "offload.start", "offload.restore", "trash.empty". */
+  action: string;
+  source: 'http' | 'mcp';
+  /** Short digest of the configured token, or 'local' when auth is off. */
+  tokenId: string;
+  paths: string[];
+  /** Known bytes involved, when the operation can tell. */
+  bytes: number | null;
+  dryRun: boolean;
+  outcome: 'ok' | 'refused' | 'error';
+  /** Error/refusal code when outcome is not 'ok'. */
+  code?: string;
+}

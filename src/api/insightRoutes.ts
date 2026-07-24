@@ -25,6 +25,8 @@ import { getForecast } from '../services/forecast';
 import { expandContainer } from '../services/containerScanner';
 import { findGitRepos, runGitGc } from '../services/gitScanner';
 import { AppError } from '../middleware/errorHandler';
+import { idempotency } from '../middleware/idempotency';
+import { appendAudit, tokenIdFor } from '../services/audit';
 import { CompareResult, FileNode, ScanResult } from '../models/types';
 
 /**
@@ -138,12 +140,14 @@ insightRouter.get('/git/repos', (req: Request, res: Response) => {
 });
 
 /** POST /api/git/gc { path, confirm:true } — run `git gc` in a scanned repo. */
-insightRouter.post('/git/gc', guardBodyPath, requireInsideScanRoot, async (req: Request, res: Response) => {
+insightRouter.post('/git/gc', idempotency, guardBodyPath, requireInsideScanRoot, async (req: Request, res: Response) => {
   const { path: repoPath, confirm } = req.body as { path: string; confirm?: boolean };
   if (confirm !== true) {
     throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } to run git gc');
   }
-  res.json(await runGitGc(repoPath));
+  const result = await runGitGc(repoPath);
+  await appendAudit({ action: 'git.gc', source: 'http', tokenId: tokenIdFor('http'), paths: [repoPath], bytes: null, dryRun: false, outcome: 'ok' });
+  res.json(result);
 });
 
 /**

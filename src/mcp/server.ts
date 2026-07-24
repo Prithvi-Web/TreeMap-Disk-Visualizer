@@ -3,7 +3,6 @@ import { z } from 'zod';
 import {
   startScan,
   getScan,
-  allScans,
   collectLargestFiles,
   collectLargestFolders,
   compareTrees,
@@ -20,6 +19,8 @@ import { isVirtualPath } from '../services/containerScanner';
 import { sanitizePath, PathRejectedError } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
 import { formatBytes } from '../utils/formatBytes';
+import { getPolicy, assertScanAllowed, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
+import { appendAudit, tokenIdFor } from '../services/audit';
 import { OffloadJob, ScanResult } from '../models/types';
 
 /**
@@ -142,17 +143,6 @@ function guardDestructivePaths(raw: string[]): string[] {
   return paths;
 }
 
-/** Recursive size of `p` according to any completed scan that contains it. */
-function knownSizeOf(p: string): number | null {
-  for (const scan of allScans()) {
-    if (scan.status !== 'complete' || (!scan.store && !scan.root)) continue;
-    const store = storeOf(scan);
-    const id = store.findByPath(p);
-    if (id !== -1) return store.size(id);
-  }
-  return null;
-}
-
 /* ------------------------- summaries ------------------------- */
 
 function scanSummary(scan: ScanResult): Record<string, unknown> {
@@ -263,7 +253,9 @@ export function buildMcpServer(): McpServer {
         if (scanId !== undefined) {
           scan = requireScanMcp(scanId);
         } else if (rawPath !== undefined) {
-          scan = await startScan(sanitizePath(rawPath), { incremental });
+          const target = sanitizePath(rawPath);
+          assertScanAllowed(await getPolicy(), target); // agent-policy.json allowedRoots
+          scan = await startScan(target, { incremental });
         } else {
           throw new AppError(400, 'PATH_REQUIRED', 'Provide "path" to start a scan or "scanId" to check one');
         }
@@ -517,20 +509,34 @@ export function buildMcpServer(): McpServer {
         const scan = requireCompleteScanMcp(scanId);
         const paths = guardDestructivePaths(rawPaths);
         const dest = sanitizePath(rawDest);
+        const policy = await getPolicy();
+        const prepared = await (async () => {
+          try {
+            assertPathsAllowed(policy, paths); // originals get trashed after verify
+            const plan = await prepareOffload(scan, paths, dest);
+            assertBytesCap(policy, plan.bytesTotal);
+            return plan;
+          } catch (err) {
+            if (err instanceof AppError) {
+              await appendAudit({ action: 'offload.start', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: null, dryRun, outcome: 'refused', code: err.code });
+            }
+            throw err;
+          }
+        })();
+        await appendAudit({ action: 'offload.start', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: prepared.bytesTotal, dryRun, outcome: 'ok' });
         if (dryRun) {
-          const { plan, bytesTotal } = await prepareOffload(scan, paths, dest);
           return ok({
             dryRun: true,
-            fileCount: plan.length,
-            bytesTotal,
-            bytesTotalFormatted: formatBytes(bytesTotal),
+            fileCount: prepared.plan.length,
+            bytesTotal: prepared.bytesTotal,
+            bytesTotalFormatted: formatBytes(prepared.bytesTotal),
             wouldTrashAfterVerify: paths,
-            copies: plan.slice(0, 100).map((c) => ({ src: c.src, dest: c.dest, size: c.size })),
-            copiesTruncated: plan.length > 100,
+            copies: prepared.plan.slice(0, 100).map((c) => ({ src: c.src, dest: c.dest, size: c.size })),
+            copiesTruncated: prepared.plan.length > 100,
             note: 'Dry run — nothing was copied, verified or trashed.',
           });
         }
-        const job = await startOffload(scan, paths, dest);
+        const job = await startOffload(scan, paths, dest, prepared);
         const deadline = Date.now() + waitMs;
         while (job.status === 'running' && Date.now() < deadline) {
           await sleep(POLL_MS);
@@ -562,7 +568,18 @@ export function buildMcpServer(): McpServer {
           return { path: p, bytes, bytesFormatted: bytes === null ? 'unknown' : formatBytes(bytes) };
         });
         const knownTotal = sized.reduce((sum, s) => sum + (s.bytes ?? 0), 0);
+        const policy = await getPolicy();
+        try {
+          assertPathsAllowed(policy, paths);
+          assertBytesCap(policy, knownTotal);
+        } catch (err) {
+          if (err instanceof AppError) {
+            await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun, outcome: 'refused', code: err.code });
+          }
+          throw err;
+        }
         if (dryRun) {
+          await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun: true, outcome: 'ok' });
           return ok({
             dryRun: true,
             wouldTrash: sized,
@@ -572,6 +589,7 @@ export function buildMcpServer(): McpServer {
           });
         }
         const result = await moveToTrash(paths);
+        await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun: false, outcome: result.failed.length === 0 ? 'ok' : 'error', ...(result.failed.length > 0 ? { code: 'PARTIAL_FAILURE' } : {}) });
         const freed = sized
           .filter((s) => result.deleted.includes(s.path))
           .reduce((sum, s) => sum + (s.bytes ?? 0), 0);

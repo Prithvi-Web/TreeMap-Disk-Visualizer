@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { requireScan } from './scanRoutes';
 import {
+  prepareOffload,
   startOffload,
   startRestore,
   getOffloadJob,
@@ -10,6 +11,9 @@ import {
 } from '../services/offload';
 import { openPath } from '../services/cleaner';
 import { guardBodyPaths, requireInsideScanRoot } from '../middleware/pathGuard';
+import { idempotency } from '../middleware/idempotency';
+import { getPolicy, assertPathsAllowed, assertBytesCap } from '../services/policy';
+import { appendAudit, tokenIdFor } from '../services/audit';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { sseSend } from '../utils/sse';
 import { AppError } from '../middleware/errorHandler';
@@ -56,11 +60,14 @@ export function drainOffloadClients(): void {
 }
 
 /**
- * POST /api/offload { scanId, paths[], dest } → 202 { jobId }
+ * POST /api/offload { scanId, paths[], dest, dryRun? } → 202 { jobId }
  * Sources must be inside a scanned root (and not inside an archive).
+ * With dryRun: true, returns the exact copy plan (files, bytes, wouldTrash)
+ * having validated everything a real run would — and does nothing.
+ * Honors an Idempotency-Key header so a retry can't start a second job.
  */
-offloadRouter.post('/offload', guardBodyPaths, requireInsideScanRoot, async (req: Request, res: Response) => {
-  const body = req.body as { scanId?: unknown; paths: string[]; dest?: unknown };
+offloadRouter.post('/offload', idempotency, guardBodyPaths, requireInsideScanRoot, async (req: Request, res: Response) => {
+  const body = req.body as { scanId?: unknown; paths: string[]; dest?: unknown; dryRun?: unknown };
   const scan = requireScan(req, body.scanId);
   if (scan.status !== 'complete' || (!scan.store && !scan.root)) {
     throw new AppError(409, 'SCAN_RUNNING', 'Wait for the scan to finish first');
@@ -69,18 +76,66 @@ offloadRouter.post('/offload', guardBodyPaths, requireInsideScanRoot, async (req
     throw new AppError(400, 'DEST_REQUIRED', 'Pick a destination folder');
   }
   const dest = sanitizePath(body.dest);
-  const job = await startOffload(scan, body.paths, dest);
-  res.status(202).json({ jobId: job.jobId });
+  const dryRun = body.dryRun === true;
+  const policy = await getPolicy();
+  try {
+    assertPathsAllowed(policy, body.paths); // originals get trashed after verify
+    const prepared = await prepareOffload(scan, body.paths, dest);
+    assertBytesCap(policy, prepared.bytesTotal);
+
+    if (dryRun) {
+      await appendAudit({ action: 'offload.start', source: 'http', tokenId: tokenIdFor('http'), paths: body.paths, bytes: prepared.bytesTotal, dryRun: true, outcome: 'ok' });
+      res.json({
+        dryRun: true,
+        fileCount: prepared.plan.length,
+        bytesTotal: prepared.bytesTotal,
+        dest,
+        wouldTrashAfterVerify: body.paths,
+        copies: prepared.plan.slice(0, 100).map((c) => ({ src: c.src, dest: c.dest, size: c.size })),
+        copiesTruncated: prepared.plan.length > 100,
+      });
+      return;
+    }
+
+    const job = await startOffload(scan, body.paths, dest, prepared);
+    await appendAudit({ action: 'offload.start', source: 'http', tokenId: tokenIdFor('http'), paths: body.paths, bytes: prepared.bytesTotal, dryRun: false, outcome: 'ok' });
+    res.status(202).json({ jobId: job.jobId });
+  } catch (err) {
+    if (err instanceof AppError) {
+      await appendAudit({ action: 'offload.start', source: 'http', tokenId: tokenIdFor('http'), paths: body.paths, bytes: null, dryRun, outcome: 'refused', code: err.code });
+    }
+    throw err;
+  }
 });
 
-/** POST /api/offload/restore { ids: [] } → 202 { jobId } */
-offloadRouter.post('/offload/restore', async (req: Request, res: Response) => {
-  const { ids } = req.body as { ids?: unknown };
+/**
+ * POST /api/offload/restore { ids: [], dryRun? } → 202 { jobId }
+ * With dryRun: true, lists exactly which entries would be restored (and
+ * where to) without copying anything. Honors an Idempotency-Key header.
+ */
+offloadRouter.post('/offload/restore', idempotency, async (req: Request, res: Response) => {
+  const { ids, dryRun } = req.body as { ids?: unknown; dryRun?: unknown };
   if (!Array.isArray(ids) || ids.length === 0 || !ids.every((x) => typeof x === 'string')) {
     throw new AppError(400, 'IDS_REQUIRED', 'Body must include a non-empty "ids" array');
   }
   if (ids.length > 500) throw new AppError(400, 'TOO_MANY_IDS', 'At most 500 restores per request');
+
+  if (dryRun === true) {
+    const entries = [];
+    for (const id of ids as string[]) {
+      const entry = await getOffloadEntry(id);
+      if (entry && !entry.restoredAt) {
+        entries.push({ id: entry.id, name: entry.name, originalPath: entry.originalPath, destPath: entry.destPath, size: entry.size });
+      }
+    }
+    const bytesTotal = entries.reduce((sum, e) => sum + e.size, 0);
+    await appendAudit({ action: 'offload.restore', source: 'http', tokenId: tokenIdFor('http'), paths: entries.map((e) => e.originalPath), bytes: bytesTotal, dryRun: true, outcome: 'ok' });
+    res.json({ dryRun: true, wouldRestore: entries, bytesTotal });
+    return;
+  }
+
   const job = await startRestore(ids as string[]);
+  await appendAudit({ action: 'offload.restore', source: 'http', tokenId: tokenIdFor('http'), paths: [], bytes: job.bytesTotal, dryRun: false, outcome: 'ok' });
   res.status(202).json({ jobId: job.jobId });
 });
 

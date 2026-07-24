@@ -6,6 +6,8 @@ import { startAuth, finishAuthManually, getTokens, saveTokens, deleteTokens } fr
 import { getSettings } from '../services/settings';
 import { guardBodyPaths } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
+import { idempotency } from '../middleware/idempotency';
+import { appendAudit, tokenIdFor } from '../services/audit';
 import { FileNode, ScanResult } from '../models/types';
 
 /**
@@ -123,7 +125,7 @@ cloudRouter.post('/cloud/scan', async (req: Request, res: Response) => {
  * POST /api/cloud/trash { scanId, paths } — deletes map to the provider's
  * own trash, mirroring the local trash-only rule.
  */
-cloudRouter.post('/cloud/trash', guardBodyPaths, async (req: Request, res: Response) => {
+cloudRouter.post('/cloud/trash', idempotency, guardBodyPaths, async (req: Request, res: Response) => {
   const body = req.body as { scanId?: unknown; paths: string[] };
   const scan = requireScan(req, body.scanId);
   if (scan.status !== 'complete' || (!scan.store && !scan.root)) throw new AppError(409, 'SCAN_RUNNING', 'Wait for the scan to finish');
@@ -135,5 +137,7 @@ cloudRouter.post('/cloud/trash', guardBodyPaths, async (req: Request, res: Respo
       throw new AppError(403, 'OUTSIDE_SCAN_ROOT', `"${p}" is not inside this cloud scan`);
     }
   }
-  res.json(await trashCloudPaths(scan as ScanResult & { root: FileNode }, body.paths));
+  const result = await trashCloudPaths(scan as ScanResult & { root: FileNode }, body.paths);
+  await appendAudit({ action: 'cloud.trash', source: 'http', tokenId: tokenIdFor('http'), paths: body.paths, bytes: null, dryRun: false, outcome: 'ok' });
+  res.json(result);
 });

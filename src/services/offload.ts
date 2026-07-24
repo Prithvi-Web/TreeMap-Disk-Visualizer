@@ -302,9 +302,12 @@ export async function startOffload(
   scan: ScanResult,
   paths: string[],
   destDir: string,
+  /** A plan already produced by prepareOffload — skips re-planning (callers
+   *  that ran policy checks on the plan's byte total pass it back in). */
+  prepared?: PreparedOffload,
 ): Promise<OffloadJob> {
   pruneJobs();
-  const { plan, bytesTotal } = await prepareOffload(scan, paths, destDir);
+  const { plan, bytesTotal } = prepared ?? (await prepareOffload(scan, paths, destDir));
 
   const job: OffloadJob = {
     jobId: crypto.randomUUID(),

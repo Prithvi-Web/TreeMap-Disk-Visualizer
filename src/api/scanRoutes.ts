@@ -8,6 +8,7 @@ import { lookupNodes, lookupNodesInStore } from '../services/scanQueries';
 import { storeOf } from '../services/scanStore';
 import { AppError } from '../middleware/errorHandler';
 import { getSettings } from '../services/settings';
+import { getPolicy, assertScanAllowed } from '../services/policy';
 import { streamCsv, streamPdf, streamXlsx } from '../services/reportExport';
 import { sseSend as sseWrite } from '../utils/sse';
 import { ScanResult, ScanEvent, ScanStats, BudgetStatus } from '../models/types';
@@ -120,6 +121,8 @@ export function requireScan(_req: Request, idSource: unknown): ScanResult {
 /** POST /api/scan  { path } -> { scanId } */
 scanRouter.post('/scan', guardBodyPath, async (req: Request, res: Response) => {
   const { path: scanPath, incremental } = req.body as { path: string; incremental?: boolean };
+  // agent-policy.json allowedRoots (no policy file = no restriction).
+  assertScanAllowed(await getPolicy(), scanPath);
   const scan = await startScan(scanPath, { incremental: incremental === true }); // lstat failures -> 404/403
   res.status(202).json({ scanId: scan.scanId, incremental: scan.incremental === true });
 });
