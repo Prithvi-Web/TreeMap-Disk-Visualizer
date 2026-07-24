@@ -1,6 +1,6 @@
 # NTFS MFT Turbo Engine — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Implement the reserved `'ntfs-mft'` scan engine: an opt-in, admin-elevated
 Rust helper that reads the NTFS Master File Table directly (via the `ntfs-reader`
@@ -54,7 +54,7 @@ recorded fixture instead of a live `gdu` binary.
 - Create: `tests/ntfsMftMapper.test.ts`
 - Create: `src/services/ntfsMftMapper.ts`
 
-- [ ] **Step 1: Write the synthetic fixture**
+- [x] **Step 1: Write the synthetic fixture**
 
 This fixture is **hand-constructed against the documented record shape**, not
 captured from a real binary (the binary doesn't exist yet — that's Task 7). It
@@ -84,7 +84,7 @@ Create `tests/fixtures/ntfs-mft-sample.ndjson`:
 {"recordNo":108,"parentRecordNo":100,"name":"zero.bin","size":0,"isDir":false,"mtimeMs":1732000000000}
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Create `tests/ntfsMftMapper.test.ts`:
 
@@ -190,12 +190,12 @@ test('derives isHidden from a leading dot', () => {
 });
 ```
 
-- [ ] **Step 3: Run to verify it fails**
+- [x] **Step 3: Run to verify it fails**
 
 Run: `npx tsx --test tests/ntfsMftMapper.test.ts`
 Expected: FAIL — cannot find module `../src/services/ntfsMftMapper`.
 
-- [ ] **Step 4: Implement the mapper**
+- [x] **Step 4: Implement the mapper**
 
 Create `src/services/ntfsMftMapper.ts`:
 
@@ -338,12 +338,12 @@ export function buildNtfsMftStoreFromEdges(
 }
 ```
 
-- [ ] **Step 5: Run to verify it passes**
+- [x] **Step 5: Run to verify it passes**
 
 Run: `npx tsx --test tests/ntfsMftMapper.test.ts`
 Expected: PASS — all 8 tests green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add tests/fixtures/ntfs-mft-sample.ndjson tests/ntfsMftMapper.test.ts src/services/ntfsMftMapper.ts
@@ -362,7 +362,7 @@ off-Windows), and pure-function tests cover validation.
 - Create: `tests/ntfsMftScanner.test.ts` (this task adds to it; Tasks 3-4 extend the same file)
 - Create: `src/services/ntfsMftScanner.ts` (this task starts it; Tasks 3-4 extend it)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/ntfsMftScanner.test.ts`:
 
@@ -390,12 +390,12 @@ test('isNtfsVolume detects the host drive on Windows', { skip: process.platform 
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `npx tsx --test tests/ntfsMftScanner.test.ts`
 Expected: FAIL — cannot find module `../src/services/ntfsMftScanner`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `src/services/ntfsMftScanner.ts`:
 
@@ -429,13 +429,13 @@ export async function isNtfsVolume(driveLetter: string): Promise<boolean> {
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `npx tsx --test tests/ntfsMftScanner.test.ts`
 Expected: PASS (the Windows-only test runs and passes on a Windows dev
 machine; elsewhere it's skipped, never failed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tests/ntfsMftScanner.test.ts src/services/ntfsMftScanner.ts
@@ -454,7 +454,7 @@ system-wide the way gdu might be).
 - Modify: `src/services/ntfsMftScanner.ts`
 - Modify: `tests/ntfsMftScanner.test.ts`
 
-- [ ] **Step 1: Add the failing test**
+- [x] **Step 1: Add the failing test**
 
 Append to `tests/ntfsMftScanner.test.ts`:
 
@@ -467,12 +467,12 @@ test('findNtfsMftBinary returns null rather than throwing when nothing is instal
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `npx tsx --test tests/ntfsMftScanner.test.ts`
 Expected: FAIL — `findNtfsMftBinary` is not exported.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add to `src/services/ntfsMftScanner.ts`:
 
@@ -512,12 +512,12 @@ export async function findNtfsMftBinary(opts: FindOptions = {}): Promise<string 
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `npx tsx --test tests/ntfsMftScanner.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/services/ntfsMftScanner.ts tests/ntfsMftScanner.test.ts
@@ -538,7 +538,7 @@ invoking real UAC.
 - Modify: `tests/ntfsMftScanner.test.ts`
 - Modify: `package.json` (add `sudo-prompt` dependency)
 
-- [ ] **Step 1: Add the dependency**
+- [x] **Step 1: Add the dependency**
 
 Run:
 ```bash
@@ -549,7 +549,7 @@ If `@types/sudo-prompt` doesn't exist on npm, skip it and add a minimal local
 `declare module 'sudo-prompt'` ambient type instead — check first, don't
 assume.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Append to `tests/ntfsMftScanner.test.ts`:
 
@@ -618,12 +618,12 @@ test('ntfsMftScanIntoStore rejects when the target path does not resolve', async
 });
 ```
 
-- [ ] **Step 3: Run to verify it fails**
+- [x] **Step 3: Run to verify it fails**
 
 Run: `npx tsx --test tests/ntfsMftScanner.test.ts`
 Expected: FAIL — `ntfsMftScanIntoStore` is not exported.
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 Add to `src/services/ntfsMftScanner.ts`:
 
@@ -726,12 +726,12 @@ correct calls to make a freshly `addNode`-populated `PackedScanStore` usable —
 check how `gduScanIntoStore` uses them (it calls both at the very end, same
 as above) and confirm no other post-build step exists that this plan missed.
 
-- [ ] **Step 5: Run to verify it passes**
+- [x] **Step 5: Run to verify it passes**
 
 Run: `npx tsx --test tests/ntfsMftScanner.test.ts`
 Expected: PASS — all tests including Tasks 2-3's.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/services/ntfsMftScanner.ts tests/ntfsMftScanner.test.ts package.json package-lock.json
@@ -753,7 +753,7 @@ Verified Facts table above for the exact fields.
 - Modify: `tests/ntfsMftScanner.test.ts` (integration-level fallback tests,
   mirroring `tests/gduScanner.test.ts`'s pattern)
 
-- [ ] **Step 1: Write the failing integration test**
+- [x] **Step 1: Write the failing integration test**
 
 Append to `tests/ntfsMftScanner.test.ts`:
 
@@ -804,13 +804,13 @@ test('a scan falls back to the walker when ntfsMft is opted in but the binary is
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `npx tsx --test tests/ntfsMftScanner.test.ts`
 Expected: FAIL — `ScanOptions` has no `ntfsMft` property (TS compile error) or
 the second test observes `engine` unexpectedly set.
 
-- [ ] **Step 3: Implement — `ScanOptions`**
+- [x] **Step 3: Implement — `ScanOptions`**
 
 In `src/services/diskScanner.ts`, modify the interface at line 172-174:
 
@@ -825,7 +825,7 @@ export interface ScanOptions {
 }
 ```
 
-- [ ] **Step 4: Implement — the cascade**
+- [x] **Step 4: Implement — the cascade**
 
 In `src/services/diskScanner.ts`, add the import:
 
@@ -901,18 +901,18 @@ this point in the real function before assuming the slice offsets above are
 correct — adjust `rootPath.slice(3)` if the real path shape differs, e.g. a
 trailing separator or UNC path).
 
-- [ ] **Step 5: Run to verify it passes**
+- [x] **Step 5: Run to verify it passes**
 
 Run: `npx tsx --test tests/ntfsMftScanner.test.ts`
 Expected: PASS.
 
-- [ ] **Step 6: Run the full suite to check for regressions**
+- [x] **Step 6: Run the full suite to check for regressions**
 
 Run: `npm test`
 Expected: same 190 pass / 3 pre-existing fail / 5 skipped as the baseline
 recorded in the spec — no new failures introduced.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/services/diskScanner.ts tests/ntfsMftScanner.test.ts
@@ -926,7 +926,7 @@ git commit -m "feat(scan): wire ntfs-mft into the engine cascade ahead of gdu-tu
 **Files:**
 - Modify: `src/api/scanRoutes.ts:122-123`
 
-- [ ] **Step 1: Implement**
+- [x] **Step 1: Implement**
 
 Change:
 
@@ -949,12 +949,12 @@ const scan = await startScan(scanPath, {
 }); // lstat failures -> 404/403
 ```
 
-- [ ] **Step 2: Run the full suite**
+- [x] **Step 2: Run the full suite**
 
 Run: `npm test`
 Expected: no new failures.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/api/scanRoutes.ts
@@ -988,7 +988,7 @@ conversion is a few lines) rather than depending on crate internals.
 - Create: `native/ntfs-mft-scan/Cargo.toml`
 - Create: `native/ntfs-mft-scan/src/main.rs`
 
-- [ ] **Step 1: Create the crate manifest**
+- [x] **Step 1: Create the crate manifest**
 
 Create `native/ntfs-mft-scan/Cargo.toml`:
 
@@ -1006,7 +1006,7 @@ ntfs-reader = "0.4.5"
 opt-level = 3
 ```
 
-- [ ] **Step 2: Implement the CLI**
+- [x] **Step 2: Implement the CLI**
 
 Create `native/ntfs-mft-scan/src/main.rs`:
 
@@ -1159,7 +1159,7 @@ embedded quotes/backslashes/control characters/non-BMP Unicode during Task 9's
 manual testing — if any real filename breaks it, switch to a proper JSON
 string escaper instead of leaning on `Debug`.
 
-- [ ] **Step 3: Attempt a build (if a Rust toolchain is available in this environment)**
+- [x] **Step 3: Attempt a build (if a Rust toolchain is available in this environment)**
 
 Run: `cd native/ntfs-mft-scan && cargo build --release`
 Expected: compiles cleanly. If it doesn't (e.g. the "verify before writing
@@ -1171,7 +1171,12 @@ explicitly and defer this build step to Task 10's manual verification on a
 real Windows machine — do not mark this step done without either a real
 build or an explicit, logged reason it couldn't run here.
 
-- [ ] **Step 4: Commit**
+**Deferred (logged):** `cargo`/`rustc` not present in this environment;
+source committed with imports verified against docs.rs/ntfs-reader/0.4.5
+(`NtfsAttributeType`/`NtfsFileNamespace`/`ntfs_to_unix_time` from `api`).
+Build deferred to Task 10.
+
+- [x] **Step 4: Commit**
 
 ```bash
 git add native/ntfs-mft-scan/
@@ -1189,7 +1194,7 @@ upstream release exists for this binary).
 - Create: `scripts/buildNtfsMftScan.js`
 - Modify: `package.json` (new script, `extraResources` entry)
 
-- [ ] **Step 1: Implement the build script**
+- [x] **Step 1: Implement the build script**
 
 Create `scripts/buildNtfsMftScan.js`:
 
@@ -1260,7 +1265,7 @@ toolchain and this fails loudly instead of silently), wrap the `cargo`
 invocation in a check for whether `cargo` exists on `$PATH` first, and only
 silently skip in that specific case.
 
-- [ ] **Step 2: Wire into `package.json`**
+- [x] **Step 2: Wire into `package.json`**
 
 Add a script:
 
@@ -1311,7 +1316,7 @@ and `customBuildOptions[name]` patterns to the same matcher). So: add a new
 A Windows build gets both the shared gdu entries and this one; mac/linux
 builds are unaffected.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add scripts/buildNtfsMftScan.js package.json
@@ -1328,7 +1333,7 @@ Modeled directly on the existing `#fastRescan` toggle
 **Files:**
 - Modify: `public/index.html`
 
-- [ ] **Step 1: Add the checkbox**
+- [x] **Step 1: Add the checkbox**
 
 Find the `#fastRescan` checkbox block (around line 1064) and add a sibling
 checkbox immediately after it:
@@ -1346,7 +1351,7 @@ works against the attribute form). Copy `#fastRescanWrap`'s real surrounding
 HTML once you have the file open — the snippet above is illustrative of
 intent, not a literal patch.
 
-- [ ] **Step 2: Show it only on Windows**
+- [x] **Step 2: Show it only on Windows**
 
 Find where the client fetches `GET /api/system` (search for `'/api/system'`
 in `public/index.html`) and add, alongside whatever it already does with the
@@ -1358,7 +1363,7 @@ if (info.platform === 'win32') {
 }
 ```
 
-- [ ] **Step 3: Wire it into the scan request**
+- [x] **Step 3: Wire it into the scan request**
 
 Find the `startScan` POST call (around line 2264, `JSON.stringify({ path, incremental: !!opts.incremental })`)
 and add the flag:
@@ -1381,13 +1386,13 @@ startScan(p, {
 });
 ```
 
-- [ ] **Step 4: Manual check**
+- [ ] **Step 4: Manual check** (deferred with Task 10 — needs a running app session)
 
 Run: `npm run dev`, open the app, confirm the checkbox is hidden on
 macOS/Linux and visible on Windows (or force-test by temporarily hardcoding
 `info.platform` in devtools).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add public/index.html
