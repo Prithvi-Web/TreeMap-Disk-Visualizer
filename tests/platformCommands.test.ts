@@ -47,6 +47,8 @@ test("Windows per-path trash uses SHFileOperation helper script (not VB FileSyst
   assert.match(src, /SHFileOperation/);
   assert.match(src, /FOF_ALLOWUNDO/);
   assert.match(src, /TreemapRecycle/);
+  assert.match(src, /Shell\.Application/);
+  assert.match(src, /IN_USE/);
   assert.match(
     fs.readFileSync(
       new URL("../src/services/cleaner.ts", import.meta.url),

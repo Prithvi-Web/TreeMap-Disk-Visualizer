@@ -11,6 +11,7 @@ import {
   resolveTargetRecord,
   buildNtfsMftStoreFromEdges,
 } from "./ntfsMftMapper";
+import { mergeScanTimingExtras, parseHelperPhaseLog } from "./scanTimingLog";
 
 const execFileAsync = promisify(execFile);
 
@@ -138,6 +139,7 @@ async function runElevatedViaUac(
   driveLetter: string,
   binPath: string,
   rootRelative: string | null,
+  logFile: string | null,
 ): Promise<void> {
   if (!isValidDriveLetter(driveLetter)) {
     throw new Error(
@@ -146,9 +148,16 @@ async function runElevatedViaUac(
   }
   // -WindowStyle Hidden: without it, the console-subsystem helper pops a
   // blank black window for the whole MFT read (looks wedged; isn't).
-  const argList = rootRelative
-    ? `@('--volume',${psSingleQuote(driveLetter)},'--root',${psSingleQuote(rootRelative)},'--out',${psSingleQuote(outFile)})`
-    : `@('--volume',${psSingleQuote(driveLetter)},'--out',${psSingleQuote(outFile)})`;
+  // --log mirrors phase lines to a file (elevated stderr is not captured).
+  const parts = [
+    `'--volume'`,
+    psSingleQuote(driveLetter),
+    ...(rootRelative ? [`'--root'`, psSingleQuote(rootRelative)] : []),
+    `'--out'`,
+    psSingleQuote(outFile),
+    ...(logFile ? [`'--log'`, psSingleQuote(logFile)] : []),
+  ];
+  const argList = `@(${parts.join(",")})`;
   const script = [
     `$ErrorActionPreference = 'Stop'`,
     `$p = Start-Process -FilePath ${psSingleQuote(binPath)} -ArgumentList ${argList} -Verb RunAs -Wait -PassThru -WindowStyle Hidden`,
@@ -209,7 +218,29 @@ export async function ntfsMftScanIntoStore(
 ): Promise<ScanStore> {
   const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "treemap-ntfs-mft-"));
   const outFile = path.join(tmpDir, "edges.ndjson");
+  const logFile = path.join(tmpDir, "phases.log");
   let stopHeartbeat: (() => void) | undefined;
+
+  async function ingestHelperLog(helperMs: number): Promise<void> {
+    let outBytes = 0;
+    try {
+      outBytes = (await fsp.stat(outFile)).size;
+    } catch {
+      /* ignore */
+    }
+    let helperPhases: ReturnType<typeof parseHelperPhaseLog> | undefined;
+    try {
+      helperPhases = parseHelperPhaseLog(await fsp.readFile(logFile, "utf8"));
+    } catch {
+      /* log missing if helper never started writing */
+    }
+    mergeScanTimingExtras(scan.scanId, {
+      helperMs,
+      ndjsonBytes: outBytes,
+      helperPhases,
+    });
+  }
+
   try {
     if (overrides.runElevated) {
       stopHeartbeat = startNtfsMftHeartbeat(
@@ -233,7 +264,20 @@ export async function ntfsMftScanIntoStore(
         () => "Reading NTFS MFT (admin)",
       );
       const tElev = Date.now();
-      await runElevatedViaUac(outFile, driveLetter, bin, rootRelative);
+      try {
+        await runElevatedViaUac(
+          outFile,
+          driveLetter,
+          bin,
+          rootRelative,
+          logFile,
+        );
+      } catch (err) {
+        await ingestHelperLog(Date.now() - tElev);
+        throw err;
+      }
+      await ingestHelperLog(Date.now() - tElev);
+      const helperMs = Date.now() - tElev;
       let outBytes = 0;
       try {
         outBytes = (await fsp.stat(outFile)).size;
@@ -241,7 +285,7 @@ export async function ntfsMftScanIntoStore(
         /* ignore */
       }
       console.info(
-        `[treemap] ntfs-mft: helper finished in ${((Date.now() - tElev) / 1000).toFixed(1)}s` +
+        `[treemap] ntfs-mft: helper finished in ${(helperMs / 1000).toFixed(1)}s` +
           ` (${(outBytes / (1024 * 1024)).toFixed(1)} MB NDJSON)`,
       );
     }
@@ -252,6 +296,7 @@ export async function ntfsMftScanIntoStore(
       outFile,
       () => "Parsing MFT edges",
     );
+    const tBuild0 = Date.now();
     // Stream line-by-line — never load a multi-hundred-MB dump as one string.
     const { edgesByParent, targetRecordNo: metaTarget } =
       await parseNtfsMftEdgesFile(outFile);
@@ -294,6 +339,9 @@ export async function ntfsMftScanIntoStore(
 
     store.finalize();
     store.sumSizes();
+    mergeScanTimingExtras(scan.scanId, {
+      parseBuildMs: Date.now() - tBuild0,
+    });
     return store;
   } finally {
     stopHeartbeat?.();

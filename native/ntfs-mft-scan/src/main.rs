@@ -7,12 +7,13 @@
 //! Win32AndDos > Win32 > Posix).
 //!
 //! Usage:
-//!   ntfs-mft-scan --volume C --out <path>
-//!   ntfs-mft-scan --volume C --root "Users\foo" --out <path>
+//!   ntfs-mft-scan --volume C --out <path> [--log <path>]
+//!   ntfs-mft-scan --volume C --root "Users\foo" --out <path> [--log <path>]
 //!
 //! With `--root`, only the requested subtree is written (plus a `_meta` line
 //! carrying `targetRecordNo`). Whole-volume dumps are still supported when
-//! `--root` is omitted.
+//! `--root` is omitted. `--log` mirrors phase lines as `+<ms> msg` for the
+//! Node timing journal (elevated stderr is otherwise invisible).
 //!
 //! Requires an elevated process token (enforced by ntfs_reader::Volume::new).
 //!
@@ -27,6 +28,7 @@ use std::env;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::process::ExitCode;
+use std::time::Instant;
 
 const ROOT_RECORD_NO: u64 = 5;
 
@@ -35,6 +37,37 @@ struct Args {
     out: String,
     /// Path under the volume root, using `\` or `/` separators (e.g. `Users\foo`).
     root: Option<String>,
+    /// Optional phase log (`+<ms> message` per line) for the Node timing journal.
+    log: Option<String>,
+}
+
+struct PhaseLog {
+    t0: Instant,
+    file: Option<BufWriter<File>>,
+}
+
+impl PhaseLog {
+    fn new(path: Option<&str>) -> Self {
+        let file = path.and_then(|p| {
+            File::create(p)
+                .ok()
+                .map(|f| BufWriter::with_capacity(64 * 1024, f))
+        });
+        Self {
+            t0: Instant::now(),
+            file,
+        }
+    }
+
+    fn log(&mut self, msg: &str) {
+        let ms = self.t0.elapsed().as_millis();
+        let line = format!("+{ms}ms {msg}");
+        eprintln!("{line}");
+        if let Some(f) = self.file.as_mut() {
+            let _ = writeln!(f, "{line}");
+            let _ = f.flush();
+        }
+    }
 }
 
 struct Edge {
@@ -50,12 +83,14 @@ fn parse_args() -> Option<Args> {
     let mut volume = None;
     let mut out = None;
     let mut root = None;
+    let mut log = None;
     let mut it = env::args().skip(1);
     while let Some(flag) = it.next() {
         match flag.as_str() {
             "--volume" => volume = it.next(),
             "--out" => out = it.next(),
             "--root" => root = it.next(),
+            "--log" => log = it.next(),
             _ => {}
         }
     }
@@ -63,6 +98,7 @@ fn parse_args() -> Option<Args> {
         volume: volume?,
         out: out?,
         root,
+        log,
     })
 }
 
@@ -164,40 +200,45 @@ fn main() -> ExitCode {
     let args = match parse_args() {
         Some(a) => a,
         None => {
-            eprintln!("usage: ntfs-mft-scan --volume C [--root Users\\foo] --out <path>");
+            eprintln!(
+                "usage: ntfs-mft-scan --volume C [--root Users\\foo] --out <path> [--log <path>]"
+            );
             return ExitCode::FAILURE;
         }
     };
+
+    let mut phase = PhaseLog::new(args.log.as_deref());
+    phase.log("start");
 
     // Create the out file before the slow Volume/Mft open so the parent can
     // see the elevated process has started (file exists, size still 0).
     let out_file = match File::create(&args.out) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("failed to create output file: {e}");
+            phase.log(&format!("failed to create output file: {e}"));
             return ExitCode::FAILURE;
         }
     };
     let mut writer = BufWriter::with_capacity(8 * 1024 * 1024, out_file);
 
     let volume_path = format!("\\\\.\\{}:", args.volume);
-    eprintln!("opening volume {volume_path}");
+    phase.log(&format!("opening volume {volume_path}"));
     let volume = match Volume::new(&volume_path) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("failed to open volume (are we elevated?): {e}");
+            phase.log(&format!("failed to open volume (are we elevated?): {e}"));
             return ExitCode::FAILURE;
         }
     };
-    eprintln!("loading MFT index…");
+    phase.log("loading MFT index…");
     let mft = match Mft::new(volume) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("failed to read MFT: {e}");
+            phase.log(&format!("failed to read MFT: {e}"));
             return ExitCode::FAILURE;
         }
     };
-    eprintln!("enumerating FileName edges…");
+    phase.log("enumerating FileName edges…");
 
     let mut edges: Vec<Edge> = Vec::with_capacity(1_000_000);
     for file in mft.files() {
@@ -250,7 +291,7 @@ fn main() -> ExitCode {
             });
         }
     }
-    eprintln!("indexed {} edges", edges.len());
+    phase.log(&format!("indexed {} edges", edges.len()));
 
     let mut edges_by_parent: HashMap<u64, Vec<usize>> = HashMap::new();
     for (i, e) in edges.iter().enumerate() {
@@ -264,7 +305,7 @@ fn main() -> ExitCode {
         match resolve_target(&edges_by_parent, &edges, root) {
             Some(t) => t,
             None => {
-                eprintln!("could not resolve --root {root}");
+                phase.log(&format!("could not resolve --root {root}"));
                 return ExitCode::FAILURE;
             }
         }
@@ -274,39 +315,39 @@ fn main() -> ExitCode {
 
     let emit_indices: Vec<usize> = if args.root.is_some() {
         let idxs = subtree_edge_indices(&edges_by_parent, &edges, target);
-        eprintln!(
+        phase.log(&format!(
             "subtree filter: {} / {} edges (target record {target})",
             idxs.len(),
             edges.len()
-        );
+        ));
         idxs
     } else {
         (0..edges.len()).collect()
     };
 
     if writeln!(writer, "{{\"_meta\":true,\"targetRecordNo\":{target}}}").is_err() {
-        eprintln!("failed writing meta");
+        phase.log("failed writing meta");
         return ExitCode::FAILURE;
     }
 
     let mut edges_written: u64 = 0;
     for idx in emit_indices {
         if write_edge(&mut writer, &edges[idx]).is_err() {
-            eprintln!("failed writing output");
+            phase.log("failed writing output");
             return ExitCode::FAILURE;
         }
         edges_written += 1;
         if edges_written % 250_000 == 0 {
             let _ = writer.flush();
-            eprintln!("wrote {edges_written} edges…");
+            phase.log(&format!("wrote {edges_written} edges…"));
         }
     }
 
     if writer.flush().is_err() {
-        eprintln!("failed flushing output");
+        phase.log("failed flushing output");
         return ExitCode::FAILURE;
     }
-    eprintln!("done — {edges_written} edges");
+    phase.log(&format!("done — {edges_written} edges"));
     ExitCode::SUCCESS
 }
 

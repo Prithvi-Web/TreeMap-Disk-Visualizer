@@ -139,3 +139,26 @@ systemRouter.get(
     });
   },
 );
+
+/**
+ * POST /api/client-log { level?, message }
+ * Mirrors UI toasts/diagnostics into the server console (dev terminal).
+ * Local-only tool — no auth; keep payloads small.
+ */
+systemRouter.post("/client-log", (req: Request, res: Response) => {
+  const body = req.body as { level?: string; message?: unknown };
+  const message =
+    typeof body.message === "string"
+      ? body.message
+      : String(body.message ?? "");
+  if (!message.trim()) {
+    throw new AppError(400, "MESSAGE_REQUIRED", 'Body must include "message"');
+  }
+  const level =
+    body.level === "error" || body.level === "warn" ? body.level : "info";
+  const line = `[client:${level}] ${message}`;
+  if (level === "error") console.error(line);
+  else if (level === "warn") console.warn(line);
+  else console.info(line);
+  res.json({ ok: true });
+});

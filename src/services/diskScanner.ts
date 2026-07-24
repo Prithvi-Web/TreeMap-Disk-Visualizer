@@ -22,6 +22,7 @@ import {
   ntfsMftScanIntoStore,
   isNtfsVolume,
 } from "./ntfsMftScanner";
+import { mergeScanTimingExtras, recordScanTimingAsync } from "./scanTimingLog";
 import {
   PackedScanStore,
   ScanStore,
@@ -154,6 +155,7 @@ export function finalizeCancelled(scan: ScanResult): void {
   if (scan.status !== "running") return;
   scan.status = "cancelled";
   scan.finishedAt = Date.now();
+  recordScanTimingAsync(scan);
 }
 
 /**
@@ -273,6 +275,9 @@ export async function startScan(
   };
   defineRootAccessor(scan);
   scans.set(scan.scanId, scan);
+  mergeScanTimingExtras(scan.scanId, {
+    ntfsMftRequested: opts.ntfsMft === true,
+  });
 
   /**
    * The gdu turbo engine is preferred (~112-120k items/sec sharded, vs the
@@ -333,6 +338,7 @@ export async function startScan(
         scan.status = "complete";
         scan.finishedAt = Date.now();
         scan.currentPath = scan.rootPath;
+        recordScanTimingAsync(scan);
         void saveMtimeCache(scan);
         void saveSnapshot(scan).catch((err: unknown) => {
           console.error("[treemap] snapshot save failed:", err);
@@ -378,6 +384,7 @@ export async function startScan(
           scan.status = "complete";
           scan.finishedAt = Date.now();
           scan.currentPath = scan.rootPath;
+          recordScanTimingAsync(scan);
           void saveMtimeCache(scan);
           void saveSnapshot(scan).catch((err: unknown) => {
             console.error("[treemap] snapshot save failed:", err);
@@ -417,6 +424,7 @@ export async function startScan(
     scan.status = "error";
     scan.error = err instanceof Error ? err.message : String(err);
     scan.finishedAt = Date.now();
+    recordScanTimingAsync(scan);
   });
 
   return scan;
@@ -621,6 +629,7 @@ async function walk(
   scan.status = "complete";
   scan.finishedAt = Date.now();
   scan.currentPath = scan.rootPath;
+  recordScanTimingAsync(scan);
 
   // Persist the tree for future fast rescans, then snapshot for Trends.
   // Failures here must never fail the scan itself.

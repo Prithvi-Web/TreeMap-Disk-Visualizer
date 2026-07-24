@@ -18,3 +18,6 @@ native/ntfs-mft-scan/Cargo.lock
 
 # Local multi-session agent handoff - keep on disk, never ship in PRs
 HANDOFF.md
+
+# Dev scan timing journal (wall-clock + NTFS helper phases)
+/logs/

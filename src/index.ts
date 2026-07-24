@@ -1,5 +1,6 @@
-import path from 'path';
-import { startServer, activeSseCount, RunningServer } from './server';
+import path from "path";
+import { startServer, activeSseCount, RunningServer } from "./server";
+import { ensureScanTimingLogReady } from "./services/scanTimingLog";
 
 /**
  * Standalone web-server entry point (`npm start`).
@@ -8,10 +9,12 @@ import { startServer, activeSseCount, RunningServer } from './server';
  */
 
 const PORT = Number(process.env.PORT) || 4280;
-const HOST = process.env.HOST || '127.0.0.1';
-const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const HOST = process.env.HOST || "127.0.0.1";
+const PUBLIC_DIR = path.join(__dirname, "..", "public");
 
 let running: RunningServer | null = null;
+
+ensureScanTimingLogReady();
 
 startServer({ port: PORT, host: HOST, publicDir: PUBLIC_DIR })
   .then((r) => {
@@ -19,7 +22,7 @@ startServer({ port: PORT, host: HOST, publicDir: PUBLIC_DIR })
     console.log(`TreeMap running → http://${HOST}:${r.port}`);
   })
   .catch((err: unknown) => {
-    console.error('[treemap] failed to start:', err);
+    console.error("[treemap] failed to start:", err);
     process.exit(1);
   });
 
@@ -29,11 +32,13 @@ let shuttingDown = false;
 function shutdown(signal: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`\n[treemap] ${signal} received — draining ${activeSseCount()} SSE stream(s)…`);
+  console.log(
+    `\n[treemap] ${signal} received — draining ${activeSseCount()} SSE stream(s)…`,
+  );
   running?.shutdown();
 
   const done = (): void => {
-    console.log('[treemap] all connections closed, bye');
+    console.log("[treemap] all connections closed, bye");
     process.exit(0);
   };
   if (running) running.server.close(done);
@@ -41,10 +46,10 @@ function shutdown(signal: string): void {
 
   // Hard deadline in case a keep-alive socket refuses to die.
   setTimeout(() => {
-    console.log('[treemap] forcing exit after timeout');
+    console.log("[treemap] forcing exit after timeout");
     process.exit(0);
   }, 5000).unref();
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

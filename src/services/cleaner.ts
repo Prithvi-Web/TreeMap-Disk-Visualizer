@@ -61,6 +61,8 @@ async function trashOne(p: string): Promise<void> {
       // DeleteFile/DeleteDirectory: the VB helpers' RecycleOption is unsupported
       // in non-interactive hosts and fails with ERROR_INVALID_LEVEL
       // ("The system call level is not correct") for many real folders.
+      // Large cache folders may recycle hundreds of children after a locked
+      // whole-tree attempt; allow enough time for SH + COM + per-child fallback.
       await run(
         "powershell.exe",
         [
@@ -73,7 +75,7 @@ async function trashOne(p: string): Promise<void> {
           "-Path",
           p,
         ],
-        60_000,
+        180_000,
       );
       return;
     }
@@ -97,10 +99,13 @@ export async function moveToTrash(paths: string[]): Promise<CleanResult> {
     try {
       await trashOne(p);
       deleted.push(p);
+      console.info(`[treemap] trash ok: ${p}`);
     } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.warn(`[treemap] trash failed: ${p} — ${reason}`);
       failed.push({
         path: p,
-        reason: err instanceof Error ? err.message : String(err),
+        reason,
       });
     }
   }
