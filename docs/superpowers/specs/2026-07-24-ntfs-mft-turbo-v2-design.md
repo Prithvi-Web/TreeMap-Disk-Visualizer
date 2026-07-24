@@ -38,7 +38,7 @@ spec.** Phase breakdown of the 74.1s, from the helper's own instrumented
 | Open volume | ~1ms | ~0% |
 | **Raw `$MFT` read** (`Mft::new`) | **58.6s** | **79%** |
 | Enumerate + parse attributes → edges (3.97M edges) | 1.6s | 2% |
-| Subtree BFS filter (→ 2.565M edges) | 0.46s | 1% |
+| Build `edgesByParent` index, resolve target, BFS filter (→ 2.565M edges)¹ | 0.46s | 1% |
 | Write NDJSON (2.565M edges, 291.9 MB) | 0.72s | 1% |
 | Node-side: parse NDJSON + build `PackedScanStore` | 4.7s | 6% |
 
@@ -46,6 +46,11 @@ spec.** Phase breakdown of the 74.1s, from the helper's own instrumented
 blamed "we walk every attribute into owned `String`s + NDJSON" — enumeration +
 NDJSON writing combined are 2.3s, about 3% of total. The real cost, at 79%, is
 the raw disk read, and it happens *before* a single attribute is parsed.
+
+¹ This row is a blended bucket, not a pure "BFS" measurement — the helper
+doesn't log building the `edgesByParent` index or the `resolve_target` path
+walk separately from the BFS filter itself. Fine for prioritization (it's 1%
+of total either way), but don't read it as an isolated BFS cost.
 
 ---
 
@@ -110,15 +115,28 @@ API, not a fork and not a dependency swap.**
 
 `AlignedReader::new(inner, alignment)` already accepts `alignment` as a
 parameter — the crate isn't structurally limited to 4KB, `open_volume()` just
-never calls it with anything else. And the lower-level functions `Mft::new`
-uses internally are already `pub` and generic over `R: Seek + Read`:
-`get_record_fs`, `read_data_fs`, `fixup_record` (confirmed directly in
-`mft.rs`, all `pub fn`). So instead of calling `Mft::new(volume)` (which
-hardcodes `open_volume()`'s 4096-byte reader internally, with no way to inject
-a different one), the helper builds its own reader with a large buffer and
-calls those same public functions directly — reproducing `Mft::new`'s ~30
-lines of logic (already read in full during v1's research) against a
-differently-configured reader:
+never calls it with anything else. Two of the three functions `Mft::new` uses
+internally are already `pub` and generic over `R: Seek + Read`: `get_record_fs`
+and `read_data_fs` (confirmed in `mft.rs`).
+
+**Correction from spec review:** the third, `fixup_record`, is **not**
+`pub` — it's private to the crate's `mft` module, so it cannot be called from
+an external dependent crate as written. A first draft of this spec claimed
+otherwise; a review caught it. This does not block the fix, but changes how
+it's characterized: `fixup_record` is a small (~35-line), fully deterministic
+NTFS Update Sequence Array repair routine, and everything it touches —
+`NtfsFileRecordHeader`'s `update_sequence_offset`/`update_sequence_length`
+fields, and the `SECTOR_SIZE` constant — is `pub` (confirmed in `api.rs`).
+Since the crate is dual MIT/Apache-2.0 licensed, the correct move is to
+**vendor that one function verbatim into our own helper** (copied with a
+source/license attribution comment), not to reimplement its logic from
+scratch (a real correctness risk for a bug that would silently corrupt every
+record read back) and not to fork the whole crate for one missing `pub`
+keyword. So: the helper builds its own large-buffer reader, calls the crate's
+own `get_record_fs`/`read_data_fs` directly, and applies the vendored
+`fixup_record` copy to each record — reproducing `Mft::new`'s ~30 lines of
+logic (already read in full during v1's research) against a
+differently-configured reader, plus one small vendored function:
 
 ```rust
 let file = std::fs::File::open(&volume.path)?;
@@ -288,6 +306,11 @@ distinct-parent-FRN model from v1's own mapper design.
 - **Benchmark task, gated on real measurement**: rebuild with Fix #1, rerun
   the exact same timed scan on the same folder, record the real number before
   writing it into any doc as fact.
+- **Commit `native/ntfs-mft-scan/Cargo.lock`** if it isn't already (spec
+  review found no lockfile pinning the resolved `ntfs-reader` version) — Fix
+  #1 depends on the exact private/public shape of a specific version's
+  source; an unpinned transitive bump could silently change what's available
+  to vendor against.
 - **Invalidation-logic tests** (pure, fixture-driven, no elevation needed):
   volume-serial mismatch → reindex; journal-ID mismatch → reindex; checkpoint
   older than `FirstUsn` → reindex; valid checkpoint → incremental path taken.
@@ -320,3 +343,17 @@ distinct-parent-FRN model from v1's own mapper design.
 - **The §5 recommendation is a judgment call, not a measured fact** — flagged
   explicitly so review and the user's own read-through can push back on it
   specifically, unlike §2/§3 which are source-confirmed.
+
+---
+
+## 10. Revision note (for the reviewer)
+
+A first draft of §3 claimed `get_record_fs`, `read_data_fs`, *and*
+`fixup_record` were all `pub` in `ntfs-reader`. Spec review caught that
+`fixup_record` is actually private, and fetched its real implementation plus
+the `NtfsFileRecordHeader`/`SECTOR_SIZE` definitions to confirm a fix: vendor
+that one function verbatim (MIT-licensed, ~35 lines, touches only `pub`
+fields) rather than reimplement it or fork the crate. §3 and this section
+were updated accordingly; §1's phase table also had one bucket's description
+tightened (§1 footnote 1) and a missing-lockfile gap added to §9's testing
+list.
