@@ -34,14 +34,21 @@ published release).
 
 - [ ] **Step 1: Confirm the resolved version**
 
-Run: `cd native/ntfs-mft-scan && cargo tree -p ntfs-reader`
-Expected: a single line like `ntfs-reader v0.4.5`. Note the exact version.
+Run: `cd native/ntfs-mft-scan && cargo tree -p ntfs-reader --depth 0`
+Expected: one line, `ntfs-reader v0.4.5`. (Without `--depth 0` this prints
+the whole transitive dependency tree, not just the one line — still fine to
+read, `--depth 0` just matches what's actually needed here.)
 
 - [ ] **Step 2: Fetch that exact tag's source, not `main`**
 
 ```bash
 gh api repos/kikijiki/ntfs-reader/contents/src/mft.rs?ref=v0.4.5 --jq '.content' | base64 -d
 ```
+
+(Run this via the project's Bash tool, not native PowerShell — PowerShell has
+no `base64 -d`. Confirmed against tag `v0.4.5` directly during plan review:
+it exists exactly as named and matches `main` for every file this plan
+touches, so no drift to reconcile as of this writing.)
 
 If tag `v0.4.5` doesn't exist under that exact name, check
 `gh api repos/kikijiki/ntfs-reader/tags --jq '.[].name'` for the right one, or
@@ -212,11 +219,12 @@ existing `use ntfs_reader::...` lines (currently line 23):
 ```rust
 use ntfs_reader::aligned_reader::AlignedReader;
 use ntfs_reader::errors::NtfsReaderError;
-use ntfs_reader::volume::Volume;
 ```
 
-(`Volume` is already imported at line 25 — don't duplicate it, just add the
-other two.)
+(`Volume` is already imported at line 25 — this is exactly the two new
+imports needed, nothing else; a spec-review pass caught an earlier draft of
+this step redundantly re-importing `Volume` here too, which would just
+produce an unused-import warning.)
 
 Add near `const ROOT_RECORD_NO: u64 = 5;` (line 33):
 

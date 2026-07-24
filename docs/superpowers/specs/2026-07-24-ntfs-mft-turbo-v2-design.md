@@ -149,11 +149,16 @@ engine does.
 
 ```rust
 let file = std::fs::File::open(&volume.path)?;
-let reader = AlignedReader::new(file, 1_048_576)?; // 1MB, matching uffs-mft's NVMe chunk size
-let mut reader = BufReader::new(reader);
+let mut reader = AlignedReader::new(file, 1_048_576)?; // 1MB, matching uffs-mft's NVMe chunk size
 // then: get_record_fs, read_data_fs(Data), read_data_fs(Bitmap), fixup_record —
 // identical sequence to Mft::new, just fed by this reader instead of open_volume()'s.
 ```
+
+(No `BufReader` wrapper needed: `AlignedReader` alone already satisfies the
+`R: Seek + Read` bound `get_record_fs`/`read_data_fs` require, and it's
+already doing its own chunk-level buffering at the new, larger size — an
+outer `BufReader` would just be a redundant second buffering layer.
+Confirmed by actually compiling this during Plan #1's review.)
 
 **Scope note:** only the `$MFT`-reading path needs this. `Volume::new()`'s own
 boot-sector read (via the crate's default `open_volume()`) is a single small
