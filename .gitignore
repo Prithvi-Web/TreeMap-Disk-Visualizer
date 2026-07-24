@@ -9,3 +9,7 @@ release/
 
 # gdu binaries staged for bundling â€” fetched by scripts/fetchGdu.js, never committed
 /build/gdu/
+
+# Local multi-session agent handoff — keep on disk, never ship in PRs
+HANDOFF.md
+
