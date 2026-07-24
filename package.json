@@ -13,10 +13,12 @@
     "app": "npm run build && electron .",
     "dist": "npm run build && npm run fetch:gdu && electron-builder",
     "dist:mac": "npm run build && npm run fetch:gdu && electron-builder --mac",
-    "dist:win": "npm run build && npm run fetch:gdu && electron-builder --win",
+    "dist:win": "npm run build && npm run fetch:gdu && npm run build:ntfs-mft-scan && electron-builder --win",
     "dist:linux": "npm run build && npm run fetch:gdu && electron-builder --linux",
     "fetch:gdu": "node scripts/fetchGdu.js",
-    "fetch:gdu:dev": "node scripts/fetchGdu.js --dev"
+    "fetch:gdu:dev": "node scripts/fetchGdu.js --dev",
+    "build:ntfs-mft-scan": "node scripts/buildNtfsMftScan.js",
+    "build:ntfs-mft-scan:dev": "node scripts/buildNtfsMftScan.js --dev"
   },
   "engines": {
     "node": ">=20"
@@ -93,7 +95,14 @@
       "target": [
         "nsis"
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "extraResources": [
+        {
+          "from": "build/ntfs-mft-scan",
+          "to": "ntfs-mft-scan",
+          "filter": ["**/*"]
+        }
+      ]
     },
     "linux": {
       "target": [
