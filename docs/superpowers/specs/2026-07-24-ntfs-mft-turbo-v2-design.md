@@ -164,28 +164,24 @@ Confirmed by actually compiling this during Plan #1's review.)
 boot-sector read (via the crate's default `open_volume()`) is a single small
 read — not the bottleneck, and not touched by this fix.
 
-**Not yet confirmed:** the exact resulting time. §7's first task is to build
-this and re-run the same timed benchmark on the same machine/folder before
-this number is treated as real, following the same "measured, not assumed"
-discipline as everything else in this spec. The projection below is a range,
-not a claim:
+**Measured after Fix #1** (same machine/folder as §1: `C:\Users\nucle`,
+elevated helper run 2026-07-24, phase log from `--log`):
 
-| Phase | Current | Projected after fix |
+| Phase | Before (baseline) | After Fix #1 (measured) |
 |---|---|---|
 | UAC/elevation overhead | 8.0s | 8.0s (unaffected by this fix) |
-| Raw `$MFT` read | 58.6s | ~2–10s |
-| Enumerate/parse/write | 2.8s | 2.8s |
-| Node-side parse + store build | 4.7s | 4.7s |
-| **Total** | **74.1s** | **~17.5–25.5s** |
+| Raw `$MFT` read | 58.6s | **17.6s** |
+| Enumerate/parse/write | 2.8s | ~3.4s (enumerate 1.9s + filter/write 1.5s) |
+| Node-side parse + store build | 4.7s | 4.7s (unaffected; not re-measured this run) |
+| **Helper wall (open→done)** | ~61.4s of the 74.1s | **~21.0s** |
+| **Implied full-pipeline total** | **74.1s** | **~33.7s** (8.0 + 17.6 + 3.4 + 4.7) |
 
-(8.0 + 58.6 + 2.8 + 4.7 = 74.1, reconciling with §1's total exactly — a second
-review caught this row previously reading 2.3s, which didn't sum correctly
-against either §1's own 1.6+0.46+0.72=2.78s breakdown or the stated 74.1s
-total.)
-
-That's close to the ≤10–15s cold target but likely not quite there on its own
-— the elevation overhead (§5) and the Node-side parse (§4) are the remaining
-levers, in that order of expected impact.
+Raw `$MFT` read dropped **58.6s → 17.6s** (~3.3×, ~41s saved) — dramatic
+enough to proceed to Plan #2. Still above the optimistic ~2–10s projection
+(likely remaining per-record fixup + sequential I/O), but the bottleneck is
+no longer nearly as dominant. Elevation (§5) and warm-path indexing (§6)
+remain the levers for the ≤2–3s warm target; Node-side parse (§4) is still
+secondary for cold scans.
 
 ---
 
@@ -410,3 +406,8 @@ fields) rather than reimplement it or fork the crate. §3 and this section
 were updated accordingly; §1's phase table also had one bucket's description
 tightened (§1 footnote 1) and a missing-lockfile gap added to §9's testing
 list.
+
+**2026-07-24 (Plan #1 Task 3):** §3's projection table replaced with
+measured post-fix numbers from an elevated helper run on `C:\Users\nucle`
+(Raw `$MFT` read **58.6s → 17.6s**). The "not yet confirmed" caveat is
+removed.
