@@ -119,8 +119,15 @@ export function requireScan(_req: Request, idSource: unknown): ScanResult {
 
 /** POST /api/scan  { path } -> { scanId } */
 scanRouter.post('/scan', guardBodyPath, async (req: Request, res: Response) => {
-  const { path: scanPath, incremental } = req.body as { path: string; incremental?: boolean };
-  const scan = await startScan(scanPath, { incremental: incremental === true }); // lstat failures -> 404/403
+  const { path: scanPath, incremental, ntfsMft } = req.body as {
+    path: string;
+    incremental?: boolean;
+    ntfsMft?: boolean;
+  };
+  const scan = await startScan(scanPath, {
+    incremental: incremental === true,
+    ntfsMft: ntfsMft === true,
+  }); // lstat failures -> 404/403
   res.status(202).json({ scanId: scan.scanId, incremental: scan.incremental === true });
 });
 
