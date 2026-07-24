@@ -1,0 +1,45 @@
+# TreeMap as a systemd service (sample).
+#
+# Install:
+#   sudo useradd --system --home /var/lib/treemap --shell /usr/sbin/nologin treemap
+#   sudo mkdir -p /opt/treemap && sudo cp -r dist public package.json package-lock.json /opt/treemap/
+#   cd /opt/treemap && sudo npm ci --omit=dev
+#   sudo cp deploy/treemap.service /etc/systemd/system/treemap.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now treemap
+#
+# Default posture: binds 127.0.0.1 — reachable only from the machine itself.
+# For remote access set HOST=0.0.0.0 AND TREEMAP_TOKEN in
+# /etc/treemap/env (see AGENTS.md for the threat model), ideally behind a
+# TLS-terminating reverse proxy.
+
+[Unit]
+Description=TreeMap disk-space visualizer
+Documentation=https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer
+After=network.target
+
+[Service]
+Type=simple
+User=treemap
+Group=treemap
+WorkingDirectory=/opt/treemap
+ExecStart=/usr/bin/node /opt/treemap/dist/index.js
+Restart=on-failure
+RestartSec=5
+
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=4280
+# Snapshots, settings, audit log and policy live here (created by systemd):
+Environment=TREEMAP_DATA_DIR=/var/lib/treemap
+StateDirectory=treemap
+# Optional secrets (TREEMAP_TOKEN=…, TREEMAP_ALLOWED_ORIGINS=…):
+EnvironmentFile=-/etc/treemap/env
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

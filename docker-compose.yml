@@ -1,0 +1,25 @@
+# TreeMap server — `docker compose up -d`, then open http://127.0.0.1:4280
+#
+# Default posture matches running the app directly: the port is published on
+# 127.0.0.1 only, so nothing outside this machine can reach it. To expose it
+# beyond localhost, change the mapping to "4280:4280" AND set TREEMAP_TOKEN
+# (see AGENTS.md for the full server profile and its threat model).
+services:
+  treemap:
+    build: .
+    container_name: treemap
+    ports:
+      - "127.0.0.1:4280:4280"
+    volumes:
+      - treemap-data:/data
+      # Mount whatever you want to analyze. Read-only is the honest mode for
+      # a container: there is no OS Trash in here, so treat it as
+      # scan-and-analyze and do destructive cleanups from the desktop app.
+      # - /home/you:/scan/home:ro
+    # environment:
+    #   TREEMAP_TOKEN: change-me-long-random          # bearer auth for /api
+    #   TREEMAP_ALLOWED_ORIGINS: https://tools.example.com
+    restart: unless-stopped
+
+volumes:
+  treemap-data:

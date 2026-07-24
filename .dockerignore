@@ -1,0 +1,10 @@
+node_modules
+dist
+release
+build/gdu
+gdu
+.git
+*.log
+docs
+tests
+electron
