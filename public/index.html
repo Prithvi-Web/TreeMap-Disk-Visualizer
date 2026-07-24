@@ -4423,10 +4423,11 @@ function renderAllStorage() {
   if (state.system) {
     const used = state.system.totalDisk - state.system.freeDisk;
     const pct = state.system.totalDisk > 0 ? (used / state.system.totalDisk) * 100 : 0;
+    const localLabel = state.system.platform === 'darwin' ? 'This Mac' : 'This PC';
     rows.push(`
       <div class="storage-row">
         <span class="chip" style="--tint:#0A84FF">${icon('hardDrive', 15)}</span>
-        <div class="meta"><div class="nm">This Mac</div><div class="pth num">${formatBytes(used)} of ${formatBytes(state.system.totalDisk)}</div></div>
+        <div class="meta"><div class="nm">${localLabel}</div><div class="pth num">${formatBytes(used)} of ${formatBytes(state.system.totalDisk)}</div></div>
         <div class="bar-track"><div class="bar" style="width:${Math.max(2, pct)}%;background:${pct > 85 ? '#FF453A' : '#0A84FF'};"></div></div>
         <button class="pill" data-storage-scan-local="1">Scan</button>
       </div>`);
