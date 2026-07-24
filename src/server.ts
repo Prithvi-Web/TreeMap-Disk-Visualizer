@@ -10,6 +10,7 @@ import { settingsRouter } from './api/settingsRoutes';
 import { watchRouter, drainWatchClients } from './api/watchRoutes';
 import { offloadRouter, drainOffloadClients } from './api/offloadRoutes';
 import { cloudRouter } from './api/cloudRoutes';
+import { metaRouter } from './api/metaRoutes';
 import { stopOAuth } from './services/cloud/oauth';
 import { rateLimiter } from './middleware/rateLimiter';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
@@ -46,6 +47,7 @@ export function createApp(publicDir: string): express.Express {
   app.use('/api', watchRouter);
   app.use('/api', offloadRouter);
   app.use('/api', cloudRouter);
+  app.use('/api', metaRouter);
 
   // Frontend: the single-file UI.
   app.use(express.static(publicDir, { index: 'index.html' }));

@@ -1,0 +1,73 @@
+import { Router, Request, Response } from 'express';
+import { buildOpenApiDocument, ENDPOINTS } from './openapi';
+
+/**
+ * metaRoutes — self-description for agents: the OpenAPI document and a
+ * compact capability manifest. Both are generated from the same endpoint
+ * registry (src/api/openapi.ts), so they cannot disagree about what exists.
+ * Read-only and side-effect-free by construction.
+ */
+
+const { version: APP_VERSION } = require('../../package.json') as { version: string };
+
+export const metaRouter = Router();
+
+/** GET /api/openapi.json — the OpenAPI 3 document. */
+metaRouter.get('/openapi.json', (_req: Request, res: Response) => {
+  res.json(buildOpenApiDocument());
+});
+
+/** GET /api/capabilities — endpoints, safety model, and the intended workflow. */
+metaRouter.get('/capabilities', (_req: Request, res: Response) => {
+  res.json({
+    name: 'treemap',
+    version: APP_VERSION,
+    description: 'Local, privacy-preserving disk-space visualizer with agent-facing surfaces',
+    docs: {
+      openapi: '/api/openapi.json',
+      agents: 'AGENTS.md at the repository root documents workflows and the safety model',
+    },
+    errors: {
+      shape: '{ error, code }',
+      note: 'Every endpoint reports failures as JSON with a human message and a stable machine code',
+    },
+    rateLimit: { sustainedPerSecond: 10, burst: 20, status: 429, code: 'RATE_LIMITED' },
+    safety: {
+      trashOnlyDeletes: 'Deletes move files to the OS Trash (recoverable); nothing is hard-deleted',
+      scannedRootRule:
+        'Destructive and OS-touching endpoints only accept paths inside a root this server has actually scanned',
+      pathSanitization:
+        'Every user-supplied path is sanitized: traversal resolved, null bytes rejected, OS-internal directories blocked',
+      cloudPaths: "cloud:// paths never touch the local filesystem; their deletes go to the provider's own trash",
+      virtualPaths: 'Entries inside archives are listings, not files — only the archive itself can be acted on',
+      offload: 'Offload copies, verifies SHA-256, and only then trashes originals; failures roll back completely',
+    },
+    workflow: [
+      'POST /api/scan with { path } → { scanId }',
+      'Poll GET /api/scan/{scanId}/stats until status is "complete" (or stream /progress via SSE)',
+      'Explore: /api/large-files, /api/large-folders, /api/cleanup/suggestions, /api/duplicates, /api/forecast',
+      'Confirm intent with the user, then act: DELETE /api/files or POST /api/offload',
+      'Anything trashed is recoverable from the OS Trash',
+    ],
+    mcp: {
+      transport: 'stdio',
+      start: 'npm run mcp',
+      tools: [
+        'scan_path',
+        'get_largest',
+        'find_duplicates',
+        'cleanup_suggestions',
+        'forecast',
+        'compare_scans',
+        'offload',
+        'trash_paths',
+      ],
+    },
+    endpoints: ENDPOINTS.map((e) => ({
+      method: e.method.toUpperCase(),
+      path: e.path,
+      summary: e.summary,
+      destructive: e.destructive,
+    })),
+  });
+});
