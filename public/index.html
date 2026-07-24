@@ -1063,6 +1063,9 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
           <label class="fast-rescan" id="fastRescanWrap" hidden>
             <input type="checkbox" id="fastRescan"><span data-icon="zap" data-size="13"></span>Fast rescan — reuse cache for unchanged folders
           </label>
+          <label class="fast-rescan" id="ntfsMftScanWrap" hidden>
+            <input type="checkbox" id="ntfsMftScan"><span data-icon="zap" data-size="13"></span>Turbo NTFS scan (requires admin)
+          </label>
           <div class="scan-status" id="scanStatus">No scan yet — pick a folder above.</div>
           <div class="scan-meta num" id="scanMeta"></div>
           <div class="progress-track" id="progressTrack"><div class="progress-fill"></div></div>
@@ -1988,6 +1991,9 @@ async function loadSystem() {
   try {
     const sys = await api('/api/system');
     state.system = sys;
+    if (sys.platform === 'win32') {
+      $('ntfsMftScanWrap').hidden = false; // reuses the existing $ helper already used for fastRescanWrap
+    }
     $('sysHost').textContent = sys.hostname;
     $('sysPlatform').textContent = ({ darwin:'macOS', win32:'Windows', linux:'Linux' })[sys.platform] || sys.platform;
     $('sysTotal').textContent = formatBytes(sys.totalDisk);
@@ -2261,7 +2267,11 @@ async function startScan(path, opts = {}) {
     const resp = await api('/api/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path, incremental: !!opts.incremental }),
+      body: JSON.stringify({
+        path,
+        incremental: !!opts.incremental,
+        ntfsMft: !!opts.ntfsMft,
+      }),
     });
     followScanProgress(resp.scanId, path, resp.incremental === true, t0);
   } catch (e) {
@@ -2606,7 +2616,10 @@ async function renderGrowthProjection() {
 $('scanBtn').addEventListener('click', () => {
   const p = $('pathInput').value.trim();
   if (!p) { toast('Enter a folder path first', 'error'); return; }
-  startScan(p, { incremental: !$('fastRescanWrap').hidden && $('fastRescan').checked });
+  startScan(p, {
+    incremental: !$('fastRescanWrap').hidden && $('fastRescan').checked,
+    ntfsMft: !$('ntfsMftScanWrap').hidden && $('ntfsMftScan').checked,
+  });
 });
 $('pathInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('scanBtn').click(); });
 $('pathInput').addEventListener('input', maybeShowFastRescan);
