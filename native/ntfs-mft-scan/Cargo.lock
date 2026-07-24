@@ -48,6 +48,7 @@ name = "ntfs-mft-scan"
 version = "0.1.0"
 dependencies = [
  "ntfs-reader",
+ "windows",
 ]
 
 [[package]]

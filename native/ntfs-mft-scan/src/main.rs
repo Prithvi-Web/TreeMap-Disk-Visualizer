@@ -9,11 +9,13 @@
 //! Usage:
 //!   ntfs-mft-scan --volume C --out <path> [--log <path>]
 //!   ntfs-mft-scan --volume C --root "Users\foo" --out <path> [--log <path>]
+//!   ntfs-mft-scan --volume C --usn-info --out <path>
 //!
 //! With `--root`, only the requested subtree is written (plus a `_meta` line
 //! carrying `targetRecordNo`). Whole-volume dumps are still supported when
 //! `--root` is omitted. `--log` mirrors phase lines as `+<ms> msg` for the
 //! Node timing journal (elevated stderr is otherwise invisible).
+//! `--usn-info` queries FSCTL_QUERY_USN_JOURNAL only (no MFT read).
 //!
 //! Requires an elevated process token (enforced by ntfs_reader::Volume::new).
 //!
@@ -48,6 +50,8 @@ struct Args {
     root: Option<String>,
     /// Optional phase log (`+<ms> message` per line) for the Node timing journal.
     log: Option<String>,
+    /// Query USN journal metadata only (no MFT read).
+    usn_info: bool,
 }
 
 struct PhaseLog {
@@ -93,6 +97,7 @@ fn parse_args() -> Option<Args> {
     let mut out = None;
     let mut root = None;
     let mut log = None;
+    let mut usn_info = false;
     let mut it = env::args().skip(1);
     while let Some(flag) = it.next() {
         match flag.as_str() {
@@ -100,6 +105,7 @@ fn parse_args() -> Option<Args> {
             "--out" => out = it.next(),
             "--root" => root = it.next(),
             "--log" => log = it.next(),
+            "--usn-info" => usn_info = true,
             _ => {}
         }
     }
@@ -108,6 +114,7 @@ fn parse_args() -> Option<Args> {
         out: out?,
         root,
         log,
+        usn_info,
     })
 }
 
@@ -162,6 +169,88 @@ fn fixup_record(record_number: u64, data: &mut [u8]) -> ntfs_reader::errors::Ntf
         sector_off += SECTOR_SIZE;
     }
     Ok(())
+}
+
+struct UsnJournalInfo {
+    volume_serial_number: u32,
+    usn_journal_id: u64,
+    first_usn: i64,
+    next_usn: i64,
+}
+
+fn query_usn_journal_info(volume_path: &str) -> std::io::Result<UsnJournalInfo> {
+    use std::ffi::CString;
+    use std::mem::size_of;
+    use std::os::raw::c_void;
+    use windows::core::PCSTR;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileA, GetVolumeInformationByHandleW, FILE_FLAG_OVERLAPPED, FILE_GENERIC_READ,
+        FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::Ioctl::{FSCTL_QUERY_USN_JOURNAL, USN_JOURNAL_DATA_V2};
+    use windows::Win32::System::IO::DeviceIoControl;
+
+    let path = CString::new(volume_path).unwrap();
+    let handle: HANDLE = unsafe {
+        CreateFileA(
+            PCSTR::from_raw(path.as_bytes_with_nul().as_ptr()),
+            // Spec/plan review: ntfs-reader's Journal::new opens READ | WRITE.
+            (FILE_GENERIC_READ | FILE_GENERIC_WRITE).0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_OVERLAPPED,
+            None,
+        )
+    }
+    .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    let mut journal = USN_JOURNAL_DATA_V2::default();
+    let mut bytes_returned = 0u32;
+    unsafe {
+        DeviceIoControl(
+            handle,
+            FSCTL_QUERY_USN_JOURNAL,
+            None,
+            0,
+            Some(&mut journal as *mut _ as *mut c_void),
+            size_of::<USN_JOURNAL_DATA_V2>() as u32,
+            Some(&mut bytes_returned),
+            None,
+        )
+    }
+    .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    let mut volume_serial: u32 = 0;
+    unsafe {
+        GetVolumeInformationByHandleW(
+            handle,
+            None,                     // volume name buffer — not needed
+            Some(&mut volume_serial), // lpVolumeSerialNumber
+            None,                     // max component length
+            None,                     // filesystem flags
+            None,                     // filesystem name buffer
+        )
+    }
+    .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    Ok(UsnJournalInfo {
+        volume_serial_number: volume_serial,
+        usn_journal_id: journal.UsnJournalID,
+        first_usn: journal.FirstUsn,
+        next_usn: journal.NextUsn,
+    })
+}
+
+/// Writes the `--usn-info` JSON line. usnJournalId/firstUsn/nextUsn are
+/// quoted strings — volumeSerialNumber is a real u32, safe as a bare JSON number.
+fn write_usn_info<W: std::io::Write>(w: &mut W, info: &UsnJournalInfo) -> std::io::Result<()> {
+    writeln!(
+        w,
+        "{{\"volumeSerialNumber\":{},\"usnJournalId\":\"{}\",\"firstUsn\":\"{}\",\"nextUsn\":\"{}\"}}",
+        info.volume_serial_number, info.usn_journal_id, info.first_usn, info.next_usn,
+    )
 }
 
 /** Preference order when a record has multiple surviving names at the SAME
@@ -313,6 +402,25 @@ fn main() -> ExitCode {
     let mut writer = BufWriter::with_capacity(8 * 1024 * 1024, out_file);
 
     let volume_path = format!("\\\\.\\{}:", args.volume);
+
+    if args.usn_info {
+        phase.log(&format!("querying USN journal on {volume_path}"));
+        match query_usn_journal_info(&volume_path) {
+            Ok(info) => {
+                if write_usn_info(&mut writer, &info).is_err() || writer.flush().is_err() {
+                    phase.log("failed writing usn-info");
+                    return ExitCode::FAILURE;
+                }
+                phase.log("done — usn-info");
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                phase.log(&format!("failed to query USN journal (are we elevated?): {e}"));
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
     phase.log(&format!("opening volume {volume_path}"));
     let volume = match Volume::new(&volume_path) {
         Ok(v) => v,
