@@ -1,5 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 
 const execFileAsync = promisify(execFile);
 
@@ -42,4 +45,34 @@ export async function isNtfsVolume(driveLetter: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export interface FindOptions {
+  bundledPath?: string;
+}
+
+/** Where a bundled ntfs-mft-scan.exe might live — see bundledCandidates in
+ *  gduScanner.ts for why both the packaged and dev-relative path are checked. */
+function bundledCandidates(): string[] {
+  const resources = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  const out: string[] = [];
+  if (resources) out.push(path.join(resources, 'ntfs-mft-scan', 'ntfs-mft-scan.exe'));
+  out.push(path.join(__dirname, '..', '..', 'ntfs-mft-scan', 'ntfs-mft-scan.exe'));
+  return out;
+}
+
+/** No $PATH fallback: unlike gdu, this binary is never something a
+ *  contributor installs system-wide — it only ever comes from this repo's
+ *  own build step (Task 8). */
+export async function findNtfsMftBinary(opts: FindOptions = {}): Promise<string | null> {
+  const candidates = opts.bundledPath ? [opts.bundledPath] : bundledCandidates();
+  for (const candidate of candidates) {
+    try {
+      await fsp.access(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      /* try the next candidate */
+    }
+  }
+  return null;
 }

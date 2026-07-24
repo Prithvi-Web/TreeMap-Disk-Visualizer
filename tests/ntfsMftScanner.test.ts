@@ -19,3 +19,8 @@ test('isNtfsVolume detects the host drive on Windows', { skip: process.platform 
   const drive = process.env.SystemDrive?.replace(':', '') ?? 'C';
   assert.equal(await isNtfsVolume(drive), true);
 });
+
+test('findNtfsMftBinary returns null rather than throwing when nothing is installed', async () => {
+  const found = await findNtfsMftBinary({ bundledPath: '/nonexistent/ntfs-mft-scan.exe' });
+  assert.equal(found, null);
+});
