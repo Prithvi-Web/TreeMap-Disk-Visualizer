@@ -31,6 +31,17 @@ metaRouter.get('/capabilities', (_req: Request, res: Response) => {
       shape: '{ error, code }',
       note: 'Every endpoint reports failures as JSON with a human message and a stable machine code',
     },
+    auth: {
+      enabled: !!process.env.TREEMAP_TOKEN,
+      scheme: 'bearer',
+      how: 'Send "Authorization: Bearer <TREEMAP_TOKEN>"; the served web UI authenticates via an auto-set cookie instead',
+      env: 'TREEMAP_TOKEN — unset (the default) means no auth, exactly the historical behavior',
+      unauthorized: { status: 401, code: 'UNAUTHORIZED' },
+    },
+    cors: {
+      enabled: !!process.env.TREEMAP_ALLOWED_ORIGINS,
+      env: 'TREEMAP_ALLOWED_ORIGINS — comma-separated origins; unset (the default) emits no CORS headers',
+    },
     rateLimit: { sustainedPerSecond: 10, burst: 20, status: 429, code: 'RATE_LIMITED' },
     safety: {
       trashOnlyDeletes: 'Deletes move files to the OS Trash (recoverable); nothing is hard-deleted',

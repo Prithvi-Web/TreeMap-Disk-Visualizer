@@ -13,6 +13,8 @@ import { cloudRouter } from './api/cloudRoutes';
 import { metaRouter } from './api/metaRoutes';
 import { stopOAuth } from './services/cloud/oauth';
 import { rateLimiter } from './middleware/rateLimiter';
+import { corsMiddleware } from './middleware/cors';
+import { requireToken, uiAuthCookie } from './middleware/requireToken';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { cancelAllScans } from './services/diskScanner';
 import { cancelAllDuplicateJobs } from './services/duplicateFinder';
@@ -37,7 +39,11 @@ export function createApp(publicDir: string): express.Express {
   app.disable('x-powered-by');
 
   app.use(express.json({ limit: '1mb' }));
+  // Both are no-ops until their env vars are set (TREEMAP_ALLOWED_ORIGINS /
+  // TREEMAP_TOKEN) — with them unset the app behaves exactly as before.
+  app.use('/api', corsMiddleware);
   app.use('/api', rateLimiter);
+  app.use('/api', requireToken);
 
   app.use('/api', scanRouter);
   app.use('/api', fileRouter);
@@ -49,7 +55,10 @@ export function createApp(publicDir: string): express.Express {
   app.use('/api', cloudRouter);
   app.use('/api', metaRouter);
 
-  // Frontend: the single-file UI.
+  // Frontend: the single-file UI. When token auth is enabled, serving the
+  // page also hands the browser its session cookie (R2 — the frozen UI keeps
+  // calling its own backend without modification).
+  app.use(uiAuthCookie);
   app.use(express.static(publicDir, { index: 'index.html' }));
 
   app.use('/api', notFoundHandler);

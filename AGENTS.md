@@ -74,6 +74,36 @@ read-what-you-saw) permission to act.
   first, show the user, then act.**
 - All sizes come back as raw bytes plus a human-formatted string.
 
+## Server profile: auth, CORS and remote bind
+
+All of this is **opt-in via environment variables; with none of them set the
+app behaves exactly as it always has** (localhost bind, no auth, no CORS).
+
+| Variable | Default | Effect when set |
+| --- | --- | --- |
+| `HOST` | `127.0.0.1` | Bind address for `npm start` (e.g. `0.0.0.0` for remote access) |
+| `PORT` | `4280` | Listen port |
+| `TREEMAP_TOKEN` | unset (no auth) | Every `/api` request must send `Authorization: Bearer <token>`; otherwise `401 { code: "UNAUTHORIZED" }` |
+| `TREEMAP_ALLOWED_ORIGINS` | unset (no CORS) | Comma-separated origins allowed to call the API from browsers |
+| `TREEMAP_DATA_DIR` | per-OS app-data dir | Where snapshots/settings/manifests persist |
+
+How the human UI keeps working with a token set: serving the UI page also
+sets an `HttpOnly`, `SameSite=Strict` session cookie, which same-origin
+`fetch()` **and `EventSource`** (which cannot send headers) attach
+automatically. The frozen frontend needs no changes.
+
+Threat model, stated plainly: the token gates API access for non-browser
+clients, and `SameSite=Strict` + CORS-off blocks cross-site browser attacks —
+but anyone who can load the UI page itself gets a session. If you bind beyond
+localhost, front the server with a reverse proxy that authenticates page
+loads (and adds TLS).
+
+A typical remote profile:
+
+```
+HOST=0.0.0.0 PORT=4280 TREEMAP_TOKEN=<long-random-secret> npm start
+```
+
 ## Operational notes
 
 - Local-first: nothing talks to the network except the optional cloud

@@ -1076,7 +1076,10 @@ export function buildOpenApiDocument(): Json {
         'Local disk-space visualizer API. Workflow: POST /api/scan, poll GET /api/scan/{scanId}/stats ' +
         '(or stream /progress), then query insights with the scanId, and only then act — deletes always go ' +
         'to the OS Trash and only paths inside a scanned root can be touched. Errors are always ' +
-        '{ error, code } JSON. Rate limit: 10 req/s sustained per client (burst 20), 429 when exceeded.',
+        '{ error, code } JSON. Rate limit: 10 req/s sustained per client (burst 20), 429 when exceeded. ' +
+        'Auth is optional: only when the server runs with TREEMAP_TOKEN set do /api requests require ' +
+        'Authorization: Bearer <token> (401 { code: "UNAUTHORIZED" } otherwise); the served web UI ' +
+        'authenticates via an automatically-set cookie.',
     },
     servers: [{ url: '/' }],
     tags: [
@@ -1092,7 +1095,16 @@ export function buildOpenApiDocument(): Json {
       { name: 'cloud', description: "The user's own cloud accounts" },
     ],
     paths,
-    components: { schemas },
+    components: {
+      schemas,
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          description: 'Enforced only when the server runs with TREEMAP_TOKEN set; without it the API is open (local default)',
+        },
+      },
+    },
   };
   return cached;
 }
