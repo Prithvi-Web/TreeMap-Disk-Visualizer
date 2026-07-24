@@ -1761,6 +1761,11 @@ applyThemeButton();
 
 /* ───────────────────────────── Toasts ───────────────────────────── */
 function toast(msg, kind = 'success', ms = 4200) {
+  // Always mirror toasts to the browser console so long/error text stays readable
+  // after the toast fades (PowerShell failures especially).
+  const line = `[toast:${kind}] ${msg}`;
+  if (kind === 'error') console.error(line);
+  else console.info(line);
   const el = document.createElement('div');
   el.className = 'toast ' + kind;
   el.innerHTML = icon(kind === 'error' ? 'alert' : 'checkCircle', 16) + '<span>' + escapeHtml(msg) + '</span>';
@@ -2485,13 +2490,18 @@ function followScanProgress(scanId, path, fast, t0, requestedOpts = null) {
       const engineTag = (requestedOpts?.ntfsMft && msg.engine && msg.engine !== 'ntfs-mft')
         ? `Using ${msg.engine} · `
         : turboTag;
+      // ntfs-mft's elevated/parse phases report phase text via currentPath while
+      // scanned stays 0 — surface that instead of a frozen "0 items".
+      const phaseBusy = !msg.scanned && msg.currentPath && /MFT|Parsing|Building/i.test(msg.currentPath);
       setScanStatusBusy(
-        `<span class="num">${engineTag}${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
-        (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`,
+        phaseBusy
+          ? `<span class="num">${engineTag}${escapeHtml(msg.currentPath)}</span>`
+          : `<span class="num">${engineTag}${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
+            (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`,
       );
       const meta = $('scanMeta');
-      meta.textContent = msg.currentPath || '';
-      meta.title = msg.currentPath || ''; // full path on hover when ellipsized
+      meta.textContent = phaseBusy ? '' : (msg.currentPath || '');
+      meta.title = phaseBusy ? '' : (msg.currentPath || ''); // full path on hover when ellipsized
     } else if (msg.type === 'complete') {
       finished = true;
       clearInterval(watchdog);
@@ -4420,16 +4430,30 @@ function renderAllStorage() {
   const host = $('allStorageList');
   if (!host) return;
   const rows = [];
-  if (state.system) {
-    const used = state.system.totalDisk - state.system.freeDisk;
-    const pct = state.system.totalDisk > 0 ? (used / state.system.totalDisk) * 100 : 0;
-    const localLabel = state.system.platform === 'darwin' ? 'This Mac' : 'This PC';
+  const volumes = state.system?.volumes?.length
+    ? state.system.volumes
+    : (state.system
+      ? [{
+          mount: state.system.homeDir,
+          name: state.system.platform === 'darwin' ? 'This Mac' : 'This PC',
+          total: state.system.totalDisk,
+          free: state.system.freeDisk,
+          fs: '',
+        }]
+      : []);
+  for (const v of volumes) {
+    const used = Math.max(0, (v.total || 0) - (v.free || 0));
+    const pct = v.total > 0 ? (used / v.total) * 100 : 0;
+    const label = v.name
+      ? `${escapeHtml(v.mount.replace(/\\$/, ''))} · ${escapeHtml(v.name)}`
+      : escapeHtml(v.mount.replace(/\\$/, '') || v.mount);
+    const fsTag = v.fs ? ` · ${escapeHtml(v.fs)}` : '';
     rows.push(`
       <div class="storage-row">
         <span class="chip" style="--tint:#0A84FF">${icon('hardDrive', 15)}</span>
-        <div class="meta"><div class="nm">${localLabel}</div><div class="pth num">${formatBytes(used)} of ${formatBytes(state.system.totalDisk)}</div></div>
+        <div class="meta"><div class="nm">${label}</div><div class="pth num">${formatBytes(used)} of ${formatBytes(v.total)}${fsTag}</div></div>
         <div class="bar-track"><div class="bar" style="width:${Math.max(2, pct)}%;background:${pct > 85 ? '#FF453A' : '#0A84FF'};"></div></div>
-        <button class="pill" data-storage-scan-local="1">Scan</button>
+        <button class="pill" data-storage-scan-mount="${escapeHtml(v.mount)}">Scan</button>
       </div>`);
   }
   const connected = state.cloud.providers.filter(p => p.connected);
@@ -4450,8 +4474,8 @@ function renderAllStorage() {
   host.innerHTML = rows.join('');
   host.querySelectorAll('[data-cloud-scan]').forEach(b =>
     b.addEventListener('click', () => startCloudScan(b.dataset.cloudScan, b.dataset.cloudName)));
-  host.querySelectorAll('[data-storage-scan-local]').forEach(b =>
-    b.addEventListener('click', () => { if (state.system) startScan(state.system.homeDir); }));
+  host.querySelectorAll('[data-storage-scan-mount]').forEach(b =>
+    b.addEventListener('click', () => startScan(b.dataset.storageScanMount)));
 }
 
 /** Provider-trash for cloud scans (mirrors the local trash-only rule). */
@@ -5981,8 +6005,11 @@ async function openBrowse(start, onPick = null, title = null) {
   $('browseTitle').innerHTML = icon('folder', 18) + (title || 'Choose a folder');
   $('browseModal').classList.add('open');
   const chips = $('browseChips');
-  chips.innerHTML = (state.system?.commonDirs ?? []).map(d =>
-    `<button class="pill" data-p="${escapeHtml(d)}">${icon('folder', 12)}${escapeHtml(d.split(/[\\/]/).pop() || d)}</button>`).join('');
+  chips.innerHTML = (state.system?.commonDirs ?? []).map(d => {
+    const isDrive = /^[A-Za-z]:\\?$/.test(d) || d === '/';
+    const label = isDrive ? d.replace(/\\$/, '') : (d.split(/[\\/]/).pop() || d);
+    return `<button class="pill" data-p="${escapeHtml(d)}">${icon(isDrive ? 'hardDrive' : 'folder', 12)}${escapeHtml(label)}</button>`;
+  }).join('');
   chips.querySelectorAll('.pill').forEach(c => c.addEventListener('click', () => browseTo(c.dataset.p)));
   await browseTo(start || state.system?.homeDir || '/');
 }

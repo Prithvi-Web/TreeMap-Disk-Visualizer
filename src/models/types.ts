@@ -193,6 +193,14 @@ export interface CleanResult {
   failed: { path: string; reason: string }[];
 }
 
+export interface SystemVolumeInfo {
+  mount: string;
+  name: string;
+  total: number;
+  free: number;
+  fs: string;
+}
+
 export interface SystemInfo {
   platform: NodeJS.Platform;
   hostname: string;
@@ -200,6 +208,8 @@ export interface SystemInfo {
   freeDisk: number;
   homeDir: string;
   commonDirs: string[];
+  /** Local volumes/drives available to scan (Windows: C:\, D:\, …). */
+  volumes?: SystemVolumeInfo[];
 }
 
 export interface FileTypeStat {
