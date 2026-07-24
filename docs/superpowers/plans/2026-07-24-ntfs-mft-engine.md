@@ -128,6 +128,10 @@ function buildFxTree(): { root: FileNode; stats: ReturnType<typeof buildNtfsMftS
     isHidden: false,
   });
   const { stats } = buildNtfsMftStoreFromEdges(edges, target!, store, store.rootId);
+  // prune() requires finalize() first (PackedScanStore.requireFinal()) — a
+  // freshly addNode-populated store throws 'finalize() first' otherwise.
+  store.finalize();
+  store.sumSizes();
   const root = store.prune(store.rootId, { maxNodes: Number.MAX_SAFE_INTEGER }).root;
   return { root, stats };
 }
@@ -166,8 +170,12 @@ test('counts files and dirs correctly', () => {
   const { stats } = buildFxTree();
   // .hidden, a.txt, hardlink.txt, b.log, c.dat, zero.bin
   assert.equal(stats.fileCount, 6);
-  // fx, sub, deep, empty
-  assert.equal(stats.dirCount, 4);
+  // sub, deep, empty — NOT fx itself: buildNtfsMftStoreFromEdges only counts
+  // fx's DESCENDANTS. fx is the store's pre-existing root (created by
+  // `new PackedScanStore(...)` above, not by this function), same reason
+  // Task 4's orchestration does `scan.dirCount = stats.dirCount + 1` to
+  // account for the root separately.
+  assert.equal(stats.dirCount, 3);
 });
 
 test('keeps empty dirs as children: [] — the empty-folder finder depends on it', () => {
@@ -621,6 +629,7 @@ Add to `src/services/ntfsMftScanner.ts`:
 
 ```ts
 import os from 'node:os';
+import sudoPrompt from 'sudo-prompt'; // top-level import, matching this codebase's style — not a lazy require()
 import { ScanResult } from '../models/types';
 import { PackedScanStore, ScanStore } from './scanStore';
 import { parseNtfsMftEdges, resolveTargetRecord, buildNtfsMftStoreFromEdges } from './ntfsMftMapper';
@@ -648,7 +657,6 @@ function runElevatedViaSudoPrompt(outFile: string, driveLetter: string, binPath:
     // Both interpolated values are strictly constrained: driveLetter is
     // validated above (single letter only), outFile is always one WE
     // generated via fsp.mkdtemp — never user input.
-    const sudoPrompt = require('sudo-prompt');
     const cmd = `"${binPath}" --volume ${driveLetter} --out "${outFile}"`;
     const timer = setTimeout(() => reject(new Error('ntfs-mft-scan timed out')), ELEVATED_RUN_TIMEOUT_MS);
     sudoPrompt.exec(cmd, { name: 'TreeMap' }, (err: Error | null) => {
@@ -957,14 +965,24 @@ git commit -m "feat(api): accept ntfsMft opt-in flag on the scan request"
 
 ## Task 7: Rust helper crate
 
-**Verify before writing code:** confirm `ntfs_to_unix_time`, `NtfsAttributeType`,
-and `ROOT_RECORD` are actually reachable from an external crate depending on
-`ntfs-reader` (i.e. re-exported as `pub` from the crate root or its `api`
-module), by running `cargo doc --open -p ntfs-reader` or checking
-`docs.rs/ntfs-reader` directly, before assuming the code below compiles
-as-is. If any aren't public, implement the small equivalent locally (a
-Windows FILETIME-to-Unix-ms conversion is a few lines) rather than depending
-on crate internals.
+**Already verified, no need to recheck:** the `file.attributes(|att| {...})`
+callback/visitor shape (not an iterator — confirmed against `ntfs-reader`'s
+own `file.rs`: `pub fn attributes<F>(&self, mut f: F) where F: FnMut(&NtfsAttribute)`),
+and the `att.as_standard_info()` / `att.resident_header()` /
+`att.nonresident_header()` calls (confirmed against the crate's own
+`file_info.rs`, which uses this exact pattern internally to compute size and
+timestamps). The code below matches real, read source — not guessed.
+
+**Still verify before writing code:** whether `ntfs_to_unix_time`,
+`NtfsAttributeType`, `ROOT_RECORD`, and `NtfsFileNamespace` are actually
+reachable from an *external* crate depending on `ntfs-reader` (i.e.
+re-exported as `pub` from the crate root or its `api`/`attribute` modules) —
+`file_info.rs` uses them via `crate::api::...`, which only proves they work
+from *inside* the crate, not that they're part of its public API surface.
+Run `cargo doc --open -p ntfs-reader` or check `docs.rs/ntfs-reader`
+directly before assuming the code below compiles as-is. If any aren't
+public, implement the small equivalent locally (a Windows FILETIME-to-Unix-ms
+conversion is a few lines) rather than depending on crate internals.
 
 **Files:**
 - Create: `native/ntfs-mft-scan/Cargo.toml`
@@ -1258,16 +1276,40 @@ Add to the `dist:win` script (and only `dist:win`, unlike gdu's cross-platform
 "dist:win": "npm run build && npm run fetch:gdu && npm run build:ntfs-mft-scan && electron-builder --win"
 ```
 
-Add to the `build.win.extraResources` array (alongside the existing `gdu`
-entries):
+**Not the same array gdu uses.** The real `package.json`'s `extraResources`
+is a single top-level array under `build` (not nested under `build.win`),
+and gdu's entries live there because gdu is fetched for every platform, so
+its `from` path always exists whichever platform is building. This binary
+is Windows-only — `buildNtfsMftScan.js` only ever produces
+`build/ntfs-mft-scan/win-x64/` on a Windows host — so adding it to that same
+shared array would point mac/linux builds at a `from` path that never gets
+created on those platforms.
+
+electron-builder supports exactly this split: `extraResources` (among other
+options) can also be set per-platform under the existing top-level `win`/
+`mac`/`linux` keys, and a platform-specific list **merges with** (adds to,
+doesn't replace) the shared top-level one — confirmed against
+electron-builder's own source (`getFileMatchers` adds both `config[name]`
+and `customBuildOptions[name]` patterns to the same matcher). So: add a new
+`extraResources` array *inside* the existing `"win": { "target": [...],
+"icon": ... }` block:
 
 ```json
-{
-  "from": "build/ntfs-mft-scan",
-  "to": "ntfs-mft-scan",
-  "filter": ["**/*"]
+"win": {
+  "target": ["nsis"],
+  "icon": "build/icon.png",
+  "extraResources": [
+    {
+      "from": "build/ntfs-mft-scan",
+      "to": "ntfs-mft-scan",
+      "filter": ["**/*"]
+    }
+  ]
 }
 ```
+
+A Windows build gets both the shared gdu entries and this one; mac/linux
+builds are unaffected.
 
 - [ ] **Step 3: Commit**
 
@@ -1292,13 +1334,17 @@ Find the `#fastRescan` checkbox block (around line 1064) and add a sibling
 checkbox immediately after it:
 
 ```html
-<input type="checkbox" id="ntfsMftScan" style="display:none">
-<span data-icon="zap" data-size="13"></span>Turbo NTFS scan (requires admin) — <span id="ntfsMftScanWrap" style="display:none"></span>
+<input type="checkbox" id="ntfsMftScan">
+<span data-icon="zap" data-size="13"></span>Turbo NTFS scan (requires admin)
 ```
 
-(Match the existing `#fastRescan` markup structure exactly rather than
-inventing new markup — copy its actual surrounding HTML once you have the
-file open, the snippet above is illustrative of intent, not a literal patch.)
+wrapped in a container with `id="ntfsMftScanWrap"` that starts **hidden via
+the bare `hidden` attribute** (`<div id="ntfsMftScanWrap" hidden>`) — match
+`#fastRescanWrap`'s actual convention exactly (it uses `hidden`, not
+`style="display:none"`; Step 2 below toggles `.hidden = false`, which only
+works against the attribute form). Copy `#fastRescanWrap`'s real surrounding
+HTML once you have the file open — the snippet above is illustrative of
+intent, not a literal patch.
 
 - [ ] **Step 2: Show it only on Windows**
 
