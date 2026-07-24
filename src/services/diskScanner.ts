@@ -1,18 +1,37 @@
-import { promises as fsp, Dirent, Stats } from 'fs';
-import path from 'path';
-import crypto from 'crypto';
-import { FileNode, ScanResult, LargeFolder, EmptyFoldersResult, CompareEntry } from '../models/types';
-import { saveSnapshot } from './snapshots';
-import { getIgnoreMatchers } from './settings';
-import { CompiledIgnore, matchesAny } from '../utils/glob';
-import { readJsonFile, appDataDir } from './storage';
-import { IO_THREADS } from '../utils/ioThreads';
-import { detectContainerKind } from '../utils/containerKind';
-import { neverDescend } from '../utils/mountBoundaries';
-import { forgetScan } from './containerScanner';
-import { findGduBinary, gduScanIntoStore } from './gduScanner';
-import { findNtfsMftBinary, ntfsMftScanIntoStore, isNtfsVolume } from './ntfsMftScanner';
-import { PackedScanStore, ScanStore, Flag, NodeInput, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
+import { promises as fsp, Dirent, Stats } from "fs";
+import path from "path";
+import crypto from "crypto";
+import {
+  FileNode,
+  ScanResult,
+  LargeFolder,
+  EmptyFoldersResult,
+  CompareEntry,
+} from "../models/types";
+import { saveSnapshot } from "./snapshots";
+import { getIgnoreMatchers } from "./settings";
+import { CompiledIgnore, matchesAny } from "../utils/glob";
+import { readJsonFile, appDataDir } from "./storage";
+import { IO_THREADS } from "../utils/ioThreads";
+import { detectContainerKind } from "../utils/containerKind";
+import { neverDescend } from "../utils/mountBoundaries";
+import { forgetScan } from "./containerScanner";
+import { findGduBinary, gduScanIntoStore } from "./gduScanner";
+import {
+  findNtfsMftBinary,
+  ntfsMftScanIntoStore,
+  isNtfsVolume,
+} from "./ntfsMftScanner";
+import {
+  PackedScanStore,
+  ScanStore,
+  Flag,
+  NodeInput,
+  fileNodeToInput,
+  buildStoreFromTree,
+  asStore,
+  TreeSource,
+} from "./scanStore";
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -49,7 +68,9 @@ const READDIR_DEADLINE_MS = 30_000;
 function readdirWithDeadline(p: string): Promise<Dirent[] | null> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
-      console.warn(`[treemap] readdir gave up after ${READDIR_DEADLINE_MS / 1000}s: ${p}`);
+      console.warn(
+        `[treemap] readdir gave up after ${READDIR_DEADLINE_MS / 1000}s: ${p}`,
+      );
       resolve(null);
     }, READDIR_DEADLINE_MS);
     timer.unref();
@@ -83,7 +104,8 @@ const scans = new Map<string, ScanResult>();
 /** True when a scan's retention window has passed. Running scans only expire
  *  at the wedge horizon; settled ones 30 minutes after they finished. */
 export function scanExpired(scan: ScanResult, now: number): boolean {
-  if (scan.status === 'running') return now - scan.createdAt > RUNNING_SCAN_HARD_CAP_MS;
+  if (scan.status === "running")
+    return now - scan.createdAt > RUNNING_SCAN_HARD_CAP_MS;
   return now - (scan.finishedAt ?? scan.createdAt) > SCAN_TTL_MS;
 }
 
@@ -121,7 +143,7 @@ export function cancelAllScans(): void {
  *  `scan.cancelled` and call finalizeCancelled when they exit. */
 export function cancelScan(scanId: string): boolean {
   const scan = scans.get(scanId);
-  if (!scan || scan.status !== 'running') return false;
+  if (!scan || scan.status !== "running") return false;
   scan.cancelled = true;
   return true;
 }
@@ -129,8 +151,8 @@ export function cancelScan(scanId: string): boolean {
 /** Mark a cancelled-but-still-`running` record as finished so SSE/clients
  *  stop waiting. Idempotent if status already left `running`. */
 export function finalizeCancelled(scan: ScanResult): void {
-  if (scan.status !== 'running') return;
-  scan.status = 'cancelled';
+  if (scan.status !== "running") return;
+  scan.status = "cancelled";
   scan.finishedAt = Date.now();
 }
 
@@ -144,14 +166,15 @@ export function finalizeCancelled(scan: ScanResult): void {
  */
 function defineRootAccessor(scan: ScanResult): void {
   let legacy: FileNode | undefined;
-  Object.defineProperty(scan, 'root', {
+  Object.defineProperty(scan, "root", {
     enumerable: true,
     configurable: true,
     get(): FileNode | undefined {
       if (legacy) return legacy;
       const store = scan.store;
       if (!store) return undefined;
-      return store.prune(store.rootId, { maxNodes: Number.MAX_SAFE_INTEGER }).root;
+      return store.prune(store.rootId, { maxNodes: Number.MAX_SAFE_INTEGER })
+        .root;
     },
     set(value: FileNode | undefined) {
       legacy = value;
@@ -169,7 +192,7 @@ export function createScanRecord(rootPath: string): ScanResult {
   const scan: ScanResult = {
     scanId: crypto.randomUUID(),
     rootPath,
-    status: 'running',
+    status: "running",
     scanned: 0,
     fileCount: 0,
     dirCount: 0,
@@ -196,21 +219,33 @@ export interface ScanOptions {
   ntfsMft?: boolean;
 }
 
-export async function startScan(rootPath: string, opts: ScanOptions = {}): Promise<ScanResult> {
+export async function startScan(
+  rootPath: string,
+  opts: ScanOptions = {},
+): Promise<ScanResult> {
   ensureEvictor();
 
   // Fail fast on unreadable/nonexistent roots so the API can 4xx properly.
   const rootStat = await fsp.lstat(rootPath);
 
   // User-configured "don't scan" patterns; a settings problem never blocks a scan.
-  const ignore = await getIgnoreMatchers('scan').catch(() => [] as CompiledIgnore[]);
+  const ignore = await getIgnoreMatchers("scan").catch(
+    () => [] as CompiledIgnore[],
+  );
 
   // Incremental rescan: load the previous tree so unchanged directories (same
   // mtime) can be substituted from cache instead of re-walked.
   let cache: Map<string, FileNode> | null = null;
   if (opts.incremental) {
-    const cachedRoot = await readJsonFile<FileNode | null>(cacheFileName(rootPath), null);
-    if (cachedRoot && cachedRoot.path === rootPath && cachedRoot.type === 'dir') {
+    const cachedRoot = await readJsonFile<FileNode | null>(
+      cacheFileName(rootPath),
+      null,
+    );
+    if (
+      cachedRoot &&
+      cachedRoot.path === rootPath &&
+      cachedRoot.type === "dir"
+    ) {
       cache = buildDirCache(cachedRoot);
     }
   }
@@ -218,7 +253,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
   const scan: ScanResult = {
     scanId: crypto.randomUUID(),
     rootPath,
-    status: 'running',
+    status: "running",
     scanned: 0,
     fileCount: 0,
     dirCount: 0,
@@ -226,7 +261,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     startedAt: Date.now(),
     createdAt: Date.now(),
     cancelled: false,
-    engine: IO_THREADS > 4 ? 'turbo-walker' : 'walker',
+    engine: IO_THREADS > 4 ? "turbo-walker" : "walker",
     ioThreads: IO_THREADS,
     incremental: !!cache,
     cachedDirs: 0,
@@ -255,7 +290,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     !cache &&
     !opts.incremental &&
     ignore.length === 0 &&
-    process.env.TREEMAP_NO_GDU !== '1';
+    process.env.TREEMAP_NO_GDU !== "1";
 
   /**
    * ntfs-mft is tried before gdu when opted in — it's faster than gdu on NTFS
@@ -266,13 +301,13 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
    * check that must never itself require elevation.
    */
   const ntfsMftRequested =
-    process.platform === 'win32' &&
+    process.platform === "win32" &&
     opts.ntfsMft === true &&
     rootStat.isDirectory() &&
     !cache &&
     !opts.incremental &&
     ignore.length === 0 &&
-    process.env.TREEMAP_NO_NTFS_MFT !== '1';
+    process.env.TREEMAP_NO_NTFS_MFT !== "1";
 
   // Fire and forget — errors land on the record, never as unhandled rejections.
   void (async () => {
@@ -280,13 +315,13 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     // path under the volume root after the `C:\` prefix (slice(3)).
     if (ntfsMftRequested && (await isNtfsVolume(rootPath[0]))) {
       try {
-        if (process.env.TREEMAP_NO_NTFS_MFT_BIN !== '1') {
+        if (process.env.TREEMAP_NO_NTFS_MFT_BIN !== "1") {
           const bin = await findNtfsMftBinary();
-          if (!bin) throw new Error('ntfs-mft-scan binary not found');
+          if (!bin) throw new Error("ntfs-mft-scan binary not found");
         } else {
-          throw new Error('test escape hatch: binary unavailable');
+          throw new Error("test escape hatch: binary unavailable");
         }
-        scan.engine = 'ntfs-mft';
+        scan.engine = "ntfs-mft";
         const driveLetter = rootPath[0];
         const components = rootPath.slice(3).split(path.sep).filter(Boolean); // strip "C:\"
         const store = await ntfsMftScanIntoStore(scan, driveLetter, components);
@@ -295,12 +330,12 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
           return;
         }
         scan.store = store;
-        scan.status = 'complete';
+        scan.status = "complete";
         scan.finishedAt = Date.now();
         scan.currentPath = scan.rootPath;
         void saveMtimeCache(scan);
         void saveSnapshot(scan).catch((err: unknown) => {
-          console.error('[treemap] snapshot save failed:', err);
+          console.error("[treemap] snapshot save failed:", err);
         });
         return;
       } catch (err) {
@@ -313,7 +348,13 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         // cloudFiles/cloudBytes are included for structural symmetry with gdu's
         // catch — ntfs-mft never sets them (still 0 from construction); hygiene,
         // not a fix for observed counter corruption.
-        console.warn(`[treemap] ntfs-mft engine unavailable, trying gdu/walker: ${String(err)}`);
+        const detail = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[treemap] ntfs-mft engine unavailable, trying gdu/walker: ${detail}`,
+        );
+        // Clear the premature 'ntfs-mft' tag and surface why for the UI.
+        scan.engine = IO_THREADS > 4 ? "turbo-walker" : "walker";
+        scan.engineDetail = `Turbo NTFS failed — ${detail}`;
         scan.fileCount = 0;
         scan.dirCount = 0;
         scan.scanned = 0;
@@ -327,19 +368,19 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
       try {
         const bin = await findGduBinary();
         if (bin) {
-          scan.engine = 'gdu-turbo';
+          scan.engine = "gdu-turbo";
           const store = await gduScanIntoStore(scan, bin, cloudProviderFor);
           if (scan.cancelled) {
             finalizeCancelled(scan);
             return;
           }
           scan.store = store;
-          scan.status = 'complete';
+          scan.status = "complete";
           scan.finishedAt = Date.now();
           scan.currentPath = scan.rootPath;
           void saveMtimeCache(scan);
           void saveSnapshot(scan).catch((err: unknown) => {
-            console.error('[treemap] snapshot save failed:', err);
+            console.error("[treemap] snapshot save failed:", err);
           });
           return;
         }
@@ -351,7 +392,9 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         // gdu is strictly best-effort: a missing binary, a spawn failure, a
         // non-zero exit or an oversized shard must never surface as a scan
         // error. Log it and let the walker produce the scan.
-        console.warn(`[treemap] gdu engine unavailable, using walker: ${String(err)}`);
+        console.warn(
+          `[treemap] gdu engine unavailable, using walker: ${String(err)}`,
+        );
         // Discard whatever the aborted attempt accumulated so the walker
         // doesn't double-count on top of it.
         scan.fileCount = 0;
@@ -362,7 +405,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         scan.cloudFiles = 0;
         scan.cloudBytes = 0;
       }
-      scan.engine = IO_THREADS > 4 ? 'turbo-walker' : 'walker';
+      scan.engine = IO_THREADS > 4 ? "turbo-walker" : "walker";
     }
     await walk(scan, rootStat.isDirectory(), ignore, cache);
     if (scan.cancelled) finalizeCancelled(scan);
@@ -371,7 +414,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
       finalizeCancelled(scan);
       return;
     }
-    scan.status = 'error';
+    scan.status = "error";
     scan.error = err instanceof Error ? err.message : String(err);
     scan.finishedAt = Date.now();
   });
@@ -385,7 +428,11 @@ const MTIME_CACHE_MAX_NODES = 300_000;
 
 /** Stable per-root cache filename in the app-data directory. */
 function cacheFileName(rootPath: string): string {
-  const h = crypto.createHash('sha1').update(rootPath).digest('hex').slice(0, 16);
+  const h = crypto
+    .createHash("sha1")
+    .update(rootPath)
+    .digest("hex")
+    .slice(0, 16);
   return `mtime-cache-${h}.json`;
 }
 
@@ -395,7 +442,7 @@ function buildDirCache(root: FileNode): Map<string, FileNode> {
   const stack: FileNode[] = [root];
   while (stack.length) {
     const n = stack.pop()!;
-    if (n.type === 'dir') {
+    if (n.type === "dir") {
       map.set(n.path, n);
       if (n.children) for (const c of n.children) stack.push(c);
     }
@@ -437,15 +484,27 @@ interface DirJob {
  * fileCount); as before, cloud and hardlink tallies are not re-derived from
  * cached files — their sizes and flags ride along in the nodes themselves.
  */
-function reuseCachedListing(scan: ScanResult, store: ScanStore, dirId: number, dirPath: string, cachedChildren: FileNode[], queue: DirJob[]): void {
+function reuseCachedListing(
+  scan: ScanResult,
+  store: ScanStore,
+  dirId: number,
+  dirPath: string,
+  cachedChildren: FileNode[],
+  queue: DirJob[],
+): void {
   scan.currentPath = dirPath;
   scan.cachedDirs = (scan.cachedDirs ?? 0) + 1;
   for (const child of cachedChildren) {
     scan.scanned++;
     const childId = store.addNode(dirId, fileNodeToInput(child));
-    if (child.type === 'dir') {
+    if (child.type === "dir") {
       scan.dirCount++;
-      queue.push({ id: childId, path: child.path, cached: child, revalidate: true });
+      queue.push({
+        id: childId,
+        path: child.path,
+        cached: child,
+        revalidate: true,
+      });
     } else {
       scan.fileCount++;
     }
@@ -463,28 +522,35 @@ async function saveMtimeCache(scan: ScanResult): Promise<void> {
     const dir = appDataDir();
     await fsp.mkdir(dir, { recursive: true });
     const file = path.join(dir, cacheFileName(scan.rootPath));
-    const tmp = file + '.tmp';
-    await fsp.writeFile(tmp, JSON.stringify(tree), 'utf8');
+    const tmp = file + ".tmp";
+    await fsp.writeFile(tmp, JSON.stringify(tree), "utf8");
     await fsp.rename(tmp, file);
   } catch (err) {
-    console.error('[treemap] mtime-cache save failed:', err);
+    console.error("[treemap] mtime-cache save failed:", err);
   }
 }
 
 /** Everything lstat tells us about one entry, shaped for store.addNode. */
-function statToInput(name: string, isDir: boolean, size: number, mtimeMs: number, atimeMs?: number): NodeInput {
+function statToInput(
+  name: string,
+  isDir: boolean,
+  size: number,
+  mtimeMs: number,
+  atimeMs?: number,
+): NodeInput {
   const input: NodeInput = {
     name,
     isDir,
     size: isDir ? 0 : size,
     modifiedAt: Math.round(mtimeMs),
-    isHidden: name.startsWith('.'),
+    isHidden: name.startsWith("."),
   };
   // atime === 0 means "never recorded" on several filesystems — omit rather
   // than let a 1970 date surface anywhere.
-  if (atimeMs !== undefined && atimeMs > 0) input.accessedAt = Math.round(atimeMs);
+  if (atimeMs !== undefined && atimeMs > 0)
+    input.accessedAt = Math.round(atimeMs);
   if (!isDir) {
-    const ext = path.extname(name).toLowerCase().replace(/^\./, '');
+    const ext = path.extname(name).toLowerCase().replace(/^\./, "");
     if (ext) input.extension = ext;
   }
   const container = detectContainerKind(name, isDir);
@@ -493,19 +559,33 @@ function statToInput(name: string, isDir: boolean, size: number, mtimeMs: number
 }
 
 /** Infer a cloud provider for a placeholder file from its path. */
-function cloudProviderFor(p: string): 'icloud' | 'onedrive' | 'dropbox' | undefined {
-  if (/Library\/Mobile Documents|com~apple~CloudDocs|\.icloud$/i.test(p)) return 'icloud';
-  if (/OneDrive/i.test(p)) return 'onedrive';
-  if (/Dropbox/i.test(p)) return 'dropbox';
+function cloudProviderFor(
+  p: string,
+): "icloud" | "onedrive" | "dropbox" | undefined {
+  if (/Library\/Mobile Documents|com~apple~CloudDocs|\.icloud$/i.test(p))
+    return "icloud";
+  if (/OneDrive/i.test(p)) return "onedrive";
+  if (/Dropbox/i.test(p)) return "dropbox";
   return undefined;
 }
 
-async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore[], cache: Map<string, FileNode> | null): Promise<void> {
+async function walk(
+  scan: ScanResult,
+  rootIsDir: boolean,
+  ignore: CompiledIgnore[],
+  cache: Map<string, FileNode> | null,
+): Promise<void> {
   const rootStat = await fsp.lstat(scan.rootPath);
   const store = new PackedScanStore(
     scan.rootPath,
     path.sep,
-    statToInput(path.basename(scan.rootPath) || scan.rootPath, rootIsDir, rootStat.size, rootStat.mtimeMs, rootStat.atimeMs),
+    statToInput(
+      path.basename(scan.rootPath) || scan.rootPath,
+      rootIsDir,
+      rootStat.size,
+      rootStat.mtimeMs,
+      rootStat.atimeMs,
+    ),
   );
   scan.scanned = 1;
   if (rootIsDir) scan.dirCount = 1;
@@ -514,7 +594,21 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
   if (rootIsDir) {
     // Dirs reached through a cached parent's listing get one fresh lstat
     // before their cached listing is trusted — membership is per-scan.
-    await drainQueue(scan, store, [{ id: store.rootId, path: scan.rootPath, cached: null, revalidate: false }], ignore, cache, new Set<string>());
+    await drainQueue(
+      scan,
+      store,
+      [
+        {
+          id: store.rootId,
+          path: scan.rootPath,
+          cached: null,
+          revalidate: false,
+        },
+      ],
+      ignore,
+      cache,
+      new Set<string>(),
+    );
   }
   if (scan.cancelled) {
     finalizeCancelled(scan);
@@ -524,7 +618,7 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
   store.finalize();
   store.sumSizes();
   scan.store = store;
-  scan.status = 'complete';
+  scan.status = "complete";
   scan.finishedAt = Date.now();
   scan.currentPath = scan.rootPath;
 
@@ -532,7 +626,7 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
   // Failures here must never fail the scan itself.
   void saveMtimeCache(scan);
   void saveSnapshot(scan).catch((err: unknown) => {
-    console.error('[treemap] snapshot save failed:', err);
+    console.error("[treemap] snapshot save failed:", err);
   });
 }
 
@@ -540,7 +634,14 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
  * Worker pool: up to CONCURRENCY directories are listed at the same time.
  * Resolves when the queue is empty and every worker has finished.
  */
-function drainQueue(scan: ScanResult, store: ScanStore, initial: DirJob[], ignore: CompiledIgnore[], cache: Map<string, FileNode> | null, seen: Set<string>): Promise<void> {
+function drainQueue(
+  scan: ScanResult,
+  store: ScanStore,
+  initial: DirJob[],
+  ignore: CompiledIgnore[],
+  cache: Map<string, FileNode> | null,
+  seen: Set<string>,
+): Promise<void> {
   const queue: DirJob[] = [...initial];
   let active = 0;
 
@@ -579,7 +680,7 @@ async function processDirectory(
   queue: DirJob[],
   ignore: CompiledIgnore[],
   cache: Map<string, FileNode> | null,
-  seen: Set<string>
+  seen: Set<string>,
 ): Promise<void> {
   if (scan.cancelled) return;
   const { id: dirId, path: dirPath } = job;
@@ -608,16 +709,34 @@ async function processDirectory(
       return;
     }
     store.setModifiedAt(dirId, Math.round(st.mtimeMs));
-    store.setAccessedAt(dirId, st.atimeMs > 0 ? Math.round(st.atimeMs) : undefined);
-    if (cachedNode.children && mtimesMatch(cachedMtime, Math.round(st.mtimeMs))) {
-      reuseCachedListing(scan, store, dirId, dirPath, cachedNode.children, queue);
+    store.setAccessedAt(
+      dirId,
+      st.atimeMs > 0 ? Math.round(st.atimeMs) : undefined,
+    );
+    if (
+      cachedNode.children &&
+      mtimesMatch(cachedMtime, Math.round(st.mtimeMs))
+    ) {
+      reuseCachedListing(
+        scan,
+        store,
+        dirId,
+        dirPath,
+        cachedNode.children,
+        queue,
+      );
       return;
     }
     // Its listing changed — fall through and re-list from disk.
   } else if (cache) {
     // Freshly stat'ed by its parent: compare the disk's mtime to the cache's.
     const cached = cache.get(dirPath);
-    if (cached && cached.type === 'dir' && cached.children && mtimesMatch(cached.modifiedAt, store.modifiedAt(dirId))) {
+    if (
+      cached &&
+      cached.type === "dir" &&
+      cached.children &&
+      mtimesMatch(cached.modifiedAt, store.modifiedAt(dirId))
+    ) {
       reuseCachedListing(scan, store, dirId, dirPath, cached.children, queue);
       return;
     }
@@ -632,7 +751,9 @@ async function processDirectory(
 
   // Honor the user's "don't scan" list before paying for any lstat calls.
   if (ignore.length > 0) {
-    entries = entries.filter((ent) => !matchesAny(ignore, path.join(dirPath, ent.name), ent.name));
+    entries = entries.filter(
+      (ent) => !matchesAny(ignore, path.join(dirPath, ent.name), ent.name),
+    );
   }
 
   for (let i = 0; i < entries.length; i += STAT_BATCH) {
@@ -645,12 +766,22 @@ async function processDirectory(
 
         if (ent.isDirectory() && !ent.isSymbolicLink()) {
           const stat = await fsp.lstat(fullPath);
-          return { input: statToInput(ent.name, true, 0, stat.mtimeMs, stat.atimeMs), fullPath, isDir: true };
+          return {
+            input: statToInput(ent.name, true, 0, stat.mtimeMs, stat.atimeMs),
+            fullPath,
+            isDir: true,
+          };
         }
         // Files, symlinks (not followed — lstat reports the link itself),
         // sockets, fifos: record as a leaf with whatever size lstat reports.
         const stat = await fsp.lstat(fullPath);
-        const input = statToInput(ent.name, false, stat.size, stat.mtimeMs, stat.atimeMs);
+        const input = statToInput(
+          ent.name,
+          false,
+          stat.size,
+          stat.mtimeMs,
+          stat.atimeMs,
+        );
         if (ent.isSymbolicLink()) {
           input.isSymlink = true;
           return { input, fullPath, isDir: false };
@@ -666,12 +797,17 @@ async function processDirectory(
           }
         }
         // Hard-link key only when the link count says the inode is shared.
-        return { input, fullPath, isDir: false, inoKey: stat.nlink > 1 ? `${stat.dev}:${stat.ino}` : undefined };
-      })
+        return {
+          input,
+          fullPath,
+          isDir: false,
+          inoKey: stat.nlink > 1 ? `${stat.dev}:${stat.ino}` : undefined,
+        };
+      }),
     );
 
     for (const result of settled) {
-      if (result.status !== 'fulfilled') continue; // entry vanished mid-scan
+      if (result.status !== "fulfilled") continue; // entry vanished mid-scan
       const { input, fullPath, isDir, inoKey } = result.value;
       // Dedup hard links sequentially so concurrent workers can't race the set.
       if (inoKey) {
@@ -688,7 +824,8 @@ async function processDirectory(
         scan.cloudFiles = (scan.cloudFiles ?? 0) + 1;
         scan.cloudBytes = (scan.cloudBytes ?? 0) + input.size;
       }
-      if (isDir && input.name === '.git') store.setFlag(dirId, Flag.GitRepo, true);
+      if (isDir && input.name === ".git")
+        store.setFlag(dirId, Flag.GitRepo, true);
       const childId = store.addNode(dirId, input);
       scan.scanned++;
       if (isDir) {
@@ -696,7 +833,13 @@ async function processDirectory(
         // Mount re-entry points and automount triggers stay visible as empty
         // dirs but are never walked — descending double-counts the disk or
         // blocks forever (see utils/mountBoundaries).
-        if (!neverDescend(fullPath)) queue.push({ id: childId, path: fullPath, cached: null, revalidate: false });
+        if (!neverDescend(fullPath))
+          queue.push({
+            id: childId,
+            path: fullPath,
+            cached: null,
+            revalidate: false,
+          });
       } else {
         scan.fileCount++;
       }
@@ -712,9 +855,16 @@ async function processDirectory(
 
 /* ---------- Aggregations over a completed scan ---------- */
 
-export function collectLargestFiles(source: TreeSource, limit: number, minSize: number) {
+export function collectLargestFiles(
+  source: TreeSource,
+  limit: number,
+  minSize: number,
+) {
   const store = asStore(source);
-  interface Hit { id: number; size: number }
+  interface Hit {
+    id: number;
+    size: number;
+  }
   const top: Hit[] = [];
   // Simple bounded insertion keeps memory flat even for huge trees.
   store.eachFile(store.rootId, (id) => {
@@ -738,13 +888,27 @@ export function collectLargestFiles(source: TreeSource, limit: number, minSize: 
   }));
 }
 
-export function collectLargestFolders(source: TreeSource, limit: number, minSize: number): LargeFolder[] {
+export function collectLargestFolders(
+  source: TreeSource,
+  limit: number,
+  minSize: number,
+): LargeFolder[] {
   const store = asStore(source);
   const found: LargeFolder[] = [];
   // Post-order with an explicit stack (no recursion on deep trees): each
   // frame accumulates its subtree's recursive file count as children finish.
-  interface Frame { id: number; kids: number[]; next: number; count: number }
-  const frame = (id: number): Frame => ({ id, kids: store.isDir(id) ? store.childIds(id) : [], next: 0, count: 0 });
+  interface Frame {
+    id: number;
+    kids: number[];
+    next: number;
+    count: number;
+  }
+  const frame = (id: number): Frame => ({
+    id,
+    kids: store.isDir(id) ? store.childIds(id) : [],
+    next: 0,
+    count: 0,
+  });
   const stack: Frame[] = [frame(store.rootId)];
   while (stack.length) {
     const f = stack[stack.length - 1];
@@ -777,7 +941,12 @@ export function collectLargestFolders(source: TreeSource, limit: number, minSize
 }
 
 /** Junk files that don't stop a folder from counting as empty. */
-const JUNK_FILES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini', '.localized']);
+const JUNK_FILES = new Set([
+  ".ds_store",
+  "thumbs.db",
+  "desktop.ini",
+  ".localized",
+]);
 const EMPTY_FOLDERS_CAP = 1000;
 
 /**
@@ -786,7 +955,10 @@ const EMPTY_FOLDERS_CAP = 1000;
  * count as content. Returns only the topmost empty dirs — trashing those
  * removes everything beneath them anyway.
  */
-export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): EmptyFoldersResult {
+export function collectEmptyFolders(
+  source: TreeSource,
+  ignoreJunk: boolean,
+): EmptyFoldersResult {
   const store = asStore(source);
 
   // Pass 1, bottom-up: a dir is empty when every child is junk or an empty
@@ -806,7 +978,12 @@ export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): Em
   }
   const empty = new Map<number, boolean>();
   for (const id of ordered) {
-    empty.set(id, store.isDir(id) ? true : ignoreJunk && JUNK_FILES.has(store.name(id).toLowerCase()));
+    empty.set(
+      id,
+      store.isDir(id)
+        ? true
+        : ignoreJunk && JUNK_FILES.has(store.name(id).toLowerCase()),
+    );
   }
   for (let i = ordered.length - 1; i >= 0; i--) {
     const id = ordered[i];
@@ -825,7 +1002,10 @@ export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): Em
   // (descend into a non-empty dir before examining its later siblings).
   const topmost: { name: string; path: string }[] = [];
   let truncated = false;
-  interface Frame { kids: number[]; next: number }
+  interface Frame {
+    kids: number[];
+    next: number;
+  }
   const stack: Frame[] = [{ kids: store.childIds(store.rootId), next: 0 }];
   while (stack.length) {
     const f = stack[stack.length - 1];
@@ -836,7 +1016,8 @@ export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): Em
     const c = f.kids[f.next++];
     if (!store.isDir(c)) continue;
     if (empty.get(c)) {
-      if (topmost.length < EMPTY_FOLDERS_CAP) topmost.push({ name: store.name(c), path: store.path(c) });
+      if (topmost.length < EMPTY_FOLDERS_CAP)
+        topmost.push({ name: store.name(c), path: store.path(c) });
       else truncated = true;
     } else {
       stack.push({ kids: store.childIds(c), next: 0 });
@@ -855,12 +1036,21 @@ const COMPARE_CAP = 1000;
  * size changed. Directories present in both are never emitted themselves —
  * their change is fully explained by the child entries.
  */
-export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entries: CompareEntry[]; truncated: boolean } {
+export function compareTrees(
+  sourceA: TreeSource,
+  sourceB: TreeSource,
+): { entries: CompareEntry[]; truncated: boolean } {
   const a = asStore(sourceA);
   const b = asStore(sourceB);
   const entries: CompareEntry[] = [];
 
-  const emit = (store: ScanStore, id: number, childPath: string, sizeA: number | null, sizeB: number | null): void => {
+  const emit = (
+    store: ScanStore,
+    id: number,
+    childPath: string,
+    sizeA: number | null,
+    sizeB: number | null,
+  ): void => {
     const delta = (sizeB ?? 0) - (sizeA ?? 0);
     if (delta === 0 && sizeA !== null && sizeB !== null) return;
     entries.push({
@@ -870,7 +1060,14 @@ export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entrie
       sizeA,
       sizeB,
       delta,
-      change: sizeA === null ? 'added' : sizeB === null ? 'removed' : delta > 0 ? 'grew' : 'shrank',
+      change:
+        sizeA === null
+          ? "added"
+          : sizeB === null
+            ? "removed"
+            : delta > 0
+              ? "grew"
+              : "shrank",
     });
   };
 
@@ -891,7 +1088,10 @@ export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entrie
       aChildren.delete(name);
       if (a.isDir(ca) && b.isDir(cb)) {
         recurse(ca, cb, childPath);
-      } else if (a.size(ca) !== b.size(cb) || a.nodeType(ca) !== b.nodeType(cb)) {
+      } else if (
+        a.size(ca) !== b.size(cb) ||
+        a.nodeType(ca) !== b.nodeType(cb)
+      ) {
         emit(b, cb, childPath, a.size(ca), b.size(cb));
       }
     }
@@ -902,14 +1102,17 @@ export function compareTrees(sourceA: TreeSource, sourceB: TreeSource): { entrie
 
   recurse(a.rootId, b.rootId, b.rootPath);
   entries.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
-  return { entries: entries.slice(0, COMPARE_CAP), truncated: entries.length > COMPARE_CAP };
+  return {
+    entries: entries.slice(0, COMPARE_CAP),
+    truncated: entries.length > COMPARE_CAP,
+  };
 }
 
 export function collectFileTypes(source: TreeSource) {
   const store = asStore(source);
   const byExt = new Map<string, { count: number; totalSize: number }>();
   store.eachFile(store.rootId, (id) => {
-    const ext = store.extension(id) ?? '(none)';
+    const ext = store.extension(id) ?? "(none)";
     const entry = byExt.get(ext) ?? { count: 0, totalSize: 0 };
     entry.count++;
     entry.totalSize += store.size(id);

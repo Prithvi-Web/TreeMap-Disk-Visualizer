@@ -1,16 +1,31 @@
-import { Router, Request, Response } from 'express';
-import { startScan, getScan, cancelScan, collectLargestFiles, collectFileTypes } from '../services/diskScanner';
-import { buildTreemapFromStore } from '../utils/treemap';
-import { pruneTree, PruneResult } from '../utils/pruneTree';
-import { isInside } from '../utils/pathSanitizer';
-import { guardBodyPath, guardBodyPaths, guardQueryPath } from '../middleware/pathGuard';
-import { lookupNodes, lookupNodesInStore } from '../services/scanQueries';
-import { storeOf } from '../services/scanStore';
-import { AppError } from '../middleware/errorHandler';
-import { getSettings } from '../services/settings';
-import { streamCsv, streamPdf, streamXlsx } from '../services/reportExport';
-import { sseSend as sseWrite } from '../utils/sse';
-import { ScanResult, ScanEvent, ScanStats, BudgetStatus } from '../models/types';
+import { Router, Request, Response } from "express";
+import {
+  startScan,
+  getScan,
+  cancelScan,
+  collectLargestFiles,
+  collectFileTypes,
+} from "../services/diskScanner";
+import { buildTreemapFromStore } from "../utils/treemap";
+import { pruneTree, PruneResult } from "../utils/pruneTree";
+import { isInside } from "../utils/pathSanitizer";
+import {
+  guardBodyPath,
+  guardBodyPaths,
+  guardQueryPath,
+} from "../middleware/pathGuard";
+import { lookupNodes, lookupNodesInStore } from "../services/scanQueries";
+import { storeOf } from "../services/scanStore";
+import { AppError } from "../middleware/errorHandler";
+import { getSettings } from "../services/settings";
+import { streamCsv, streamPdf, streamXlsx } from "../services/reportExport";
+import { sseSend as sseWrite } from "../utils/sse";
+import {
+  ScanResult,
+  ScanEvent,
+  ScanStats,
+  BudgetStatus,
+} from "../models/types";
 
 export const scanRouter = Router();
 
@@ -23,7 +38,7 @@ export function buildScanStats(scan: ScanResult): ScanStats {
     scanned: scan.scanned,
     fileCount: scan.fileCount,
     dirCount: scan.dirCount,
-    engine: scan.engine ?? 'walker',
+    engine: scan.engine ?? "walker",
     ioThreads: scan.ioThreads ?? 0,
     durationMs: scan.finishedAt ? scan.finishedAt - scan.startedAt : 0,
     incremental: scan.incremental === true,
@@ -94,7 +109,7 @@ function closeClient(client: SseClient): void {
 export function drainSseClients(): void {
   for (const client of [...sseClients]) {
     try {
-      sseSend(client.res, { type: 'shutdown' });
+      sseSend(client.res, { type: "shutdown" });
     } catch {
       /* socket already dead */
     }
@@ -110,16 +125,20 @@ export function activeSseCount(): number {
 
 /** Shared with insightRoutes: resolve a scanId or 404 cleanly. */
 export function requireScan(_req: Request, idSource: unknown): ScanResult {
-  const scan = getScan(String(idSource ?? ''));
+  const scan = getScan(String(idSource ?? ""));
   if (!scan) {
-    throw new AppError(404, 'SCAN_NOT_FOUND', 'Unknown or expired scanId');
+    throw new AppError(404, "SCAN_NOT_FOUND", "Unknown or expired scanId");
   }
   return scan;
 }
 
 /** POST /api/scan  { path } -> { scanId } */
-scanRouter.post('/scan', guardBodyPath, async (req: Request, res: Response) => {
-  const { path: scanPath, incremental, ntfsMft } = req.body as {
+scanRouter.post("/scan", guardBodyPath, async (req: Request, res: Response) => {
+  const {
+    path: scanPath,
+    incremental,
+    ntfsMft,
+  } = req.body as {
     path: string;
     incremental?: boolean;
     ntfsMft?: boolean;
@@ -128,11 +147,13 @@ scanRouter.post('/scan', guardBodyPath, async (req: Request, res: Response) => {
     incremental: incremental === true,
     ntfsMft: ntfsMft === true,
   }); // lstat failures -> 404/403
-  res.status(202).json({ scanId: scan.scanId, incremental: scan.incremental === true });
+  res
+    .status(202)
+    .json({ scanId: scan.scanId, incremental: scan.incremental === true });
 });
 
 /** POST /api/scan/:scanId/cancel — cooperative stop (walker exits at next checkpoint). */
-scanRouter.post('/scan/:scanId/cancel', (req: Request, res: Response) => {
+scanRouter.post("/scan/:scanId/cancel", (req: Request, res: Response) => {
   const scanId = String(req.params.scanId);
   requireScan(req, scanId); // 404 if unknown
   const ok = cancelScan(scanId);
@@ -140,14 +161,14 @@ scanRouter.post('/scan/:scanId/cancel', (req: Request, res: Response) => {
 });
 
 /** GET /api/scan/:scanId/progress — Server-Sent Events stream. */
-scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
+scanRouter.get("/scan/:scanId/progress", (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
 
   res.status(200).set({
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
   });
   res.flushHeaders();
 
@@ -155,38 +176,50 @@ scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
   let lastBeat = Date.now();
 
   const finish = (): void => {
-    if (scan.status === 'complete' && (scan.store || scan.root)) {
+    if (scan.status === "complete" && (scan.store || scan.root)) {
       // Pruned: the full tree may be far larger than the UI can hold. The
       // sseSend guard below stays as a backstop — pruning should mean it never
       // trips, but a timer throw would take the app down, so we keep the net.
       const sseStore = storeOf(scan);
-      const { root } = sseStore.prune(sseStore.rootId, { maxNodes: PRUNE_MAX_NODES });
+      const { root } = sseStore.prune(sseStore.rootId, {
+        maxNodes: PRUNE_MAX_NODES,
+      });
       // Counters ride along: a pruned tree can't be counted client-side, and
       // making the client fetch them instead puts three full server-side tree
       // walks in front of the headline paint.
-      if (!sseSend(res, { type: 'complete', root, stats: buildScanStats(scan) })) {
-        sseSend(res, { type: 'error', message: treeTooLargeMessage(scan) });
+      if (
+        !sseSend(res, { type: "complete", root, stats: buildScanStats(scan) })
+      ) {
+        sseSend(res, { type: "error", message: treeTooLargeMessage(scan) });
       }
-    } else if (scan.status === 'cancelled') {
-      sseSend(res, { type: 'cancelled' });
+    } else if (scan.status === "cancelled") {
+      sseSend(res, { type: "cancelled" });
     } else {
-      sseSend(res, { type: 'error', message: scan.error ?? 'Scan failed' });
+      sseSend(res, { type: "error", message: scan.error ?? "Scan failed" });
     }
     closeClient(client);
   };
 
   const timer = setInterval(() => {
     try {
-      if (scan.status !== 'running') {
+      if (scan.status !== "running") {
         finish();
         return;
       }
-      if (scan.scanned !== lastScanned) {
+      if (scan.scanned !== lastScanned || scan.engineDetail) {
         lastScanned = scan.scanned;
-        sseSend(res, { type: 'progress', scanned: scan.scanned, currentPath: scan.currentPath });
+        sseSend(res, {
+          type: "progress",
+          scanned: scan.scanned,
+          currentPath: scan.currentPath,
+          engine: scan.engine,
+          engineDetail: scan.engineDetail,
+        });
+        // Clear detail after one push so we don't re-spam every tick; UI keeps it.
+        if (scan.engineDetail) delete scan.engineDetail;
         lastBeat = Date.now();
       } else if (Date.now() - lastBeat > 10_000) {
-        res.write(': keep-alive\n\n'); // comment frame, ignored by EventSource
+        res.write(": keep-alive\n\n"); // comment frame, ignored by EventSource
         lastBeat = Date.now();
       }
     } catch {
@@ -200,45 +233,50 @@ scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
   sseClients.add(client);
 
   // Send an immediate first frame so the UI updates without waiting a tick.
-  if (scan.status === 'running') {
-    sseSend(res, { type: 'progress', scanned: scan.scanned, currentPath: scan.currentPath });
+  if (scan.status === "running") {
+    sseSend(res, {
+      type: "progress",
+      scanned: scan.scanned,
+      currentPath: scan.currentPath,
+    });
     lastScanned = scan.scanned;
   } else {
     finish();
   }
 
-  req.on('close', () => closeClient(client));
+  req.on("close", () => closeClient(client));
 });
 
 /** GET /api/scan/:scanId/result -> FileNode tree, or 202 while running. */
-scanRouter.get('/scan/:scanId/result', (req: Request, res: Response) => {
+scanRouter.get("/scan/:scanId/result", (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
-  if (scan.status === 'running') {
+  if (scan.status === "running") {
     res.status(202).json({
-      status: 'running',
+      status: "running",
       scanned: scan.scanned,
       currentPath: scan.currentPath,
     });
     return;
   }
-  if (scan.status === 'cancelled') {
-    res.json({ status: 'cancelled', scanId: scan.scanId });
+  if (scan.status === "cancelled") {
+    res.json({ status: "cancelled", scanId: scan.scanId });
     return;
   }
-  if (scan.status === 'error') {
-    throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  if (scan.status === "error") {
+    throw new AppError(500, "SCAN_FAILED", scan.error ?? "Scan failed");
   }
   // Pruned to the same budget as the SSE 'complete' event — this is the
   // frontend's fallback path when the stream stalls, so it must hand over a
   // tree of the same shape, not a 600 MB one that cannot be serialized.
-  const pruned = scan.store || scan.root
-    ? (() => {
-        const store = storeOf(scan);
-        return store.prune(store.rootId, { maxNodes: PRUNE_MAX_NODES }).root;
-      })()
-    : undefined;
+  const pruned =
+    scan.store || scan.root
+      ? (() => {
+          const store = storeOf(scan);
+          return store.prune(store.rootId, { maxNodes: PRUNE_MAX_NODES }).root;
+        })()
+      : undefined;
   res.json({
-    status: 'complete',
+    status: "complete",
     scanId: scan.scanId,
     rootPath: scan.rootPath,
     fileCount: scan.fileCount,
@@ -263,28 +301,55 @@ scanRouter.get('/scan/:scanId/result', (req: Request, res: Response) => {
  * The response obeys pruneTree's invariants: any directory carrying `children`
  * carries all of them, and every `size` is the real recursive total.
  */
-scanRouter.get('/scan/:scanId/subtree', guardQueryPath('path'), (req: Request, res: Response) => {
-  const scan = requireScan(req, req.params.scanId);
-  if (scan.status === 'running') {
-    res.status(202).json({ status: 'running', scanned: scan.scanned });
-    return;
-  }
-  if (scan.status === 'error' || scan.status === 'cancelled' || (!scan.store && !scan.root)) {
-    throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
-  }
+scanRouter.get(
+  "/scan/:scanId/subtree",
+  guardQueryPath("path"),
+  (req: Request, res: Response) => {
+    const scan = requireScan(req, req.params.scanId);
+    if (scan.status === "running") {
+      res.status(202).json({ status: "running", scanned: scan.scanned });
+      return;
+    }
+    if (
+      scan.status === "error" ||
+      scan.status === "cancelled" ||
+      (!scan.store && !scan.root)
+    ) {
+      throw new AppError(500, "SCAN_FAILED", scan.error ?? "Scan failed");
+    }
 
-  const target = String(req.query.path ?? scan.rootPath);
-  if (target !== scan.rootPath && !isInside(scan.rootPath, target)) {
-    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', 'path must be inside the scanned folder');
-  }
-  const maxNodes = clampInt(req.query.maxNodes, SUBTREE_MAX_NODES, 1, PRUNE_MAX_NODES);
+    const target = String(req.query.path ?? scan.rootPath);
+    if (target !== scan.rootPath && !isInside(scan.rootPath, target)) {
+      throw new AppError(
+        403,
+        "OUTSIDE_SCAN_ROOT",
+        "path must be inside the scanned folder",
+      );
+    }
+    const maxNodes = clampInt(
+      req.query.maxNodes,
+      SUBTREE_MAX_NODES,
+      1,
+      PRUNE_MAX_NODES,
+    );
 
-  const store = storeOf(scan);
-  const nodeId = store.findByPath(target);
-  if (nodeId === -1) throw new AppError(404, 'PATH_NOT_FOUND', 'That path is not in this scan');
-  const result: PruneResult = store.prune(nodeId, { maxNodes });
-  res.json({ scanId: scan.scanId, root: result.root, nodes: result.nodes, prunedDirs: result.prunedDirs });
-});
+    const store = storeOf(scan);
+    const nodeId = store.findByPath(target);
+    if (nodeId === -1)
+      throw new AppError(
+        404,
+        "PATH_NOT_FOUND",
+        "That path is not in this scan",
+      );
+    const result: PruneResult = store.prune(nodeId, { maxNodes });
+    res.json({
+      scanId: scan.scanId,
+      root: result.root,
+      nodes: result.nodes,
+      prunedDirs: result.prunedDirs,
+    });
+  },
+);
 
 /**
  * POST /api/scan/:scanId/nodes  { paths: [...] }
@@ -296,23 +361,38 @@ scanRouter.get('/scan/:scanId/subtree', guardQueryPath('path'), (req: Request, r
  *
  * guardBodyPaths sanitizes each path and caps the batch at 500.
  */
-scanRouter.post('/scan/:scanId/nodes', guardBodyPaths, (req: Request, res: Response) => {
-  const scan = requireScan(req, req.params.scanId);
-  if (scan.status === 'running') {
-    res.status(202).json({ status: 'running' });
-    return;
-  }
-  if (scan.status === 'error' || scan.status === 'cancelled' || (!scan.store && !scan.root)) {
-    throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
-  }
-  const { paths } = req.body as { paths: string[] };
-  res.json({ scanId: scan.scanId, nodes: lookupNodesInStore(storeOf(scan), paths) });
-});
+scanRouter.post(
+  "/scan/:scanId/nodes",
+  guardBodyPaths,
+  (req: Request, res: Response) => {
+    const scan = requireScan(req, req.params.scanId);
+    if (scan.status === "running") {
+      res.status(202).json({ status: "running" });
+      return;
+    }
+    if (
+      scan.status === "error" ||
+      scan.status === "cancelled" ||
+      (!scan.store && !scan.root)
+    ) {
+      throw new AppError(500, "SCAN_FAILED", scan.error ?? "Scan failed");
+    }
+    const { paths } = req.body as { paths: string[] };
+    res.json({
+      scanId: scan.scanId,
+      nodes: lookupNodesInStore(storeOf(scan), paths),
+    });
+  },
+);
 
 /** GET /api/scan/:scanId/stats — counters incl. incremental cache usage. */
-scanRouter.get('/scan/:scanId/stats', (req: Request, res: Response) => {
+scanRouter.get("/scan/:scanId/stats", (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
-  res.json({ scanId: scan.scanId, status: scan.status, ...buildScanStats(scan) });
+  res.json({
+    scanId: scan.scanId,
+    status: scan.status,
+    ...buildScanStats(scan),
+  });
 });
 
 /**
@@ -320,14 +400,18 @@ scanRouter.get('/scan/:scanId/stats', (req: Request, res: Response) => {
  * against this scan. Returns only budgets whose folder is inside the scanned
  * root and present in the tree, each with its current size and overage.
  */
-scanRouter.get('/scan/:scanId/budgets', async (req: Request, res: Response) => {
+scanRouter.get("/scan/:scanId/budgets", async (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
-  if (scan.status === 'running') {
-    res.status(202).json({ status: 'running' });
+  if (scan.status === "running") {
+    res.status(202).json({ status: "running" });
     return;
   }
-  if (scan.status === 'error' || scan.status === 'cancelled' || (!scan.store && !scan.root)) {
-    throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  if (
+    scan.status === "error" ||
+    scan.status === "cancelled" ||
+    (!scan.store && !scan.root)
+  ) {
+    throw new AppError(500, "SCAN_FAILED", scan.error ?? "Scan failed");
   }
   const store = storeOf(scan);
   const { budgets } = await getSettings();
@@ -353,102 +437,168 @@ scanRouter.get('/scan/:scanId/budgets', async (req: Request, res: Response) => {
  * Downloads the scan as a report: streamed CSV or XLSX of every file/folder,
  * or a pdfmake text summary. Always sent as an attachment.
  */
-scanRouter.get('/scan/:scanId/export', async (req: Request, res: Response) => {
+scanRouter.get("/scan/:scanId/export", async (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
-  if (scan.status === 'running') {
-    res.status(202).json({ status: 'running' });
+  if (scan.status === "running") {
+    res.status(202).json({ status: "running" });
     return;
   }
-  if (scan.status === 'error' || scan.status === 'cancelled' || (!scan.store && !scan.root)) {
-    throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  if (
+    scan.status === "error" ||
+    scan.status === "cancelled" ||
+    (!scan.store && !scan.root)
+  ) {
+    throw new AppError(500, "SCAN_FAILED", scan.error ?? "Scan failed");
   }
   const complete = scan;
-  const format = String(req.query.format ?? 'csv');
-  if (format === 'pdf') {
+  const format = String(req.query.format ?? "csv");
+  if (format === "pdf") {
     await streamPdf(complete, res);
     return;
   }
-  if (format === 'csv') {
-    streamCsv(complete, req.query.mode === 'folders' ? 'folders' : 'files', res);
+  if (format === "csv") {
+    streamCsv(
+      complete,
+      req.query.mode === "folders" ? "folders" : "files",
+      res,
+    );
     return;
   }
-  if (format === 'xlsx') {
-    await streamXlsx(complete, req.query.mode === 'folders' ? 'folders' : 'files', res);
+  if (format === "xlsx") {
+    await streamXlsx(
+      complete,
+      req.query.mode === "folders" ? "folders" : "files",
+      res,
+    );
     return;
   }
-  throw new AppError(400, 'BAD_FORMAT', 'format must be "csv", "xlsx" or "pdf"');
+  throw new AppError(
+    400,
+    "BAD_FORMAT",
+    'format must be "csv", "xlsx" or "pdf"',
+  );
 });
 
 /**
  * GET /api/scan/:scanId/treemap?maxDepth=3&minSize=10240&root=<subpath>
  * Pre-computed squarified layout, coordinates in percent.
  */
-scanRouter.get('/scan/:scanId/treemap', guardQueryPath('root'), (req: Request, res: Response) => {
-  const scan = requireScan(req, req.params.scanId);
-  if (scan.status === 'running') {
-    res.status(202).json({ status: 'running', scanned: scan.scanned });
-    return;
-  }
-  if (scan.status === 'error' || scan.status === 'cancelled' || (!scan.store && !scan.root)) {
-    throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
-  }
-
-  const maxDepth = clampInt(req.query.maxDepth, 3, 1, 8);
-  const minSize = clampInt(req.query.minSize, 10_240, 0, Number.MAX_SAFE_INTEGER);
-
-  const store = storeOf(scan);
-  let rootId = store.rootId;
-  const rootParam = req.query.root as string | undefined;
-  if (rootParam && rootParam !== scan.rootPath) {
-    if (!isInside(scan.rootPath, rootParam)) {
-      throw new AppError(403, 'OUTSIDE_SCAN_ROOT', 'root must be inside the scanned folder');
+scanRouter.get(
+  "/scan/:scanId/treemap",
+  guardQueryPath("root"),
+  (req: Request, res: Response) => {
+    const scan = requireScan(req, req.params.scanId);
+    if (scan.status === "running") {
+      res.status(202).json({ status: "running", scanned: scan.scanned });
+      return;
     }
-    const found = store.findByPath(rootParam);
-    if (found === -1) throw new AppError(404, 'PATH_NOT_FOUND', 'That path is not in this scan');
-    if (!store.isDir(found) && !(store.container(found) !== undefined && store.childCount(found) > 0)) {
-      throw new AppError(400, 'NOT_A_DIRECTORY', 'Treemap root must be a directory or an opened container');
+    if (
+      scan.status === "error" ||
+      scan.status === "cancelled" ||
+      (!scan.store && !scan.root)
+    ) {
+      throw new AppError(500, "SCAN_FAILED", scan.error ?? "Scan failed");
     }
-    rootId = found;
-  }
 
-  const nodes = buildTreemapFromStore(store, rootId, { maxDepth, minSize, maxNodes: 20_000 });
-  res.json({
-    scanId: scan.scanId,
-    root: { name: store.name(rootId), path: store.path(rootId), size: store.size(rootId), modifiedAt: store.modifiedAt(rootId) },
-    scanRootPath: scan.rootPath,
-    maxDepth,
-    minSize,
-    nodes,
-  });
-});
+    const maxDepth = clampInt(req.query.maxDepth, 3, 1, 8);
+    const minSize = clampInt(
+      req.query.minSize,
+      10_240,
+      0,
+      Number.MAX_SAFE_INTEGER,
+    );
+
+    const store = storeOf(scan);
+    let rootId = store.rootId;
+    const rootParam = req.query.root as string | undefined;
+    if (rootParam && rootParam !== scan.rootPath) {
+      if (!isInside(scan.rootPath, rootParam)) {
+        throw new AppError(
+          403,
+          "OUTSIDE_SCAN_ROOT",
+          "root must be inside the scanned folder",
+        );
+      }
+      const found = store.findByPath(rootParam);
+      if (found === -1)
+        throw new AppError(
+          404,
+          "PATH_NOT_FOUND",
+          "That path is not in this scan",
+        );
+      if (
+        !store.isDir(found) &&
+        !(store.container(found) !== undefined && store.childCount(found) > 0)
+      ) {
+        throw new AppError(
+          400,
+          "NOT_A_DIRECTORY",
+          "Treemap root must be a directory or an opened container",
+        );
+      }
+      rootId = found;
+    }
+
+    const nodes = buildTreemapFromStore(store, rootId, {
+      maxDepth,
+      minSize,
+      maxNodes: 20_000,
+    });
+    res.json({
+      scanId: scan.scanId,
+      root: {
+        name: store.name(rootId),
+        path: store.path(rootId),
+        size: store.size(rootId),
+        modifiedAt: store.modifiedAt(rootId),
+      },
+      scanRootPath: scan.rootPath,
+      maxDepth,
+      minSize,
+      nodes,
+    });
+  },
+);
 
 /** GET /api/large-files?scanId=x&limit=50&minSize=1048576 */
-scanRouter.get('/large-files', (req: Request, res: Response) => {
-  const scan = requireScan(req, String(req.query.scanId ?? ''));
-  if (scan.status === 'running') {
-    res.status(202).json({ status: 'running' });
+scanRouter.get("/large-files", (req: Request, res: Response) => {
+  const scan = requireScan(req, String(req.query.scanId ?? ""));
+  if (scan.status === "running") {
+    res.status(202).json({ status: "running" });
     return;
   }
-  if (!scan.store && !scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  if (!scan.store && !scan.root)
+    throw new AppError(500, "SCAN_FAILED", scan.error ?? "Scan failed");
 
   const limit = clampInt(req.query.limit, 50, 1, 1000);
-  const minSize = clampInt(req.query.minSize, 1_048_576, 0, Number.MAX_SAFE_INTEGER);
+  const minSize = clampInt(
+    req.query.minSize,
+    1_048_576,
+    0,
+    Number.MAX_SAFE_INTEGER,
+  );
   res.json({ files: collectLargestFiles(storeOf(scan), limit, minSize) });
 });
 
 /** GET /api/file-types?scanId=x */
-scanRouter.get('/file-types', (req: Request, res: Response) => {
-  const scan = requireScan(req, String(req.query.scanId ?? ''));
-  if (scan.status === 'running') {
-    res.status(202).json({ status: 'running' });
+scanRouter.get("/file-types", (req: Request, res: Response) => {
+  const scan = requireScan(req, String(req.query.scanId ?? ""));
+  if (scan.status === "running") {
+    res.status(202).json({ status: "running" });
     return;
   }
-  if (!scan.store && !scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  if (!scan.store && !scan.root)
+    throw new AppError(500, "SCAN_FAILED", scan.error ?? "Scan failed");
   res.json({ types: collectFileTypes(storeOf(scan)) });
 });
 
-export function clampInt(raw: unknown, fallback: number, min: number, max: number): number {
-  const n = Number.parseInt(String(raw ?? ''), 10);
+export function clampInt(
+  raw: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const n = Number.parseInt(String(raw ?? ""), 10);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, n));
 }

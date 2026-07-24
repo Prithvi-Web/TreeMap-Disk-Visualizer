@@ -3,7 +3,7 @@
  * Every shape that crosses a service or API boundary lives here.
  */
 
-import type { ScanStore } from '../services/scanStore';
+import type { ScanStore } from "../services/scanStore";
 
 /** A single file or directory in the scanned tree. */
 export interface FileNode {
@@ -11,7 +11,7 @@ export interface FileNode {
   path: string;
   /** Bytes. For directories this is the recursive sum of all children. */
   size: number;
-  type: 'file' | 'dir';
+  type: "file" | "dir";
   /** Present only for directories. */
   children?: FileNode[];
   /**
@@ -40,7 +40,7 @@ export interface FileNode {
   /** Cloud placeholder/stub: reports a logical size but occupies ~no disk blocks. */
   cloudPlaceholder?: boolean;
   /** Cloud provider detected for a placeholder, when inferable from the path. */
-  cloudProvider?: 'icloud' | 'onedrive' | 'dropbox';
+  cloudProvider?: "icloud" | "onedrive" | "dropbox";
   /** Directory that is a git repository root (directly contains a .git directory). */
   gitRepo?: boolean;
   /** Drillable container (archive, disk image, Docker data, Photos library). */
@@ -54,9 +54,16 @@ export interface FileNode {
 }
 
 /** Containers the treemap can drill into. */
-export type ContainerKind = 'zip' | 'tar' | 'tgz' | 'iso' | 'dmg' | 'photos' | 'docker';
+export type ContainerKind =
+  | "zip"
+  | "tar"
+  | "tgz"
+  | "iso"
+  | "dmg"
+  | "photos"
+  | "docker";
 
-export type ScanStatus = 'running' | 'complete' | 'error' | 'cancelled';
+export type ScanStatus = "running" | "complete" | "error" | "cancelled";
 
 /** Mutable record of one scan, kept in the in-memory store. */
 export interface ScanResult {
@@ -85,7 +92,9 @@ export interface ScanResult {
   /** Cooperative cancellation flag (set on shutdown/eviction). */
   cancelled: boolean;
   /** Which enumeration engine produced this scan (dashboard note). */
-  engine?: 'walker' | 'turbo-walker' | 'gdu-turbo' | 'ntfs-mft' | 'cloud';
+  engine?: "walker" | "turbo-walker" | "gdu-turbo" | "ntfs-mft" | "cloud";
+  /** Why an opted-in engine (e.g. ntfs-mft) was abandoned — for UI diagnostics. */
+  engineDetail?: string;
   /** libuv threadpool size the scan ran with. */
   ioThreads?: number;
   /** True when this scan reused the on-disk mtime cache (fast rescan). */
@@ -109,7 +118,7 @@ export interface TreemapNode {
   name: string;
   path: string;
   size: number;
-  type: 'file' | 'dir';
+  type: "file" | "dir";
   extension?: string;
   modifiedAt: number;
   depth: number;
@@ -162,11 +171,17 @@ export interface ScanStats {
 }
 
 export type ScanEvent =
-  | { type: 'progress'; scanned: number; currentPath: string }
-  | { type: 'complete'; root: FileNode; stats: ScanStats }
-  | { type: 'error'; message: string }
-  | { type: 'cancelled' }
-  | { type: 'shutdown' };
+  | {
+      type: "progress";
+      scanned: number;
+      currentPath: string;
+      engine?: ScanResult["engine"];
+      engineDetail?: string;
+    }
+  | { type: "complete"; root: FileNode; stats: ScanStats }
+  | { type: "error"; message: string }
+  | { type: "cancelled" }
+  | { type: "shutdown" };
 
 /** A batch trash operation. */
 export interface CleanJob {
@@ -225,7 +240,7 @@ export interface DuplicateGroup {
   files: { name: string; path: string; modifiedAt: number }[];
 }
 
-export type DuplicateJobStatus = 'running' | 'complete' | 'error';
+export type DuplicateJobStatus = "running" | "complete" | "error";
 
 /** Mutable record of one background hashing job (per scanId). */
 export interface DuplicateJob {
@@ -267,7 +282,7 @@ export interface NearDupeCluster {
   reclaimableBytes: number;
 }
 
-export type NearDupeJobStatus = 'running' | 'complete' | 'error';
+export type NearDupeJobStatus = "running" | "complete" | "error";
 
 /** Background dHash + clustering job, one per (scanId, threshold). */
 export interface NearDupeJob {
@@ -276,7 +291,7 @@ export interface NearDupeJob {
   /** Max Hamming distance for two images to be considered near-duplicates. */
   threshold: number;
   /** Image decoder actually used, or 'none' when none was available. */
-  decoder: 'sharp' | 'ffmpeg' | 'none';
+  decoder: "sharp" | "ffmpeg" | "none";
   /** False when no image decoder could be loaded — the UI shows a hint instead of clusters. */
   available: boolean;
   reason?: string;
@@ -311,7 +326,7 @@ export interface SnapshotTopEntry {
   name: string;
   path: string;
   size: number;
-  type: 'file' | 'dir';
+  type: "file" | "dir";
 }
 
 /** Lightweight persisted record of one completed scan. */
@@ -351,7 +366,7 @@ export interface SnapshotRef {
 export interface SnapshotDeltaEntry {
   name: string;
   path: string;
-  type: 'file' | 'dir';
+  type: "file" | "dir";
   /** null = entry did not exist in that snapshot. */
   sizeA: number | null;
   sizeB: number | null;
@@ -368,12 +383,12 @@ export interface SnapshotDiff {
 
 /* ---------- Scan comparison ---------- */
 
-export type CompareChange = 'added' | 'removed' | 'grew' | 'shrank';
+export type CompareChange = "added" | "removed" | "grew" | "shrank";
 
 export interface CompareEntry {
   path: string;
   name: string;
-  type: 'file' | 'dir';
+  type: "file" | "dir";
   sizeA: number | null;
   sizeB: number | null;
   delta: number;
@@ -391,7 +406,7 @@ export interface CompareResult {
 
 /* ---------- Settings: ignore list + scheduled scans ---------- */
 
-export type IgnoreScope = 'scan' | 'suggest' | 'both';
+export type IgnoreScope = "scan" | "suggest" | "both";
 
 export interface IgnoreEntry {
   /** Absolute path, path glob, or bare name glob (e.g. "node_modules", "*.iso"). */
@@ -436,7 +451,7 @@ export interface AppSettings {
   /** Live activity mode auto-pauses after this many minutes without events. */
   watchIdleMinutes: number;
   /** Cloud provider app credentials (tokens live in cloud-tokens.json). */
-  cloud: Partial<Record<'gdrive' | 'dropbox' | 'onedrive', CloudCredentials>>;
+  cloud: Partial<Record<"gdrive" | "dropbox" | "onedrive", CloudCredentials>>;
 }
 
 /** A budget cross-referenced against a scan: how the folder measures up now. */
@@ -480,13 +495,19 @@ export interface OffloadEntry {
   restoredAt?: number;
 }
 
-export type OffloadJobStatus = 'running' | 'complete' | 'error' | 'cancelled';
-export type OffloadPhase = 'checking' | 'copying' | 'verifying' | 'trashing' | 'rolling-back' | 'done';
+export type OffloadJobStatus = "running" | "complete" | "error" | "cancelled";
+export type OffloadPhase =
+  | "checking"
+  | "copying"
+  | "verifying"
+  | "trashing"
+  | "rolling-back"
+  | "done";
 
 /** Mutable record of one offload/restore job (progress via SSE). */
 export interface OffloadJob {
   jobId: string;
-  kind: 'offload' | 'restore';
+  kind: "offload" | "restore";
   status: OffloadJobStatus;
   phase: OffloadPhase;
   destRoot: string;
@@ -503,15 +524,23 @@ export interface OffloadJob {
 
 /** Events streamed over the offload SSE progress endpoint. */
 export type OffloadStreamEvent =
-  | { type: 'progress'; phase: OffloadPhase; filesDone: number; fileCount: number; bytesDone: number; bytesTotal: number; currentPath: string }
-  | { type: 'complete'; filesDone: number; bytesDone: number }
-  | { type: 'error'; message: string }
-  | { type: 'cancelled' }
-  | { type: 'shutdown' };
+  | {
+      type: "progress";
+      phase: OffloadPhase;
+      filesDone: number;
+      fileCount: number;
+      bytesDone: number;
+      bytesTotal: number;
+      currentPath: string;
+    }
+  | { type: "complete"; filesDone: number; bytesDone: number }
+  | { type: "error"; message: string }
+  | { type: "cancelled" }
+  | { type: "shutdown" };
 
 /* ---------- Live disk activity (Watcher) ---------- */
 
-export type WatchEventKind = 'created' | 'modified' | 'deleted';
+export type WatchEventKind = "created" | "modified" | "deleted";
 
 /** One batched filesystem change, streamed over the watch SSE. */
 export interface WatchEvent {
@@ -525,9 +554,9 @@ export interface WatchEvent {
 
 /** Frames streamed over GET /api/watch/:scanId. */
 export type WatchStreamEvent =
-  | { type: 'init'; idleMinutes: number; engine: 'recursive' | 'top-levels' }
-  | { type: 'activity'; at: number; events: WatchEvent[] }
-  | { type: 'paused'; reason: 'idle' | 'shutdown' };
+  | { type: "init"; idleMinutes: number; engine: "recursive" | "top-levels" }
+  | { type: "activity"; at: number; events: WatchEvent[] }
+  | { type: "paused"; reason: "idle" | "shutdown" };
 
 /* ---------- Disk-full forecasting ---------- */
 
@@ -536,7 +565,12 @@ export type WatchStreamEvent =
  * stable/shrinking — no fill-up risk at the fitted rate. erratic — sizes
  * bounce around too much for an honest number.
  */
-export type ForecastStatus = 'ok' | 'insufficient' | 'stable' | 'shrinking' | 'erratic';
+export type ForecastStatus =
+  | "ok"
+  | "insufficient"
+  | "stable"
+  | "shrinking"
+  | "erratic";
 
 /** A top-level folder among the fastest growers. */
 export interface ForecastGrower {
@@ -572,13 +606,13 @@ export interface ForecastResult {
  * build output, virtualenvs). cache — rebuilt automatically by a tool when next
  * used (browser/dev caches). junk — OS-recreated metadata or stale downloads.
  */
-export type SuggestionCategory = 'regenerable' | 'cache' | 'junk';
+export type SuggestionCategory = "regenerable" | "cache" | "junk";
 
 export interface CleanupSuggestionItem {
   name: string;
   path: string;
   size: number;
-  type: 'file' | 'dir';
+  type: "file" | "dir";
   modifiedAt: number;
 }
 
@@ -596,7 +630,7 @@ export interface CleanupSuggestionGroup {
 /* ---------- Per-app storage attribution (Apps tab) ---------- */
 
 /** Where an app's bytes live: the app itself, rebuildable caches, user data, or logs. */
-export type AppCategory = 'app' | 'cache' | 'data' | 'logs';
+export type AppCategory = "app" | "cache" | "data" | "logs";
 
 /** One directory (or .app bundle) attributed to an application. */
 export interface AppLocation {

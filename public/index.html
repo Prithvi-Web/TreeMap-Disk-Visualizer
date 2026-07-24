@@ -2423,6 +2423,7 @@ function followScanProgress(scanId, path, fast, t0, requestedOpts = null) {
   const isCloud = path.startsWith('cloud://');
   state.scanId = scanId;
   state.scanOpts = requestedOpts || resolveScanOpts({ incremental: fast });
+  let turboFallbackNoted = false;
 
   const es = new EventSource(`/api/scan/${scanId}/progress`);
   state.es = es;
@@ -2467,10 +2468,25 @@ function followScanProgress(scanId, path, fast, t0, requestedOpts = null) {
     if (finished) return;
     const msg = JSON.parse(ev.data);
     if (msg.type === 'progress') {
+      // Turbo was requested but the server fell back — say so once (path-by-path
+      // progress at ~40k/s is the walker, not an MFT read).
+      if (msg.engineDetail && requestedOpts?.ntfsMft && !turboFallbackNoted) {
+        turboFallbackNoted = true;
+        console.warn('[treemap]', msg.engineDetail);
+        toast(msg.engineDetail, 'error', 8000);
+        const log = $('scanOptsLog');
+        if (log) {
+          log.hidden = false;
+          log.textContent = `Turbo NTFS: ON (failed) · Fast rescan: ${requestedOpts.incremental ? 'ON' : 'OFF'} · Engine: ${msg.engine || 'walker'} · ${msg.engineDetail}`;
+        }
+      }
       const secs = (performance.now() - t0) / 1000;
       const rate = secs > 0.2 ? Math.round(msg.scanned / secs) : 0;
+      const engineTag = (requestedOpts?.ntfsMft && msg.engine && msg.engine !== 'ntfs-mft')
+        ? `Using ${msg.engine} · `
+        : turboTag;
       setScanStatusBusy(
-        `<span class="num">${turboTag}${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
+        `<span class="num">${engineTag}${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`,
       );
       const meta = $('scanMeta');
