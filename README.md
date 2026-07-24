@@ -27,8 +27,9 @@
 <br><br>
 
 <kbd><a href="#-download-the-app-for-users">⬇ Download</a></kbd> &nbsp;
-<kbd><a href="#-the-eight-views">✨ Features</a></kbd> &nbsp;
+<kbd><a href="#-the-ten-views">✨ Features</a></kbd> &nbsp;
 <kbd><a href="#-run-from-source--web-mode-3-commands">🚀 Run it</a></kbd> &nbsp;
+<kbd><a href="#-use-it-with-ai-mcp">🤖 AI / MCP</a></kbd> &nbsp;
 <kbd><a href="#-api-overview">🔌 API</a></kbd> &nbsp;
 <kbd><a href="#-safety">🛡️ Safety</a></kbd>
 
@@ -286,6 +287,136 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 | `POST /api/files/open` | Open / reveal a path in Finder & co. |
 
 </details>
+
+<img src="divider.svg" width="100%" alt="">
+
+## 🤖 Use it with AI (MCP)
+
+TreeMap speaks the **Model Context Protocol (MCP)** — the open standard that lets AI assistants like **Claude** use apps as tools. Connect it once and you can simply *talk to your disk*:
+
+> *"What's eating my disk?"* &nbsp;·&nbsp; *"Find duplicates in my Downloads and clean them up"* &nbsp;·&nbsp; *"How long until this disk is full?"* &nbsp;·&nbsp; *"Move my old videos to the external drive"*
+
+The AI does the scanning and number-crunching with TreeMap's real engine, and **every safety rule still applies**: deletes only ever go to the system Trash, destructive actions can be previewed with a dry run first, and everything is written to an audit log.
+
+### Step 1 — One-time setup (~2 minutes)
+
+You need [Node.js 20+](https://nodejs.org) installed. Then copy-paste this into a terminal:
+
+```bash
+git clone https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer.git
+cd TreeMap-Disk-Visualizer
+npm install
+npm run build
+```
+
+Done. Now print the folder's full location — you'll paste it in step 2 wherever you see `/PATH/TO/TreeMap-Disk-Visualizer`:
+
+```bash
+pwd
+```
+
+### Step 2 — Connect your AI app
+
+<details>
+<summary><b>🟠 Claude Desktop</b></summary>
+
+<br>
+
+1. Open Claude Desktop → **Settings → Developer → Edit Config**. That opens `claude_desktop_config.json`
+   (macOS: `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`).
+2. Add TreeMap to it (if the file already has an `mcpServers` block, just add the `"treemap"` entry inside it):
+
+```json
+{
+  "mcpServers": {
+    "treemap": {
+      "command": "node",
+      "args": ["/PATH/TO/TreeMap-Disk-Visualizer/dist/mcp/index.js"]
+    }
+  }
+}
+```
+
+3. **Fully quit and reopen Claude Desktop.** A tools icon appears in the chat box — TreeMap's tools are listed under `treemap`.
+
+> 🪟 **Windows:** write the path with double backslashes, e.g. `"C:\\Users\\you\\TreeMap-Disk-Visualizer\\dist\\mcp\\index.js"`.
+
+</details>
+
+<details>
+<summary><b>⌨️ Claude Code</b></summary>
+
+<br>
+
+One command (swap in your real path):
+
+```bash
+claude mcp add treemap -- node /PATH/TO/TreeMap-Disk-Visualizer/dist/mcp/index.js
+```
+
+That's it — next session, ask Claude Code to scan a folder and it will pick up the TreeMap tools automatically. (`claude mcp list` shows it; `claude mcp remove treemap` undoes it.)
+
+</details>
+
+<details>
+<summary><b>🖱️ Cursor</b></summary>
+
+<br>
+
+Create (or edit) `.cursor/mcp.json` in your home folder for all projects — or in a project's root for just that project — with:
+
+```json
+{
+  "mcpServers": {
+    "treemap": {
+      "command": "node",
+      "args": ["/PATH/TO/TreeMap-Disk-Visualizer/dist/mcp/index.js"]
+    }
+  }
+}
+```
+
+Then enable it under **Settings → MCP**.
+
+</details>
+
+<details>
+<summary><b>🧩 Any other MCP client</b></summary>
+
+<br>
+
+TreeMap is a standard **stdio** MCP server. Point your client at:
+
+- **Command:** `node`
+- **Arguments:** `/PATH/TO/TreeMap-Disk-Visualizer/dist/mcp/index.js`
+
+No environment variables, ports, or API keys needed — it runs locally and talks over stdin/stdout. (Quick smoke test from the repo folder: `npm run mcp` should print `server ready on stdio`.)
+
+</details>
+
+### What the AI can do
+
+Eight tools, all calling the exact same internals as the app — same validation, same safety rails:
+
+| Tool | What it does |
+|---|---|
+| `scan_path` | Scan a folder → returns a `scanId` the other tools use |
+| `get_largest` | The biggest files or folders in a scan |
+| `find_duplicates` | True duplicates (size + SHA-256 content hashing) |
+| `cleanup_suggestions` | Known-reclaimable space: caches, regenerable build folders, junk |
+| `forecast` | Disk-full projection — *"full in ~58 days at current growth"* |
+| `compare_scans` | What grew and what shrank between two scans |
+| `offload` | Move files to another drive the safe way: copy → verify → then trash originals |
+| `trash_paths` | Move files to the system Trash — never a hard delete |
+
+### Kept safe by design
+
+- 🎯 The AI can only touch paths **inside folders it has scanned** — scanning is what grants permission.
+- 🧪 `trash_paths` and `offload` accept `dryRun: true`, returning the exact list of affected files and bytes while doing **nothing** — so the AI can show you the plan before acting.
+- 📜 You can pin down what agents may ever touch with an `agent-policy.json` (allowed roots, protected paths, a per-operation byte cap) — see [AGENTS.md](AGENTS.md).
+- 🧾 Every destructive request — executed, dry-run, or refused — lands in an append-only `audit.jsonl` you can review any time.
+
+> 🤓 Prefer plain HTTP? The same power is available as a REST API with a machine-readable spec — start the server and fetch `/api/openapi.json` or `/api/capabilities`, or read [AGENTS.md](AGENTS.md), the full guide for automated agents.
 
 <img src="divider.svg" width="100%" alt="">
 
