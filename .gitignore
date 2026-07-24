@@ -4,12 +4,17 @@ release/
 *.log
 .DS_Store
 
-# Bundled gdu binary — fetched at build time by scripts/fetchGdu.js, never committed
+# Bundled gdu binary - fetched at build time by scripts/fetchGdu.js, never committed
 /gdu/
 
-# gdu binaries staged for bundling — fetched by scripts/fetchGdu.js, never committed
+# gdu binaries staged for bundling - fetched by scripts/fetchGdu.js, never committed
 /build/gdu/
 
-# Local multi-session agent handoff � keep on disk, never ship in PRs
-HANDOFF.md
+# ntfs-mft-scan staged for bundling / local dev - built by scripts/buildNtfsMftScan.js
+/build/ntfs-mft-scan/
+/ntfs-mft-scan/
+native/ntfs-mft-scan/target/
+native/ntfs-mft-scan/Cargo.lock
 
+# Local multi-session agent handoff - keep on disk, never ship in PRs
+HANDOFF.md

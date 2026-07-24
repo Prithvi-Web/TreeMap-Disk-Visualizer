@@ -1,0 +1,11 @@
+[package]
+name = "ntfs-mft-scan"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+ntfs-reader = "0.4.5"
+
+[profile.release]
+opt-level = 3
