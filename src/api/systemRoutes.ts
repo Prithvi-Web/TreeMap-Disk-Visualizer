@@ -162,3 +162,21 @@ systemRouter.post("/client-log", (req: Request, res: Response) => {
   else console.info(line);
   res.json({ ok: true });
 });
+
+/**
+ * POST /api/ntfs-mft/rebuild-index { volume: "C" }
+ * Deletes the persisted warm index for a volume so the next Turbo NTFS scan
+ * does a full $MFT reindex (spec §7 minimum bar).
+ */
+systemRouter.post("/ntfs-mft/rebuild-index", async (req: Request, res: Response) => {
+  const { rebuildNtfsMftIndex, isValidDriveLetter } = await import(
+    "../services/ntfsMftScanner"
+  );
+  const body = req.body as { volume?: string };
+  const volume = (body.volume || "").trim().toUpperCase();
+  if (!isValidDriveLetter(volume)) {
+    throw new AppError(400, "VOLUME_REQUIRED", 'Body must include volume drive letter, e.g. "C"');
+  }
+  await rebuildNtfsMftIndex(volume);
+  res.json({ ok: true, volume });
+});

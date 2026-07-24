@@ -3689,6 +3689,15 @@
                 ></span
                 >Turbo NTFS scan (requires admin)
               </label>
+              <button
+                type="button"
+                class="btn ghost"
+                id="ntfsMftRebuildBtn"
+                hidden
+                title="Delete the persisted warm index so the next Turbo scan re-reads the $MFT"
+              >
+                Rebuild NTFS index
+              </button>
               <div class="scan-status" id="scanStatus">
                 No scan yet — pick a folder above.
               </div>
@@ -5500,6 +5509,8 @@
           const wrap = $(id);
           if (wrap) wrap.hidden = !win;
         }
+        const rebuild = $("ntfsMftRebuildBtn");
+        if (rebuild) rebuild.hidden = !win;
         if (win) syncNtfsMftCheckboxes();
         else {
           const spacer = $("browseFootSpacer");
@@ -5519,6 +5530,31 @@
                 : "Turbo NTFS OFF — next scan uses gdu/walker",
               "success",
             );
+          });
+        }
+        const rebuild = $("ntfsMftRebuildBtn");
+        if (rebuild && rebuild.dataset.wired !== "1") {
+          rebuild.dataset.wired = "1";
+          rebuild.addEventListener("click", async () => {
+            const root = state.root?.path || state.system?.homeDir || "";
+            const m = /^([A-Za-z]):/.exec(root);
+            const volume = m ? m[1].toUpperCase() : "C";
+            try {
+              await api("/api/ntfs-mft/rebuild-index", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ volume }),
+              });
+              toast(
+                `NTFS index for ${volume}: cleared — next Turbo scan will rebuild from $MFT`,
+                "success",
+              );
+            } catch (e) {
+              toast(
+                e.message || "Could not rebuild NTFS index",
+                "error",
+              );
+            }
           });
         }
       }
@@ -6427,11 +6463,13 @@
               `${label} — scanned ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s` +
               (rate ? ` · ${formatCount(rate)}/s` : "");
             $("engineHint").textContent =
-              s.engine === "gdu-turbo"
-                ? "A bundled gdu subprocess per top-level folder — same counts as the built-in walker, measurably faster."
-                : s.ioThreads > 4
-                  ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
-                  : "";
+              s.engine === "ntfs-mft" && s.engineDetail
+                ? s.engineDetail
+                : s.engine === "gdu-turbo"
+                  ? "A bundled gdu subprocess per top-level folder — same counts as the built-in walker, measurably faster."
+                  : s.ioThreads > 4
+                    ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
+                    : "";
             en.hidden = false;
           } else en.hidden = true;
         }
