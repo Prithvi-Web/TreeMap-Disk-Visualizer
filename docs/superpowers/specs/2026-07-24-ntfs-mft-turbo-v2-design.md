@@ -136,7 +136,16 @@ keyword. So: the helper builds its own large-buffer reader, calls the crate's
 own `get_record_fs`/`read_data_fs` directly, and applies the vendored
 `fixup_record` copy to each record — reproducing `Mft::new`'s ~30 lines of
 logic (already read in full during v1's research) against a
-differently-configured reader, plus one small vendored function:
+differently-configured reader, plus one small vendored function.
+
+**One behavior to reproduce exactly, caught in second-pass review:** `Mft::
+new` doesn't just call `read_data_fs` and trust the result — it converts a
+`None` (Data/Bitmap attribute genuinely missing, however unlikely on a real
+volume) into `NtfsReaderError::MissingMftAttribute` via `.ok_or_else(...)`
+rather than unwrapping. The reproduction must do the same — an `.unwrap()`
+here would turn a rare-but-real "attribute missing" case into a panic instead
+of a clean, catchable error that falls back like everything else in this
+engine does.
 
 ```rust
 let file = std::fs::File::open(&volume.path)?;
@@ -160,9 +169,14 @@ not a claim:
 |---|---|---|
 | UAC/elevation overhead | 8.0s | 8.0s (unaffected by this fix) |
 | Raw `$MFT` read | 58.6s | ~2–10s |
-| Enumerate/parse/write | 2.3s | 2.3s |
+| Enumerate/parse/write | 2.8s | 2.8s |
 | Node-side parse + store build | 4.7s | 4.7s |
 | **Total** | **74.1s** | **~17.5–25.5s** |
+
+(8.0 + 58.6 + 2.8 + 4.7 = 74.1, reconciling with §1's total exactly — a second
+review caught this row previously reading 2.3s, which didn't sum correctly
+against either §1's own 1.6+0.46+0.72=2.78s breakdown or the stated 74.1s
+total.)
 
 That's close to the ≤10–15s cold target but likely not quite there on its own
 — the elevation overhead (§5) and the Node-side parse (§4) are the remaining
@@ -201,6 +215,22 @@ already surveyed in prior discussion:
    consent) — the app talks to it over local IPC for "give me anything new
    since checkpoint X." No further UAC prompts after install, ever, without
    the footprint of a full service.
+
+   **Invocation path matters and must be specified precisely — a second spec
+   review flagged this as a real gap, not a nitpick.** "Highest privileges"
+   only actually skips UAC when the task is triggered *through the Task
+   Scheduler service itself* (a logon trigger that starts it as the daemon,
+   `schtasks /run`, or the Scheduler COM API) — it does **not** skip UAC if
+   invoked via a shortcut, `ShellExecute`, or a naive elevated `CreateProcess`
+   from outside that service, a documented Windows behavior. The design here
+   is: the task runs as a **long-lived background process from a logon
+   trigger** (started once, elevated, without a prompt, when the user logs
+   in), and the app's IPC channel talks to that already-running process — it
+   never asks Task Scheduler to launch a fresh instance per query. Getting
+   this wrong (e.g. having the app invoke `schtasks /run` synchronously per
+   query instead of talking to a standing process) would silently reintroduce
+   per-scan latency this design exists to eliminate, even though "no UAC
+   prompt" would still technically hold.
 3. A real Windows Service — closest to what serious prior art (Everything,
    and the UFFS project surveyed earlier) actually does, but the largest
    installation/security footprint: SCM registration, a service account,
@@ -214,11 +244,15 @@ judgment call for review/user sign-off, not a settled fact the way §2/§3 are �
 unlike the read-path fix, there's no measured evidence pointing at one answer
 here, only a reasoned tradeoff.
 
-**Mandatory fallback, no exceptions:** if the scheduled task isn't registered
-(declined at install, portable/dev build, task got removed by the user or
-disabled by a policy), the engine falls back to today's opt-in per-scan
-elevation — never a silent failure, matching the fallback discipline
-everywhere else in this codebase.
+**Mandatory fallback, no exceptions:** covers two distinct failure modes, not
+just one — (a) the task **isn't registered** (declined at install, portable/
+dev build, removed by the user or a policy), and (b) the task **is
+registered but fails to reach/execute** (stale credentials, access denied,
+the standing process crashed and the logon trigger hasn't fired again yet).
+Both fall back to today's opt-in per-scan elevation — never a silent failure,
+matching the fallback discipline everywhere else in this codebase. The
+original draft only named case (a); a second review caught that (b) is a
+distinct, equally-real, silent-failure-shaped gap.
 
 ---
 
@@ -238,7 +272,12 @@ prior art for the model):
 - A small metadata/checkpoint file: `VolumeSerialNumber`, `UsnJournalID`,
   `LastUsnProcessed`.
 
-**Invalidation logic on every warm attempt**, in order:
+**Trivial case first:** no checkpoint file exists yet for this volume (first
+ever run) → build fresh, same as any other full reindex, just without a
+"stored value didn't match" reason attached.
+
+**Invalidation logic on every warm attempt** (i.e., once a checkpoint exists),
+in order:
 
 1. Stored `VolumeSerialNumber` doesn't match the volume's current one → full
    reindex (different/reformatted volume under the same drive letter).
@@ -306,6 +345,15 @@ distinct-parent-FRN model from v1's own mapper design.
 - **Benchmark task, gated on real measurement**: rebuild with Fix #1, rerun
   the exact same timed scan on the same folder, record the real number before
   writing it into any doc as fact.
+- **Walker-vs-`ntfs-mft` parity test** (the thing §1 refers to but this list
+  previously omitted — closing that gap): scan the same real folder with both
+  engines back to back and assert file count, dir count, total bytes, and
+  hardlink count match exactly, the same byte-for-byte gate v1's gdu-vs-walker
+  and ntfs-mft-vs-walker parity tests already enforce. §1's two numbers
+  (139.7s / 74.1s) differed by ~9.7k items purely from filesystem churn
+  between two separate multi-minute runs — this test controls for that by
+  running both close together and comparing the same snapshot's worth of
+  ground truth, not just eyeballing similar totals.
 - **Commit `native/ntfs-mft-scan/Cargo.lock`** if it isn't already (spec
   review found no lockfile pinning the resolved `ntfs-reader` version) — Fix
   #1 depends on the exact private/public shape of a specific version's
