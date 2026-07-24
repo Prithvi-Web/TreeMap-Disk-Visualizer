@@ -106,6 +106,10 @@
         {
           "from": "scripts/sendToRecycleBin.ps1",
           "to": "scripts/sendToRecycleBin.ps1"
+        },
+        {
+          "from": "scripts/ntfsMftBroker.ps1",
+          "to": "scripts/ntfsMftBroker.ps1"
         }
       ]
     },
@@ -118,7 +122,8 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh"
     },
     "extraResources": [
       {
