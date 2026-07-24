@@ -173,6 +173,7 @@ scanRouter.get("/scan/:scanId/progress", (req: Request, res: Response) => {
   res.flushHeaders();
 
   let lastScanned = -1;
+  let lastPath = "";
   let lastBeat = Date.now();
 
   const finish = (): void => {
@@ -206,8 +207,15 @@ scanRouter.get("/scan/:scanId/progress", (req: Request, res: Response) => {
         finish();
         return;
       }
-      if (scan.scanned !== lastScanned || scan.engineDetail) {
+      // Also push when currentPath changes: ntfs-mft's elevated phase keeps
+      // scanned at 0 for a long time and only heartbeats via currentPath.
+      if (
+        scan.scanned !== lastScanned ||
+        scan.currentPath !== lastPath ||
+        scan.engineDetail
+      ) {
         lastScanned = scan.scanned;
+        lastPath = scan.currentPath;
         sseSend(res, {
           type: "progress",
           scanned: scan.scanned,

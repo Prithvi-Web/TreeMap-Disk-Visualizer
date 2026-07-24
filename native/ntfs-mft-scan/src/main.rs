@@ -1,46 +1,69 @@
-//! Dumps every surviving NTFS FileName-attribute edge on a volume as NDJSON.
+//! Dumps surviving NTFS FileName-attribute edges as NDJSON.
 //!
 //! "Surviving" = namespace is not pure DOS (an 8.3 short-name alias, not a
 //! real second hardlink — see docs/superpowers/specs/2026-07-24-ntfs-mft-
 //! engine-design.md §3.1), and at most one edge per (record, parent) pair
 //! (a Posix + Win32 name for the SAME link collapses to one, preferring
-//! Win32AndDos > Win32 > Posix). Everything else — path resolution, subtree
-//! selection, hardlink dedup across distinct parents — is the TypeScript
-//! mapper's job (src/services/ntfsMftMapper.ts), not this binary's.
+//! Win32AndDos > Win32 > Posix).
 //!
-//! Usage: ntfs-mft-scan --volume C --out <path>
+//! Usage:
+//!   ntfs-mft-scan --volume C --out <path>
+//!   ntfs-mft-scan --volume C --root "Users\foo" --out <path>
+//!
+//! With `--root`, only the requested subtree is written (plus a `_meta` line
+//! carrying `targetRecordNo`). Whole-volume dumps are still supported when
+//! `--root` is omitted.
+//!
 //! Requires an elevated process token (enforced by ntfs_reader::Volume::new).
 //!
-//! Import note (verified against docs.rs/ntfs-reader/0.4.5): NtfsAttributeType,
-//! NtfsFileNamespace, and ntfs_to_unix_time live in `ntfs_reader::api`, not
-//! `ntfs_reader::attribute` (the plan's draft import path was wrong).
+//! Names are JSON-escaped (NOT Rust Debug `{:?}`): Debug emits `\u{…}` which
+//! is invalid JSON and breaks the Node parser.
 
 use ntfs_reader::api::{ntfs_to_unix_time, NtfsAttributeType, NtfsFileNamespace};
 use ntfs_reader::mft::Mft;
 use ntfs_reader::volume::Volume;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::process::ExitCode;
 
+const ROOT_RECORD_NO: u64 = 5;
+
 struct Args {
     volume: String,
     out: String,
+    /// Path under the volume root, using `\` or `/` separators (e.g. `Users\foo`).
+    root: Option<String>,
+}
+
+struct Edge {
+    record_no: u64,
+    parent_record_no: u64,
+    name: String,
+    size: u64,
+    is_dir: bool,
+    mtime_ms: i64,
 }
 
 fn parse_args() -> Option<Args> {
     let mut volume = None;
     let mut out = None;
+    let mut root = None;
     let mut it = env::args().skip(1);
     while let Some(flag) = it.next() {
         match flag.as_str() {
             "--volume" => volume = it.next(),
             "--out" => out = it.next(),
+            "--root" => root = it.next(),
             _ => {}
         }
     }
-    Some(Args { volume: volume?, out: out? })
+    Some(Args {
+        volume: volume?,
+        out: out?,
+        root,
+    })
 }
 
 /** Preference order when a record has multiple surviving names at the SAME
@@ -54,31 +77,100 @@ fn namespace_rank(ns: u8) -> u8 {
     }
 }
 
+/// JSON string body rules: quote/control escapes only; UTF-8 passes through.
+fn write_json_string<W: Write>(w: &mut W, s: &str) -> std::io::Result<()> {
+    w.write_all(b"\"")?;
+    for ch in s.chars() {
+        match ch {
+            '"' => w.write_all(b"\\\"")?,
+            '\\' => w.write_all(b"\\\\")?,
+            '\u{08}' => w.write_all(b"\\b")?,
+            '\u{0c}' => w.write_all(b"\\f")?,
+            '\n' => w.write_all(b"\\n")?,
+            '\r' => w.write_all(b"\\r")?,
+            '\t' => w.write_all(b"\\t")?,
+            c if (c as u32) < 0x20 => write!(w, "\\u{:04x}", c as u32)?,
+            c => {
+                let mut buf = [0u8; 4];
+                w.write_all(c.encode_utf8(&mut buf).as_bytes())?;
+            }
+        }
+    }
+    w.write_all(b"\"")
+}
+
+fn write_edge<W: Write>(w: &mut W, e: &Edge) -> std::io::Result<()> {
+    write!(
+        w,
+        "{{\"recordNo\":{},\"parentRecordNo\":{},\"name\":",
+        e.record_no, e.parent_record_no
+    )?;
+    write_json_string(w, &e.name)?;
+    write!(
+        w,
+        ",\"size\":{},\"isDir\":{},\"mtimeMs\":{}}}\n",
+        e.size, e.is_dir, e.mtime_ms
+    )
+}
+
+fn resolve_target(
+    edges_by_parent: &HashMap<u64, Vec<usize>>,
+    edges: &[Edge],
+    root: &str,
+) -> Option<u64> {
+    let components: Vec<&str> = root.split(['\\', '/']).filter(|c| !c.is_empty()).collect();
+    if components.is_empty() {
+        return Some(ROOT_RECORD_NO);
+    }
+    let mut current = ROOT_RECORD_NO;
+    for part in components {
+        let children = edges_by_parent.get(&current)?;
+        let match_idx = children.iter().copied().find(|&i| {
+            let e = &edges[i];
+            e.is_dir && e.name.eq_ignore_ascii_case(part)
+        })?;
+        current = edges[match_idx].record_no;
+    }
+    Some(current)
+}
+
+/** Indices of edges whose parent is inside the target subtree (BFS). */
+fn subtree_edge_indices(
+    edges_by_parent: &HashMap<u64, Vec<usize>>,
+    edges: &[Edge],
+    target: u64,
+) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut seen_dirs = HashSet::new();
+    let mut q = VecDeque::new();
+    seen_dirs.insert(target);
+    q.push_back(target);
+    while let Some(parent) = q.pop_front() {
+        let Some(children) = edges_by_parent.get(&parent) else {
+            continue;
+        };
+        for &idx in children {
+            out.push(idx);
+            let e = &edges[idx];
+            if e.is_dir && seen_dirs.insert(e.record_no) {
+                q.push_back(e.record_no);
+            }
+        }
+    }
+    out
+}
+
 fn main() -> ExitCode {
     let args = match parse_args() {
         Some(a) => a,
         None => {
-            eprintln!("usage: ntfs-mft-scan --volume C --out <path>");
+            eprintln!("usage: ntfs-mft-scan --volume C [--root Users\\foo] --out <path>");
             return ExitCode::FAILURE;
         }
     };
 
-    let volume_path = format!("\\\\.\\{}:", args.volume);
-    let volume = match Volume::new(&volume_path) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("failed to open volume (are we elevated?): {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let mft = match Mft::new(volume) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("failed to read MFT: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-
+    // Create the out file before the slow Volume/Mft open so the parent can
+    // see the elevated process has started (file exists, size still 0).
     let out_file = match File::create(&args.out) {
         Ok(f) => f,
         Err(e) => {
@@ -86,14 +178,32 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut writer = BufWriter::new(out_file);
+    let mut writer = BufWriter::with_capacity(8 * 1024 * 1024, out_file);
 
+    let volume_path = format!("\\\\.\\{}:", args.volume);
+    eprintln!("opening volume {volume_path}");
+    let volume = match Volume::new(&volume_path) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("failed to open volume (are we elevated?): {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    eprintln!("loading MFT index…");
+    let mft = match Mft::new(volume) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("failed to read MFT: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    eprintln!("enumerating FileName edges…");
+
+    let mut edges: Vec<Edge> = Vec::with_capacity(1_000_000);
     for file in mft.files() {
         let is_dir = file.is_directory();
         let record_no = file.number();
 
-        // Collect (parent, name, namespace), then keep only the best
-        // namespace per distinct parent — see namespace_rank above.
         let mut best_per_parent: HashMap<u64, (u8, String)> = HashMap::new();
         let mut size: u64 = 0;
         let mut mtime_ms: i64 = 0;
@@ -101,9 +211,7 @@ fn main() -> ExitCode {
         file.attributes(|att| {
             if att.header.type_id == NtfsAttributeType::StandardInformation as u32 {
                 if let Some(info) = att.as_standard_info() {
-                    mtime_ms = ntfs_to_unix_time(info.modification_time)
-                        .unix_timestamp()
-                        * 1000;
+                    mtime_ms = ntfs_to_unix_time(info.modification_time).unix_timestamp() * 1000;
                 }
             }
             if att.header.type_id == NtfsAttributeType::Data as u32 {
@@ -122,7 +230,9 @@ fn main() -> ExitCode {
                 }
                 let parent = fname.parent();
                 let rank = namespace_rank(ns);
-                let entry = best_per_parent.entry(parent).or_insert((rank, fname.to_string()));
+                let entry = best_per_parent
+                    .entry(parent)
+                    .or_insert((rank, fname.to_string()));
                 if rank > entry.0 {
                     *entry = (rank, fname.to_string());
                 }
@@ -130,15 +240,89 @@ fn main() -> ExitCode {
         });
 
         for (parent_record_no, (_, name)) in best_per_parent {
-            let line = format!(
-                "{{\"recordNo\":{record_no},\"parentRecordNo\":{parent_record_no},\"name\":{name:?},\"size\":{size},\"isDir\":{is_dir},\"mtimeMs\":{mtime_ms}}}\n"
-            );
-            if writer.write_all(line.as_bytes()).is_err() {
-                eprintln!("failed writing output");
+            edges.push(Edge {
+                record_no,
+                parent_record_no,
+                name,
+                size,
+                is_dir,
+                mtime_ms,
+            });
+        }
+    }
+    eprintln!("indexed {} edges", edges.len());
+
+    let mut edges_by_parent: HashMap<u64, Vec<usize>> = HashMap::new();
+    for (i, e) in edges.iter().enumerate() {
+        edges_by_parent
+            .entry(e.parent_record_no)
+            .or_default()
+            .push(i);
+    }
+
+    let target = if let Some(ref root) = args.root {
+        match resolve_target(&edges_by_parent, &edges, root) {
+            Some(t) => t,
+            None => {
+                eprintln!("could not resolve --root {root}");
                 return ExitCode::FAILURE;
             }
         }
+    } else {
+        ROOT_RECORD_NO
+    };
+
+    let emit_indices: Vec<usize> = if args.root.is_some() {
+        let idxs = subtree_edge_indices(&edges_by_parent, &edges, target);
+        eprintln!(
+            "subtree filter: {} / {} edges (target record {target})",
+            idxs.len(),
+            edges.len()
+        );
+        idxs
+    } else {
+        (0..edges.len()).collect()
+    };
+
+    if writeln!(writer, "{{\"_meta\":true,\"targetRecordNo\":{target}}}").is_err() {
+        eprintln!("failed writing meta");
+        return ExitCode::FAILURE;
     }
 
+    let mut edges_written: u64 = 0;
+    for idx in emit_indices {
+        if write_edge(&mut writer, &edges[idx]).is_err() {
+            eprintln!("failed writing output");
+            return ExitCode::FAILURE;
+        }
+        edges_written += 1;
+        if edges_written % 250_000 == 0 {
+            let _ = writer.flush();
+            eprintln!("wrote {edges_written} edges…");
+        }
+    }
+
+    if writer.flush().is_err() {
+        eprintln!("failed flushing output");
+        return ExitCode::FAILURE;
+    }
+    eprintln!("done — {edges_written} edges");
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_json_string;
+
+    #[test]
+    fn json_string_escapes_controls_not_rust_debug() {
+        let mut buf = Vec::new();
+        // Controls must be \uXXXX; non-ASCII may stay as raw UTF-8 (valid JSON).
+        // Never emit Rust Debug's `\u{…}` form — that is what broke Node's parser.
+        write_json_string(&mut buf, "a\"b\\c\n\u{0001}\u{202e}").unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert_eq!(s, "\"a\\\"b\\\\c\\n\\u0001\u{202e}\"");
+        assert!(!s.contains("\\u{"));
+        assert!(s.contains("\\u0001"));
+    }
 }
