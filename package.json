@@ -1,7 +1,7 @@
 {
   "name": "treemap",
   "version": "2.3.2",
-  "description": "TreeMap \u2014 a GrandPerspective-style disk space visualizer for macOS, Linux and Windows",
+  "description": "TreeMap — a GrandPerspective-style disk space visualizer for macOS, Linux and Windows",
   "author": "Prithvi-Web",
   "main": "electron/main.js",
   "scripts": {
@@ -10,6 +10,7 @@
     "start": "node dist/index.js",
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
+    "mcp": "tsx src/mcp/index.ts",
     "app": "npm run build && electron .",
     "dist": "npm run build && npm run fetch:gdu && electron-builder",
     "dist:mac": "npm run build && npm run fetch:gdu && electron-builder --mac",
@@ -23,11 +24,13 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "electron-updater": "^6.3.9",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "pdfmake": "^0.2.23",
-    "sharp": "^0.35.2"
+    "sharp": "^0.35.2",
+    "zod": "^4.4.3"
   },
   "overrides": {
     "exceljs": {

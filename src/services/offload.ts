@@ -238,13 +238,23 @@ async function rollback(created: string[], createdDirs: string[], job: OffloadJo
 
 /* ---------------- offload ---------------- */
 
-export async function startOffload(
+/** The exact manifest an offload would execute — what dryRun reports. */
+export interface PreparedOffload {
+  plan: PlannedCopy[];
+  bytesTotal: number;
+}
+
+/**
+ * Resolve and validate an offload selection into its exact copy plan.
+ * Read-only: stats the destination and lists its entries, but writes nothing.
+ * Every check startOffload enforces happens here, so a dry run fails exactly
+ * where a real run would.
+ */
+export async function prepareOffload(
   scan: ScanResult,
   paths: string[],
   destDir: string,
-): Promise<OffloadJob> {
-  pruneJobs();
-
+): Promise<PreparedOffload> {
   // Resolve every selected path in the scan (also rejects typos early). Each
   // selection materializes as a bounded subtree for the copy planner — the
   // same magnitude as the plan itself, never the whole scan.
@@ -284,6 +294,17 @@ export async function startOffload(
   if (free < bytesTotal * FREE_SPACE_MARGIN) {
     throw new AppError(400, 'DEST_FULL', `Not enough space at the destination — need ${(bytesTotal / 1073741824).toFixed(1)} GB, only ${(free / 1073741824).toFixed(1)} GB free`);
   }
+
+  return { plan, bytesTotal };
+}
+
+export async function startOffload(
+  scan: ScanResult,
+  paths: string[],
+  destDir: string,
+): Promise<OffloadJob> {
+  pruneJobs();
+  const { plan, bytesTotal } = await prepareOffload(scan, paths, destDir);
 
   const job: OffloadJob = {
     jobId: crypto.randomUUID(),
