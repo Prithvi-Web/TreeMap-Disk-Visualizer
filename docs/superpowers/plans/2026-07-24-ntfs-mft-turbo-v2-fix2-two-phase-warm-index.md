@@ -80,20 +80,35 @@ query `FSCTL_QUERY_USN_JOURNAL`, and write one JSON line to `--out` with
 then exit — it does not read the MFT at all.
 
 ```rust
+struct UsnJournalInfo {
+    volume_serial_number: u32,
+    usn_journal_id: u64,
+    first_usn: i64,
+    next_usn: i64,
+}
+
 fn query_usn_journal_info(volume_path: &str) -> std::io::Result<UsnJournalInfo> {
     use windows::core::PCSTR;
     use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::Storage::FileSystem::{CreateFileA, FILE_GENERIC_READ, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SHARE_DELETE, OPEN_EXISTING, FILE_FLAG_OVERLAPPED};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileA, GetVolumeInformationByHandleW, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SHARE_DELETE, OPEN_EXISTING, FILE_FLAG_OVERLAPPED,
+    };
     use windows::Win32::System::Ioctl::{FSCTL_QUERY_USN_JOURNAL, USN_JOURNAL_DATA_V2};
     use windows::Win32::System::IO::DeviceIoControl;
     use std::ffi::CString;
     use std::mem::size_of;
+    use std::os::raw::c_void;
 
     let path = CString::new(volume_path).unwrap();
     let handle: HANDLE = unsafe {
         CreateFileA(
             PCSTR::from_raw(path.as_bytes_with_nul().as_ptr()),
-            FILE_GENERIC_READ.0,
+            // Spec/plan review caught this: a first draft used
+            // FILE_GENERIC_READ only, but ntfs-reader's own Journal::new
+            // (the thing this function's docstring claims to mirror) opens
+            // with READ | WRITE — matching that exactly, not partially.
+            (FILE_GENERIC_READ | FILE_GENERIC_WRITE).0,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             None,
             OPEN_EXISTING,
@@ -110,20 +125,34 @@ fn query_usn_journal_info(volume_path: &str) -> std::io::Result<UsnJournalInfo> 
             FSCTL_QUERY_USN_JOURNAL,
             None,
             0,
-            Some(&mut journal as *mut _ as *mut _),
+            Some(&mut journal as *mut _ as *mut c_void),
             size_of::<USN_JOURNAL_DATA_V2>() as u32,
             Some(&mut bytes_returned),
             None,
         )
     }.map_err(|e| std::io::Error::other(e.to_string()))?;
 
-    // TODO(implementer): also fetch VolumeSerialNumber via
-    // GetVolumeInformationByHandleW or FSCTL_GET_NTFS_VOLUME_DATA — not
-    // shown here in full; check ntfs_reader::volume::Volume for whether it
-    // already surfaces this (its BootSector parse may have it) before
-    // adding a second Windows API call for something already available.
+    // Confirmed during plan review: ntfs_reader::volume::Volume has no
+    // serial-number field, so this second Win32 call is not optional —
+    // volumeSerialNumber is the first, most load-bearing field in Task 3's
+    // invalidation precedence and can't be left as a TODO. Reuses the same
+    // handle already open above rather than opening the volume twice.
+    let mut volume_serial: u32 = 0;
+    unsafe {
+        GetVolumeInformationByHandleW(
+            handle,
+            None,                      // lpVolumeNameBuffer — not needed
+            0,                         // nVolumeNameSize
+            Some(&mut volume_serial),  // lpVolumeSerialNumber — the one we want
+            None,                      // lpMaximumComponentLength — not needed
+            None,                      // lpFileSystemFlags — not needed
+            None,                      // lpFileSystemNameBuffer — not needed
+            0,                         // nFileSystemNameSize
+        )
+    }.map_err(|e| std::io::Error::other(e.to_string()))?;
 
     Ok(UsnJournalInfo {
+        volume_serial_number: volume_serial,
         usn_journal_id: journal.UsnJournalID,
         first_usn: journal.FirstUsn,
         next_usn: journal.NextUsn,
@@ -131,18 +160,15 @@ fn query_usn_journal_info(volume_path: &str) -> std::io::Result<UsnJournalInfo> 
 }
 ```
 
-**Verify while implementing:** the exact `windows` crate 0.62 type names/field
-casing for `USN_JOURNAL_DATA_V2` and the `DeviceIoControl` signature — the
-`windows` crate's generated bindings occasionally shift field/parameter
-shapes between minor versions; the code above is written against the pattern
-already confirmed working in `ntfs-reader`'s own `journal.rs` (read in full
-during spec research), but confirm it compiles against whatever version Step
-1 actually resolves before treating this as final.
-
-**Check before adding a second API call:** whether `Volume` (from
-`ntfs_reader::volume`) already exposes a volume serial number from its own
-boot-sector parse — if so, reuse it instead of a second
-`GetVolumeInformationByHandleW`/`FSCTL_GET_NTFS_VOLUME_DATA` call.
+**Verify while implementing:** the exact `windows` crate 0.62 type names,
+field casing, and `GetVolumeInformationByHandleW`'s exact parameter list
+(some `windows`-crate versions group the out-params differently, or return
+them via a struct rather than individual `Option<&mut _>` args) — the code
+above is written against the pattern already confirmed working in
+`ntfs-reader`'s own `journal.rs` for the `DeviceIoControl` call, but
+`GetVolumeInformationByHandleW`'s exact shape wasn't independently verified
+against this specific `windows` version and needs a real compile check, not
+just a read-through.
 
 - [ ] **Step 3: Manual test** (no unit-testable path without a real elevated
       volume — this is a thin wrapper around one Windows API call)
@@ -160,6 +186,20 @@ git commit -m "feat(native): add --usn-info mode, querying the journal directly"
 ---
 
 ## Task 2: Persisted index format + checkpoint file (pure, TDD)
+
+**Revised after plan review.** A first draft of this task used NDJSON (one
+JSON line per record) for the persisted index, "the simplest thing that
+satisfies today's needs." Review caught a real problem with that: the
+spec's own §1 measured `JSON.parse`-ing 2.565M NDJSON edges at **~4.7s** —
+and that's for one subtree scan's worth of edges. A *whole-volume* persisted
+index (which is what this task actually builds — it has to cover every
+record, not just one folder's subtree) is at least that large and plausibly
+larger. Loading it via `JSON.parse` on every warm scan could eat most or all
+of the ≤2–3s budget this entire plan exists to hit, before a single journal
+event is even applied. That's not a future optimization to defer — it directly
+contradicts this task's own purpose, so the format is binary from the start,
+matching what spec §6 originally specified ("a binary, FRN-indexed record
+store (fixed-size records...)").
 
 **Files:**
 - Create: `src/services/ntfsMftIndexStore.ts`
@@ -244,54 +284,110 @@ export interface IndexRecord {
   mtimeMs: number;
 }
 
+const MAGIC = 0x4e4d4649; // "NMFI" as a little-endian u32
+// checkpoint header: magic(4) + formatVersion(4) + volumeSerialNumber(4)
+// + usnJournalId(8) + lastUsnProcessed(8) + recordCount(4) + namesBlobLength(4)
+const HEADER_SIZE = 36;
+// per-record fixed fields: recordNo(8) + parentRecordNo(8) + size(8)
+// + mtimeMs(8) + isDir(1, padded to 4) + nameOffset(4) + nameLength(2, padded to 4)
+const RECORD_SIZE = 48;
+
 /**
- * On-disk shape: one JSON line for the checkpoint, then one JSON line per
- * record (NDJSON, same wire-format discipline as the cold-scan helper — no
- * single-string-size ceiling regardless of volume size). A real fixed-size
- * binary format is a reasonable future optimization; NDJSON is the simplest
- * thing that satisfies the invalidation logic's needs today, and the
- * checkpoint fields are what invalidation actually reads — the exact record
- * encoding underneath can change later behind formatVersion without touching
- * callers.
+ * Binary format, not NDJSON/JSON — a fixed-size header, a fixed-size record
+ * array (no per-record parsing/allocation), and a separate names blob that
+ * records point into by (offset, length). Chosen specifically because this
+ * plan's own predecessor draft used NDJSON and a review caught that
+ * `JSON.parse`-ing a whole-volume-sized index on every warm scan could burn
+ * through the ≤2–3s warm budget by itself — see the note above this task.
+ * Same "avoid a JSON.parse per record at scale" lesson this project already
+ * learned twice (the Rust read path, and gdu's own mapper).
  */
 export async function saveIndex(
   filePath: string,
   checkpoint: IndexCheckpoint,
   records: IndexRecord[],
 ): Promise<void> {
-  const lines = [
-    JSON.stringify({
-      ...checkpoint,
-      usnJournalId: checkpoint.usnJournalId.toString(),
-      lastUsnProcessed: checkpoint.lastUsnProcessed.toString(),
-    }),
-    ...records.map((r) => JSON.stringify(r)),
-  ];
-  await fsp.writeFile(filePath, lines.join('\n') + '\n', 'utf8');
+  const nameBuffers = records.map((r) => Buffer.from(r.name, 'utf8'));
+  const namesBlobLength = nameBuffers.reduce((sum, b) => sum + b.length, 0);
+  const buf = Buffer.alloc(HEADER_SIZE + records.length * RECORD_SIZE + namesBlobLength);
+
+  let off = 0;
+  buf.writeUInt32LE(MAGIC, off); off += 4;
+  buf.writeUInt32LE(checkpoint.formatVersion, off); off += 4;
+  buf.writeUInt32LE(checkpoint.volumeSerialNumber, off); off += 4;
+  buf.writeBigUInt64LE(checkpoint.usnJournalId, off); off += 8;
+  buf.writeBigInt64LE(checkpoint.lastUsnProcessed, off); off += 8;
+  buf.writeUInt32LE(records.length, off); off += 4;
+  buf.writeUInt32LE(namesBlobLength, off); off += 4;
+
+  let nameOffset = HEADER_SIZE + records.length * RECORD_SIZE;
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    const nameBuf = nameBuffers[i];
+    const recordStart = HEADER_SIZE + i * RECORD_SIZE;
+    buf.writeBigUInt64LE(BigInt(r.recordNo), recordStart);
+    buf.writeBigUInt64LE(BigInt(r.parentRecordNo), recordStart + 8);
+    buf.writeBigUInt64LE(BigInt(r.size), recordStart + 16);
+    buf.writeBigInt64LE(BigInt(r.mtimeMs), recordStart + 24);
+    buf.writeUInt8(r.isDir ? 1 : 0, recordStart + 32);
+    buf.writeUInt32LE(nameOffset, recordStart + 36);
+    buf.writeUInt16LE(nameBuf.length, recordStart + 40);
+    nameBuf.copy(buf, nameOffset);
+    nameOffset += nameBuf.length;
+  }
+
+  await fsp.writeFile(filePath, buf);
 }
 
 export async function loadIndex(
   filePath: string,
 ): Promise<{ checkpoint: IndexCheckpoint; records: IndexRecord[] }> {
-  const text = await fsp.readFile(filePath, 'utf8');
-  const lines = text.split('\n').filter((l) => l.trim());
-  const [checkpointLine, ...recordLines] = lines;
-  const raw = JSON.parse(checkpointLine);
-  if (raw.formatVersion !== INDEX_FORMAT_VERSION) {
+  const buf = await fsp.readFile(filePath);
+
+  const magic = buf.readUInt32LE(0);
+  const formatVersion = buf.readUInt32LE(4);
+  if (magic !== MAGIC || formatVersion !== INDEX_FORMAT_VERSION) {
     throw new Error(
-      `ntfs-mft index format version mismatch: file has ${raw.formatVersion}, expected ${INDEX_FORMAT_VERSION}`,
+      `ntfs-mft index format version mismatch: file has ${formatVersion} (magic ${magic.toString(16)}), expected ${INDEX_FORMAT_VERSION}`,
     );
   }
   const checkpoint: IndexCheckpoint = {
-    volumeSerialNumber: raw.volumeSerialNumber,
-    usnJournalId: BigInt(raw.usnJournalId),
-    lastUsnProcessed: BigInt(raw.lastUsnProcessed),
-    formatVersion: raw.formatVersion,
+    volumeSerialNumber: buf.readUInt32LE(8),
+    usnJournalId: buf.readBigUInt64LE(12),
+    lastUsnProcessed: buf.readBigInt64LE(20),
+    formatVersion,
   };
-  const records: IndexRecord[] = recordLines.map((l) => JSON.parse(l));
+  const recordCount = buf.readUInt32LE(28);
+
+  const records: IndexRecord[] = new Array(recordCount);
+  const namesStart = HEADER_SIZE + recordCount * RECORD_SIZE;
+  for (let i = 0; i < recordCount; i++) {
+    const recordStart = HEADER_SIZE + i * RECORD_SIZE;
+    const nameOffset = buf.readUInt32LE(recordStart + 36);
+    const nameLength = buf.readUInt16LE(recordStart + 40);
+    records[i] = {
+      recordNo: Number(buf.readBigUInt64LE(recordStart)),
+      parentRecordNo: Number(buf.readBigUInt64LE(recordStart + 8)),
+      size: Number(buf.readBigUInt64LE(recordStart + 16)),
+      mtimeMs: Number(buf.readBigInt64LE(recordStart + 24)),
+      isDir: buf.readUInt8(recordStart + 32) !== 0,
+      name: buf.toString('utf8', nameOffset, nameOffset + nameLength),
+    };
+  }
+  void namesStart; // kept for clarity/future validation, not otherwise used
+
   return { checkpoint, records };
 }
 ```
+
+**Verify while implementing:** `Number(bigUint64)` for `recordNo`/
+`parentRecordNo`/`size` loses precision above 2^53 — fine for `recordNo`/
+`parentRecordNo` (MFT record numbers on any real volume are far below that),
+but double-check `size` can't legitimately exceed 2^53 bytes (~9 petabytes)
+on any volume this app will ever see before assuming `Number` is safe there
+too; if it ever needs to be exact past that range, keep it as `bigint` in
+`IndexRecord` instead; the round-trip test in Step 1 covers only realistic
+sizes and won't catch this by itself.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -457,6 +553,31 @@ loop until no more records, writing one NDJSON line per `UsnRecord` (`usn`,
 final `next_usn` to a `_meta` line — mirroring the existing `_meta` pattern
 already used for `targetRecordNo` in the cold-scan mode.
 
+**Reason classification, flagged by plan review as a real gap in a first
+draft:** a real `USN_RECORD`'s `Reason` field is a bitmask — a brand-new file
+routinely arrives as `FILE_CREATE | DATA_EXTEND | CLOSE` all set on one
+record, not just one bit. This step must collapse that bitmask into exactly
+one of `JournalEvent`'s `reason` strings (Task 4 Step 4 below) using a fixed
+priority order, **structural bits before data bits**, since a structural
+change carries information a data-only event can't (name, parent, existence)
+and must never be shadowed by a co-occurring data bit:
+
+```
+if reason & USN_REASON_FILE_DELETE != 0        -> "delete"
+else if reason & USN_REASON_FILE_CREATE != 0   -> "create"
+else if reason & (RENAME_NEW_NAME) != 0         -> "rename"
+else if reason & USN_REASON_DATA_EXTEND != 0    -> "data-extend"
+else if reason & USN_REASON_DATA_OVERWRITE != 0 -> "data-overwrite"
+else if reason & USN_REASON_DATA_TRUNCATION != 0 -> "data-truncation"
+else                                             -> "basic-info-change"
+```
+
+(`RENAME_OLD_NAME`-only records, with no `RENAME_NEW_NAME` bit, carry no new
+name/parent and should be skipped rather than classified as `"rename"` — the
+crate's own `Journal::match_rename` history buffer exists for correlating
+these; that correlation is out of scope for a first cut of this task and can
+be a follow-up if it proves necessary.)
+
 - [ ] **Step 2: Write the failing tests for event application (TS, pure)**
 
 Create `tests/ntfsMftJournalApply.test.ts`:
@@ -504,6 +625,33 @@ test('an unrelated data-change event updates size/mtime without touching name/pa
   assert.equal(updated.size, 999);
   assert.equal(updated.name, 'old-name.txt', 'name must survive a data-only event');
 });
+
+test('a data-only event for an unknown recordNo throws JournalApplyGapError, never a silent no-op', () => {
+  // Real cause: the Rust side picked a data bit over a co-occurring CREATE
+  // bit when classifying a combined Reason (should not happen per Task 4
+  // Step 1's priority order, but must be treated as a detected gap, not
+  // silently swallowed, if it ever does) — surfaces as "must full-reindex",
+  // matching the invalidation philosophy in ntfsMftInvalidation.ts.
+  assert.throws(
+    () => applyJournalEvents(baseRecords(), [
+      { recordNo: 9999, reason: 'data-extend', size: 1, mtimeMs: 1 },
+    ]),
+    /JournalApplyGapError/,
+  );
+});
+
+test('a create/rename event with no existing record and no parent/name throws rather than defaulting silently', () => {
+  // The wire contract from Rust always includes parentRecordNo/name on
+  // create/rename events — a missing field here means something upstream is
+  // broken, and defaulting to parent 0 ($MFT itself) would silently orphan
+  // the file from the visible tree instead of surfacing the bug.
+  assert.throws(
+    () => applyJournalEvents(baseRecords(), [
+      { recordNo: 202, reason: 'create' },
+    ]),
+    /JournalApplyGapError/,
+  );
+});
 ```
 
 - [ ] **Step 3: Run to verify it fails**
@@ -529,12 +677,28 @@ export interface JournalEvent {
 }
 
 /**
+ * Thrown when a journal event can't be applied safely — an unknown recordNo
+ * on a non-structural event, or a create/rename missing required fields with
+ * nothing existing to fall back to. Both mean something is inconsistent
+ * between the persisted index and the journal stream; per
+ * docs/superpowers/specs/2026-07-24-ntfs-mft-turbo-v2-design.md §6's own
+ * philosophy ("silently resuming would miss changes rather than error
+ * loudly, so it isn't attempted"), the caller catches this and falls back to
+ * a full reindex — never silently drops or misparents a file.
+ */
+export class JournalApplyGapError extends Error {
+  constructor(message: string) {
+    super(`JournalApplyGapError: ${message}`);
+    this.name = 'JournalApplyGapError';
+  }
+}
+
+/**
  * Applies USN journal events to an existing FRN-indexed record set, per
- * docs/superpowers/specs/2026-07-24-ntfs-mft-turbo-v2-design.md §6:
- * rename updates name/parent in place, delete removes, and a later create on
- * the SAME recordNo is a normal new file (NTFS reuses MFT records) — never
- * treated as corruption. Non-structural events (data-extend etc.) only
- * touch the fields the event actually reports.
+ * spec §6: rename updates name/parent in place, delete removes, and a later
+ * create on the SAME recordNo is a normal new file (NTFS reuses MFT
+ * records) — never treated as corruption. Non-structural events (data-extend
+ * etc.) only touch the fields the event actually reports.
  */
 export function applyJournalEvents(
   records: IndexRecord[],
@@ -550,10 +714,17 @@ export function applyJournalEvents(
 
     const existing = byRecordNo.get(event.recordNo);
     if (event.reason === 'create' || event.reason === 'rename') {
+      const parentRecordNo = event.parentRecordNo ?? existing?.parentRecordNo;
+      const name = event.name ?? existing?.name;
+      if (parentRecordNo === undefined || name === undefined) {
+        throw new JournalApplyGapError(
+          `${event.reason} event for record ${event.recordNo} has no parent/name and no existing record to fall back to`,
+        );
+      }
       byRecordNo.set(event.recordNo, {
         recordNo: event.recordNo,
-        parentRecordNo: event.parentRecordNo ?? existing?.parentRecordNo ?? 0,
-        name: event.name ?? existing?.name ?? '',
+        parentRecordNo,
+        name,
         isDir: event.isDir ?? existing?.isDir ?? false,
         size: event.size ?? existing?.size ?? 0,
         mtimeMs: event.mtimeMs ?? existing?.mtimeMs ?? 0,
@@ -561,14 +732,20 @@ export function applyJournalEvents(
       continue;
     }
 
-    // Non-structural: only touch fields the event actually carries.
-    if (existing) {
-      byRecordNo.set(event.recordNo, {
-        ...existing,
-        size: event.size ?? existing.size,
-        mtimeMs: event.mtimeMs ?? existing.mtimeMs,
-      });
+    // Non-structural: only touch fields the event actually carries. An
+    // unknown recordNo here means the journal stream and the persisted
+    // index have drifted (e.g. a combined-Reason record misclassified
+    // upstream) — surface it rather than silently doing nothing.
+    if (!existing) {
+      throw new JournalApplyGapError(
+        `${event.reason} event for unknown record ${event.recordNo} — index and journal have drifted`,
+      );
     }
+    byRecordNo.set(event.recordNo, {
+      ...existing,
+      size: event.size ?? existing.size,
+      mtimeMs: event.mtimeMs ?? existing.mtimeMs,
+    });
   }
 
   return Array.from(byRecordNo.values());
@@ -578,7 +755,7 @@ export function applyJournalEvents(
 - [ ] **Step 5: Run to verify it passes**
 
 Run: `npx tsx --test tests/ntfsMftJournalApply.test.ts`
-Expected: PASS — all 3 tests green.
+Expected: PASS — all 5 tests green.
 
 - [ ] **Step 6: Commit**
 
@@ -682,6 +859,9 @@ volume/journal access; the main (unprivileged) app process talks to it.
       same fallback, not a silent hang
 - [ ] Corrupted/unreadable persisted index file → treated as "no checkpoint"
       (full reindex), not a crash
+- [ ] `JournalApplyGapError` from Task 4's `applyJournalEvents` (index and
+      journal stream drifted) → caught and treated as a full-reindex trigger,
+      same as the invalidation-logic reasons in Task 3 — not a scan error
 - [ ] Every fallback path logs why, matching the discipline every other
       engine fallback in this codebase already has
 
