@@ -1,0 +1,10 @@
+{"recordNo":100,"parentRecordNo":5,"name":"fx","size":0,"isDir":true,"mtimeMs":1732000000000}
+{"recordNo":101,"parentRecordNo":100,"name":".hidden","size":2,"isDir":false,"mtimeMs":1732000000000}
+{"recordNo":102,"parentRecordNo":100,"name":"a.txt","size":5,"isDir":false,"mtimeMs":1732000000000}
+{"recordNo":103,"parentRecordNo":100,"name":"sub","size":0,"isDir":true,"mtimeMs":1732000000000}
+{"recordNo":102,"parentRecordNo":103,"name":"hardlink.txt","size":5,"isDir":false,"mtimeMs":1732000000000}
+{"recordNo":104,"parentRecordNo":103,"name":"b.log","size":3,"isDir":false,"mtimeMs":1732000000000}
+{"recordNo":105,"parentRecordNo":103,"name":"deep","size":0,"isDir":true,"mtimeMs":1732000000000}
+{"recordNo":106,"parentRecordNo":105,"name":"c.dat","size":1,"isDir":false,"mtimeMs":1732000000000}
+{"recordNo":107,"parentRecordNo":100,"name":"empty","size":0,"isDir":true,"mtimeMs":1732000000000}
+{"recordNo":108,"parentRecordNo":100,"name":"zero.bin","size":0,"isDir":false,"mtimeMs":1732000000000}
