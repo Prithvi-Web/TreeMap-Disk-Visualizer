@@ -14,7 +14,7 @@ release/
 /build/ntfs-mft-scan/
 /ntfs-mft-scan/
 native/ntfs-mft-scan/target/
-native/ntfs-mft-scan/Cargo.lock
+# Cargo.lock is committed for this binary crate (pin ntfs-reader for fixup_record)
 
 # Local multi-session agent handoff - keep on disk, never ship in PRs
 HANDOFF.md
