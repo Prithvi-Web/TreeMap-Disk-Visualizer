@@ -76,8 +76,18 @@ Add a new flag to `parse_args()` in `native/ntfs-mft-scan/src/main.rs`
 `usn_info: bool`, set when `--usn-info` is present. When set, `main()` takes
 a separate, much shorter path: open the volume (same elevation requirement),
 query `FSCTL_QUERY_USN_JOURNAL`, and write one JSON line to `--out` with
-`{"volumeSerialNumber":..,"usnJournalId":..,"firstUsn":..,"nextUsn":..}`,
+`{"volumeSerialNumber":..,"usnJournalId":"..","firstUsn":"..","nextUsn":".."}`,
 then exit — it does not read the MFT at all.
+
+**`usnJournalId`/`firstUsn`/`nextUsn` must be JSON strings, not bare
+numbers** — caught in a second review pass. These are 64-bit,
+FILETIME-derived values that already exceed
+`Number.MAX_SAFE_INTEGER` on any real machine today; a bare JSON number
+loses precision *before* the TS side's `BigInt(...)` ever runs, silently
+undermining the exact journal-ID-mismatch comparison Task 3 exists to make
+reliable. `volumeSerialNumber` (a real 32-bit value) is fine as a bare
+number. `main.rs`'s existing hand-written JSON (no serde) already
+demonstrates the pattern to follow — see `write_edge`'s `write!` calls.
 
 ```rust
 struct UsnJournalInfo {
@@ -137,17 +147,21 @@ fn query_usn_journal_info(volume_path: &str) -> std::io::Result<UsnJournalInfo> 
     // volumeSerialNumber is the first, most load-bearing field in Task 3's
     // invalidation precedence and can't be left as a TODO. Reuses the same
     // handle already open above rather than opening the volume twice.
+    // Corrected in a second review pass: the `windows` 0.62 crate binding
+    // for this API merges each buffer+size pair into a single
+    // Option<&mut [u16]> slice — 6 params total, not the raw Win32 header's
+    // 8 (verified against docs.rs for this exact crate version; the first
+    // draft's 8-param call, copied from the C signature shape, would not
+    // have compiled).
     let mut volume_serial: u32 = 0;
     unsafe {
         GetVolumeInformationByHandleW(
             handle,
-            None,                      // lpVolumeNameBuffer — not needed
-            0,                         // nVolumeNameSize
+            None,                      // volume name buffer — not needed
             Some(&mut volume_serial),  // lpVolumeSerialNumber — the one we want
-            None,                      // lpMaximumComponentLength — not needed
-            None,                      // lpFileSystemFlags — not needed
-            None,                      // lpFileSystemNameBuffer — not needed
-            0,                         // nFileSystemNameSize
+            None,                      // max component length — not needed
+            None,                      // filesystem flags — not needed
+            None,                      // filesystem name buffer — not needed
         )
     }.map_err(|e| std::io::Error::other(e.to_string()))?;
 
@@ -158,17 +172,26 @@ fn query_usn_journal_info(volume_path: &str) -> std::io::Result<UsnJournalInfo> 
         next_usn: journal.NextUsn,
     })
 }
+
+/// Writes the `--usn-info` JSON line. usnJournalId/firstUsn/nextUsn are
+/// quoted strings (see the note above) — volumeSerialNumber is a real u32,
+/// safe as a bare JSON number.
+fn write_usn_info<W: std::io::Write>(w: &mut W, info: &UsnJournalInfo) -> std::io::Result<()> {
+    writeln!(
+        w,
+        "{{\"volumeSerialNumber\":{},\"usnJournalId\":\"{}\",\"firstUsn\":\"{}\",\"nextUsn\":\"{}\"}}",
+        info.volume_serial_number, info.usn_journal_id, info.first_usn, info.next_usn,
+    )
+}
 ```
 
-**Verify while implementing:** the exact `windows` crate 0.62 type names,
-field casing, and `GetVolumeInformationByHandleW`'s exact parameter list
-(some `windows`-crate versions group the out-params differently, or return
-them via a struct rather than individual `Option<&mut _>` args) — the code
-above is written against the pattern already confirmed working in
-`ntfs-reader`'s own `journal.rs` for the `DeviceIoControl` call, but
-`GetVolumeInformationByHandleW`'s exact shape wasn't independently verified
-against this specific `windows` version and needs a real compile check, not
-just a read-through.
+**Verify while implementing:** the `DeviceIoControl`/`CreateFileA` shapes are
+confirmed against `ntfs-reader`'s own real `journal.rs`, and
+`GetVolumeInformationByHandleW`'s 6-param shape above is confirmed against
+docs.rs for `windows` 0.62 specifically — both should compile as written.
+Still worth an actual `cargo build` before trusting it fully, same as any
+plan code, but this isn't an open question the way it was in the first
+draft.
 
 - [ ] **Step 3: Manual test** (no unit-testable path without a real elevated
       volume — this is a thin wrapper around one Windows API call)
@@ -288,8 +311,12 @@ const MAGIC = 0x4e4d4649; // "NMFI" as a little-endian u32
 // checkpoint header: magic(4) + formatVersion(4) + volumeSerialNumber(4)
 // + usnJournalId(8) + lastUsnProcessed(8) + recordCount(4) + namesBlobLength(4)
 const HEADER_SIZE = 36;
-// per-record fixed fields: recordNo(8) + parentRecordNo(8) + size(8)
-// + mtimeMs(8) + isDir(1, padded to 4) + nameOffset(4) + nameLength(2, padded to 4)
+// per-record layout (byte offsets within each record):
+// recordNo(0-8) + parentRecordNo(8-16) + size(16-24) + mtimeMs(24-32)
+// + isDir(32-33) + [3 bytes padding] + nameOffset(36-40) + nameLength(40-42)
+// + [6 bytes trailing padding] = 48 total. A second review caught this
+// comment previously summing to 44, not the 48 the code actually uses —
+// fixed to match; Buffer.alloc zero-fills the padding and it's never read.
 const RECORD_SIZE = 48;
 
 /**
