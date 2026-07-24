@@ -3,8 +3,19 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
+import sudoPrompt from 'sudo-prompt'; // top-level import, matching this codebase's style — not a lazy require()
+import { ScanResult } from '../models/types';
+import { PackedScanStore, ScanStore } from './scanStore';
+import { parseNtfsMftEdges, resolveTargetRecord, buildNtfsMftStoreFromEdges } from './ntfsMftMapper';
 
 const execFileAsync = promisify(execFile);
+
+/** Backstop against a wedged elevated helper — mirrors gdu's SHARD_TIMEOUT_MS.
+ *  sudo-prompt gives no killable handle, so this can only stop US from
+ *  waiting forever; the orphaned process, if still running, finishes on its
+ *  own in its own temp dir and its output is simply never consumed. */
+const ELEVATED_RUN_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** A single drive letter, nothing else — the only value ever interpolated
  *  into the sudo-prompt shell string in Task 4, so it must be airtight. */
@@ -75,4 +86,84 @@ export async function findNtfsMftBinary(opts: FindOptions = {}): Promise<string 
     }
   }
   return null;
+}
+
+export interface NtfsMftScanOverrides {
+  /** Real implementation (Task 5 wiring) spawns ntfs-mft-scan.exe via
+   *  sudo-prompt; tests inject a fake that just writes NDJSON to outFile. */
+  runElevated?: (outFile: string, driveLetter: string) => Promise<void>;
+}
+
+function runElevatedViaSudoPrompt(outFile: string, driveLetter: string, binPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!isValidDriveLetter(driveLetter)) {
+      reject(new Error(`refusing to elevate with an invalid drive letter: ${driveLetter}`));
+      return;
+    }
+    // sudo-prompt's API takes a shell command STRING, not an argv array —
+    // the one place in this codebase that can't use execFile's argv safety.
+    // Both interpolated values are strictly constrained: driveLetter is
+    // validated above (single letter only), outFile is always one WE
+    // generated via fsp.mkdtemp — never user input.
+    const cmd = `"${binPath}" --volume ${driveLetter} --out "${outFile}"`;
+    const timer = setTimeout(() => reject(new Error('ntfs-mft-scan timed out')), ELEVATED_RUN_TIMEOUT_MS);
+    sudoPrompt.exec(cmd, { name: 'TreeMap' }, (err: Error | null) => {
+      clearTimeout(timer);
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
+/**
+ * Build a store for `scan.rootPath` (a folder under drive `driveLetter`,
+ * split into `pathComponents` relative to the volume root) via a full-volume
+ * MFT read. Throws on any failure — callers (Task 5) fall back to gdu/walker.
+ */
+export async function ntfsMftScanIntoStore(
+  scan: ScanResult,
+  driveLetter: string,
+  pathComponents: string[],
+  overrides: NtfsMftScanOverrides = {},
+): Promise<ScanStore> {
+  const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'treemap-ntfs-mft-'));
+  const outFile = path.join(tmpDir, 'edges.ndjson');
+  try {
+    if (overrides.runElevated) {
+      await overrides.runElevated(outFile, driveLetter);
+    } else {
+      const bin = await findNtfsMftBinary();
+      if (!bin) throw new Error('ntfs-mft-scan binary not found');
+      await runElevatedViaSudoPrompt(outFile, driveLetter, bin);
+    }
+
+    const ndjson = await fsp.readFile(outFile, 'utf8');
+    const edges = parseNtfsMftEdges(ndjson);
+    const targetRecordNo = resolveTargetRecord(edges, pathComponents);
+    if (targetRecordNo === null) {
+      throw new Error(`could not resolve ${scan.rootPath} in the MFT edge set`);
+    }
+
+    const rootName = pathComponents.length ? pathComponents[pathComponents.length - 1] : `${driveLetter}:\\`;
+    const store = new PackedScanStore(scan.rootPath, '\\', {
+      name: rootName,
+      isDir: true,
+      size: 0,
+      modifiedAt: Date.now(),
+      isHidden: false,
+    });
+
+    const { stats } = buildNtfsMftStoreFromEdges(edges, targetRecordNo, store, store.rootId);
+    scan.fileCount = stats.fileCount;
+    scan.dirCount = stats.dirCount + 1; // +1 for the root itself
+    scan.hardlinkedFiles = stats.hardlinkedFiles;
+    scan.hardlinkedBytes = stats.hardlinkedBytes;
+    scan.scanned = scan.fileCount + scan.dirCount;
+
+    store.finalize();
+    store.sumSizes();
+    return store;
+  } finally {
+    await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
 }

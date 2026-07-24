@@ -1,7 +1,7 @@
 {
   "name": "treemap",
   "version": "2.3.2",
-  "description": "TreeMap \u2014 a GrandPerspective-style disk space visualizer for macOS, Linux and Windows",
+  "description": "TreeMap — a GrandPerspective-style disk space visualizer for macOS, Linux and Windows",
   "author": "Prithvi-Web",
   "main": "electron/main.js",
   "scripts": {
@@ -27,7 +27,8 @@
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "pdfmake": "^0.2.23",
-    "sharp": "^0.35.2"
+    "sharp": "^0.35.2",
+    "sudo-prompt": "^9.2.1"
   },
   "overrides": {
     "exceljs": {
