@@ -1,6 +1,7 @@
-import { execFile, spawn } from 'child_process';
-import { promises as fsp } from 'fs';
-import { CleanResult } from '../models/types';
+import { execFile, spawn } from "child_process";
+import { promises as fsp } from "fs";
+import path from "path";
+import { CleanResult } from "../models/types";
 
 /**
  * Cleaner — moves files to the system trash and opens paths in the OS.
@@ -11,60 +12,75 @@ import { CleanResult } from '../models/types';
  * quotes, spaces or $(...) can never be interpreted as shell syntax.
  */
 
+/** Windows recycle helper — SHFileOperation, not VB FileSystem (see script).
+ *  Packaged builds load it from extraResources (asar is opaque to powershell.exe). */
+export function windowsRecycleScriptPath(): string {
+  const resources = (process as NodeJS.Process & { resourcesPath?: string })
+    .resourcesPath;
+  if (resources) {
+    return path.join(resources, "scripts", "sendToRecycleBin.ps1");
+  }
+  return path.join(__dirname, "..", "..", "scripts", "sendToRecycleBin.ps1");
+}
+
 function run(cmd: string, args: string[], timeoutMs = 15000): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: timeoutMs, windowsHide: true }, (err, _stdout, stderr) => {
-      if (err) {
-        const detail = (stderr || err.message || 'command failed').trim();
-        reject(new Error(detail));
-      } else {
-        resolve();
-      }
-    });
+    execFile(
+      cmd,
+      args,
+      { timeout: timeoutMs, windowsHide: true },
+      (err, _stdout, stderr) => {
+        if (err) {
+          const detail = (stderr || err.message || "command failed").trim();
+          reject(new Error(detail));
+        } else {
+          resolve();
+        }
+      },
+    );
   });
 }
 
 /** Escape a string for embedding inside an AppleScript double-quoted literal. */
 function appleScriptString(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 async function trashOne(p: string): Promise<void> {
-  // Confirm the path still exists (and learn file-vs-dir for Windows).
-  const stat = await fsp.lstat(p); // throws ENOENT -> caught by caller
+  // Confirm the path still exists before asking the OS to trash it.
+  await fsp.lstat(p); // throws ENOENT -> caught by caller
 
   switch (process.platform) {
-    case 'darwin': {
+    case "darwin": {
       const script = `tell application "Finder" to delete POSIX file "${appleScriptString(p)}"`;
-      await run('osascript', ['-e', script]);
+      await run("osascript", ["-e", script]);
       return;
     }
-    case 'win32': {
-      const method = stat.isDirectory() ? 'DeleteDirectory' : 'DeleteFile';
-      // FileIO.FileSystem routes through the Recycle Bin natively.
-      const ps = [
-        'Add-Type -AssemblyName Microsoft.VisualBasic;',
-        `[Microsoft.VisualBasic.FileIO.FileSystem]::${method}(`,
-        `[string]$env:TREEMAP_TRASH_TARGET,`,
-        `'OnlyErrorDialogs', 'SendToRecycleBin')`,
-      ].join(' ');
-      await new Promise<void>((resolve, reject) => {
-        execFile(
-          'powershell.exe',
-          ['-NoProfile', '-NonInteractive', '-Command', ps],
-          { timeout: 20000, windowsHide: true, env: { ...process.env, TREEMAP_TRASH_TARGET: p } },
-          (err, _stdout, stderr) => {
-            if (err) reject(new Error((stderr || err.message).trim()));
-            else resolve();
-          }
-        );
-      });
+    case "win32": {
+      // Prefer SHFileOperation(FOF_ALLOWUNDO) over VisualBasic FileIO.FileSystem
+      // DeleteFile/DeleteDirectory: the VB helpers' RecycleOption is unsupported
+      // in non-interactive hosts and fails with ERROR_INVALID_LEVEL
+      // ("The system call level is not correct") for many real folders.
+      await run(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          windowsRecycleScriptPath(),
+          "-Path",
+          p,
+        ],
+        60_000,
+      );
       return;
     }
     default: {
       // Linux & friends: freedesktop trash via gio (GLib), present on all
       // mainstream desktop distros.
-      await run('gio', ['trash', p]);
+      await run("gio", ["trash", p]);
       return;
     }
   }
@@ -82,7 +98,10 @@ export async function moveToTrash(paths: string[]): Promise<CleanResult> {
       await trashOne(p);
       deleted.push(p);
     } catch (err) {
-      failed.push({ path: p, reason: err instanceof Error ? err.message : String(err) });
+      failed.push({
+        path: p,
+        reason: err instanceof Error ? err.message : String(err),
+      });
     }
   }
   return { deleted, failed };
@@ -105,30 +124,36 @@ export async function moveToTrash(paths: string[]): Promise<CleanResult> {
  *    has none, so a fixed `sh -c` script reads the target from $1 — the path
  *    is never interpolated into shell text.
  */
-export function terminalCommands(dir: string, platform: NodeJS.Platform = process.platform): { cmd: string; args: string[] }[] {
+export function terminalCommands(
+  dir: string,
+  platform: NodeJS.Platform = process.platform,
+): { cmd: string; args: string[] }[] {
   switch (platform) {
-    case 'darwin': {
+    case "darwin": {
       const script =
         `tell application "Terminal"\n` +
         `do script "cd " & quoted form of "${appleScriptString(dir)}"\n` +
         `activate\n` +
         `end tell`;
       return [
-        { cmd: 'osascript', args: ['-e', script] },
-        { cmd: 'open', args: ['-a', 'Terminal', dir] },
+        { cmd: "osascript", args: ["-e", script] },
+        { cmd: "open", args: ["-a", "Terminal", dir] },
       ];
     }
-    case 'win32':
+    case "win32":
       return [
-        { cmd: 'wt.exe', args: ['-d', dir] },
-        { cmd: 'cmd.exe', args: ['/c', 'start', '', '/D', dir, 'cmd.exe'] },
+        { cmd: "wt.exe", args: ["-d", dir] },
+        { cmd: "cmd.exe", args: ["/c", "start", "", "/D", dir, "cmd.exe"] },
       ];
     default:
       return [
-        { cmd: 'x-terminal-emulator', args: [`--working-directory=${dir}`] },
-        { cmd: 'gnome-terminal', args: [`--working-directory=${dir}`] },
-        { cmd: 'konsole', args: ['--workdir', dir] },
-        { cmd: 'xterm', args: ['-e', 'sh', '-c', 'cd "$1" && exec "${SHELL:-sh}"', 'sh', dir] },
+        { cmd: "x-terminal-emulator", args: [`--working-directory=${dir}`] },
+        { cmd: "gnome-terminal", args: [`--working-directory=${dir}`] },
+        { cmd: "konsole", args: ["--workdir", dir] },
+        {
+          cmd: "xterm",
+          args: ["-e", "sh", "-c", 'cd "$1" && exec "${SHELL:-sh}"', "sh", dir],
+        },
       ];
   }
 }
@@ -141,15 +166,34 @@ export function terminalCommands(dir: string, platform: NodeJS.Platform = proces
  */
 function launchTerminal(cmd: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true });
-    let settled = false;
-    const settle = (fn: () => void): void => { if (!settled) { settled = true; fn(); } };
-    child.once('error', (err) => settle(() => reject(err))); // ENOENT — not installed
-    child.once('exit', (code) => {
-      if (code === 0) settle(resolve);
-      else settle(() => reject(new Error(`${cmd} exited with code ${String(code)}`)));
+    const child = spawn(cmd, args, {
+      stdio: "ignore",
+      detached: true,
+      windowsHide: true,
     });
-    setTimeout(() => settle(() => { child.unref(); resolve(); }), 1200);
+    let settled = false;
+    const settle = (fn: () => void): void => {
+      if (!settled) {
+        settled = true;
+        fn();
+      }
+    };
+    child.once("error", (err) => settle(() => reject(err))); // ENOENT — not installed
+    child.once("exit", (code) => {
+      if (code === 0) settle(resolve);
+      else
+        settle(() =>
+          reject(new Error(`${cmd} exited with code ${String(code)}`)),
+        );
+    });
+    setTimeout(
+      () =>
+        settle(() => {
+          child.unref();
+          resolve();
+        }),
+      1200,
+    );
   });
 }
 
@@ -165,10 +209,14 @@ export async function openTerminal(dirPath: string): Promise<void> {
       await launchTerminal(cmd, args);
       return;
     } catch (err) {
-      errors.push(`${cmd}: ${err instanceof Error ? err.message : String(err)}`);
+      errors.push(
+        `${cmd}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
-  throw new Error(`No terminal emulator could be opened (${errors.join('; ')})`);
+  throw new Error(
+    `No terminal emulator could be opened (${errors.join("; ")})`,
+  );
 }
 
 /**
@@ -179,23 +227,23 @@ export async function openPath(p: string, reveal = false): Promise<void> {
   await fsp.lstat(p); // throws ENOENT for missing paths
 
   switch (process.platform) {
-    case 'darwin':
-      await run('open', reveal ? ['-R', p] : [p]);
+    case "darwin":
+      await run("open", reveal ? ["-R", p] : [p]);
       return;
-    case 'win32':
+    case "win32":
       if (reveal) {
-        await run('explorer.exe', ['/select,', p]).catch(() => {
+        await run("explorer.exe", ["/select,", p]).catch(() => {
           /* explorer returns nonzero exit codes even on success */
         });
       } else {
         // `start` is a cmd builtin; empty title arg guards paths with spaces.
-        await run('cmd.exe', ['/c', 'start', '', p]).catch(() => {
+        await run("cmd.exe", ["/c", "start", "", p]).catch(() => {
           /* same quirk as explorer */
         });
       }
       return;
     default:
-      await run('xdg-open', [p]);
+      await run("xdg-open", [p]);
       return;
   }
 }
