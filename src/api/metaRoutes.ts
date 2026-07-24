@@ -1,10 +1,18 @@
 import { Router, Request, Response } from 'express';
 import path from 'path';
 import { buildOpenApiDocument, ENDPOINTS } from './openapi';
-import { clampInt } from './scanRoutes';
+import { clampInt, requireScan } from './scanRoutes';
 import { readAudit } from '../services/audit';
 import { getPolicy, POLICY_FILE } from '../services/policy';
 import { appDataDir } from '../services/storage';
+import { collectLargestFiles, collectLargestFolders } from '../services/diskScanner';
+import { collectCleanupSuggestions } from '../services/cleanupRules';
+import { getIgnoreMatchers } from '../services/settings';
+import { getForecast } from '../services/forecast';
+import { storeOf } from '../services/scanStore';
+import { formatBytes } from '../utils/formatBytes';
+import { AppError } from '../middleware/errorHandler';
+import { SuggestionCategory } from '../models/types';
 
 /**
  * metaRoutes — self-description for agents: the OpenAPI document and a
@@ -35,6 +43,80 @@ metaRouter.get('/audit', async (req: Request, res: Response) => {
  */
 metaRouter.get('/policy', async (_req: Request, res: Response) => {
   res.json({ policy: await getPolicy(), file: path.join(appDataDir(), POLICY_FILE) });
+});
+
+/**
+ * GET /api/agent/summary?scanId= — the whole picture in one read-only call:
+ * top culprits, reclaimable-by-category, and the disk-full forecast, composed
+ * from the exact services the individual endpoints use. Every number comes as
+ * raw bytes plus a formatted string; ids are the services' stable ids; every
+ * list is deterministically ordered (size desc), so two calls over the same
+ * scan return identical payloads.
+ */
+metaRouter.get('/agent/summary', async (req: Request, res: Response) => {
+  const scan = requireScan(req, req.query.scanId);
+  if (scan.status === 'running') {
+    res.status(202).json({ status: 'running', scanned: scan.scanned, currentPath: scan.currentPath });
+    return;
+  }
+  if (scan.status === 'error' || (!scan.store && !scan.root)) {
+    throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  }
+
+  const store = storeOf(scan);
+  const totalBytes = store.size(store.rootId);
+
+  const largestFiles = collectLargestFiles(store, 10, 0).map((f) => ({ ...f, sizeFormatted: formatBytes(f.size) }));
+  const largestFolders = collectLargestFolders(store, 10, 0).map((f) => ({ ...f, sizeFormatted: formatBytes(f.size) }));
+
+  const ignore = await getIgnoreMatchers('suggest');
+  const groups = collectCleanupSuggestions(store, ignore); // already sorted largest first
+  const reclaimableBytes = groups.reduce((sum, g) => sum + g.totalSize, 0);
+  const byCategoryMap = new Map<SuggestionCategory, { bytes: number; groupCount: number }>();
+  for (const g of groups) {
+    const agg = byCategoryMap.get(g.category) ?? { bytes: 0, groupCount: 0 };
+    agg.bytes += g.totalSize;
+    agg.groupCount += 1;
+    byCategoryMap.set(g.category, agg);
+  }
+  const byCategory = [...byCategoryMap.entries()]
+    .map(([category, agg]) => ({ category, bytes: agg.bytes, bytesFormatted: formatBytes(agg.bytes), groupCount: agg.groupCount }))
+    .sort((a, b) => b.bytes - a.bytes || a.category.localeCompare(b.category));
+
+  const forecast = await getForecast(scan.rootPath);
+
+  res.json({
+    scanId: scan.scanId,
+    rootPath: scan.rootPath,
+    totals: {
+      bytes: totalBytes,
+      formatted: formatBytes(totalBytes),
+      fileCount: scan.fileCount,
+      dirCount: scan.dirCount,
+    },
+    largestFiles,
+    largestFolders,
+    cleanup: {
+      reclaimableBytes,
+      reclaimableFormatted: formatBytes(reclaimableBytes),
+      byCategory,
+      groups: groups.slice(0, 10).map((g) => ({
+        id: g.id,
+        title: g.title,
+        category: g.category,
+        totalSize: g.totalSize,
+        totalSizeFormatted: formatBytes(g.totalSize),
+        itemCount: g.items.length,
+        ...(g.regenerateCmd !== undefined ? { regenerateCmd: g.regenerateCmd } : {}),
+        topItems: g.items.slice(0, 3).map((i) => ({ ...i, sizeFormatted: formatBytes(i.size) })),
+      })),
+    },
+    forecast: {
+      ...forecast,
+      bytesPerDayFormatted: formatBytes(Math.abs(forecast.bytesPerDay)),
+      freeFormatted: formatBytes(forecast.freeBytes),
+    },
+  });
 });
 
 /** GET /api/capabilities — endpoints, safety model, and the intended workflow. */
@@ -81,10 +163,10 @@ metaRouter.get('/capabilities', (_req: Request, res: Response) => {
         'Destructive endpoints honor an Idempotency-Key header: a retried request replays the stored response instead of executing twice',
     },
     workflow: [
-      'POST /api/scan with { path } → { scanId }',
+      'POST /api/scan with { path } → { scanId } (add ?wait=true to block until done)',
       'Poll GET /api/scan/{scanId}/stats until status is "complete" (or stream /progress via SSE)',
-      'Explore: /api/large-files, /api/large-folders, /api/cleanup/suggestions, /api/duplicates, /api/forecast',
-      'Confirm intent with the user, then act: DELETE /api/files or POST /api/offload',
+      'GET /api/agent/summary?scanId= for the whole picture in one call, or explore: /api/large-files, /api/large-folders, /api/cleanup/suggestions, /api/duplicates, /api/forecast',
+      'Confirm intent with the user, dry-run the destructive call (dryRun: true), then act: DELETE /api/files or POST /api/offload',
       'Anything trashed is recoverable from the OS Trash',
     ],
     mcp: {

@@ -332,6 +332,64 @@ const schemas: Json = {
     ['dryRun', 'fileCount', 'bytesTotal', 'dest', 'wouldTrashAfterVerify', 'copies', 'copiesTruncated'],
     'The exact plan a real offload would execute — nothing has been touched',
   ),
+  AgentSummary: obj(
+    {
+      scanId: str(),
+      rootPath: str(),
+      totals: obj(
+        { bytes: int(), formatted: str(), fileCount: int(), dirCount: int() },
+        ['bytes', 'formatted', 'fileCount', 'dirCount'],
+      ),
+      largestFiles: arr(
+        { allOf: [ref('LargeFile'), obj({ sizeFormatted: str() }, ['sizeFormatted'])] },
+        'Top 10, size desc',
+      ),
+      largestFolders: arr(
+        { allOf: [ref('LargeFolder'), obj({ sizeFormatted: str() }, ['sizeFormatted'])] },
+        'Top 10, size desc',
+      ),
+      cleanup: obj(
+        {
+          reclaimableBytes: int('Exact total across every suggestion group'),
+          reclaimableFormatted: str(),
+          byCategory: arr(
+            obj(
+              {
+                category: { type: 'string', enum: ['regenerable', 'cache', 'junk'] },
+                bytes: int(),
+                bytesFormatted: str(),
+                groupCount: int(),
+              },
+              ['category', 'bytes', 'bytesFormatted', 'groupCount'],
+            ),
+            'Bytes desc',
+          ),
+          groups: arr(
+            obj(
+              {
+                id: str('Stable rule id'),
+                title: str(),
+                category: { type: 'string', enum: ['regenerable', 'cache', 'junk'] },
+                totalSize: int(),
+                totalSizeFormatted: str(),
+                itemCount: int(),
+                regenerateCmd: str('Regenerable groups only'),
+                topItems: arr({ allOf: [ref('CleanupSuggestionItem'), obj({ sizeFormatted: str() }, ['sizeFormatted'])] }, 'Top 3'),
+              },
+              ['id', 'title', 'category', 'totalSize', 'totalSizeFormatted', 'itemCount', 'topItems'],
+            ),
+            'Top 10 groups, size desc',
+          ),
+        },
+        ['reclaimableBytes', 'reclaimableFormatted', 'byCategory', 'groups'],
+      ),
+      forecast: {
+        allOf: [ref('ForecastResult'), obj({ bytesPerDayFormatted: str(), freeFormatted: str() }, ['bytesPerDayFormatted', 'freeFormatted'])],
+      },
+    },
+    ['scanId', 'rootPath', 'totals', 'largestFiles', 'largestFolders', 'cleanup', 'forecast'],
+    'GET /api/agent/summary — the whole picture in one deterministic, read-only payload',
+  ),
   AppSettings: obj(
     {
       ignore: arr(obj({ pattern: str(), scope: { type: 'string', enum: ['scan', 'suggest', 'both'] } }, ['pattern', 'scope'])),
@@ -421,14 +479,31 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       '200': jsonResponse('Policy', obj({ policy: ref('AgentPolicy'), file: str('Absolute path of agent-policy.json') }, ['policy', 'file'])),
     },
   },
+  {
+    method: 'get',
+    path: '/api/agent/summary',
+    summary: 'One read-only call: top culprits, reclaimable-by-category, and the forecast — raw bytes + formatted, deterministic order',
+    tag: 'meta',
+    destructive: false,
+    parameters: [scanIdQuery],
+    responses: {
+      '200': jsonResponse('The summary', ref('AgentSummary')),
+      '202': jsonResponse('Scan still running', obj({ status: str("'running'"), scanned: int(), currentPath: str() }, ['status', 'scanned'])),
+      '404': errorResponse('Unknown scanId'),
+    },
+  },
 
   /* ------------ scanning ------------ */
   {
     method: 'post',
     path: '/api/scan',
-    summary: 'Start scanning a directory tree (progress via SSE or polling GET /api/scan/{scanId}/stats)',
+    summary: 'Start scanning a directory tree (progress via SSE or polling GET /api/scan/{scanId}/stats); ?wait=true blocks until done',
     tag: 'scan',
     destructive: false,
+    parameters: [
+      queryParam('wait', "'true' = block until the scan settles (or waitMs elapses) instead of returning immediately", bool()),
+      queryParam('waitMs', 'With wait=true: max wait in ms, 0–600000 (default 55000)', int()),
+    ],
     requestBody: jsonBody(
       obj(
         {
@@ -439,8 +514,21 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       ),
     ),
     responses: {
-      '202': jsonResponse('Scan started', obj({ scanId: str(), incremental: bool() }, ['scanId', 'incremental'])),
+      '200': jsonResponse(
+        'wait=true only: the scan completed within waitMs',
+        {
+          allOf: [
+            obj({ scanId: str(), status: str("'complete'"), incremental: bool() }, ['scanId', 'status', 'incremental']),
+            ref('ScanStats'),
+          ],
+        },
+      ),
+      '202': jsonResponse(
+        'Scan started (default), or still running after waitMs (wait=true adds status/scanned/currentPath)',
+        obj({ scanId: str(), incremental: bool(), status: str("wait=true only: 'running'"), scanned: int('wait=true only'), currentPath: str('wait=true only') }, ['scanId', 'incremental']),
+      ),
       '400': errorResponse('Path rejected'),
+      '403': errorResponse('Outside agent-policy.json allowedRoots'),
       '404': errorResponse('Path does not exist'),
     },
   },

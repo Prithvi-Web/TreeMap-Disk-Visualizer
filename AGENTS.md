@@ -22,7 +22,14 @@ OpenAPI 3 spec).
 1. **Scan.** `POST /api/scan` with `{ "path": "/absolute/dir" }` → `202 { scanId }`.
    Poll `GET /api/scan/{scanId}/stats` until `status` is `"complete"`
    (or stream `GET /api/scan/{scanId}/progress`, Server-Sent Events).
-   Scans live in memory for ~30 minutes after completion.
+   Agents can skip the polling: `POST /api/scan?wait=true&waitMs=55000`
+   blocks until the scan settles and answers `200` with the stats inline
+   (`202 { status: "running" }` if it outlives `waitMs`). Scans live in
+   memory for ~30 minutes after completion.
+   For the whole picture in one call afterwards:
+   `GET /api/agent/summary?scanId=` — top culprits, reclaimable-by-category,
+   and the forecast, every number as raw bytes plus a formatted string, in
+   deterministic order.
 2. **Inspect.** With the `scanId`:
    - `GET /api/large-files` / `GET /api/large-folders` — the big things.
    - `GET /api/cleanup/suggestions` — known-reclaimable space: regenerable

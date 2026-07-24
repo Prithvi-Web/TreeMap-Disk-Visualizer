@@ -118,12 +118,48 @@ export function requireScan(_req: Request, idSource: unknown): ScanResult {
   return scan;
 }
 
-/** POST /api/scan  { path } -> { scanId } */
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * POST /api/scan  { path } -> 202 { scanId }
+ *
+ * With ?wait=true (opt-in, for agents), the request blocks until the scan
+ * settles or waitMs elapses: 200 { status:'complete', …stats } when done,
+ * 202 { status:'running', … } on timeout — poll GET /api/scan/:id/stats (its
+ * status field turns 'complete'/'error') or call again. The default
+ * (no query) response is byte-identical to before; the SSE progress
+ * endpoint is untouched either way.
+ */
 scanRouter.post('/scan', guardBodyPath, async (req: Request, res: Response) => {
   const { path: scanPath, incremental } = req.body as { path: string; incremental?: boolean };
   // agent-policy.json allowedRoots (no policy file = no restriction).
   assertScanAllowed(await getPolicy(), scanPath);
   const scan = await startScan(scanPath, { incremental: incremental === true }); // lstat failures -> 404/403
+
+  if (String(req.query.wait ?? '') === 'true') {
+    const waitMs = clampInt(req.query.waitMs, 55_000, 0, 600_000);
+    const deadline = Date.now() + waitMs;
+    while (scan.status === 'running' && Date.now() < deadline) {
+      await sleep(250);
+    }
+    if (scan.status === 'error') {
+      throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+    }
+    if (scan.status === 'complete') {
+      // buildScanStats already carries `incremental` — the one source of truth.
+      res.json({ scanId: scan.scanId, status: 'complete', ...buildScanStats(scan) });
+      return;
+    }
+    res.status(202).json({
+      scanId: scan.scanId,
+      status: 'running',
+      incremental: scan.incremental === true,
+      scanned: scan.scanned,
+      currentPath: scan.currentPath,
+    });
+    return;
+  }
+
   res.status(202).json({ scanId: scan.scanId, incremental: scan.incremental === true });
 });
 
