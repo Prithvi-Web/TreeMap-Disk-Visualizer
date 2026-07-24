@@ -382,6 +382,8 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
 .scan-meta { margin-top: 5px; font-size: 11.5px; color: var(--text-3);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 15px;
   max-width: 100%; min-width: 0; }
+.scan-opts-log { margin-top: 6px; font-size: 11.5px; line-height: 1.45; }
+.scan-opts-log[hidden] { display: none; }
 .progress-track { margin-top: 12px; height: 5px; border-radius: 3px; background: var(--surface-2);
   overflow: hidden; display: none; }
 .progress-track.active { display: block; }
@@ -1000,6 +1002,9 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     <button class="btn btn-primary" id="emptyBrowseBtn" style="font-size:14px;min-height:44px;padding:0 26px;">
       <span data-icon="folder"></span>Choose a folder to get started
     </button>
+    <label class="fast-rescan" id="emptyNtfsMftWrap" hidden style="margin-top:16px;">
+      <input type="checkbox" id="emptyNtfsMft"><span data-icon="zap" data-size="13"></span>Turbo NTFS scan (requires admin)
+    </label>
   </section>
 
   <!-- ═══════════ Dashboard ═══════════ -->
@@ -1074,6 +1079,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
           </label>
           <div class="scan-status" id="scanStatus">No scan yet — pick a folder above.</div>
           <div class="scan-meta num" id="scanMeta"></div>
+          <div class="scan-opts-log muted" id="scanOptsLog" hidden></div>
           <div class="progress-track" id="progressTrack"><div class="progress-fill"></div></div>
         </div>
 
@@ -1388,7 +1394,10 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       <div class="browse-list" id="browseList"></div>
     </div>
     <div class="modal-foot">
-      <div style="flex:1"></div>
+      <label class="fast-rescan" id="browseNtfsMftWrap" hidden style="margin:0;flex:1;">
+        <input type="checkbox" id="browseNtfsMft"><span data-icon="zap" data-size="13"></span>Turbo NTFS (admin)
+      </label>
+      <div style="flex:1" id="browseFootSpacer"></div>
       <button class="btn btn-primary" id="browseUseBtn"><span data-icon="check"></span>Scan this folder</button>
     </div>
   </div>
@@ -1993,13 +2002,83 @@ function switchView(name) {
 }
 
 /* ───────────────────────────── System info ───────────────────────────── */
-/** Show Turbo NTFS as soon as we know we're on Windows — don't wait for
- *  /api/system (that race left the checkbox hidden until after people hit Scan). */
+/** Persist Turbo NTFS across empty-state / browse / dashboard entry points. */
+const NTFS_MFT_PREF = 'treemap.ntfsMft';
+const NTFS_MFT_CHECKBOX_IDS = ['ntfsMftScan', 'browseNtfsMft', 'emptyNtfsMft'];
+const NTFS_MFT_WRAP_IDS = ['ntfsMftScanWrap', 'browseNtfsMftWrap', 'emptyNtfsMftWrap'];
+
+function isWindowsUi(platform) {
+  if (platform === 'win32' || state.system?.platform === 'win32') return true;
+  if (platform && platform !== 'win32') return false;
+  return /Win/i.test(navigator.platform || navigator.userAgent || '');
+}
+function isNtfsMftPrefOn() {
+  try { return localStorage.getItem(NTFS_MFT_PREF) === '1'; } catch { return false; }
+}
+function syncNtfsMftCheckboxes(on = isNtfsMftPrefOn()) {
+  for (const id of NTFS_MFT_CHECKBOX_IDS) {
+    const el = $(id);
+    if (el) el.checked = on;
+  }
+  const spacer = $('browseFootSpacer');
+  if (spacer) spacer.style.display = isWindowsUi() ? 'none' : '';
+}
+function setNtfsMftPref(on) {
+  try { localStorage.setItem(NTFS_MFT_PREF, on ? '1' : '0'); } catch { /* private mode */ }
+  syncNtfsMftCheckboxes(on);
+  console.info('[treemap] Turbo NTFS', on ? 'ON' : 'OFF');
+  updateScanOptsLog({ preview: true });
+}
+function ntfsMftOptIn() {
+  return isWindowsUi() && isNtfsMftPrefOn();
+}
+/** Show Turbo NTFS on every Windows entry point (dashboard, empty, browse). */
 function revealNtfsMftToggle(platform) {
-  const wrap = $('ntfsMftScanWrap');
-  if (!wrap) return;
-  const win = platform === 'win32' || (!platform && /Win/i.test(navigator.platform || navigator.userAgent || ''));
-  if (win) wrap.hidden = false;
+  const win = isWindowsUi(platform);
+  for (const id of NTFS_MFT_WRAP_IDS) {
+    const wrap = $(id);
+    if (wrap) wrap.hidden = !win;
+  }
+  if (win) syncNtfsMftCheckboxes();
+  else {
+    const spacer = $('browseFootSpacer');
+    if (spacer) spacer.style.display = '';
+  }
+}
+function wireNtfsMftCheckboxes() {
+  for (const id of NTFS_MFT_CHECKBOX_IDS) {
+    const el = $(id);
+    if (!el || el.dataset.wired === '1') continue;
+    el.dataset.wired = '1';
+    el.addEventListener('change', () => {
+      setNtfsMftPref(el.checked);
+      toast(el.checked
+        ? 'Turbo NTFS ON — next scan will request admin elevation'
+        : 'Turbo NTFS OFF — next scan uses gdu/walker', 'success');
+    });
+  }
+}
+function resolveScanOpts(opts = {}) {
+  const incremental = opts.incremental != null
+    ? !!opts.incremental
+    : (!$('fastRescanWrap')?.hidden && !!$('fastRescan')?.checked);
+  const ntfsMft = opts.ntfsMft != null ? !!opts.ntfsMft : ntfsMftOptIn();
+  return { incremental, ntfsMft };
+}
+function updateScanOptsLog(opts = {}) {
+  const log = $('scanOptsLog');
+  if (!log) return;
+  const resolved = opts.preview
+    ? resolveScanOpts()
+    : { incremental: !!opts.incremental, ntfsMft: !!opts.ntfsMft };
+  const parts = [
+    `Turbo NTFS: ${resolved.ntfsMft ? 'ON' : 'OFF'}`,
+    `Fast rescan: ${resolved.incremental ? 'ON' : 'OFF'}`,
+  ];
+  if (opts.engine) parts.push(`Engine: ${opts.engine}`);
+  log.hidden = false;
+  log.textContent = parts.join(' · ');
+  console.info('[treemap] scan options', resolved, opts.engine ? { engine: opts.engine } : {});
 }
 
 async function loadSystem() {
@@ -2007,6 +2086,7 @@ async function loadSystem() {
     const sys = await api('/api/system');
     state.system = sys;
     revealNtfsMftToggle(sys.platform);
+    wireNtfsMftCheckboxes();
     $('sysHost').textContent = sys.hostname;
     $('sysPlatform').textContent = ({ darwin:'macOS', win32:'Windows', linux:'Linux' })[sys.platform] || sys.platform;
     $('sysTotal').textContent = formatBytes(sys.totalDisk);
@@ -2291,30 +2371,37 @@ async function startScan(path, opts = {}) {
   if (state.scanning) { toast('A scan is already running', 'error'); return; }
   closeEventSource();
   disableLive({ keepWanted: true }); // the new scanId gets a fresh watch session
+  const resolved = resolveScanOpts(opts);
   try {
     beginScanChrome();
+    updateScanOptsLog(resolved);
+    $('scanStatus').innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') +
+      `<span>Starting scan… · Turbo NTFS <b>${resolved.ntfsMft ? 'ON' : 'OFF'}</b>` +
+      (resolved.incremental ? ' · Fast rescan ON' : '') + '</span>';
     const t0 = performance.now();
     const resp = await api('/api/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         path,
-        incremental: !!opts.incremental,
-        ntfsMft: !!opts.ntfsMft,
+        incremental: resolved.incremental,
+        ntfsMft: resolved.ntfsMft,
       }),
     });
-    followScanProgress(resp.scanId, path, resp.incremental === true, t0);
+    followScanProgress(resp.scanId, path, resolved.incremental, t0, resolved);
   } catch (e) {
     failScan(e.message);
   }
 }
 
 /** Follow a running scan (disk or cloud) over SSE, with the stall watchdog. */
-function followScanProgress(scanId, path, fast, t0) {
+function followScanProgress(scanId, path, fast, t0, requestedOpts = null) {
   const status = $('scanStatus');
+  const turboTag = requestedOpts?.ntfsMft ? icon('zap', 12) + ' Turbo NTFS requested · ' : '';
   const fastTag = fast ? icon('zap', 12) + ' Fast rescan · ' : '';
   const isCloud = path.startsWith('cloud://');
   state.scanId = scanId;
+  state.scanOpts = requestedOpts || resolveScanOpts({ incremental: fast });
 
   const es = new EventSource(`/api/scan/${scanId}/progress`);
   state.es = es;
@@ -2362,12 +2449,11 @@ function followScanProgress(scanId, path, fast, t0) {
       const secs = (performance.now() - t0) / 1000;
       const rate = secs > 0.2 ? Math.round(msg.scanned / secs) : 0;
       status.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') +
-        `<span class="num">${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
+        `<span class="num">${turboTag}${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`;
       const meta = $('scanMeta');
       meta.textContent = msg.currentPath || '';
       meta.title = msg.currentPath || ''; // full path on hover when ellipsized
-
     } else if (msg.type === 'complete') {
       finished = true;
       clearInterval(watchdog);
@@ -2459,12 +2545,22 @@ function cancelScanUi() {
   endScanChrome();
   const status = $('scanStatus');
   status.classList.remove('error');
-  status.innerHTML = icon('x', 14) + '<span>Scan stopped.</span>';
+  status.innerHTML = icon('x', 14) + '<span>Scan stopped — tweak options below and scan again.</span>';
+  updateScanOptsLog({ preview: true });
   if (!state.largest.length) $('bigFiles').innerHTML = '<div class="muted">Run a scan to find your biggest files.</div>';
   if (!state.bigFolders.length) $('bigFolders').innerHTML = '<div class="muted">Run a scan to find your biggest folders.</div>';
   if (!state.types.length) $('donutLegend').innerHTML = '<div class="muted">Run a scan to see the breakdown.</div>';
+  // Stay on the dashboard Scan card — the empty landing page has no path input
+  // and used to hide Turbo NTFS entirely after Stop.
+  $('emptyState').style.display = 'none';
+  state.view = 'dashboard';
+  tabs.forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === 'dashboard')));
+  document.querySelectorAll('.view').forEach(v => {
+    const on = v.id === 'view-dashboard';
+    v.classList.toggle('active', on);
+    v.hidden = !on;
+  });
   toast('Scan stopped', 'success');
-  switchView(state.view);
 }
 
 /**
@@ -2510,6 +2606,11 @@ async function finishScan(root, durationMs, stats) {
   state.scanStats = stats || null;
   const files = stats ? stats.fileCount : null;
   const dirs = stats ? stats.dirCount : null;
+  updateScanOptsLog({
+    incremental: !!(state.scanOpts?.incremental ?? stats?.incremental),
+    ntfsMft: !!state.scanOpts?.ntfsMft,
+    engine: stats?.engine || undefined,
+  });
 
   $('scanStatus').classList.remove('error');
   $('scanStatus').innerHTML = icon('checkCircle', 14) +
@@ -2677,16 +2778,18 @@ async function renderGrowthProjection() {
 $('scanBtn').addEventListener('click', () => {
   const p = $('pathInput').value.trim();
   if (!p) { toast('Enter a folder path first', 'error'); return; }
-  startScan(p, {
-    incremental: !$('fastRescanWrap').hidden && $('fastRescan').checked,
-    ntfsMft: !$('ntfsMftScanWrap').hidden && $('ntfsMftScan').checked,
-  });
+  // Prefer the checkbox the user is looking at; fall back to persisted pref.
+  if (!$('ntfsMftScanWrap')?.hidden && $('ntfsMftScan')) setNtfsMftPref($('ntfsMftScan').checked);
+  startScan(p, resolveScanOpts());
 });
 $('stopScanBtn')?.addEventListener('click', () => { stopScan(); });
 $('pathInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('scanBtn').click(); });
 $('pathInput').addEventListener('input', maybeShowFastRescan);
 maybeShowFastRescan();
 revealNtfsMftToggle(); // sync show on Windows before /api/system returns
+wireNtfsMftCheckboxes();
+syncNtfsMftCheckboxes();
+updateScanOptsLog({ preview: true });
 window.addEventListener('beforeunload', closeEventSource);
 
 /* ───────────────────────────── Dashboard: largest files ───────────────────────────── */
@@ -5868,8 +5971,10 @@ $('browseUseBtn').addEventListener('click', () => {
   closeModal('browseModal');
   if (!browsePath) return;
   if (pick) { pick(browsePath); return; }
+  // Capture Turbo from the browse-modal checkbox before closing (same pref as dashboard).
+  if (!$('browseNtfsMftWrap')?.hidden && $('browseNtfsMft')) setNtfsMftPref($('browseNtfsMft').checked);
   $('pathInput').value = browsePath;
-  startScan(browsePath);
+  startScan(browsePath, resolveScanOpts());
 });
 
 /* ───────────────────────────── Clean Up modal ───────────────────────────── */
