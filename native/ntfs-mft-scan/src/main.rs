@@ -20,7 +20,9 @@
 //! Names are JSON-escaped (NOT Rust Debug `{:?}`): Debug emits `\u{…}` which
 //! is invalid JSON and breaks the Node parser.
 
+use ntfs_reader::aligned_reader::AlignedReader;
 use ntfs_reader::api::{ntfs_to_unix_time, NtfsAttributeType, NtfsFileNamespace};
+use ntfs_reader::errors::NtfsReaderError;
 use ntfs_reader::mft::Mft;
 use ntfs_reader::volume::Volume;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -31,6 +33,13 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 const ROOT_RECORD_NO: u64 = 5;
+
+/// 1MB, matching uffs-mft's disclosed NVMe chunk size (their README: "4MB for
+/// NVMe, 2MB for SSD, 1MB for HDD"). A single fixed size rather than
+/// per-drive-type tuning — that's a reasonable future refinement, not needed
+/// to fix the ~1M-tiny-syscall problem this targets. Must be a power of two
+/// (AlignedReader::new validates this) — 1_048_576 = 2^20.
+const MFT_READ_CHUNK_BYTES: u64 = 1_048_576;
 
 struct Args {
     volume: String,
@@ -249,6 +258,35 @@ fn subtree_edge_indices(
     out
 }
 
+/// Builds an `Mft` exactly like `Mft::new(volume)` does, except the $MFT's
+/// Data/Bitmap attributes are read through a large-buffer reader instead of
+/// `open_volume()`'s hardcoded 4096-byte one with no lookahead (spec §2: that
+/// hardcoding costs ~1M syscall pairs on a ~4GB $MFT, measured at 58.6s of a
+/// 74.1s run). `Mft`'s fields are public, so the result here is indistinguishable
+/// from what `Mft::new` builds — every method on it (`.files()`, etc.) is
+/// unchanged code, untouched by this fix.
+fn read_mft_fast(volume: Volume, chunk_bytes: u64) -> ntfs_reader::errors::NtfsReaderResult<Mft> {
+    let file = std::fs::File::open(&volume.path)?;
+    let mut reader = AlignedReader::new(file, chunk_bytes)?;
+
+    let mft_record =
+        Mft::get_record_fs(&mut reader, volume.file_record_size, volume.mft_position)?;
+
+    let mut data = Mft::read_data_fs(&volume, &mut reader, &mft_record, NtfsAttributeType::Data)?
+        .ok_or_else(|| NtfsReaderError::MissingMftAttribute("Data".to_string()))?;
+    let bitmap = Mft::read_data_fs(&volume, &mut reader, &mft_record, NtfsAttributeType::Bitmap)?
+        .ok_or_else(|| NtfsReaderError::MissingMftAttribute("Bitmap".to_string()))?;
+
+    let max_record = data.len() as u64 / volume.file_record_size;
+    for number in 0..max_record {
+        let start = (number * volume.file_record_size) as usize;
+        let end = start + volume.file_record_size as usize;
+        fixup_record(number, &mut data[start..end])?;
+    }
+
+    Ok(Mft { volume, data, bitmap, max_record })
+}
+
 fn main() -> ExitCode {
     let args = match parse_args() {
         Some(a) => a,
@@ -284,7 +322,7 @@ fn main() -> ExitCode {
         }
     };
     phase.log("loading MFT index…");
-    let mft = match Mft::new(volume) {
+    let mft = match read_mft_fast(volume, MFT_READ_CHUNK_BYTES) {
         Ok(m) => m,
         Err(e) => {
             phase.log(&format!("failed to read MFT: {e}"));
