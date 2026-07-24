@@ -11,6 +11,7 @@ import { detectContainerKind } from '../utils/containerKind';
 import { neverDescend } from '../utils/mountBoundaries';
 import { forgetScan } from './containerScanner';
 import { findGduBinary, gduScanIntoStore } from './gduScanner';
+import { findNtfsMftBinary, ntfsMftScanIntoStore, isNtfsVolume } from './ntfsMftScanner';
 import { PackedScanStore, ScanStore, Flag, NodeInput, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
 
 /**
@@ -172,6 +173,10 @@ export function createScanRecord(rootPath: string): ScanResult {
 export interface ScanOptions {
   /** Reuse the on-disk mtime cache to skip unchanged subtrees (fast rescan). */
   incremental?: boolean;
+  /** Explicit opt-in only — see docs/superpowers/specs/2026-07-24-ntfs-mft-engine-design.md §3.5.
+   *  Never auto-triggered: unlike every other engine, this one produces a
+   *  real UAC prompt, so it must never fire without the user asking for it. */
+  ntfsMft?: boolean;
 }
 
 export async function startScan(rootPath: string, opts: ScanOptions = {}): Promise<ScanResult> {
@@ -235,8 +240,66 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     ignore.length === 0 &&
     process.env.TREEMAP_NO_GDU !== '1';
 
+  /**
+   * ntfs-mft is tried before gdu when opted in — it's faster than gdu on NTFS
+   * because it reads the MFT directly instead of spawning a walking
+   * subprocess. Same gates as gdu (directory only, no cache/incremental, no
+   * ignore list — raw MFT enumeration has even less ability than gdu to honor
+   * glob ignore patterns) plus the explicit opt-in and a platform/filesystem
+   * check that must never itself require elevation.
+   */
+  const ntfsMftRequested =
+    process.platform === 'win32' &&
+    opts.ntfsMft === true &&
+    rootStat.isDirectory() &&
+    !cache &&
+    !opts.incremental &&
+    ignore.length === 0 &&
+    process.env.TREEMAP_NO_NTFS_MFT !== '1';
+
   // Fire and forget — errors land on the record, never as unhandled rejections.
   void (async () => {
+    // Windows absolute paths look like `C:\Users\foo` — drive letter at [0],
+    // path under the volume root after the `C:\` prefix (slice(3)).
+    if (ntfsMftRequested && (await isNtfsVolume(rootPath[0]))) {
+      try {
+        if (process.env.TREEMAP_NO_NTFS_MFT_BIN !== '1') {
+          const bin = await findNtfsMftBinary();
+          if (!bin) throw new Error('ntfs-mft-scan binary not found');
+        } else {
+          throw new Error('test escape hatch: binary unavailable');
+        }
+        scan.engine = 'ntfs-mft';
+        const driveLetter = rootPath[0];
+        const components = rootPath.slice(3).split(path.sep).filter(Boolean); // strip "C:\"
+        const store = await ntfsMftScanIntoStore(scan, driveLetter, components);
+        if (scan.cancelled) return;
+        scan.store = store;
+        scan.status = 'complete';
+        scan.finishedAt = Date.now();
+        scan.currentPath = scan.rootPath;
+        void saveMtimeCache(scan);
+        void saveSnapshot(scan).catch((err: unknown) => {
+          console.error('[treemap] snapshot save failed:', err);
+        });
+        return;
+      } catch (err) {
+        if (scan.cancelled) return;
+        // Same discipline as gdu: never surface as a scan error, always reset
+        // counters before falling through so the next engine doesn't double-count.
+        // cloudFiles/cloudBytes are included for structural symmetry with gdu's
+        // catch — ntfs-mft never sets them (still 0 from construction); hygiene,
+        // not a fix for observed counter corruption.
+        console.warn(`[treemap] ntfs-mft engine unavailable, trying gdu/walker: ${String(err)}`);
+        scan.fileCount = 0;
+        scan.dirCount = 0;
+        scan.scanned = 0;
+        scan.hardlinkedFiles = 0;
+        scan.hardlinkedBytes = 0;
+        scan.cloudFiles = 0;
+        scan.cloudBytes = 0;
+      }
+    }
     if (gduEligible) {
       try {
         const bin = await findGduBinary();

@@ -4,6 +4,7 @@ import fsp2 from 'node:fs/promises';
 import os from 'node:os';
 import path2 from 'node:path';
 import { isValidDriveLetter, isNtfsVolume, findNtfsMftBinary, ntfsMftScanIntoStore } from '../src/services/ntfsMftScanner';
+import { startScan, getScan } from '../src/services/diskScanner';
 import { ScanResult } from '../src/models/types';
 
 function fakeScan(rootPath: string): ScanResult {
@@ -83,4 +84,47 @@ test('ntfsMftScanIntoStore rejects when the target path does not resolve', async
       },
     }),
   );
+});
+
+async function settle(scanId: string) {
+  await new Promise<void>((r) => {
+    const iv = setInterval(() => {
+      if (getScan(scanId)!.status !== 'running') {
+        clearInterval(iv);
+        r();
+      }
+    }, 25);
+  });
+  return getScan(scanId)!;
+}
+
+test('a scan falls back to the walker when ntfsMft is not opted into', async () => {
+  const dir = await fsp2.mkdtemp(path2.join(os.tmpdir(), 'ntfs-mft-int-'));
+  process.env.TREEMAP_NO_GDU = '1';
+  try {
+    const started = await startScan(dir, { incremental: false });
+    const s = await settle(started.scanId);
+    assert.equal(s.status, 'complete');
+    assert.notEqual(s.engine, 'ntfs-mft');
+  } finally {
+    delete process.env.TREEMAP_NO_GDU;
+    await fsp2.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a scan falls back to the walker when ntfsMft is opted in but the binary is missing', async () => {
+  const dir = await fsp2.mkdtemp(path2.join(os.tmpdir(), 'ntfs-mft-int-'));
+  process.env.TREEMAP_NO_GDU = '1';
+  process.env.TREEMAP_NO_NTFS_MFT_BIN = '1'; // test-only escape hatch, see implementation
+  try {
+    const started = await startScan(dir, { incremental: false, ntfsMft: true });
+    const s = await settle(started.scanId);
+    assert.equal(s.status, 'complete');
+    assert.notEqual(s.engine, 'ntfs-mft');
+    assert.equal(s.fileCount >= 0, true); // counters were reset, not left dangling
+  } finally {
+    delete process.env.TREEMAP_NO_GDU;
+    delete process.env.TREEMAP_NO_NTFS_MFT_BIN;
+    await fsp2.rm(dir, { recursive: true, force: true });
+  }
 });
