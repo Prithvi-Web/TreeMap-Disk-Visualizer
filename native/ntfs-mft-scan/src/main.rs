@@ -52,6 +52,8 @@ struct Args {
     log: Option<String>,
     /// Query USN journal metadata only (no MFT read).
     usn_info: bool,
+    /// Read USN journal events starting from this USN (no MFT read).
+    usn_read: Option<i64>,
 }
 
 struct PhaseLog {
@@ -98,6 +100,7 @@ fn parse_args() -> Option<Args> {
     let mut root = None;
     let mut log = None;
     let mut usn_info = false;
+    let mut usn_read = None;
     let mut it = env::args().skip(1);
     while let Some(flag) = it.next() {
         match flag.as_str() {
@@ -106,6 +109,10 @@ fn parse_args() -> Option<Args> {
             "--root" => root = it.next(),
             "--log" => log = it.next(),
             "--usn-info" => usn_info = true,
+            "--usn-read" => {
+                let raw = it.next()?;
+                usn_read = Some(raw.parse::<i64>().ok()?);
+            }
             _ => {}
         }
     }
@@ -115,6 +122,7 @@ fn parse_args() -> Option<Args> {
         root,
         log,
         usn_info,
+        usn_read,
     })
 }
 
@@ -251,6 +259,137 @@ fn write_usn_info<W: std::io::Write>(w: &mut W, info: &UsnJournalInfo) -> std::i
         "{{\"volumeSerialNumber\":{},\"usnJournalId\":\"{}\",\"firstUsn\":\"{}\",\"nextUsn\":\"{}\"}}",
         info.volume_serial_number, info.usn_journal_id, info.first_usn, info.next_usn,
     )
+}
+
+fn file_id_to_record_no(id: ntfs_reader::api::FileId) -> Option<u64> {
+    match id {
+        // NTFS FRN: low 48 bits are the MFT record number.
+        ntfs_reader::api::FileId::Normal(n) => Some(n & 0x0000_FFFF_FFFF_FFFF),
+        ntfs_reader::api::FileId::Extended(_) => None,
+    }
+}
+
+/// Collapse a USN Reason bitmask into exactly one JournalEvent reason string.
+/// Structural bits before data bits (plan Task 4).
+fn classify_usn_reason(reason: u32) -> Option<&'static str> {
+    use windows::Win32::System::Ioctl::{
+        USN_REASON_BASIC_INFO_CHANGE, USN_REASON_DATA_EXTEND, USN_REASON_DATA_OVERWRITE,
+        USN_REASON_DATA_TRUNCATION, USN_REASON_FILE_CREATE, USN_REASON_FILE_DELETE,
+        USN_REASON_RENAME_NEW_NAME, USN_REASON_RENAME_OLD_NAME,
+    };
+    if reason & USN_REASON_FILE_DELETE != 0 {
+        Some("delete")
+    } else if reason & USN_REASON_FILE_CREATE != 0 {
+        Some("create")
+    } else if reason & USN_REASON_RENAME_NEW_NAME != 0 {
+        Some("rename")
+    } else if reason & USN_REASON_DATA_EXTEND != 0 {
+        Some("data-extend")
+    } else if reason & USN_REASON_DATA_OVERWRITE != 0 {
+        Some("data-overwrite")
+    } else if reason & USN_REASON_DATA_TRUNCATION != 0 {
+        Some("data-truncation")
+    } else if reason & USN_REASON_BASIC_INFO_CHANGE != 0 {
+        Some("basic-info-change")
+    } else if reason & USN_REASON_RENAME_OLD_NAME != 0 {
+        // OLD_NAME-only carries no new name/parent — skip.
+        None
+    } else {
+        Some("basic-info-change")
+    }
+}
+
+fn write_usn_event<W: std::io::Write>(
+    w: &mut W,
+    rec: &ntfs_reader::journal::UsnRecord,
+    reason: &str,
+) -> std::io::Result<()> {
+    let Some(file_id) = file_id_to_record_no(rec.file_id) else {
+        return Ok(());
+    };
+    let Some(parent_id) = file_id_to_record_no(rec.parent_id) else {
+        return Ok(());
+    };
+    let path_str = rec.path.to_string_lossy();
+    let name = rec
+        .path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ts_ms = rec.timestamp.as_millis();
+    write!(
+        w,
+        "{{\"usn\":\"{}\",\"fileId\":{},\"parentId\":{},\"reason\":",
+        rec.usn, file_id, parent_id
+    )?;
+    write_json_string(w, reason)?;
+    write!(w, ",\"path\":")?;
+    write_json_string(w, &path_str)?;
+    write!(w, ",\"name\":")?;
+    write_json_string(w, &name)?;
+    write!(w, ",\"timestampMs\":{}}}\n", ts_ms)
+}
+
+fn run_usn_read<W: std::io::Write>(
+    volume_path: &str,
+    start_usn: i64,
+    w: &mut W,
+    phase: &mut PhaseLog,
+) -> ExitCode {
+    use ntfs_reader::journal::{Journal, JournalOptions, NextUsn};
+
+    let volume = match Volume::new(volume_path) {
+        Ok(v) => v,
+        Err(e) => {
+            phase.log(&format!("failed to open volume (are we elevated?): {e}"));
+            return ExitCode::FAILURE;
+        }
+    };
+    let options = JournalOptions {
+        next_usn: NextUsn::Custom(start_usn),
+        ..JournalOptions::default()
+    };
+    let mut journal = match Journal::new(volume, options) {
+        Ok(j) => j,
+        Err(e) => {
+            phase.log(&format!("failed to open USN journal: {e}"));
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mut events = 0u64;
+    loop {
+        let batch = match journal.read() {
+            Ok(b) => b,
+            Err(e) => {
+                phase.log(&format!("USN read failed: {e}"));
+                return ExitCode::FAILURE;
+            }
+        };
+        if batch.is_empty() {
+            break;
+        }
+        for rec in &batch {
+            let Some(reason) = classify_usn_reason(rec.reason) else {
+                continue;
+            };
+            if write_usn_event(w, rec, reason).is_err() {
+                phase.log("failed writing usn event");
+                return ExitCode::FAILURE;
+            }
+            events += 1;
+        }
+    }
+
+    let next = journal.get_next_usn();
+    if writeln!(w, "{{\"_meta\":true,\"nextUsn\":\"{next}\",\"events\":{events}}}").is_err()
+        || w.flush().is_err()
+    {
+        phase.log("failed writing usn-read meta");
+        return ExitCode::FAILURE;
+    }
+    phase.log(&format!("done — usn-read {events} events, nextUsn {next}"));
+    ExitCode::SUCCESS
 }
 
 /** Preference order when a record has multiple surviving names at the SAME
@@ -419,6 +558,11 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
+    }
+
+    if let Some(start_usn) = args.usn_read {
+        phase.log(&format!("reading USN journal from {start_usn} on {volume_path}"));
+        return run_usn_read(&volume_path, start_usn, &mut writer, &mut phase);
     }
 
     phase.log(&format!("opening volume {volume_path}"));
