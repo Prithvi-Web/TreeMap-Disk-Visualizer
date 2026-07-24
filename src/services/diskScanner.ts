@@ -117,6 +117,23 @@ export function cancelAllScans(): void {
   for (const scan of scans.values()) scan.cancelled = true;
 }
 
+/** Cooperative cancel for one scan. The walker/gdu/ntfs engines poll
+ *  `scan.cancelled` and call finalizeCancelled when they exit. */
+export function cancelScan(scanId: string): boolean {
+  const scan = scans.get(scanId);
+  if (!scan || scan.status !== 'running') return false;
+  scan.cancelled = true;
+  return true;
+}
+
+/** Mark a cancelled-but-still-`running` record as finished so SSE/clients
+ *  stop waiting. Idempotent if status already left `running`. */
+export function finalizeCancelled(scan: ScanResult): void {
+  if (scan.status !== 'running') return;
+  scan.status = 'cancelled';
+  scan.finishedAt = Date.now();
+}
+
 /**
  * Compatibility accessor: every production scan's tree lives in `scan.store`,
  * and no production code path reads or writes `scan.root` (the bounded
@@ -273,7 +290,10 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         const driveLetter = rootPath[0];
         const components = rootPath.slice(3).split(path.sep).filter(Boolean); // strip "C:\"
         const store = await ntfsMftScanIntoStore(scan, driveLetter, components);
-        if (scan.cancelled) return;
+        if (scan.cancelled) {
+          finalizeCancelled(scan);
+          return;
+        }
         scan.store = store;
         scan.status = 'complete';
         scan.finishedAt = Date.now();
@@ -284,7 +304,10 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         });
         return;
       } catch (err) {
-        if (scan.cancelled) return;
+        if (scan.cancelled) {
+          finalizeCancelled(scan);
+          return;
+        }
         // Same discipline as gdu: never surface as a scan error, always reset
         // counters before falling through so the next engine doesn't double-count.
         // cloudFiles/cloudBytes are included for structural symmetry with gdu's
@@ -306,7 +329,10 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         if (bin) {
           scan.engine = 'gdu-turbo';
           const store = await gduScanIntoStore(scan, bin, cloudProviderFor);
-          if (scan.cancelled) return;
+          if (scan.cancelled) {
+            finalizeCancelled(scan);
+            return;
+          }
           scan.store = store;
           scan.status = 'complete';
           scan.finishedAt = Date.now();
@@ -318,7 +344,10 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
           return;
         }
       } catch (err) {
-        if (scan.cancelled) return; // cancellation is not a gdu failure
+        if (scan.cancelled) {
+          finalizeCancelled(scan);
+          return; // cancellation is not a gdu failure
+        }
         // gdu is strictly best-effort: a missing binary, a spawn failure, a
         // non-zero exit or an oversized shard must never surface as a scan
         // error. Log it and let the walker produce the scan.
@@ -336,7 +365,12 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
       scan.engine = IO_THREADS > 4 ? 'turbo-walker' : 'walker';
     }
     await walk(scan, rootStat.isDirectory(), ignore, cache);
+    if (scan.cancelled) finalizeCancelled(scan);
   })().catch((err: unknown) => {
+    if (scan.cancelled) {
+      finalizeCancelled(scan);
+      return;
+    }
     scan.status = 'error';
     scan.error = err instanceof Error ? err.message : String(err);
     scan.finishedAt = Date.now();
@@ -482,7 +516,10 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
     // before their cached listing is trusted — membership is per-scan.
     await drainQueue(scan, store, [{ id: store.rootId, path: scan.rootPath, cached: null, revalidate: false }], ignore, cache, new Set<string>());
   }
-  if (scan.cancelled) return;
+  if (scan.cancelled) {
+    finalizeCancelled(scan);
+    return;
+  }
 
   store.finalize();
   store.sumSizes();

@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { startScan, getScan, collectLargestFiles, collectFileTypes } from '../services/diskScanner';
+import { startScan, getScan, cancelScan, collectLargestFiles, collectFileTypes } from '../services/diskScanner';
 import { buildTreemapFromStore } from '../utils/treemap';
 import { pruneTree, PruneResult } from '../utils/pruneTree';
 import { isInside } from '../utils/pathSanitizer';
@@ -131,6 +131,14 @@ scanRouter.post('/scan', guardBodyPath, async (req: Request, res: Response) => {
   res.status(202).json({ scanId: scan.scanId, incremental: scan.incremental === true });
 });
 
+/** POST /api/scan/:scanId/cancel — cooperative stop (walker exits at next checkpoint). */
+scanRouter.post('/scan/:scanId/cancel', (req: Request, res: Response) => {
+  const scanId = String(req.params.scanId);
+  requireScan(req, scanId); // 404 if unknown
+  const ok = cancelScan(scanId);
+  res.json({ cancelling: ok });
+});
+
 /** GET /api/scan/:scanId/progress — Server-Sent Events stream. */
 scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
@@ -159,6 +167,8 @@ scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
       if (!sseSend(res, { type: 'complete', root, stats: buildScanStats(scan) })) {
         sseSend(res, { type: 'error', message: treeTooLargeMessage(scan) });
       }
+    } else if (scan.status === 'cancelled') {
+      sseSend(res, { type: 'cancelled' });
     } else {
       sseSend(res, { type: 'error', message: scan.error ?? 'Scan failed' });
     }
@@ -211,6 +221,10 @@ scanRouter.get('/scan/:scanId/result', (req: Request, res: Response) => {
     });
     return;
   }
+  if (scan.status === 'cancelled') {
+    res.json({ status: 'cancelled', scanId: scan.scanId });
+    return;
+  }
   if (scan.status === 'error') {
     throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   }
@@ -255,7 +269,7 @@ scanRouter.get('/scan/:scanId/subtree', guardQueryPath('path'), (req: Request, r
     res.status(202).json({ status: 'running', scanned: scan.scanned });
     return;
   }
-  if (scan.status === 'error' || (!scan.store && !scan.root)) {
+  if (scan.status === 'error' || scan.status === 'cancelled' || (!scan.store && !scan.root)) {
     throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   }
 
@@ -288,7 +302,7 @@ scanRouter.post('/scan/:scanId/nodes', guardBodyPaths, (req: Request, res: Respo
     res.status(202).json({ status: 'running' });
     return;
   }
-  if (scan.status === 'error' || (!scan.store && !scan.root)) {
+  if (scan.status === 'error' || scan.status === 'cancelled' || (!scan.store && !scan.root)) {
     throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   }
   const { paths } = req.body as { paths: string[] };
@@ -312,7 +326,7 @@ scanRouter.get('/scan/:scanId/budgets', async (req: Request, res: Response) => {
     res.status(202).json({ status: 'running' });
     return;
   }
-  if (scan.status === 'error' || (!scan.store && !scan.root)) {
+  if (scan.status === 'error' || scan.status === 'cancelled' || (!scan.store && !scan.root)) {
     throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   }
   const store = storeOf(scan);
@@ -345,7 +359,7 @@ scanRouter.get('/scan/:scanId/export', async (req: Request, res: Response) => {
     res.status(202).json({ status: 'running' });
     return;
   }
-  if (scan.status === 'error' || (!scan.store && !scan.root)) {
+  if (scan.status === 'error' || scan.status === 'cancelled' || (!scan.store && !scan.root)) {
     throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   }
   const complete = scan;
@@ -375,7 +389,7 @@ scanRouter.get('/scan/:scanId/treemap', guardQueryPath('root'), (req: Request, r
     res.status(202).json({ status: 'running', scanned: scan.scanned });
     return;
   }
-  if (scan.status === 'error' || (!scan.store && !scan.root)) {
+  if (scan.status === 'error' || scan.status === 'cancelled' || (!scan.store && !scan.root)) {
     throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
   }
 

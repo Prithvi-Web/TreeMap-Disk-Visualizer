@@ -56,7 +56,7 @@ export interface FileNode {
 /** Containers the treemap can drill into. */
 export type ContainerKind = 'zip' | 'tar' | 'tgz' | 'iso' | 'dmg' | 'photos' | 'docker';
 
-export type ScanStatus = 'running' | 'complete' | 'error';
+export type ScanStatus = 'running' | 'complete' | 'error' | 'cancelled';
 
 /** Mutable record of one scan, kept in the in-memory store. */
 export interface ScanResult {
@@ -165,6 +165,7 @@ export type ScanEvent =
   | { type: 'progress'; scanned: number; currentPath: string }
   | { type: 'complete'; root: FileNode; stats: ScanStats }
   | { type: 'error'; message: string }
+  | { type: 'cancelled' }
   | { type: 'shutdown' };
 
 /** A batch trash operation. */

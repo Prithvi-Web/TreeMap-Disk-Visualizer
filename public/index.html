@@ -572,8 +572,9 @@ body.preview-open #cartDock { right: 348px; }
 /* ── Fast (incremental) rescan toggle (Feature 5) ── */
 .fast-rescan { display: inline-flex; align-items: center; gap: 7px; margin-top: 11px; font-size: 12.5px; color: var(--text-2); cursor: pointer; user-select: none; }
 .fast-rescan[hidden] { display: none; }
-.fast-rescan input { accent-color: var(--accent); margin: 0; }
+.fast-rescan input { accent-color: var(--accent); margin: 0; pointer-events: auto; }
 .fast-rescan .ic { color: var(--accent); }
+#stopScanBtn[hidden] { display: none; }
 
 /* ── Keyboard shortcuts overlay (Feature 6) ── */
 .kbd-sec { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-3); margin: 2px 0 11px; }
@@ -1059,6 +1060,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
             </div>
             <button class="btn" id="browseBtn">Browse…</button>
             <button class="btn btn-primary" id="scanBtn"><span data-icon="play"></span>Scan</button>
+            <button class="btn btn-danger" id="stopScanBtn" hidden type="button"><span data-icon="x"></span>Stop</button>
           </div>
           <label class="fast-rescan" id="fastRescanWrap" hidden>
             <input type="checkbox" id="fastRescan"><span data-icon="zap" data-size="13"></span>Fast rescan — reuse cache for unchanged folders
@@ -1987,13 +1989,20 @@ function switchView(name) {
 }
 
 /* ───────────────────────────── System info ───────────────────────────── */
+/** Show Turbo NTFS as soon as we know we're on Windows — don't wait for
+ *  /api/system (that race left the checkbox hidden until after people hit Scan). */
+function revealNtfsMftToggle(platform) {
+  const wrap = $('ntfsMftScanWrap');
+  if (!wrap) return;
+  const win = platform === 'win32' || (!platform && /Win/i.test(navigator.platform || navigator.userAgent || ''));
+  if (win) wrap.hidden = false;
+}
+
 async function loadSystem() {
   try {
     const sys = await api('/api/system');
     state.system = sys;
-    if (sys.platform === 'win32') {
-      $('ntfsMftScanWrap').hidden = false; // reuses the existing $ helper already used for fastRescanWrap
-    }
+    revealNtfsMftToggle(sys.platform);
     $('sysHost').textContent = sys.hostname;
     $('sysPlatform').textContent = ({ darwin:'macOS', win32:'Windows', linux:'Linux' })[sys.platform] || sys.platform;
     $('sysTotal').textContent = formatBytes(sys.totalDisk);
@@ -2241,6 +2250,9 @@ async function showFastRescanStat(scanId) {
 function beginScanChrome() {
   state.scanning = true;
   $('scanBtn').disabled = true;
+  $('scanBtn').hidden = true;
+  const stop = $('stopScanBtn');
+  if (stop) { stop.hidden = false; stop.disabled = false; }
   $('headerSpin').classList.add('on');
   $('headerSpin').innerHTML = icon('loader', 15, REDUCED ? '' : 'spin');
   $('progressTrack').classList.add('active');
@@ -2255,6 +2267,20 @@ function beginScanChrome() {
   $('whatsNewCard').hidden = true;
   $('emptyState').style.display = 'none';
   switchView('dashboard');
+}
+
+async function stopScan() {
+  const id = state.scanId;
+  if (!id || !state.scanning) return;
+  const stop = $('stopScanBtn');
+  if (stop) stop.disabled = true;
+  try {
+    await api(`/api/scan/${id}/cancel`, { method: 'POST' });
+    $('scanStatus').innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + '<span>Stopping scan…</span>';
+  } catch (e) {
+    if (stop) stop.disabled = false;
+    toast(e.message || 'Could not stop scan', 'error');
+  }
 }
 
 async function startScan(path, opts = {}) {
@@ -2297,13 +2323,19 @@ function followScanProgress(scanId, path, fast, t0) {
     if (performance.now() - lastSseAt < 6000) return;
     try {
       const r = await api(`/api/scan/${scanId}/result`);
-      if (r.status === 'complete' && !finished) {
+      if (finished) return;
+      if (r.status === 'complete') {
         finished = true;
         clearInterval(watchdog);
         closeEventSource();
         if (!isCloud) rememberScannedRoot(path);
         if (fast) showFastRescanStat(scanId);
         finishScan(r.root, performance.now() - t0, statsFromResult(r));
+      } else if (r.status === 'cancelled') {
+        finished = true;
+        clearInterval(watchdog);
+        closeEventSource();
+        cancelScanUi();
       }
     } catch (e) {
       // 500: the scan itself failed server-side. 404: the scan record is
@@ -2343,6 +2375,11 @@ function followScanProgress(scanId, path, fast, t0) {
       if (!isCloud) rememberScannedRoot(path);
       if (fast) showFastRescanStat(scanId);
       finishScan(root, performance.now() - t0, stats);
+    } else if (msg.type === 'cancelled') {
+      finished = true;
+      clearInterval(watchdog);
+      closeEventSource();
+      cancelScanUi();
     } else if (msg.type === 'error') {
       finished = true;
       clearInterval(watchdog);
@@ -2389,6 +2426,9 @@ async function startCloudScan(providerId, providerName) {
 function endScanChrome() {
   state.scanning = false;
   $('scanBtn').disabled = false;
+  $('scanBtn').hidden = false;
+  const stop = $('stopScanBtn');
+  if (stop) { stop.hidden = true; stop.disabled = false; }
   $('headerSpin').classList.remove('on');
   $('progressTrack').classList.remove('active');
   $('scanMeta').textContent = '';
@@ -2403,6 +2443,18 @@ function failScan(message) {
   if (!state.bigFolders.length) $('bigFolders').innerHTML = '<div class="muted">Run a scan to find your biggest folders.</div>';
   if (!state.types.length) $('donutLegend').innerHTML = '<div class="muted">Run a scan to see the breakdown.</div>';
   toast(message, 'error');
+  switchView(state.view);
+}
+
+function cancelScanUi() {
+  endScanChrome();
+  const status = $('scanStatus');
+  status.classList.remove('error');
+  status.innerHTML = icon('x', 14) + '<span>Scan stopped.</span>';
+  if (!state.largest.length) $('bigFiles').innerHTML = '<div class="muted">Run a scan to find your biggest files.</div>';
+  if (!state.bigFolders.length) $('bigFolders').innerHTML = '<div class="muted">Run a scan to find your biggest folders.</div>';
+  if (!state.types.length) $('donutLegend').innerHTML = '<div class="muted">Run a scan to see the breakdown.</div>';
+  toast('Scan stopped', 'success');
   switchView(state.view);
 }
 
@@ -2621,9 +2673,11 @@ $('scanBtn').addEventListener('click', () => {
     ntfsMft: !$('ntfsMftScanWrap').hidden && $('ntfsMftScan').checked,
   });
 });
+$('stopScanBtn')?.addEventListener('click', () => { stopScan(); });
 $('pathInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('scanBtn').click(); });
 $('pathInput').addEventListener('input', maybeShowFastRescan);
 maybeShowFastRescan();
+revealNtfsMftToggle(); // sync show on Windows before /api/system returns
 window.addEventListener('beforeunload', closeEventSource);
 
 /* ───────────────────────────── Dashboard: largest files ───────────────────────────── */
