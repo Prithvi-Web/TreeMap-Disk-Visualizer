@@ -1,0 +1,18 @@
+# LF on every OS, no exceptions for text.
+#
+# The frontend contract tests regex the SOURCE of public/index.html (and the
+# app script inside it) with \n-anchored patterns, and several other suites
+# grep source files the same way. A default Windows checkout converts text
+# files to CRLF, which broke every one of those tests at once on CI's first
+# real Windows run — failures that said nothing about the code. The repo's
+# files are authored with LF; this keeps them LF everywhere.
+* text=auto eol=lf
+
+# Binary assets — never eol-converted (git usually detects these, but the
+# release-critical ones are pinned so a misdetection can't corrupt them).
+*.png binary
+*.icns binary
+*.ico binary
+*.zip binary
+*.dmg binary
+*.node binary

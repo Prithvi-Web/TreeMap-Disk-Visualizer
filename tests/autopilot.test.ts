@@ -109,8 +109,13 @@ test('a policy needs a folder, and it goes through the same guard as a scan path
     () => normalizePolicy({ match: { kind: 'suggestion', groupIds: ['x'] } }),
     (err: unknown) => err instanceof AppError && err.code === 'POLICY_PATH_REQUIRED',
   );
-  // The shared sanitizer refuses virtual filesystems.
-  assert.throws(() => normalizePolicy({ path: '/proc', match: { kind: 'suggestion', groupIds: ['x'] } }));
+  // The shared sanitizer refuses virtual filesystems. POSIX-only: on a
+  // Windows host the sanitizer resolves '/proc' to 'C:\proc' — an ordinary,
+  // permissible path there — so the refusal genuinely does not (and should
+  // not) fire. The NUL check below is invalid on every OS.
+  if (process.platform !== 'win32') {
+    assert.throws(() => normalizePolicy({ path: '/proc', match: { kind: 'suggestion', groupIds: ['x'] } }));
+  }
   assert.throws(() => normalizePolicy({ path: 'x\0y', match: { kind: 'suggestion', groupIds: ['x'] } }));
 });
 

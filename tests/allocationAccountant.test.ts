@@ -136,7 +136,11 @@ test('a family reaching outside the scanned root is flagged, not counted as excl
 
 /* ══════════════════════ Sparse files — exactly measurable ══════════════════════ */
 
-test('a sparse file is sized by what it occupies, not what it claims', async () => {
+// Windows: NTFS allocates truncate-only files solid unless FSCTL_SET_SPARSE
+// was set, so "occupies what it claims" is the genuinely correct answer
+// there — recorded by CI's first real Windows run, same as the platform
+// suite's sparse test.
+test('a sparse file is sized by what it occupies, not what it claims', { skip: process.platform === 'win32' && 'NTFS allocates truncate-only files solid' }, async () => {
   const dir = await mkTmp();
   try {
     const sparse = path.join(dir, 'sparse.bin');

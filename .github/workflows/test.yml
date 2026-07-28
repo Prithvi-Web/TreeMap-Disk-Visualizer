@@ -73,11 +73,21 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          grep -n '^not ok' test-output.tap | head -40 | while IFS= read -r line; do
+          # GitHub caps error annotations at 10 per step, so the annotations
+          # carry the first failures and the step summary carries them ALL —
+          # the first Windows run had more failures than the cap could show.
+          grep -n '^not ok' test-output.tap | head -10 | while IFS= read -r line; do
             echo "::error title=Failing test::${line}"
           done
+          {
+            echo '## Failing tests'
+            echo '```'
+            grep -n '^not ok' test-output.tap || echo '(none matched — see raw log)'
+            grep -E '^# (tests|pass|fail|cancelled|skipped)' test-output.tap
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
           grep -E '^# (tests|pass|fail|cancelled|skipped)' test-output.tap | while IFS= read -r line; do
-            echo "::error title=Suite summary::${line}"
+            echo "::warning title=Suite summary::${line}"
           done
 
       - name: Report this machine's detected capabilities

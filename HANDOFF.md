@@ -17,7 +17,27 @@ separators) — skipped elsewhere with the reason. (4) Truncate-only files are
 SOLID on NTFS unless FSCTL_SET_SPARSE — two sparse tests skip on win32 with
 the recorded numbers. **Job logs are auth-gated even on public repos; the
 workflow now prints every failing test as a PUBLIC annotation
-(`::error::`), so future CI diagnosis never needs log access.**
+(`::error::`, capped at 10/step) AND the full list into the step summary,
+so future CI diagnosis never needs log access.**
+
+**Run #8 findings (round two):** Linux went GREEN. macOS red on ONE test —
+the A4 500k benchmark's absolute ceilings measured the loaded runner, not
+the code (the project's own recorded lesson); ceilings loosened, the 4×
+relationship assert unchanged. Windows red with ≥10 failures: SIX were the
+contract suites breaking wholesale because a default Windows checkout
+converts text to CRLF and every source-grepping regex anchors on \n —
+fixed with `.gitattributes` (`* text=auto eol=lf`). Plus: sparse test in
+the accountant suite gated on win32 (NTFS truncate-solid, same as the
+others); autopilot's `/proc` refusal gated to POSIX (Windows resolves it
+to `C:\proc`, an ordinary path). **Still expected red on Windows next
+run:** `nodes accepts exactly 500` — mechanism CONFIRMED: withScan's
+synthetic `/root` fixture meets the sanitizer, which path.resolve()s
+requests to `C:\root\...` on a Windows host so store lookups miss; fixing
+means resolve()-aware fixtures in apiHardening (and possibly siblings).
+`windows: Program Files…` (appAttribution) — cause not yet pinned; pure
+fixture passes on POSIX hosts, fails on a real Windows host. And possibly
+more beyond the old annotation cap — the step summary will list them ALL
+next run.
 **v2.5.0 is built and installed** at `/Applications/TreeMap.app` — it predates
 today's commits, so the installed app gains them at the next release build
 (which will also rebuild its index once, v2 → v3).
