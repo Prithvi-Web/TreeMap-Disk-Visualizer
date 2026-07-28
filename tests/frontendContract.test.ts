@@ -1255,3 +1255,60 @@ test('the delete confirmation still promises the Trash', () => {
   // not quietly reword it away.
   assert.match(INDEX, /Trash|Recycle Bin/, 'the destructive dialog must name the Trash');
 });
+
+/* ══════════════ Near-duplicate rendering stays windowed (perf) ══════════════ */
+
+test('the near-duplicate view renders a window, never the whole result', () => {
+  const code = appCode();
+  // A single result clustered 1,556 images into one group; rendering all of it
+  // added 28,196 nodes and 7,830 listeners, which is what made the whole app
+  // sluggish afterwards. The window is the fix, so it is pinned.
+  assert.match(code, /const ND_CLUSTER_BATCH = \d+/, 'clusters render in batches');
+  assert.match(code, /const ND_ITEMS_PER_STEP = \d+/, 'images within a cluster render in steps');
+
+  const render = code.slice(code.indexOf('function renderNearDupes'), code.indexOf('function bindNearDupeDelegation'));
+  assert.ok(render.length > 0, 'renderNearDupes must be findable');
+  assert.doesNotMatch(render, /clusters\.map\(/, 'the renderer must not build every cluster at once');
+  assert.match(render, /ndAppendClusters\(\)/, 'it hands off to the incremental appender');
+
+  const append = code.slice(code.indexOf('function ndAppendClusters'), code.indexOf('function ndSyncNewNodes'));
+  assert.ok(append.length > 0, 'ndAppendClusters must be findable');
+  assert.match(append, /Math\.min\(n\.clusters\.length, from \+ ND_CLUSTER_BATCH\)/, 'each step is bounded');
+  assert.match(append, /data-nd-loadmore/, 'and leaves an explicit control for the next batch');
+});
+
+test('near-duplicate handlers are delegated, not attached per image', () => {
+  const code = appCode();
+  const bind = code.slice(code.indexOf('function bindNearDupeDelegation'), code.indexOf('function updateNdToolbar'));
+  assert.ok(bind.length > 0, 'the delegation block must be findable');
+  for (const type of ['change', 'click', 'keydown', 'error']) {
+    assert.match(bind, new RegExp(`body\\.addEventListener\\('${type}'`), `${type} is delegated from #ndBody`);
+  }
+  // The old code attached listeners inside querySelectorAll loops over every
+  // checkbox, thumb wrapper, image and reveal button.
+  const render = code.slice(code.indexOf('function ndItemHtml'), code.indexOf('function bindNearDupeDelegation'));
+  assert.doesNotMatch(render, /\.forEach\(\s*\w+\s*=>\s*\{?[^}]*addEventListener/, 'no per-element listener loops remain');
+});
+
+test('a failed thumbnail retries before it is called broken', () => {
+  const code = appCode();
+  assert.match(code, /const ND_THUMB_RETRIES = \d+/, 'retries are bounded and named');
+  const bind = code.slice(code.indexOf('function bindNearDupeDelegation'), code.indexOf('function updateNdToolbar'));
+  assert.match(bind, /tries < ND_THUMB_RETRIES/, 'a transient failure is retried');
+  assert.match(bind, /nd-thumb broken/, 'and only then replaced with the broken placeholder');
+});
+
+test('leaving the Duplicates view frees the near-duplicate DOM', () => {
+  const code = appCode();
+  const unmount = code.slice(code.indexOf("id: 'duplicates'"), code.indexOf("id: 'trends'"));
+  assert.ok(unmount.length > 0, 'the duplicates view registration must be findable');
+  assert.match(unmount, /ndClearBody\(\)/, 'unmount empties #ndBody');
+  assert.match(code, /function ndClearBody/, 'and that helper exists');
+});
+
+test('cart buttons are only rewritten when their state actually changed', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function refreshCartButtons'), code.indexOf('async function renderCart'));
+  assert.ok(fn.length > 0, 'refreshCartButtons must be findable');
+  assert.match(fn, /if \(b\.dataset\.cartin === want\) return;/, 'an already-correct button is skipped entirely');
+});

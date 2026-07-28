@@ -1141,6 +1141,14 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .nd-info .sub { font-size: 10.5px; color: var(--text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nd-info .acts { display: flex; gap: 4px; margin-top: 5px; }
 .nd-note { font-size: 12px; color: var(--text-3); margin-bottom: 10px; display: flex; align-items: center; gap: 7px; }
+.nd-chead .nd-shown { font-size: 11.5px; color: var(--text-3); }
+/* "+N more" sits in the strip at thumbnail size so the row stays aligned. */
+.nd-morebtn { width: 132px; height: 100px; border-radius: 9px; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--text-2); cursor: pointer;
+  background: var(--surface-2); border: 1px dashed var(--hairline); }
+.nd-morebtn:hover { color: var(--accent); border-color: var(--accent); }
+.nd-loadmore { display: flex; justify-content: center; padding: 4px 0 2px; }
+.nd-loadmore .btn { display: inline-flex; align-items: center; gap: 7px; }
 
 /* ── Trends view ── */
 .trends-grid { display: grid; grid-template-columns: 7fr 5fr; gap: 18px; align-items: start; }
@@ -2425,7 +2433,9 @@ const state = {
   donut: { segs: [], hover: -1, animated: false },
   dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
   dupMode: 'exact',
-  near: { loadedFor: null, status: 'idle', clusters: [], clusterCount: 0, totalReclaimable: 0, available: true, truncated: false, selection: new Set(), pollTimer: 0 },
+  // renderedClusters / shownPerCluster drive the windowed render: how many
+  // clusters are in the DOM, and how many images of each. Both reset per render.
+  near: { loadedFor: null, status: 'idle', clusters: [], clusterCount: 0, totalReclaimable: 0, available: true, truncated: false, selection: new Set(), pollTimer: 0, renderedClusters: 0, shownPerCluster: {} },
   budgets: { list: [], overPaths: new Set() },
   trends: { roots: [], path: null, snapshots: [], points: [], hover: -1 },
   compare: { options: [], result: null },
@@ -2676,6 +2686,10 @@ const VIEWS = [
       // is watching.
       clearTimeout(state.dup.pollTimer); state.dup.pollTimer = 0;
       clearTimeout(state.near.pollTimer); state.near.pollTimer = 0;
+      // Hiding a view does not free it. A big near-duplicate result left tens of
+      // thousands of nodes and ~1,500 cart buttons in the document, and every
+      // later cart click in every other view paid for them.
+      ndClearBody();
     },
   },
   // Trends, Compare and Offloaded read persisted history, so they work with no
@@ -7060,10 +7074,20 @@ function cartToggle(p) {
 }
 function cartClear() { state.cart.clear(); saveCart(); renderCart(); refreshCartButtons(); }
 
-/** Sync the +/✓ state of every per-row "add to cart" button currently on screen. */
+/**
+ * Sync the +/✓ state of every per-row "add to cart" button currently on screen.
+ *
+ * Buttons already showing the right icon are left completely alone. Rewriting
+ * all of them unconditionally cost 30.5 ms of blocked main thread per cart
+ * click once a large near-duplicate result had put ~1,500 of them in the DOM —
+ * a stutter in every view, from a list the user wasn't even looking at.
+ */
 function refreshCartButtons() {
   document.querySelectorAll('[data-cart-add]').forEach((b) => {
     const inIt = state.cart.has(b.getAttribute('data-cart-add'));
+    const want = inIt ? '1' : '0';
+    if (b.dataset.cartin === want) return;
+    b.dataset.cartin = want;
     b.classList.toggle('cartin', inIt);
     b.innerHTML = icon(inIt ? 'check' : 'plus', 14);
     b.setAttribute('title', inIt ? 'Remove from cleanup cart' : 'Add to cleanup cart');
@@ -7735,9 +7759,141 @@ async function loadNearDupes(force = false) {
   poll();
 }
 
+/*
+ * Rendering the result is windowed, not all-at-once.
+ *
+ * Measured on a 1,820-image corpus that clustered into one group of 1,556: the
+ * old "one innerHTML with every cluster and every image" added **28,196 DOM
+ * nodes, 3.7 MB of HTML and 7,830 event listeners**, laid out a single flex
+ * strip **224,052 px** wide, and fired 1,564 thumbnail requests at a bucket
+ * that allows 20. Worse, none of it was ever released — the view is hidden, not
+ * emptied — so every later `refreshCartButtons()` walked 1,574 buttons and
+ * rewrote each one's SVG, costing **30.5 ms of blocked main thread per cart
+ * click in every other view**. That is the "TreeMap goes slow and glitchy after
+ * near-duplicates run" report, exactly.
+ *
+ * So clusters render a batch at a time, each cluster shows a bounded number of
+ * images with an explicit "show more", every handler is delegated from #ndBody
+ * (four listeners total, not four per image), and unmount empties the body.
+ */
+const ND_CLUSTER_BATCH = 12;   // clusters appended per step
+const ND_ITEMS_PER_STEP = 24;  // images revealed per cluster per step
+/** Retries a thumbnail gets before it is called broken (covers a transient 429). */
+const ND_THUMB_RETRIES = 2;
+
+function ndItemHtml(f, fi) {
+  const badge = fi === 0
+    ? '<span class="nd-badge new">newest</span>'
+    : `<span class="nd-badge" title="${f.distance} bits different from the newest copy">Δ${f.distance}</span>`;
+  return `
+      <div class="nd-item">
+        <div class="nd-thumbwrap" data-p="${escapeHtml(f.path)}" role="button" tabindex="0" aria-label="Toggle ${escapeHtml(f.name)}">
+          <input type="checkbox" class="nd-ck" data-p="${escapeHtml(f.path)}" aria-label="Select ${escapeHtml(f.name)}">
+          <img class="nd-thumb" loading="lazy" decoding="async" src="/api/files/preview?path=${encodeURIComponent(f.path)}&thumb=1" alt="${escapeHtml(f.name)}">
+          ${badge}
+        </div>
+        <div class="nd-info">
+          <div class="nm" title="${escapeHtml(f.path)}">${escapeHtml(f.name)}</div>
+          <div class="sub num">${formatBytes(f.size)} · ${formatDate(f.modifiedAt)}</div>
+          <div class="acts">
+            <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
+            <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
+          </div>
+        </div>
+      </div>`;
+}
+
+/** The trailing "+N more" control inside a cluster strip, or '' when it is fully shown. */
+function ndMoreItemHtml(ci, shown, total) {
+  const rest = total - shown;
+  if (rest <= 0) return '';
+  return `<div class="nd-item nd-more"><button class="nd-morebtn" data-nd-more="${ci}"
+      aria-label="Show more images in this group">${icon('plus', 16)}<span>${formatCount(rest)} more</span></button></div>`;
+}
+
+function ndClusterHtml(c, ci, shown) {
+  const files = c.files.slice(0, shown);
+  return `
+    <div class="nd-cluster glass" data-c="${ci}">
+      <div class="nd-chead">
+        ${icon('image', 15)}
+        <span class="nd-count">${formatCount(c.count)} similar images</span>
+        ${c.count > shown ? `<span class="nd-shown num">showing ${formatCount(shown)}</span>` : ''}
+        <span class="reclaim num">+${formatBytes(c.reclaimableBytes)} reclaimable</span>
+      </div>
+      <div class="nd-strip">${files.map(ndItemHtml).join('')}${ndMoreItemHtml(ci, shown, c.count)}</div>
+    </div>`;
+}
+
+/** Append the next batch of clusters, and the sentinel that asks for the one after. */
+function ndAppendClusters() {
+  const n = state.near;
+  const list = $('ndBody').querySelector('.nd-list');
+  if (!list) return;
+  const old = list.querySelector('.nd-loadmore');
+  if (old) old.remove();
+
+  const from = n.renderedClusters;
+  const to = Math.min(n.clusters.length, from + ND_CLUSTER_BATCH);
+  let html = '';
+  for (let ci = from; ci < to; ci++) {
+    const shown = Math.min(n.clusters[ci].count, ND_ITEMS_PER_STEP);
+    n.shownPerCluster[ci] = shown;
+    html += ndClusterHtml(n.clusters[ci], ci, shown);
+  }
+  n.renderedClusters = to;
+  if (to < n.clusters.length) {
+    html += `<div class="nd-loadmore"><button class="btn" data-nd-loadmore="1">Show more groups
+      <span class="num">(${formatCount(n.clusters.length - to)} left)</span></button></div>`;
+  }
+  list.insertAdjacentHTML('beforeend', html);
+  ndSyncNewNodes(list);
+}
+
+/** Reflect selection state on freshly inserted rows and prime their cart buttons. */
+function ndSyncNewNodes(scope) {
+  scope.querySelectorAll('.nd-ck').forEach(ck => {
+    const on = state.near.selection.has(ck.dataset.p);
+    if (ck.checked !== on) ck.checked = on;
+    const w = ck.closest('.nd-thumbwrap');
+    if (w) w.classList.toggle('sel', on);
+  });
+  refreshCartButtons();
+  // The pane can be occluded (rAF and IntersectionObserver suspend), so the
+  // sentinel is a real button first and observed second — it always works.
+  ndObserveSentinel();
+}
+
+let ndSentinelObserver = null;
+function ndObserveSentinel() {
+  if (ndSentinelObserver) { ndSentinelObserver.disconnect(); ndSentinelObserver = null; }
+  const sentinel = $('ndBody').querySelector('.nd-loadmore');
+  if (!sentinel || typeof IntersectionObserver !== 'function') return;
+  ndSentinelObserver = new IntersectionObserver((entries) => {
+    // Never auto-append into a page nobody is looking at: a hidden document can
+    // report a zero-height sentinel as permanently intersecting, which would
+    // walk the whole result and undo the window. The button still works.
+    if (document.hidden) return;
+    if (entries.some(e => e.isIntersecting)) ndAppendClusters();
+  }, { rootMargin: '600px' });
+  ndSentinelObserver.observe(sentinel);
+}
+
+/** Free the rendered DOM. Called on unmount so its cost cannot follow the user. */
+function ndClearBody() {
+  if (ndSentinelObserver) { ndSentinelObserver.disconnect(); ndSentinelObserver = null; }
+  const body = $('ndBody');
+  if (body) body.innerHTML = '';
+  state.near.renderedClusters = 0;
+  state.near.shownPerCluster = {};
+}
+
 function renderNearDupes() {
   const body = $('ndBody');
   const n = state.near;
+  if (ndSentinelObserver) { ndSentinelObserver.disconnect(); ndSentinelObserver = null; }
+  n.renderedClusters = 0;
+  n.shownPerCluster = {};
   if (!n.available) {
     $('ndSummary').textContent = '';
     body.innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('image', 15)} ${escapeHtml(n.reason || 'Near-duplicate image detection is unavailable on this system.')}</div></div>`;
@@ -7756,68 +7912,93 @@ function renderNearDupes() {
     (n.clusterCount > clusters.length ? ` <span class="num">(top ${clusters.length} shown)</span>` : '');
   const note = n.truncated
     ? `<div class="nd-note">${icon('alert', 14)} Only the largest images were compared — some smaller images may not be grouped.</div>` : '';
-  body.innerHTML = note + '<div class="nd-list">' + clusters.map((c, ci) => {
-    const strip = c.files.map((f, fi) => {
-      const enc = encodeURIComponent(f.path);
-      const badge = fi === 0
-        ? '<span class="nd-badge new">newest</span>'
-        : `<span class="nd-badge" title="${f.distance} bits different from the newest copy">Δ${f.distance}</span>`;
-      return `
-      <div class="nd-item">
-        <div class="nd-thumbwrap" data-p="${escapeHtml(f.path)}" role="button" tabindex="0" aria-label="Toggle ${escapeHtml(f.name)}">
-          <input type="checkbox" class="nd-ck" data-p="${escapeHtml(f.path)}" aria-label="Select ${escapeHtml(f.name)}">
-          <img class="nd-thumb" loading="lazy" decoding="async" src="/api/files/preview?path=${enc}&thumb=1" alt="${escapeHtml(f.name)}">
-          ${badge}
-        </div>
-        <div class="nd-info">
-          <div class="nm" title="${escapeHtml(f.path)}">${escapeHtml(f.name)}</div>
-          <div class="sub num">${formatBytes(f.size)} · ${formatDate(f.modifiedAt)}</div>
-          <div class="acts">
-            <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
-            <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
-          </div>
-        </div>
-      </div>`;
-    }).join('');
-    return `
-    <div class="nd-cluster glass" data-c="${ci}">
-      <div class="nd-chead">
-        ${icon('image', 15)}
-        <span class="nd-count">${c.count} similar images</span>
-        <span class="reclaim num">+${formatBytes(c.reclaimableBytes)} reclaimable</span>
-      </div>
-      <div class="nd-strip">${strip}</div>
-    </div>`;
-  }).join('') + '</div>';
-
-  const syncWrap = (ck) => { const w = ck.closest('.nd-thumbwrap'); if (w) w.classList.toggle('sel', ck.checked); };
-  body.querySelectorAll('.nd-ck').forEach(ck => {
-    ck.checked = n.selection.has(ck.dataset.p);
-    syncWrap(ck);
-    ck.addEventListener('change', () => {
-      if (ck.checked) n.selection.add(ck.dataset.p); else n.selection.delete(ck.dataset.p);
-      syncWrap(ck);
-      updateNdToolbar();
-    });
-  });
-  body.querySelectorAll('.nd-thumbwrap').forEach(wrap => {
-    const toggle = () => { const ck = wrap.querySelector('.nd-ck'); ck.checked = !ck.checked; ck.dispatchEvent(new Event('change')); };
-    wrap.addEventListener('click', (e) => { if (e.target.closest('input')) return; e.preventDefault(); toggle(); });
-    wrap.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
-  });
-  body.querySelectorAll('.nd-thumb').forEach(img => {
-    img.addEventListener('error', () => {
-      const ph = document.createElement('div');
-      ph.className = 'nd-thumb broken';
-      ph.innerHTML = icon('image', 22);
-      img.replaceWith(ph);
-    });
-  });
-  body.querySelectorAll('[data-reveal]').forEach(b =>
-    b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openInOS(b.dataset.reveal, true); }));
-  refreshCartButtons();
+  body.innerHTML = note + '<div class="nd-list"></div>';
+  ndAppendClusters();
   updateNdToolbar();
 }
+
+/* One delegated set of handlers for the whole view, attached once. Per-element
+   listeners were the other half of the cost: 7,830 of them on a big result. */
+(function bindNearDupeDelegation() {
+  const body = $('ndBody');
+  if (!body) return;
+
+  /* `item` is the .nd-item the interaction came from — a path belongs to exactly
+     one cluster, so syncing that one row is enough and avoids a selector built
+     from a user-controlled path. */
+  const setChecked = (path, on, item) => {
+    if (on) state.near.selection.add(path); else state.near.selection.delete(path);
+    const ck = item && item.querySelector('.nd-ck');
+    if (ck) ck.checked = on;
+    const wrap = item && item.querySelector('.nd-thumbwrap');
+    if (wrap) wrap.classList.toggle('sel', on);
+    updateNdToolbar();
+  };
+
+  body.addEventListener('change', (e) => {
+    const ck = e.target.closest('.nd-ck');
+    if (!ck) return;
+    setChecked(ck.dataset.p, ck.checked, ck.closest('.nd-item'));
+  });
+
+  body.addEventListener('click', (e) => {
+    const more = e.target.closest('[data-nd-more]');
+    if (more) {
+      e.preventDefault();
+      const ci = Number(more.dataset.ndMore);
+      const cluster = state.near.clusters[ci];
+      if (!cluster) return;
+      const shown = state.near.shownPerCluster[ci] || 0;
+      const next = Math.min(cluster.count, shown + ND_ITEMS_PER_STEP);
+      state.near.shownPerCluster[ci] = next;
+      const strip = more.closest('.nd-strip');
+      const holder = more.closest('.nd-item');
+      holder.insertAdjacentHTML('beforebegin', cluster.files.slice(shown, next).map((f, i) => ndItemHtml(f, shown + i)).join(''));
+      holder.outerHTML = ndMoreItemHtml(ci, next, cluster.count);
+      const head = strip.parentElement.querySelector('.nd-shown');
+      if (head) {
+        if (next < cluster.count) head.textContent = `showing ${formatCount(next)}`;
+        else head.remove(); // fully shown — the count in the heading says it all
+      }
+      ndSyncNewNodes(strip);
+      return;
+    }
+    if (e.target.closest('[data-nd-loadmore]')) { e.preventDefault(); ndAppendClusters(); return; }
+    const reveal = e.target.closest('[data-reveal]');
+    if (reveal) { e.preventDefault(); e.stopPropagation(); openInOS(reveal.dataset.reveal, true); return; }
+    const wrap = e.target.closest('.nd-thumbwrap');
+    if (wrap && !e.target.closest('input')) {
+      e.preventDefault();
+      setChecked(wrap.dataset.p, !state.near.selection.has(wrap.dataset.p), wrap.closest('.nd-item'));
+    }
+  });
+
+  body.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const wrap = e.target.closest('.nd-thumbwrap');
+    if (!wrap) return;
+    e.preventDefault();
+    setChecked(wrap.dataset.p, !state.near.selection.has(wrap.dataset.p), wrap.closest('.nd-item'));
+  });
+
+  // `error` does not bubble, but it does capture. One retry pass covers a
+  // transient failure; before this a single hiccup broke the thumbnail for good.
+  body.addEventListener('error', (e) => {
+    const img = e.target;
+    if (!img.classList || !img.classList.contains('nd-thumb')) return;
+    const tries = Number(img.dataset.try || 0);
+    if (tries < ND_THUMB_RETRIES) {
+      img.dataset.try = String(tries + 1);
+      const src = img.src.split('#')[0];
+      setTimeout(() => { img.src = src + '#r' + (tries + 1); }, 400 * (tries + 1));
+      return;
+    }
+    const ph = document.createElement('div');
+    ph.className = 'nd-thumb broken';
+    ph.innerHTML = icon('image', 22);
+    img.replaceWith(ph);
+  }, true);
+})();
 
 function updateNdToolbar() {
   const count = state.near.selection.size;

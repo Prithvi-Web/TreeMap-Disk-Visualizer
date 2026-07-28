@@ -1138,7 +1138,11 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'files',
     destructive: false,
     parameters: [queryParam('path', 'File inside a scanned root', { type: 'string' }, true), queryParam('thumb', 'Present = WebP thumbnail mode')],
-    responses: { '200': { description: 'Image bytes, or JSON {type: text|meta, …}' }, '403': errorResponse('Outside every scanned root') },
+    responses: {
+      '200': { description: 'Image bytes, or JSON {type: text|meta, …}' },
+      '304': { description: 'Thumbnail mode only: the ETag still matches, body unchanged' },
+      '403': errorResponse('Outside every scanned root'),
+    },
   },
 
   /* ------------ offload ------------ */

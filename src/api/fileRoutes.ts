@@ -10,7 +10,7 @@ import {
   insideAnyScanRoot,
 } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
-import { makeThumbnail } from '../services/perceptualDupes';
+import { getOrRenderThumbnail } from '../services/thumbnailCache';
 import { idempotency } from '../middleware/idempotency';
 import { getPolicy, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
@@ -156,6 +156,8 @@ const PREVIEW_NAME_TEXT = new Set(['dockerfile', 'makefile', 'license', 'readme'
 /** Raster formats sharp can turn into a WebP thumbnail (?thumb) for the near-dupe strip. */
 const THUMB_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif', 'heic', 'heif', 'avif']);
 const THUMB_MAX_INPUT = 60 * 1024 * 1024; // sharp decodes into memory — cap the source size
+/** Longest edge of a generated thumbnail; part of the cache key. */
+const THUMB_DIM = 256;
 
 /** Heuristic: NUL byte or >10% control chars ⇒ treat as binary, not text. */
 function looksBinary(buf: Buffer): boolean {
@@ -201,12 +203,22 @@ fileRouter.get('/files/preview', guardQueryPath('path'), async (req: Request, re
   // even TIFF/HEIC/BMP (which browsers won't show inline) appear in the
   // near-duplicate strip. Falls through to normal handling if sharp can't.
   if (req.query.thumb !== undefined && THUMB_EXT.has(ext) && st.size <= THUMB_MAX_INPUT) {
-    const thumb = await makeThumbnail(target, 256);
+    const thumb = await getOrRenderThumbnail(target, st.mtimeMs, st.size, THUMB_DIM);
     if (thumb) {
       res.setHeader('Content-Type', 'image/webp');
-      res.setHeader('Cache-Control', 'no-store');
+      // The ETag is keyed on path + mtime + size, so an edited file gets a new
+      // one and the browser re-fetches. An unchanged one costs a 304 and no
+      // decode at all — the near-duplicate strip re-renders constantly
+      // (threshold change, tab return, scrolling), and `no-store` made every
+      // one of those a fresh ~20 ms sharp decode per visible image.
+      res.setHeader('ETag', thumb.etag);
+      res.setHeader('Cache-Control', 'private, max-age=86400');
       res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.end(thumb);
+      if (req.fresh) {
+        res.status(304).end();
+        return;
+      }
+      res.end(thumb.body);
       return;
     }
   }
