@@ -3,12 +3,21 @@
 **Date:** 28 July 2026 (third session of the day)
 **Status:** Phase 0 ✅ · Phase 1 ✅ (A1–A5) · **Phase 2 ✅ COMPLETE** (B2, B3, B1, B4, B5) · index schema v3 ✅ · CI fixed ✅ · glass sidebar ✅
 **Suite:** 600/600 · typecheck clean · zero console errors
-**Pushed through `8009694`** (index v3 + B5 are on GitHub). **NOT yet pushed:**
-the CI fix (`4f57688`) and the sidebar commit after it — the user clicks
-**Push origin** in GitHub Desktop. **CI note: the Tests workflow had NEVER
-passed on any OS** (unref'd waitForScan poll timer stranding the suite +
-Windows never expanding the `tests/*.test.ts` glob). Both fixed in `4f57688`;
-the next push should produce the first green run — check it.
+**CI state after the user's push of run #7: macOS GREEN (first ever), Linux
+and Windows red — their first real runs surfaced true platform findings, all
+fixed in the commit after `aaef8ea`:** (1) base `getAllocatedSize` treated
+`blocks === 0` as unknown and rounded a sparse file up to its logical size —
+the same guard bug `blocksAreMeaningful` fixed in `toRawEntry` once before;
+macOS never saw it because it overrides the method (Linux failure). (2) The
+accountant reconstructed naive/dedup figures from the ZEROED duplicate rows,
+whose `allocated` is NULL on Windows — now computed per family from the
+unzeroed row (Windows failure). (3) Goldens are macOS-only BY CONSTRUCTION
+(recorded against APFS readdir order; ext4 hash-orders, NTFS flips
+separators) — skipped elsewhere with the reason. (4) Truncate-only files are
+SOLID on NTFS unless FSCTL_SET_SPARSE — two sparse tests skip on win32 with
+the recorded numbers. **Job logs are auth-gated even on public repos; the
+workflow now prints every failing test as a PUBLIC annotation
+(`::error::`), so future CI diagnosis never needs log access.**
 **v2.5.0 is built and installed** at `/Applications/TreeMap.app` — it predates
 today's commits, so the installed app gains them at the next release build
 (which will also rebuild its index once, v2 → v3).

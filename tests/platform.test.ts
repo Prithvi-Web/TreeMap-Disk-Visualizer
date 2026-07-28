@@ -438,7 +438,12 @@ test('fastEnumerate skips what the caller asks it to skip', async () => {
   }
 });
 
-test('getAllocatedSize tells a sparse file from a solid one', async () => {
+// Windows is excluded because its answer is genuinely different, not broken:
+// NTFS allocates a truncate-only file SOLID unless FSCTL_SET_SPARSE was set,
+// so ~50 MB allocated is the true on-disk figure there (CI's first real
+// Windows run recorded it). Asserting the POSIX expectation would measure
+// the filesystem's semantics, not the code.
+test('getAllocatedSize tells a sparse file from a solid one', { skip: process.platform === 'win32' && 'NTFS allocates truncate-only files solid; the full size is the honest answer' }, async () => {
   const dir = await mkTmp();
   try {
     const sparse = path.join(dir, 'sparse.bin');

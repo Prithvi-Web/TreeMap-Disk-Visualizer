@@ -251,14 +251,16 @@ export async function accountFor(rootPath: string): Promise<AllocationSummary | 
   }
 
   // What a naive logical sum would have double-counted: every name after the
-  // first in each family. The index already zeroes those rows, so this is
-  // recovered from the family table rather than by re-reading them.
-  const dedupRow = handle
-    .prepare(
-      `SELECT COALESCE(SUM(CASE WHEN allocated IS NULL THEN size ELSE allocated END), 0) AS bytes
-         FROM nodes WHERE root_id = ? AND is_dir = 0 AND (flags & 2) != 0`,
-    )
-    .get(root.id) as { bytes: number };
+  // first in each family. Computed per family — (names in scope − 1) × the
+  // family's real size — never from the zeroed duplicate rows themselves:
+  // their size is 0 by the dedup convention, and on Windows their allocated
+  // is NULL too (blocks is meaningless there), which made this figure
+  // silently collapse to zero on CI's first real Windows run. The family's
+  // MAX picks the one unzeroed row, which always knows the true size.
+  const savedByDeduplication = familyRows.reduce(
+    (sum, row) => sum + Math.max(0, row.links_in_scope - 1) * row.allocated,
+    0,
+  );
 
   const allocatedBytes = totals.allocated;
   const summary: AllocationSummary = {
@@ -266,14 +268,14 @@ export async function accountFor(rootPath: string): Promise<AllocationSummary | 
     // The index zeroes a hard-link duplicate's `size` so the tree does not
     // double-count it (the same convention the walker uses), so the naive
     // figure has to be reconstructed by adding those bytes back.
-    naiveLogicalBytes: totals.logical + dedupRow.bytes,
+    naiveLogicalBytes: totals.logical + savedByDeduplication,
     logicalBytes: totals.logical,
     allocatedBytes,
     sharedBytes,
     exclusiveBytes: Math.max(0, allocatedBytes - sharedBytes),
     hardlinkFamilies: familyRows.length,
     hardlinkedNames,
-    savedByDeduplication: dedupRow.bytes,
+    savedByDeduplication,
     volume: null,
     reconciliation: null,
     approximate: true,
@@ -335,7 +337,6 @@ export function allocationForFile(rootPath: string, filePath: string): FileAlloc
     .get(nodeId) as { size: number; allocated: number | null; ino: number | null; nlink: number | null } | undefined;
   if (!row) return null;
 
-  const allocated = row.allocated ?? row.size;
   const linksTotal = row.nlink ?? 1;
   let linksInScope = 1;
   let logicalBytes = row.size;
@@ -351,6 +352,11 @@ export function allocationForFile(rootPath: string, filePath: string): FileAlloc
     linksInScope = family.c;
     logicalBytes = Math.max(row.size, family.s);
   }
+
+  // Falls back to logicalBytes, never row.size: a zeroed duplicate row with
+  // no allocated figure (Windows, where blocks is meaningless) would
+  // otherwise report a 4 MB hard link as 0 bytes shared.
+  const allocated = row.allocated ?? logicalBytes;
 
   const extendsOutsideRoot = linksTotal > linksInScope;
   const shared = linksInScope > 1 || extendsOutsideRoot;

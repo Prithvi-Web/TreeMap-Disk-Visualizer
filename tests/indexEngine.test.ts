@@ -119,7 +119,12 @@ test('a hard link is counted once, not once per name', async () => {
   }
 });
 
-test('a sparse file is indexed by what it claims, and flagged by what it occupies', async () => {
+// Skipped on Windows because both halves of the premise are POSIX-shaped:
+// libuv leaves `blocks` meaningless there (so `allocated` is NULL in the
+// index by design — blocksAreMeaningful), and NTFS allocates truncate-only
+// files solid anyway. Windows placeholder detection rides reparse tags via
+// the platform layer (A3), not block counts.
+test('a sparse file is indexed by what it claims, and flagged by what it occupies', { skip: process.platform === 'win32' && 'blocks is meaningless on Windows; placeholders ride reparse tags there' }, async () => {
   const dir = await mkTmp();
   try {
     const sparse = path.join(dir, 'sparse.bin');

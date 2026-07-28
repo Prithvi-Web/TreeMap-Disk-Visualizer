@@ -245,7 +245,14 @@ export abstract class BaseProvider implements PlatformProvider {
    */
   async getAllocatedSize(p: string): Promise<number> {
     const st = await fsp.lstat(p);
-    return typeof st.blocks === 'number' && st.blocks > 0 ? st.blocks * 512 : st.size;
+    // blocks === 0 is a REAL answer on POSIX — a fully-sparse file occupies
+    // nothing — so it must not be treated as "unknown" and rounded up to the
+    // logical size. That guard bug already bit toRawEntry once (see
+    // blocksAreMeaningful); CI's first real Linux run caught this second
+    // copy: a 50 MB truncate-only file reported 52,428,800 "allocated".
+    // Where blocks IS meaningless (Windows), size is the honest fallback —
+    // and the Windows provider overrides this method anyway.
+    return this.blocksAreMeaningful && typeof st.blocks === 'number' ? st.blocks * 512 : st.size;
   }
 
   async getPlaceholderInfo(_path: string): Promise<PlaceholderInfo | null> {
