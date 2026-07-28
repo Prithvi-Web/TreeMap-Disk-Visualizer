@@ -113,7 +113,7 @@ Every scan saves a lightweight snapshot, charted over time per folder — with a
 <td width="50%" valign="top">
 
 ### 🔀 Compare
-Pick any two scans of the same folder for a file-level diff: **added, removed, grew, shrank.** Subtrees collapse to one row instead of thousands.
+Pick any two scans of the same folder for a file-level diff: **added, removed, grew, shrank.** Subtrees collapse to one row instead of thousands. Every **removed** row also offers **"Check snapshots"** — your OS has probably been keeping filesystem snapshots (APFS local snapshots, Btrfs subvolumes, Volume Shadow Copies) the whole time, so a file deleted weeks ago and long gone from the Trash is often still recoverable. Looking costs nothing and asks for nothing; recovering asks for your administrator password once, at that moment, on macOS and Windows (Linux needs none). The recovered copy is written **beside** the original, never over whatever is there now — it came from an older snapshot, so overwriting by default would replace newer work with older.
 
 </td>
 <td width="50%" valign="top">
@@ -292,6 +292,8 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 | `GET /api/cleanup/browser-profiles?scanId=` | Per-browser-profile cache breakdown |
 | `GET /api/git/repos?scanId=` · `POST /api/git/gc` | Git pack/loose/LFS breakdown, and `git gc` a scanned repo |
 | `GET /api/system/snapshots` · `POST …/purge` | OS snapshot accounting (APFS / Btrfs / VSS) |
+| `GET /api/system/snapshots/find-deleted?path=` | Which filesystem snapshots could still hold a lost path — needs no privileges |
+| `POST /api/system/snapshots/restore` | Recover it, written beside the original (asks for admin on macOS/Windows) |
 | `GET /api/autopilot/policies` · `PUT …` | Standing cleanup policies (re-validated on save; editing a policy's scope revokes its approval) |
 | `POST /api/autopilot/simulate` | Exactly what a policy would delete — writes nothing, touches no schedule |
 | `POST /api/autopilot/policies/:id/approve` | Let a policy start deleting, after its mandatory first preview |

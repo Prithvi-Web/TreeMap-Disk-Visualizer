@@ -5,6 +5,7 @@ import path from 'path';
 import { guardQueryPath } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
 import { idempotency } from '../middleware/idempotency';
+import { findDeleted, restoreFromSnapshot } from '../services/snapshotRecovery';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { diskUsage } from '../services/diskUsage';
 import { getTrashInfo, emptyTrash } from '../services/trash';
@@ -84,6 +85,68 @@ systemRouter.post('/system/snapshots/purge', idempotency, async (req: Request, r
   const result = await purgeSnapshots();
   await appendAudit({ action: 'snapshots.purge', source: 'http', tokenId: tokenIdFor('http'), paths: [], bytes: null, dryRun: false, outcome: 'ok' });
   res.json(result);
+});
+
+/**
+ * GET /api/system/snapshots/find-deleted?path= — which snapshots could still
+ * hold a path the user has lost (B4).
+ *
+ * ── Why not `/api/snapshots/find-deleted`, which §B4 names? ──
+ *
+ * `/api/snapshots` is already TreeMap's *scan history* — the snapshots Trends
+ * charts and Compare diffs. These are *filesystem* snapshots, an unrelated
+ * thing that happens to share a word, and they already have a home at
+ * `/api/system/snapshots`. Putting a filesystem-snapshot operation inside the
+ * scan-history namespace would leave two meanings of "snapshot" under one path.
+ * The same resolution as `/api/platform/capabilities` in A5; recorded in
+ * docs/PLATFORM_NOTES.md.
+ *
+ * Costs nothing and asks for nothing: listing snapshots is unprivileged on all
+ * three platforms, so the user always learns what might be recoverable before
+ * being asked for a password.
+ */
+systemRouter.get('/system/snapshots/find-deleted', guardQueryPath('path'), async (req: Request, res: Response) => {
+  const target = req.query.path as string | undefined;
+  if (!target) throw new AppError(400, 'PATH_REQUIRED', 'Give the path you are looking for');
+  res.json(await findDeleted(target));
+});
+
+/**
+ * POST /api/system/snapshots/restore { path, destination?, overwrite? }
+ *
+ * Writes the recovered copy *beside* the original by default, never over it:
+ * a file from a three-week-old snapshot is older than whatever holds that path
+ * now, so overwriting by default would replace newer work with older.
+ *
+ * On macOS and Windows this is the one call that asks for an administrator
+ * password, at the moment it is invoked (§3.8). A dismissed prompt comes back
+ * as `AUTHORIZATION_DECLINED` — an answer, not a fault.
+ */
+systemRouter.post('/system/snapshots/restore', idempotency, async (req: Request, res: Response) => {
+  const body = req.body as { path?: unknown; destination?: unknown; overwrite?: unknown };
+  if (typeof body.path !== 'string' || !body.path.trim()) {
+    throw new AppError(400, 'PATH_REQUIRED', 'Give the path you want back');
+  }
+  try {
+    const outcome = await restoreFromSnapshot({
+      path: body.path,
+      ...(typeof body.destination === 'string' && body.destination.trim() ? { destination: body.destination } : {}),
+      overwrite: body.overwrite === true,
+    });
+    await appendAudit({
+      action: 'snapshots.restore', source: 'http', tokenId: tokenIdFor('http'),
+      paths: [outcome.restoredTo], bytes: outcome.sizeBytes, dryRun: false, outcome: 'ok',
+    });
+    res.json(outcome);
+  } catch (err) {
+    if (err instanceof AppError) {
+      await appendAudit({
+        action: 'snapshots.restore', source: 'http', tokenId: tokenIdFor('http'),
+        paths: [String(body.path)], bytes: null, dryRun: false, outcome: 'refused', code: err.code,
+      });
+    }
+    throw err;
+  }
 });
 
 /**

@@ -20,6 +20,8 @@ import {
   SmartInfo,
   Unsubscribe,
   VolumeSnapshotRef,
+  SnapshotEntryInfo,
+  SnapshotRecoveryResult,
   VolumeTopology,
   ZombieHandleInfo,
 } from './types';
@@ -272,6 +274,25 @@ export abstract class BaseProvider implements PlatformProvider {
 
   async readFromSnapshot(_snapshot: VolumeSnapshotRef, _path: string): Promise<NodeJS.ReadableStream> {
     throw new Error('No filesystem snapshot mechanism is available on this system');
+  }
+
+  /* ---- Snapshot recovery (B4) ---- */
+
+  /** Conservative default: assume contents cannot be read without permission. */
+  canInspectSnapshotsUnprivileged(): boolean {
+    return false;
+  }
+
+  async inspectSnapshot(_snapshot: VolumeSnapshotRef, _path: string): Promise<SnapshotEntryInfo | null> {
+    return null;
+  }
+
+  async recoverFromSnapshots(
+    _snapshots: VolumeSnapshotRef[],
+    _originalPath: string,
+    _destination: string,
+  ): Promise<SnapshotRecoveryResult> {
+    return { restored: false, reason: 'This system has no filesystem snapshots TreeMap can read.' };
   }
 
   async registerShellIntegration(): Promise<ShellIntegrationResult> {

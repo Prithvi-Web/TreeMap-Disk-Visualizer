@@ -8,6 +8,7 @@ import { openHandlesFor, zombieHandles } from './procFdGuard';
 import { volumeTopology, isRotational, queueDepth, topologyReason } from './topology';
 import { downloadOrigin, provenanceAvailable } from './provenance';
 import { listSnapshots as btrfsSnapshots, snapshotAvailability } from './btrfs';
+import { relativeToVolume } from '../snapshotPaths';
 import { registerShellIntegration, unregisterShellIntegration } from './shellIntegration';
 import { mapSmartctl, SmartctlJson } from '../macos';
 import type {
@@ -22,6 +23,8 @@ import type {
   SmartInfo,
   Unsubscribe,
   VolumeSnapshotRef,
+  SnapshotEntryInfo,
+  SnapshotRecoveryResult,
   VolumeTopology,
   ZombieHandleInfo,
 } from '../types';
@@ -253,6 +256,51 @@ export class LinuxProvider extends BaseProvider {
     }
     const relative = p.startsWith(snapshot.volume) ? p.slice(snapshot.volume.length) : p;
     return createReadStream(path.join(snapshot.accessPath, relative));
+  }
+
+  /* ---------------- Snapshot recovery (B4) ---------------- */
+
+  /**
+   * True — and Linux is the only platform where it is. A btrfs snapshot is an
+   * ordinary subvolume sitting in the filesystem, so TreeMap can confirm "your
+   * file is in this snapshot, 4.2 MB, modified Tuesday" with no privileges at
+   * all. macOS must mount and Windows must name a shadow device; both need
+   * authorization first.
+   */
+  override canInspectSnapshotsUnprivileged(): boolean {
+    return true;
+  }
+
+  override async inspectSnapshot(snapshot: VolumeSnapshotRef, p: string): Promise<SnapshotEntryInfo | null> {
+    if (snapshot.accessPath === null) return null;
+    try {
+      const st = await fsp.lstat(path.join(snapshot.accessPath, relativeToVolume(p, snapshot.volume)));
+      return { sizeBytes: st.size, modifiedAt: st.mtimeMs, isDirectory: st.isDirectory() };
+    } catch {
+      return null; // not in this snapshot — an answer, not a failure
+    }
+  }
+
+  override async recoverFromSnapshots(
+    snapshots: VolumeSnapshotRef[],
+    originalPath: string,
+    destination: string,
+  ): Promise<SnapshotRecoveryResult> {
+    const ordered = [...snapshots].sort((a, b) => (b.takenAt ?? 0) - (a.takenAt ?? 0));
+    for (const snapshot of ordered) {
+      if (snapshot.accessPath === null) continue;
+      const source = path.join(snapshot.accessPath, relativeToVolume(originalPath, snapshot.volume));
+      const st = await fsp.lstat(source).catch(() => null);
+      if (!st) continue;
+      await fsp.mkdir(path.dirname(destination), { recursive: true });
+      // recursive handles a directory; a plain file takes the same call.
+      await fsp.cp(source, destination, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+      return { restored: true, fromSnapshotId: snapshot.id, sizeBytes: st.size };
+    }
+    return {
+      restored: false,
+      reason: `None of the ${ordered.length} btrfs snapshot${ordered.length === 1 ? '' : 's'} on this system contain that path.`,
+    };
   }
 
   override async getSmartData(devicePath: string): Promise<SmartInfo | null> {

@@ -14,6 +14,8 @@ import {
   SmartInfo,
   Unsubscribe,
   VolumeSnapshotRef,
+  SnapshotEntryInfo,
+  SnapshotRecoveryResult,
   VolumeTopology,
   ZombieHandleInfo,
 } from './types';
@@ -67,6 +69,38 @@ export interface PlatformProvider {
   getVolumeTopology(): Promise<VolumeTopology>;
   listSnapshots(volume: string): Promise<VolumeSnapshotRef[]>;
   readFromSnapshot(snapshot: VolumeSnapshotRef, path: string): Promise<NodeJS.ReadableStream>;
+
+  /* ---- Snapshot recovery (B4) ---- */
+
+  /**
+   * Can a snapshot's contents be examined without asking for a password?
+   *
+   * True only on Linux, where a btrfs snapshot is an ordinary readable
+   * subvolume. macOS must mount the snapshot and Windows must name the shadow
+   * device, and both of those need elevation — so on those platforms TreeMap
+   * can honestly say "these snapshots cover the period" but not "your file is
+   * in this one" until the user authorizes the read.
+   */
+  canInspectSnapshotsUnprivileged(): boolean;
+
+  /** What this snapshot holds at `path`, or null. Only meaningful when
+   *  `canInspectSnapshotsUnprivileged()` is true. */
+  inspectSnapshot(snapshot: VolumeSnapshotRef, path: string): Promise<SnapshotEntryInfo | null>;
+
+  /**
+   * Copy `originalPath` out of the newest snapshot that holds it, to
+   * `destination`.
+   *
+   * Takes the whole candidate list rather than one snapshot because on macOS
+   * every mount costs an authorization prompt: searching six snapshots one
+   * call at a time would ask the user for their password six times. One call,
+   * one prompt, newest first.
+   */
+  recoverFromSnapshots(
+    snapshots: VolumeSnapshotRef[],
+    originalPath: string,
+    destination: string,
+  ): Promise<SnapshotRecoveryResult>;
 
   /* Shell integration (D2) — reversible from the same place it is installed */
   registerShellIntegration(): Promise<ShellIntegrationResult>;

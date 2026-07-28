@@ -209,6 +209,32 @@ export interface VolumeTopology {
   mechanism: string;
 }
 
+/* ---------- Snapshot recovery (B4) ---------- */
+
+/** What a snapshot holds for one path, when that can be established. */
+export interface SnapshotEntryInfo {
+  sizeBytes: number;
+  modifiedAt: number;
+  isDirectory: boolean;
+}
+
+/**
+ * The result of recovering a path out of the newest snapshot that has it.
+ *
+ * `cancelled` is separate from a failure on purpose: a user who dismisses an
+ * authorization prompt has given an answer, and showing them a red error for
+ * doing so would be wrong.
+ */
+export interface SnapshotRecoveryResult {
+  restored: boolean;
+  /** Which snapshot the bytes came from. */
+  fromSnapshotId?: string;
+  sizeBytes?: number;
+  /** Present when nothing was restored — always set in that case. */
+  reason?: string;
+  cancelled?: boolean;
+}
+
 /* ---------- Filesystem snapshots (B4) ---------- */
 
 export interface VolumeSnapshotRef {

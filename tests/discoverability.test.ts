@@ -225,6 +225,9 @@ test('capabilities marks exactly the destructive endpoints as destructive', asyn
       'POST /api/offload',
       'POST /api/offload/restore',
       'POST /api/system/snapshots/purge',
+      // Writes a recovered tree back onto the filesystem, and can overwrite when
+      // explicitly asked to.
+      'POST /api/system/snapshots/restore',
       // Restoring writes a whole tree back onto the filesystem.
       'POST /api/timecapsule/{id}/restore',
       'POST /api/trash/empty',

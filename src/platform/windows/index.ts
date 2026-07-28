@@ -8,6 +8,7 @@ import { downloadOrigin } from './zoneIdentifier';
 import { volumeTopology } from './topology';
 import { fileFactsBatch, toPlaceholderInfo } from './attributes';
 import { listSnapshots as vssSnapshots, snapshotAvailability } from './vss';
+import { relativeToVolume } from '../snapshotPaths';
 import { registerShellIntegration, unregisterShellIntegration } from './shellIntegration';
 import { runPowerShellJson } from './powershell';
 import { mapSmartctl, SmartctlJson } from '../macos';
@@ -21,6 +22,7 @@ import type {
   ShellIntegrationResult,
   SmartInfo,
   VolumeSnapshotRef,
+  SnapshotRecoveryResult,
   VolumeTopology,
   ZombieHandleInfo,
 } from '../types';
@@ -175,6 +177,74 @@ export class WindowsProvider extends BaseProvider {
       void fsp.rm(staging, { recursive: true, force: true }).catch(() => {});
     });
     return stream;
+  }
+
+  /* ---------------- Snapshot recovery (B4) ---------------- */
+
+  /**
+   * False. A shadow copy's contents live under a raw
+   * `\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopyN` path that Windows will
+   * not open directly; naming it with `mklink /d` needs administrator rights
+   * or Developer Mode. Enumeration stays unelevated, so TreeMap can say how
+   * many restore points cover a file before asking for anything.
+   */
+  override canInspectSnapshotsUnprivileged(): boolean {
+    return false;
+  }
+
+  /**
+   * Copy a path out of the newest shadow copy that holds it.
+   *
+   * One link per snapshot, removed immediately: a left-behind directory link
+   * into a shadow device is both confusing in Explorer and a handle on storage
+   * the user cannot see.
+   *
+   * ⚠ Not executed on Windows by the author; the live round-trip runs in CI.
+   */
+  override async recoverFromSnapshots(
+    snapshots: VolumeSnapshotRef[],
+    originalPath: string,
+    destination: string,
+  ): Promise<SnapshotRecoveryResult> {
+    const ordered = [...snapshots].sort((a, b) => (b.takenAt ?? 0) - (a.takenAt ?? 0));
+    const relative = relativeToVolume(originalPath, '');
+    await fsp.mkdir(path.dirname(destination), { recursive: true });
+
+    for (const snapshot of ordered) {
+      const device = await this.deviceObjectFor(snapshot.id);
+      if (device === null) continue;
+      const linkDir = path.join(os.tmpdir(), `treemap-shadow-${Date.now().toString(36)}`);
+      try {
+        await runPowerShellJson<unknown>(
+          String.raw`cmd.exe /c mklink /d "$env:TREEMAP_LINK" "$env:TREEMAP_DEVICE\" | Out-Null; '{}'`,
+          { timeoutMs: 20_000, env: { TREEMAP_LINK: linkDir, TREEMAP_DEVICE: device } },
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // Refused for want of rights, rather than because the file is absent.
+        if (/denied|privilege|elevat/i.test(message)) {
+          return {
+            restored: false,
+            reason: 'Reading a restore point needs administrator rights (or Developer Mode). Nothing was changed.',
+          };
+        }
+        continue;
+      }
+
+      try {
+        const source = path.join(linkDir, relative);
+        const st = await fsp.lstat(source).catch(() => null);
+        if (!st) continue;
+        await fsp.cp(source, destination, { recursive: true, preserveTimestamps: true });
+        return { restored: true, fromSnapshotId: snapshot.id, sizeBytes: st.size };
+      } finally {
+        await fsp.rm(linkDir, { force: true, recursive: false }).catch(() => {});
+      }
+    }
+    return {
+      restored: false,
+      reason: `None of the ${ordered.length} restore point${ordered.length === 1 ? '' : 's'} on this PC contain that path.`,
+    };
   }
 
   private async deviceObjectFor(shadowId: string): Promise<string | null> {

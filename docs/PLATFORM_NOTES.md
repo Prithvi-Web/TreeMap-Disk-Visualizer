@@ -347,6 +347,51 @@ Windows is the one platform that can hit its cap. When it does,
 `expandForRegistration` reports `complete: false` rather than letting a partial
 answer read as a clean one.
 
+### Reading a snapshot needs root on macOS — measured, not assumed (B4)
+
+Listing local snapshots is unprivileged and works fine. Reading one does not:
+
+```
+tmutil listlocalsnapshots /                  → works as an ordinary user
+tmutil localsnapshot                         → works as an ordinary user (!)
+mount_apfs -s <snap> /                       → "Resource busy"
+mount_apfs -s <snap> /System/Volumes/Data    → "Operation not permitted"
+```
+
+The first failure is the boot volume refusing to have its own snapshot mounted
+over itself; the second is the real answer — mounting needs root. There is no
+unprivileged route: APFS has no `.snapshot` directory (that is ZFS and NetApp),
+and nothing is pre-mounted under `/Volumes`. Windows is the same story for a
+different reason (naming a shadow device with `mklink /d` needs administrator
+rights or Developer Mode). **Btrfs is the exception**: a snapshot is an ordinary
+subvolume already in the tree, so Linux confirms and restores with no
+privileges at all.
+
+That asymmetry is why `findDeleted` reports three states rather than two:
+`present` (looked inside — Linux), `possible` (a snapshot exists that covers the
+period, and confirming costs a password), and `absent`. Claiming `present`
+without having looked would be exactly the confident-wrong-answer §10 bans.
+
+Consequences encoded in the code:
+
+- **One prompt, not one per snapshot.** Searching six snapshots as six
+  privileged calls would ask for the password six times, so the whole
+  mount → look → copy → unmount → next loop runs inside a single elevated
+  script (`platform/macos/snapshotRecover.ts`).
+- **The script is a fixed file that interpolates nothing**, written to a
+  0700 temp file at run time and handed every value as argv through
+  AppleScript's `quoted form of`. `do shell script` takes a *string*, which is
+  the classic route from "restore my file" to "run my command".
+- **It is inlined in the .ts rather than shipped as a sibling `.sh`** because
+  the desktop build packs into `app.asar`, and `/bin/sh` cannot execute a path
+  inside an asar archive — a bug that would appear only in the packaged app.
+- **A dismissed prompt is `AUTHORIZATION_DECLINED`, not an error.** The user was
+  asked and answered.
+
+**Not executed:** the elevated branch itself, which needs a real password. The
+helper is verified unprivileged (every mount fails → `NOTFOUND`, exit 0, no
+leaked mount points, nothing written) and its argv quoting is unit-tested.
+
 ### `mdadm` is deliberately not shelled out to
 
 It has no JSON mode, but `lsblk --json` already reports md devices with their
@@ -398,6 +443,13 @@ Also available:
   cache or restarting.
 - `GET /api/platform/topology` — physical disks and the volumes on each;
   `409 CAPABILITY_UNAVAILABLE` with a reason when it cannot be read.
+- `GET /api/system/snapshots/find-deleted?path=` and
+  `POST /api/system/snapshots/restore` — B4. §B4 names these
+  `/api/snapshots/*`, but that namespace is already TreeMap's **scan
+  history** (Trends, Compare). These are *filesystem* snapshots, which
+  already live at `/api/system/snapshots`, so they stay there rather than
+  leaving two meanings of "snapshot" under one path — the same resolution as
+  `/api/platform/capabilities` in A5.
 - `POST /api/files/open-handles` — B2 pre-flight: which of these paths, or
   files inside them, a program is holding open. Read-only. `DELETE /api/files`
   runs the same check itself and answers `409 OPEN_HANDLE_CONFLICT` (with the

@@ -650,6 +650,69 @@ export type TimeCapsuleStreamEvent =
   | { type: 'cancelled' }
   | { type: 'shutdown' };
 
+/* ---------- Snapshot recovery (B4) ---------- */
+
+/**
+ * One snapshot's relationship to a path being looked for.
+ *
+ * `possible` is the state that keeps this honest. On macOS and Windows,
+ * reading a snapshot needs an administrator password, so before the user has
+ * given one TreeMap knows a snapshot *exists* but not what is in it. Reporting
+ * that as `present` would be a claim nobody checked; reporting it as `absent`
+ * would hide a recoverable file.
+ */
+export type SnapshotCandidateState = 'present' | 'possible' | 'absent';
+
+export interface SnapshotCandidate {
+  snapshot: VolumeSnapshotRefDto;
+  state: SnapshotCandidateState;
+  /** Only known when the snapshot could actually be inspected. */
+  sizeBytes: number | null;
+  modifiedAt: number | null;
+}
+
+/** The wire shape of a platform snapshot reference. */
+export interface VolumeSnapshotRefDto {
+  id: string;
+  name: string;
+  takenAt: number | null;
+  volume: string;
+  accessPath: string | null;
+}
+
+export interface SnapshotSearchResult {
+  path: string;
+  /** Newest first. */
+  candidates: SnapshotCandidate[];
+  /**
+   * Whether `state` was established by looking inside, or inferred from the
+   * snapshot merely existing. False on macOS and Windows until authorized.
+   */
+  confirmed: boolean;
+  capability: CapabilityStateDto;
+  /** True when the path is still on disk — not a recovery case at all. */
+  stillPresent?: boolean;
+  /** Why there is nothing to offer, when there is nothing to offer. */
+  reason?: string;
+}
+
+/** Mirror of the platform layer's CapabilityState, for the wire. */
+export interface CapabilityStateDto {
+  available: boolean;
+  mechanism: string;
+  reason?: string;
+  degradedTo?: string;
+}
+
+export interface SnapshotRestoreOutcome {
+  restored: true;
+  originalPath: string;
+  /** Where it was actually written — never the original path unless asked. */
+  restoredTo: string;
+  fromSnapshotId: string | null;
+  sizeBytes: number;
+}
+
 /* ---------- Autopilot (B1) ---------- */
 
 /**

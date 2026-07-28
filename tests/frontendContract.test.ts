@@ -1121,6 +1121,75 @@ test('the Autopilot panel implements the §3.5 states', () => {
   assert.match(code, /Nothing has run yet/, 'and an empty run history is explained too');
 });
 
+/* ══════════════════════ Snapshot recovery (B4) ══════════════════════ */
+
+test('only a removed Compare row offers to check snapshots', () => {
+  // §B4 puts the action on removed rows. A file that still exists has nothing
+  // to recover, and the button beside it would be noise on every other row.
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function deltaRow'), code.indexOf('async function checkSnapshotsFor'));
+  assert.match(fn, /const removed = en\.sizeB === null/);
+  assert.match(fn, /removed && opts\.offerSnapshots/, 'gated on the row actually being a deletion');
+  assert.match(fn, /data-snap-check/);
+});
+
+test('looking is separated from recovering, because only one costs a password', () => {
+  const code = appCode();
+  assert.match(code, /\/api\/system\/snapshots\/find-deleted/);
+  assert.match(code, /\/api\/system\/snapshots\/restore/);
+  const find = code.slice(code.indexOf('async function checkSnapshotsFor'), code.indexOf('async function restoreFromSnapshot'));
+  assert.ok(!/snapshots\/restore/.test(find), 'checking must never trigger the privileged call');
+});
+
+test('an unconfirmed snapshot is never described as containing the file', () => {
+  // On macOS and Windows TreeMap knows a snapshot exists but not what is in it
+  // until authorized. Saying "found it" would be a claim nobody checked.
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function checkSnapshotsFor'), code.indexOf('async function restoreFromSnapshot'));
+  assert.match(fn, /result\.confirmed/, 'the two cases are told apart');
+  // Assert the *claim*, not adjacency: the wording comes from a template whose
+  // plural switch splits "covers"/"cover" from "this period", so a
+  // phrase-matching regex would break on a perfectly correct edit.
+  assert.match(fn, /this period/, 'the unconfirmed wording is about a period being covered');
+  assert.match(fn, /cover/, 'in terms of coverage');
+  assert.match(fn, /administrator password/i, 'and says what checking would cost');
+
+  // The decisive part: only the branch that actually looked inside may claim a
+  // find. "Found in" must sit on the confirmed side of the ternary.
+  // Search for the end anchor *after* the start one: `host.innerHTML` also
+  // appears in the loading and error branches above this, so a plain
+  // indexOf would slice backwards to an empty string.
+  const headlineAt = fn.indexOf('const headline');
+  const branches = fn.slice(headlineAt, fn.indexOf('host.innerHTML', headlineAt));
+  assert.ok(branches.length > 50, 'the headline slice must not be empty');
+  const split = branches.split(/\n\s*:\s/);
+  assert.equal(split.length, 2, 'headline is a two-branch choice on result.confirmed');
+  assert.match(split[0], /Found in/, 'the confirmed branch is the one that claims a find');
+  assert.ok(!/Found in/.test(split[1]), 'the unconfirmed branch never claims the file is in there');
+});
+
+test('the panel promises the recovered file goes beside the original', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function checkSnapshotsFor'), code.indexOf('async function restoreFromSnapshot'));
+  assert.match(fn, /never over anything/i);
+});
+
+test('a declined password prompt is shown neutrally, not as a failure', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function restoreFromSnapshot'), code.indexOf('function wireSnapshotActions'));
+  assert.match(fn, /AUTHORIZATION_DECLINED/);
+  assert.match(fn, /declined \? 'clock' : 'alert'/, 'a decision gets a neutral icon, an error gets the alert');
+});
+
+test('the snapshot panel implements the §3.5 states', () => {
+  const code = appCode();
+  assert.match(code, /Looking through this system.s snapshots/, 'loading');
+  assert.match(code, /Try again/, 'error, with a retry');
+  const fn = code.slice(code.indexOf('async function checkSnapshotsFor'), code.indexOf('async function restoreFromSnapshot'));
+  assert.match(fn, /result\.reason/, 'unavailable, carrying the specific reason');
+  assert.match(fn, /stillPresent/, 'and the not-a-recovery-case answer');
+});
+
 /* ══════════════════════ Safety copy (§2, §B2) ══════════════════════ */
 
 test('the delete confirmation still promises the Trash', () => {

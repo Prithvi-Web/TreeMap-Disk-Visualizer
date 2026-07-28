@@ -359,6 +359,30 @@ const schemas: Json = {
     },
     ['status', 'entries', 'events'],
   ),
+  SnapshotCandidate: obj(
+    {
+      snapshot: obj(
+        { id: str(), name: str(), takenAt: nullable(int('Unix epoch ms')), volume: str(), accessPath: nullable(str()) },
+        ['id', 'name', 'takenAt', 'volume', 'accessPath'],
+      ),
+      state: { type: 'string', enum: ['present', 'possible', 'absent'] },
+      sizeBytes: nullable(int('Known only when the snapshot could be inspected')),
+      modifiedAt: nullable(int()),
+    },
+    ['snapshot', 'state', 'sizeBytes', 'modifiedAt'],
+    "'possible' means the snapshot exists but reading it needs authorization — never assume it holds the file",
+  ),
+  SnapshotSearchResult: obj(
+    {
+      path: str(),
+      candidates: arr(ref('SnapshotCandidate'), 'Newest first'),
+      confirmed: bool('False when states were inferred rather than checked inside (macOS/Windows before authorization)'),
+      capability: opaque('available, mechanism, reason?, degradedTo?'),
+      stillPresent: bool('The path is still on disk — not a recovery case'),
+      reason: str('Why there is nothing to offer'),
+    },
+    ['path', 'candidates', 'confirmed', 'capability'],
+  ),
   AutopilotPolicy: obj(
     {
       id: str(),
@@ -1600,6 +1624,41 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': sseResponse('progress | complete | cancelled | error | shutdown frames'),
       '404': errorResponse('JOB_NOT_FOUND — unknown or expired job id'),
+    },
+  },
+  {
+    method: 'get',
+    path: '/api/system/snapshots/find-deleted',
+    summary: 'Which filesystem snapshots could still hold a lost path — costs no privileges',
+    tag: 'system',
+    destructive: false,
+    parameters: [queryParam('path', 'The path you are looking for', { type: 'string' }, true)],
+    responses: {
+      '200': jsonResponse('Candidate snapshots, newest first', ref('SnapshotSearchResult')),
+      '400': errorResponse('PATH_REQUIRED'),
+    },
+  },
+  {
+    method: 'post',
+    path: '/api/system/snapshots/restore',
+    summary: 'Recover a path from the newest snapshot holding it, written beside the original',
+    tag: 'system',
+    destructive: true,
+    parameters: [idempotencyHeader],
+    requestBody: {
+      required: true,
+      content: { 'application/json': { schema: obj({
+        path: str('The original path to recover'),
+        destination: str('Where to write it; defaults to a dated sibling of the original'),
+        overwrite: bool('Replace an existing file at the destination. Off by default — a snapshot copy is older than whatever is there now'),
+      }, ['path']) } },
+    },
+    responses: {
+      '200': jsonResponse('Recovered', obj(
+        { restored: bool(), originalPath: str(), restoredTo: str(), fromSnapshotId: nullable(str()), sizeBytes: int() },
+        ['restored', 'originalPath', 'restoredTo', 'fromSnapshotId', 'sizeBytes'],
+      )),
+      '409': errorResponse('DESTINATION_OCCUPIED, NO_SNAPSHOTS, NOT_IN_ANY_SNAPSHOT, or AUTHORIZATION_DECLINED when the password prompt was dismissed'),
     },
   },
   {

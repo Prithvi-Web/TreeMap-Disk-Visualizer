@@ -1,8 +1,8 @@
 # TreeMap — 21-feature master prompt, session handoff
 
-**Date:** 27 July 2026 · **Status:** Phase 0 + **Phase 1 complete (A1–A5)**, Phase 2 in progress (**B2, B3, B1 done**)
-**Suite:** 566/566 passing (3 consecutive runs) · typecheck clean · zero console errors
-**Through B3 is COMMITTED and pushed** (239000b, 6357274). **B1 is uncommitted.**
+**Date:** 27 July 2026 · **Status:** Phase 0 + **Phase 1 complete (A1–A5)**, Phase 2 in progress (**B2, B3, B1, B4 done**)
+**Suite:** 586/586 passing (3 consecutive runs) · typecheck clean · zero console errors
+**Through B1 is COMMITTED and pushed** (239000b, 6357274, cc9354a). **B4 is uncommitted.**
 
 Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
@@ -12,7 +12,7 @@ Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
 ```bash
 cd "/Users/prithvivinay/Desktop/Claude Code/Treemap"
-npm run build && npm test          # expect 566/566
+npm run build && npm test          # expect 586/586
 npm run capabilities:report        # expect 9/12 available on this Mac
 ```
 
@@ -45,7 +45,8 @@ contradict what the spec assumes.
 | **B2** | Open-file guard before every delete | ✅ Complete |
 | **B3** | Time Capsule — recovery beyond the OS Trash | ✅ Complete |
 | **B1** | Autopilot cleanup with policy engine | ✅ Complete |
-| **B4** | Snapshot-aware restore beyond Trash | ⬜ **NEXT** (Phase 2 order: B4 → B5) |
+| **B4** | Snapshot-aware restore beyond Trash | ✅ Complete |
+| **B5** | Zombie-handle reclaim detector | ⬜ **NEXT** — last of Phase 2 |
 
 ### Measured results (real hardware, this Mac)
 
@@ -191,14 +192,55 @@ contradict what the spec assumes.
   writes nothing and never consumes the schedule.
 - Autopilot rides the **existing Scheduler tick** rather than a second timer.
 
-## B4 is next
+## B4 — what was decided and why (27 Jul 2026)
 
-Snapshot-aware restore (§B4): bridge the existing APFS/Btrfs/VSS snapshot
-accounting into an active restore path, surfaced on Compare's "removed" rows.
-`PlatformProvider` already has `listSnapshots` and `readFromSnapshot` for all
-three OSes from Phase 0 — B4 is mostly the service + the Compare-row action.
-Note §B4's rule: restores go to a *new* location by default, never overwriting
-a current file at the same path.
+- **MEASURED: reading an APFS snapshot needs root; listing one does not.**
+  `tmutil listlocalsnapshots /` works as an ordinary user, and so does
+  `tmutil localsnapshot` (surprising — it creates a real snapshot with no
+  sudo). But `mount_apfs -s <snap> /` → *Resource busy* and
+  `… /System/Volumes/Data` → *Operation not permitted*. No unprivileged route
+  exists: APFS has no `.snapshot` dir, nothing is pre-mounted under /Volumes.
+  Windows is the same (mklink needs admin/Developer Mode); **Btrfs is the
+  exception** — a snapshot is an ordinary readable subvolume.
+- **That asymmetry shapes the whole feature.** `findDeleted` returns three
+  states: `present` (looked inside — Linux), `possible` (a snapshot covers the
+  period; confirming costs a password), `absent`. Claiming `present` without
+  looking would be the confident-wrong-answer §10 bans.
+- **Looking is free and separate from recovering.** The Compare row's "Check
+  snapshots" never triggers anything privileged; only "Recover it" does, and
+  the destination collision is checked *first* so nobody is asked for a
+  password and only then told the target was taken.
+- **One prompt, not one per snapshot.** The whole mount→look→copy→unmount→next
+  loop runs inside a single elevated script.
+- **The privileged script is a fixed file that interpolates nothing**, written
+  to a 0700 temp file at runtime, every value passed as argv via `quoted form
+  of`. **Inlined in the .ts, not shipped as a sibling .sh** — the desktop build
+  packs into app.asar and `/bin/sh` cannot execute a path inside an archive
+  (would have failed only in the packaged app).
+- **Restore writes beside the original** (`name (recovered YYYY-MM-DD).ext`).
+  A snapshot copy is *older* than whatever holds that path now, so overwriting
+  by default would replace newer work with older. Explicit `overwrite` still
+  refuses to remove a directory, and **routes the replaced file through the
+  Trash** — caught by the trash-bypass guard, which was right to.
+- **Namespace:** §B4 says `/api/snapshots/*`, but that is already scan history
+  (Trends/Compare). These live at `/api/system/snapshots/*` beside the existing
+  OS-snapshot endpoint. Same resolution as A5's `/api/platform/capabilities`.
+- **NOT executed: the elevated branch**, which needs a real password. Verified
+  unprivileged instead (every mount fails → NOTFOUND, exit 0, no leaked mount
+  points, nothing written) plus unit-tested argv quoting against a hostile
+  filename. This is the one place B4 is CI/user-verifiable rather than
+  author-verified.
+
+## B5 is next
+
+Zombie-handle reclaim (§B5), the last of Phase 2. `getZombieHandles` already
+exists on the provider for macOS and Linux from Phase 0 (lsof inode comparison
+/ `/proc/*/fd`); **Windows is deliberately unimplemented and reports
+unavailable with a reason** — §B5 says pick one implementation and do it
+completely, and both candidates need native code or a non-redistributable
+binary. What remains: the panel listing "X GB held by processes that won't let
+go", and the per-process restart action (graceful terminate + relaunch where
+supported, an explicit unsaved-work warning otherwise).
 
 ---
 
@@ -298,7 +340,7 @@ and Electron 31 bundles Node 20.
 
 ## Not yet done
 
-- **Phase 2** B4 → B5, **Phase 3** C1–C8, **Phase 4** D1–D3, **Phase 5** regression + benchmarks
+- **Phase 2** B5, **Phase 3** C1–C8, **Phase 4** D1–D3, **Phase 5** regression + benchmarks
 - README endpoint/view documentation for A1–A5 (deferred to Phase 5 by
   precedent — §7 lists the README pass there; §11.7 would prefer per-feature)
 - **Nothing is committed.** The user pushes via **GitHub Desktop**, not the CLI.

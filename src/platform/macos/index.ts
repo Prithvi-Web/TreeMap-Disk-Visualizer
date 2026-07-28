@@ -8,6 +8,7 @@ import { openHandlesFor, zombieHandles } from './lsofGuard';
 import { downloadOrigin } from './provenance';
 import { volumeTopology } from './diskutil';
 import { listSnapshots as tmListSnapshots, mountSnapshot } from './tmutil';
+import { recoverFromSnapshots as macRecoverFromSnapshots } from './snapshotRecover';
 import { allocatedSize, placeholderInfo } from './allocation';
 import {
   registerShellIntegration as installQuickAction,
@@ -25,6 +26,7 @@ import type {
   ShellIntegrationResult,
   SmartInfo,
   VolumeSnapshotRef,
+  SnapshotRecoveryResult,
   VolumeTopology,
   ZombieHandleInfo,
 } from '../types';
@@ -133,6 +135,27 @@ export class MacOsProvider extends BaseProvider {
       void fsp.rm(staging, { recursive: true, force: true }).catch(() => {});
     });
     return stream;
+  }
+
+  /* ---------------- Snapshot recovery (B4) ---------------- */
+
+  /**
+   * False, and measured rather than assumed: `mount_apfs -s <snap> /` answers
+   * "Resource busy" and the Data volume answers "Operation not permitted".
+   * There is no unprivileged route to a local snapshot's contents on macOS, so
+   * TreeMap can say which snapshots cover a period but not what is inside one
+   * until the user authorizes the read.
+   */
+  override canInspectSnapshotsUnprivileged(): boolean {
+    return false;
+  }
+
+  override async recoverFromSnapshots(
+    snapshots: VolumeSnapshotRef[],
+    originalPath: string,
+    destination: string,
+  ): Promise<SnapshotRecoveryResult> {
+    return macRecoverFromSnapshots(snapshots, originalPath, destination);
   }
 
   /* ---------------- Drive health (C4) ---------------- */
