@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { GrowthNotification, ScheduleConfig } from '../models/types';
 import { startScan, getScan } from './diskScanner';
 import { getSettings, patchSchedule } from './settings';
+import { runDuePolicies } from './autopilot';
 import { listSnapshots } from './snapshots';
 import { getForecast } from './forecast';
 import { sanitizePath } from '../utils/pathSanitizer';
@@ -56,6 +57,11 @@ export function stopScheduler(): void {
 }
 
 async function tick(): Promise<void> {
+  // Autopilot policies ride this same tick rather than starting a second timer
+  // (§B1: extend the Scheduler, don't duplicate it). Its own cooldown decides
+  // when a policy is actually due, so checking every minute costs nothing.
+  void runDuePolicies().catch((err: unknown) => console.error('[treemap] autopilot tick failed:', err));
+
   let schedules: ScheduleConfig[];
   try {
     schedules = (await getSettings()).schedules;

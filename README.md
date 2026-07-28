@@ -27,7 +27,7 @@
 <br><br>
 
 <kbd><a href="#-download-the-app-for-users">⬇ Download</a></kbd> &nbsp;
-<kbd><a href="#-the-eleven-views">✨ Features</a></kbd> &nbsp;
+<kbd><a href="#-the-twelve-views">✨ Features</a></kbd> &nbsp;
 <kbd><a href="#-run-from-source--web-mode-3-commands">🚀 Run it</a></kbd> &nbsp;
 <kbd><a href="#-use-it-with-ai-mcp">🤖 AI / MCP</a></kbd> &nbsp;
 <kbd><a href="#-api-overview">🔌 API</a></kbd> &nbsp;
@@ -56,12 +56,12 @@
 
 <br>
 
-## ✨ The eleven views
+## ✨ The twelve views
 
-TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Eleven views, one zero-dependency frontend.
+TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Twelve views, one zero-dependency frontend.
 
 <div align="center">
-  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Grid, Apps, Duplicates, Trends, Compare, Clean Up, Offloaded, Time Capsule, Scheduled + Ignore">
+  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Grid, Apps, Duplicates, Trends, Compare, Clean Up, Autopilot, Offloaded, Time Capsule, Scheduled + Ignore">
 </div>
 
 <br>
@@ -138,6 +138,12 @@ The safety net for deletions **you didn't watch happen**. Before TreeMap ever de
 </td>
 </tr>
 <tr>
+<td width="50%" valign="top">
+
+### ✨ Autopilot
+**Clean Up, but it keeps happening.** Write a policy once — *"clear old build folders in ~/Projects"* — and TreeMap carries it out on its own. Every rail §B1 asks for is here and visible in the editor: **the first run of any new policy is always a preview**, showing exactly what it matched, and it deletes nothing until you approve it; **byte caps** per run and per rolling week; a **cooldown** that doubles as the schedule; and *"ask me first above N GB"* so a policy that suddenly matches far more than expected **stops instead of executing**. Everything it removes goes through the Time Capsule first, so **any run can be undone in one click**, and the run history shows what each run deleted *and why* — or the reason it decided not to. Clean Up stays exactly as it was: manual, for deleting something right now.
+
+</td>
 <td width="50%" valign="top">
 
 ### ⏰ Scheduled scans + 🚫 Ignore list
@@ -286,6 +292,10 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 | `GET /api/cleanup/browser-profiles?scanId=` | Per-browser-profile cache breakdown |
 | `GET /api/git/repos?scanId=` · `POST /api/git/gc` | Git pack/loose/LFS breakdown, and `git gc` a scanned repo |
 | `GET /api/system/snapshots` · `POST …/purge` | OS snapshot accounting (APFS / Btrfs / VSS) |
+| `GET /api/autopilot/policies` · `PUT …` | Standing cleanup policies (re-validated on save; editing a policy's scope revokes its approval) |
+| `POST /api/autopilot/simulate` | Exactly what a policy would delete — writes nothing, touches no schedule |
+| `POST /api/autopilot/policies/:id/approve` | Let a policy start deleting, after its mandatory first preview |
+| `GET /api/autopilot/runs` · `POST …/runs/:id/undo` | Run history, and a verified one-click undo from the Time Capsule |
 | `GET /api/timecapsule` | Items copied aside before an automated delete, with capacity + history |
 | `POST /api/timecapsule/:id/restore` · `DELETE /api/timecapsule/:id` | Verified restore to the original path (202 + SSE job), or forget one copy |
 | `GET /api/timecapsule/jobs/:jobId/progress` | Restore progress (Server-Sent Events), cancellable |

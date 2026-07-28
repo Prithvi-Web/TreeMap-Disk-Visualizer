@@ -34,6 +34,7 @@ const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), '
 const TAB_VIEWS = [
   'dashboard', 'treemap', 'grid', 'apps', 'duplicates', 'trends', 'compare', 'offloaded',
   'capsule', // B3 — Time Capsule
+  'autopilot', // B1 — Autopilot
 ] as const;
 const MODAL_VIEWS = ['cleanModal', 'settingsModal'] as const;
 
@@ -1021,6 +1022,103 @@ test('capsule retention and its size cap are user-settable', () => {
   assert.match(code, /timeCapsuleMaxPercent/);
   // The bound matters: the capsule must never be the reason a disk fills up.
   assert.match(INDEX, /id="capsuleMaxPercent"[^>]*max="90"/);
+});
+
+/* ══════════════════════ Autopilot (B1) ══════════════════════ */
+
+test('Autopilot is its own tab and does not replace Clean Up', () => {
+  // §B1: "New Autopilot tab alongside (not replacing) Clean Up, which stays
+  // manual." Deleting something now and standing up a rule that deletes
+  // forever are different decisions and must stay different surfaces.
+  assert.match(INDEX, /data-view="autopilot"/);
+  assert.match(INDEX, /id="view-autopilot"/);
+  assert.match(INDEX, /id="cleanModal"/, 'Clean Up is still here');
+  assert.match(INDEX, /id="cleanPaneRules"/, 'with its manual rules pane intact');
+  const code = appCode();
+  assert.match(code, /registerView\(\{[\s\S]{0,200}id:\s*'autopilot'/);
+});
+
+test('the policy editor reuses the Clean Up rule controls rather than inventing new ones', () => {
+  // Same four ideas, same order, same wording as Clean Up's custom rules.
+  for (const id of ['apRuleAgeOn', 'apRuleAgeDays', 'apRuleSizeOn', 'apRuleSizeMb', 'apRuleExtOn', 'apRuleExts']) {
+    assert.match(INDEX, new RegExp(`id="${id}"`), `${id} is missing from the policy editor`);
+  }
+});
+
+test('every safety rail is exposed in the editor, not just in the engine', () => {
+  // A rail the user cannot see or set is a rail they will not trust.
+  for (const id of ['apMaxRun', 'apMaxWeek', 'apConfirmAbove', 'apCooldown', 'apDryRunFirst', 'apEnabled']) {
+    assert.match(INDEX, new RegExp(`id="${id}"`), `${id} is missing`);
+  }
+});
+
+test('the empty state explains that nothing is deleted on a first run', () => {
+  // The single most important thing to know before writing a policy.
+  const code = appCode();
+  assert.match(code, /Nothing is ever deleted on the first run/i);
+  assert.match(code, /Time Capsule/, 'and that deletions are recoverable');
+});
+
+test('a run awaiting approval opens itself and offers the approval', () => {
+  // A decision folded behind a disclosure triangle is a decision nobody makes.
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function renderAutopilotRuns'), code.indexOf('function approveAutopilotPolicy'));
+  assert.match(fn, /data-ap-approve/);
+  assert.match(fn, /querySelector\('\[data-ap-approve\]'\)[\s\S]{0,80}classList\.add\('open'\)/);
+});
+
+test('approval goes through the shared destructive confirmation', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function approveAutopilotPolicy'), code.indexOf('function undoAutopilotRun'));
+  assert.match(fn, /onConfirmTrash =/, 'the same dialog every destructive action uses (§3.6)');
+  assert.match(fn, /without asking again/, 'and it is honest about what approval means');
+});
+
+test('undo streams through the one shared progress dialog', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function undoAutopilotRun'), code.indexOf('function deletePolicy'));
+  assert.match(fn, /watchJob\(/);
+  assert.match(fn, /\/api\/timecapsule\/jobs\/\$\{resp\.jobId\}\/progress/, 'the capsule owns the restore, Autopilot just starts it');
+  assert.match(fn, /cancelUrl/);
+});
+
+test('a run shows why each item was chosen, and what it left alone', () => {
+  // §B1 wants the run record to carry what and why. On screen that means the
+  // rule's own words beside every item, and the skipped list visible.
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function renderAutopilotRuns'), code.indexOf('function approveAutopilotPolicy'));
+  assert.match(fn, /i\.reason/, 'each item says why it was selected');
+  assert.match(fn, /r\.skipped/, 'and what was left behind is shown');
+  assert.match(fn, /blockedReason/, 'a run that refused explains itself');
+});
+
+test('preview never saves, and is available before a policy exists', () => {
+  const code = appCode();
+  assert.match(code, /\/api\/autopilot\/simulate/);
+  const fn = code.slice(code.indexOf("$('apPreviewBtn')"), code.indexOf("$('apSaveBtn')"));
+  assert.match(fn, /policy: policyFromEditor\(\)/, 'it previews the unsaved draft');
+  assert.ok(!/method:\s*'PUT'/.test(fn), 'previewing must not write anything');
+});
+
+test('byte limits are entered in GB and converted once, in one place', () => {
+  const code = appCode();
+  // Anchored on a string that occurs once: '#apMatchSeg' also appears inside
+  // setApMatchKind, above this function, which would slice backwards to
+  // nothing and silently assert against an empty string.
+  const fn = code.slice(code.indexOf('function policyFromEditor'), code.indexOf("$('apAddBtn')"));
+  assert.match(fn, /const gb = \(id\)/, 'one conversion helper, not three hand-written multiplications');
+  assert.match(fn, /maxBytesPerRun: gb\('apMaxRun'\)/);
+  assert.match(fn, /maxBytesPerWeek: gb\('apMaxWeek'\)/);
+  assert.match(fn, /requireConfirmationAbove: gb\('apConfirmAbove'\)/);
+});
+
+test('the Autopilot panel implements the §3.5 states', () => {
+  const code = appCode();
+  assert.match(code, /Loading policies/, 'loading');
+  assert.match(code, /Couldn.t load Autopilot/, 'error, from the envelope message');
+  assert.match(code, /apRetry/, 'with a retry');
+  assert.match(code, /No policies yet/, 'empty');
+  assert.match(code, /Nothing has run yet/, 'and an empty run history is explained too');
 });
 
 /* ══════════════════════ Safety copy (§2, §B2) ══════════════════════ */

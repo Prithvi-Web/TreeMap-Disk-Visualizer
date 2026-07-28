@@ -75,7 +75,7 @@ timeCapsuleRouter.get('/timecapsule', async (_req: Request, res: Response) => {
 timeCapsuleRouter.post('/timecapsule/:id/restore', idempotency, async (req: Request, res: Response) => {
   const id = String(req.params.id);
   try {
-    const job = await startCapsuleRestore(id);
+    const job = await startCapsuleRestore([id]);
     await appendAudit({
       action: 'timecapsule.restore', source: 'http', tokenId: tokenIdFor('http'),
       paths: [], bytes: job.bytesTotal, dryRun: false, outcome: 'ok',

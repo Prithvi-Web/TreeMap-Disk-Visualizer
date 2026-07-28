@@ -1,8 +1,8 @@
 # TreeMap — 21-feature master prompt, session handoff
 
-**Date:** 27 July 2026 · **Status:** Phase 0 + **Phase 1 complete (A1–A5)**, Phase 2 in progress (**B2, B3 done**)
-**Suite:** 527/527 passing (3 consecutive runs) · typecheck clean · zero console errors
-**Phase 0 + Phase 1 + B2 are COMMITTED and pushed** (239000b). **B3 is uncommitted.**
+**Date:** 27 July 2026 · **Status:** Phase 0 + **Phase 1 complete (A1–A5)**, Phase 2 in progress (**B2, B3, B1 done**)
+**Suite:** 566/566 passing (3 consecutive runs) · typecheck clean · zero console errors
+**Through B3 is COMMITTED and pushed** (239000b, 6357274). **B1 is uncommitted.**
 
 Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
@@ -12,7 +12,7 @@ Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
 ```bash
 cd "/Users/prithvivinay/Desktop/Claude Code/Treemap"
-npm run build && npm test          # expect 527/527
+npm run build && npm test          # expect 566/566
 npm run capabilities:report        # expect 9/12 available on this Mac
 ```
 
@@ -44,7 +44,8 @@ contradict what the spec assumes.
 | **A5** | RAID/LVM topology panel | ✅ Complete |
 | **B2** | Open-file guard before every delete | ✅ Complete |
 | **B3** | Time Capsule — recovery beyond the OS Trash | ✅ Complete |
-| **B1** | Autopilot cleanup with policy engine | ⬜ **NEXT** (Phase 2 order: B1 → B4 → B5) |
+| **B1** | Autopilot cleanup with policy engine | ✅ Complete |
+| **B4** | Snapshot-aware restore beyond Trash | ⬜ **NEXT** (Phase 2 order: B4 → B5) |
 
 ### Measured results (real hardware, this Mac)
 
@@ -154,16 +155,50 @@ contradict what the spec assumes.
   `…ByThisRestore`, so a bare delete of a *user's* file added there later still
   fails that test.
 
-## B1 is next
+## B1 — what was decided and why (27 Jul 2026)
 
-Autopilot (§B1), the first real consumer of both B2 and B3: policies resolve
-candidates through `CleanupRules`, then call **`protectAndTrash()`** — that one
-call already routes through the open-file guard and the capsule, so B1 must not
-build any delete path of its own. Note §B1's hard rules: the **first run of any
-new policy is always a dry run** regardless of settings, byte caps per run and
-per week, cooldowns, `requireConfirmationAbove`, and every run undoable for 30
-days (which the capsule's retention already provides). Until B1 exists the Time
-Capsule tab is legitimately empty and says so.
+- **`autopilot.ts` contains no delete at all.** A run resolves candidates
+  through `CleanupRules`, then makes exactly one call — `protectAndTrash()` —
+  which already routes through B2's open-file guard and B3's capsule. That is
+  the whole reason B2 and B3 came first.
+- **A policy carries a `path`.** §B1's field list omits one, but candidates
+  come from `CleanupRules` matching a scanned tree, so a policy must say which
+  tree. Pointing one at the filesystem root is refused outright
+  (`POLICY_PATH_TOO_BROAD`) — the shared sanitizer allows `/` because scanning
+  it is reasonable, and deleting from it unattended is not.
+- **Approval is engine-owned.** `normalizePolicy` strips client-sent
+  `approvedAt`/`lastRunAt`, so the mandatory first dry run cannot be skipped by
+  a crafted request. Editing a policy's *scope* (path or match) revokes its
+  approval — otherwise "approve a tiny dry run, then widen it" walks straight
+  past the rail.
+- **Approving clears `lastRunAt`**, or the user waits out a full cooldown right
+  after saying yes.
+- **`requireConfirmationAbove` stops the run**; it does not trim to the cap and
+  proceed. The size itself is the signal the policy is wrong.
+- **A cooldown block does not stamp `lastRunAt`** — a minute-by-minute tick
+  would otherwise push the next real run away forever.
+- **agent-policy.json's `protectedPaths` bind Autopilot too**, per candidate
+  (skipped with the reason, not an aborted run). It was written for the API
+  surface, but an unattended deleter is exactly what those paths guard against.
+- **Bug worth remembering:** `run.skipped = skipped` from the cap step
+  *overwrote* the policy-refusal skips recorded earlier. Both assignments now
+  append. A skipped item that vanishes from the record is the one thing the
+  user most needs to see.
+- Run history is JSON, not the SQLite index §B1's "autopilot_runs table"
+  implies — the index is explicitly rebuildable and wiped on schema change, and
+  undo history that vanishes with a rebuild would not be history.
+- `simulatePolicy()` is separate from `runPolicy()` so the editor's Preview
+  writes nothing and never consumes the schedule.
+- Autopilot rides the **existing Scheduler tick** rather than a second timer.
+
+## B4 is next
+
+Snapshot-aware restore (§B4): bridge the existing APFS/Btrfs/VSS snapshot
+accounting into an active restore path, surfaced on Compare's "removed" rows.
+`PlatformProvider` already has `listSnapshots` and `readFromSnapshot` for all
+three OSes from Phase 0 — B4 is mostly the service + the Compare-row action.
+Note §B4's rule: restores go to a *new* location by default, never overwriting
+a current file at the same path.
 
 ---
 
@@ -263,7 +298,7 @@ and Electron 31 bundles Node 20.
 
 ## Not yet done
 
-- **Phase 2** B1 → B4 → B5, **Phase 3** C1–C8, **Phase 4** D1–D3, **Phase 5** regression + benchmarks
+- **Phase 2** B4 → B5, **Phase 3** C1–C8, **Phase 4** D1–D3, **Phase 5** regression + benchmarks
 - README endpoint/view documentation for A1–A5 (deferred to Phase 5 by
   precedent — §7 lists the README pass there; §11.7 would prefer per-feature)
 - **Nothing is committed.** The user pushes via **GitHub Desktop**, not the CLI.

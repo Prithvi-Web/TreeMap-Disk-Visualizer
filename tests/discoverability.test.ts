@@ -213,6 +213,12 @@ test('capabilities marks exactly the destructive endpoints as destructive', asyn
       // Forgetting a capsule entry destroys a backup copy, so it is declared
       // destructive even though no live user data is touched.
       'DELETE /api/timecapsule/{id}',
+      // Approving is what lets a policy start deleting unattended — the single
+      // most consequential button in Autopilot, so it is declared destructive
+      // even though the call itself removes nothing.
+      'POST /api/autopilot/policies/{id}/approve',
+      // Undo writes a whole tree back onto the filesystem.
+      'POST /api/autopilot/runs/{id}/undo',
       'POST /api/cloud/disconnect',
       'POST /api/cloud/trash',
       'POST /api/git/gc',
@@ -222,6 +228,8 @@ test('capabilities marks exactly the destructive endpoints as destructive', asyn
       // Restoring writes a whole tree back onto the filesystem.
       'POST /api/timecapsule/{id}/restore',
       'POST /api/trash/empty',
+      // Saving a policy is saving a standing instruction to delete things.
+      'PUT /api/autopilot/policies',
       'PUT /api/settings',
     ]);
   } finally {

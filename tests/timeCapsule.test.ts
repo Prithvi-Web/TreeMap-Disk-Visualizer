@@ -60,7 +60,7 @@ const sha = (buf: Buffer): string => crypto.createHash('sha256').update(buf).dig
 
 /** Run a restore to completion and hand back the finished job. */
 async function restoreAndWait(entryId: string): Promise<TimeCapsuleJob> {
-  const job = await startCapsuleRestore(entryId);
+  const job = await startCapsuleRestore([entryId]);
   const deadline = Date.now() + 20_000;
   for (;;) {
     const live = getCapsuleJob(job.jobId);
@@ -344,7 +344,7 @@ test('restoring never overwrites something sitting at the original path', async 
 
     const entry = (await entries()).find((e) => e.originalPath === target);
     await assert.rejects(
-      () => startCapsuleRestore(entry!.id),
+      () => startCapsuleRestore([entry!.id]),
       (err: unknown) => err instanceof AppError && err.code === 'PATH_OCCUPIED',
     );
     assert.equal(await fsp.readFile(target, 'utf8'), 'something newer\n', 'the newer file is intact');
@@ -432,7 +432,7 @@ test('reconcile removes payloads nothing points at, and flags entries whose payl
 
     // And a Restore that cannot possibly work is refused up front.
     await assert.rejects(
-      () => startCapsuleRestore(entryId),
+      () => startCapsuleRestore([entryId]),
       (err: unknown) => err instanceof AppError && err.code === 'PAYLOAD_GONE',
     );
   } finally {

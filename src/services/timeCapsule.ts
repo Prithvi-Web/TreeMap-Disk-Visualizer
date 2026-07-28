@@ -734,34 +734,59 @@ async function readManifest(id: string): Promise<EntryManifest> {
  * how a "restore" turns into data loss, and the user can move the current file
  * aside themselves if that is what they meant. Mirrors Offload's restore.
  */
-export async function startCapsuleRestore(id: string): Promise<TimeCapsuleJob> {
-  pruneJobs();
+/** Everything one automated run protected — the unit Autopilot's undo works in. */
+export async function listCapsuleEntriesForRun(runId: string): Promise<TimeCapsuleEntry[]> {
   const store = await loadStore();
-  const entry = store.entries.find((e) => e.id === id);
-  if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
-  if (entry.restoredAt) throw new AppError(409, 'ALREADY_RESTORED', 'That item has already been restored');
-  if (!entry.hasPayload) {
-    throw new AppError(409, 'PAYLOAD_GONE', 'The Time Capsule no longer holds a copy of that item');
-  }
-  const occupied = await fsp.lstat(entry.originalPath).then(() => true).catch(() => false);
-  if (occupied) {
-    throw new AppError(409, 'PATH_OCCUPIED',
-      `Something already exists at ${entry.originalPath}. Move it aside first — restoring will never overwrite what is there now.`);
-  }
+  return store.entries.filter((e) => e.runId === runId);
+}
 
-  const manifest = await readManifest(id).catch(() => null);
-  if (!manifest) {
-    throw new AppError(409, 'MANIFEST_UNREADABLE', 'The record of what was captured can’t be read, so this item can’t be verified on restore');
+/**
+ * Restore one or more entries as a single job.
+ *
+ * Takes a list rather than one id because undoing an Autopilot run has to put
+ * back everything that run removed, and doing that as N separate jobs would
+ * give the user N progress dialogs and no single answer about whether the undo
+ * worked. A single-entry restore is just a list of one.
+ *
+ * Every entry is validated up front: if any one of them cannot be restored,
+ * nothing starts. A partial undo that silently skipped two of five items would
+ * be exactly the kind of half-applied operation §B2 refuses elsewhere.
+ */
+export async function startCapsuleRestore(entryIds: string[]): Promise<TimeCapsuleJob> {
+  pruneJobs();
+  if (entryIds.length === 0) throw new AppError(400, 'NOTHING_TO_RESTORE', 'No items to restore');
+
+  const store = await loadStore();
+  const planned: { entry: TimeCapsuleEntry; manifest: EntryManifest }[] = [];
+
+  for (const id of entryIds) {
+    const entry = store.entries.find((e) => e.id === id);
+    if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
+    if (entry.restoredAt) throw new AppError(409, 'ALREADY_RESTORED', `“${entry.name}” has already been restored`);
+    if (!entry.hasPayload) {
+      throw new AppError(409, 'PAYLOAD_GONE', `The Time Capsule no longer holds a copy of “${entry.name}”`);
+    }
+    const occupied = await fsp.lstat(entry.originalPath).then(() => true).catch(() => false);
+    if (occupied) {
+      throw new AppError(409, 'PATH_OCCUPIED',
+        `Something already exists at ${entry.originalPath}. Move it aside first — restoring will never overwrite what is there now.`);
+    }
+    const manifest = await readManifest(id).catch(() => null);
+    if (!manifest) {
+      throw new AppError(409, 'MANIFEST_UNREADABLE', `The record of what was captured for “${entry.name}” can’t be read, so it can’t be verified on restore`);
+    }
+    planned.push({ entry, manifest });
   }
 
   const job: TimeCapsuleJob = {
     jobId: crypto.randomUUID(),
-    entryId: id,
+    entryId: planned[0].entry.id,
+    entryIds: planned.map((p) => p.entry.id),
     status: 'running',
     phase: 'copying',
-    fileCount: manifest.members.filter((m) => m.kind === 'file').length,
+    fileCount: planned.reduce((sum, p) => sum + p.manifest.members.filter((m) => m.kind === 'file').length, 0),
     filesDone: 0,
-    bytesTotal: entry.sizeBytes,
+    bytesTotal: planned.reduce((sum, p) => sum + p.entry.sizeBytes, 0),
     bytesDone: 0,
     currentPath: '',
     cancelled: false,
@@ -769,12 +794,39 @@ export async function startCapsuleRestore(id: string): Promise<TimeCapsuleJob> {
   };
   jobs.set(job.jobId, job);
 
-  void runRestore(job, entry, manifest).catch((err: unknown) => {
+  void runRestoreAll(job, planned).catch((err: unknown) => {
     job.status = job.cancelled ? 'cancelled' : 'error';
     job.error = err instanceof Error ? err.message : String(err);
     job.finishedAt = Date.now();
   });
   return job;
+}
+
+/**
+ * Restore every planned entry in turn.
+ *
+ * One failure fails the job and stops: the remaining entries keep their copies,
+ * so the user can fix whatever went wrong and undo again. Entries already put
+ * back stay put back — they are at their correct paths, and pulling them out
+ * again would be a second destructive act nobody asked for.
+ */
+async function runRestoreAll(
+  job: TimeCapsuleJob,
+  planned: { entry: TimeCapsuleEntry; manifest: EntryManifest }[],
+): Promise<void> {
+  for (const { entry, manifest } of planned) {
+    if (job.cancelled) break;
+    await runRestore(job, entry, manifest);
+    if (job.status === 'error' || job.status === 'cancelled') return;
+  }
+  if (job.cancelled) {
+    job.status = 'cancelled';
+    job.finishedAt = Date.now();
+    return;
+  }
+  job.phase = 'done';
+  job.status = 'complete';
+  job.finishedAt = Date.now();
 }
 
 async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest: EntryManifest): Promise<void> {
@@ -839,10 +891,8 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
       await dropPayload(live);
     }
     await saveStore(store);
-
-    job.phase = 'done';
-    job.status = 'complete';
-    job.finishedAt = Date.now();
+    // Deliberately does NOT mark the job complete: a job can cover several
+    // entries, and only runRestoreAll knows when the last one is home.
   } catch (err) {
     // Leave nothing half-restored at the destination, and keep the capsule copy
     // so the user can try again once they've fixed whatever failed.

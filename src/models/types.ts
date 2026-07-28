@@ -625,7 +625,10 @@ export type TimeCapsulePhase = 'copying' | 'verifying' | 'rolling-back' | 'done'
 /** Mutable record of one restore job (progress via SSE). */
 export interface TimeCapsuleJob {
   jobId: string;
+  /** First entry in the job — kept for callers that only ever restore one. */
   entryId: string;
+  /** Every entry this job restores; one item for a single-entry restore. */
+  entryIds: string[];
   status: TimeCapsuleJobStatus;
   phase: TimeCapsulePhase;
   fileCount: number;
@@ -646,6 +649,87 @@ export type TimeCapsuleStreamEvent =
   | { type: 'error'; message: string }
   | { type: 'cancelled' }
   | { type: 'shutdown' };
+
+/* ---------- Autopilot (B1) ---------- */
+
+/**
+ * What a policy is allowed to delete.
+ *
+ * Two kinds, because Clean Up has two kinds and Autopilot must not invent a
+ * third vocabulary: the Smart Suggestions groups (`node_modules`, caches,
+ * junk — each carrying the reason and the command that regenerates it), and
+ * the custom age/size/extension rules.
+ */
+export type AutopilotMatch =
+  | { kind: 'suggestion'; groupIds: string[] }
+  | { kind: 'custom'; maxAgeMs?: number; minBytes?: number; exts?: string[] };
+
+export interface AutopilotPolicy {
+  id: string;
+  /** User-facing label, e.g. "Old build folders in ~/Projects". */
+  name: string;
+  /**
+   * The folder this policy may clean. Not in §B1's field list, but the feature
+   * cannot resolve candidates without one — CleanupRules matches against a
+   * scanned tree, so a policy has to say which tree.
+   */
+  path: string;
+  match: AutopilotMatch;
+  /** Hard ceiling on one run. null = no per-run cap. */
+  maxBytesPerRun: number | null;
+  /** Ceiling across a rolling 7 days. null = no weekly cap. */
+  maxBytesPerWeek: number | null;
+  /** Minimum days between runs; doubles as the schedule. */
+  cooldownDays: number;
+  /** Simulate every run instead of deleting. */
+  dryRunFirst: boolean;
+  /** Refuse to run unattended when the match totals more than this. */
+  requireConfirmationAbove: number | null;
+  enabled: boolean;
+  /**
+   * When the mandatory first dry run was approved. Until this is set the
+   * policy only ever simulates, regardless of `dryRunFirst` (§B1).
+   */
+  approvedAt?: number;
+  lastRunAt?: number;
+}
+
+export type AutopilotRunMode = 'dry-run' | 'live';
+export type AutopilotRunStatus = 'awaiting-approval' | 'completed' | 'blocked' | 'failed';
+
+/** One item a run deleted, or would have deleted. */
+export interface AutopilotRunItem {
+  path: string;
+  name: string;
+  bytes: number;
+  /** Why it was selected, in the rule's own words. */
+  reason: string;
+  /** Command that puts it back, for regenerable matches. */
+  regenerateCmd?: string;
+}
+
+/** The record §B1 requires: what, why, how much, when, under which policy. */
+export interface AutopilotRun {
+  id: string;
+  policyId: string;
+  policyName: string;
+  at: number;
+  mode: AutopilotRunMode;
+  status: AutopilotRunStatus;
+  /** Why nothing was deleted, when nothing was. */
+  blockedReason?: string;
+  items: AutopilotRunItem[];
+  /** Bytes the match totalled, before any cap. */
+  bytesMatched: number;
+  /** Bytes actually removed (0 for a dry run). */
+  bytesDeleted: number;
+  /** Ties this run's deletions to their Time Capsule copies, for undo. */
+  capsuleRunId?: string;
+  /** Selected but not deleted, each with the reason. */
+  skipped: { path: string; reason: string }[];
+  /** Set once the run has been undone. */
+  undoneAt?: number;
+}
 
 /* ---------- Live disk activity (Watcher) ---------- */
 

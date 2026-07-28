@@ -887,6 +887,23 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 #capsuleEvents h3 { font-size: 11px; font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase;
   color: var(--text-3); margin: 0 0 4px; }
 
+/* ── Autopilot (B1) ── */
+#apPolicies .ap-policy .why { font-size: 11px; color: var(--text-3); }
+#apPolicies .ap-off { opacity: 0.55; }
+#apRuns .ap-reason { font-size: 12px; color: var(--text-2); line-height: 1.5; padding: 6px 10px 8px;
+  border-left: 2px solid var(--accent); margin: 2px 0 8px 10px; }
+#apRuns .ap-run-item, #apPreview .ap-run-item { display: flex; align-items: center; gap: 10px; padding: 3px 10px; font-size: 12px; }
+#apRuns .ap-run-item .nm, #apPreview .ap-run-item .nm { flex: none; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#apRuns .ap-run-item .why, #apPreview .ap-run-item .why { flex: 1; min-width: 0; color: var(--text-3); font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#apRuns .ap-run-item b, #apPreview .ap-run-item b { flex: none; font-size: 11.5px; color: var(--text-2); }
+#apRuns .ap-skipped, #apPreview .ap-skipped { display: flex; gap: 7px; align-items: flex-start; font-size: 11px;
+  color: var(--text-3); padding: 6px 10px 2px; line-height: 1.45; }
+#apRuns .ap-run-actions { display: flex; gap: 8px; padding: 10px 10px 4px; }
+#apRuns .ap-run-actions:empty { display: none; }
+#apPreview .ap-preview-head { font-size: 13px; font-weight: 600; padding: 2px 0 6px; }
+#apPreview .ap-reason { font-size: 12px; color: var(--text-2); line-height: 1.5; padding: 6px 0 8px; }
+
 /* ── Disk topology (A5) ── */
 #topologyBody .topo-disk { padding: 8px 10px 6px; border-radius: var(--r-sm); }
 #topologyBody .topo-disk + .topo-disk { margin-top: 8px; border-top: 1px solid var(--hairline); }
@@ -1110,6 +1127,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     <button role="tab" aria-selected="false" data-view="compare"><span data-icon="diff"></span>Compare</button>
     <button role="tab" aria-selected="false" data-view="offloaded"><span data-icon="archive"></span>Offloaded</button>
     <button role="tab" aria-selected="false" data-view="capsule"><span data-icon="clock"></span>Time Capsule</button>
+    <button role="tab" aria-selected="false" data-view="autopilot"><span data-icon="sparkles"></span>Autopilot</button>
   </nav>
   <div class="header-right">
     <!-- A4: global search. Lives in the header, not in a view, because it
@@ -1462,6 +1480,102 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       <div id="capsuleEvents"></div>
     </div>
   </section>
+
+  <!-- ═══════════ Autopilot (B1) ═══════════ -->
+  <section class="view" id="view-autopilot" role="tabpanel" aria-label="Autopilot" hidden>
+    <div class="card glass">
+      <h2><span data-icon="sparkles"></span>Autopilot
+        <button class="pill" id="apAddBtn" style="margin-left:auto;">Add a policy</button>
+      </h2>
+      <div class="apps-info muted" id="apInfo"></div>
+      <div id="apPolicies"></div>
+    </div>
+
+    <div class="card glass" style="margin-top:18px;">
+      <h2><span data-icon="clock"></span>What Autopilot has done</h2>
+      <div id="apRuns"></div>
+    </div>
+  </section>
+
+  <!-- Policy editor: the Clean Up custom-rules controls, reused verbatim in
+       shape so a person who has used Clean Up already knows this dialog. -->
+  <div class="modal-backdrop" id="apModal" role="dialog" aria-modal="true" aria-labelledby="apModalTitle">
+    <div class="modal" style="width:620px;">
+      <div class="modal-head">
+        <h3 id="apModalTitle"><span data-icon="sparkles"></span>Cleanup policy</h3>
+        <button class="close-x" data-close="apModal" aria-label="Close"><span data-icon="x"></span></button>
+      </div>
+      <div class="modal-body">
+        <div class="rule-row">
+          <span data-icon="type"></span><label for="apName">Name</label>
+          <input type="text" id="apName" placeholder="Old build folders" aria-label="Policy name" style="flex:1;">
+        </div>
+        <div class="rule-row" style="margin-top:8px;">
+          <span data-icon="folder"></span><label for="apPath">In folder</label>
+          <input type="text" id="apPath" placeholder="/Users/you/Projects" aria-label="Folder this policy cleans" style="flex:1;">
+          <button class="btn" id="apBrowseBtn">Browse…</button>
+        </div>
+
+        <div class="set-h" style="margin-top:18px;"><span data-icon="search"></span>What it cleans up</div>
+        <div class="seg" id="apMatchSeg" role="tablist" aria-label="Match kind" style="margin-bottom:10px;">
+          <button role="tab" aria-selected="true" data-apmatch="suggestion">Known reclaimable</button>
+          <button role="tab" aria-selected="false" data-apmatch="custom">My own rules</button>
+        </div>
+        <div id="apMatchSuggestion">
+          <div class="muted" style="margin-bottom:8px;">The same things Clean Up's Smart Suggestions find — each one safe to delete and rebuildable.</div>
+          <div id="apGroupList"></div>
+        </div>
+        <div id="apMatchCustom" style="display:none;">
+          <div class="rule-row">
+            <input type="checkbox" id="apRuleAgeOn" checked> <span data-icon="clock"></span><label for="apRuleAgeOn">Older than</label>
+            <input type="number" id="apRuleAgeDays" value="180" min="1" aria-label="Days"> <span class="muted">days</span>
+          </div>
+          <div class="rule-row">
+            <input type="checkbox" id="apRuleSizeOn" checked> <span data-icon="trendUp"></span><label for="apRuleSizeOn">Larger than</label>
+            <input type="number" id="apRuleSizeMb" value="100" min="1" aria-label="Megabytes"> <span class="muted">MB</span>
+          </div>
+          <div class="rule-row">
+            <input type="checkbox" id="apRuleExtOn"> <span data-icon="file"></span><label for="apRuleExtOn">Extensions</label>
+            <input type="text" id="apRuleExts" placeholder="log, tmp, dmg" aria-label="Extensions, comma separated">
+          </div>
+        </div>
+
+        <div class="set-h" style="margin-top:18px;"><span data-icon="shield"></span>Limits</div>
+        <div class="rule-row">
+          <span data-icon="gauge"></span><label for="apMaxRun">Delete at most</label>
+          <input type="number" id="apMaxRun" min="0" placeholder="no limit" aria-label="Maximum gigabytes per run"> <span class="muted">GB per run</span>
+        </div>
+        <div class="rule-row" style="margin-top:6px;">
+          <span data-icon="gauge"></span><label for="apMaxWeek">and at most</label>
+          <input type="number" id="apMaxWeek" min="0" placeholder="no limit" aria-label="Maximum gigabytes per week"> <span class="muted">GB per week</span>
+        </div>
+        <div class="rule-row" style="margin-top:6px;">
+          <span data-icon="alert"></span><label for="apConfirmAbove">Ask me first above</label>
+          <input type="number" id="apConfirmAbove" min="0" placeholder="never ask" aria-label="Ask for confirmation above this many gigabytes"> <span class="muted">GB in one run</span>
+        </div>
+        <div class="rule-row" style="margin-top:6px;">
+          <span data-icon="clock"></span><label for="apCooldown">Run at most once every</label>
+          <input type="number" id="apCooldown" value="7" min="1" max="365" aria-label="Cooldown in days"> <span class="muted">days</span>
+        </div>
+        <div class="rule-row" style="margin-top:10px;">
+          <input type="checkbox" id="apDryRunFirst" checked>
+          <label for="apDryRunFirst">Only ever preview — never actually delete</label>
+        </div>
+        <div class="rule-row">
+          <input type="checkbox" id="apEnabled">
+          <label for="apEnabled">Enabled</label>
+        </div>
+
+        <div id="apPreview"></div>
+      </div>
+      <div class="modal-foot">
+        <span class="muted" style="font-size:11.5px;">Anything deleted is copied to the Time Capsule first, and can be undone.</span>
+        <div style="flex:1"></div>
+        <button class="btn" id="apPreviewBtn"><span data-icon="search"></span>Preview</button>
+        <button class="btn btn-primary" id="apSaveBtn">Save policy</button>
+      </div>
+    </div>
+  </div>
 </main>
 
 <!-- ═══════════ Selection toolbar ═══════════ -->
@@ -2106,6 +2220,7 @@ const state = {
   live: { on: false, wanted: false, es: null, engine: '', idleMinutes: 10, pulses: new Map(), window: [], dirty: 0, feedTimer: 0, relayoutTimer: 0, pulseRaf: 0 },
   offload: { index: null, q: '' },
   capsule: { index: null, q: '' },
+  autopilot: { policies: null, runs: null },
   cloud: { providers: [], loaded: false },
   donut: { segs: [], hover: -1, animated: false },
   dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
@@ -5833,6 +5948,366 @@ registerView({
   // useful with no scan loaded and never shows the empty-state screen.
   needsScan: false,
   mount() { loadCapsule(); },
+});
+
+/* ───────────────────────────── Autopilot tab (B1) ─────────────────────────────
+   Standing cleanup policies. Clean Up stays exactly as it was — manual, and
+   the place you go to delete something now; this is the place you go to say
+   "keep doing this without me".
+
+   Everything here is shaped around one fact: a policy deletes while nobody is
+   watching, so the user has to be able to see what it *would* do before it can
+   do it, and see what it *did* afterwards. Hence Preview beside every editor
+   control, a mandatory approval on the first run, and a run history where the
+   runs that refused are as visible as the ones that worked.               */
+
+const AP_STATUS_LABEL = {
+  'awaiting-approval': 'Needs your approval',
+  completed: 'Ran',
+  blocked: 'Held back',
+  failed: 'Failed',
+};
+const GB = 1024 * 1024 * 1024;
+
+/** Editor state for the policy dialog; null when it is closed. */
+let apDraft = null;
+
+async function loadAutopilot() {
+  const host = $('apPolicies');
+  if (!state.autopilot.policies) host.innerHTML = `<div class="muted">Loading policies…</div>`;
+  try {
+    const [policies, runs] = await Promise.all([
+      api('/api/autopilot/policies'),
+      api('/api/autopilot/runs?limit=30'),
+    ]);
+    state.autopilot.policies = policies.policies;
+    state.autopilot.runs = runs.runs;
+  } catch (e) {
+    host.innerHTML =
+      `<div class="muted">Couldn’t load Autopilot: ${escapeHtml(e.message)}</div>` +
+      `<button class="pill" id="apRetry" style="margin-top:8px;">Try again</button>`;
+    $('apRetry').addEventListener('click', () => loadAutopilot());
+    $('apRuns').innerHTML = '';
+    return;
+  }
+  renderAutopilot();
+}
+
+function renderAutopilot() {
+  const policies = state.autopilot.policies || [];
+  const runs = state.autopilot.runs || [];
+  const host = $('apPolicies');
+
+  if (!policies.length) {
+    $('apInfo').textContent = '';
+    host.innerHTML =
+      `<div class="muted" style="line-height:1.6;">No policies yet. A policy is a standing instruction — ` +
+      `"clear old build folders in my Projects folder", say — that TreeMap carries out on its own.<br>` +
+      `<b>Nothing is ever deleted on the first run:</b> you always see exactly what it matched and approve it first, ` +
+      `and everything it removes is copied to the Time Capsule so you can undo it.</div>`;
+  } else {
+    const live = policies.filter(p => p.enabled && p.approvedAt && !p.dryRunFirst).length;
+    $('apInfo').innerHTML =
+      `<span class="num">${formatCount(policies.length)}</span> polic${policies.length === 1 ? 'y' : 'ies'} — ` +
+      `<span class="num">${formatCount(live)}</span> actively cleaning up, the rest previewing or off.`;
+
+    host.innerHTML = policies.map(p => {
+      const needsApproval = !p.approvedAt;
+      const stateLabel = !p.enabled ? 'Off'
+        : needsApproval ? 'Waiting for your approval'
+        : p.dryRunFirst ? 'Preview only'
+        : `Every ${p.cooldownDays} day${p.cooldownDays === 1 ? '' : 's'}`;
+      const limits = [
+        p.maxBytesPerRun ? `${formatBytes(p.maxBytesPerRun)} per run` : null,
+        p.maxBytesPerWeek ? `${formatBytes(p.maxBytesPerWeek)} per week` : null,
+        p.requireConfirmationAbove ? `asks above ${formatBytes(p.requireConfirmationAbove)}` : null,
+      ].filter(Boolean).join(' · ');
+      return `
+      <div class="bp-item ap-policy${p.enabled ? '' : ' ap-off'}">
+        <span class="chip" style="--tint:${needsApproval ? '#FF9F0A' : p.enabled ? '#30D158' : '#8E8E93'}">${icon('sparkles', 15)}</span>
+        <div class="meta" style="flex:1;min-width:0;">
+          <div class="nm">${escapeHtml(p.name)}</div>
+          <div class="pth" title="${escapeHtml(p.path)}">${escapeHtml(p.path)} · ${escapeHtml(describeMatch(p.match))}</div>
+          <div class="why">${escapeHtml(stateLabel)}${limits ? ' · ' + escapeHtml(limits) : ''}</div>
+        </div>
+        <button class="pill" data-ap-edit="${escapeHtml(p.id)}">Edit</button>
+        <button class="icon-btn" data-ap-delete="${escapeHtml(p.id)}" title="Remove this policy" aria-label="Remove the policy ${escapeHtml(p.name)}">${icon('trash', 13)}</button>
+      </div>`;
+    }).join('');
+
+    host.querySelectorAll('[data-ap-edit]').forEach(b =>
+      b.addEventListener('click', () => openPolicyEditor(policies.find(p => p.id === b.dataset.apEdit))));
+    host.querySelectorAll('[data-ap-delete]').forEach(b =>
+      b.addEventListener('click', () => deletePolicy(b.dataset.apDelete)));
+  }
+
+  renderAutopilotRuns(runs);
+}
+
+function describeMatch(match) {
+  if (!match) return '';
+  if (match.kind === 'suggestion') {
+    return `${match.groupIds.length} kind${match.groupIds.length === 1 ? '' : 's'} of reclaimable file`;
+  }
+  const parts = [];
+  if (match.minBytes) parts.push(`over ${formatBytes(match.minBytes)}`);
+  if (match.maxAgeMs) parts.push(`older than ${Math.round(match.maxAgeMs / 86400000)}d`);
+  if (match.exts?.length) parts.push(match.exts.map(e => '.' + e).join('/'));
+  return parts.join(', ');
+}
+
+function renderAutopilotRuns(runs) {
+  const host = $('apRuns');
+  if (!runs.length) {
+    host.innerHTML = `<div class="muted">Nothing has run yet. Each run will be listed here with exactly what it removed — or why it decided not to.</div>`;
+    return;
+  }
+  host.innerHTML = runs.map(r => {
+    const needsApproval = r.status === 'awaiting-approval';
+    const tint = needsApproval ? '#FF9F0A' : r.status === 'completed' && r.bytesDeleted > 0 ? '#30D158'
+      : r.status === 'failed' ? '#FF453A' : '#8E8E93';
+    const headline = r.bytesDeleted > 0
+      ? `Removed ${formatBytes(r.bytesDeleted)} across ${formatCount(r.items.length)} item${r.items.length === 1 ? '' : 's'}`
+      : r.mode === 'dry-run'
+        ? `Would remove ${formatBytes(r.bytesMatched)} across ${formatCount(r.items.length)} item${r.items.length === 1 ? '' : 's'}`
+        : 'Removed nothing';
+    const items = r.items.slice(0, 8).map(i => `
+      <div class="ap-run-item">
+        <span class="nm" title="${escapeHtml(i.path)}">${escapeHtml(i.name)}</span>
+        <span class="why">${escapeHtml(i.reason)}</span>
+        <b class="num">${formatBytes(i.bytes)}</b>
+      </div>`).join('');
+    const more = r.items.length > 8 ? `<div class="muted" style="font-size:11px;padding:2px 0 0 10px;">…and ${formatCount(r.items.length - 8)} more</div>` : '';
+    const skipped = r.skipped.length ? `
+      <div class="ap-skipped">${icon('alert', 12)} <span>${escapeHtml(r.skipped[0].reason)}${r.skipped.length > 1 ? ` (and ${formatCount(r.skipped.length - 1)} more left alone)` : ''}</span></div>` : '';
+
+    return `
+    <div class="bp-acc ap-run" data-run="${escapeHtml(r.id)}">
+      <div class="bp-head" role="button" tabindex="0" aria-expanded="false">
+        <span class="chip" style="--tint:${tint}">${icon(needsApproval ? 'alert' : 'clock', 15)}</span>
+        <span class="bp-title">${escapeHtml(r.policyName)}<span class="prof">${formatDate(r.at)} · ${escapeHtml(AP_STATUS_LABEL[r.status] || r.status)}${r.undoneAt ? ' · undone' : ''}</span></span>
+        <span class="spacer"></span>
+        <span class="size-badge num">${headline}</span>
+        <span class="chev">${icon('chevronRight', 14)}</span>
+      </div>
+      <div class="bp-items">
+        ${r.blockedReason ? `<div class="ap-reason">${escapeHtml(r.blockedReason)}</div>` : ''}
+        ${items || '<div class="muted" style="padding:4px 10px;">Nothing matched.</div>'}
+        ${more}${skipped}
+        <div class="ap-run-actions">
+          ${needsApproval ? `<button class="btn btn-primary" data-ap-approve="${escapeHtml(r.policyId)}"><span data-icon="check"></span>Approve this policy</button>` : ''}
+          ${r.bytesDeleted > 0 && !r.undoneAt ? `<button class="btn" data-ap-undo="${escapeHtml(r.id)}"><span data-icon="refresh"></span>Undo this run</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  host.querySelectorAll('.ap-run .bp-head').forEach(head => {
+    const toggle = () => { const a = head.closest('.bp-acc'); head.setAttribute('aria-expanded', String(a.classList.toggle('open'))); };
+    head.addEventListener('click', (e) => { if (e.target.closest('button')) return; toggle(); });
+    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
+  // Anything needing a decision opens itself — a run that is waiting on the
+  // user is useless folded away.
+  host.querySelectorAll('.ap-run').forEach(a => {
+    if (a.querySelector('[data-ap-approve]')) { a.classList.add('open'); a.querySelector('.bp-head').setAttribute('aria-expanded', 'true'); }
+  });
+  host.querySelectorAll('[data-ap-approve]').forEach(b => b.addEventListener('click', () => approveAutopilotPolicy(b.dataset.apApprove)));
+  host.querySelectorAll('[data-ap-undo]').forEach(b => b.addEventListener('click', () => undoAutopilotRun(b.dataset.apUndo)));
+}
+
+function approveAutopilotPolicy(policyId) {
+  const policy = (state.autopilot.policies || []).find(p => p.id === policyId);
+  onConfirmTrash = async () => {
+    try {
+      await api(`/api/autopilot/policies/${encodeURIComponent(policyId)}/approve`, { method: 'POST' });
+      toast('Approved — it will run on its own from now on');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    loadAutopilot();
+  };
+  $('confirmTitle').innerHTML = icon('check', 18) + 'Let this policy delete on its own?';
+  $('confirmText').innerHTML =
+    `<b>${escapeHtml(policy ? policy.name : 'This policy')}</b> will start removing what it matched, without asking again.` +
+    `<br><span style="color:var(--text-3)">Everything it removes is copied to the Time Capsule first, and any run can be undone from here.</span>`;
+  $('confirmModal').classList.add('open');
+}
+
+function undoAutopilotRun(runId) {
+  api(`/api/autopilot/runs/${encodeURIComponent(runId)}/undo`, { method: 'POST' })
+    .then(resp => {
+      watchJob({
+        title: 'Putting everything back…',
+        icon: 'refresh',
+        progressUrl: `/api/timecapsule/jobs/${resp.jobId}/progress`,
+        cancelUrl: `/api/timecapsule/jobs/${resp.jobId}/cancel`,
+        footNote: 'Every byte is checked against the fingerprint taken when it was protected.',
+        cancelledMessage: 'Undo cancelled — nothing was left half-written',
+        lostMessage: 'Lost the progress stream — reopen Autopilot for the result',
+        onComplete: () => { toast('Everything from that run is back'); loadAutopilot(); },
+        onSettled: () => loadAutopilot(),
+      });
+    })
+    .catch(e => toast(e.message, 'error', 8000));
+}
+
+function deletePolicy(policyId) {
+  const policies = (state.autopilot.policies || []).filter(p => p.id !== policyId);
+  api('/api/autopilot/policies', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ policies }),
+  }).then(() => { toast('Policy removed'); loadAutopilot(); })
+    .catch(e => toast(e.message, 'error'));
+}
+
+/* ── The policy editor ── */
+
+function openPolicyEditor(policy) {
+  apDraft = policy ? { ...policy } : {
+    name: '', path: state.system ? state.system.homeDir : '',
+    match: { kind: 'suggestion', groupIds: [] },
+    maxBytesPerRun: null, maxBytesPerWeek: null, requireConfirmationAbove: null,
+    cooldownDays: 7, dryRunFirst: true, enabled: false,
+  };
+  $('apModalTitle').innerHTML = icon('sparkles', 18) + (policy ? 'Edit policy' : 'New policy');
+  $('apName').value = apDraft.name || '';
+  $('apPath').value = apDraft.path || '';
+  $('apCooldown').value = apDraft.cooldownDays ?? 7;
+  $('apMaxRun').value = apDraft.maxBytesPerRun ? (apDraft.maxBytesPerRun / GB).toFixed(2).replace(/\.?0+$/, '') : '';
+  $('apMaxWeek').value = apDraft.maxBytesPerWeek ? (apDraft.maxBytesPerWeek / GB).toFixed(2).replace(/\.?0+$/, '') : '';
+  $('apConfirmAbove').value = apDraft.requireConfirmationAbove ? (apDraft.requireConfirmationAbove / GB).toFixed(2).replace(/\.?0+$/, '') : '';
+  $('apDryRunFirst').checked = apDraft.dryRunFirst !== false;
+  $('apEnabled').checked = apDraft.enabled === true;
+  $('apPreview').innerHTML = '';
+
+  const kind = apDraft.match?.kind === 'custom' ? 'custom' : 'suggestion';
+  setApMatchKind(kind);
+  if (kind === 'custom') {
+    const m = apDraft.match;
+    $('apRuleAgeOn').checked = m.maxAgeMs !== undefined;
+    if (m.maxAgeMs) $('apRuleAgeDays').value = Math.round(m.maxAgeMs / 86400000);
+    $('apRuleSizeOn').checked = m.minBytes !== undefined;
+    if (m.minBytes) $('apRuleSizeMb').value = Math.round(m.minBytes / 1048576);
+    $('apRuleExtOn').checked = Boolean(m.exts?.length);
+    $('apRuleExts').value = (m.exts || []).join(', ');
+  }
+  renderApGroupList(kind === 'suggestion' ? (apDraft.match.groupIds || []) : []);
+  $('apModal').classList.add('open');
+}
+
+/**
+ * The reclaimable kinds a policy can target.
+ *
+ * Deliberately a fixed, readable list rather than whatever the last scan
+ * happened to find: a policy has to be writable before any scan exists, and a
+ * list that changed shape depending on recent activity would make the same
+ * policy mean different things on different days.
+ */
+const AP_GROUPS = [
+  { id: 'regen-node-modules', label: 'node_modules folders', hint: 'JavaScript dependencies — npm install restores them' },
+  { id: 'regen-python-venv', label: 'Python virtualenvs', hint: 'Recreate from the project manifest' },
+  { id: 'regen-rust-target', label: 'Rust target folders', hint: 'cargo build restores them' },
+  { id: 'regen-build-output', label: 'Web build output', hint: 'dist, build — your build command restores them' },
+  { id: 'cache-general', label: 'Application caches', hint: 'Rebuilt automatically as you use each app' },
+  { id: 'junk-general', label: 'Junk files', hint: '.DS_Store, Thumbs.db and friends' },
+];
+
+function renderApGroupList(selected) {
+  const chosen = new Set(selected);
+  $('apGroupList').innerHTML = AP_GROUPS.map(g => `
+    <div class="rule-row">
+      <input type="checkbox" id="apg-${escapeHtml(g.id)}" data-ap-group="${escapeHtml(g.id)}"${chosen.has(g.id) ? ' checked' : ''}>
+      <label for="apg-${escapeHtml(g.id)}">${escapeHtml(g.label)} <span class="muted">— ${escapeHtml(g.hint)}</span></label>
+    </div>`).join('');
+}
+
+function setApMatchKind(kind) {
+  $('apMatchSuggestion').style.display = kind === 'suggestion' ? '' : 'none';
+  $('apMatchCustom').style.display = kind === 'custom' ? '' : 'none';
+  document.querySelectorAll('#apMatchSeg button').forEach(b =>
+    b.setAttribute('aria-selected', String(b.dataset.apmatch === kind)));
+}
+
+/** Read the dialog back into the wire shape the API validates. */
+function policyFromEditor() {
+  const kind = document.querySelector('#apMatchSeg button[aria-selected="true"]').dataset.apmatch;
+  let match;
+  if (kind === 'suggestion') {
+    match = { kind: 'suggestion', groupIds: [...document.querySelectorAll('[data-ap-group]')].filter(c => c.checked).map(c => c.dataset.apGroup) };
+  } else {
+    match = { kind: 'custom' };
+    if ($('apRuleAgeOn').checked) match.maxAgeMs = Math.max(1, Number($('apRuleAgeDays').value) || 180) * 86400000;
+    if ($('apRuleSizeOn').checked) match.minBytes = Math.max(1, Number($('apRuleSizeMb').value) || 100) * 1048576;
+    if ($('apRuleExtOn').checked) match.exts = $('apRuleExts').value.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  const gb = (id) => { const n = Number($(id).value); return Number.isFinite(n) && n > 0 ? Math.round(n * GB) : null; };
+  return {
+    ...(apDraft && apDraft.id ? { id: apDraft.id } : {}),
+    name: $('apName').value.trim() || 'Untitled policy',
+    path: $('apPath').value.trim(),
+    match,
+    maxBytesPerRun: gb('apMaxRun'),
+    maxBytesPerWeek: gb('apMaxWeek'),
+    requireConfirmationAbove: gb('apConfirmAbove'),
+    cooldownDays: Math.min(365, Math.max(1, Math.round(Number($('apCooldown').value) || 7))),
+    dryRunFirst: $('apDryRunFirst').checked,
+    enabled: $('apEnabled').checked,
+  };
+}
+
+document.querySelectorAll('#apMatchSeg button').forEach(b =>
+  b.addEventListener('click', () => setApMatchKind(b.dataset.apmatch)));
+$('apAddBtn').addEventListener('click', () => openPolicyEditor(null));
+$('apBrowseBtn').addEventListener('click', () =>
+  openBrowse($('apPath').value.trim() || null, (picked) => { $('apPath').value = picked; }, 'Folder this policy cleans'));
+
+$('apPreviewBtn').addEventListener('click', async () => {
+  const host = $('apPreview');
+  host.innerHTML = `<div class="muted" style="margin-top:14px;">Checking what this would delete…</div>`;
+  try {
+    const result = await api('/api/autopilot/simulate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ policy: policyFromEditor() }),
+    });
+    const rows = result.items.slice(0, 12).map(i => `
+      <div class="ap-run-item"><span class="nm" title="${escapeHtml(i.path)}">${escapeHtml(i.name)}</span>
+      <span class="why">${escapeHtml(i.reason)}</span><b class="num">${formatBytes(i.bytes)}</b></div>`).join('');
+    host.innerHTML =
+      `<div class="set-h" style="margin-top:18px;">${icon('search', 14)}What this would delete</div>` +
+      `<div class="ap-preview-head num">${formatBytes(result.bytesWouldDelete)} across ${formatCount(result.items.length)} item${result.items.length === 1 ? '' : 's'}` +
+      (result.capBytes !== null ? ` <span class="muted">(limit ${formatBytes(result.capBytes)})</span>` : '') + `</div>` +
+      (result.wouldBlockReason ? `<div class="ap-reason">${escapeHtml(result.wouldBlockReason)}</div>` : '') +
+      (rows || `<div class="muted" style="padding:4px 0;">Nothing matches right now.</div>`) +
+      (result.items.length > 12 ? `<div class="muted" style="font-size:11px;padding-left:10px;">…and ${formatCount(result.items.length - 12)} more</div>` : '') +
+      (result.skipped.length ? `<div class="ap-skipped">${icon('alert', 12)} <span>${escapeHtml(result.skipped[0].reason)}</span></div>` : '');
+  } catch (e) {
+    host.innerHTML = `<div class="ap-reason">${escapeHtml(e.message)}</div>`;
+  }
+});
+
+$('apSaveBtn').addEventListener('click', async () => {
+  const edited = policyFromEditor();
+  const others = (state.autopilot.policies || []).filter(p => p.id !== edited.id);
+  try {
+    await api('/api/autopilot/policies', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ policies: [...others, edited] }),
+    });
+    closeModal('apModal');
+    toast(edited.enabled ? 'Policy saved — its first run will show you what it matched before deleting anything' : 'Policy saved');
+    loadAutopilot();
+  } catch (e) {
+    toast(e.message, 'error', 8000);
+  }
+});
+
+registerView({
+  id: 'autopilot',
+  label: 'Autopilot',
+  icon: 'sparkles',
+  // Policies and run history are persisted, so this works with no scan loaded.
+  needsScan: false,
+  mount() { loadAutopilot(); },
 });
 
 /* ───────────────────────────── Trash (confirm + execute) ───────────────────────────── */
