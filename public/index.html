@@ -105,7 +105,12 @@ body {
     radial-gradient(110% 100% at 100% 110%, rgba(94,92,230,0.06), transparent 55%),
     linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 100%);
   background-attachment: fixed;
-  min-width: 1024px;
+  /* 640, not the old 1024: that floor dated from the horizontal header, which
+     genuinely could not get narrower. The sidebar can — it collapses to a
+     64px rail and every view stacks — so half-screen windows now reflow
+     instead of scrolling sideways. Below 640 the page scrolls, because the
+     fixed-width dialogs stop fitting there. */
+  min-width: 640px;
   overflow-x: auto;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -280,53 +285,68 @@ select option { background: var(--glass-strong); color: var(--text-1); }
   animation: shimmer 1.4s ease infinite; }
 @keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
 
-/* ════════════════════════════ Header ════════════════════════════ */
-header {
-  display: flex; align-items: center; gap: 18px;
-  padding: 12px 24px; position: sticky; top: 0; z-index: 50;
-  border-bottom: 1px solid var(--hairline);
-  --lg-tint: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0) 70%),
+/* ════════════════════════ Sidebar navigation ════════════════════════ */
+/* One column, two states. Expanded (--side-w) it is a liquid-glass panel:
+   search on top, the ten views, utilities at the foot. Collapsed
+   (--side-w-rail) it is an icon rail — labels vanish, every control keeps
+   its position and its tooltip. The column layout is the fix for the old
+   header's zoom bug: items never compete for one row, so nothing can clip
+   the search box at any zoom level. */
+:root { --side-w: 232px; --side-w-rail: 64px; }
+
+body { display: grid; grid-template-columns: auto minmax(0, 1fr); }
+
+#sideNav {
+  width: var(--side-w);
+  position: sticky; top: 0; height: 100vh; height: 100dvh; z-index: 50;
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 14px 12px 12px;
+  border-right: 1px solid var(--hairline);
+  transition: width var(--dur-3) var(--ease);
+  --lg-tint: linear-gradient(165deg, rgba(255,255,255,0.045), rgba(255,255,255,0) 60%),
              color-mix(in srgb, var(--bg-1) 55%, transparent);
   --lg-blur: 26px;
 }
-:root[data-theme="light"] header {
-  --lg-tint: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0.15) 70%),
+:root[data-theme="light"] #sideNav {
+  --lg-tint: linear-gradient(165deg, rgba(255,255,255,0.6), rgba(255,255,255,0.15) 60%),
              color-mix(in srgb, var(--bg-1) 45%, transparent);
 }
-header.lg::after { border-radius: 0; padding: 0; background: none; mask: none; -webkit-mask: none;
-  border-bottom: 1px solid rgba(255,255,255,0.06); inset: auto 0 -1px 0; height: 1px; }
-/* `flex: none` + `nowrap`: the wordmark is a fixed thing, not a flexible one.
-   Without these it shrank when the global search box was added to the header
-   and broke "TreeMap Disk Space Visualizer" across two lines. The search box
-   gives up space instead — it is the one header item that should. */
-.logo { display: flex; align-items: center; gap: 11px; font-size: 16px; font-weight: 700; letter-spacing: -0.2px; flex: none; white-space: nowrap; }
-.logo .sub { font-weight: 400; color: var(--text-3); font-size: 12px; margin-left: 2px; }
+/* The lens shine is a rounded inset ring by default; a full-height panel
+   wants only a hairline on its content edge. */
+#sideNav.lg::after { border-radius: 0; padding: 0; background: none; mask: none; -webkit-mask: none;
+  border-right: 1px solid rgba(255,255,255,0.06); inset: 0 -1px 0 auto; width: 1px; }
+
+.side-top { display: flex; align-items: center; gap: 8px; min-height: 34px; }
+.logo { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 700; letter-spacing: -0.2px; min-width: 0; flex: 1; }
+.logo svg { flex: none; }
+.logo .side-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.logo .sub { display: block; font-weight: 400; color: var(--text-3); font-size: 10.5px; margin-top: 1px; }
+#sideToggle { flex: none; }
+
 .tabbar {
-  display: flex; border: 1px solid var(--hairline);
-  background: linear-gradient(180deg, rgba(0,0,0,0.12), rgba(0,0,0,0.02)), var(--surface-1);
-  box-shadow: inset 0 1.5px 4px rgba(0,0,0,0.18);
-  border-radius: 12px; padding: 3px; gap: 2px; margin: 0 auto;
-}
-:root[data-theme="light"] .tabbar {
-  background: linear-gradient(180deg, rgba(10,15,30,0.05), rgba(10,15,30,0.01)), var(--surface-1);
-  box-shadow: inset 0 1.5px 4px rgba(20,24,40,0.08);
+  display: flex; flex-direction: column; gap: 2px;
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  margin: 0 -4px; padding: 0 4px; /* room for focus rings inside the scroller */
 }
 .tabbar button {
-  display: inline-flex; align-items: center; gap: 7px;
+  display: flex; align-items: center; gap: 10px; width: 100%;
   border: none; background: transparent; color: var(--text-2);
-  font-size: 13px; font-weight: 500; padding: 7px 18px; border-radius: 9px; cursor: pointer;
+  font-size: 13px; font-weight: 500; padding: 8.5px 11px; border-radius: 10px; cursor: pointer;
+  white-space: nowrap; text-align: left;
   transition: color var(--dur-1) var(--ease), background var(--dur-2) var(--ease),
               box-shadow var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-spring);
 }
-.tabbar button:hover { color: var(--text-1); }
-.tabbar button:active { transform: scale(0.95); }
+.tabbar button [data-icon] { flex: none; }
+.tabbar button .side-label { overflow: hidden; text-overflow: ellipsis; }
+.tabbar button:hover { color: var(--text-1); background: var(--surface-2); }
+.tabbar button:active { transform: scale(0.97); }
 /* A view whose capability is unavailable stays visible and focusable — it is
    dimmed and explains itself when opened, rather than vanishing. A tab that
    disappears reads as a bug; a tab that says why reads as an answer (§2.2). */
 .tabbar button.tab-unavailable { opacity: 0.45; }
 .tabbar button.tab-unavailable::after {
-  content: ''; width: 5px; height: 5px; border-radius: 50%;
-  background: var(--warn, #FF9F0A); margin-left: 5px; display: inline-block;
+  content: ''; width: 5px; height: 5px; border-radius: 50%; flex: none;
+  background: var(--warn, #FF9F0A); margin-left: auto; display: inline-block;
 }
 .tabbar button[aria-selected="true"] {
   background: linear-gradient(170deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02) 60%), var(--surface-3);
@@ -336,14 +356,46 @@ header.lg::after { border-radius: 0; padding: 0; background: none; mask: none; -
 :root[data-theme="light"] .tabbar button[aria-selected="true"] {
   background: linear-gradient(170deg, rgba(255,255,255,0.95), rgba(255,255,255,0.65));
 }
-.header-right { display: flex; gap: 8px; align-items: center; }
+
+.side-foot { display: flex; flex-direction: column; gap: 8px; }
+.side-foot .btn { justify-content: flex-start; }
+.side-foot-row { display: flex; gap: 8px; }
+
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-#headerSpin { display: none; color: var(--accent); }
+#headerSpin { display: none; color: var(--accent); flex: none; }
 #headerSpin.on { display: inline-flex; }
 
+/* ── Collapsed: the icon rail ── */
+#sideNav.collapsed { width: var(--side-w-rail); padding-left: 10px; padding-right: 10px; }
+#sideNav.collapsed .side-label { display: none; }
+#sideNav.collapsed .side-top { flex-direction: column; gap: 10px; }
+#sideNav.collapsed .logo { flex: none; }
+#sideNav.collapsed #headerSpin.on { position: absolute; top: 12px; right: 8px; }
+#sideNav.collapsed .tabbar button { justify-content: center; padding: 9.5px 0; }
+#sideNav.collapsed .tabbar button.tab-unavailable::after { position: absolute; margin: 0; transform: translate(11px, -8px); }
+#sideNav.collapsed .tabbar button { position: relative; }
+#sideNav.collapsed .side-foot .btn { justify-content: center; padding: 0 8px; }
+#sideNav.collapsed .side-foot .btn [data-icon] { margin: 0; }
+#sideNav.collapsed .side-foot-row { flex-direction: column; align-items: center; }
+
+/* ── Narrow windows: the expanded panel floats over the content ──
+   In-flow, an expanded sidebar would leave a phone-width column of app; the
+   rail stays in flow (it costs 64px), and expanding overlays instead. The
+   scrim is its own element — body::after is already the film-grain layer,
+   and borrowing it here would silently delete the grain below 900px. */
+#navScrim {
+  position: fixed; inset: 0; z-index: 49; background: rgba(0,0,0,0.35);
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-3) var(--ease);
+}
+@media (max-width: 900px) {
+  #sideNav:not(.collapsed) { position: fixed; left: 0; top: 0; box-shadow: 24px 0 64px rgba(0,0,0,0.35); }
+  body { grid-template-columns: var(--side-w-rail) minmax(0, 1fr); }
+  body:has(#sideNav:not(.collapsed)) #navScrim { opacity: 1; pointer-events: auto; }
+}
+
 /* ════════════════════════════ Layout ════════════════════════════ */
-main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: relative; }
+main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: relative; min-width: 0; }
 .view { display: none; animation: viewIn var(--dur-3) var(--ease); }
 .view.active { display: block; }
 @keyframes viewIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -583,27 +635,61 @@ body.preview-open #cartDock { right: 348px; }
 
 /* ── Global search (A4) ── */
 /* The search box is the one header item that may give up space. Without
-   `min-width: 0` a flex item refuses to shrink below its content, so adding
-   this box pushed the header 43px wider than the window and clipped the
-   Clean Up button off the right edge. It shrinks first, then hides entirely on
-   narrow windows, and nothing else in the header ever moves. */
-.gsearch { position: relative; flex: 0 1 auto; min-width: 0; }
+   Lives at the top of the sidebar with the full column width to itself —
+   the fix for the old header, where at mild page zoom this box clipped and
+   overlapped its neighbours because a single row could not fit everything. */
+.gsearch { position: relative; flex: none; }
 .gsearch-icon {
-  position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
-  color: var(--text-3); pointer-events: none; display: inline-flex;
+  position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+  color: var(--text-3); pointer-events: none; display: inline-flex; z-index: 1;
 }
+/* Glassmorphism, matching the .glass frost recipe: a translucent tint the
+   backdrop shows through, frosted by blur, ringed by an inset shine. It sits
+   on the sidebar's own lens, so what shimmers through is the page itself. */
 #gsearch {
-  width: clamp(120px, 12vw, 180px); min-width: 0;
-  padding: 7px 10px 7px 30px; font-size: 12.5px;
-  background: var(--surface-2); border: 1px solid var(--hairline);
-  border-radius: 8px; color: var(--text-1); outline: none;
-  transition: width 0.18s ease, border-color 0.18s ease;
+  width: 100%;
+  padding: 9px 12px 9px 32px; font-size: 12.5px;
+  background: linear-gradient(170deg, rgba(255,255,255,0.07), rgba(255,255,255,0.015) 65%),
+              color-mix(in srgb, var(--surface-2) 55%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  border: 1px solid rgba(255,255,255,0.09);
+  box-shadow: inset 0 1px 0 var(--shine), 0 4px 14px rgba(0,0,0,0.10);
+  border-radius: 11px; color: var(--text-1); outline: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
-#gsearch:focus { width: clamp(180px, 22vw, 300px); border-color: var(--accent); }
+:root[data-theme="light"] #gsearch {
+  background: linear-gradient(170deg, rgba(255,255,255,0.75), rgba(255,255,255,0.35) 65%),
+              color-mix(in srgb, var(--surface-2) 40%, transparent);
+  border-color: rgba(20,24,40,0.10);
+}
+#gsearch:focus { border-color: var(--accent); box-shadow: inset 0 1px 0 var(--shine), 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 #gsearch::placeholder { color: var(--text-3); }
+/* The rail form of the search: same target, shown only when collapsed. */
+.gsearch-rail-btn { display: none; }
+#sideNav.collapsed .gsearch-icon { display: none; }
+#sideNav.collapsed #gsearch { display: none; }
+#sideNav.collapsed .gsearch-rail-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; min-height: 36px; border-radius: 11px; cursor: pointer;
+  color: var(--text-2); border: 1px solid rgba(255,255,255,0.09);
+  background: linear-gradient(170deg, rgba(255,255,255,0.07), rgba(255,255,255,0.015) 65%),
+              color-mix(in srgb, var(--surface-2) 55%, transparent);
+  box-shadow: inset 0 1px 0 var(--shine);
+}
+#sideNav.collapsed .gsearch-rail-btn:hover { color: var(--text-1); }
+:root[data-theme="light"] #sideNav.collapsed .gsearch-rail-btn {
+  background: linear-gradient(170deg, rgba(255,255,255,0.75), rgba(255,255,255,0.35) 65%),
+              color-mix(in srgb, var(--surface-2) 40%, transparent);
+  border-color: rgba(20,24,40,0.10);
+}
+/* Results fly out to the RIGHT of the sidebar, over the content — inside the
+   column they would be clipped to 232px and unreadable. The offset is the
+   box→panel gap PLUS the sidebar's 12px inner padding, so the panel clears
+   the sidebar's edge, not just the box's. */
 .gsearch-panel {
-  position: absolute; top: calc(100% + 8px); right: 0; width: 460px;
-  max-height: min(62vh, 560px); overflow-y: auto; z-index: 60;
+  position: absolute; top: 0; left: calc(100% + 26px); width: min(460px, calc(100vw - var(--side-w) - 40px));
+  max-height: min(72vh, 640px); overflow-y: auto; z-index: 60;
   background: var(--surface-1); border: 1px solid var(--hairline);
   border-radius: 12px; box-shadow: 0 18px 48px rgba(0,0,0,0.32); padding: 6px;
 }
@@ -620,18 +706,11 @@ body.preview-open #cartDock { right: 348px; }
 .gsearch-hit .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gsearch-hit .sz { color: var(--text-2); font-variant-numeric: tabular-nums; font-size: 11.5px; }
 .gsearch-note { padding: 10px 12px; color: var(--text-2); font-size: 12px; line-height: 1.5; }
-/* Below this the tab bar needs the room, so the search box steps aside — but
-   the keyboard shortcut must still work, and focusing a `display: none` input
-   silently does nothing. `.gsearch-summoned` is added when the shortcut is
-   pressed, overlaying the box so it is genuinely focusable at any width. */
-@media (max-width: 1320px) {
-  .gsearch:not(.gsearch-summoned) { display: none; }
-  .gsearch.gsearch-summoned {
-    position: absolute; top: 50%; right: 12px; transform: translateY(-50%); z-index: 70;
-  }
-  .gsearch.gsearch-summoned #gsearch { width: min(60vw, 320px); }
+/* On a narrow window the fly-out would leave the viewport; anchor it to the
+   rail edge and let it take what width there is. */
+@media (max-width: 700px) {
+  .gsearch-panel { width: calc(100vw - var(--side-w-rail) - 24px); }
 }
-@media (max-width: 560px) { .gsearch-panel { width: min(92vw, 460px); } }
 
 /* ── Allocation diagnostic (A2) ── */
 .alloc-diag { font-size: 13px; color: var(--text-2); }
@@ -1105,19 +1184,17 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 :root[data-theme="light"] .seg button[aria-selected="true"] {
   background: linear-gradient(170deg, rgba(255,255,255,0.95), rgba(255,255,255,0.65)); }
 
-/* Raised from 1360px when the global search box joined the header: the
-   subtitle is decoration, and the Clean Up button and search box are not, so
-   the subtitle is what steps aside first. */
-@media (max-width: 1560px) {
-  .logo .sub { display: none; }
-}
-@media (max-width: 1360px) {
-  .tabbar button { padding: 7px 13px; }
-}
-@media (max-width: 1240px) {
+/* Sidebar-era breakpoints: the column costs the content 232px, so the
+   dashboard steps down earlier than it used to (its two-column form starts
+   scrolling sideways otherwise), and gains a true single-column form that
+   the old header layout never had. */
+@media (max-width: 1500px) {
   .dash-grid { grid-template-columns: 1fr 1fr; }
   .quick-stats { grid-template-columns: 1fr; }
   .trends-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 1120px) {
+  .dash-grid { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
@@ -1127,45 +1204,66 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 <body>
 <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="blob b4"></div>
 
-<header>
-  <div class="logo">
-    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
-      <rect x="1" y="1" width="14" height="24" rx="4" fill="#30D158"/>
-      <rect x="17" y="1" width="8" height="14" rx="3.5" fill="#FFD60A"/>
-      <rect x="17" y="17" width="8" height="8" rx="3.5" fill="#FF453A"/>
-    </svg>
-    <span>TreeMap<span class="sub">Disk Space Visualizer</span></span>
-  </div>
-  <nav class="tabbar" role="tablist" aria-label="Views">
-    <button role="tab" aria-selected="true" data-view="dashboard"><span data-icon="dashboard"></span>Dashboard</button>
-    <button role="tab" aria-selected="false" data-view="treemap"><span data-icon="treemap"></span>Treemap</button>
-    <button role="tab" aria-selected="false" data-view="grid"><span data-icon="grid"></span>Grid</button>
-    <button role="tab" aria-selected="false" data-view="apps"><span data-icon="box"></span>Apps</button>
-    <button role="tab" aria-selected="false" data-view="duplicates"><span data-icon="copy"></span>Duplicates</button>
-    <button role="tab" aria-selected="false" data-view="trends"><span data-icon="trendUp"></span>Trends</button>
-    <button role="tab" aria-selected="false" data-view="compare"><span data-icon="diff"></span>Compare</button>
-    <button role="tab" aria-selected="false" data-view="offloaded"><span data-icon="archive"></span>Offloaded</button>
-    <button role="tab" aria-selected="false" data-view="capsule"><span data-icon="clock"></span>Time Capsule</button>
-    <button role="tab" aria-selected="false" data-view="autopilot"><span data-icon="sparkles"></span>Autopilot</button>
-  </nav>
-  <div class="header-right">
-    <!-- A4: global search. Lives in the header, not in a view, because it
-         searches everything TreeMap has indexed rather than whatever happens
-         to be on screen. "/" focuses it from anywhere. -->
-    <div class="gsearch" id="gsearchWrap">
-      <span class="gsearch-icon" data-icon="search" data-size="14"></span>
-      <input type="text" id="gsearch" placeholder="Search all indexed files…  /"
-             aria-label="Search all indexed files" aria-expanded="false"
-             aria-controls="gsearchResults" role="combobox" aria-autocomplete="list"
-             autocomplete="off" spellcheck="false">
-      <div class="gsearch-panel" id="gsearchResults" role="listbox" aria-label="Search results" hidden></div>
+<!-- The one navigation surface: a collapsible liquid-glass sidebar. It
+     replaced the horizontal header when the header ran out of width — at
+     mild page zoom the search box clipped and overlapped its neighbours,
+     because ten tabs, a search box and three actions were competing for one
+     row. A column never has that fight: every item owns its own line, and
+     collapsing to an icon rail returns the space when the user wants it. -->
+<aside id="sideNav" aria-label="Navigation">
+  <div class="side-top">
+    <div class="logo">
+      <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
+        <rect x="1" y="1" width="14" height="24" rx="4" fill="#30D158"/>
+        <rect x="17" y="1" width="8" height="14" rx="3.5" fill="#FFD60A"/>
+        <rect x="17" y="17" width="8" height="8" rx="3.5" fill="#FF453A"/>
+      </svg>
+      <span class="side-label">TreeMap<span class="sub">Disk Space Visualizer</span></span>
     </div>
     <span id="headerSpin" aria-hidden="true"></span>
-    <button class="icon-btn" id="themeToggle" aria-label="Toggle light or dark theme" title="Toggle theme"></button>
-    <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings — schedules & ignore list"></button>
-    <button class="btn" id="cleanupBtn" title="Find and trash old or large files"><span data-icon="sparkles"></span>Clean Up</button>
+    <button class="icon-btn" id="sideToggle" aria-label="Collapse the navigation" aria-expanded="true"
+            title="Collapse navigation (⌘B)"></button>
   </div>
-</header>
+
+  <!-- A4: global search. Lives at the top of the sidebar, not in a view,
+       because it searches everything TreeMap has indexed rather than
+       whatever happens to be on screen. "/" or ⌘K focuses it from anywhere;
+       on the collapsed rail those shortcuts (or the icon) open the sidebar
+       first, so the input genuinely exists to be focused. -->
+  <div class="gsearch" id="gsearchWrap">
+    <span class="gsearch-icon" data-icon="search" data-size="14"></span>
+    <input type="text" id="gsearch" placeholder="Search all indexed files…"
+           aria-label="Search all indexed files" aria-expanded="false"
+           aria-controls="gsearchResults" role="combobox" aria-autocomplete="list"
+           autocomplete="off" spellcheck="false">
+    <button class="gsearch-rail-btn" id="gsearchRailBtn" aria-label="Search all indexed files" title="Search (⌘K)" tabindex="-1">
+      <span data-icon="search" data-size="15"></span>
+    </button>
+    <div class="gsearch-panel" id="gsearchResults" role="listbox" aria-label="Search results" hidden></div>
+  </div>
+
+  <nav class="tabbar" role="tablist" aria-label="Views" aria-orientation="vertical">
+    <button role="tab" aria-selected="true" data-view="dashboard" title="Dashboard"><span data-icon="dashboard"></span><span class="side-label">Dashboard</span></button>
+    <button role="tab" aria-selected="false" data-view="treemap" title="Treemap"><span data-icon="treemap"></span><span class="side-label">Treemap</span></button>
+    <button role="tab" aria-selected="false" data-view="grid" title="Grid"><span data-icon="grid"></span><span class="side-label">Grid</span></button>
+    <button role="tab" aria-selected="false" data-view="apps" title="Apps"><span data-icon="box"></span><span class="side-label">Apps</span></button>
+    <button role="tab" aria-selected="false" data-view="duplicates" title="Duplicates"><span data-icon="copy"></span><span class="side-label">Duplicates</span></button>
+    <button role="tab" aria-selected="false" data-view="trends" title="Trends"><span data-icon="trendUp"></span><span class="side-label">Trends</span></button>
+    <button role="tab" aria-selected="false" data-view="compare" title="Compare"><span data-icon="diff"></span><span class="side-label">Compare</span></button>
+    <button role="tab" aria-selected="false" data-view="offloaded" title="Offloaded"><span data-icon="archive"></span><span class="side-label">Offloaded</span></button>
+    <button role="tab" aria-selected="false" data-view="capsule" title="Time Capsule"><span data-icon="clock"></span><span class="side-label">Time Capsule</span></button>
+    <button role="tab" aria-selected="false" data-view="autopilot" title="Autopilot"><span data-icon="sparkles"></span><span class="side-label">Autopilot</span></button>
+  </nav>
+
+  <div class="side-foot">
+    <button class="btn" id="cleanupBtn" title="Find and trash old or large files"><span data-icon="sparkles"></span><span class="side-label">Clean Up</span></button>
+    <div class="side-foot-row">
+      <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings — schedules & ignore list"></button>
+      <button class="icon-btn" id="themeToggle" aria-label="Toggle light or dark theme" title="Toggle theme"></button>
+    </div>
+  </div>
+</aside>
+<div id="navScrim" aria-hidden="true"></div>
 
 <main>
   <!-- ═══════════ Empty state ═══════════ -->
@@ -1888,6 +1986,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       <div class="kbd-sec">Anywhere</div>
       <div class="kbd-grid">
         <div><kbd>⌘</kbd><kbd>K</kbd></div><div>Search everything indexed</div>
+        <div><kbd>⌘</kbd><kbd>B</kbd></div><div>Collapse or expand the navigation</div>
         <div><kbd>/</kbd></div><div>Search everything indexed (in Treemap and Grid, <kbd>/</kbd> focuses that view's own filter instead)</div>
         <div><kbd>⌘</kbd><kbd>R</kbd></div><div>Rescan the current folder</div>
         <div><kbd>⌘</kbd><kbd>⌫</kbd></div><div>Move the selection to Trash</div>
@@ -2084,6 +2183,7 @@ const PATHS = {
   moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
   sparkles: '<path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3z"/>',
   chevronRight: '<path d="m9 18 6-6-6-6"/>',
+  chevronLeft: '<path d="m15 18-6-6 6-6"/>',
   arrowUp: '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
@@ -2169,6 +2269,36 @@ $('themeToggle').addEventListener('click', () => {
   if (state.donut.segs.length) drawDonut(1);
 });
 applyThemeButton();
+
+/* ───────────────────────────── Sidebar ─────────────────────────────
+   Expanded glass panel ⇄ icon rail. The preference persists, aria-expanded
+   mirrors the state for assistive tech, and the chevron always points where
+   the sidebar will go next. */
+function applySideNav(collapsed) {
+  $('sideNav').classList.toggle('collapsed', collapsed);
+  const btn = $('sideToggle');
+  btn.setAttribute('aria-expanded', String(!collapsed));
+  btn.setAttribute('aria-label', collapsed ? 'Expand the navigation' : 'Collapse the navigation');
+  btn.title = (collapsed ? 'Expand navigation' : 'Collapse navigation') + ' (⌘B)';
+  btn.innerHTML = icon(collapsed ? 'chevronRight' : 'chevronLeft', 16);
+  try { localStorage.setItem('tm-sidenav', collapsed ? 'rail' : 'open'); } catch { /* private mode */ }
+}
+function toggleSideNav() {
+  applySideNav(!$('sideNav').classList.contains('collapsed'));
+}
+$('sideToggle').addEventListener('click', toggleSideNav);
+// The rail's search icon is the search box in collapsed form: it opens the
+// sidebar and puts the caret in the input, exactly like ⌘K.
+$('gsearchRailBtn').addEventListener('click', () => summonGlobalSearch());
+// On narrow windows the expanded panel floats over a scrim; clicking the
+// scrim puts the panel away, the way every sheet in the app already closes.
+$('navScrim').addEventListener('click', () => applySideNav(true));
+let savedSideNav = null;
+try { savedSideNav = localStorage.getItem('tm-sidenav'); } catch { /* private mode */ }
+// A narrow window always boots on the rail: below 900px the expanded panel
+// floats OVER the content, which is a fine state to toggle into but a rude
+// one to wake up in.
+applySideNav(savedSideNav === 'rail' || window.innerWidth <= 900);
 
 /* ───────────────────────────── Toasts ───────────────────────────── */
 function toast(msg, kind = 'success', ms = 4200) {
@@ -8511,21 +8641,15 @@ function gsearchClose() {
   const panel = $('gsearchResults');
   panel.hidden = true;
   $('gsearch').setAttribute('aria-expanded', 'false');
-  // Let a narrow window reclaim the header space it lent us.
-  $('gsearchWrap').classList.remove('gsearch-summoned');
 }
 
 /**
- * Focus the global search, showing it first if the window is too narrow to
- * display it permanently.
- *
- * Without the summon step the keyboard shortcut is a lie below 1320px:
- * `focus()` on a `display: none` element does nothing at all, silently. The
- * class overrides the media query so the box exists to be focused, and
- * `gsearchClose` takes it away again.
+ * Focus the global search, opening the sidebar first when it is collapsed to
+ * the icon rail — `focus()` on a `display: none` input does nothing at all,
+ * silently, so the shortcut would otherwise be a lie in rail mode.
  */
 function summonGlobalSearch() {
-  $('gsearchWrap').classList.add('gsearch-summoned');
+  if ($('sideNav').classList.contains('collapsed')) applySideNav(false);
   const box = $('gsearch');
   box.focus();
   box.select();
@@ -8678,15 +8802,6 @@ $('gsearch').addEventListener('keydown', (e) => {
 });
 
 $('gsearch').addEventListener('focus', () => { if (gsearch.hits.length) gsearchOpen(); });
-$('gsearch').addEventListener('blur', () => {
-  // Deferred: clicking a result blurs the box before the click lands, and
-  // tearing the panel down first would swallow the click entirely.
-  setTimeout(() => {
-    if (document.activeElement !== $('gsearch') && !$('gsearchResults').contains(document.activeElement)) {
-      $('gsearchWrap').classList.remove('gsearch-summoned');
-    }
-  }, 180);
-});
 document.addEventListener('click', (e) => {
   if (gsearch.open && !$('gsearchWrap').contains(e.target)) gsearchClose();
 });
@@ -9050,6 +9165,11 @@ document.addEventListener('keydown', (e) => {
     summonGlobalSearch();
     return;
   }
+  if (mod && e.key.toLowerCase() === 'b') {
+    e.preventDefault();
+    toggleSideNav();
+    return;
+  }
   if (e.key === '/' && !typing && state.view === 'grid') {
     e.preventDefault();
     $('gridSearch').focus();
@@ -9281,7 +9401,7 @@ window.TreeMap = {
 
     /* Which elements get the lens, and how strong. */
     const TARGETS = [
-      ['header',        { scale: 20, ab: 1.5 }],
+      ['#sideNav',      { scale: 22, ab: 1.5 }],
       ['.modal',        { scale: 44, ab: 2 }],
       ['#cartTab',      { scale: 34, ab: 2, track: 1 }],
       ['#cartPanel',    { scale: 40, ab: 2 }],

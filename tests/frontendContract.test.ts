@@ -638,23 +638,50 @@ test('the diagnostic explains a missing reconciliation instead of showing nothin
 
 /* ══════════════════════ Global search (A4) ══════════════════════ */
 
-test('the global search box lives in the header, not inside a view', () => {
+/** The sidebar's markup, sliced with an explicit start so it cannot slice
+ *  backwards to empty (the trap this file has hit three times). */
+function sideNavHtml(): string {
+  const start = INDEX.indexOf('<aside id="sideNav"');
+  assert.ok(start !== -1, 'the sidebar exists');
+  const end = INDEX.indexOf('</aside>', start);
+  const nav = INDEX.slice(start, end);
+  assert.ok(nav.length > 500, 'the sidebar slice is non-empty');
+  return nav;
+}
+
+test('the global search box lives at the top of the sidebar, not inside a view', () => {
   // §A4: "an always-available search bar (not tied to one view)". Putting it in
   // a view would make it search whatever happens to be on screen, which is the
-  // opposite of the point.
-  const header = INDEX.slice(INDEX.indexOf('<header'), INDEX.indexOf('</header>'));
-  assert.match(header, /id="gsearch"/, 'the input is in the header');
-  assert.match(header, /id="gsearchResults"/);
+  // opposite of the point. And the user's spec for the sidebar is explicit:
+  // search first, then the views.
+  const nav = sideNavHtml();
+  assert.match(nav, /id="gsearch"/, 'the input is in the sidebar');
+  assert.match(nav, /id="gsearchResults"/);
+  assert.ok(
+    nav.indexOf('id="gsearch"') < nav.indexOf('role="tablist"'),
+    'search comes before the view list',
+  );
 });
 
 test('the search box is a proper combobox for screen readers', () => {
   // §6 accessibility: a type-ahead that announces nothing is unusable without
   // sight, and the results are the whole feature.
-  const header = INDEX.slice(INDEX.indexOf('<header'), INDEX.indexOf('</header>'));
-  assert.match(header, /role="combobox"/);
-  assert.match(header, /aria-expanded="false"/, 'expansion state is announced');
-  assert.match(header, /aria-controls="gsearchResults"/);
+  const nav = sideNavHtml();
+  assert.match(nav, /role="combobox"/);
+  assert.match(nav, /aria-expanded="false"/, 'expansion state is announced');
+  assert.match(nav, /aria-controls="gsearchResults"/);
   assert.match(INDEX, /id="gsearchResults"[^>]*role="listbox"/);
+});
+
+test('the sidebar collapses to a rail, remembers the choice, and announces its state', () => {
+  const nav = sideNavHtml();
+  assert.match(nav, /id="sideToggle"/, 'the collapse control exists');
+  assert.match(nav, /aria-expanded/, 'and carries an expanded state for assistive tech');
+  const code = appCode();
+  assert.match(code, /localStorage\.setItem\('tm-sidenav'/, 'the preference persists');
+  assert.match(code, /mod && e\.key\.toLowerCase\(\) === 'b'/, '⌘B toggles it');
+  assert.match(INDEX, /#sideNav\.collapsed \.side-label \{ display: none/, 'labels leave in rail mode');
+  assert.match(INDEX, /aria-orientation="vertical"/, 'the tablist declares its new axis');
 });
 
 test('search uses the shared query language, never a second one', () => {
@@ -691,15 +718,18 @@ test('results are keyboard navigable and openable', () => {
   }
 });
 
-test('the keyboard shortcut works even when the box is hidden on narrow windows', () => {
-  // Focusing a `display: none` element does nothing at all, silently — so the
-  // shortcut has to reveal the box before focusing it.
+test('the keyboard shortcut works even when the sidebar is collapsed to the rail', () => {
+  // Focusing a `display: none` element does nothing at all, silently — the
+  // rail hides the input, so the shortcut must open the sidebar first.
   const code = appCode();
   assert.match(code, /function summonGlobalSearch/);
-  const fn = code.slice(code.indexOf('function summonGlobalSearch'), code.indexOf('function renderGsearch'));
-  assert.match(fn, /classList\.add\('gsearch-summoned'\)/, 'it is revealed first');
+  const start = code.indexOf('function summonGlobalSearch');
+  const fn = code.slice(start, code.indexOf('function renderGsearch', start));
+  assert.ok(fn.length > 100, 'the summon slice is non-empty');
+  assert.match(fn, /applySideNav\(false\)/, 'the sidebar opens first');
   assert.match(fn, /\.focus\(\)/);
-  assert.match(INDEX, /\.gsearch:not\(\.gsearch-summoned\) \{ display: none/, 'and the CSS honours the override');
+  assert.match(INDEX, /#sideNav\.collapsed #gsearch \{ display: none/, 'the rail genuinely hides the input');
+  assert.match(INDEX, /id="gsearchRailBtn"/, 'and offers the icon form in its place');
 });
 
 test("the Treemap's own filter box keeps its / shortcut", () => {
@@ -743,11 +773,14 @@ test('opening a result reuses the existing click-through and highlight', () => {
   assert.match(fn, /\$\('tmSearch'\)\.value/, 'the existing highlight box is reused');
 });
 
-test('the header cannot be pushed wider than the window by the search box', () => {
-  // Adding the box clipped the Clean Up button off the right edge until the
-  // box was made the one header item that shrinks.
-  assert.match(INDEX, /\.gsearch \{ position: relative; flex: 0 1 auto; min-width: 0; \}/);
-  assert.match(INDEX, /\.logo \{[^}]*flex: none[^}]*white-space: nowrap/, 'the wordmark never wraps or shrinks');
+test('the search box owns its whole row, so zoom can never clip it', () => {
+  // The horizontal header's terminal bug: at mild page zoom the search box
+  // clipped and overlapped its neighbours, because one row held ten tabs,
+  // a search box and three actions. In the sidebar the box has the column
+  // to itself — full width, no flex competition — and the results panel
+  // flies out over the content rather than fighting for sidebar width.
+  assert.match(INDEX, /#gsearch \{\n  width: 100%;/, 'the input takes the full column');
+  assert.match(INDEX, /\.gsearch-panel \{\n  position: absolute; top: 0; left: calc\(100% \+ 26px\)/, 'results fly out beside the sidebar');
 });
 
 /* ══════════════════════ Disk topology (A5) ══════════════════════ */
