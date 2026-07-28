@@ -341,7 +341,11 @@ function waitForScan(scanId: string): Promise<void> {
         resolve();
         return;
       }
-      setTimeout(check, 1000).unref();
+      // Deliberately ref'd — see scheduler.ts's waitForScan for the full
+      // story: an unref'd poll here is the only path to resolution, so the
+      // event loop could drain mid-wait and strand the await forever. That is
+      // what failed CI on all three OSes. The deadline keeps it bounded.
+      setTimeout(check, 1000);
     };
     check();
   });

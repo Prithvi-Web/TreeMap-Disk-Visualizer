@@ -1,14 +1,14 @@
 {
   "name": "treemap",
   "version": "2.5.0",
-  "description": "TreeMap — a GrandPerspective-style disk space visualizer for macOS, Linux and Windows",
+  "description": "TreeMap \u2014 a GrandPerspective-style disk space visualizer for macOS, Linux and Windows",
   "author": "Prithvi-Web",
   "main": "electron/main.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "node scripts/run-tests.js",
     "typecheck": "tsc --noEmit",
     "capabilities:report": "tsx scripts/report-capabilities.ts",
     "mcp": "tsx src/mcp/index.ts",

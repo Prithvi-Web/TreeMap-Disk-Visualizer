@@ -163,7 +163,14 @@ function waitForScan(scanId: string): Promise<void> {
         resolve();
         return;
       }
-      setTimeout(check, 1000).unref();
+      // Deliberately ref'd: this timer is the ONLY thing that resolves the
+      // promise, so an unref'd one lets the event loop drain mid-wait and the
+      // await above never continues — which is exactly what took CI down on
+      // every OS ("Promise resolution is still pending but the event loop has
+      // already resolved"). A server never noticed because its listen handle
+      // kept the loop alive. The deadline bounds how long this can hold the
+      // process: SCAN_TIMEOUT_MS, then it resolves regardless.
+      setTimeout(check, 1000);
     };
     check();
   });
