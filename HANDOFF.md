@@ -1,13 +1,14 @@
 # TreeMap — 21-feature master prompt, session handoff
 
-**Date:** 28 July 2026 (end of the v2.6.1 session)
-**Status:** Phase 0 ✅ · Phase 1 ✅ (A1–A5) · **Phase 2 ✅** (B2, B3, B1, B4, B5) ·
-index schema v3 ✅ · liquid-glass sidebar ✅ · CI green on macOS+Windows+Linux ✅ ·
-**v2.6.1 RELEASED and INSTALLED** (all assets byte-verified against the update feeds)
-**Suite:** 600/600 · typecheck clean · zero console errors
-**Everything is committed AND pushed.** Working tree clean. No open threads.
-**⏭️ NEXT: Phase 3, starting with C8 (rule packs) — the user has said "start Phase 3";
-check in after each feature.**
+**Date:** 28 July 2026 (Phase 3 opened)
+**Status:** Phase 0 ✅ · Phase 1 ✅ (A1–A5) · Phase 2 ✅ (B2, B3, B1, B4, B5) ·
+**Phase 3 started: C8 ✅** · index schema v3 ✅ · liquid-glass sidebar ✅ ·
+CI green on macOS+Windows+Linux ✅ · v2.6.1 released and installed
+**Suite:** 664/664 · typecheck clean · zero console errors
+**2 commits on main, LOCAL — the user must click Push origin in GitHub Desktop:**
+`b8a0104` near-duplicate performance · `fc27f39` C8 rule packs
+**⏭️ NEXT: C6 (package-manager orphans) and C7 (game libraries), both expressed
+as rule packs now that C8 exists — then C1–C5 in any order.**
 
 Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
@@ -17,9 +18,14 @@ Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
 ```bash
 cd "/Users/prithvivinay/Desktop/Claude Code/Treemap"
-npm run build && npm test          # expect 600/600
+npm run build && npm test          # expect 664/664
 npm run capabilities:report        # expect 9/12 available on this Mac
 ```
+
+**`npm run build` is now `tsc && node scripts/copy-assets.js`** — tsc emits .js
+only, so without that second step a built app ships with no rule packs and
+Smart Suggestions reports itself broken. If you add another non-.ts runtime
+asset, add its directory to `ASSET_DIRS` there.
 
 If `npm test` fails with **`NODE_MODULE_VERSION … requires …`**, run
 `npm rebuild better-sqlite3` (trap #1). Not a code failure.
@@ -44,32 +50,58 @@ Read `docs/PLATFORM_NOTES.md` before touching anything platform-specific.
 
 ---
 
-# ⏭️ THE NEXT TASK — C8: rule packs (Phase 3 opener)
+# ⏭️ THE NEXT TASK — C6 and C7, as rule packs
 
-§C8: refactor the existing `CleanupRules` Smart Suggestions
-(`src/services/cleanupRules.ts`) into versioned JSON rule packs at
-`src/services/rulepacks/{windows,macos,linux}.json` — each rule: pattern,
-category (regenerable / cache / junk), OS applicability, confidence, human
-description, restore command. Schema-validate at load; a malformed pack fails
-loudly, never partially loads (reconcile with §6 failure isolation: the
-suggestions feature reports itself broken with the reason — the app still
-boots). Frontend: existing Smart Suggestions UI unchanged in behavior, plus a
-"why is this suggested" affordance showing description + confidence.
+C8 shipped the catalog, so C6 and C7 should mostly be **pack authoring plus a
+detector**, not new bespoke suggestion surfaces.
 
-**Acceptance (§C8):** every existing suggestion fires IDENTICALLY after the
-refactor — write an explicit regression test per existing rule BEFORE moving
-logic — and adding a rule to a pack JSON with no code change produces a new
-suggestion on the next scan.
+- **C6 · package-manager orphans** (`PackageEcosystemScanner.ts`): npm/yarn/pnpm,
+  pip venvs, cargo registry + `target`, Homebrew, apt/dpkg, winget/chocolatey.
+  Orphaned (parent project gone / version no longer referenced) vs active,
+  read from each ecosystem's own lockfile. The spec says use the existing
+  `GET /api/git/repos` detector as the structural template, and feed results
+  into the existing Clean Up "regenerable" bucket rather than a fourth surface.
+- **C7 · game libraries** (`GameLibraryScanner.ts`): Steam `libraryfolders.vdf`
+  + app manifests, Epic `Manifests/*.item`, GOG, itch.io, Proton prefixes.
+  Split per title into base install / shader cache / DLC / workshop. A "clear
+  shader cache safely" action, warning about the one-time stutter.
 
-**Order after C8:** C6 (package-manager orphans) and C7 (game libraries)
-expressed as rule packs → C1–C5 in any order → Phase 4 (D2 → D3 → D1) →
-Phase 5 (full regression, §8 benchmark with real numbers, D1 security review,
-README sweep — the README still documents only through B4; sidebar + B5 are
-deliberately not in it yet).
+**Then C1–C5 in any order** → Phase 4 (D2 → D3 → D1) → Phase 5 (full
+regression, §8 benchmark with real numbers, D1 security review, README sweep —
+the README documents through B4 plus the C8 rule-pack paragraph; sidebar and
+B5 are still not in it).
 
 Route changes must update the `ENDPOINTS` registry in `src/api/openapi.ts`
 in the SAME commit (`tests/discoverability.test.ts` enforces it, including a
 pinned destructive-endpoints list that is edited deliberately).
+
+---
+
+## C8 as built — what a follow-up needs to know
+
+- Packs live in `src/services/rulepacks/{common,macos,windows,linux}.json`;
+  `README.md` beside them is the schema reference. Loader + validator:
+  `src/services/rulePacks.ts`. `cleanupRules.ts` is now ONLY the matcher.
+- **`common.json` is an addition to the spec's file list, on purpose** —
+  fifteen rules are OS-independent and triplicating them is how a catalog
+  drifts. Exactly two packs load: `common` + the current platform's.
+- Five kinds: `project-directory` (manifest-gated, restore command),
+  `directory`, `file`, `location` (token paths: `{home}`, `{localAppData}`,
+  `{windir}`, `{systemDrive}`), `stale-files`. Order inside a pack is
+  precedence — that is how `target` resolves Rust vs Maven.
+- **Validation rejects unknown keys**, so `restoreComand` fails loudly. One bad
+  pack fails the whole catalog; the route answers `available:false` + `reason`
+  and the app is otherwise untouched.
+- **`action: "advice"`** = listed for its size, no checkbox, no cart button, no
+  select-all, and an `adviceCommand` instead. Use it for anything where the
+  file IS the data (Docker/WSL vhdx) or the OS owns it (Windows.old, Windows
+  Update cache, /var/cache/apt, the journal). **WinSxS is deliberately absent**
+  — reason written in `rulepacks/README.md`; do not "complete" the seed list by
+  adding it.
+- `tests/cleanupRules.test.ts` is the behaviour lock (one test per shipped
+  rule, written against the pre-refactor code). Treat a failure there as
+  "behaviour changed", never as "update the expectation".
+- Set `TREEMAP_RULEPACK_DIR` to test a pack directory without touching the repo.
 
 ---
 
@@ -78,8 +110,30 @@ pinned destructive-endpoints list that is edited deliberately).
 Phase 0 platform layer + frontend registry · A1 persistent live index (schema
 v3) · A2 allocation accounting · A3 placeholders · A4 instant search · A5
 topology · B2 open-file guard · B3 Time Capsule · B1 Autopilot · B4 snapshot
-restore · B5 zombie handles ("Held-Up Space" Dashboard card) · liquid-glass
-sidebar · 3-OS CI · v2.6.0/2.6.1 released.
+restore · B5 zombie handles ("Held-Up Space" Dashboard card) · **C8 rule
+packs** · liquid-glass sidebar · 3-OS CI · v2.6.0/2.6.1 released.
+
+### Near-duplicate performance (user-reported, fixed 28 Jul, `b8a0104`)
+
+"TreeMap goes slow and glitchy after near-duplicates run" was five things, all
+measured on a 1,820-image corpus that clustered into one group of 1,556:
+thumbnails shared the 20-token API bucket (**60 concurrent → 20 OK, 40 × 429**,
+and an `<img>` cannot retry, so they broke permanently); `Cache-Control:
+no-store` with no server cache meant every re-render re-decoded ~20 ms per
+image on the scanner's own libuv pool; the result rendered in one innerHTML
+(**28,196 nodes, 7,830 listeners, a 224,052 px strip**); nothing was ever freed
+because a hidden view is not an empty one; so `refreshCartButtons()` then cost
+**30.5 ms of blocked main thread per cart click in every other view**.
+
+Fixes: two rate-limiter lanes (preview 300/150, API unchanged at 20/10);
+`services/thumbnailCache.ts` (LRU on path+mtime+size+dim, 4-way decode
+semaphore, single-flight) + strong ETag and max-age; a windowed render (12
+clusters, 24 images per cluster, explicit "show more" at both levels, with the
+IntersectionObserver only as a convenience on top — it is skipped when
+`document.hidden`); four delegated handlers instead of four per image; thumbs
+retry twice before showing broken; `ndClearBody()` on unmount.
+**After: 429s 0, DOM added 627, images in DOM 32, refreshCartButtons 0.5 ms, and
+a re-render issues 0 requests and 0 bytes.**
 
 ### Measured on this Mac (state the machine's load with any number)
 
@@ -173,7 +227,16 @@ sidebar · 3-OS CI · v2.6.0/2.6.1 released.
     Treemap folder cells are frames — center-clicks hit files (set `#tmDepth` 2).
     `window.TreeMap` exposes state/showTooltip/allocationTooltipLine.
 12. Tests touching app data set `TREEMAP_DATA_DIR` before importing services.
-    The A1 watcher test flakes only when a build runs in the same shell command.
+    The A1 watcher test flakes only when a build runs in the same shell command
+    — and on 28 Jul the B5 `lsof` test did the same thing once, in a
+    `npm run build && npm test` one-liner. Both passed 3/3 in isolation
+    afterwards. **Run the suite as its own command.**
+13. **Thumbnails are not `api()` calls** — they are `<img src>`, so they get no
+    429 backoff and no retry from the shared wrapper. That is why previews have
+    their own rate-limit lane; do not merge the lanes back.
+14. A test fixture that sets a key to `undefined` still has the KEY. The rule
+    pack validator rejects unknown keys, so `{names: undefined}` fails with
+    "unknown key names" rather than the assertion you meant — delete the key.
 
 ---
 
@@ -220,6 +283,9 @@ sidebar · 3-OS CI · v2.6.0/2.6.1 released.
   `pathResolver`; search ties order by `n.id`; subtree deletes are id-closure
   CTEs; builds take ids from lastInsertRowid (true inserts). Never re-add a
   stored path or a path_hash.
+- **C8**: packs are data, `cleanupRules.ts` is only the matcher; one bad pack
+  fails the whole catalog (never a partial load); unknown keys are rejected;
+  `action: "advice"` means listed-but-never-deletable; WinSxS stays out.
 
 ## Known gaps and honest limitations (stated in the UI — don't "fix" the caveats)
 
