@@ -121,6 +121,8 @@ Pick any two scans of the same folder for a file-level diff: **added, removed, g
 ### 🧹 Clean Up
 **Custom rules** (old / huge / by extension / duplicated), **Smart Suggestions** — sorted into **regenerable** (`node_modules`, Rust/Maven `target`, virtualenvs, build output — each shown with the command that restores it), **cache**, and **junk**, plus a per-profile **browser cache** breakdown (Chrome / Edge / Brave / Firefox / Safari) — and **Empty Folders**. Everything → Trash.
 
+Smart Suggestions come from **versioned rule packs** ([`src/services/rulepacks/`](src/services/rulepacks/)) rather than hard-coded logic, so adding a known offender is a JSON edit. Every group has a **“why is this suggested”** panel showing what matched, how confident the rule is, and how to put it back. A few of the biggest things on a disk — a Docker/WSL virtual disk, Windows.old, root-owned package caches — are listed **for their size only, with no delete option**, because the file *is* the data or the OS owns it; those show the supported way to reclaim the space instead.
+
 </td>
 </tr>
 <tr>

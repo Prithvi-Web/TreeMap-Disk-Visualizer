@@ -1312,3 +1312,44 @@ test('cart buttons are only rewritten when their state actually changed', () => 
   assert.ok(fn.length > 0, 'refreshCartButtons must be findable');
   assert.match(fn, /if \(b\.dataset\.cartin === want\) return;/, 'an already-correct button is skipped entirely');
 });
+
+/* ══════════════ Smart Suggestions are rule-pack sourced (§C8) ══════════════ */
+
+test('every suggestion group offers a "why is this suggested" affordance', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function loadSmartSuggestions'), code.indexOf("$('cleanFindBtn')"));
+  assert.ok(fn.length > 0, 'loadSmartSuggestions must be findable');
+  assert.match(fn, /class="icon-btn why-btn" data-why=/, 'each group gets a why control');
+  assert.match(fn, /aria-expanded="false" aria-controls="smartWhy/, 'and it is announced as a disclosure');
+  assert.match(fn, /What matched:/, 'the panel says what the rule matched');
+  assert.match(fn, /confidenceWording\(g\.confidence, adv\)/, 'and states the rule pack confidence');
+  assert.match(code, /function confidenceWording/, 'confidence is put into words, not shown as a bare level');
+});
+
+test('an advisory group is never offered for deletion', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function loadSmartSuggestions'), code.indexOf("$('cleanFindBtn')"));
+  assert.match(fn, /const adv = !!g\.advisory;/, 'advisory groups are identified');
+  // No select-all, no per-item checkbox, no cart button — the three ways an
+  // item can reach the delete path.
+  assert.match(fn, /adv\s*\n?\s*\?[^]*?adv-mark[^]*?:\s*`<input type="checkbox" class="smart-all"/, 'no select-all on an advisory group');
+  assert.match(fn, /\$\{adv \? '<span class="adv-spacer"><\/span>' : `<input type="checkbox" class="smart-ck"/, 'no per-item checkbox');
+  assert.match(fn, /\$\{adv \? '' : `<button class="icon-btn" data-cart-add=/, 'no add-to-cart button');
+  assert.match(fn, /Do not move this to the Trash/, 'and the panel says so plainly');
+});
+
+test('a broken rule pack is reported as unavailable, with its reason', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function loadSmartSuggestions'), code.indexOf("$('cleanFindBtn')"));
+  assert.match(fn, /data\.available === false/, 'the unavailable state is handled');
+  assert.match(fn, /Smart Suggestions are unavailable/, 'and named as unavailable, not as "nothing found"');
+  assert.match(fn, /escapeHtml\(data\.reason/, 'carrying the specific reason from the server');
+});
+
+test('the rule-pack catalog states which packs produced the list, and when', () => {
+  const code = appCode();
+  assert.match(code, /function catalogNote/, 'provenance is rendered');
+  const fn = code.slice(code.indexOf('function catalogNote'), code.indexOf('async function loadSmartSuggestions'));
+  assert.match(fn, /Rule packs:/);
+  assert.match(fn, /updated \$\{escapeHtml\(updated\)\}/, 'a stale catalog must be visible as stale');
+});

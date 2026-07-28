@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireScan, clampInt } from './scanRoutes';
 import { getSettings, updateSettings, getIgnoreMatchers } from '../services/settings';
 import { collectCleanupSuggestions } from '../services/cleanupRules';
+import { ruleCatalogStatus } from '../services/rulePacks';
 import { collectCloudPlaceholders, matchCustomRules, CustomRules } from '../services/scanQueries';
 import { storeOf } from '../services/scanStore';
 import { collectBrowserProfiles } from '../services/browserProfiles';
@@ -68,8 +69,21 @@ settingsRouter.get('/cleanup/suggestions', async (req: Request, res: Response) =
     return;
   }
   if (!scan.store && !scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  // §6 failure isolation: a malformed rule pack breaks this one feature, with
+  // the reason shown, rather than the request or the app. A half-loaded catalog
+  // is never served — silently dropping rules people rely on is the worse bug.
+  const catalog = ruleCatalogStatus();
+  if (!catalog.ok) {
+    res.json({ scanId: scan.scanId, groups: [], available: false, reason: catalog.reason });
+    return;
+  }
   const ignore = await getIgnoreMatchers('suggest');
-  res.json({ scanId: scan.scanId, groups: collectCleanupSuggestions(storeOf(scan), ignore) });
+  res.json({
+    scanId: scan.scanId,
+    groups: collectCleanupSuggestions(storeOf(scan), ignore, catalog.catalog),
+    available: true,
+    catalog: { schemaVersion: catalog.catalog.schemaVersion, packs: catalog.catalog.packs },
+  });
 });
 
 /** GET /api/cleanup/browser-profiles?scanId= — per-profile cache breakdown. */

@@ -876,6 +876,14 @@ export interface CleanupSuggestionGroup {
   category: SuggestionCategory;
   /** Command that recreates this group's contents (regenerable groups only). */
   regenerateCmd?: string;
+  /** How sure the rule pack is that this is safe to reclaim (§C8). */
+  confidence?: 'high' | 'medium' | 'low';
+  /** Plain-English "why is this suggested", derived from what the rule matches. */
+  why?: string;
+  /** True when the space must NOT be reclaimed by trashing it (§C8 advice rules). */
+  advisory?: boolean;
+  /** For advisory groups: the supported way to reclaim the space instead. */
+  adviceCommand?: string;
 }
 
 /* ---------- Per-app storage attribution (Apps tab) ---------- */

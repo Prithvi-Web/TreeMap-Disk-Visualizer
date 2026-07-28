@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "pack": "windows",
+  "updated": "2026-07-28",
+  "rules": [
+    {
+      "id": "browser-caches",
+      "kind": "location",
+      "title": "Browser caches",
+      "description": "Chrome / Edge / Firefox caches — pages reload a bit slower once",
+      "category": "cache",
+      "confidence": "high",
+      "paths": [
+        "{localAppData}/Google/Chrome/User Data/Default/Cache",
+        "{localAppData}/Microsoft/Edge/User Data/Default/Cache",
+        "{localAppData}/Mozilla/Firefox/Profiles"
+      ]
+    },
+    {
+      "id": "dev-caches",
+      "kind": "location",
+      "title": "Developer caches",
+      "description": "Package-manager and tool caches — rebuilt when next used",
+      "category": "cache",
+      "confidence": "high",
+      "paths": [
+        "{localAppData}/npm-cache",
+        "{localAppData}/Yarn/Cache",
+        "{localAppData}/pip/cache",
+        "{localAppData}/NuGet/Cache",
+        "{home}/.m2/repository",
+        "{home}/.cargo/registry",
+        "{localAppData}/Temp"
+      ]
+    },
+    {
+      "id": "windows-old",
+      "kind": "location",
+      "title": "Previous Windows installation",
+      "description": "Windows.old holds your last Windows version so you can roll back. Windows deletes it on its own about ten days after an upgrade, and it is owned by the system — use Storage settings rather than the Recycle Bin.",
+      "category": "junk",
+      "confidence": "high",
+      "action": "advice",
+      "adviceCommand": "Settings ▸ System ▸ Storage ▸ Temporary files",
+      "paths": ["{systemDrive}/Windows.old"]
+    },
+    {
+      "id": "windows-update-cache",
+      "kind": "location",
+      "title": "Windows Update cache",
+      "description": "Downloaded update packages Windows keeps after installing them. They regenerate, but the folder is system-owned, so let Windows clear it.",
+      "category": "cache",
+      "confidence": "high",
+      "action": "advice",
+      "adviceCommand": "Settings ▸ System ▸ Storage ▸ Temporary files",
+      "paths": ["{windir}/SoftwareDistribution/Download"]
+    },
+    {
+      "id": "wsl-docker-vhdx",
+      "kind": "location",
+      "title": "Docker / WSL2 virtual disk",
+      "description": "A WSL2 virtual disk never shrinks by itself, even after you delete things inside it. The file IS your Linux or Docker data — reclaim the space from inside, then compact the disk.",
+      "category": "cache",
+      "confidence": "high",
+      "action": "advice",
+      "adviceCommand": "docker system prune -a --volumes, then wsl --shutdown",
+      "paths": [
+        "{localAppData}/Docker/wsl/data",
+        "{localAppData}/Docker/wsl/disk",
+        "{localAppData}/Packages/CanonicalGroupLimited.Ubuntu_79rhkp1fndgsc/LocalState"
+      ]
+    }
+  ]
+}

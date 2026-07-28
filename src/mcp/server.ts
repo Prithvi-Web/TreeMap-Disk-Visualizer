@@ -9,6 +9,7 @@ import {
 } from '../services/diskScanner';
 import { getDuplicateJob } from '../services/duplicateFinder';
 import { collectCleanupSuggestions } from '../services/cleanupRules';
+import { ruleCatalogStatus } from '../services/rulePacks';
 import { getIgnoreMatchers } from '../services/settings';
 import { getForecast } from '../services/forecast';
 import { prepareOffload, startOffload, getOffloadJob } from '../services/offload';
@@ -384,8 +385,13 @@ export function buildMcpServer(): McpServer {
     async ({ scanId, itemsPerGroup }) =>
       run(async () => {
         const scan = requireCompleteScanMcp(scanId);
+        // A malformed rule pack must say so, not answer "nothing to clean up".
+        const catalog = ruleCatalogStatus();
+        if (!catalog.ok) {
+          return ok({ scanId, available: false, reason: catalog.reason, totalBytes: 0, groups: [] });
+        }
         const ignore = await getIgnoreMatchers('suggest');
-        const groups = collectCleanupSuggestions(storeOf(scan), ignore);
+        const groups = collectCleanupSuggestions(storeOf(scan), ignore, catalog.catalog);
         const totalBytes = groups.reduce((sum, g) => sum + g.totalSize, 0);
         return ok({
           scanId,
@@ -399,6 +405,9 @@ export function buildMcpServer(): McpServer {
             totalSize: g.totalSize,
             totalSizeFormatted: formatBytes(g.totalSize),
             ...(g.regenerateCmd !== undefined ? { regenerateCmd: g.regenerateCmd } : {}),
+            confidence: g.confidence,
+            why: g.why,
+            ...(g.advisory ? { advisory: true, adviceCommand: g.adviceCommand } : {}),
             itemCount: g.items.length,
             items: g.items.slice(0, itemsPerGroup).map((i) => ({ ...i, sizeFormatted: formatBytes(i.size) })),
             itemsTruncated: g.items.length > itemsPerGroup,

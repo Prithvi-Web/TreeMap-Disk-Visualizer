@@ -34,7 +34,13 @@ OpenAPI 3 spec).
    - `GET /api/large-files` / `GET /api/large-folders` — the big things.
    - `GET /api/cleanup/suggestions` — known-reclaimable space: regenerable
      build dirs (with the command that rebuilds each), tool/browser caches,
-     OS junk. Exact byte totals.
+     OS junk. Exact byte totals. Sourced from versioned rule packs
+     (`src/services/rulepacks/*.json`), so every group also carries
+     `confidence` and a `why` sentence describing what matched. **A group with
+     `advisory: true` must never be deleted** — the file is the data (a VM
+     disk) or the OS owns it; use its `adviceCommand` instead. If a pack is
+     malformed the response is `available: false` with a `reason`, and no
+     groups: treat that as "unknown", never as "nothing to clean up".
    - `GET /api/duplicates` — content-identical groups (background hashing;
      `202` with progress until done).
    - `GET /api/file-types`, `GET /api/empty-folders`, `GET /api/apps`,

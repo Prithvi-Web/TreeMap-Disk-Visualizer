@@ -246,6 +246,10 @@ const schemas: Json = {
       totalSize: int('Exact total across all matches'),
       category: { type: 'string', enum: ['regenerable', 'cache', 'junk'] },
       regenerateCmd: str('Command that recreates the contents (regenerable groups only)'),
+      confidence: { type: 'string', enum: ['high', 'medium', 'low'], description: 'How sure the rule pack is that this is safe to reclaim' },
+      why: str('Plain-English description of what the rule matched'),
+      advisory: bool('True when this space must NOT be reclaimed by trashing it'),
+      adviceCommand: str('For advisory groups: the supported way to reclaim the space'),
     },
     ['id', 'title', 'description', 'items', 'totalSize', 'category'],
   ),
@@ -1030,12 +1034,24 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/cleanup/suggestions',
-    summary: 'Smart reclaimable-space suggestions (regenerable dirs, caches, junk), grouped by rule',
+    summary: 'Smart reclaimable-space suggestions (regenerable dirs, caches, junk), grouped by rule pack rule',
     tag: 'cleanup',
     destructive: false,
     parameters: [scanIdQuery],
     responses: {
-      '200': jsonResponse('Groups, largest first', obj({ scanId: str(), groups: arr(ref('CleanupSuggestionGroup')) }, ['scanId', 'groups'])),
+      '200': jsonResponse(
+        'Groups, largest first. available:false with a reason means a rule pack is malformed — the rest of the app is unaffected.',
+        obj(
+          {
+            scanId: str(),
+            groups: arr(ref('CleanupSuggestionGroup')),
+            available: bool('false when the rule-pack catalog could not be loaded'),
+            reason: str('Why the catalog could not be loaded (present only when available is false)'),
+            catalog: opaque('schemaVersion and the loaded packs: name, updated, ruleCount'),
+          },
+          ['scanId', 'groups'],
+        ),
+      ),
       '202': running202,
     },
   },

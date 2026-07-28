@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "pack": "linux",
+  "updated": "2026-07-28",
+  "rules": [
+    {
+      "id": "browser-caches",
+      "kind": "location",
+      "title": "Browser caches",
+      "description": "Chrome / Firefox caches — pages reload a bit slower once",
+      "category": "cache",
+      "confidence": "high",
+      "paths": [
+        "{home}/.cache/google-chrome",
+        "{home}/.cache/chromium",
+        "{home}/.cache/mozilla"
+      ]
+    },
+    {
+      "id": "dev-caches",
+      "kind": "location",
+      "title": "Developer caches",
+      "description": "Package-manager and tool caches — rebuilt when next used",
+      "category": "cache",
+      "confidence": "high",
+      "paths": [
+        "{home}/.npm/_cacache",
+        "{home}/.cache/yarn",
+        "{home}/.cache/pip",
+        "{home}/.m2/repository",
+        "{home}/.cargo/registry",
+        "{home}/.gradle/caches"
+      ]
+    },
+    {
+      "id": "package-manager-caches",
+      "kind": "location",
+      "title": "Package manager caches",
+      "description": "Downloaded .deb / package files kept after installing. They are owned by root, so the package manager should clear them rather than the Trash.",
+      "category": "cache",
+      "confidence": "high",
+      "action": "advice",
+      "adviceCommand": "sudo apt-get clean   ·   sudo paccache -r   ·   sudo dnf clean all",
+      "paths": [
+        "/var/cache/apt/archives",
+        "/var/cache/pacman/pkg",
+        "/var/cache/dnf",
+        "/var/cache/zypp/packages"
+      ]
+    },
+    {
+      "id": "journal-logs",
+      "kind": "location",
+      "title": "systemd journal logs",
+      "description": "The system log. It is capped by configuration rather than deleted by hand — vacuuming it is the supported way, and keeps journalctl working.",
+      "category": "cache",
+      "confidence": "high",
+      "action": "advice",
+      "adviceCommand": "sudo journalctl --vacuum-size=200M",
+      "paths": ["/var/log/journal"]
+    },
+    {
+      "id": "flatpak-snap-runtimes",
+      "kind": "location",
+      "title": "Flatpak and Snap runtimes",
+      "description": "Old runtime versions and retained Snap revisions. Removing the directory by hand breaks the apps that share those runtimes — the package tools free the same space safely.",
+      "category": "cache",
+      "confidence": "high",
+      "action": "advice",
+      "adviceCommand": "flatpak uninstall --unused   ·   sudo snap set system refresh.retain=2",
+      "paths": [
+        "/var/lib/flatpak/runtime",
+        "{home}/.local/share/flatpak/runtime",
+        "/var/lib/snapd/snaps"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "pack": "macos",
+  "updated": "2026-07-28",
+  "rules": [
+    {
+      "id": "browser-caches",
+      "kind": "location",
+      "title": "Browser caches",
+      "description": "Chrome / Safari / Firefox caches — pages reload a bit slower once",
+      "category": "cache",
+      "confidence": "high",
+      "paths": [
+        "{home}/Library/Caches/Google/Chrome",
+        "{home}/Library/Caches/com.apple.Safari",
+        "{home}/Library/Caches/Firefox",
+        "{home}/Library/Caches/Chromium",
+        "{home}/Library/Caches/company.thebrowser.Browser"
+      ]
+    },
+    {
+      "id": "dev-caches",
+      "kind": "location",
+      "title": "Developer caches",
+      "description": "Xcode and package-manager caches — rebuilt when next used",
+      "category": "cache",
+      "confidence": "high",
+      "paths": [
+        "{home}/Library/Developer/Xcode/DerivedData",
+        "{home}/Library/Developer/Xcode/iOS DeviceSupport",
+        "{home}/Library/Developer/CoreSimulator/Caches",
+        "{home}/Library/Caches/Homebrew",
+        "{home}/Library/Caches/pip",
+        "{home}/Library/Caches/Yarn",
+        "{home}/.npm/_cacache",
+        "{home}/.m2/repository",
+        "{home}/.cargo/registry",
+        "{home}/.gradle/caches"
+      ]
+    },
+    {
+      "id": "xcode-archives",
+      "kind": "location",
+      "title": "Xcode archives",
+      "description": "Every build you have ever archived. They are also the only way to symbolicate crash reports from those releases, so TreeMap will not offer to trash them — delete the ones you no longer support from Xcode's Organizer.",
+      "category": "cache",
+      "confidence": "high",
+      "action": "advice",
+      "adviceCommand": "Xcode ▸ Window ▸ Organizer ▸ Archives",
+      "paths": ["{home}/Library/Developer/Xcode/Archives"]
+    },
+    {
+      "id": "docker-vm-image",
+      "kind": "location",
+      "title": "Docker Desktop disk image",
+      "description": "Docker's virtual disk only ever grows, and deleting the file destroys every image, container and volume on this machine. Reclaim the space from inside Docker instead.",
+      "category": "cache",
+      "confidence": "high",
+      "action": "advice",
+      "adviceCommand": "docker system prune -a --volumes",
+      "paths": [
+        "{home}/Library/Containers/com.docker.docker/Data/vms/0/data",
+        "{home}/Library/Containers/com.docker.docker/Data/vms/0"
+      ]
+    }
+  ]
+}

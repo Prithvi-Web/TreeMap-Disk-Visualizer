@@ -901,6 +901,19 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
   color: #d6a8ff; background: rgba(191,90,242,0.16); border: 1px solid rgba(191,90,242,0.36);
   border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
 .rc-lbl { color: var(--text-3); font-size: 11px; flex: none; margin-left: 1px; }
+/* ── C8: "why is this suggested", and advisory groups ── */
+.why-btn { flex: none; color: var(--text-3); }
+.why-btn:hover, .why-btn.on { color: var(--accent); }
+.smart-why { margin: 2px 0 8px 26px; padding: 9px 11px; border-radius: 8px; background: var(--surface-2);
+  border: 1px solid var(--hairline); font-size: 12px; line-height: 1.55; color: var(--text-2); }
+.smart-why-line + .smart-why-line { margin-top: 3px; }
+.smart-why code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  padding: 1px 5px; border-radius: 4px; background: var(--surface-3); }
+.smart-catalog { color: var(--text-3); font-size: 11.5px; margin-left: 6px; }
+/* Advisory: shown for its size, never offered for deletion. */
+.smart-group.advisory { border-color: rgba(255,159,10,0.42); background: rgba(255,159,10,0.07); }
+.smart-group.advisory .adv-mark { flex: none; display: inline-flex; color: var(--warn); }
+.adv-spacer { flex: none; width: 17px; }
 :root[data-theme="light"] .smart-group.cat-regenerable { border-color: rgba(124,58,237,0.30); background: rgba(124,58,237,0.06); }
 :root[data-theme="light"] .regen-cmd { color: #7c3aed; background: rgba(124,58,237,0.10); border-color: rgba(124,58,237,0.28); }
 
@@ -2245,6 +2258,7 @@ const PATHS = {
   terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
   cloud: '<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>',
   gitBranch: '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9.5a3 3 0 0 1 5.8 1c0 2-2.9 3-2.9 3"/><path d="M12 17h.01"/>',
 };
 function icon(name, size = 16, cls = '') {
   return `<svg class="ic ${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PATHS[name] || PATHS.file}</svg>`;
@@ -8648,6 +8662,33 @@ async function renderBrowserProfiles() {
   return true;
 }
 
+/**
+ * Confidence in words. "high" alone tells a non-coder nothing useful — and for
+ * an advisory group it means "we are sure this is what it is", NOT "safe to
+ * delete", which is the opposite of what that group is telling you.
+ */
+function confidenceWording(level, advisory) {
+  if (advisory) {
+    if (level === 'high') return 'High — this is certainly the thing named above.';
+    if (level === 'medium') return 'Medium — this is very likely the thing named above.';
+    if (level === 'low') return 'Low — this may not be what the rule expects. Check before acting.';
+    return 'Not stated by the rule.';
+  }
+  if (level === 'high') return 'High — this is a well-known, safely reclaimable location.';
+  if (level === 'medium') return 'Medium — usually reclaimable, but worth a glance at the paths below.';
+  if (level === 'low') return 'Low — check each item before removing it.';
+  return 'Not stated by the rule.';
+}
+
+/** Provenance for the catalog, so a stale rule set is visible as stale (§C8). */
+function catalogNote(catalog) {
+  if (!catalog || !Array.isArray(catalog.packs) || !catalog.packs.length) return '';
+  const names = catalog.packs.map(p => p.name).join(' + ');
+  const updated = catalog.packs.map(p => p.updated).sort().pop();
+  const rules = catalog.packs.reduce((s, p) => s + p.ruleCount, 0);
+  return ` <span class="smart-catalog">Rule packs: ${escapeHtml(names)} · ${rules} rules · updated ${escapeHtml(updated)}</span>`;
+}
+
 async function loadSmartSuggestions() {
   renderGitRepos();
   const hadBrowsers = await renderBrowserProfiles();
@@ -8655,6 +8696,16 @@ async function loadSmartSuggestions() {
   host.innerHTML = skeletonRows(4, 34);
   try {
     const data = await api(`/api/cleanup/suggestions?scanId=${state.scanId}`);
+    // §C8/§6: a malformed rule pack breaks this panel only, and says why —
+    // never a blank "nothing to clean up", which would read as good news.
+    if (data.available === false) {
+      smartGroups = [];
+      host.innerHTML = `<div class="muted" style="display:flex;align-items:flex-start;gap:8px;padding:12px 2px;">${icon('alert', 15)}
+        <span>Smart Suggestions are unavailable because a cleanup rule pack could not be loaded.<br>
+        <span class="smart-why-line">${escapeHtml(data.reason || 'No reason was given.')}</span></span></div>`;
+      updateCleanSummary();
+      return;
+    }
     smartGroups = data.groups;
     if (!smartGroups.length) {
       host.innerHTML = hadBrowsers ? ''
@@ -8669,20 +8720,37 @@ async function loadSmartSuggestions() {
           <button class="pill active" data-cat="all">All</button>` +
           present.map(c => `<button class="pill" data-cat="${c}">${catLabel[c]}</button>`).join('') + `</div>`
       : '';
-    host.innerHTML = `<div class="muted" style="margin-bottom:8px;">Found by ${smartGroups.length} rule${smartGroups.length > 1 ? 's' : ''} — nothing is pre-selected, tick what you want gone.</div>` +
+    host.innerHTML = `<div class="muted" style="margin-bottom:8px;">Found by ${smartGroups.length} rule${smartGroups.length > 1 ? 's' : ''} — nothing is pre-selected, tick what you want gone.${catalogNote(data.catalog)}</div>` +
       filterPills +
-      smartGroups.map((g, gi) => `
-      <div class="smart-group cat-${g.category}" data-cat="${g.category}">
+      smartGroups.map((g, gi) => {
+        // An advisory group is shown for its size, never offered for deletion:
+        // the file IS the data (a VM disk), or the OS owns it. It gets no
+        // checkboxes at all, and names the supported way to reclaim it instead.
+        const adv = !!g.advisory;
+        return `
+      <div class="smart-group cat-${g.category}${adv ? ' advisory' : ''}" data-cat="${g.category}">
         <div class="rule-row">
-          <input type="checkbox" class="smart-all" data-g="${gi}" aria-label="Select all in ${escapeHtml(g.title)}">
+          ${adv
+            ? `<span class="adv-mark" title="TreeMap will not offer to move this to the Trash" aria-label="Not safe to trash">${icon('alert', 14)}</span>`
+            : `<input type="checkbox" class="smart-all" data-g="${gi}" aria-label="Select all in ${escapeHtml(g.title)}">`}
           <b>${escapeHtml(g.title)}</b>
           <span class="smart-desc">${escapeHtml(g.description)}</span>
           ${g.regenerateCmd ? `<code class="regen-cmd" title="Restore with: ${escapeHtml(g.regenerateCmd)}">${escapeHtml(g.regenerateCmd)}</code><span class="rc-lbl">to restore</span>` : ''}
+          ${adv && g.adviceCommand ? `<code class="regen-cmd" title="Reclaim with: ${escapeHtml(g.adviceCommand)}">${escapeHtml(g.adviceCommand)}</code><span class="rc-lbl">to reclaim</span>` : ''}
+          <button class="icon-btn why-btn" data-why="${gi}" aria-expanded="false" aria-controls="smartWhy${gi}"
+            title="Why is this suggested?" aria-label="Why is ${escapeHtml(g.title)} suggested?">${icon('help', 13)}</button>
           <span class="size-badge num" style="color:${sizeColor(g.totalSize)}">${g.items.length} · ${formatBytes(g.totalSize)}</span>
+        </div>
+        <div class="smart-why" id="smartWhy${gi}" hidden>
+          <div class="smart-why-line"><b>What matched:</b> ${escapeHtml(g.why || 'This rule did not record what it matches.')}</div>
+          <div class="smart-why-line"><b>Confidence:</b> ${escapeHtml(confidenceWording(g.confidence, adv))}</div>
+          <div class="smart-why-line"><b>${adv ? 'What this is' : 'Why it is safe'}:</b> ${escapeHtml(g.description)}</div>
+          ${g.regenerateCmd ? `<div class="smart-why-line"><b>Put it back with:</b> <code>${escapeHtml(g.regenerateCmd)}</code></div>` : ''}
+          ${adv ? `<div class="smart-why-line"><b>Do not move this to the Trash.</b>${g.adviceCommand ? ` Reclaim it instead: <code>${escapeHtml(g.adviceCommand)}</code>` : ''}</div>` : ''}
         </div>
         <div class="clean-list">` + g.items.map((it, i) => `
           <div class="clean-item">
-            <input type="checkbox" class="smart-ck" data-g="${gi}" data-i="${i}" aria-label="Select ${escapeHtml(it.path)}">
+            ${adv ? '<span class="adv-spacer"></span>' : `<input type="checkbox" class="smart-ck" data-g="${gi}" data-i="${i}" aria-label="Select ${escapeHtml(it.path)}">`}
             ${chipFor({ type: it.type, extension: it.type === 'file' ? (it.name.split('.').pop() || '').toLowerCase() : undefined }, 13)}
             <div class="meta">
               <div class="nm">${escapeHtml(it.name)}</div>
@@ -8690,9 +8758,17 @@ async function loadSmartSuggestions() {
             </div>
             <span class="dt num">${formatDate(it.modifiedAt)}</span>
             <span class="size-badge num">${formatBytes(it.size)}</span>
-            <button class="icon-btn" data-cart-add="${escapeHtml(it.path)}" aria-label="Add ${escapeHtml(it.name)} to cleanup cart">${icon('plus', 13)}</button>
+            ${adv ? '' : `<button class="icon-btn" data-cart-add="${escapeHtml(it.path)}" aria-label="Add ${escapeHtml(it.name)} to cleanup cart">${icon('plus', 13)}</button>`}
           </div>`).join('') + `</div>
-      </div>`).join('');
+      </div>`;
+      }).join('');
+    host.querySelectorAll('.why-btn').forEach(b => b.addEventListener('click', () => {
+      const panel = $(`smartWhy${b.dataset.why}`);
+      const open = panel.hidden;
+      panel.hidden = !open;
+      b.setAttribute('aria-expanded', String(open));
+      b.classList.toggle('on', open);
+    }));
     host.querySelectorAll('.smart-all').forEach(all => all.addEventListener('change', () => {
       host.querySelectorAll(`.smart-ck[data-g="${all.dataset.g}"]`).forEach(ck => { ck.checked = all.checked; });
       updateCleanSummary();
