@@ -336,7 +336,9 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); }
   transition: color var(--dur-1) var(--ease), background var(--dur-2) var(--ease),
               box-shadow var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-spring);
 }
-.tabbar button [data-icon] { flex: none; }
+/* .ic, not [data-icon]: the injector swaps data-icon spans for svg.ic
+   elements at boot, so an attribute selector here matches nothing. */
+.tabbar button .ic { flex: none; }
 .tabbar button .side-label { overflow: hidden; text-overflow: ellipsis; }
 .tabbar button:hover { color: var(--text-1); background: var(--surface-2); }
 .tabbar button:active { transform: scale(0.97); }
@@ -376,7 +378,7 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); }
 #sideNav.collapsed .tabbar button.tab-unavailable::after { position: absolute; margin: 0; transform: translate(11px, -8px); }
 #sideNav.collapsed .tabbar button { position: relative; }
 #sideNav.collapsed .side-foot .btn { justify-content: center; padding: 0 8px; }
-#sideNav.collapsed .side-foot .btn [data-icon] { margin: 0; }
+#sideNav.collapsed .side-foot .btn .ic { margin: 0; }
 #sideNav.collapsed .side-foot-row { flex-direction: column; align-items: center; }
 
 /* ── Narrow windows: the expanded panel floats over the content ──
@@ -634,8 +636,7 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
 body.preview-open #cartDock { right: 348px; }
 
 /* ── Global search (A4) ── */
-/* The search box is the one header item that may give up space. Without
-   Lives at the top of the sidebar with the full column width to itself —
+/* Lives at the top of the sidebar with the full column width to itself —
    the fix for the old header, where at mild page zoom this box clipped and
    overlapped its neighbours because a single row could not fit everything. */
 .gsearch { position: relative; flex: none; }
@@ -1231,7 +1232,11 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
        on the collapsed rail those shortcuts (or the icon) open the sidebar
        first, so the input genuinely exists to be focused. -->
   <div class="gsearch" id="gsearchWrap">
-    <span class="gsearch-icon" data-icon="search" data-size="14"></span>
+    <!-- Two spans, not one: the icon injector REPLACES the [data-icon]
+         element wholesale, so a class on the same element is silently lost
+         with it. The outer span survives injection and carries the
+         positioning; the inner one is sacrificed for the svg. -->
+    <span class="gsearch-icon" aria-hidden="true"><span data-icon="search" data-size="14"></span></span>
     <input type="text" id="gsearch" placeholder="Search all indexed files…"
            aria-label="Search all indexed files" aria-expanded="false"
            aria-controls="gsearchResults" role="combobox" aria-autocomplete="list"
