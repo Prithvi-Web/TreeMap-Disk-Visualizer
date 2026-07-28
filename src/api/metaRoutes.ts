@@ -12,6 +12,8 @@ import { getForecast } from '../services/forecast';
 import { storeOf } from '../services/scanStore';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
+import { getCapabilities } from '../platform/capabilities';
+import { capabilitySummary } from './platformRoutes';
 import { SuggestionCategory } from '../models/types';
 
 /**
@@ -119,8 +121,17 @@ metaRouter.get('/agent/summary', async (req: Request, res: Response) => {
   });
 });
 
-/** GET /api/capabilities — endpoints, safety model, and the intended workflow. */
-metaRouter.get('/capabilities', (_req: Request, res: Response) => {
+/**
+ * GET /api/capabilities — endpoints, safety model, and the intended workflow.
+ *
+ * The `platform` key is an ADDITIVE extension (§4: extend with optional fields,
+ * never break). It carries a compact on/off summary of what this machine can
+ * actually do, plus a pointer to the full detail — the prose reasons live at
+ * /api/platform/capabilities because they are written for a person reading a
+ * panel, not for an agent branching on a boolean.
+ */
+metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
+  const platformCapabilities = await getCapabilities().catch(() => null);
   res.json({
     name: 'treemap',
     version: APP_VERSION,
@@ -189,5 +200,14 @@ metaRouter.get('/capabilities', (_req: Request, res: Response) => {
       summary: e.summary,
       destructive: e.destructive,
     })),
+    platform:
+      platformCapabilities === null
+        ? { detail: '/api/platform/capabilities', note: 'Capability detection is unavailable on this system' }
+        : {
+            name: platformCapabilities.platform,
+            available: capabilitySummary(platformCapabilities),
+            detail: '/api/platform/capabilities',
+            note: 'Each capability is detected at runtime; the detail endpoint carries a human-readable reason whenever one is unavailable',
+          },
   });
 });

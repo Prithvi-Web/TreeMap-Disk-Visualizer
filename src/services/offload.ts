@@ -12,6 +12,7 @@ import {
 import { storeOf, Flag } from './scanStore';
 import { readJsonFile, writeJsonFile } from './storage';
 import { moveToTrash } from './cleaner';
+import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { diskUsage } from './diskUsage';
 import { isInside } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
@@ -295,6 +296,18 @@ export async function prepareOffload(
     throw new AppError(400, 'DEST_FULL', `Not enough space at the destination — need ${(bytesTotal / 1073741824).toFixed(1)} GB, only ${(free / 1073741824).toFixed(1)} GB free`);
   }
 
+  // B2, up front. `moveToTrash` guards the originals at the end of the job
+  // anyway, but discovering the conflict there means the user waited through a
+  // multi-gigabyte verified copy to be told a file was open. Asking now costs
+  // one enumeration and lets them close the app before anything is written.
+  // Copying a file that is open is safe in itself — only the delete is at risk.
+  const openHandles = await checkOpenHandles(paths);
+  if (openHandles.conflicts.length > 0) {
+    throw new AppError(409, 'OPEN_HANDLE_CONFLICT', describeConflicts(openHandles.conflicts), {
+      conflicts: openHandles.conflicts,
+    });
+  }
+
   return { plan, bytesTotal };
 }
 
@@ -360,7 +373,21 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     // Every copy verified — only now do the local originals go to the Trash.
     job.phase = 'trashing';
     job.currentPath = '';
-    const trashed = await moveToTrash(topPaths);
+    let trashed = { deleted: [] as string[], failed: [] as { path: string; reason: string }[] };
+    try {
+      trashed = await moveToTrash(topPaths);
+    } catch (err) {
+      // B2 refused: something got opened between the pre-flight and here.
+      //
+      // Rolling back would delete copies that were made and verified — an
+      // expensive, surprising undo for a condition the user can fix by closing
+      // an app. So this follows the path the failed-trash case below already
+      // takes: the copies stand and are recorded, the originals stay, and the
+      // job says exactly that. Rethrowing anything else keeps real failures
+      // rolling back as before.
+      if (!(err instanceof AppError) || err.code !== 'OPEN_HANDLE_CONFLICT') throw err;
+      job.error = `Everything was copied and verified, but the originals are still here: ${err.message}`;
+    }
     if (trashed.failed.length) {
       // Copies are safe at the destination; report the leftovers honestly.
       job.error = `Offloaded everything, but ${trashed.failed.length} original${trashed.failed.length === 1 ? '' : 's'} couldn't be moved to the Trash: ${trashed.failed[0].reason}`;

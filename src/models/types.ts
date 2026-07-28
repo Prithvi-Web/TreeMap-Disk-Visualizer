@@ -51,6 +51,31 @@ export interface FileNode {
   virtual?: boolean;
   /** Uncompressed size for archive entries whose treemap size was scaled. */
   logicalSize?: number;
+  /**
+   * Bytes this file actually occupies on disk (A2). Differs from `size` for
+   * sparse files, compressed files and cloud placeholders. Absent when it
+   * equals `size` — which is the overwhelming majority of files — so a large
+   * tree does not carry a redundant field per node.
+   */
+  allocatedBytes?: number;
+  /**
+   * Of `allocatedBytes`, the part shared with another name for the same data
+   * (A2). Present only for files that genuinely share; deleting a file with
+   * `sharedBytes > 0` frees nothing.
+   */
+  sharedBytes?: number;
+  /**
+   * Of `allocatedBytes`, the part deleting this file would genuinely free.
+   *
+   * Scope rule: exclusivity is measured **within the scanned root**. A file
+   * whose family reaches outside it is reported as shared, not exclusive,
+   * because deleting every copy in scope would still free nothing.
+   */
+  exclusiveBytes?: number;
+  /** Names for this file's data found in the scanned root (A2, families only). */
+  linksInScope?: number;
+  /** Names the filesystem reports in total; more than `linksInScope` means the family reaches outside. */
+  linksTotal?: number;
 }
 
 /** Containers the treemap can drill into. */

@@ -14,19 +14,45 @@ import { makeThumbnail } from '../services/perceptualDupes';
 import { idempotency } from '../middleware/idempotency';
 import { getPolicy, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
+import { checkOpenHandles } from '../services/openHandleGuard';
 
 export const fileRouter = Router();
 
 /**
- * DELETE /api/files  { paths: string[], dryRun?: boolean }
+ * POST /api/files/open-handles  { paths: string[] }
+ * Which of these paths — or files inside them — is a program holding open (B2)?
+ * -> { conflicts, checked, complete, reason?, elapsedMs }
+ *
+ * Read-only preflight for the confirmation dialog, so the warning appears
+ * *before* the user commits rather than as a failure afterwards. The delete
+ * endpoint runs the same check itself, so skipping this changes nothing about
+ * what is allowed — it only changes when the user finds out.
+ */
+fileRouter.post('/files/open-handles', guardBodyPaths, requireInsideScanRoot, async (req: Request, res: Response) => {
+  const { paths } = req.body as { paths: string[] };
+  res.json(await checkOpenHandles(paths));
+});
+
+/**
+ * DELETE /api/files  { paths: string[], dryRun?: boolean, ignoreOpenHandles?: boolean }
  * Moves every path to the system trash (never hard-deletes).
  * -> { deleted: string[], failed: { path, reason }[] }
  * With dryRun: true, reports the exact manifest (paths + known bytes) and
  * touches nothing; the response then carries `dryRun: true` instead.
  * Honors an Idempotency-Key header so a retry can't double-trash.
+ *
+ * Answers `409 OPEN_HANDLE_CONFLICT` — with the offending processes in
+ * `conflicts` — when something in the set is open, unless the caller passes
+ * `ignoreOpenHandles: true` (the "delete anyway" the user chose after seeing
+ * the warning). A dry run reports the conflicts rather than refusing: its whole
+ * job is to describe what would happen without anything happening.
  */
 fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, async (req: Request, res: Response) => {
-  const { paths, dryRun } = req.body as { paths: string[]; dryRun?: boolean };
+  const { paths, dryRun, ignoreOpenHandles } = req.body as {
+    paths: string[];
+    dryRun?: boolean;
+    ignoreOpenHandles?: boolean;
+  };
   const sized = paths.map((p) => ({ path: p, bytes: knownSizeOf(p) }));
   const totalKnownBytes = sized.reduce((sum, s) => sum + (s.bytes ?? 0), 0);
 
@@ -42,12 +68,26 @@ fileRouter.delete('/files', idempotency, guardBodyPaths, requireInsideScanRoot, 
   }
 
   if (dryRun === true) {
+    // A dry run describes, it never refuses — so open files are reported as
+    // part of the picture rather than as an error.
+    const openHandles = await checkOpenHandles(paths);
     await appendAudit({ action: 'files.trash', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: totalKnownBytes, dryRun: true, outcome: 'ok' });
-    res.json({ dryRun: true, wouldTrash: sized, totalKnownBytes });
+    res.json({ dryRun: true, wouldTrash: sized, totalKnownBytes, openHandles });
     return;
   }
 
-  const result = await moveToTrash(paths);
+  let result;
+  try {
+    result = await moveToTrash(paths, { ignoreOpenHandles: ignoreOpenHandles === true });
+  } catch (err) {
+    // A refusal is a real outcome and belongs in the audit trail beside the
+    // policy refusals above — otherwise the log shows a delete that simply
+    // never happened, with no record of why.
+    if (err instanceof AppError && err.code === 'OPEN_HANDLE_CONFLICT') {
+      await appendAudit({ action: 'files.trash', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: totalKnownBytes, dryRun: false, outcome: 'refused', code: err.code });
+    }
+    throw err;
+  }
   await appendAudit({
     action: 'files.trash',
     source: 'http',

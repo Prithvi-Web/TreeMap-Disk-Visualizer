@@ -5,11 +5,22 @@ import { PathRejectedError } from '../utils/pathSanitizer';
 export class AppError extends Error {
   readonly status: number;
   readonly code: string;
-  constructor(status: number, code: string, message: string) {
+  /**
+   * Machine-readable specifics, merged into the response body when present.
+   *
+   * §3.2 sanctions `details` on a 4xx, and some errors are genuinely not
+   * answerable in prose alone: B2's `OPEN_HANDLE_CONFLICT` has to hand the UI
+   * the actual process names and pids so the dialog can name them. Additive by
+   * construction — an error without details serialises exactly as before, so no
+   * existing response shape changes (§4).
+   */
+  readonly details?: Record<string, unknown>;
+  constructor(status: number, code: string, message: string, details?: Record<string, unknown>) {
     super(message);
     this.name = 'AppError';
     this.status = status;
     this.code = code;
+    if (details) this.details = details;
   }
 }
 
@@ -41,7 +52,7 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   }
 
   if (err instanceof AppError) {
-    res.status(err.status).json({ error: err.message, code: err.code });
+    res.status(err.status).json({ error: err.message, code: err.code, ...(err.details ?? {}) });
     return;
   }
   if (err instanceof PathRejectedError) {

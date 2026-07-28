@@ -10,6 +10,7 @@
     "start": "node dist/index.js",
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
+    "capabilities:report": "tsx scripts/report-capabilities.ts",
     "mcp": "tsx src/mcp/index.ts",
     "app": "npm run build && electron .",
     "dist": "npm run build && npm run fetch:gdu && electron-builder",
@@ -25,6 +26,7 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^11.10.0",
     "electron-updater": "^6.3.9",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
@@ -38,6 +40,7 @@
     }
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.0",
     "@types/node": "^20.17.0",
     "@types/pdfmake": "^0.3.3",

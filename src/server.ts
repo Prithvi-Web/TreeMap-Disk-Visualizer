@@ -11,6 +11,9 @@ import { watchRouter, drainWatchClients } from './api/watchRoutes';
 import { offloadRouter, drainOffloadClients } from './api/offloadRoutes';
 import { cloudRouter } from './api/cloudRoutes';
 import { metaRouter } from './api/metaRoutes';
+import { platformRouter } from './api/platformRoutes';
+import { indexRouter, drainIndexClients, cancelAllIndexJobs } from './api/indexRoutes';
+import { closeIndex } from './services/indexEngine';
 import { stopOAuth } from './services/cloud/oauth';
 import { rateLimiter } from './middleware/rateLimiter';
 import { corsMiddleware } from './middleware/cors';
@@ -54,6 +57,8 @@ export function createApp(publicDir: string): express.Express {
   app.use('/api', offloadRouter);
   app.use('/api', cloudRouter);
   app.use('/api', metaRouter);
+  app.use('/api', platformRouter);
+  app.use('/api', indexRouter);
 
   // Frontend: the single-file UI. When token auth is enabled, serving the
   // page also hands the browser its session cookie (R2 — the frozen UI keeps
@@ -97,10 +102,16 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
     cancelAllNearDupeJobs(); // stop background image fingerprinting
     stopAllWatchers(); // close live-activity watchers ('paused' to clients)
     cancelAllOffloadJobs(); // in-flight copies roll back cooperatively
+    cancelAllIndexJobs(); // half-built indexes roll back; startup discards them
     stopOAuth(); // close any pending sign-in listener
     drainSseClients(); // send 'shutdown' event, then end each stream
     drainWatchClients(); // end live-activity streams
     drainOffloadClients(); // end offload progress streams
+    drainIndexClients(); // end index-build progress streams
+    // Closes the index database and detaches its live watchers. Roots left
+    // 'ready' are marked stale on next open, since nothing was watching them
+    // while the app was down.
+    closeIndex();
     server.close();
     // Don't process.exit here — the caller (CLI or Electron) decides that.
   };

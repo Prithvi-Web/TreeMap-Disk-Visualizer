@@ -295,7 +295,11 @@ header {
 }
 header.lg::after { border-radius: 0; padding: 0; background: none; mask: none; -webkit-mask: none;
   border-bottom: 1px solid rgba(255,255,255,0.06); inset: auto 0 -1px 0; height: 1px; }
-.logo { display: flex; align-items: center; gap: 11px; font-size: 16px; font-weight: 700; letter-spacing: -0.2px; }
+/* `flex: none` + `nowrap`: the wordmark is a fixed thing, not a flexible one.
+   Without these it shrank when the global search box was added to the header
+   and broke "TreeMap Disk Space Visualizer" across two lines. The search box
+   gives up space instead — it is the one header item that should. */
+.logo { display: flex; align-items: center; gap: 11px; font-size: 16px; font-weight: 700; letter-spacing: -0.2px; flex: none; white-space: nowrap; }
 .logo .sub { font-weight: 400; color: var(--text-3); font-size: 12px; margin-left: 2px; }
 .tabbar {
   display: flex; border: 1px solid var(--hairline);
@@ -316,6 +320,14 @@ header.lg::after { border-radius: 0; padding: 0; background: none; mask: none; -
 }
 .tabbar button:hover { color: var(--text-1); }
 .tabbar button:active { transform: scale(0.95); }
+/* A view whose capability is unavailable stays visible and focusable — it is
+   dimmed and explains itself when opened, rather than vanishing. A tab that
+   disappears reads as a bug; a tab that says why reads as an answer (§2.2). */
+.tabbar button.tab-unavailable { opacity: 0.45; }
+.tabbar button.tab-unavailable::after {
+  content: ''; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--warn, #FF9F0A); margin-left: 5px; display: inline-block;
+}
 .tabbar button[aria-selected="true"] {
   background: linear-gradient(170deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02) 60%), var(--surface-3);
   color: var(--text-1);
@@ -569,6 +581,88 @@ main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: rel
 :root[data-theme="light"] .pv-body .tk-num { color: #d84315; }
 body.preview-open #cartDock { right: 348px; }
 
+/* ── Global search (A4) ── */
+/* The search box is the one header item that may give up space. Without
+   `min-width: 0` a flex item refuses to shrink below its content, so adding
+   this box pushed the header 43px wider than the window and clipped the
+   Clean Up button off the right edge. It shrinks first, then hides entirely on
+   narrow windows, and nothing else in the header ever moves. */
+.gsearch { position: relative; flex: 0 1 auto; min-width: 0; }
+.gsearch-icon {
+  position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+  color: var(--text-3); pointer-events: none; display: inline-flex;
+}
+#gsearch {
+  width: clamp(120px, 12vw, 180px); min-width: 0;
+  padding: 7px 10px 7px 30px; font-size: 12.5px;
+  background: var(--surface-2); border: 1px solid var(--hairline);
+  border-radius: 8px; color: var(--text-1); outline: none;
+  transition: width 0.18s ease, border-color 0.18s ease;
+}
+#gsearch:focus { width: clamp(180px, 22vw, 300px); border-color: var(--accent); }
+#gsearch::placeholder { color: var(--text-3); }
+.gsearch-panel {
+  position: absolute; top: calc(100% + 8px); right: 0; width: 460px;
+  max-height: min(62vh, 560px); overflow-y: auto; z-index: 60;
+  background: var(--surface-1); border: 1px solid var(--hairline);
+  border-radius: 12px; box-shadow: 0 18px 48px rgba(0,0,0,0.32); padding: 6px;
+}
+.gsearch-group {
+  font-size: 11px; color: var(--text-3); padding: 8px 10px 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left;
+}
+.gsearch-hit {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 7px 10px; border-radius: 8px; border: 0; background: none;
+  color: var(--text-1); font-size: 12.5px; text-align: left; cursor: pointer;
+}
+.gsearch-hit:hover, .gsearch-hit[aria-selected="true"] { background: var(--surface-2); }
+.gsearch-hit .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gsearch-hit .sz { color: var(--text-2); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+.gsearch-note { padding: 10px 12px; color: var(--text-2); font-size: 12px; line-height: 1.5; }
+/* Below this the tab bar needs the room, so the search box steps aside — but
+   the keyboard shortcut must still work, and focusing a `display: none` input
+   silently does nothing. `.gsearch-summoned` is added when the shortcut is
+   pressed, overlaying the box so it is genuinely focusable at any width. */
+@media (max-width: 1320px) {
+  .gsearch:not(.gsearch-summoned) { display: none; }
+  .gsearch.gsearch-summoned {
+    position: absolute; top: 50%; right: 12px; transform: translateY(-50%); z-index: 70;
+  }
+  .gsearch.gsearch-summoned #gsearch { width: min(60vw, 320px); }
+}
+@media (max-width: 560px) { .gsearch-panel { width: min(92vw, 460px); } }
+
+/* ── Allocation diagnostic (A2) ── */
+.alloc-diag { font-size: 13px; color: var(--text-2); }
+.alloc-diag .row {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 7px 0; border-bottom: 1px solid var(--hairline);
+}
+.alloc-diag .row:last-child { border-bottom: 0; }
+.alloc-diag .row b { color: var(--text-1); font-variant-numeric: tabular-nums; }
+.alloc-diag .note {
+  margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+  background: var(--surface-2); line-height: 1.5;
+}
+
+/* ── Live index indicator (A1) ── */
+.index-badge {
+  display: flex; align-items: center; gap: 7px;
+  margin-top: 8px; font-size: 12px; color: var(--text-2);
+}
+.index-badge .dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--ok, #30D158);
+}
+.index-badge.stale .dot { background: var(--warn, #FF9F0A); }
+/* The pulse is a liveness cue, so it is exactly the kind of decoration
+   prefers-reduced-motion exists to switch off (§6). */
+@media (prefers-reduced-motion: no-preference) {
+  .index-badge:not(.stale) .dot { animation: indexPulse 2.4s ease-in-out infinite; }
+}
+@keyframes indexPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
 /* ── Fast (incremental) rescan toggle (Feature 5) ── */
 .fast-rescan { display: inline-flex; align-items: center; gap: 7px; margin-top: 11px; font-size: 12.5px; color: var(--text-2); cursor: pointer; user-select: none; }
 .fast-rescan[hidden] { display: none; }
@@ -770,6 +864,35 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .storage-row .pth { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .storage-row .bar-track { width: 84px; height: 4px; border-radius: 2px; background: var(--surface-2); flex: none; }
 .storage-row .bar { height: 100%; border-radius: 2px; }
+/* ── Open-file warning in the delete dialog (B2) ── */
+#confirmOpenHandles { margin-top: 13px; padding: 10px 12px; border-radius: var(--r-sm);
+  background: rgba(255,214,10,0.08); border: 1px solid rgba(255,214,10,0.25); font-size: 12.5px; line-height: 1.5; }
+#confirmOpenHandles.checking { background: var(--surface-2); border-color: var(--hairline); color: var(--text-3); }
+#confirmOpenHandles .oh-head { display: flex; gap: 8px; align-items: flex-start; color: var(--text-1); }
+#confirmOpenHandles .oh-head .ic { color: var(--warn); flex: none; margin-top: 1px; }
+#confirmOpenHandles ul { margin: 7px 0 0; padding-left: 26px; color: var(--text-2); }
+#confirmOpenHandles li { margin-top: 2px; }
+#confirmOpenHandles .oh-file { color: var(--text-3); }
+
+/* ── Disk topology (A5) ── */
+#topologyBody .topo-disk { padding: 8px 10px 6px; border-radius: var(--r-sm); }
+#topologyBody .topo-disk + .topo-disk { margin-top: 8px; border-top: 1px solid var(--hairline); }
+#topologyBody .topo-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+#topologyBody .topo-head .nm { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#topologyBody .topo-head .sub { font-size: 11px; color: var(--text-3); margin-left: auto; white-space: nowrap; }
+#topologyBody .topo-tag { font-size: 9.5px; font-weight: 700; letter-spacing: 0.5px; color: var(--text-3);
+  border: 1px solid var(--hairline); border-radius: 4px; padding: 0.5px 4px; flex: none; transform: translateY(-1px); }
+#topologyBody .topo-track { margin: 7px 0 4px; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+#topologyBody .topo-track .bar { height: 100%; border-radius: 3px; }
+#topologyBody .topo-note { font-size: 11px; color: var(--text-3); margin-bottom: 2px; }
+#topologyBody .topo-vol { display: flex; align-items: center; gap: 10px; padding: 3.5px 0 3.5px 10px; font-size: 12px; }
+#topologyBody .topo-vol[hidden] { display: none; }
+#topologyBody .topo-vol .nm { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#topologyBody .topo-vol .pth { flex: 1; min-width: 0; color: var(--text-3); font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#topologyBody .topo-vol .sz { flex: none; font-size: 11.5px; color: var(--text-2); }
+#topologyBody .topo-more { margin: 4px 0 2px 10px; }
+
 .cloud-row { border: 1px solid var(--hairline); border-radius: var(--r-md); padding: 8px 10px; margin-bottom: 8px; }
 #cloudRedirectUri { font-size: 11px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 
@@ -933,8 +1056,13 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 :root[data-theme="light"] .seg button[aria-selected="true"] {
   background: linear-gradient(170deg, rgba(255,255,255,0.95), rgba(255,255,255,0.65)); }
 
-@media (max-width: 1360px) {
+/* Raised from 1360px when the global search box joined the header: the
+   subtitle is decoration, and the Clean Up button and search box are not, so
+   the subtitle is what steps aside first. */
+@media (max-width: 1560px) {
   .logo .sub { display: none; }
+}
+@media (max-width: 1360px) {
   .tabbar button { padding: 7px 13px; }
 }
 @media (max-width: 1240px) {
@@ -970,6 +1098,17 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     <button role="tab" aria-selected="false" data-view="offloaded"><span data-icon="archive"></span>Offloaded</button>
   </nav>
   <div class="header-right">
+    <!-- A4: global search. Lives in the header, not in a view, because it
+         searches everything TreeMap has indexed rather than whatever happens
+         to be on screen. "/" focuses it from anywhere. -->
+    <div class="gsearch" id="gsearchWrap">
+      <span class="gsearch-icon" data-icon="search" data-size="14"></span>
+      <input type="text" id="gsearch" placeholder="Search all indexed files…  /"
+             aria-label="Search all indexed files" aria-expanded="false"
+             aria-controls="gsearchResults" role="combobox" aria-autocomplete="list"
+             autocomplete="off" spellcheck="false">
+      <div class="gsearch-panel" id="gsearchResults" role="listbox" aria-label="Search results" hidden></div>
+    </div>
     <span id="headerSpin" aria-hidden="true"></span>
     <button class="icon-btn" id="themeToggle" aria-label="Toggle light or dark theme" title="Toggle theme"></button>
     <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings — schedules & ignore list"></button>
@@ -1064,6 +1203,10 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
             <input type="checkbox" id="fastRescan"><span data-icon="zap" data-size="13"></span>Fast rescan — reuse cache for unchanged folders
           </label>
           <div class="scan-status" id="scanStatus">No scan yet — pick a folder above.</div>
+          <!-- A1: the index indicator. Green "always current" when a live
+               watcher is attached; amber when the index exists but missed
+               events and is being rechecked. Hidden when there is no index. -->
+          <div class="index-badge" id="indexBadge" hidden role="status"></div>
           <div class="scan-meta num" id="scanMeta"></div>
           <div class="progress-track" id="progressTrack"><div class="progress-fill"></div></div>
         </div>
@@ -1080,6 +1223,16 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
             <div class="stat-tile tile"><span class="chip" style="--tint:#BF5AF2"><span data-icon="clock"></span></span>
               <div><div class="v small num" id="statLastScan">–</div><div class="k">Last scan</div></div></div>
           </div>
+        </div>
+
+        <!-- A5: physical disks and the volumes on each, so "which physical
+             drive is actually filling up" has a direct answer. -->
+        <div class="card glass" id="topologyCard">
+          <h2><span data-icon="hardDrive"></span>Disk Topology
+            <button class="pill" id="topologyRefresh" style="margin-left:auto;"
+                    title="Re-read the disk layout — after plugging in a drive, for example">Refresh</button>
+          </h2>
+          <div id="topologyBody"><div class="muted">Reading disk layout…</div></div>
         </div>
       </div>
 
@@ -1394,6 +1547,10 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     </div>
     <div class="modal-body">
       <div class="muted" id="confirmText" style="font-size:13.5px;line-height:1.55;"></div>
+      <!-- B2: filled in when a program holds one of these files open. Lives
+           inside the one confirmation dialog every view shares, so no view can
+           delete without it. -->
+      <div id="confirmOpenHandles" hidden role="status"></div>
     </div>
     <div class="modal-foot">
       <div style="flex:1"></div>
@@ -1476,6 +1633,13 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely (faster scans); <b>Don't suggest</b> keeps them out of Smart Suggestions only. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/**/dist</b>.</div>
       <div id="ignoreList"></div>
       <button class="btn" id="ignoreAddBtn"><span data-icon="plus"></span>Add pattern</button>
+
+      <!-- A2: the reconciliation diagnostic. Shows what TreeMap measured
+           against what the disk itself reports, so the gap caused by files
+           that share storage is visible rather than hidden inside a total. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="gauge"></span>How TreeMap measures space</div>
+      <div class="muted" style="margin-bottom:10px;">TreeMap measures the space files actually occupy, not just the size they report. This panel shows the difference for the folder you last scanned.</div>
+      <div id="allocationDiag" class="alloc-diag">Scan a folder to see this.</div>
     </div>
     <div class="modal-foot">
       <span class="muted" id="settingsStatus"></span>
@@ -1531,6 +1695,8 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       </div>
       <div class="kbd-sec">Anywhere</div>
       <div class="kbd-grid">
+        <div><kbd>⌘</kbd><kbd>K</kbd></div><div>Search everything indexed</div>
+        <div><kbd>/</kbd></div><div>Search everything indexed (in Treemap and Grid, <kbd>/</kbd> focuses that view's own filter instead)</div>
         <div><kbd>⌘</kbd><kbd>R</kbd></div><div>Rescan the current folder</div>
         <div><kbd>⌘</kbd><kbd>⌫</kbd></div><div>Move the selection to Trash</div>
         <div><kbd>?</kbd></div><div>Show this help</div>
@@ -1604,17 +1770,88 @@ function formatDate(ms) {
   return new Date(ms).toLocaleDateString(undefined, { year:'numeric', month:'short', day:'numeric' });
 }
 function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
-async function api(url, options) {
-  const res = await fetch(url, options);
-  let body = null;
-  try { body = await res.json(); } catch { /* no body */ }
-  if (!res.ok) {
-    const err = new Error((body && body.error) || ('HTTP ' + res.status));
-    err.code = (body && body.code) || 'HTTP_' + res.status;
-    err.status = res.status;
-    throw err;
+/**
+ * The one fetch wrapper (§3.4). Every network call in this file goes through
+ * it — there are no other `fetch()` call sites, and a test pins that.
+ *
+ * It owns four things so no caller has to:
+ *
+ *  - **The error envelope.** The backend answers failures as flat
+ *    `{ error, code }` (src/middleware/errorHandler.ts). That is NOT the nested
+ *    `{ error: { code, message } }` shape the spec sketches; §3.2 says to follow
+ *    the existing convention, so this reads the flat one and every caller
+ *    switches on `err.code`, never on message text.
+ *  - **Rate limiting.** The server allows 10 req/s with a burst of 20. Quick
+ *    navigation and bulk chunking genuinely outrun that, and a surfaced 429 used
+ *    to read as "your delete failed" or, worse, made a folder render as empty.
+ *    Retried with backoff instead.
+ *  - **202 pending.** Long work answers `202 { status: 'running' }` until it is
+ *    done. With `poll: true` the wrapper waits it out rather than making each
+ *    panel write its own polling loop.
+ *  - **Capability failures.** `409 CAPABILITY_UNAVAILABLE` carries a
+ *    human-readable reason; it is marked so panels can render the *unavailable*
+ *    state (§3.5 #5) instead of an error.
+ *
+ * Throws on failure. Callers catch and pass the error to `reportError`, which
+ * is the single place an error becomes something the user sees.
+ */
+async function api(url, options, opts = {}) {
+  const { retries = 8, poll = false, pollMs = 700, pollTimeoutMs = 120000 } = opts;
+  const deadline = Date.now() + pollTimeoutMs;
+
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, options);
+    let body = null;
+    try { body = await res.json(); } catch { /* no body */ }
+
+    if (res.status === 429 && attempt < retries) {
+      await new Promise((r) => setTimeout(r, 250 * (attempt + 1))); // refill is 10/s
+      continue;
+    }
+
+    // 202 means "still working" — the shape every long-running endpoint uses.
+    if (res.status === 202 && poll) {
+      if (Date.now() > deadline) {
+        const err = new Error('This is taking longer than expected.');
+        err.code = 'PENDING_TIMEOUT';
+        err.status = 202;
+        err.pending = body;
+        throw err;
+      }
+      await new Promise((r) => setTimeout(r, pollMs));
+      continue;
+    }
+
+    if (!res.ok) {
+      const err = new Error((body && body.error) || ('HTTP ' + res.status));
+      err.code = (body && body.code) || 'HTTP_' + res.status;
+      err.status = res.status;
+      // Some errors carry machine-readable specifics alongside the prose —
+      // B2's OPEN_HANDLE_CONFLICT ships the offending processes so the dialog
+      // can name them. The envelope is flat, so anything beyond error/code is
+      // carried straight onto the error rather than being dropped here.
+      if (body) for (const k of Object.keys(body)) if (k !== 'error' && k !== 'code') err[k] = body[k];
+      // Not a failure so much as an answer: this machine cannot do that.
+      err.capabilityUnavailable = err.code === 'CAPABILITY_UNAVAILABLE';
+      throw err;
+    }
+    return body;
   }
-  return body;
+}
+
+/**
+ * The single place an error becomes something the user sees (§3.4).
+ *
+ * `message` from the envelope is written for a non-technical reader, so it goes
+ * on screen as-is. A capability failure is not an error — it is an answer — so
+ * it is shown neutrally rather than in red, and a cancelled request says
+ * nothing at all.
+ */
+function reportError(err, context) {
+  if (!err || err.name === 'AbortError') return;
+  const detail = err.message || 'Something went wrong.';
+  if (err.capabilityUnavailable) { toast(detail, 'success', 6000); return; }
+  toast(context ? context + ': ' + detail : detail, 'error');
 }
 /** Animated count-up for stat numbers (skipped under reduced motion). */
 function countUp(el, target, fmt = formatCount) {
@@ -1830,6 +2067,45 @@ const state = {
   trends: { roots: [], path: null, snapshots: [], points: [], hover: -1 },
   compare: { options: [], result: null },
   whatsNew: { seq: 0, dismissed: false },
+  /** Platform capabilities from /api/platform/capabilities; null until loaded. */
+  capabilities: null,
+};
+
+/* ─────────────── State change notification (§3.4) ───────────────
+   One app state object with explicit subscribe/notify. Views read from it and
+   subscribe to it; a view never reaches into another view's state or calls
+   another view's render function directly. That rule is what stops the "grid
+   nudges the treemap which re-enters the grid" tangles that make a single-file
+   UI unmaintainable.
+
+   `emit` is deliberately synchronous and exception-isolated: a listener that
+   throws must not stop the others from being told, or one broken panel silently
+   freezes the rest of the app (§6, failure isolation).                     */
+const stateListeners = new Map(); // topic -> Set<fn>
+
+/** Subscribe to a topic. Returns an unsubscribe function. */
+function subscribe(topic, fn) {
+  if (!stateListeners.has(topic)) stateListeners.set(topic, new Set());
+  stateListeners.get(topic).add(fn);
+  return () => { const set = stateListeners.get(topic); if (set) set.delete(fn); };
+}
+
+/** Tell every subscriber of `topic`. Never throws. */
+function emit(topic, payload) {
+  const set = stateListeners.get(topic);
+  if (!set) return;
+  for (const fn of [...set]) {
+    try { fn(payload, state); }
+    catch (err) { console.error('[treemap] listener for "' + topic + '" failed:', err); }
+  }
+}
+
+/** Topics the app publishes. Listed here so subscribers can't invent typos. */
+const TOPIC = {
+  scan: 'scan',                 // a new scan completed, or was cleared
+  path: 'path',                 // the current drill-in path changed
+  selection: 'selection',       // the multi-select set changed
+  capabilities: 'capabilities', // platform capabilities arrived or were refreshed
 };
 
 /**
@@ -1841,6 +2117,10 @@ const state = {
 function indexTree(root) {
   state.pathIndex.clear();
   state.nodeCache.clear(); // resolved against the previous scan; nothing carries over
+  // Same reasoning for A2 allocation: shared/exclusive bytes are relative to
+  // what was in scope at the time, and a file that lost its twin since the last
+  // scan would otherwise keep reporting "deleting this frees nothing".
+  allocationCache.clear();
   const stack = [root];
   while (stack.length) {
     const n = stack.pop();
@@ -1943,45 +2223,462 @@ async function ensureNodes(paths) {
   }
 }
 
-/* ───────────────────────────── View switching ───────────────────────────── */
+/* ───────────────────────────── View registry (§3.4) ─────────────────────────────
+   Every view — the original ten and everything added later — is registered
+   here as { id, label, icon, needsScan, mount, unmount, onScanChange,
+   capabilityKey }. Tab switching calls unmount() on the outgoing view and
+   mount() on the incoming one. There is exactly ONE navigation mechanism: no
+   view is reachable through a second path, and no per-view branch survives
+   inside switchView.
+
+   Why unmount() is not ceremony: the Duplicates view polls the hashing job on a
+   700 ms self-rescheduling timer, and before this registry existed, navigating
+   away left that timer running against the server until the job happened to
+   finish. Live activity mode holds two intervals and an animation frame with
+   the same problem. Each view now stops what it started.
+
+   `capabilityKey` names an entry in /api/platform/capabilities. A view that
+   declares one is disabled — with the capability's own human-readable reason
+   shown on its tab — rather than rendering an empty panel (§2.2, §3.5 state 5).
+   No view has to plumb capability handling itself.                            */
+
 const tabs = document.querySelectorAll('.tabbar button');
-tabs.forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
+
+const VIEWS = [
+  {
+    id: 'dashboard', label: 'Dashboard', icon: 'dashboard', needsScan: true,
+    mount() { /* painted by finishScan; nothing to do on entry */ },
+  },
+  {
+    id: 'treemap', label: 'Treemap', icon: 'treemap', needsScan: true,
+    // A new scan invalidates the drill-in path: it belongs to the previous
+    // scan's tree, and reusing it would either render the wrong folder or
+    // silently fail to find it. Resetting here is why mount() can now be the
+    // single load path.
+    onScanChange() {
+      state.treemap.rootPath = state.root ? state.root.path : null;
+      exitHistoryState();
+    },
+    mount() {
+      if (!state.scanId || !state.root) return;
+      if (!state.treemap.rootPath) state.treemap.rootPath = state.root.path;
+      loadTreemap(state.treemap.rootPath);
+    },
+    unmount() {
+      // Live mode keeps two intervals and a rAF loop alive; leaving the view
+      // without stopping them means the app keeps re-laying-out a canvas
+      // nobody is looking at. `keepWanted` preserves the user's intent so the
+      // toggle is still on when they come back.
+      if (state.live.on) disableLive({ keepWanted: true });
+      // tmAnimFrame is declared further down with `let`; unmount only ever runs
+      // after the whole script has evaluated, so it is in scope by then.
+      if (tmAnimFrame) { cancelAnimationFrame(tmAnimFrame); tmAnimFrame = 0; }
+    },
+  },
+  {
+    id: 'grid', label: 'Grid', icon: 'grid', needsScan: true,
+    // Same reasoning as the treemap: the browsed folder came from the old tree.
+    onScanChange() { state.grid.path = state.root ? state.root.path : null; },
+    mount() {
+      if (!state.root) return;
+      if (!state.grid.path || !state.pathIndex.has(state.grid.path)) state.grid.path = state.root.path;
+      renderGrid();
+    },
+  },
+  {
+    id: 'apps', label: 'Apps', icon: 'box', needsScan: true,
+    mount() { if (state.scanId && state.root) loadApps(); },
+  },
+  {
+    id: 'duplicates', label: 'Duplicates', icon: 'copy', needsScan: true,
+    mount() {
+      if (!state.scanId || !state.root) return;
+      if (isCloudScan()) {
+        // Duplicate detection reads file contents, and a cloud scan never
+        // downloads any — so this is genuinely unavailable rather than empty,
+        // and says which account it is unavailable for (§3.5 state 5).
+        const provider = cloudProviderOfScan();
+        const msg = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('cloud', 15)} Duplicate detection reads file contents, and cloud scans never download any — it's disabled for ${escapeHtml(provider.name)}.</div></div>`;
+        $('dupBody').innerHTML = msg;
+        $('ndBody').innerHTML = msg;
+        $('dupSummary').textContent = 'Not available for cloud scans.';
+        $('ndSummary').textContent = 'Not available for cloud scans.';
+        return;
+      }
+      if (state.dupMode === 'near') loadNearDupes(); else loadDuplicates();
+    },
+    unmount() {
+      // The leak this registry exists to close: both finders reschedule
+      // themselves every 700 ms until the job completes, whether or not anyone
+      // is watching.
+      clearTimeout(state.dup.pollTimer); state.dup.pollTimer = 0;
+      clearTimeout(state.near.pollTimer); state.near.pollTimer = 0;
+    },
+  },
+  // Trends, Compare and Offloaded read persisted history, so they work with no
+  // scan loaded at all — which is why they never show the empty state.
+  { id: 'trends', label: 'Trends', icon: 'trendUp', needsScan: false, mount() { loadTrends(); } },
+  { id: 'compare', label: 'Compare', icon: 'diff', needsScan: false, mount() { loadCompareOptions(); } },
+  { id: 'offloaded', label: 'Offloaded', icon: 'archive', needsScan: false, mount() { loadOffloadIndex(); } },
+];
+
+const VIEW_BY_ID = new Map();
+
+/**
+ * Register a view. The only supported way to add one.
+ *
+ * The lookup map and the ordered list are updated together here because
+ * keeping them in sync by hand does not work: pushing to `VIEWS` alone leaves
+ * `VIEW_BY_ID` stale, and `switchView` then silently does nothing for the new
+ * view — it takes the "unknown view" early return, so the tab appears to be
+ * dead rather than broken. Every view added from Phase 1 onward goes through
+ * this.
+ */
+function registerView(view) {
+  if (!view || !view.id) throw new Error('a view needs an id');
+  if (VIEW_BY_ID.has(view.id)) {
+    // Replace in place rather than appending a duplicate, so a re-registration
+    // during development cannot leave two entries answering to one id.
+    const at = VIEWS.findIndex(v => v.id === view.id);
+    if (at !== -1) VIEWS[at] = view;
+  } else {
+    VIEWS.push(view);
+  }
+  VIEW_BY_ID.set(view.id, view);
+  return view;
+}
+
+for (const view of [...VIEWS]) VIEW_BY_ID.set(view.id, view);
+
+/** The view currently mounted, so switchView knows what to unmount. */
+let mountedView = null;
+
+/**
+ * Is this view usable right now, and if not, why not?
+ * Returns null when usable, or a human-readable reason when it is not.
+ */
+function viewBlockedReason(view) {
+  if (!view.capabilityKey) return null;
+  const caps = state.capabilities;
+  if (!caps) return null; // not yet known — never disable on missing information
+  const cap = caps[view.capabilityKey];
+  if (!cap || cap.available) return null;
+  return cap.reason || 'This feature is not available on this computer.';
+}
+
 function switchView(name) {
+  const view = VIEW_BY_ID.get(name);
+  if (!view) return;
+
+  // Tear down the outgoing view before the incoming one starts, so the two
+  // never hold the same timers or canvas at once.
+  if (mountedView && mountedView.id !== name && typeof mountedView.unmount === 'function') {
+    try { mountedView.unmount(); }
+    catch (err) { console.error('[treemap] unmount of "' + mountedView.id + '" failed:', err); }
+  }
+
   state.view = name;
-  // Trends + Compare + Offloaded read persisted history, so they work without a scan.
-  const standalone = name === 'trends' || name === 'compare' || name === 'offloaded';
-  const empty = !state.root && !state.scanning && !standalone;
+  const blocked = viewBlockedReason(view);
+  const empty = !blocked && view.needsScan && !state.root && !state.scanning;
+
   tabs.forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === name)));
   document.querySelectorAll('.view').forEach(v => {
-    const on = !empty && v.id === 'view-' + name;
+    const on = !empty && !blocked && v.id === 'view-' + name;
     v.classList.toggle('active', on);
     v.hidden = !on;
   });
   hideTooltip(); hideCtxMenu();
   $('emptyState').style.display = empty ? 'flex' : 'none';
-  if (name === 'treemap' && state.scanId && state.root) {
-    if (!state.treemap.rootPath) state.treemap.rootPath = state.root.path;
-    loadTreemap(state.treemap.rootPath);
+  renderCapabilityNotice(view, blocked);
+
+  if (empty || blocked) { mountedView = view; return; }
+
+  mountedView = view;
+  // A view failing to mount disables itself, and must not take the app with it.
+  try { view.mount(); }
+  catch (err) {
+    console.error('[treemap] mount of "' + name + '" failed:', err);
+    toast('The ' + view.label + ' view could not be opened.', 'error');
   }
-  if (name === 'grid' && state.root) {
-    if (!state.grid.path || !state.pathIndex.has(state.grid.path)) state.grid.path = state.root.path;
-    renderGrid();
-  }
-  if (name === 'apps' && state.scanId && state.root) loadApps();
-  if (name === 'duplicates' && state.scanId && state.root) {
-    if (isCloudScan()) {
-      const provider = cloudProviderOfScan();
-      const msg = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('cloud', 15)} Duplicate detection reads file contents, and cloud scans never download any — it's disabled for ${escapeHtml(provider.name)}.</div></div>`;
-      $('dupBody').innerHTML = msg;
-      $('ndBody').innerHTML = msg;
-      $('dupSummary').textContent = 'Not available for cloud scans.';
-      $('ndSummary').textContent = 'Not available for cloud scans.';
-    } else if (state.dupMode === 'near') loadNearDupes(); else loadDuplicates();
-  }
-  if (name === 'trends') loadTrends();
-  if (name === 'compare') loadCompareOptions();
-  if (name === 'offloaded') loadOffloadIndex();
 }
+
+/**
+ * The *unavailable* state (§3.5 #5) for a capability-gated view: the specific
+ * reason, never a blank panel.
+ */
+function renderCapabilityNotice(view, reason) {
+  let host = $('capabilityNotice');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'capabilityNotice';
+    host.className = 'card glass';
+    host.style.cssText = 'display:none;margin:18px auto;max-width:640px;padding:18px 20px;';
+    host.setAttribute('role', 'status');
+    const main = document.querySelector('main') || document.body;
+    main.appendChild(host);
+  }
+  if (!reason) { host.style.display = 'none'; return; }
+  host.innerHTML =
+    `<div style="display:flex;gap:10px;align-items:flex-start;">${icon('alert', 18)}` +
+    `<div><b>${escapeHtml(view.label)} isn’t available on this computer</b>` +
+    `<div class="muted" style="margin-top:6px;line-height:1.5;">${escapeHtml(reason)}</div></div></div>`;
+  host.style.display = 'block';
+}
+
+/** Reflect capability changes onto the tab bar itself. */
+function applyCapabilitiesToTabs() {
+  for (const view of VIEWS) {
+    const btn = [...tabs].find(b => b.dataset.view === view.id);
+    if (!btn) continue;
+    const reason = viewBlockedReason(view);
+    btn.classList.toggle('tab-unavailable', Boolean(reason));
+    if (reason) btn.title = reason; else btn.removeAttribute('title');
+  }
+  // A blocked view that is currently open must re-render into its notice.
+  if (state.view) switchView(state.view);
+}
+
+tabs.forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
+
+/* A completed scan is a state change every view reacts to, rather than
+   something finishScan pokes into each panel by hand. */
+subscribe(TOPIC.scan, (scanId) => {
+  for (const view of VIEWS) {
+    if (typeof view.onScanChange === 'function') {
+      try { view.onScanChange(scanId); }
+      catch (err) { console.error('[treemap] onScanChange for "' + view.id + '" failed:', err); }
+    }
+  }
+});
+
+subscribe(TOPIC.capabilities, applyCapabilitiesToTabs);
+
+/* A3 — the "All Storage" strip reports how much of the last scan is not
+   actually on this machine, so it has to repaint when a scan lands. It renders
+   on load from the cloud-account list, which happens long before any scan. */
+subscribe(TOPIC.scan, () => {
+  if (typeof renderAllStorage === 'function') renderAllStorage();
+});
+
+/**
+ * Platform capabilities (§2.2). Loaded once at start-up; failure is not fatal,
+ * because every view treats "capabilities unknown" as "do not disable anything".
+ */
+async function loadCapabilities() {
+  try {
+    const res = await api('/api/platform/capabilities');
+    state.capabilities = res.capabilities || null;
+  } catch {
+    state.capabilities = null; // unknown — views stay enabled rather than hiding
+  }
+  // Emitted on failure too: subscribers that can get their own answer from the
+  // server (the topology card asks it directly and renders its 409 reason)
+  // must not stay stuck on a skeleton because this one request failed.
+  emit(TOPIC.capabilities, state.capabilities);
+}
+
+/* ───────────────────────────── Disk topology (A5) ─────────────────────────────
+   Physical disks with the volumes on each, and a per-disk usage bar.
+
+   Two numbers per volume, deliberately distinct: sizeBytes is the capacity
+   *ceiling* — shared by every volume in an APFS container or storage pool, so
+   it is never summed here — while usedBytes is the volume's own consumption,
+   the only figure that may be added up. The bar divides summed usage by the
+   disk's real size; a volume whose usage the platform cannot report is counted
+   as unknown and said out loud, never treated as zero (§2.2).               */
+
+let topologyLoading = false;
+
+async function loadTopology() {
+  const body = $('topologyBody');
+  if (!body || topologyLoading) return;
+
+  // When the capability answer is already on hand, render the honest
+  // unavailable state without a doomed request. Capabilities unknown → ask
+  // anyway; the server answers 409 with the same human-readable reason.
+  const cap = state.capabilities && state.capabilities.volumeTopology;
+  if (cap && !cap.available) { renderTopologyBlocked(cap.reason); return; }
+
+  topologyLoading = true;
+  // Loading state (§3.5) — but not on a refresh, where blanking a populated
+  // card for half a second would read as data vanishing.
+  if (!body.querySelector('.topo-disk')) {
+    body.innerHTML = `<div class="muted">Reading disk layout…</div>`;
+  }
+  try {
+    const topo = await api('/api/platform/topology');
+    renderTopology(topo);
+  } catch (err) {
+    if (err.capabilityUnavailable) renderTopologyBlocked(err.message);
+    else renderTopologyError(err);
+  } finally {
+    topologyLoading = false;
+  }
+}
+
+/** Unavailable (§3.5 state 5): the specific reason, shown as an answer, not an error. */
+function renderTopologyBlocked(reason) {
+  $('topologyBody').innerHTML =
+    `<div class="muted" style="display:flex;gap:8px;align-items:flex-start;padding:4px 2px;">${icon('alert', 14)}` +
+    `<span style="line-height:1.5;">${escapeHtml(reason || 'Disk layout is not available on this computer.')}</span></div>` +
+    `<button class="pill topo-more" data-topo-recheck="1" title="Probe again — after installing the missing tool or granting access">Check again</button>`;
+  wireTopologyActions();
+}
+
+/** Error (§3.5 state 6): the envelope's message, with a retry. */
+function renderTopologyError(err) {
+  $('topologyBody').innerHTML =
+    `<div class="muted" style="padding:4px 2px;">Couldn’t read the disk layout: ${escapeHtml(err.message || 'something went wrong.')}</div>` +
+    `<button class="pill topo-more" data-topo-retry="1">Try again</button>`;
+  wireTopologyActions();
+}
+
+/** How many volume rows a disk shows before the rest fold behind "show more". */
+const TOPO_VISIBLE_VOLUMES = 4;
+
+function renderTopology(topo) {
+  const body = $('topologyBody');
+  const disks = topo.physicalDisks || [];
+  const volumes = topo.logicalVolumes || [];
+
+  if (!disks.length && !volumes.length) {
+    // Empty (§3.5 state 1) — genuinely nothing visible, with the fix at hand.
+    body.innerHTML =
+      `<div class="muted" style="padding:4px 2px;">No disks are visible right now.</div>` +
+      `<button class="pill topo-more" data-topo-retry="1">Look again</button>`;
+    wireTopologyActions();
+    return;
+  }
+
+  // Volumes grouped by the exact set of disks behind them: a plain volume
+  // joins its one disk's section; a RAID/pool volume spanning several disks
+  // forms a combined section, because splitting its bytes per member would be
+  // a made-up number (the resiliency layout decides, not arithmetic).
+  const groups = new Map();
+  for (const v of volumes) {
+    const ids = (v.physicalDiskIds || []).slice().sort();
+    const key = ids.length ? ids.join('|') : `un:${v.id}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(v);
+  }
+
+  const labelOf = (id) => {
+    const d = disks.find((x) => x.id === id);
+    return (d && d.name) || id;
+  };
+
+  const sections = [];
+  for (const d of disks) {
+    sections.push(topoSection({
+      title: d.name || d.id,
+      tag: d.rotational === true ? 'HDD' : d.rotational === false ? 'SSD' : null,
+      capacity: d.sizeBytes,
+      vols: groups.get(d.id) || [],
+    }));
+  }
+  for (const [key, vols] of groups) {
+    if (!key.includes('|')) continue;
+    sections.push(topoSection({
+      title: key.split('|').map(labelOf).join(' + '),
+      tag: 'POOL',
+      // A pool's ceiling is what it provisions, not the sum of raw disks —
+      // a mirror of two 1TB drives holds 1TB, not 2.
+      capacity: vols.reduce((s, v) => s + (v.sizeBytes || 0), 0) || null,
+      vols,
+    }));
+  }
+  for (const [key, vols] of groups) {
+    if (!key.startsWith('un:')) continue;
+    for (const v of vols) {
+      sections.push(topoSection({ title: v.name || v.id, tag: (v.kind || '').toUpperCase() || null, capacity: v.sizeBytes, vols: [v] }));
+    }
+  }
+
+  const note = topo.capability && topo.capability.degradedTo && topo.capability.reason
+    ? `<div class="topo-note" style="margin-top:6px;">${escapeHtml(topo.capability.reason)}</div>`
+    : '';
+  body.innerHTML = sections.join('') + note;
+  wireTopologyActions();
+}
+
+function topoSection({ title, tag, capacity, vols }) {
+  const known = vols.filter((v) => typeof v.usedBytes === 'number');
+  const unknown = vols.length - known.length;
+  const used = known.reduce((s, v) => s + v.usedBytes, 0);
+  const pct = capacity > 0 && known.length ? Math.min(100, (used / capacity) * 100) : null;
+
+  let sub = '';
+  if (known.length && capacity > 0) sub = `${formatBytes(used)} of ${formatBytes(capacity)}`;
+  else if (capacity > 0) sub = formatBytes(capacity);
+
+  const bar = pct === null ? '' :
+    `<div class="topo-track"><div class="bar" style="width:${Math.max(2, pct)}%;background:${pct > 85 ? '#FF453A' : '#0A84FF'};"></div></div>`;
+  // Usage the platform could not read is said out loud — an absent number is
+  // an answer here, a bar quietly missing those bytes would be a wrong one.
+  const caveat = !vols.length
+    ? `<div class="topo-note">No volumes on this disk.</div>`
+    : !known.length
+      ? `<div class="topo-note">This disk’s filesystems don’t report how full they are.</div>`
+      : unknown > 0
+        ? `<div class="topo-note">Bar excludes ${unknown} volume${unknown === 1 ? '' : 's'} that couldn’t be read.</div>`
+        : '';
+
+  // Biggest first, unknowns last — attention proportional to bytes.
+  const ordered = [...vols].sort((a, b) => (b.usedBytes ?? -1) - (a.usedBytes ?? -1));
+  const rows = ordered.map((v, i) => {
+    const nm = v.name || v.id;
+    const mount = v.mountPoint ? escapeHtml(v.mountPoint) : 'not mounted';
+    const sz = typeof v.usedBytes === 'number' ? formatBytes(v.usedBytes) : '–';
+    return `<div class="topo-vol"${i >= TOPO_VISIBLE_VOLUMES ? ' hidden' : ''}>` +
+      `<span class="nm" title="${escapeHtml(nm)}">${escapeHtml(nm)}</span>` +
+      `<span class="pth" title="${mount}">${mount}</span>` +
+      `<b class="sz num" title="Space this volume itself takes up">${sz}</b></div>`;
+  }).join('');
+
+  const foldedCount = Math.max(0, ordered.length - TOPO_VISIBLE_VOLUMES);
+  const folded = ordered.slice(TOPO_VISIBLE_VOLUMES);
+  const foldedUsed = folded.reduce((s, v) => s + (typeof v.usedBytes === 'number' ? v.usedBytes : 0), 0);
+  const more = foldedCount
+    ? `<button class="pill topo-more" data-topo-toggle="1" data-more="Show ${foldedCount} more · ${formatBytes(foldedUsed)}" data-less="Show fewer" aria-expanded="false">Show ${foldedCount} more · ${formatBytes(foldedUsed)}</button>`
+    : '';
+
+  return `<div class="topo-disk">` +
+    `<div class="topo-head"><span class="nm" title="${escapeHtml(title)}">${escapeHtml(title)}</span>` +
+    (tag ? `<span class="topo-tag">${escapeHtml(tag)}</span>` : '') +
+    (sub ? `<span class="sub num">${sub}</span>` : '') +
+    `</div>${bar}${caveat}${rows}${more}</div>`;
+}
+
+function wireTopologyActions() {
+  const body = $('topologyBody');
+  body.querySelectorAll('[data-topo-retry]').forEach((b) => b.addEventListener('click', () => loadTopology()));
+  body.querySelectorAll('[data-topo-recheck]').forEach((b) => b.addEventListener('click', async () => {
+    // Availability may have changed at a moment the 30s cache didn't see —
+    // a tool installed, access granted (§3.8) — so re-probe, then re-render.
+    b.disabled = true;
+    try {
+      const res = await api('/api/platform/capabilities/refresh', { method: 'POST' });
+      state.capabilities = res.capabilities || null;
+      emit(TOPIC.capabilities, state.capabilities);
+    } catch (err) {
+      reportError(err, 'Couldn’t re-check');
+      b.disabled = false;
+    }
+  }));
+  body.querySelectorAll('[data-topo-toggle]').forEach((b) => b.addEventListener('click', () => {
+    const open = b.getAttribute('aria-expanded') === 'true';
+    b.closest('.topo-disk').querySelectorAll('.topo-vol').forEach((row, i) => {
+      if (i >= TOPO_VISIBLE_VOLUMES) row.hidden = open;
+    });
+    b.setAttribute('aria-expanded', String(!open));
+    b.textContent = open ? b.dataset.more : b.dataset.less;
+  }));
+}
+
+$('topologyRefresh').addEventListener('click', () => loadTopology());
+// Repaints when the capability answer lands or changes; the card never sits
+// on its skeleton waiting for a poke from another view.
+subscribe(TOPIC.capabilities, () => loadTopology());
 
 /* ───────────────────────────── System info ───────────────────────────── */
 async function loadSystem() {
@@ -2232,13 +2929,27 @@ async function showFastRescanStat(scanId) {
 }
 
 /** Shared scanning chrome: spinners, skeletons, dashboard switch. */
-function beginScanChrome() {
+/**
+ * Put the UI into "scanning" mode.
+ *
+ * `quiet` is for the A1 background refresh that runs behind an already-painted
+ * indexed tree. It still marks the scan as running — the progress watchdog and
+ * the double-scan guard both key off `state.scanning`, so skipping that would
+ * quietly disable the stall recovery — but it leaves the results on screen
+ * instead of replacing them with skeletons. Wiping a perfectly good tree to
+ * show a spinner would make the instant open pointless.
+ */
+function beginScanChrome({ quiet = false } = {}) {
   state.scanning = true;
   $('scanBtn').disabled = true;
   $('headerSpin').classList.add('on');
   $('headerSpin').innerHTML = icon('loader', 15, REDUCED ? '' : 'spin');
   $('progressTrack').classList.add('active');
   $('scanStatus').classList.remove('error');
+  if (quiet) {
+    $('scanStatus').innerHTML = icon('refresh', 14) + '<span>Checking for changes…</span>';
+    return;
+  }
   $('scanStatus').innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + '<span>Starting scan…</span>';
   $('bigFiles').innerHTML = skeletonRows(6);
   $('bigFolders').innerHTML = skeletonRows(6);
@@ -2251,12 +2962,141 @@ function beginScanChrome() {
   switchView('dashboard');
 }
 
+/* ─────────────────────── Persistent live index (A1) ───────────────────────
+   The first scan of a folder is a scan. Every later open is a database read:
+   the index is built in the background once a scan finishes, kept current by a
+   filesystem watcher, and read back in a few milliseconds.
+
+   The honesty rule that makes this safe: an index whose watcher was not
+   attached continuously since it was built may have missed changes, and the
+   server reports that as `state: 'stale'`. Stale data is still shown — it is
+   far better than nothing and usually correct — but it is *labelled*, and a
+   rescan is offered. TreeMap never presents an unverified number as current. */
+
+/** Paint the index indicator for the folder currently on screen. */
+function renderIndexBadge(info) {
+  const el = $('indexBadge');
+  if (!info || !info.indexed || !info.root) { el.hidden = true; return; }
+  const stale = info.root.state !== 'ready' || !info.root.live;
+  el.classList.toggle('stale', stale);
+  el.innerHTML =
+    '<span class="dot"></span><span>' +
+    (stale
+      ? 'Index may be out of date — it wasn’t watching while TreeMap was closed. Scan again to refresh it.'
+      : 'Index live — always current') +
+    '</span>';
+  el.title = stale
+    ? 'TreeMap keeps a saved index of this folder so it opens instantly. It stopped watching for changes at some point, so something may have changed since.'
+    : 'This folder opens instantly from a saved index that updates itself as files change.';
+  el.hidden = false;
+}
+
+/** Ask whether a folder can be served from the index. Never throws. */
+async function indexStatusFor(path) {
+  try {
+    return await api('/api/index/status?path=' + encodeURIComponent(path));
+  } catch {
+    return null; // no index service, no problem — scanning still works
+  }
+}
+
+/**
+ * Open a folder straight from the index.
+ *
+ * Returns true when it rendered. The tree comes back in the same `FileNode`
+ * shape a scan produces, so everything downstream — treemap, grid, cart — is
+ * the existing code path with no special casing.
+ */
+async function openFromIndex(path, info) {
+  const t0 = performance.now();
+  let data;
+  try {
+    data = await api('/api/index/tree?path=' + encodeURIComponent(path));
+  } catch {
+    return false; // fall through to a real scan
+  }
+  if (!data || !data.root) return false;
+
+  // A scanId is what every destructive and drill-in endpoint keys off. The
+  // index cannot grant one — those endpoints deliberately require a scan this
+  // server actually performed — so a real scan still runs in the background to
+  // unlock them. What the index buys is the instant paint.
+  state.root = data.root;
+  indexTree(data.root);
+  // `state.lastScan` is deliberately NOT written here. It has one shape,
+  // { when, durationMs }, and finishScan sets it a moment later — writing a
+  // different shape from here left `when` undefined, which the "since your last
+  // scan" banner reads directly.
+  state.scanStats = {
+    scanned: data.fileCount + data.dirCount,
+    fileCount: data.fileCount,
+    dirCount: data.dirCount,
+    engine: 'index',
+    durationMs: Math.round(performance.now() - t0),
+  };
+  renderIndexBadge(info);
+  await finishScan(data.root, performance.now() - t0, state.scanStats);
+  return true;
+}
+
+/**
+ * Build the index for a freshly-scanned root, in the background.
+ *
+ * Fire-and-forget on purpose: this is what makes the *next* open instant, and
+ * the user is already looking at their results. A failure is silent because
+ * nothing they can see depends on it — scanning keeps working exactly as
+ * before if indexing is unavailable.
+ */
+async function buildIndexInBackground(path) {
+  try {
+    const started = await api('/api/index/build', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    });
+    // The build endpoint answers 202 with a job id and returns immediately, so
+    // asking for status now would read the index mid-build and paint a badge
+    // describing a state that is about to change. Wait for the job to settle
+    // first — this is exactly the 202 handling the shared wrapper provides.
+    await api(`/api/index/${started.jobId}/result`, undefined, { poll: true, pollMs: 500, pollTimeoutMs: 600000 });
+
+    const info = await indexStatusFor(path);
+    // Only paint if the user is still looking at this folder; they may have
+    // scanned somewhere else while a big index was building. The loaded tree's
+    // own root is the test — `state.lastScan` carries timing, not a path.
+    if (info && state.root && state.root.path === path) renderIndexBadge(info);
+  } catch {
+    /* indexing is an optimisation, never a requirement — scanning still works */
+  }
+}
+
 async function startScan(path, opts = {}) {
   if (state.scanning) { toast('A scan is already running', 'error'); return; }
   closeEventSource();
   disableLive({ keepWanted: true }); // the new scanId gets a fresh watch session
+
+  // A1: if this folder is already indexed, paint from the index first so the
+  // user sees their tree immediately, then let the scan refresh it underneath.
+  // Skipped for an explicit fast-rescan, which the user asked to be a rescan.
+  if (!opts.incremental && !opts.noIndex) {
+    const info = await indexStatusFor(path);
+    if (info && info.indexed && info.root && info.root.state !== 'building') {
+      const painted = await openFromIndex(path, info);
+      if (painted) {
+        // The scan still runs — it grants the scanId the destructive endpoints
+        // require, and reconciles anything the watcher missed.
+        void startScanRequest(path, opts, { quiet: true });
+        return;
+      }
+    }
+  }
+  await startScanRequest(path, opts, { quiet: false });
+}
+
+/** The actual scan request, split out so the index path can run it quietly. */
+async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
   try {
-    beginScanChrome();
+    beginScanChrome({ quiet });
     const t0 = performance.now();
     const resp = await api('/api/scan', {
       method: 'POST',
@@ -2265,6 +3105,9 @@ async function startScan(path, opts = {}) {
     });
     followScanProgress(resp.scanId, path, resp.incremental === true, t0);
   } catch (e) {
+    // A background refresh that fails must not blow away the tree already on
+    // screen — the indexed view is still perfectly usable.
+    if (quiet) { console.warn('[treemap] background rescan failed:', e); return; }
     failScan(e.message);
   }
 }
@@ -2470,9 +3313,18 @@ async function finishScan(root, durationMs, stats) {
   renderBigFolders();
   state.donut.animated = false;
   renderDonut();
-  if (state.view === 'treemap') loadTreemap(root.path);
-  if (state.view === 'grid') renderGrid();
+  // Tell every view a new scan landed, then re-enter the current one. Views
+  // repoint themselves at the new root in onScanChange, so switchView's mount
+  // is the single load path — previously this called loadTreemap()/renderGrid()
+  // and *then* switchView(), loading the active view twice on every scan.
+  emit(TOPIC.scan, state.scanId);
   switchView(state.view);
+  // A1: make the *next* open of this folder instant. Background, non-blocking,
+  // and only for real local scans — a cloud account has no filesystem to watch,
+  // and re-indexing what we just read from the index would be pointless work.
+  if (root.path && !root.path.startsWith('cloud://') && state.scanStats?.engine !== 'index') {
+    buildIndexInBackground(root.path);
+  }
   renderGrowthProjection();
   loadBudgets();
   // The snapshot (and its time-slider tree) is saved asynchronously after the
@@ -2729,13 +3581,8 @@ function highlightLegend() {
     li.classList.toggle('hl', +li.dataset.i === state.donut.hover));
 }
 function drawDonut(progress = 1) {
-  const canvas = $('donutCanvas');
-  const dpr = window.devicePixelRatio || 1;
   const cssW = 230;
-  if (canvas.width !== cssW * dpr) { canvas.width = cssW * dpr; canvas.height = cssW * dpr; }
-  canvas.style.width = canvas.style.height = cssW + 'px';
-  const ctx = canvas.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const { ctx } = Canvas2D.setup($('donutCanvas'), cssW, cssW);
   ctx.clearRect(0, 0, cssW, cssW);
   const cx = cssW / 2, cy = cssW / 2, R = 96, r = 63;
   const sweepLimit = -Math.PI / 2 + Math.PI * 2 * progress;
@@ -2931,6 +3778,24 @@ function drawTreemap() {
     if (r.frame) continue;
     const base = r.n.isTrash ? [108, 122, 137] : cellRgb(r.n); // distinct gray-blue for the Trash cell
     const depthFade = Math.max(0.55, 1 - r.n.depth * 0.08);
+
+    /* A3 — a cloud placeholder is drawn hollow, because it is not here.
+       A solid block the size of a 4 GB video says "this is filling your disk",
+       which for an evicted file is precisely the false statement A3 exists to
+       correct. The faint fill plus a dashed outline reads as an outline of
+       something absent, and the cloud glyph in pass 5 names the reason. */
+    if (r.n.cloudPlaceholder && r.w > 6 && r.h > 6) {
+      ctx.fillStyle = `rgba(${base[0]},${base[1]},${base[2]},${0.16 * depthFade})`;
+      ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
+      ctx.save();
+      ctx.setLineDash([4, 3]);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = `rgba(${base[0]},${base[1]},${base[2]},0.85)`;
+      ctx.strokeRect(r.x + 1, r.y + 1, Math.max(1, r.w - 2), Math.max(1, r.h - 2));
+      ctx.restore();
+      continue;
+    }
+
     const top = mix(base, [255,255,255], 0.16);
     const bot = mix(base, [0,0,0], 0.22);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
@@ -3099,14 +3964,115 @@ function updateTmStatus() {
     ? `${formatCount(state.treemap.matches)} match${state.treemap.matches === 1 ? '' : 'es'} for “${q}” · ${formatBytes(state.treemap.rootSize)} total`
     : `${formatCount(state.treemap.nodes.length)} nodes · ${formatCount(state.treemap.pxRects.length)} drawn · ${formatBytes(state.treemap.rootSize)} total`;
 }
+/* ───────────────────── Shared Canvas 2D toolkit (§3.4) ─────────────────────
+   The primitives every canvas panel needs, in one place: DPR-correct sizing,
+   rounded rects, label fitting, pointer→canvas coordinates, and hit-testing.
+
+   The point is that a new visual panel reuses these rather than re-deriving
+   them — hit detection especially, which is where a hand-rolled version
+   silently disagrees with what was drawn. Before this existed, six functions
+   each recomputed devicePixelRatio and one hit-tester was welded to the
+   treemap's own rectangle list.
+
+   Deliberately NOT force-fitted everywhere: the treemap draws through an
+   offscreen double buffer and the donut is a fixed square, so their sizing
+   genuinely differs. Sharing what is common beats pretending they are the same. */
+const Canvas2D = {
+  /**
+   * Size a canvas for the device pixel ratio and return a ready 2D context.
+   * Resizing a canvas clears it, so the dimensions are only assigned when they
+   * actually change — otherwise every redraw would flash.
+   */
+  setup(canvas, cssW, cssH) {
+    const dpr = window.devicePixelRatio || 1;
+    const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
+    if (canvas.width !== pw) canvas.width = pw;
+    if (canvas.height !== ph) canvas.height = ph;
+    canvas.style.width = cssW + 'px';
+    canvas.style.height = cssH + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, dpr, width: cssW, height: cssH };
+  },
+
+  /** Rounded-rectangle path. Radius is clamped so thin cells can't invert. */
+  roundRect(ctx, x, y, w, h, r) {
+    const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+    ctx.closePath();
+  },
+
+  /** Pointer coordinates relative to a canvas's CSS box. */
+  toLocal(canvas, clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  },
+
+  /**
+   * Topmost rectangle under a point.
+   *
+   * `rects` are plain `{x, y, w, h}` in CSS pixels plus whatever payload the
+   * caller carries. When rectangles nest — as a treemap's do — the deepest
+   * match wins, which `depthOf` reports; without that, a click on a file inside
+   * a folder would select the folder.
+   */
+  hitTest(rects, x, y, opts = {}) {
+    const { skip, depthOf } = opts;
+    let best = null, bestDepth = -Infinity;
+    for (const r of rects) {
+      if (skip && skip(r)) continue;
+      if (x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) continue;
+      const depth = depthOf ? depthOf(r) : 0;
+      if (best === null || depth > bestDepth) { best = r; bestDepth = depth; }
+    }
+    return best;
+  },
+
+  /**
+   * Truncate `text` with an ellipsis so it fits `maxWidth`, or null when even
+   * the ellipsis will not fit. Binary search rather than character-by-character:
+   * a treemap can label thousands of cells per frame, and `measureText` is the
+   * expensive part.
+   */
+  fitText(ctx, text, maxWidth) {
+    if (maxWidth <= 0) return null;
+    if (ctx.measureText(text).width <= maxWidth) return text;
+    if (ctx.measureText('…').width > maxWidth) return null;
+    let lo = 0, hi = text.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (ctx.measureText(text.slice(0, mid) + '…').width <= maxWidth) lo = mid; else hi = mid - 1;
+    }
+    return lo > 0 ? text.slice(0, lo) + '…' : null;
+  },
+
+  /** A filled, optionally-outlined, optionally-labelled rounded cell. */
+  drawCell(ctx, rect, opts = {}) {
+    const { fill, stroke, strokeWidth = 1, radius = 3, label, labelColor = '#fff', font } = opts;
+    this.roundRect(ctx, rect.x, rect.y, rect.w, rect.h, radius);
+    if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+    if (stroke) { ctx.lineWidth = strokeWidth; ctx.strokeStyle = stroke; ctx.stroke(); }
+    if (!label) return;
+    if (font) ctx.font = font;
+    const fitted = this.fitText(ctx, label, rect.w - 10);
+    if (fitted === null) return;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(rect.x, rect.y, rect.w, rect.h); ctx.clip();
+    ctx.fillStyle = labelColor;
+    ctx.textBaseline = 'top';
+    ctx.fillText(fitted, rect.x + 5, rect.y + 4);
+    ctx.restore();
+  },
+};
+
+/** Kept as a free function: it is called from the treemap's hot draw loop. */
 function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
+  Canvas2D.roundRect(ctx, x, y, w, h, r);
 }
 
 /** Blit the buffers (base + search overlay), then the hover highlight. */
@@ -3153,16 +4119,13 @@ function presentTreemap() {
 }
 
 function treemapHit(clientX, clientY, leavesOnly = false) {
-  const rect = tmCanvas.getBoundingClientRect();
-  const x = clientX - rect.left, y = clientY - rect.top;
-  let best = null;
-  for (const r of state.treemap.pxRects) {
-    if (leavesOnly && r.frame) continue;
-    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
-      if (!best || r.n.depth > best.n.depth) best = r;
-    }
-  }
-  return best;
+  // Through the shared toolkit: the deepest rectangle wins, so clicking a file
+  // inside a folder selects the file rather than its parent.
+  const { x, y } = Canvas2D.toLocal(tmCanvas, clientX, clientY);
+  return Canvas2D.hitTest(state.treemap.pxRects, x, y, {
+    skip: leavesOnly ? (r) => r.frame : null,
+    depthOf: (r) => r.n.depth,
+  });
 }
 
 let tmRaf = 0;
@@ -4053,6 +5016,103 @@ function exportTreemapSVG() {
 }
 
 /* ───────────────────────────── Tooltip ───────────────────────────── */
+/* ── A2 allocation, resolved on demand ──
+   The index tree carries sharedBytes/exclusiveBytes per node, but a tree that
+   came straight from a scan does not — and the background rescan replaces the
+   indexed tree with a scanned one, which would silently drop the A2 line from
+   tooltips a moment after it appeared.
+
+   So a node without allocation data resolves it once, lazily, and the answer is
+   cached by path (including "nothing to say", so a plain file is never asked
+   about twice). One request per distinct file hovered, never per hover. */
+const allocationCache = new Map();
+
+function resolveAllocation(node) {
+  if (!node || node.type !== 'file' || !node.path) return;
+  if (node.sharedBytes !== undefined || allocationCache.has(node.path)) return;
+  allocationCache.set(node.path, null); // claim it, so concurrent hovers don't stack
+
+  api('/api/allocation/file?path=' + encodeURIComponent(node.path))
+    .then((info) => {
+      allocationCache.set(node.path, info);
+      // Graft onto the node so every later read — tooltip, grid, preview —
+      // sees it without another request.
+      node.allocatedBytes = info.allocatedBytes;
+      node.sharedBytes = info.sharedBytes;
+      node.exclusiveBytes = info.exclusiveBytes;
+      node.linksInScope = info.linksInScope;
+      node.linksTotal = info.linksTotal;
+      // Repaint only if this is still the file under the pointer.
+      const tip = $('tooltip');
+      if (tip.style.display !== 'none' && tip.dataset.path === node.path) {
+        showTooltip(Number(tip.dataset.x), Number(tip.dataset.y), node, tip.dataset.pct ? Number(tip.dataset.pct) : null);
+      }
+    })
+    .catch(() => { /* no index yet, or not a local file — the tooltip just omits the line */ });
+}
+
+/**
+ * The A2 line in a tooltip: what this file really costs, and what deleting it
+ * would actually free.
+ *
+ * Shown only when it says something the size does not — a line reading "100%
+ * exclusive" on every ordinary file is noise, and noise is what stops people
+ * reading tooltips at all. Three cases earn it:
+ *
+ *   - the file shares its data with another name (deleting it frees nothing),
+ *   - it occupies less than it claims (sparse, compressed, or in the cloud),
+ *   - its family reaches outside the scanned folder.
+ */
+function allocationTooltipLine(node) {
+  const shared = node.sharedBytes > 0;
+  const underAllocated = typeof node.allocatedBytes === 'number' && node.allocatedBytes < node.size;
+  // A cloud placeholder always earns the line, even before its allocated size
+  // has been resolved: the scanner marks it during the walk, and "this file is
+  // not actually here" is the single most important thing to say about it.
+  if (!shared && !underAllocated && !node.cloudPlaceholder) return '';
+
+  if (shared) {
+    const outside = node.linksTotal > node.linksInScope;
+    const others = Math.max(1, (node.linksTotal || 2) - 1);
+    return (
+      `<div class="t-line num" style="margin-top:4px;">` +
+      `<span class="t-strong">${formatBytes(node.sharedBytes)} shared</span> · ` +
+      `0 B exclusive to this copy</div>` +
+      `<div class="t-line">${escapeHtml(
+        outside
+          ? `The same data has ${others} other name${others === 1 ? '' : 's'}, at least one outside this folder — deleting this copy frees nothing.`
+          : `The same data appears under ${others} other name${others === 1 ? '' : 's'} here — deleting this copy frees nothing.`,
+      )}</div>`
+    );
+  }
+
+  /* A3 — a placeholder states BOTH numbers, never one. "4.2 GB" alone is the
+     lie: the file is not here, and reporting only its claimed size is what
+     makes an evicted video look like it is filling the disk. The two are
+     labelled by where the bytes are, not merely as "on disk" vs "claims". */
+  if (node.cloudPlaceholder) {
+    const local = node.allocatedBytes ?? 0;
+    const provider = { icloud: 'iCloud', onedrive: 'OneDrive', dropbox: 'Dropbox', gdrive: 'Google Drive' }[node.cloudProvider] || 'the cloud';
+    return (
+      `<div class="t-line num" style="margin-top:4px;">` +
+      `<span class="t-strong">${formatBytes(local)} on this computer</span> · ` +
+      `${formatBytes(node.size)} in ${escapeHtml(provider)}</div>` +
+      `<div class="t-line">${escapeHtml(
+        `Not downloaded — it costs almost nothing here until you open it. Deleting it removes it from ${provider} too.`,
+      )}</div>`
+    );
+  }
+
+  return (
+    `<div class="t-line num" style="margin-top:4px;">` +
+    `<span class="t-strong">${formatBytes(node.allocatedBytes)} on disk</span> · ` +
+    `claims ${formatBytes(node.size)}</div>` +
+    `<div class="t-line">${escapeHtml(
+      'This file reserves more space than it currently uses — it is not a cloud file.',
+    )}</div>`
+  );
+}
+
 function showTooltip(x, y, node, pctOfRoot = null) {
   const tip = $('tooltip');
   if (node.isTrash) {
@@ -4064,6 +5124,14 @@ function showTooltip(x, y, node, pctOfRoot = null) {
     tip.style.top = (y + pad + h > window.innerHeight - 10 ? y - h - 8 : y + pad) + 'px';
     return;
   }
+  // Remember what this tooltip is showing, so an allocation lookup that lands
+  // a moment later can repaint it — and only if it is still the same file.
+  tip.dataset.path = node.path || '';
+  tip.dataset.x = String(x);
+  tip.dataset.y = String(y);
+  if (pctOfRoot !== null) tip.dataset.pct = String(pctOfRoot); else delete tip.dataset.pct;
+  resolveAllocation(node);
+
   const k = kindFor(node);
   tip.innerHTML = `
     <div class="t-head"><span style="color:${k.tint};display:inline-flex;">${icon(k.icon, 15)}</span>${escapeHtml(node.name)}</div>
@@ -4077,7 +5145,8 @@ function showTooltip(x, y, node, pctOfRoot = null) {
     // (absent for gdu/cloud scans and noatime mounts), so missing shows as "—".
     (state.view === 'grid' && state.grid.sort === 'accessed'
       ? ` · accessed ${node.accessedAt ? formatDate(node.accessedAt) : '—'}` : '') +
-    `</div>`;
+    `</div>` +
+    allocationTooltipLine(node);
   tip.style.display = 'block';
   const pad = 14;
   const w = tip.offsetWidth, h = tip.offsetHeight;
@@ -4229,6 +5298,27 @@ function renderAllStorage() {
   if (!connected.length) {
     rows.push(`<div class="muted" style="padding:6px 2px;font-size:12px;">${icon('cloud', 13)} Connect Google Drive, Dropbox or OneDrive in Settings to see and scan them here — nothing talks to the internet until you do.</div>`);
   }
+
+  /* A3 — how much of the folder you just scanned is not actually on this
+     machine. Without this, a scan of a synced folder reports bytes the user
+     cannot free by deleting anything locally, and cannot find on their disk
+     either. The "This Mac" bar above comes from the operating system's own
+     accounting and already excludes these, so nothing is double-counted;
+     this line explains the gap between the two rather than adding to it. */
+  const cloudBytes = state.scanStats ? state.scanStats.cloudBytes || 0 : 0;
+  const cloudFiles = state.scanStats ? state.scanStats.cloudFiles || 0 : 0;
+  if (cloudBytes > 0) {
+    rows.push(`
+      <div class="storage-row" style="opacity:0.9;">
+        <span class="chip" style="--tint:#64D2FF">${icon('cloud', 15)}</span>
+        <div class="meta">
+          <div class="nm">Not on this computer</div>
+          <div class="pth num">${formatBytes(cloudBytes)} across ${formatCount(cloudFiles)} file${cloudFiles === 1 ? '' : 's'} in your last scan</div>
+        </div>
+        <div class="muted" style="font-size:11px;max-width:190px;text-align:right;line-height:1.4;">Stored online — counted in the folder's size, but taking no space here.</div>
+      </div>`);
+  }
+
   host.innerHTML = rows.join('');
   host.querySelectorAll('[data-cloud-scan]').forEach(b =>
     b.addEventListener('click', () => startCloudScan(b.dataset.cloudScan, b.dataset.cloudName)));
@@ -4458,6 +5548,10 @@ async function confirmTrash(paths) {
   if (!paths.length) return;
   onConfirmTrash = null;
   confirmPaths = paths;
+  // Reset the B2 panel before anything can return early below — otherwise a
+  // previous dialog's warning, and its "Delete anyway" button, would still be
+  // sitting there for an unrelated set of files.
+  resetOpenHandleWarning();
   // These sizes are what the user is told they're freeing, so they must be
   // real: a pruned-away node read as 0 would understate the total.
   await ensureNodes(paths);
@@ -4480,12 +5574,132 @@ async function confirmTrash(paths) {
     ? `Move <b>${escapeHtml(first ? first.name : paths[0])}</b> (${formatBytes(total)}) to the Trash?<br><span style="color:var(--text-3)">You can restore it from the Trash at any time.</span>`
     : `Move <b>${paths.length} items</b> (${formatBytes(total)} total) to the Trash?<br><span style="color:var(--text-3)">You can restore them from the Trash at any time.</span>`;
   $('confirmModal').classList.add('open');
+  void checkOpenHandlesFor(paths);
 }
+
+/* ───────────────────────────── Open-file guard (B2) ─────────────────────────────
+   The dialog opens immediately and the check fills in behind it. Blocking the
+   dialog on a ~200 ms round-trip would make every delete feel sticky, and the
+   answer arrives long before anyone reads the sentence above it.
+
+   The server runs the same check again on the delete itself, so this is a
+   courtesy, not the enforcement — nothing gets through by clicking fast.     */
+
+/** Rises with each dialog, so a slow answer can't paint into a later one. */
+let openHandleSeq = 0;
+/** Set when the user has seen the warning and chose to go ahead regardless. */
+let confirmIgnoreOpenHandles = false;
+
+/** Clear the panel and the button back to their neutral state. */
+function resetOpenHandleWarning() {
+  openHandleSeq++; // abandon any answer still in flight
+  confirmIgnoreOpenHandles = false;
+  const host = $('confirmOpenHandles');
+  if (host) { host.hidden = true; host.innerHTML = ''; }
+  setConfirmButton('Move to Trash');
+}
+
+async function checkOpenHandlesFor(paths) {
+  const seq = ++openHandleSeq;
+  const host = $('confirmOpenHandles');
+  host.hidden = false;
+  host.className = 'checking';
+  host.textContent = 'Checking whether anything has these files open…';
+
+  let report;
+  try {
+    report = await api('/api/files/open-handles', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: paths.slice(0, TRASH_CHUNK) }),
+    });
+  } catch {
+    // The check is a courtesy; failing it must not stand between the user and
+    // a delete they asked for. The server still guards the delete itself.
+    if (seq === openHandleSeq) host.hidden = true;
+    return;
+  }
+  if (seq !== openHandleSeq) return; // a newer dialog owns the panel now
+
+  renderOpenHandleWarning(report, paths.length);
+}
+
+function renderOpenHandleWarning(report, pathCount) {
+  const host = $('confirmOpenHandles');
+  const conflicts = report.conflicts || [];
+
+  if (!conflicts.length) {
+    // "Couldn't check" is not "nothing is open" (§2.2) — say which it was, but
+    // quietly, since it changes nothing about what the button does.
+    if (report.checked === false) {
+      host.className = 'checking';
+      host.hidden = false;
+      host.textContent = report.reason || 'TreeMap couldn’t check whether these files are in use.';
+      return;
+    }
+    host.hidden = true;
+    return;
+  }
+
+  // Group by program: "Chrome — 3 files" reads better than three Chrome rows.
+  const byProcess = new Map();
+  for (const c of conflicts) {
+    if (!byProcess.has(c.processName)) byProcess.set(c.processName, []);
+    byProcess.get(c.processName).push(c.openPath || c.path);
+  }
+  const rows = [...byProcess.entries()].slice(0, 5).map(([name, files]) => {
+    const shown = files.slice(0, 2).map(f => escapeHtml(baseName(f))).join(', ');
+    const extra = files.length > 2 ? ` and ${files.length - 2} more` : '';
+    return `<li><b>${escapeHtml(name)}</b> <span class="oh-file">— ${shown}${extra}</span></li>`;
+  }).join('');
+  const hiddenCount = byProcess.size - Math.min(5, byProcess.size);
+
+  // What is actually in use decides the wording. Telling someone "this file is
+  // in use" when they selected a folder — the commonest case, since the open
+  // file is usually buried inside it — describes something they didn't do.
+  const insideAFolder = conflicts.some(c => c.openPath && c.openPath !== c.path);
+  const openFileCount = new Set(conflicts.map(c => c.openPath || c.path)).size;
+  const subject = pathCount > 1
+    ? 'Some of these items are in use right now.'
+    : insideAFolder
+      ? `${openFileCount === 1 ? 'A file' : `${openFileCount} files`} inside this folder ${openFileCount === 1 ? 'is' : 'are'} in use right now.`
+      : 'This file is in use right now.';
+  // The consequence follows what is *open*, not what was selected: it is the
+  // open file that keeps holding the space, and one open file inside a folder
+  // still reads as "it".
+  const consequence = openFileCount === 1
+    ? `Deleting it may not free the space until ${byProcess.size === 1 ? 'that program closes' : 'those programs close'} it.`
+    : `Deleting them may not free the space until ${byProcess.size === 1 ? 'that program closes' : 'those programs close'} them.`;
+
+  host.className = '';
+  host.hidden = false;
+  host.innerHTML =
+    `<div class="oh-head">${icon('alert', 15)}<div><b>${subject}</b> ${consequence}</div></div>` +
+    `<ul>${rows}${hiddenCount > 0 ? `<li class="oh-file">and ${hiddenCount} other program${hiddenCount === 1 ? '' : 's'}</li>` : ''}</ul>`;
+
+  // The button now says what it actually does. The user has read the warning;
+  // taking the choice away would just send them to Finder to do it unguarded.
+  confirmIgnoreOpenHandles = true;
+  setConfirmButton('Delete anyway');
+}
+
+/** Last path segment, for naming a file without the full path. */
+function baseName(p) {
+  const parts = String(p).split(/[\\/]/);
+  return parts[parts.length - 1] || p;
+}
+
+function setConfirmButton(label) {
+  $('confirmOk').innerHTML = icon('trash', 15) + escapeHtml(label);
+}
+
 $('confirmOk').addEventListener('click', async () => {
   closeModal('confirmModal');
   const cb = onConfirmTrash; onConfirmTrash = null;
+  const ignoreOpenHandles = confirmIgnoreOpenHandles;
+  confirmIgnoreOpenHandles = false;
+  openHandleSeq++; // any in-flight check belongs to a dialog that is now closed
   if (cb) { await cb(); return; }
-  await trashPaths(confirmPaths);
+  await trashPaths(confirmPaths, { ignoreOpenHandles });
   confirmPaths = [];
 });
 
@@ -4502,23 +5716,28 @@ const TRASH_CHUNK = 400;
  * quickly (e.g. paths already gone) can outrun that — pacing is the client's
  * job, and a 429 must never surface as "your delete failed".
  */
+/**
+ * Kept as a name, not as a second code path: rate-limit backoff moved into
+ * `api()` itself, so every call gets it rather than only the handful that
+ * remembered to opt in. A 429 means the request was refused, not performed, so
+ * retrying it is safe even for POST and DELETE.
+ */
 async function apiPaced(url, options, tries = 8) {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await api(url, options);
-    } catch (e) {
-      if (e.status !== 429 || attempt >= tries) throw e;
-      await new Promise((r) => setTimeout(r, 250 * (attempt + 1))); // refill is 10/s
-    }
-  }
+  return api(url, options, { retries: tries });
 }
 
-async function trashPaths(paths, { silent = false } = {}) {
+async function trashPaths(paths, { silent = false, ignoreOpenHandles = false } = {}) {
   if (!paths.length) return { deleted: [], failed: [] };
   await ensureNodes(paths); // real sizes for the "recovered" figure
   const recovered = paths.reduce((s, p) => s + (nodeFor(p)?.size ?? 0), 0);
 
   const deleted = [], failed = [];
+  // A file can be opened between the dialog's check and this request. The
+  // server refuses that batch rather than half-freeing it, and the paths are
+  // collected here so the user can be re-asked with the fresh answer instead of
+  // just being told "failed".
+  let blocked = null;
+  const blockedPaths = [];
   // Per-chunk error handling: a later chunk failing must not discard the fact
   // that earlier ones really were trashed.
   for (let i = 0; i < paths.length; i += TRASH_CHUNK) {
@@ -4526,11 +5745,16 @@ async function trashPaths(paths, { silent = false } = {}) {
     try {
       const result = await apiPaced('/api/files', {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths: chunk }),
+        body: JSON.stringify({ paths: chunk, ...(ignoreOpenHandles ? { ignoreOpenHandles: true } : {}) }),
       });
       deleted.push(...result.deleted);
       failed.push(...result.failed);
     } catch (e) {
+      if (e.code === 'OPEN_HANDLE_CONFLICT') {
+        blocked = e;
+        blockedPaths.push(...chunk);
+        continue;
+      }
       for (const p of chunk) failed.push({ path: p, reason: e.message });
     }
   }
@@ -4543,8 +5767,28 @@ async function trashPaths(paths, { silent = false } = {}) {
       toast(`${failed.length} failed: ${failed[0].reason}`, 'error');
     }
     if (deleted.length) rescan();
+    // Re-ask last, so it isn't buried under the toasts above.
+    if (blocked) reofferBlockedTrash(blockedPaths, blocked);
   }
-  return { deleted, failed };
+  return { deleted, failed, ...(blocked ? { blocked: blockedPaths } : {}) };
+}
+
+/**
+ * Something got opened between the check and the delete: put the dialog back
+ * with the real reason, rather than leaving a bare "failed" toast the user can
+ * do nothing with.
+ */
+async function reofferBlockedTrash(paths, err) {
+  if (!paths.length) return;
+  confirmPaths = paths;
+  onConfirmTrash = null;
+  $('confirmTitle').innerHTML = icon('trash', 18) + 'Still in use';
+  $('confirmText').innerHTML = paths.length === 1
+    ? `<b>${escapeHtml(baseName(paths[0]))}</b> wasn’t moved to the Trash.`
+    : `<b>${paths.length} items</b> weren’t moved to the Trash.`;
+  $('confirmModal').classList.add('open');
+  openHandleSeq++; // this panel is painted directly, not by the async check
+  renderOpenHandleWarning({ conflicts: err.conflicts || [], checked: true }, paths.length);
 }
 function rescan() {
   if (state.root && !state.scanning) startScan(state.root.path);
@@ -6184,12 +7428,282 @@ $('cleanConfirmBtn').addEventListener('click', async () => {
   if (done) rescan();
 });
 
+/* ─────────────────────── Global search (A4) ───────────────────────
+   Searches everything TreeMap has indexed, not just the current view — which
+   is why it lives in the header rather than inside a tab.
+
+   The query language is deliberately the one the treemap highlight box already
+   uses (`*.zip`, `.zip`, or a filename substring). §A4 forbids inventing a
+   second one, and the reason is practical: two boxes that look the same and
+   interpret `*.zip` differently is worse than either box alone.
+
+   Results come back largest-first, because this is a search for things filling
+   the disk, and are grouped by folder so ten hits in one place read as one
+   place rather than ten. */
+const gsearch = {
+  seq: 0,          // guards against a slow response overwriting a newer one
+  timer: 0,
+  hits: [],
+  selected: -1,
+  open: false,
+};
+
+function gsearchClose() {
+  gsearch.open = false;
+  gsearch.selected = -1;
+  const panel = $('gsearchResults');
+  panel.hidden = true;
+  $('gsearch').setAttribute('aria-expanded', 'false');
+  // Let a narrow window reclaim the header space it lent us.
+  $('gsearchWrap').classList.remove('gsearch-summoned');
+}
+
+/**
+ * Focus the global search, showing it first if the window is too narrow to
+ * display it permanently.
+ *
+ * Without the summon step the keyboard shortcut is a lie below 1320px:
+ * `focus()` on a `display: none` element does nothing at all, silently. The
+ * class overrides the media query so the box exists to be focused, and
+ * `gsearchClose` takes it away again.
+ */
+function summonGlobalSearch() {
+  $('gsearchWrap').classList.add('gsearch-summoned');
+  const box = $('gsearch');
+  box.focus();
+  box.select();
+  if (gsearch.hits.length) gsearchOpen();
+}
+
+function gsearchOpen() {
+  gsearch.open = true;
+  $('gsearchResults').hidden = false;
+  $('gsearch').setAttribute('aria-expanded', 'true');
+}
+
+/** Render the panel: grouped by folder, largest first within each group. */
+function renderGsearch(result) {
+  const panel = $('gsearchResults');
+  gsearch.hits = result.hits || [];
+  gsearch.selected = -1;
+
+  if (!gsearch.hits.length) {
+    // Three different "nothing here" cases, and they mean different things —
+    // collapsing them into one message is how a user concludes the feature is
+    // broken when actually they simply haven't scanned anything yet.
+    let note;
+    if (!result.roots || result.roots.length === 0) {
+      note = 'Nothing is indexed yet. Scan a folder once and it becomes searchable instantly from then on.';
+    } else {
+      note = `No matches for “${result.query}”. Try part of a filename, or ${'*.zip'} for a file type.`;
+    }
+    panel.innerHTML = `<div class="gsearch-note">${escapeHtml(note)}</div>`;
+    gsearchOpen();
+    return;
+  }
+
+  // Group by folder, preserving the size-descending order the server chose.
+  const groups = new Map();
+  for (const hit of gsearch.hits) {
+    if (!groups.has(hit.parentPath)) groups.set(hit.parentPath, []);
+    groups.get(hit.parentPath).push(hit);
+  }
+
+  let index = 0;
+  let html = '';
+  for (const [folder, hits] of groups) {
+    // Long paths are truncated from the LEFT (direction:rtl in CSS): the tail
+    // of a path is what identifies it, the "/Users/me/Library/…" head is not.
+    html += `<div class="gsearch-group">${escapeHtml(folder)}</div>`;
+    for (const hit of hits) {
+      html +=
+        `<button class="gsearch-hit" role="option" aria-selected="false" data-i="${index}" data-path="${escapeHtml(hit.path)}">` +
+        chipFor(hit, 13) +
+        `<span class="nm">${escapeHtml(hit.name)}</span>` +
+        `<span class="sz">${formatBytes(hit.size)}</span></button>`;
+      index++;
+    }
+  }
+
+  const shown = gsearch.hits.length;
+  const total = result.countCapped ? `${formatCount(result.total)}+` : formatCount(result.total);
+  if (result.truncated) {
+    html += `<div class="gsearch-note">Showing the ${formatCount(shown)} largest of ${total} matches.</div>`;
+  }
+  // Staleness is never hidden: a result from an index that stopped watching
+  // could name a file that has since moved (§A1's consistency guard).
+  if (result.staleRoots && result.staleRoots.length) {
+    html += `<div class="gsearch-note">Some results come from an index that may be out of date — scan again to refresh it.</div>`;
+  }
+
+  panel.innerHTML = html;
+  panel.querySelectorAll('.gsearch-hit').forEach((btn) => {
+    btn.addEventListener('click', () => gsearchGoTo(btn.dataset.path));
+  });
+  gsearchOpen();
+}
+
+/** Highlight the keyboard selection. */
+function gsearchHighlight(delta) {
+  const options = [...$('gsearchResults').querySelectorAll('.gsearch-hit')];
+  if (!options.length) return;
+  gsearch.selected = (gsearch.selected + delta + options.length) % options.length;
+  options.forEach((el, i) => el.setAttribute('aria-selected', String(i === gsearch.selected)));
+  options[gsearch.selected].scrollIntoView({ block: 'nearest' });
+}
+
+/**
+ * Open a result: drill the treemap to the folder holding it and highlight the
+ * file — the same click-through the Dashboard's top-10 already performs (§3.6),
+ * so a search result behaves like every other path in the app.
+ */
+async function gsearchGoTo(targetPath) {
+  const hit = gsearch.hits.find((h) => h.path === targetPath);
+  if (!hit) return;
+  gsearchClose();
+  $('gsearch').blur();
+
+  const folder = hit.type === 'dir' ? hit.path : hit.parentPath;
+
+  // The treemap can only drill within the scan it currently holds. A hit from
+  // a different indexed root needs that root loaded first — and saying so beats
+  // silently doing nothing.
+  if (!state.root || !(folder === state.root.path || folder.startsWith(state.root.path))) {
+    toast(`“${hit.name}” is in ${hit.rootPath} — scanning that folder to show it.`);
+    $('pathInput').value = hit.rootPath;
+    await startScan(hit.rootPath);
+  }
+
+  switchView('treemap');
+  state.treemap.rootPath = folder;
+  await loadTreemap(folder, true);
+  // Reuse the existing highlight box so the file is visibly marked, rather
+  // than adding a second highlighting mechanism.
+  $('tmSearch').value = hit.name;
+  state.treemap.query = hit.name;
+  renderSearchOverlay();
+  presentTreemap();
+}
+
+async function runGsearch(raw) {
+  const q = raw.trim();
+  if (!q) { gsearchClose(); return; }
+  const seq = ++gsearch.seq;
+  try {
+    const result = await api('/api/search?q=' + encodeURIComponent(q) + '&limit=50');
+    // A slower earlier request must not overwrite a newer answer.
+    if (seq !== gsearch.seq) return;
+    renderGsearch(result);
+  } catch (e) {
+    if (seq !== gsearch.seq) return;
+    $('gsearchResults').innerHTML = `<div class="gsearch-note">${escapeHtml(e.message)}</div>`;
+    gsearchOpen();
+  }
+}
+
+$('gsearch').addEventListener('input', (e) => {
+  clearTimeout(gsearch.timer);
+  const value = e.target.value;
+  // Debounced so a fast typist issues one query, not eight — the rate limiter
+  // allows 10/s and the shared wrapper would otherwise be backing off.
+  gsearch.timer = setTimeout(() => void runGsearch(value), 140);
+});
+
+$('gsearch').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown') { e.preventDefault(); gsearchHighlight(1); return; }
+  if (e.key === 'ArrowUp') { e.preventDefault(); gsearchHighlight(-1); return; }
+  if (e.key === 'Escape') { e.preventDefault(); gsearchClose(); e.target.blur(); return; }
+  if (e.key === 'Enter') {
+    const options = [...$('gsearchResults').querySelectorAll('.gsearch-hit')];
+    const pick = options[gsearch.selected >= 0 ? gsearch.selected : 0];
+    if (pick) { e.preventDefault(); void gsearchGoTo(pick.dataset.path); }
+  }
+});
+
+$('gsearch').addEventListener('focus', () => { if (gsearch.hits.length) gsearchOpen(); });
+$('gsearch').addEventListener('blur', () => {
+  // Deferred: clicking a result blurs the box before the click lands, and
+  // tearing the panel down first would swallow the click entirely.
+  setTimeout(() => {
+    if (document.activeElement !== $('gsearch') && !$('gsearchResults').contains(document.activeElement)) {
+      $('gsearchWrap').classList.remove('gsearch-summoned');
+    }
+  }, 180);
+});
+document.addEventListener('click', (e) => {
+  if (gsearch.open && !$('gsearchWrap').contains(e.target)) gsearchClose();
+});
+
+/* ───────────────────── Allocation diagnostic (A2) ─────────────────────
+   Shows the three numbers side by side: what a naive tool would report, what
+   the files claim, and what they actually occupy — plus, when the scanned root
+   is a whole disk, how TreeMap's total compares with the disk's own accounting.
+
+   §A2 asks that this delta be visible ("should be near zero"). Making it
+   visible rather than quietly correcting for it is the point: TreeMap cannot
+   see which files share storage, and a panel that showed a confident total
+   would be hiding exactly the uncertainty the user needs to know about. */
+async function renderAllocationDiagnostic() {
+  const host = $('allocationDiag');
+  if (!host) return;
+  const target = state.root && state.root.path;
+  if (!target) { host.textContent = 'Scan a folder to see this.'; return; }
+
+  host.innerHTML = '<span class="muted">Measuring…</span>';
+  let a;
+  try {
+    a = await api('/api/allocation?path=' + encodeURIComponent(target));
+  } catch (e) {
+    // The most likely reason by far is simply that the index has not been
+    // built yet — which is a state, not a failure, and says so.
+    host.innerHTML = `<span class="muted">${escapeHtml(
+      e.code === 'INDEX_NOT_BUILT'
+        ? 'TreeMap is still building its index of this folder. Try again in a moment.'
+        : e.message,
+    )}</span>`;
+    return;
+  }
+
+  const row = (label, value, hint) =>
+    `<div class="row"><span>${escapeHtml(label)}${hint ? ` <span class="muted">— ${escapeHtml(hint)}</span>` : ''}</span><b>${formatBytes(value)}</b></div>`;
+
+  let html =
+    row('What other tools would report', a.naiveLogicalBytes, 'every file counted at the size it claims') +
+    row('Size the files claim', a.logicalBytes, 'counting files with several names once') +
+    row('Space actually used', a.allocatedBytes, 'what the disk really holds');
+
+  if (a.sharedBytes > 0) {
+    html += row('Of that, shared with other copies', a.sharedBytes, 'deleting one copy frees none of it');
+  }
+  if (a.hardlinkFamilies > 0) {
+    html +=
+      `<div class="row"><span>Files with more than one name</span><b>${formatCount(a.hardlinkFamilies)}</b></div>`;
+  }
+
+  if (a.reconciliation) {
+    const r = a.reconciliation;
+    html +=
+      row('This disk reports as used', r.actualBytes, 'the disk’s own accounting') +
+      `<div class="row"><span>Difference</span><b>${formatBytes(Math.abs(r.deltaBytes))} (${r.deltaPercent}%)</b></div>` +
+      `<div class="note">${escapeHtml(r.verdict)}</div>`;
+  } else {
+    html +=
+      `<div class="note">${escapeHtml(
+        'Comparing against the disk’s own total only works when you scan a whole disk, so it isn’t shown for a folder.',
+      )}</div>`;
+  }
+
+  html += `<div class="note">${escapeHtml(a.reason)}</div>`;
+  host.innerHTML = html;
+}
+
 /* ───────────────────────────── Settings modal ───────────────────────────── */
 let settingsData = { ignore: [], schedules: [] };
 $('settingsBtn').innerHTML = icon('settings', 16);
 $('settingsBtn').addEventListener('click', async () => {
   $('settingsModal').classList.add('open');
   $('settingsStatus').textContent = '';
+  void renderAllocationDiagnostic(); // A2 — independent of settings loading
   try {
     settingsData = await api('/api/settings');
   } catch (e) {
@@ -6457,9 +7971,30 @@ document.addEventListener('keydown', (e) => {
     if (!typing && state.grid.selection.size) { e.preventDefault(); confirmTrash([...state.grid.selection]); }
     return;
   }
+  /* A4 — global search.
+     Cmd/Ctrl+K opens it from anywhere, the near-universal convention.
+
+     "/" is more delicate: §A4 asks for it "from anywhere", but Grid and Treemap
+     have bound it to their own highlight boxes since they shipped, and those
+     are documented in the shortcuts panel. Those boxes *filter what is on
+     screen*; this one *finds things anywhere on disk* — different tools, and
+     taking the key away would regress muscle memory for the two views where
+     people filter most. So "/" opens global search on the eight views that
+     never claimed it, and the two that did keep theirs. Recorded as a
+     deliberate deviation in docs/PLATFORM_NOTES.md. */
+  if (mod && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    summonGlobalSearch();
+    return;
+  }
   if (e.key === '/' && !typing && state.view === 'grid') {
     e.preventDefault();
     $('gridSearch').focus();
+    return;
+  }
+  if (e.key === '/' && !typing && state.view !== 'treemap') {
+    e.preventDefault();
+    summonGlobalSearch();
     return;
   }
   // Plain Backspace / Delete in the grid — never while typing, and the
@@ -6551,6 +8086,38 @@ window.addEventListener('drop', async (e) => {
 /* ───────────────────────────── Boot ───────────────────────────── */
 switchView('dashboard');
 loadSystem();
+// Capabilities are fetched in the background: nothing blocks the first paint on
+// them, and until they arrive no view is disabled (unknown never means absent).
+loadCapabilities();
+
+/* Debug/testing handle. Deliberately read-mostly and namespaced: the app's own
+   state and view registry are script-scoped `const`s, which are not reachable
+   from outside the script — so an end-to-end check could not otherwise assert
+   which view is mounted or what the registry contains. */
+window.TreeMap = {
+  get state() { return state; },
+  // The live registry, not a copy: capability gating has no consumer among the
+  // original ten views (none of them depend on a platform mechanism), so the
+  // only way to prove that machinery works before its first real consumer
+  // arrives is to register a probe view against it.
+  get views() { return VIEWS; },
+  get mountedView() { return mountedView && mountedView.id; },
+  registerView,
+  switchView,
+  subscribe,
+  emit,
+  TOPIC,
+  applyCapabilitiesToTabs,
+  Canvas2D,
+  formatBytes,
+  // Hover-driven UI cannot be exercised from outside: the treemap's mousemove
+  // handler does its work inside a requestAnimationFrame callback, and rAF does
+  // not fire while the window is occluded — so a synthetic mousemove reaches
+  // nothing. Exposing the tooltip lets its content be asserted directly.
+  showTooltip,
+  allocationTooltipLine,
+  resolveAllocation,
+};
 
 /* ═══════════════ Liquid Glass engine ═══════════════
    Vanilla port of rdev/liquid-glass-react (MIT): per-element SVG displacement

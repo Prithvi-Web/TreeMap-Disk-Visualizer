@@ -13,6 +13,7 @@ import { getIgnoreMatchers } from '../services/settings';
 import { getForecast } from '../services/forecast';
 import { prepareOffload, startOffload, getOffloadJob } from '../services/offload';
 import { moveToTrash } from '../services/cleaner';
+import { checkOpenHandles, describeConflicts } from '../services/openHandleGuard';
 import { storeOf } from '../services/scanStore';
 import { insideAnyScanRoot } from '../middleware/pathGuard';
 import { isVirtualPath } from '../services/containerScanner';
@@ -557,10 +558,18 @@ export function buildMcpServer(): McpServer {
       inputSchema: {
         paths: z.array(z.string().min(1)).min(1).max(MAX_PATHS).describe('Files/folders to trash (inside a scanned root)'),
         dryRun: z.boolean().default(false).describe('true = report the manifest, act on nothing'),
+        ignoreOpenHandles: z
+          .boolean()
+          .default(false)
+          .describe(
+            'true = trash even though a program has one of these files open. Only set this after telling the ' +
+              'user which program it is and getting their agreement — deleting an open file often frees no space ' +
+              'until that program closes.',
+          ),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ paths: rawPaths, dryRun }) =>
+    async ({ paths: rawPaths, dryRun, ignoreOpenHandles }) =>
       run(async () => {
         const paths = guardDestructivePaths(rawPaths);
         const sized = paths.map((p) => {
@@ -579,16 +588,31 @@ export function buildMcpServer(): McpServer {
           throw err;
         }
         if (dryRun) {
+          // B2: the dry run reports open files rather than refusing, so an
+          // agent can raise it with the user in the same breath as the manifest
+          // instead of discovering it only when the real call fails.
+          const openHandles = await checkOpenHandles(paths);
           await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun: true, outcome: 'ok' });
           return ok({
             dryRun: true,
             wouldTrash: sized,
             totalKnownBytes: knownTotal,
             totalKnownFormatted: formatBytes(knownTotal),
+            openHandles: openHandles.conflicts.length
+              ? { inUse: true, conflicts: openHandles.conflicts, note: describeConflicts(openHandles.conflicts) }
+              : { inUse: false, checked: openHandles.checked, ...(openHandles.checked ? {} : { note: openHandles.reason }) },
             note: 'Dry run — nothing was moved to the Trash.',
           });
         }
-        const result = await moveToTrash(paths);
+        let result;
+        try {
+          result = await moveToTrash(paths, { ignoreOpenHandles });
+        } catch (err) {
+          if (err instanceof AppError && err.code === 'OPEN_HANDLE_CONFLICT') {
+            await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun: false, outcome: 'refused', code: err.code });
+          }
+          throw err;
+        }
         await appendAudit({ action: 'files.trash', source: 'mcp', tokenId: tokenIdFor('mcp'), paths, bytes: knownTotal, dryRun: false, outcome: result.failed.length === 0 ? 'ok' : 'error', ...(result.failed.length > 0 ? { code: 'PARTIAL_FAILURE' } : {}) });
         const freed = sized
           .filter((s) => result.deleted.includes(s.path))

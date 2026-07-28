@@ -1,0 +1,70 @@
+name: Tests
+
+# Runs the suite on all three supported operating systems.
+#
+# This exists because of a stated constraint: much of src/platform/ was written
+# on macOS against documented Windows and Linux APIs and has never been executed
+# on those systems. The pure parts (parsers, bit arithmetic, argv construction)
+# are unit-tested everywhere and run in every job below; the parts that can only
+# be proven by actually calling the OS — does RmGetList return a process name,
+# does lsblk accept -O, does /proc report what the code expects — are proven
+# here and nowhere else.
+#
+# A job failing on one OS therefore carries real information: it means a
+# mechanism does not behave as documented, which is exactly what needs to
+# surface in CI rather than on a user's machine.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    strategy:
+      # Never cancel the other OSes when one fails — a Windows-only failure is
+      # information about Windows, not a reason to lose the Linux result.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS
+          - os: windows-latest
+            name: Windows
+          - os: ubuntu-latest
+            name: Linux
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Run the test suite
+        run: npm test
+        env:
+          # Tests must never touch the real app-data directory: scan tests
+          # write snapshots, and a shared directory is how junk roots ended up
+          # in a real user's snapshots.json before.
+          TREEMAP_DATA_DIR: ${{ runner.temp }}/treemap-test-data
+
+      - name: Report this machine's detected capabilities
+        # Not an assertion — a record. Reading what each OS actually detected is
+        # how a capability that quietly regresses to "unavailable" gets noticed,
+        # since an honest unavailable state passes every test by design.
+        run: npm run capabilities:report
+        env:
+          TREEMAP_DATA_DIR: ${{ runner.temp }}/treemap-test-data

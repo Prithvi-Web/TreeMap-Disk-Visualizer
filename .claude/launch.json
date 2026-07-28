@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["start"],
       "port": 4280
+    },
+    {
+      "name": "treemap-isolated",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/dev-isolated.js", "4281"],
+      "port": 4281
     }
   ]
 }

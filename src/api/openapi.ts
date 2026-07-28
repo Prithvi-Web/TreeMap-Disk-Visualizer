@@ -257,6 +257,26 @@ const schemas: Json = {
     ['deleted', 'failed'],
     'Every delete is a move to the OS Trash — recoverable, never a hard delete',
   ),
+  OpenHandleConflict: obj(
+    {
+      path: str('The path from the request that is blocked'),
+      pid: int(),
+      processName: str('e.g. "Google Chrome"'),
+      openPath: str('The file actually held open, when it sits inside `path`'),
+    },
+    ['path', 'pid', 'processName'],
+  ),
+  OpenHandleReport: obj(
+    {
+      conflicts: arr(ref('OpenHandleConflict')),
+      checked: bool('false = the check could not run; `reason` says why, and no conclusion may be drawn'),
+      complete: bool('false = the check ran but could not cover the whole set'),
+      reason: str('How the answer was obtained, or why it could not be'),
+      elapsedMs: int(),
+    },
+    ['conflicts', 'checked', 'complete', 'elapsedMs'],
+    'An empty `conflicts` with `checked: false` means "unknown", never "nothing is open"',
+  ),
   BudgetStatus: obj(
     { path: str(), name: str(), maxBytes: int(), actualBytes: int(), overBy: int('Positive means over budget') },
     ['path', 'name', 'maxBytes', 'actualBytes', 'overBy'],
@@ -955,6 +975,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         {
           paths: arr(str(), 'At most 500, each inside a scanned root'),
           dryRun: bool('true = return the exact manifest (paths + known bytes) and touch nothing'),
+          ignoreOpenHandles: bool('true = trash even though a program has something open (the user chose "delete anyway")'),
         },
         ['paths'],
       ),
@@ -962,6 +983,19 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse('Per-path outcome, or the dry-run manifest', { oneOf: [ref('CleanResult'), ref('TrashDryRunManifest')] }),
       '403': errorResponse('A path is outside every scanned root, cloud-hosted, inside an archive, or refused by agent-policy.json'),
+      '409': errorResponse('OPEN_HANDLE_CONFLICT — a program holds one of these paths (or a file inside it) open; the offending processes are listed in `conflicts`. Retry with ignoreOpenHandles: true to proceed anyway'),
+    },
+  },
+  {
+    method: 'post',
+    path: '/api/files/open-handles',
+    summary: 'Which of these paths (or files inside them) is a program holding open? Read-only pre-flight for a delete',
+    tag: 'files',
+    destructive: false,
+    requestBody: jsonBody(obj({ paths: arr(str(), 'At most 500, each inside a scanned root') }, ['paths'])),
+    responses: {
+      '200': jsonResponse('Open-handle report', ref('OpenHandleReport')),
+      '403': errorResponse('A path is outside every scanned root'),
     },
   },
   {
@@ -1244,6 +1278,193 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     parameters: [idempotencyHeader],
     requestBody: jsonBody(obj({ scanId: str('A cloud scan'), paths: arr(str(), 'cloud:// paths inside that scan') }, ['scanId', 'paths'])),
     responses: { '200': jsonResponse('Outcome', opaque('Per-path provider-trash outcome')), '403': errorResponse('Path outside this cloud scan') },
+  },
+
+  /* ------------ platform capabilities (§2.2) ------------ */
+  {
+    method: 'get',
+    path: '/api/platform/capabilities',
+    summary: 'What this machine can actually do, detected at runtime — each capability available, unavailable with a reason, or degraded to a named fallback',
+    tag: 'meta',
+    destructive: false,
+    responses: {
+      '200': jsonResponse(
+        'Capability states',
+        obj(
+          {
+            platform: str("'windows' | 'macos' | 'linux'"),
+            nodePlatform: str('process.platform, verbatim'),
+            capabilities: opaque('One CapabilityState per capability-gated feature'),
+          },
+          ['platform', 'nodePlatform', 'capabilities'],
+        ),
+      ),
+    },
+  },
+  {
+    method: 'post',
+    path: '/api/platform/capabilities/refresh',
+    summary: 'Re-probe capabilities now (after granting a permission or installing a missing tool)',
+    tag: 'meta',
+    destructive: false,
+    responses: { '200': jsonResponse('Freshly detected capability states', opaque('Same shape as GET')) },
+  },
+  /* ------------ persistent live index (A1) ------------ */
+  {
+    method: 'post',
+    path: '/api/index/build',
+    summary: 'Build (or rebuild) the persistent index for a folder — progress via SSE',
+    tag: 'index',
+    destructive: false,
+    requestBody: jsonBody(obj({ path: str('Absolute folder path') }, ['path'])),
+    responses: {
+      '202': jsonResponse('Build started', obj({ jobId: str(), status: str("'running'") }, ['jobId'])),
+      '403': errorResponse('POLICY_ROOT_NOT_ALLOWED — outside the configured allowedRoots'),
+    },
+  },
+  {
+    method: 'get',
+    path: '/api/index/{jobId}/progress',
+    summary: 'Server-Sent Events stream of index build progress',
+    tag: 'index',
+    destructive: false,
+    parameters: [pathParam('jobId', 'Job id from POST /api/index/build')],
+    responses: { '200': sseResponse('progress / complete / error / shutdown frames') },
+  },
+  {
+    method: 'get',
+    path: '/api/index/{jobId}/result',
+    summary: 'The finished index root, or 202 while the build is still running',
+    tag: 'index',
+    destructive: false,
+    parameters: [pathParam('jobId', 'Job id from POST /api/index/build')],
+    responses: {
+      '200': jsonResponse('Index root', opaque('status, root')),
+      '202': running202,
+      '404': errorResponse('JOB_NOT_FOUND'),
+    },
+  },
+  {
+    method: 'post',
+    path: '/api/index/{jobId}/cancel',
+    summary: 'Cancel a running index build; partial rows are discarded',
+    tag: 'index',
+    destructive: false,
+    parameters: [pathParam('jobId', 'Job id from POST /api/index/build')],
+    responses: { '200': jsonResponse('Cancelled', obj({ jobId: str(), cancelled: bool() }, ['jobId', 'cancelled'])) },
+  },
+  {
+    method: 'get',
+    path: '/api/index/status',
+    summary: 'Indexed roots, or (with ?path=) whether a folder can be served from the index',
+    tag: 'index',
+    destructive: false,
+    parameters: [queryParam('path', 'Optional folder to resolve against the index', str())],
+    responses: { '200': jsonResponse('Index status', opaque('roots[] or { indexed, root, running[] }')) },
+  },
+  {
+    method: 'get',
+    path: '/api/index/tree',
+    summary: 'Read a folder tree straight from the index — the instant-open path, same FileNode shape as a scan',
+    tag: 'index',
+    destructive: false,
+    parameters: [
+      queryParam('path', 'Folder to read', str()),
+      queryParam('maxNodes', 'Node budget (default 250000)', int()),
+    ],
+    responses: {
+      '200': jsonResponse('Indexed tree', opaque('root FileNode plus state/live/builtAt and counters')),
+      '202': running202,
+      '404': errorResponse('INDEX_NOT_BUILT — that folder has not been indexed yet'),
+    },
+  },
+  {
+    method: 'post',
+    path: '/api/index/watch',
+    summary: 'Attach a live watcher to an indexed folder so changes update it automatically',
+    tag: 'index',
+    destructive: false,
+    requestBody: jsonBody(obj({ path: str('Indexed folder path') }, ['path'])),
+    responses: {
+      '200': jsonResponse('Watching', obj({ path: str(), watching: bool() }, ['path', 'watching'])),
+      '404': errorResponse('INDEX_NOT_BUILT'),
+    },
+  },
+  {
+    method: 'delete',
+    path: '/api/index',
+    summary: 'Drop one indexed root (?path=) or the whole index — nothing on disk is touched',
+    tag: 'index',
+    destructive: false,
+    parameters: [queryParam('path', 'Optional single root to drop', str())],
+    responses: { '200': jsonResponse('Removed', obj({ removed: int() }, ['removed'])) },
+  },
+
+  /* ------------ instant search (A4) ------------ */
+  {
+    method: 'get',
+    path: '/api/search',
+    summary:
+      'Instant size-aware search over the index. Same query language as the treemap highlight box: "*.zip", ".zip", or a case-insensitive filename substring. Size-descending.',
+    tag: 'index',
+    destructive: false,
+    parameters: [
+      queryParam('q', 'Query — "*.zip", ".zip", or a filename substring', str()),
+      queryParam('minSize', 'Only entries at least this many bytes', int()),
+      queryParam('olderThan', 'Only entries untouched for at least this many days', int()),
+      queryParam('type', "'file' | 'dir' | 'all' (default all)", str()),
+      queryParam('scope', 'Restrict to this folder and everything beneath it', str()),
+      queryParam('limit', '1–500 (default 50)', int()),
+      queryParam('offset', 'Pagination offset', int()),
+    ],
+    responses: {
+      '200': jsonResponse(
+        'Matches, largest first',
+        opaque('hits[], total, countCapped, truncated, tookMs, roots[], staleRoots[]'),
+      ),
+    },
+  },
+
+  /* ------------ allocation accounting (A2) ------------ */
+  {
+    method: 'get',
+    path: '/api/allocation',
+    summary:
+      'What a folder really costs on disk: naive vs inode-deduplicated vs allocated bytes, the shared/exclusive split, and (for a whole volume) reconciliation against the filesystem',
+    tag: 'index',
+    destructive: false,
+    parameters: [queryParam('path', 'Indexed folder path', str())],
+    responses: {
+      '200': jsonResponse(
+        'Allocation summary — always carries approximate:true with a plain-language reason',
+        opaque('naiveLogicalBytes, logicalBytes, allocatedBytes, sharedBytes, exclusiveBytes, reconciliation'),
+      ),
+      '404': errorResponse('INDEX_NOT_BUILT — scan the folder once first'),
+    },
+  },
+  {
+    method: 'get',
+    path: '/api/allocation/file',
+    summary: 'Shared vs exclusive bytes for one file — what deleting it would actually free',
+    tag: 'index',
+    destructive: false,
+    parameters: [queryParam('path', 'File path inside an indexed folder', str())],
+    responses: {
+      '200': jsonResponse('Per-file allocation', opaque('logicalBytes, allocatedBytes, sharedBytes, exclusiveBytes, links')),
+      '404': errorResponse('INDEX_NOT_BUILT or PATH_NOT_FOUND'),
+    },
+  },
+
+  {
+    method: 'get',
+    path: '/api/platform/topology',
+    summary: 'Physical disks and the logical volumes on each — which drive is actually filling up',
+    tag: 'system',
+    destructive: false,
+    responses: {
+      '200': jsonResponse('Logical-to-physical mapping', opaque('physicalDisks[], logicalVolumes[], mechanism')),
+      '409': errorResponse('CAPABILITY_UNAVAILABLE — disk layout cannot be read on this system'),
+    },
   },
 ];
 

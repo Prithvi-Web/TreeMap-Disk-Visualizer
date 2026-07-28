@@ -147,8 +147,25 @@ test('agent summary: raw+formatted bytes, stable ids, deterministic order, real 
     assert.equal(typeof s.forecast.bytesPerDayFormatted, 'string');
 
     // Deterministic: an immediate second read is identical.
+    //
+    // Everything derived from the scan must match exactly. `forecast.freeBytes`
+    // is deliberately excluded, and this is not a loophole: it is a live
+    // reading of the volume's free space, taken fresh on each request. The disk
+    // genuinely changes between two calls — this assertion failed in CI with an
+    // 28 KB difference — so demanding it be identical asserts something that is
+    // not true of the system, which is how a flaky test is born. It is checked
+    // for presence and plausibility instead.
     const again = await req(port, 'GET', `/api/agent/summary?scanId=${scanId}`);
-    assert.deepEqual(again.body, s, 'two reads over the same scan are identical');
+    const strip = (body: unknown): unknown => {
+      const clone = JSON.parse(JSON.stringify(body)) as { forecast: { freeBytes?: number; freeFormatted?: string } };
+      delete clone.forecast.freeBytes;
+      delete clone.forecast.freeFormatted;
+      return clone;
+    };
+    assert.deepEqual(strip(again.body), strip(s), 'two reads over the same scan are identical');
+
+    const free = (again.body as { forecast: { freeBytes: number } }).forecast.freeBytes;
+    assert.ok(Number.isFinite(free) && free > 0, 'free space is still reported, and is a real number');
   } finally {
     await close();
   }

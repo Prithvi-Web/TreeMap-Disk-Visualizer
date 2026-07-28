@@ -1,6 +1,8 @@
 import { execFile, spawn } from 'child_process';
 import { promises as fsp } from 'fs';
 import { CleanResult } from '../models/types';
+import { AppError } from '../middleware/errorHandler';
+import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 
 /**
  * Cleaner — moves files to the system trash and opens paths in the OS.
@@ -9,6 +11,11 @@ import { CleanResult } from '../models/types';
  *
  * All commands run through execFile (argv arrays, no shell) so paths with
  * quotes, spaces or $(...) can never be interpreted as shell syntax.
+ *
+ * Since B2 this is also where the open-file guard runs. It sits here, in the
+ * one pathway every deletion already goes through, rather than in each caller —
+ * so a feature added later cannot forget it, and there is no second delete
+ * route to keep in sync.
  */
 
 function run(cmd: string, args: string[], timeoutMs = 15000): Promise<void> {
@@ -70,8 +77,37 @@ async function trashOne(p: string): Promise<void> {
   }
 }
 
-/** Move every path to the system trash; per-path failures don't abort the batch. */
-export async function moveToTrash(paths: string[]): Promise<CleanResult> {
+export interface TrashOptions {
+  /**
+   * Skip the open-file check (B2).
+   *
+   * Set only when the user has already been shown the warning and chose to go
+   * ahead — the "delete anyway" button — or when a caller has just run the
+   * check itself. It never means "this caller doesn't care"; nothing in
+   * TreeMap is allowed to delete without the user having had the chance to see
+   * the warning.
+   */
+  ignoreOpenHandles?: boolean;
+}
+
+/**
+ * Move every path to the system trash; per-path failures don't abort the batch.
+ *
+ * Refuses the whole batch with `OPEN_HANDLE_CONFLICT` when something in it is
+ * open (§B2), unless the caller passes `ignoreOpenHandles`. All-or-nothing is
+ * deliberate: silently trashing the 9 files that were free and stopping at the
+ * 10th would leave the user with a half-applied delete they never agreed to.
+ */
+export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Promise<CleanResult> {
+  if (!opts.ignoreOpenHandles) {
+    const report = await checkOpenHandles(paths);
+    if (report.conflicts.length > 0) {
+      throw new AppError(409, 'OPEN_HANDLE_CONFLICT', describeConflicts(report.conflicts), {
+        conflicts: report.conflicts,
+      });
+    }
+  }
+
   const deleted: string[] = [];
   const failed: { path: string; reason: string }[] = [];
 
