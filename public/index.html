@@ -640,16 +640,12 @@ body.preview-open #cartDock { right: 348px; }
    the fix for the old header, where at mild page zoom this box clipped and
    overlapped its neighbours because a single row could not fit everything. */
 .gsearch { position: relative; flex: none; }
-.gsearch-icon {
-  position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
-  color: var(--text-3); pointer-events: none; display: inline-flex; z-index: 1;
-}
 /* Glassmorphism, matching the .glass frost recipe: a translucent tint the
    backdrop shows through, frosted by blur, ringed by an inset shine. It sits
    on the sidebar's own lens, so what shimmers through is the page itself. */
 #gsearch {
   width: 100%;
-  padding: 9px 12px 9px 32px; font-size: 12.5px;
+  padding: 9px 12px; font-size: 12.5px;
   background: linear-gradient(170deg, rgba(255,255,255,0.07), rgba(255,255,255,0.015) 65%),
               color-mix(in srgb, var(--surface-2) 55%, transparent);
   -webkit-backdrop-filter: blur(14px) saturate(160%);
@@ -668,7 +664,6 @@ body.preview-open #cartDock { right: 348px; }
 #gsearch::placeholder { color: var(--text-3); }
 /* The rail form of the search: same target, shown only when collapsed. */
 .gsearch-rail-btn { display: none; }
-#sideNav.collapsed .gsearch-icon { display: none; }
 #sideNav.collapsed #gsearch { display: none; }
 #sideNav.collapsed .gsearch-rail-btn {
   display: flex; align-items: center; justify-content: center;
@@ -1232,11 +1227,10 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
        on the collapsed rail those shortcuts (or the icon) open the sidebar
        first, so the input genuinely exists to be focused. -->
   <div class="gsearch" id="gsearchWrap">
-    <!-- Two spans, not one: the icon injector REPLACES the [data-icon]
-         element wholesale, so a class on the same element is silently lost
-         with it. The outer span survives injection and carries the
-         positioning; the inner one is sacrificed for the svg. -->
-    <span class="gsearch-icon" aria-hidden="true"><span data-icon="search" data-size="14"></span></span>
+    <!-- No decorative magnifier inside the box: the placeholder already says
+         what this is, and the injector-replaces-the-element behaviour made a
+         separately-positioned icon a recurring alignment bug. The rail form
+         below keeps its icon — there, the icon IS the control. -->
     <input type="text" id="gsearch" placeholder="Search all indexed files…"
            aria-label="Search all indexed files" aria-expanded="false"
            aria-controls="gsearchResults" role="combobox" aria-autocomplete="list"
