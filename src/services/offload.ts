@@ -2,7 +2,6 @@ import fs from 'fs';
 import { promises as fsp } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { pipeline } from 'stream/promises';
 import {
   FileNode,
   OffloadEntry,
@@ -15,6 +14,7 @@ import { moveToTrash } from './cleaner';
 import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { diskUsage } from './diskUsage';
 import { isInside } from '../utils/pathSanitizer';
+import { copyWithHash, hashFile, CopyCancelled } from '../utils/copyVerify';
 import { AppError } from '../middleware/errorHandler';
 
 /**
@@ -180,39 +180,18 @@ export function cancelAllOffloadJobs(): void {
   for (const job of jobs.values()) if (job.status === 'running') job.cancelled = true;
 }
 
-class JobCancelled extends Error {
-  constructor() { super('Cancelled'); }
-}
-
 /* ---------------- copy + verify machinery ---------------- */
 
-/** Copy src → dest, returning the SHA-256 of the bytes that flowed through. */
-async function copyWithHash(src: string, dest: string, job: OffloadJob): Promise<string> {
-  const hash = crypto.createHash('sha256');
-  const reader = fs.createReadStream(src);
-  const writer = fs.createWriteStream(dest, { flags: 'wx' }); // never clobber
-  reader.on('data', (chunk: string | Buffer) => {
-    hash.update(chunk);
-    job.bytesDone += chunk.length;
-    if (job.cancelled) reader.destroy(new JobCancelled());
-  });
-  await pipeline(reader, writer);
-  return hash.digest('hex');
-}
-
-/** SHA-256 of a file on disk (used for the read-back verify + restore). */
-export async function hashFile(filePath: string, job?: OffloadJob): Promise<string> {
-  const hash = crypto.createHash('sha256');
-  const reader = fs.createReadStream(filePath);
-  reader.on('data', (chunk: string | Buffer) => {
-    hash.update(chunk);
-    if (job?.cancelled) reader.destroy(new JobCancelled());
-  });
-  await new Promise<void>((resolve, reject) => {
-    reader.on('end', resolve);
-    reader.on('error', reject);
-  });
-  return hash.digest('hex');
+/**
+ * Bind a job to the shared copy/verify primitive (src/utils/copyVerify.ts),
+ * which Time Capsule uses too. Byte progress and cancellation are the only
+ * job-shaped parts; the copy semantics themselves live in one place.
+ */
+function jobProgress(job: OffloadJob, countBytes: boolean): { onBytes?: (n: number) => void; isCancelled: () => boolean } {
+  return {
+    ...(countBytes ? { onBytes: (n: number) => { job.bytesDone += n; } } : {}),
+    isCancelled: () => job.cancelled,
+  };
 }
 
 /** mkdir -p for every distinct parent in the plan; returns dirs we created. */
@@ -353,15 +332,15 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
   try {
     createdDirs = await ensureDirs(plan);
     for (const item of plan) {
-      if (job.cancelled) throw new JobCancelled();
+      if (job.cancelled) throw new CopyCancelled();
       job.phase = 'copying';
       job.currentPath = item.src;
-      const hash = await copyWithHash(item.src, item.dest, job);
+      const hash = await copyWithHash(item.src, item.dest, jobProgress(job, true));
       createdFiles.push(item.dest);
 
       job.phase = 'verifying';
       job.currentPath = item.dest;
-      const verify = await hashFile(item.dest, job);
+      const verify = await hashFile(item.dest, jobProgress(job, false));
       if (verify !== hash) {
         throw new Error(`Verification failed for ${path.basename(item.dest)} — the destination copy doesn't match. Nothing was deleted.`);
       }
@@ -416,7 +395,7 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     job.finishedAt = Date.now();
   } catch (err) {
     await rollback(createdFiles, createdDirs, job);
-    job.status = err instanceof JobCancelled || job.cancelled ? 'cancelled' : 'error';
+    job.status = err instanceof CopyCancelled || job.cancelled ? 'cancelled' : 'error';
     if (job.status === 'error') job.error = err instanceof Error ? err.message : String(err);
     job.finishedAt = Date.now();
   }
@@ -470,7 +449,7 @@ async function runRestore(job: OffloadJob, entries: OffloadEntry[]): Promise<voi
       if (!source) throw new Error('the offloaded copy is missing — is the drive connected?');
 
       await fsp.mkdir(path.dirname(entry.originalPath), { recursive: true });
-      const hash = await copyWithHash(entry.destPath, entry.originalPath, job);
+      const hash = await copyWithHash(entry.destPath, entry.originalPath, jobProgress(job, true));
 
       job.phase = 'verifying';
       if (hash !== entry.hash) {

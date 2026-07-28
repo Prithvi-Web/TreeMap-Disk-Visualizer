@@ -2,7 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
 import { FileNode, OffloadEntry } from '../src/models/types';
-import { planOffload, destNameFor, trimManifest, hashFile } from '../src/services/offload';
+import { planOffload, destNameFor, trimManifest } from '../src/services/offload';
+// Moved to a shared util in B3 so Offload and Time Capsule copy and verify
+// through one implementation rather than two.
+import { hashFile } from '../src/utils/copyVerify';
 import { promises as fsp } from 'fs';
 import os from 'os';
 import crypto from 'crypto';

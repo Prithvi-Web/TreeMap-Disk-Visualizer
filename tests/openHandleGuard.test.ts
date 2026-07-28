@@ -453,7 +453,18 @@ test('nothing outside Cleaner removes a user file', async () => {
         const arg = m[2];
         // TreeMap's own scratch and app-data files are not user data: gdu's
         // JSON output, the SQLite index, staging dirs for verified copies.
-        const ownStorage = /dbPath|indexPath|tmpPath|tmpDir|tempDir|outFile|staging|\.tmp|CAPSULE|appData|dataDir/i.test(arg);
+        // Time Capsule (B3) removes things in exactly two situations, both
+        // named so they are visible here rather than argued about in review:
+        //   - its own payloads under app-data (entryDir/payloadRoot/orphan…)
+        //   - paths a restore wrote seconds earlier, when that restore failed
+        //     (…ByThisRestore) — the same rollback-what-I-just-wrote licence
+        //     offload.ts has. A restore never clears a pre-existing file: it
+        //     refuses outright when the original path is occupied.
+        // Deliberately NOT a blanket allow for timeCapsule.ts: a bare delete
+        // of a user's file added there later must still fail this test.
+        const ownStorage =
+          /dbPath|indexPath|tmpPath|tmpDir|tempDir|outFile|staging|\.tmp|CAPSULE|appData|dataDir/i.test(arg) ||
+          /entryDir\(|payloadRoot\(|orphanCapsuleDir|ByThisRestore/.test(arg);
         if (!ownStorage) offenders.push(`${entry.name}: ${m[1]}(${arg.slice(0, 60)}`);
       }
     }

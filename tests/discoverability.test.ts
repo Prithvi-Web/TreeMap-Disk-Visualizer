@@ -206,14 +206,21 @@ test('capabilities marks exactly the destructive endpoints as destructive', asyn
   try {
     const caps = (await req(port, 'GET', '/api/capabilities')).body;
     const destructive = caps.endpoints.filter((e: any) => e.destructive).map((e: any) => `${e.method} ${e.path}`).sort();
+    // Pinned on purpose: growing this list is a deliberate decision about what
+    // an agent is allowed to do, not something a new route may do in passing.
     assert.deepEqual(destructive, [
       'DELETE /api/files',
+      // Forgetting a capsule entry destroys a backup copy, so it is declared
+      // destructive even though no live user data is touched.
+      'DELETE /api/timecapsule/{id}',
       'POST /api/cloud/disconnect',
       'POST /api/cloud/trash',
       'POST /api/git/gc',
       'POST /api/offload',
       'POST /api/offload/restore',
       'POST /api/system/snapshots/purge',
+      // Restoring writes a whole tree back onto the filesystem.
+      'POST /api/timecapsule/{id}/restore',
       'POST /api/trash/empty',
       'PUT /api/settings',
     ]);

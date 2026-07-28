@@ -13,6 +13,7 @@ import { cloudRouter } from './api/cloudRoutes';
 import { metaRouter } from './api/metaRoutes';
 import { platformRouter } from './api/platformRoutes';
 import { indexRouter, drainIndexClients, cancelAllIndexJobs } from './api/indexRoutes';
+import { timeCapsuleRouter, drainCapsuleClients } from './api/timeCapsuleRoutes';
 import { closeIndex } from './services/indexEngine';
 import { stopOAuth } from './services/cloud/oauth';
 import { rateLimiter } from './middleware/rateLimiter';
@@ -24,6 +25,7 @@ import { cancelAllDuplicateJobs } from './services/duplicateFinder';
 import { cancelAllNearDupeJobs } from './services/perceptualDupes';
 import { stopAllWatchers } from './services/watcher';
 import { cancelAllOffloadJobs } from './services/offload';
+import { cancelAllCapsuleJobs, startCapsuleMaintenance, stopCapsuleMaintenance } from './services/timeCapsule';
 import { startScheduler, stopScheduler } from './services/scheduler';
 
 /**
@@ -59,6 +61,7 @@ export function createApp(publicDir: string): express.Express {
   app.use('/api', metaRouter);
   app.use('/api', platformRouter);
   app.use('/api', indexRouter);
+  app.use('/api', timeCapsuleRouter);
 
   // Frontend: the single-file UI. When token auth is enabled, serving the
   // page also hands the browser its session cookie (R2 — the frozen UI keeps
@@ -103,11 +106,14 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
     stopAllWatchers(); // close live-activity watchers ('paused' to clients)
     cancelAllOffloadJobs(); // in-flight copies roll back cooperatively
     cancelAllIndexJobs(); // half-built indexes roll back; startup discards them
+    cancelAllCapsuleJobs(); // in-flight restores roll back what they wrote
+    stopCapsuleMaintenance(); // stop the retention sweep
     stopOAuth(); // close any pending sign-in listener
     drainSseClients(); // send 'shutdown' event, then end each stream
     drainWatchClients(); // end live-activity streams
     drainOffloadClients(); // end offload progress streams
     drainIndexClients(); // end index-build progress streams
+    drainCapsuleClients(); // end Time Capsule restore streams
     // Closes the index database and detaches its live watchers. Roots left
     // 'ready' are marked stale on next open, since nothing was watching them
     // while the app was down.
@@ -118,6 +124,9 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
 
   // Recurring scans (and their growth alerts) live for the server's lifetime.
   startScheduler();
+  // Sweeps Time Capsule entries past their retention window, and reconciles
+  // the capsule against its index once at startup (B3).
+  startCapsuleMaintenance();
 
   return new Promise<RunningServer>((resolve, reject) => {
     server.once('error', reject);

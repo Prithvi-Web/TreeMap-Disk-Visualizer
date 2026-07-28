@@ -86,6 +86,30 @@ function normalizeWatchIdle(raw: unknown): number {
   return Math.min(120, Math.max(1, Math.round(n)));
 }
 
+/**
+ * Time Capsule retention: 1–365 days, defaulting to the 30 §B3 specifies.
+ *
+ * Lowering it takes effect on the next sweep and can retire items captured
+ * under the old value — retention is read live rather than stamped onto each
+ * entry, so the setting always means what it says today.
+ */
+function normalizeCapsuleRetention(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 30;
+  return Math.min(365, Math.max(1, Math.round(n)));
+}
+
+/**
+ * Capsule ceiling as a percentage of the volume's usable space: 1–90, default
+ * 10. The upper bound is not cosmetic — the capsule must never be the reason a
+ * disk fills, and a user who types 100 would be asking for exactly that.
+ */
+function normalizeCapsulePercent(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 10;
+  return Math.min(90, Math.max(1, Math.round(n)));
+}
+
 const CLOUD_PROVIDERS = ['gdrive', 'dropbox', 'onedrive'] as const;
 
 /** Cloud app credentials: plain strings per provider, empty entries dropped. */
@@ -112,6 +136,8 @@ export async function getSettings(): Promise<AppSettings> {
       budgets: normalizeBudgets(raw.budgets),
       forecastThresholdDays: normalizeForecastDays(raw.forecastThresholdDays),
       watchIdleMinutes: normalizeWatchIdle(raw.watchIdleMinutes),
+      timeCapsuleRetentionDays: normalizeCapsuleRetention(raw.timeCapsuleRetentionDays),
+      timeCapsuleMaxPercent: normalizeCapsulePercent(raw.timeCapsuleMaxPercent),
       cloud: normalizeCloud(raw.cloud),
     };
   }
@@ -119,7 +145,7 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 /** Replace ignore list and/or schedules (input is re-validated here). */
-export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; cloud?: unknown }): Promise<AppSettings> {
+export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown }): Promise<AppSettings> {
   const current = await getSettings();
   const next: AppSettings = {
     ignore: patch.ignore !== undefined ? normalizeIgnore(patch.ignore) : current.ignore,
@@ -131,6 +157,12 @@ export async function updateSettings(patch: { ignore?: unknown; schedules?: unkn
     watchIdleMinutes: patch.watchIdleMinutes !== undefined
       ? normalizeWatchIdle(patch.watchIdleMinutes)
       : current.watchIdleMinutes,
+    timeCapsuleRetentionDays: patch.timeCapsuleRetentionDays !== undefined
+      ? normalizeCapsuleRetention(patch.timeCapsuleRetentionDays)
+      : current.timeCapsuleRetentionDays,
+    timeCapsuleMaxPercent: patch.timeCapsuleMaxPercent !== undefined
+      ? normalizeCapsulePercent(patch.timeCapsuleMaxPercent)
+      : current.timeCapsuleMaxPercent,
     cloud: patch.cloud !== undefined ? normalizeCloud(patch.cloud) : current.cloud,
   };
   // Preserve lastRunAt across edits that didn't intend to reset it.

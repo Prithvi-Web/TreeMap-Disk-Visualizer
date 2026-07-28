@@ -1,8 +1,8 @@
 # TreeMap — 21-feature master prompt, session handoff
 
-**Date:** 27 July 2026 · **Status:** Phase 0 + **Phase 1 complete (A1–A5)**, Phase 2 started (**B2 done**)
-**Suite:** 495/495 passing (3 consecutive runs) · typecheck clean · zero console errors
-**Everything is UNCOMMITTED** in the working tree.
+**Date:** 27 July 2026 · **Status:** Phase 0 + **Phase 1 complete (A1–A5)**, Phase 2 in progress (**B2, B3 done**)
+**Suite:** 527/527 passing (3 consecutive runs) · typecheck clean · zero console errors
+**Phase 0 + Phase 1 + B2 are COMMITTED and pushed** (239000b). **B3 is uncommitted.**
 
 Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
@@ -12,7 +12,7 @@ Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
 ```bash
 cd "/Users/prithvivinay/Desktop/Claude Code/Treemap"
-npm run build && npm test          # expect 449/449
+npm run build && npm test          # expect 527/527
 npm run capabilities:report        # expect 9/12 available on this Mac
 ```
 
@@ -43,7 +43,8 @@ contradict what the spec assumes.
 | **A4** | Instant global search | ✅ Complete |
 | **A5** | RAID/LVM topology panel | ✅ Complete |
 | **B2** | Open-file guard before every delete | ✅ Complete |
-| **B3** | Time capsule — recovery beyond the OS Trash | ⬜ **NEXT** (Phase 2 order: B3 → B1 → B4 → B5) |
+| **B3** | Time Capsule — recovery beyond the OS Trash | ✅ Complete |
+| **B1** | Autopilot cleanup with policy engine | ⬜ **NEXT** (Phase 2 order: B1 → B4 → B5) |
 
 ### Measured results (real hardware, this Mac)
 
@@ -115,13 +116,54 @@ contradict what the spec assumes.
   copies and reports it rather than rolling back — matching what it already did
   for a failed trash.
 
-## B3 is next
+## B3 — what was decided and why (27 Jul 2026)
 
-Time Capsule (§B3): copy → SHA-256 verify → trash, following Offload's existing
-pattern exactly, before any *automated* deletion. The capacity guard is the part
-worth care — §B3 mandates capping total capsule size and evicting oldest-first,
-and **the same reasoning applies to the uncapped SQLite index** (known gap #2
-below); consider doing both together.
+- **`protectAndTrash()` is the single automated-deletion entry point**, and the
+  invariant is structural rather than a rule someone must remember: it passes
+  only *protected* paths to `moveToTrash`. Anything it could not copy and
+  verify is simply not deleted, and says why. `protectItems()` is the capture
+  half on its own (no delete in it at all) — used by the tests, and available
+  to B1's simulate mode.
+- **Payload presence is its own field (`hasPayload`), not `heldBytes > 0`.**
+  Found by a test: an empty folder and a zero-byte file hold zero bytes and are
+  both perfectly restorable, so reading emptiness as absence made them
+  permanently unrestorable. Do not re-collapse these two facts.
+- **The cap is a share of *usable* space** (free + already-held), not of free
+  space. Over free space alone the ceiling shrinks as the capsule fills, so it
+  would evict itself into an ever-smaller corner and "10%" would mean something
+  different at every moment. `capFor()` is pure and tested.
+- **An item bigger than the whole cap is refused without evicting anything** —
+  otherwise the capsule clears itself to make room for something that was never
+  going to fit, and fails anyway. Pinned by a test.
+- **Eviction, expiry, refusal and loss are all surfaced in the panel**
+  ("What the Time Capsule couldn't keep"), because §B3's "warn rather than
+  silently skipping protection" is only satisfied if the warning reaches a
+  person. An item that has *already vanished* (ENOENT) is deliberately NOT
+  warned about — nothing was lost and nothing was deleted.
+- **Symlinks are recorded as links, never followed**; empty directories are
+  recorded too. Both matter because the folders this protects (node_modules,
+  virtualenvs) are full of them, and following a link to a parent walks forever.
+- **Restore refuses when the original path is occupied** rather than
+  overwriting, mirroring Offload. On success the payload is dropped and the
+  space returned — the bytes are home, a second copy is pure cost.
+- **Copy/verify now lives in `src/utils/copyVerify.ts`**, shared by Offload and
+  the capsule: one never-clobber `wx` copy, one read-back verify. The frontend
+  got the same treatment — `watchJob()` drives the one progress dialog for both.
+- The trash-bypass guard in `tests/openHandleGuard.test.ts` was **not** given a
+  blanket allow for `timeCapsule.ts`. Instead the rollback variables are named
+  `…ByThisRestore`, so a bare delete of a *user's* file added there later still
+  fails that test.
+
+## B1 is next
+
+Autopilot (§B1), the first real consumer of both B2 and B3: policies resolve
+candidates through `CleanupRules`, then call **`protectAndTrash()`** — that one
+call already routes through the open-file guard and the capsule, so B1 must not
+build any delete path of its own. Note §B1's hard rules: the **first run of any
+new policy is always a dry run** regardless of settings, byte caps per run and
+per week, cooldowns, `requireConfirmationAbove`, and every run undoable for 30
+days (which the capsule's retention already provides). Until B1 exists the Time
+Capsule tab is legitimately empty and says so.
 
 ---
 
@@ -221,7 +263,7 @@ and Electron 31 bundles Node 20.
 
 ## Not yet done
 
-- **Phase 2** B3 → B1 → B4 → B5, **Phase 3** C1–C8, **Phase 4** D1–D3, **Phase 5** regression + benchmarks
+- **Phase 2** B1 → B4 → B5, **Phase 3** C1–C8, **Phase 4** D1–D3, **Phase 5** regression + benchmarks
 - README endpoint/view documentation for A1–A5 (deferred to Phase 5 by
   precedent — §7 lists the README pass there; §11.7 would prefer per-feature)
 - **Nothing is committed.** The user pushes via **GitHub Desktop**, not the CLI.

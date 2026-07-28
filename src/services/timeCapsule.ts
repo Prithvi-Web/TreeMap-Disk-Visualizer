@@ -1,0 +1,864 @@
+import { promises as fsp } from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import {
+  TimeCapsuleEntry,
+  TimeCapsuleEvent,
+  TimeCapsuleIndex,
+  TimeCapsuleJob,
+  TimeCapsuleStatus,
+} from '../models/types';
+import { appDataDir, readJsonFile, writeJsonFile } from './storage';
+import { moveToTrash } from './cleaner';
+import { getSettings } from './settings';
+import { diskUsage } from './diskUsage';
+import { copyWithHash, hashFile, CopyCancelled } from '../utils/copyVerify';
+import { formatBytes } from '../utils/formatBytes';
+import { AppError } from '../middleware/errorHandler';
+
+/**
+ * Time Capsule — recovery beyond the OS Trash (B3).
+ *
+ * The OS Trash is the app's safety net for everything a person deletes on
+ * purpose. It is the wrong net for deletions a person did not watch happen:
+ * Autopilot (B1) can run while nobody is looking, and emptying the Trash
+ * afterwards — a routine, encouraged thing to do — destroys the only copy.
+ *
+ * So before any *automated* deletion, the item is copied into a capsule under
+ * the app-data directory, every byte is read back and verified, and only then
+ * does the original go to the Trash through the existing `Cleaner`. Emptying
+ * the Trash then costs nothing: the capsule still has it.
+ *
+ * ── The rule that shapes everything here ──
+ *
+ * **Nothing is trashed that was not first protected.** Not "usually", not
+ * "unless the capsule is full". If a copy cannot be made and verified, the
+ * delete does not happen and the reason is recorded where the user will see it
+ * (§B3: "warn rather than silently skipping protection"). A capsule that
+ * quietly lets a delete through when it is full is worse than no capsule,
+ * because the user believes they are covered.
+ *
+ * ── Capacity ──
+ *
+ * The capsule must never be the reason a disk fills up. Its ceiling is a
+ * percentage of the volume's usable space, and it is enforced *before* each
+ * copy, evicting the oldest protections to make room. An item bigger than the
+ * whole cap is refused outright rather than being allowed to evict everything
+ * else on its way to failing anyway.
+ *
+ * ── On-disk shape ──
+ *
+ *   <app-data>/timecapsule/<entry-id>/manifest.json   what was captured
+ *   <app-data>/timecapsule/<entry-id>/data/<name>     the payload itself
+ *   <app-data>/timecapsule.json                       the index
+ *
+ * The payload is written before the index records it, never the other way
+ * round: a crash mid-capture leaves bytes with no index entry, which
+ * `reconcileCapsule()` cleans up at startup. The reverse order would leave an
+ * index promising a restore it cannot perform — a lie that survives restarts.
+ */
+
+const INDEX_FILE = 'timecapsule.json';
+const CAPSULE_DIR = 'timecapsule';
+const SCHEMA_VERSION = 1;
+
+/** Bound on the visible history of evictions, expiries and refusals. */
+const MAX_EVENTS = 200;
+/** A single capture beyond this many files is refused rather than crawled. */
+const MAX_FILES_PER_ENTRY = 50_000;
+/** Cap used when the volume's free space cannot be read at all. */
+const FALLBACK_CAP_BYTES = 1024 * 1024 * 1024;
+const JOB_TTL_MS = 30 * 60_000;
+/** How often expired entries are swept out. */
+const MAINTENANCE_INTERVAL_MS = 60 * 60_000;
+
+/* ---------------- on-disk index ---------------- */
+
+interface CapsuleStore {
+  version: number;
+  entries: TimeCapsuleEntry[];
+  events: TimeCapsuleEvent[];
+}
+
+/** One member of a captured item, as recorded in the entry's own manifest. */
+interface ManifestMember {
+  /** Path relative to the captured item's root. '' for a single file. */
+  rel: string;
+  kind: 'file' | 'dir' | 'symlink';
+  size: number;
+  /** SHA-256 of the content, or of the link target for a symlink. */
+  hash: string;
+  /** Symlinks only: what the link pointed at. */
+  target?: string;
+}
+
+interface EntryManifest {
+  originalPath: string;
+  name: string;
+  members: ManifestMember[];
+}
+
+export function capsuleRoot(): string {
+  return path.join(appDataDir(), CAPSULE_DIR);
+}
+
+function entryDir(id: string): string {
+  return path.join(capsuleRoot(), id);
+}
+
+function payloadRoot(id: string): string {
+  return path.join(entryDir(id), 'data');
+}
+
+async function loadStore(): Promise<CapsuleStore> {
+  const raw = await readJsonFile<Partial<CapsuleStore>>(INDEX_FILE, {});
+  return {
+    version: typeof raw.version === 'number' ? raw.version : SCHEMA_VERSION,
+    entries: Array.isArray(raw.entries) ? raw.entries : [],
+    events: Array.isArray(raw.events) ? raw.events : [],
+  };
+}
+
+async function saveStore(store: CapsuleStore): Promise<void> {
+  store.version = SCHEMA_VERSION;
+  if (store.events.length > MAX_EVENTS) store.events = store.events.slice(0, MAX_EVENTS);
+  // writeJsonFile is atomic (tmp + rename) and serialized per file, which is
+  // what §6 asks of capsule writes.
+  await writeJsonFile(INDEX_FILE, store);
+}
+
+function recordEvent(store: CapsuleStore, event: TimeCapsuleEvent): void {
+  store.events.unshift(event); // newest first
+  if (store.events.length > MAX_EVENTS) store.events.length = MAX_EVENTS;
+}
+
+/* ---------------- capacity ---------------- */
+
+export interface CapsuleCapacity {
+  usedBytes: number;
+  capBytes: number;
+  freeBytes: number | null;
+  maxPercent: number;
+  /** Set when the cap had to be guessed rather than derived. */
+  note?: string;
+}
+
+export function usedBytesOf(entries: TimeCapsuleEntry[]): number {
+  return entries.reduce((sum, e) => sum + (e.hasPayload && e.heldBytes > 0 ? e.heldBytes : 0), 0);
+}
+
+/**
+ * The capsule's ceiling right now.
+ *
+ * The percentage is taken over *usable* space — free space plus whatever the
+ * capsule is already holding — not over free space alone. Using free space
+ * alone makes the cap shrink as the capsule fills, so the capsule would evict
+ * itself into an ever-smaller corner and the setting would mean something
+ * different at every moment. Over usable space, "10%" means the same thing
+ * whether the capsule is empty or full.
+ */
+export function capFor(freeBytes: number | null, usedBytes: number, maxPercent: number): number {
+  if (freeBytes === null) return FALLBACK_CAP_BYTES;
+  const usable = Math.max(0, freeBytes) + Math.max(0, usedBytes);
+  return Math.floor((usable * maxPercent) / 100);
+}
+
+async function capacityOf(entries: TimeCapsuleEntry[], maxPercent: number): Promise<CapsuleCapacity> {
+  const usedBytes = usedBytesOf(entries);
+  let freeBytes: number | null = null;
+  try {
+    freeBytes = (await diskUsage(appDataDir())).free;
+  } catch {
+    freeBytes = null; // reported honestly below rather than assumed
+  }
+  return {
+    usedBytes,
+    capBytes: capFor(freeBytes, usedBytes, maxPercent),
+    freeBytes,
+    maxPercent,
+    ...(freeBytes === null
+      ? { note: `Free space on this volume couldn’t be read, so the capsule is limited to ${formatBytes(FALLBACK_CAP_BYTES)} to be safe.` }
+      : {}),
+  };
+}
+
+/**
+ * Which entries must go for `incomingBytes` to fit, oldest capture first.
+ *
+ * Pure, and exported, because the interesting cases are all about ordering and
+ * refusal rather than about files: an item larger than the entire cap must be
+ * refused *without* evicting anything, or the capsule empties itself to make
+ * room for something that was never going to fit.
+ */
+export function planEviction(
+  entries: TimeCapsuleEntry[],
+  capBytes: number,
+  incomingBytes: number,
+): { evict: TimeCapsuleEntry[]; fits: boolean } {
+  if (incomingBytes > capBytes) return { evict: [], fits: false };
+
+  // Only entries whose removal frees something are worth sacrificing. A
+  // zero-byte payload still has a payload, but evicting it buys nothing.
+  const holding = entries.filter((e) => e.hasPayload && e.heldBytes > 0);
+  let used = holding.reduce((sum, e) => sum + e.heldBytes, 0);
+  if (used + incomingBytes <= capBytes) return { evict: [], fits: true };
+
+  const byAge = [...holding].sort((a, b) => a.capturedAt - b.capturedAt); // oldest first
+  const evict: TimeCapsuleEntry[] = [];
+  for (const entry of byAge) {
+    evict.push(entry);
+    used -= entry.heldBytes;
+    if (used + incomingBytes <= capBytes) break;
+  }
+  return { evict, fits: used + incomingBytes <= capBytes };
+}
+
+/** Delete an entry's payload and zero what it holds. The index record stays. */
+async function dropPayload(entry: TimeCapsuleEntry): Promise<void> {
+  await fsp.rm(entryDir(entry.id), { recursive: true, force: true });
+  entry.heldBytes = 0;
+  entry.hasPayload = false;
+}
+
+/* ---------------- capture ---------------- */
+
+/** A file, directory or symlink to be copied, discovered under the item. */
+interface WalkedMember {
+  abs: string;
+  rel: string;
+  kind: 'file' | 'dir' | 'symlink';
+  size: number;
+}
+
+/**
+ * Enumerate everything under `root` that has to be captured.
+ *
+ * Symlinks are recorded as links rather than followed. Following them would
+ * copy the target's bytes into the capsule and — for a link pointing at a
+ * parent — walk forever; recording the target reproduces the tree exactly on
+ * restore, which matters because the folders this protects (node_modules,
+ * virtualenvs) are full of them. Empty directories are recorded too, so a
+ * restored tree has the same shape and not merely the same files.
+ */
+async function walkItem(root: string): Promise<{ members: WalkedMember[]; bytes: number; isFolder: boolean }> {
+  const stat = await fsp.lstat(root);
+  if (stat.isSymbolicLink()) {
+    const target = await fsp.readlink(root);
+    return { members: [{ abs: root, rel: '', kind: 'symlink', size: Buffer.byteLength(target) }], bytes: 0, isFolder: false };
+  }
+  if (!stat.isDirectory()) {
+    return { members: [{ abs: root, rel: '', kind: 'file', size: stat.size }], bytes: stat.size, isFolder: false };
+  }
+
+  const members: WalkedMember[] = [];
+  let bytes = 0;
+  const queue: { abs: string; rel: string }[] = [{ abs: root, rel: '' }];
+  while (queue.length) {
+    const dir = queue.shift()!;
+    if (dir.rel) members.push({ abs: dir.abs, rel: dir.rel, kind: 'dir', size: 0 });
+    const dirents = await fsp.readdir(dir.abs, { withFileTypes: true });
+    for (const dirent of dirents) {
+      const abs = path.join(dir.abs, dirent.name);
+      const rel = dir.rel ? path.join(dir.rel, dirent.name) : dirent.name;
+      if (dirent.isSymbolicLink()) {
+        const target = await fsp.readlink(abs).catch(() => '');
+        members.push({ abs, rel, kind: 'symlink', size: Buffer.byteLength(target) });
+      } else if (dirent.isDirectory()) {
+        queue.push({ abs, rel });
+      } else if (dirent.isFile()) {
+        const st = await fsp.lstat(abs).catch(() => null);
+        if (!st) continue; // vanished mid-walk — nothing to protect
+        members.push({ abs, rel, kind: 'file', size: st.size });
+        bytes += st.size;
+      }
+      // Sockets, FIFOs and devices are deliberately skipped: they carry no
+      // content to restore, and pretending otherwise would hang the copy.
+      if (members.length > MAX_FILES_PER_ENTRY) {
+        throw new AppError(413, 'CAPSULE_ITEM_TOO_COMPLEX',
+          `That folder holds more than ${MAX_FILES_PER_ENTRY.toLocaleString()} items — too many to protect in one piece.`);
+      }
+    }
+  }
+  return { members, bytes, isFolder: true };
+}
+
+export interface ProtectionRequest {
+  path: string;
+  /** Why this was selected for deletion, in the rule's own words. */
+  reason?: string;
+}
+
+export interface ProtectionOutcome {
+  path: string;
+  protected: boolean;
+  entryId?: string;
+  bytes: number;
+  /** Stable code when protection was refused. */
+  code?: string;
+  /** User-facing explanation when protection was refused. */
+  detail?: string;
+}
+
+/**
+ * Copy one item into the capsule and verify every byte. Never trashes.
+ *
+ * `capBytes` is passed in rather than recomputed here because reading free
+ * space shells out to `df`, and doing that once per item would put a
+ * subprocess between every file of a hundred-item run. It is also the more
+ * correct number: the cap is a share of *usable* space, and copying an item
+ * into the capsule moves bytes from free into used without changing the sum,
+ * so the ceiling genuinely is constant for the duration of a run.
+ */
+async function capture(
+  store: CapsuleStore,
+  request: ProtectionRequest,
+  context: { runId: string; policyId?: string },
+  capBytes: number,
+): Promise<ProtectionOutcome> {
+  const original = request.path;
+  const name = path.basename(original);
+
+  let walked: { members: WalkedMember[]; bytes: number; isFolder: boolean };
+  try {
+    walked = await walkItem(original);
+  } catch (err) {
+    const detail = err instanceof AppError ? err.message : `It could not be read (${err instanceof Error ? err.message : String(err)}).`;
+    const code = err instanceof AppError ? err.code : 'CAPSULE_UNREADABLE';
+    // An item that has already vanished needs no warning — there is nothing
+    // left to protect and nothing was deleted. An item that is *there* but
+    // unreadable (permissions, an I/O error) is a real refusal, and the user
+    // should see it rather than wonder why that file never got cleaned up.
+    const alreadyGone = (err as NodeJS.ErrnoException)?.code === 'ENOENT';
+    if (!alreadyGone) {
+      recordEvent(store, { at: Date.now(), kind: 'unprotected', name, originalPath: original, sizeBytes: 0, detail });
+    }
+    return { path: original, protected: false, bytes: 0, code, detail };
+  }
+
+  const { evict, fits } = planEviction(store.entries, capBytes, walked.bytes);
+  if (!fits) {
+    const detail =
+      `Protecting it needs ${formatBytes(walked.bytes)}, but the Time Capsule can only hold ${formatBytes(capBytes)}. ` +
+      `It was left alone rather than deleted without a backup.`;
+    recordEvent(store, {
+      at: Date.now(), kind: 'unprotected', name, originalPath: original, sizeBytes: walked.bytes, detail,
+    });
+    return { path: original, protected: false, bytes: walked.bytes, code: 'CAPSULE_FULL', detail };
+  }
+
+  // Make room first — the eviction is real and permanent, so it is recorded
+  // where the user can see what it cost them.
+  for (const victim of evict) {
+    await dropPayload(victim);
+    recordEvent(store, {
+      at: Date.now(),
+      kind: 'evicted',
+      name: victim.name,
+      originalPath: victim.originalPath,
+      sizeBytes: victim.sizeBytes,
+      detail: `Removed from the Time Capsule to make room for ${name}. It can no longer be restored from here.`,
+    });
+  }
+
+  const id = crypto.randomUUID();
+  const dataRoot = payloadRoot(id);
+  try {
+    await fsp.mkdir(dataRoot, { recursive: true });
+    // A folder's own directory is created up front so an item that contains
+    // nothing at all still round-trips as a folder rather than vanishing.
+    if (walked.isFolder) await fsp.mkdir(path.join(dataRoot, name), { recursive: true });
+    const members: ManifestMember[] = [];
+
+    for (const member of walked.members) {
+      // '' means the item itself is a single file or link: it lands at
+      // data/<name>, so the payload keeps its real name on disk.
+      const destRel = member.rel === '' ? name : path.join(name, member.rel);
+      const dest = path.join(dataRoot, destRel);
+
+      if (member.kind === 'dir') {
+        await fsp.mkdir(dest, { recursive: true });
+        members.push({ rel: member.rel, kind: 'dir', size: 0, hash: '' });
+        continue;
+      }
+      if (member.kind === 'symlink') {
+        const target = await fsp.readlink(member.abs);
+        await fsp.mkdir(path.dirname(dest), { recursive: true });
+        await fsp.symlink(target, dest);
+        members.push({
+          rel: member.rel,
+          kind: 'symlink',
+          size: Buffer.byteLength(target),
+          hash: crypto.createHash('sha256').update(target).digest('hex'),
+          target,
+        });
+        continue;
+      }
+
+      await fsp.mkdir(path.dirname(dest), { recursive: true });
+      const hash = await copyWithHash(member.abs, dest);
+      // Read back what actually landed. Hashing the source twice would agree
+      // with itself even if the write was short or corrupted.
+      const verify = await hashFile(dest);
+      if (verify !== hash) {
+        throw new Error(`the copy of ${member.rel || name} did not match what was read`);
+      }
+      members.push({ rel: member.rel, kind: 'file', size: member.size, hash });
+    }
+
+    const manifest: EntryManifest = { originalPath: original, name, members };
+    await fsp.writeFile(path.join(entryDir(id), 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
+
+    const entry: TimeCapsuleEntry = {
+      id,
+      name,
+      originalPath: original,
+      kind: walked.isFolder ? 'folder' : 'file',
+      sizeBytes: walked.bytes,
+      heldBytes: walked.bytes,
+      hasPayload: true,
+      fileCount: members.filter((m) => m.kind === 'file').length,
+      digest: digestOf(members),
+      capturedAt: Date.now(),
+      runId: context.runId,
+      ...(context.policyId ? { policyId: context.policyId } : {}),
+      ...(request.reason ? { reason: request.reason } : {}),
+    };
+    store.entries.push(entry);
+    return { path: original, protected: true, entryId: id, bytes: walked.bytes };
+  } catch (err) {
+    // A half-written capture protects nothing. Remove it entirely so the
+    // caller cannot mistake it for cover, and so reconcile has nothing to find.
+    await fsp.rm(entryDir(id), { recursive: true, force: true }).catch(() => {});
+    const detail = `It could not be copied into the Time Capsule (${err instanceof Error ? err.message : String(err)}), so it was left alone.`;
+    recordEvent(store, {
+      at: Date.now(), kind: 'unprotected', name, originalPath: original, sizeBytes: walked.bytes, detail,
+    });
+    return { path: original, protected: false, bytes: walked.bytes, code: 'CAPSULE_COPY_FAILED', detail };
+  }
+}
+
+/** One fingerprint over every member, order-independent of the walk. */
+function digestOf(members: ManifestMember[]): string {
+  const lines = members
+    .map((m) => `${m.kind}:${m.rel}:${m.hash}`)
+    .sort()
+    .join('\n');
+  return crypto.createHash('sha256').update(lines).digest('hex');
+}
+
+export interface ProtectAndTrashResult {
+  runId: string;
+  /** Every request, protected or not. */
+  outcomes: ProtectionOutcome[];
+  /** Paths that were protected and are now in the Trash. */
+  trashed: string[];
+  /** Protected, but the Trash refused them; their capsule copies were dropped. */
+  failedToTrash: { path: string; reason: string }[];
+  /** Requests that were NOT deleted because they could not be protected. */
+  skipped: ProtectionOutcome[];
+  bytesProtected: number;
+}
+
+/**
+ * Copy items into the capsule and verify them. **Trashes nothing.**
+ *
+ * Separate from `protectAndTrash` so the capture half can be exercised — by
+ * tests, and by anything that wants to know what protection would cost —
+ * without a deletion happening. It is not a way to delete things: it has no
+ * delete in it at all.
+ */
+export async function protectItems(
+  requests: ProtectionRequest[],
+  context: { runId?: string; policyId?: string } = {},
+): Promise<{ runId: string; outcomes: ProtectionOutcome[] }> {
+  const runId = context.runId ?? crypto.randomUUID();
+  const settings = await getSettings();
+
+  const store = await loadStore();
+  const capacity = await capacityOf(store.entries, settings.timeCapsuleMaxPercent);
+  const outcomes: ProtectionOutcome[] = [];
+  for (const request of requests) {
+    outcomes.push(await capture(store, request, { runId, policyId: context.policyId }, capacity.capBytes));
+  }
+  // Persist the captures before anything is deleted. If the process dies at
+  // this instant, the capsule holds copies of files that still exist — wasteful
+  // but harmless. The opposite order could delete a file whose protection was
+  // never recorded.
+  await saveStore(store);
+  return { runId, outcomes };
+}
+
+/**
+ * The one entry point for automated deletion: copy → verify → Trash.
+ *
+ * Everything that could not be protected is simply not deleted, and says why.
+ * The Trash step goes through the existing `Cleaner`, so B2's open-file guard
+ * applies here exactly as it does to a manual delete — there is no second
+ * deletion pathway (§10).
+ */
+export async function protectAndTrash(
+  requests: ProtectionRequest[],
+  context: { runId?: string; policyId?: string } = {},
+): Promise<ProtectAndTrashResult> {
+  const { runId, outcomes } = await protectItems(requests, context);
+
+  const protectedOutcomes = outcomes.filter((o) => o.protected);
+  const paths = protectedOutcomes.map((o) => o.path);
+
+  let trashed: string[] = [];
+  let failedToTrash: { path: string; reason: string }[] = [];
+  if (paths.length > 0) {
+    try {
+      const result = await moveToTrash(paths);
+      trashed = result.deleted;
+      failedToTrash = result.failed;
+    } catch (err) {
+      // B2 refused the whole batch (something is open). Nothing was deleted,
+      // so every copy just made is holding space for a file that still exists.
+      failedToTrash = paths.map((p) => ({ path: p, reason: err instanceof Error ? err.message : String(err) }));
+    }
+  }
+
+  if (failedToTrash.length > 0) {
+    const fresh = await loadStore();
+    const failedPaths = new Set(failedToTrash.map((f) => f.path));
+    for (const outcome of protectedOutcomes) {
+      if (!failedPaths.has(outcome.path)) continue;
+      const entry = fresh.entries.find((e) => e.id === outcome.entryId);
+      if (entry) {
+        await dropPayload(entry);
+        fresh.entries = fresh.entries.filter((e) => e.id !== entry.id);
+      }
+      outcome.protected = false;
+      outcome.code = 'NOT_DELETED';
+      outcome.detail = 'It was copied, but the delete did not happen — so the copy was discarded and the original is untouched.';
+    }
+    await saveStore(fresh);
+  }
+
+  const stillProtected = outcomes.filter((o) => o.protected);
+  return {
+    runId,
+    outcomes,
+    trashed,
+    failedToTrash,
+    skipped: outcomes.filter((o) => !o.protected),
+    bytesProtected: stillProtected.reduce((sum, o) => sum + o.bytes, 0),
+  };
+}
+
+/* ---------------- index (Time Capsule tab) ---------------- */
+
+async function statusOf(store: CapsuleStore): Promise<TimeCapsuleStatus> {
+  const settings = await getSettings();
+  const capacity = await capacityOf(store.entries, settings.timeCapsuleMaxPercent);
+
+  let available = true;
+  let reason = capacity.note;
+  try {
+    await fsp.mkdir(capsuleRoot(), { recursive: true });
+  } catch (err) {
+    available = false;
+    reason = `The Time Capsule folder can’t be created (${err instanceof Error ? err.message : String(err)}), so automatic deletions cannot be protected.`;
+  }
+
+  return {
+    usedBytes: capacity.usedBytes,
+    capBytes: capacity.capBytes,
+    freeBytes: capacity.freeBytes,
+    retentionDays: settings.timeCapsuleRetentionDays,
+    maxPercent: settings.timeCapsuleMaxPercent,
+    entryCount: store.entries.length,
+    restorableCount: store.entries.filter((e) => e.hasPayload).length,
+    available,
+    ...(reason ? { reason } : {}),
+  };
+}
+
+export async function getCapsuleIndex(): Promise<TimeCapsuleIndex> {
+  const store = await loadStore();
+  return {
+    status: await statusOf(store),
+    entries: [...store.entries].sort((a, b) => b.capturedAt - a.capturedAt),
+    events: store.events,
+  };
+}
+
+export async function getCapsuleEntry(id: string): Promise<TimeCapsuleEntry | undefined> {
+  const store = await loadStore();
+  return store.entries.find((e) => e.id === id);
+}
+
+/** Forget one entry and its payload, at the user's request. */
+export async function deleteCapsuleEntry(id: string): Promise<{ deleted: boolean; bytesFreed: number }> {
+  const store = await loadStore();
+  const entry = store.entries.find((e) => e.id === id);
+  if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
+  const bytesFreed = entry.heldBytes;
+  await dropPayload(entry);
+  store.entries = store.entries.filter((e) => e.id !== id);
+  await saveStore(store);
+  return { deleted: true, bytesFreed };
+}
+
+/* ---------------- retention + reconciliation ---------------- */
+
+/** Sweep out everything past the retention window. Returns how many went. */
+export async function pruneExpired(now = Date.now()): Promise<{ removed: number; bytesFreed: number }> {
+  const { timeCapsuleRetentionDays } = await getSettings();
+  const cutoff = now - timeCapsuleRetentionDays * 86_400_000;
+
+  const store = await loadStore();
+  const expired = store.entries.filter((e) => e.capturedAt < cutoff);
+  if (expired.length === 0) return { removed: 0, bytesFreed: 0 };
+
+  let bytesFreed = 0;
+  for (const entry of expired) {
+    bytesFreed += entry.heldBytes;
+    await dropPayload(entry);
+    recordEvent(store, {
+      at: now,
+      kind: 'expired',
+      name: entry.name,
+      originalPath: entry.originalPath,
+      sizeBytes: entry.sizeBytes,
+      detail: `Kept for ${timeCapsuleRetentionDays} days, then removed from the Time Capsule.`,
+    });
+  }
+  store.entries = store.entries.filter((e) => e.capturedAt >= cutoff);
+  await saveStore(store);
+  return { removed: expired.length, bytesFreed };
+}
+
+/**
+ * Reconcile the index against what is actually on disk.
+ *
+ * Two directions, both real after a crash or a hand-edited app-data folder:
+ * payload directories with no index entry are unreferenced bytes and are
+ * removed; index entries whose payload has gone are downgraded to
+ * "no longer restorable" and say so, rather than offering a Restore button
+ * that cannot work.
+ */
+export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entriesLost: number }> {
+  const root = capsuleRoot();
+  await fsp.mkdir(root, { recursive: true }).catch(() => {});
+  const store = await loadStore();
+
+  const known = new Set(store.entries.map((e) => e.id));
+  let orphansRemoved = 0;
+  const onDisk = await fsp.readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const dirent of onDisk) {
+    if (!dirent.isDirectory() || known.has(dirent.name)) continue;
+    const orphanCapsuleDir = path.join(root, dirent.name);
+    await fsp.rm(orphanCapsuleDir, { recursive: true, force: true }).catch(() => {});
+    orphansRemoved++;
+  }
+
+  let entriesLost = 0;
+  for (const entry of store.entries) {
+    if (!entry.hasPayload) continue;
+    const exists = await fsp.stat(entryDir(entry.id)).then(() => true).catch(() => false);
+    if (exists) continue;
+    entry.heldBytes = 0;
+    entry.hasPayload = false;
+    entriesLost++;
+    recordEvent(store, {
+      at: Date.now(),
+      kind: 'lost',
+      name: entry.name,
+      originalPath: entry.originalPath,
+      sizeBytes: entry.sizeBytes,
+      detail: 'Its copy is missing from the Time Capsule folder, so it can no longer be restored.',
+    });
+  }
+
+  if (orphansRemoved > 0 || entriesLost > 0) await saveStore(store);
+  return { orphansRemoved, entriesLost };
+}
+
+let maintenanceTimer: NodeJS.Timeout | null = null;
+
+/** Start the background sweep (retention + reconciliation). */
+export function startCapsuleMaintenance(): void {
+  if (maintenanceTimer) return;
+  maintenanceTimer = setInterval(() => {
+    void pruneExpired().catch((err: unknown) => console.error('[treemap] capsule prune failed:', err));
+  }, MAINTENANCE_INTERVAL_MS);
+  maintenanceTimer.unref(); // never keeps the process alive on its own
+  void reconcileCapsule().catch((err: unknown) => console.error('[treemap] capsule reconcile failed:', err));
+  void pruneExpired().catch((err: unknown) => console.error('[treemap] capsule prune failed:', err));
+}
+
+export function stopCapsuleMaintenance(): void {
+  if (maintenanceTimer) {
+    clearInterval(maintenanceTimer);
+    maintenanceTimer = null;
+  }
+}
+
+/* ---------------- restore ---------------- */
+
+const jobs = new Map<string, TimeCapsuleJob>();
+
+function pruneJobs(): void {
+  const now = Date.now();
+  for (const [id, job] of jobs) {
+    if (job.status !== 'running' && now - (job.finishedAt ?? job.startedAt) > JOB_TTL_MS) jobs.delete(id);
+  }
+}
+
+export function getCapsuleJob(jobId: string): TimeCapsuleJob | undefined {
+  return jobs.get(jobId);
+}
+
+export function cancelCapsuleJob(jobId: string): boolean {
+  const job = jobs.get(jobId);
+  if (!job || job.status !== 'running') return false;
+  job.cancelled = true;
+  return true;
+}
+
+export function cancelAllCapsuleJobs(): void {
+  for (const job of jobs.values()) if (job.status === 'running') job.cancelled = true;
+}
+
+async function readManifest(id: string): Promise<EntryManifest> {
+  const raw = await fsp.readFile(path.join(entryDir(id), 'manifest.json'), 'utf8');
+  return JSON.parse(raw) as EntryManifest;
+}
+
+/**
+ * Copy an entry back to where it came from, re-verifying every byte.
+ *
+ * Refuses when something already occupies the original path: overwriting is
+ * how a "restore" turns into data loss, and the user can move the current file
+ * aside themselves if that is what they meant. Mirrors Offload's restore.
+ */
+export async function startCapsuleRestore(id: string): Promise<TimeCapsuleJob> {
+  pruneJobs();
+  const store = await loadStore();
+  const entry = store.entries.find((e) => e.id === id);
+  if (!entry) throw new AppError(404, 'ENTRY_NOT_FOUND', 'That item is no longer in the Time Capsule');
+  if (entry.restoredAt) throw new AppError(409, 'ALREADY_RESTORED', 'That item has already been restored');
+  if (!entry.hasPayload) {
+    throw new AppError(409, 'PAYLOAD_GONE', 'The Time Capsule no longer holds a copy of that item');
+  }
+  const occupied = await fsp.lstat(entry.originalPath).then(() => true).catch(() => false);
+  if (occupied) {
+    throw new AppError(409, 'PATH_OCCUPIED',
+      `Something already exists at ${entry.originalPath}. Move it aside first — restoring will never overwrite what is there now.`);
+  }
+
+  const manifest = await readManifest(id).catch(() => null);
+  if (!manifest) {
+    throw new AppError(409, 'MANIFEST_UNREADABLE', 'The record of what was captured can’t be read, so this item can’t be verified on restore');
+  }
+
+  const job: TimeCapsuleJob = {
+    jobId: crypto.randomUUID(),
+    entryId: id,
+    status: 'running',
+    phase: 'copying',
+    fileCount: manifest.members.filter((m) => m.kind === 'file').length,
+    filesDone: 0,
+    bytesTotal: entry.sizeBytes,
+    bytesDone: 0,
+    currentPath: '',
+    cancelled: false,
+    startedAt: Date.now(),
+  };
+  jobs.set(job.jobId, job);
+
+  void runRestore(job, entry, manifest).catch((err: unknown) => {
+    job.status = job.cancelled ? 'cancelled' : 'error';
+    job.error = err instanceof Error ? err.message : String(err);
+    job.finishedAt = Date.now();
+  });
+  return job;
+}
+
+async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest: EntryManifest): Promise<void> {
+  const dataRoot = payloadRoot(entry.id);
+  // Named for the invariant that makes removing them safe: every path in
+  // these lists was created by THIS restore, moments ago. Nothing here ever
+  // removes a file that existed before the restore started — the occupied-path
+  // check refuses outright rather than clearing the way.
+  const writtenByThisRestore: string[] = [];
+  const dirsCreatedByThisRestore: string[] = [];
+
+  try {
+    await fsp.mkdir(path.dirname(entry.originalPath), { recursive: true });
+    // The item's own directory comes first, so a folder that held nothing at
+    // all still comes back as a folder rather than as nothing.
+    if (entry.kind === 'folder') {
+      await fsp.mkdir(entry.originalPath, { recursive: true });
+      dirsCreatedByThisRestore.push(entry.originalPath);
+    }
+    // Then its subdirectories, so file writes never race their own parents.
+    for (const member of manifest.members.filter((m) => m.kind === 'dir')) {
+      const dest = path.join(entry.originalPath, member.rel);
+      await fsp.mkdir(dest, { recursive: true });
+      dirsCreatedByThisRestore.push(dest);
+    }
+
+    for (const member of manifest.members) {
+      if (job.cancelled) throw new CopyCancelled();
+      if (member.kind === 'dir') continue;
+
+      const from = path.join(dataRoot, member.rel === '' ? manifest.name : path.join(manifest.name, member.rel));
+      const dest = member.rel === '' ? entry.originalPath : path.join(entry.originalPath, member.rel);
+      await fsp.mkdir(path.dirname(dest), { recursive: true });
+
+      if (member.kind === 'symlink') {
+        await fsp.symlink(member.target ?? '', dest);
+        writtenByThisRestore.push(dest);
+        continue;
+      }
+
+      job.phase = 'copying';
+      job.currentPath = dest;
+      const hash = await copyWithHash(from, dest, {
+        onBytes: (n) => { job.bytesDone += n; },
+        isCancelled: () => job.cancelled,
+      });
+      writtenByThisRestore.push(dest);
+
+      job.phase = 'verifying';
+      if (hash !== member.hash) {
+        throw new Error(`${member.rel || manifest.name} no longer matches the fingerprint recorded when it was protected`);
+      }
+      job.filesDone++;
+    }
+
+    // Restored successfully: the bytes live at their real home again, so the
+    // capsule copy is redundant and giving its space back is the honest move.
+    const store = await loadStore();
+    const live = store.entries.find((e) => e.id === entry.id);
+    if (live) {
+      live.restoredAt = Date.now();
+      await dropPayload(live);
+    }
+    await saveStore(store);
+
+    job.phase = 'done';
+    job.status = 'complete';
+    job.finishedAt = Date.now();
+  } catch (err) {
+    // Leave nothing half-restored at the destination, and keep the capsule copy
+    // so the user can try again once they've fixed whatever failed.
+    job.phase = 'rolling-back';
+    for (const writtenByThisRestore_file of writtenByThisRestore.reverse()) {
+      await fsp.rm(writtenByThisRestore_file, { force: true }).catch(() => {});
+    }
+    for (const dirsCreatedByThisRestore_dir of [...dirsCreatedByThisRestore].sort((a, b) => b.length - a.length)) {
+      // rmdir, not rm -r: it removes the directory only if it ended up empty,
+      // so anything that was not ours is left exactly where it is.
+      await fsp.rmdir(dirsCreatedByThisRestore_dir).catch(() => {});
+    }
+
+    job.status = err instanceof CopyCancelled || job.cancelled ? 'cancelled' : 'error';
+    if (job.status === 'error') job.error = err instanceof Error ? err.message : String(err);
+    job.phase = 'done';
+    job.finishedAt = Date.now();
+  }
+}

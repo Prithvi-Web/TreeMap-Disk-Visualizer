@@ -459,6 +459,10 @@ export interface AppSettings {
   forecastThresholdDays: number;
   /** Live activity mode auto-pauses after this many minutes without events. */
   watchIdleMinutes: number;
+  /** Time Capsule keeps automatically-deleted items restorable this long (B3). */
+  timeCapsuleRetentionDays: number;
+  /** Ceiling on the capsule, as a percentage of the volume's usable space. */
+  timeCapsuleMaxPercent: number;
   /** Cloud provider app credentials (tokens live in cloud-tokens.json). */
   cloud: Partial<Record<'gdrive' | 'dropbox' | 'onedrive', CloudCredentials>>;
 }
@@ -528,6 +532,116 @@ export interface OffloadJob {
 /** Events streamed over the offload SSE progress endpoint. */
 export type OffloadStreamEvent =
   | { type: 'progress'; phase: OffloadPhase; filesDone: number; fileCount: number; bytesDone: number; bytesTotal: number; currentPath: string }
+  | { type: 'complete'; filesDone: number; bytesDone: number }
+  | { type: 'error'; message: string }
+  | { type: 'cancelled' }
+  | { type: 'shutdown' };
+
+/* ---------- Time Capsule (B3) ---------- */
+
+export type TimeCapsuleKind = 'file' | 'folder';
+
+/** One protected item: what was copied aside before an automated delete. */
+export interface TimeCapsuleEntry {
+  id: string;
+  /** Basename, for search and display. */
+  name: string;
+  originalPath: string;
+  kind: TimeCapsuleKind;
+  /** Size of the item when it was captured — never changes, so the panel can
+   *  still say how big a restored or evicted item was. */
+  sizeBytes: number;
+  /** Bytes the capsule is holding right now: 0 once restored or evicted. This
+   *  is what counts against the cap. */
+  heldBytes: number;
+  /**
+   * Whether the capsule still has a copy to give back.
+   *
+   * Separate from `heldBytes` because zero bytes is a perfectly good payload:
+   * an empty folder and a zero-byte file both hold nothing and must both still
+   * restore. Reading emptiness as absence made them permanently unrestorable.
+   */
+  hasPayload: boolean;
+  fileCount: number;
+  /** SHA-256 of the entry's file manifest — one hash for a file, a digest over
+   *  every member for a folder. */
+  digest: string;
+  capturedAt: number;
+  /** Groups everything one automated run protected. */
+  runId?: string;
+  /** The autopilot policy that selected it (B1). */
+  policyId?: string;
+  /** Why it was deleted, in the rule's own words. */
+  reason?: string;
+  /** Set once copied back to its original path and re-verified. */
+  restoredAt?: number;
+}
+
+/**
+ * Something that happened to the capsule's contents without the user asking.
+ * Surfaced in the panel: protection that was withheld or withdrawn is never
+ * allowed to be silent (§B3).
+ */
+export type TimeCapsuleEventKind = 'evicted' | 'expired' | 'unprotected' | 'lost';
+
+export interface TimeCapsuleEvent {
+  at: number;
+  kind: TimeCapsuleEventKind;
+  name: string;
+  originalPath: string;
+  sizeBytes: number;
+  /** Plain-language explanation, written to go straight on screen. */
+  detail: string;
+}
+
+export interface TimeCapsuleStatus {
+  /** Bytes currently held (sum of every entry's heldBytes). */
+  usedBytes: number;
+  /** Ceiling, derived from the volume's capacity and the user's percentage. */
+  capBytes: number;
+  /** Free space on the volume holding the capsule; null when unreadable. */
+  freeBytes: number | null;
+  retentionDays: number;
+  maxPercent: number;
+  entryCount: number;
+  /** Entries still holding a payload, i.e. restorable right now. */
+  restorableCount: number;
+  /** False when the capsule cannot be used at all; `reason` says why. */
+  available: boolean;
+  reason?: string;
+}
+
+export interface TimeCapsuleIndex {
+  status: TimeCapsuleStatus;
+  /** Newest first. */
+  entries: TimeCapsuleEntry[];
+  /** Newest first, bounded. */
+  events: TimeCapsuleEvent[];
+}
+
+export type TimeCapsuleJobStatus = 'running' | 'complete' | 'error' | 'cancelled';
+export type TimeCapsulePhase = 'copying' | 'verifying' | 'rolling-back' | 'done';
+
+/** Mutable record of one restore job (progress via SSE). */
+export interface TimeCapsuleJob {
+  jobId: string;
+  entryId: string;
+  status: TimeCapsuleJobStatus;
+  phase: TimeCapsulePhase;
+  fileCount: number;
+  filesDone: number;
+  bytesTotal: number;
+  bytesDone: number;
+  currentPath: string;
+  error?: string;
+  cancelled: boolean;
+  startedAt: number;
+  finishedAt?: number;
+}
+
+/** Events streamed over the Time Capsule SSE progress endpoint. */
+export type TimeCapsuleStreamEvent =
+  | { type: 'progress'; phase: TimeCapsulePhase; filesDone: number; fileCount: number; bytesDone: number; bytesTotal: number; currentPath: string }
   | { type: 'complete'; filesDone: number; bytesDone: number }
   | { type: 'error'; message: string }
   | { type: 'cancelled' }

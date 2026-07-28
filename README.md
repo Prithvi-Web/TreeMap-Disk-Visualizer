@@ -27,7 +27,7 @@
 <br><br>
 
 <kbd><a href="#-download-the-app-for-users">⬇ Download</a></kbd> &nbsp;
-<kbd><a href="#-the-ten-views">✨ Features</a></kbd> &nbsp;
+<kbd><a href="#-the-eleven-views">✨ Features</a></kbd> &nbsp;
 <kbd><a href="#-run-from-source--web-mode-3-commands">🚀 Run it</a></kbd> &nbsp;
 <kbd><a href="#-use-it-with-ai-mcp">🤖 AI / MCP</a></kbd> &nbsp;
 <kbd><a href="#-api-overview">🔌 API</a></kbd> &nbsp;
@@ -56,12 +56,12 @@
 
 <br>
 
-## ✨ The ten views
+## ✨ The eleven views
 
-TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Ten views, one zero-dependency frontend.
+TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Eleven views, one zero-dependency frontend.
 
 <div align="center">
-  <img src="views.svg" width="100%" alt="The ten views: Dashboard, Treemap, Grid, Apps, Duplicates, Trends, Compare, Clean Up, Offloaded, Scheduled + Ignore">
+  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Grid, Apps, Duplicates, Trends, Compare, Clean Up, Offloaded, Time Capsule, Scheduled + Ignore">
 </div>
 
 <br>
@@ -130,6 +130,14 @@ Pick any two scans of the same folder for a file-level diff: **added, removed, g
 The third option next to *keep* and *trash*: **Offload…** copies files to another drive, **verifies every byte** (SHA-256, read back from the destination), and only then moves the originals to the Trash — never a bare move; any failure rolls back cleanly. This tab is the searchable index of everything offloaded, with per-destination totals, reveal-on-destination, and verified **Restore**. Unplugged drives show grayed out with a last-seen date.
 
 </td>
+<td width="50%" valign="top">
+
+### 🕰️ Time Capsule
+The safety net for deletions **you didn't watch happen**. Before TreeMap ever deletes something automatically, it copies it here, **verifies every byte** (SHA-256), and only then moves the original to the Trash — so emptying the Trash doesn't lose it. Searchable and grouped by run, with one-click verified **Restore** back to the exact original path (never overwriting anything that's there now). It can't fill your disk: a size cap (default 10%) evicts the oldest copies first, and anything too big to protect is **left undeleted rather than deleted unprotected** — with the reason shown, never hidden in a log. Copies are kept 30 days by default; both numbers are in Settings. Files *you* delete go to the Trash as usual and aren't copied here.
+
+</td>
+</tr>
+<tr>
 <td width="50%" valign="top">
 
 ### ⏰ Scheduled scans + 🚫 Ignore list
@@ -278,6 +286,9 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 | `GET /api/cleanup/browser-profiles?scanId=` | Per-browser-profile cache breakdown |
 | `GET /api/git/repos?scanId=` · `POST /api/git/gc` | Git pack/loose/LFS breakdown, and `git gc` a scanned repo |
 | `GET /api/system/snapshots` · `POST …/purge` | OS snapshot accounting (APFS / Btrfs / VSS) |
+| `GET /api/timecapsule` | Items copied aside before an automated delete, with capacity + history |
+| `POST /api/timecapsule/:id/restore` · `DELETE /api/timecapsule/:id` | Verified restore to the original path (202 + SSE job), or forget one copy |
+| `GET /api/timecapsule/jobs/:jobId/progress` | Restore progress (Server-Sent Events), cancellable |
 | `GET /api/settings` · `PUT /api/settings` | Ignore list, scheduled scans + folder budgets |
 | `GET /api/notifications` | Growth alerts from scheduled scans |
 | `GET /api/system` · `GET /api/trash/size` | Disk totals & platform; system Trash size |

@@ -874,6 +874,19 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 #confirmOpenHandles li { margin-top: 2px; }
 #confirmOpenHandles .oh-file { color: var(--text-3); }
 
+/* ── Time Capsule (B3) ── */
+.capsule-gauge { display: flex; align-items: center; gap: 12px; margin: 2px 0 14px; }
+.capsule-gauge .bar-track { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.capsule-gauge .bar { height: 100%; border-radius: 3px; background: var(--accent); transition: width .3s ease; }
+.capsule-gauge .muted { flex: none; font-size: 11.5px; }
+#capsuleBody .cap-item .why { font-size: 11px; color: var(--text-3); font-style: italic; }
+#capsuleBody .cap-gone { opacity: 0.55; }
+#capsuleEvents { margin-top: 14px; border-top: 1px solid var(--hairline); padding-top: 10px; }
+#capsuleEvents .cap-ev { display: flex; gap: 8px; align-items: flex-start; padding: 4px 2px; font-size: 11.5px; color: var(--text-3); line-height: 1.45; }
+#capsuleEvents .cap-ev b { color: var(--text-2); font-weight: 600; }
+#capsuleEvents h3 { font-size: 11px; font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase;
+  color: var(--text-3); margin: 0 0 4px; }
+
 /* ── Disk topology (A5) ── */
 #topologyBody .topo-disk { padding: 8px 10px 6px; border-radius: var(--r-sm); }
 #topologyBody .topo-disk + .topo-disk { margin-top: 8px; border-top: 1px solid var(--hairline); }
@@ -1096,6 +1109,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     <button role="tab" aria-selected="false" data-view="trends"><span data-icon="trendUp"></span>Trends</button>
     <button role="tab" aria-selected="false" data-view="compare"><span data-icon="diff"></span>Compare</button>
     <button role="tab" aria-selected="false" data-view="offloaded"><span data-icon="archive"></span>Offloaded</button>
+    <button role="tab" aria-selected="false" data-view="capsule"><span data-icon="clock"></span>Time Capsule</button>
   </nav>
   <div class="header-right">
     <!-- A4: global search. Lives in the header, not in a view, because it
@@ -1428,6 +1442,26 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       <div id="offloadBody"><div class="muted">Nothing offloaded yet — right-click any file or folder and choose <b>Offload…</b> to move it to another drive with copy-and-verify safety.</div></div>
     </div>
   </section>
+
+  <!-- ═══════════ Time Capsule (B3) ═══════════ -->
+  <section class="view" id="view-capsule" role="tabpanel" aria-label="Time Capsule" hidden>
+    <div class="card glass">
+      <h2><span data-icon="clock"></span>Time Capsule</h2>
+      <div class="apps-info muted" id="capsuleInfo"></div>
+      <div class="capsule-gauge" id="capsuleGauge" hidden>
+        <div class="bar-track"><div class="bar" id="capsuleBar"></div></div>
+        <div class="muted num" id="capsuleGaugeText"></div>
+      </div>
+      <div class="rule-row" style="margin-bottom:10px;">
+        <div class="field" style="flex:1;max-width:420px;">
+          <span data-icon="search"></span>
+          <input type="text" id="capsuleSearch" placeholder="Search by name or original path…" aria-label="Search protected items" autocomplete="off">
+        </div>
+      </div>
+      <div id="capsuleBody"></div>
+      <div id="capsuleEvents"></div>
+    </div>
+  </section>
 </main>
 
 <!-- ═══════════ Selection toolbar ═══════════ -->
@@ -1453,7 +1487,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       <div class="muted" id="offloadCurrent" style="margin-top:4px;word-break:break-all;font-size:11.5px;"></div>
     </div>
     <div class="modal-foot">
-      <span class="muted" style="font-size:11.5px;">Nothing is removed until every copy is verified.</span>
+      <span class="muted" id="offloadFoot" style="font-size:11.5px;">Nothing is removed until every copy is verified.</span>
       <div style="flex:1"></div>
       <button class="btn" id="offloadCancelBtn"><span data-icon="x"></span>Cancel</button>
     </div>
@@ -1623,6 +1657,19 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <span data-icon="clock"></span><label for="watchIdleMin">Auto-pause after</label>
         <input type="number" id="watchIdleMin" min="1" max="120" value="10" aria-label="Live mode idle auto-pause in minutes">
         <span class="muted">minutes without disk activity</span>
+      </div>
+
+      <div class="set-h" style="margin-top:22px;"><span data-icon="clock"></span>Time Capsule</div>
+      <div class="muted" style="margin-bottom:10px;">Before TreeMap deletes anything <b>automatically</b>, it keeps a verified copy here — so you can get it back even after emptying the Trash. Files you delete yourself aren't copied.</div>
+      <div class="rule-row">
+        <span data-icon="clock"></span><label for="capsuleRetentionDays">Keep copies for</label>
+        <input type="number" id="capsuleRetentionDays" min="1" max="365" value="30" aria-label="How many days to keep Time Capsule copies">
+        <span class="muted">days</span>
+      </div>
+      <div class="rule-row" style="margin-top:8px;">
+        <span data-icon="gauge"></span><label for="capsuleMaxPercent">Never use more than</label>
+        <input type="number" id="capsuleMaxPercent" min="1" max="90" value="10" aria-label="Time Capsule size cap as a percentage of disk space">
+        <span class="muted">% of this disk — oldest copies go first, and anything too big to fit is left undeleted rather than deleted unprotected</span>
       </div>
 
       <div class="set-h" style="margin-top:22px;"><span data-icon="cloud"></span>Cloud accounts</div>
@@ -2058,6 +2105,7 @@ const state = {
   apps: { loadedFor: null, list: [], otherBytes: 0, totalBytes: 0, appsFolderScanned: false },
   live: { on: false, wanted: false, es: null, engine: '', idleMinutes: 10, pulses: new Map(), window: [], dirty: 0, feedTimer: 0, relayoutTimer: 0, pulseRaf: 0 },
   offload: { index: null, q: '' },
+  capsule: { index: null, q: '' },
   cloud: { providers: [], loaded: false },
   donut: { segs: [], hover: -1, animated: false },
   dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
@@ -5380,7 +5428,8 @@ const OFFLOAD_PHASE_LABEL = {
   'rolling-back': 'Undoing partial copies…',
   done: 'Done',
 };
-let offloadJobId = null;
+/** The job the shared progress modal is currently showing, with its cancel URL. */
+let activeJob = null;
 
 /** Entry point for every "Offload…" action: pick a destination, then run. */
 function startOffloadFlow(paths) {
@@ -5425,16 +5474,25 @@ async function runRestoreJob(ids) {
 }
 
 /** Progress modal driven by the job's SSE stream. */
-function watchOffloadJob(jobId, title, onComplete) {
-  offloadJobId = jobId;
-  $('offloadTitle').innerHTML = icon('archive', 18) + title;
+/**
+ * Drive the shared progress modal from any copy-and-verify job's SSE stream.
+ *
+ * Offload and Time Capsule restore are the same shape — phases, per-file
+ * progress, cooperative cancel, rollback — so they share one implementation
+ * and one dialog rather than each rendering its own (§3.4). Only the URLs and
+ * the wording differ, which is what `opts` carries.
+ */
+function watchJob(opts) {
+  activeJob = { cancelUrl: opts.cancelUrl };
+  $('offloadTitle').innerHTML = icon(opts.icon || 'archive', 18) + opts.title;
   $('offloadPhase').textContent = OFFLOAD_PHASE_LABEL.checking;
   $('offloadBar').style.width = '0%';
   $('offloadStats').textContent = '';
   $('offloadCurrent').textContent = '';
+  $('offloadFoot').textContent = opts.footNote;
   $('offloadModal').classList.add('open');
-  const es = new EventSource(`/api/offload/${jobId}/progress`);
-  const done = () => { es.close(); offloadJobId = null; closeModal('offloadModal'); };
+  const es = new EventSource(opts.progressUrl);
+  const done = () => { es.close(); activeJob = null; closeModal('offloadModal'); };
   es.onmessage = (m) => {
     const ev = JSON.parse(m.data);
     if (ev.type === 'progress') {
@@ -5445,29 +5503,46 @@ function watchOffloadJob(jobId, title, onComplete) {
       $('offloadCurrent').textContent = ev.currentPath;
     } else if (ev.type === 'complete') {
       done();
-      onComplete(ev);
+      opts.onComplete(ev);
     } else if (ev.type === 'error') {
       done();
       toast(ev.message, 'error', 8000);
-      loadOffloadIndex();
+      opts.onSettled();
     } else if (ev.type === 'cancelled') {
       done();
-      toast('Offload cancelled — everything rolled back, nothing was deleted');
+      toast(opts.cancelledMessage);
+      opts.onSettled();
     } else if (ev.type === 'shutdown') {
       done();
       toast('Server shutting down — the job rolled back safely', 'error');
+      opts.onSettled();
     }
   };
   es.onerror = () => {
     if (es.readyState === EventSource.CLOSED) {
       done();
-      toast('Lost the progress stream — check the Offloaded tab for the result', 'error');
+      toast(opts.lostMessage, 'error');
     }
   };
 }
+
+function watchOffloadJob(jobId, title, onComplete) {
+  watchJob({
+    title,
+    icon: 'archive',
+    progressUrl: `/api/offload/${jobId}/progress`,
+    cancelUrl: `/api/offload/${jobId}/cancel`,
+    footNote: 'Nothing is removed until every copy is verified.',
+    cancelledMessage: 'Offload cancelled — everything rolled back, nothing was deleted',
+    lostMessage: 'Lost the progress stream — check the Offloaded tab for the result',
+    onComplete,
+    onSettled: () => loadOffloadIndex(),
+  });
+}
+
 $('offloadCancelBtn').addEventListener('click', () => {
-  if (!offloadJobId) { closeModal('offloadModal'); return; }
-  api(`/api/offload/${offloadJobId}/cancel`, { method: 'POST' }).catch(() => {});
+  if (!activeJob) { closeModal('offloadModal'); return; }
+  api(activeJob.cancelUrl, { method: 'POST' }).catch(() => {});
 });
 $('selOffloadBtn').addEventListener('click', () => startOffloadFlow([...state.grid.selection]));
 $('dupOffloadBtn').addEventListener('click', () => startOffloadFlow([...state.dup.selection]));
@@ -5539,6 +5614,225 @@ function renderOffloadIndex() {
 $('offloadSearch').addEventListener('input', () => {
   state.offload.q = $('offloadSearch').value;
   renderOffloadIndex();
+});
+
+/* ───────────────────────────── Time Capsule tab (B3) ─────────────────────────────
+   Structurally the Offloaded tab: a searchable index of things TreeMap moved
+   somewhere safe, grouped by the run that moved them, each restorable.
+
+   The one thing it says that Offloaded does not: what the capsule *failed* to
+   protect, and what it had to throw away to keep protecting. Those are the
+   moments a person would otherwise discover only by looking for a file that
+   is not there, so they get their own visible list rather than a log line
+   (§B3: warn rather than silently skipping protection).                     */
+
+const CAPSULE_EVENT_LABEL = {
+  evicted: 'Made room',
+  expired: 'Expired',
+  unprotected: 'Not protected',
+  lost: 'Copy missing',
+};
+
+async function loadCapsule() {
+  const host = $('capsuleBody');
+  // Loading (§3.5 #2) — but never blank an already-populated list on refresh.
+  if (!host.querySelector('.cap-item') && !state.capsule.index) {
+    host.innerHTML = `<div class="muted">Reading the Time Capsule…</div>`;
+  }
+  try {
+    state.capsule.index = await api('/api/timecapsule');
+  } catch (e) {
+    // Error (§3.5 #6) — the envelope's own message, with a way to retry.
+    state.capsule.index = null;
+    host.innerHTML =
+      `<div class="muted">Couldn’t read the Time Capsule: ${escapeHtml(e.message)}</div>` +
+      `<button class="pill" id="capsuleRetry" style="margin-top:8px;">Try again</button>`;
+    $('capsuleGauge').hidden = true;
+    $('capsuleInfo').textContent = '';
+    $('capsuleEvents').innerHTML = '';
+    $('capsuleRetry').addEventListener('click', () => loadCapsule());
+    return;
+  }
+  renderCapsule();
+}
+
+function renderCapsule() {
+  const idx = state.capsule.index;
+  const host = $('capsuleBody');
+  if (!idx) return;
+
+  // Unavailable (§3.5 #5) — the capsule itself cannot be used.
+  if (!idx.status.available) {
+    $('capsuleGauge').hidden = true;
+    $('capsuleInfo').textContent = '';
+    host.innerHTML =
+      `<div class="muted" style="display:flex;gap:8px;align-items:flex-start;padding:4px 2px;">${icon('alert', 14)}` +
+      `<span style="line-height:1.5;">${escapeHtml(idx.status.reason || 'The Time Capsule isn’t available on this computer.')}</span></div>`;
+    renderCapsuleEvents(idx.events);
+    return;
+  }
+
+  const restorable = idx.entries.filter(e => e.hasPayload);
+  const pct = idx.status.capBytes > 0 ? (idx.status.usedBytes / idx.status.capBytes) * 100 : 0;
+  $('capsuleGauge').hidden = idx.entries.length === 0;
+  $('capsuleBar').style.width = Math.max(idx.status.usedBytes > 0 ? 2 : 0, Math.min(100, pct)) + '%';
+  $('capsuleBar').style.background = pct > 85 ? '#FF9F0A' : 'var(--accent)';
+  $('capsuleGaugeText').textContent =
+    `${formatBytes(idx.status.usedBytes)} of ${formatBytes(idx.status.capBytes)} · kept for ${idx.status.retentionDays} days`;
+
+  if (!idx.entries.length) {
+    // Empty (§3.5 #1) — and honest about what fills it. Autopilot (B1) is the
+    // only thing that deletes without the user watching, so until it exists
+    // this list is *correctly* empty and says so rather than implying a fault.
+    $('capsuleInfo').textContent = '';
+    host.innerHTML =
+      `<div class="muted" style="line-height:1.6;">Nothing here yet — and that’s the normal state.<br>` +
+      `The Time Capsule keeps a verified copy of anything <b>TreeMap deletes automatically</b>, so you can get it back ` +
+      `even after emptying the Trash. Files you delete yourself go to the Trash as usual and aren’t copied here.</div>`;
+    renderCapsuleEvents(idx.events);
+    return;
+  }
+
+  $('capsuleInfo').innerHTML =
+    `<span class="num">${formatCount(restorable.length)}</span> item${restorable.length === 1 ? '' : 's'} can be restored — ` +
+    `<span class="num">${formatBytes(idx.status.usedBytes)}</span> held safely, beyond the reach of emptying the Trash.`;
+
+  const q = state.capsule.q.trim().toLowerCase();
+  const matches = idx.entries.filter(e =>
+    !q || e.name.toLowerCase().includes(q) || e.originalPath.toLowerCase().includes(q));
+
+  // Grouped by the run that captured them, newest run first — the same
+  // per-run grouping the Offloaded tab uses for destinations.
+  const runs = new Map();
+  for (const entry of matches) {
+    const key = entry.runId || entry.id;
+    if (!runs.has(key)) runs.set(key, []);
+    runs.get(key).push(entry);
+  }
+
+  host.innerHTML = [...runs.entries()].map(([key, group], gi) => {
+    const at = Math.max(...group.map(e => e.capturedAt));
+    const bytes = group.reduce((s, e) => s + e.sizeBytes, 0);
+    const rows = group.map(e => {
+      const expiresInDays = Math.ceil((e.capturedAt + idx.status.retentionDays * 86400000 - Date.now()) / 86400000);
+      const gone = !e.hasPayload;
+      const state6 = e.restoredAt
+        ? `<span class="muted">· restored ${formatDate(e.restoredAt)}</span>`
+        : gone ? `<span class="muted">· no longer held</span>` : '';
+      return `
+      <div class="bp-item cap-item${gone ? ' cap-gone' : ''}">
+        ${chipFor({ type: e.kind === 'folder' ? 'dir' : 'file', extension: (e.name.split('.').pop() || '').toLowerCase() }, 13)}
+        <div class="meta" style="flex:1;min-width:0;">
+          <div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(e.name)} ${state6}</div>
+          <div class="pth" title="${escapeHtml(e.originalPath)}">${escapeHtml(e.originalPath)}</div>
+          ${e.reason ? `<div class="why">Deleted because it ${escapeHtml(e.reason)}</div>` : ''}
+        </div>
+        <span class="dt num" title="Protected ${escapeHtml(formatDate(e.capturedAt))}">${
+          gone ? '' : (expiresInDays > 0 ? `${expiresInDays}d left` : 'expiring')}</span>
+        <span class="size-badge num">${formatBytes(e.sizeBytes)}</span>
+        ${gone ? '' : `
+          <button class="pill" data-cap-restore="${escapeHtml(e.id)}" title="Copy it back to where it was, verifying every byte">Restore</button>
+          <button class="icon-btn" data-cap-forget="${escapeHtml(e.id)}" title="Forget this copy and free the space" aria-label="Forget the copy of ${escapeHtml(e.name)}">${icon('trash', 13)}</button>`}
+      </div>`;
+    }).join('');
+    return `
+      <div class="bp-acc offl-acc" data-acc="${gi}">
+        <div class="bp-head" role="button" tabindex="0" aria-expanded="false">
+          <span class="chip" style="--tint:#BF5AF2">${icon('clock', 15)}</span>
+          <span class="bp-title">${formatDate(at)}<span class="prof">${formatCount(group.length)} item${group.length === 1 ? '' : 's'} protected together</span></span>
+          <span class="spacer"></span>
+          <span class="size-badge num">${formatBytes(bytes)}</span>
+          <span class="chev">${icon('chevronRight', 14)}</span>
+        </div>
+        <div class="bp-items">${rows}</div>
+      </div>`;
+  }).join('') || `<div class="muted" style="padding:10px 2px;">Nothing protected matches that search.</div>`;
+
+  host.querySelectorAll('.offl-acc .bp-head').forEach(head => {
+    const toggle = () => { const a = head.closest('.bp-acc'); head.setAttribute('aria-expanded', String(a.classList.toggle('open'))); };
+    head.addEventListener('click', (e) => { if (e.target.closest('button')) return; toggle(); });
+    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
+  if (q) host.querySelectorAll('.offl-acc').forEach(a => a.classList.add('open'));
+  host.querySelectorAll('[data-cap-restore]').forEach(b =>
+    b.addEventListener('click', () => restoreFromCapsule(b.dataset.capRestore)));
+  host.querySelectorAll('[data-cap-forget]').forEach(b =>
+    b.addEventListener('click', () => forgetCapsuleEntry(b.dataset.capForget)));
+
+  renderCapsuleEvents(idx.events);
+}
+
+/** Protection withheld or withdrawn — never left to a log file. */
+function renderCapsuleEvents(events) {
+  const host = $('capsuleEvents');
+  if (!events || !events.length) { host.innerHTML = ''; return; }
+  host.innerHTML =
+    `<h3>What the Time Capsule couldn’t keep</h3>` +
+    events.slice(0, 12).map(ev => `
+      <div class="cap-ev">${icon(ev.kind === 'unprotected' ? 'alert' : 'clock', 13)}
+        <div><b>${escapeHtml(CAPSULE_EVENT_LABEL[ev.kind] || ev.kind)} · ${escapeHtml(ev.name)}</b>
+        <span class="num">(${formatBytes(ev.sizeBytes)})</span> — ${escapeHtml(ev.detail)}</div>
+      </div>`).join('');
+}
+
+function restoreFromCapsule(id) {
+  api(`/api/timecapsule/${encodeURIComponent(id)}/restore`, { method: 'POST' })
+    .then(resp => {
+      // Partial (§3.5 #3): the restore streams, through the same progress
+      // dialog every other copy-and-verify job in the app uses.
+      watchJob({
+        title: 'Restoring…',
+        icon: 'clock',
+        progressUrl: `/api/timecapsule/jobs/${resp.jobId}/progress`,
+        cancelUrl: `/api/timecapsule/jobs/${resp.jobId}/cancel`,
+        footNote: 'Every byte is checked against the fingerprint taken when it was protected.',
+        cancelledMessage: 'Restore cancelled — nothing was left half-written',
+        lostMessage: 'Lost the progress stream — reopen the Time Capsule tab for the result',
+        onComplete: () => { toast('Restored and verified'); loadCapsule(); },
+        onSettled: () => loadCapsule(),
+      });
+    })
+    .catch(e => toast(e.message, 'error', 8000));
+}
+
+/**
+ * Forgetting a copy is destructive, so it goes through the same confirmation
+ * dialog as every other destructive action (§3.6) rather than a bespoke one.
+ * The wording is careful about what is actually at stake: the original is
+ * already gone, and this is the last copy.
+ */
+function forgetCapsuleEntry(id) {
+  const entry = (state.capsule.index ? state.capsule.index.entries : []).find(e => e.id === id);
+  onConfirmTrash = async () => {
+    try {
+      await api(`/api/timecapsule/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      toast('Copy forgotten');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    loadCapsule();
+  };
+  $('confirmTitle').innerHTML = icon('trash', 18) + 'Forget this copy?';
+  $('confirmText').innerHTML =
+    `<b>${escapeHtml(entry ? entry.name : 'This item')}</b> was already deleted from your disk — this only removes ` +
+    `TreeMap’s spare copy${entry ? `, freeing ${formatBytes(entry.sizeBytes)}` : ''}.` +
+    `<br><span style="color:var(--text-3)">It can’t be restored from here afterwards.</span>`;
+  $('confirmModal').classList.add('open');
+}
+
+$('capsuleSearch').addEventListener('input', () => {
+  state.capsule.q = $('capsuleSearch').value;
+  renderCapsule();
+});
+
+registerView({
+  id: 'capsule',
+  label: 'Time Capsule',
+  icon: 'clock',
+  // Reads persisted history, exactly like Trends/Compare/Offloaded, so it is
+  // useful with no scan loaded and never shows the empty-state screen.
+  needsScan: false,
+  mount() { loadCapsule(); },
 });
 
 /* ───────────────────────────── Trash (confirm + execute) ───────────────────────────── */
@@ -7715,6 +8009,8 @@ $('settingsBtn').addEventListener('click', async () => {
   renderCloudAccounts();
   $('forecastDays').value = settingsData.forecastThresholdDays ?? 30;
   $('watchIdleMin').value = settingsData.watchIdleMinutes ?? 10;
+  $('capsuleRetentionDays').value = settingsData.timeCapsuleRetentionDays ?? 30;
+  $('capsuleMaxPercent').value = settingsData.timeCapsuleMaxPercent ?? 10;
 });
 
 /* ── Cloud accounts (Feature 25) ── */
@@ -7922,17 +8218,21 @@ $('settingsSaveBtn').addEventListener('click', async () => {
   const ignore = settingsData.ignore.filter(e => e.pattern);
   const forecastThresholdDays = Math.min(365, Math.max(1, Math.round(Number($('forecastDays').value) || 30)));
   const watchIdleMinutes = Math.min(120, Math.max(1, Math.round(Number($('watchIdleMin').value) || 10)));
+  const timeCapsuleRetentionDays = Math.min(365, Math.max(1, Math.round(Number($('capsuleRetentionDays').value) || 30)));
+  const timeCapsuleMaxPercent = Math.min(90, Math.max(1, Math.round(Number($('capsuleMaxPercent').value) || 10)));
   const cloud = collectCloudCreds();
   try {
     settingsData = await api('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schedules, ignore, forecastThresholdDays, watchIdleMinutes, cloud }),
+      body: JSON.stringify({ schedules, ignore, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud }),
     });
     renderSchedules();
     renderIgnores();
     $('forecastDays').value = settingsData.forecastThresholdDays ?? 30;
     $('watchIdleMin').value = settingsData.watchIdleMinutes ?? 10;
+    $('capsuleRetentionDays').value = settingsData.timeCapsuleRetentionDays ?? 30;
+    $('capsuleMaxPercent').value = settingsData.timeCapsuleMaxPercent ?? 10;
     $('settingsStatus').textContent = 'Saved';
     toast('Settings saved — ignore rules apply from the next scan');
     setTimeout(() => { if ($('settingsStatus').textContent === 'Saved') $('settingsStatus').textContent = ''; }, 2500);

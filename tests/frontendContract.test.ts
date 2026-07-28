@@ -26,8 +26,15 @@ import path from 'node:path';
 
 const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
-/** The ten views §0 names: eight tabs plus the Clean Up and Settings surfaces. */
-const TAB_VIEWS = ['dashboard', 'treemap', 'grid', 'apps', 'duplicates', 'trends', 'compare', 'offloaded'] as const;
+/**
+ * The ten views §0 names: eight tabs plus the Clean Up and Settings surfaces —
+ * followed by the tabs later phases add. Growing this list is deliberate: a
+ * view that appears without being added here is a view nobody decided to ship.
+ */
+const TAB_VIEWS = [
+  'dashboard', 'treemap', 'grid', 'apps', 'duplicates', 'trends', 'compare', 'offloaded',
+  'capsule', // B3 — Time Capsule
+] as const;
 const MODAL_VIEWS = ['cleanModal', 'settingsModal'] as const;
 
 /** Body of the one inline <script> that holds the application. */
@@ -250,11 +257,22 @@ test('the canvas views have an accessible list counterpart', () => {
 /* ══════════════════════ View registry (§3.4) ══════════════════════ */
 
 test('every tab view is registered in the view registry', () => {
+  // Two legitimate places a view can be declared: the original ten sit in the
+  // VIEWS literal, and everything added from Phase 1 onward comes in through
+  // registerView(). What must never happen is a tab with no registration at
+  // all — switchView would take its unknown-view early return and the tab
+  // would look dead. So this checks the union, not one hard-coded location.
   const code = appCode();
-  const registry = code.slice(code.indexOf('const VIEWS = ['), code.indexOf('const VIEW_BY_ID'));
-  assert.ok(registry.length > 100, 'the view registry must exist');
+  const literal = code.slice(code.indexOf('const VIEWS = ['), code.indexOf('const VIEW_BY_ID'));
+  assert.ok(literal.length > 100, 'the view registry must exist');
+  const registered = code.slice(code.indexOf('function registerView(view)'));
+
   for (const view of TAB_VIEWS) {
-    assert.match(registry, new RegExp(`id:\\s*'${view}'`), `"${view}" is not registered`);
+    const declaration = new RegExp(`id:\\s*'${view}'`);
+    assert.ok(
+      declaration.test(literal) || declaration.test(registered),
+      `"${view}" has a tab but is registered nowhere`,
+    );
   }
 });
 
@@ -898,6 +916,111 @@ test('program names and file names are escaped in the warning', () => {
   const fn = code.slice(code.indexOf('function renderOpenHandleWarning'), code.indexOf('function baseName'));
   assert.match(fn, /escapeHtml\(name\)/);
   assert.match(fn, /escapeHtml\(baseName\(f\)\)/);
+});
+
+/* ══════════════════════ Time Capsule (B3) ══════════════════════ */
+
+test('the Time Capsule is a registered view, not a second navigation mechanism', () => {
+  // registerView() is the only supported way to add a view: pushing to VIEWS
+  // alone leaves VIEW_BY_ID stale and switchView silently does nothing.
+  const code = appCode();
+  assert.match(code, /registerView\(\{[\s\S]{0,200}id:\s*'capsule'/, 'it goes through the registry');
+  assert.match(INDEX, /data-view="capsule"/, 'and has a real tab');
+  assert.match(INDEX, /id="view-capsule"/, 'pointing at a real section');
+});
+
+test('the capsule reads persisted history, so it works with no scan loaded', () => {
+  const code = appCode();
+  const reg = code.slice(code.indexOf("id: 'capsule'"), code.indexOf("id: 'capsule'") + 400);
+  assert.match(reg, /needsScan:\s*false/, 'like Trends, Compare and Offloaded');
+});
+
+test('the empty state explains that an empty capsule is the correct state', () => {
+  // Until Autopilot (B1) exists nothing deletes automatically, so this list is
+  // legitimately empty. Saying "nothing here" without saying why would read as
+  // a fault, and would make a user hunt for a feature that is working.
+  const code = appCode();
+  assert.match(code, /that.s the normal state/i);
+  assert.match(code, /deletes automatically/i, 'it names what fills the capsule');
+  assert.match(code, /delete yourself/i, 'and what deliberately does not');
+});
+
+test('protection that was withheld or withdrawn is shown, never left to a log', () => {
+  // §B3's "warn rather than silently skipping protection" is only satisfied if
+  // the warning reaches a human. These are the moments a user would otherwise
+  // discover by looking for a file that is not there.
+  const code = appCode();
+  assert.match(code, /function renderCapsuleEvents/);
+  assert.match(code, /couldn.t keep/i, 'the section has a heading of its own');
+  const labels = code.slice(code.indexOf('CAPSULE_EVENT_LABEL'), code.indexOf('async function loadCapsule'));
+  for (const kind of ['evicted', 'expired', 'unprotected', 'lost']) {
+    assert.match(labels, new RegExp(kind), `${kind} is given plain-language wording`);
+  }
+});
+
+test('an item with no copy left offers no Restore button', () => {
+  // Offering a restore that must fail is worse than not offering one. The flag
+  // is hasPayload, never heldBytes: an empty folder holds zero bytes and is
+  // still perfectly restorable.
+  const code = appCode();
+  const render = code.slice(code.indexOf('function renderCapsule('), code.indexOf('function renderCapsuleEvents'));
+  assert.match(render, /const gone = !e\.hasPayload/, 'presence is its own fact, not inferred from size');
+  assert.match(render, /gone \? '' : `[\s\S]{0,200}data-cap-restore/, 'no payload → no Restore');
+  assert.ok(!/heldBytes\s*>\s*0\s*\?/.test(render), 'restorability is never derived from a byte count');
+});
+
+test('the capsule shows how full it is against its own cap', () => {
+  const code = appCode();
+  const render = code.slice(code.indexOf('function renderCapsule('), code.indexOf('function renderCapsuleEvents'));
+  assert.match(render, /status\.capBytes/, 'the ceiling is shown, not just the usage');
+  assert.match(render, /retentionDays/, 'and how long things are kept');
+  assert.match(render, /formatBytes\(/, 'through the shared formatter (§3.6)');
+});
+
+test('restoring streams through the one shared progress dialog', () => {
+  // §3.3: anything that can exceed a second uses the SSE job pattern, and §3.6
+  // wants it to look like every other job rather than a bespoke panel.
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function restoreFromCapsule'), code.indexOf('function forgetCapsuleEntry'));
+  assert.match(fn, /watchJob\(/, 'the same driver Offload uses');
+  assert.match(fn, /\/api\/timecapsule\/jobs\/\$\{resp\.jobId\}\/progress/);
+  assert.match(fn, /cancelUrl/, 'and it is cancellable (§6)');
+});
+
+test('there is one job-progress implementation, not one per feature', () => {
+  const code = appCode();
+  assert.match(code, /function watchJob\(opts\)/);
+  const offload = code.slice(code.indexOf('function watchOffloadJob'), code.indexOf("$('offloadCancelBtn')"));
+  assert.match(offload, /watchJob\(\{/, 'offload delegates to it rather than keeping its own copy');
+  assert.equal((code.match(/new EventSource\(opts\.progressUrl\)/g) || []).length, 1);
+});
+
+test('forgetting a copy uses the shared destructive confirmation', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function forgetCapsuleEntry'), code.indexOf("$('capsuleSearch')"));
+  assert.match(fn, /onConfirmTrash =/, 'the same dialog every destructive action uses (§3.6)');
+  assert.match(fn, /confirmModal/);
+  assert.match(fn, /already deleted from your disk/, 'and it is honest about what is actually at stake');
+});
+
+test('the capsule panel implements the §3.5 states', () => {
+  const code = appCode();
+  assert.match(code, /Reading the Time Capsule/, 'loading');
+  assert.match(code, /Couldn.t read the Time Capsule/, 'error, from the envelope message');
+  assert.match(code, /capsuleRetry/, 'with a retry');
+  const render = code.slice(code.indexOf('function renderCapsule('), code.indexOf('function renderCapsuleEvents'));
+  assert.match(render, /status\.available/, 'unavailable, with the reason');
+  assert.match(render, /Nothing protected matches that search/, 'a search that finds nothing is not the empty state');
+});
+
+test('capsule retention and its size cap are user-settable', () => {
+  assert.match(INDEX, /id="capsuleRetentionDays"/);
+  assert.match(INDEX, /id="capsuleMaxPercent"/);
+  const code = appCode();
+  assert.match(code, /timeCapsuleRetentionDays/);
+  assert.match(code, /timeCapsuleMaxPercent/);
+  // The bound matters: the capsule must never be the reason a disk fills up.
+  assert.match(INDEX, /id="capsuleMaxPercent"[^>]*max="90"/);
 });
 
 /* ══════════════════════ Safety copy (§2, §B2) ══════════════════════ */
