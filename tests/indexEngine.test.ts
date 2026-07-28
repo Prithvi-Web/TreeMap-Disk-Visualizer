@@ -518,3 +518,60 @@ test('reading a folder that was never indexed answers null, not an empty tree', 
 test('applying an empty change queue is a no-op, not an error', async () => {
   assert.equal(await applyPendingChanges('/not/watched'), 0);
 });
+
+/* ══════════════════ readTree scales sub-quadratically ══════════════════ */
+
+test('reading a tree stays sub-quadratic as directory count grows', async (t) => {
+  /**
+   * The bug this pins, found by measuring a real ~/Library rather than a
+   * fixture: `readTree` picked the next directory to expand with
+   * `frontier.sort(); frontier.shift()`. Correct, but it re-sorted every
+   * pending directory on every iteration — ~10^9 comparisons on a root with
+   * 47k directories, and **8.5 seconds** to read back 224k nodes. The index
+   * exists to make reopening instant; that made it slower than scanning.
+   *
+   * Asserting "under N milliseconds" would measure the CI runner, not the
+   * code (the lesson A4's benchmark taught). So this asserts the *shape* of
+   * the curve instead: quadruple the directories and quadratic behaviour costs
+   * ~16x, while the heap costs ~4x. The 9x ceiling sits far enough above the
+   * linear case to be quiet, and far enough below quadratic to catch it.
+   */
+  const build = async (dirs: number): Promise<string> => {
+    const root = await mkTmp();
+    for (let i = 0; i < dirs; i++) {
+      const d = path.join(root, `d${String(i).padStart(5, '0')}`);
+      await fsp.mkdir(d, { recursive: true });
+      // Varying sizes so the biggest-first ordering has real work to do.
+      await fsp.writeFile(path.join(d, 'f.bin'), Buffer.alloc(((i * 37) % 512) + 1));
+    }
+    await buildIndex(root);
+    return root;
+  };
+
+  const timeRead = (root: string): number => {
+    readTree(root);                       // warm the page cache
+    const t0 = performance.now();
+    readTree(root);
+    return performance.now() - t0;
+  };
+
+  const small = await build(400);
+  const large = await build(1600);        // 4x the directories
+
+  const tSmall = Math.max(timeRead(small), 0.5); // floor: a sub-ms baseline makes the ratio meaningless
+  const tLarge = timeRead(large);
+  const ratio = tLarge / tSmall;
+  t.diagnostic(`400 dirs: ${tSmall.toFixed(1)}ms · 1600 dirs: ${tLarge.toFixed(1)}ms · ratio ${ratio.toFixed(1)}x (quadratic would be ~16x)`);
+
+  assert.ok(ratio < 9, `4x the directories cost ${ratio.toFixed(1)}x the time — that curve is quadratic again`);
+
+  // And the ordering the heap exists to provide is still biggest-first.
+  const tree = readTree(large);
+  assert.ok(tree);
+  const kids = tree!.root.children ?? [];
+  const sizes = kids.map((c) => c.size);
+  assert.deepEqual(sizes, [...sizes].sort((a, b) => b - a), 'children come back biggest-first');
+
+  await fsp.rm(small, { recursive: true, force: true });
+  await fsp.rm(large, { recursive: true, force: true });
+});
