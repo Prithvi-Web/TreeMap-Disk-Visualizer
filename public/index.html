@@ -397,7 +397,12 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); }
 }
 
 /* ════════════════════════════ Layout ════════════════════════════ */
-main { padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: relative; min-width: 0; }
+/* width: 100% is load-bearing: as a grid item with auto margins, main
+   otherwise SHRINK-WRAPS to its content instead of filling its column —
+   the Grid view (whose content is all shrinkable) collapsed to ~580px in a
+   1768px column. 100% + max-width + auto margins = fill the column, cap at
+   1680, center only the overflow on very wide windows. */
+main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: relative; min-width: 0; }
 .view { display: none; animation: viewIn var(--dur-3) var(--ease); }
 .view.active { display: block; }
 @keyframes viewIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -2281,11 +2286,28 @@ function applySideNav(collapsed) {
   btn.title = (collapsed ? 'Expand navigation' : 'Collapse navigation') + ' (⌘B)';
   btn.innerHTML = icon(collapsed ? 'chevronRight' : 'chevronLeft', 16);
   try { localStorage.setItem('tm-sidenav', collapsed ? 'rail' : 'open'); } catch { /* private mode */ }
+  scheduleSideNavReflow(); // every entry point — toggle, scrim, search summon
 }
 function toggleSideNav() {
   applySideNav(!$('sideNav').classList.contains('collapsed'));
 }
 $('sideToggle').addEventListener('click', toggleSideNav);
+// Collapsing or expanding changes the content column's width — a thing only
+// window resizes could do before the sidebar existed. The width-sensitive
+// views (grid layout, treemap canvas, trends chart) already rebuild on
+// resize, so replay their own signal once the width transition lands. The
+// timer is not redundant: a hidden or occluded window freezes transitions,
+// so transitionend can arrive arbitrarily late or not at all — the same
+// reason the Liquid Glass engine keeps a timer beside its rAF. Replaying
+// resize twice is harmless; never replaying it strands a stale layout.
+$('sideNav').addEventListener('transitionend', (e) => {
+  if (e.propertyName === 'width') window.dispatchEvent(new Event('resize'));
+});
+let sideNavReflowTimer = 0;
+function scheduleSideNavReflow() {
+  clearTimeout(sideNavReflowTimer);
+  sideNavReflowTimer = setTimeout(() => window.dispatchEvent(new Event('resize')), 480);
+}
 // The rail's search icon is the search box in collapsed form: it opens the
 // sidebar and puts the caret in the input, exactly like ⌘K.
 $('gsearchRailBtn').addEventListener('click', () => summonGlobalSearch());
