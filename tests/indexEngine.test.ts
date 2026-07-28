@@ -562,7 +562,11 @@ test('reading a tree stays sub-quadratic as directory count grows', async (t) =>
       // Varying sizes so the biggest-first ordering has real work to do.
       await fsp.writeFile(path.join(d, 'f.bin'), Buffer.alloc(((i * 37) % 512) + 1));
     }
-    await buildIndex(root);
+    // live: false — this test only reads trees back, and the default live
+    // watcher turned the fixture teardown into a burst of change events
+    // whose flush could straddle the suite's closeIndex (Windows CI caught
+    // the resulting closed-handle rejection; the engine now also guards it).
+    await buildIndex(root, { live: false });
     return root;
   };
 

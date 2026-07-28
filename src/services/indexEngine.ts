@@ -758,6 +758,15 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
   const root = getRoot(rootPath);
   if (!root) return 0;
 
+  // Shutdown can close the database while this burst is awaiting a stat: the
+  // flush timer fires before closeIndex, the await resumes after it, and any
+  // statement on the captured handle then throws "The database connection is
+  // not open" as an unhandledRejection (CI's Windows runner caught it after
+  // a test; a SIGTERM mid-burst reproduces it in production). An interrupted
+  // burst is simply dropped — the staleness guard already exists precisely
+  // to cover changes the watcher did not get to apply.
+  const stillOpen = (): boolean => db === handle;
+
   const touchedParents = new Set<string>();
   let applied = 0;
 
@@ -784,6 +793,7 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
     } catch {
       stat = null; // gone
     }
+    if (!stillOpen()) return applied;
 
     if (stat === null) {
       const nodeId = findNodeIdByPath(root.id, rootPath, change.path);
@@ -830,6 +840,7 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
         applied++;
       } else {
         const parentId = await ensureParents(handle, root.id, rootPath, path.dirname(change.path));
+        if (!stillOpen()) return applied;
         if (parentId !== null) {
           insertNode.run(
             root.id,
@@ -851,7 +862,7 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
     touchedParents.add(path.dirname(change.path));
   }
 
-  if (applied > 0) resumAncestors(handle, root.id, rootPath, touchedParents);
+  if (applied > 0 && stillOpen()) resumAncestors(handle, root.id, rootPath, touchedParents);
   return applied;
 }
 
@@ -885,6 +896,7 @@ async function ensureParents(
   } catch {
     return null; // vanished again already — nothing to hang the child on
   }
+  if (db !== handle) return null; // closed mid-await — see applyPendingChanges
   if (!stat.isDirectory()) return null;
 
   const name = path.basename(dirPath);
