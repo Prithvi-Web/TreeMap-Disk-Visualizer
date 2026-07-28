@@ -262,13 +262,20 @@ test('500,000 files: first results in under 100ms', async (t) => {
 
   const EXTS = ['zip', 'mp4', 'ts', 'js', 'png', 'pdf', 'log', 'tmp', 'iso', 'dmg'];
   const WORDS = ['report', 'holiday', 'backup', 'project', 'invoice', 'render', 'archive', 'dataset', 'sample', 'build'];
+  // v3 schema: no path column, and exactly one parent_id-IS-NULL top node per
+  // root — so the synthetic corpus hangs every file off a real top node, and
+  // search reconstructs hit paths through it.
   const insert = db.prepare(
-    'INSERT INTO nodes (root_id, parent_id, name, path, ext, is_dir, size, mtime, flags) VALUES (?,?,?,?,?,0,?,?,0)',
+    'INSERT INTO nodes (root_id, parent_id, name, ext, is_dir, size, mtime, flags) VALUES (?,?,?,?,0,?,?,0)',
   );
   db.transaction(() => {
+    const top = db
+      .prepare("INSERT INTO nodes (root_id, parent_id, name, ext, is_dir, size, mtime, flags) VALUES (?, NULL, 'bench', '', 1, 0, ?, 0)")
+      .run(rootId, Date.now());
+    const topId = Number(top.lastInsertRowid);
     for (let i = 0; i < N; i++) {
       const name = `${WORDS[i % WORDS.length]}-${String(i)}.${EXTS[i % EXTS.length]}`;
-      insert.run(rootId, null, name, `/bench/d${String(i % 1000)}/${name}`, extensionOf(name), (i * 7919) % 5_000_000_000, Date.now());
+      insert.run(rootId, topId, name, extensionOf(name), (i * 7919) % 5_000_000_000, Date.now());
     }
   })();
 
@@ -336,11 +343,15 @@ test('a very broad match reports a capped count rather than paying for an exact 
   db.prepare("INSERT INTO roots (path, state, mechanism) VALUES ('/many', 'ready', 'synthetic')").run();
   const rootId = (db.prepare("SELECT id FROM roots WHERE path = '/many'").get() as { id: number }).id;
   const insert = db.prepare(
-    'INSERT INTO nodes (root_id, parent_id, name, path, ext, is_dir, size, mtime, flags) VALUES (?,?,?,?,?,0,?,?,0)',
+    'INSERT INTO nodes (root_id, parent_id, name, ext, is_dir, size, mtime, flags) VALUES (?,?,?,?,0,?,?,0)',
   );
   db.transaction(() => {
+    const top = db
+      .prepare("INSERT INTO nodes (root_id, parent_id, name, ext, is_dir, size, mtime, flags) VALUES (?, NULL, 'many', '', 1, 0, ?, 0)")
+      .run(rootId, Date.now());
+    const topId = Number(top.lastInsertRowid);
     for (let i = 0; i < 6_000; i++) {
-      insert.run(rootId, null, `common-${String(i)}.txt`, `/many/common-${String(i)}.txt`, 'txt', i, Date.now());
+      insert.run(rootId, topId, `common-${String(i)}.txt`, 'txt', i, Date.now());
     }
   })();
 

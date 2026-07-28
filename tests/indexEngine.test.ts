@@ -31,6 +31,8 @@ import {
   stopWatcher,
   stopAllWatchers,
   applyPendingChanges,
+  findNodeIdByPath,
+  pathOfNode,
   FLAG,
 } from '../src/services/indexEngine';
 import type { FileNode } from '../src/models/types';
@@ -127,7 +129,10 @@ test('a sparse file is indexed by what it claims, and flagged by what it occupie
 
     const root = await buildIndex(dir, { live: false });
     const db = openIndex();
-    const row = db.prepare('SELECT size, allocated, flags FROM nodes WHERE root_id = ? AND path = ?').get(root.id, sparse) as
+    const nodeId = findNodeIdByPath(root.id, dir, sparse);
+    assert.notEqual(nodeId, null, 'the sparse file resolves through the segment descent');
+    assert.equal(pathOfNode(nodeId!), sparse, 'and its path reconstructs byte-identically');
+    const row = db.prepare('SELECT size, allocated, flags FROM nodes WHERE id = ?').get(nodeId) as
       | { size: number; allocated: number | null; flags: number }
       | undefined;
     assert.ok(row);
@@ -233,10 +238,10 @@ test('deleting a folder removes its whole subtree from the index', async () => {
     assert.ok(took >= 0, 'the folder deletion was noticed');
 
     const db = openIndex();
-    const orphans = db
-      .prepare("SELECT COUNT(*) c FROM nodes WHERE root_id = ? AND path LIKE ?")
-      .get(getRoot(dir)!.id, path.join(dir, 'doomed') + '%') as { c: number };
-    assert.equal(orphans.c, 0, 'no descendant rows are left behind');
+    const rootId = getRoot(dir)!.id;
+    assert.equal(findNodeIdByPath(rootId, dir, path.join(dir, 'doomed')), null, 'the folder itself is gone');
+    const remaining = db.prepare('SELECT COUNT(*) c FROM nodes WHERE root_id = ?').get(rootId) as { c: number };
+    assert.equal(remaining.c, 2, 'only the root and keep.bin remain — no descendant rows left behind');
   } finally {
     stopWatcher(dir);
     deleteIndex(dir);
@@ -245,8 +250,10 @@ test('deleting a folder removes its whole subtree from the index', async () => {
 });
 
 test('a path containing LIKE wildcards is deleted precisely, not by pattern', async () => {
-  // `_` and `%` are wildcards in SQL LIKE. A folder called "100%_backup" must
-  // delete only itself — an unescaped pattern would take unrelated siblings.
+  // `_` and `%` are wildcards in SQL LIKE, and when deletes matched on a
+  // stored path this needed careful escaping. v3 deletes by id closure, which
+  // makes the hazard structural rather than escaped — this test pins that a
+  // folder called "100%_backup" still takes only itself.
   const dir = await mkTmp();
   try {
     await fsp.mkdir(path.join(dir, '100%_backup'));
@@ -262,11 +269,13 @@ test('a path containing LIKE wildcards is deleted precisely, not by pattern', as
     const took = await waitFor(() => getRoot(dir)!.totalSize === 900);
     assert.ok(took >= 0, 'the wildcard-named folder was removed');
 
-    const db = openIndex();
-    const survivor = db
-      .prepare('SELECT COUNT(*) c FROM nodes WHERE root_id = ? AND path = ?')
-      .get(getRoot(dir)!.id, path.join(dir, '1002xbackup', 'survivor.bin')) as { c: number };
-    assert.equal(survivor.c, 1, 'the similarly-named sibling survived');
+    const rootId = getRoot(dir)!.id;
+    assert.equal(findNodeIdByPath(rootId, dir, path.join(dir, '100%_backup')), null, 'the wildcard-named folder is gone');
+    assert.notEqual(
+      findNodeIdByPath(rootId, dir, path.join(dir, '1002xbackup', 'survivor.bin')),
+      null,
+      'the similarly-named sibling survived',
+    );
   } finally {
     stopWatcher(dir);
     deleteIndex(dir);

@@ -1,6 +1,6 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
-import { openIndex, getRoot } from './indexEngine';
+import { openIndex, getRoot, findNodeIdByPath, pathResolver } from './indexEngine';
 
 /**
  * AllocationAccountant (A2) — what a folder really costs on disk.
@@ -215,6 +215,9 @@ export async function accountFor(rootPath: string): Promise<AllocationSummary | 
   let sharedBytes = 0;
   let hardlinkedNames = 0;
   const families: HardlinkFamily[] = [];
+  // One shared resolver for every family: hard-linked names cluster in the
+  // same few directories, so the ancestor cache does most of the work.
+  const resolvePath = pathResolver();
 
   for (const row of familyRows) {
     const extendsOutside = row.links_total > row.links_in_scope;
@@ -225,16 +228,24 @@ export async function accountFor(rootPath: string): Promise<AllocationSummary | 
     hardlinkedNames += Math.max(0, row.links_in_scope - 1);
 
     if (families.length < MAX_FAMILIES) {
-      const paths = handle
-        .prepare('SELECT path FROM nodes WHERE root_id = ? AND ino = ? AND is_dir = 0 ORDER BY path LIMIT ?')
-        .all(root.id, row.ino, MAX_PATHS_PER_FAMILY) as { path: string }[];
+      const memberIds = handle
+        .prepare('SELECT id FROM nodes WHERE root_id = ? AND ino = ? AND is_dir = 0')
+        .all(root.id, row.ino) as { id: number }[];
+      // Paths are rebuilt from the tree (v3 stores none), then sorted the way
+      // the old `ORDER BY path` did — SQLite's BINARY collation is UTF-8 byte
+      // order, which Buffer.compare reproduces exactly.
+      const paths = memberIds
+        .map((m) => resolvePath(m.id))
+        .filter((p): p is string => p !== null)
+        .sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
+        .slice(0, MAX_PATHS_PER_FAMILY);
       families.push({
         ino: row.ino,
         allocatedBytes: row.allocated,
         linksInScope: row.links_in_scope,
         linksTotal: row.links_total,
         extendsOutsideRoot: extendsOutside,
-        paths: paths.map((p) => p.path),
+        paths,
       });
     }
   }
@@ -317,9 +328,11 @@ export function allocationForFile(rootPath: string, filePath: string): FileAlloc
   if (!root) return null;
   const handle = openIndex();
 
+  const nodeId = findNodeIdByPath(root.id, root.path, filePath);
+  if (nodeId === null) return null;
   const row = handle
-    .prepare('SELECT size, allocated, ino, nlink FROM nodes WHERE root_id = ? AND path = ? AND is_dir = 0')
-    .get(root.id, filePath) as { size: number; allocated: number | null; ino: number | null; nlink: number | null } | undefined;
+    .prepare('SELECT size, allocated, ino, nlink FROM nodes WHERE id = ? AND is_dir = 0')
+    .get(nodeId) as { size: number; allocated: number | null; ino: number | null; nlink: number | null } | undefined;
   if (!row) return null;
 
   const allocated = row.allocated ?? row.size;

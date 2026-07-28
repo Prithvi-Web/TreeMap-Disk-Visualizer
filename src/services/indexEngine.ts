@@ -4,9 +4,10 @@ import { promises as fsp, mkdirSync, unlinkSync } from 'fs';
 import { appDataDir } from './storage';
 import { platform } from '../platform';
 import { neverDescend } from '../utils/mountBoundaries';
-// `escapeLike` is shared with the search layer: `_` and `%` are LIKE wildcards,
-// and a real path containing either must not become a pattern. One
-// implementation, so the delete path and the search path cannot disagree.
+// `escapeLike` guards the one LIKE query left (the substring search): `_` and
+// `%` are LIKE wildcards, and a real filename containing either must not
+// become a pattern. Since v3, deletes and scopes work on node ids, so no
+// path ever meets LIKE at all.
 import { parseQuery, extensionOf, escapeLike } from '../utils/searchQuery';
 import type { ChangeEvent, Unsubscribe } from '../platform/types';
 import type { FileNode } from '../models/types';
@@ -49,8 +50,14 @@ import type { FileNode } from '../models/types';
  *
  * v2 added the `ext` column and its index, so A4's `*.zip` searches are an
  * index seek rather than a scan computing extensions on the fly.
+ *
+ * v3 dropped the stored absolute path. Measured on a real ~/Library (223,779
+ * nodes): the `path` column plus its unique index were 320 of 486 bytes per
+ * node — 66% of the database was one path stored twice. A node's identity is
+ * now (parent_id, name); paths are rebuilt from the tree when needed, which
+ * is what keeps 100M nodes inside a ~19 GB envelope instead of ~49 GB.
  */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const DB_FILE = 'index.db';
 
@@ -110,12 +117,15 @@ function schemaSql(): string {
       error      TEXT
     );
 
+    -- v3: no stored path. A node's absolute path is its ancestor chain joined
+    -- with the root's path; helpers findNodeIdByPath / pathOfNode translate in
+    -- both directions. The column and its unique index were 66% of the whole
+    -- database, and the tree already carries the same information.
     CREATE TABLE IF NOT EXISTS nodes (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
       root_id   INTEGER NOT NULL REFERENCES roots(id) ON DELETE CASCADE,
       parent_id INTEGER,
       name      TEXT NOT NULL,
-      path      TEXT NOT NULL,
       -- Lower-cased extension without the dot, '' when the file has none.
       -- Stored rather than derived so an extension search is an index seek.
       ext       TEXT NOT NULL DEFAULT '',
@@ -128,10 +138,14 @@ function schemaSql(): string {
       nlink     INTEGER
     );
 
-    -- Drill-in: children of a directory.
-    CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id);
-    -- Path lookup, and the uniqueness that makes incremental upsert correct.
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_path ON nodes(root_id, path);
+    -- The uniqueness that used to live on (root_id, path), at ~29 B/node
+    -- instead of 177: a directory cannot hold two entries of one name. Also
+    -- serves every children-of-a-directory lookup, so no separate parent
+    -- index is needed. Root nodes have parent_id NULL, and UNIQUE treats
+    -- NULLs as distinct — which is what the partial index below is for.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_child ON nodes(parent_id, name);
+    -- A root's top node without a scan; one row per root qualifies.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_root_node ON nodes(root_id) WHERE parent_id IS NULL;
     -- A4's size-ordered search.
     CREATE INDEX IF NOT EXISTS idx_nodes_size ON nodes(root_id, size DESC);
     -- A4's "older than" filter.
@@ -297,17 +311,15 @@ export async function buildIndex(root: string, opts: BuildOptions = {}): Promise
   const rootId = (handle.prepare('SELECT id FROM roots WHERE path = ?').get(root) as { id: number }).id;
 
   const insert = handle.prepare(
-    `INSERT INTO nodes (root_id, parent_id, name, path, ext, is_dir, size, allocated, mtime, flags, ino, nlink)
-     VALUES (@root_id, @parent_id, @name, @path, @ext, @is_dir, @size, @allocated, @mtime, @flags, @ino, @nlink)
-     ON CONFLICT(root_id, path) DO UPDATE SET
-       size = excluded.size, allocated = excluded.allocated, mtime = excluded.mtime,
-       flags = excluded.flags, ino = excluded.ino, nlink = excluded.nlink`,
+    `INSERT INTO nodes (root_id, parent_id, name, ext, is_dir, size, allocated, mtime, flags, ino, nlink)
+     VALUES (@root_id, @parent_id, @name, @ext, @is_dir, @size, @allocated, @mtime, @flags, @ino, @nlink)`,
   );
-  const insertMany = handle.transaction((rows: Record<string, unknown>[]) => {
-    for (const row of rows) insert.run(row);
-  });
 
-  /** path → node id, so a child can name its parent without a query per row. */
+  /**
+   * path → node id, so a child can name its parent without a query per row.
+   * This is a build-time cache, not storage — the only place the full paths
+   * exist, and it dies with the build.
+   */
   const idByPath = new Map<string, number>();
   /** Inodes already counted, so a hard link is not double-counted. */
   const seenInodes = new Set<number>();
@@ -315,19 +327,20 @@ export async function buildIndex(root: string, opts: BuildOptions = {}): Promise
   let processed = 0;
   let fileCount = 0;
   let dirCount = 0;
-  let pending: Record<string, unknown>[] = [];
+  let pending: { path: string; row: Record<string, unknown> }[] = [];
+
+  const insertMany = handle.transaction((batch: typeof pending) => {
+    for (const item of batch) {
+      // Every insert is a true insert — the root's previous rows were deleted
+      // up front — so the returned rowid IS the node's id. That is what lets
+      // v3 drop the old per-batch read-back query entirely.
+      idByPath.set(item.path, Number(insert.run(item.row).lastInsertRowid));
+    }
+  });
 
   const flush = (): void => {
     if (pending.length === 0) return;
     insertMany(pending);
-    // Ids are assigned by SQLite, so they are read back once per batch rather
-    // than once per row.
-    const paths = pending.map((r) => r.path as string);
-    const placeholders = paths.map(() => '?').join(',');
-    const rows = handle
-      .prepare(`SELECT id, path FROM nodes WHERE root_id = ? AND path IN (${placeholders})`)
-      .all(rootId, ...paths) as { id: number; path: string }[];
-    for (const row of rows) idByPath.set(row.path, row.id);
     pending = [];
   };
 
@@ -361,21 +374,37 @@ export async function buildIndex(root: string, opts: BuildOptions = {}): Promise
       // A file claiming bytes it does not occupy is a cloud placeholder.
       if (!entry.isDir && entry.allocatedSize === 0 && entry.size > 0) flags |= FLAG.PLACEHOLDER;
 
+      let parentId: number | null = null;
+      if (parentPath !== null) {
+        const known = idByPath.get(parentPath);
+        if (known === undefined) {
+          // The enumerator yields every parent before its children, and the
+          // flush above lands any parent still in `pending`. Without a stored
+          // path an orphan row would be invisible to every tree read, so a
+          // broken invariant fails the build loudly instead of quietly
+          // shrinking the tree.
+          throw new Error(`index build: parent of ${entry.path} was never enumerated`);
+        }
+        parentId = known;
+      }
+
       pending.push({
-        root_id: rootId,
-        parent_id: parentPath === null ? null : (idByPath.get(parentPath) ?? null),
-        name: entry.name,
         path: entry.path,
-        // Directories have no extension in this language, matching the
-        // frontend's `n.type === 'file'` guard.
-        ext: entry.isDir ? '' : extensionOf(entry.name),
-        is_dir: entry.isDir ? 1 : 0,
-        size,
-        allocated: entry.allocatedSize,
-        mtime: entry.modifiedAt,
-        flags,
-        ino: entry.ino,
-        nlink: entry.nlink,
+        row: {
+          root_id: rootId,
+          parent_id: parentId,
+          name: entry.name,
+          // Directories have no extension in this language, matching the
+          // frontend's `n.type === 'file'` guard.
+          ext: entry.isDir ? '' : extensionOf(entry.name),
+          is_dir: entry.isDir ? 1 : 0,
+          size,
+          allocated: entry.allocatedSize,
+          mtime: entry.modifiedAt,
+          flags,
+          ino: entry.ino,
+          nlink: entry.nlink,
+        },
       });
 
       processed++;
@@ -549,6 +578,103 @@ export function deleteIndex(rootPath?: string): number {
 }
 
 /* ------------------------------------------------------------------ *
+ * Path ↔ id translation (v3: paths are derived, never stored)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Join a child name onto its parent's path, byte-for-byte the way the
+ * enumerator builds paths (`base.ts`): plain concatenation with the
+ * separator, except when the parent already ends with one (`/`, `C:\`).
+ * Names never contain separators, so no normalisation is needed — and
+ * `path.join` per node would be measurable on a 224k-node read.
+ */
+function joinChild(parent: string, name: string): string {
+  return parent.endsWith(path.sep) ? parent + name : parent + path.sep + name;
+}
+
+/**
+ * Resolve an absolute path to its node id by descending one segment at a
+ * time — `WHERE parent_id = ? AND name = ?` is an idx_nodes_child seek, so
+ * this costs one indexed query per path level, once per call.
+ *
+ * Returns null when the path is outside the root or not in the index, which
+ * is exactly what the old `WHERE path = ?` lookup answered with no row.
+ */
+export function findNodeIdByPath(rootId: number, rootPath: string, absPath: string): number | null {
+  const handle = openIndex();
+  const top = handle.prepare('SELECT id FROM nodes WHERE root_id = ? AND parent_id IS NULL').get(rootId) as
+    | { id: number }
+    | undefined;
+  if (!top) return null;
+  if (absPath === rootPath) return top.id;
+
+  const prefix = rootPath.endsWith(path.sep) ? rootPath : rootPath + path.sep;
+  if (!absPath.startsWith(prefix)) return null;
+
+  const childByName = handle.prepare('SELECT id FROM nodes WHERE parent_id = ? AND name = ?');
+  let id = top.id;
+  for (const segment of absPath.slice(prefix.length).split(path.sep)) {
+    if (segment === '') continue;
+    const row = childByName.get(id, segment) as { id: number } | undefined;
+    if (!row) return null;
+    id = row.id;
+  }
+  return id;
+}
+
+/**
+ * A memoised node-id → absolute-path resolver.
+ *
+ * Callers resolving many nodes at once (search hits, hard-link families)
+ * share one resolver: results are sibling-heavy, so nearly every ancestor
+ * after the first walk is a cache hit and the marginal cost per node is one
+ * query for the node's own row.
+ */
+export function pathResolver(): (nodeId: number) => string | null {
+  const handle = openIndex();
+  const nodeRow = handle.prepare('SELECT parent_id, name, root_id FROM nodes WHERE id = ?');
+  const rootRow = handle.prepare('SELECT path FROM roots WHERE id = ?');
+  const cache = new Map<number, string>();
+
+  return (nodeId: number): string | null => {
+    const above: { id: number; name: string }[] = [];
+    let base: string | undefined;
+    let current = nodeId;
+    for (;;) {
+      const cached = cache.get(current);
+      if (cached !== undefined) {
+        base = cached;
+        break;
+      }
+      const row = nodeRow.get(current) as { parent_id: number | null; name: string; root_id: number } | undefined;
+      if (!row) return null;
+      if (row.parent_id === null) {
+        // The top node's path is the root's own path — its `name` is only the
+        // final segment, and for a root like '/' not even that.
+        const root = rootRow.get(row.root_id) as { path: string } | undefined;
+        if (!root) return null;
+        base = root.path;
+        cache.set(current, base);
+        break;
+      }
+      above.push({ id: current, name: row.name });
+      current = row.parent_id;
+    }
+    let result = base;
+    for (let i = above.length - 1; i >= 0; i--) {
+      result = joinChild(result, above[i].name);
+      cache.set(above[i].id, result);
+    }
+    return result;
+  };
+}
+
+/** One-off form of `pathResolver` for single lookups and tests. */
+export function pathOfNode(nodeId: number): string | null {
+  return pathResolver()(nodeId);
+}
+
+/* ------------------------------------------------------------------ *
  * Live updates
  * ------------------------------------------------------------------ */
 
@@ -635,6 +761,22 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
   const touchedParents = new Set<string>();
   let applied = 0;
 
+  // Deleting a directory takes its whole subtree with it. v3 stores no
+  // paths, so "the subtree" is the id closure of the node — which also makes
+  // the old LIKE-wildcard escaping hazard structurally impossible.
+  const deleteSubtree = handle.prepare(
+    `WITH RECURSIVE sub(id) AS (
+       SELECT ?
+       UNION ALL
+       SELECT n.id FROM nodes n JOIN sub ON n.parent_id = sub.id
+     )
+     DELETE FROM nodes WHERE id IN (SELECT id FROM sub)`,
+  );
+  const insertNode = handle.prepare(
+    `INSERT INTO nodes (root_id, parent_id, name, ext, is_dir, size, allocated, mtime, flags, ino, nlink)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+
   for (const change of queue.values()) {
     let stat: Awaited<ReturnType<typeof fsp.lstat>> | null = null;
     try {
@@ -644,50 +786,124 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
     }
 
     if (stat === null) {
-      // Deleting a directory takes its whole subtree with it.
-      const prefix = change.path.endsWith(path.sep) ? change.path : change.path + path.sep;
-      handle
-        .prepare('DELETE FROM nodes WHERE root_id = ? AND (path = ? OR path LIKE ? ESCAPE \'\\\')')
-        .run(root.id, change.path, escapeLike(prefix) + '%');
-      applied++;
+      const nodeId = findNodeIdByPath(root.id, rootPath, change.path);
+      if (nodeId !== null) {
+        deleteSubtree.run(nodeId);
+        applied++;
+      }
     } else {
       const isDir = stat.isDirectory();
-      const parentPath = path.dirname(change.path);
-      const parent = handle.prepare('SELECT id FROM nodes WHERE root_id = ? AND path = ?').get(root.id, parentPath) as
-        | { id: number }
-        | undefined;
+      const name = path.basename(change.path);
       let flags = 0;
       if (stat.isSymbolicLink()) flags |= FLAG.SYMLINK;
-      if (path.basename(change.path).charCodeAt(0) === 46) flags |= FLAG.HIDDEN;
+      if (name.charCodeAt(0) === 46) flags |= FLAG.HIDDEN;
+      const allocated = typeof stat.blocks === 'number' && stat.blocks > 0 ? stat.blocks * 512 : null;
+      const mtime = Math.round(stat.mtimeMs);
 
-      handle
-        .prepare(
-          `INSERT INTO nodes (root_id, parent_id, name, path, ext, is_dir, size, allocated, mtime, flags, ino, nlink)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(root_id, path) DO UPDATE SET
-             size = excluded.size, allocated = excluded.allocated, mtime = excluded.mtime, flags = excluded.flags`,
-        )
-        .run(
-          root.id,
-          parent?.id ?? null,
-          path.basename(change.path),
-          change.path,
-          isDir ? '' : extensionOf(path.basename(change.path)),
-          isDir ? 1 : 0,
-          isDir ? 0 : stat.size,
-          typeof stat.blocks === 'number' && stat.blocks > 0 ? stat.blocks * 512 : null,
-          Math.round(stat.mtimeMs),
-          flags,
-          stat.ino,
-          stat.nlink,
-        );
-      applied++;
+      let nodeId = findNodeIdByPath(root.id, rootPath, change.path);
+      if (nodeId !== null) {
+        const existing = handle.prepare('SELECT is_dir FROM nodes WHERE id = ?').get(nodeId) as
+          | { is_dir: number }
+          | undefined;
+        if (existing && existing.is_dir !== (isDir ? 1 : 0)) {
+          // The entry changed kind (a file replaced by a directory, or the
+          // reverse) between events. Refreshing the row in place would leave
+          // a file with children or a directory without them, so the old
+          // subtree goes and a fresh row takes its place.
+          deleteSubtree.run(nodeId);
+          nodeId = null;
+        }
+      }
+
+      if (nodeId !== null) {
+        if (isDir) {
+          // A directory's `size` is the roll-up of its children, not what
+          // lstat reports — refreshing it here with stat.size (or the old
+          // upsert's 0) would wipe the subtree's total until the next full
+          // re-sum, which never touches this node.
+          handle.prepare('UPDATE nodes SET allocated = ?, mtime = ?, flags = ? WHERE id = ?').run(allocated, mtime, flags, nodeId);
+        } else {
+          handle
+            .prepare('UPDATE nodes SET size = ?, allocated = ?, mtime = ?, flags = ? WHERE id = ?')
+            .run(stat.size, allocated, mtime, flags, nodeId);
+        }
+        applied++;
+      } else {
+        const parentId = await ensureParents(handle, root.id, rootPath, path.dirname(change.path));
+        if (parentId !== null) {
+          insertNode.run(
+            root.id,
+            parentId,
+            name,
+            isDir ? '' : extensionOf(name),
+            isDir ? 1 : 0,
+            isDir ? 0 : stat.size,
+            allocated,
+            mtime,
+            flags,
+            stat.ino,
+            stat.nlink,
+          );
+          applied++;
+        }
+      }
     }
     touchedParents.add(path.dirname(change.path));
   }
 
   if (applied > 0) resumAncestors(handle, root.id, rootPath, touchedParents);
   return applied;
+}
+
+/**
+ * Node id for `dirPath`, creating any missing ancestor directories on the
+ * way down. A watcher can deliver a child's event before its parent's, or
+ * coalesce the parent's away entirely — and under v3 an orphan row would be
+ * invisible to every tree read, so the chain is materialised from the
+ * filesystem instead. Returns null when `dirPath` falls outside the root or
+ * no longer exists.
+ */
+async function ensureParents(
+  handle: Database.Database,
+  rootId: number,
+  rootPath: string,
+  dirPath: string,
+): Promise<number | null> {
+  const known = findNodeIdByPath(rootId, rootPath, dirPath);
+  if (known !== null) return known;
+  // The root's own node missing is a rebuild problem, not a watcher one.
+  if (dirPath === rootPath) return null;
+  const prefix = rootPath.endsWith(path.sep) ? rootPath : rootPath + path.sep;
+  if (!dirPath.startsWith(prefix)) return null;
+
+  const parentId = await ensureParents(handle, rootId, rootPath, path.dirname(dirPath));
+  if (parentId === null) return null;
+
+  let stat: Awaited<ReturnType<typeof fsp.lstat>>;
+  try {
+    stat = await fsp.lstat(dirPath);
+  } catch {
+    return null; // vanished again already — nothing to hang the child on
+  }
+  if (!stat.isDirectory()) return null;
+
+  const name = path.basename(dirPath);
+  const info = handle
+    .prepare(
+      `INSERT INTO nodes (root_id, parent_id, name, ext, is_dir, size, allocated, mtime, flags, ino, nlink)
+       VALUES (?, ?, ?, '', 1, 0, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      rootId,
+      parentId,
+      name,
+      typeof stat.blocks === 'number' && stat.blocks > 0 ? stat.blocks * 512 : null,
+      Math.round(stat.mtimeMs),
+      name.charCodeAt(0) === 46 ? FLAG.HIDDEN : 0,
+      stat.ino,
+      stat.nlink,
+    );
+  return Number(info.lastInsertRowid);
 }
 
 
@@ -717,15 +933,16 @@ function resumAncestors(
 
   // Deepest first, so a parent is re-summed after its children.
   const ordered = [...chain].sort((a, b) => b.length - a.length);
-  const childSum = handle.prepare(
-    'SELECT COALESCE(SUM(size), 0) total FROM nodes WHERE parent_id = (SELECT id FROM nodes WHERE root_id = ? AND path = ?)',
-  );
-  const setSize = handle.prepare('UPDATE nodes SET size = ? WHERE root_id = ? AND path = ?');
+  const childSum = handle.prepare('SELECT COALESCE(SUM(size), 0) total FROM nodes WHERE parent_id = ?');
+  const setSize = handle.prepare('UPDATE nodes SET size = ? WHERE id = ?');
 
   const apply = handle.transaction(() => {
     for (const dir of ordered) {
-      const { total } = childSum.get(rootId, dir) as { total: number };
-      setSize.run(total, rootId, dir);
+      // Outside the root, or itself deleted in this burst — nothing to re-sum.
+      const id = findNodeIdByPath(rootId, rootPath, dir);
+      if (id === null) continue;
+      const { total } = childSum.get(id) as { total: number };
+      setSize.run(total, id);
     }
     const rootSize = handle.prepare('SELECT size FROM nodes WHERE root_id = ? AND parent_id IS NULL').get(rootId) as
       | { size: number }
@@ -748,7 +965,6 @@ interface NodeRow {
   id: number;
   parent_id: number | null;
   name: string;
-  path: string;
   is_dir: number;
   size: number;
   allocated: number | null;
@@ -846,9 +1062,12 @@ export function readTree(
   if (!root) return null;
 
   const target = subPath ?? rootPath;
-  const startRow = handle.prepare('SELECT * FROM nodes WHERE root_id = ? AND path = ?').get(root.id, target) as
-    | NodeRow
-    | undefined;
+  // v3 stores no paths, so the start row is found by descending the tree one
+  // segment at a time — an idx_nodes_child seek per level, ~10 queries once
+  // per call in place of the old single path-column lookup.
+  const startId = findNodeIdByPath(root.id, rootPath, target);
+  if (startId === null) return null;
+  const startRow = handle.prepare('SELECT * FROM nodes WHERE id = ?').get(startId) as NodeRow | undefined;
   if (!startRow) return null;
 
   const childrenOf = handle.prepare('SELECT * FROM nodes WHERE parent_id = ? ORDER BY size DESC');
@@ -863,7 +1082,10 @@ export function readTree(
     familySizes.set(row.ino, row.c);
   }
 
-  const startNode = toFileNode(startRow, familySizes);
+  // Paths are rebuilt top-down during the descent: the parent's path is
+  // already known when its children are read, so each child costs one string
+  // concatenation rather than a stored 143-byte column.
+  const startNode = toFileNode(startRow, familySizes, target);
   let nodes = 1;
   let prunedDirs = 0;
 
@@ -900,7 +1122,7 @@ export function readTree(
 
     current.node.children = [];
     for (const row of rows) {
-      const child = toFileNode(row, familySizes);
+      const child = toFileNode(row, familySizes, joinChild(current.node.path, row.name));
       current.node.children.push(child);
       nodes++;
       if (row.is_dir) frontier.push({ row, node: child });
@@ -910,10 +1132,10 @@ export function readTree(
   return { root: startNode, nodes, prunedDirs };
 }
 
-function toFileNode(row: NodeRow, familySizes: Map<number, number>): FileNode {
+function toFileNode(row: NodeRow, familySizes: Map<number, number>, nodePath: string): FileNode {
   const node: FileNode = {
     name: row.name,
-    path: row.path,
+    path: nodePath,
     size: row.size,
     type: row.is_dir ? 'dir' : 'file',
     modifiedAt: row.mtime,
@@ -1078,34 +1300,78 @@ export function searchIndex(rawQuery: string, opts: SearchOptions = {}): SearchR
     params.push(Date.now() - opts.olderThanDays * 86_400_000);
   }
   if (opts.scope) {
-    // Scope to a folder and everything beneath it. The separator on the prefix
-    // stops '/data/app' from also scoping '/data/application'.
-    const prefix = opts.scope.endsWith(path.sep) ? opts.scope : opts.scope + path.sep;
-    where.push("(n.path = ? OR n.path LIKE ? ESCAPE '\\')");
-    params.push(opts.scope, escapeLike(prefix) + '%');
+    // Scope to a folder and everything beneath it. v3 stores no paths, so the
+    // scope resolves to node ids — one per root that holds it — and the filter
+    // is their id closure. Segment matching keeps the old separator guarantee:
+    // '/data/app' cannot scope '/data/application'. When two roots overlap
+    // (an outer and an inner both indexed), both contribute, exactly as the
+    // old prefix match did.
+    const scope = opts.scope;
+    const scopePrefix = scope.endsWith(path.sep) ? scope : scope + path.sep;
+    const scopeIds: number[] = [];
+    for (const r of roots) {
+      const id =
+        r.path === scope || r.path.startsWith(scopePrefix)
+          ? findNodeIdByPath(r.id, r.path, r.path) // the whole root lies inside the scope
+          : findNodeIdByPath(r.id, r.path, scope); // null when the scope is outside this root
+      if (id !== null) scopeIds.push(id);
+    }
+    if (scopeIds.length === 0) {
+      return {
+        query: rawQuery,
+        hits: [],
+        total: 0,
+        countCapped: false,
+        truncated: false,
+        tookMs: Date.now() - started,
+        roots: roots.map((r) => r.path),
+        staleRoots,
+      };
+    }
+    where.push(
+      `n.id IN (
+         WITH RECURSIVE sub(id) AS (
+           SELECT id FROM nodes WHERE id IN (${scopeIds.map(() => '?').join(',')})
+           UNION ALL
+           SELECT c.id FROM nodes c JOIN sub ON c.parent_id = sub.id
+         )
+         SELECT id FROM sub
+       )`,
+    );
+    params.push(...scopeIds);
   }
 
   const clause = where.join(' AND ');
   const limit = Math.min(SEARCH_MAX_LIMIT, Math.max(1, opts.limit ?? 100));
   const offset = Math.max(0, opts.offset ?? 0);
 
+  // The id tiebreak replaces the old `n.path ASC`: with no stored path there
+  // is nothing alphabetical to order equal sizes by without reconstructing a
+  // path for every candidate row. Ids are enumeration order, which is just as
+  // deterministic and stable across pages — and for a size-descending search
+  // for disk hogs, the order among exact-size ties carries no meaning.
   const rows = handle
     .prepare(
-      `SELECT n.name, n.path, n.ext, n.is_dir, n.size, n.mtime, r.path AS root_path
+      `SELECT n.id, n.name, n.ext, n.is_dir, n.size, n.mtime, r.path AS root_path
          FROM nodes n JOIN roots r ON r.id = n.root_id
         WHERE ${clause}
-        ORDER BY n.size DESC, n.path ASC
+        ORDER BY n.size DESC, n.id ASC
         LIMIT ? OFFSET ?`,
     )
     .all(...params, limit, offset) as {
+    id: number;
     name: string;
-    path: string;
     ext: string;
     is_dir: number;
     size: number;
     mtime: number;
     root_path: string;
   }[];
+
+  // Results are capped at a page, so rebuilding each hit's path is a bounded
+  // ancestor walk — and hits are sibling-heavy, so the shared resolver cache
+  // makes most of it free.
+  const resolve = pathResolver();
 
   /* Counting matches, without paying for it twice.
    *
@@ -1135,16 +1401,19 @@ export function searchIndex(rawQuery: string, opts: SearchOptions = {}): SearchR
   return {
     query: rawQuery,
     countCapped,
-    hits: rows.map((row) => ({
-      name: row.name,
-      path: row.path,
-      parentPath: path.dirname(row.path),
-      size: row.size,
-      type: row.is_dir ? 'dir' : 'file',
-      ...(row.is_dir === 0 && row.ext ? { extension: row.ext } : {}),
-      modifiedAt: row.mtime,
-      rootPath: row.root_path,
-    })),
+    hits: rows.map((row) => {
+      const hitPath = resolve(row.id) ?? joinChild(row.root_path, row.name);
+      return {
+        name: row.name,
+        path: hitPath,
+        parentPath: path.dirname(hitPath),
+        size: row.size,
+        type: row.is_dir ? ('dir' as const) : ('file' as const),
+        ...(row.is_dir === 0 && row.ext ? { extension: row.ext } : {}),
+        modifiedAt: row.mtime,
+        rootPath: row.root_path,
+      };
+    }),
     total,
     // More matches exist beyond this page. With a capped count `total` is a
     // floor, so a full page always implies more may follow.
