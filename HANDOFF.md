@@ -1,10 +1,13 @@
 # TreeMap — 21-feature master prompt, session handoff
 
-**Date:** 28 July 2026
-**Status:** Phase 0 ✅ · Phase 1 ✅ (A1–A5) · Phase 2 four-fifths ✅ (B2, B3, B1, B4) — **B5 remains**
-**Suite:** 587/587 on 3 consecutive runs · typecheck clean · zero console errors
-**Everything is COMMITTED AND PUSHED** through `c26e309`. Working tree clean.
-**v2.5.0 is built and installed** at `/Applications/TreeMap.app`.
+**Date:** 28 July 2026 (second session of the day)
+**Status:** Phase 0 ✅ · Phase 1 ✅ (A1–A5) · **Phase 2 ✅ COMPLETE** (B2, B3, B1, B4, B5) · index schema v3 ✅
+**Suite:** 599/599 on 3 consecutive runs · typecheck clean · zero console errors
+**Committed but NOT pushed:** two commits (index v3 shrink, B5) sit on `main`
+waiting for the user to click **Push origin** in GitHub Desktop.
+**v2.5.0 is built and installed** at `/Applications/TreeMap.app` — it predates
+today's commits, so the installed app gains them at the next release build
+(which will also rebuild its index once, v2 → v3).
 
 Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
@@ -14,7 +17,7 @@ Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
 ```bash
 cd "/Users/prithvivinay/Desktop/Claude Code/Treemap"
-npm run build && npm test          # expect 587/587
+npm run build && npm test          # expect 599/599
 npm run capabilities:report        # expect 9/12 available on this Mac
 ```
 
@@ -46,91 +49,70 @@ contradict what the spec assumes.
 
 ---
 
-# ⏭️ THE NEXT TASK — shrink the index (user-approved, NOT started)
+# ✅ DONE THIS SESSION — index schema v3 (commit `bf641a7`) and B5
 
-The user asked for TreeMap to handle **100,000,000 files** and, shown the
-options, chose *"drop the stored path — 3× smaller"*. The analysis below is
-done and measured; **the change itself has not been started.** Do this before B5.
+## Index schema v3 — the stored path is gone
 
-### The measurement that defines the job
+The user-approved "drop the stored path" plan was executed exactly as designed
+and measured against the same real `~/Library`:
 
-Indexing a real `~/Library` (223,779 nodes) produced a 108.8 MB database.
-`dbstat` breakdown, per node:
-
-| Part | B/node | Share |
+| | v2 (before) | v3 (after) |
 |---|---|---|
-| `nodes` table (of which `path` text ≈ 143) | ~215 | 44% |
-| `idx_nodes_path` — UNIQUE(root_id, path) | **177** | **36%** |
-| `idx_nodes_name` | 34 | 7% |
-| `idx_nodes_mtime` | 19 | 4% |
-| `idx_nodes_ext` | 15 | 3% |
-| `idx_nodes_parent` | 13 | 3% |
-| `idx_nodes_size` | 13 | 3% |
-| **TOTAL** | **486** | |
+| Bytes/node | 486 | **190** (2.6× smaller; alarm line was 250) |
+| Whole DB, ~225k nodes | 108.8 MB | **42.9 MB** |
+| 100M-file projection | ~49 GB | **~19 GB** |
+| `readTree`, 225k nodes | ~590 ms | **553 ms** |
+| Search substring, 500k | 58 ms | **47 ms** |
 
-Average path length **143 chars**; average name length 21.
+How it works now, in one paragraph: nodes carry `(parent_id, name)` and no
+path; `idx_nodes_child UNIQUE(parent_id, name)` replaces both the path index
+and the parent index; a partial unique index finds a root's top node.
+`findNodeIdByPath` (segment descent) and `pathResolver`/`pathOfNode`
+(memoised ancestor walk) translate in both directions. `readTree` rebuilds
+paths top-down during the descent; search scopes via a recursive-CTE id
+closure and orders ties by `n.id` (there is no stored path to order by);
+watcher deletes are id-closure CTEs, so LIKE-escaping is structurally gone.
+Builds got faster: ids come from `lastInsertRowid`, so the per-batch
+read-back SELECT no longer exists. Two latent watcher bugs were fixed in
+passing (a directory-self event zeroing its rolled-up size; a child event
+arriving before its parent's writing an invisible orphan — the ancestor chain
+is now materialised). Verified: goldens byte-identical, `dbstat` shows no
+path stored anywhere, schema-mismatch rebuild covers v2 → v3 with no
+migration code.
 
-**The absolute path is stored twice — as a column and as a unique index on that
-column — and together that is 66% of the whole database.** At 100M files,
-486 B/node is **48.6 GB**. Removing it should reach ~195 B/node ≈ **17 GB**.
+## B5 — zombie-handle reclaim detector (Phase 2 complete)
 
-### Why this is the right target (do not re-litigate)
+- `GET /api/zombie-handles` — per-process report of space held by files
+  deleted while still open. `POST /api/zombie-handles/restart` — SIGTERM
+  only, identity-checked against pid reuse (`ps -o comm=`), never TreeMap
+  itself, **never escalated to SIGKILL**; relaunches only macOS `.app`
+  bundles via `open` after the exit is confirmed. Registered in `ENDPOINTS`
+  and added to the **pinned destructive list** in
+  `tests/discoverability.test.ts` — both deliberate.
+- Dashboard card **"Held-Up Space"** below Disk Topology: all six §3.5
+  states; rows fold behind "Show N more · X GB" past 8 (measured: this Mac
+  had **330 holders / 2.5 GB**, mostly Chrome helpers — an unfolded list was
+  unusable); restart goes through the shared confirm dialog with the
+  §B5-required unsaved-work warning, worded differently for a reopenable
+  Mac app vs a bare process.
+- Verified in the real dev app end-to-end: a spawned holder of a deleted
+  3 MB file appeared with exactly 3,145,728 bytes, the restart endpoint
+  terminated it gracefully, and it left the report. Windows stays honestly
+  unavailable (§B5: the reason is on the card).
+- Platform notes: `ps -o comm=` prints the full executable path on macOS
+  (measured); `kill(pid, 0)` throws EPERM for a live foreign process (only
+  ESRCH means gone); the `.app` test takes the outermost bundle.
 
-- **Scanning is not the bottleneck.** gdu does the user's whole disk
-  (1,445,163 items) in **20 s** — 72k items/s. 100M items is ~23 minutes, once.
-  A different open-source scanner buys percentages, not the 10× that would
-  matter; the limit is macOS's own filesystem calls. This was investigated and
-  rejected with numbers — **do not spend time swapping scanners.**
-- **The in-memory tree is already fine.** `scanStore.ts` holds ~52 B/node, so
-  100M ≈ 5.2 GB. Done in July.
-- The index is the only structure that does not scale.
+---
 
-### The design (worked out, not yet written)
+# ⏭️ THE NEXT TASK — Phase 3, starting with C8
 
-**Schema v3** — bump `SCHEMA_VERSION`. A1 already rebuilds on version mismatch,
-so no migration code is needed; that is exactly why the version field exists.
-
-1. **Drop the `path` column and `idx_nodes_path`.**
-2. `CREATE UNIQUE INDEX idx_nodes_child ON nodes(parent_id, name)` — the same
-   guarantee (a directory cannot hold two entries of one name) at ~29 B/node
-   instead of 177.
-3. Root nodes have `parent_id IS NULL`, so add the partial index
-   `CREATE UNIQUE INDEX idx_nodes_root_node ON nodes(root_id) WHERE parent_id IS NULL`
-   to find a root's top node without a scan.
-
-**The call sites that genuinely need a path** (71 textual references collapse to
-these six):
-
-| Site | Today | After |
-|---|---|---|
-| `buildIndex` insert | `ON CONFLICT(root_id, path)` plus a per-batch read-back `SELECT id, path … WHERE path IN (…)` | Conflict on `(parent_id, name)`. Take ids from `info.lastInsertRowid` inside the transaction — `buildIndex` deletes the root's rows first, so every insert is a true insert and the rowid is reliable. **This also removes the read-back query, so builds get faster.** Keep the in-memory `idByPath` map: it is a build-time cache, not storage. |
-| `readTree` nodes | reads `row.path` | Build paths **top-down during the descent** — the parent's path is already known, so it costs nothing. Give `toFileNode` a `parentPath` argument. |
-| `readTree` start row | `WHERE root_id=? AND path=?` | Descend from the root node by path segments (`WHERE parent_id=? AND name=?`), ~10 queries once per call. |
-| `searchIndex` | selects `n.path`, orders by it, and `scope` uses `n.path LIKE 'prefix%'` | Results are capped (≤ a few hundred), so rebuild each path by walking `parent_id` upward with a **memoised ancestor cache** — sibling results share nearly all ancestors. For `scope`, resolve the scope to a node id and filter results by walking their ancestors. |
-| `applyPendingChanges` (live watcher) | subtree delete via `path LIKE 'prefix%'`; parent lookup by path | Subtree delete via recursive CTE: `WITH RECURSIVE sub(id) AS (SELECT id FROM nodes WHERE id=? UNION ALL SELECT n.id FROM nodes n JOIN sub ON n.parent_id=sub.id) DELETE FROM nodes WHERE id IN (SELECT id FROM sub)`. Parent lookup by the same segment descent. |
-| size roll-up (~line 721) | `WHERE root_id=? AND path=?` | Key off the node id the caller already has. |
-
-**Two helpers to add:** `findNodeIdByPath(rootId, absPath)` (segment descent)
-and `pathOfNode(id)` (ancestor walk, memoised).
-
-### How to know it worked
-
-- `tests/goldenResponses.test.ts` must pass **byte-identical** — that is what
-  those goldens are for, and the index feeds `/api/index/tree`.
-- Re-run the measurement: index `~/Library`, divide DB+WAL bytes by
-  `fileCount + dirCount`. **Target ≈195 B/node. Above ~250 means a path is
-  still being stored somewhere.**
-- `readTree` must not regress (currently ~590 ms for 224k nodes).
-- The sub-quadratic scaling test in `tests/indexEngine.test.ts` must still pass.
-
-### Do NOT
-
-- Do not add a `path_hash` column as a shortcut. It keeps the 143-byte column
-  and removes only the index — a 1.5× win where 2.5× is available, and it
-  leaves two sources of truth for one path.
-- Do not load every row of a root to assemble the tree in memory. Faster on a
-  small root, impossible on a 100M-node one; the budgeted descent is what keeps
-  memory bounded.
+Spec §7: **C8 (rule packs) first**, then C6 and C7 expressed as rule packs,
+then C1–C5 in any order. C8 refactors the existing `CleanupRules` Smart
+Suggestions into versioned JSON rule packs with a schema check that fails
+loudly at startup — §C8's acceptance requires an explicit regression test
+that every existing suggestion still fires identically. Stop and report at
+the phase boundary per §7.
 
 ---
 
@@ -148,16 +130,18 @@ and `pathOfNode(id)` (ancestor walk, memoised).
 | **B3** | Time Capsule — recovery beyond the OS Trash | ✅ |
 | **B1** | Autopilot cleanup with policy engine | ✅ |
 | **B4** | Snapshot-aware restore beyond Trash | ✅ |
-| **B5** | Zombie-handle reclaim detector | ⬜ **after the index work** |
+| **B5** | Zombie-handle reclaim detector | ✅ *(Windows honestly unavailable — gap #3)* |
+| — | Index schema v3 (486 → 190 B/node) | ✅ |
 
 ### Measured on this Mac — throughput here is load-dominated, so state the machine's state with any number
 
 - Whole disk `/`: **20.1 s**, 1,445,163 items, **72k items/s**, gdu-turbo
 - Home dir: 10.0 s / 524,142 items *(with Full Disk Access)*
-- Index build for home: **26.9 s**
-- Reopen from index: **586 ms** in-process, 1,674 ms end-to-end over HTTP
-  *(was 8,549 ms before the heap fix)*
-- Search over 500,000 files: 1 ms extension, 58 ms substring
+- Index build for home: **26.9 s** *(v2; v3 builds are faster — no read-back query)*
+- Index density: **190 B/node** (v3) vs 486 (v2), measured on ~/Library, 225,596 nodes
+- Reopen from index: **553 ms** in-process (v3; was 586 ms on v2, 8,549 ms before the heap fix)
+- Search over 500,000 files: 1 ms extension, 47 ms substring (v3; was 58 ms)
+- Zombie handles on this Mac: 330 processes holding 2.5 GB, almost all browser helpers
 - A2 on a clone/hardlink/sparse fixture: naive 145.8 MB → real 34.3 MB
 - Index total matches the gdu scanner byte-for-byte: 58,322,430 = 58,322,430
 
@@ -315,13 +299,15 @@ Stated **in the UI**, not hidden. Do not "fix" them by removing the caveats.
    gets its own inode, `nlink` stays 1, and `st.blocks` reports the full size.
    `du` gets this wrong identically. A2 reports the aggregate gap and labels
    totals `approximate`.
-2. **The index has no size cap**, and now a measured cost of 486 B/node — the
-   next task. §B3 mandates a capacity guard for the Time Capsule; the same
-   reasoning applies here, and the capsule's `capFor`/`planEviction` are a
-   ready-made model.
-3. **Windows zombie-handle detection is absent** (B5). Both candidates need
-   native code or a non-redistributable binary. Reported as unavailable with a
-   reason — §B5 says pick one and do it completely.
+2. **The index still has no size cap.** Schema v3 cut the cost 2.6× (190
+   B/node measured), which defers the problem but does not remove it. §B3
+   mandates a capacity guard for the Time Capsule; the same reasoning applies
+   here, and the capsule's `capFor`/`planEviction` are a ready-made model.
+3. **Windows zombie-handle detection is absent** (B5 shipped without it).
+   Both candidates need native code or a non-redistributable binary. The
+   card shows the specific reason, and the restart endpoint answers the same
+   409 — §B5's "pick one and do it completely" was resolved as: do the Unix
+   mechanism completely, say why Windows cannot follow.
 4. **B4's elevated branch was never executed** — it needs a real password.
    Verified unprivileged instead (every mount fails → NOTFOUND, exit 0, no
    leaked mount points, nothing written) plus unit-tested argv quoting against a
@@ -339,27 +325,34 @@ Stated **in the UI**, not hidden. Do not "fix" them by removing the caveats.
 
 ---
 
-## After the index work: B5, then Phases 3–5
+## The road ahead: Phases 3–5
 
-**B5 · Zombie-handle reclaim** — the last of Phase 2. `getZombieHandles` already
-exists on the provider for macOS and Linux from Phase 0 (lsof inode comparison /
-`/proc/*/fd`). Windows stays unimplemented with an honest reason. What remains:
-the panel listing "X GB held by processes that won't let go", and a per-process
-restart action (graceful terminate + relaunch where supported, an explicit
-unsaved-work warning otherwise).
-
-Then **Phase 3** C8 (rule packs) → C6, C7 → C1–C5; **Phase 4** D2 → D3 → D1;
+**Phase 3** C8 (rule packs) → C6, C7 → C1–C5; **Phase 4** D2 → D3 → D1;
 **Phase 5** full regression, the §8 benchmark with real recorded numbers, a
 security review of D1's network surface, and the README sweep.
 
-**README status:** documented through B4 (twelve views, all endpoints). §7
-schedules the full README pass for Phase 5.
+**Per-feature decisions for B5** (worth keeping): the restart action is
+SIGTERM-only and never escalates — a process that declines to quit is
+*reported* as still running, because force-killing is exactly the unsaved-work
+loss the confirmation warned about, done silently. Identity is verified via
+`ps -o comm=` before any signal (pids are recycled); name matching tolerates a
+prefix only at ≥ 9 chars, because old lsof truncates at 9 and Linux comm at 15,
+while `node`/`nodemon` must not cross-match. `restartProcess` takes a `waitMs`
+so the stubborn-process test doesn't cost five real seconds.
+
+**README status:** documented through B4 (twelve views, all endpoints). B5 is
+NOT yet in the README — §7 schedules the full README pass for Phase 5.
 
 ---
 
 ## New files this session
 
-**Source:** `src/platform/` (types, exec, base, index, capabilities, portable,
+**This (second 28 Jul) session:** `src/services/zombieHandles.ts`,
+`src/api/zombieRoutes.ts`, `tests/zombieHandles.test.ts` — plus schema v3
+rewrites inside `indexEngine.ts`/`allocationAccountant.ts` and the B5 card in
+`public/index.html`.
+
+**Earlier sessions:** `src/platform/` (types, exec, base, index, capabilities, portable,
 snapshotPaths + `macos/`, `linux/`, `windows/`),
 `src/services/{indexEngine,allocationAccountant,placeholderResolver,timeCapsule,autopilot,snapshotRecovery}.ts`,
 `src/api/{indexRoutes,platformRoutes,timeCapsuleRoutes,autopilotRoutes}.ts`,

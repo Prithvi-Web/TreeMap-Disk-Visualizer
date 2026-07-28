@@ -15,6 +15,7 @@ import { platformRouter } from './api/platformRoutes';
 import { indexRouter, drainIndexClients, cancelAllIndexJobs } from './api/indexRoutes';
 import { timeCapsuleRouter, drainCapsuleClients } from './api/timeCapsuleRoutes';
 import { autopilotRouter } from './api/autopilotRoutes';
+import { zombieRouter } from './api/zombieRoutes';
 import { closeIndex } from './services/indexEngine';
 import { stopOAuth } from './services/cloud/oauth';
 import { rateLimiter } from './middleware/rateLimiter';
@@ -64,6 +65,7 @@ export function createApp(publicDir: string): express.Express {
   app.use('/api', indexRouter);
   app.use('/api', timeCapsuleRouter);
   app.use('/api', autopilotRouter);
+  app.use('/api', zombieRouter);
 
   // Frontend: the single-file UI. When token auth is enabled, serving the
   // page also hands the browser its session cookie (R2 — the frozen UI keeps

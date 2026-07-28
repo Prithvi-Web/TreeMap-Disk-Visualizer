@@ -1583,6 +1583,62 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   },
   {
     method: 'get',
+    path: '/api/zombie-handles',
+    summary: 'Space still held by files that were deleted while a process kept them open, grouped by process',
+    tag: 'system',
+    destructive: false,
+    responses: {
+      '200': jsonResponse(
+        'The held-space report',
+        obj(
+          {
+            processes: opaque('per-process groups: pid, processName, appBundle, bytes, unknownSizeCount, handles[]'),
+            totalBytes: int('Known held bytes across every process — a floor, not an estimate'),
+            unknownSizeCount: int('Held files whose size could not be read'),
+            scannedAt: int(),
+          },
+          ['processes', 'totalBytes', 'unknownSizeCount', 'scannedAt'],
+        ),
+      ),
+      '409': errorResponse('CAPABILITY_UNAVAILABLE — held-space detection is not possible on this system'),
+    },
+  },
+  {
+    method: 'post',
+    path: '/api/zombie-handles/restart',
+    summary: 'Ask the process holding deleted files to quit (reopening it where supported) so the space frees',
+    tag: 'system',
+    // Quitting a program can lose its unsaved work. SIGTERM only, identity-
+    // checked against pid reuse, never TreeMap itself, never escalated.
+    destructive: true,
+    requestBody: {
+      required: true,
+      content: {
+        'application/json': {
+          schema: obj(
+            {
+              pid: int('The process id, exactly as reported by GET /api/zombie-handles'),
+              processName: str('The process name from the same report — refused if the pid no longer matches it'),
+            },
+            ['pid', 'processName'],
+          ),
+        },
+      },
+    },
+    responses: {
+      '200': jsonResponse(
+        'What happened',
+        obj(
+          { pid: int(), processName: str(), terminated: bool(), relaunched: bool(), message: str() },
+          ['pid', 'processName', 'terminated', 'relaunched', 'message'],
+        ),
+      ),
+      '400': errorResponse('PID_INVALID / PROCESS_NAME_REQUIRED / PID_IS_TREEMAP'),
+      '409': errorResponse('CAPABILITY_UNAVAILABLE / PID_REUSED / PID_UNVERIFIED / TERMINATE_REFUSED'),
+    },
+  },
+  {
+    method: 'get',
     path: '/api/timecapsule',
     summary: 'Items copied aside before an automated delete, with capacity and history',
     tag: 'timecapsule',

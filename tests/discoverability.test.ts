@@ -231,6 +231,9 @@ test('capabilities marks exactly the destructive endpoints as destructive', asyn
       // Restoring writes a whole tree back onto the filesystem.
       'POST /api/timecapsule/{id}/restore',
       'POST /api/trash/empty',
+      // Quitting a program can lose its unsaved work — the one B5 action that
+      // frees held space is aimed at a process, not a file.
+      'POST /api/zombie-handles/restart',
       // Saving a policy is saving a standing instruction to delete things.
       'PUT /api/autopilot/policies',
       'PUT /api/settings',

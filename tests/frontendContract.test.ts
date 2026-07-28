@@ -89,6 +89,31 @@ test('the Clean Up and Settings surfaces are present', () => {
   }
 });
 
+test('the held-up space card (B5) is present, wired, and honest in every state', () => {
+  assert.ok(INDEX.includes('id="zombieCard"'), 'the Dashboard card exists');
+  assert.ok(INDEX.includes('id="zombieBody"') && INDEX.includes('id="zombieRefresh"'), 'its body and refresh control exist');
+
+  // The panel logic, sliced from its own anchor forward (never from 0 — an
+  // earlier match would slice backwards to empty).
+  const code = appCode();
+  const start = code.indexOf('function loadZombies');
+  assert.ok(start !== -1, 'loadZombies exists');
+  const end = code.indexOf('System info', start);
+  const panel = code.slice(start, end === -1 ? code.length : end);
+  assert.ok(panel.length > 500, 'the B5 panel slice is non-empty');
+
+  // §3.5: unavailable-with-reason and error-with-retry are distinct states.
+  assert.match(panel, /capabilityUnavailable/, 'a 409 renders the capability reason, not a generic error');
+  assert.match(panel, /renderZombiesBlocked/, 'the unavailable state exists');
+  assert.match(panel, /data-zh-retry/, 'the error state offers a retry');
+  // §B5: the restart confirmation carries the unsaved-work warning explicitly,
+  // and differs by whether relaunch is genuinely supported.
+  assert.match(panel, /unsaved work/, 'the unsaved-work warning is present');
+  assert.match(panel, /appBundle\s*\?/, 'the confirmation distinguishes reopenable apps from bare processes');
+  // The action goes through the shared confirm dialog, not a bare click.
+  assert.match(panel, /confirmModal/, 'restart is confirmed, never immediate');
+});
+
 test('every view section is a tabpanel with an accessible label', () => {
   // §6 accessibility: a canvas-heavy view is unusable without this.
   for (const view of TAB_VIEWS) {

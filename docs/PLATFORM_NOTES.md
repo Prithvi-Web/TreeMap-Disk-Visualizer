@@ -191,6 +191,20 @@ shipped a confidently wrong answer.
    ~1.5% — the residue is container metadata and snapshot overhead, which
    belongs to the container, not to any volume.
 
+8. **`ps -o comm=` prints the full executable path on macOS** (measured:
+   `/Applications/Google Chrome.app/Contents/…/Google Chrome Helper (Renderer)`)
+   — unlike Linux, where `comm` is the kernel's 15-character name. B5's restart
+   action uses it twice: to verify a pid still belongs to the process the panel
+   showed (pids are recycled), and to find the enclosing `.app` bundle so
+   "restart" can genuinely mean quit-and-reopen via `open`. The identity check
+   tolerates prefix matches only for names ≥ 9 characters, because older `lsof`
+   builds truncate command names at 9 and Linux truncates at 15 — while a short
+   name like `node` must match exactly (`nodemon` reusing its pid is realistic).
+   Two adjacent subtleties, both unit-tested: `process.kill(pid, 0)` throws
+   `EPERM` for a *live* process owned by someone else (only `ESRCH` means gone),
+   and the `.app` test matches the **first** `.app/` path segment so a Chrome
+   helper resolves to Chrome itself, which is the thing `open` can reopen.
+
 ---
 
 ## Windows
@@ -454,3 +468,10 @@ Also available:
   files inside them, a program is holding open. Read-only. `DELETE /api/files`
   runs the same check itself and answers `409 OPEN_HANDLE_CONFLICT` (with the
   processes in `conflicts`) unless the caller passes `ignoreOpenHandles: true`.
+- `GET /api/zombie-handles` — B5: space still held by files deleted while a
+  process kept them open, grouped by process; `409 CAPABILITY_UNAVAILABLE`
+  with the honest reason on Windows. `POST /api/zombie-handles/restart`
+  (destructive, in the manifest's pinned list) asks one holder to quit —
+  SIGTERM only, identity-checked against pid reuse, never TreeMap itself,
+  never escalated to SIGKILL — and reopens it where that is genuinely
+  supported (a macOS `.app`, via `open`, after the exit is confirmed).
