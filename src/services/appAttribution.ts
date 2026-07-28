@@ -137,9 +137,15 @@ function containersFor(ctx: AttributionContext): ContainerSpec[] {
     ];
   }
   if (ctx.platform === 'win32') {
-    // Env vars only mean something when we're really on Windows; otherwise
-    // (tests exercising win32 rules elsewhere) derive everything from ctx.
-    const onWindows = process.platform === 'win32';
+    // Env vars only mean something when we're really on Windows AND the
+    // context describes this machine's own home — that pairing is what lets
+    // a redirected AppData be honoured in production. A ctx pointing at a
+    // different home (a fixture, or attribution of another machine's tree)
+    // must derive from ctx, or the containers point at the runner's real
+    // AppData and the tree under ctx.homeDir silently attributes nothing —
+    // exactly how CI's first real Windows run failed this module's own
+    // win32 fixture test.
+    const onWindows = process.platform === 'win32' && h === os.homedir();
     const programFiles = onWindows ? winProgramFilesDirs() : ['C:\\Program Files', 'C:\\Program Files (x86)'];
     const local = onWindows ? winLocalAppData() : j(h, 'AppData', 'Local');
     const roaming = onWindows ? winRoamingAppData() : j(h, 'AppData', 'Roaming');

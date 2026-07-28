@@ -276,6 +276,10 @@ test('idempotency works end-to-end on the real DELETE /api/files route', async (
   } finally {
     await close();
     fs.rmSync(fixture, { recursive: true, force: true });
-    fs.rmSync(DATA_DIR, { recursive: true, force: true });
+    // maxRetries: Windows briefly holds locks on just-closed SQLite WAL and
+  // watcher handles, and a bare rmSync throws EBUSY into the after() hook —
+  // which node:test reports as the whole FILE failing (CI, first real
+  // Windows runs). Retrying is the documented cure and free elsewhere.
+  fs.rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

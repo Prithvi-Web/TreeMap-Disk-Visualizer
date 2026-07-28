@@ -430,9 +430,13 @@ test('fastEnumerate skips what the caller asks it to skip', async () => {
     await fsp.mkdir(path.join(dir, 'drop'));
     await fsp.writeFile(path.join(dir, 'drop', 'hidden.txt'), 'x');
     const seen: string[] = [];
-    for await (const e of platform().fastEnumerate(dir, { skip: (p) => p.endsWith('/drop') })) seen.push(e.path);
-    assert.ok(seen.some((p) => p.endsWith('/keep')));
-    assert.ok(!seen.some((p) => p.includes('/drop')), 'a skipped directory takes its whole subtree with it');
+    // path.sep, not '/': the enumerator hands back host-separated paths, and
+    // a '/'-anchored suffix silently never matches on Windows — the skip
+    // callback then never fires and the test fails for a reason that has
+    // nothing to do with skipping.
+    for await (const e of platform().fastEnumerate(dir, { skip: (p) => p.endsWith(path.sep + 'drop') })) seen.push(e.path);
+    assert.ok(seen.some((p) => p.endsWith(path.sep + 'keep')));
+    assert.ok(!seen.some((p) => p.includes(path.sep + 'drop')), 'a skipped directory takes its whole subtree with it');
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
   }

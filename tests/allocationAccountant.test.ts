@@ -42,7 +42,11 @@ function canClone(dir: string): boolean {
 
 after(() => {
   closeIndex();
-  fs.rmSync(DATA_DIR, { recursive: true, force: true });
+  // maxRetries: Windows briefly holds locks on just-closed SQLite WAL and
+  // watcher handles, and a bare rmSync throws EBUSY into the after() hook —
+  // which node:test reports as the whole FILE failing (CI, first real
+  // Windows runs). Retrying is the documented cure and free elsewhere.
+  fs.rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 /* ══════════════════════ Hard links — exactly measurable ══════════════════════ */

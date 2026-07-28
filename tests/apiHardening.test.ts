@@ -14,14 +14,23 @@ import { FileNode } from '../src/models/types';
  * the scanned root.
  */
 
+// The fixture root goes through the host's own path.resolve, because the
+// sanitizer resolves every incoming path the same way — on Windows a
+// literal '/root' request becomes '<drive>:\\root', and a fixture pinned to
+// the literal would miss every lookup (CI's first real Windows run failed
+// the /nodes boundary test exactly this way: 200 OK, but the response was
+// keyed by the resolved form). On POSIX ROOT === '/root', unchanged.
+const ROOT = path.resolve('/root');
+const R = (...parts: string[]) => path.join(ROOT, ...parts);
+
 function tree(): FileNode {
   return {
-    name: 'root', path: '/root', type: 'dir', modifiedAt: 0, isHidden: false, size: 30,
+    name: 'root', path: ROOT, type: 'dir', modifiedAt: 0, isHidden: false, size: 30,
     children: [
-      { name: 'a.txt', path: '/root/a.txt', size: 10, type: 'file', modifiedAt: 0, isHidden: false, extension: 'txt' },
+      { name: 'a.txt', path: R('a.txt'), size: 10, type: 'file', modifiedAt: 0, isHidden: false, extension: 'txt' },
       {
-        name: 'sub', path: '/root/sub', type: 'dir', modifiedAt: 0, isHidden: false, size: 20,
-        children: [{ name: 'b.txt', path: '/root/sub/b.txt', size: 20, type: 'file', modifiedAt: 0, isHidden: false, extension: 'txt' }],
+        name: 'sub', path: R('sub'), type: 'dir', modifiedAt: 0, isHidden: false, size: 20,
+        children: [{ name: 'b.txt', path: R('sub', 'b.txt'), size: 20, type: 'file', modifiedAt: 0, isHidden: false, extension: 'txt' }],
       },
     ],
   };
@@ -61,7 +70,7 @@ function req(port: number, method: string, url: string, body?: unknown): Promise
 }
 
 async function withScan(fn: (port: number, scanId: string) => Promise<void>): Promise<void> {
-  const scan = createScanRecord('/root');
+  const scan = createScanRecord(ROOT);
   scan.status = 'complete';
   scan.root = tree();
   scan.fileCount = 2;
@@ -90,7 +99,7 @@ test('subtree refuses path traversal out of the scanned root', async () => {
 
 test('subtree rejects a null byte in the path', async () => {
   await withScan(async (port, scanId) => {
-    const r = await req(port, 'GET', `/api/scan/${scanId}/subtree?path=${encodeURIComponent('/root/a.txt\0.png')}`);
+    const r = await req(port, 'GET', `/api/scan/${scanId}/subtree?path=${encodeURIComponent(ROOT + '/a.txt\0.png')}`);
     assert.ok(r.status >= 400, `a null byte must be refused, got ${r.status}`);
   });
 });
@@ -98,9 +107,9 @@ test('subtree rejects a null byte in the path', async () => {
 test('subtree survives junk maxNodes values', async () => {
   await withScan(async (port, scanId) => {
     for (const v of ['abc', '-5', '0', 'NaN', 'Infinity', '999999999999', '1e400', '', '1.5']) {
-      const r = await req(port, 'GET', `/api/scan/${scanId}/subtree?path=${encodeURIComponent('/root')}&maxNodes=${encodeURIComponent(v)}`);
+      const r = await req(port, 'GET', `/api/scan/${scanId}/subtree?path=${encodeURIComponent(ROOT)}&maxNodes=${encodeURIComponent(v)}`);
       assert.equal(r.status, 200, `maxNodes=${v} should clamp, not fail (got ${r.status})`);
-      assert.equal(r.body.root.path, '/root');
+      assert.equal(r.body.root.path, ROOT);
       assert.equal(r.body.root.size, 30, 'size stays exact whatever the budget');
     }
   });
@@ -108,7 +117,7 @@ test('subtree survives junk maxNodes values', async () => {
 
 test('subtree on an unknown scanId is a clean 404', async () => {
   await withScan(async (port) => {
-    const r = await req(port, 'GET', `/api/scan/does-not-exist/subtree?path=${encodeURIComponent('/root')}`);
+    const r = await req(port, 'GET', `/api/scan/does-not-exist/subtree?path=${encodeURIComponent(ROOT)}`);
     assert.equal(r.status, 404);
   });
 });
@@ -117,7 +126,7 @@ test('subtree with no path defaults to the scan root', async () => {
   await withScan(async (port, scanId) => {
     const r = await req(port, 'GET', `/api/scan/${scanId}/subtree`);
     assert.equal(r.status, 200);
-    assert.equal(r.body.root.path, '/root');
+    assert.equal(r.body.root.path, ROOT);
   });
 });
 
@@ -125,7 +134,7 @@ test('subtree with no path defaults to the scan root', async () => {
 
 test('nodes rejects a batch over the 500-path cap rather than doing partial work', async () => {
   await withScan(async (port, scanId) => {
-    const paths = Array.from({ length: 501 }, (_, i) => `/root/f${i}`);
+    const paths = Array.from({ length: 501 }, (_, i) => R(`f${i}`));
     const r = await req(port, 'POST', `/api/scan/${scanId}/nodes`, { paths });
     assert.equal(r.status, 400);
     assert.equal(r.body.code ?? r.body.error?.code, 'TOO_MANY_PATHS');
@@ -134,11 +143,11 @@ test('nodes rejects a batch over the 500-path cap rather than doing partial work
 
 test('nodes accepts exactly 500 — the boundary is inclusive', async () => {
   await withScan(async (port, scanId) => {
-    const paths = Array.from({ length: 500 }, (_, i) => (i === 0 ? '/root/a.txt' : `/root/f${i}`));
+    const paths = Array.from({ length: 500 }, (_, i) => (i === 0 ? R('a.txt') : R(`f${i}`)));
     const r = await req(port, 'POST', `/api/scan/${scanId}/nodes`, { paths });
     assert.equal(r.status, 200, 'exactly 500 must be allowed');
-    assert.equal(r.body.nodes['/root/a.txt'].size, 10);
-    assert.equal(r.body.nodes['/root/f1'], null, 'unknown paths resolve to null');
+    assert.equal(r.body.nodes[R('a.txt')].size, 10);
+    assert.equal(r.body.nodes[R('f1')], null, 'unknown paths resolve to null');
   });
 });
 
@@ -198,11 +207,11 @@ test('cloud-safe returns exact zeroes rather than failing on a scan with none', 
 /* ----------------------- concurrency / running ------------------------ */
 
 test('every new endpoint answers 202 while the scan is still running', async () => {
-  const scan = createScanRecord('/root'); // stays 'running'
+  const scan = createScanRecord(ROOT); // stays 'running'
   const { port, close } = await listen();
   try {
     const urls = [
-      `/api/scan/${scan.scanId}/subtree?path=${encodeURIComponent('/root')}`,
+      `/api/scan/${scan.scanId}/subtree?path=${encodeURIComponent(ROOT)}`,
       `/api/cleanup/rules?scanId=${scan.scanId}&minBytes=0`,
       `/api/cleanup/cloud-safe?scanId=${scan.scanId}`,
     ];
@@ -210,7 +219,7 @@ test('every new endpoint answers 202 while the scan is still running', async () 
       const r = await req(port, 'GET', u);
       assert.equal(r.status, 202, `${u} should be 202 while running, got ${r.status}`);
     }
-    const post = await req(port, 'POST', `/api/scan/${scan.scanId}/nodes`, { paths: ['/root/a.txt'] });
+    const post = await req(port, 'POST', `/api/scan/${scan.scanId}/nodes`, { paths: [R('a.txt')] });
     assert.equal(post.status, 202);
   } finally {
     await close();
@@ -221,7 +230,7 @@ test('50 concurrent subtree requests are each served correctly or cleanly rate-l
   await withScan(async (port, scanId) => {
     const results = await Promise.all(
       Array.from({ length: 50 }, () =>
-        req(port, 'GET', `/api/scan/${scanId}/subtree?path=${encodeURIComponent('/root/sub')}`)),
+        req(port, 'GET', `/api/scan/${scanId}/subtree?path=${encodeURIComponent(R('sub'))}`)),
     );
     let served = 0, limited = 0;
     for (const r of results) {
@@ -237,14 +246,14 @@ test('50 concurrent subtree requests are each served correctly or cleanly rate-l
 });
 
 test('concurrent prunes never mutate the shared scan tree', async () => {
-  const scan = createScanRecord('/root');
+  const scan = createScanRecord(ROOT);
   scan.status = 'complete';
   scan.root = tree();
   const before = JSON.stringify(scan.root);
   const { port, close } = await listen();
   try {
     await Promise.all([
-      ...Array.from({ length: 20 }, () => req(port, 'GET', `/api/scan/${scan.scanId}/subtree?path=${encodeURIComponent('/root')}&maxNodes=1`)),
+      ...Array.from({ length: 20 }, () => req(port, 'GET', `/api/scan/${scan.scanId}/subtree?path=${encodeURIComponent(ROOT)}&maxNodes=1`)),
       ...Array.from({ length: 20 }, () => req(port, 'GET', `/api/scan/${scan.scanId}/result`)),
     ]);
     assert.equal(JSON.stringify(scan.root), before, 'the live scan tree must be untouched by reads');

@@ -66,7 +66,15 @@ async function fakeProc(
   }
 }
 
-test('linux: readOpenDescriptors walks /proc and names each process', async () => {
+// The fake-/proc fixture is built from symlinks whose TARGETS are Linux fd
+// strings ('socket:[123]', '/path (deleted)') — NTFS forbids ':' inside a
+// path segment, so on a Windows host the fixture cannot exist and every
+// assertion (including the ones that pass vacuously on empty results) would
+// measure the fixture's absence rather than the guard. The module under
+// test is Linux's own mechanism; the POSIX hosts prove it for real.
+const WIN_NO_PROC_FIXTURE = process.platform === 'win32' && 'the fake /proc fixture needs POSIX symlink targets';
+
+test('linux: readOpenDescriptors walks /proc and names each process', { skip: WIN_NO_PROC_FIXTURE }, async () => {
   const root = await mkTmp();
   try {
     await fakeProc(root, [
@@ -87,7 +95,7 @@ test('linux: readOpenDescriptors walks /proc and names each process', async () =
   }
 });
 
-test('linux: sockets, pipes and /proc self-references are not files', async () => {
+test('linux: sockets, pipes and /proc self-references are not files', { skip: WIN_NO_PROC_FIXTURE }, async () => {
   const root = await mkTmp();
   try {
     await fakeProc(root, [
@@ -113,7 +121,7 @@ test('linux: sockets, pipes and /proc self-references are not files', async () =
   }
 });
 
-test('linux: openHandlesFor matches only the requested paths', async () => {
+test('linux: openHandlesFor matches only the requested paths', { skip: WIN_NO_PROC_FIXTURE }, async () => {
   const root = await mkTmp();
   try {
     await fakeProc(root, [
@@ -129,7 +137,7 @@ test('linux: openHandlesFor matches only the requested paths', async () => {
   }
 });
 
-test('linux: an unlinked inode blocks no delete, so it is not an open-handle conflict', async () => {
+test('linux: an unlinked inode blocks no delete, so it is not an open-handle conflict', { skip: WIN_NO_PROC_FIXTURE }, async () => {
   const root = await mkTmp();
   try {
     await fakeProc(root, [{ pid: 7, comm: 'x', fds: [{ name: '3', target: '/data/f.bin (deleted)' }] }]);
@@ -139,7 +147,7 @@ test('linux: an unlinked inode blocks no delete, so it is not an open-handle con
   }
 });
 
-test('linux: a real file whose NAME ends in " (deleted)" is not reported as a zombie', async () => {
+test('linux: a real file whose NAME ends in " (deleted)" is not reported as a zombie', { skip: WIN_NO_PROC_FIXTURE }, async () => {
   // The trap: trusting the kernel's suffix blindly would report a live file as
   // reclaimable space and invite the user to kill the process holding it.
   const root = await mkTmp();
@@ -157,7 +165,7 @@ test('linux: a real file whose NAME ends in " (deleted)" is not reported as a zo
   }
 });
 
-test('linux: a genuinely unlinked inode IS reported as a zombie', async () => {
+test('linux: a genuinely unlinked inode IS reported as a zombie', { skip: WIN_NO_PROC_FIXTURE }, async () => {
   const root = await mkTmp();
   try {
     await fakeProc(root, [{ pid: 8, comm: 'logger', fds: [{ name: '3', target: '/var/log/gone.log (deleted)' }] }]);

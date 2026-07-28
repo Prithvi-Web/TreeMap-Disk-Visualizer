@@ -148,11 +148,17 @@ test('a recovered file lands beside the original, never on top of it', () => {
   // three-week-old snapshot is OLDER than whatever holds that path now, so
   // overwriting by default would replace newer work with older.
   const at = new Date(2026, 6, 27);
-  assert.equal(defaultRestoreTarget('/Users/me/notes.txt', at), '/Users/me/notes (recovered 2026-07-27).txt');
-  assert.equal(defaultRestoreTarget('/Users/me/archive.tar.gz', at), '/Users/me/archive.tar (recovered 2026-07-27).gz');
-  assert.equal(defaultRestoreTarget('/Users/me/Projects', at), '/Users/me/Projects (recovered 2026-07-27)');
+  // Inputs and expectations both ride path.join, because the implementation
+  // reassembles dirname + new basename with the HOST separator — comparing
+  // against '/'-joined literals fails on Windows for separator reasons that
+  // say nothing about the naming rule under test.
+  const home = path.join(path.sep + 'Users', 'me');
+  const at2 = (name: string) => path.join(home, name);
+  assert.equal(defaultRestoreTarget(at2('notes.txt'), at), at2('notes (recovered 2026-07-27).txt'));
+  assert.equal(defaultRestoreTarget(at2('archive.tar.gz'), at), at2('archive.tar (recovered 2026-07-27).gz'));
+  assert.equal(defaultRestoreTarget(at2('Projects'), at), at2('Projects (recovered 2026-07-27)'));
   // A dotfile has no extension to split on.
-  assert.equal(defaultRestoreTarget('/Users/me/.zshrc', at), '/Users/me/.zshrc (recovered 2026-07-27)');
+  assert.equal(defaultRestoreTarget(at2('.zshrc'), at), at2('.zshrc (recovered 2026-07-27)'));
 });
 
 test('the destination is checked before anything privileged happens', async () => {

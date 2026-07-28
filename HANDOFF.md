@@ -29,15 +29,20 @@ converts text to CRLF and every source-grepping regex anchors on \n —
 fixed with `.gitattributes` (`* text=auto eol=lf`). Plus: sparse test in
 the accountant suite gated on win32 (NTFS truncate-solid, same as the
 others); autopilot's `/proc` refusal gated to POSIX (Windows resolves it
-to `C:\proc`, an ordinary path). **Still expected red on Windows next
-run:** `nodes accepts exactly 500` — mechanism CONFIRMED: withScan's
-synthetic `/root` fixture meets the sanitizer, which path.resolve()s
-requests to `C:\root\...` on a Windows host so store lookups miss; fixing
-means resolve()-aware fixtures in apiHardening (and possibly siblings).
-`windows: Program Files…` (appAttribution) — cause not yet pinned; pure
-fixture passes on POSIX hosts, fails on a real Windows host. And possibly
-more beyond the old annotation cap — the step summary will list them ALL
-next run.
+to `C:\proc`, an ordinary path). **Round three fixed all nine Windows reds** (list read from
+annotations): apiHardening fixtures now live at `path.resolve('/root')` so
+the sanitizer's resolved form matches on any host (attack literals stay
+literal); appAttribution derives AppData/ProgramFiles from ctx.homeDir
+unless ctx describes THIS machine's own home (`h === os.homedir()`) — the
+real-env branch was hijacking fixture runs on real Windows;
+`defaultRestoreTarget` expectations ride path.join; fastEnumerate's skip
+test anchors on path.sep; the six fake-/proc fixture tests skip on win32
+(NTFS forbids ':' in fd-target paths, and two of them passed only
+vacuously there); every DATA_DIR after()-hook rm gets
+`maxRetries/retryDelay` because Windows briefly holds locks on
+just-closed SQLite WAL + watcher handles and a bare rmSync EBUSY in
+after() marks the WHOLE FILE failed (that was indexEngine's file-level
+red, and plausibly the long runtime).
 **v2.5.0 is built and installed** at `/Applications/TreeMap.app` — it predates
 today's commits, so the installed app gains them at the next release build
 (which will also rebuild its index once, v2 → v3).
@@ -62,7 +67,7 @@ Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
 ```bash
 cd "/Users/prithvivinay/Desktop/Claude Code/Treemap"
-npm run build && npm test          # expect 599/599
+npm run build && npm test          # expect 600/600
 npm run capabilities:report        # expect 9/12 available on this Mac
 ```
 
