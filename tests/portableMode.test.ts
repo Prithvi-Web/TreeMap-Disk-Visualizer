@@ -232,7 +232,12 @@ test('the boot volume is never offered as an external drive', () => {
 });
 
 test('the host location is named per platform so the UI can say what is avoided', () => {
-  assert.match(hostDataDir('darwin', '/Users/x'), /Library\/Application Support\/TreeMap$/);
+  // What the platform argument chooses is the FOLDER NAMES; the separators
+  // always belong to the machine the code is running on, because path.join
+  // joins with the host's own. So on the Windows CI runner the darwin answer
+  // reads `\Users\x\Library\Application Support\TreeMap` — right names, host
+  // separators — and a forward-slash-only pattern failed there for months.
+  assert.match(hostDataDir('darwin', '/Users/x'), /Library[\\/]Application Support[\\/]TreeMap$/);
   assert.match(hostDataDir('linux', '/home/x'), /treemap$/);
   assert.ok(hostDataDir('win32', 'C:\\Users\\x').includes('TreeMap'));
 });

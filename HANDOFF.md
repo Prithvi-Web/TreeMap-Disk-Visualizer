@@ -300,7 +300,11 @@ B5 zombie handles.
 - Windows-host rules that ARE code rules: sanitizers `path.resolve()` requests,
   so fixtures live at `path.resolve('/root')`; test after()-hook `rmSync` needs
   `maxRetries/retryDelay`; async work must re-check `db === handle` after every
-  await.
+  await. And **`path.join` always joins with the HOST's separator**, even when
+  building another platform's folder names — assert path shapes with `[\\/]`,
+  never a literal `/`. (This one broke Windows CI from the D3 commit until
+  29 Jul: the previous session guarded two D3 tests but this third one only
+  surfaced after its push, in a run nobody was left to read.)
 
 ---
 
