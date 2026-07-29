@@ -3,6 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { AuditEntry } from '../models/types';
 import { appDataDir } from './storage';
+import { isEphemeral } from './portableMode';
 
 /**
  * audit — an append-only JSONL record of every destructive request (real,
@@ -12,6 +13,9 @@ import { appDataDir } from './storage';
  */
 
 const AUDIT_FILE = 'audit.jsonl';
+/** Ring buffer standing in for the file in a read-only portable session. */
+const memoryAudit: string[] = [];
+const MEMORY_AUDIT_MAX = 2000;
 /** Read-back guard: never parse more than this many trailing lines. */
 const MAX_READ_LINES = 1000;
 
@@ -37,6 +41,13 @@ export function appendAudit(entry: Omit<AuditEntry, 'at'>): Promise<void> {
       /* an earlier failed append must not poison the queue */
     })
     .then(async () => {
+      // A read-only portable session records the audit trail in memory: the log
+      // exists for the session that produced it, and this machine keeps nothing.
+      if (isEphemeral()) {
+        memoryAudit.push(JSON.stringify(full));
+        if (memoryAudit.length > MEMORY_AUDIT_MAX) memoryAudit.shift();
+        return;
+      }
       const dir = appDataDir();
       await fsp.mkdir(dir, { recursive: true });
       await fsp.appendFile(auditFilePath(), JSON.stringify(full) + '\n', 'utf8');
@@ -50,10 +61,14 @@ export function appendAudit(entry: Omit<AuditEntry, 'at'>): Promise<void> {
 /** The most recent `limit` entries, newest first. Unparseable lines are skipped. */
 export async function readAudit(limit: number): Promise<AuditEntry[]> {
   let raw: string;
-  try {
-    raw = await fsp.readFile(auditFilePath(), 'utf8');
-  } catch {
-    return []; // no log yet
+  if (isEphemeral()) {
+    raw = memoryAudit.join('\n');
+  } else {
+    try {
+      raw = await fsp.readFile(auditFilePath(), 'utf8');
+    } catch {
+      return []; // no log yet
+    }
   }
   const lines = raw.split('\n').filter((l) => l.trim().length > 0);
   const tail = lines.slice(-Math.min(Math.max(limit, 1), MAX_READ_LINES));

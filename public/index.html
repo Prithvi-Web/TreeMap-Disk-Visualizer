@@ -928,6 +928,19 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .pkg-why { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 .pkg-why code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
   padding: 1px 4px; border-radius: 4px; background: var(--surface-3); }
+/* ── D3: portable session ── */
+.pm-lead { font-size: 13px; line-height: 1.6; margin-bottom: 14px; }
+.pm-rows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.pm-row { display: flex; gap: 12px; align-items: baseline; font-size: 12px; padding: 8px 11px;
+  border-radius: 9px; background: var(--surface-2); border: 1px solid var(--hairline); }
+.pm-row b { flex: none; width: 118px; color: var(--text-3); font-weight: 600; }
+.pm-row .pth { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; word-break: break-all; }
+.pm-row.warn { background: rgba(255,159,10,0.08); border-color: rgba(255,159,10,0.42); }
+.pm-degraded { font-size: 12px; line-height: 1.55; margin-bottom: 12px; }
+.pm-degraded b { display: block; margin-bottom: 5px; color: var(--text-3); }
+.pm-degraded ul { margin: 0; padding-left: 18px; color: var(--text-2); }
+.pm-degraded li { margin-bottom: 4px; }
+.pm-foot { font-size: 11.5px; color: var(--text-3); }
 /* ── C2: shrink video ── */
 .vid-warn { display: flex; align-items: flex-start; gap: 9px; padding: 10px 12px; margin-bottom: 11px;
   border-radius: 10px; font-size: 12px; line-height: 1.55; color: var(--text-2);
@@ -2237,6 +2250,22 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 </aside>
 
 <div id="ctxMenu" role="menu"></div>
+<!-- D3 · Portable first-run screen. Shown once per session, before anything is
+     scanned, because "this leaves no trace" is a promise the user has to be
+     told about to rely on. -->
+<div class="modal-backdrop" id="portableModal" role="dialog" aria-modal="true" aria-labelledby="portableTitle">
+  <div class="modal" style="width:560px;">
+    <div class="modal-head">
+      <h3 id="portableTitle"><span data-icon="disc"></span>Portable session</h3>
+    </div>
+    <div class="modal-body" id="portableBody"></div>
+    <div class="modal-foot">
+      <div style="flex:1"></div>
+      <button class="btn btn-primary" id="portableStartBtn"><span data-icon="check"></span>Start</button>
+    </div>
+  </div>
+</div>
+
 <div id="toasts" aria-live="polite"></div>
 
 <script>
@@ -9926,6 +9955,55 @@ async function renderAllocationDiagnostic() {
   host.innerHTML = html;
 }
 
+/* ── Portable session (§D3) ────────────────────────────────────────────────
+   "It leaves no trace" is a promise the user has to be TOLD about to rely on,
+   so a portable session opens with a screen that says exactly where things go,
+   what this computer will and will not receive, and what the session cannot do.
+   The read-only case is the one that must not be glossed: nothing is saved
+   anywhere at all, and pretending otherwise would be the worst kind of lie
+   here. */
+let portableInfo = null;
+
+async function loadPortableMode() {
+  try { portableInfo = await api('/api/platform/portable'); } catch { return; }
+  if (!portableInfo.portable) return;
+  document.body.classList.add('is-portable');
+  renderPortableScreen();
+}
+
+function renderPortableScreen() {
+  const p = portableInfo;
+  const body = $('portableBody');
+  const drives = (p.externalVolumes || []).length
+    ? `<div class="pm-row"><b>Drives found</b><span>${p.externalVolumes.map(v => escapeHtml(v.name)).join(', ')}</span></div>`
+    : '';
+  const degraded = (p.degraded || []).length
+    ? `<div class="pm-degraded"><b>What this session can’t do</b><ul>` +
+      p.degraded.map(d => `<li>${escapeHtml(d.reason)}</li>`).join('') + `</ul></div>`
+    : '';
+
+  body.innerHTML =
+    `<p class="pm-lead">TreeMap is running from the drive it was launched from. Nothing is installed, and
+      <b>nothing is written to this computer</b>.</p>` +
+    `<div class="pm-rows">` +
+      (p.writable
+        ? `<div class="pm-row"><b>Saved to</b><span class="pth">${escapeHtml(p.dataDir || '')}</span></div>`
+        : `<div class="pm-row warn"><b>Nothing is saved</b><span>${escapeHtml(p.reason || 'This drive is read-only.')}</span></div>`) +
+      `<div class="pm-row"><b>Never touched</b><span class="pth">${escapeHtml(p.hostDataDir)}</span></div>` +
+      drives +
+    `</div>` + degraded +
+    `<p class="pm-foot">When you are done, eject the drive. This computer keeps no record that TreeMap ran.</p>`;
+
+  $('portableStartBtn').onclick = () => {
+    $('portableModal').classList.remove('open');
+    // Offer the attached drives first — that is what a portable session is for.
+    if ((p.externalVolumes || []).length && $('pathInput') && !$('pathInput').value) {
+      $('pathInput').value = p.externalVolumes[0].path;
+    }
+  };
+  $('portableModal').classList.add('open');
+}
+
 /* ── Right-click menu (§D2) ───────────────────────────────────────────────
    Installed AND removed from the same control, because an uninstall that
    leaves a dead context-menu entry behind is the specific failure §D2 names.
@@ -9984,6 +10062,7 @@ async function renderShellIntegration(carryStatus = '') {
 
 /* ───────────────────────────── Settings modal ───────────────────────────── */
 let settingsData = { ignore: [], schedules: [] };
+void loadPortableMode(); // D3 — decided before the user scans anything
 $('settingsBtn').innerHTML = icon('settings', 16);
 $('settingsBtn').addEventListener('click', async () => {
   $('settingsModal').classList.add('open');

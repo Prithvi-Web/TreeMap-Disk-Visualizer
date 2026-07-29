@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { getCapabilities, invalidateCapabilities, capabilityState } from '../platform/capabilities';
 import { platform } from '../platform';
 import { AppError } from '../middleware/errorHandler';
+import { portableStatus, listExternalVolumes } from '../services/portableMode';
 import type { Capabilities } from '../platform/types';
 
 /**
@@ -68,6 +69,20 @@ platformRouter.get('/platform/topology', async (_req: Request, res: Response) =>
   }
   const topology = await platform().getVolumeTopology();
   res.json({ ...topology, capability: state });
+});
+
+/**
+ * GET /api/platform/portable — is this a no-trace portable session? (D3)
+ *
+ * Answers even when it is not, so the frontend can decide once at boot whether
+ * to show the portable first-run screen.
+ */
+platformRouter.get('/platform/portable', (_req: Request, res: Response) => {
+  const status = portableStatus();
+  res.json({
+    ...status,
+    externalVolumes: status.portable ? listExternalVolumes() : [],
+  });
 });
 
 /**

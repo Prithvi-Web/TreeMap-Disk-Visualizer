@@ -1560,3 +1560,23 @@ test('the button reflects what the OS really has, not what we asked for', () => 
   assert.match(fn, /carryStatus/, 'and the confirmation survives that refresh');
   assert.match(fn, /!data\.supported/, 'a system with no file manager says so instead of offering a dead button');
 });
+
+/* ══════════════ A portable session says what it does (§D3) ══════════════ */
+
+test('the portable screen names where it writes and what it never touches', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function renderPortableScreen'), code.indexOf("/* ── Right-click menu (§D2)"));
+  assert.ok(fn.length > 0, 'renderPortableScreen must be findable');
+  assert.match(fn, /nothing is written to this computer/, 'the promise is stated up front');
+  assert.match(fn, /Never touched/, 'and the host location is named');
+  assert.match(fn, /p\.hostDataDir/, 'with the real path, not a description of it');
+  assert.match(fn, /eject the drive/, 'and how the session ends');
+});
+
+test('a read-only portable drive is told plainly that nothing is saved', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function renderPortableScreen'), code.indexOf("/* ── Right-click menu (§D2)"));
+  assert.match(fn, /Nothing is saved/, 'the read-only case is not glossed');
+  assert.match(fn, /p\.writable/, 'and it is driven by the real writability probe');
+  assert.match(fn, /degraded/, 'the capabilities it loses are listed');
+});

@@ -1,6 +1,7 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
 import os from 'os';
+import { isEphemeral } from './portableMode';
 
 /**
  * Storage — tiny JSON-file persistence in the platform's app-data directory.
@@ -10,6 +11,17 @@ import os from 'os';
  */
 
 /** Per-OS app-data directory, created on demand. */
+/**
+ * In-memory stand-in for the app-data directory, used only by a read-only
+ * portable session (D3). Nothing here ever reaches a disk.
+ */
+const memoryFiles = new Map<string, string>();
+
+/** Test-only: the map outlives a single test otherwise. */
+export function resetMemoryStore(): void {
+  memoryFiles.clear();
+}
+
 export function appDataDir(): string {
   if (process.env.TREEMAP_DATA_DIR) return process.env.TREEMAP_DATA_DIR;
   switch (process.platform) {
@@ -27,6 +39,15 @@ const writeQueues = new Map<string, Promise<void>>();
 
 /** Read a JSON file from the app-data dir; returns `fallback` when missing/corrupt. */
 export async function readJsonFile<T>(name: string, fallback: T): Promise<T> {
+  if (isEphemeral()) {
+    const held = memoryFiles.get(name);
+    if (held === undefined) return fallback;
+    try {
+      return JSON.parse(held) as T;
+    } catch {
+      return fallback;
+    }
+  }
   try {
     const raw = await fsp.readFile(path.join(appDataDir(), name), 'utf8');
     return JSON.parse(raw) as T;
@@ -43,6 +64,12 @@ export function writeJsonFile(name: string, data: unknown): Promise<void> {
       /* an earlier failed write must not poison the queue */
     })
     .then(async () => {
+      // A read-only portable session keeps everything in memory. Writing to the
+      // host's normal location instead is the one thing D3 promises never to do.
+      if (isEphemeral()) {
+        memoryFiles.set(name, JSON.stringify(data, null, 2));
+        return;
+      }
       const dir = appDataDir();
       await fsp.mkdir(dir, { recursive: true });
       const file = path.join(dir, name);

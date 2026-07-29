@@ -1848,6 +1848,33 @@ export const ENDPOINTS: EndpointDescriptor[] = [
 
   {
     method: 'get',
+    path: '/api/platform/portable',
+    summary: 'Is this a portable, no-trace session? Where it writes, what it cannot do, and which drives to offer first.',
+    tag: 'platform',
+    destructive: false,
+    responses: {
+      '200': jsonResponse(
+        'Portable status',
+        obj(
+          {
+            portable: bool(),
+            signal: str('Which signal turned it on: env, portable-executable-dir or marker-file'),
+            dataDir: nullable(str('Where state is written; null means nothing is persisted at all')),
+            baseDir: str('The folder holding the executable — the only place it may write'),
+            writable: bool(),
+            reason: str('Why nothing can be saved, when that is the case'),
+            hostUntouched: bool('True while this machine’s own app-data location has not been touched'),
+            hostDataDir: str('The host location being deliberately avoided'),
+            degraded: arr(opaque('key and a plain-English reason')),
+            externalVolumes: arr(opaque('path and name of each attached drive')),
+          },
+          ['portable', 'signal', 'writable', 'hostUntouched'],
+        ),
+      ),
+    },
+  },
+  {
+    method: 'get',
     path: '/api/platform/shell-integration',
     summary: 'Is the "Scan with TreeMap" right-click entry installed? Read from the filesystem/registry, never remembered.',
     tag: 'platform',

@@ -6,6 +6,7 @@ import { saveSnapshot } from './snapshots';
 import { getIgnoreMatchers } from './settings';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { readJsonFile, appDataDir } from './storage';
+import { isEphemeral } from './portableMode';
 import { IO_THREADS } from '../utils/ioThreads';
 import { detectContainerKind } from '../utils/containerKind';
 import { neverDescend } from '../utils/mountBoundaries';
@@ -362,6 +363,11 @@ async function saveMtimeCache(scan: ScanResult): Promise<void> {
   if (scan.scanned > MTIME_CACHE_MAX_NODES) return;
   const tree = scan.root;
   if (!tree) return;
+  // A read-only portable session persists nothing. This writer builds its own
+  // path rather than going through writeJsonFile, so it needs the check of its
+  // own — a live portable run proved it was the one remaining leak onto the
+  // host after everything else had been redirected.
+  if (isEphemeral()) return;
   try {
     const dir = appDataDir();
     await fsp.mkdir(dir, { recursive: true });

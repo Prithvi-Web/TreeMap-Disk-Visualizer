@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { promises as fsp, mkdirSync, unlinkSync } from 'fs';
 import { appDataDir } from './storage';
+import { isEphemeral } from './portableMode';
 import { platform } from '../platform';
 import { neverDescend } from '../utils/mountBoundaries';
 // `escapeLike` guards the one LIKE query left (the substring search): `_` and
@@ -177,11 +178,18 @@ export function indexDbPath(): string {
 export function openIndex(): Database.Database {
   if (db) return db;
 
-  const file = indexDbPath();
-  // The app-data directory is created lazily elsewhere (storage.ts writes it on
-  // first save), so on a fresh machine it may not exist yet — and better-sqlite3
-  // refuses to create a database in a missing directory.
-  mkdirSync(appDataDir(), { recursive: true });
+  // A read-only portable session has nowhere of its own to put a database, and
+  // putting it in the host's app-data folder is exactly the trace D3 promises
+  // not to leave. SQLite's own in-memory mode is the honest answer: the index
+  // works for this session and vanishes with the process.
+  const ephemeral = isEphemeral();
+  const file = ephemeral ? ':memory:' : indexDbPath();
+  if (!ephemeral) {
+    // The app-data directory is created lazily elsewhere (storage.ts writes it
+    // on first save), so on a fresh machine it may not exist yet — and
+    // better-sqlite3 refuses to create a database in a missing directory.
+    mkdirSync(appDataDir(), { recursive: true });
+  }
   dbPath = file;
   let handle = new Database(file);
 

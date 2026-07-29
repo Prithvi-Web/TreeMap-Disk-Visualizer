@@ -77,6 +77,10 @@ OpenAPI 3 spec).
    - `GET`/`POST /api/platform/shell-integration` — the "Scan with TreeMap"
      right-click entry. Per-user, no elevation, and the installed flag is read
      from the OS every time rather than remembered.
+   - `GET /api/platform/portable` — whether this is a no-trace portable
+     session, where it writes, and what it cannot do. **When `writable` is
+     false nothing is persisted anywhere at all** — not on the drive, and
+     emphatically not on the host.
 3. **Confirm with the user, then act.**
    - `DELETE /api/files` with `{ "paths": [...] }` moves files to the **OS
      Trash** — recoverable, never a hard delete.

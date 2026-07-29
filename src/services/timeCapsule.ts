@@ -9,6 +9,7 @@ import {
   TimeCapsuleStatus,
 } from '../models/types';
 import { appDataDir, readJsonFile, writeJsonFile } from './storage';
+import { isEphemeral } from './portableMode';
 import { moveToTrash } from './cleaner';
 import { getSettings } from './settings';
 import { diskUsage } from './diskUsage';
@@ -100,6 +101,24 @@ interface EntryManifest {
 
 export function capsuleRoot(): string {
   return path.join(appDataDir(), CAPSULE_DIR);
+}
+
+/**
+ * The Time Capsule copies real file bytes somewhere before deleting them, and a
+ * read-only portable session has nowhere of its own to put them. Keeping them
+ * on the host would be both a trace and a surprise — someone's files left on a
+ * machine they were only troubleshooting. So the capsule is off, and callers
+ * say so rather than silently protecting nothing.
+ */
+export function capsuleAvailable(): { available: boolean; reason?: string } {
+  if (isEphemeral()) {
+    return {
+      available: false,
+      reason:
+        'This is a read-only portable session, so there is nowhere to keep a recoverable copy — and TreeMap will not leave your files on this computer. Deletions still go to the system Trash.',
+    };
+  }
+  return { available: true };
 }
 
 function entryDir(id: string): string {
@@ -457,6 +476,11 @@ export interface ProtectAndTrashResult {
   /** Requests that were NOT deleted because they could not be protected. */
   skipped: ProtectionOutcome[];
   bytesProtected: number;
+  /**
+   * Set when the capsule itself is unavailable — a read-only portable session
+   * has nowhere to keep a recoverable copy. Nothing was deleted.
+   */
+  unavailableReason?: string;
 }
 
 /**
@@ -500,6 +524,19 @@ export async function protectAndTrash(
   requests: ProtectionRequest[],
   context: { runId?: string; policyId?: string } = {},
 ): Promise<ProtectAndTrashResult> {
+  // Nowhere to keep a copy means nothing gets protected, and the caller must be
+  // told before anything is deleted — not after.
+  const capsule = capsuleAvailable();
+  if (!capsule.available) {
+    const outcomes: ProtectionOutcome[] = requests.map((r) => ({
+      path: r.path,
+      protected: false,
+      bytes: 0,
+      reason: capsule.reason,
+    }));
+    // Nothing is deleted: `skipped` is every request, and the reason says why.
+    return { runId: '', outcomes, trashed: [], failedToTrash: [], skipped: outcomes, bytesProtected: 0, unavailableReason: capsule.reason };
+  }
   const { runId, outcomes } = await protectItems(requests, context);
 
   const protectedOutcomes = outcomes.filter((o) => o.protected);
