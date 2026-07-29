@@ -18,7 +18,7 @@ import {
   diffSnapshots,
 } from '../services/snapshots';
 import { buildTreemap } from '../utils/treemap';
-import { guardQueryPath, guardBodyPath, requireInsideScanRoot } from '../middleware/pathGuard';
+import { guardQueryPath, guardBodyPath, requireInsideScanRoot, insideAnyScanRoot } from '../middleware/pathGuard';
 import { getAppAttribution } from '../services/appAttribution';
 import { storeOf } from '../services/scanStore';
 import { getForecast } from '../services/forecast';
@@ -26,6 +26,9 @@ import { expandContainer } from '../services/containerScanner';
 import { findGitRepos, runGitGc } from '../services/gitScanner';
 import { scanPackageEcosystems } from '../services/packageEcosystemScanner';
 import { scanGameLibraries } from '../services/gameLibraryScanner';
+import { collectSecurityFindings, relocateSecret, SECURITY_PATTERNS } from '../services/securityHygieneScanner';
+import { sanitizePath } from '../utils/pathSanitizer';
+import { getPolicy, assertPathsAllowed } from '../services/policy';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { getIgnoreMatchers } from '../services/settings';
 import { AppError } from '../middleware/errorHandler';
@@ -173,6 +176,52 @@ insightRouter.get('/packages/orphans', async (req: Request, res: Response) => {
 insightRouter.get('/games', (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   res.json({ scanId: scan.scanId, ...scanGameLibraries(storeOf(scan)) });
+});
+
+/**
+ * GET /api/security/findings?scanId= — secrets sitting outside their home.
+ *
+ * Names and locations only: no file is opened and no content is ever read or
+ * returned. Findings are local to this machine and are deliberately excluded
+ * from anything that leaves it.
+ */
+insightRouter.get('/security/findings', async (req: Request, res: Response) => {
+  const scan = requireCompleteScan(req, req.query.scanId);
+  const ignore = await getIgnoreMatchers('suggest');
+  res.json({ scanId: scan.scanId, patternCount: SECURITY_PATTERNS.length, ...collectSecurityFindings(storeOf(scan), ignore) });
+});
+
+/**
+ * POST /api/security/relocate { path, to, confirm:true }
+ *
+ * Move ONE secret into a safer directory. Never a delete, never a clobber: an
+ * occupied destination aborts. Both ends are path-sanitised and the source must
+ * lie inside a scanned root, exactly like every other file operation.
+ */
+insightRouter.post('/security/relocate', idempotency, guardBodyPath, requireInsideScanRoot, async (req: Request, res: Response) => {
+  const { path: from, to, confirm } = req.body as { path: string; to?: unknown; confirm?: boolean };
+  if (confirm !== true) {
+    throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } to move a file');
+  }
+  if (typeof to !== 'string' || !to.trim()) {
+    throw new AppError(400, 'DEST_REQUIRED', 'A "to" destination path is required');
+  }
+  const dest = sanitizePath(to);
+  // Both ends, not just the source: writing a file into a folder the user never
+  // scanned is exactly the surprise the scanned-root rule exists to prevent.
+  if (!insideAnyScanRoot(dest)) {
+    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', 'The destination is outside every scanned folder — scan it first');
+  }
+  const policy = await getPolicy();
+  assertPathsAllowed(policy, [from, dest]);
+  try {
+    const result = await relocateSecret(from, dest);
+    await appendAudit({ action: 'security.relocate', source: 'http', tokenId: tokenIdFor('http'), paths: [from, dest], bytes: null, dryRun: false, outcome: 'ok' });
+    res.json(result);
+  } catch (err) {
+    await appendAudit({ action: 'security.relocate', source: 'http', tokenId: tokenIdFor('http'), paths: [from, dest], bytes: null, dryRun: false, outcome: 'refused' });
+    throw new AppError(409, 'RELOCATE_FAILED', err instanceof Error ? err.message : String(err));
+  }
 });
 
 /** POST /api/git/gc { path, confirm:true } — run `git gc` in a scanned repo. */

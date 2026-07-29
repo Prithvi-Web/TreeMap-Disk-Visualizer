@@ -36,6 +36,7 @@ const TAB_VIEWS = [
   'capsule', // B3 — Time Capsule
   'autopilot', // B1 — Autopilot
   'games', // C7 — game libraries
+  'security', // C5 — secrets hygiene
 ] as const;
 const MODAL_VIEWS = ['cleanModal', 'settingsModal'] as const;
 
@@ -1423,4 +1424,26 @@ test('a game total states when it disagrees with the launcher, rather than hidin
   const fn = code.slice(code.indexOf('function renderGames'), code.indexOf('function clearShaderCaches'));
   assert.match(fn, /t\.reportedBytes/, 'the launcher’s own figure is used');
   assert.match(fn, /says \$\{formatBytes\(t\.reportedBytes\)\}/, 'and shown when it differs');
+});
+
+/* ══════════════════ Security: look, never delete (§C5) ══════════════════ */
+
+test('the Security panel offers no delete, and says it never read anything', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function renderSecurity'), code.indexOf('function confirmRelocateSecret'));
+  assert.ok(fn.length > 0, 'renderSecurity must be findable');
+  // False positives here are expensive; the only actions are "show me" and
+  // "put it somewhere sensible".
+  assert.doesNotMatch(fn, /data-cart-add|confirmTrash|trashPaths/, 'no delete of any kind is offered');
+  assert.match(fn, /data-sec-reveal/, 'reveal is offered');
+  assert.match(fn, /no file was opened and nothing leaves this computer/, 'and the method is stated plainly');
+});
+
+test('moving a secret warns that references to the old path will break', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function confirmRelocateSecret'), code.indexOf("/* ───────────────────────────── Games view"));
+  assert.ok(fn.length > 0, 'confirmRelocateSecret must be findable');
+  assert.match(fn, /will need updating/, 'the real cost of moving a key is stated');
+  assert.match(fn, /Nothing is deleted/, 'and that nothing is deleted');
+  assert.match(fn, /confirm: true/, 'the endpoint is double-gated');
 });

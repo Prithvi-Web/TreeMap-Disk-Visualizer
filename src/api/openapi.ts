@@ -968,6 +968,51 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   },
   {
     method: 'get',
+    path: '/api/security/findings',
+    summary: 'Secrets (keys, .env, wallets, cloud credentials) found OUTSIDE their expected locations — names and paths only, never contents',
+    tag: 'insights',
+    destructive: false,
+    parameters: [scanIdQuery],
+    responses: {
+      '200': jsonResponse(
+        'Findings, most serious first',
+        obj(
+          {
+            scanId: str(),
+            patternCount: int('How many patterns the catalog checks'),
+            findings: arr(opaque('patternId, label, why, severity, path, name, size, modifiedAt, reason, suggestedPath, exposed')),
+            counts: opaque('high, medium and low finding counts'),
+            truncated: bool('true when the 500-finding cap was reached'),
+          },
+          ['scanId', 'findings', 'counts'],
+        ),
+      ),
+    },
+  },
+  {
+    method: 'post',
+    path: '/api/security/relocate',
+    summary: 'Move ONE secret into a safer directory. Never deletes, never overwrites an existing destination.',
+    tag: 'insights',
+    destructive: true,
+    parameters: [idempotencyHeader],
+    requestBody: jsonBody(
+      obj(
+        {
+          path: str('File inside a scanned root'),
+          to: str('Destination path, including the file name'),
+          confirm: bool('Must be true'),
+        },
+        ['path', 'to', 'confirm'],
+      ),
+    ),
+    responses: {
+      '200': jsonResponse('Moved', obj({ moved: bool(), from: str(), to: str() }, ['moved', 'from', 'to'])),
+      '409': errorResponse('The destination is occupied, or the move failed — nothing was removed'),
+    },
+  },
+  {
+    method: 'get',
     path: '/api/games',
     summary: 'Game libraries (Steam, Epic, GOG, itch.io) broken down per title into base install, shader cache, workshop, Proton prefix and DLC',
     tag: 'insights',

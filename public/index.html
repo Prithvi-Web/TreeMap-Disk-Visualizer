@@ -928,6 +928,22 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .pkg-why { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 .pkg-why code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
   padding: 1px 4px; border-radius: 4px; background: var(--surface-3); }
+/* ── C5: secrets hygiene ── */
+.sec-note { color: var(--text-3); font-size: 11.5px; }
+.sec-list { display: flex; flex-direction: column; gap: 8px; }
+.sec-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 11px;
+  border: 1px solid var(--hairline); background: var(--surface-1); }
+.sec-item.sev-high { border-color: rgba(255,69,58,0.42); background: rgba(255,69,58,0.06); }
+.sec-item.sev-medium { border-color: rgba(255,159,10,0.38); background: rgba(255,159,10,0.05); }
+.sec-item .meta { flex: 1; min-width: 0; }
+.sec-item .nm { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sec-item .pth { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sec-kind { font-size: 11px; font-weight: 500; color: var(--text-3); margin-left: 6px; }
+.sec-why { font-size: 11px; color: var(--text-2); margin-top: 3px; }
+.sec-sev { flex: none; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em;
+  padding: 3px 8px; border-radius: 99px; background: var(--surface-3); color: var(--text-3); }
+.sev-high .sec-sev { background: rgba(255,69,58,0.18); color: #ff6b60; }
+.sev-medium .sec-sev { background: rgba(255,159,10,0.18); color: var(--warn); }
 /* ── C7: game libraries ── */
 .game-lib { margin-bottom: 18px; }
 .game-libhead { display: flex; align-items: baseline; gap: 10px; padding: 4px 2px 8px; font-size: 13.5px; }
@@ -1329,6 +1345,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     <button role="tab" aria-selected="false" data-view="grid" title="Grid"><span data-icon="grid"></span><span class="side-label">Grid</span></button>
     <button role="tab" aria-selected="false" data-view="apps" title="Apps"><span data-icon="box"></span><span class="side-label">Apps</span></button>
     <button role="tab" aria-selected="false" data-view="games" title="Games"><span data-icon="play"></span><span class="side-label">Games</span></button>
+    <button role="tab" aria-selected="false" data-view="security" title="Security"><span data-icon="shield"></span><span class="side-label">Security</span></button>
     <button role="tab" aria-selected="false" data-view="duplicates" title="Duplicates"><span data-icon="copy"></span><span class="side-label">Duplicates</span></button>
     <button role="tab" aria-selected="false" data-view="trends" title="Trends"><span data-icon="trendUp"></span><span class="side-label">Trends</span></button>
     <button role="tab" aria-selected="false" data-view="compare" title="Compare"><span data-icon="diff"></span><span class="side-label">Compare</span></button>
@@ -1581,6 +1598,15 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       <h2><span data-icon="box"></span>Storage by Application</h2>
       <div class="apps-info muted" id="appsInfo"></div>
       <div id="appsBody"><div class="muted">Run a scan to see how much disk each application owns.</div></div>
+    </div>
+  </section>
+
+  <!-- ═══════════ Security (C5) ═══════════ -->
+  <section class="view" id="view-security" role="tabpanel" aria-label="Security" hidden>
+    <div class="card glass">
+      <h2><span data-icon="shield"></span>Secrets in the wrong place</h2>
+      <div class="apps-info muted" id="securityInfo"></div>
+      <div id="securityBody"><div class="muted">Run a scan to check where your keys and credentials are sitting.</div></div>
     </div>
   </section>
 
@@ -2489,6 +2515,7 @@ const state = {
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   apps: { loadedFor: null, list: [], otherBytes: 0, totalBytes: 0, appsFolderScanned: false },
   games: { loadedFor: null, report: null },
+  security: { loadedFor: null, report: null },
   live: { on: false, wanted: false, es: null, engine: '', idleMinutes: 10, pulses: new Map(), window: [], dirty: 0, feedTimer: 0, relayoutTimer: 0, pulseRaf: 0 },
   offload: { index: null, q: '' },
   capsule: { index: null, q: '' },
@@ -2730,6 +2757,11 @@ const VIEWS = [
     id: 'games', label: 'Games', icon: 'play', needsScan: true,
     mount() { if (state.scanId && state.root) loadGames(); },
     onScanChange() { state.games.loadedFor = null; },
+  },
+  {
+    id: 'security', label: 'Security', icon: 'shield', needsScan: true,
+    mount() { if (state.scanId && state.root) loadSecurity(); },
+    onScanChange() { state.security.loadedFor = null; },
   },
   {
     id: 'duplicates', label: 'Duplicates', icon: 'copy', needsScan: true,
@@ -7548,6 +7580,90 @@ async function loadApps(force = false) {
   } catch (e) {
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }
+}
+
+/* ──────────────────────────── Security view (§C5) ────────────────────────────
+   Names and locations only — nothing here has ever opened a file, and the panel
+   says so, because a tool that reads your keys is a different kind of tool.
+   There is deliberately NO delete: false positives in this category are
+   expensive, so the only actions are "show me" and "put it somewhere sensible". */
+const SEVERITY_LABEL = { high: 'Serious', medium: 'Worth fixing', low: 'Minor' };
+
+async function loadSecurity(force = false) {
+  if (!state.scanId || !state.root) return;
+  if (!force && state.security.loadedFor === state.scanId) { renderSecurity(); return; }
+  const host = $('securityBody');
+  host.innerHTML = skeletonRows(5, 40);
+  $('securityInfo').textContent = '';
+  try {
+    state.security.report = await api('/api/security/findings?scanId=' + state.scanId);
+    state.security.loadedFor = state.scanId;
+    renderSecurity();
+  } catch (e) {
+    state.security.report = null;
+    host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderSecurity() {
+  const host = $('securityBody');
+  const report = state.security.report;
+  if (!report) return;
+  const findings = report.findings || [];
+  if (!findings.length) {
+    $('securityInfo').textContent = '';
+    host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('checkCircle', 15)}
+      Nothing out of place. TreeMap checked ${formatCount(report.patternCount || 0)} kinds of key, credential and wallet file
+      against the folders each one belongs in — by name and location only, never by opening anything.</div>`;
+    return;
+  }
+  const { high = 0, medium = 0 } = report.counts || {};
+  $('securityInfo').innerHTML =
+    `<b>${formatCount(findings.length)}</b> ${findings.length === 1 ? 'file' : 'files'} sitting outside the folder ${findings.length === 1 ? 'it belongs' : 'they belong'} in` +
+    (high ? ` — <b>${formatCount(high)} serious</b>` : '') + (medium ? `, ${formatCount(medium)} worth fixing` : '') +
+    `. <span class="sec-note">Matched on name and location only; no file was opened and nothing leaves this computer.</span>` +
+    (report.truncated ? ' <span class="num">(first 500 shown)</span>' : '');
+
+  host.innerHTML = '<div class="sec-list">' + findings.map((f, i) => `
+    <div class="sec-item sev-${escapeHtml(f.severity)}">
+      <span class="sec-sev">${escapeHtml(SEVERITY_LABEL[f.severity] || f.severity)}</span>
+      <div class="meta">
+        <div class="nm">${escapeHtml(f.name)} <span class="sec-kind">${escapeHtml(f.label)}</span></div>
+        <div class="pth">${escapeHtml(f.path)}</div>
+        <div class="sec-why">${escapeHtml(f.reason)} ${escapeHtml(f.why)}</div>
+      </div>
+      <span class="size-badge num">${formatBytes(f.size)}</span>
+      <button class="pill" data-sec-reveal="${i}">${icon('external', 13)} Show me</button>
+      ${f.suggestedPath ? `<button class="pill" data-sec-move="${i}">${icon('shield', 13)} Move to ${escapeHtml(baseName(f.suggestedPath))}</button>` : ''}
+    </div>`).join('') + '</div>';
+
+  host.querySelectorAll('[data-sec-reveal]').forEach(b =>
+    b.addEventListener('click', () => openInOS(findings[+b.dataset.secReveal].path, true)));
+  host.querySelectorAll('[data-sec-move]').forEach(b =>
+    b.addEventListener('click', () => confirmRelocateSecret(findings[+b.dataset.secMove])));
+}
+
+/** Confirm and run a single move. Never a delete; an occupied destination aborts. */
+function confirmRelocateSecret(finding) {
+  const to = finding.suggestedPath + '/' + finding.name;
+  $('confirmTitle').innerHTML = icon('shield', 18) + 'Move it somewhere safer?';
+  $('confirmText').innerHTML =
+    `Move <b>${escapeHtml(finding.name)}</b> to <b>${escapeHtml(to)}</b>.<br>` +
+    `<span style="color:var(--text-3)">Nothing is deleted, and if something is already there the move is cancelled instead of overwriting it. ` +
+    `<b>Anything that refers to the old path</b> — an SSH config, a script, an app setting — <b>will need updating</b>.</span>`;
+  onConfirmTrash = async () => {
+    try {
+      await api('/api/security/relocate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: finding.path, to, confirm: true }),
+      });
+      toast(`Moved to ${baseName(finding.suggestedPath)}`);
+      rescan();
+    } catch (e) {
+      toast('Not moved: ' + e.message, 'error');
+    }
+  };
+  $('confirmModal').classList.add('open');
 }
 
 /* ───────────────────────────── Games view (§C7) ─────────────────────────────

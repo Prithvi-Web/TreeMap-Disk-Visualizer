@@ -224,6 +224,10 @@ test('capabilities marks exactly the destructive endpoints as destructive', asyn
       'POST /api/git/gc',
       'POST /api/offload',
       'POST /api/offload/restore',
+      // Moving a secret writes it to a new path and removes the old one. It
+      // never deletes content and never overwrites, but it does move a file the
+      // user did not name, so an agent must be allowed to do it explicitly.
+      'POST /api/security/relocate',
       'POST /api/system/snapshots/purge',
       // Writes a recovered tree back onto the filesystem, and can overwrite when
       // explicitly asked to.
