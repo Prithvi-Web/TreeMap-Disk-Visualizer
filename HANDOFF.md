@@ -1,16 +1,15 @@
 # TreeMap — 21-feature master prompt, session handoff
 
-**Date:** 28 July 2026 — **PHASE 3 COMPLETE (C1–C8 all shipped)**
-**Status:** Phase 0 ✅ · Phase 1 ✅ (A1–A5) · Phase 2 ✅ (B2, B3, B1, B4, B5) ·
-**Phase 3 ✅ (C1–C8)** · index schema v3 ✅ · liquid-glass sidebar ✅ ·
-CI green on macOS+Windows+Linux ✅ · v2.6.1 released and installed
-**Suite:** 765 (764 pass, 1 linux-only skip) · typecheck clean · zero console errors
+**Date:** 28 July 2026 — **ALL 21 FEATURES SHIPPED (Phases 0–4 complete)**
+**Status:** Phase 0 ✅ · Phase 1 ✅ (A1–A5) · Phase 2 ✅ (B1–B5) ·
+**Phase 3 ✅ (C1–C8)** · **Phase 4 ✅ (D1, D2, D3)** · index schema v3 ✅ ·
+liquid-glass sidebar ✅ · CI green on macOS+Windows+Linux ✅ · v2.6.1 installed
+**Suite:** 822 (820 pass, 2 platform-skips) · typecheck clean · zero console errors
 **Pushed:** near-dupe performance + C8 (origin/main = `518d83c`).
-**8 commits on main still LOCAL — the user must click Push origin in GitHub
-Desktop:** C6 · C7 · handoff · C5 · C3 · C4 · C1 · C2.
-**⏭️ NEXT: Phase 4 — D2 (shell integration) → D3 (portable triage) → D1 (LAN
-fleet view)**, then Phase 5 (full regression, §8 benchmark with real numbers,
-D1 security review, README sweep).
+**12 commits on main still LOCAL — the user must click Push origin in GitHub
+Desktop:** C6 · C7 · handoff · C5 · C3 · C4 · C1 · C2 · D2 · D3 · D1 · handoff.
+**⏭️ NEXT: PHASE 5 — the closing phase.** Full regression, the §8 benchmark
+with real numbers, the D1 security review, and a README sweep. Then a release.
 
 Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
@@ -20,7 +19,7 @@ Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
 ```bash
 cd "/Users/prithvivinay/Desktop/Claude Code/Treemap"
-npm run build && npm test          # expect 765 (764 pass, 1 skip)
+npm run build && npm test          # expect 822 (820 pass, 2 skips)
 npm run capabilities:report        # expect 9/12 available on this Mac
 ```
 
@@ -52,19 +51,49 @@ Read `docs/PLATFORM_NOTES.md` before touching anything platform-specific.
 
 ---
 
-# ⏭️ THE NEXT TASK — Phase 4
+# ⏭️ THE NEXT TASK — Phase 5, the closing phase
 
-- **D2 · shell integration** — the platform layer already implements it
-  (`shellIntegration.ts` per OS, capability reports OK on this Mac: "Finder
-  Quick Action"). This is mostly exposing and testing what exists.
-- **D3 · portable triage mode** — `src/platform/portable.ts` already exists.
-- **D1 · LAN fleet view** — LAST, and the one needing a security review.
-  **C5's findings must never leave the machine, including via D1** — that is
-  stated in the spec and is now a real constraint, since the Security panel
-  exists.
+1. **Full regression** — the suite is 822; also drive every one of the now
+   THIRTEEN tabs in the real app once (dashboard, treemap, grid, apps, games,
+   duplicates, security, fleet, trends, compare, offloaded, capsule,
+   autopilot) plus the Clean Up and Settings modals.
+2. **§8 benchmark with real numbers** — state the machine's load with every
+   figure, per the standing rule in this file.
+3. **D1 security review** — the one feature that opens a network surface.
+   `npm run fleet:acceptance` is the end-to-end proof and should be re-run.
+   Read `services/fleet/fleetSummary.ts` first: the allow-list is the whole
+   guarantee.
+4. **README sweep** — it documents through B4 plus the C1–C8 and D1–D3 API
+   rows. The sidebar, B5, and most of Phase 3/4's UI are still not described.
+5. Then a release (recipe below), and consider bumping to **v2.7.0** — this is
+   twenty-one features, not a patch.
 
-Then Phase 5: full regression, §8 benchmark with real numbers, D1 security
-review, README sweep.
+## Phase 4 as built (D1–D3)
+
+- **D2** (`platform/*/shellIntegration.ts` + `GET`/`POST
+  /api/platform/shell-integration` + a Settings control). Phase 0 had already
+  written the per-OS integrations; this added the switch, the removal, and a
+  `shellIntegrationInstalled()` read from the OS every time rather than
+  remembered. The entry launches `<exe> <folder>`, which electron/main.js
+  already routes through `scanPathsFromArgv` → `requestScan`. **Fixed: unpacked
+  argv offset** (`app.isPackaged ? 1 : 2`) — `npm run app` used to scan the repo.
+- **D3** (`services/portableMode.ts`, `utils/portableBoot.ts`,
+  `GET /api/platform/portable`, first-run screen, `dist:portable-*`). Signals:
+  `TREEMAP_PORTABLE`, `PORTABLE_EXECUTABLE_DIR`, or a `treemap-portable.txt`
+  marker. **Removable media is deliberately NOT a signal.** When the medium is
+  read-only the session is EPHEMERAL: storage is memory-backed, SQLite opens
+  `:memory:`, the audit log is a ring buffer, the Time Capsule is off with a
+  reason. **`isEphemeral()` must be consulted by anything that resolves
+  `appDataDir()` itself** — a test enforces that, because diskScanner's mtime
+  cache escaped the first fix.
+- **D1** (`services/fleet/*`, `/api/fleet*`, Fleet tab). Separate LAN listener
+  with THREE routes; the main API is not on it. One allow-list
+  (`fleetSummary.ts`) is the entire disclosure guarantee. Six-digit code,
+  constant-time, spent once, wrong guess does not close the window. Binds
+  specific private IPv4s, never 0.0.0.0. **No remote-delete route exists.**
+  mDNS is hand-written on `dgram` (no dependency); the compression-pointer
+  guard matters because that socket reads from a network.
+  **`npm run fleet:acceptance` spawns three real servers and proves the lot.**
 
 ## Phase 3 as built (C1–C8) — what a follow-up needs to know
 
