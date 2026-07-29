@@ -968,6 +968,44 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   },
   {
     method: 'get',
+    path: '/api/cost/estimate',
+    summary: 'What the scanned data would cost on each cloud provider, and what cleaning up would save — against a table that ships with the app, never fetched',
+    tag: 'insights',
+    destructive: false,
+    parameters: [
+      scanIdQuery,
+      queryParam('freeable', 'Bytes the user is considering removing, for the what-if', int()),
+      queryParam('currency', 'USD (default), EUR, GBP, INR, AUD or CAD', { type: 'string' }),
+    ],
+    responses: {
+      '200': jsonResponse(
+        'Per-provider tier fit and saving',
+        obj(
+          {
+            scanId: str(),
+            asOf: str('The date every price was read from the provider — show it, so a stale price is visible as stale'),
+            currency: str(),
+            symbol: str(),
+            approximate: bool('true for every currency but USD: conversions are approximations, not live rates'),
+            rateFromUsd: { type: 'number' },
+            providerCount: int(),
+            providers: arr(opaque('providerId, providerName, source, current tier fit, afterCleanup, monthlySavingUsd, annualSavingUsd')),
+          },
+          ['scanId', 'asOf', 'currency', 'providers'],
+        ),
+      ),
+    },
+  },
+  {
+    method: 'get',
+    path: '/api/cost/pricing',
+    summary: 'The shipped pricing table itself, with the date it was recorded',
+    tag: 'insights',
+    destructive: false,
+    responses: { '200': jsonResponse('Pricing', obj({ asOf: str(), providers: arr(opaque('id, name, source, tiers[]')) }, ['asOf', 'providers'])) },
+  },
+  {
+    method: 'get',
     path: '/api/health/smart',
     summary: "Drive SMART attributes reported verbatim, plus which runs out first — space or write endurance",
     tag: 'insights',

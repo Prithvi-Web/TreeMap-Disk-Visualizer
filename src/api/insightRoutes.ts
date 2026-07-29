@@ -29,6 +29,7 @@ import { scanGameLibraries } from '../services/gameLibraryScanner';
 import { collectSecurityFindings, relocateSecret, SECURITY_PATTERNS } from '../services/securityHygieneScanner';
 import { readProvenance } from '../services/provenanceTracker';
 import { getDriveHealth } from '../services/driveHealthMonitor';
+import { estimateCost, isCurrency, PROVIDER_PRICING, PRICING_AS_OF } from '../services/costIntelligence';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { getPolicy, assertPathsAllowed } from '../services/policy';
 import { ruleCatalogStatus } from '../services/rulePacks';
@@ -259,6 +260,31 @@ insightRouter.get('/health/smart', async (req: Request, res: Response) => {
     rootPath = requireCompleteScan(req, req.query.scanId).rootPath;
   }
   res.json(await getDriveHealth(device, rootPath));
+});
+
+/**
+ * GET /api/cost/estimate?scanId=&freeable=&currency= — what this data costs.
+ *
+ * Against a pricing table that SHIPS WITH THE APP. Nothing here fetches a
+ * price: TreeMap makes no outbound request, and the "as of" date travels with
+ * the answer so a stale price is visible as stale rather than presented as
+ * current.
+ */
+insightRouter.get('/cost/estimate', (req: Request, res: Response) => {
+  const scan = requireCompleteScan(req, req.query.scanId);
+  const bytes = storeOf(scan).size(storeOf(scan).rootId);
+  const freeable = Math.max(0, Number(req.query.freeable) || 0);
+  const currency = isCurrency(req.query.currency) ? req.query.currency : 'USD';
+  res.json({
+    scanId: scan.scanId,
+    providerCount: PROVIDER_PRICING.length,
+    ...estimateCost(bytes, freeable, currency),
+  });
+});
+
+/** GET /api/cost/pricing — the shipped table itself, with its "as of" date. */
+insightRouter.get('/cost/pricing', (_req: Request, res: Response) => {
+  res.json({ asOf: PRICING_AS_OF, providers: PROVIDER_PRICING });
 });
 
 /** POST /api/git/gc { path, confirm:true } — run `git gc` in a scanned repo. */

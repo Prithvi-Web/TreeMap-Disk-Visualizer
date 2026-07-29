@@ -1493,3 +1493,25 @@ test('an unreadable drive shows the reason and how to fix it', () => {
   assert.match(fn, /dh-unknown/, 'and rendered as an explicit unknown');
   assert.match(fn, /escapeHtml\(data\.reason/, 'carrying the server’s reason, which names the install command');
 });
+
+/* ══════════════ Cost figures are dated, never fetched (§C1) ══════════════ */
+
+test('the cost card always shows the date its prices were recorded', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function loadCostEstimate'), code.indexOf('/* ───────────────────────────── Drive Health'));
+  assert.ok(fn.length > 0, 'loadCostEstimate must be findable');
+  assert.match(fn, /Prices as of/, 'the "as of" date is on screen, not buried');
+  assert.match(fn, /escapeHtml\(est\.asOf\)/);
+  assert.match(fn, /never looks them up online/, 'and the reason it can go stale is stated');
+});
+
+test('a cleanup that does not change the plan is not sold as a saving', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function loadCostEstimate'), code.indexOf('/* ───────────────────────────── Drive Health'));
+  assert.match(fn, /p\.monthlySavingUsd > 0/, 'a saving is only shown when there is one');
+  assert.match(fn, /keeps you on the same plan/, 'and the no-saving case says so plainly');
+  // The ≈ marker lives in the shared formatter, above loadCostEstimate.
+  const money = code.slice(code.indexOf('function costMoney'), code.indexOf('async function loadCostEstimate'));
+  assert.ok(money.length > 0, 'costMoney must be findable');
+  assert.match(money, /est\.approximate \? '≈'/, 'converted figures are marked as approximations');
+});

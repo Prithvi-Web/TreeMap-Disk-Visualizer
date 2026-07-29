@@ -928,6 +928,19 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .pkg-why { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 .pkg-why code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
   padding: 1px 4px; border-radius: 4px; background: var(--surface-3); }
+/* ── C1: cost to keep ── */
+.cost-lead { font-size: 12.5px; color: var(--text-2); margin-bottom: 9px; }
+.cost-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--hairline); }
+.cost-row:first-of-type { border-top: 0; }
+.cost-row .meta { flex: 1; min-width: 0; }
+.cost-row .nm { font-size: 12.5px; font-weight: 600; }
+.cost-row .sub { font-size: 11px; color: var(--text-3); margin-top: 1px; }
+.cost-price { font-size: 13px; font-weight: 700; white-space: nowrap; }
+.cost-price .per { font-size: 10px; font-weight: 500; color: var(--text-3); }
+.cost-save { color: #30d158; font-weight: 600; margin-left: 6px; }
+.cost-nosave { margin-left: 6px; }
+.cost-foot { margin-top: 10px; font-size: 10.5px; color: var(--text-3); line-height: 1.5; }
+#costCurrency { font-size: 11px; padding: 3px 6px; }
 /* ── C4: drive health ── */
 .dh-summary { font-size: 12.5px; line-height: 1.55; color: var(--text-2); margin-bottom: 10px; }
 .dh-kv { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; font-size: 12px; align-items: baseline; }
@@ -1519,6 +1532,21 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <div class="card glass" id="driveHealthCard">
           <h2><span data-icon="gauge"></span>Drive Health</h2>
           <div id="driveHealthBody"><div class="muted">Run a scan to check this drive.</div></div>
+        </div>
+
+        <!-- C1 · What this data would cost to keep in the cloud, against a
+             pricing table that ships with the app. The "as of" date is always
+             visible: a stale price shown as stale is honest, shown as current
+             is not. -->
+        <div class="card glass" id="costCard">
+          <h2><span data-icon="cloud"></span>Cost to Keep
+            <select id="costCurrency" aria-label="Currency" style="margin-left:auto;">
+              <option value="USD">USD $</option><option value="EUR">EUR €</option>
+              <option value="GBP">GBP £</option><option value="INR">INR ₹</option>
+              <option value="AUD">AUD A$</option><option value="CAD">CAD C$</option>
+            </select>
+          </h2>
+          <div id="costBody"><div class="muted">Run a scan to see what this data would cost to keep online.</div></div>
         </div>
       </div>
 
@@ -2543,6 +2571,7 @@ const state = {
   apps: { loadedFor: null, list: [], otherBytes: 0, totalBytes: 0, appsFolderScanned: false },
   games: { loadedFor: null, report: null },
   security: { loadedFor: null, report: null },
+  cost: null,
   live: { on: false, wanted: false, es: null, engine: '', idleMinutes: 10, pulses: new Map(), window: [], dirty: 0, feedTimer: 0, relayoutTimer: 0, pulseRaf: 0 },
   offload: { index: null, q: '' },
   capsule: { index: null, q: '' },
@@ -3952,6 +3981,7 @@ async function finishScan(root, durationMs, stats) {
   // Painted. Now the expensive server-side walks, filling in behind it.
   void loadWhatsNew(); // "what's new" banner — fetches its snapshots behind the paint too
   void loadDriveHealth(); // C4 — shells out to smartctl, so never in front of the paint
+  void loadCostEstimate(); // C1
   state.largest = []; state.types = []; state.bigFolders = [];
   $('statLargest').textContent = '–';
   try {
@@ -7662,6 +7692,62 @@ async function loadApps(force = false) {
   }
 }
 
+/* ─────────────────────────── Cost to Keep (§C1) ───────────────────────────
+   Prices come from a table that ships with the app — TreeMap makes no outbound
+   request of any kind. That means prices go stale, so the date they were
+   recorded is always on screen. The what-if is the useful half: a saving only
+   exists when the TIER changes, and the card says so when it does not. */
+function costMoney(usd, est) {
+  const value = usd * (est.rateFromUsd || 1);
+  const shown = value >= 100 ? value.toFixed(0) : value.toFixed(2);
+  return `${est.approximate ? '≈' : ''}${est.symbol}${shown}`;
+}
+
+async function loadCostEstimate() {
+  const host = $('costBody');
+  if (!host || !state.scanId) return;
+  host.innerHTML = skeletonRows(4, 22);
+  // The what-if uses whatever the Clean Up rules already found to be
+  // reclaimable, so the two features agree about the same bytes.
+  let freeable = 0;
+  try {
+    const s = await api('/api/cleanup/suggestions?scanId=' + state.scanId);
+    freeable = (s.groups || []).reduce((n, g) => n + (g.advisory ? 0 : g.totalSize), 0);
+  } catch { /* the estimate is still worth showing without a what-if */ }
+
+  let est;
+  try {
+    est = await api(`/api/cost/estimate?scanId=${state.scanId}&freeable=${freeable}&currency=${$('costCurrency').value}`);
+  } catch (e) {
+    host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  state.cost = est;
+
+  const rows = est.providers.map(p => {
+    const tier = p.current.tier;
+    const price = tier
+      ? `${costMoney(p.current.monthly, est)}<span class="per">/mo</span>`
+      : '<span class="muted">no plan this big</span>';
+    const saving = p.monthlySavingUsd > 0
+      ? `<span class="cost-save">save ${costMoney(p.monthlySavingUsd, est)}/mo by clearing ${formatBytes(freeable)}</span>`
+      : p.afterCleanup && p.sameTierAfterCleanup
+        ? `<span class="cost-nosave">clearing ${formatBytes(freeable)} keeps you on the same plan</span>`
+        : '';
+    return `<div class="cost-row">
+      <div class="meta"><div class="nm">${escapeHtml(p.providerName)}</div>
+        <div class="sub">${tier ? escapeHtml(tier.label) : 'more than this provider sells'} ${saving}</div></div>
+      <span class="cost-price num">${price}</span>
+    </div>`;
+  }).join('');
+
+  host.innerHTML =
+    `<div class="cost-lead">Keeping <b>${formatBytes(state.root ? state.root.size : 0)}</b> online would cost:</div>` +
+    rows +
+    `<div class="cost-foot">Prices as of <b>${escapeHtml(est.asOf)}</b>, shipped with this version — TreeMap never looks them up online, so check the provider before you buy.` +
+    (est.approximate ? ` Figures marked ≈ are converted from US dollars at an approximate rate.` : '') + `</div>`;
+}
+
 /* ───────────────────────────── Drive Health (§C4) ─────────────────────────────
    The drive's own attributes and its own self-assessment, verbatim, next to the
    growth forecast. There is deliberately NO health verdict of TreeMap's own: a
@@ -8469,6 +8555,7 @@ $('ndTrashBtn').addEventListener('click', () => {
   confirmTrash([...state.near.selection]);
 });
 $('ndThreshold').addEventListener('change', () => loadNearDupes(true));
+$('costCurrency').addEventListener('change', () => loadCostEstimate());
 
 /* ───────────────────────────── Trends view ───────────────────────────── */
 async function loadTrends() {
