@@ -1,14 +1,16 @@
 # TreeMap — 21-feature master prompt, session handoff
 
-**Date:** 28 July 2026 (Phase 3 opened)
+**Date:** 28 July 2026 (Phase 3: C8, C6, C7 done)
 **Status:** Phase 0 ✅ · Phase 1 ✅ (A1–A5) · Phase 2 ✅ (B2, B3, B1, B4, B5) ·
-**Phase 3 started: C8 ✅** · index schema v3 ✅ · liquid-glass sidebar ✅ ·
+**Phase 3: C8 ✅ C6 ✅ C7 ✅** · index schema v3 ✅ · liquid-glass sidebar ✅ ·
 CI green on macOS+Windows+Linux ✅ · v2.6.1 released and installed
-**Suite:** 664/664 · typecheck clean · zero console errors
-**2 commits on main, LOCAL — the user must click Push origin in GitHub Desktop:**
-`b8a0104` near-duplicate performance · `fc27f39` C8 rule packs
-**⏭️ NEXT: C6 (package-manager orphans) and C7 (game libraries), both expressed
-as rule packs now that C8 exists — then C1–C5 in any order.**
+**Suite:** 699 (698 pass, 1 linux-only skip) · typecheck clean · zero console errors
+**Pushed:** near-dupe performance + C8 rule packs (origin/main = `518d83c`).
+**3 commits on main still LOCAL — the user must click Push origin in GitHub
+Desktop:** `c512038` C6 orphans · `1a5168c` C7 games · this handoff update.
+**⏭️ NEXT: C1–C5 in any order** (C1 cost intelligence · C2 compression advisor ·
+C3 download provenance · C4 SMART health · C5 secrets hygiene), then Phase 4
+(D2 → D3 → D1), then Phase 5.
 
 Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
@@ -18,7 +20,7 @@ Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
 ```bash
 cd "/Users/prithvivinay/Desktop/Claude Code/Treemap"
-npm run build && npm test          # expect 664/664
+npm run build && npm test          # expect 699 (698 pass, 1 skip)
 npm run capabilities:report        # expect 9/12 available on this Mac
 ```
 
@@ -50,32 +52,59 @@ Read `docs/PLATFORM_NOTES.md` before touching anything platform-specific.
 
 ---
 
-# ⏭️ THE NEXT TASK — C6 and C7, as rule packs
+# ⏭️ THE NEXT TASK — C1 to C5, in any order
 
-C8 shipped the catalog, so C6 and C7 should mostly be **pack authoring plus a
-detector**, not new bespoke suggestion surfaces.
+- **C1 · storage cost intelligence** — shipped pricing table with a visible
+  "as of" date, `GET /api/cost/estimate`, what-if calculator. No live fetch.
+- **C2 · media compression advisor** — ffprobe + HEVC estimates, hardware
+  encode only, encode→verify→trash→promote, never overwrite in place.
+  **Detect AV1 hardware encode at runtime; never silently substitute software.**
+- **C3 · download provenance** — the platform layer already reads
+  `com.apple.quarantine` (kMDItemDownloadedDate reads `(null)`, don't use it),
+  Zone.Identifier and `user.xdg.origin.url`. Host prominently, full URL on
+  demand, escaped, never auto-fetched.
+- **C4 · SMART health** — `smartctl --json`; it is NOT installed on this Mac,
+  so the honest-unavailable path is the one that gets exercised here.
+  **Never editorialize about imminent failure.**
+- **C5 · secrets hygiene** — filename/path patterns from the index, flagged
+  only OUTSIDE expected locations. Never an automatic delete, never display
+  contents, never leaves the machine.
 
-- **C6 · package-manager orphans** (`PackageEcosystemScanner.ts`): npm/yarn/pnpm,
-  pip venvs, cargo registry + `target`, Homebrew, apt/dpkg, winget/chocolatey.
-  Orphaned (parent project gone / version no longer referenced) vs active,
-  read from each ecosystem's own lockfile. The spec says use the existing
-  `GET /api/git/repos` detector as the structural template, and feed results
-  into the existing Clean Up "regenerable" bucket rather than a fourth surface.
-- **C7 · game libraries** (`GameLibraryScanner.ts`): Steam `libraryfolders.vdf`
-  + app manifests, Epic `Manifests/*.item`, GOG, itch.io, Proton prefixes.
-  Split per title into base install / shader cache / DLC / workshop. A "clear
-  shader cache safely" action, warning about the one-time stutter.
-
-**Then C1–C5 in any order** → Phase 4 (D2 → D3 → D1) → Phase 5 (full
-regression, §8 benchmark with real numbers, D1 security review, README sweep —
-the README documents through B4 plus the C8 rule-pack paragraph; sidebar and
-B5 are still not in it).
+Then Phase 4 (D2 → D3 → D1), then Phase 5 (full regression, §8 benchmark with
+real numbers, D1 security review, README sweep — the README documents through
+B4 plus the C8/C6/C7 additions; sidebar and B5 are still not in it).
 
 Route changes must update the `ENDPOINTS` registry in `src/api/openapi.ts`
 in the SAME commit (`tests/discoverability.test.ts` enforces it, including a
 pinned destructive-endpoints list that is edited deliberately).
 
 ---
+
+## C6 and C7 as built
+
+- **C6** (`packageEcosystemScanner.ts`, `GET /api/packages/orphans`, "Package
+  leftovers" panel in Clean Up ▸ Smart Suggestions). The rules are DATA: an
+  ecosystem-tagged `project-directory` rule or the `package-cache` kind.
+  Three classes — **orphan** (owner manifest gone), **active** (context only,
+  no checkbox), **cache** (shared, never "orphaned"). **It refuses to guess:**
+  with the manifest gone a directory is claimed only if one of the rule's
+  `evidence` children is present, so an unidentifiable `target` is reported as
+  nothing. The validator now REQUIRES `evidence` on any ecosystem-tagged rule.
+  Extras: a venv whose `pyvenv.cfg` interpreter is gone is an orphan even with
+  a live project; Homebrew Cellar reports superseded versions.
+  **`activeCleanSelection()` is now keyed by path** — the same orphan is
+  offered by both this panel and Smart Suggestions, and used to double-count.
+- **C7** (`gameLibraryScanner.ts`, `GET /api/games`, Games tab). Steam / Epic /
+  GOG / itch.io, per title split into base / shaderCache / workshop /
+  compatPrefix / dlc. Detection is structural (`steamapps` anywhere; a
+  `Manifests` dir holding `.item` files), not path-guessing. Includes a small
+  total Valve KeyValues parser. **Shader caches are the ONLY component ever
+  offered for removal** — a contract test pins that, and the dialog states the
+  one-time stutter. DLC is only broken out when the game keeps its own folder;
+  otherwise the UI says Steam does not separate it. Steam's `SizeOnDisk` is
+  shown alongside ours ("matches Steam" within 2%, else Steam's number).
+  **C7's "the game still launches and rebuilds" criterion cannot be automated**
+  — it needs Steam and a real title; everything else was verified live.
 
 ## C8 as built — what a follow-up needs to know
 
