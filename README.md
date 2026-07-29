@@ -293,6 +293,11 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 | `GET /api/cleanup/suggestions?scanId=` | Smart cleanup suggestions (regenerable / cache / junk) |
 | `GET /api/packages/orphans?scanId=` | Package-manager leftovers: orphaned / active / shared cache |
 | `GET /api/games?scanId=` | Game libraries per title: base, shader cache, workshop, Proton prefix, DLC |
+| `GET /api/security/findings?scanId=` | Keys and credentials sitting outside their expected folders |
+| `GET /api/provenance?path=` | Where a file came from, and when it was last opened |
+| `GET /api/health/smart?device=` | Drive SMART attributes next to the growth forecast |
+| `GET /api/cost/estimate?scanId=` | What the data would cost to keep on each cloud provider |
+| `GET /api/compression/candidates?scanId=` | Video worth re-encoding to HEVC, with estimated savings |
 | `GET /api/cleanup/browser-profiles?scanId=` | Per-browser-profile cache breakdown |
 | `GET /api/git/repos?scanId=` · `POST /api/git/gc` | Git pack/loose/LFS breakdown, and `git gc` a scanned repo |
 | `GET /api/system/snapshots` · `POST …/purge` | OS snapshot accounting (APFS / Btrfs / VSS) |

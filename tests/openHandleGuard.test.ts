@@ -436,8 +436,12 @@ test('nothing outside Cleaner removes a user file', async () => {
    *  - `trash.ts`   — Empty Trash. The one place a permanent delete is the
    *    entire point, it only ever touches the OS trash directory, and it
    *    refuses without an explicit `confirm: true`.
+   *  - `compressionAdvisor.ts` — discards the ENCODE it just wrote when the
+   *    verification fails. Exactly offload's argument: the only path it can
+   *    remove is a temp file created moments earlier by the same function, and
+   *    the user's original is only ever removed through cleaner's moveToTrash.
    */
-  const allowed = new Set(['cleaner.ts', 'offload.ts', 'trash.ts']);
+  const allowed = new Set(['cleaner.ts', 'offload.ts', 'trash.ts', 'compressionAdvisor.ts']);
   const offenders: string[] = [];
 
   const scan = async (dir: string): Promise<void> => {

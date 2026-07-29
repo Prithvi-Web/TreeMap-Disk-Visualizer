@@ -221,6 +221,10 @@ test('capabilities marks exactly the destructive endpoints as destructive', asyn
       'POST /api/autopilot/runs/{id}/undo',
       'POST /api/cloud/disconnect',
       'POST /api/cloud/trash',
+      // Re-encoding rewrites a video: the picture is compressed again, losing
+      // quality permanently, and the original is trashed once the new file
+      // verifies. The most consequential thing an agent can ask for.
+      'POST /api/compression/encode',
       'POST /api/git/gc',
       'POST /api/offload',
       'POST /api/offload/restore',

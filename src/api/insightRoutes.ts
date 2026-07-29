@@ -18,7 +18,7 @@ import {
   diffSnapshots,
 } from '../services/snapshots';
 import { buildTreemap } from '../utils/treemap';
-import { guardQueryPath, guardBodyPath, requireInsideScanRoot, insideAnyScanRoot } from '../middleware/pathGuard';
+import { guardQueryPath, guardBodyPath, guardBodyPaths, requireInsideScanRoot, insideAnyScanRoot } from '../middleware/pathGuard';
 import { getAppAttribution } from '../services/appAttribution';
 import { storeOf } from '../services/scanStore';
 import { getForecast } from '../services/forecast';
@@ -30,6 +30,12 @@ import { collectSecurityFindings, relocateSecret, SECURITY_PATTERNS } from '../s
 import { readProvenance } from '../services/provenanceTracker';
 import { getDriveHealth } from '../services/driveHealthMonitor';
 import { estimateCost, isCurrency, PROVIDER_PRICING, PRICING_AS_OF } from '../services/costIntelligence';
+import {
+  cancelEncodeJob, estimateFor, getEncodeJob, isWorthEncoding, mediaTools,
+  shortlistFromScan, startEncodeJob, CompressionCandidate,
+} from '../services/compressionAdvisor';
+import { sseSend } from '../utils/sse';
+import { randomUUID } from 'crypto';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { getPolicy, assertPathsAllowed } from '../services/policy';
 import { ruleCatalogStatus } from '../services/rulePacks';
@@ -285,6 +291,109 @@ insightRouter.get('/cost/estimate', (req: Request, res: Response) => {
 /** GET /api/cost/pricing — the shipped table itself, with its "as of" date. */
 insightRouter.get('/cost/pricing', (_req: Request, res: Response) => {
   res.json({ asOf: PRICING_AS_OF, providers: PROVIDER_PRICING });
+});
+
+/**
+ * GET /api/compression/candidates?scanId= — video worth re-encoding to HEVC.
+ *
+ * Shortlisted from the scan first (big video containers only), then probed —
+ * so ffprobe runs tens of times, not tens of thousands.
+ */
+insightRouter.get('/compression/candidates', async (req: Request, res: Response) => {
+  const scan = requireCompleteScan(req, req.query.scanId);
+  const tools = mediaTools();
+  const availability = await tools.availability();
+  if (!availability.available) {
+    res.json({ scanId: scan.scanId, ...availability, candidates: [], totalSaving: 0 });
+    return;
+  }
+  const ignore = await getIgnoreMatchers('suggest');
+  const shortlist = shortlistFromScan(storeOf(scan), ignore, clampInt(req.query.limit, 60, 1, 200));
+  const candidates: CompressionCandidate[] = [];
+  for (const item of shortlist) {
+    const probe = await tools.probe(item.path);
+    if (!isWorthEncoding(probe)) continue;
+    const { estimatedBytes, estimatedSaving } = estimateFor(item.size, probe!.videoCodec);
+    candidates.push({
+      ...item,
+      codec: probe!.videoCodec,
+      width: probe!.width,
+      height: probe!.height,
+      durationSeconds: probe!.durationSeconds,
+      estimatedBytes,
+      estimatedSaving,
+      reason: `${(probe!.videoCodec || 'this codec').toUpperCase()} video — HEVC stores the same picture in less space.`,
+    });
+  }
+  candidates.sort((a, b) => b.estimatedSaving - a.estimatedSaving);
+  res.json({
+    scanId: scan.scanId, ...availability, candidates,
+    totalSaving: candidates.reduce((s, c) => s + c.estimatedSaving, 0),
+  });
+});
+
+/**
+ * POST /api/compression/encode { paths, confirm:true } -> 202 { jobId }
+ *
+ * Re-encoding is LOSSY and the original is trashed once the new file verifies,
+ * so it is double-gated like every other destructive action.
+ */
+insightRouter.post('/compression/encode', idempotency, guardBodyPaths, async (req: Request, res: Response) => {
+  const { paths, confirm } = req.body as { paths: string[]; confirm?: boolean };
+  if (confirm !== true) {
+    throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } — re-encoding is lossy and trashes the original');
+  }
+  for (const p of paths) {
+    if (!insideAnyScanRoot(p)) {
+      throw new AppError(403, 'OUTSIDE_SCAN_ROOT', `${p} is outside every scanned folder`);
+    }
+  }
+  const availability = await mediaTools().availability();
+  if (!availability.available || !availability.encoder) {
+    throw new AppError(503, 'ENCODER_UNAVAILABLE', availability.reason || 'No hardware encoder is available');
+  }
+  const policy = await getPolicy();
+  assertPathsAllowed(policy, paths);
+  const jobId = randomUUID();
+  startEncodeJob(jobId, paths, availability.encoder);
+  await appendAudit({ action: 'compression.encode', source: 'http', tokenId: tokenIdFor('http'), paths, bytes: null, dryRun: false, outcome: 'ok' });
+  res.status(202).json({ jobId, total: paths.length, encoder: availability.encoder });
+});
+
+/** GET /api/compression/:jobId/progress — SSE, the app's one long-work pattern. */
+insightRouter.get('/compression/:jobId/progress', (req: Request, res: Response) => {
+  const jobId = String(req.params.jobId);
+  const job = getEncodeJob(jobId);
+  if (!job) throw new AppError(404, 'JOB_NOT_FOUND', 'No such encode job');
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+  const tick = setInterval(() => {
+    const current = getEncodeJob(jobId);
+    if (!current) { clearInterval(tick); res.end(); return; }
+    sseSend(res, {
+      type: 'progress',
+      status: current.status, done: current.done, total: current.total,
+      currentPath: current.currentPath, currentFraction: current.currentFraction,
+      savedBytes: current.savedBytes,
+    });
+    if (current.status !== 'running') {
+      sseSend(res, { type: 'complete', results: current.results, savedBytes: current.savedBytes, error: current.error });
+      clearInterval(tick);
+      res.end();
+    }
+  }, 500);
+  req.on('close', () => clearInterval(tick));
+});
+
+/** GET /api/compression/:jobId/result — the same answer, for pollers. */
+insightRouter.get('/compression/:jobId/result', (req: Request, res: Response) => {
+  const job = getEncodeJob(String(req.params.jobId));
+  if (!job) throw new AppError(404, 'JOB_NOT_FOUND', 'No such encode job');
+  res.json(job);
+});
+
+/** POST /api/compression/:jobId/cancel — stops before the NEXT file. */
+insightRouter.post('/compression/:jobId/cancel', (req: Request, res: Response) => {
+  res.json({ cancelled: cancelEncodeJob(String(req.params.jobId)) });
 });
 
 /** POST /api/git/gc { path, confirm:true } — run `git gc` in a scanned repo. */

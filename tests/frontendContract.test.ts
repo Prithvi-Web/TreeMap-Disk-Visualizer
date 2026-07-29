@@ -1515,3 +1515,28 @@ test('a cleanup that does not change the plan is not sold as a saving', () => {
   assert.ok(money.length > 0, 'costMoney must be findable');
   assert.match(money, /est\.approximate \? '≈'/, 'converted figures are marked as approximations');
 });
+
+/* ══════════════ Re-encoding says what it costs (§C2) ══════════════ */
+
+test('the video pane states that re-encoding is lossy and trashes the original', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function loadVideoCandidates'), code.indexOf('function confirmEncode'));
+  assert.ok(fn.length > 0, 'loadVideoCandidates must be findable');
+  assert.match(fn, /Re-encoding is lossy/, 'the irreversible half is said first');
+  assert.match(fn, /Trash/, 'and where the original goes');
+  assert.match(fn, /estimates/, 'and that the sizes are estimates');
+  assert.match(fn, /!data\.available/, 'with the unavailable state handled');
+});
+
+test('the confirmation repeats the cost before anything runs', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function confirmEncode'), code.indexOf('async function startEncode'));
+  assert.ok(fn.length > 0, 'confirmEncode must be findable');
+  assert.match(fn, /This is lossy/, 'the dialog does not soften it');
+  assert.match(fn, /before<\/b> the original is moved to the Trash/s, 'and states the ordering guarantee');
+  assert.match(fn, /left exactly as it is/, 'and what happens when a check fails');
+  // The confirm flag is sent by startEncode, which the dialog calls.
+  const start = code.slice(code.indexOf('async function startEncode'), code.indexOf('/* ── Empty Folders pane ── */'));
+  assert.ok(start.length > 0, 'startEncode must be findable');
+  assert.match(start, /confirm: true/, 'the endpoint is double-gated');
+});

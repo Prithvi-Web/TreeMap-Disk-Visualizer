@@ -928,6 +928,20 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .pkg-why { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 .pkg-why code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
   padding: 1px 4px; border-radius: 4px; background: var(--surface-3); }
+/* ── C2: shrink video ── */
+.vid-warn { display: flex; align-items: flex-start; gap: 9px; padding: 10px 12px; margin-bottom: 11px;
+  border-radius: 10px; font-size: 12px; line-height: 1.55; color: var(--text-2);
+  background: rgba(255,159,10,0.08); border: 1px solid rgba(255,159,10,0.4); }
+.vid-list { max-height: 320px; overflow-y: auto; }
+.vid-why { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+.vid-ba { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.vid-actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.vid-actions .muted { font-size: 11.5px; }
+.vid-progress { margin-top: 12px; }
+.vid-progress .track { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.vid-progress .fill { height: 100%; width: 0%; border-radius: 3px; background: var(--accent); transition: width 300ms var(--ease); }
+.vid-progtext { margin-top: 6px; font-size: 11.5px; color: var(--text-3); }
+.vid-failed { margin-top: 6px; color: var(--warn); font-size: 11px; }
 /* ── C1: cost to keep ── */
 .cost-lead { font-size: 12.5px; color: var(--text-2); margin-bottom: 9px; }
 .cost-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--hairline); }
@@ -1920,6 +1934,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <button role="tab" aria-selected="true" data-pane="rules"><span data-icon="search"></span>Custom Rules</button>
         <button role="tab" aria-selected="false" data-pane="smart"><span data-icon="sparkles"></span>Smart Suggestions</button>
         <button role="tab" aria-selected="false" data-pane="empty"><span data-icon="folder"></span>Empty Folders</button>
+        <button role="tab" aria-selected="false" data-pane="video"><span data-icon="video"></span>Shrink Video</button>
         <button role="tab" aria-selected="false" data-pane="cloud" id="cleanTabCloud" hidden><span data-icon="cloud"></span>Cloud-safe</button>
       </div>
       <div class="muted" style="margin-bottom:6px;">Nothing is removed until you confirm — and everything goes to the system Trash, recoverable any time.</div>
@@ -1948,6 +1963,13 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <div id="browserProfiles"></div>
         <div id="smartResults"></div>
       </div>
+      <!-- C2 · Shrink Video. The only feature that rewrites a file rather than
+           moving it, so the copy is blunt about what it does: it is lossy, and
+           the original goes to the Trash only once the new file has verified. -->
+      <div id="cleanPaneVideo" style="display:none;">
+        <div id="videoBody"><div class="muted">Run a scan to look for video worth re-encoding.</div></div>
+      </div>
+
       <div id="cleanPaneEmpty" style="display:none;">
         <div class="rule-row">
           <input type="checkbox" id="emptyIgnoreJunk" checked>
@@ -9009,10 +9031,135 @@ function setCleanPane(pane, skipLoad = false) {
   $('cleanPaneRules').style.display = pane === 'rules' ? '' : 'none';
   $('cleanPaneSmart').style.display = pane === 'smart' ? '' : 'none';
   $('cleanPaneEmpty').style.display = pane === 'empty' ? '' : 'none';
+  $('cleanPaneVideo').style.display = pane === 'video' ? '' : 'none';
   $('cleanPaneCloud').style.display = pane === 'cloud' ? '' : 'none';
   updateCleanSummary();
   if (!skipLoad && pane === 'empty' && !emptyFolders.length) loadEmptyFolders();
   if (!skipLoad && pane === 'smart' && !smartGroups.length) loadSmartSuggestions();
+  if (!skipLoad && pane === 'video' && !videoCandidates.length) loadVideoCandidates();
+}
+
+/* ── Shrink Video pane (§C2) ────────────────────────────────────────────────
+   The only place TreeMap rewrites a file instead of moving it. The copy is
+   deliberately blunt about the two things that matter: it is LOSSY, and the
+   original goes to the Trash — but only after the new file has been checked. */
+let videoCandidates = [];
+let videoJobStream = null;
+
+async function loadVideoCandidates() {
+  const host = $('videoBody');
+  if (!host || !state.scanId) return;
+  host.innerHTML = skeletonRows(4, 34);
+  let data;
+  try { data = await api('/api/compression/candidates?scanId=' + state.scanId); }
+  catch (e) { host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`; return; }
+
+  if (!data.available) {
+    // §3.5 state 5 — unavailable, with the reason and the way to fix it.
+    host.innerHTML = `<div class="muted" style="display:flex;align-items:flex-start;gap:8px;padding:10px 2px;">${icon('alert', 15)}
+      <span>${escapeHtml(data.reason || 'Video re-encoding is not available on this system.')}</span></div>`;
+    return;
+  }
+  videoCandidates = data.candidates || [];
+  if (!videoCandidates.length) {
+    host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('checkCircle', 15)}
+      No video worth re-encoding — everything large is already in an efficient format.</div>`;
+    return;
+  }
+
+  host.innerHTML =
+    `<div class="vid-warn">${icon('alert', 15)}<span><b>Re-encoding is lossy.</b> The picture is compressed again, so a little
+      quality is lost for good. TreeMap checks the new file opens and runs the full length before it touches anything, then the
+      original goes to your <b>Trash</b> — recoverable until you empty it. Sizes below are <b>estimates</b>.</span></div>` +
+    `<div class="vid-list">` + videoCandidates.map((c, i) => `
+      <div class="clean-item">
+        <input type="checkbox" class="vid-ck" data-i="${i}" aria-label="Select ${escapeHtml(c.name)}">
+        ${chipFor({ type: 'file', extension: (c.name.split('.').pop() || '').toLowerCase() }, 13)}
+        <div class="meta">
+          <div class="nm">${escapeHtml(c.name)}</div>
+          <div class="pth">${escapeHtml(c.path)}</div>
+          <div class="vid-why">${escapeHtml(c.reason)}${c.width ? ` · ${c.width}×${c.height}` : ''}${
+            c.durationSeconds ? ` · ${Math.round(c.durationSeconds / 60)} min` : ''}</div>
+        </div>
+        <span class="vid-ba num">${formatBytes(c.size)} → <b>~${formatBytes(c.estimatedBytes)}</b></span>
+        <span class="size-badge num" style="color:${sizeColor(c.estimatedSaving)}">~${formatBytes(c.estimatedSaving)}</span>
+      </div>`).join('') + `</div>
+    <div class="vid-actions">
+      <button class="btn" id="vidSelectAll">Select all</button>
+      <button class="btn btn-danger" id="vidEncodeBtn" disabled>${icon('video', 14)} Re-encode</button>
+      <span class="muted" id="vidSummary"></span>
+    </div>
+    <div class="vid-progress" id="vidProgress" hidden><div class="track"><div class="fill" id="vidFill"></div></div>
+      <div class="vid-progtext" id="vidProgText"></div></div>`;
+
+  const update = () => {
+    const chosen = [...host.querySelectorAll('.vid-ck:checked')].map(ck => videoCandidates[+ck.dataset.i]);
+    const saving = chosen.reduce((s, c) => s + c.estimatedSaving, 0);
+    $('vidEncodeBtn').disabled = !chosen.length;
+    $('vidSummary').textContent = chosen.length
+      ? `${chosen.length} selected — around ${formatBytes(saving)} back, if the estimates hold`
+      : '';
+  };
+  host.querySelectorAll('.vid-ck').forEach(ck => ck.addEventListener('change', update));
+  $('vidSelectAll').addEventListener('click', () => {
+    host.querySelectorAll('.vid-ck').forEach(ck => { ck.checked = true; });
+    update();
+  });
+  $('vidEncodeBtn').addEventListener('click', () => confirmEncode(
+    [...host.querySelectorAll('.vid-ck:checked')].map(ck => videoCandidates[+ck.dataset.i])));
+  update();
+}
+
+function confirmEncode(chosen) {
+  if (!chosen.length) return;
+  const saving = chosen.reduce((s, c) => s + c.estimatedSaving, 0);
+  $('confirmTitle').innerHTML = icon('video', 18) + 'Re-encode and replace?';
+  $('confirmText').innerHTML =
+    `Re-encode <b>${chosen.length}</b> video ${chosen.length === 1 ? 'file' : 'files'} to HEVC, freeing roughly <b>${formatBytes(saving)}</b>.<br>` +
+    `<span style="color:var(--text-3)"><b>This is lossy</b> — the picture is compressed again and a little quality is lost permanently. ` +
+    `Each new file is checked (it opens, and it runs the full length) <b>before</b> the original is moved to the Trash. ` +
+    `If a check fails, that file is left exactly as it is. This can take a long time.</span>`;
+  onConfirmTrash = () => startEncode(chosen.map(c => c.path));
+  $('confirmModal').classList.add('open');
+}
+
+async function startEncode(paths) {
+  let job;
+  try {
+    job = await api('/api/compression/encode', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths, confirm: true }),
+    });
+  } catch (e) { toast('Could not start: ' + e.message, 'error'); return; }
+
+  $('vidProgress').hidden = false;
+  $('vidEncodeBtn').disabled = true;
+  if (videoJobStream) videoJobStream.close();
+  videoJobStream = new EventSource(`/api/compression/${job.jobId}/progress`);
+  videoJobStream.onmessage = (ev) => {
+    const d = JSON.parse(ev.data);
+    if (d.type === 'progress') {
+      const overall = d.total ? (d.done + (d.currentFraction || 0)) / d.total : 0;
+      $('vidFill').style.width = Math.round(overall * 100) + '%';
+      $('vidProgText').textContent = d.currentPath
+        ? `${d.done} of ${d.total} done — working on ${baseName(d.currentPath)}`
+        : `${d.done} of ${d.total} done`;
+    } else if (d.type === 'complete') {
+      videoJobStream.close(); videoJobStream = null;
+      const ok = (d.results || []).filter(r => r.ok).length;
+      const failed = (d.results || []).filter(r => !r.ok);
+      $('vidFill').style.width = '100%';
+      $('vidProgText').innerHTML = `${ok} re-encoded, ${formatBytes(d.savedBytes || 0)} recovered.` +
+        (failed.length ? `<div class="vid-failed">${failed.map(f =>
+          `<div>${escapeHtml(baseName(f.path))}: ${escapeHtml(f.error || 'failed')}</div>`).join('')}</div>` : '');
+      toast(`Re-encoded ${ok} file${ok === 1 ? '' : 's'} — ${formatBytes(d.savedBytes || 0)} recovered`);
+      rescan();
+    }
+  };
+  videoJobStream.onerror = () => {
+    if (videoJobStream) { videoJobStream.close(); videoJobStream = null; }
+    $('vidProgText').textContent = 'Lost contact with the encoder — check the Trash and the folder before retrying.';
+  };
 }
 
 /* ── Empty Folders pane ── */
