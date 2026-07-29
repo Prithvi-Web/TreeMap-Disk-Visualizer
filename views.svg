@@ -1,4 +1,4 @@
-<svg width="1280" height="150" viewBox="0 0 1280 150" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
+<svg width="1280" height="212" viewBox="0 0 1280 212" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
   <defs>
     <linearGradient id="chip" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#101a2e"/>
@@ -6,56 +6,84 @@
     </linearGradient>
   </defs>
   <g font-size="15" font-weight="700">
-    <!-- row of 5 view chips -->
+    <!-- row 1 -->
     <g transform="translate(20,18)">
-      <rect width="235" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
+      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#2dd4bf"/>
       <text x="48" y="31" fill="#dbe4f3">📊 Dashboard</text>
     </g>
     <g transform="translate(270,18)">
-      <rect width="235" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#fbbf24"/>
       <text x="48" y="31" fill="#dbe4f3">🗺️ Treemap</text>
     </g>
     <g transform="translate(520,18)">
-      <rect width="235" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
+      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#f43f5e"/>
       <text x="48" y="31" fill="#dbe4f3">🔲 Grid</text>
     </g>
     <g transform="translate(770,18)">
-      <rect width="235" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#a78bfa" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#a78bfa"/>
       <text x="48" y="31" fill="#dbe4f3">📦 Apps</text>
     </g>
     <g transform="translate(1020,18)">
+      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#a78bfa" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#c4b5fd"/>
+      <text x="48" y="31" fill="#dbe4f3">🎮 Games</text>
+    </g>
+
+    <!-- row 2 -->
+    <g transform="translate(20,80)">
+      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#fb7185"/>
+      <text x="48" y="31" fill="#dbe4f3">🛡️ Security</text>
+    </g>
+    <g transform="translate(270,80)">
+      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#22d3ee" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#22d3ee"/>
+      <text x="48" y="31" fill="#dbe4f3">🌐 Fleet</text>
+    </g>
+    <g transform="translate(520,80)">
       <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#34d399"/>
       <text x="48" y="31" fill="#dbe4f3">🧬 Duplicates</text>
     </g>
-
-    <g transform="translate(20,80)">
-      <rect width="220" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+    <g transform="translate(770,80)">
+      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#facc15"/>
       <text x="48" y="31" fill="#dbe4f3">📈 Trends</text>
     </g>
-    <g transform="translate(250,80)">
-      <rect width="220" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
+    <g transform="translate(1020,80)">
+      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#22d3ee"/>
       <text x="48" y="31" fill="#dbe4f3">🔀 Compare</text>
     </g>
-    <g transform="translate(480,80)">
-      <rect width="220" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
-      <circle cx="28" cy="26" r="6" fill="#fb7185"/>
-      <text x="48" y="31" fill="#dbe4f3">🧹 Clean&#160;Up</text>
-    </g>
-    <g transform="translate(710,80)">
-      <rect width="230" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
+
+    <!-- row 3 -->
+    <g transform="translate(20,142)">
+      <rect width="220" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#2dd4bf"/>
       <text x="48" y="31" fill="#dbe4f3">📤 Offloaded</text>
     </g>
-    <g transform="translate(950,80)">
-      <rect width="310" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+    <g transform="translate(245,142)">
+      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#a78bfa" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#a78bfa"/>
+      <text x="48" y="31" fill="#dbe4f3">🕰️ Time&#160;Capsule</text>
+    </g>
+    <g transform="translate(490,142)">
+      <rect width="220" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#fbbf24"/>
+      <text x="48" y="31" fill="#dbe4f3">✨ Autopilot</text>
+    </g>
+    <g transform="translate(715,142)">
+      <rect width="200" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#fb7185"/>
+      <text x="48" y="31" fill="#dbe4f3">🧹 Clean&#160;Up</text>
+    </g>
+    <g transform="translate(920,142)">
+      <rect width="340" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#facc15"/>
       <text x="48" y="31" fill="#dbe4f3">⏰ Scheduled&#160;+&#160;🚫 Ignore</text>
     </g>
   </g>
