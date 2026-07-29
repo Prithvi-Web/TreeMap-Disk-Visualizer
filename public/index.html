@@ -498,7 +498,10 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
   background: var(--surface-2); white-space: nowrap; }
 
 /* ── Treemap view ── */
-.tm-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; min-height: 36px; }
+/* wrap: the toolbar carries nine controls, which stopped fitting somewhere
+   around 900px and pushed the page into a sideways scroll rather than moving
+   to a second line. `.trends-toolbar` already wraps; this now matches it. */
+.tm-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; min-height: 36px; flex-wrap: wrap; }
 .crumbs { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; font-size: 13px; min-width: 0; }
 .crumbs button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid transparent;
   background: transparent; color: var(--accent); cursor: pointer; font-size: 12.5px; font-weight: 500;
@@ -508,7 +511,7 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .crumbs button[aria-current="true"] { color: var(--text-1); background: var(--surface-2);
   border-color: var(--hairline); pointer-events: none; }
 .crumbs .sep { color: var(--text-3); display: inline-flex; }
-.tm-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.tm-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
 .tm-controls label { font-size: 12px; color: var(--text-2); }
 .tm-controls .field { position: relative; }
 .tm-controls .field .ic { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
