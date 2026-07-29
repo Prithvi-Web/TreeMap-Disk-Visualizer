@@ -1,16 +1,16 @@
 # TreeMap — 21-feature master prompt, session handoff
 
-**Date:** 28 July 2026 (Phase 3: C8, C6, C7 done)
+**Date:** 28 July 2026 — **PHASE 3 COMPLETE (C1–C8 all shipped)**
 **Status:** Phase 0 ✅ · Phase 1 ✅ (A1–A5) · Phase 2 ✅ (B2, B3, B1, B4, B5) ·
-**Phase 3: C8 ✅ C6 ✅ C7 ✅** · index schema v3 ✅ · liquid-glass sidebar ✅ ·
+**Phase 3 ✅ (C1–C8)** · index schema v3 ✅ · liquid-glass sidebar ✅ ·
 CI green on macOS+Windows+Linux ✅ · v2.6.1 released and installed
-**Suite:** 699 (698 pass, 1 linux-only skip) · typecheck clean · zero console errors
-**Pushed:** near-dupe performance + C8 rule packs (origin/main = `518d83c`).
-**3 commits on main still LOCAL — the user must click Push origin in GitHub
-Desktop:** `c512038` C6 orphans · `1a5168c` C7 games · this handoff update.
-**⏭️ NEXT: C1–C5 in any order** (C1 cost intelligence · C2 compression advisor ·
-C3 download provenance · C4 SMART health · C5 secrets hygiene), then Phase 4
-(D2 → D3 → D1), then Phase 5.
+**Suite:** 765 (764 pass, 1 linux-only skip) · typecheck clean · zero console errors
+**Pushed:** near-dupe performance + C8 (origin/main = `518d83c`).
+**8 commits on main still LOCAL — the user must click Push origin in GitHub
+Desktop:** C6 · C7 · handoff · C5 · C3 · C4 · C1 · C2.
+**⏭️ NEXT: Phase 4 — D2 (shell integration) → D3 (portable triage) → D1 (LAN
+fleet view)**, then Phase 5 (full regression, §8 benchmark with real numbers,
+D1 security review, README sweep).
 
 Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
@@ -20,7 +20,7 @@ Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
 ```bash
 cd "/Users/prithvivinay/Desktop/Claude Code/Treemap"
-npm run build && npm test          # expect 699 (698 pass, 1 skip)
+npm run build && npm test          # expect 765 (764 pass, 1 skip)
 npm run capabilities:report        # expect 9/12 available on this Mac
 ```
 
@@ -52,7 +52,50 @@ Read `docs/PLATFORM_NOTES.md` before touching anything platform-specific.
 
 ---
 
-# ⏭️ THE NEXT TASK — C1 to C5, in any order
+# ⏭️ THE NEXT TASK — Phase 4
+
+- **D2 · shell integration** — the platform layer already implements it
+  (`shellIntegration.ts` per OS, capability reports OK on this Mac: "Finder
+  Quick Action"). This is mostly exposing and testing what exists.
+- **D3 · portable triage mode** — `src/platform/portable.ts` already exists.
+- **D1 · LAN fleet view** — LAST, and the one needing a security review.
+  **C5's findings must never leave the machine, including via D1** — that is
+  stated in the spec and is now a real constraint, since the Security panel
+  exists.
+
+Then Phase 5: full regression, §8 benchmark with real numbers, D1 security
+review, README sweep.
+
+## Phase 3 as built (C1–C8) — what a follow-up needs to know
+
+- **C1 cost** (`costIntelligence.ts`): the pricing table SHIPS with the app and
+  a test pins that nothing fetches. `asOf` is always on screen. A saving only
+  exists when the TIER changes — freeing 3 GB inside a 2 TB plan saves nothing
+  and the card says so. Non-USD figures are marked ≈.
+- **C2 compression** (`compressionAdvisor.ts`): **ffmpeg is NOT installed here
+  and neither is Homebrew**, so only the honest-unavailable path was verified
+  live. The pipeline is tested through the `MediaTools` seam — `setMediaTools()`
+  swaps in a fake that reproduces each real ffmpeg failure. Ordering is the
+  guarantee: encode beside → probe → verify → trash → rename → utimes.
+  Hardware encoders only; **AV1 is not offered on this M3 because it decodes
+  but cannot encode it**, which the platform layer already reports.
+- **C3 provenance** (`provenanceTracker.ts`): the URL is untrusted — host only,
+  full URL behind a click, `textContent` never `innerHTML`, no anchor ever.
+  **Test against `com.apple.quarantine`, NOT `kMDItemWhereFroms`** — the latter
+  is Spotlight metadata and Spotlight does not index temp volumes, so such a
+  test passes or fails depending on the runner's scratch directory.
+- **C4 SMART** (`driveHealthMonitor.ts`): smartctl is not installed here, so
+  the can't-know path is what runs. **Report, never editorialise** — a test
+  pins the failure vocabulary out of both the service and the UI. Wear is only
+  projected when the drive reports both an indicator and power-on hours.
+- **C5 secrets** (`securityHygieneScanner.ts`): names and locations only, never
+  opens a file. **No delete is offered at all.** The relocate is a RENAME only
+  (a copy-then-delete fallback would break the "nothing outside cleaner removes
+  a user file" guard, and that rule is worth more); both ends must be inside a
+  scanned root; an occupied destination aborts. A home destination is only
+  suggested for a file already under home.
+
+---
 
 - **C1 · storage cost intelligence** — shipped pricing table with a visible
   "as of" date, `GET /api/cost/estimate`, what-if calculator. No live fetch.
