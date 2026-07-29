@@ -15,10 +15,19 @@ app-data, no stray node processes).
 + views.svg · `80208ee` treemap toolbar wrap · `4d037e2` handoff · `764c18d`
 app-owned secrets + tool-owned empty folders · `f6adaf7` **Release v3.0.0**.
 
-**⏭️ NEXT: the user pushes, then publishes the release** via the prefilled link
-`https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/releases/new?tag=v3.0.0&title=v3.0.0`
-— creating the tag on publish fires Build & Release, which uploads all 8 assets.
-Then verify the downloads (recipe step 7 below).
+**✅ v3.0.0 IS PUBLISHED AND FULLY VERIFIED (29 Jul 2026).** The user pushed
+(3-OS Tests green at `c430c90` after the Windows separator fix) and published
+"v3.0.0 - 21 Updates"; Build & Release succeeded from `c430c90`, so the release
+carries every commit including the CI fix. Verified per recipe step 7:
+**9 assets** (one more than v2.x — `TreeMap.3.0.0.exe` is the **D3 portable
+Windows build**, from `win.target: ["nsis","portable"]`; GitHub stores the
+space as a dot). Both ymls read 3.0.0; zip/dmg/Setup-exe sha512+size match
+byte-exact; DMG mounts with a 3.0.0 app, gdu bundled, codesign clean; zip app
+codesign clean; both exes have MZ headers; `releases/latest` → v3.0.0; and the
+shipped app.asar contains this session's markers (appOwned 5, ownsItsContents
+2, fleet-help 10, treemapCanvasHeight 3). **Verification trap: raw `grep` on
+app.asar reports zero even for strings that ARE there** (BSD grep chokes on
+the binary) — `npx asar extract` first, then grep the extracted files.
 
 **v3.0.0 is built, installed to `/Applications` and smoke-tested** (`/api/system`
 answers, `/api/capabilities` reports `version: 3.0.0`, bundle carries
