@@ -1,16 +1,20 @@
 # TreeMap — session handoff
 
-**Date:** 28 July 2026
-**Status:** **ALL 21 FEATURES OF THE MASTER PROMPT ARE SHIPPED.**
+**Date:** 28 July 2026 (second session of the day)
+**Status:** **ALL 21 FEATURES SHIPPED · PHASE 5 STEPS 1–4 DONE.**
 Phase 0 ✅ · Phase 1 ✅ (A1–A5) · Phase 2 ✅ (B1–B5) · Phase 3 ✅ (C1–C8) ·
-Phase 4 ✅ (D1, D2, D3)
+Phase 4 ✅ (D1, D2, D3) · **Phase 5: 1 ✅ 2 ✅ 3 ✅ 4 ✅ — only 5 (release) left**
 **Suite:** 822 (820 pass, 2 platform-skips) · typecheck clean · zero console errors
-**Everything is committed AND pushed.** `origin/main` = `931aeb0` plus the
-Windows-CI guard commit on top. Working tree clean, no dev server running,
-nothing of mine left on the user's machine (checked: `~/Library/Services` empty,
-no `fleet.json` in the real app-data, no stray node processes).
+Working tree clean, no dev server running, nothing of mine left on the user's
+machine (checked: `~/Library/Services` empty, no `fleet.json` in the real
+app-data, no stray node processes).
 
-**⏭️ NEXT: PHASE 5 — the closing phase.** Details below.
+**⚠️ THREE COMMITS ON `main` AWAITING THE USER'S GITHUB DESKTOP PUSH:**
+`0dc4136` (UI layout fixes + Fleet pairing instructions), `c2fedaa` (README
+sweep + views.svg), `80208ee` (treemap toolbar wrap).
+
+**⏭️ NEXT: PHASE 5 STEP 5 — the release.** The user has not yet chosen a
+version number; suggest **v2.7.0** and ask before touching `package.json`.
 
 Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
@@ -61,54 +65,75 @@ Expect **822 (820 pass, 2 skips)**.
 
 ---
 
-# ⏭️ PHASE 5 — the closing phase
+# ⏭️ PHASE 5 — steps 1–4 are done; step 5 remains
 
-The spec's §11 definition of done. Five pieces, in this order:
+### 1. ✅ Full regression in the real app
+All **thirteen tabs** driven against a real 389k-file / 46 GB scan of the home
+folder, plus the **Clean Up** modal and the **Settings** modal. Zero console
+errors; all §3.5 states seen (skeleton loading, populated, honest-empty on
+Games/Offloaded/Capsule/Autopilot, honest-unavailable on Shrink Video).
+"Cloud-safe" is correctly `hidden` until a cloud provider is connected — not a
+missing tab.
 
-### 1. Full regression in the real app
-The suite is green, but §5 asks for the app to be driven. There are now
-**thirteen tabs**: dashboard, treemap, grid, apps, **games**, duplicates,
-**security**, **fleet**, trends, compare, offloaded, capsule, autopilot — plus
-the **Clean Up** modal (Custom Rules / Smart Suggestions / **Shrink Video** /
-Empty Folders / Cloud-safe) and the **Settings** modal (which now also holds the
-right-click-menu control and the Cost currency picker). Open each once against a
-real scan, watch the console, confirm the §3.5 states.
+**Correction to the previous handoff:** the Cost **currency picker lives on the
+Dashboard's Cost to Keep card, not in Settings.** Settings holds the
+right-click-menu control, schedules, forecast, live activity, Time Capsule,
+cloud accounts, the ignore list and the allocation panel.
 
-Launch config **`treemap-c8`** (port 4295, isolated `TREEMAP_DATA_DIR`) lives in
-the PARENT `Desktop/Claude Code/.claude/launch.json` — *not* the repo's own.
+Launch config **`treemap-p5`** (port 4296, isolated `TREEMAP_DATA_DIR`) was added
+to the PARENT `Desktop/Claude Code/.claude/launch.json` — *not* the repo's own.
+`treemap-c8` still exists but points at a dead session's scratchpad.
 
-### 2. §8 benchmark with real numbers
-Prove the speed claim. **State the machine's load with every figure** — a
-standing rule here, because the same code on the same tree measured 116,793
-items/s on a quiet machine and ~47,000/s on a busy one. Prior figures to
-reproduce against: whole disk `/` 20.1 s / 1,445,163 items (gdu-turbo); home
-10.0 s / 524k; index v3 190 B/node; readTree 553 ms for 225k nodes.
+**Five UI defects were found this way and fixed** (see the three commits):
+dashboard scrolled sideways (grid item `min-width: auto` vs one long path);
+treemap canvas wasted ~126px of window on a flat `innerHeight - 300`; grid
+scroller scrolled internally against a `100vh - 256px` reserve while the window
+had room; below 900px `main` rendered as a **64px sliver** because the fixed
+sidebar leaves the body grid; treemap toolbar overhung the viewport with no
+`flex-wrap`. Also: depth-1 folder tags printed straight through child labels.
 
-### 3. D1 security review
-The only feature that opens a network surface. Start by reading
-`src/services/fleet/fleetSummary.ts` — the eleven-field allow-list **is** the
-disclosure guarantee. Then re-run the end-to-end proof:
+### 2. ✅ §8 benchmark — measured, with load stated
+Apple Silicon MacBook, normal desktop session (**not** a quiet box):
 
-```bash
-npm run fleet:acceptance
-```
+| Figure | Measured | Load at the time |
+| --- | --- | --- |
+| Whole disk `/` | 1,411,715 items in **16.4 s** = ~85,900 items/s (gdu-turbo) | 3.13 → 4.61 |
+| Home folder | 458,661 items in **9.1 s** = ~50,300 items/s | 3.27 |
+| Index density | **183.4 B/node** in use, 163.7 compacted | 3.28 |
+| `readTree` | 250,000 nodes (its cap) in **~790 ms** = ~316k nodes/s | 4.63 |
 
-It spawns three real servers and checks: off by default ×3 · two pair in
-seconds · the summary is exactly the allowed fields · the unpaired third gets
-401 unauthenticated, 401 with a guessed key, 401 on a guessed pairing code, and
-401 reaching for `/api/security/findings` · the peer port refuses loopback
-entirely · remote scan refused before its separate opt-in and accepted after ·
-the triggered scan really ran on the other machine.
+The 190 B/node claim **holds**. These are now in the README's design notes.
+Home reads *slower per item* than the whole disk because gdu-turbo parallelises
+across top-level folders and `/` has far more of them — not a regression.
 
-### 4. README sweep — the biggest single gap
-`README.md` describes the app **through B4**, plus API-table rows for C1–C8 and
-D1–D3. Not described anywhere: the liquid-glass sidebar, B5 Held-Up Space, and
-most of Phase 3/4's UI — Games, Security, Fleet, Cost to Keep, Drive Health,
-Shrink Video, portable mode, the right-click menu.
+### 3. ✅ D1 security review — re-proven
+`fleetSummary.ts` read and confirmed: an explicit **eleven-field allow-list** is
+the only thing ever serialised, plus a forbidden-substring check that *throws*
+rather than send anything smelling of a tree, a finding or a URL, and
+`buildSummary` deliberately takes `SummaryInputs` rather than a `ScanResult` so a
+scan store is never within reach. `npm run fleet:acceptance` → **ALL D1
+ACCEPTANCE CHECKS PASSED** (11-key summary, 401 on every unpaired probe, peer
+port refuses loopback, remote scan gated behind its separate opt-in).
 
-### 5. Release
-Follow the recipe below. **Suggest v2.7.0, not a patch** — this is 21 features.
-Ask the user first; version numbers are their call.
+Backend also swept independently: **46 GET endpoints, zero 5xx**; the
+scanned-root rule verified on a *clean* server (dry-run AND real deletes both
+refused with `OUTSIDE_SCAN_ROOT`, `/api/files/open` too); `CONFIRM_REQUIRED` on
+trash-empty; blocklist fires on `/dev`, `/private/var/db`, `/System/Volumes/VM`.
+Note `/System/Library` is deliberately **scannable** — the blocklist targets
+virtual/volatile filesystems, and SIP protects the rest.
+
+### 4. ✅ README sweep
+Games, Security and Fleet added as view entries (Fleet full-width, since it is
+the one network surface); Cost to Keep, Drive Health and Held-Up Space folded
+into Dashboard; Shrink Video and package orphans into Clean Up; provenance into
+Treemap; right-click menu and portable mode into Desktop extras; the liquid-glass
+sidebar into "How it's built"; the §8 figures into the design notes.
+`views.svg` was redrawn — it had been showing **ten** chips while the prose
+claimed twelve and reality was fifteen.
+
+### 5. ⏭️ Release — NOT STARTED, needs the user's decision
+Follow the recipe below. **Suggest v2.7.0, not a patch** — this is 21 features
+plus a Phase 5 UI pass. Ask the user first; version numbers are their call.
 
 ---
 
@@ -299,6 +324,37 @@ B5 zombie handles.
     continuously.** Any before/after check against
     `~/Library/Application Support/TreeMap` is worthless — isolate with a fake
     `HOME` instead. That is how D3's remaining leak was finally attributed.
+23. **Never open the live index from a second process while a server is using
+    it.** `openIndex()` ends in `discardIncompleteBuilds()`, which DELETES every
+    root still in `state = 'building'`. That is correct for the shipping app —
+    one process, and a half-built root whose builder died is garbage — but an
+    out-of-process benchmark that calls `readTree()` will silently wipe an index
+    the server is still building, and then report `readTree -> null`. Build the
+    index to `state = 'ready'` first (`POST /api/index/build`, poll
+    `/api/index/:jobId/result` for 200), and for read-only measurement open the
+    file with plain `better-sqlite3` rather than anything that reaches
+    `openIndex()`.
+24. **`index.db`'s file size is NOT bytes-per-node.** SQLite never returns pages
+    to the OS, so a discarded whole-disk build leaves the file inflated — it read
+    342 B/node that way against a true 183. Measure with `VACUUM INTO` a copy, or
+    `(page_count - freelist_count) × page_size`. Do the `VACUUM INTO` from a
+    `readonly: true` connection so the live database is never rewritten.
+25. **Browser-pane refs go stale the moment the pane resizes**, and the pane
+    resizes on its own. A `left_click` on a stale `ref_N` lands on whatever now
+    occupies those coordinates. In this session that silently pressed **"Turn on
+    for this network"** and opened a real LAN listener on the user's Wi-Fi. After
+    ANY resize, re-run `read_page` before clicking — and after touching the Fleet
+    view at all, verify with
+    `curl -s .../api/fleet` **and** `lsof -nP -iTCP -sTCP:LISTEN | grep 4290`,
+    because the on-screen state and the socket are two different facts.
+26. **A hidden browser pane freezes timers, not just rAF.** `await new
+    Promise(r => setTimeout(r, 60))` inside `javascript_tool` never resolves and
+    the call times out at 30 s. Measure synchronously (read `scrollWidth` after
+    forcing layout) — but remember canvases sized in JS will then be **stale from
+    the previous width**, which reads exactly like an overflow bug. Trends and
+    the treemap both looked broken at 860px for this reason; only the treemap
+    toolbar was real. Confirm any canvas-view finding on a fresh load at the
+    target width.
 
 ---
 
@@ -330,7 +386,14 @@ B5 zombie handles.
 3. Windows zombie detection is absent (honest reason shown).
 4. B4's elevated branch has never executed with a real password.
 5. `better_sqlite3.node` ships inside app.asar (works; unpack if it misbehaves).
-6. **README documents through B4** — the Phase 5 sweep fixes this.
+6. ~~README documents through B4~~ — **fixed** by the Phase 5 sweep (`c2fedaa`).
+7. **Empty Folders lists structural directories** — `~/.Trash`, `~/.cache`, and
+   `.git/objects/info` / `.git/refs/tags` inside every repo, because they really
+   are empty. Trash-only and recoverable, and the ignore list is documented as
+   applying to Smart Suggestions *only*, so this is consistent with the stated
+   contract rather than a bug — but "Select all — 1000 top-level empty folders"
+   makes it a footgun worth a product decision. Left alone deliberately; raise it
+   with the user rather than changing the scanner unasked.
 
 ## What could NOT be verified on this Mac (state it; never fake it)
 
