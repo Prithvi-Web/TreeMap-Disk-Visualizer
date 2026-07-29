@@ -1,9 +1,10 @@
 # TreeMap — session handoff
 
 **Date:** 28 July 2026 (second session of the day)
-**Status:** **ALL 21 FEATURES SHIPPED · PHASE 5 STEPS 1–4 DONE.**
+**Status:** **ALL 21 FEATURES SHIPPED · PHASE 5 COMPLETE · v3.0.0 BUILT.**
 Phase 0 ✅ · Phase 1 ✅ (A1–A5) · Phase 2 ✅ (B1–B5) · Phase 3 ✅ (C1–C8) ·
-Phase 4 ✅ (D1, D2, D3) · **Phase 5: 1 ✅ 2 ✅ 3 ✅ 4 ✅ — only 5 (release) left**
+Phase 4 ✅ (D1, D2, D3) · **Phase 5 ✅ (1–5)** — only the push + publish remain,
+and both are the user's to do.
 **Suite:** 828 (826 pass, 2 platform-skips) · typecheck clean · zero console errors
 Working tree clean, no dev server running, nothing of mine left on the user's
 machine (checked: `~/Library/Services` empty, no `fleet.json` in the real
@@ -48,7 +49,7 @@ Then, as its **own** command (never chained — see trap 1):
 npm test
 ```
 
-Expect **822 (820 pass, 2 skips)**.
+Expect **828 (826 pass, 2 skips)**.
 
 - **`npm run build` is `tsc && node scripts/copy-assets.js`.** tsc emits .js
   only; without the copy step a built app ships with no rule packs and Smart
@@ -80,7 +81,7 @@ Expect **822 (820 pass, 2 skips)**.
 
 ---
 
-# ⏭️ PHASE 5 — steps 1–4 are done; step 5 remains
+# ✅ PHASE 5 — all five steps done
 
 ### 1. ✅ Full regression in the real app
 All **thirteen tabs** driven against a real 389k-file / 46 GB scan of the home
