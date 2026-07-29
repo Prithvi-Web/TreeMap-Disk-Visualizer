@@ -4,17 +4,32 @@
 **Status:** **ALL 21 FEATURES SHIPPED · PHASE 5 STEPS 1–4 DONE.**
 Phase 0 ✅ · Phase 1 ✅ (A1–A5) · Phase 2 ✅ (B1–B5) · Phase 3 ✅ (C1–C8) ·
 Phase 4 ✅ (D1, D2, D3) · **Phase 5: 1 ✅ 2 ✅ 3 ✅ 4 ✅ — only 5 (release) left**
-**Suite:** 822 (820 pass, 2 platform-skips) · typecheck clean · zero console errors
+**Suite:** 828 (826 pass, 2 platform-skips) · typecheck clean · zero console errors
 Working tree clean, no dev server running, nothing of mine left on the user's
 machine (checked: `~/Library/Services` empty, no `fleet.json` in the real
 app-data, no stray node processes).
 
-**⚠️ THREE COMMITS ON `main` AWAITING THE USER'S GITHUB DESKTOP PUSH:**
-`0dc4136` (UI layout fixes + Fleet pairing instructions), `c2fedaa` (README
-sweep + views.svg), `80208ee` (treemap toolbar wrap).
+**⚠️ SIX COMMITS ON `main` AWAITING THE USER'S GITHUB DESKTOP PUSH:**
+`0dc4136` UI layout fixes + Fleet pairing instructions · `c2fedaa` README sweep
++ views.svg · `80208ee` treemap toolbar wrap · `4d037e2` handoff · `764c18d`
+app-owned secrets + tool-owned empty folders · `f6adaf7` **Release v3.0.0**.
 
-**⏭️ NEXT: PHASE 5 STEP 5 — the release.** The user has not yet chosen a
-version number; suggest **v2.7.0** and ask before touching `package.json`.
+**⏭️ NEXT: the user pushes, then publishes the release** via the prefilled link
+`https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/releases/new?tag=v3.0.0&title=v3.0.0`
+— creating the tag on publish fires Build & Release, which uploads all 8 assets.
+Then verify the downloads (recipe step 7 below).
+
+**v3.0.0 is built, installed to `/Applications` and smoke-tested** (`/api/system`
+answers, `/api/capabilities` reports `version: 3.0.0`, bundle carries
+`Resources/gdu/gdu`, `codesign --verify --deep --strict` passes,
+`npm rebuild better-sqlite3` done and the suite re-run green afterwards).
+
+**⚠️ THE USER MUST RE-GRANT FULL DISK ACCESS.** The reinstall reset it, and
+scans of Desktop/Documents/home now return 0 items and sit at "running". This is
+trap 5, not a regression — proven by scanning a TCC-free path in the same
+installed build, which completed normally. Tell them:
+`open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"`
+→ toggle TreeMap off→on → relaunch.
 
 Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
@@ -131,9 +146,34 @@ sidebar into "How it's built"; the §8 figures into the design notes.
 `views.svg` was redrawn — it had been showing **ten** chips while the prose
 claimed twelve and reality was fifteen.
 
-### 5. ⏭️ Release — NOT STARTED, needs the user's decision
-Follow the recipe below. **Suggest v2.7.0, not a patch** — this is 21 features
-plus a Phase 5 UI pass. Ask the user first; version numbers are their call.
+### 5. ✅ Release v3.0.0 — built and installed; publishing is the user's step
+The user chose **v3.0.0** (major, not minor: the app grew from a treemap into a
+fifteen-view workbench, and Phase 3/4 shipped without ever being released).
+Recipe steps 1–5 done. Steps 6–7 (push, publish, verify downloads) are theirs.
+
+### Two product fixes they also asked for, done in `764c18d`
+Both were "TreeMap offering an action whose cost exceeds the problem":
+
+- **Security.** Google Drive's own `roots.pem` was reported SERIOUS with a
+  "Move to .ssh" button — and that relocate is a *rename*, so taking it would
+  have broken Google Drive. Files inside an installed program's own files
+  (`.app` bundles, `Library/Application Support`, `Containers`, `AppData`,
+  `node_modules`, `site-packages`) now carry `appOwned: true`: still listed,
+  never called serious, never offered a move. Verified in the running app —
+  the badge reads MINOR and there is no move button.
+- **Empty Folders.** `.git/refs/tags` and `.git/objects/info` are empty in
+  nearly every repo, and a signed `.app` ships dozens of empty `.lproj` folders
+  **inside the code signature's seal** — deleting one frees ~0 bytes and stops
+  the app launching. Tool-owned, app-owned and OS-Trash directories are now
+  excluded from the offered list *and* the nested count, so the two numbers
+  still agree. On this repo the offered list went **70 → 1**, and a fixture in
+  the shipped build offers 2 of 7 empty dirs — exactly the user's own two.
+
+**If revisiting:** `ownsItsContents()` in `diskScanner.ts` and
+`isApplicationOwned()` in `securityHygieneScanner.ts` are the two lists.
+`tests/emptyFolders.test.ts` and the app-owned test in
+`tests/securityHygiene.test.ts` are the behaviour locks — a failure there means
+behaviour changed, never "update the expectation".
 
 ---
 
