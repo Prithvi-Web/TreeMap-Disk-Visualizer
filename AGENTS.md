@@ -41,6 +41,12 @@ OpenAPI 3 spec).
      disk) or the OS owns it; use its `adviceCommand` instead. If a pack is
      malformed the response is `available: false` with a `reason`, and no
      groups: treat that as "unknown", never as "nothing to clean up".
+   - `GET /api/packages/orphans` — package-manager artifacts split into
+     **orphaned** (the owning project is gone — nothing will ever rebuild
+     them), **active** (context only) and **cache** (shared, always
+     reclaimable). Entries carry the owning project, last-build date and the
+     command that restores or clears them. Same `available:false` + `reason`
+     contract as the suggestions endpoint.
    - `GET /api/duplicates` — content-identical groups (background hashing;
      `202` with progress until done).
    - `GET /api/file-types`, `GET /api/empty-folders`, `GET /api/apps`,

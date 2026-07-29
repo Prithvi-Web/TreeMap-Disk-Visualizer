@@ -36,9 +36,29 @@ typo fails loudly instead of silently doing nothing.
 | `file` | a file by name | `names` |
 | `location` | absolute known paths | `paths` |
 | `stale-files` | files under a path, over a size, past an age | `withinPath`, `olderThanDays`, `minSizeBytes` |
+| `package-cache` | a shared package-manager cache (§C6 only) | `ecosystem`, `paths`, `clearCommand` |
 
 Names and sibling patterns are matched case-insensitively. A sibling pattern
 ending in `.*` matches any extension (`vite.config.*`).
+
+### Ecosystem tagging (§C6)
+
+A rule may carry `ecosystem` (`npm`, `cargo`, `python`, …). Only the orphan
+scanner reads it — Smart Suggestions ignores it entirely, so tagging a rule can
+never change what the Clean Up list shows. A tagged `project-directory` rule
+must also carry:
+
+- `ownerManifest` — the file that proves the owning project still exists.
+  Defaults to `requiresSibling`, which is the same thing for every rule that
+  has one; `node_modules` states it separately because Smart Suggestions flags
+  it with or without a manifest.
+- `evidence` — child names that identify the directory once its owner is
+  already gone. **Required for any ecosystem-tagged rule**, and the load fails
+  without it: `target` is both Rust and Maven, and an orphan that matches no
+  evidence is reported as nothing rather than guessed at.
+
+`package-cache` rules are never "orphaned" — nothing owns a shared cache. They
+are always reclaimable, and `clearCommand` is the supported way to empty one.
 
 Paths use `/` separators and these tokens: `{home}`, `{localAppData}`,
 `{windir}`, `{systemDrive}`. A path whose token cannot be resolved on this

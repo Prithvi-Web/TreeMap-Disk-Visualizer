@@ -69,6 +69,116 @@
         "{localAppData}/Docker/wsl/disk",
         "{localAppData}/Packages/CanonicalGroupLimited.Ubuntu_79rhkp1fndgsc/LocalState"
       ]
+    },
+    {
+      "id": "pkgcache-npm",
+      "kind": "package-cache",
+      "title": "npm cache",
+      "description": "Downloaded npm tarballs and npx scratch installs — npm refetches what it needs",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "npm",
+      "paths": ["{localAppData}/npm-cache", "{home}/.npm/_cacache", "{home}/.npm/_npx"],
+      "clearCommand": "npm cache clean --force"
+    },
+    {
+      "id": "pkgcache-yarn",
+      "kind": "package-cache",
+      "title": "Yarn cache",
+      "description": "Yarn's global package cache",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "yarn",
+      "paths": ["{localAppData}/Yarn/Cache", "{home}/.yarn/berry/cache"],
+      "clearCommand": "yarn cache clean"
+    },
+    {
+      "id": "pkgcache-pnpm",
+      "kind": "package-cache",
+      "title": "pnpm store",
+      "description": "pnpm's content-addressed package store",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "pnpm",
+      "paths": ["{localAppData}/pnpm/store", "{localAppData}/pnpm-store"],
+      "clearCommand": "pnpm store prune"
+    },
+    {
+      "id": "pkgcache-pip",
+      "kind": "package-cache",
+      "title": "pip cache",
+      "description": "Downloaded and built Python wheels",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "python",
+      "paths": ["{localAppData}/pip/cache"],
+      "clearCommand": "pip cache purge"
+    },
+    {
+      "id": "pkgcache-cargo",
+      "kind": "package-cache",
+      "title": "Cargo registry",
+      "description": "Downloaded crate sources and their .crate archives",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "cargo",
+      "paths": ["{home}/.cargo/registry"],
+      "clearCommand": "delete %USERPROFILE%\\.cargo\\registry"
+    },
+    {
+      "id": "pkgcache-maven",
+      "kind": "package-cache",
+      "title": "Maven repository",
+      "description": "Every jar Maven has ever downloaded — refetched on the next build",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "maven",
+      "paths": ["{home}/.m2/repository"],
+      "clearCommand": "mvn dependency:purge-local-repository"
+    },
+    {
+      "id": "pkgcache-gradle",
+      "kind": "package-cache",
+      "title": "Gradle caches",
+      "description": "Gradle's dependency and build caches",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "gradle",
+      "paths": ["{home}/.gradle/caches"],
+      "clearCommand": "gradle --stop, then delete %USERPROFILE%\\.gradle\\caches"
+    },
+    {
+      "id": "pkgcache-nuget",
+      "kind": "package-cache",
+      "title": "NuGet cache",
+      "description": "Downloaded NuGet packages and HTTP cache",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "nuget",
+      "paths": ["{localAppData}/NuGet/Cache", "{localAppData}/NuGet/v3-cache", "{home}/.nuget/packages"],
+      "clearCommand": "dotnet nuget locals all --clear"
+    },
+    {
+      "id": "pkgcache-chocolatey",
+      "kind": "package-cache",
+      "title": "Chocolatey cache",
+      "description": "Installer packages Chocolatey keeps after installing",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "chocolatey",
+      "paths": ["{localAppData}/Temp/chocolatey", "{systemDrive}/ProgramData/chocolatey/lib-bad"],
+      "clearCommand": "choco cache remove --expired"
+    },
+    {
+      "id": "pkgcache-winget",
+      "kind": "package-cache",
+      "title": "winget cache",
+      "description": "Installers winget downloaded, kept after the install finished",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "winget",
+      "paths": ["{localAppData}/Packages/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe/LocalState"],
+      "clearCommand": "Settings ▸ Apps ▸ Installed apps ▸ App Installer ▸ Advanced options ▸ Reset"
     }
   ]
 }

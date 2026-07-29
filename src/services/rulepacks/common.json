@@ -10,7 +10,10 @@
       "description": "JavaScript dependencies — restore any time",
       "category": "regenerable",
       "confidence": "high",
+      "ecosystem": "npm",
       "names": ["node_modules"],
+      "ownerManifest": ["package.json"],
+      "evidence": [".package-lock.json", ".bin", ".modules.yaml", ".yarn-integrity", ".pnpm"],
       "restoreCommand": "npm install"
     },
     {
@@ -20,8 +23,10 @@
       "description": "Virtual environment — recreate from the project manifest",
       "category": "regenerable",
       "confidence": "high",
+      "ecosystem": "python",
       "names": [".venv", "venv", "env"],
       "requiresSibling": ["requirements.txt", "pyproject.toml", "pipfile", "setup.py", "setup.cfg", ".python-version"],
+      "evidence": ["pyvenv.cfg"],
       "restoreCommand": "pip install -r requirements.txt"
     },
     {
@@ -41,8 +46,10 @@
       "description": "Cargo build output and fetched crates",
       "category": "regenerable",
       "confidence": "high",
+      "ecosystem": "cargo",
       "names": ["target"],
       "requiresSibling": ["cargo.toml"],
+      "evidence": ["cachedir.tag", ".rustc_info.json", ".rustdoc_fingerprint.json"],
       "restoreCommand": "cargo build"
     },
     {
@@ -52,8 +59,10 @@
       "description": "Maven build output",
       "category": "regenerable",
       "confidence": "high",
+      "ecosystem": "maven",
       "names": ["target"],
       "requiresSibling": ["pom.xml"],
+      "evidence": ["maven-status", "maven-archiver", "surefire-reports"],
       "restoreCommand": "mvn package"
     },
     {
@@ -63,8 +72,10 @@
       "description": "Compiled output — rebuilt by the next Gradle build",
       "category": "regenerable",
       "confidence": "high",
+      "ecosystem": "gradle",
       "names": ["build"],
       "requiresSibling": ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"],
+      "evidence": ["tmp", "libs", "intermediates", "classes"],
       "restoreCommand": "gradle build"
     },
     {
@@ -74,8 +85,10 @@
       "description": "Installed pods — restore with pod install",
       "category": "regenerable",
       "confidence": "high",
+      "ecosystem": "cocoapods",
       "names": ["pods"],
       "requiresSibling": ["podfile"],
+      "evidence": ["manifest.lock", "pods.xcodeproj", "target support files"],
       "restoreCommand": "pod install"
     },
     {
@@ -85,7 +98,10 @@
       "description": "Framework build output — rebuilt by the next build",
       "category": "regenerable",
       "confidence": "high",
+      "ecosystem": "npm",
       "names": [".next", ".nuxt", ".output", ".svelte-kit", ".angular"],
+      "ownerManifest": ["package.json"],
+      "evidence": ["static", "server", "cache", "build-manifest.json", "prerender-manifest.json"],
       "restoreCommand": "npm run build"
     },
     {
@@ -95,8 +111,11 @@
       "description": "Framework build output — rebuilt by the next build",
       "category": "regenerable",
       "confidence": "high",
+      "ecosystem": "npm",
       "names": ["dist"],
       "requiresSibling": ["package.json", "next.config.*", "nuxt.config.*", "vite.config.*", "svelte.config.*", "angular.json"],
+      "ownerManifest": ["package.json"],
+      "evidence": ["static", "server", "cache", "build-manifest.json", "prerender-manifest.json"],
       "restoreCommand": "npm run build"
     },
 

@@ -62,6 +62,105 @@
         "{home}/Library/Containers/com.docker.docker/Data/vms/0/data",
         "{home}/Library/Containers/com.docker.docker/Data/vms/0"
       ]
+    },
+    {
+      "id": "pkgcache-npm",
+      "kind": "package-cache",
+      "title": "npm cache",
+      "description": "Downloaded npm tarballs and npx scratch installs — npm refetches what it needs",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "npm",
+      "paths": ["{home}/.npm/_cacache", "{home}/.npm/_npx"],
+      "clearCommand": "npm cache clean --force"
+    },
+    {
+      "id": "pkgcache-yarn",
+      "kind": "package-cache",
+      "title": "Yarn cache",
+      "description": "Yarn's global package cache",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "yarn",
+      "paths": ["{home}/Library/Caches/Yarn", "{home}/.cache/yarn", "{home}/.yarn/berry/cache"],
+      "clearCommand": "yarn cache clean"
+    },
+    {
+      "id": "pkgcache-pnpm",
+      "kind": "package-cache",
+      "title": "pnpm store",
+      "description": "pnpm's content-addressed package store",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "pnpm",
+      "paths": ["{home}/Library/pnpm/store", "{home}/.pnpm-store", "{home}/.local/share/pnpm/store"],
+      "clearCommand": "pnpm store prune"
+    },
+    {
+      "id": "pkgcache-pip",
+      "kind": "package-cache",
+      "title": "pip cache",
+      "description": "Downloaded and built Python wheels",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "python",
+      "paths": ["{home}/Library/Caches/pip", "{home}/.cache/pip"],
+      "clearCommand": "pip cache purge"
+    },
+    {
+      "id": "pkgcache-cargo",
+      "kind": "package-cache",
+      "title": "Cargo registry",
+      "description": "Downloaded crate sources and their .crate archives",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "cargo",
+      "paths": ["{home}/.cargo/registry"],
+      "clearCommand": "cargo cache -a  (or delete ~/.cargo/registry)"
+    },
+    {
+      "id": "pkgcache-maven",
+      "kind": "package-cache",
+      "title": "Maven repository",
+      "description": "Every jar Maven has ever downloaded — refetched on the next build",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "maven",
+      "paths": ["{home}/.m2/repository"],
+      "clearCommand": "mvn dependency:purge-local-repository"
+    },
+    {
+      "id": "pkgcache-gradle",
+      "kind": "package-cache",
+      "title": "Gradle caches",
+      "description": "Gradle's dependency and build caches",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "gradle",
+      "paths": ["{home}/.gradle/caches"],
+      "clearCommand": "gradle --stop, then delete ~/.gradle/caches"
+    },
+    {
+      "id": "pkgcache-homebrew",
+      "kind": "package-cache",
+      "title": "Homebrew cache",
+      "description": "Downloaded bottles and source archives kept after installing",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "homebrew",
+      "paths": ["{home}/Library/Caches/Homebrew"],
+      "clearCommand": "brew cleanup -s"
+    },
+    {
+      "id": "pkgcache-cocoapods",
+      "kind": "package-cache",
+      "title": "CocoaPods cache",
+      "description": "Downloaded pod sources and specs",
+      "category": "cache",
+      "confidence": "high",
+      "ecosystem": "cocoapods",
+      "paths": ["{home}/Library/Caches/CocoaPods"],
+      "clearCommand": "pod cache clean --all"
     }
   ]
 }

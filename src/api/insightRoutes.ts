@@ -24,6 +24,9 @@ import { storeOf } from '../services/scanStore';
 import { getForecast } from '../services/forecast';
 import { expandContainer } from '../services/containerScanner';
 import { findGitRepos, runGitGc } from '../services/gitScanner';
+import { scanPackageEcosystems } from '../services/packageEcosystemScanner';
+import { ruleCatalogStatus } from '../services/rulePacks';
+import { getIgnoreMatchers } from '../services/settings';
 import { AppError } from '../middleware/errorHandler';
 import { idempotency } from '../middleware/idempotency';
 import { appendAudit, tokenIdFor } from '../services/audit';
@@ -137,6 +140,25 @@ insightRouter.get('/empty-folders', (req: Request, res: Response) => {
 insightRouter.get('/git/repos', (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   res.json({ repos: findGitRepos(storeOf(scan)) });
+});
+
+/**
+ * GET /api/packages/orphans?scanId= — package-manager artifacts, classified.
+ *
+ * Orphaned (the owning project is gone), active (context only), and shared
+ * caches. Rules come from the §C8 packs, so a malformed pack makes this feature
+ * report itself unavailable exactly like Smart Suggestions rather than
+ * answering "no orphans", which would read as good news.
+ */
+insightRouter.get('/packages/orphans', async (req: Request, res: Response) => {
+  const scan = requireCompleteScan(req, req.query.scanId);
+  const catalog = ruleCatalogStatus();
+  if (!catalog.ok) {
+    res.json({ scanId: scan.scanId, available: false, reason: catalog.reason, ecosystems: [], orphanBytes: 0, cacheBytes: 0, activeBytes: 0, orphanCount: 0 });
+    return;
+  }
+  const ignore = await getIgnoreMatchers('suggest');
+  res.json({ scanId: scan.scanId, available: true, ...scanPackageEcosystems(storeOf(scan), ignore, catalog.catalog) });
 });
 
 /** POST /api/git/gc { path, confirm:true } — run `git gc` in a scanned repo. */

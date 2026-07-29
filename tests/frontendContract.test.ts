@@ -1353,3 +1353,42 @@ test('the rule-pack catalog states which packs produced the list, and when', () 
   assert.match(fn, /Rule packs:/);
   assert.match(fn, /updated \$\{escapeHtml\(updated\)\}/, 'a stale catalog must be visible as stale');
 });
+
+/* ══════════════ Package leftovers feed the existing bucket (§C6) ══════════════ */
+
+test('the package panel is grouped by ecosystem and shows owner, date and command', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function renderPackageOrphans'), code.indexOf('const BROWSER_FAV'));
+  assert.ok(fn.length > 0, 'renderPackageOrphans must be findable');
+  assert.match(fn, /class="pkg-eco"/, 'entries are grouped per ecosystem');
+  assert.match(fn, /pkg-proj/, 'each entry names its owning project, or says there is none');
+  assert.match(fn, /formatDate\(e\.modifiedAt\)/, 'and its last-build date');
+  assert.match(fn, /to clear' : 'to restore'/, 'and the command that puts it back or clears it');
+});
+
+test('an in-use package artifact is never offered for deletion by this panel', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function renderPackageOrphans'), code.indexOf('const BROWSER_FAV'));
+  assert.match(fn, /const selectable = e\.kind !== 'active' && !e\.advisory;/, 'active and advisory rows are not selectable');
+  assert.match(fn, /selectable\s*\n?\s*\?\s*`<input type="checkbox" class="pkg-ck"/, 'only selectable rows get a checkbox');
+  assert.match(fn, /\$\{selectable \? `<button class="icon-btn" data-cart-add=/, 'and only they get a cart button');
+});
+
+test('the package panel feeds the one Clean Up selection, deduped by path', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function activeCleanSelection'), code.indexOf('function updateCleanSummary'));
+  assert.ok(fn.length > 0, 'activeCleanSelection must be findable');
+  // An orphaned node_modules is offered by BOTH the package panel and Smart
+  // Suggestions; selecting it twice must not count its bytes twice.
+  assert.match(fn, /const chosen = new Map\(\)/, 'the selection is keyed by path');
+  assert.match(fn, /#packageOrphans \.pkg-ck/, 'the package panel contributes to it');
+  assert.match(fn, /paths: \[\.\.\.chosen\.keys\(\)\]/, 'and the result is the deduped key set');
+});
+
+test('a broken rule pack makes the package panel say so, not report zero orphans', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function renderPackageOrphans'), code.indexOf('const BROWSER_FAV'));
+  assert.match(fn, /data\.available === false/);
+  assert.match(fn, /could not be checked/, 'unknown is not the same as clean');
+  assert.match(fn, /escapeHtml\(data\.reason/);
+});

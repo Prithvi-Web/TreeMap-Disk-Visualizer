@@ -914,6 +914,20 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .smart-group.advisory { border-color: rgba(255,159,10,0.42); background: rgba(255,159,10,0.07); }
 .smart-group.advisory .adv-mark { flex: none; display: inline-flex; color: var(--warn); }
 .adv-spacer { flex: none; width: 17px; }
+/* ── C6: package-manager leftovers, grouped by ecosystem ── */
+.pkg-eco { margin-bottom: 10px; }
+.pkg-echead { display: flex; align-items: baseline; gap: 10px; padding: 4px 2px 5px; font-size: 12.5px; }
+.pkg-echead .muted { font-size: 11.5px; }
+.pkg-tag { flex: none; font-size: 10px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 99px; background: var(--surface-3); color: var(--text-3); }
+.pkg-tag.orphan { background: rgba(255,69,58,0.16); color: #ff6b60; }
+.pkg-tag.cache { background: rgba(10,132,255,0.16); color: #4aa3ff; }
+.pkg-item.kind-active { opacity: 0.62; }
+.pkg-proj { font-size: 11px; font-weight: 500; color: var(--text-3); margin-left: 6px; }
+.pkg-proj.none { font-style: italic; }
+.pkg-why { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+.pkg-why code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
+  padding: 1px 4px; border-radius: 4px; background: var(--surface-3); }
 :root[data-theme="light"] .smart-group.cat-regenerable { border-color: rgba(124,58,237,0.30); background: rgba(124,58,237,0.06); }
 :root[data-theme="light"] .regen-cmd { color: #7c3aed; background: rgba(124,58,237,0.10); border-color: rgba(124,58,237,0.28); }
 
@@ -1816,6 +1830,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       </div>
       <div id="cleanPaneSmart" style="display:none;">
         <div id="gitRepos"></div>
+        <div id="packageOrphans"></div>
         <div id="browserProfiles"></div>
         <div id="smartResults"></div>
       </div>
@@ -8580,6 +8595,85 @@ document.addEventListener('click', (e) => {
   $('confirmModal').classList.add('open');
 });
 
+/* ── Package-manager orphans (§C6) ──────────────────────────────────────────
+   Grouped by ecosystem, and wired into the SAME selection the rest of the
+   Clean Up modal uses — this is not a fourth delete surface. Orphans and
+   caches get checkboxes; active artifacts are context only (Smart Suggestions
+   below already offers those, and this panel exists for the things nobody is
+   going to miss). */
+const ECOSYSTEM_LABEL = {
+  npm: 'npm', yarn: 'Yarn', pnpm: 'pnpm', python: 'Python', cargo: 'Rust / Cargo',
+  maven: 'Maven', gradle: 'Gradle', cocoapods: 'CocoaPods', homebrew: 'Homebrew',
+  nuget: 'NuGet', chocolatey: 'Chocolatey', winget: 'winget', apt: 'apt / dpkg',
+};
+function ecosystemLabel(id) { return ECOSYSTEM_LABEL[id] || id; }
+
+let packageOrphans = [];
+
+/** Render the ecosystem panel. Returns true if anything was shown. */
+async function renderPackageOrphans() {
+  const host = $('packageOrphans');
+  if (!host || !state.scanId) return false;
+  packageOrphans = [];
+  let data;
+  try { data = await api('/api/packages/orphans?scanId=' + state.scanId); } catch { host.innerHTML = ''; return false; }
+  if (data.available === false) {
+    // Same honesty rule as Smart Suggestions: a broken catalog is "unknown",
+    // never "you have no leftovers".
+    host.innerHTML = `<div class="muted" style="display:flex;align-items:flex-start;gap:8px;padding:10px 2px;">${icon('alert', 15)}
+      <span>Package leftovers could not be checked — a cleanup rule pack failed to load.<br>
+      <span class="smart-why-line">${escapeHtml(data.reason || 'No reason was given.')}</span></span></div>`;
+    return false;
+  }
+  const groups = (data.ecosystems || []).filter(g => g.orphanCount || g.cacheCount || g.activeCount);
+  if (!groups.length) { host.innerHTML = ''; return false; }
+
+  // Flat index so a checkbox can name its entry without re-encoding the path.
+  groups.forEach(g => g.entries.forEach(e => { e._i = packageOrphans.push(e) - 1; }));
+
+  const reclaimable = data.orphanBytes + data.cacheBytes;
+  host.innerHTML = `<div style="margin-bottom:16px;">
+    <div class="rule-row" style="padding:6px 0;">
+      <b style="display:inline-flex;align-items:center;gap:7px;">${icon('box', 15)}Package leftovers</b>
+      <span class="muted" style="flex:1;margin-left:8px;">${data.orphanCount
+        ? `${formatCount(data.orphanCount)} orphaned — nothing will rebuild ${data.orphanCount === 1 ? 'it' : 'them'}`
+        : 'no orphans; shared caches only'}</span>
+      <span class="size-badge num" style="color:${sizeColor(reclaimable)}">${formatBytes(reclaimable)}</span>
+    </div>` + groups.map(g => {
+      const head = [
+        g.orphanCount ? `${formatCount(g.orphanCount)} orphaned · ${formatBytes(g.orphanBytes)}` : '',
+        g.cacheCount ? `cache ${formatBytes(g.cacheBytes)}` : '',
+        g.activeCount ? `${formatCount(g.activeCount)} in use` : '',
+      ].filter(Boolean).join(' · ');
+      return `<div class="pkg-eco">
+      <div class="pkg-echead"><b>${escapeHtml(ecosystemLabel(g.ecosystem))}</b><span class="muted num">${escapeHtml(head)}</span></div>
+      <div class="clean-list">` + g.entries.map(e => {
+        const selectable = e.kind !== 'active' && !e.advisory;
+        const project = e.projectName
+          ? `<span class="pkg-proj">${escapeHtml(e.projectName)}</span>`
+          : '<span class="pkg-proj none">no owning project</span>';
+        return `<div class="clean-item pkg-item kind-${e.kind}">
+          ${selectable
+            ? `<input type="checkbox" class="pkg-ck" data-i="${e._i}" aria-label="Select ${escapeHtml(e.path)}">`
+            : `<span class="adv-spacer" title="${e.advisory ? 'Not safe to trash' : 'In use — kept'}"></span>`}
+          <span class="pkg-tag ${e.kind}">${e.kind === 'orphan' ? 'orphaned' : e.kind === 'cache' ? 'cache' : 'in use'}</span>
+          <div class="meta">
+            <div class="nm">${escapeHtml(e.name)} ${project}</div>
+            <div class="pth">${escapeHtml(e.path)}</div>
+            <div class="pkg-why">${escapeHtml(e.reason)}${e.command ? ` · <code>${escapeHtml(e.command)}</code> ${e.kind === 'cache' ? 'to clear' : 'to restore'}` : ''}</div>
+          </div>
+          <span class="dt num">${formatDate(e.modifiedAt)}</span>
+          <span class="size-badge num">${formatBytes(e.size)}</span>
+          ${selectable ? `<button class="icon-btn" data-cart-add="${escapeHtml(e.path)}" aria-label="Add ${escapeHtml(e.name)} to cleanup cart">${icon('plus', 13)}</button>` : ''}
+        </div>`;
+      }).join('') + `</div></div>`;
+    }).join('') + `</div>`;
+
+  host.querySelectorAll('.pkg-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
+  refreshCartButtons();
+  return true;
+}
+
 /* ── Browser profile drill-down (Feature 16) — inline-SVG favicons, no external fetch ── */
 const BROWSER_FAV = {
   Chrome: `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22" fill="#fff"/>` +
@@ -8691,6 +8785,7 @@ function catalogNote(catalog) {
 
 async function loadSmartSuggestions() {
   renderGitRepos();
+  const hadPackages = await renderPackageOrphans();
   const hadBrowsers = await renderBrowserProfiles();
   const host = $('smartResults');
   host.innerHTML = skeletonRows(4, 34);
@@ -8708,7 +8803,7 @@ async function loadSmartSuggestions() {
     }
     smartGroups = data.groups;
     if (!smartGroups.length) {
-      host.innerHTML = hadBrowsers ? ''
+      host.innerHTML = (hadBrowsers || hadPackages) ? ''
         : `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon('checkCircle', 15)} Nothing in this scan matches the common-junk rules.</div>`;
       updateCleanSummary();
       return;
@@ -8866,18 +8961,29 @@ function activeCleanSelection() {
       .filter(ck => ck.checked).map(ck => emptyFolders[+ck.dataset.i]);
     return { paths: sel.map(f => f.path), bytes: 0, noun: 'empty folder' };
   }
-  const paths = []; let bytes = 0;
+  // The Smart pane has three sources that can name the SAME path — an orphaned
+  // node_modules is both a package leftover (§C6) and a Smart Suggestion. Keyed
+  // by path so selecting it in both places counts its bytes once.
+  const chosen = new Map();
   document.querySelectorAll('#smartResults .smart-ck').forEach(ck => {
     if (!ck.checked) return;
     const it = smartGroups[+ck.dataset.g].items[+ck.dataset.i];
-    paths.push(it.path); bytes += it.size;
+    chosen.set(it.path, it.size);
+  });
+  // Package-manager orphans and shared caches (§C6).
+  document.querySelectorAll('#packageOrphans .pkg-ck').forEach(ck => {
+    if (!ck.checked) return;
+    const e = packageOrphans[+ck.dataset.i];
+    if (e) chosen.set(e.path, e.size);
   });
   // Browser-cache sub-items carry their own path + size (Feature 16).
   document.querySelectorAll('#browserProfiles .bp-ck').forEach(ck => {
     if (!ck.checked) return;
-    paths.push(ck.dataset.path); bytes += Number(ck.dataset.bytes) || 0;
+    chosen.set(ck.dataset.path, Number(ck.dataset.bytes) || 0);
   });
-  return { paths, bytes, noun: 'item' };
+  let bytes = 0;
+  for (const size of chosen.values()) bytes += size;
+  return { paths: [...chosen.keys()], bytes, noun: 'item' };
 }
 
 function updateCleanSummary() {

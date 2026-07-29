@@ -967,6 +967,32 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: { '200': jsonResponse('Repositories', obj({ repos: arr(opaque('Per-repo breakdown')) }, ['repos'])) },
   },
   {
+    method: 'get',
+    path: '/api/packages/orphans',
+    summary: 'Package-manager artifacts classified as orphaned (owning project gone), active, or shared cache',
+    tag: 'cleanup',
+    destructive: false,
+    parameters: [scanIdQuery],
+    responses: {
+      '200': jsonResponse(
+        'Ecosystems, most reclaimable first. available:false with a reason means a rule pack is malformed.',
+        obj(
+          {
+            scanId: str(),
+            available: bool('false when the rule-pack catalog could not be loaded'),
+            reason: str('Why the catalog could not be loaded'),
+            ecosystems: arr(opaque('ecosystem, orphan/active/cache counts and bytes, entries[]')),
+            orphanBytes: int('Exact total across every orphan'),
+            cacheBytes: int(),
+            activeBytes: int(),
+            orphanCount: int(),
+          },
+          ['scanId', 'ecosystems'],
+        ),
+      ),
+    },
+  },
+  {
     method: 'post',
     path: '/api/git/gc',
     summary: 'Run git gc in a scanned repository (requires confirm: true)',

@@ -28,7 +28,7 @@ export type RuleConfidence = 'high' | 'medium' | 'low';
 /** What the app may do about a match. `advice` means "never offer to trash it". */
 export type RuleAction = 'trash' | 'advice';
 
-export type RuleKind = 'project-directory' | 'directory' | 'file' | 'location' | 'stale-files';
+export type RuleKind = 'project-directory' | 'directory' | 'file' | 'location' | 'stale-files' | 'package-cache';
 
 interface RuleBase {
   id: string;
@@ -42,6 +42,12 @@ interface RuleBase {
   os?: NodeJS.Platform[];
   /** How the user gets the space back properly, when trashing is not the way. */
   adviceCommand?: string;
+  /**
+   * Which package ecosystem this belongs to (§C6). Read only by the orphan
+   * scanner — Smart Suggestions ignores it entirely, so tagging a rule cannot
+   * change what the Clean Up list shows.
+   */
+  ecosystem?: string;
 }
 
 /** A build/dependency directory that can be deleted and rebuilt. */
@@ -51,6 +57,20 @@ export interface ProjectDirRule extends RuleBase {
   /** Lowercased sibling basenames; a `foo.*` entry matches any `foo.<ext>`. */
   requiresSibling?: string[];
   restoreCommand: string;
+  /**
+   * §C6: the manifest that OWNS this directory. Missing ⇒ the parent project is
+   * gone and the directory is an orphan. Defaults to `requiresSibling`, which
+   * is the same thing for every rule that has one; `node_modules` needs it
+   * stated separately because Smart Suggestions flags it with or without one.
+   */
+  ownerManifest?: string[];
+  /**
+   * §C6: child names that identify the directory when its owner manifest is
+   * already gone — without one of these, an orphan is not claimed for this
+   * ecosystem at all. `target` is both Rust and Maven, and guessing is worse
+   * than saying nothing.
+   */
+  evidence?: string[];
 }
 
 /** A directory matched on basename alone, with no manifest to confirm it. */
@@ -78,7 +98,16 @@ export interface StaleFilesRule extends RuleBase {
   minSizeBytes: number;
 }
 
-export type Rule = ProjectDirRule | DirRule | FileRule | LocationRule | StaleFilesRule;
+/** A shared package-manager cache (§C6). Never "orphaned" — always reclaimable. */
+export interface PackageCacheRule extends RuleBase {
+  kind: 'package-cache';
+  ecosystem: string;
+  paths: string[];
+  /** The supported way to empty it. */
+  clearCommand: string;
+}
+
+export type Rule = ProjectDirRule | DirRule | FileRule | LocationRule | StaleFilesRule | PackageCacheRule;
 
 export interface PackSummary {
   name: string;
@@ -95,6 +124,8 @@ export interface RuleCatalog {
   file: FileRule[];
   location: LocationRule[];
   staleFiles: StaleFilesRule[];
+  /** §C6 only. cleanupRules never reads this, so Smart Suggestions is unchanged. */
+  packageCache: PackageCacheRule[];
 }
 
 /** Thrown for any malformed pack. The message names the pack and the field. */
@@ -109,17 +140,18 @@ export const RULEPACK_SCHEMA_VERSION = 1;
 const CATEGORIES: SuggestionCategory[] = ['regenerable', 'cache', 'junk'];
 const CONFIDENCES: RuleConfidence[] = ['high', 'medium', 'low'];
 const ACTIONS: RuleAction[] = ['trash', 'advice'];
-const KINDS: RuleKind[] = ['project-directory', 'directory', 'file', 'location', 'stale-files'];
+const KINDS: RuleKind[] = ['project-directory', 'directory', 'file', 'location', 'stale-files', 'package-cache'];
 const PLATFORMS = ['darwin', 'win32', 'linux'];
 
 /** Every key a rule may carry, per kind. Anything else is a typo, and rejected. */
-const COMMON_KEYS = ['id', 'kind', 'title', 'description', 'category', 'confidence', 'action', 'os', 'adviceCommand'];
+const COMMON_KEYS = ['id', 'kind', 'title', 'description', 'category', 'confidence', 'action', 'os', 'adviceCommand', 'ecosystem'];
 const KIND_KEYS: Record<RuleKind, string[]> = {
-  'project-directory': ['names', 'requiresSibling', 'restoreCommand'],
+  'project-directory': ['names', 'requiresSibling', 'restoreCommand', 'ownerManifest', 'evidence'],
   directory: ['names'],
   file: ['names'],
   location: ['paths'],
   'stale-files': ['withinPath', 'olderThanDays', 'minSizeBytes'],
+  'package-cache': ['paths', 'clearCommand'],
 };
 
 export const PACK_NAMES = ['common', 'macos', 'windows', 'linux'] as const;
@@ -222,6 +254,9 @@ export function validateRulePack(packName: string, raw: unknown): { rules: Rule[
     if (entry.adviceCommand !== undefined) {
       base.adviceCommand = requireString(packName, `${at}.adviceCommand`, entry.adviceCommand);
     }
+    if (entry.ecosystem !== undefined) {
+      base.ecosystem = requireString(packName, `${at}.ecosystem`, entry.ecosystem);
+    }
     // An advisory rule exists to say "don't trash this, do that instead" — with
     // no `that`, it is just an unactionable warning.
     if (base.action === 'advice' && !base.adviceCommand) {
@@ -237,7 +272,20 @@ export function validateRulePack(packName: string, raw: unknown): { rules: Rule[
           entry.requiresSibling === undefined
             ? undefined
             : requireStringArray(packName, `${at}.requiresSibling`, entry.requiresSibling).map((s) => s.toLowerCase());
-        rule = { ...base, kind, names, restoreCommand, requiresSibling };
+        const ownerManifest =
+          entry.ownerManifest === undefined
+            ? undefined
+            : requireStringArray(packName, `${at}.ownerManifest`, entry.ownerManifest).map((s) => s.toLowerCase());
+        const evidence =
+          entry.evidence === undefined
+            ? undefined
+            : requireStringArray(packName, `${at}.evidence`, entry.evidence).map((s) => s.toLowerCase());
+        // Orphan detection needs a way to recognise the directory once its
+        // owner is gone; without one, an ecosystem-tagged rule would guess.
+        if (base.ecosystem && !evidence) {
+          fail(packName, `${at} is tagged with an ecosystem but has no evidence[] to identify it once its owner manifest is gone`);
+        }
+        rule = { ...base, kind, names, restoreCommand, requiresSibling, ownerManifest, evidence };
         break;
       }
       case 'directory':
@@ -248,6 +296,17 @@ export function validateRulePack(packName: string, raw: unknown): { rules: Rule[
       }
       case 'location': {
         rule = { ...base, kind, paths: requireStringArray(packName, `${at}.paths`, entry.paths) };
+        break;
+      }
+      case 'package-cache': {
+        if (!base.ecosystem) fail(packName, `${at} is a package-cache and must name its ecosystem`);
+        rule = {
+          ...base,
+          ecosystem: base.ecosystem,
+          kind,
+          paths: requireStringArray(packName, `${at}.paths`, entry.paths),
+          clearCommand: requireString(packName, `${at}.clearCommand`, entry.clearCommand),
+        };
         break;
       }
       case 'stale-files': {
@@ -340,6 +399,7 @@ function buildCatalog(dir: string, platform: NodeJS.Platform): RuleCatalog {
     file: [],
     location: [],
     staleFiles: [],
+    packageCache: [],
   };
 
   for (const name of ['common', packForPlatform(platform)] as PackName[]) {
@@ -364,6 +424,12 @@ function buildCatalog(dir: string, platform: NodeJS.Platform): RuleCatalog {
           const paths = rule.paths.map(expandPath).filter((p): p is string => p !== null);
           if (paths.length === 0) { applied--; continue; }
           catalog.location.push({ ...rule, paths });
+          break;
+        }
+        case 'package-cache': {
+          const paths = rule.paths.map(expandPath).filter((p): p is string => p !== null);
+          if (paths.length === 0) { applied--; continue; }
+          catalog.packageCache.push({ ...rule, paths });
           break;
         }
       }
@@ -428,6 +494,8 @@ export function matchReasonFor(rule: Rule): string {
       return rule.paths.length === 1
         ? `The known location ${rule.paths[0]}.`
         : `One of ${rule.paths.length} known locations, such as ${rule.paths[0]}.`;
+    case 'package-cache':
+      return `The ${rule.ecosystem} package cache at ${rule.paths[0]}.`;
     case 'stale-files':
       return `Files under ${rule.withinPath} of at least ${Math.round(rule.minSizeBytes / 1_048_576)} MB, untouched for ${rule.olderThanDays}+ days.`;
   }
