@@ -85,7 +85,11 @@ test('a portable session writes beside the executable, never to this computer', 
   assert.ok(!status.dataDir!.startsWith(status.hostDataDir), 'the data dir must be nowhere inside the host location');
 });
 
-test('a read-only drive persists NOTHING — it never falls back to the host', () => {
+const NO_CHMOD = process.platform === 'win32'
+  ? 'chmod cannot make a directory read-only on Windows — the read-only medium case is POSIX-shaped'
+  : false;
+
+test('a read-only drive persists NOTHING — it never falls back to the host', { skip: NO_CHMOD }, () => {
   // The single most important test in this file. Falling through to the normal
   // app-data location would silently break the one promise D3 makes.
   const base = tmp();
@@ -110,7 +114,7 @@ test('a read-only drive persists NOTHING — it never falls back to the host', (
   }
 });
 
-test('when nothing can be written, TREEMAP_DATA_DIR is left unset rather than pointed at the host', () => {
+test('when nothing can be written, TREEMAP_DATA_DIR is left unset rather than pointed at the host', { skip: NO_CHMOD }, () => {
   const base = tmp();
   const readOnly = path.join(base, 'ro2');
   fs.mkdirSync(readOnly);

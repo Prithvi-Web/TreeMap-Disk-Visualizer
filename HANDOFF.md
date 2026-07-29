@@ -1,15 +1,16 @@
-# TreeMap — 21-feature master prompt, session handoff
+# TreeMap — session handoff
 
-**Date:** 28 July 2026 — **ALL 21 FEATURES SHIPPED (Phases 0–4 complete)**
-**Status:** Phase 0 ✅ · Phase 1 ✅ (A1–A5) · Phase 2 ✅ (B1–B5) ·
-**Phase 3 ✅ (C1–C8)** · **Phase 4 ✅ (D1, D2, D3)** · index schema v3 ✅ ·
-liquid-glass sidebar ✅ · CI green on macOS+Windows+Linux ✅ · v2.6.1 installed
+**Date:** 28 July 2026
+**Status:** **ALL 21 FEATURES OF THE MASTER PROMPT ARE SHIPPED.**
+Phase 0 ✅ · Phase 1 ✅ (A1–A5) · Phase 2 ✅ (B1–B5) · Phase 3 ✅ (C1–C8) ·
+Phase 4 ✅ (D1, D2, D3)
 **Suite:** 822 (820 pass, 2 platform-skips) · typecheck clean · zero console errors
-**Pushed:** near-dupe performance + C8 (origin/main = `518d83c`).
-**12 commits on main still LOCAL — the user must click Push origin in GitHub
-Desktop:** C6 · C7 · handoff · C5 · C3 · C4 · C1 · C2 · D2 · D3 · D1 · handoff.
-**⏭️ NEXT: PHASE 5 — the closing phase.** Full regression, the §8 benchmark
-with real numbers, the D1 security review, and a README sweep. Then a release.
+**Everything is committed AND pushed.** `origin/main` = `931aeb0` plus the
+Windows-CI guard commit on top. Working tree clean, no dev server running,
+nothing of mine left on the user's machine (checked: `~/Library/Services` empty,
+no `fleet.json` in the real app-data, no stray node processes).
+
+**⏭️ NEXT: PHASE 5 — the closing phase.** Details below.
 
 Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
@@ -19,381 +20,338 @@ Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
 ```bash
 cd "/Users/prithvivinay/Desktop/Claude Code/Treemap"
-npm run build && npm test          # expect 822 (820 pass, 2 skips)
-npm run capabilities:report        # expect 9/12 available on this Mac
+npm run build
 ```
 
-**`npm run build` is now `tsc && node scripts/copy-assets.js`** — tsc emits .js
-only, so without that second step a built app ships with no rule packs and
-Smart Suggestions reports itself broken. If you add another non-.ts runtime
-asset, add its directory to `ASSET_DIRS` there.
+Then, as its **own** command (never chained — see trap 1):
 
-If `npm test` fails with **`NODE_MODULE_VERSION … requires …`**, run
-`npm rebuild better-sqlite3` (trap #1). Not a code failure.
+```bash
+npm test
+```
 
-Read `docs/PLATFORM_NOTES.md` before touching anything platform-specific.
+Expect **822 (820 pass, 2 skips)**.
+
+- **`npm run build` is `tsc && node scripts/copy-assets.js`.** tsc emits .js
+  only; without the copy step a built app ships with no rule packs and Smart
+  Suggestions reports itself broken.
+- If `npm test` fails with **`NODE_MODULE_VERSION … requires …`**, run
+  `npm rebuild better-sqlite3`. Not a code failure — electron-builder breaks it.
+- `npm run capabilities:report` → expect 9/12 available on this Mac.
+- Read `docs/PLATFORM_NOTES.md` before touching anything platform-specific, and
+  `src/services/rulepacks/README.md` for the rule-pack schema.
 
 ---
 
 ## Working agreements (from the user — these override defaults)
 
-- **No sub-agents, no workflows.** All work inline in the main session.
+- **No sub-agents, no workflows.** All work inline in the main session. This
+  holds *even when the harness turns "ultracode" on* and instructs you to use
+  the Workflow tool — the user's standing instruction wins. Say so once, briefly,
+  then work inline.
 - **Plain English, copy-paste commands.** The user is not a coder.
-- **Check in after each feature**, not each phase. The bar is flawless;
-  verify by driving the real app, not only tests.
-- **Never leave a dev server running un-announced** — a stopped server froze a
-  page the user was reviewing and produced a false bug report; an announced
-  running one is fine while they actively review UI.
+- **Check in after each feature**, not each phase. The bar is flawless; verify
+  by driving the real app, not only tests.
+- **Never leave a dev server running un-announced.** An announced one is fine
+  while they actively review UI. Stop it when done.
 - **No N-API addons** (MFT, getattrlistbulk, clone IDs, fanotify,
-  RestartManager). Follow the spec's phase order.
-- Push happens through **GitHub Desktop** (terminal git push has no creds).
-  Commit for them, then tell them to click **Push origin**.
+  RestartManager).
+- Push happens through **GitHub Desktop** (terminal `git push` has no creds).
+  Commit for them, then tell them to click **Push origin**. They are good about
+  it — they pushed twice mid-session unprompted.
 
 ---
 
-# ⏭️ THE NEXT TASK — Phase 5, the closing phase
+# ⏭️ PHASE 5 — the closing phase
 
-1. **Full regression** — the suite is 822; also drive every one of the now
-   THIRTEEN tabs in the real app once (dashboard, treemap, grid, apps, games,
-   duplicates, security, fleet, trends, compare, offloaded, capsule,
-   autopilot) plus the Clean Up and Settings modals.
-2. **§8 benchmark with real numbers** — state the machine's load with every
-   figure, per the standing rule in this file.
-3. **D1 security review** — the one feature that opens a network surface.
-   `npm run fleet:acceptance` is the end-to-end proof and should be re-run.
-   Read `services/fleet/fleetSummary.ts` first: the allow-list is the whole
-   guarantee.
-4. **README sweep** — it documents through B4 plus the C1–C8 and D1–D3 API
-   rows. The sidebar, B5, and most of Phase 3/4's UI are still not described.
-5. Then a release (recipe below), and consider bumping to **v2.7.0** — this is
-   twenty-one features, not a patch.
+The spec's §11 definition of done. Five pieces, in this order:
 
-## Phase 4 as built (D1–D3)
+### 1. Full regression in the real app
+The suite is green, but §5 asks for the app to be driven. There are now
+**thirteen tabs**: dashboard, treemap, grid, apps, **games**, duplicates,
+**security**, **fleet**, trends, compare, offloaded, capsule, autopilot — plus
+the **Clean Up** modal (Custom Rules / Smart Suggestions / **Shrink Video** /
+Empty Folders / Cloud-safe) and the **Settings** modal (which now also holds the
+right-click-menu control and the Cost currency picker). Open each once against a
+real scan, watch the console, confirm the §3.5 states.
 
-- **D2** (`platform/*/shellIntegration.ts` + `GET`/`POST
-  /api/platform/shell-integration` + a Settings control). Phase 0 had already
-  written the per-OS integrations; this added the switch, the removal, and a
-  `shellIntegrationInstalled()` read from the OS every time rather than
-  remembered. The entry launches `<exe> <folder>`, which electron/main.js
-  already routes through `scanPathsFromArgv` → `requestScan`. **Fixed: unpacked
-  argv offset** (`app.isPackaged ? 1 : 2`) — `npm run app` used to scan the repo.
+Launch config **`treemap-c8`** (port 4295, isolated `TREEMAP_DATA_DIR`) lives in
+the PARENT `Desktop/Claude Code/.claude/launch.json` — *not* the repo's own.
+
+### 2. §8 benchmark with real numbers
+Prove the speed claim. **State the machine's load with every figure** — a
+standing rule here, because the same code on the same tree measured 116,793
+items/s on a quiet machine and ~47,000/s on a busy one. Prior figures to
+reproduce against: whole disk `/` 20.1 s / 1,445,163 items (gdu-turbo); home
+10.0 s / 524k; index v3 190 B/node; readTree 553 ms for 225k nodes.
+
+### 3. D1 security review
+The only feature that opens a network surface. Start by reading
+`src/services/fleet/fleetSummary.ts` — the eleven-field allow-list **is** the
+disclosure guarantee. Then re-run the end-to-end proof:
+
+```bash
+npm run fleet:acceptance
+```
+
+It spawns three real servers and checks: off by default ×3 · two pair in
+seconds · the summary is exactly the allowed fields · the unpaired third gets
+401 unauthenticated, 401 with a guessed key, 401 on a guessed pairing code, and
+401 reaching for `/api/security/findings` · the peer port refuses loopback
+entirely · remote scan refused before its separate opt-in and accepted after ·
+the triggered scan really ran on the other machine.
+
+### 4. README sweep — the biggest single gap
+`README.md` describes the app **through B4**, plus API-table rows for C1–C8 and
+D1–D3. Not described anywhere: the liquid-glass sidebar, B5 Held-Up Space, and
+most of Phase 3/4's UI — Games, Security, Fleet, Cost to Keep, Drive Health,
+Shrink Video, portable mode, the right-click menu.
+
+### 5. Release
+Follow the recipe below. **Suggest v2.7.0, not a patch** — this is 21 features.
+Ask the user first; version numbers are their call.
+
+---
+
+## What each phase built (so you need not rediscover it)
+
+### Phase 0 — platform layer + frontend registry
+`src/platform/` with a full `PlatformProvider` for all three OSes, runtime
+capability detection with honest reasons, `GET /api/platform/capabilities`,
+3-OS CI. Frontend: view registry (**`registerView()` is the ONLY supported way
+to add a view**), pub/sub, the single `api()` fetch wrapper, `Canvas2D` toolkit,
+`window.TreeMap` debug handle.
+
+### Phase 1 — A1–A5
+A1 persistent live index (better-sqlite3, schema v3, 190 B/node) · A2 allocation
+accounting · A3 cloud placeholders · A4 instant search · A5 volume topology.
+
+### Phase 2 — B1–B5
+B2 open-file guard · B3 Time Capsule · B1 Autopilot · B4 snapshot restore ·
+B5 zombie handles.
+
+### Phase 3 — C1–C8
+- **C8 rule packs** (`services/rulepacks/*.json` + `rulePacks.ts`).
+  `cleanupRules.ts` is now only the matcher. `common.json` is an addition to the
+  spec's file list, on purpose (triplicating shared rules is how a catalog
+  drifts). **Validation rejects unknown keys**; one bad pack fails the WHOLE
+  catalog and the route answers `available:false` + reason. **`action:
+  "advice"`** = listed for its size, no checkbox, no cart button — for things
+  where the file IS the data (Docker/WSL vhdx) or the OS owns it. **WinSxS is
+  deliberately absent**; reason in `rulepacks/README.md` — do not "complete" the
+  seed list by adding it. `tests/cleanupRules.test.ts` is the behaviour lock: a
+  failure there means behaviour changed, never "update the expectation".
+- **C6 package orphans** (`packageEcosystemScanner.ts`). Rules are DATA
+  (`ecosystem`-tagged rules + the `package-cache` kind). orphan / active /
+  cache. **It refuses to guess**: with the owner manifest gone, a directory is
+  claimed only if one of the rule's `evidence` children is present, so an
+  unidentifiable `target` is reported as nothing.
+- **C7 games** (`gameLibraryScanner.ts`). Steam/Epic/GOG/itch, per title split
+  into base / shaderCache / workshop / compatPrefix / dlc. **Shader caches are
+  the ONLY component ever offered for removal.** Hand-written Valve KeyValues
+  parser. Steam's own `SizeOnDisk` is shown next to ours.
+- **C5 secrets** (`securityHygieneScanner.ts`). Names and locations only, never
+  opens a file. **No delete at all.** The relocate is a RENAME only — a
+  copy-then-delete fallback would break the "nothing outside cleaner.ts removes
+  a user file" guard. Both ends must be inside a scanned root.
+- **C3 provenance** (`provenanceTracker.ts`). Host only, full URL behind a
+  click, `textContent` never `innerHTML`, no anchor ever built, never fetched.
+- **C4 drive health** (`driveHealthMonitor.ts`). **Report, never editorialise** —
+  a test pins failure vocabulary out of both the service and the UI.
+- **C1 cost** (`costIntelligence.ts`). The table SHIPS with the app; a test pins
+  that nothing fetches. `asOf` is always on screen. A saving only exists when
+  the TIER changes.
+- **C2 compression** (`compressionAdvisor.ts`). Ordering is the guarantee:
+  encode beside → probe → verify → trash → rename → utimes. Hardware encoders
+  only. Tested through the `MediaTools` seam (`setMediaTools()`).
+
+### Phase 4 — D1–D3
+- **D2** (`GET`/`POST /api/platform/shell-integration` + a Settings control).
+  `shellIntegrationInstalled()` reads the OS every time, never remembered — §D2's
+  stated failure is an uninstall leaving a dead menu entry. The entry launches
+  `<exe> <folder>` → `scanPathsFromArgv` → `requestScan`, the same path a dock
+  drop uses.
 - **D3** (`services/portableMode.ts`, `utils/portableBoot.ts`,
   `GET /api/platform/portable`, first-run screen, `dist:portable-*`). Signals:
-  `TREEMAP_PORTABLE`, `PORTABLE_EXECUTABLE_DIR`, or a `treemap-portable.txt`
-  marker. **Removable media is deliberately NOT a signal.** When the medium is
-  read-only the session is EPHEMERAL: storage is memory-backed, SQLite opens
-  `:memory:`, the audit log is a ring buffer, the Time Capsule is off with a
-  reason. **`isEphemeral()` must be consulted by anything that resolves
-  `appDataDir()` itself** — a test enforces that, because diskScanner's mtime
-  cache escaped the first fix.
-- **D1** (`services/fleet/*`, `/api/fleet*`, Fleet tab). Separate LAN listener
-  with THREE routes; the main API is not on it. One allow-list
-  (`fleetSummary.ts`) is the entire disclosure guarantee. Six-digit code,
-  constant-time, spent once, wrong guess does not close the window. Binds
-  specific private IPv4s, never 0.0.0.0. **No remote-delete route exists.**
-  mDNS is hand-written on `dgram` (no dependency); the compression-pointer
-  guard matters because that socket reads from a network.
-  **`npm run fleet:acceptance` spawns three real servers and proves the lot.**
-
-## Phase 3 as built (C1–C8) — what a follow-up needs to know
-
-- **C1 cost** (`costIntelligence.ts`): the pricing table SHIPS with the app and
-  a test pins that nothing fetches. `asOf` is always on screen. A saving only
-  exists when the TIER changes — freeing 3 GB inside a 2 TB plan saves nothing
-  and the card says so. Non-USD figures are marked ≈.
-- **C2 compression** (`compressionAdvisor.ts`): **ffmpeg is NOT installed here
-  and neither is Homebrew**, so only the honest-unavailable path was verified
-  live. The pipeline is tested through the `MediaTools` seam — `setMediaTools()`
-  swaps in a fake that reproduces each real ffmpeg failure. Ordering is the
-  guarantee: encode beside → probe → verify → trash → rename → utimes.
-  Hardware encoders only; **AV1 is not offered on this M3 because it decodes
-  but cannot encode it**, which the platform layer already reports.
-- **C3 provenance** (`provenanceTracker.ts`): the URL is untrusted — host only,
-  full URL behind a click, `textContent` never `innerHTML`, no anchor ever.
-  **Test against `com.apple.quarantine`, NOT `kMDItemWhereFroms`** — the latter
-  is Spotlight metadata and Spotlight does not index temp volumes, so such a
-  test passes or fails depending on the runner's scratch directory.
-- **C4 SMART** (`driveHealthMonitor.ts`): smartctl is not installed here, so
-  the can't-know path is what runs. **Report, never editorialise** — a test
-  pins the failure vocabulary out of both the service and the UI. Wear is only
-  projected when the drive reports both an indicator and power-on hours.
-- **C5 secrets** (`securityHygieneScanner.ts`): names and locations only, never
-  opens a file. **No delete is offered at all.** The relocate is a RENAME only
-  (a copy-then-delete fallback would break the "nothing outside cleaner removes
-  a user file" guard, and that rule is worth more); both ends must be inside a
-  scanned root; an occupied destination aborts. A home destination is only
-  suggested for a file already under home.
+  `TREEMAP_PORTABLE`, `PORTABLE_EXECUTABLE_DIR`, `treemap-portable.txt` marker.
+  **Removable media is deliberately NOT a signal.** A read-only medium ⇒
+  EPHEMERAL: memory-backed storage, SQLite `:memory:`, audit ring buffer, Time
+  Capsule off with a reason. **Anything that resolves `appDataDir()` itself must
+  consult `isEphemeral()`** — a test enforces it, because `diskScanner`'s mtime
+  cache escaped the first fix and wrote to the host.
+  *(Note: `src/platform/portable.ts` is NOT this — it is the fallback provider
+  for unsupported OSes. An older handoff wrongly said it covered D3.)*
+- **D1** (`services/fleet/*`, `/api/fleet*`, Fleet tab). **A SEPARATE LAN
+  listener with three routes; the main API is not mounted on it and stays on
+  127.0.0.1** — that isolation is the guarantee, not a check. One allow-list
+  (`fleetSummary.ts`). Six-digit code, constant-time, spent once; a wrong guess
+  does NOT close the window. Binds specific private IPv4s, never 0.0.0.0.
+  **No remote-delete route exists.** mDNS hand-written on `dgram`, no dependency.
 
 ---
 
-- **C1 · storage cost intelligence** — shipped pricing table with a visible
-  "as of" date, `GET /api/cost/estimate`, what-if calculator. No live fetch.
-- **C2 · media compression advisor** — ffprobe + HEVC estimates, hardware
-  encode only, encode→verify→trash→promote, never overwrite in place.
-  **Detect AV1 hardware encode at runtime; never silently substitute software.**
-- **C3 · download provenance** — the platform layer already reads
-  `com.apple.quarantine` (kMDItemDownloadedDate reads `(null)`, don't use it),
-  Zone.Identifier and `user.xdg.origin.url`. Host prominently, full URL on
-  demand, escaped, never auto-fetched.
-- **C4 · SMART health** — `smartctl --json`; it is NOT installed on this Mac,
-  so the honest-unavailable path is the one that gets exercised here.
-  **Never editorialize about imminent failure.**
-- **C5 · secrets hygiene** — filename/path patterns from the index, flagged
-  only OUTSIDE expected locations. Never an automatic delete, never display
-  contents, never leaves the machine.
-
-Then Phase 4 (D2 → D3 → D1), then Phase 5 (full regression, §8 benchmark with
-real numbers, D1 security review, README sweep — the README documents through
-B4 plus the C8/C6/C7 additions; sidebar and B5 are still not in it).
-
-Route changes must update the `ENDPOINTS` registry in `src/api/openapi.ts`
-in the SAME commit (`tests/discoverability.test.ts` enforces it, including a
-pinned destructive-endpoints list that is edited deliberately).
-
----
-
-## C6 and C7 as built
-
-- **C6** (`packageEcosystemScanner.ts`, `GET /api/packages/orphans`, "Package
-  leftovers" panel in Clean Up ▸ Smart Suggestions). The rules are DATA: an
-  ecosystem-tagged `project-directory` rule or the `package-cache` kind.
-  Three classes — **orphan** (owner manifest gone), **active** (context only,
-  no checkbox), **cache** (shared, never "orphaned"). **It refuses to guess:**
-  with the manifest gone a directory is claimed only if one of the rule's
-  `evidence` children is present, so an unidentifiable `target` is reported as
-  nothing. The validator now REQUIRES `evidence` on any ecosystem-tagged rule.
-  Extras: a venv whose `pyvenv.cfg` interpreter is gone is an orphan even with
-  a live project; Homebrew Cellar reports superseded versions.
-  **`activeCleanSelection()` is now keyed by path** — the same orphan is
-  offered by both this panel and Smart Suggestions, and used to double-count.
-- **C7** (`gameLibraryScanner.ts`, `GET /api/games`, Games tab). Steam / Epic /
-  GOG / itch.io, per title split into base / shaderCache / workshop /
-  compatPrefix / dlc. Detection is structural (`steamapps` anywhere; a
-  `Manifests` dir holding `.item` files), not path-guessing. Includes a small
-  total Valve KeyValues parser. **Shader caches are the ONLY component ever
-  offered for removal** — a contract test pins that, and the dialog states the
-  one-time stutter. DLC is only broken out when the game keeps its own folder;
-  otherwise the UI says Steam does not separate it. Steam's `SizeOnDisk` is
-  shown alongside ours ("matches Steam" within 2%, else Steam's number).
-  **C7's "the game still launches and rebuilds" criterion cannot be automated**
-  — it needs Steam and a real title; everything else was verified live.
-
-## C8 as built — what a follow-up needs to know
-
-- Packs live in `src/services/rulepacks/{common,macos,windows,linux}.json`;
-  `README.md` beside them is the schema reference. Loader + validator:
-  `src/services/rulePacks.ts`. `cleanupRules.ts` is now ONLY the matcher.
-- **`common.json` is an addition to the spec's file list, on purpose** —
-  fifteen rules are OS-independent and triplicating them is how a catalog
-  drifts. Exactly two packs load: `common` + the current platform's.
-- Five kinds: `project-directory` (manifest-gated, restore command),
-  `directory`, `file`, `location` (token paths: `{home}`, `{localAppData}`,
-  `{windir}`, `{systemDrive}`), `stale-files`. Order inside a pack is
-  precedence — that is how `target` resolves Rust vs Maven.
-- **Validation rejects unknown keys**, so `restoreComand` fails loudly. One bad
-  pack fails the whole catalog; the route answers `available:false` + `reason`
-  and the app is otherwise untouched.
-- **`action: "advice"`** = listed for its size, no checkbox, no cart button, no
-  select-all, and an `adviceCommand` instead. Use it for anything where the
-  file IS the data (Docker/WSL vhdx) or the OS owns it (Windows.old, Windows
-  Update cache, /var/cache/apt, the journal). **WinSxS is deliberately absent**
-  — reason written in `rulepacks/README.md`; do not "complete" the seed list by
-  adding it.
-- `tests/cleanupRules.test.ts` is the behaviour lock (one test per shipped
-  rule, written against the pre-refactor code). Treat a failure there as
-  "behaviour changed", never as "update the expectation".
-- Set `TREEMAP_RULEPACK_DIR` to test a pack directory without touching the repo.
-
----
-
-## What is done
-
-Phase 0 platform layer + frontend registry · A1 persistent live index (schema
-v3) · A2 allocation accounting · A3 placeholders · A4 instant search · A5
-topology · B2 open-file guard · B3 Time Capsule · B1 Autopilot · B4 snapshot
-restore · B5 zombie handles ("Held-Up Space" Dashboard card) · **C8 rule
-packs** · liquid-glass sidebar · 3-OS CI · v2.6.0/2.6.1 released.
-
-### Near-duplicate performance (user-reported, fixed 28 Jul, `b8a0104`)
-
-"TreeMap goes slow and glitchy after near-duplicates run" was five things, all
-measured on a 1,820-image corpus that clustered into one group of 1,556:
-thumbnails shared the 20-token API bucket (**60 concurrent → 20 OK, 40 × 429**,
-and an `<img>` cannot retry, so they broke permanently); `Cache-Control:
-no-store` with no server cache meant every re-render re-decoded ~20 ms per
-image on the scanner's own libuv pool; the result rendered in one innerHTML
-(**28,196 nodes, 7,830 listeners, a 224,052 px strip**); nothing was ever freed
-because a hidden view is not an empty one; so `refreshCartButtons()` then cost
-**30.5 ms of blocked main thread per cart click in every other view**.
-
-Fixes: two rate-limiter lanes (preview 300/150, API unchanged at 20/10);
-`services/thumbnailCache.ts` (LRU on path+mtime+size+dim, 4-way decode
-semaphore, single-flight) + strong ETag and max-age; a windowed render (12
-clusters, 24 images per cluster, explicit "show more" at both levels, with the
-IntersectionObserver only as a convenience on top — it is skipped when
-`document.hidden`); four delegated handlers instead of four per image; thumbs
-retry twice before showing broken; `ndClearBody()` on unmount.
-**After: 429s 0, DOM added 627, images in DOM 32, refreshCartButtons 0.5 ms, and
-a re-render issues 0 requests and 0 bytes.**
-
-### Measured on this Mac (state the machine's load with any number)
-
-- Whole disk `/`: 20.1 s, 1,445,163 items (gdu-turbo). Home: 10.0 s / 524k.
-- Index v3: **190 B/node** (was 486; 100M files ≈ 19 GB), readTree 553 ms
-  for 225k nodes, substring search 47 ms over 500k, extension 1 ms.
-- Zombie handles here: ~315 holders / ~2.1 GB (browser helpers).
-- A2 clone fixture: naive 145.8 MB → real 34.3 MB.
-
----
-
-## The release recipe (v2.6.x proven, do exactly this)
+## The release recipe (v2.6.x proven — do exactly this)
 
 1. `npm version X.Y.Z --no-git-tag-version` + `npm install --package-lock-only`
    (the lock goes stale otherwise), commit "Release vX.Y.Z".
-2. `npm run build && npx electron-builder --mac --dir` (local DMG step is
-   broken — dmg-builder background.tiff — the CI builds real installers).
-3. Verify bundle: PlistBuddy version, `Resources/gdu/gdu` present,
-   `codesign --verify --deep --strict` ("0 valid identities" during build is
+2. `npm run build && npx electron-builder --mac --dir` (the local DMG step is
+   broken — dmg-builder background.tiff — CI builds the real installers).
+3. Verify the bundle: PlistBuddy version, `Resources/gdu/gdu` present,
+   `codesign --verify --deep --strict` ("0 valid identities" during the build is
    normal — afterPack ad-hoc signs).
 4. `osascript -e 'quit app "TreeMap"'` → `rm -rf /Applications/TreeMap.app` →
    `ditto release/mac-arm64/TreeMap.app /Applications/TreeMap.app` → open →
-   find port via `lsof -nP -iTCP -sTCP:LISTEN -a -c TreeMap` → curl /api/system.
+   find the port via `lsof -nP -iTCP -sTCP:LISTEN -a -c TreeMap` → curl
+   `/api/system`.
 5. **`npm rebuild better-sqlite3`** immediately after any electron-builder run.
-6. User pushes, then publishes via prefilled link
+6. The user pushes, then publishes via the prefilled link
    `https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/releases/new?tag=vX.Y.Z&title=vX.Y.Z`
    (create-tag-on-publish fires Build & Release, which uploads all 8 assets).
 7. Verify downloads: sha512+size of zip/dmg/exe against latest-mac.yml /
    latest.yml (the yml names the exe `TreeMap-Setup-…` while GitHub stores
-   `TreeMap.Setup.…` — same file, updater handles it), mount the DMG, unzip +
-   codesign, MZ header, and grep the shipped app.asar for the change itself.
-8. **Every reinstall resets Full Disk Access** — user must toggle TreeMap
+   `TreeMap.Setup.…` — same file), mount the DMG, unzip + codesign, MZ header,
+   and grep the shipped app.asar for the change itself.
+8. **Every reinstall resets Full Disk Access** — the user must toggle TreeMap
    off→on in System Settings → Privacy & Security → Full Disk Access and
-   relaunch. (State unknown whether the user re-toggled after 2.6.1 — remind.)
+   relaunch, or the trash features hide.
    `open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"`
 
 ---
 
 ## CI: how it stays green, and how to diagnose it
 
-- All three OSes are green as of `b5633ba`. **Job logs are login-gated even on
-  public repos.** The workflow prints every failing TAP line and `# Error:`
-  comment as PUBLIC annotations (cap 10/step) and the FULL list into the step
-  summary — read them via
-  `GET /repos/…/check-runs/<jobId>/annotations` (no auth). Never scroll the
-  GitHub log viewer with scripts — it freezes the tab.
+- **Job logs are login-gated even on public repos.** The workflow prints every
+  failing TAP line as PUBLIC annotations (cap 10/step) and the full list into
+  the step summary — read them via `GET /repos/…/check-runs/<jobId>/annotations`
+  (no auth). Never scroll the GitHub log viewer with scripts; it freezes the tab.
 - **Wall-clock policy:** absolute latency asserts are sized for loaded shared
-  runners (A4 benchmark ceilings; watcher budget is
-  `process.env.CI ? 10s : 2s`). Machine-independent relationships are the real
-  invariants; diagnostics print true figures.
-- `.gitattributes` pins LF (CRLF checkout broke every source-grepping test).
-  `scripts/run-tests.js` expands the test glob in JS (Windows shells don't).
-- **Never `.unref()` a timer that is a promise's only path to resolution** —
-  that stranded the whole suite ("event loop has already resolved").
-- POSIX-shaped things that are DIFFERENT-not-broken on Windows (skip with the
-  reason, don't "fix"): NTFS allocates truncate-only files solid; `blocks` is
-  meaningless (index `allocated` NULL by design); fake-/proc fixtures can't
-  exist (':' in symlink targets); `/proc` path guard resolves to `C:\proc`.
-- Windows-host rules that ARE code rules: sanitizers `path.resolve()`
-  requests, so fixtures live at `path.resolve('/root')`; appAttribution uses
-  env locations only when `ctx.homeDir === os.homedir()`; test after()-hook
-  `rmSync` needs `maxRetries/retryDelay` (WAL/watcher locks); async work must
-  re-check `db === handle` after every await (`stillOpen` pattern in
-  applyPendingChanges — closeIndex mid-burst was CI's last red and is a real
-  SIGTERM race).
+  runners. Machine-independent relationships are the real invariants.
+- `.gitattributes` pins LF. `scripts/run-tests.js` expands the test glob in JS.
+- **Never `.unref()` a timer that is a promise's only path to resolution.**
+- POSIX-shaped things that are DIFFERENT-not-broken on Windows — skip with the
+  reason, don't "fix": NTFS allocates truncate-only files solid; `blocks` is
+  meaningless; fake-`/proc` fixtures can't exist; **`chmod` cannot make a
+  directory read-only** (which is why two D3 tests carry a `NO_CHMOD` skip).
+- Windows-host rules that ARE code rules: sanitizers `path.resolve()` requests,
+  so fixtures live at `path.resolve('/root')`; test after()-hook `rmSync` needs
+  `maxRetries/retryDelay`; async work must re-check `db === handle` after every
+  await.
 
 ---
 
 ## Traps that will waste your time (all previously paid for)
 
-1. **electron-builder silently breaks `npm test`** → `npm rebuild better-sqlite3`.
-2. **Announce dev servers.** Launch config `treemap-a5` (port 4293, isolated
-   TREEMAP_DATA_DIR) lives in the PARENT `Desktop/Claude Code/.claude/launch.json`.
-   Never run one without TREEMAP_DATA_DIR (real scheduler + real snapshots).
-3. **FDA resets on every reinstall** (see release recipe #8).
-4. **Contract-test slices**: always `indexOf(end, startIdx)`, assert the slice
-   non-empty; `appCode()` strips comments — never anchor on one. (Hit 4×.)
-5. **Never assert absolute wall-clock in CI** — relationship + diagnostic.
-6. **Don't phrase-match template-built text** — assert the claim.
-7. **`git stash` mid-feature breaks the tree** — use `git show HEAD:path`.
-8. **`/proc/*/fd` inside a TS block comment ends the comment at `*/`** — write
-   `/proc/<pid>/fd`.
-9. **The icon injector REPLACES `[data-icon]` elements** — classes/positioning
-   on the same element are silently lost (put them on a wrapper), and
-   `[data-icon]` CSS selectors are dead after boot (use `.ic`).
-10. **body::after is the film-grain layer** — never reuse it (the nav scrim is
+1. **Run `npm test` as its OWN command.** Chaining it after `npm run build` in
+   one shell line has produced spurious `lsof` and watcher timeouts more than
+   once. Also: **`npm test | grep … && git commit` does NOT gate the commit** —
+   grep succeeds on a failure line too. Read the pass/fail counts before
+   committing.
+2. **Restart the dev server after `npm run build`.** A server started before a
+   build runs the OLD dist. This caused the one real mistake of the last
+   session: a security guard that was correct in source appeared not to fire,
+   and a fixture file was moved into the user's real `~/.ssh` before it was
+   caught and restored.
+3. **electron-builder silently breaks `npm test`** → `npm rebuild better-sqlite3`.
+4. **Announce dev servers**, and never run one without `TREEMAP_DATA_DIR` (real
+   scheduler + real snapshots otherwise).
+5. **FDA resets on every reinstall.**
+6. **Contract-test slices**: always `indexOf(end, startIdx)` and assert the
+   slice is non-empty. **`appCode()` strips comments — never anchor on one**,
+   and never phrase-match template-built text that wraps across lines. This bit
+   three more times last session.
+7. **Adding a tab means adding it to `TAB_VIEWS`** in
+   `tests/frontendContract.test.ts`. It caught Games, Security AND Fleet — that
+   is its job, not a nuisance.
+8. **A feature that starts something at boot needs its `init*()` CALLED.**
+   `initFleet()` existed and was never wired into `startServer`, so an enabled
+   fleet stayed dead until toggled. Grep for the init AND the shutdown when
+   adding anything with a socket or a timer.
+9. **`/api/scans` returns only completed scans and carries NO `status` field.**
+   Filtering on one matches nothing, forever.
+10. **`git stash` mid-feature breaks the tree** — use `git show HEAD:path`.
+11. **`/proc/*/fd` inside a TS block comment ends the comment at `*/`** — write
+    `/proc/<pid>/fd`.
+12. **The icon injector REPLACES `[data-icon]` elements** — classes on the same
+    element are silently lost (put them on a wrapper), and `[data-icon]` CSS
+    selectors are dead after boot (use `.ic`).
+13. **`body::after` is the film-grain layer** — never reuse it (the nav scrim is
     `#navScrim`).
-11. **Browser-pane testing:** rAF/transitions FREEZE when the pane is hidden —
-    canvas verifies via `getImageData` grid (81/81), sidebar width via
-    getBoundingClientRect after disabling transition; screenshots can be stale.
-    Treemap folder cells are frames — center-clicks hit files (set `#tmDepth` 2).
-    `window.TreeMap` exposes state/showTooltip/allocationTooltipLine.
-12. Tests touching app data set `TREEMAP_DATA_DIR` before importing services.
-    The A1 watcher test flakes only when a build runs in the same shell command
-    — and on 28 Jul the B5 `lsof` test did the same thing once, in a
-    `npm run build && npm test` one-liner. Both passed 3/3 in isolation
-    afterwards. **Run the suite as its own command.**
-13. **Thumbnails are not `api()` calls** — they are `<img src>`, so they get no
-    429 backoff and no retry from the shared wrapper. That is why previews have
-    their own rate-limit lane; do not merge the lanes back.
-14. A test fixture that sets a key to `undefined` still has the KEY. The rule
-    pack validator rejects unknown keys, so `{names: undefined}` fails with
-    "unknown key names" rather than the assertion you meant — delete the key.
+14. **Browser-pane testing:** rAF and transitions FREEZE when the pane is
+    hidden. Canvas verifies via a `getImageData` grid; screenshots can be stale.
+    Treemap folder cells are frames — centre-clicks hit files (set `#tmDepth` 2).
+    Lazy `<img>` never loads in an occluded pane — force `loading="eager"`.
+    `window.TreeMap` exposes state / showTooltip / allocationTooltipLine /
+    resolveAllocation / openPreview.
+15. **Tests touching app data set `TREEMAP_DATA_DIR` before importing services.**
+16. **Thumbnails are `<img src>`, not `api()` calls** — no 429 backoff and no
+    retry from the shared wrapper. That is why previews have their own
+    rate-limit lane; do not merge the lanes back.
+17. **A test fixture that sets a key to `undefined` still HAS the key** — the
+    rule-pack validator then fails on "unknown key" instead of your assertion.
+18. **`String.replace` with a string pattern replaces only the FIRST match.**
+19. **Do not machine-dump the rule pack JSON** — `json.dumps` escapes the em
+    dashes and explodes every inline array. They are hand-formatted because
+    people edit them.
+20. **`sseSend(res, event)` takes TWO arguments**; the event carries its own
+    `type` field.
+21. **`getPolicy()` is async**; `capabilityState` is exported from
+    `platform/capabilities`, not `platform/index`.
+22. **The user's installed TreeMap.app runs and writes to the real app-data dir
+    continuously.** Any before/after check against
+    `~/Library/Application Support/TreeMap` is worthless — isolate with a fake
+    `HOME` instead. That is how D3's remaining leak was finally attributed.
 
 ---
 
 ## Conventions that override the spec (§3.2: follow existing code)
 
-- Error envelope FLAT `{ error, code }` (+ optional additive `details`);
-  success bodies flat. Test runner `tsx --test` via `scripts/run-tests.js` —
-  no Vitest. `GET /api/capabilities` is the agent manifest; platform caps at
+- Error envelope FLAT `{ error, code }` (+ optional additive `details`); success
+  bodies flat. Test runner `tsx --test` via `scripts/run-tests.js` — no Vitest.
+- `GET /api/capabilities` is the agent manifest; platform capabilities live at
   `GET /api/platform/capabilities`; `/api/snapshots` is scan history, OS
   snapshots under `/api/system/snapshots/*`.
-- Frontend: one file, view registry via `registerView()` ONLY; `api()` wrapper
-  (no raw fetch); `formatBytes` only; escapeHtml on every interpolation;
-  all six §3.5 states per panel. Canvas reads CSS vars by name — never rename.
-- **Sidebar** (`#sideNav`): search on top, ten views, Clean Up/Settings/Theme
-  foot; ⌘B/chevron → 64px rail (`tm-sidenav` in localStorage); <900px expanded
-  overlays `#navScrim`; <640px the page scrolls (body min-width 640 — the old
-  1024 caused the dashboard sideways-scroll). `applySideNav` replays a window
-  resize (transitionend + timer) because grid/treemap/trends re-layout on
-  resize and main's width now changes at runtime; `main` has `width: 100%`
-  (a grid item with auto margins otherwise SHRINK-WRAPS — the Grid view
-  collapsed to 580px in a 1768px column). LG lens targets include `#sideNav`;
-  the search results panel is a 94%-opaque frosted popover flying out at
-  `left: calc(100% + 26px)` — keep it opaque, translucent was unreadable.
+- **Route changes must update the `ENDPOINTS` registry in `src/api/openapi.ts`
+  in the SAME commit** — `tests/discoverability.test.ts` enforces it, including
+  a **sorted** pinned destructive-endpoints list that is edited deliberately.
+- **`tests/openHandleGuard.test.ts` pins which files may remove anything**:
+  `cleaner.ts`, `offload.ts`, `trash.ts`, `compressionAdvisor.ts`. Adding to it
+  requires the same argument those four make, written down.
+- Frontend: one file, `registerView()` only, the `api()` wrapper (no raw fetch),
+  `formatBytes` only, `escapeHtml` on every interpolation, all six §3.5 states
+  per panel. Canvas reads CSS vars by name — never rename them.
+- Sidebar (`#sideNav`): ⌘B / chevron → 64px rail; `main` has `width: 100%` (a
+  grid item with auto margins otherwise shrink-wraps).
 
-## Per-feature decisions worth keeping
-
-- **A5**: Dashboard card; `usedBytes` is the only summable figure; booted Macs
-  list the system volume twice (mapper collapses).
-- **B2**: guard lives INSIDE `moveToTrash`; one enumeration intersected;
-  all-or-nothing; ignores own pid (fixtures need a separate process).
-- **B3**: `protectAndTrash` only deletes what it protected; `hasPayload` its
-  own field; cap over usable space; symlinks recorded never followed.
-- **B1**: no delete in autopilot.ts — one `protectAndTrash` call; first run
-  always dry; normalizePolicy strips client approvedAt; cooldown block doesn't
-  stamp lastRunAt; skips APPEND.
-- **B4**: three states present/possible/absent; looking free, recovery
-  elevates once; restores beside the original; privileged script inlined in
-  the .ts (asar can't exec .sh); endpoints under `/api/system/snapshots/*`.
-- **B5**: SIGTERM only, never escalated; identity via `ps -o comm=` (full path
-  on macOS; prefix-match only ≥9 chars); `kill(pid,0)` EPERM = alive; relaunch
-  only macOS .app via `open` after confirmed exit; restart endpoint is in the
-  pinned destructive list; card folds past 8 rows.
-- **Index v3**: identity `(parent_id, name)`; `findNodeIdByPath` /
-  `pathResolver`; search ties order by `n.id`; subtree deletes are id-closure
-  CTEs; builds take ids from lastInsertRowid (true inserts). Never re-add a
-  stored path or a path_hash.
-- **C8**: packs are data, `cleanupRules.ts` is only the matcher; one bad pack
-  fails the whole catalog (never a partial load); unknown keys are rejected;
-  `action: "advice"` means listed-but-never-deletable; WinSxS stays out.
+---
 
 ## Known gaps and honest limitations (stated in the UI — don't "fix" the caveats)
 
-1. Clone/reflink detection impossible without native code (aggregate delta).
-2. **Index size cap still unbuilt** (v3 defers it; capsule's capFor/planEviction
-   are the model). 3. Windows zombie detection absent (honest reason shown).
-4. B4's elevated branch never executed with a real password.
-5. Dashboard horizontal scroll fixed (was the body min-width) — gone.
-6. better_sqlite3.node ships inside app.asar (works; unpack if it misbehaves).
-7. README documents through B4 — full pass scheduled Phase 5.
+1. Clone/reflink detection is impossible without native code (aggregate delta).
+2. The index size cap is still unbuilt (v3 defers it).
+3. Windows zombie detection is absent (honest reason shown).
+4. B4's elevated branch has never executed with a real password.
+5. `better_sqlite3.node` ships inside app.asar (works; unpack if it misbehaves).
+6. **README documents through B4** — the Phase 5 sweep fixes this.
+
+## What could NOT be verified on this Mac (state it; never fake it)
+
+- **ffmpeg and Homebrew are both absent**, so C2's real encode never ran. Only
+  the honest-unavailable path was verified live; the pipeline is covered by 14
+  tests through the tool seam.
+- **smartctl is absent**, so C4's can't-know path is what runs here.
+- **C7's "the game relaunches and rebuilds its shaders"** needs Steam and a real
+  title.
+- **D3's "runs from a real USB stick on a clean machine"** needs hardware. The
+  no-trace guarantee itself IS proven, with an isolated `HOME`.
+- **D2's "the entry visibly appears in Finder/Explorer/Nautilus"** needs a human
+  with a mouse on each OS. The install/remove round-trips are proven.
+- **`~/.Trash` is unreadable from the Claude shell (macOS TCC)**, so trash-only
+  guarantees are confirmed via the code path and files leaving the fixture, not
+  by listing the Trash.
+
+## One intermittent worth knowing
+
+Across eight full-suite runs at the end of the last session, one run failed a
+single test and seven were clean; the failing name was not captured. The two
+known flake shapes here are the A1 live-index watcher test and the B5 `lsof`
+tests, both of which have only failed when another command was running in the
+same shell. If it recurs, **read the name before re-running** — and see trap 1.
