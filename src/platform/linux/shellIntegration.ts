@@ -198,3 +198,19 @@ export async function unregisterShellIntegration(opts: ShellIntegrationPaths = {
 
   return { installed: false, targets: removed };
 }
+
+/**
+ * Is any of the three entries present?
+ *
+ * Checked against the same three locations `unregisterShellIntegration` clears,
+ * so "installed" and "removed" can never disagree. Any one of them counts —
+ * a machine with only Thunar is still integrated.
+ */
+export async function isInstalled(opts: ShellIntegrationPaths = {}): Promise<boolean> {
+  const home = homeOf(opts);
+  const exists = (p: string): Promise<boolean> => fsp.stat(p).then(() => true, () => false);
+  if (await exists(path.join(home, '.local', 'share', 'nautilus', 'scripts', SCRIPT_NAME))) return true;
+  if (await exists(path.join(home, '.local', 'share', 'kio', 'servicemenus', DESKTOP_NAME))) return true;
+  const thunar = await fsp.readFile(path.join(home, '.config', 'Thunar', 'uca.xml'), 'utf8').catch(() => null);
+  return thunar !== null && thunar.includes(SCRIPT_NAME);
+}

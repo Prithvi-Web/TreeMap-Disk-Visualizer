@@ -114,3 +114,20 @@ export async function unregisterShellIntegration(): Promise<ShellIntegrationResu
   }
   return { installed: false, targets: removed };
 }
+
+/**
+ * Is the Explorer entry present?
+ *
+ * `reg query` on the first key is enough: install writes all three together and
+ * uninstall removes all three together, so they cannot diverge except by a
+ * hand edit — and reporting "installed" for a half-present entry would be
+ * worse than reporting the common case correctly.
+ */
+export async function isInstalled(): Promise<boolean> {
+  try {
+    await runText('reg.exe', ['query', SHELL_KEYS[0].key], { timeoutMs: 10_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}

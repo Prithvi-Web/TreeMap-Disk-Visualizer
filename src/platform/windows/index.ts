@@ -9,7 +9,7 @@ import { volumeTopology } from './topology';
 import { fileFactsBatch, toPlaceholderInfo } from './attributes';
 import { listSnapshots as vssSnapshots, snapshotAvailability } from './vss';
 import { relativeToVolume } from '../snapshotPaths';
-import { registerShellIntegration, unregisterShellIntegration } from './shellIntegration';
+import { registerShellIntegration, unregisterShellIntegration, isInstalled as winShellInstalled } from './shellIntegration';
 import { runPowerShellJson } from './powershell';
 import { mapSmartctl, SmartctlJson } from '../macos';
 import type {
@@ -281,6 +281,10 @@ export class WindowsProvider extends BaseProvider {
 
   override async unregisterShellIntegration(): Promise<ShellIntegrationResult> {
     return unregisterShellIntegration();
+  }
+
+  override async shellIntegrationInstalled(): Promise<boolean> {
+    return winShellInstalled();
   }
 
   /* ---------------- Capability probes ---------------- */

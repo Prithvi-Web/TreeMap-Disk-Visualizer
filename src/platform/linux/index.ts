@@ -9,7 +9,7 @@ import { volumeTopology, isRotational, queueDepth, topologyReason } from './topo
 import { downloadOrigin, provenanceAvailable } from './provenance';
 import { listSnapshots as btrfsSnapshots, snapshotAvailability } from './btrfs';
 import { relativeToVolume } from '../snapshotPaths';
-import { registerShellIntegration, unregisterShellIntegration } from './shellIntegration';
+import { registerShellIntegration, unregisterShellIntegration, isInstalled as linuxShellInstalled } from './shellIntegration';
 import { mapSmartctl, SmartctlJson } from '../macos';
 import type {
   CapabilityState,
@@ -322,6 +322,10 @@ export class LinuxProvider extends BaseProvider {
 
   override async unregisterShellIntegration(): Promise<ShellIntegrationResult> {
     return unregisterShellIntegration();
+  }
+
+  override async shellIntegrationInstalled(): Promise<boolean> {
+    return linuxShellInstalled();
   }
 
   /* ---------------- Capability probes ---------------- */

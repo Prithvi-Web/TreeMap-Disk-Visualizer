@@ -306,6 +306,10 @@ export abstract class BaseProvider implements PlatformProvider {
     return { installed: false, targets: [], reason: 'Shell integration is not available on this system' };
   }
 
+  async shellIntegrationInstalled(): Promise<boolean> {
+    return false;
+  }
+
   async unregisterShellIntegration(): Promise<ShellIntegrationResult> {
     return { installed: false, targets: [], reason: 'Nothing was installed' };
   }

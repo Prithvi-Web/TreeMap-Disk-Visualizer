@@ -1848,6 +1848,28 @@ export const ENDPOINTS: EndpointDescriptor[] = [
 
   {
     method: 'get',
+    path: '/api/platform/shell-integration',
+    summary: 'Is the "Scan with TreeMap" right-click entry installed? Read from the filesystem/registry, never remembered.',
+    tag: 'platform',
+    destructive: false,
+    responses: {
+      '200': jsonResponse('State', obj({ supported: bool(), mechanism: str(), reason: str(), installed: bool() }, ['supported', 'installed'])),
+    },
+  },
+  {
+    method: 'post',
+    path: '/api/platform/shell-integration',
+    summary: 'Add or remove the right-click entry. Per-user; needs no administrator rights.',
+    tag: 'platform',
+    destructive: false,
+    requestBody: jsonBody(obj({ install: bool('true to add, false to remove') }, ['install'])),
+    responses: {
+      '200': jsonResponse('Result', obj({ installed: bool(), targets: arr(str()), reason: str(), mechanism: str() }, ['installed', 'targets'])),
+      '409': errorResponse('No supported file manager on this system'),
+    },
+  },
+  {
+    method: 'get',
     path: '/api/platform/topology',
     summary: 'Physical disks and the logical volumes on each — which drive is actually filling up',
     tag: 'system',

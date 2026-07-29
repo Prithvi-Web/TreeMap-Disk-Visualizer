@@ -105,6 +105,13 @@ export interface PlatformProvider {
   /* Shell integration (D2) — reversible from the same place it is installed */
   registerShellIntegration(): Promise<ShellIntegrationResult>;
   unregisterShellIntegration(): Promise<ShellIntegrationResult>;
+  /**
+   * Is the entry installed right now? Read from the filesystem/registry rather
+   * than remembered, so an entry removed by hand — or left behind by an
+   * uninstall — is reported truthfully (D2: "removing integration cleanly
+   * removes the entry" is only checkable if we look).
+   */
+  shellIntegrationInstalled(): Promise<boolean>;
 
   /* Capability probes — one per capability-gated feature (§2.2) */
   probeFastEnumeration(): Promise<CapabilityState>;

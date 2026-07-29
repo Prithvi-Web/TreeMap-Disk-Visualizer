@@ -74,6 +74,9 @@ OpenAPI 3 spec).
      endpoint is in the destructive list for that reason.
    - `GET /api/file-types`, `GET /api/empty-folders`, `GET /api/apps`,
      `GET /api/compare`, `GET /api/forecast` — further angles.
+   - `GET`/`POST /api/platform/shell-integration` — the "Scan with TreeMap"
+     right-click entry. Per-user, no elevation, and the installed flag is read
+     from the OS every time rather than remembered.
 3. **Confirm with the user, then act.**
    - `DELETE /api/files` with `{ "paths": [...] }` moves files to the **OS
      Trash** — recoverable, never a hard delete.

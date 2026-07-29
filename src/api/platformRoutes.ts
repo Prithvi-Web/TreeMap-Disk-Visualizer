@@ -71,6 +71,46 @@ platformRouter.get('/platform/topology', async (_req: Request, res: Response) =>
 });
 
 /**
+ * GET /api/platform/shell-integration — is "Scan with TreeMap" in place? (D2)
+ *
+ * The installed flag is read from the filesystem/registry every time rather
+ * than remembered: an entry removed by hand, or left behind by an uninstall,
+ * must be reported truthfully. D2's "removing integration cleanly removes the
+ * entry" is only checkable if we look.
+ */
+platformRouter.get('/platform/shell-integration', async (_req: Request, res: Response) => {
+  const state = await capabilityState('shellIntegration');
+  res.json({
+    supported: state.available,
+    mechanism: state.mechanism,
+    reason: state.reason,
+    installed: state.available ? await platform().shellIntegrationInstalled() : false,
+  });
+});
+
+/**
+ * POST /api/platform/shell-integration { install: boolean }
+ *
+ * Adds or removes the right-click entry. Per-user in every implementation —
+ * no administrator rights, nothing written outside the user's own account —
+ * which is why this needs no elevation prompt (§3.8).
+ */
+platformRouter.post('/platform/shell-integration', async (req: Request, res: Response) => {
+  const { install } = req.body as { install?: unknown };
+  if (typeof install !== 'boolean') {
+    throw new AppError(400, 'INSTALL_REQUIRED', 'Body must be { install: true } or { install: false }');
+  }
+  const state = await capabilityState('shellIntegration');
+  if (!state.available) {
+    throw new AppError(409, 'CAPABILITY_UNAVAILABLE', state.reason ?? 'Shell integration is not available on this system');
+  }
+  const provider = platform();
+  const result = install ? await provider.registerShellIntegration() : await provider.unregisterShellIntegration();
+  // Report what is ACTUALLY there afterwards, not what we intended.
+  res.json({ ...result, installed: await provider.shellIntegrationInstalled(), mechanism: state.mechanism });
+});
+
+/**
  * Compact mirror for the existing agent manifest.
  *
  * Only the shape an agent needs — which capabilities are on — without the prose

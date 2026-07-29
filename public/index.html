@@ -2124,6 +2124,16 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       <div class="set-h" style="margin-top:22px;"><span data-icon="gauge"></span>How TreeMap measures space</div>
       <div class="muted" style="margin-bottom:10px;">TreeMap measures the space files actually occupy, not just the size they report. This panel shows the difference for the folder you last scanned.</div>
       <div id="allocationDiag" class="alloc-diag">Scan a folder to see this.</div>
+
+      <!-- D2 · The right-click entry. Installed and removed from the same
+           place, because an uninstall that leaves a dead menu item behind is
+           the specific failure §D2 calls out. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="mouse"></span>Right-click menu</div>
+      <div class="muted" style="margin-bottom:10px;" id="shellIntegrationBlurb">Checking…</div>
+      <div class="rule-row">
+        <button class="btn" id="shellIntegrationBtn" disabled>Checking…</button>
+        <span class="muted" id="shellIntegrationStatus"></span>
+      </div>
     </div>
     <div class="modal-foot">
       <span class="muted" id="settingsStatus"></span>
@@ -9916,6 +9926,62 @@ async function renderAllocationDiagnostic() {
   host.innerHTML = html;
 }
 
+/* ── Right-click menu (§D2) ───────────────────────────────────────────────
+   Installed AND removed from the same control, because an uninstall that
+   leaves a dead context-menu entry behind is the specific failure §D2 names.
+   The state is re-read from the OS after every action rather than assumed, so
+   the button always reflects what is really there. */
+async function renderShellIntegration(carryStatus = '') {
+  const btn = $('shellIntegrationBtn');
+  const blurb = $('shellIntegrationBlurb');
+  const status = $('shellIntegrationStatus');
+  if (!btn) return;
+  btn.disabled = true;
+  // The re-read below is what makes the state trustworthy, but it must not wipe
+  // the confirmation the user just earned — so the message is carried through.
+  status.textContent = carryStatus;
+  let data;
+  try { data = await api('/api/platform/shell-integration'); }
+  catch (e) { blurb.textContent = 'Could not check: ' + e.message; return; }
+
+  if (!data.supported) {
+    blurb.textContent = data.reason || 'This system has no file manager TreeMap can add an entry to.';
+    btn.hidden = true;
+    return;
+  }
+  btn.hidden = false;
+  // The capability's own reason is already a complete sentence about what this
+  // does; prefixing it with our own restated it twice.
+  blurb.textContent = data.installed
+    ? '“Scan with TreeMap” is in your file manager’s right-click menu for folders. Removing it takes the entry away completely.'
+    : (data.reason || 'Add “Scan with TreeMap” to your file manager’s right-click menu for folders.');
+  btn.textContent = data.installed ? 'Remove from right-click menu' : 'Add to right-click menu';
+  btn.classList.toggle('btn-danger', !!data.installed);
+  btn.disabled = false;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    status.textContent = data.installed ? 'Removing…' : 'Adding…';
+    let message;
+    try {
+      const result = await api('/api/platform/shell-integration', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ install: !data.installed }),
+      });
+      message = result.installed
+        ? `Added${result.targets && result.targets.length ? ' (' + result.targets.join(', ') + ')' : ''}.`
+        : 'Removed.';
+      if (result.installed && !data.installed) {
+        toast('Added — your file manager may take a moment to show it');
+      }
+    } catch (e) {
+      message = 'Failed: ' + e.message;
+    }
+    // Re-read the truth rather than assuming the action landed, carrying the
+    // confirmation through so it survives the refresh.
+    await renderShellIntegration(message);
+  };
+}
+
 /* ───────────────────────────── Settings modal ───────────────────────────── */
 let settingsData = { ignore: [], schedules: [] };
 $('settingsBtn').innerHTML = icon('settings', 16);
@@ -9923,6 +9989,7 @@ $('settingsBtn').addEventListener('click', async () => {
   $('settingsModal').classList.add('open');
   $('settingsStatus').textContent = '';
   void renderAllocationDiagnostic(); // A2 — independent of settings loading
+  void renderShellIntegration();     // D2 — same
   try {
     settingsData = await api('/api/settings');
   } catch (e) {

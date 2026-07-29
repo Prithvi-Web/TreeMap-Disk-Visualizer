@@ -281,6 +281,10 @@ export class MacOsProvider extends BaseProvider {
     return removeQuickAction();
   }
 
+  override async shellIntegrationInstalled(): Promise<boolean> {
+    return quickActionInstalled();
+  }
+
   override async probeProvenance(): Promise<CapabilityState> {
     return { available: true, mechanism: 'kMDItemWhereFroms + com.apple.quarantine' };
   }

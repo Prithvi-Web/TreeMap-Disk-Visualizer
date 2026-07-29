@@ -1540,3 +1540,23 @@ test('the confirmation repeats the cost before anything runs', () => {
   assert.ok(start.length > 0, 'startEncode must be findable');
   assert.match(start, /confirm: true/, 'the endpoint is double-gated');
 });
+
+/* ══════════════ Shell integration is reversible from one place (§D2) ══════════════ */
+
+test('the right-click entry is installed AND removed from the same control', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function renderShellIntegration'), code.indexOf('/* ───────────────────────────── Settings modal'));
+  assert.ok(fn.length > 0, 'renderShellIntegration must be findable');
+  // §D2: "an uninstall must not leave a dead context-menu entry behind".
+  assert.match(fn, /Remove from right-click menu/, 'removal is offered');
+  assert.match(fn, /Add to right-click menu/, 'and so is installation');
+  assert.match(fn, /install: !data\.installed/, 'the one button toggles');
+});
+
+test('the button reflects what the OS really has, not what we asked for', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function renderShellIntegration'), code.indexOf('/* ───────────────────────────── Settings modal'));
+  assert.match(fn, /await renderShellIntegration\(message\)/, 'the state is re-read after every action');
+  assert.match(fn, /carryStatus/, 'and the confirmation survives that refresh');
+  assert.match(fn, /!data\.supported/, 'a system with no file manager says so instead of offering a dead button');
+});

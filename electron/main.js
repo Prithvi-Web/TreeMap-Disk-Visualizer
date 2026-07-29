@@ -67,9 +67,20 @@ function flushPendingScans() {
   }
 }
 
-/** Directory args from a launch/second launch (Windows/Linux drag-onto-icon). */
+/**
+ * Directory args from a launch/second launch.
+ *
+ * This is the path the D2 shell integration uses: "Scan with TreeMap" launches
+ * `<exe> <folder>`, which lands here and goes through `requestScan` — the same
+ * entry point a dock drop uses, rather than a second path-injection mechanism.
+ *
+ * Unpackaged, Electron's own argv is `[electron, <appDir>, ...]`, and `<appDir>`
+ * is a real directory — so `npm run app` would "helpfully" scan the repo. Skip
+ * the extra leading argument when running from source.
+ */
 function scanPathsFromArgv(argv) {
-  return argv.slice(1).filter((arg) => {
+  const from = app.isPackaged ? 1 : 2;
+  return argv.slice(from).filter((arg) => {
     if (arg.startsWith('-')) return false;
     try {
       return fs.statSync(arg).isDirectory();
