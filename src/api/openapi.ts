@@ -968,6 +968,29 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   },
   {
     method: 'get',
+    path: '/api/games',
+    summary: 'Game libraries (Steam, Epic, GOG, itch.io) broken down per title into base install, shader cache, workshop, Proton prefix and DLC',
+    tag: 'insights',
+    destructive: false,
+    parameters: [scanIdQuery],
+    responses: {
+      '200': jsonResponse(
+        'Libraries, largest first',
+        obj(
+          {
+            scanId: str(),
+            libraries: arr(opaque('launcher, path, totalBytes, shaderCacheBytes, titles[]')),
+            totalBytes: int(),
+            shaderCacheBytes: int('Total shader cache across every title — the only part safe to clear'),
+            titleCount: int(),
+          },
+          ['scanId', 'libraries', 'totalBytes', 'shaderCacheBytes', 'titleCount'],
+        ),
+      ),
+    },
+  },
+  {
+    method: 'get',
     path: '/api/packages/orphans',
     summary: 'Package-manager artifacts classified as orphaned (owning project gone), active, or shared cache',
     tag: 'cleanup',

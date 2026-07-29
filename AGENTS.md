@@ -49,6 +49,12 @@ OpenAPI 3 spec).
      contract as the suggestions endpoint.
    - `GET /api/duplicates` — content-identical groups (background hashing;
      `202` with progress until done).
+   - `GET /api/games` — Steam / Epic / GOG / itch.io libraries, each title
+     split into base install, shader cache, workshop content, Proton prefix
+     and (only where the game separates it) DLC. **Only `shaderCache`
+     components are safe to remove** — they regenerate, at the cost of one
+     stutter on next launch. Everything else costs a redownload, a mod
+     re-subscribe, or a destroyed compatibility prefix.
    - `GET /api/file-types`, `GET /api/empty-folders`, `GET /api/apps`,
      `GET /api/compare`, `GET /api/forecast` — further angles.
 3. **Confirm with the user, then act.**

@@ -928,6 +928,30 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .pkg-why { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 .pkg-why code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
   padding: 1px 4px; border-radius: 4px; background: var(--surface-3); }
+/* ── C7: game libraries ── */
+.game-lib { margin-bottom: 18px; }
+.game-libhead { display: flex; align-items: baseline; gap: 10px; padding: 4px 2px 8px; font-size: 13.5px; }
+/* No `direction: rtl` here: it does show the tail of a long path, but it also
+   drags the leading "/" to the end, which reads as a broken path. */
+.game-libhead .pth { flex: 1; min-width: 0; font-size: 11px; color: var(--text-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.game-title { padding: 10px 12px 11px; margin-bottom: 8px; border: 1px solid var(--hairline);
+  border-radius: 11px; background: var(--surface-1); }
+.game-head { display: flex; align-items: center; gap: 10px; }
+.game-head .meta { flex: 1; min-width: 0; }
+.game-head .nm { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.game-head .pth { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.game-vs { flex: none; font-size: 10.5px; color: var(--text-3); }
+.game-bar { display: flex; height: 7px; margin-top: 9px; border-radius: 4px; overflow: hidden; background: var(--surface-2); }
+.game-bar .gp { height: 100%; }
+.gp-base { background: var(--accent); }
+.gp-dlc { background: #bf5af2; }
+.gp-shaderCache { background: var(--warn); }
+.gp-workshop { background: #30d158; }
+.gp-compatPrefix { background: #64d2ff; }
+.game-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 7px; font-size: 11px; color: var(--text-3); }
+.game-legend .gl { display: inline-flex; align-items: center; gap: 5px; }
+.game-legend .gl i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 :root[data-theme="light"] .smart-group.cat-regenerable { border-color: rgba(124,58,237,0.30); background: rgba(124,58,237,0.06); }
 :root[data-theme="light"] .regen-cmd { color: #7c3aed; background: rgba(124,58,237,0.10); border-color: rgba(124,58,237,0.28); }
 
@@ -1304,6 +1328,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     <button role="tab" aria-selected="false" data-view="treemap" title="Treemap"><span data-icon="treemap"></span><span class="side-label">Treemap</span></button>
     <button role="tab" aria-selected="false" data-view="grid" title="Grid"><span data-icon="grid"></span><span class="side-label">Grid</span></button>
     <button role="tab" aria-selected="false" data-view="apps" title="Apps"><span data-icon="box"></span><span class="side-label">Apps</span></button>
+    <button role="tab" aria-selected="false" data-view="games" title="Games"><span data-icon="play"></span><span class="side-label">Games</span></button>
     <button role="tab" aria-selected="false" data-view="duplicates" title="Duplicates"><span data-icon="copy"></span><span class="side-label">Duplicates</span></button>
     <button role="tab" aria-selected="false" data-view="trends" title="Trends"><span data-icon="trendUp"></span><span class="side-label">Trends</span></button>
     <button role="tab" aria-selected="false" data-view="compare" title="Compare"><span data-icon="diff"></span><span class="side-label">Compare</span></button>
@@ -1556,6 +1581,15 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       <h2><span data-icon="box"></span>Storage by Application</h2>
       <div class="apps-info muted" id="appsInfo"></div>
       <div id="appsBody"><div class="muted">Run a scan to see how much disk each application owns.</div></div>
+    </div>
+  </section>
+
+  <!-- ═══════════ Games (C7) ═══════════ -->
+  <section class="view" id="view-games" role="tabpanel" aria-label="Games" hidden>
+    <div class="card glass">
+      <h2><span data-icon="play"></span>Game Libraries</h2>
+      <div class="apps-info muted" id="gamesInfo"></div>
+      <div id="gamesBody"><div class="muted">Run a scan to see what your game libraries hold.</div></div>
     </div>
   </section>
 
@@ -2454,6 +2488,7 @@ const state = {
   treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null } },
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   apps: { loadedFor: null, list: [], otherBytes: 0, totalBytes: 0, appsFolderScanned: false },
+  games: { loadedFor: null, report: null },
   live: { on: false, wanted: false, es: null, engine: '', idleMinutes: 10, pulses: new Map(), window: [], dirty: 0, feedTimer: 0, relayoutTimer: 0, pulseRaf: 0 },
   offload: { index: null, q: '' },
   capsule: { index: null, q: '' },
@@ -2690,6 +2725,11 @@ const VIEWS = [
   {
     id: 'apps', label: 'Apps', icon: 'box', needsScan: true,
     mount() { if (state.scanId && state.root) loadApps(); },
+  },
+  {
+    id: 'games', label: 'Games', icon: 'play', needsScan: true,
+    mount() { if (state.scanId && state.root) loadGames(); },
+    onScanChange() { state.games.loadedFor = null; },
   },
   {
     id: 'duplicates', label: 'Duplicates', icon: 'copy', needsScan: true,
@@ -7508,6 +7548,125 @@ async function loadApps(force = false) {
   } catch (e) {
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }
+}
+
+/* ───────────────────────────── Games view (§C7) ─────────────────────────────
+   Structurally the Apps tab, per title instead of per app. The only action is
+   clearing shader caches: everything else here costs a redownload, a mod
+   re-subscribe, or a destroyed Proton prefix. */
+const LAUNCHER_LABEL = { steam: 'Steam', epic: 'Epic Games', gog: 'GOG Galaxy', itch: 'itch.io' };
+const GAME_PART = {
+  base: { label: 'Game', hint: 'The game itself — removing it means downloading it again.' },
+  dlc: { label: 'DLC', hint: 'Add-on content this game keeps in its own folder.' },
+  shaderCache: { label: 'Shader cache', hint: 'Compiled shaders. Safe to clear — the game rebuilds them.' },
+  workshop: { label: 'Workshop / mods', hint: 'Subscribed Workshop items and their downloads.' },
+  compatPrefix: { label: 'Proton prefix', hint: 'The Windows compatibility prefix, including saves for some games.' },
+};
+
+async function loadGames(force = false) {
+  if (!state.scanId || !state.root) return;
+  if (!force && state.games.loadedFor === state.scanId) { renderGames(); return; }
+  const host = $('gamesBody');
+  host.innerHTML = skeletonRows(6, 42);
+  $('gamesInfo').textContent = '';
+  try {
+    state.games.report = await api('/api/games?scanId=' + state.scanId);
+    state.games.loadedFor = state.scanId;
+    renderGames();
+  } catch (e) {
+    state.games.report = null;
+    host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderGames() {
+  const host = $('gamesBody');
+  const report = state.games.report;
+  if (!report) return;
+  if (!report.libraries.length) {
+    $('gamesInfo').textContent = '';
+    host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('play', 15)}
+      No Steam, Epic, GOG or itch.io library was found in this scan. Scan the drive your games are installed on to see them here.</div>`;
+    return;
+  }
+  $('gamesInfo').innerHTML =
+    `<b>${formatCount(report.titleCount)}</b> ${report.titleCount === 1 ? 'title' : 'titles'} across ` +
+    `${formatCount(report.libraries.length)} ${report.libraries.length === 1 ? 'library' : 'libraries'} — <b>${formatBytes(report.totalBytes)}</b>` +
+    (report.shaderCacheBytes
+      ? `, of which <b>${formatBytes(report.shaderCacheBytes)}</b> is shader cache
+         <button class="pill" id="clearShadersBtn">${icon('sparkles', 13)} Clear shader caches safely</button>`
+      : '');
+
+  host.innerHTML = report.libraries.map(lib => `
+    <div class="game-lib">
+      <div class="game-libhead">
+        <b>${escapeHtml(LAUNCHER_LABEL[lib.launcher] || lib.launcher)}</b>
+        <span class="pth">${escapeHtml(lib.path)}</span>
+        <span class="size-badge num" style="color:${sizeColor(lib.totalBytes)}">${formatBytes(lib.totalBytes)}</span>
+      </div>` + lib.titles.map(t => {
+        const parts = t.components.reduce((m, c) => { m[c.kind] = (m[c.kind] || 0) + c.bytes; return m; }, {});
+        const bar = Object.keys(GAME_PART).filter(k => parts[k] > 0).map(k =>
+          `<span class="gp gp-${k}" style="width:${(parts[k] / Math.max(1, t.totalBytes) * 100).toFixed(2)}%"
+             title="${escapeHtml(GAME_PART[k].label)} — ${escapeHtml(formatBytes(parts[k]))}. ${escapeHtml(GAME_PART[k].hint)}"></span>`).join('');
+        const legend = Object.keys(GAME_PART).filter(k => parts[k] > 0)
+          .map(k => `<span class="gl"><i class="gp-${k}"></i>${escapeHtml(GAME_PART[k].label)} ${formatBytes(parts[k])}</span>`).join('');
+        // Only Steam records a size of its own; show the gap when there is one
+        // rather than quietly presenting our number as theirs.
+        const vsLauncher = t.reportedBytes
+          ? `<span class="game-vs" title="${escapeHtml(LAUNCHER_LABEL[t.launcher] || t.launcher)} records ${escapeHtml(formatBytes(t.reportedBytes))} for the install itself">${
+              t.reportedDelta !== undefined && t.reportedDelta < 0.02
+                ? `matches ${escapeHtml(LAUNCHER_LABEL[t.launcher])}`
+                : `${escapeHtml(LAUNCHER_LABEL[t.launcher])} says ${formatBytes(t.reportedBytes)}`}</span>`
+          : '';
+        return `
+      <div class="game-title">
+        <div class="game-head">
+          <div class="meta">
+            <div class="nm">${escapeHtml(t.name)}</div>
+            <div class="pth">${escapeHtml(t.installPath)}</div>
+          </div>
+          ${vsLauncher}
+          ${t.updatedAt ? `<span class="dt num">${formatDate(t.updatedAt)}</span>` : ''}
+          <span class="size-badge num">${formatBytes(t.totalBytes)}</span>
+        </div>
+        <div class="game-bar">${bar}</div>
+        <div class="game-legend">${legend}${t.dlcInsideBase && !parts.dlc
+          ? '<span class="gl muted">DLC is installed inside the game — Steam does not separate it</span>' : ''}</div>
+      </div>`;
+      }).join('') + `</div>`).join('');
+
+  const btn = $('clearShadersBtn');
+  if (btn) btn.addEventListener('click', clearShaderCaches);
+}
+
+/**
+ * Clear every shader cache. Trash-only and confirmed, through the same path as
+ * every other delete — and it states the cost up front, because a game that
+ * stutters for a minute after an unexplained cleanup reads as a broken game.
+ */
+function clearShaderCaches() {
+  const report = state.games.report;
+  if (!report) return;
+  const paths = [];
+  let bytes = 0;
+  for (const lib of report.libraries) {
+    for (const t of lib.titles) {
+      for (const c of t.components) {
+        if (c.kind === 'shaderCache') { paths.push(c.path); bytes += c.bytes; }
+      }
+    }
+  }
+  if (!paths.length) { toast('No shader caches to clear'); return; }
+  $('confirmTitle').innerHTML = icon('sparkles', 18) + 'Clear shader caches?';
+  $('confirmText').innerHTML =
+    `Move <b>${paths.length}</b> shader ${paths.length === 1 ? 'cache' : 'caches'} to the Trash, freeing <b>${formatBytes(bytes)}</b>.<br>` +
+    `<span style="color:var(--text-3)">Shaders are recompiled automatically. <b>Each affected game will stutter once</b> while it rebuilds them on the next launch — after that it is back to normal. Nothing else about the games is touched.</span>`;
+  onConfirmTrash = async () => {
+    await trashPaths(paths);
+    // A rescan is what re-measures the tree; the panel then reloads from it.
+    rescan();
+  };
+  $('confirmModal').classList.add('open');
 }
 
 /** Short per-category summary for an app's header row, e.g. "caches 1.2 GB · data 3.4 GB". */

@@ -25,6 +25,7 @@ import { getForecast } from '../services/forecast';
 import { expandContainer } from '../services/containerScanner';
 import { findGitRepos, runGitGc } from '../services/gitScanner';
 import { scanPackageEcosystems } from '../services/packageEcosystemScanner';
+import { scanGameLibraries } from '../services/gameLibraryScanner';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { getIgnoreMatchers } from '../services/settings';
 import { AppError } from '../middleware/errorHandler';
@@ -159,6 +160,19 @@ insightRouter.get('/packages/orphans', async (req: Request, res: Response) => {
   }
   const ignore = await getIgnoreMatchers('suggest');
   res.json({ scanId: scan.scanId, available: true, ...scanPackageEcosystems(storeOf(scan), ignore, catalog.catalog) });
+});
+
+/**
+ * GET /api/games?scanId= — game libraries in the scan, broken down per title.
+ *
+ * Steam (libraryfolders.vdf + appmanifest_*.acf), Epic (.item manifests), GOG
+ * (goggame-*.info) and itch.io. Each title splits into base install, shader
+ * cache, workshop content, Proton prefix and — only where the game keeps it
+ * separately — DLC.
+ */
+insightRouter.get('/games', (req: Request, res: Response) => {
+  const scan = requireCompleteScan(req, req.query.scanId);
+  res.json({ scanId: scan.scanId, ...scanGameLibraries(storeOf(scan)) });
 });
 
 /** POST /api/git/gc { path, confirm:true } — run `git gc` in a scanned repo. */

@@ -35,6 +35,7 @@ const TAB_VIEWS = [
   'dashboard', 'treemap', 'grid', 'apps', 'duplicates', 'trends', 'compare', 'offloaded',
   'capsule', // B3 — Time Capsule
   'autopilot', // B1 — Autopilot
+  'games', // C7 — game libraries
 ] as const;
 const MODAL_VIEWS = ['cleanModal', 'settingsModal'] as const;
 
@@ -1391,4 +1392,35 @@ test('a broken rule pack makes the package panel say so, not report zero orphans
   assert.match(fn, /data\.available === false/);
   assert.match(fn, /could not be checked/, 'unknown is not the same as clean');
   assert.match(fn, /escapeHtml\(data\.reason/);
+});
+
+/* ══════════════════ Games: only shader caches are clearable (§C7) ══════════════════ */
+
+test('the Games view breaks each title into its parts', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function renderGames'), code.indexOf('function clearShaderCaches'));
+  assert.ok(fn.length > 0, 'renderGames must be findable');
+  for (const part of ['base', 'dlc', 'shaderCache', 'workshop', 'compatPrefix']) {
+    assert.ok(code.includes(`${part}:`) || code.includes(`gp-${part}`), `the ${part} component is rendered`);
+  }
+  assert.match(fn, /No Steam, Epic, GOG or itch\.io library was found/, 'and it has an honest empty state');
+});
+
+test('only the shader cache is ever offered for clearing, and the stutter is stated', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function clearShaderCaches'), code.indexOf("/** Short per-category summary"));
+  assert.ok(fn.length > 0, 'clearShaderCaches must be findable');
+  // The one filter that keeps a redownload, a mod subscription or a Proton
+  // prefix out of the delete list.
+  assert.match(fn, /c\.kind === 'shaderCache'/, 'the delete list is filtered to shader caches alone');
+  assert.match(fn, /trashPaths\(paths\)/, 'and goes through the one Trash-only delete path');
+  assert.match(fn, /stutter once/, 'the one-time cost is stated before the user agrees');
+  assert.doesNotMatch(fn, /kind === 'base'|kind === 'workshop'|kind === 'compatPrefix'/, 'nothing else is collected');
+});
+
+test('a game total states when it disagrees with the launcher, rather than hiding it', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function renderGames'), code.indexOf('function clearShaderCaches'));
+  assert.match(fn, /t\.reportedBytes/, 'the launcher’s own figure is used');
+  assert.match(fn, /says \$\{formatBytes\(t\.reportedBytes\)\}/, 'and shown when it differs');
 });
