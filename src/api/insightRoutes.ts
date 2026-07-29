@@ -28,6 +28,7 @@ import { scanPackageEcosystems } from '../services/packageEcosystemScanner';
 import { scanGameLibraries } from '../services/gameLibraryScanner';
 import { collectSecurityFindings, relocateSecret, SECURITY_PATTERNS } from '../services/securityHygieneScanner';
 import { readProvenance } from '../services/provenanceTracker';
+import { getDriveHealth } from '../services/driveHealthMonitor';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { getPolicy, assertPathsAllowed } from '../services/policy';
 import { ruleCatalogStatus } from '../services/rulePacks';
@@ -241,6 +242,23 @@ insightRouter.get('/provenance', guardQueryPath('path'), async (req: Request, re
     throw new AppError(403, 'OUTSIDE_SCAN_ROOT', 'Provenance is only available for files inside a scanned folder');
   }
   res.json(await readProvenance(target));
+});
+
+/**
+ * GET /api/health/smart?device=&scanId= — drive health next to the forecast.
+ *
+ * Reports the drive's own attributes and its own self-assessment verbatim, plus
+ * the arithmetic a person cannot do in their head: which runs out first, space
+ * or write endurance. It never renders a verdict of its own — a false "your
+ * drive is dying" is a serious harm.
+ */
+insightRouter.get('/health/smart', async (req: Request, res: Response) => {
+  const device = typeof req.query.device === 'string' && req.query.device.trim() ? req.query.device.trim() : null;
+  let rootPath: string | null = null;
+  if (typeof req.query.scanId === 'string' && req.query.scanId) {
+    rootPath = requireCompleteScan(req, req.query.scanId).rootPath;
+  }
+  res.json(await getDriveHealth(device, rootPath));
 });
 
 /** POST /api/git/gc { path, confirm:true } — run `git gc` in a scanned repo. */

@@ -1470,3 +1470,26 @@ test('a file with no recorded origin is explained, not left blank', () => {
   assert.match(fn, /!data\.supported/, 'and an OS that cannot record it says so separately');
   assert.match(fn, /never opened since it was saved/, 'last-opened has an honest unknown state');
 });
+
+/* ══════════════ Drive health reports, never editorialises (§C4) ══════════════ */
+
+test('the Drive Health card renders no verdict of its own', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function loadDriveHealth'), code.indexOf('/* ──────────────────────────── Security view'));
+  assert.ok(fn.length > 0, 'loadDriveHealth must be findable');
+  // The specific harm §C4 names: a false "your drive is dying".
+  for (const word of ['failing', 'dying', 'imminent', 'replace your drive', 'healthy', 'Critical']) {
+    assert.ok(!fn.includes(word), `the card must not say "${word}"`);
+  }
+  // The drive's own self-check is attributed to the drive.
+  assert.match(fn, /The drive’s own self-check/, "the device's verdict is labelled as the device's");
+  assert.match(fn, /reports passed/, 'and reported, not restated');
+});
+
+test('an unreadable drive shows the reason and how to fix it', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function loadDriveHealth'), code.indexOf('/* ──────────────────────────── Security view'));
+  assert.match(fn, /!data\.available/, 'the unavailable state is handled');
+  assert.match(fn, /dh-unknown/, 'and rendered as an explicit unknown');
+  assert.match(fn, /escapeHtml\(data\.reason/, 'carrying the server’s reason, which names the install command');
+});

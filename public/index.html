@@ -928,6 +928,13 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .pkg-why { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 .pkg-why code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
   padding: 1px 4px; border-radius: 4px; background: var(--surface-3); }
+/* ── C4: drive health ── */
+.dh-summary { font-size: 12.5px; line-height: 1.55; color: var(--text-2); margin-bottom: 10px; }
+.dh-kv { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; font-size: 12px; align-items: baseline; }
+.dh-kv .k { color: var(--text-3); }
+.dh-unknown { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--text-3);
+  padding: 9px 11px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--hairline); }
+.dh-foot { margin-top: 9px; font-size: 10.5px; color: var(--text-3); }
 /* ── C3: download provenance, in the preview pane ── */
 .pv-origin { flex: none; padding: 9px 13px; border-top: 1px solid var(--hairline); font-size: 11.5px; line-height: 1.5; }
 .pv-orig-line { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
@@ -1503,6 +1510,15 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
                     title="Look again for space held by programs that won’t let go">Refresh</button>
           </h2>
           <div id="zombieBody"><div class="muted">Checking for held-up space…</div></div>
+        </div>
+
+        <!-- C4 · Drive Health. Reports the drive's own numbers and its own
+             self-assessment verbatim, next to the growth forecast, so the user
+             can see which limit arrives first — space or write endurance.
+             It never renders a verdict of its own. -->
+        <div class="card glass" id="driveHealthCard">
+          <h2><span data-icon="gauge"></span>Drive Health</h2>
+          <div id="driveHealthBody"><div class="muted">Run a scan to check this drive.</div></div>
         </div>
       </div>
 
@@ -3935,6 +3951,7 @@ async function finishScan(root, durationMs, stats) {
 
   // Painted. Now the expensive server-side walks, filling in behind it.
   void loadWhatsNew(); // "what's new" banner — fetches its snapshots behind the paint too
+  void loadDriveHealth(); // C4 — shells out to smartctl, so never in front of the paint
   state.largest = []; state.types = []; state.bigFolders = [];
   $('statLargest').textContent = '–';
   try {
@@ -7643,6 +7660,62 @@ async function loadApps(force = false) {
   } catch (e) {
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }
+}
+
+/* ───────────────────────────── Drive Health (§C4) ─────────────────────────────
+   The drive's own attributes and its own self-assessment, verbatim, next to the
+   growth forecast. There is deliberately NO health verdict of TreeMap's own: a
+   false "your drive is dying" sends people to buy hardware they do not need. */
+async function loadDriveHealth() {
+  const host = $('driveHealthBody');
+  if (!host || !state.scanId) return;
+  host.innerHTML = skeletonRows(2, 22);
+  let device = null;
+  try {
+    // The topology map (A5) already knows which physical drive holds this root.
+    const topo = await api('/api/platform/topology');
+    const vol = (topo.volumes || []).find(v => state.root && state.root.path.startsWith(v.mountPoint || ' '));
+    device = (vol && vol.devicePath) || (topo.disks && topo.disks[0] && topo.disks[0].devicePath) || null;
+  } catch { /* topology is optional; the forecast half still answers */ }
+
+  let data;
+  try {
+    data = await api(`/api/health/smart?scanId=${state.scanId}` + (device ? `&device=${encodeURIComponent(device)}` : ''));
+  } catch (e) {
+    host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
+    return;
+  }
+
+  const outlook = data.outlook || {};
+  const summary = `<div class="dh-summary">${escapeHtml(outlook.summary || '')}</div>`;
+
+  if (!data.available) {
+    // §3.5 state 5: unavailable, with the reason and what to do about it.
+    host.innerHTML = summary +
+      `<div class="dh-unknown">${icon('alert', 14)}<span>${escapeHtml(data.reason || 'Drive health cannot be read on this system.')}</span></div>`;
+    return;
+  }
+
+  const s = data.smart || {};
+  const rows = [
+    s.modelName ? ['Drive', escapeHtml(s.modelName)] : null,
+    s.percentageUsed !== null && s.percentageUsed !== undefined
+      ? ['Write endurance used', `${escapeHtml(String(s.percentageUsed))}%`] : null,
+    s.powerOnHours !== null && s.powerOnHours !== undefined
+      ? ['Powered on for', `${formatCount(Math.round(s.powerOnHours))} hours`] : null,
+    s.reallocatedSectors !== null && s.reallocatedSectors !== undefined
+      ? ['Reallocated sectors', formatCount(s.reallocatedSectors)] : null,
+    s.temperatureCelsius !== null && s.temperatureCelsius !== undefined
+      ? ['Temperature', `${escapeHtml(String(s.temperatureCelsius))} °C`] : null,
+    // The device's own words, attributed to the device — never restated as ours.
+    s.selfAssessmentPassed !== null && s.selfAssessmentPassed !== undefined
+      ? ['The drive’s own self-check', s.selfAssessmentPassed ? 'reports passed' : 'reports not passed']
+      : ['The drive’s own self-check', 'not reported'],
+  ].filter(Boolean);
+
+  host.innerHTML = summary +
+    '<div class="dh-kv">' + rows.map(([k, v]) => `<span class="k">${k}</span><span>${v}</span>`).join('') + '</div>' +
+    `<div class="dh-foot">${escapeHtml(data.mechanism)} · ${escapeHtml(data.devicePath || '')}</div>`;
 }
 
 /* ──────────────────────────── Security view (§C5) ────────────────────────────

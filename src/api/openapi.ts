@@ -968,6 +968,34 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   },
   {
     method: 'get',
+    path: '/api/health/smart',
+    summary: "Drive SMART attributes reported verbatim, plus which runs out first — space or write endurance",
+    tag: 'insights',
+    destructive: false,
+    parameters: [
+      queryParam('device', 'Raw device path, e.g. /dev/disk0', { type: 'string' }),
+      queryParam('scanId', 'Completed scan, to include its growth forecast', { type: 'string' }),
+    ],
+    responses: {
+      '200': jsonResponse(
+        'Health, or an explicit can’t-know with the reason',
+        obj(
+          {
+            available: bool('false when SMART cannot be read — the reason says why, and how to fix it'),
+            reason: str(),
+            mechanism: str(),
+            devicePath: nullable(str()),
+            smart: nullable(opaque('modelName, percentageUsed, powerOnHours, reallocatedSectors, selfAssessmentPassed, temperatureCelsius, attributes[] — all verbatim from the device')),
+            forecast: nullable(opaque('The existing growth forecast for the scanned root')),
+            outlook: nullable(opaque('spaceFullInDays, wearExhaustedInDays, firstLimit, summary')),
+          },
+          ['available', 'mechanism'],
+        ),
+      ),
+    },
+  },
+  {
+    method: 'get',
     path: '/api/provenance',
     summary: 'Where one file came from: origin URL and host, download date, and last-opened time',
     tag: 'insights',
