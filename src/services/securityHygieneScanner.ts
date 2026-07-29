@@ -178,6 +178,11 @@ export interface SecurityFinding {
   suggestedPath?: string;
   /** True when the file sits in a folder that is shared or cloud-synced. */
   exposed: boolean;
+  /**
+   * True when an installed program owns this file. Listed for awareness only:
+   * never called serious, and never offered a move.
+   */
+  appOwned: boolean;
 }
 
 export interface SecurityReport {
@@ -198,6 +203,47 @@ function isUnder(child: string, parent: string): boolean {
 /** Lowercased path segments of `p`, for ancestor matching. */
 function segments(p: string): string[] {
   return p.split(/[\\/]+/).filter(Boolean).map((s) => s.toLowerCase());
+}
+
+/**
+ * Places where an installed program owns what is inside.
+ *
+ * Chrome ships a CA bundle; Google Drive ships `roots.pem`; half of npm ships a
+ * test fixture key. Those match the name rules exactly, but they are not a
+ * secret anyone mislaid — they are part of the software. TreeMap still lists
+ * them, because silently hiding a key-shaped file is the one thing this panel
+ * must never do, but it does two things differently: it does not call them
+ * serious, and it does not offer to move them. The relocate is a rename, and
+ * renaming an application's own resource out from under it breaks that
+ * application — which is a worse outcome than the finding it "fixed".
+ */
+const APP_OWNED_SEGMENTS = new Set([
+  'node_modules', 'site-packages', 'dist-packages', 'bower_components',
+  'program files', 'program files (x86)',
+]);
+/** The same idea where it takes two consecutive segments to be sure. */
+const APP_OWNED_RUNS = [
+  ['library', 'application support'],
+  ['library', 'containers'],
+  ['library', 'group containers'],
+  ['appdata', 'local'],
+  ['appdata', 'roaming'],
+];
+
+/** True when a run of segments appears consecutively in `dirs`. */
+function hasRun(dirs: string[], want: string[]): boolean {
+  for (let i = 0; i + want.length <= dirs.length; i++) {
+    if (want.every((w, k) => dirs[i + k] === w)) return true;
+  }
+  return false;
+}
+
+/** True when the file lives inside an installed program's own files. */
+export function isApplicationOwned(filePath: string): boolean {
+  const dirs = segments(path.dirname(filePath));
+  // A macOS bundle is a directory whose name ends in `.app`.
+  if (dirs.some((d) => d.endsWith('.app') || APP_OWNED_SEGMENTS.has(d))) return true;
+  return APP_OWNED_RUNS.some((want) => hasRun(dirs, want));
 }
 
 /**
@@ -265,31 +311,40 @@ export function collectSecurityFindings(
       const syncFolder = dirs.find((d) => SYNC_FOLDERS.some((s) => d === s || d.startsWith(s)));
       const where = path.basename(path.dirname(childPath)) || path.dirname(childPath);
 
+      // Being inside a synced or shared folder raises the stakes, never lowers
+      // them — a medium finding in Dropbox is a high one.
+      const stakes = syncFolder && pattern.severity === 'medium' ? 'high' : pattern.severity;
+      const appOwned = isApplicationOwned(childPath);
+
       findings.push({
         patternId: pattern.id,
         label: pattern.label,
         why: pattern.why,
-        // Being inside a synced or shared folder raises the stakes, never lowers
-        // them — a medium finding in Dropbox is a high one.
-        severity: syncFolder && pattern.severity === 'medium' ? 'high' : pattern.severity,
+        // A file that ships with a program is where that program put it, so it
+        // is not "in the wrong place" in the sense this panel means. Listed,
+        // never called serious.
+        severity: appOwned ? 'low' : stakes,
         path: childPath,
         name,
         size: store.size(child),
         modifiedAt: store.modifiedAt(child),
-        reason: syncFolder
-          ? `In “${where}”, which syncs to the cloud — a copy of this file leaves this computer.`
-          : exposedFolder
-            ? `In “${where}”, a folder that is easy to share or hand over by accident.`
-            : `In “${where}”, which is not where this kind of file belongs.`,
+        reason: appOwned
+          ? `In “${where}”, which belongs to an installed program — this file is part of that software, so moving it would break it.`
+          : syncFolder
+            ? `In “${where}”, which syncs to the cloud — a copy of this file leaves this computer.`
+            : exposedFolder
+              ? `In “${where}”, a folder that is easy to share or hand over by accident.`
+              : `In “${where}”, which is not where this kind of file belongs.`,
         // Only suggest a home directory for a file that is ALREADY under home.
         // Proposing to move a key found on an external drive into ~/.ssh is a
         // surprising place to put someone's file, and the rename would fail
-        // across filesystems anyway.
+        // across filesystems anyway. And never for a file a program owns.
         suggestedPath:
-          pattern.suggestedHome && isUnder(childPath, homeDir)
+          !appOwned && pattern.suggestedHome && isUnder(childPath, homeDir)
             ? path.join(homeDir, pattern.suggestedHome)
             : undefined,
         exposed: Boolean(syncFolder || exposedFolder),
+        appOwned,
       });
     }
   };

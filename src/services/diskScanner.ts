@@ -687,6 +687,33 @@ const JUNK_FILES = new Set(['.ds_store', 'thumbs.db', 'desktop.ini', '.localized
 const EMPTY_FOLDERS_CAP = 1000;
 
 /**
+ * Directories a tool keeps for itself, and everything beneath them.
+ *
+ * `.git/refs/tags` and `.git/objects/info` are empty in almost every repository
+ * on a disk, so they flooded the list — and an empty directory is worth ~0
+ * bytes, so removing them buys nothing while "Select all" quietly reaches into
+ * every repo you own. They are git's bookkeeping, not your files.
+ */
+const TOOL_OWNED_DIRS = new Set(['.git', '.hg', '.svn']);
+/**
+ * Directories the OS owns and recreates. Trashing the Trash is not a cleanup.
+ */
+const OS_OWNED_EMPTY_DIRS = new Set(['.trash', '.trashes', '$recycle.bin']);
+
+/**
+ * True for a directory whose whole subtree belongs to a tool or an application.
+ *
+ * The `.app` half is not cosmetic: a bundle ships empty `.lproj` localisation
+ * folders by the dozen, and they are inside the code signature's seal. Removing
+ * one gains nothing (an empty directory is ~0 bytes) and invalidates the
+ * signature, which on macOS means the app stops launching.
+ */
+function ownsItsContents(name: string): boolean {
+  const lower = name.toLowerCase();
+  return TOOL_OWNED_DIRS.has(lower) || lower.endsWith('.app');
+}
+
+/**
  * Find recursively-empty directories: no files anywhere below (only other
  * empty dirs). With `ignoreJunk`, OS metadata files like .DS_Store don't
  * count as content. Returns only the topmost empty dirs — trashing those
@@ -720,9 +747,24 @@ export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): Em
     const p = store.parent(id);
     if (!empty.get(id) && empty.get(p)) empty.set(p, false);
   }
+  // Which nodes a tool owns. `ordered` is ascending and children carry higher
+  // ids than their parents, so one forward pass settles a parent before any of
+  // its children ask about it — no second traversal, no recursion.
+  const toolOwned = new Set<number>();
+  for (const id of ordered) {
+    if (id === store.rootId) continue;
+    if (toolOwned.has(store.parent(id)) || ownsItsContents(store.name(id))) {
+      toolOwned.add(id);
+    }
+  }
+  /** Reportable = empty, and not something a tool or the OS keeps for itself. */
+  const reportable = (id: number): boolean =>
+    id !== store.rootId && store.isDir(id) && Boolean(empty.get(id)) &&
+    !toolOwned.has(id) && !OS_OWNED_EMPTY_DIRS.has(store.name(id).toLowerCase());
+
   let totalCount = 0;
   for (const id of ordered) {
-    if (id !== store.rootId && store.isDir(id) && empty.get(id)) totalCount++;
+    if (reportable(id)) totalCount++;
   }
 
   // Pass 2, top-down: report only topmost empty dirs (their whole subtree is
@@ -742,6 +784,10 @@ export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): Em
     const c = f.kids[f.next++];
     if (!store.isDir(c)) continue;
     if (empty.get(c)) {
+      // An empty dir a tool owns is skipped outright rather than descended
+      // into — its whole subtree is empty by definition, so there is nothing
+      // reportable below it either.
+      if (!reportable(c)) continue;
       if (topmost.length < EMPTY_FOLDERS_CAP) topmost.push({ name: store.name(c), path: store.path(c) });
       else truncated = true;
     } else {

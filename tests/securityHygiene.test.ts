@@ -235,6 +235,42 @@ test('a home destination is only suggested for a file that is already under home
   assert.equal(relocationTargetFor(elsewhere), null);
 });
 
+test('a file an installed program owns is listed, but never called serious and never offered a move', () => {
+  // The real case this came from: Google Drive ships its own CA bundle at
+  // Library/Application Support/Google/DriveFS/Resources/roots.pem. It matches
+  // the PEM rule exactly, but it is part of the software — calling it SERIOUS is
+  // wrong, and "Move to .ssh" would break Google Drive, because the relocate is
+  // a rename of the app's own resource.
+  const owned = findingsFor([
+    file('roots.pem', path.join(HOME, 'Library', 'Application Support', 'Google', 'DriveFS', 'Resources')),
+  ])[0];
+  assert.ok(owned, 'still listed — hiding a key-shaped file is the one thing this panel must not do');
+  assert.equal(owned.appOwned, true);
+  assert.equal(owned.severity, 'low', 'not serious: it is where its program put it');
+  assert.equal(owned.suggestedPath, undefined, 'and nothing is proposed');
+  assert.equal(relocationTargetFor(owned), null, 'so there is no destination to move to');
+  assert.match(owned.reason, /installed program/);
+
+  // Every shape of app ownership, and the control: the same file loose in
+  // Downloads is still a serious finding with a home to go to.
+  for (const dir of [
+    path.join(HOME, 'Library', 'Containers', 'com.example.app', 'Data'),
+    path.join(HOME, 'projects', 'app', 'node_modules', 'some-pkg', 'test', 'fixtures'),
+    path.join(HOME, 'Applications', 'Thing.app', 'Contents', 'Resources'),
+    path.join(HOME, 'Library', 'Application Support', 'Vendor'),
+  ]) {
+    const f = findingsFor([file('id_rsa', dir)])[0];
+    assert.ok(f, `${dir} is still listed`);
+    assert.equal(f.appOwned, true, `${dir} counts as program-owned`);
+    assert.equal(f.suggestedPath, undefined, `${dir} is never offered a move`);
+  }
+
+  const loose = findingsFor([file('id_rsa', path.join(HOME, 'Downloads'))])[0];
+  assert.equal(loose.appOwned, false);
+  assert.equal(loose.severity, 'high', 'the ordinary case is unchanged');
+  assert.equal(loose.suggestedPath, path.join(HOME, '.ssh'));
+});
+
 test('the move can only ever be a rename — it never removes anything', () => {
   // Monkey-patching fs to force EXDEV does not survive the module boundary, and
   // a second real filesystem is not something a test can conjure. The invariant
