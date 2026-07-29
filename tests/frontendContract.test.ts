@@ -1447,3 +1447,26 @@ test('moving a secret warns that references to the old path will break', () => {
   assert.match(fn, /Nothing is deleted/, 'and that nothing is deleted');
   assert.match(fn, /confirm: true/, 'the endpoint is double-gated');
 });
+
+/* ══════════════ Provenance URLs are untrusted text (§C3) ══════════════ */
+
+test('an origin URL is never a live link, and never shown up front', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function loadProvenance'), code.indexOf('function renderPreviewMeta'));
+  assert.ok(fn.length > 0, 'loadProvenance must be findable');
+  // The string came from a web page. A full URL in a panel is both ugly and a
+  // shoulder-surfing risk, and an anchor is a click away from being followed.
+  assert.doesNotMatch(fn, /<a\s/i, 'no anchor is ever built');
+  assert.doesNotMatch(fn, /window\.open|location\.href|fetch\(data\.url/, 'the URL is never followed');
+  assert.match(fn, /escapeHtml\(data\.host/, 'the host is escaped');
+  assert.match(fn, /Show the full address/, 'the full URL is behind a deliberate click');
+  assert.match(fn, /textContent = data\.url/, 'and set as text, never as markup');
+});
+
+test('a file with no recorded origin is explained, not left blank', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('async function loadProvenance'), code.indexOf('function renderPreviewMeta'));
+  assert.match(fn, /data\.absentReason/, 'the server’s explanation is shown');
+  assert.match(fn, /!data\.supported/, 'and an OS that cannot record it says so separately');
+  assert.match(fn, /never opened since it was saved/, 'last-opened has an honest unknown state');
+});

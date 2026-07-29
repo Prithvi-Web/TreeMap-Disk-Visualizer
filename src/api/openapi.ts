@@ -968,6 +968,36 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   },
   {
     method: 'get',
+    path: '/api/provenance',
+    summary: 'Where one file came from: origin URL and host, download date, and last-opened time',
+    tag: 'insights',
+    destructive: false,
+    parameters: [queryParam('path', 'File inside a scanned root', { type: 'string' }, true)],
+    responses: {
+      '200': jsonResponse(
+        'Origin, or an honest statement that nothing was recorded',
+        obj(
+          {
+            path: str(),
+            supported: bool('false when this OS cannot read provenance at all'),
+            unsupportedReason: str(),
+            found: bool('false when the OS records nothing for this file'),
+            url: nullable(str('UNTRUSTED input — never fetch it, always escape it')),
+            host: nullable(str()),
+            referrer: nullable(str()),
+            downloadedAt: nullable(int('Unix epoch milliseconds')),
+            mechanism: nullable(str('Which OS record answered')),
+            lastOpenedAt: nullable(int()),
+            absentReason: str('Why nothing was recorded, when nothing was'),
+          },
+          ['path', 'supported', 'found'],
+        ),
+      ),
+      '403': errorResponse('Outside every scanned root'),
+    },
+  },
+  {
+    method: 'get',
     path: '/api/security/findings',
     summary: 'Secrets (keys, .env, wallets, cloud credentials) found OUTSIDE their expected locations — names and paths only, never contents',
     tag: 'insights',

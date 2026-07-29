@@ -27,6 +27,7 @@ import { findGitRepos, runGitGc } from '../services/gitScanner';
 import { scanPackageEcosystems } from '../services/packageEcosystemScanner';
 import { scanGameLibraries } from '../services/gameLibraryScanner';
 import { collectSecurityFindings, relocateSecret, SECURITY_PATTERNS } from '../services/securityHygieneScanner';
+import { readProvenance } from '../services/provenanceTracker';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { getPolicy, assertPathsAllowed } from '../services/policy';
 import { ruleCatalogStatus } from '../services/rulePacks';
@@ -222,6 +223,24 @@ insightRouter.post('/security/relocate', idempotency, guardBodyPath, requireInsi
     await appendAudit({ action: 'security.relocate', source: 'http', tokenId: tokenIdFor('http'), paths: [from, dest], bytes: null, dryRun: false, outcome: 'refused' });
     throw new AppError(409, 'RELOCATE_FAILED', err instanceof Error ? err.message : String(err));
   }
+});
+
+/**
+ * GET /api/provenance?path= — where one file came from (§C3).
+ *
+ * Read-only, and restricted to files inside a scanned root like every other
+ * per-file read. The URL it returns is untrusted text: it is never fetched,
+ * never resolved, and the UI escapes it on render.
+ */
+insightRouter.get('/provenance', guardQueryPath('path'), async (req: Request, res: Response) => {
+  const target = req.query.path;
+  if (typeof target !== 'string' || !target) {
+    throw new AppError(400, 'PATH_REQUIRED', 'A "path" query parameter is required');
+  }
+  if (!insideAnyScanRoot(target)) {
+    throw new AppError(403, 'OUTSIDE_SCAN_ROOT', 'Provenance is only available for files inside a scanned folder');
+  }
+  res.json(await readProvenance(target));
 });
 
 /** POST /api/git/gc { path, confirm:true } — run `git gc` in a scanned repo. */

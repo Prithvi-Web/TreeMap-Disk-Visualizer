@@ -928,6 +928,16 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .pkg-why { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 .pkg-why code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
   padding: 1px 4px; border-radius: 4px; background: var(--surface-3); }
+/* ── C3: download provenance, in the preview pane ── */
+.pv-origin { flex: none; padding: 9px 13px; border-top: 1px solid var(--hairline); font-size: 11.5px; line-height: 1.5; }
+.pv-orig-line { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
+.pv-orig-line.muted, .pv-origin .muted { color: var(--text-3); }
+.pv-orig-line b { display: inline-flex; align-items: baseline; gap: 5px; }
+.pv-orig-show { margin-top: 4px; padding: 0; background: none; border: 0; cursor: pointer;
+  color: var(--accent); font-size: 11px; text-decoration: underline; }
+.pv-orig-url { margin-top: 4px; }
+.pv-orig-url code { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
+  word-break: break-all; padding: 5px 7px; border-radius: 6px; background: var(--surface-2); color: var(--text-2); }
 /* ── C5: secrets hygiene ── */
 .sec-note { color: var(--text-3); font-size: 11.5px; }
 .sec-list { display: flex; flex-direction: column; gap: 8px; }
@@ -2146,6 +2156,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     <button class="close-x" id="pvClose" aria-label="Close preview"><span data-icon="x" data-size="14"></span></button>
   </div>
   <div class="pv-body" id="pvBody"></div>
+  <div class="pv-origin" id="pvOrigin" hidden></div>
   <div class="pv-foot"><span class="pth" id="pvFoot"></span></div>
 </aside>
 
@@ -7331,6 +7342,7 @@ function openPreview(node) {
   body.innerHTML = '<div class="pv-empty">Loading…</div>';
   const reqId = ++pvReqId;
   const url = `/api/files/preview?path=${encodeURIComponent(node.path)}`;
+  loadProvenance(node.path, reqId);
 
   if (PV_IMG_EXT.has(ext)) {
     const img = new Image();
@@ -7352,6 +7364,57 @@ function openPreview(node) {
   }).catch((e) => {
     if (reqId === pvReqId) body.innerHTML = `<div class="pv-empty">Can’t preview this file.<br>${escapeHtml(e.message)}</div>`;
   });
+}
+
+/* ── Download provenance (§C3) ──────────────────────────────────────────────
+   The origin URL is untrusted text that arrived from a website. It is shown as
+   the HOST only, escaped, with the full URL behind a deliberate click — a full
+   URL in a panel is both ugly and a shoulder-surfing risk. It is never rendered
+   as a live link and never fetched: the whole app makes no outbound request. */
+async function loadProvenance(filePath, reqId) {
+  const host = $('pvOrigin');
+  if (!host) return;
+  host.hidden = true;
+  host.innerHTML = '';
+  let data;
+  try { data = await api('/api/provenance?path=' + encodeURIComponent(filePath)); } catch { return; }
+  if (reqId !== pvReqId) return; // a newer file superseded this one
+
+  const opened = data.lastOpenedAt
+    ? `last opened ${escapeHtml(formatDate(data.lastOpenedAt))}`
+    : 'never opened since it was saved, as far as this Mac records';
+
+  if (!data.supported) {
+    host.innerHTML = `<div class="pv-orig-line muted">${icon('globe', 12)} ${escapeHtml(data.unsupportedReason || 'This system does not record where files came from.')}</div>`;
+  } else if (!data.found) {
+    host.innerHTML = `<div class="pv-orig-line muted">${icon('globe', 12)} ${escapeHtml(data.absentReason || 'No origin recorded.')}</div>
+      <div class="pv-orig-line muted">${escapeHtml(opened.charAt(0).toUpperCase() + opened.slice(1))}.</div>`;
+  } else {
+    const when = data.downloadedAt ? ` on ${escapeHtml(formatDate(data.downloadedAt))}` : '';
+    // A quarantine record without a Spotlight entry gives the date but no URL
+    // (Spotlight does not index every volume). "Downloaded on the 3rd" is true;
+    // "downloaded from an unknown site" invents a site that was never recorded.
+    const headline = data.host
+      ? `Downloaded from ${escapeHtml(data.host)}`
+      : 'Downloaded from the web';
+    host.innerHTML =
+      `<div class="pv-orig-line"><b>${icon('globe', 12)} ${headline}</b>${when}.</div>` +
+      `<div class="pv-orig-line muted">${escapeHtml(opened.charAt(0).toUpperCase() + opened.slice(1))}.</div>` +
+      (data.url ? `<button class="pv-orig-show" type="button">Show the full address</button>
+         <div class="pv-orig-url" hidden><code></code></div>` : '');
+    const show = host.querySelector('.pv-orig-show');
+    if (show) {
+      show.addEventListener('click', () => {
+        const box = host.querySelector('.pv-orig-url');
+        // textContent, never innerHTML and never an <a>: this string came from
+        // a web page, and nothing here should be clickable by accident.
+        box.querySelector('code').textContent = data.url;
+        box.hidden = false;
+        show.remove();
+      });
+    }
+  }
+  host.hidden = false;
 }
 
 function renderPreviewMeta(node, data) {
@@ -9977,6 +10040,11 @@ window.TreeMap = {
   showTooltip,
   allocationTooltipLine,
   resolveAllocation,
+  // Same reason: the preview pane opens from a canvas double-click, a context
+  // menu or a keyboard shortcut, none of which a synthetic event can drive in an
+  // occluded window — so the provenance strip (§C3) could not otherwise be
+  // asserted against a real file.
+  openPreview,
 };
 
 /* ═══════════════ Liquid Glass engine ═══════════════
