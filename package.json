@@ -21,7 +21,8 @@
     "fetch:gdu:dev": "node scripts/fetchGdu.js --dev",
     "dist:portable-mac": "npm run build && npm run fetch:gdu && electron-builder --mac zip --config.artifactName=\"TreeMap-Portable-${version}-${arch}.${ext}\" && node scripts/mark-portable.js",
     "dist:portable-win": "npm run build && npm run fetch:gdu && electron-builder --win portable --config.artifactName=\"TreeMap-Portable-${version}.${ext}\"",
-    "dist:portable-linux": "npm run build && npm run fetch:gdu && electron-builder --linux AppImage --config.artifactName=\"TreeMap-Portable-${version}-${arch}.${ext}\" && node scripts/mark-portable.js"
+    "dist:portable-linux": "npm run build && npm run fetch:gdu && electron-builder --linux AppImage --config.artifactName=\"TreeMap-Portable-${version}-${arch}.${ext}\" && node scripts/mark-portable.js",
+    "fleet:acceptance": "npm run build && node scripts/fleet-acceptance.js"
   },
   "engines": {
     "node": ">=20"

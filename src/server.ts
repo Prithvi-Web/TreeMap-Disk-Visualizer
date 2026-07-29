@@ -7,6 +7,8 @@ import { scanRouter, drainSseClients, activeSseCount } from './api/scanRoutes';
 import { fileRouter } from './api/fileRoutes';
 import { systemRouter } from './api/systemRoutes';
 import { insightRouter } from './api/insightRoutes';
+import { fleetRouter } from './api/fleetRoutes';
+import { initFleet, fleetRuntime } from './services/fleet/fleetRuntime';
 import { settingsRouter } from './api/settingsRoutes';
 import { watchRouter, drainWatchClients } from './api/watchRoutes';
 import { offloadRouter, drainOffloadClients } from './api/offloadRoutes';
@@ -57,6 +59,7 @@ export function createApp(publicDir: string): express.Express {
   app.use('/api', fileRouter);
   app.use('/api', systemRouter);
   app.use('/api', insightRouter);
+  app.use('/api', fleetRouter);
   app.use('/api', settingsRouter);
   app.use('/api', watchRouter);
   app.use('/api', offloadRouter);
@@ -114,6 +117,7 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
     cancelAllCapsuleJobs(); // in-flight restores roll back what they wrote
     stopCapsuleMaintenance(); // stop the retention sweep
     stopOAuth(); // close any pending sign-in listener
+    void fleetRuntime().stop(); // close the LAN listener and stop advertising
     drainSseClients(); // send 'shutdown' event, then end each stream
     drainWatchClients(); // end live-activity streams
     drainOffloadClients(); // end offload progress streams
@@ -132,6 +136,10 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
   // Sweeps Time Capsule entries past their retention window, and reconciles
   // the capsule against its index once at startup (B3).
   startCapsuleMaintenance();
+  // D1: bring the fleet listener up ONLY if the user had already turned it on.
+  // Fire-and-forget and never fatal — the fleet view is an extra, and a taken
+  // port or an unreachable multicast group must not stop TreeMap starting.
+  void initFleet();
 
   return new Promise<RunningServer>((resolve, reject) => {
     server.once('error', reject);

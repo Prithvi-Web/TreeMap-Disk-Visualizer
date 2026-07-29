@@ -37,6 +37,7 @@ const TAB_VIEWS = [
   'autopilot', // B1 — Autopilot
   'games', // C7 — game libraries
   'security', // C5 — secrets hygiene
+  'fleet', // D1 — LAN fleet view
 ] as const;
 const MODAL_VIEWS = ['cleanModal', 'settingsModal'] as const;
 
@@ -1579,4 +1580,36 @@ test('a read-only portable drive is told plainly that nothing is saved', () => {
   assert.match(fn, /Nothing is saved/, 'the read-only case is not glossed');
   assert.match(fn, /p\.writable/, 'and it is driven by the real writability probe');
   assert.match(fn, /degraded/, 'the capabilities it loses are listed');
+});
+
+/* ══════════════ The fleet says what leaves this machine (§D1) ══════════════ */
+
+test('the Fleet panel leads with what is shared and what never is', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function renderFleet'), code.indexOf('async function setFleet'));
+  assert.ok(fn.length > 0, 'renderFleet must be findable');
+  // Read from the SERVER, so the promise on screen and the code that keeps it
+  // cannot drift apart.
+  assert.match(fn, /f\.shares/, 'what would be shared comes from the server');
+  assert.match(fn, /f\.neverShares/, 'and so does what never can');
+  assert.match(fn, /What other machines would see/);
+  assert.match(fn, /What they can never see/);
+});
+
+test('an unpaired machine is shown as available to pair, never as connected', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function renderFleet'), code.indexOf('async function setFleet'));
+  assert.match(fn, /Available to pair/, '§D1’s exact requirement');
+  assert.match(fn, /not paired — nothing is shared/, 'and the row says so');
+  assert.match(fn, /!pairedIds\.has\(d\.instanceId\)/, 'paired machines are not listed twice');
+});
+
+test('the off state says plainly that nothing is being shared', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function renderFleet'), code.indexOf('async function setFleet'));
+  assert.match(fn, /is <b>off<\/b>/s, 'off is stated, not implied');
+  // The sentence wraps inside the template literal, so match the claim rather
+  // than a contiguous phrase (trap: never phrase-match template-built text).
+  assert.match(fn, /announcing itself/, 'including that it is not advertising');
+  assert.match(fn, /Nothing is being shared/);
 });

@@ -928,6 +928,32 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .pkg-why { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 .pkg-why code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
   padding: 1px 4px; border-radius: 4px; background: var(--surface-3); }
+/* ── D1: fleet ── */
+.fleet-disclosure { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.fleet-disclosure .fl-col { flex: 1 1 260px; padding: 10px 12px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--hairline); font-size: 11.5px; }
+.fleet-disclosure .fl-col.never { background: rgba(255,69,58,0.06); border-color: rgba(255,69,58,0.3); }
+.fleet-disclosure b { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; }
+.fleet-disclosure ul { margin: 0; padding-left: 17px; color: var(--text-2); line-height: 1.55; }
+.fleet-off { padding: 14px 2px; font-size: 12.5px; line-height: 1.6; }
+.fleet-controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+.fl-switch { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; }
+.fl-addr { font-size: 11px; margin-bottom: 12px; }
+.fleet-code { padding: 9px 12px; margin-bottom: 12px; border-radius: 9px; font-size: 13px;
+  background: rgba(10,132,255,0.1); border: 1px solid rgba(10,132,255,0.4); display: flex; align-items: center; gap: 10px; }
+.fleet-code b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 17px; letter-spacing: 3px; }
+.fleet-sub { font-size: 11.5px; color: var(--text-3); margin: 14px 0 7px; }
+.fleet-peer { padding: 10px 12px; margin-bottom: 8px; border-radius: 11px;
+  border: 1px solid var(--hairline); background: var(--surface-1); }
+.fleet-peer.offline { opacity: 0.65; }
+.fleet-peer.available { border-style: dashed; }
+.fl-head { display: flex; align-items: center; gap: 9px; font-size: 12.5px; }
+.fl-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.fl-dot.on { background: #30d158; } .fl-dot.off { background: var(--text-3); }
+.fl-tag { font-size: 10.5px; color: var(--text-3); font-style: italic; }
+.fl-bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin-top: 9px; }
+.fl-bar .fill { height: 100%; background: var(--accent); }
+.fl-facts { font-size: 11px; color: var(--text-3); margin-top: 6px; }
 /* ── D3: portable session ── */
 .pm-lead { font-size: 13px; line-height: 1.6; margin-bottom: 14px; }
 .pm-rows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
@@ -1403,6 +1429,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     <button role="tab" aria-selected="false" data-view="apps" title="Apps"><span data-icon="box"></span><span class="side-label">Apps</span></button>
     <button role="tab" aria-selected="false" data-view="games" title="Games"><span data-icon="play"></span><span class="side-label">Games</span></button>
     <button role="tab" aria-selected="false" data-view="security" title="Security"><span data-icon="shield"></span><span class="side-label">Security</span></button>
+    <button role="tab" aria-selected="false" data-view="fleet" title="Fleet"><span data-icon="globe"></span><span class="side-label">Fleet</span></button>
     <button role="tab" aria-selected="false" data-view="duplicates" title="Duplicates"><span data-icon="copy"></span><span class="side-label">Duplicates</span></button>
     <button role="tab" aria-selected="false" data-view="trends" title="Trends"><span data-icon="trendUp"></span><span class="side-label">Trends</span></button>
     <button role="tab" aria-selected="false" data-view="compare" title="Compare"><span data-icon="diff"></span><span class="side-label">Compare</span></button>
@@ -1679,6 +1706,14 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       <h2><span data-icon="box"></span>Storage by Application</h2>
       <div class="apps-info muted" id="appsInfo"></div>
       <div id="appsBody"><div class="muted">Run a scan to see how much disk each application owns.</div></div>
+    </div>
+  </section>
+
+  <!-- ═══════════ Fleet (D1) ═══════════ -->
+  <section class="view" id="view-fleet" role="tabpanel" aria-label="Fleet" hidden>
+    <div class="card glass">
+      <h2><span data-icon="globe"></span>Other Machines</h2>
+      <div id="fleetBody"><div class="muted">Loading…</div></div>
     </div>
   </section>
 
@@ -2633,6 +2668,7 @@ const state = {
   games: { loadedFor: null, report: null },
   security: { loadedFor: null, report: null },
   cost: null,
+  fleet: { data: null, timer: 0 },
   live: { on: false, wanted: false, es: null, engine: '', idleMinutes: 10, pulses: new Map(), window: [], dirty: 0, feedTimer: 0, relayoutTimer: 0, pulseRaf: 0 },
   offload: { index: null, q: '' },
   capsule: { index: null, q: '' },
@@ -2879,6 +2915,12 @@ const VIEWS = [
     id: 'security', label: 'Security', icon: 'shield', needsScan: true,
     mount() { if (state.scanId && state.root) loadSecurity(); },
     onScanChange() { state.security.loadedFor = null; },
+  },
+  {
+    // Needs no scan: it is about other machines, not this folder.
+    id: 'fleet', label: 'Fleet', icon: 'globe', needsScan: false,
+    mount() { loadFleet(); },
+    unmount() { clearTimeout(state.fleet.timer); state.fleet.timer = 0; },
   },
   {
     id: 'duplicates', label: 'Duplicates', icon: 'copy', needsScan: true,
@@ -9953,6 +9995,163 @@ async function renderAllocationDiagnostic() {
 
   html += `<div class="note">${escapeHtml(a.reason)}</div>`;
   host.innerHTML = html;
+}
+
+/* ── Fleet view (§D1) ──────────────────────────────────────────────────────
+   The only feature that opens a network surface, so the panel leads with what
+   would leave this machine and what never can — read from the SERVER, so the
+   promise on screen and the code that keeps it cannot drift apart. Discovered
+   machines are shown as "available to pair", never as connected. */
+async function loadFleet() {
+  const host = $('fleetBody');
+  clearTimeout(state.fleet.timer);
+  try { state.fleet.data = await api('/api/fleet'); }
+  catch (e) { host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`; return; }
+  renderFleet();
+  // Discovery and peer liveness both move on their own; refresh gently while
+  // the tab is open, and stop entirely on unmount.
+  state.fleet.timer = setTimeout(() => { if (state.view === 'fleet') loadFleet(); }, 5000);
+}
+
+function renderFleet() {
+  const f = state.fleet.data;
+  const host = $('fleetBody');
+  if (!f) return;
+
+  const disclosure = `<div class="fleet-disclosure">
+    <div class="fl-col"><b>${icon('checkCircle', 13)} What other machines would see</b><ul>${
+      (f.shares || []).map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul></div>
+    <div class="fl-col never"><b>${icon('ban', 13)} What they can never see</b><ul>${
+      (f.neverShares || []).map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul></div>
+  </div>`;
+
+  if (!f.enabled) {
+    host.innerHTML = disclosure +
+      `<div class="fleet-off">
+        <p>Seeing other TreeMaps on your network is <b>off</b>. Nothing is being shared, and this machine is not
+        announcing itself to anything.</p>
+        <button class="btn btn-primary" id="fleetOnBtn">${icon('globe', 14)} Turn on for this network</button>
+      </div>`;
+    $('fleetOnBtn').onclick = () => setFleet({ enabled: true });
+    return;
+  }
+
+  const peers = (f.peers || []).map(p => {
+    const s = p.summary;
+    const pct = s && s.totalBytes ? Math.round((s.usedBytes / s.totalBytes) * 100) : null;
+    return `<div class="fleet-peer${p.online ? '' : ' offline'}">
+      <div class="fl-head">
+        <b>${escapeHtml(p.label)}</b>
+        <span class="fl-dot ${p.online ? 'on' : 'off'}" title="${p.online ? 'Seen just now' : 'Not seen recently'}"></span>
+        <span class="muted num">${escapeHtml(p.address)}</span>
+        <span style="flex:1"></span>
+        <button class="pill" data-fleet-refresh="${escapeHtml(p.instanceId)}">Refresh</button>
+        ${s && s.acceptsRemoteScan ? `<button class="pill" data-fleet-scan="${escapeHtml(p.instanceId)}">Scan a folder…</button>` : ''}
+        <button class="icon-btn" data-fleet-forget="${escapeHtml(p.instanceId)}" title="Forget this machine">${icon('x', 13)}</button>
+      </div>
+      ${s ? `<div class="fl-bar"><div class="fill" style="width:${pct === null ? 0 : pct}%"></div></div>
+        <div class="fl-facts num">${s.totalBytes !== null
+          ? `${formatBytes(s.usedBytes)} used of ${formatBytes(s.totalBytes)} · ${formatBytes(s.freeBytes)} free`
+          : 'disk figures unavailable'}${s.lastScanPath
+          ? ` · last scanned ${escapeHtml(baseName(s.lastScanPath))} ${s.lastScanAt ? 'on ' + escapeHtml(formatDate(s.lastScanAt)) : ''}`
+          : ' · no scan yet'}</div>`
+        : `<div class="fl-facts muted">No summary yet — press Refresh to ask.</div>`}
+    </div>`;
+  }).join('');
+
+  // §D1: an unpaired machine is "available to pair", never "connected".
+  const pairedIds = new Set((f.peers || []).map(p => p.instanceId));
+  const available = (f.discovered || []).filter(d => d.instanceId !== f.instanceId && !pairedIds.has(d.instanceId));
+  const availableHtml = available.length
+    ? `<div class="fleet-sub">Available to pair</div>` + available.map(d => `
+      <div class="fleet-peer available">
+        <div class="fl-head">
+          <b>${escapeHtml(d.label)}</b>
+          <span class="muted num">${escapeHtml(d.address)}</span>
+          <span class="fl-tag">not paired — nothing is shared</span>
+          <span style="flex:1"></span>
+          <button class="pill" data-fleet-pair="${escapeHtml(d.address)}" data-fleet-port="${d.port}">Pair…</button>
+        </div>
+      </div>`).join('')
+    : '';
+
+  host.innerHTML = disclosure +
+    `<div class="fleet-controls">
+      <label class="fl-switch"><input type="checkbox" id="fleetEnabled" checked> Visible on this network</label>
+      <label class="fl-switch"><input type="checkbox" id="fleetRemoteScan"${f.allowRemoteScan ? ' checked' : ''}>
+        Let paired machines start a scan here</label>
+      <span style="flex:1"></span>
+      <button class="btn" id="fleetPairBtn">${icon('plus', 13)} Pair a machine</button>
+    </div>
+    <div class="fl-addr muted num">${f.running
+      ? `Listening on ${(f.addresses || []).map(escapeHtml).join(', ')} · port ${f.port}`
+      : 'Not listening'}</div>` +
+    (f.pairing ? `<div class="fleet-code">Type this code on the other machine: <b>${escapeHtml(f.pairing.code)}</b>
+       <button class="pill" id="fleetCancelCode">Stop</button></div>` : '') +
+    (peers || `<div class="muted" style="padding:10px 2px;">No machines paired yet.</div>`) +
+    availableHtml;
+
+  $('fleetEnabled').onchange = (e) => setFleet({ enabled: e.target.checked });
+  $('fleetRemoteScan').onchange = (e) => setFleet({ allowRemoteScan: e.target.checked });
+  $('fleetPairBtn').onclick = showPairingCode;
+  const cancel = $('fleetCancelCode');
+  if (cancel) cancel.onclick = async () => { await api('/api/fleet/pairing', { method: 'DELETE' }); loadFleet(); };
+
+  host.querySelectorAll('[data-fleet-refresh]').forEach(b => b.onclick = () => refreshPeer(b.dataset.fleetRefresh));
+  host.querySelectorAll('[data-fleet-forget]').forEach(b => b.onclick = () => forgetPeer(b.dataset.fleetForget));
+  host.querySelectorAll('[data-fleet-scan]').forEach(b => b.onclick = () => triggerPeerScan(b.dataset.fleetScan));
+  host.querySelectorAll('[data-fleet-pair]').forEach(b =>
+    b.onclick = () => pairWithMachine(b.dataset.fleetPair, Number(b.dataset.fleetPort)));
+}
+
+async function setFleet(patch) {
+  try {
+    await api('/api/fleet', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+  } catch (e) { toast('Could not change that: ' + e.message, 'error'); }
+  loadFleet();
+}
+
+async function showPairingCode() {
+  try {
+    const offer = await api('/api/fleet/pairing', { method: 'POST' });
+    toast(`Type ${offer.code} on the other machine`);
+  } catch (e) { toast(e.message, 'error'); }
+  loadFleet();
+}
+
+async function pairWithMachine(address, port) {
+  const code = prompt(`Enter the six-digit code showing on ${address}:`);
+  if (!code) return;
+  try {
+    await api('/api/fleet/peers', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address, port, code: code.trim() }),
+    });
+    toast('Paired');
+  } catch (e) { toast('Pairing failed: ' + e.message, 'error'); }
+  loadFleet();
+}
+
+async function refreshPeer(id) {
+  try { await api(`/api/fleet/peers/${encodeURIComponent(id)}/summary`); }
+  catch (e) { toast(e.message, 'error'); }
+  loadFleet();
+}
+
+async function forgetPeer(id) {
+  await api(`/api/fleet/peers/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => undefined);
+  loadFleet();
+}
+
+async function triggerPeerScan(id) {
+  const path = prompt('Which folder should that machine scan?');
+  if (!path) return;
+  try {
+    await api(`/api/fleet/peers/${encodeURIComponent(id)}/trigger-scan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }),
+    });
+    toast('Asked it to scan — its own screen will show the result');
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 /* ── Portable session (§D3) ────────────────────────────────────────────────

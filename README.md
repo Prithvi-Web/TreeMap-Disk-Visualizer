@@ -298,6 +298,9 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 | `GET /api/health/smart?device=` | Drive SMART attributes next to the growth forecast |
 | `GET /api/cost/estimate?scanId=` | What the data would cost to keep on each cloud provider |
 | `GET /api/compression/candidates?scanId=` | Video worth re-encoding to HEVC, with estimated savings |
+| `GET /api/platform/shell-integration` | The "Scan with TreeMap" right-click entry (add / remove) |
+| `GET /api/platform/portable` | Whether this is a no-trace portable session |
+| `GET /api/fleet` | Other TreeMaps on your network — off by default, summaries only |
 | `GET /api/cleanup/browser-profiles?scanId=` | Per-browser-profile cache breakdown |
 | `GET /api/git/repos?scanId=` · `POST /api/git/gc` | Git pack/loose/LFS breakdown, and `git gc` a scanned repo |
 | `GET /api/system/snapshots` · `POST …/purge` | OS snapshot accounting (APFS / Btrfs / VSS) |

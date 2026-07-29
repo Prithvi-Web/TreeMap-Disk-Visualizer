@@ -81,6 +81,12 @@ OpenAPI 3 spec).
      session, where it writes, and what it cannot do. **When `writable` is
      false nothing is persisted anywhere at all** — not on the drive, and
      emphatically not on the host.
+   - `GET /api/fleet`, `/api/fleet/peers`, `/api/fleet/peers/{id}/summary` —
+     other TreeMaps on the LAN. **Off by default.** Peers exchange summaries
+     only (volume figures, last scan root/time/size); file trees, Security
+     findings and provenance URLs never cross the network, and **there is no
+     remote-delete route at all**. Triggering a scan on a peer is a separate
+     opt-in that peer must have granted.
 3. **Confirm with the user, then act.**
    - `DELETE /api/files` with `{ "paths": [...] }` moves files to the **OS
      Trash** — recoverable, never a hard delete.
