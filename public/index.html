@@ -111,7 +111,10 @@ body {
      instead of scrolling sideways. Below 640 the page scrolls, because the
      fixed-width dialogs stop fitting there. */
   min-width: 640px;
-  overflow-x: auto;
+  /* The window itself never scrolls vertically — main is the app's one
+     scroller. This is what keeps the sidebar pinned and modals aligned no
+     matter how tall a view grows. Horizontal stays auto for sub-640px. */
+  overflow: auto hidden;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -294,14 +297,17 @@ select option { background: var(--glass-strong); color: var(--text-1); }
    the search box at any zoom level. */
 :root { --side-w: 232px; --side-w-rail: 64px; }
 
-body { display: grid; grid-template-columns: auto minmax(0, 1fr); }
+body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 
 #sideNav {
   width: var(--side-w);
-  position: sticky; top: 0; height: 100vh; height: 100dvh; z-index: 50;
+  /* A floating glass card: inset from the window edges with the app's large
+     radius. position: relative anchors the .lg pseudo-layers; the grid row
+     (100% of the window) minus these margins sets its height. */
+  position: relative; z-index: 50;
+  margin: 12px 0 12px 12px; border-radius: var(--r-lg);
   display: flex; flex-direction: column; gap: 12px;
   padding: 14px 12px 12px;
-  border-right: 1px solid var(--hairline);
   transition: width var(--dur-3) var(--ease);
   --lg-tint: linear-gradient(165deg, rgba(255,255,255,0.045), rgba(255,255,255,0) 60%),
              color-mix(in srgb, var(--bg-1) 55%, transparent);
@@ -311,10 +317,8 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); }
   --lg-tint: linear-gradient(165deg, rgba(255,255,255,0.6), rgba(255,255,255,0.15) 60%),
              color-mix(in srgb, var(--bg-1) 45%, transparent);
 }
-/* The lens shine is a rounded inset ring by default; a full-height panel
-   wants only a hairline on its content edge. */
-#sideNav.lg::after { border-radius: 0; padding: 0; background: none; mask: none; -webkit-mask: none;
-  border-right: 1px solid rgba(255,255,255,0.06); inset: 0 -1px 0 auto; width: 1px; }
+/* As a floating card the sidebar keeps the default .lg rounded shine ring —
+   it inherits the card's border-radius. */
 
 .side-top { display: flex; align-items: center; gap: 8px; min-height: 34px; }
 .logo { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 700; letter-spacing: -0.2px; min-width: 0; flex: 1; }
@@ -391,7 +395,8 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); }
   opacity: 0; pointer-events: none; transition: opacity var(--dur-3) var(--ease);
 }
 @media (max-width: 900px) {
-  #sideNav:not(.collapsed) { position: fixed; left: 0; top: 0; box-shadow: 24px 0 64px rgba(0,0,0,0.35); }
+  #sideNav:not(.collapsed) { position: fixed; left: 0; top: 0;
+    height: calc(100dvh - 24px); box-shadow: 24px 0 64px rgba(0,0,0,0.35); }
   body { grid-template-columns: var(--side-w-rail) minmax(0, 1fr); }
   /* Going `position: fixed` takes the sidebar OUT of the grid, so main — now
      the only in-flow item — auto-placed into track 1 and rendered 64px wide
@@ -406,7 +411,9 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); }
    the Grid view (whose content is all shrinkable) collapsed to ~580px in a
    1768px column. 100% + max-width + auto margins = fill the column, cap at
    1680, center only the overflow on very wide windows. */
-main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: relative; min-width: 0; }
+main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: relative; min-width: 0;
+  /* The app's single scroller (the window never scrolls) — see body. */
+  overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .view { display: none; animation: viewIn var(--dur-3) var(--ease); }
 .view.active { display: block; }
 @keyframes viewIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
