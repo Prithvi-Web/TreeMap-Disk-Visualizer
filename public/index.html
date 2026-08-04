@@ -10821,6 +10821,30 @@ loadSystem();
 // them, and until they arrive no view is disabled (unknown never means absent).
 loadCapabilities();
 
+/* Session restore: the app opens where it left off. The newest completed scan
+   comes back through the exact path the Scan button takes — painted instantly
+   from the live index when it can be, with the reconciling rescan running
+   quietly underneath. The welcome screen is only for true first runs. Restore
+   must never make boot worse: every failure is swallowed to a warn and the
+   app simply starts empty, exactly as before this feature existed. */
+async function restoreLastSession() {
+  try {
+    const { scans } = await api('/api/scans');
+    const last = scans && scans[0];
+    if (!last || !last.rootPath) return;               // true first run
+    if (last.rootPath.startsWith('cloud://')) return;  // sign-in may be gone
+    if (state.root || state.scanning) return;          // the user beat us to it
+    // Pre-flight with the picker's own listing endpoint, so a moved or
+    // deleted folder falls back to the welcome screen instead of a boot error.
+    await api('/api/fs/list?path=' + encodeURIComponent(last.rootPath));
+    if (state.root || state.scanning) return;
+    await startScan(last.rootPath);
+  } catch (e) {
+    console.warn('[treemap] session restore skipped:', e.message);
+  }
+}
+void restoreLastSession();
+
 /* Debug/testing handle. Deliberately read-mostly and namespaced: the app's own
    state and view registry are script-scoped `const`s, which are not reachable
    from outside the script — so an end-to-end check could not otherwise assert

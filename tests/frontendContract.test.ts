@@ -1613,3 +1613,20 @@ test('the off state says plainly that nothing is being shared', () => {
   assert.match(fn, /announcing itself/, 'including that it is not advertising');
   assert.match(fn, /Nothing is being shared/);
 });
+
+/* ══════════════ Session restore (the app opens where it left off) ══════════════ */
+
+test('boot restores the last scanned folder through the normal scan path', () => {
+  const code = appCode();
+  const start = code.indexOf('async function restoreLastSession');
+  assert.ok(start !== -1, 'restoreLastSession must exist');
+  const end = code.indexOf('void restoreLastSession()', start);
+  assert.ok(end > start, 'and it must actually be invoked at boot');
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 0, 'restoreLastSession must be findable');
+  assert.match(fn, /\/api\/scans/, 'history comes from the completed-scans endpoint');
+  assert.match(fn, /\/api\/fs\/list\?path=/, 'a moved folder is pre-flighted, not errored at boot');
+  assert.match(fn, /cloud:\/\//, 'cloud scans are never auto-restored');
+  assert.match(fn, /state\.root \|\| state\.scanning/, 'a user action always wins the race');
+  assert.match(fn, /startScan\(/, 'restore goes through the same path the Scan button takes');
+});
