@@ -320,6 +320,7 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-
      (100% of the window) minus these margins sets its height. */
   position: relative; z-index: 50;
   margin: 12px 0 12px 12px; border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2);
   display: flex; flex-direction: column; gap: 12px;
   padding: 14px 12px 12px;
   transition: width var(--dur-3) var(--ease);
@@ -1301,14 +1302,20 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .dup-summary { font-size: 13px; color: var(--text-2); }
 .dup-summary b { color: var(--text-1); }
 .dup-list { display: flex; flex-direction: column; gap: 12px; }
-.dup-group { padding: 0; overflow: hidden; }
+/* Rows are quieter than cards: the full card shadow repeated hundreds of
+   times read as noise, so rows carry a hairline lift instead, and a calmer
+   radius keeps the list's rhythm tight. */
+.dup-group { padding: 0; overflow: hidden; border-radius: 14px;
+  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-1); }
+.dup-group:hover { border-color: var(--hairline-2); }
 .dup-head { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: pointer; user-select: none;
   transition: background var(--dur-1) var(--ease); }
 .dup-head:hover { background: var(--surface-1); }
 .dup-head .meta { flex: 1; min-width: 0; }
 .dup-head .nm { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dup-head .sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
-.dup-head .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap; }
+.dup-head .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap;
+  background: color-mix(in srgb, var(--warn) 12%, transparent); padding: 3px 10px; border-radius: 99px; }
 .dup-head .chev { transition: transform var(--dur-2) var(--ease); color: var(--text-3); display: inline-flex; }
 .dup-group.open .dup-head .chev { transform: rotate(90deg); }
 .dup-files { display: none; border-top: 1px solid var(--hairline); }
@@ -1330,7 +1337,8 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .nd-cluster { padding: 13px 16px 16px; }
 .nd-chead { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .nd-chead .nd-count { font-size: 13px; font-weight: 600; }
-.nd-chead .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap; margin-left: auto; }
+.nd-chead .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap; margin-left: auto;
+  background: color-mix(in srgb, var(--warn) 12%, transparent); padding: 3px 10px; border-radius: 99px; }
 .nd-strip { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
 .nd-item { flex: 0 0 132px; width: 132px; }
 .nd-thumbwrap { position: relative; display: block; width: 132px; height: 100px; border-radius: 9px; overflow: hidden;
