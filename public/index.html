@@ -75,6 +75,9 @@ document.documentElement.dataset.theme =
   --text-2:        rgba(10,12,20,0.60);
   --text-3:        rgba(10,12,20,0.42);
 
+  /* The dark theme's #FFD60A yellow is near-invisible on light cards
+     (~1.5:1). Text and badges using --warn need this darker amber here. */
+  --warn:          #B36B00;
   --tm-canvas-bg:  rgba(10,15,30,0.05);
   --scrim:         rgba(24,28,44,0.34);
   --skeleton-a:    rgba(10,15,30,0.05);
@@ -490,16 +493,19 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .stat-tile .v.small { font-size: 13px; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stat-tile .k { font-size: 11px; color: var(--text-2); margin-top: 2px; }
 
-.donut-row { display: flex; gap: 22px; align-items: center; }
+/* The canvas is a fixed width, so at narrow card widths the legend wraps
+   below it instead of being squeezed into an unreadable sliver. */
+.donut-row { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
 #donutCanvas { flex: none; }
-.donut-legend { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; flex: 1; min-width: 0; }
+.donut-legend { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; flex: 1; min-width: 190px; }
 .donut-legend .li { display: flex; align-items: center; gap: 9px; padding: 5px 8px; border-radius: 7px;
   transition: background var(--dur-1) var(--ease); cursor: default; }
 .donut-legend .li.hl { background: var(--surface-2); }
 .donut-legend .dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
 .donut-legend .ext { font-weight: 600; min-width: 52px; }
-.donut-legend .cnt { color: var(--text-3); font-size: 11.5px; }
-.donut-legend .sz { margin-left: auto; color: var(--text-2); white-space: nowrap; }
+.donut-legend .cnt { color: var(--text-3); font-size: 11.5px;
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.donut-legend .sz { color: var(--text-2); white-space: nowrap; }
 
 .bigfile { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: var(--r-sm);
   transition: background var(--dur-1) var(--ease); }
@@ -9178,9 +9184,9 @@ async function browseTo(path) {
     $('browseCurrent').textContent = data.path;
     const list = $('browseList');
     const rows = [];
-    if (data.parent) rows.push(`<button class="browse-item" data-p="${escapeHtml(data.parent)}">${icon('arrowUp', 14)} <b>..</b></button>`);
+    if (data.parent) rows.push(`<button class="browse-item" data-p="${escapeHtml(data.parent)}" aria-label="Up one level">${icon('arrowUp', 14)} <b>..</b></button>`);
     rows.push(...data.dirs.map(d =>
-      `<button class="browse-item" data-p="${escapeHtml(d.path)}">${icon('folder', 14)} <span class="${d.isHidden ? 'hid' : ''}">${escapeHtml(d.name)}</span></button>`));
+      `<button class="browse-item" data-p="${escapeHtml(d.path)}" aria-label="Open ${escapeHtml(d.name)}">${icon('folder', 14)} <span class="${d.isHidden ? 'hid' : ''}">${escapeHtml(d.name)}</span></button>`));
     list.innerHTML = rows.join('') || '<div class="muted" style="padding:14px;">No subfolders.</div>';
     list.querySelectorAll('.browse-item').forEach(b => b.addEventListener('click', () => browseTo(b.dataset.p)));
   } catch (e) {
