@@ -134,16 +134,17 @@ button { font-family: inherit; color: inherit; }
 
 /* Ambient background field */
 .blob { position: fixed; border-radius: 50%; filter: blur(95px); pointer-events: none; z-index: -1; opacity: var(--blob-opacity); }
+/* Static ambience on purpose: these used to drift on infinite animations,
+   which kept the GPU re-compositing four giant blurred layers forever —
+   battery and frame-time spent on a 30-second drift nobody watches. */
 .blob.b1 { width: 620px; height: 620px; top: -200px; left: -140px;
-  background: radial-gradient(circle, rgba(10,132,255,0.22), transparent 65%); animation: drift1 26s var(--ease) infinite alternate; }
+  background: radial-gradient(circle, rgba(10,132,255,0.22), transparent 65%); }
 .blob.b2 { width: 700px; height: 700px; top: 28%; right: -240px;
-  background: radial-gradient(circle, rgba(94,92,230,0.17), transparent 65%); animation: drift2 32s var(--ease) infinite alternate; }
+  background: radial-gradient(circle, rgba(94,92,230,0.17), transparent 65%); }
 .blob.b3 { width: 520px; height: 520px; bottom: -220px; left: 28%;
-  background: radial-gradient(circle, rgba(48,209,88,0.11), transparent 65%); animation: drift1 38s var(--ease) infinite alternate-reverse; }
+  background: radial-gradient(circle, rgba(48,209,88,0.11), transparent 65%); }
 .blob.b4 { width: 380px; height: 380px; top: 12%; left: 42%;
-  background: radial-gradient(circle, rgba(100,210,255,0.10), transparent 65%); animation: drift2 44s var(--ease) infinite alternate-reverse; }
-@keyframes drift1 { from { transform: translate(0,0); } to { transform: translate(70px, 50px); } }
-@keyframes drift2 { from { transform: translate(0,0); } to { transform: translate(-80px, -60px); } }
+  background: radial-gradient(circle, rgba(100,210,255,0.10), transparent 65%); }
 
 /* ════════════════════════════ Primitives ════════════════════════════ */
 /* Liquid Glass lens — technique ported from rdev/liquid-glass-react (MIT).
@@ -172,12 +173,16 @@ button { font-family: inherit; color: inherit; }
 }
 :root[data-theme="light"] .lg::after { mix-blend-mode: normal; }
 
+/* In-flow cards carry the glass LOOK without live backdrop blur: every list
+   row and panel used to be a real-time blur surface (800+ of them on a big
+   scan), which is what made long views feel sluggish. Over the page's static
+   backdrop the stronger tint is visually equivalent, and the few surfaces
+   that float over MOVING content (sidebar, modals, search dropdown, treemap
+   timebar) keep true blur below. */
 .glass {
   background:
     linear-gradient(150deg, rgba(255,255,255,0.055), rgba(255,255,255,0.014) 40%, rgba(255,255,255,0) 65%),
-    var(--glass);
-  backdrop-filter: blur(28px) saturate(190%);
-  -webkit-backdrop-filter: blur(28px) saturate(190%);
+    var(--glass-strong);
   border: 1px solid var(--hairline);
   border-radius: var(--r-lg);
   box-shadow: inset 0 1px 0 var(--shine), inset 0 0 24px rgba(255,255,255,0.02), var(--shadow-2);
@@ -185,8 +190,14 @@ button { font-family: inherit; color: inherit; }
 :root[data-theme="light"] .glass {
   background:
     linear-gradient(150deg, rgba(255,255,255,0.7), rgba(255,255,255,0.3) 40%, rgba(255,255,255,0.1) 65%),
-    var(--glass);
+    var(--glass-strong);
   box-shadow: inset 0 1px 0 var(--shine), var(--shadow-2);
+}
+/* The one in-flow surface floating over changing pixels (the treemap canvas)
+   keeps a real blur. */
+.tm-timebar {
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
 }
 .tile {
   background:
@@ -1324,7 +1335,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .nd-ck { position: absolute; top: 7px; left: 7px; z-index: 2; width: 17px; height: 17px; cursor: pointer; accent-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(0,0,0,0.35); border-radius: 4px; }
 .nd-badge { position: absolute; bottom: 6px; right: 6px; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 99px;
-  background: rgba(0,0,0,0.62); color: #fff; backdrop-filter: blur(3px); }
+  background: rgba(0,0,0,0.72); color: #fff; }
 .nd-badge.new { background: rgba(48,209,88,0.85); }
 .nd-info { margin-top: 7px; }
 .nd-info .nm { font-size: 11.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1416,6 +1427,17 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* ── List performance ─────────────────────────────────────────────────────
+   Long lists skip layout and paint for offscreen rows; the intrinsic-size
+   hints keep the scrollbar honest before a row is first rendered. `auto`
+   remembers each row's real size once seen, so expanded groups stay right. */
+.dup-group   { content-visibility: auto; contain-intrinsic-size: auto 64px; }
+.clean-item  { content-visibility: auto; contain-intrinsic-size: auto 52px; }
+.nd-item     { content-visibility: auto; contain-intrinsic-size: auto 170px; }
+.sec-item    { content-visibility: auto; contain-intrinsic-size: auto 64px; }
+.bp-item     { content-visibility: auto; contain-intrinsic-size: auto 40px; }
+.smart-group { content-visibility: auto; contain-intrinsic-size: auto 56px; }
 </style>
 </head>
 <body>
@@ -2365,9 +2387,19 @@ function formatCount(n) { return (n ?? 0).toLocaleString(); }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+/* One shared formatter + a memo: toLocaleDateString builds a fresh Intl
+   formatter per call (~20µs), which alone cost ~35ms per long-list render. */
+const DATE_FMT = new Intl.DateTimeFormat(undefined, { year:'numeric', month:'short', day:'numeric' });
+const dateMemo = new Map();
 function formatDate(ms) {
   if (!ms) return '–';
-  return new Date(ms).toLocaleDateString(undefined, { year:'numeric', month:'short', day:'numeric' });
+  let s = dateMemo.get(ms);
+  if (s === undefined) {
+    s = DATE_FMT.format(ms);
+    if (dateMemo.size > 20000) dateMemo.clear();
+    dateMemo.set(ms, s);
+  }
+  return s;
 }
 function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
 /**
@@ -8345,37 +8377,47 @@ function renderDuplicates() {
       </div>
       <div class="dup-files">` + g.files.map((f, fi) => `
         <div class="dup-file">
-          <input type="checkbox" class="dup-ck" data-p="${escapeHtml(f.path)}" aria-label="Select ${escapeHtml(f.path)}">
+          <input type="checkbox" class="dup-ck" data-p="${escapeHtml(f.path)}"${state.dup.selection.has(f.path) ? ' checked' : ''} aria-label="Select ${escapeHtml(f.path)}">
           ${fi === 0 ? '<span class="tag">newest</span>' : ''}
           <span class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</span>
           <span class="dt num">${formatDate(f.modifiedAt)}</span>
-          <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
+          <button class="icon-btn${cartHas(f.path) ? ' cartin' : ''}" data-cart-add="${escapeHtml(f.path)}" data-cartin="${cartHas(f.path) ? '1' : '0'}" title="${cartHas(f.path) ? 'Remove from cleanup cart' : 'Add to cleanup cart'}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon(cartHas(f.path) ? 'check' : 'plus', 13)}</button>
           <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
         </div>`).join('') + `
       </div>
     </div>`;
   }).join('') + '</div>';
 
-  body.querySelectorAll('.dup-head').forEach(head => {
-    const toggle = () => {
-      const g = head.closest('.dup-group');
-      head.setAttribute('aria-expanded', String(g.classList.toggle('open')));
-    };
-    head.addEventListener('click', (e) => { if (e.target.closest('input,button')) return; toggle(); });
-    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
-  });
-  body.querySelectorAll('.dup-ck').forEach(ck => {
-    ck.checked = state.dup.selection.has(ck.dataset.p);
-    ck.addEventListener('change', () => {
-      if (ck.checked) state.dup.selection.add(ck.dataset.p);
-      else state.dup.selection.delete(ck.dataset.p);
-      updateDupToolbar();
-    });
-  });
-  body.querySelectorAll('[data-reveal]').forEach(b => b.addEventListener('click', () => openInOS(b.dataset.reveal, true)));
   refreshCartButtons();
   updateDupToolbar();
 }
+
+/* One delegated set of listeners serves every duplicate row for the life of
+   the page: wiring each of ~2,400 controls per render used to cost twice as
+   much main-thread time as building the HTML itself. Selection state is
+   rendered into the markup, so a rebuild needs no per-row fix-up pass. */
+function dupToggleHead(head) {
+  const g = head.closest('.dup-group');
+  head.setAttribute('aria-expanded', String(g.classList.toggle('open')));
+}
+$('dupBody').addEventListener('click', (e) => {
+  const reveal = e.target.closest('[data-reveal]');
+  if (reveal) { openInOS(reveal.dataset.reveal, true); return; }
+  const head = e.target.closest('.dup-head');
+  if (head && !e.target.closest('input,button')) dupToggleHead(head);
+});
+$('dupBody').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const head = e.target.closest('.dup-head');
+  if (head && e.target === head) { e.preventDefault(); dupToggleHead(head); }
+});
+$('dupBody').addEventListener('change', (e) => {
+  const ck = e.target.closest('.dup-ck');
+  if (!ck) return;
+  if (ck.checked) state.dup.selection.add(ck.dataset.p);
+  else state.dup.selection.delete(ck.dataset.p);
+  updateDupToolbar();
+});
 
 function updateDupToolbar() {
   const n = state.dup.selection.size;
@@ -9349,17 +9391,22 @@ async function loadEmptyFolders() {
             <div class="pth">${escapeHtml(f.path)}</div>
           </div>
         </div>`).join('') + '</div>';
-    $('emptyAll').addEventListener('change', (e) => {
-      host.querySelectorAll('.empty-ck').forEach(ck => { ck.checked = e.target.checked; });
-      updateCleanSummary();
-    });
-    host.querySelectorAll('.empty-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
     updateCleanSummary();
   } catch (e) {
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }
 }
 $('emptyIgnoreJunk').addEventListener('change', () => { emptyFolders = []; loadEmptyFolders(); });
+/* Delegated once: this list is the app's longest (structural empties run to
+   the thousands), so per-row listeners made every rebuild a stutter. */
+$('emptyResults').addEventListener('change', (e) => {
+  if (e.target.id === 'emptyAll') {
+    $('emptyResults').querySelectorAll('.empty-ck').forEach(ck => { ck.checked = e.target.checked; });
+    updateCleanSummary();
+    return;
+  }
+  if (e.target.classList.contains('empty-ck')) updateCleanSummary();
+});
 
 /* ── Smart Suggestions pane ── */
 /* Feature 13 — git repositories section + git gc. */
