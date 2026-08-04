@@ -1,7 +1,23 @@
 # TreeMap — session handoff
 
-**Date:** 28 July 2026 (second session of the day)
-**Status:** **ALL 21 FEATURES SHIPPED · PHASE 5 COMPLETE · v3.0.0 BUILT.**
+**Date:** 3 August 2026
+**Status:** **v3.0.0 shipped; six post-release commits on `main` AWAITING THE
+USER'S GITHUB DESKTOP PUSH** (`d3aa336` settings-open fix + rounded floating
+sidebar · `de867ce` UI performance (backdrop-blur cull, static blobs,
+content-visibility, delegation, formatDate memo) · `f731994` three UI defects
+(donut legend overflow, light-theme --warn contrast, picker aria-labels) ·
+`5fba59a` **session restore** (boot reloads the last scan; contract-tested;
+spec in `docs/superpowers/specs/`) · `935c211` polish (row rhythm, amber
+reclaim pills, sidebar shadow) · plus the earlier `f1be026`). Suite is now
+**829 (827 pass, 2 skips)**. The scroll architecture changed: **the window
+never scrolls; `main` is the app's one scroller** — the sidebar is a floating
+rounded card pinned in place. `.glass` no longer live-blurs (in-flow cards use
+`--glass-strong` tint; only sidebar/modals/search/tm-timebar keep real
+backdrop blur). These fixes reach the user's installed app only after a new
+release (recipe below) — v3.1.0 is the natural next step when the user is
+present to re-grant Full Disk Access and push/publish.
+
+**Previous release status (28 July):** ALL 21 FEATURES SHIPPED · PHASE 5 COMPLETE · v3.0.0 BUILT.
 Phase 0 ✅ · Phase 1 ✅ (A1–A5) · Phase 2 ✅ (B1–B5) · Phase 3 ✅ (C1–C8) ·
 Phase 4 ✅ (D1, D2, D3) · **Phase 5 ✅ (1–5)** — only the push + publish remain,
 and both are the user's to do.
