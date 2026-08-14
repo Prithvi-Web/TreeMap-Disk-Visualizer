@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { startScan, getScan, collectLargestFiles, collectFileTypes } from '../services/diskScanner';
+import { startScan, getScan, cancelScan, collectLargestFiles, collectFileTypes } from '../services/diskScanner';
 import { buildTreemapFromStore } from '../utils/treemap';
 import { pruneTree, PruneResult } from '../utils/pruneTree';
 import { isInside } from '../utils/pathSanitizer';
@@ -161,6 +161,12 @@ scanRouter.post('/scan', guardBodyPath, async (req: Request, res: Response) => {
   }
 
   res.status(202).json({ scanId: scan.scanId, incremental: scan.incremental === true });
+});
+
+/** POST /api/scan/:scanId/cancel — stop a running scan */
+scanRouter.post('/scan/:scanId/cancel', (req: Request, res: Response) => {
+  const ok = cancelScan(String(req.params.scanId));
+  res.json({ scanId: req.params.scanId, cancelled: ok });
 });
 
 /** GET /api/scan/:scanId/progress — Server-Sent Events stream. */

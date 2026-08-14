@@ -117,6 +117,18 @@ export function cancelAllScans(): void {
   for (const scan of scans.values()) scan.cancelled = true;
 }
 
+export function cancelScan(scanId: string): boolean {
+  const scan = scans.get(scanId);
+  if (scan && scan.status === 'running') {
+    scan.cancelled = true;
+    scan.status = 'error';
+    scan.error = 'Scan cancelled by user';
+    scan.finishedAt = Date.now();
+    return true;
+  }
+  return false;
+}
+
 /**
  * Compatibility accessor: every production scan's tree lives in `scan.store`,
  * and no production code path reads or writes `scan.root` (the bounded
@@ -425,7 +437,12 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
     // before their cached listing is trusted — membership is per-scan.
     await drainQueue(scan, store, [{ id: store.rootId, path: scan.rootPath, cached: null, revalidate: false }], ignore, cache, new Set<string>());
   }
-  if (scan.cancelled) return;
+  if (scan.cancelled) {
+    scan.status = 'error';
+    scan.error = scan.error ?? 'Scan cancelled by user';
+    scan.finishedAt = Date.now();
+    return;
+  }
 
   store.finalize();
   store.sumSizes();

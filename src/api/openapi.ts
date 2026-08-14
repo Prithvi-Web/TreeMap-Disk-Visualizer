@@ -672,6 +672,18 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     },
   },
   {
+    method: 'post',
+    path: '/api/scan/{scanId}/cancel',
+    summary: 'Cancel a running scan',
+    tag: 'scan',
+    destructive: false,
+    parameters: [pathParam('scanId', 'Scan id')],
+    responses: {
+      '200': jsonResponse('Scan cancellation requested', obj({ scanId: str(), cancelled: bool() }, ['scanId', 'cancelled'])),
+      '404': errorResponse('Unknown scanId'),
+    },
+  },
+  {
     method: 'get',
     path: '/api/scan/{scanId}/progress',
     summary: "SSE progress stream: frames of type 'progress', then one 'complete' (pruned tree + stats) or 'error'",

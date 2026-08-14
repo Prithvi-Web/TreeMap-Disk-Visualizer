@@ -3815,7 +3815,10 @@ async function showFastRescanStat(scanId) {
  */
 function beginScanChrome({ quiet = false } = {}) {
   state.scanning = true;
-  $('scanBtn').disabled = true;
+  $('scanBtn').disabled = false;
+  $('scanBtn').classList.remove('btn-primary');
+  $('scanBtn').classList.add('btn-danger');
+  $('scanBtn').innerHTML = icon('x', 16) + 'Stop';
   $('headerSpin').classList.add('on');
   $('headerSpin').innerHTML = icon('loader', 15, REDUCED ? '' : 'spin');
   $('progressTrack').classList.add('active');
@@ -4096,6 +4099,9 @@ async function startCloudScan(providerId, providerName) {
 function endScanChrome() {
   state.scanning = false;
   $('scanBtn').disabled = false;
+  $('scanBtn').classList.remove('btn-danger');
+  $('scanBtn').classList.add('btn-primary');
+  $('scanBtn').innerHTML = icon('play', 16) + 'Scan';
   $('headerSpin').classList.remove('on');
   $('progressTrack').classList.remove('active');
   $('scanMeta').textContent = '';
@@ -4332,6 +4338,14 @@ async function renderGrowthProjection() {
 }
 
 $('scanBtn').addEventListener('click', () => {
+  if (state.scanning) {
+    if (state.scanId) {
+      api(`/api/scan/${state.scanId}/cancel`, { method: 'POST' }).catch(() => {});
+      closeEventSource();
+      failScan('Scan stopped by user');
+    }
+    return;
+  }
   const p = $('pathInput').value.trim();
   if (!p) { toast('Enter a folder path first', 'error'); return; }
   startScan(p, { incremental: !$('fastRescanWrap').hidden && $('fastRescan').checked });
