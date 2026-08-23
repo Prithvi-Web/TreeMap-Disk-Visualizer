@@ -1,0 +1,34 @@
+{
+  "name": "treemap-disk-visualizer",
+  "displayName": "TreeMap Disk Visualizer",
+  "description": "Analyze disk space and find large files or duplicates using TreeMap-Disk-Visualizer",
+  "version": "1.0.0",
+  "publisher": "antigravity",
+  "repository": "https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "treemap.analyze",
+        "title": "TreeMap: Analyze Disk Storage"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@types/node": "18.x",
+    "typescript": "^5.1.3"
+  }
+}
