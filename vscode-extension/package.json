@@ -1,10 +1,19 @@
 {
   "name": "treemap-disk-visualizer",
   "displayName": "TreeMap Disk Visualizer",
-  "description": "Analyze disk space and find large files or duplicates using TreeMap-Disk-Visualizer",
   "version": "1.0.0",
-  "publisher": "antigravity",
+  "description": "Analyze disk space and find large files or duplicates using TreeMap-Disk-Visualizer",
+  "publisher": "shubh2moon-hub",
   "repository": "https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer",
+  "license": "MIT",
+  "icon": "icon.png",
+  "keywords": [
+    "disk space",
+    "storage analyzer",
+    "treemap",
+    "cleanup",
+    "free space"
+  ],
   "engines": {
     "vscode": "^1.80.0"
   },
