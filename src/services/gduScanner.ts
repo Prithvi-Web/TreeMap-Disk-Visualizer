@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { ChildProcess, execFile } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -106,16 +106,49 @@ export async function findGduBinary(opts: FindOptions = {}): Promise<string | nu
 }
 
 /**
+ * The gdu subprocess a scan currently has in flight, keyed by scanId.
+ *
+ * The shard loop below already checks `scan.cancelled`, but only *between*
+ * shards — so a scan cancelled one second into a shard keeps reading the disk
+ * until that shard ends, up to SHARD_TIMEOUT_MS (five minutes), long after the
+ * UI has said it stopped. Holding the handle is what lets a cancel end the
+ * subprocess now instead of at the next checkpoint.
+ */
+const activeShards = new Map<string, ChildProcess>();
+
+/**
+ * Kill the gdu subprocess a scan has in flight, if it has one.
+ *
+ * The kill surfaces as a rejected runGdu, which the caller in diskScanner
+ * already swallows when the scan is cancelled — so this shortens the wait
+ * without adding a new failure path. Returns false when there was nothing to
+ * kill, which is the ordinary case (the walker engine, or a scan between
+ * shards).
+ */
+export function abortGduScan(scanId: string): boolean {
+  const child = activeShards.get(scanId);
+  if (!child) return false;
+  activeShards.delete(scanId);
+  child.kill('SIGKILL');
+  return true;
+}
+
+/**
  * Spawn gdu for one directory, exporting JSON to `outFile`.
  *
  * execFile with an argv array — never `exec` with a string and never
  * shell: true — because `dir` originates in user input.
+ *
+ * `onSpawn` hands the caller the live child so it can be killed early. Note
+ * that a kill and a timeout are indistinguishable here — both set `err.killed`
+ * — so a cancel-kill reports the timeout message. That text never reaches a
+ * user: diskScanner returns on `scan.cancelled` before it logs or falls back.
  */
 export function runGdu(
   bin: string,
   dir: string,
   outFile: string,
-  opts: { ignoreDirs?: string[]; timeoutMs?: number } = {},
+  opts: { ignoreDirs?: string[]; timeoutMs?: number; onSpawn?: (child: ChildProcess) => void } = {},
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     // -x: never cross filesystem boundaries — inside a shard this skips
@@ -126,7 +159,7 @@ export function runGdu(
     if (opts.ignoreDirs?.length) args.push('-i', opts.ignoreDirs.join(','));
     args.push(dir);
     const timeout = opts.timeoutMs ?? SHARD_TIMEOUT_MS;
-    execFile(bin, args, { maxBuffer: 1 << 20, timeout, killSignal: 'SIGKILL' }, (err) => {
+    const child = execFile(bin, args, { maxBuffer: 1 << 20, timeout, killSignal: 'SIGKILL' }, (err) => {
       if (err) {
         reject(
           new Error(
@@ -137,6 +170,7 @@ export function runGdu(
         );
       } else resolve();
     });
+    opts.onSpawn?.(child);
   });
 }
 
@@ -287,7 +321,13 @@ export async function gduScanIntoStore(
       scan.currentPath = dirPath;
 
       const outFile = path.join(tmpDir, `shard-${i}.json`);
-      await runGdu(bin, dirPath, outFile);
+      // Registered only for the duration of this one subprocess, so a cancel
+      // can never kill a child that already exited and been replaced.
+      try {
+        await runGdu(bin, dirPath, outFile, { onSpawn: (child) => activeShards.set(scan.scanId, child) });
+      } finally {
+        activeShards.delete(scan.scanId);
+      }
 
       const st = await fsp.stat(outFile);
       if (st.size > MAX_SHARD_BYTES) {

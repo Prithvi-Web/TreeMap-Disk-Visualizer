@@ -1630,3 +1630,253 @@ test('boot restores the last scanned folder through the normal scan path', () =>
   assert.match(fn, /state\.root \|\| state\.scanning/, 'a user action always wins the race');
   assert.match(fn, /startScan\(/, 'restore goes through the same path the Scan button takes');
 });
+
+/* ══════════════ Stopping a scan (the Scan button becomes Stop) ══════════════ */
+
+test('the primary scan control is one button, in the Scan state at rest', () => {
+  // Two buttons would mean one of them is always dead. The markup ships the
+  // resting state; setScanButtonMode owns every change after boot.
+  const buttons = [...INDEX.matchAll(/id="scanBtn"/g)];
+  assert.equal(buttons.length, 1, 'exactly one scan control exists');
+  assert.match(INDEX, /<button class="btn btn-primary" id="scanBtn"><span data-icon="play"><\/span>Scan<\/button>/,
+    'and it starts as a primary Scan button');
+});
+
+test('a running scan turns the button into a red Stop, not a dead grey one', () => {
+  const code = appCode();
+  const start = code.indexOf('function setScanButtonMode');
+  assert.ok(start !== -1, 'setScanButtonMode must exist');
+  const end = code.indexOf('function cancelScanById', start);
+  assert.ok(end > start, 'and cancelScanById must follow it');
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 100, 'the setScanButtonMode slice is non-empty');
+
+  assert.match(fn, /classList\.toggle\('btn-danger', stop\)/, 'Stop is the danger style');
+  assert.match(fn, /classList\.toggle\('btn-primary', !stop\)/, 'and Scan is not, at the same time');
+  assert.match(fn, /btn\.disabled = false/, 'a disabled Stop could never be clicked');
+  assert.match(fn, /icon\(stop \? 'stop' : 'play', 16\)/, 'the label is rebuilt through icon(), never a data-icon span');
+  assert.match(fn, /aria-label/, 'and screen readers are told which action it is now');
+});
+
+test('the stop icon exists, so the button does not silently render a document', () => {
+  // icon() falls back to PATHS.file for an unknown name — no error, no warning.
+  // A typo here would ship a Stop button wearing a page icon.
+  assert.match(appScript(), /\n {2}stop: '<rect /, 'PATHS carries a real stop glyph');
+});
+
+test('scanning chrome flips the button to Stop for background refreshes too', () => {
+  const code = appCode();
+  const start = code.indexOf('function beginScanChrome');
+  assert.ok(start !== -1, 'beginScanChrome must exist');
+  const end = code.indexOf('if (quiet)', start);
+  assert.ok(end > start, 'the quiet branch marks the end of the shared preamble');
+  const preamble = code.slice(start, end);
+  assert.ok(preamble.length > 50, 'the preamble slice is non-empty');
+  assert.match(preamble, /setScanButtonMode\('stop'\)/, 'a quiet whole-drive refresh is just as long, so it gets a Stop');
+  assert.match(preamble, /state\.abortScan = null/, 'and the previous scan\'s stream handle never leaks into it');
+});
+
+test('the button returns to Scan from the one place a scan ever ends', () => {
+  const code = appCode();
+  const start = code.indexOf('function endScanChrome');
+  assert.ok(start !== -1, 'endScanChrome must exist');
+  const end = code.indexOf('function failScan', start);
+  assert.ok(end > start, 'failScan must follow it');
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 50, 'the endScanChrome slice is non-empty');
+  assert.match(fn, /setScanButtonMode\('scan'\)/, 'success and failure both restore the button');
+  assert.match(fn, /state\.abortScan = null/, 'and release the finished scan\'s stream handle');
+});
+
+test('Stop severs the stream and the watchdog before it asks the server', () => {
+  const code = appCode();
+  const start = code.indexOf('async function stopScan');
+  assert.ok(start !== -1, 'stopScan must exist');
+  const end = code.indexOf('function skeletonRows', start);
+  assert.ok(end > start, 'skeletonRows must follow it');
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 200, 'the stopScan slice is non-empty');
+
+  const abortAt = fn.indexOf('state.abortScan()');
+  const postAt = fn.indexOf('cancelScanById(scanId)');
+  assert.ok(abortAt !== -1, 'the watchdog is settled');
+  assert.ok(fn.indexOf('closeEventSource()') !== -1, 'and the stream is closed');
+  assert.ok(postAt > abortAt, 'both happen BEFORE the request, so nothing in flight can repaint after it');
+});
+
+test('cancellation has exactly one route to the server', () => {
+  // Both callers — Stop, and startScanRequest honouring a Stop that beat the
+  // scan request — go through this, so the endpoint is pinned in one place.
+  const code = appCode();
+  const start = code.indexOf('function cancelScanById');
+  assert.ok(start !== -1, 'cancelScanById must exist');
+  const end = code.indexOf('async function stopScan', start);
+  assert.ok(end > start, 'stopScan must follow it');
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 50, 'the cancelScanById slice is non-empty');
+  assert.match(fn, /\/api\/scan\/\$\{scanId\}\/cancel/, 'the cancel goes to the scan cancel endpoint');
+  assert.match(fn, /method: 'POST'/, 'as a POST');
+});
+
+test('a stopped scan reads as a choice, not as a failure', () => {
+  const code = appCode();
+  const start = code.indexOf('async function stopScan');
+  const end = code.indexOf('function skeletonRows', start);
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 200, 'the stopScan slice is non-empty');
+  assert.match(fn, /Scan stopped by user/, 'the status says exactly what happened');
+  assert.match(fn, /status\.classList\.remove\('error'\)/, 'and it is not painted as an error');
+  assert.ok(!/toast\([^)]*'error'/.test(fn), 'stopping never raises an error toast');
+});
+
+test('a stopped scan does not leave the dashboard showing skeletons forever', () => {
+  // beginScanChrome swaps three dashboard panels for skeletons, and a stopped
+  // scan never fills them. The dashboard's own mount() is a no-op, so
+  // switchView cannot repaint them — this is why the restore is explicit.
+  const code = appCode();
+  const start = code.indexOf('function restoreDashboardPanels');
+  assert.ok(start !== -1, 'restoreDashboardPanels must exist');
+  const end = code.indexOf('function cancelScanById', start);
+  assert.ok(end > start, 'cancelScanById must follow it');
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 150, 'the restoreDashboardPanels slice is non-empty');
+
+  // Repaint what we still have; say so honestly only where we have nothing.
+  assert.match(fn, /state\.largest\.length\) renderBigFiles\(\)/, 'held data is repainted, not thrown away');
+  assert.match(fn, /state\.bigFolders\.length\) renderBigFolders\(\)/);
+  assert.match(fn, /state\.types\.length\) \{ state\.donut\.animated = false; renderDonut\(\)/);
+  assert.match(fn, /Run a scan to find your biggest files/, 'and an empty panel says why it is empty');
+
+  // Both non-completion paths must use it — a stop and a failure leave the
+  // dashboard in exactly the same half-painted state.
+  const stop = code.slice(code.indexOf('async function stopScan'), code.indexOf('function skeletonRows'));
+  assert.ok(stop.length > 200, 'the stopScan slice is non-empty');
+  assert.match(stop, /restoreDashboardPanels\(\)/, 'Stop restores the panels');
+  assert.match(stop, /switchView\(state\.view\)/, 'and puts the never-scanned empty state back');
+
+  const failStart = code.indexOf('function failScan');
+  const fail = code.slice(failStart, code.indexOf('function statsFromResult', failStart));
+  assert.ok(fail.length > 100, 'the failScan slice is non-empty');
+  assert.match(fail, /restoreDashboardPanels\(\)/, 'and a failed scan restores them the same way');
+});
+
+test('a cancel the server refuses is reported, never swallowed into a false "stopped"', () => {
+  const code = appCode();
+  const start = code.indexOf('async function stopScan');
+  const end = code.indexOf('function skeletonRows', start);
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 200, 'the stopScan slice is non-empty');
+  assert.match(fn, /catch \(e\)/, 'the request is awaited and its failure handled');
+  assert.match(fn, /e\.status !== 404/, '404 means the record was already gone — that IS stopped');
+  assert.match(fn, /Could not stop the scan/, 'anything else says the scan is still running');
+});
+
+test('Stop pressed before the scan request answers still cancels that scan', () => {
+  // There is no scanId until the scan request returns, so the click can only
+  // stop the chrome. The request has to honour it when it lands, or the walk
+  // runs on server-side with nothing watching it — and worse, the stream would
+  // repoint state.scanId and resurrect a scan the user already ended.
+  const code = appCode();
+  const start = code.indexOf('function abandonIfStopped');
+  assert.ok(start !== -1, 'abandonIfStopped must exist');
+  const end = code.indexOf('async function stopScan', start);
+  assert.ok(end > start, 'stopScan must follow it');
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 80, 'the abandonIfStopped slice is non-empty');
+  assert.match(fn, /cancelScanById\(scanId\)/, 'the orphan is cancelled');
+  // The generation check is the part that is easy to lose. state.scanning
+  // describes whichever scan is running NOW — so after Stop-then-Scan-again,
+  // a bare flag check would let the FIRST request's reply be followed, leaving
+  // two live streams and a state.scanId belonging to the abandoned scan.
+  assert.match(fn, /state\.scanning && state\.scanGen === gen/, 'a superseded reply is abandoned too, not just a stopped one');
+});
+
+test('every scan request carries the generation it was started in', () => {
+  const code = appCode();
+  const begin = code.slice(code.indexOf('function beginScanChrome'), code.indexOf('if (quiet)'));
+  assert.ok(begin.length > 50, 'the beginScanChrome slice is non-empty');
+  assert.match(begin, /state\.scanGen\+\+/, 'starting a scan mints a new generation');
+
+  for (const [name, anchor, endAnchor] of [
+    ['disk', 'async function startScanRequest', 'function followScanProgress'],
+    ['cloud', 'async function startCloudScan', 'function endScanChrome'],
+  ] as const) {
+    const start = code.indexOf(anchor);
+    assert.ok(start !== -1, `${anchor} must exist`);
+    const end = code.indexOf(endAnchor, start);
+    assert.ok(end > start, `${endAnchor} must follow ${anchor}`);
+    const fn = code.slice(start, end);
+    assert.ok(fn.length > 200, `the ${name} slice is non-empty`);
+    const captureAt = fn.indexOf('const gen = state.scanGen');
+    const awaitAt = fn.indexOf('await api(');
+    assert.ok(captureAt !== -1, `the ${name} path captures its generation`);
+    assert.ok(awaitAt > captureAt, `and captures it BEFORE awaiting, or it would read the wrong one`);
+  }
+});
+
+test('BOTH scan entry points honour a Stop that beat their request', () => {
+  // startScanRequest and startCloudScan have the same await-then-follow shape.
+  // The disk path guarding while the cloud path silently did not is exactly the
+  // asymmetry this pins: a cloud Stop would resurrect itself.
+  const code = appCode();
+
+  const diskStart = code.indexOf('async function startScanRequest');
+  assert.ok(diskStart !== -1, 'startScanRequest must exist');
+  const diskEnd = code.indexOf('function followScanProgress', diskStart);
+  assert.ok(diskEnd > diskStart, 'followScanProgress must follow it');
+  const disk = code.slice(diskStart, diskEnd);
+  assert.ok(disk.length > 200, 'the startScanRequest slice is non-empty');
+
+  const cloudStart = code.indexOf('async function startCloudScan');
+  assert.ok(cloudStart !== -1, 'startCloudScan must exist');
+  const cloudEnd = code.indexOf('function endScanChrome', cloudStart);
+  assert.ok(cloudEnd > cloudStart, 'endScanChrome must follow it');
+  const cloud = code.slice(cloudStart, cloudEnd);
+  assert.ok(cloud.length > 200, 'the startCloudScan slice is non-empty');
+
+  for (const [name, fn] of [['disk', disk], ['cloud', cloud]] as const) {
+    const guardAt = fn.indexOf('abandonIfStopped(resp.scanId, gen)');
+    const followAt = fn.indexOf('followScanProgress(resp.scanId');
+    assert.ok(guardAt !== -1, `the ${name} scan path must check for a Stop that beat its request`);
+    assert.ok(followAt > guardAt, `and the ${name} path must check BEFORE it opens a stream`);
+  }
+});
+
+test('Stop cancels the scan that is actually streaming, never the previous one', () => {
+  // state.scanId is assigned only by followScanProgress, so during a quiet
+  // background refresh it still holds the PREVIOUS scan's id. Cancelling on
+  // state.scanId alone would stop the wrong scan.
+  const code = appCode();
+  const start = code.indexOf('async function stopScan');
+  const end = code.indexOf('function skeletonRows', start);
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 200, 'the stopScan slice is non-empty');
+  assert.match(fn, /state\.abortScan \? state\.scanId : null/, 'the stream handle is what proves the id is current');
+});
+
+test('followScanProgress hands Stop the closure only it can settle', () => {
+  const code = appCode();
+  const start = code.indexOf('function followScanProgress');
+  assert.ok(start !== -1, 'followScanProgress must exist');
+  const end = code.indexOf('async function startCloudScan', start);
+  assert.ok(end > start, 'startCloudScan must follow it');
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 500, 'the followScanProgress slice is non-empty');
+  assert.match(fn, /state\.abortScan = \(\) =>/, 'the handle is published');
+  assert.match(fn, /finished = true; clearInterval\(watchdog\)/, 'and it settles both the frame gate and the watchdog');
+});
+
+test('the scan button routes to Stop mid-scan, and Enter never does', () => {
+  const code = appCode();
+  const start = code.indexOf("$('scanBtn').addEventListener('click'");
+  assert.ok(start !== -1, 'the scan button has a click listener');
+  const end = code.indexOf("$('pathInput').addEventListener('input'", start);
+  assert.ok(end > start, 'the input listener follows it');
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 100, 'the listener slice is non-empty');
+
+  assert.match(fn, /if \(state\.scanning\) \{ void stopScan\(\); return; \}/, 'clicking mid-scan stops it');
+  // Enter used to be safe only because the button was disabled. Now that the
+  // button is Stop, an unguarded Enter in the path field would cancel the scan.
+  assert.match(fn, /e\.key === 'Enter' && !state\.scanning/, 'Enter starts a scan and only ever starts one');
+});

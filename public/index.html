@@ -2547,6 +2547,7 @@ const PATHS = {
   refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
   hardDrive: '<line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/>',
   play: '<path d="M6 3l14 9-14 9V3z"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   loader: '<path d="M21 12a9 9 0 1 1-6.22-8.56"/>',
   clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
   trendUp: '<path d="M16 7h6v6"/><path d="m22 7-8.5 8.5-5-5L2 17"/>',
@@ -2739,6 +2740,17 @@ const state = {
   scanId: null,
   scanning: false,
   es: null,
+  // Settles the running scan's stream and watchdog together. followScanProgress
+  // owns both in a closure, and Stop has to reach them: cancelling server-side
+  // without this leaves the watchdog polling, and its 500 would overwrite the
+  // user's own "stopped" message with a scan-failed one.
+  abortScan: null,
+  // Bumped by beginScanChrome, once per started scan. A scan request that
+  // answers after its own generation has passed is an orphan — either the user
+  // stopped it, or a newer scan has since claimed the chrome — and must be
+  // cancelled rather than followed. state.scanning alone cannot tell those
+  // apart from "the newer scan is running fine".
+  scanGen: 0,
   root: null,
   pathIndex: new Map(),
   // Nodes resolved from the server for paths the pruned tree doesn't carry.
@@ -3781,6 +3793,118 @@ $('whatsNewBody').addEventListener('keydown', (e) => {
 function closeEventSource() {
   if (state.es) { state.es.close(); state.es = null; }
 }
+
+/**
+ * The primary scan control is one button in two modes: Scan, and Stop while a
+ * scan is running. One button rather than two because the two actions are
+ * never both available, and a permanently-greyed Stop is the thing that made
+ * a long scan feel like it had taken the app hostage.
+ *
+ * The label must be rebuilt with icon() rather than a [data-icon] span: the
+ * injector runs once at boot and replaces those placeholders outright, so a
+ * span written here would stay permanently empty.
+ */
+function setScanButtonMode(mode) {
+  const btn = $('scanBtn');
+  const stop = mode === 'stop';
+  btn.disabled = false; // a disabled Stop cannot be clicked — .btn:disabled kills pointer events
+  btn.classList.toggle('btn-primary', !stop);
+  btn.classList.toggle('btn-danger', stop);
+  btn.innerHTML = icon(stop ? 'stop' : 'play', 16) + (stop ? 'Stop' : 'Scan');
+  btn.setAttribute('aria-label', stop ? 'Stop the running scan' : 'Scan the folder');
+}
+
+/**
+ * Undo beginScanChrome's skeletons for a scan that will never fill them.
+ *
+ * The dashboard's mount() is deliberately a no-op — it is painted by
+ * finishScan — so switchView cannot repaint these three panels. Without this,
+ * a scan that stops or fails after a successful one leaves the dashboard
+ * showing skeleton rows forever, on top of data the app still holds.
+ */
+function restoreDashboardPanels() {
+  if (state.largest.length) renderBigFiles();
+  else $('bigFiles').innerHTML = '<div class="muted">Run a scan to find your biggest files.</div>';
+  if (state.bigFolders.length) renderBigFolders();
+  else $('bigFolders').innerHTML = '<div class="muted">Run a scan to find your biggest folders.</div>';
+  if (state.types.length) { state.donut.animated = false; renderDonut(); }
+  else $('donutLegend').innerHTML = '<div class="muted">Run a scan to see the breakdown.</div>';
+}
+
+/** Ask the server to stop one scan. Split out because Stop can be pressed
+ *  before the scan request has answered, and that scanId still has to be
+ *  cancelled — by whichever entry point is the only code that ever sees it. */
+function cancelScanById(scanId) {
+  return api(`/api/scan/${scanId}/cancel`, { method: 'POST' });
+}
+
+/**
+ * True when a scan request that has just answered must be abandoned instead of
+ * followed, because it is no longer the scan the app is running.
+ *
+ * There is no scanId until the request answers, so a Stop pressed before then
+ * can only stop the chrome — the walk is running with nothing watching it.
+ * Opening a stream now would be worse than leaking it: followScanProgress
+ * would repoint state.scanId and finishScan would eventually resurrect a scan
+ * the user already ended, on top of a UI that says it stopped.
+ *
+ * The generation check is what makes this correct rather than merely usually
+ * right. `state.scanning` describes whichever scan is running NOW, not the one
+ * that is asking — so after Stop-then-Scan-again, the first request's reply
+ * would see scanning=true and be followed, leaving two live streams, a
+ * state.scanId belonging to the abandoned scan, and an uncancelled walk.
+ *
+ * Shared by both entry points on purpose: startScanRequest and startCloudScan
+ * have the same await-then-follow shape, and the disk path having this guard
+ * while the cloud path silently did not is exactly the asymmetry it prevents.
+ */
+function abandonIfStopped(scanId, gen) {
+  if (state.scanning && state.scanGen === gen) return false;
+  void cancelScanById(scanId).catch((e) => console.warn('[treemap] late cancel failed:', e));
+  return true;
+}
+
+/**
+ * Stop the running scan, from the user's side first.
+ *
+ * The stream and watchdog are settled before the request goes out, so nothing
+ * that is already in flight can repaint the status afterwards — the server's
+ * own 'error' frame and the watchdog's 500 both describe the cancellation we
+ * just asked for, and either one landing later would read as a failure the
+ * user did not cause. The request is still awaited so a genuinely failed
+ * cancel is reported rather than assumed.
+ */
+async function stopScan() {
+  if (!state.scanning) return;
+  // `state.scanId` is only ever assigned by followScanProgress, and a quiet
+  // background refresh leaves the PREVIOUS scan's id sitting there until the
+  // new one arrives — so it alone cannot say which scan to cancel. abortScan
+  // is set in the same breath as the new id, which makes it the honest test
+  // for "this scan has a stream, and state.scanId is its id". If it is null we
+  // are still inside POST /api/scan; startScanRequest cancels that one.
+  const scanId = state.abortScan ? state.scanId : null;
+  if (state.abortScan) state.abortScan();
+  closeEventSource();
+  endScanChrome();
+
+  const status = $('scanStatus');
+  status.classList.remove('error'); // stopping is a choice, not a failure
+  status.innerHTML = icon('stop', 14) + '<span>Scan stopped by user</span>';
+  restoreDashboardPanels();
+  switchView(state.view); // and put the never-scanned empty state back if that is where we are
+
+  if (!scanId) return; // stopped before POST /api/scan answered — startScanRequest handles it
+  try {
+    await cancelScanById(scanId);
+  } catch (e) {
+    // The walk is still running server-side, and saying "stopped" would be a
+    // lie. 404 is not one of these: the record was already gone, so it is.
+    if (e.status !== 404) {
+      status.classList.add('error');
+      status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml('Could not stop the scan: ' + e.message) + '</span>';
+    }
+  }
+}
 function skeletonRows(n, h = 38) {
   return Array.from({ length: n }, () => `<div class="skeleton" style="height:${h}px;margin:8px 0;"></div>`).join('');
 }
@@ -3815,7 +3939,11 @@ async function showFastRescanStat(scanId) {
  */
 function beginScanChrome({ quiet = false } = {}) {
   state.scanning = true;
-  $('scanBtn').disabled = true;
+  state.abortScan = null; // no stream yet — Stop before the request answers has no scanId
+  state.scanGen++; // this scan's identity while its request is in flight
+  // Above the `quiet` branch on purpose: a background refresh of a whole drive
+  // is exactly as long as a foreground one, so it gets a Stop too.
+  setScanButtonMode('stop');
   $('headerSpin').classList.add('on');
   $('headerSpin').innerHTML = icon('loader', 15, REDUCED ? '' : 'spin');
   $('progressTrack').classList.add('active');
@@ -3971,12 +4099,14 @@ async function startScan(path, opts = {}) {
 async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
   try {
     beginScanChrome({ quiet });
+    const gen = state.scanGen; // this request's identity for the abandon check below
     const t0 = performance.now();
     const resp = await api('/api/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path, incremental: !!opts.incremental }),
     });
+    if (abandonIfStopped(resp.scanId, gen)) return;
     followScanProgress(resp.scanId, path, resp.incremental === true, t0);
   } catch (e) {
     // A background refresh that fails must not blow away the tree already on
@@ -4025,6 +4155,10 @@ function followScanProgress(scanId, path, fast, t0) {
       /* otherwise: still running or transient — keep waiting */
     }
   }, 3000);
+  // Hand Stop the two things only this closure can settle. `finished` also
+  // gates es.onmessage, so a frame already queued when Stop is pressed is
+  // dropped rather than repainting a scan the user just ended.
+  state.abortScan = () => { finished = true; clearInterval(watchdog); };
   es.onmessage = async (ev) => {
     lastSseAt = performance.now();
     if (finished) return;
@@ -4080,6 +4214,7 @@ async function startCloudScan(providerId, providerName) {
   disableLive({ keepWanted: false }); // watching makes no sense on a cloud tree
   try {
     beginScanChrome();
+    const gen = state.scanGen; // this request's identity for the abandon check below
     $('scanStatus').innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `<span>Listing ${escapeHtml(providerName)}…</span>`;
     const t0 = performance.now();
     const resp = await api('/api/cloud/scan', {
@@ -4087,6 +4222,7 @@ async function startCloudScan(providerId, providerName) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: providerId }),
     });
+    if (abandonIfStopped(resp.scanId, gen)) return;
     followScanProgress(resp.scanId, 'cloud://' + providerId, false, t0);
   } catch (e) {
     failScan(e.message);
@@ -4095,7 +4231,8 @@ async function startCloudScan(providerId, providerName) {
 
 function endScanChrome() {
   state.scanning = false;
-  $('scanBtn').disabled = false;
+  state.abortScan = null;
+  setScanButtonMode('scan');
   $('headerSpin').classList.remove('on');
   $('progressTrack').classList.remove('active');
   $('scanMeta').textContent = '';
@@ -4106,9 +4243,7 @@ function failScan(message) {
   const status = $('scanStatus');
   status.classList.add('error');
   status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(message) + '</span>';
-  if (!state.largest.length) $('bigFiles').innerHTML = '<div class="muted">Run a scan to find your biggest files.</div>';
-  if (!state.bigFolders.length) $('bigFolders').innerHTML = '<div class="muted">Run a scan to find your biggest folders.</div>';
-  if (!state.types.length) $('donutLegend').innerHTML = '<div class="muted">Run a scan to see the breakdown.</div>';
+  restoreDashboardPanels();
   toast(message, 'error');
   switchView(state.view);
 }
@@ -4332,11 +4467,15 @@ async function renderGrowthProjection() {
 }
 
 $('scanBtn').addEventListener('click', () => {
+  if (state.scanning) { void stopScan(); return; } // the same button is Stop mid-scan
   const p = $('pathInput').value.trim();
   if (!p) { toast('Enter a folder path first', 'error'); return; }
   startScan(p, { incremental: !$('fastRescanWrap').hidden && $('fastRescan').checked });
 });
-$('pathInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('scanBtn').click(); });
+// Enter starts a scan and only ever starts one. It used to be free of this
+// check because the button was disabled mid-scan; now that the button is Stop,
+// an unguarded Enter in the path field would cancel the running scan instead.
+$('pathInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !state.scanning) $('scanBtn').click(); });
 $('pathInput').addEventListener('input', maybeShowFastRescan);
 maybeShowFastRescan();
 window.addEventListener('beforeunload', closeEventSource);

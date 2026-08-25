@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { startScan, getScan, collectLargestFiles, collectFileTypes } from '../services/diskScanner';
+import { startScan, getScan, cancelScan, collectLargestFiles, collectFileTypes } from '../services/diskScanner';
 import { buildTreemapFromStore } from '../utils/treemap';
 import { pruneTree, PruneResult } from '../utils/pruneTree';
 import { isInside } from '../utils/pathSanitizer';
@@ -161,6 +161,25 @@ scanRouter.post('/scan', guardBodyPath, async (req: Request, res: Response) => {
   }
 
   res.status(202).json({ scanId: scan.scanId, incremental: scan.incremental === true });
+});
+
+/**
+ * POST /api/scan/:scanId/cancel — stop a running scan.
+ *
+ * Cooperative: the walker stops at its next directory, and a gdu subprocess is
+ * killed outright rather than left to finish its shard. The record settles as
+ * an error immediately either way, so this answers about the record's state,
+ * not about the engine having already wound down.
+ *
+ * `cancelled: false` is a real answer, not a failure — it means the scan had
+ * already finished (or failed) before the request landed, which is exactly what
+ * happens when a user hits Stop as the last directory lands. An unknown scanId
+ * is still a 404, like every other route here.
+ */
+scanRouter.post('/scan/:scanId/cancel', (req: Request, res: Response) => {
+  const scan = requireScan(req, req.params.scanId);
+  const cancelled = cancelScan(scan.scanId);
+  res.json({ scanId: scan.scanId, cancelled, status: scan.status });
 });
 
 /** GET /api/scan/:scanId/progress — Server-Sent Events stream. */

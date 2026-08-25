@@ -672,6 +672,21 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     },
   },
   {
+    method: 'post',
+    path: '/api/scan/{scanId}/cancel',
+    summary: 'Stop a running scan — the walker halts and a gdu subprocess is killed; cancelled:false means it had already settled',
+    tag: 'scan',
+    destructive: false,
+    parameters: [pathParam('scanId', 'Scan id')],
+    responses: {
+      '200': jsonResponse(
+        'The scan record after the request',
+        obj({ scanId: str(), cancelled: bool('False when the scan had already finished or failed'), status: str("'error' once cancelled") }, ['scanId', 'cancelled', 'status']),
+      ),
+      '404': errorResponse('Unknown scanId'),
+    },
+  },
+  {
     method: 'get',
     path: '/api/scan/{scanId}/progress',
     summary: "SSE progress stream: frames of type 'progress', then one 'complete' (pruned tree + stats) or 'error'",

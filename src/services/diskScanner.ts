@@ -11,7 +11,7 @@ import { IO_THREADS } from '../utils/ioThreads';
 import { detectContainerKind } from '../utils/containerKind';
 import { neverDescend } from '../utils/mountBoundaries';
 import { forgetScan } from './containerScanner';
-import { findGduBinary, gduScanIntoStore } from './gduScanner';
+import { abortGduScan, findGduBinary, gduScanIntoStore } from './gduScanner';
 import { PackedScanStore, ScanStore, Flag, NodeInput, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
 
 /**
@@ -113,8 +113,63 @@ export function allScans(): ScanResult[] {
   return [...scans.values()];
 }
 
+/**
+ * Shutdown: stop every walker cooperatively, and kill any gdu subprocess.
+ *
+ * The flag alone leaves the subprocess running — it is only observed between
+ * shards — so quitting mid-scan would orphan a gdu that keeps reading the disk
+ * and holding its temp directory open with nothing left to clean it up. The
+ * records themselves are not settled here: the process is going away, and a
+ * shutdown is not the user stopping one scan.
+ */
 export function cancelAllScans(): void {
-  for (const scan of scans.values()) scan.cancelled = true;
+  for (const scan of scans.values()) {
+    scan.cancelled = true;
+    abortGduScan(scan.scanId);
+  }
+}
+
+/** What a scan the user stopped reports as its error, everywhere. */
+export const SCAN_CANCELLED_MESSAGE = 'Scan stopped by user';
+
+/**
+ * Stop a running scan on the user's behalf.
+ *
+ * Two things have to happen, and the order matters:
+ *
+ * 1. **Settle the record here, synchronously.** Raising `cancelled` alone is
+ *    not enough. Every engine observes the flag by simply `return`ing — gdu at
+ *    both its exits, the walker after drainQueue, the cloud driver after
+ *    listTree — and none of them assign a status, so the record would sit at
+ *    'running' forever: the SSE timer in scanRoutes only ends on
+ *    `status !== 'running'`, so the stream would keep beating and the UI would
+ *    keep spinning. Settling first makes every one of those returns a no-op.
+ *    It is race-free because each engine runs from its cancellation check to
+ *    `status = 'complete'` without an await in between — a scan that beat us
+ *    to the line really did complete, and `status !== 'running'` below leaves
+ *    it alone rather than rewriting a finished scan as an error.
+ *
+ * 2. **`finishedAt` is not optional.** `scanExpired` falls back to `createdAt`
+ *    when it is missing, so cancelling a walk that started more than the
+ *    30-minute TTL ago would have the next evictor tick delete the record —
+ *    and the UI would get a 404 instead of this message.
+ *
+ * Killing the gdu child is a separate concern: cooperative cancellation only
+ * reaches the shard boundary, which is up to five minutes away.
+ *
+ * Returns false when the scan is unknown or has already settled, so the route
+ * can answer honestly rather than claim to have stopped something.
+ */
+export function cancelScan(scanId: string): boolean {
+  const scan = scans.get(scanId);
+  if (!scan) return false;
+  scan.cancelled = true;
+  abortGduScan(scanId); // no-op unless a gdu subprocess is mid-shard
+  if (scan.status !== 'running') return false;
+  scan.status = 'error';
+  scan.error = SCAN_CANCELLED_MESSAGE;
+  scan.finishedAt = Date.now();
+  return true;
 }
 
 /**
