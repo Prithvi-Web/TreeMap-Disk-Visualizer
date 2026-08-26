@@ -262,3 +262,40 @@ test('meta endpoints are read-only: they answer GET and never accept a body meth
     await close();
   }
 });
+
+test('release artifact names carry no spaces, so a release cannot get duplicate assets', () => {
+  // v3.2.0 shipped 12 assets where 9 were expected: every Windows artifact
+  // appeared twice, once as `TreeMap-Setup-3.2.0.exe` and once as
+  // `TreeMap.Setup.3.2.0.exe`. The cause is a SPACE in electron-builder's
+  // default Windows artifactName (`${productName} Setup ${version}.${ext}`):
+  // the two upload paths in release.yml sanitize it differently — GitHub's
+  // asset API turns a space into a dot, electron-builder's own safe-name turns
+  // it into a hyphen — so the same file lands twice under two names.
+  //
+  // It was not cosmetic. latest.yml always named the hyphenated form, and in
+  // v3.0.0 and v3.1.0 only the dotted form was uploaded, so Windows
+  // auto-update pointed at a file that did not exist.
+  //
+  // macOS never had the problem because its defaults are already hyphenated.
+  const build = require('../package.json').build as {
+    nsis?: { artifactName?: string };
+    portable?: { artifactName?: string };
+    win?: { artifactName?: string };
+    mac?: { artifactName?: string };
+  };
+
+  const names = [build.nsis?.artifactName, build.portable?.artifactName].filter(Boolean) as string[];
+  assert.equal(names.length, 2, 'both Windows targets must pin their artifact name');
+  for (const name of names) {
+    assert.ok(!/\s/.test(name), `artifactName must contain no whitespace: ${name}`);
+    assert.match(name, /\$\{version\}/, `artifactName must carry the version: ${name}`);
+    assert.match(name, /\$\{ext\}/, `artifactName must carry the extension: ${name}`);
+  }
+  // The installer name is the one latest.yml points at, so it is pinned exactly
+  // rather than merely being space-free.
+  assert.equal(build.nsis?.artifactName, '${productName}-Setup-${version}.${ext}');
+  assert.equal(build.portable?.artifactName, '${productName}-${version}.${ext}');
+  // Both Windows targets produce .exe, so a shared win.artifactName would make
+  // them collide and overwrite one another.
+  assert.equal(build.win?.artifactName, undefined, 'the two .exe targets must be named separately');
+});

@@ -204,7 +204,7 @@ Grab the latest installer from the [**Releases page**](https://github.com/Prithv
 </tr>
 <tr>
 <td>🪟 <b>Windows</b></td>
-<td><code>TreeMap Setup x.y.z.exe</code></td>
+<td><code>TreeMap-Setup-x.y.z.exe</code></td>
 <td>Run it and follow the installer.</td>
 </tr>
 </table>
