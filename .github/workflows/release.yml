@@ -47,6 +47,14 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          # Append the install note to whatever changelog is already on the
+          # release. macOS blocks the first launch of any un-notarized app, and
+          # the Releases page is where people hit that wall — so the way past it
+          # has to live here, not only in the README. Appended from the macOS
+          # job ONLY: both matrix jobs touch the same release, and appending
+          # from both would print the note twice.
+          body_path: ${{ matrix.os == 'macos-latest' && '.github/INSTALL-NOTE.md' || '' }}
+          append_body: ${{ matrix.os == 'macos-latest' }}
           # The .zip / .yml / .blockmap files are what the in-app
           # auto-updater (electron-updater) reads — keep them published.
           files: |

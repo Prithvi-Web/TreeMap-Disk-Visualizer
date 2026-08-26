@@ -27,7 +27,7 @@
 <br><br>
 
 <kbd><a href="#-download-the-app-for-users">⬇ Download</a></kbd> &nbsp;
-<kbd><a href="#-the-twelve-views">✨ Features</a></kbd> &nbsp;
+<kbd><a href="#-the-fifteen-views">✨ Features</a></kbd> &nbsp;
 <kbd><a href="#-run-from-source--web-mode-3-commands">🚀 Run it</a></kbd> &nbsp;
 <kbd><a href="#-use-it-with-ai-mcp">🤖 AI / MCP</a></kbd> &nbsp;
 <kbd><a href="#-api-overview">🔌 API</a></kbd> &nbsp;
@@ -198,37 +198,111 @@ Grab the latest installer from the [**Releases page**](https://github.com/Prithv
 <table>
 <tr><th>Platform</th><th>File</th><th>How</th></tr>
 <tr>
-<td>🍎 <b>macOS</b></td>
+<td>🍎 <b>macOS</b><br><sub>Apple Silicon only</sub></td>
 <td><code>TreeMap-x.y.z-arm64.dmg</code></td>
-<td>Open it, drag TreeMap to Applications, launch.</td>
+<td>Open it, drag TreeMap into Applications — then follow <b><a href="#-first-launch-on-macos--apple-could-not-verify">First launch on macOS</a></b>, because macOS blocks it the first time.</td>
 </tr>
 <tr>
 <td>🪟 <b>Windows</b></td>
 <td><code>TreeMap-Setup-x.y.z.exe</code></td>
-<td>Run it and follow the installer.</td>
+<td>Run it. At the blue SmartScreen prompt click <b>More info</b> → <b>Run anyway</b>, then follow the installer.</td>
 </tr>
 </table>
 
-> [!IMPORTANT]
-> **First-launch security prompt.** Because the app isn't signed with a paid Apple/Microsoft
-> developer certificate, your OS shows a one-time warning.
-> - **macOS:** right-click the app → **Open** → **Open**
-> - **Windows:** click **More info** → **Run anyway**
->
-> After the first launch it opens normally.
+> [!NOTE]
+> **The macOS build is Apple Silicon only** — M1, M2, M3 or M4 (any Mac from late 2020 onward).
+> There is no Intel Mac build. On an Intel Mac, run TreeMap in web mode instead — see
+> **🚀 Run from source / web mode** further down; it is the same app in a browser tab.
+> Not sure which you have?  → **About This Mac**: it says either *Apple M…* or *Intel*.
 
-<details>
-<summary><b>🛠️ macOS says "TreeMap is damaged and can't be opened"?</b></summary>
+### 🍎 First launch on macOS — "Apple could not verify…"
+
+The first time you open TreeMap, macOS stops it with this:
+
+> **"TreeMap.app" Not Opened**
+> Apple could not verify "TreeMap.app" is free of malware that may harm your Mac or
+> compromise your privacy.  ·  **[ Done ]  [ Move to Bin ]**
+
+**Your download is fine.** That message does not mean malware was found — macOS shows it for
+*any* app that hasn't been **notarized**, and notarizing requires a paid Apple Developer
+Program membership ($99/year) that this free, open-source project doesn't have. TreeMap is
+signed, just not by an Apple-paid certificate. Every byte of it is
+[public in this repo](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer), and every
+release is built in the open by [GitHub Actions](.github/workflows/release.yml).
+
+Get past it **once** with either route below. After that TreeMap opens normally forever.
+
+<details open>
+<summary><b>Route 1 — clicks only, no Terminal</b> (Apple's own way)</summary>
 
 <br>
 
-That happens when the download's quarantine flag is still set. Clear it once, then launch normally — open **Terminal** and paste:
+> ⚠️ **Two things people trip on here**
+>
+> **1 — *Right-click → Open* no longer works.** Apple removed that old shortcut in macOS
+> **Sequoia (15)**, so on Sequoia and **Tahoe (26)** it does nothing at all. The steps below are
+> the replacement.
+>
+> **2 — There is a one-hour clock.** The **Open Anyway** button in step 3 only appears for about
+> an hour after macOS blocked the app. If it isn't there, double-click TreeMap again to
+> re-trigger the block, then go straight back to System Settings.
+
+1. Double-click **TreeMap** in your Applications folder. The message above appears — click **Done**.
+2. Open  **System Settings → Privacy & Security**, and scroll to the bottom, to **Security**.
+3. You'll see *"TreeMap.app" was blocked to protect your Mac.* Click **Open Anyway**.
+4. Authenticate with **Touch ID** or your Mac's password.
+5. Double-click **TreeMap** again. A last prompt appears — click **Open Anyway**.
+6. Authenticate once more. TreeMap launches, and is now a permanent exception.
+
+</details>
+
+<details>
+<summary><b>Route 2 — one line in Terminal</b> (fastest — a single step)</summary>
+
+<br>
+
+Drag **TreeMap** into your **Applications** folder first, then open **Terminal**
+(⌘-Space, type `Terminal`, Return) and paste this exactly, then press Return:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/TreeMap.app
 ```
 
+Nothing is printed when it works. Now double-click TreeMap and it opens straight away.
+
+**What that command does:** macOS tags every downloaded file with an invisible "came from the
+internet" marker called `com.apple.quarantine`. This removes that one marker from TreeMap, and
+only from TreeMap. It changes no setting on your Mac, weakens no protection for any other app,
+and needs no password.
+
 </details>
+
+<details>
+<summary><b>macOS says "TreeMap is damaged and can't be opened" instead?</b></summary>
+
+<br>
+
+Same cause, same cure — use **Route 2** above. That wording appears when the download was
+partly unpacked, or when the DMG was copied around before opening. If it still says *damaged*
+after running the command, the download itself was truncated: delete the `.dmg` and download it
+again from the Releases page.
+
+</details>
+
+<details>
+<summary><b>On macOS Sonoma (14) or older?</b></summary>
+
+<br>
+
+Both routes above still work, and you also get the classic shortcut Apple removed in Sequoia:
+**right-click** (or Control-click) TreeMap → **Open** → **Open**.
+
+</details>
+
+### 🪟 First launch on Windows — "Windows protected your PC"
+
+Same story, different vendor: the installer isn't signed with a paid Microsoft certificate, so
+SmartScreen shows a blue box once. Click **More info**, then **Run anyway**. That's it.
 
 > No Node.js or setup required — the desktop app is self-contained and scans the disk of the computer it runs on.
 
