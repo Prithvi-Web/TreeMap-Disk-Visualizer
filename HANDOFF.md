@@ -1,5 +1,52 @@
 # TreeMap — session handoff
 
+## v4 — Phases 0–2 verified, reviewed, and INSTALLED (26 August 2026)
+
+`/Applications/TreeMap.app` was rebuilt from `cd30b21` and now carries Phases
+0–2. Verified live in the installed app: a 357,134-node scan, the grammar
+(`size>5mb -in:node_modules` → 722 matches), and the fact layer returning a
+real last-opened date plus an honest "no Time Machine configured".
+**Full Disk Access resets on every reinstall** — the user must re-grant it.
+
+**Two adversarial read-only reviews found nine defects** (`cd30b21`), five of
+which made TreeMap state something false about recoverability. The most
+valuable ones to remember:
+
+- **A failed `git check-ignore` was read as "nothing is ignored"** — turning a
+  clean pushed repo into "deleting this costs one `git clone`" for a
+  node_modules the remote never held. Its own error path reintroduced the bug
+  it was written to prevent.
+- **`git()` treated exit code 1 as success for every command**, not just
+  check-ignore, so a failing `git status` read as a clean worktree.
+- **"does not skip this location" was claimed by readers that never check.**
+  Only macOS has an exclusion list; Linux has none and Windows never matches
+  paths against its own list. `BackupMembership.exclusionChecked` now exists
+  and the type system forces every reader to answer it.
+- **`tmutil isexcluded` echoes RESOLVED paths** (`/etc/hosts` →
+  `/private/etc/hosts`), so lookups keyed on the original path miss.
+- **A one-path `mdls` batch emits a bare dict, not an array** — and the
+  Spotlight verdict is memoised for the process, so the first single-file
+  request permanently disabled Spotlight.
+- **Frontend regression on a shipped path:** the grammar/bare-word router
+  triggered on any `-`, `:`, `(`, `)` or `or`, so `Screenshot (1).png` became a
+  three-way AND and `-hidden.txt` highlighted everything EXCEPT the match.
+  Global search's "go to" routes through it. It now requires a known field
+  before the operator.
+
+**Performance, measured in the real app.** All 13 tabs block 1–12 ms. The one
+breach was pre-existing: **Duplicates froze ~400 ms on every visit** (one
+3.4 MB innerHTML write, 26,675 elements, 1,484 cart buttons — the exact
+population `refreshCartButtons` warns about). Rows now fill on expand and the
+group list is windowed at 100: **400 ms → 14.8 ms, zero long tasks.**
+
+**Browser-pane measurement traps** (both cost time here): the pane throttles
+timers and auto-hides mid-call, so `setTimeout` stalls and results look like
+app bugs — front the tab with `tabs_select` first. And `getComputedStyle`
+returns STALE values there: an inline `border-color: #ff453a` read back as the
+old colour while the screenshot showed it correctly. Verify CSS visually.
+
+---
+
 ## v4 — Phases 0, 1 and 2 complete (26 August 2026)
 
 **Phase 2 (`e57a93d`): the query grammar.** Suite **1045 (1043 pass, 2 skips)**.
