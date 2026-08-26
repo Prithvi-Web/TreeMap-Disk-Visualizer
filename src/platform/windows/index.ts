@@ -12,9 +12,11 @@ import { relativeToVolume } from '../snapshotPaths';
 import { registerShellIntegration, unregisterShellIntegration, isInstalled as winShellInstalled } from './shellIntegration';
 import { runPowerShellJson } from './powershell';
 import { readLastUsedWindows, probeLastUsedWindows } from './lastUsed';
+import { readBackupMembershipWindows, probeBackupMembershipWindows } from './backup';
 import { mapSmartctl, SmartctlJson } from '../macos';
 import type {
   CapabilityState,
+  BackupMembership,
   LastUsedInfo,
   HardwareEncodeCapability,
   OpenHandleInfo,
@@ -422,5 +424,18 @@ export class WindowsProvider extends BaseProvider {
 
   override probeLastUsed(): Promise<CapabilityState> {
     return probeLastUsedWindows();
+  }
+
+  /**
+   * Read-only backup membership — see ./backup.ts. Never concludes that a
+   * path IS backed up; a false "this is backed up" is the one error that
+   * directly destroys data.
+   */
+  override readBackupMembership(paths: string[]): Promise<Map<string, BackupMembership>> {
+    return readBackupMembershipWindows(paths);
+  }
+
+  override probeBackupMembership(): Promise<CapabilityState> {
+    return probeBackupMembershipWindows();
   }
 }

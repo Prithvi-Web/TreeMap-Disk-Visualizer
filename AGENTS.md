@@ -100,6 +100,21 @@ OpenAPI 3 spec).
      a `noatime` mount — the fact is `source: 'none'` with the reason, and
      mtime is explicitly *not* substituted: "changed a year ago" is a
      different claim from "not opened in a year".
+     **`recoverability`** answers "does a copy of this exist elsewhere?" from
+     three independent sub-signals — git, backups and cloud sync — as
+     `{ elsewhere: 'proven'|'likely'|'none'|'unknown', why[], git, backup,
+     cloud, unavailable[] }`. **`proven` requires a checkable fact**: a
+     fully-pushed git remote, or a sync client reporting the file as
+     uploaded. **A configured backup earns at most `likely`, forever** — "a
+     backup exists and this path is not excluded" is not "this file is in the
+     backup", and `backup.pathCovered` is never promoted to `'yes'` by
+     inference, because a false "this is backed up" directly causes data
+     loss. Each sub-signal can fail alone: a repo whose `git` call fails is
+     unavailable *for that repo*, listed in `unavailable[]` with its reason,
+     while the other two still answer. Note a file that git *ignores* is
+     `none` even inside a fully-pushed repo — `git status --porcelain` omits
+     ignored files, so the repo reports clean while the remote has never held
+     them.
    - `GET /api/file-types`, `GET /api/empty-folders`, `GET /api/apps`,
      `GET /api/compare`, `GET /api/forecast` — further angles.
    - `GET`/`POST /api/platform/shell-integration` — the "Scan with TreeMap"

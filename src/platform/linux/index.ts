@@ -11,9 +11,11 @@ import { listSnapshots as btrfsSnapshots, snapshotAvailability } from './btrfs';
 import { relativeToVolume } from '../snapshotPaths';
 import { registerShellIntegration, unregisterShellIntegration, isInstalled as linuxShellInstalled } from './shellIntegration';
 import { readLastUsedLinux, probeLastUsedLinux } from './lastUsed';
+import { readBackupMembershipLinux, probeBackupMembershipLinux } from './backup';
 import { mapSmartctl, SmartctlJson } from '../macos';
 import type {
   CapabilityState,
+  BackupMembership,
   LastUsedInfo,
   ChangeEvent,
   HardwareEncodeCapability,
@@ -478,5 +480,18 @@ export class LinuxProvider extends BaseProvider {
 
   override probeLastUsed(): Promise<CapabilityState> {
     return probeLastUsedLinux();
+  }
+
+  /**
+   * Read-only backup membership — see ./backup.ts. Never concludes that a
+   * path IS backed up; a false "this is backed up" is the one error that
+   * directly destroys data.
+   */
+  override readBackupMembership(paths: string[]): Promise<Map<string, BackupMembership>> {
+    return readBackupMembershipLinux(paths);
+  }
+
+  override probeBackupMembership(): Promise<CapabilityState> {
+    return probeBackupMembershipLinux();
   }
 }

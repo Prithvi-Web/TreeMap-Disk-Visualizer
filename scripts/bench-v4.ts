@@ -336,7 +336,7 @@ async function measureFacts(): Promise<FactMeasurement[] | null> {
     // blow the budget without the gate ever noticing — which is exactly what
     // a Spotlight-first `lastUsed` would have done at ~0.36 ms/path.
     const out: FactMeasurement[] = [];
-    for (const provider of ['size', 'lastUsed']) {
+    for (const provider of ['size', 'lastUsed', 'recoverability']) {
       clearFactCache(); // cold: a cache hit would measure the Map, not the provider
       let computed = 0;
       let requested = 0;

@@ -553,3 +553,82 @@ such fallback, so the honest answer is nothing.
 own OS. Both are covered through their parse seams against captured tool
 output, including every `DisableLastAccess` value and the `noatime`,
 `relatime`, escaped-mount-point and nested-mount forms.
+
+---
+
+## Backup membership (v4 §1.2b)
+
+**The rule: `pathCovered` is never promoted to `'yes'` by inference.** A false
+"this is backed up" is the one error in TreeMap that directly destroys data —
+someone reads it, deletes their only copy, and the backup never had the file.
+Every mechanism available without mounting the backup destination (which §1.2b
+forbids) can establish only two things: that a backup exists, and that a path is
+not on the exclusion list. Neither is proof of coverage.
+
+### macOS — measured on this Mac, which has no Time Machine
+
+- `tmutil destinationinfo` → `tmutil: No destinations configured.`, **exit 0**.
+- `tmutil latestbackup` → `Failed to mount destination…`, **also exit 0**.
+  Exit codes are worthless here; the text is what is parsed.
+- `tmutil isexcluded a b c` **batches, and echoes each path back** on its own
+  `[Included]`/`[Excluded]` line — so answers are matched by name, not by array
+  position. That makes it immune to the alignment trap that makes `mdls`
+  batching dangerous.
+
+And the finding that decided the design: with **no destination configured at
+all**, `tmutil isexcluded ~/Desktop` still answers **`[Included]`**. "Included"
+means "not on the exclusion list", nothing more. Reading it as "backed up"
+would tell someone with no backups whatsoever that their files are safe.
+
+Only `[Excluded]` yields a definite verdict (`'no'`). Everything else is
+`'unknown'`, including the tempting case of a configured destination that
+completed an hour ago and does not exclude the path.
+
+### Linux — presence is not coverage
+
+restic / borg / borgmatic / Timeshift are detected from config in their
+documented locations plus `RESTIC_REPOSITORY`. `pathCovered` is **always**
+`'unknown'`: there is no exclusion list to prove even a negative, and §1.2b is
+explicit that a repository's existence is not proof a given file is inside it.
+The reason string says exactly that to the user.
+
+### Windows — File History
+
+`%LOCALAPPDATA%\Microsoft\Windows\FileHistory\Configuration\Config1.xml`
+records whether it is on and which folders it protects. Needs no elevation and
+touches no backup volume. A protected folder still yields `'unknown'`: File
+History runs on a schedule, so a file created since the last cycle is inside a
+protected folder and absent from the backup.
+
+**Not verified live:** this Mac has no Time Machine destination, so the
+populated macOS paths have never run here — only the not-configured path has.
+Linux and Windows have never run at all. All three are covered through their
+parse seams against captured tool output.
+
+---
+
+## Git recoverability (v4 §1.2a)
+
+The distinction the feature exists to draw: *4.2 GB fully pushed to origin*
+(deleting costs one `git clone`) versus *4.2 GB with three uncommitted files*
+(deleting is permanent). Same size, categorically different objects.
+
+**A hole in the obvious design, found by testing it.** `git status --porcelain`
+**does not list ignored files**. A repository containing `node_modules/` and
+`build/` behind a `.gitignore` reports *completely clean* — verified directly —
+so `fullyPushed` comes back true, and the UI would tell the user that deleting
+their 4 GB `node_modules` "costs one git clone". It is not in the remote at
+all. Every path is therefore also run through `git check-ignore`, batched per
+repository over stdin, and an ignored path carries `pathTracked: false` — git
+proves nothing about it.
+
+**Finding the repo root is a filesystem walk, not `git rev-parse`.** Asking
+`rev-parse --show-toplevel` once per directory cost **1.4 ms per path** — a
+2,000-path batch would have spent most of a second spawning git before doing
+any work. Walking up for a `.git` entry (which may be a *file*, for linked
+worktrees and submodules) with a shared memo per batch brings a 2,000-path
+batch to **75 ms**.
+
+Every invocation uses `execFile` with an argv array, `--porcelain`/`-z` forms
+only, and a timeout. Paths reach `check-ignore` on **stdin**, so a path
+beginning with `-` cannot become a flag.

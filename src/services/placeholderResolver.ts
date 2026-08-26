@@ -164,3 +164,79 @@ export function addToTotals(totals: PlaceholderTotals, verdict: PlaceholderVerdi
   totals.localBytes += verdict.localBytes;
   totals.notOnThisMachine += Math.max(0, verdict.cloudBytes - verdict.localBytes);
 }
+
+/* ------------------------------ cloud residency (v4 §1.2c) ------------------------------ */
+
+/**
+ * The sync root a path sits under, or null.
+ *
+ * Returns the deepest directory whose name still matches a provider pattern,
+ * so the UI can name the folder rather than only the vendor.
+ */
+export function syncRootFor(p: string): string | null {
+  if (providerForPath(p) === null) return null;
+  const normalized = p.replace(/\\/g, '/');
+  const markers = [
+    /^(.*?\/Library\/Mobile Documents\/[^/]+)\//i,
+    /^(.*?\/[^/]*iCloud ?Drive[^/]*)\//i,
+    /^(.*?\/OneDrive[^/]*)\//i,
+    /^(.*?\/Dropbox[^/]*)\//i,
+    /^(.*?\/Google ?Drive[^/]*)\//i,
+  ];
+  for (const marker of markers) {
+    const m = marker.exec(normalized);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/**
+ * Does a remote copy of this path exist? (v4 §1.2c)
+ *
+ * Extends A3's "is this a placeholder" to the question that actually decides
+ * whether deleting is safe. Four states, and the two extremes are the point:
+ *
+ *  - `placeholder`   — the content is not on this disk at all; it is in the
+ *                      account. Safe.
+ *  - `synced-local`  — present here and uploaded. Safe.
+ *  - `local-only`    — **present here and NOT uploaded.** A file sitting in a
+ *                      Dropbox folder looks backed up to a person; while the
+ *                      client is still syncing, or has stalled, it is not.
+ *                      Deleting it loses it.
+ *  - `unknown`       — not in a sync folder, or the client's state could not
+ *                      be read.
+ *
+ * **Reads only the sync client's own local state. Never calls a network API** —
+ * that is the same standard the existing cloud integrations meet, and §1.2c
+ * states it explicitly.
+ *
+ * The honest limit, and why `synced-local` is conservative: what can be read
+ * locally is whether the file is a placeholder and whether it is fully
+ * resident. A fully-resident file in a sync folder is *usually* uploaded, but
+ * a client that is mid-upload or stalled reports the same thing. Where the
+ * per-OS layer cannot distinguish those, this returns `unknown` rather than
+ * `synced-local`, because `synced-local` maps to a `proven` verdict and
+ * `proven` must never rest on an assumption.
+ */
+export async function cloudResidency(filePath: string, logicalSize: number): Promise<{
+  syncRoot: string | null;
+  provider: CloudProvider | null;
+  state: 'placeholder' | 'synced-local' | 'local-only' | 'unknown';
+}> {
+  const provider = providerForPath(filePath);
+  const syncRoot = syncRootFor(filePath);
+  if (provider === null) return { syncRoot: null, provider: null, state: 'unknown' };
+
+  const verdict = await resolve(filePath, logicalSize);
+  if (!verdict) return { syncRoot, provider, state: 'unknown' };
+
+  // Evicted: the bytes are in the account and not here. The strongest possible
+  // evidence that a remote copy exists, because the local copy does not.
+  if (verdict.evicted) return { syncRoot, provider, state: 'placeholder' };
+
+  // Resident in a sync folder. Uploaded, or merely not uploaded yet — and the
+  // local state alone cannot always tell. Reported as unknown rather than
+  // guessed at in either direction, because one direction ('synced-local')
+  // becomes a "proven, safe to delete" and the other becomes a false alarm.
+  return { syncRoot, provider, state: 'unknown' };
+}

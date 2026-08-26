@@ -11,6 +11,7 @@ import {
   CloneFamilyId,
   EnumerateOptions,
   HardwareEncodeCapability,
+  BackupMembership,
   LastUsedInfo,
   LogicalVolumeInfo,
   OpenHandleInfo,
@@ -443,5 +444,39 @@ export abstract class BaseProvider implements PlatformProvider {
 
   async probeLastUsed(): Promise<CapabilityState> {
     return { available: true, mechanism: 'file access time' };
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Backup membership (v4 §1.2b)
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Default: nothing known. Every path reports `configured: false` and
+   * `pathCovered: 'unknown'`.
+   *
+   * "Unknown" is the right default rather than an omission — a platform with
+   * no backup reader has genuinely not checked, and the one value it must
+   * never fall back to is 'yes'.
+   */
+  async readBackupMembership(paths: string[]): Promise<Map<string, BackupMembership>> {
+    const out = new Map<string, BackupMembership>();
+    for (const p of paths) {
+      out.set(p, {
+        configured: false,
+        lastBackupMs: null,
+        pathCovered: 'unknown',
+        mechanism: 'none',
+        reason: 'TreeMap does not know of a backup system on this computer, so it cannot tell whether anything here has a second copy.',
+      });
+    }
+    return out;
+  }
+
+  async probeBackupMembership(): Promise<CapabilityState> {
+    return {
+      available: false,
+      mechanism: 'none',
+      reason: 'TreeMap does not know of a backup system on this computer, so it cannot tell whether anything here has a second copy.',
+    };
   }
 }

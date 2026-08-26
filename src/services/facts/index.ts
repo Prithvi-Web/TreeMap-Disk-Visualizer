@@ -1,6 +1,7 @@
 import { registerFactProvider } from './registry';
 import { sizeProvider } from './sizeProvider';
 import { lastUsedProvider } from './lastUsedProvider';
+import { recoverabilityProvider } from './recoverabilityProvider';
 
 /**
  * The fact layer's entry point (§4.1).
@@ -18,6 +19,7 @@ import { lastUsedProvider } from './lastUsedProvider';
 
 registerFactProvider(sizeProvider);
 registerFactProvider(lastUsedProvider);
+registerFactProvider(recoverabilityProvider);
 
 export {
   computeFacts,
@@ -33,3 +35,4 @@ export type { FactBatch, FactProvider, FactStats } from './types';
 export { unavailableBatch } from './types';
 export type { SizeFact } from './sizeProvider';
 export type { LastUsedFact } from './lastUsedProvider';
+export type { RecoverabilityFact } from '../recoverabilityTypes';

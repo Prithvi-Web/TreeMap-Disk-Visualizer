@@ -1,4 +1,5 @@
 import { platform } from './index';
+import { commandExists } from './exec';
 import type { Capabilities, CapabilityState } from './types';
 
 /**
@@ -69,6 +70,8 @@ async function detect(): Promise<Capabilities> {
     provenance,
     shellIntegration,
     lastUsed,
+    backupMembership,
+    gitStatus,
   ] = await Promise.all([
     safeProbe('Fast scanning', () => p.probeFastEnumeration(), unavailable('readdir')),
     safeProbe('Live updates', () => p.probeLiveIndex(), unavailable('fs.watch')),
@@ -86,6 +89,8 @@ async function detect(): Promise<Capabilities> {
     safeProbe('Download history', () => p.probeProvenance(), unavailable('none')),
     safeProbe('File manager integration', () => p.probeShellIntegration(), unavailable('none')),
     safeProbe('Last-opened dates', () => p.probeLastUsed(), unavailable('none')),
+    safeProbe('Backup status', () => p.probeBackupMembership(), unavailable('none')),
+    safeProbe('Git status', () => probeGitStatus(), unavailable('git')),
   ]);
 
   return {
@@ -103,7 +108,38 @@ async function detect(): Promise<Capabilities> {
     provenance,
     shellIntegration,
     lastUsed,
+    backupMembership,
+    gitStatus,
+    // Not probed: reading a sync client's own local state needs no tool and
+    // touches no network, so there is nothing that can be missing. Whether a
+    // given path is in a sync folder is a per-path question the fact provider
+    // answers, not a machine-wide capability.
+    cloudResidency: {
+      available: true,
+      mechanism: "sync client's own local state (never a network call)",
+    },
   };
+}
+
+/**
+ * Is `git` usable for reading repository state (v4 §1.2a)?
+ *
+ * Not a per-OS mechanism — git is git — so it is probed here rather than
+ * through the platform provider. Only ever invoked with `--porcelain` forms
+ * and a sanitized path; see services/gitScanner.ts.
+ */
+async function probeGitStatus(): Promise<CapabilityState> {
+  const present = await commandExists('git', ['--version']);
+  if (!present) {
+    return {
+      available: false,
+      mechanism: 'git',
+      reason:
+        'Git is not installed, so TreeMap cannot tell whether a project folder has already been pushed to a remote. ' +
+        'Repository folders will show as "unknown" rather than being guessed at.',
+    };
+  }
+  return { available: true, mechanism: 'git --porcelain' };
 }
 
 /**

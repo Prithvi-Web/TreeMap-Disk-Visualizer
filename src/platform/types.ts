@@ -195,6 +195,39 @@ export interface LastUsedInfo {
   caveat?: string;
 }
 
+/* ---------- Backup membership (v4 §1.2b) ---------- */
+
+/**
+ * Whether a backup system on this machine covers a path.
+ *
+ * **`pathCovered: 'yes'` is the most dangerous value in TreeMap.** A false
+ * "this is backed up" directly causes data loss — someone reads it, deletes
+ * the only copy, and the backup never had it. So it is produced only by a
+ * mechanism that genuinely checked the backup's own contents, and the macOS,
+ * Linux and Windows readers as written **never produce it at all**: they can
+ * see that a backup is configured and that a path is not excluded, and neither
+ * of those is proof that any completed backup contains it.
+ *
+ * `'unknown'` is therefore the correct and common answer, and a dedicated test
+ * asserts no code path promotes it.
+ */
+export interface BackupMembership {
+  /** Is any backup system set up on this machine at all? */
+  configured: boolean;
+  /** When the last backup completed, where that is knowable. */
+  lastBackupMs: number | null;
+  /**
+   * 'no' means positively excluded — it will never be backed up.
+   * 'unknown' means not excluded, which is not the same as covered.
+   * 'yes' requires having checked the backup's contents.
+   */
+  pathCovered: 'yes' | 'no' | 'unknown';
+  /** e.g. "Time Machine", "File History", "restic", "none". */
+  mechanism: string;
+  /** Present when the reader could not run at all. */
+  reason?: string;
+}
+
 /* ---------- Volume topology (A5) ---------- */
 
 export interface PhysicalDiskInfo {
@@ -338,6 +371,12 @@ export interface Capabilities {
   shellIntegration: CapabilityState;
   /** v4 §1.1 — last-opened dates, from Spotlight or from access times. */
   lastUsed: CapabilityState;
+  /** v4 §1.2a — git ahead/dirty/pushed state for paths inside a work tree. */
+  gitStatus: CapabilityState;
+  /** v4 §1.2b — whether a backup system on this machine covers a path. */
+  backupMembership: CapabilityState;
+  /** v4 §1.2c — whether a sync client holds a remote copy of a path. */
+  cloudResidency: CapabilityState;
 }
 
 export type PlatformName = 'windows' | 'macos' | 'linux';

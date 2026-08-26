@@ -1,5 +1,6 @@
 import {
   CapabilityState,
+  BackupMembership,
   LastUsedInfo,
   ChangeEvent,
   CloneFamilyId,
@@ -123,6 +124,14 @@ export interface PlatformProvider {
    */
   readLastUsed(paths: string[]): Promise<Map<string, LastUsedInfo>>;
 
+  /**
+   * Whether a backup system on this machine covers a batch of paths
+   * (v4 §1.2b). Read-only: the backup destination is never mounted or
+   * traversed. See BackupMembership for why `pathCovered: 'yes'` is the value
+   * these readers are forbidden from inventing.
+   */
+  readBackupMembership(paths: string[]): Promise<Map<string, BackupMembership>>;
+
   /* Capability probes — one per capability-gated feature (§2.2) */
   probeFastEnumeration(): Promise<CapabilityState>;
   probeLiveIndex(): Promise<CapabilityState>;
@@ -137,6 +146,7 @@ export interface PlatformProvider {
   probeProvenance(): Promise<CapabilityState>;
   probeShellIntegration(): Promise<CapabilityState>;
   probeLastUsed(): Promise<CapabilityState>;
+  probeBackupMembership(): Promise<CapabilityState>;
 }
 
 /** Map Node's platform string onto the three TreeMap supports. */

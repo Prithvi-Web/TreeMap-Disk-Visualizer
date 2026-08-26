@@ -11,6 +11,7 @@ import { listSnapshots as tmListSnapshots, mountSnapshot } from './tmutil';
 import { recoverFromSnapshots as macRecoverFromSnapshots } from './snapshotRecover';
 import { allocatedSize, placeholderInfo } from './allocation';
 import { readLastUsedMac, probeLastUsedMac } from './lastUsed';
+import { readBackupMembershipMac, probeBackupMembershipMac } from './backup';
 import {
   registerShellIntegration as installQuickAction,
   unregisterShellIntegration as removeQuickAction,
@@ -20,6 +21,7 @@ import type {
   CapabilityState,
   CloneFamilyId,
   HardwareEncodeCapability,
+  BackupMembership,
   LastUsedInfo,
   OpenHandleInfo,
   PlaceholderInfo,
@@ -301,6 +303,19 @@ export class MacOsProvider extends BaseProvider {
 
   override probeLastUsed(): Promise<CapabilityState> {
     return probeLastUsedMac();
+  }
+
+  /**
+   * Read-only backup membership — see ./backup.ts. Never concludes that a
+   * path IS backed up; a false "this is backed up" is the one error that
+   * directly destroys data.
+   */
+  override readBackupMembership(paths: string[]): Promise<Map<string, BackupMembership>> {
+    return readBackupMembershipMac(paths);
+  }
+
+  override probeBackupMembership(): Promise<CapabilityState> {
+    return probeBackupMembershipMac();
   }
 }
 
