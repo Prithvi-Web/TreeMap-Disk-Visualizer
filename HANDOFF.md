@@ -1,5 +1,75 @@
 # TreeMap — session handoff
 
+## v4 — Phase 0 and Phase 1 complete (26 August 2026)
+
+**Six commits on `main`, unpushed.** Suite **970 (968 pass, 2 skips)**, up from
+906 at `2d47e98`. Typecheck clean, build clean, `npm run bench:v4` 6 pass /
+3 not measurable in Node. Capabilities **12/16** (was 9/12).
+
+| Commit | What |
+| --- | --- |
+| `6f3c9c4` | 0.2 the fact layer + `POST /api/facts` |
+| `c3c7d6c` | 0.3 the performance gate, `npm run bench:v4` |
+| `7717392` | 0.1 the recorded baseline |
+| `f989f81` | 1.1 last-opened dates |
+| `d6ee1bf` | 1.2 recoverability |
+
+Spec: `/Users/prithvivinay/Desktop/TREEMAP-V4-MASTER-PROMPT.md`.
+Baseline: `docs/superpowers/specs/2026-08-25-v4-baseline.md`.
+
+### Corrections to the v4 brief, found by measuring
+
+1. **The suite was 906, not the 828 the brief states** (and HANDOFF's own
+   header said 899 while its "Start here" said 828). 906 is the floor.
+2. **The golden lock covers nine surfaces, not eight** — `goldenHarness.ts`
+   also captures the final SSE frame of `/api/scan/{id}/progress`.
+3. **⌘K is already bound to global search** (A4), so Phase 9.1's command
+   palette needs a different key. The user approved **⌘⇧P**.
+4. **§4.1's 2,000-path cap collides with `guardBodyPaths`' 500** (same error
+   code). Resolved with `guardBodyPathsMax(n)`; destructive routes keep 500,
+   and a test asserts the separation.
+5. **§2.5 budgets a sidecar at "400 ms for 5,000 paths" while §4.1 caps a
+   request at 2,000.** Measured as three sequential batches against the one
+   400 ms budget.
+
+### New traps, all paid for
+
+- **`kMDItemLastUsedDate` is dead on this macOS.** Spotlight indexing is ON,
+  `mdimport -A` lists the attribute, and `mdfind` matches **zero files on the
+  entire machine**. A capability probe based on `mdutil` alone would report the
+  feature available and answer "unknown" forever. Availability is decided by
+  whether Spotlight *answers*, probed against real paths.
+- **`mdls` loses a whole batch to one missing path** — it abandons the plist,
+  prints `could not find /x.` as text, and **exits 0**. Stat first; discard a
+  result whose length does not match rather than mis-zipping.
+- **`tmutil` exits 0 on failure too** (`destinationinfo`, `latestbackup`).
+  Parse the text, never the exit code.
+- **`tmutil isexcluded` says `[Included]` on a Mac with no backups at all.**
+  It means "not on the exclusion list", not "backed up".
+- **`git status --porcelain` omits ignored files**, so a repo full of
+  `node_modules` reports clean and `fullyPushed` is true. Without
+  `check-ignore`, the UI would say deleting it "costs one git clone".
+- **tsx does not forward the outer process's V8 flags** to the child it
+  spawns, so `node --expose-gc <tsx> bench-store.ts` measures an unsettled
+  heap and reports ~123 B/node against a true 50.9. Flags go AFTER the tsx
+  entry point.
+- **Trap 2 below is real and I hit it.** Repeated 542-554 ms measurements of a
+  provider I had just optimised turned out to be a **stale server still bound
+  to the port** — the rebuilt one had died with EADDRINUSE, visible only in a
+  log I had not read. The true figure was 75 ms. Verify the server you are
+  measuring is the one you just built.
+
+### What could NOT be verified on this machine
+
+- **`useCount` has never returned a real value** — Spotlight supplies none here.
+- **Time Machine's populated paths have never run**: this Mac has no backup
+  destination, so only the not-configured branch has executed live.
+- **Linux and Windows have never run at all** for 1.1 or 1.2. Both are covered
+  through their parse seams against captured tool output.
+- **No `noatime` volume and no cloud sync client** were available to exercise.
+
+---
+
 **Date:** 25 August 2026
 **Status:** **v3.2.0 committed, AWAITING THE USER'S GITHUB DESKTOP PUSH + RELEASE.**
 Three commits on `main` since the v3.1.0 release: `879eff7` scan cancellation,
