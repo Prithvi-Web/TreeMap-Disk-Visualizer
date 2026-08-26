@@ -2885,7 +2885,19 @@ async function ensureSubtree(path) {
   const have = state.pathIndex.get(path);
   if (have && !have.pruned) return have;
   const scanId = state.scanId;
-  if (!scanId) return have || null;
+  if (!scanId) {
+    // No scan yet — we are looking at the instant paint from the index, which
+    // is deliberately a small preview. The index can still answer for this
+    // branch, and without this the folder would render as empty, which is the
+    // one thing ensureSubtree exists to prevent.
+    try {
+      const data = await apiPaced(`/api/index/tree?path=${encodeURIComponent(path)}&maxNodes=${SUBTREE_NODES}`);
+      if (state.scanId) return state.pathIndex.get(path) || have || null; // a scan landed; its tree wins
+      return data.root ? graftSubtree(data.root) : (have || null);
+    } catch {
+      return have || null;
+    }
+  }
   try {
     // Paced: quick navigation can outrun the server's 10/s allowance, and a
     // 429 here would leave the folder looking empty rather than unloaded.
@@ -3922,6 +3934,23 @@ function skeletonRows(n, h = 38) {
   return Array.from({ length: n }, () => `<div class="skeleton" style="height:${h}px;margin:8px 0;"></div>`).join('');
 }
 
+/**
+ * How much tree the instant open asks the index for.
+ *
+ * This paint is a PREVIEW: the background scan replaces it seconds later with
+ * its own pruned tree and a real scanId. Sizing it like the scan's 250,000 was
+ * costing 89.7 MB of JSON and ~2.1s of blocked server on a 1M-node index —
+ * on the one path whose entire purpose is to feel instant. 25,000 nodes is
+ * 6.2 MB and ~440ms, still covers the whole first screen biggest-first, and
+ * root.size stays exact because pruning preserves recursive totals.
+ *
+ * Nothing is lost: a folder the preview withheld is marked `pruned`, and
+ * ensureSubtree now fetches it from the index on demand.
+ */
+const INSTANT_OPEN_NODES = 25000;
+/** Budget for one on-demand drill-in, matching the scan path's subtree cap. */
+const SUBTREE_NODES = 20000;
+
 /* Feature 5 — fast (incremental) rescan helpers. */
 function scannedRoots() { try { return new Set(JSON.parse(localStorage.getItem('tm-scanned-roots') || '[]')); } catch { return new Set(); } }
 function rememberScannedRoot(p) { const s = scannedRoots(); s.add(p); localStorage.setItem('tm-scanned-roots', JSON.stringify([...s].slice(-60))); }
@@ -4031,7 +4060,7 @@ async function openFromIndex(path, info) {
   const t0 = performance.now();
   let data;
   try {
-    data = await api('/api/index/tree?path=' + encodeURIComponent(path));
+    data = await api('/api/index/tree?path=' + encodeURIComponent(path) + '&maxNodes=' + INSTANT_OPEN_NODES);
   } catch {
     return false; // fall through to a real scan
   }

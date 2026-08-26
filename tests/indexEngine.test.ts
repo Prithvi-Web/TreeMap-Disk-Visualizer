@@ -607,3 +607,94 @@ test('reading a tree stays sub-quadratic as directory count grows', async (t) =>
   await fsp.rm(small, { recursive: true, force: true });
   await fsp.rm(large, { recursive: true, force: true });
 });
+
+test('a withheld directory is never fetched, only counted past the budget', async () => {
+  // readTree withholds a directory whole when its children do not fit the
+  // remaining budget — but it used to fetch every one of those children first
+  // and then throw them all away. Measured on a real 1,013,072-node index with
+  // a 25,000-node budget: 275,876 rows read to keep 25,000, and 427ms of a
+  // synchronous, event-loop-blocking read on the one path whose whole purpose
+  // is to feel instant.
+  //
+  // Asserted as a ROW COUNT, not a duration: rows read is the machine-
+  // independent invariant, and this repo's wall-clock policy is that timings
+  // belong in the notes, not in assertions.
+  const dir = await mkTmp();
+  try {
+    // One small directory that will fit, and one fat one that cannot.
+    await fsp.mkdir(path.join(dir, 'small'));
+    await fsp.writeFile(path.join(dir, 'small', 'a.bin'), Buffer.alloc(9000));
+    await fsp.mkdir(path.join(dir, 'fat'));
+    for (let i = 0; i < 400; i++) {
+      await fsp.writeFile(path.join(dir, 'fat', `f${i}.bin`), Buffer.alloc(8));
+    }
+    await buildIndex(dir);
+
+    const Database = (await import('better-sqlite3')).default;
+    const proto = Database.prototype as unknown as { prepare: (sql: string) => unknown };
+    const original = proto.prepare;
+    let rowsRead = 0;
+    proto.prepare = function patched(sql: string) {
+      const stmt = original.call(this, sql) as { all: (...a: unknown[]) => unknown[] };
+      if (/parent_id = \? ORDER BY size DESC/.test(sql)) {
+        const inner = stmt.all.bind(stmt);
+        stmt.all = (...a: unknown[]) => { const r = inner(...a); rowsRead += r.length; return r; };
+      }
+      return stmt;
+    } as typeof original;
+
+    let tree;
+    try {
+      // Room for the two directories and a little more, but nowhere near 400.
+      tree = readTree(dir, dir, 6);
+    } finally {
+      proto.prepare = original;
+    }
+
+    assert.ok(tree, 'a tree is returned');
+    assert.ok(tree.prunedDirs >= 1, 'the fat directory is withheld');
+    assert.ok(
+      rowsRead < 100,
+      `a withheld directory must not be read in full: ${rowsRead} rows read for a 6-node budget`,
+    );
+
+    // Equivalence: withholding is still whole-directory, and the withheld one
+    // is marked so the client knows to ask for it rather than call it empty.
+    const fat = tree.root.children?.find((c) => c.name === 'fat');
+    assert.ok(fat, 'the fat directory is still present');
+    assert.equal(fat.pruned, true, 'and marked as withheld');
+    assert.equal(fat.children, undefined, 'with no partial listing');
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the index carries the seek paths readTree and the allocation report need', async () => {
+  const dir = await mkTmp();
+  try {
+    await fsp.writeFile(path.join(dir, 'a.bin'), Buffer.alloc(1024));
+    await buildIndex(dir);
+    const { openIndex } = await import('../src/services/indexEngine');
+    const handle = openIndex();
+    const plan = (sql: string, ...params: number[]): string =>
+      (handle.prepare('EXPLAIN QUERY PLAN ' + sql).all(...params) as { detail: string }[])
+        .map((r) => r.detail)
+        .join(' | ');
+
+    // Reading one directory, biggest child first — without this the walk
+    // builds a temp B-tree per directory, ~29,000 of them on a real index.
+    const children = plan('SELECT * FROM nodes WHERE parent_id = ? ORDER BY size DESC LIMIT ?', 1, 10);
+    assert.match(children, /idx_nodes_child_size/, `children read must be index-ordered: ${children}`);
+    assert.ok(!/TEMP B-TREE/.test(children), `and must not sort: ${children}`);
+
+    // Counting hard-link families: only the few multi-linked rows can match,
+    // so a partial index answers it without touching the other million.
+    const families = plan(
+      'SELECT ino, COUNT(*) c FROM nodes WHERE root_id = ? AND is_dir = 0 AND nlink > 1 GROUP BY ino',
+      1,
+    );
+    assert.match(families, /idx_nodes_family/, `family counting must use the partial index: ${families}`);
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});

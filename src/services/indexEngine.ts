@@ -169,6 +169,19 @@ function schemaSql(): string {
     -- With this index the same 200 lookups take 1 ms. It costs ~15 MB on a
     -- 209 MB index, and is built once on the next open of an existing one.
     CREATE INDEX IF NOT EXISTS idx_nodes_ino ON nodes(root_id, ino);
+    -- Every readTree call, and the allocation report, start by counting how
+    -- many names each multi-linked inode has in this root. That is a GROUP BY
+    -- over the whole root — 1M rows, 565 ms measured — even though only the
+    -- ~25k hard-linked files can possibly contribute. A PARTIAL index holds
+    -- just those rows, and SQLite uses it because the query's own WHERE says
+    -- exactly the same thing: 565 ms -> 9 ms, for almost no disk.
+    CREATE INDEX IF NOT EXISTS idx_nodes_family ON nodes(root_id, ino)
+      WHERE nlink > 1 AND is_dir = 0;
+    -- readTree reads one directory at a time, biggest child first. Without a
+    -- size-ordered child index every one of those ~29,000 reads builds a temp
+    -- B-tree to sort: measured 757 ms of walking, 449 ms with this. The
+    -- existing idx_nodes_child is (parent_id, name) and cannot serve the sort.
+    CREATE INDEX IF NOT EXISTS idx_nodes_child_size ON nodes(parent_id, size DESC);
   `;
 }
 
@@ -1100,7 +1113,15 @@ export function readTree(
   const startRow = handle.prepare('SELECT * FROM nodes WHERE id = ?').get(startId) as NodeRow | undefined;
   if (!startRow) return null;
 
-  const childrenOf = handle.prepare('SELECT * FROM nodes WHERE parent_id = ? ORDER BY size DESC');
+  // LIMIT is not an optimisation detail here, it is the difference between
+  // fetching what we keep and fetching what we throw away. A directory that
+  // does not fit the remaining budget is withheld whole — but the old query
+  // fetched every one of its children first and then discarded them all.
+  // Measured on a real 1M-node index with a 25,000-node budget: 275,876 rows
+  // fetched to keep 25,000. Asking for one more row than could possibly fit
+  // answers the same question — "is this bigger than the room left?" — while
+  // reading at most that many rows.
+  const childrenOf = handle.prepare('SELECT * FROM nodes WHERE parent_id = ? ORDER BY size DESC LIMIT ?');
 
   // How many names for each multi-linked inode live inside this root (A2).
   // Fetched once for the whole root rather than per node: the alternative is a
@@ -1135,14 +1156,17 @@ export function readTree(
     const current = frontier.pop();
     if (!current) break;
 
-    const rows = childrenOf.all(current.row.id) as NodeRow[];
+    // room + 1 rows: enough to place every child if they fit, and exactly one
+    // more than fits if they do not — which is all the test below needs.
+    const room = maxNodes - nodes;
+    const rows = childrenOf.all(current.row.id, room + 1) as NodeRow[];
     if (rows.length === 0) {
       // An empty directory MUST carry `children: []`, not undefined — the
       // empty-folder finder keys off exactly that distinction.
       current.node.children = [];
       continue;
     }
-    if (nodes + rows.length > maxNodes) {
+    if (rows.length > room) {
       // Withhold whole directories only: half a directory would break
       // invariant 1 and silently under-report the folder.
       current.node.pruned = true;
