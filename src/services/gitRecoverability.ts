@@ -50,7 +50,11 @@ import type { GitRecoverability } from './recoverabilityTypes';
 const GIT_TIMEOUT_MS = 10_000;
 const MAX_BUFFER = 8 * 1024 * 1024;
 
-function git(args: string[], stdin?: string): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
+function git(
+  args: string[],
+  opts: { stdin?: string; exitOneIsEmpty?: boolean } = {},
+): Promise<{ ok: true; stdout: string } | { ok: false; error: string }> {
+  const { stdin, exitOneIsEmpty = false } = opts;
   return new Promise((resolve) => {
     const child = execFile(
       'git',
@@ -58,10 +62,16 @@ function git(args: string[], stdin?: string): Promise<{ ok: true; stdout: string
       { timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true },
       (err, stdout) => {
         if (err) {
-          // `check-ignore` exits 1 when nothing matched — a normal answer, not
-          // a failure, and its stdout is still valid.
+          // `check-ignore` exits 1 to mean "nothing matched" — a normal answer.
+          //
+          // **Scoped to that one command on purpose.** Applying it everywhere
+          // made a `git status` that exits 1 read as a clean, empty worktree:
+          // no dirty files, nothing untracked, and with a remote and ahead=0
+          // that produces `fullyPushed: true` and a confident "deleting this
+          // costs one git clone" for a repo whose state was never actually
+          // read. A failure must look like a failure.
           const code = (err as { code?: unknown }).code;
-          if (code === 1 && typeof stdout === 'string') { resolve({ ok: true, stdout }); return; }
+          if (exitOneIsEmpty && code === 1 && typeof stdout === 'string') { resolve({ ok: true, stdout }); return; }
           resolve({ ok: false, error: err instanceof Error ? err.message.split('\n')[0] : String(err) });
           return;
         }
@@ -95,9 +105,27 @@ function git(args: string[], stdin?: string): Promise<{ ok: true; stdout: string
  * nothing.
  */
 export async function repoRootFor(p: string, cache?: Map<string, string | null>): Promise<string | null> {
+  // A relative or empty path would walk up from the SERVER's own working
+  // directory and, in a checkout, attribute this repository's state to the
+  // user's file. Callers are sanitised to absolute, but this is exported.
+  if (!path.isAbsolute(p)) return null;
+
   const memo = cache ?? new Map<string, string | null>();
   const chain: string[] = [];
+
+  // Start at `p` itself when it is a directory, not at its parent.
+  //
+  // Starting at `path.dirname(p)` unconditionally meant the repository FOLDER
+  // — "4.2 GB, fully pushed to origin", the example this whole module exists
+  // for — reported no git information at all, because the walk began one level
+  // above its own `.git`. A treemap asks about folders far more often than
+  // about the files inside them.
   let dir = path.dirname(p);
+  try {
+    if ((await fsp.stat(p)).isDirectory()) dir = p;
+  } catch {
+    // Gone or unreadable; the parent walk is still the right answer.
+  }
 
   for (;;) {
     const hit = memo.get(dir);
@@ -211,9 +239,20 @@ export async function readRepoState(repoRoot: string): Promise<GitRecoverability
  * keeps one invocation per repo regardless of batch size, and a path
  * beginning with `-` cannot be read as a flag.
  */
-export async function ignoredPaths(repoRoot: string, paths: string[]): Promise<Set<string>> {
+export async function ignoredPaths(repoRoot: string, paths: string[]): Promise<Set<string> | null> {
   if (paths.length === 0) return new Set();
-  const result = await git(['-C', repoRoot, 'check-ignore', '-z', '--stdin'], paths.join('\0') + '\0');
-  if (!result.ok) return new Set();
+  const result = await git(
+    ['-C', repoRoot, 'check-ignore', '-z', '--stdin'],
+    { stdin: paths.join('\0') + '\0', exitOneIsEmpty: true },
+  );
+  // A FAILURE IS NOT "nothing is ignored".
+  //
+  // Returning an empty set here made every path look tracked, which turned a
+  // clean pushed repo into `fullyPushed` + `pathTracked` — i.e. a confident
+  // "deleting this costs one git clone" for a 4 GB node_modules the remote has
+  // never held. That is the exact outcome the check-ignore pass exists to
+  // prevent, reintroduced by its own error path. Null means "unknown", and the
+  // caller reports the repo as unavailable rather than guessing.
+  if (!result.ok) return null;
   return new Set(result.stdout.split('\0').filter((p) => p.length > 0));
 }

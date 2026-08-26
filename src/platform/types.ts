@@ -222,6 +222,19 @@ export interface BackupMembership {
    * 'yes' requires having checked the backup's contents.
    */
   pathCovered: 'yes' | 'no' | 'unknown';
+  /**
+   * Did the reader actually establish that this path is NOT on an exclusion
+   * list, or did it simply never look?
+   *
+   * A separate flag rather than folding both into `pathCovered: 'unknown'`,
+   * because the composite's wording depends on it. "does not skip this
+   * location" is a claim only macOS can make, and only when the lookup
+   * succeeded — on Linux there is no exclusion list at all, and on Windows the
+   * protected-folder list is read but not matched against. Collapsing the two
+   * made every file on a Linux box with a restic config say "probably a second
+   * copy".
+   */
+  exclusionChecked: boolean;
   /** e.g. "Time Machine", "File History", "restic", "none". */
   mechanism: string;
   /** Present when the reader could not run at all. */

@@ -27,6 +27,9 @@ const strongest = (a: ElsewhereVerdict, b: ElsewhereVerdict): ElsewhereVerdict =
 
 /** Plain-English duration, for reasons a person reads under a delete button. */
 export function humanAge(ms: number): string {
+  // Clock skew, or a DST-ambiguous reconstruction, can make this negative.
+  // Flooring it silently produced a confident "today" from a nonsensical input.
+  if (ms < 0) return 'at an unknown time';
   const days = Math.floor(ms / 86_400_000);
   if (days < 1) return 'today';
   if (days === 1) return 'yesterday';
@@ -107,12 +110,37 @@ export function backupVerdict(backup: BackupRecoverability | null): { verdict: E
     };
   }
 
-  // The ceiling. A configured backup that has run recently and does not
+  const when = backup.lastBackupMs !== null ? ` The last backup finished ${humanAge(Date.now() - backup.lastBackupMs)}.` : '';
+
+  // **"does not skip this location" is a claim only a reader that actually
+  // checked may make.**
+  //
+  // Only macOS has an exclusion list to consult, and even there the lookup can
+  // miss — `tmutil` echoes resolved paths, so `/etc/hosts` comes back as
+  // `/private/etc/hosts`. Linux has no exclusion concept at all, and the
+  // Windows reader parses the protected-folder list without matching against
+  // it. Wording all three the same way meant a Linux box with a `~/.config/
+  // restic` directory reported "probably a second copy" for every byte on the
+  // disk — including files restic was never pointed at — while the honest
+  // sentence those readers had already computed was discarded.
+  if (!backup.exclusionChecked) {
+    return {
+      verdict: 'likely',
+      reason: {
+        signal: 'backup',
+        text:
+          backup.reason ??
+          `${backup.mechanism} is set up on this computer, but TreeMap has not checked whether it covers this particular file — ` +
+          `it has not opened the backup, and cannot see which locations are skipped.${when}`,
+      },
+    };
+  }
+
+  // The ceiling. A configured backup that has run recently and is known not to
   // exclude this path is the strongest thing a membership check can say, and
   // it is still only 'likely' — the file may post-date the last run, or have
   // failed to copy. Promoting this to 'proven' is the inference that would let
   // TreeMap tell someone it is safe to delete their only copy.
-  const when = backup.lastBackupMs !== null ? ` The last backup finished ${humanAge(Date.now() - backup.lastBackupMs)}.` : '';
   return {
     verdict: 'likely',
     reason: {
@@ -149,6 +177,10 @@ export function cloudVerdict(cloud: CloudRecoverability | null): { verdict: Else
           text: `${provider} has not uploaded this yet, so it exists only on this computer despite sitting in a synced folder. Deleting it loses it.`,
         },
       };
+    default:
+      // A state added later without a branch here would otherwise return
+      // undefined and crash the composite on `part.verdict`.
+      return { verdict: 'unknown', reason: null };
   }
 }
 

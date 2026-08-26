@@ -26,9 +26,17 @@ export function registerFactProvider<T>(provider: FactProvider<T>): void {
   providers.set(provider.id, provider as FactProvider<unknown>);
 }
 
-/** Remove a provider. Returns whether one was there. */
+/** Remove a provider, and forget everything it cached. */
 export function unregisterFactProvider(id: string): boolean {
-  return providers.delete(id);
+  const had = providers.delete(id);
+  // Leaving the entries behind kept them counting against the cap until their
+  // TTL, and a provider re-registered under the same id would have been served
+  // the previous one's values.
+  if (had) {
+    const marker = SEP + id + SEP;
+    for (const k of cache.keys()) if (k.includes(marker)) cache.delete(k);
+  }
+  return had;
 }
 
 export function getFactProvider(id: string): FactProvider<unknown> | undefined {
@@ -50,13 +58,18 @@ export function factProviderIds(): string[] {
 const FACT_TTL_MS = 30 * 60 * 1000;
 
 /**
- * Hard entry cap. Facts are small, but "cache everything forever" is how a
- * long-running desktop app develops a slow leak — and this project holds
- * itself to under 56 bytes per scanned node, so an unbounded side table would
- * quietly undo that discipline. 100,000 entries is fifty full batches at the
- * 2,000-path request cap, far more than any screen shows at once.
+ * Hard entry cap. "Cache everything forever" is how a long-running desktop
+ * app develops a slow leak.
+ *
+ * **This counts entries, not bytes, and the two are not close.** A cached
+ * recoverability fact is not the ~50 bytes a scanned node costs: it carries a
+ * `why` array of full sentences, a git object and an `unavailable` list, so
+ * one to two kilobytes each is realistic. 100,000 of those would retain on the
+ * order of 100–200 MB, which is not a bound worth having. Ten thousand is five
+ * full batches at the 2,000-path request cap — far more than any screen shows
+ * at once — and keeps the worst case in the tens of megabytes.
  */
-const MAX_CACHE_ENTRIES = 100_000;
+const MAX_CACHE_ENTRIES = 10_000;
 
 /**
  * The live limits. Mutable only through `setFactCacheLimitsForTests`.

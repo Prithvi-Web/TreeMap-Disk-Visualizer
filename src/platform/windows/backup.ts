@@ -16,9 +16,13 @@ import type { BackupMembership, CapabilityState } from '../types';
  * **A protected folder still yields `pathCovered: 'unknown'`.** File History
  * protects a folder on a schedule; a file created since the last cycle, or one
  * that failed to copy, is inside a protected folder and absent from the
- * backup. The only value this reader can prove is `'no'`, for a path outside
- * every protected folder — and even that is reported conservatively, because
- * the config lists user libraries whose real locations can be redirected.
+ * backup.
+ *
+ * This reader establishes nothing about exclusion — it reads the protected
+ * folder list but does not match paths against it, because the config lists
+ * user libraries whose real locations can be redirected. It therefore reports
+ * `exclusionChecked: false`, and the composite words its verdict accordingly
+ * rather than claiming this location is "not skipped".
  *
  * Never verified on a Windows machine; the parse seam is covered against
  * captured config XML.
@@ -76,6 +80,9 @@ export async function readBackupMembershipWindows(paths: string[]): Promise<Map<
       // Never 'yes'. A protected folder is a schedule, not a guarantee that
       // this file made it into a completed cycle.
       pathCovered: 'unknown',
+      // The config's protected-folder list is parsed but never matched against
+      // the path, so no exclusion check has actually happened.
+      exclusionChecked: false,
       mechanism: 'File History',
       ...(fh.reason ? { reason: fh.reason } : {}),
     });

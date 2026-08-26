@@ -465,6 +465,8 @@ export abstract class BaseProvider implements PlatformProvider {
         configured: false,
         lastBackupMs: null,
         pathCovered: 'unknown',
+        // No backup reader on this platform, so nothing was checked.
+        exclusionChecked: false,
         mechanism: 'none',
         reason: 'TreeMap does not know of a backup system on this computer, so it cannot tell whether anything here has a second copy.',
       });

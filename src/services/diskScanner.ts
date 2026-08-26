@@ -87,6 +87,19 @@ export function scanExpired(scan: ScanResult, now: number): boolean {
   return now - (scan.finishedAt ?? scan.createdAt) > SCAN_TTL_MS;
 }
 
+/**
+ * Things to run when a scan is dropped.
+ *
+ * A callback list rather than a direct import, because the fact layer already
+ * imports this module — calling into it from here would be a cycle. Lets
+ * derived caches keyed by scanId die with the scan they describe instead of
+ * outliving it for their own TTL.
+ */
+const scanForgottenHooks: ((scanId: string) => void)[] = [];
+export function onScanForgotten(fn: (scanId: string) => void): void {
+  scanForgottenHooks.push(fn);
+}
+
 let evictTimer: NodeJS.Timeout | null = null;
 
 function ensureEvictor(): void {
@@ -98,6 +111,9 @@ function ensureEvictor(): void {
         scan.cancelled = true;
         scans.delete(id);
         forgetScan(id); // drop its expanded-container registry too
+        for (const hook of scanForgottenHooks) {
+          try { hook(id); } catch { /* a derived cache must not break eviction */ }
+        }
       }
     }
   }, EVICT_INTERVAL_MS);

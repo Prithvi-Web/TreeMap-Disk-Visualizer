@@ -1266,9 +1266,12 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .tm-querybar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; margin-bottom: 10px;
   border-radius: var(--r-md); flex-wrap: wrap; }
 .tm-saved { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.saved-chip { display: inline-flex; align-items: center; gap: 2px; }
+.saved-chip .pill { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.saved-chip .pill-x { border-top-left-radius: 0; border-bottom-left-radius: 0;
+  padding: 6px 9px; opacity: 0.6; font-size: 13px; line-height: 1; }
+.saved-chip .pill-x:hover { opacity: 1; color: var(--danger, #ff453a); border-color: var(--danger, #ff453a); }
 .tm-saved .pill .sw { width: 8px; height: 8px; border-radius: 99px; background: var(--accent); flex: none; }
-.tm-saved .pill .rm { margin-left: 2px; opacity: 0.55; }
-.tm-saved .pill .rm:hover { opacity: 1; color: var(--danger, #ff453a); }
 .tm-queryerr { font-size: 11.5px; color: var(--danger, #ff453a); margin-left: auto; max-width: 60%;
   text-align: right; line-height: 1.45; }
 .tm-queryerr.okmsg { color: var(--text-3); }
@@ -2759,6 +2762,16 @@ function cellRgb(n) {
 }
 
 /* ───────────────────────────── App state ───────────────────────────── */
+/**
+ * How many duplicate groups are drawn at once.
+ *
+ * Five hundred headers in one innerHTML write cost ~100 ms of blocked main
+ * thread every time the tab was opened. The same windowed-render pattern the
+ * near-duplicate view already uses brings it under the 50 ms budget, and the
+ * count of what is not yet drawn is stated on the button rather than implied.
+ */
+const DUP_PAGE = 100;
+
 const state = {
   view: 'dashboard',
   system: null,
@@ -2789,6 +2802,7 @@ const state = {
   types: [],
   bigFolders: [],
   savedViews: [],
+  savedViewsLoaded: false,
   treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null } },
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   apps: { loadedFor: null, list: [], otherBytes: 0, totalBytes: 0, appsFolderScanned: false },
@@ -2802,7 +2816,7 @@ const state = {
   autopilot: { policies: null, runs: null },
   cloud: { providers: [], loaded: false },
   donut: { segs: [], hover: -1, animated: false },
-  dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 },
+  dup: { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0, shown: DUP_PAGE },
   dupMode: 'exact',
   // renderedClusters / shownPerCluster drive the windowed render: how many
   // clusters are in the DOM, and how many images of each. Both reset per render.
@@ -3022,10 +3036,13 @@ const VIEWS = [
       loadTreemap(state.treemap.rootPath);
     },
     unmount() {
-      // Phase 2: stop the query debounce and close the autocomplete. The
-      // registry exists to make each view clean up exactly what it started.
-      clearTimeout(tmQueryDeb); tmQueryDeb = 0;
+      // Phase 2: stop the debounce, invalidate anything already in flight, and
+      // clear the message. Without the invalidation a reply landed after the
+      // view was gone, re-painted a hidden canvas, and left tmQueryErr visible
+      // so the NEXT entry resurrected the bar with a query from two views ago.
+      tmCancelQueries();
       tmCloseHints();
+      tmSetQueryMessage('', false);
       $('tmQueryBar').hidden = true;
       // Live mode keeps two intervals and a rAF loop alive; leaving the view
       // without stopping them means the app keeps re-laying-out a canvas
@@ -4371,7 +4388,7 @@ async function finishScan(root, durationMs, stats) {
   state.grid.selection.clear();
   updateSelectionBar();
 
-  state.dup = { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0 };
+  state.dup = { loadedFor: null, status: 'idle', groups: [], groupCount: 0, totalReclaimable: 0, selection: new Set(), pollTimer: 0, shown: DUP_PAGE };
   state.apps.loadedFor = null;
 
   // `root` is pruned to a node budget, so counting the tree we just indexed
@@ -6041,35 +6058,52 @@ function treemapUp() {
 $('tmUpBtn').addEventListener('click', treemapUp);
 
 /* ═════════════════ Query grammar in the highlight box (Phase 2, §2.4) ═════════════════
-   The box now accepts the full grammar — size>1gb ext:mp4 used>1y -in:node_modules —
+   The box accepts the full grammar — size>1gb ext:mp4 used>1y -in:node_modules —
    without becoming a second implementation of it (§7 forbids one).
-
-   How that is arranged, and why:
 
    * **The zero-token fast path is untouched.** A bare word still goes through
      `treemapMatch()` exactly as it always has: no network, no latency, and the
      backend/frontend agreement test in tests/indexSearch.test.ts keeps passing
      against the same five lines it has always read.
-   * **Anything with an operator goes to the server.** `POST /api/query` runs
-     the one parser and the one evaluator, and returns matching paths that the
-     overlay highlights. The browser never parses the grammar.
+   * **Anything naming a field goes to the server.** `POST /api/query` runs the
+     one parser and the one evaluator. The browser never parses the grammar.
    * **Live feedback is parse-only.** `POST /api/query/validate` on a 150 ms
-     debounce never touches a scan, so typing cannot start a tree walk.
+     debounce never touches a scan, so typing cannot start a tree walk.        */
 
-   The parse error is shown under the box with the offending span named, rather
-   than the query silently matching nothing — §2.1 is explicit that a red
-   underline beats a plausible wrong answer.                                   */
-
-/** Does this query use the grammar, or is it the legacy bare word? */
+/**
+ * Does this query use the grammar, or is it an ordinary filename search?
+ *
+ * **Anchored to a real field name, and that is the whole point.** An earlier
+ * version triggered on any of `-`, `:`, `<`, `>`, `(`, `)` or the word `or`,
+ * which quietly sent ordinary filenames to the parser:
+ *
+ *   `Screenshot (1).png`  →  substring("screenshot") AND "1" AND ".png"
+ *   `-hidden.txt`         →  NOT substring("hidden.txt")  ← highlights every
+ *                            file EXCEPT the one that was typed
+ *
+ * The first is the commonest filename shape there is, and the second is a
+ * confident, silent inversion of what was asked. Global search's "go to" also
+ * routes through here, so it broke a shipped path too. Requiring a known field
+ * before the operator costs the grammar nothing — every field term has one —
+ * and gives filenames back their plain meaning.
+ */
+const TM_GRAMMAR_FIELDS = 'size|ext|name|path|in|modified|created|used|dupe|elsewhere|git|backup|cloud|type|depth|empty|score';
+const TM_GRAMMAR_RE = new RegExp('(^|[\\s(])-?(' + TM_GRAMMAR_FIELDS + ')\\s*(:|<=|>=|<|>|=)', 'i');
 function tmIsGrammarQuery(q) {
-  // Mirrors the parser's own rule — an atom with an operator is a field term —
-  // WITHOUT reimplementing it: the answer only decides which path to take, and
-  // a wrong guess costs a round trip, never a wrong result.
-  return /(^|\s)-|[:<>()]|(^|\s)or(\s|$)/i.test(q.trim());
+  return TM_GRAMMAR_RE.test(q.trim());
 }
 
 let tmQueryDeb = 0;
 let tmQuerySeq = 0;
+
+/**
+ * Invalidate every in-flight query response.
+ *
+ * Called on clear, on the bare-word path and on unmount. Without it a reply
+ * that was already in the air lands afterwards and re-paints highlights, or
+ * re-opens the message bar with a query the user ran two views ago.
+ */
+function tmCancelQueries() { tmQuerySeq++; clearTimeout(tmQueryDeb); tmQueryDeb = 0; }
 
 function tmSetQueryMessage(text, isError) {
   const box = $('tmQueryErr');
@@ -6093,20 +6127,22 @@ function tmSyncQueryBar() {
 
 /** Run a grammar query on the server and highlight what comes back. */
 async function tmRunGrammarQuery(q) {
-  if (!state.scanId) return;
+  if (!state.scanId) {
+    // Say so rather than doing nothing. A silent no-op here reads as a broken
+    // search box; the user has no way to know a scan is what is missing.
+    tmSetQueryMessage('Scan a folder first — there is nothing to search yet.', false);
+    return;
+  }
   const seq = ++tmQuerySeq;
   try {
     const out = await api('/api/query', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ scanId: state.scanId, q, limit: 1000, sort: 'size' }),
     });
-    if (seq !== tmQuerySeq) return; // a newer keystroke already won
+    if (seq !== tmQuerySeq) return; // a newer keystroke, a clear, or an unmount won
     state.treemap.matchedPaths = new Set((out.hits || []).map((h) => h.path));
     state.treemap.queryMode = 'grammar';
 
-    // §2.2: a signal this machine cannot supply must be VISIBLE. An empty
-    // highlight with no explanation reads as "nothing matched", which is a
-    // different and wrong claim.
     renderSearchOverlay();
     presentTreemap();
 
@@ -6115,8 +6151,9 @@ async function tmRunGrammarQuery(q) {
     // The server searches the whole scan; the map draws only what fits at the
     // current folder and depth. So a query can genuinely match thirty files
     // while the map outlines three — and "3 matches" alone reads as "that is
-    // all there is". Naming the gap is the difference between a filter that
-    // works and one that looks broken.
+    // all there is". §2.2 also requires that a signal this machine cannot
+    // supply is visible, rather than an empty highlight that reads as
+    // "nothing matched".
     const degraded = out.degraded || [];
     const drawn = state.treemap.matches;
     const found = out.total;
@@ -6138,7 +6175,14 @@ async function tmRunGrammarQuery(q) {
   }
 }
 
-/** Parse-only feedback while typing. Never runs a query. */
+/**
+ * Parse-only feedback while typing. Never runs a query.
+ *
+ * Returns false when superseded as well as when invalid. Returning true for a
+ * stale check let an older query start its run AFTER a newer one — and since
+ * the run takes a fresh sequence number on entry, the stale results then won
+ * the race and were painted.
+ */
 async function tmValidateQuery(q) {
   const seq = ++tmQuerySeq;
   try {
@@ -6146,7 +6190,7 @@ async function tmValidateQuery(q) {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ q }),
     });
-    if (seq !== tmQuerySeq) return true;
+    if (seq !== tmQuerySeq) return false;
     tmSetQueryMessage('', false);
     return true;
   } catch (e) {
@@ -6160,20 +6204,16 @@ async function tmValidateQuery(q) {
   }
 }
 
+/** The one path by which a query reaches the box. */
 function tmApplyQuery(raw) {
   const q = raw.trim();
   state.treemap.query = raw;
-  if (!q) {
-    state.treemap.queryMode = 'bare';
-    state.treemap.matchedPaths = null;
-    tmSetQueryMessage('', false);
-    if (isSun()) { presentSunburst(); return; }
-    renderSearchOverlay(); presentTreemap();
-    return;
-  }
-  if (!tmIsGrammarQuery(q)) {
-    // The legacy path: instant, local, and byte-for-byte the behaviour the
-    // box has always had.
+
+  if (!q || !tmIsGrammarQuery(q)) {
+    // Empty means "no filter"; a bare word takes the original local path —
+    // instant, and byte-for-byte the behaviour this box has always had.
+    // Both invalidate anything in flight, or a late reply repaints over them.
+    tmCancelQueries();
     state.treemap.queryMode = 'bare';
     state.treemap.matchedPaths = null;
     tmSetQueryMessage('', false);
@@ -6186,10 +6226,10 @@ function tmApplyQuery(raw) {
 
 $('tmSearch').addEventListener('input', (e) => {
   clearTimeout(tmQueryDeb);
-  tmRenderHints(e.target.value);
   const raw = e.target.value;
-  // 150 ms, per §2.4 — long enough that a fast typist makes one request, short
-  // enough that the underline feels immediate.
+  void tmRenderHints(raw);
+  // 150 ms for a grammar query, per §2.4 — long enough that a fast typist makes
+  // one request, short enough that the underline feels immediate.
   tmQueryDeb = setTimeout(() => tmApplyQuery(raw), tmIsGrammarQuery(raw) ? 150 : 120);
 });
 
@@ -6198,34 +6238,51 @@ $('tmSearch').addEventListener('input', (e) => {
    here, so the box cannot drift from the parser that answers it. */
 
 let tmFields = null;
+let tmFieldsInFlight = null;
 let tmHintSel = -1;
 
 async function tmLoadFields() {
   if (tmFields) return tmFields;
-  try {
-    const out = await api('/api/query/fields');
-    tmFields = out.fields || [];
-  } catch { tmFields = []; }
-  return tmFields;
+  // One request, however fast the typing. Without the in-flight guard the
+  // first four keystrokes fired four concurrent fetches and whichever landed
+  // last rendered — possibly for the oldest prefix.
+  if (!tmFieldsInFlight) {
+    tmFieldsInFlight = api('/api/query/fields')
+      .then((out) => { tmFields = out.fields || []; return tmFields; })
+      .catch(() => { tmFields = []; return tmFields; })
+      .finally(() => { tmFieldsInFlight = null; });
+  }
+  return tmFieldsInFlight;
 }
 
 function tmCloseHints() {
-  $('tmQueryHints').hidden = true;
-  $('tmSearch').setAttribute('aria-expanded', 'false');
+  const panel = $('tmQueryHints');
+  if (panel) panel.hidden = true;
+  const box = $('tmSearch');
+  box.setAttribute('aria-expanded', 'false');
+  box.removeAttribute('aria-activedescendant');
   tmHintSel = -1;
 }
 
 /** The token the caret sits in — what autocomplete is completing. */
-function tmActiveToken(value) {
-  const upto = value.slice(0, $('tmSearch').selectionStart ?? value.length);
+function tmActiveToken(value, caret) {
+  const upto = value.slice(0, caret);
   const start = Math.max(upto.lastIndexOf(' '), upto.lastIndexOf('(')) + 1;
   return { text: upto.slice(start).replace(/^-/, ''), start };
 }
 
 async function tmRenderHints(value) {
+  // Read the caret BEFORE the await: `tmLoadFields` can suspend, and reading a
+  // live selection against a captured value afterwards completes the wrong
+  // token.
+  const caret = $('tmSearch').selectionStart ?? value.length;
   const fields = await tmLoadFields();
+  // The view may have been left while the fields were loading; re-opening the
+  // panel inside a hidden view is exactly what unmount() just prevented.
+  if (state.view !== 'treemap') { tmCloseHints(); return; }
+
   const panel = $('tmQueryHints');
-  const token = tmActiveToken(value);
+  const token = tmActiveToken(value, caret);
   if (!token.text) { tmCloseHints(); return; }
 
   const colon = token.text.indexOf(':');
@@ -6234,7 +6291,7 @@ async function tmRenderHints(value) {
     const prefix = token.text.toLowerCase();
     items = fields
       .filter((f) => f.name.startsWith(prefix))
-      .map((f) => ({ insert: f.name + (f.operators.includes(':') ? ':' : '>'), label: f.name, help: f.help }));
+      .map((f) => ({ insert: f.name + ((f.operators || []).includes(':') ? ':' : '>'), label: f.name, help: f.help || '' }));
   } else {
     // Past the colon: offer that field's own values, so `git:` proposes
     // pushed / dirty / none rather than nothing.
@@ -6243,27 +6300,26 @@ async function tmRenderHints(value) {
     if (field) {
       items = (field.values || [])
         .filter((v) => v.startsWith(typed))
-        .map((v) => ({ insert: `${field.name}:${v}`, label: `${field.name}:${v}`, help: field.help }));
+        .map((v) => ({ insert: `${field.name}:${v}`, label: `${field.name}:${v}`, help: field.help || '' }));
     }
   }
 
   if (!items.length) { tmCloseHints(); return; }
   panel.innerHTML = items.slice(0, 8).map((it, i) =>
-    `<button class="tm-hint" role="option" aria-selected="false" data-i="${i}" data-insert="${escapeHtml(it.insert)}">` +
+    `<button class="tm-hint" role="option" id="tmHint${i}" aria-selected="false" data-i="${i}" data-insert="${escapeHtml(it.insert)}">` +
     `<span class="k">${escapeHtml(it.label)}</span><span class="h">${escapeHtml(it.help)}</span></button>`).join('');
   panel.hidden = false;
   $('tmSearch').setAttribute('aria-expanded', 'true');
   tmHintSel = -1;
-  panel.querySelectorAll('.tm-hint').forEach((b) =>
-    b.addEventListener('mousedown', (ev) => { ev.preventDefault(); tmAcceptHint(b.dataset.insert); }));
+  $('tmSearch').removeAttribute('aria-activedescendant');
 }
 
 function tmAcceptHint(insert) {
   const input = $('tmSearch');
-  const token = tmActiveToken(input.value);
+  const caret = input.selectionStart ?? input.value.length;
+  const token = tmActiveToken(input.value, caret);
   const negated = input.value.slice(token.start).startsWith('-');
   const before = input.value.slice(0, token.start) + (negated ? '-' : '');
-  const caret = input.selectionStart ?? input.value.length;
   input.value = before + insert + input.value.slice(caret);
   input.focus();
   input.setSelectionRange((before + insert).length, (before + insert).length);
@@ -6280,29 +6336,59 @@ function tmMoveHint(delta) {
     o.setAttribute('aria-selected', String(i === tmHintSel));
     if (i === tmHintSel) o.scrollIntoView({ block: 'nearest' });
   });
+  // Without this the input declares role="combobox" and announces nothing as
+  // the arrow keys move.
+  $('tmSearch').setAttribute('aria-activedescendant', options[tmHintSel].id);
 }
+
+// One delegate on the panel, so a re-render cannot leave listeners behind.
+$('tmQueryHints').addEventListener('mousedown', (e) => {
+  const hint = e.target.closest('.tm-hint');
+  if (!hint) return;
+  e.preventDefault();
+  tmAcceptHint(hint.dataset.insert);
+});
 
 $('tmSearch').addEventListener('keydown', (e) => {
   const open = !$('tmQueryHints').hidden;
   if (open && e.key === 'ArrowDown') { e.preventDefault(); tmMoveHint(1); return; }
   if (open && e.key === 'ArrowUp') { e.preventDefault(); tmMoveHint(-1); return; }
   if (open && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); tmCloseHints(); return; }
-  if (open && (e.key === 'Enter' || e.key === 'Tab')) {
+  if (open && e.key === 'Tab') {
     const pick = [...$('tmQueryHints').querySelectorAll('.tm-hint')][tmHintSel >= 0 ? tmHintSel : 0];
     if (pick) { e.preventDefault(); tmAcceptHint(pick.dataset.insert); return; }
   }
-  if (e.key === 'Enter') { e.preventDefault(); clearTimeout(tmQueryDeb); tmApplyQuery(e.target.value); }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    // Enter accepts a hint ONLY when one was deliberately highlighted. Taking
+    // the first suggestion otherwise turned a search for a file named "ext"
+    // into the `ext:` filter without the user choosing it.
+    if (open && tmHintSel >= 0) {
+      const pick = [...$('tmQueryHints').querySelectorAll('.tm-hint')][tmHintSel];
+      if (pick) { tmAcceptHint(pick.dataset.insert); return; }
+    }
+    tmCloseHints();
+    clearTimeout(tmQueryDeb);
+    tmApplyQuery(e.target.value);
+  }
 });
+// Focus can leave without a click — ⌘K jumps to global search — and an
+// orphaned panel then floats over the toolbar until the next click anywhere.
+$('tmSearch').addEventListener('blur', () => { setTimeout(tmCloseHints, 120); });
 document.addEventListener('click', (e) => {
   if (!$('tmQueryHints').hidden && !$('tmSearchWrap').contains(e.target)) tmCloseHints();
 });
 
 /* ── Saved views (§2.3 / §2.4) ── */
 
-async function loadSavedViews() {
+async function loadSavedViews(force = false) {
+  // Cached: this list changes only when a view is saved or deleted, and
+  // re-fetching it on every entry to the view is a round trip for nothing.
+  if (state.savedViews && state.savedViewsLoaded && !force) { renderSavedViews(); return; }
   try {
     const out = await api('/api/queries');
     state.savedViews = out.queries || [];
+    state.savedViewsLoaded = true;
   } catch { state.savedViews = []; }
   renderSavedViews();
 }
@@ -6311,12 +6397,20 @@ function renderSavedViews() {
   const host = $('tmSavedViews');
   if (!host) return;
   const views = state.savedViews || [];
+  // Two sibling buttons rather than a role="button" span inside a <button>:
+  // the nested form was invalid interactive content AND unreachable from the
+  // keyboard, while promising "Delete the saved view X" to a screen reader.
+  //
+  // `colour` reaches a style attribute, and escapeHtml does not escape ';' or
+  // '(' — it is safe only because the server whitelists /^#[0-9a-f]{6}$/i on
+  // read as well as on write. Do not relax that pattern.
   host.innerHTML = views.map((v) =>
+    `<span class="saved-chip">` +
     `<button class="pill" data-view-q="${escapeHtml(v.q)}" title="${escapeHtml(v.q)}">` +
     `<span class="sw"${v.colour ? ` style="background:${escapeHtml(v.colour)}"` : ''}></span>` +
-    `${escapeHtml(v.name)}` +
-    `<span class="rm" role="button" tabindex="0" data-view-rm="${escapeHtml(v.id)}" aria-label="Delete the saved view ${escapeHtml(v.name)}">×</span>` +
-    `</button>`).join('');
+    `${escapeHtml(v.name)}</button>` +
+    `<button class="pill pill-x" data-view-rm="${escapeHtml(v.id)}" aria-label="Delete the saved view ${escapeHtml(v.name)}" title="Delete this saved view">×</button>` +
+    `</span>`).join('');
   tmSyncQueryBar();
 }
 
@@ -6330,7 +6424,7 @@ async function saveCurrentView() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, q, pinned: true }),
     });
-    await loadSavedViews();
+    await loadSavedViews(true);
     toast('Saved view “' + name + '”');
   } catch (e) {
     toast('Could not save that view: ' + e.message, 'error');
@@ -6341,17 +6435,18 @@ $('tmSaveView').addEventListener('click', saveCurrentView);
 $('tmSavedViews').addEventListener('click', async (e) => {
   const remove = e.target.closest('[data-view-rm]');
   if (remove) {
-    e.preventDefault(); e.stopPropagation();
+    // preventDefault only. stopPropagation here also blocked the document
+    // delegate that closes the autocomplete, so deleting a chip with the
+    // panel open left it hanging.
+    e.preventDefault();
     try {
       await api('/api/queries/' + encodeURIComponent(remove.dataset.viewRm), { method: 'DELETE' });
-      await loadSavedViews();
+      await loadSavedViews(true);
     } catch (err) { toast('Could not delete that view: ' + err.message, 'error'); }
     return;
   }
   const chip = e.target.closest('[data-view-q]');
   if (!chip) return;
-  // The same sequence the global-search "go to" uses, so there is one way a
-  // query reaches the box rather than two that can drift.
   $('tmSearch').value = chip.dataset.viewQ;
   clearTimeout(tmQueryDeb);
   tmApplyQuery(chip.dataset.viewQ);
@@ -8927,6 +9022,7 @@ async function loadDuplicates(force = false) {
 function renderDuplicates() {
   const body = $('dupBody');
   const groups = state.dup.groups;
+  if (state.dup.shown === undefined) state.dup.shown = DUP_PAGE;
   if (!groups.length) {
     $('dupSummary').textContent = 'No duplicates found.';
     body.innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No duplicate files above the size threshold — nothing to reclaim.</div></div>`;
@@ -8936,7 +9032,8 @@ function renderDuplicates() {
   $('dupSummary').innerHTML =
     `<b>${formatCount(state.dup.groupCount)}</b> duplicate groups — up to <b>${formatBytes(state.dup.totalReclaimable)}</b> reclaimable` +
     (state.dup.groupCount > groups.length ? ` <span class="num">(top ${groups.length} shown)</span>` : '');
-  body.innerHTML = '<div class="dup-list">' + groups.map((g, gi) => {
+  const shown = Math.min(state.dup.shown, groups.length);
+  body.innerHTML = '<div class="dup-list">' + groups.slice(0, shown).map((g, gi) => {
     const ext = (g.files[0].name.split('.').pop() || '').toLowerCase();
     return `
     <div class="dup-group glass" data-g="${gi}">
@@ -8949,7 +9046,44 @@ function renderDuplicates() {
         </div>
         <span class="reclaim num">+${formatBytes(g.reclaimable)} reclaimable</span>
       </div>
-      <div class="dup-files">` + g.files.map((f, fi) => `
+      <div class="dup-files"></div>
+    </div>`;
+  }).join('') + '</div>' +
+    (shown < groups.length
+      ? `<div style="display:flex;justify-content:center;margin-top:12px;">
+           <button class="btn" id="dupShowMore">Show ${Math.min(DUP_PAGE, groups.length - shown)} more of ${groups.length - shown} remaining</button>
+         </div>`
+      : '');
+
+  const more = $('dupShowMore');
+  if (more) more.addEventListener('click', () => { state.dup.shown += DUP_PAGE; renderDuplicates(); });
+
+  refreshCartButtons();
+  updateDupToolbar();
+}
+
+/**
+ * Build one group's file rows, once, the first time it is opened.
+ *
+ * Groups render collapsed, so building every row up front put a DOM nobody
+ * was looking at on screen: measured on a real 768-group result, one 3.4 MB
+ * innerHTML write producing 26,675 elements and 1,484 cart buttons, and a
+ * ~400 ms main-thread freeze on EVERY visit to the tab — eight times §2.5's
+ * 50 ms budget for a single UI action.
+ *
+ * Those 1,484 buttons are also exactly the population `refreshCartButtons`
+ * documents as having cost 30.5 ms per cart click, from a list the user was
+ * not even looking at. Filling on expand fixes both at once.
+ *
+ * Selection state is read from `state.dup.selection` here rather than fixed
+ * up afterwards, so a row built late is still correct — which is what lets
+ * "select all extras" keep working without touching unbuilt rows.
+ */
+function dupFillGroup(groupEl) {
+  if (!groupEl || groupEl.dataset.filled === '1') return;
+  const g = state.dup.groups[Number(groupEl.dataset.g)];
+  if (!g) return;
+  groupEl.querySelector('.dup-files').innerHTML = g.files.map((f, fi) => `
         <div class="dup-file">
           <input type="checkbox" class="dup-ck" data-p="${escapeHtml(f.path)}"${state.dup.selection.has(f.path) ? ' checked' : ''} aria-label="Select ${escapeHtml(f.path)}">
           ${fi === 0 ? '<span class="tag">newest</span>' : ''}
@@ -8957,13 +9091,9 @@ function renderDuplicates() {
           <span class="dt num">${formatDate(f.modifiedAt)}</span>
           <button class="icon-btn${cartHas(f.path) ? ' cartin' : ''}" data-cart-add="${escapeHtml(f.path)}" data-cartin="${cartHas(f.path) ? '1' : '0'}" title="${cartHas(f.path) ? 'Remove from cleanup cart' : 'Add to cleanup cart'}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon(cartHas(f.path) ? 'check' : 'plus', 13)}</button>
           <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
-        </div>`).join('') + `
-      </div>
-    </div>`;
-  }).join('') + '</div>';
-
+        </div>`).join('');
+  groupEl.dataset.filled = '1';
   refreshCartButtons();
-  updateDupToolbar();
 }
 
 /* One delegated set of listeners serves every duplicate row for the life of
@@ -8972,6 +9102,8 @@ function renderDuplicates() {
    rendered into the markup, so a rebuild needs no per-row fix-up pass. */
 function dupToggleHead(head) {
   const g = head.closest('.dup-group');
+  // Fill before opening, so the rows are there the moment it expands.
+  if (!g.classList.contains('open')) dupFillGroup(g);
   head.setAttribute('aria-expanded', String(g.classList.toggle('open')));
 }
 $('dupBody').addEventListener('click', (e) => {
@@ -9005,8 +9137,13 @@ function updateDupToolbar() {
 $('dupAutoBtn').addEventListener('click', () => {
   if (state.dup.status !== 'complete' || !state.dup.groups.length) return;
   state.dup.selection.clear();
+  // Selection comes from the DATA, so groups past the render window are
+  // selected too — and their checkboxes read correctly whenever they are drawn.
   state.dup.groups.forEach(g => g.files.slice(1).forEach(f => state.dup.selection.add(f.path)));
   $('dupBody').querySelectorAll('.dup-group').forEach(g => {
+    // An explicit bulk action, so building every row here is the cost the
+    // user asked for — unlike merely opening the tab, which now builds none.
+    dupFillGroup(g);
     g.classList.add('open');
     g.querySelector('.dup-head').setAttribute('aria-expanded', 'true');
   });
@@ -11330,8 +11467,11 @@ document.addEventListener('keydown', (e) => {
     }
     if (typing && document.activeElement === $('tmSearch') && $('tmSearch').value) {
       $('tmSearch').value = '';
-      // Through the one path, so the grammar state is cleared with the text —
-      // otherwise an emptied box keeps highlighting the last server answer.
+      // Cancel FIRST. Setting .value programmatically fires no input event, so
+      // the timer armed by the last real keystroke survived and fired
+      // tmApplyQuery('size>1gb') afterwards — dimming the map and printing
+      // "N matches" under a visibly empty box.
+      tmCancelQueries();
       tmApplyQuery('');
       return;
     }

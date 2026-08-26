@@ -17,9 +17,18 @@ import { recoverabilityProvider } from './recoverabilityProvider';
  * no-op rather than a crash.
  */
 
+import { onScanForgotten } from '../diskScanner';
+import { clearFactCache } from './registry';
+
 registerFactProvider(sizeProvider);
 registerFactProvider(lastUsedProvider);
 registerFactProvider(recoverabilityProvider);
+
+// Facts describe one scan's tree, so they die with it. Without this the
+// registry's own comment ("called when a scan is replaced") was aspirational:
+// nothing called it, and a rescan left the previous scan's verdicts resident
+// for the rest of their TTL.
+onScanForgotten((scanId) => clearFactCache(scanId));
 
 export {
   computeFacts,

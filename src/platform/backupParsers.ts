@@ -56,7 +56,9 @@ export function parseDestinationInfo(text: string): { configured: boolean; name:
  */
 export function parseLatestBackup(text: string): number | null {
   const trimmed = text.trim();
-  if (!trimmed || /error|failed/i.test(trimmed)) return null;
+  // Anchored, not a substring search: a destination volume legitimately named
+  // "/Volumes/failed-drive/..." is not an error message.
+  if (!trimmed || /^(?:error|failed|tmutil:)/i.test(trimmed)) return null;
   const stamp = /(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(trimmed);
   if (!stamp) return null;
   const [, y, mo, d, h, mi, sec] = stamp;
@@ -103,16 +105,21 @@ export function membershipFromTmutil(
   configured: boolean,
   lastBackupMs: number | null,
   excluded: boolean | undefined,
-): { configured: boolean; lastBackupMs: number | null; pathCovered: 'yes' | 'no' | 'unknown'; mechanism: string } {
+): { configured: boolean; lastBackupMs: number | null; pathCovered: 'yes' | 'no' | 'unknown'; mechanism: string; exclusionChecked: boolean } {
   if (!configured) {
-    return { configured: false, lastBackupMs: null, pathCovered: 'unknown', mechanism: 'Time Machine' };
+    return { configured: false, lastBackupMs: null, pathCovered: 'unknown', mechanism: 'Time Machine', exclusionChecked: false };
   }
   // Excluded is the one thing tmutil can prove: this path will never be in a
   // backup, so deletion is permanent as far as Time Machine is concerned.
   if (excluded === true) {
-    return { configured: true, lastBackupMs, pathCovered: 'no', mechanism: 'Time Machine' };
+    return { configured: true, lastBackupMs, pathCovered: 'no', mechanism: 'Time Machine', exclusionChecked: true };
   }
-  return { configured: true, lastBackupMs, pathCovered: 'unknown', mechanism: 'Time Machine' };
+  // `excluded === false` means tmutil answered "[Included]" for this exact
+  // path. `undefined` means it did not answer at all — the batch failed, or
+  // tmutil echoed a resolved path (`/etc/hosts` comes back as
+  // `/private/etc/hosts`) and the lookup missed. Those are different facts,
+  // and only the first licenses "does not skip this location".
+  return { configured: true, lastBackupMs, pathCovered: 'unknown', mechanism: 'Time Machine', exclusionChecked: excluded === false };
 }
 
 /* ------------------------------ Linux: restic / borg ------------------------------ */
@@ -158,7 +165,11 @@ export function linuxBackupReason(tools: string[]): string {
  * reason `[Included]` does on macOS.
  */
 export function parseFileHistoryConfig(xml: string): { enabled: boolean; includedFolders: string[] } {
-  const enabled = /<(?:Target|FileHistory)[^>]*\bstate\s*=\s*"?1"?/i.test(xml) || /<ProtectedUpToTime>/i.test(xml);
+  // `<ProtectedUpToTime>` records how far back protection goes and is present
+  // in the config whether or not File History is currently on. Accepting it as
+  // proof of "enabled" made a switched-off File History report `configured`,
+  // which the composite renders as "probably a second copy".
+  const enabled = /<(?:Target|FileHistory)[^>]*\bstate\s*=\s*"?1"?/i.test(xml);
   const includedFolders: string[] = [];
   for (const m of xml.matchAll(/<Folder[^>]*>\s*<Path[^>]*>([^<]+)<\/Path>/gi)) {
     const value = m[1].trim();

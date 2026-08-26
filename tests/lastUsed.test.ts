@@ -337,3 +337,27 @@ test('mtime is never substituted for a missing last-used date', async () => {
     fixture.cleanup();
   }
 });
+
+/* ============================ regressions from review ============================ */
+
+test('a ONE-path mdls batch is a bare dict, not an array', () => {
+  // Verified against the real tool: `mdls -plist - -- one` emits `{}` while
+  // two paths emit `[{},{}]`.
+  //
+  // Requiring an array made every single-path batch parse as null, and the
+  // Spotlight probe memoises that for the whole process as "Spotlight has
+  // nothing to say". So the most likely first request the UI ever makes —
+  // facts for one selected file — permanently downgraded every later batch to
+  // access times and displayed a sentence that was false.
+  const one = parseMdlsBatch({ kMDItemLastUsedDate: '2025-03-14T09:21:00Z', kMDItemUseCount: 3 }, ['/a']);
+  assert.ok(one, 'a bare dict is accepted for a single path');
+  assert.equal(one!.get('/a')!.useCount, 3);
+
+  // An empty dict for one path is still a valid answer meaning "no data".
+  const empty = parseMdlsBatch({}, ['/a']);
+  assert.ok(empty);
+  assert.equal(empty!.size, 0);
+
+  // A bare dict for MORE than one path is still a mismatch and refused.
+  assert.equal(parseMdlsBatch({}, ['/a', '/b']), null);
+});

@@ -82,6 +82,8 @@ export async function readBackupMembershipLinux(paths: string[]): Promise<Map<st
     // upgrade it, and reading the repository is out of scope for a read-only
     // membership check.
     pathCovered: 'unknown',
+    // Linux has no equivalent of an exclusion list, so this is never checked.
+    exclusionChecked: false,
     mechanism: found.length > 0 ? found.join(' + ') : 'none',
     reason: linuxBackupReason(found),
   };

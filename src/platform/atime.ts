@@ -190,7 +190,7 @@ export function parseBsdMount(text: string): MountEntry[] {
  * Output takes one of these forms depending on the Windows version:
  *
  *     DisableLastAccess = 1
- *     DisableLastAccess = 2  (System Managed, Disabled)
+ *     DisableLastAccess = 2  (System Managed, Enabled)
  *     DisableLastAccess = 0  (User Managed, Updates Enabled)
  *
  * The value is a **two-bit field, not a boolean**, and reading it as one is

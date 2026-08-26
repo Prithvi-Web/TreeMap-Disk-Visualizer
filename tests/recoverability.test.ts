@@ -212,6 +212,13 @@ test('pathCovered is NEVER promoted to "yes" by any code path', () => {
           result.pathCovered, 'yes',
           `configured=${configured} excluded=${String(excluded)} lastBackup=${String(lastBackup)} produced "yes"`,
         );
+        // And "we checked" is true only when tmutil actually answered for this
+        // exact path. `undefined` means the batch failed or the echoed path
+        // did not match ours — different from a definite "[Included]".
+        assert.equal(
+          result.exclusionChecked, configured && excluded !== undefined,
+          `configured=${configured} excluded=${String(excluded)} mis-reported exclusionChecked`,
+        );
       }
     }
   }
@@ -297,20 +304,48 @@ const gitPushed: GitRecoverability = {
 const gitDirty: GitRecoverability = { ...gitPushed, dirtyFiles: 3, fullyPushed: false };
 const gitIgnored: GitRecoverability = { ...gitPushed, pathTracked: false };
 
+/** Configured, and the reader actually confirmed this path is not excluded. */
 const backupConfigured: BackupRecoverability = {
   kind: 'backup', configured: true, lastBackupMs: Date.now() - 3_600_000,
-  pathCovered: 'unknown', mechanism: 'Time Machine',
+  pathCovered: 'unknown', mechanism: 'Time Machine', exclusionChecked: true,
+};
+/** Configured, but nothing checked exclusion — Linux, Windows, or a lookup miss. */
+const backupUnchecked: BackupRecoverability = {
+  kind: 'backup', configured: true, lastBackupMs: null,
+  pathCovered: 'unknown', mechanism: 'restic', exclusionChecked: false,
 };
 const backupExcluded: BackupRecoverability = { ...backupConfigured, pathCovered: 'no' };
 const backupAbsent: BackupRecoverability = {
   kind: 'backup', configured: false, lastBackupMs: null, pathCovered: 'unknown',
-  mechanism: 'Time Machine', reason: 'Time Machine has no backup disk set up on this Mac.',
+  mechanism: 'Time Machine', exclusionChecked: false,
+  reason: 'Time Machine has no backup disk set up on this Mac.',
 };
 
 const cloudSynced: CloudRecoverability = { kind: 'cloud', syncRoot: '/s', provider: 'dropbox', state: 'synced-local' };
 const cloudPlaceholder: CloudRecoverability = { ...cloudSynced, state: 'placeholder' };
 const cloudLocalOnly: CloudRecoverability = { ...cloudSynced, state: 'local-only' };
 const cloudUnknown: CloudRecoverability = { ...cloudSynced, state: 'unknown' };
+
+test('"does not skip this location" is claimed ONLY when something checked', () => {
+  // The most dangerous sentence in the feature, and only macOS can say it —
+  // Linux has no exclusion list at all, the Windows reader parses the
+  // protected-folder list without matching paths against it, and even on macOS
+  // the lookup misses when tmutil echoes a resolved path (/etc/hosts comes
+  // back as /private/etc/hosts).
+  //
+  // Wording all three alike meant a Linux box with a ~/.config/restic
+  // directory reported "probably a second copy" for every byte on the disk.
+  const checked = backupVerdict(backupConfigured).reason!.text;
+  assert.match(checked, /does not skip this location/);
+
+  const unchecked = backupVerdict(backupUnchecked).reason!.text;
+  assert.doesNotMatch(unchecked, /does not skip this location/, 'a reader that never looked must not claim it did');
+  assert.match(unchecked, /has not checked whether it covers this particular file/);
+
+  // Both are still only 'likely' — the ceiling does not move either way.
+  assert.equal(backupVerdict(backupConfigured).verdict, 'likely');
+  assert.equal(backupVerdict(backupUnchecked).verdict, 'likely');
+});
 
 test('a configured backup can never reach "proven" on its own', () => {
   // The ceiling, asserted directly. However recent the backup and however
@@ -337,7 +372,8 @@ test('the composite mapping is exhaustive over all three sub-signals', () => {
     ['none', null], ['pushed', gitPushed], ['dirty', gitDirty], ['ignored', gitIgnored],
   ];
   const backups: [string, BackupRecoverability | null][] = [
-    ['none', null], ['configured', backupConfigured], ['excluded', backupExcluded], ['absent', backupAbsent],
+    ['none', null], ['configured', backupConfigured], ['unchecked', backupUnchecked],
+    ['excluded', backupExcluded], ['absent', backupAbsent],
   ];
   const clouds: [string, CloudRecoverability | null][] = [
     ['none', null], ['synced', cloudSynced], ['placeholder', cloudPlaceholder],
@@ -385,7 +421,7 @@ test('the composite mapping is exhaustive over all three sub-signals', () => {
       }
     }
   }
-  assert.equal(combos, 4 * 4 * 5, 'every combination was exercised');
+  assert.equal(combos, 4 * 5 * 5, 'every combination was exercised');
 });
 
 test('one sub-signal failing leaves the other two intact', () => {

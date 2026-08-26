@@ -84,8 +84,13 @@ export const recoverabilityProvider: FactProvider<RecoverabilityFact> = {
         const root = await repoRootFor(p, rootByDir);
         if (root === null) continue;
         const bucket = pathsByRepo.get(root);
-        if (bucket) bucket.push(p);
-        else if (pathsByRepo.size < MAX_REPOS_PER_BATCH) pathsByRepo.set(root, [p]);
+        if (bucket) { bucket.push(p); continue; }
+        if (pathsByRepo.size < MAX_REPOS_PER_BATCH) { pathsByRepo.set(root, [p]); continue; }
+        // Past the cap. Saying so is the difference between "no git signal"
+        // and "no git repository" — without it, a file with unpushed commits
+        // in the 65th repo renders as `likely` with git never mentioned, which
+        // contradicts this module's own promise to name what it could not run.
+        gitUnavailableByPath.set(p, `More than ${MAX_REPOS_PER_BATCH} Git projects in one request — this one was not checked. Ask about fewer files at a time.`);
       }
 
       for (const [root, repoPaths] of pathsByRepo) {
@@ -104,6 +109,15 @@ export const recoverabilityProvider: FactProvider<RecoverabilityFact> = {
         // back true. Without this, the UI would say deleting 4 GB of ignored
         // build output "costs one git clone".
         const ignored = await ignoredPaths(root, repoPaths);
+        if (ignored === null) {
+          // check-ignore failed. Treating that as "nothing is ignored" would
+          // reintroduce the very claim this pass exists to prevent, so the
+          // repo is reported unavailable instead of guessed at.
+          for (const p of repoPaths) {
+            gitUnavailableByPath.set(p, `Git could not check which files are ignored in ${root}, so its "already pushed" status is not shown.`);
+          }
+          continue;
+        }
         for (const p of repoPaths) {
           gitByPath.set(p, { ...state, pathTracked: !ignored.has(p) });
         }
@@ -114,7 +128,9 @@ export const recoverabilityProvider: FactProvider<RecoverabilityFact> = {
 
     const cloudByPath = new Map<string, CloudRecoverability>();
     const scan = getScan(scanId);
-    const store = scan && (scan.store || scan.root) ? storeOf(scan) : null;
+    // A scan still running has no settled sizes; reading them would feed the
+    // cloud check a number that changes underneath it.
+    const store = scan && scan.status !== 'running' && (scan.store || scan.root) ? storeOf(scan) : null;
 
     for (const p of paths) {
       if (signal.aborted) break;
@@ -153,6 +169,18 @@ export const recoverabilityProvider: FactProvider<RecoverabilityFact> = {
         continue;
       }
       values.set(p, composeRecoverability(git, backup, cloud, unavailable));
+    }
+
+    if (signal.aborted) {
+      // Partial maps would otherwise be returned as complete facts AND cached
+      // for the full TTL, so a user who navigated away mid-request poisons the
+      // cache with git-less verdicts that carry no reason for their absence.
+      return {
+        available: false,
+        reason: 'The search was stopped before these files could be checked.',
+        values: new Map(),
+        stats: { requested: paths.length, computed: 0, skipped: paths.length, failed: 0 },
+      };
     }
 
     return {

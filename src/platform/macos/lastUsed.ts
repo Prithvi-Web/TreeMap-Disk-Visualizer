@@ -68,11 +68,20 @@ export interface MdlsEntry {
  * date to another file's row.
  */
 export function parseMdlsBatch(raw: unknown, paths: string[]): Map<string, { lastUsedMs: number; useCount: number | null }> | null {
-  if (!Array.isArray(raw) || raw.length !== paths.length) return null;
+  // With exactly ONE path, `mdls -plist -` emits a bare dict rather than a
+  // one-element array — verified directly against the real tool.
+  //
+  // Requiring an array made every single-path batch return null, which the
+  // probe below then memoised for the whole process as "Spotlight has nothing
+  // to say". The most likely first request the UI makes — facts for one
+  // selected file — therefore disabled Spotlight permanently and displayed a
+  // sentence that was simply false.
+  const rows = Array.isArray(raw) ? raw : (paths.length === 1 && raw && typeof raw === 'object' ? [raw] : null);
+  if (!rows || rows.length !== paths.length) return null;
 
   const out = new Map<string, { lastUsedMs: number; useCount: number | null }>();
   for (let i = 0; i < paths.length; i++) {
-    const entry = raw[i] as MdlsEntry | null;
+    const entry = rows[i] as MdlsEntry | null;
     if (!entry || typeof entry !== 'object') continue;
 
     const when = entry.kMDItemLastUsedDate;
@@ -124,6 +133,15 @@ export function parseMdutilStatus(text: string): boolean {
  * never as a claim about the whole disk.
  */
 const SPOTLIGHT_PROBE_PATHS = 128;
+
+/**
+ * How many paths one `mdls` invocation is given.
+ *
+ * Unchunked, a 2,000-path batch of long paths can exceed ARG_MAX; the spawn
+ * fails, `runMdls` catches it, and Spotlight silently drops out of the answer
+ * with no reason recorded. `tmutil` is chunked for the same reason.
+ */
+const MDLS_BATCH = 200;
 
 /** Cached per process: re-probing per batch would undo the point of probing. */
 let spotlightVerdict: { productive: boolean; note: string } | null = null;
@@ -197,11 +215,26 @@ export async function readLastUsedMac(paths: string[]): Promise<Map<string, Last
   }
   if (alive.length === 0) return out;
 
-  const noatime = await noatimeReason(alive[0]);
+  // Per path, not per batch.
+  //
+  // Taking the first survivor's mount for everything meant a batch spanning a
+  // normal volume and a `noatime` one either presented the noatime volume's
+  // frozen atime as a last-opened date — mtime substitution, which §1.1
+  // forbids outright — or, with the order reversed, blanked every good answer
+  // in the batch. Mount options are cached, so asking per path is cheap.
+  const noatimeByPath = new Map<string, string | null>();
+  for (const p of alive) noatimeByPath.set(p, await noatimeReason(p));
+
   const verdict = await spotlightIsProductive(alive);
 
   let spotlight: Map<string, { lastUsedMs: number; useCount: number | null }> | null = null;
-  if (verdict.productive) spotlight = await runMdls(alive);
+  if (verdict.productive) {
+    spotlight = new Map();
+    for (let i = 0; i < alive.length; i += MDLS_BATCH) {
+      const chunk = await runMdls(alive.slice(i, i + MDLS_BATCH));
+      if (chunk) for (const [k, v] of chunk) spotlight.set(k, v);
+    }
+  }
 
   for (const p of alive) {
     const hit = spotlight?.get(p);
@@ -209,6 +242,7 @@ export async function readLastUsedMac(paths: string[]): Promise<Map<string, Last
       out.set(p, { lastUsedMs: hit.lastUsedMs, useCount: hit.useCount, source: 'spotlight' });
       continue;
     }
+    const noatime = noatimeByPath.get(p) ?? null;
     if (noatime) {
       // Access times are frozen on this volume, so the number lstat returned
       // is not a last-used date. Saying nothing is the only honest answer.
@@ -224,10 +258,21 @@ export async function readLastUsedMac(paths: string[]): Promise<Map<string, Last
   return out;
 }
 
+/** Mount table, cached briefly: asking per path must not mean a subprocess per path. */
+let mountCache: { at: number; entries: ReturnType<typeof parseBsdMount> } | null = null;
+const MOUNT_TTL_MS = 30_000;
+
+/** Test seam — drops the cached mount table. */
+export function resetMountCacheForTests(): void { mountCache = null; }
+
 /** `noatime` on this path's volume, as a reason string — or null when fine. */
 async function noatimeReason(samplePath: string): Promise<string | null> {
   try {
-    const entries = parseBsdMount(await runText('mount', [], { timeoutMs: 5_000 }));
+    const now = Date.now();
+    if (!mountCache || now - mountCache.at > MOUNT_TTL_MS) {
+      mountCache = { at: now, entries: parseBsdMount(await runText('mount', [], { timeoutMs: 5_000 })) };
+    }
+    const entries = mountCache.entries;
     const mount = mountForPath(entries, samplePath);
     if (!mount) return null;
     const support = atimeSupportFromOptions(mount.options);
