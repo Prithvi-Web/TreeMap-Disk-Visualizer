@@ -250,21 +250,25 @@ test('the progress stream ends on cancellation instead of beating forever', asyn
   const { port, close } = await listen();
   try {
     const frames: string[] = [];
-    let bomb: NodeJS.Timeout | undefined;
     const ended = new Promise<void>((resolve, reject) => {
       const r = http.get({ host: '127.0.0.1', port, path: `/api/scan/${scan.scanId}/progress` }, (res) => {
         res.setEncoding('utf8');
         res.on('data', (c: string) => { frames.push(c); });
-        res.on('end', () => resolve());
+        res.on('end', () => { clearTimeout(bomb); resolve(); });
       });
-      r.on('error', reject);
-      // Destroy before rejecting, and do NOT unref: a stream still open holds
-      // server.close() forever, so the regression this test exists to catch
-      // would hang the whole suite instead of failing it.
-      bomb = setTimeout(() => {
+      // Destroys the stream before rejecting: a stream still open holds
+      // server.close() open forever, so the regression this test exists to
+      // catch would hang the whole suite instead of failing it.
+      //
+      // Cleared on BOTH settle paths, and from inside this promise rather than
+      // the outer finally. Left armed it keeps the event loop alive for its
+      // full 8s after a PASSING run — measured, it added 8s to every run of
+      // this file.
+      const bomb = setTimeout(() => {
         r.destroy();
         reject(new Error('the progress stream never ended after a cancel'));
       }, 8000);
+      r.on('error', (err) => { clearTimeout(bomb); reject(err); });
     });
 
     await new Promise((r) => setTimeout(r, 250)); // let the first progress frame land
@@ -275,7 +279,6 @@ test('the progress stream ends on cancellation instead of beating forever', asyn
     assert.match(text, /"type":"error"/, 'the stream signs off with an error frame');
     assert.ok(text.includes(SCAN_CANCELLED_MESSAGE), `the frame says why: ${text.slice(-200)}`);
   } finally {
-    clearTimeout(bomb);
     await close();
   }
 });

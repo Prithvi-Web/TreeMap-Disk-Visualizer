@@ -1,0 +1,126 @@
+{
+  "name": "treemap-disk-visualizer",
+  "displayName": "TreeMap Disk Visualizer",
+  "description": "See what is eating your disk, without leaving the editor.",
+  "version": "1.0.0",
+  "publisher": "Prithvi-Web",
+  "license": "MIT",
+  "author": "Prithvi-Web",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer.git",
+    "directory": "vscode-extension"
+  },
+  "bugs": {
+    "url": "https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/issues"
+  },
+  "homepage": "https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer#readme",
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": ">=20"
+  },
+  "categories": ["Visualization", "Other"],
+  "keywords": ["disk", "storage", "treemap", "disk usage", "cleanup"],
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#0b0f17",
+    "theme": "dark"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "TreeMap runs a local server from the workspace folder when that folder is the TreeMap repository, so it needs a trusted workspace."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "TreeMap scans a real filesystem, which a virtual workspace does not have."
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "treemap.open",
+        "title": "Open Disk Visualizer",
+        "category": "TreeMap"
+      },
+      {
+        "command": "treemap.scanWorkspaceFolder",
+        "title": "Scan This Workspace Folder",
+        "category": "TreeMap"
+      },
+      {
+        "command": "treemap.stopServer",
+        "title": "Stop the Local Server",
+        "category": "TreeMap"
+      },
+      {
+        "command": "treemap.showLog",
+        "title": "Show Server Log",
+        "category": "TreeMap"
+      },
+      {
+        "command": "treemap.resetInstall",
+        "title": "Reset the Local Copy",
+        "category": "TreeMap"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "treemap.scanWorkspaceFolder",
+          "group": "navigation@99",
+          "when": "explorerResourceIsFolder && !virtualWorkspace"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "treemap.stopServer",
+          "when": "treemap.serverRunning"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "TreeMap",
+      "properties": {
+        "treemap.repositoryUrl": {
+          "type": "string",
+          "default": "https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer.git",
+          "markdownDescription": "Git repository the extension clones TreeMap from. Change this only to point at a fork you control — the extension runs code from here."
+        },
+        "treemap.gitRef": {
+          "type": "string",
+          "default": "main",
+          "description": "Branch or tag to check out."
+        },
+        "treemap.useWorkspaceRepository": {
+          "type": "boolean",
+          "default": true,
+          "description": "When the open workspace IS the TreeMap repository, run that working tree instead of cloning a second copy."
+        },
+        "treemap.serverHost": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "Address the local server binds. Leave as 127.0.0.1 unless you know why you are changing it."
+        },
+        "treemap.autoUpdate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Fetch and fast-forward the cloned copy each time the visualizer is opened."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "typecheck": "tsc -p ./ --noEmit",
+    "package": "npm run compile && npx --yes @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.6.0"
+  }
+}

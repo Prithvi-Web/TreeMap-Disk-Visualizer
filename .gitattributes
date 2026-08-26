@@ -16,3 +16,4 @@
 *.zip binary
 *.dmg binary
 *.node binary
+*.vsix binary

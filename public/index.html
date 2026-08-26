@@ -10974,8 +10974,36 @@ loadCapabilities();
    quietly underneath. The welcome screen is only for true first runs. Restore
    must never make boot worse: every failure is swallowed to a warn and the
    app simply starts empty, exactly as before this feature existed. */
+/**
+ * `?path=<folder>` — scan that folder on boot instead of restoring.
+ *
+ * The one way an embedder can say which folder it wants. The VS Code extension
+ * frames this page in a webview, which is cross-origin to it and so cannot
+ * script it: a query parameter is the only channel there is. It takes priority
+ * over session restore, because someone who asked for a specific folder did not
+ * ask for the last one.
+ *
+ * The value is only ever put in the input and passed to startScan — the same
+ * two things the Browse… picker does with what it returns. Every path check
+ * that matters is the server's, which refuses anything outside what it will
+ * scan regardless of who asked.
+ */
+function requestedPath() {
+  try {
+    const p = new URLSearchParams(location.search).get('path');
+    return p && p.trim() ? p.trim() : null;
+  } catch { return null; }
+}
+
 async function restoreLastSession() {
   try {
+    const wanted = requestedPath();
+    if (wanted) {
+      $('pathInput').value = wanted;
+      maybeShowFastRescan();
+      if (!state.root && !state.scanning) await startScan(wanted);
+      return;
+    }
     const { scans } = await api('/api/scans');
     const last = scans && scans[0];
     if (!last || !last.rootPath) return;               // true first run

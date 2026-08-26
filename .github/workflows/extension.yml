@@ -1,0 +1,63 @@
+name: VS Code extension
+
+# Deliberately its own workflow, not a step inside Tests.
+#
+# That job exists to prove OS-native mechanisms on three operating systems, and
+# its failures are read as "this mechanism does not behave as documented on
+# Windows". A TypeScript error in the editor extension appearing there as
+# "macOS ❌" would be actively misleading about what broke.
+#
+# The extension is pure TypeScript with no native code, so one OS is enough.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'vscode-extension/**'
+      - '.github/workflows/extension.yml'
+  pull_request:
+    paths:
+      - 'vscode-extension/**'
+      - '.github/workflows/extension.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Compile and package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode-extension
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          # Pinned to the extension's own lockfile. The default (**/package-lock.json)
+          # would fold the root lockfile into the cache key, so an unrelated
+          # dependency bump at the root would cold-miss this cache every time.
+          cache: npm
+          cache-dependency-path: vscode-extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Package the .vsix
+        # Proves the manifest, the icon path and .vscodeignore are all valid —
+        # the failures that otherwise only surface at publish time.
+        run: npx --yes @vscode/vsce package --no-dependencies --out treemap-extension.vsix
+
+      - name: Keep the .vsix as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: treemap-vscode-extension
+          path: vscode-extension/treemap-extension.vsix

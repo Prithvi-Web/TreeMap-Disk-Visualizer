@@ -1,0 +1,8 @@
+# Everything the extension does not need at runtime.
+src/**
+node_modules/**
+tsconfig.json
+out/**/*.map
+.vscode/**
+**/*.ts
+!out/**/*.js

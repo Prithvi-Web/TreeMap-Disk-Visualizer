@@ -243,6 +243,31 @@ xattr -dr com.apple.quarantine /Applications/TreeMap.app
 
 <img src="divider.svg" width="100%" alt="">
 
+## 🧩 Inside VS Code
+
+There is a VS Code extension in [`vscode-extension/`](vscode-extension/). It runs
+TreeMap's own server and shows the visualizer in an editor tab, so you can check
+what is eating your disk without leaving your work.
+
+```bash
+cd vscode-extension
+npm install && npm run compile
+npx @vscode/vsce package --no-dependencies   # produces a .vsix you can install
+```
+
+Then **Extensions → ⋯ → Install from VSIX…**, and run **TreeMap: Open Disk
+Visualizer** from the command palette. Right-clicking any folder in the Explorer
+offers **TreeMap: Scan This Workspace Folder**.
+
+The first open clones TreeMap, installs its dependencies and builds it, under one
+cancellable progress notification; later opens go straight to starting the server.
+If the folder you have open *is* this repository, your working tree is used and
+nothing is downloaded — and nothing fetches or resets it either.
+
+The server always runs as a **child process on your own Node 20+**, never inside
+the extension host: TreeMap loads `better-sqlite3` and `sharp`, native modules
+built for standard Node, and VS Code's host is Electron with a different ABI.
+
 ## 🚀 Run from source / web mode (3 commands)
 
 ```bash
@@ -300,6 +325,7 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 |---|---|
 | `POST /api/scan` | Start scanning a folder → `{ scanId }` |
 | `GET /api/scan/:id/progress` | Live scan progress (Server-Sent Events) |
+| `POST /api/scan/:id/cancel` | Stop a running scan. The walker halts and a gdu subprocess is killed; `cancelled: false` means it had already finished |
 | `GET /api/scan/:id/result` | Full file tree (202 while running) |
 | `GET /api/scan/:id/treemap` | Pre-computed squarified treemap layout |
 | `GET /api/scan/:id/stats` | Scan counters incl. engine, duration & fast-rescan cache usage |
@@ -526,6 +552,12 @@ electron/
   preload.js    Context-isolated bridge for drag-drop paths & scan pushes
 public/
   index.html    The entire frontend (inline CSS + JS, zero dependencies)
+vscode-extension/
+  src/lib/      Pure decision-making (which source tree to run, what may be
+                cloned, what a webview may frame) — no `vscode` import, so the
+                main test suite covers it
+  src/          The editor glue: progress notifications, the webview panel,
+                and the child process that runs TreeMap's own server
 scripts/
   gen-tray-icon.js  One-time generator for the tray template icons
 ```

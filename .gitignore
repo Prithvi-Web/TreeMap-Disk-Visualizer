@@ -9,3 +9,7 @@ release/
 
 # gdu binaries staged for bundling — fetched by scripts/fetchGdu.js, never committed
 /build/gdu/
+
+# VS Code extension: compiled output and the packaged bundle — never committed
+/vscode-extension/out/
+/vscode-extension/*.vsix

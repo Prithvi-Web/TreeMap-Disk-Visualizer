@@ -1880,3 +1880,33 @@ test('the scan button routes to Stop mid-scan, and Enter never does', () => {
   // button is Stop, an unguarded Enter in the path field would cancel the scan.
   assert.match(fn, /e\.key === 'Enter' && !state\.scanning/, 'Enter starts a scan and only ever starts one');
 });
+
+test('an embedder can name the folder to scan, and it beats session restore', () => {
+  // The VS Code extension frames this page in a webview, which is cross-origin
+  // to it and so cannot script it. `?path=` is the only channel there is.
+  const code = appCode();
+  const start = code.indexOf('function requestedPath');
+  assert.ok(start !== -1, 'requestedPath must exist');
+  const end = code.indexOf('async function restoreLastSession', start);
+  assert.ok(end > start, 'restoreLastSession must follow it');
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 60, 'the requestedPath slice is non-empty');
+  assert.match(fn, /new URLSearchParams\(location\.search\)/, 'it reads the query string');
+  assert.match(fn, /get\('path'\)/);
+
+  const restoreStart = code.indexOf('async function restoreLastSession');
+  const restoreEnd = code.indexOf('void restoreLastSession()', restoreStart);
+  assert.ok(restoreEnd > restoreStart, 'restoreLastSession must be invoked at boot');
+  const restore = code.slice(restoreStart, restoreEnd);
+  assert.ok(restore.length > 200, 'the restoreLastSession slice is non-empty');
+
+  const wantedAt = restore.indexOf('requestedPath()');
+  const historyAt = restore.indexOf('/api/scans');
+  assert.ok(wantedAt !== -1, 'restore consults the requested path');
+  assert.ok(
+    historyAt > wantedAt,
+    'and does so BEFORE reading history — someone who named a folder did not ask for the last one',
+  );
+  assert.match(restore, /startScan\(wanted\)/, 'the request goes through the same path the Scan button takes');
+  assert.match(restore, /!state\.root && !state\.scanning/, 'and still loses to a user who got there first');
+});
