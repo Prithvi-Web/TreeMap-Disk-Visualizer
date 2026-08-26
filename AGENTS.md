@@ -88,6 +88,18 @@ OpenAPI 3 spec).
      The facts live in a sidecar because the scan responses are held
      byte-identical to the pre-rewrite baseline by
      `tests/goldenResponses.test.ts` — no field may be added to them.
+     Providers: `size` (the scan's own byte count) and `lastUsed`.
+     **`lastUsed`** answers when a path was last *opened*, which mtime cannot
+     express: `{ lastUsedMs, useCount, source: 'spotlight'|'atime'|'none',
+     caveat? }`. `source` is part of the value because the sources answer
+     different questions — Spotlight records an app opening the item and can
+     supply a use count, while an access time also moves for backups, search
+     indexing and antivirus, and always carries its `caveat`. **A null
+     `lastUsedMs` is never a zero and never the modification time.** Where a
+     system does not record openings at all — NTFS last-access tracking off,
+     a `noatime` mount — the fact is `source: 'none'` with the reason, and
+     mtime is explicitly *not* substituted: "changed a year ago" is a
+     different claim from "not opened in a year".
    - `GET /api/file-types`, `GET /api/empty-folders`, `GET /api/apps`,
      `GET /api/compare`, `GET /api/forecast` — further angles.
    - `GET`/`POST /api/platform/shell-integration` — the "Scan with TreeMap"

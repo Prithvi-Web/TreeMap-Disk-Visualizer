@@ -290,6 +290,7 @@ function request(port: number, method: string, url: string, body?: unknown): Pro
 }
 
 interface FactMeasurement {
+  provider: string;
   totalMs: number;
   batches: number;
   computed: number;
@@ -303,7 +304,7 @@ interface FactMeasurement {
  * end to end against the single 400 ms budget. Sequential, not parallel —
  * parallel would measure the machine's core count rather than the endpoint.
  */
-async function measureFacts(): Promise<FactMeasurement | null> {
+async function measureFacts(): Promise<FactMeasurement[] | null> {
   const { createApp } = await import('../src/server');
   const { resetRateLimiter } = await import('../src/middleware/rateLimiter');
   const { startScan, getScan } = await import('../src/services/diskScanner');
@@ -329,19 +330,28 @@ async function measureFacts(): Promise<FactMeasurement | null> {
     clearFactCache();
 
     const batches = [paths.slice(0, 2000), paths.slice(2000, 4000), paths.slice(4000, 5000)];
-    let computed = 0;
-    let requested = 0;
-    const started = performance.now();
-    for (const batch of batches) {
-      const r = await request(port, 'POST', '/api/facts', {
-        scanId: scan.scanId, paths: batch, providers: ['size'],
-      });
-      if (r.status !== 200) throw new Error(`/api/facts answered ${r.status}: ${JSON.stringify(r.body)}`);
-      computed += r.body.providers.size.stats.computed;
-      requested += r.body.providers.size.stats.requested;
+
+    // One row per provider, because the endpoint's cost is the provider's
+    // cost. Measuring only the cheapest one would let an expensive provider
+    // blow the budget without the gate ever noticing — which is exactly what
+    // a Spotlight-first `lastUsed` would have done at ~0.36 ms/path.
+    const out: FactMeasurement[] = [];
+    for (const provider of ['size', 'lastUsed']) {
+      clearFactCache(); // cold: a cache hit would measure the Map, not the provider
+      let computed = 0;
+      let requested = 0;
+      const started = performance.now();
+      for (const batch of batches) {
+        const r = await request(port, 'POST', '/api/facts', {
+          scanId: scan.scanId, paths: batch, providers: [provider],
+        });
+        if (r.status !== 200) throw new Error(`/api/facts answered ${r.status}: ${JSON.stringify(r.body)}`);
+        computed += r.body.providers[provider].stats.computed;
+        requested += r.body.providers[provider].stats.requested;
+      }
+      out.push({ provider, totalMs: performance.now() - started, batches: batches.length, computed, requested });
     }
-    const totalMs = performance.now() - started;
-    return { totalMs, batches: batches.length, computed, requested };
+    return out;
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
   }
@@ -459,13 +469,15 @@ async function main(): Promise<void> {
       note: `The fixture holds fewer than 5,000 files — re-run without --files, or with --files=5000 or more.`,
     });
   } else {
-    rows.push({
-      budget: `Fact sidecar (${facts.requested.toLocaleString()} paths, ${facts.batches} batches)`,
-      measured: ms(facts.totalMs), limit: '≤ 400 ms',
-      verdict: facts.totalMs <= 400 ? 'PASS' : 'FAIL',
-      note: `${facts.computed.toLocaleString()} of ${facts.requested.toLocaleString()} computed. ` +
-            `Sent as ${facts.batches} sequential requests because §4.1 caps one request at 2,000 paths.`,
-    });
+    for (const f of facts) {
+      rows.push({
+        budget: `Fact sidecar: ${f.provider} (${f.requested.toLocaleString()} paths, ${f.batches} batches)`,
+        measured: ms(f.totalMs), limit: '≤ 400 ms',
+        verdict: f.totalMs <= 400 ? 'PASS' : 'FAIL',
+        note: `${f.computed.toLocaleString()} of ${f.requested.toLocaleString()} computed. ` +
+              `Sent as ${f.batches} sequential requests because §4.1 caps one request at 2,000 paths.`,
+      });
+    }
   }
 
   /* --- the browser budgets --- */

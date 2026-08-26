@@ -10,9 +10,11 @@ import { downloadOrigin, provenanceAvailable } from './provenance';
 import { listSnapshots as btrfsSnapshots, snapshotAvailability } from './btrfs';
 import { relativeToVolume } from '../snapshotPaths';
 import { registerShellIntegration, unregisterShellIntegration, isInstalled as linuxShellInstalled } from './shellIntegration';
+import { readLastUsedLinux, probeLastUsedLinux } from './lastUsed';
 import { mapSmartctl, SmartctlJson } from '../macos';
 import type {
   CapabilityState,
+  LastUsedInfo,
   ChangeEvent,
   HardwareEncodeCapability,
   OpenHandleInfo,
@@ -463,5 +465,18 @@ export class LinuxProvider extends BaseProvider {
       };
     }
     return { available: true, mechanism: `per-user actions for ${present.join(', ')}` };
+  }
+
+  /**
+   * Access time, gated on the mount's own options — see ./lastUsed.ts. A
+   * `noatime` mount reports nothing rather than presenting a frozen creation
+   * date as a last-opened date.
+   */
+  override readLastUsed(paths: string[]): Promise<Map<string, LastUsedInfo>> {
+    return readLastUsedLinux(paths);
+  }
+
+  override probeLastUsed(): Promise<CapabilityState> {
+    return probeLastUsedLinux();
   }
 }

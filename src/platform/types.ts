@@ -164,6 +164,37 @@ export interface ProvenanceInfo {
   mechanism: string;
 }
 
+/* ---------- Last-used dates (v4 §1.1) ---------- */
+
+/**
+ * When a path was last *opened*, as distinct from last modified.
+ *
+ * "Downloaded fourteen months ago, never opened" is the highest-signal fact on
+ * a disk, and mtime cannot express it — a file written once and read daily has
+ * the same mtime as one written once and forgotten.
+ *
+ * `source` is part of the value, not metadata about it, because the three
+ * sources answer subtly different questions and the UI must be able to say
+ * which one it is showing:
+ *
+ *  - `spotlight` — macOS's own record of an application opening the item, and
+ *    the only source that can also supply a **use count**.
+ *  - `atime` — the filesystem's access time. Genuine, but it moves for reasons
+ *    that are not a person opening the file: backups, indexers, antivirus and
+ *    thumbnail generation all read files. Always carries a `caveat`.
+ *  - `none` — nothing is known. `lastUsedMs` is null, and that null must never
+ *    be rendered as a date or as zero.
+ */
+export interface LastUsedInfo {
+  /** Unix epoch milliseconds, or null when genuinely unknown. Never 0-for-unknown. */
+  lastUsedMs: number | null;
+  /** How many times the item has been opened, where the OS counts. Usually null. */
+  useCount: number | null;
+  source: 'spotlight' | 'atime' | 'none';
+  /** Shown verbatim beside the date whenever the source needs qualifying. */
+  caveat?: string;
+}
+
 /* ---------- Volume topology (A5) ---------- */
 
 export interface PhysicalDiskInfo {
@@ -305,6 +336,8 @@ export interface Capabilities {
   volumeTopology: CapabilityState;
   provenance: CapabilityState;
   shellIntegration: CapabilityState;
+  /** v4 §1.1 — last-opened dates, from Spotlight or from access times. */
+  lastUsed: CapabilityState;
 }
 
 export type PlatformName = 'windows' | 'macos' | 'linux';

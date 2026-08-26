@@ -10,6 +10,7 @@ import { volumeTopology } from './diskutil';
 import { listSnapshots as tmListSnapshots, mountSnapshot } from './tmutil';
 import { recoverFromSnapshots as macRecoverFromSnapshots } from './snapshotRecover';
 import { allocatedSize, placeholderInfo } from './allocation';
+import { readLastUsedMac, probeLastUsedMac } from './lastUsed';
 import {
   registerShellIntegration as installQuickAction,
   unregisterShellIntegration as removeQuickAction,
@@ -19,6 +20,7 @@ import type {
   CapabilityState,
   CloneFamilyId,
   HardwareEncodeCapability,
+  LastUsedInfo,
   OpenHandleInfo,
   PlaceholderInfo,
   PlatformName,
@@ -287,6 +289,18 @@ export class MacOsProvider extends BaseProvider {
 
   override async probeProvenance(): Promise<CapabilityState> {
     return { available: true, mechanism: 'kMDItemWhereFroms + com.apple.quarantine' };
+  }
+
+  /**
+   * Spotlight where it actually answers, access time otherwise — see
+   * ./lastUsed.ts for the measurements that decided which is which.
+   */
+  override readLastUsed(paths: string[]): Promise<Map<string, LastUsedInfo>> {
+    return readLastUsedMac(paths);
+  }
+
+  override probeLastUsed(): Promise<CapabilityState> {
+    return probeLastUsedMac();
   }
 }
 

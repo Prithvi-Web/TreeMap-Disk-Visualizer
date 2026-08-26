@@ -475,3 +475,81 @@ Also available:
   SIGTERM only, identity-checked against pid reuse, never TreeMap itself,
   never escalated to SIGKILL — and reopens it where that is genuinely
   supported (a macOS `.app`, via `open`, after the exit is confirmed).
+
+---
+
+## Last-opened dates (v4 §1.1)
+
+Measured on this Mac before the implementation was written, because the
+obvious design does not work here.
+
+### macOS — Spotlight is on, and has nothing to say
+
+- `mdutil -s /` → **"Indexing enabled"**.
+- `mdimport -A` lists `kMDItemLastUsedDate` as a known attribute.
+- `mdfind 'kMDItemLastUsedDate > "2020-01-01"'` matches **zero files on the
+  entire machine**, and `mdls` returns an empty dict for every path tried,
+  including `/Applications/Safari.app`. Apple no longer populates it.
+
+A capability probe based on `mdutil` alone would therefore have reported this
+feature *available* and then answered "unknown" for every file forever. So
+availability is decided by whether Spotlight actually **answers** — probed once
+per process against up to 128 real paths — not by whether it is switched on.
+What that probe concludes is worded as what it is: "Spotlight returned no last
+opened dates for a sample of N files here."
+
+Cost, measured: `mdls -plist -` batched costs **~0.36 ms/path** (2,000 paths in
+717 ms, which alone exceeds §2.5's 400 ms sidecar budget). `lstat` costs
+**~0.0015 ms/path** (5,000 paths in 7.4 ms). Access time is therefore the
+default source and Spotlight is an enrichment that must earn its 240x cost.
+Access time is live here: a read advanced `atime` by two seconds on APFS,
+verified directly.
+
+**Three `mdls` batching traps**, all paid for:
+
+1. `mdls -plist - a b c` emits an **array of dicts positionally matching the
+   input paths**. Nothing else ties an answer to a file.
+2. **One missing path destroys the whole batch.** With any nonexistent
+   argument, `mdls` abandons the plist, prints `could not find /x.` as plain
+   text, and **exits 0** — every valid path in that batch loses its answer,
+   silently. Paths are stat'd first and only survivors are sent; a result whose
+   length does not match the request is discarded rather than mis-zipped.
+3. An attribute with no value is **absent from the dict**, not null. An empty
+   dict is the normal case.
+
+### Linux — a per-mount question
+
+Read from `/proc/mounts`, taking the **longest** matching mount point, because
+mounts nest: a `noatime` data drive under a `relatime` root would otherwise be
+read through the root's options. Mount points are octal-escaped by the kernel
+(`/mnt/my\040disk`), which matters for any drive named with a space.
+
+`relatime` (the modern default) is treated as **usable** with its ~24-hour
+precision stated — refusing it would throw away a good signal to avoid a
+rounding error. `noatime` is fatal and reported as such.
+
+### Windows — a two-bit field, not a boolean
+
+`fsutil behavior query DisableLastAccess` returns 0–3:
+
+| Value | Meaning | atime |
+| --- | --- | --- |
+| 0 | User Managed, Updates Enabled | usable |
+| 1 | User Managed, Updates Disabled | frozen |
+| 2 | System Managed, Updates Enabled | usable |
+| 3 | System Managed, Updates Disabled | frozen |
+
+Bit 0 is the disable flag; bit 1 only records who decides. **"Non-zero means
+off" would wrongly blank this feature on every machine reporting 2**, a common
+modern default. Updates have been off by default since Vista; Windows 10 1803
+added the System Managed modes, which keep them on for smaller volumes.
+
+When updates are off, TreeMap reports nothing and **does not fall back to
+mtime**. On macOS and Linux the fallback to access time is honest because
+access time really does track opening; on Windows with tracking off there is no
+such fallback, so the honest answer is nothing.
+
+**Not verified live:** neither the Linux nor the Windows path has run on its
+own OS. Both are covered through their parse seams against captured tool
+output, including every `DisableLastAccess` value and the `noatime`,
+`relatime`, escaped-mount-point and nested-mount forms.

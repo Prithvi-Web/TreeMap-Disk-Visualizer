@@ -68,6 +68,7 @@ async function detect(): Promise<Capabilities> {
     volumeTopology,
     provenance,
     shellIntegration,
+    lastUsed,
   ] = await Promise.all([
     safeProbe('Fast scanning', () => p.probeFastEnumeration(), unavailable('readdir')),
     safeProbe('Live updates', () => p.probeLiveIndex(), unavailable('fs.watch')),
@@ -84,6 +85,7 @@ async function detect(): Promise<Capabilities> {
     safeProbe('Disk layout', () => p.probeVolumeTopology(), unavailable('none')),
     safeProbe('Download history', () => p.probeProvenance(), unavailable('none')),
     safeProbe('File manager integration', () => p.probeShellIntegration(), unavailable('none')),
+    safeProbe('Last-opened dates', () => p.probeLastUsed(), unavailable('none')),
   ]);
 
   return {
@@ -100,6 +102,7 @@ async function detect(): Promise<Capabilities> {
     volumeTopology,
     provenance,
     shellIntegration,
+    lastUsed,
   };
 }
 

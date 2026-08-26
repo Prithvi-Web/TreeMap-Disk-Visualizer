@@ -11,9 +11,11 @@ import { listSnapshots as vssSnapshots, snapshotAvailability } from './vss';
 import { relativeToVolume } from '../snapshotPaths';
 import { registerShellIntegration, unregisterShellIntegration, isInstalled as winShellInstalled } from './shellIntegration';
 import { runPowerShellJson } from './powershell';
+import { readLastUsedWindows, probeLastUsedWindows } from './lastUsed';
 import { mapSmartctl, SmartctlJson } from '../macos';
 import type {
   CapabilityState,
+  LastUsedInfo,
   HardwareEncodeCapability,
   OpenHandleInfo,
   PlaceholderInfo,
@@ -407,5 +409,18 @@ export class WindowsProvider extends BaseProvider {
       mechanism: 'HKCU Explorer context menu',
       reason: 'Adding "Scan with TreeMap" to the right-click menu applies to your account only and needs no administrator rights.',
     };
+  }
+
+  /**
+   * NTFS last-access time, gated on whether Windows still updates it — see
+   * ./lastUsed.ts. When it does not, this reports nothing rather than
+   * substituting the modification date.
+   */
+  override readLastUsed(paths: string[]): Promise<Map<string, LastUsedInfo>> {
+    return readLastUsedWindows(paths);
+  }
+
+  override probeLastUsed(): Promise<CapabilityState> {
+    return probeLastUsedWindows();
   }
 }

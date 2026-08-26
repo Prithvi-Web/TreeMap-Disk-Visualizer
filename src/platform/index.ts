@@ -1,5 +1,6 @@
 import {
   CapabilityState,
+  LastUsedInfo,
   ChangeEvent,
   CloneFamilyId,
   EnumerateOptions,
@@ -113,6 +114,15 @@ export interface PlatformProvider {
    */
   shellIntegrationInstalled(): Promise<boolean>;
 
+  /**
+   * Last-opened dates for a batch of paths (v4 §1.1).
+   *
+   * Batched because the per-OS mechanisms cost far more per invocation than
+   * per path. A path absent from the returned map could not be read at all —
+   * it is not a zero date, and callers must not render it as one.
+   */
+  readLastUsed(paths: string[]): Promise<Map<string, LastUsedInfo>>;
+
   /* Capability probes — one per capability-gated feature (§2.2) */
   probeFastEnumeration(): Promise<CapabilityState>;
   probeLiveIndex(): Promise<CapabilityState>;
@@ -126,6 +136,7 @@ export interface PlatformProvider {
   probeVolumeTopology(): Promise<CapabilityState>;
   probeProvenance(): Promise<CapabilityState>;
   probeShellIntegration(): Promise<CapabilityState>;
+  probeLastUsed(): Promise<CapabilityState>;
 }
 
 /** Map Node's platform string onto the three TreeMap supports. */
