@@ -115,6 +115,24 @@ OpenAPI 3 spec).
      `none` even inside a fully-pushed repo — `git status --porcelain` omits
      ignored files, so the repo reports clean while the remote has never held
      them.
+   - `POST /api/query` with `{ scanId, q, limit?, offset?, sort? }` — **the
+     query grammar**, and the highest-leverage surface in v4: every hard-coded
+     view is a filter over the same tree, so a query is a view, a saved query
+     is a Clean Up rule, and a rule is an Autopilot policy.
+     `size>1gb ext:mp4,mov used>1y -in:node_modules elsewhere:proven` — terms
+     are ANDed, `or` is an explicit keyword, parentheses group, and any term
+     negates with a leading `-`. Sizes are decimal (`kb`=1000) with `kib`
+     available; dates take `YYYY-MM-DD` **or** an age (`90d`, `6m`, `2y`), and
+     the two read differently on purpose: `modified<2023-01-01` is "before that
+     date" while `modified>90d` is "older than 90 days".
+     **An unknown field is a parse error naming the valid fields, never a
+     silent substring search** — `400 QUERY_PARSE_ERROR` carries `offset`,
+     `length` and `expected`. `degraded[]` names any signal this machine cannot
+     supply, so an empty result reads as "unknown" rather than "nothing
+     matched". `POST /api/query/validate` parses without running (it never
+     touches a scan); `GET /api/query/fields` serves the grammar so nothing
+     duplicates it. `GET`/`POST`/`DELETE /api/queries` are saved views — a
+     query that does not parse is refused rather than stored.
    - `GET /api/file-types`, `GET /api/empty-folders`, `GET /api/apps`,
      `GET /api/compare`, `GET /api/forecast` — further angles.
    - `GET`/`POST /api/platform/shell-integration` — the "Scan with TreeMap"

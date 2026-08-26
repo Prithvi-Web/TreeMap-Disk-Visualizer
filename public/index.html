@@ -1260,6 +1260,26 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 
 /* ── Time-slider treemap (Feature 20) ── */
 .tm-timebar { display: flex; align-items: center; gap: 12px; padding: 8px 14px; margin-bottom: 10px; border-radius: var(--r-md); }
+/* Phase 2 (§2.4) — saved views and live query feedback. A sibling row of
+   .tm-timebar rather than more controls in .tm-toolbar, which already wraps
+   below 900px with nine of them. */
+.tm-querybar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; margin-bottom: 10px;
+  border-radius: var(--r-md); flex-wrap: wrap; }
+.tm-saved { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tm-saved .pill .sw { width: 8px; height: 8px; border-radius: 99px; background: var(--accent); flex: none; }
+.tm-saved .pill .rm { margin-left: 2px; opacity: 0.55; }
+.tm-saved .pill .rm:hover { opacity: 1; color: var(--danger, #ff453a); }
+.tm-queryerr { font-size: 11.5px; color: var(--danger, #ff453a); margin-left: auto; max-width: 60%;
+  text-align: right; line-height: 1.45; }
+.tm-queryerr.okmsg { color: var(--text-3); }
+#tmSearch.badq { border-color: var(--danger, #ff453a); }
+.tm-hints { top: calc(100% + 6px); left: auto; right: 0; min-width: 280px;
+  max-width: min(420px, 88vw); max-height: 280px; overflow-y: auto; }
+.tm-hint { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; padding: 6px 10px;
+  border: 0; background: none; border-radius: 8px; cursor: pointer; color: var(--text-1); font-size: 12px; }
+.tm-hint:hover, .tm-hint[aria-selected="true"] { background: var(--accent-soft); }
+.tm-hint .k { font-weight: 600; color: var(--accent); font-family: var(--mono, ui-monospace, monospace); }
+.tm-hint .h { color: var(--text-3); font-size: 11px; }
 .tm-timebar input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
 .tm-timebar .tm-timelabel { font-size: 12px; color: var(--text-2); white-space: nowrap; min-width: 170px; text-align: right; }
 
@@ -1718,9 +1738,12 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
           <button type="button" data-vm="treemap" aria-selected="true" title="Squarified treemap">Treemap</button>
           <button type="button" data-vm="sunburst" aria-selected="false" title="Radial sunburst">Sunburst</button>
         </div>
-        <div class="field">
+        <div class="field" id="tmSearchWrap">
           <span data-icon="search"></span>
-          <input type="text" id="tmSearch" placeholder="Highlight… (name or *.zip)" aria-label="Highlight matching files in the treemap" autocomplete="off" spellcheck="false">
+          <input type="text" id="tmSearch" placeholder="Highlight… (try size&gt;1gb)" aria-label="Highlight matching files in the treemap"
+                 role="combobox" aria-expanded="false" aria-controls="tmQueryHints" aria-autocomplete="list"
+                 autocomplete="off" spellcheck="false">
+          <div class="gsearch-panel tm-hints" id="tmQueryHints" role="listbox" aria-label="Query fields" hidden></div>
         </div>
         <div class="seg" id="tmColorSeg" role="tablist" aria-label="Treemap color mode">
           <button type="button" data-mode="size" aria-selected="true" title="Color cells by file size">Size</button>
@@ -1736,6 +1759,11 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <button class="icon-btn" id="tmRefresh" aria-label="Re-render treemap" title="Re-render"></button>
         <button class="btn" id="tmExportBtn" title="Download the treemap as an image"><span data-icon="download"></span>Export</button>
       </div>
+    </div>
+    <div class="tm-querybar glass" id="tmQueryBar" hidden>
+      <div class="tm-saved" id="tmSavedViews"></div>
+      <button class="pill" id="tmSaveView" title="Save this query as a view you can click again">Save view</button>
+      <div class="tm-queryerr" id="tmQueryErr" role="status" aria-live="polite" hidden></div>
     </div>
     <div class="tm-timebar glass" id="tmTimebar" hidden>
       <span data-icon="clock" data-size="14"></span>
@@ -2760,7 +2788,8 @@ const state = {
   largest: [],
   types: [],
   bigFolders: [],
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null } },
+  savedViews: [],
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null } },
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   apps: { loadedFor: null, list: [], otherBytes: 0, totalBytes: 0, appsFolderScanned: false },
   games: { loadedFor: null, report: null },
@@ -2989,9 +3018,15 @@ const VIEWS = [
     mount() {
       if (!state.scanId || !state.root) return;
       if (!state.treemap.rootPath) state.treemap.rootPath = state.root.path;
+      loadSavedViews(); // Phase 2 §2.4 — the chip strip, fetched lazily on entry
       loadTreemap(state.treemap.rootPath);
     },
     unmount() {
+      // Phase 2: stop the query debounce and close the autocomplete. The
+      // registry exists to make each view clean up exactly what it started.
+      clearTimeout(tmQueryDeb); tmQueryDeb = 0;
+      tmCloseHints();
+      $('tmQueryBar').hidden = true;
       // Live mode keeps two intervals and a rAF loop alive; leaving the view
       // without stopping them means the app keeps re-laying-out a canvas
       // nobody is looking at. `keepWanted` preserves the user's intent so the
@@ -5061,16 +5096,24 @@ function renderSearchOverlay() {
   const accent = cssVar('--accent') || '#0A84FF';
   let matches = 0;
 
+  // One predicate, chosen once. A bare word uses the original local rule —
+  // instant, and the exact behaviour this box has always had. A grammar query
+  // uses the paths the server's evaluator returned, so the browser never
+  // parses the grammar and there is only ever one implementation of it (§7).
+  const grammar = state.treemap.queryMode === 'grammar' && state.treemap.matchedPaths;
+  const hits = state.treemap.matchedPaths;
+  const isMatch = grammar ? (n) => hits.has(n.path) : (n) => treemapMatch(n, q);
+
   // Dim non-matching leaves first, then outline matches on top.
   for (const r of state.treemap.pxRects) {
     if (r.frame) continue;
-    if (!treemapMatch(r.n, q)) {
+    if (!isMatch(r.n)) {
       ctx.fillStyle = scrim;
       ctx.fillRect(r.x, r.y, r.w, r.h);
     }
   }
   for (const r of state.treemap.pxRects) {
-    if (!treemapMatch(r.n, q)) continue;
+    if (!isMatch(r.n)) continue;
     matches++;
     ctx.strokeStyle = accent;
     ctx.lineWidth = r.frame ? 2.5 : 1.5;
@@ -5997,18 +6040,324 @@ function treemapUp() {
 }
 $('tmUpBtn').addEventListener('click', treemapUp);
 
-/* ── Search box ── */
-let tmSearchDeb = 0;
-$('tmSearch').addEventListener('input', (e) => {
-  clearTimeout(tmSearchDeb);
-  tmSearchDeb = setTimeout(() => {
-    state.treemap.query = e.target.value;
-    if (isSun()) { presentSunburst(); return; } // search highlight is treemap-only
+/* ═════════════════ Query grammar in the highlight box (Phase 2, §2.4) ═════════════════
+   The box now accepts the full grammar — size>1gb ext:mp4 used>1y -in:node_modules —
+   without becoming a second implementation of it (§7 forbids one).
+
+   How that is arranged, and why:
+
+   * **The zero-token fast path is untouched.** A bare word still goes through
+     `treemapMatch()` exactly as it always has: no network, no latency, and the
+     backend/frontend agreement test in tests/indexSearch.test.ts keeps passing
+     against the same five lines it has always read.
+   * **Anything with an operator goes to the server.** `POST /api/query` runs
+     the one parser and the one evaluator, and returns matching paths that the
+     overlay highlights. The browser never parses the grammar.
+   * **Live feedback is parse-only.** `POST /api/query/validate` on a 150 ms
+     debounce never touches a scan, so typing cannot start a tree walk.
+
+   The parse error is shown under the box with the offending span named, rather
+   than the query silently matching nothing — §2.1 is explicit that a red
+   underline beats a plausible wrong answer.                                   */
+
+/** Does this query use the grammar, or is it the legacy bare word? */
+function tmIsGrammarQuery(q) {
+  // Mirrors the parser's own rule — an atom with an operator is a field term —
+  // WITHOUT reimplementing it: the answer only decides which path to take, and
+  // a wrong guess costs a round trip, never a wrong result.
+  return /(^|\s)-|[:<>()]|(^|\s)or(\s|$)/i.test(q.trim());
+}
+
+let tmQueryDeb = 0;
+let tmQuerySeq = 0;
+
+function tmSetQueryMessage(text, isError) {
+  const box = $('tmQueryErr');
+  const input = $('tmSearch');
+  box.textContent = text || '';
+  box.hidden = !text;
+  box.classList.toggle('okmsg', !isError);
+  input.classList.toggle('badq', Boolean(isError));
+  input.setAttribute('aria-invalid', isError ? 'true' : 'false');
+  tmSyncQueryBar();
+}
+
+/** The bar earns its row only when it has something to say. */
+function tmSyncQueryBar() {
+  const bar = $('tmQueryBar');
+  if (!bar) return;
+  const hasViews = $('tmSavedViews').childElementCount > 0;
+  const hasMessage = !$('tmQueryErr').hidden;
+  bar.hidden = !(hasViews || hasMessage) || state.view !== 'treemap';
+}
+
+/** Run a grammar query on the server and highlight what comes back. */
+async function tmRunGrammarQuery(q) {
+  if (!state.scanId) return;
+  const seq = ++tmQuerySeq;
+  try {
+    const out = await api('/api/query', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scanId: state.scanId, q, limit: 1000, sort: 'size' }),
+    });
+    if (seq !== tmQuerySeq) return; // a newer keystroke already won
+    state.treemap.matchedPaths = new Set((out.hits || []).map((h) => h.path));
+    state.treemap.queryMode = 'grammar';
+
+    // §2.2: a signal this machine cannot supply must be VISIBLE. An empty
+    // highlight with no explanation reads as "nothing matched", which is a
+    // different and wrong claim.
     renderSearchOverlay();
     presentTreemap();
-  }, 120);
+
+    // Said AFTER rendering, because the honest number needs both halves.
+    //
+    // The server searches the whole scan; the map draws only what fits at the
+    // current folder and depth. So a query can genuinely match thirty files
+    // while the map outlines three — and "3 matches" alone reads as "that is
+    // all there is". Naming the gap is the difference between a filter that
+    // works and one that looks broken.
+    const degraded = out.degraded || [];
+    const drawn = state.treemap.matches;
+    const found = out.total;
+    if (degraded.length) {
+      tmSetQueryMessage(degraded.map((d) => d.reason).join(' '), false);
+    } else if (out.truncated) {
+      tmSetQueryMessage(`Showing the ${state.treemap.matchedPaths.size} biggest of ${found} matches.`, false);
+    } else if (found > drawn) {
+      tmSetQueryMessage(
+        `${found} match${found === 1 ? '' : 'es'} — ${drawn} shown here. The rest are deeper than this view draws; zoom in or raise Depth.`,
+        false,
+      );
+    } else {
+      tmSetQueryMessage('', false);
+    }
+  } catch (e) {
+    if (seq !== tmQuerySeq) return;
+    tmSetQueryMessage(e.message || 'That query could not be run.', true);
+  }
+}
+
+/** Parse-only feedback while typing. Never runs a query. */
+async function tmValidateQuery(q) {
+  const seq = ++tmQuerySeq;
+  try {
+    await api('/api/query/validate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q }),
+    });
+    if (seq !== tmQuerySeq) return true;
+    tmSetQueryMessage('', false);
+    return true;
+  } catch (e) {
+    if (seq !== tmQuerySeq) return false;
+    // The parser hands back the offending span and the valid alternatives;
+    // showing them is the difference between "that didn't work" and a message
+    // the user can act on without reading documentation.
+    const where = typeof e.offset === 'number' ? ` (at character ${e.offset + 1})` : '';
+    tmSetQueryMessage((e.message || 'That query could not be understood.') + where, true);
+    return false;
+  }
+}
+
+function tmApplyQuery(raw) {
+  const q = raw.trim();
+  state.treemap.query = raw;
+  if (!q) {
+    state.treemap.queryMode = 'bare';
+    state.treemap.matchedPaths = null;
+    tmSetQueryMessage('', false);
+    if (isSun()) { presentSunburst(); return; }
+    renderSearchOverlay(); presentTreemap();
+    return;
+  }
+  if (!tmIsGrammarQuery(q)) {
+    // The legacy path: instant, local, and byte-for-byte the behaviour the
+    // box has always had.
+    state.treemap.queryMode = 'bare';
+    state.treemap.matchedPaths = null;
+    tmSetQueryMessage('', false);
+    if (isSun()) { presentSunburst(); return; }
+    renderSearchOverlay(); presentTreemap();
+    return;
+  }
+  void tmValidateQuery(q).then((valid) => { if (valid) void tmRunGrammarQuery(q); });
+}
+
+$('tmSearch').addEventListener('input', (e) => {
+  clearTimeout(tmQueryDeb);
+  tmRenderHints(e.target.value);
+  const raw = e.target.value;
+  // 150 ms, per §2.4 — long enough that a fast typist makes one request, short
+  // enough that the underline feels immediate.
+  tmQueryDeb = setTimeout(() => tmApplyQuery(raw), tmIsGrammarQuery(raw) ? 150 : 120);
 });
 
+/* ── Autocomplete over the grammar (§2.4) ──
+   The field list comes from GET /api/query/fields rather than a copy kept
+   here, so the box cannot drift from the parser that answers it. */
+
+let tmFields = null;
+let tmHintSel = -1;
+
+async function tmLoadFields() {
+  if (tmFields) return tmFields;
+  try {
+    const out = await api('/api/query/fields');
+    tmFields = out.fields || [];
+  } catch { tmFields = []; }
+  return tmFields;
+}
+
+function tmCloseHints() {
+  $('tmQueryHints').hidden = true;
+  $('tmSearch').setAttribute('aria-expanded', 'false');
+  tmHintSel = -1;
+}
+
+/** The token the caret sits in — what autocomplete is completing. */
+function tmActiveToken(value) {
+  const upto = value.slice(0, $('tmSearch').selectionStart ?? value.length);
+  const start = Math.max(upto.lastIndexOf(' '), upto.lastIndexOf('(')) + 1;
+  return { text: upto.slice(start).replace(/^-/, ''), start };
+}
+
+async function tmRenderHints(value) {
+  const fields = await tmLoadFields();
+  const panel = $('tmQueryHints');
+  const token = tmActiveToken(value);
+  if (!token.text) { tmCloseHints(); return; }
+
+  const colon = token.text.indexOf(':');
+  let items = [];
+  if (colon === -1) {
+    const prefix = token.text.toLowerCase();
+    items = fields
+      .filter((f) => f.name.startsWith(prefix))
+      .map((f) => ({ insert: f.name + (f.operators.includes(':') ? ':' : '>'), label: f.name, help: f.help }));
+  } else {
+    // Past the colon: offer that field's own values, so `git:` proposes
+    // pushed / dirty / none rather than nothing.
+    const field = fields.find((f) => f.name === token.text.slice(0, colon).toLowerCase());
+    const typed = token.text.slice(colon + 1).toLowerCase();
+    if (field) {
+      items = (field.values || [])
+        .filter((v) => v.startsWith(typed))
+        .map((v) => ({ insert: `${field.name}:${v}`, label: `${field.name}:${v}`, help: field.help }));
+    }
+  }
+
+  if (!items.length) { tmCloseHints(); return; }
+  panel.innerHTML = items.slice(0, 8).map((it, i) =>
+    `<button class="tm-hint" role="option" aria-selected="false" data-i="${i}" data-insert="${escapeHtml(it.insert)}">` +
+    `<span class="k">${escapeHtml(it.label)}</span><span class="h">${escapeHtml(it.help)}</span></button>`).join('');
+  panel.hidden = false;
+  $('tmSearch').setAttribute('aria-expanded', 'true');
+  tmHintSel = -1;
+  panel.querySelectorAll('.tm-hint').forEach((b) =>
+    b.addEventListener('mousedown', (ev) => { ev.preventDefault(); tmAcceptHint(b.dataset.insert); }));
+}
+
+function tmAcceptHint(insert) {
+  const input = $('tmSearch');
+  const token = tmActiveToken(input.value);
+  const negated = input.value.slice(token.start).startsWith('-');
+  const before = input.value.slice(0, token.start) + (negated ? '-' : '');
+  const caret = input.selectionStart ?? input.value.length;
+  input.value = before + insert + input.value.slice(caret);
+  input.focus();
+  input.setSelectionRange((before + insert).length, (before + insert).length);
+  tmCloseHints();
+  clearTimeout(tmQueryDeb);
+  tmApplyQuery(input.value);
+}
+
+function tmMoveHint(delta) {
+  const options = [...$('tmQueryHints').querySelectorAll('.tm-hint')];
+  if (!options.length) return;
+  tmHintSel = (tmHintSel + delta + options.length) % options.length;
+  options.forEach((o, i) => {
+    o.setAttribute('aria-selected', String(i === tmHintSel));
+    if (i === tmHintSel) o.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+$('tmSearch').addEventListener('keydown', (e) => {
+  const open = !$('tmQueryHints').hidden;
+  if (open && e.key === 'ArrowDown') { e.preventDefault(); tmMoveHint(1); return; }
+  if (open && e.key === 'ArrowUp') { e.preventDefault(); tmMoveHint(-1); return; }
+  if (open && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); tmCloseHints(); return; }
+  if (open && (e.key === 'Enter' || e.key === 'Tab')) {
+    const pick = [...$('tmQueryHints').querySelectorAll('.tm-hint')][tmHintSel >= 0 ? tmHintSel : 0];
+    if (pick) { e.preventDefault(); tmAcceptHint(pick.dataset.insert); return; }
+  }
+  if (e.key === 'Enter') { e.preventDefault(); clearTimeout(tmQueryDeb); tmApplyQuery(e.target.value); }
+});
+document.addEventListener('click', (e) => {
+  if (!$('tmQueryHints').hidden && !$('tmSearchWrap').contains(e.target)) tmCloseHints();
+});
+
+/* ── Saved views (§2.3 / §2.4) ── */
+
+async function loadSavedViews() {
+  try {
+    const out = await api('/api/queries');
+    state.savedViews = out.queries || [];
+  } catch { state.savedViews = []; }
+  renderSavedViews();
+}
+
+function renderSavedViews() {
+  const host = $('tmSavedViews');
+  if (!host) return;
+  const views = state.savedViews || [];
+  host.innerHTML = views.map((v) =>
+    `<button class="pill" data-view-q="${escapeHtml(v.q)}" title="${escapeHtml(v.q)}">` +
+    `<span class="sw"${v.colour ? ` style="background:${escapeHtml(v.colour)}"` : ''}></span>` +
+    `${escapeHtml(v.name)}` +
+    `<span class="rm" role="button" tabindex="0" data-view-rm="${escapeHtml(v.id)}" aria-label="Delete the saved view ${escapeHtml(v.name)}">×</span>` +
+    `</button>`).join('');
+  tmSyncQueryBar();
+}
+
+async function saveCurrentView() {
+  const q = ($('tmSearch').value || '').trim();
+  if (!q) { toast('Type a query first, then save it as a view.', 'error'); return; }
+  const name = window.prompt('Name this view', q.slice(0, 40));
+  if (!name) return;
+  try {
+    await api('/api/queries', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, q, pinned: true }),
+    });
+    await loadSavedViews();
+    toast('Saved view “' + name + '”');
+  } catch (e) {
+    toast('Could not save that view: ' + e.message, 'error');
+  }
+}
+
+$('tmSaveView').addEventListener('click', saveCurrentView);
+$('tmSavedViews').addEventListener('click', async (e) => {
+  const remove = e.target.closest('[data-view-rm]');
+  if (remove) {
+    e.preventDefault(); e.stopPropagation();
+    try {
+      await api('/api/queries/' + encodeURIComponent(remove.dataset.viewRm), { method: 'DELETE' });
+      await loadSavedViews();
+    } catch (err) { toast('Could not delete that view: ' + err.message, 'error'); }
+    return;
+  }
+  const chip = e.target.closest('[data-view-q]');
+  if (!chip) return;
+  // The same sequence the global-search "go to" uses, so there is one way a
+  // query reaches the box rather than two that can drift.
+  $('tmSearch').value = chip.dataset.viewQ;
+  clearTimeout(tmQueryDeb);
+  tmApplyQuery(chip.dataset.viewQ);
+});
+
+/* ── Export PNG / SVG ── */
 /* ── Export PNG / SVG ── */
 $('tmExportBtn').addEventListener('click', (e) => {
   e.stopPropagation();
@@ -10241,9 +10590,7 @@ async function gsearchGoTo(targetPath) {
   // Reuse the existing highlight box so the file is visibly marked, rather
   // than adding a second highlighting mechanism.
   $('tmSearch').value = hit.name;
-  state.treemap.query = hit.name;
-  renderSearchOverlay();
-  presentTreemap();
+  tmApplyQuery(hit.name);
 }
 
 async function runGsearch(raw) {
@@ -10982,8 +11329,10 @@ document.addEventListener('keydown', (e) => {
       $('gridSearch').value = ''; state.grid.query = ''; renderGrid(); return;
     }
     if (typing && document.activeElement === $('tmSearch') && $('tmSearch').value) {
-      $('tmSearch').value = ''; state.treemap.query = '';
-      if (isSun()) presentSunburst(); else { renderSearchOverlay(); presentTreemap(); }
+      $('tmSearch').value = '';
+      // Through the one path, so the grammar state is cleared with the text —
+      // otherwise an emptied box keeps highlighting the last server answer.
+      tmApplyQuery('');
       return;
     }
     if (state.view === 'treemap' && state.treemap.history.active) {

@@ -2236,6 +2236,107 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     },
   },
 
+  /* ------------ query grammar (v4 §2) ------------ */
+  {
+    method: 'post',
+    path: '/api/query',
+    summary: 'Run a query against a completed scan — the grammar behind saved views and Clean Up rules',
+    tag: 'query',
+    destructive: false,
+    requestBody: jsonBody(
+      obj(
+        {
+          scanId: str('A completed scan (from POST /api/scan)'),
+          q: str('The query, e.g. size>100mb ext:mp4 used>1y -in:node_modules'),
+          limit: int('1-1000 (default 200)'),
+          offset: int('Paging offset'),
+          sort: str('size | name | modified | path (default size)'),
+        },
+        ['scanId', 'q'],
+      ),
+    ),
+    responses: {
+      '200': jsonResponse(
+        'Matches, plus what the query could not fully answer',
+        obj(
+          {
+            ok: bool(),
+            total: int('Matches found'),
+            truncated: bool('More matches exist than were examined or returned'),
+            examined: int('Nodes walked — lets a caller state coverage rather than imply it'),
+            postFiltered: arr(str(), 'Signals read after the scan tree was walked — this route runs in memory, not against the index'),
+            postFilterReasons: arr(opaque('{ field, reason }')),
+            degraded: arr(opaque('{ provider, reason }'), 'Signals this machine cannot supply — an empty result here means "unknown", never "nothing matched"'),
+            hits: arr(opaque('{ path, name, size, isDir, mtimeMs }')),
+          },
+          ['ok', 'total', 'truncated', 'hits', 'degraded', 'postFiltered'],
+        ),
+      ),
+      '400': errorResponse('QUERY_PARSE_ERROR (with offset, length and expected), QUERY_REQUIRED or SCAN_REQUIRED'),
+      '404': errorResponse('SCAN_NOT_FOUND'),
+      '409': errorResponse('SCAN_RUNNING or SCAN_FAILED'),
+    },
+  },
+  {
+    method: 'post',
+    path: '/api/query/validate',
+    summary: 'Parse a query without running it — for live feedback while typing',
+    tag: 'query',
+    destructive: false,
+    requestBody: jsonBody(obj({ q: str('The query to parse') }, ['q'])),
+    responses: {
+      '200': jsonResponse('Parsed', obj({
+        ok: bool(),
+        postFiltered: arr(str(), 'What a scan query would need beyond the tree itself'),
+        indexPostFiltered: arr(str(), 'What the SQLite index could not answer — a different engine, reported separately'),
+        fields: arr(str()),
+      }, ['ok', 'fields'])),
+      '400': errorResponse('QUERY_PARSE_ERROR — carries offset, length and the valid alternatives'),
+    },
+  },
+  {
+    method: 'get',
+    path: '/api/query/fields',
+    summary: 'The query grammar: every field, its operators, its values and its help text',
+    tag: 'query',
+    destructive: false,
+    responses: {
+      '200': jsonResponse('The grammar', obj({ fields: arr(opaque('{ name, help, values[], operators[] }')) }, ['fields'])),
+    },
+  },
+  {
+    method: 'get',
+    path: '/api/queries',
+    summary: 'Saved views, pinned first then newest',
+    tag: 'query',
+    destructive: false,
+    responses: { '200': jsonResponse('Saved views', obj({ queries: arr(opaque('{ id, name, q, createdMs, pinned, colour }')) }, ['queries'])) },
+  },
+  {
+    method: 'post',
+    path: '/api/queries',
+    summary: 'Save a view. A query that does not parse is refused rather than stored',
+    tag: 'query',
+    destructive: false,
+    requestBody: jsonBody(obj({ name: str(), q: str(), pinned: bool(), colour: str('#rrggbb, or omitted') }, ['name', 'q'])),
+    responses: {
+      '201': jsonResponse('Saved', obj({ query: opaque('{ id, name, q, createdMs, pinned, colour }') }, ['query'])),
+      '400': errorResponse('QUERY_PARSE_ERROR, NAME_REQUIRED, NAME_TOO_LONG, QUERY_REQUIRED or TOO_MANY_SAVED_QUERIES'),
+    },
+  },
+  {
+    method: 'delete',
+    path: '/api/queries/{id}',
+    summary: 'Delete a saved view (it holds no file data — this removes a bookmark)',
+    tag: 'query',
+    destructive: false,
+    parameters: [pathParam('id', 'Saved view id')],
+    responses: {
+      '200': jsonResponse('Deleted', obj({ deleted: bool() }, ['deleted'])),
+      '404': errorResponse('SAVED_QUERY_NOT_FOUND'),
+    },
+  },
+
   /* ------------ facts (v4 §4.1) ------------ */
   {
     method: 'post',
@@ -2321,6 +2422,7 @@ export function buildOpenApiDocument(): Json {
       { name: 'settings', description: 'Settings, notifications and live watch' },
       { name: 'cloud', description: "The user's own cloud accounts" },
       { name: 'facts', description: 'Per-path derived facts, delivered as a sidecar to the scan tree' },
+      { name: 'query', description: 'The query grammar, and the views saved from it' },
     ],
     paths,
     components: {
