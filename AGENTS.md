@@ -72,6 +72,22 @@ OpenAPI 3 spec).
      re-encode video to HEVC. **Lossy, and the original is trashed once the new
      file verifies.** Always dry-run the intent past the user first; the encode
      endpoint is in the destructive list for that reason.
+   - `POST /api/facts` with `{ scanId, paths, providers }` — **per-path
+     derived facts, delivered as a sidecar** rather than folded into the scan
+     tree. Answers one object per requested provider:
+     `{ available, reason?, stats: { requested, computed, skipped, failed },
+     values: { [path]: fact } }`. Three rules matter more than the shape:
+     **a path absent from `values` was not computable, and is never a zero**;
+     `stats` always satisfies `requested = computed + skipped + failed`, so a
+     partial answer can state itself ("scored 41,200 of 58,900"); and a
+     provider that fails is reported `available: false` with its own reason
+     while every other provider in the same request still answers. At most
+     2000 paths per request (`400 TOO_MANY_PATHS`), every one sanitized and
+     inside a scanned root, and an unknown provider id is
+     `400 UNKNOWN_PROVIDER` naming the valid ids rather than being ignored.
+     The facts live in a sidecar because the scan responses are held
+     byte-identical to the pre-rewrite baseline by
+     `tests/goldenResponses.test.ts` — no field may be added to them.
    - `GET /api/file-types`, `GET /api/empty-folders`, `GET /api/apps`,
      `GET /api/compare`, `GET /api/forecast` — further angles.
    - `GET`/`POST /api/platform/shell-integration` — the "Scan with TreeMap"

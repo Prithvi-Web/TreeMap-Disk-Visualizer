@@ -2235,6 +2235,42 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       '404': errorResponse('JOB_NOT_RUNNING — no running job with that id'),
     },
   },
+
+  /* ------------ facts (v4 §4.1) ------------ */
+  {
+    method: 'post',
+    path: '/api/facts',
+    summary: 'Per-path derived facts, as a sidecar — a path absent from "values" was not computable, never zero',
+    tag: 'facts',
+    destructive: false,
+    requestBody: jsonBody(
+      obj(
+        {
+          scanId: str('A completed scan (from POST /api/scan)'),
+          paths: arr(str(), 'Absolute paths inside a scanned root. At most 2000 per request.'),
+          providers: arr(str(), 'Fact provider ids. Unknown ids are refused rather than ignored.'),
+        },
+        ['scanId', 'paths', 'providers'],
+      ),
+      'Facts are delivered here rather than added to the scan endpoints, whose responses are held byte-identical to the pre-rewrite baseline.',
+    ),
+    responses: {
+      '200': jsonResponse(
+        'One entry per requested provider. A provider that failed is available:false with its own reason; the others still answer.',
+        obj(
+          {
+            providers: opaque(
+              'providerId -> { available, reason?, stats: { requested, computed, skipped, failed }, values: { [path]: fact } }',
+            ),
+          },
+          ['providers'],
+        ),
+      ),
+      '400': errorResponse('PATHS_REQUIRED, TOO_MANY_PATHS, PROVIDERS_REQUIRED or UNKNOWN_PROVIDER (which names the valid ids)'),
+      '403': errorResponse('OUTSIDE_SCAN_ROOT — every path must lie inside a root this server scanned'),
+      '404': errorResponse('SCAN_NOT_FOUND — unknown or expired scanId'),
+    },
+  },
 ];
 
 /* ------------------------------ document ------------------------------ */
@@ -2284,6 +2320,7 @@ export function buildOpenApiDocument(): Json {
       { name: 'system', description: 'Host, disk and OS trash' },
       { name: 'settings', description: 'Settings, notifications and live watch' },
       { name: 'cloud', description: "The user's own cloud accounts" },
+      { name: 'facts', description: 'Per-path derived facts, delivered as a sidecar to the scan tree' },
     ],
     paths,
     components: {

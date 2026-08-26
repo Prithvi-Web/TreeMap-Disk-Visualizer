@@ -28,21 +28,43 @@ export function guardBodyPath(req: Request, _res: Response, next: NextFunction):
   next();
 }
 
-/** Sanitize req.body.paths (array of paths). */
-export function guardBodyPaths(req: Request, _res: Response, next: NextFunction): void {
-  const body = req.body as Record<string, unknown> | undefined;
-  const paths = body?.paths;
-  if (!Array.isArray(paths) || paths.length === 0) {
-    next(new AppError(400, 'PATHS_REQUIRED', 'Request body must include a non-empty "paths" array'));
-    return;
-  }
-  if (paths.length > 500) {
-    next(new AppError(400, 'TOO_MANY_PATHS', 'At most 500 paths per request'));
-    return;
-  }
-  (req.body as Record<string, unknown>).paths = paths.map((p) => sanitizePath(p));
-  next();
+/**
+ * The default batch cap for `paths` bodies.
+ *
+ * Every destructive route uses this. It is deliberately small: these bodies
+ * become filesystem operations, and a person confirming "move 500 things to
+ * the Trash" is still reviewing a list they could in principle read.
+ */
+export const DEFAULT_MAX_BODY_PATHS = 500;
+
+/**
+ * Sanitize req.body.paths (array of paths), capping the batch at `max`.
+ *
+ * Read-only routes may raise the cap — the v4 fact sidecar (§4.1) allows
+ * 2,000, because it answers questions about paths rather than acting on them
+ * and a treemap view can legitimately need facts for a whole screenful at
+ * once. The cap is a parameter rather than a global so that raising it for a
+ * read-only route cannot silently raise it for a destructive one.
+ */
+export function guardBodyPathsMax(max: number) {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    const body = req.body as Record<string, unknown> | undefined;
+    const paths = body?.paths;
+    if (!Array.isArray(paths) || paths.length === 0) {
+      next(new AppError(400, 'PATHS_REQUIRED', 'Request body must include a non-empty "paths" array'));
+      return;
+    }
+    if (paths.length > max) {
+      next(new AppError(400, 'TOO_MANY_PATHS', `At most ${max} paths per request`));
+      return;
+    }
+    (req.body as Record<string, unknown>).paths = paths.map((p) => sanitizePath(p));
+    next();
+  };
 }
+
+/** Sanitize req.body.paths (array of paths), capped at 500. */
+export const guardBodyPaths = guardBodyPathsMax(DEFAULT_MAX_BODY_PATHS);
 
 /** Sanitize an optional ?path= / ?root= query parameter. */
 export function guardQueryPath(...params: string[]) {
