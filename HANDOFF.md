@@ -1,5 +1,36 @@
 # TreeMap — session handoff
 
+## v4 — Phases 0, 1 and 2 complete (26 August 2026)
+
+**Phase 2 (`e57a93d`): the query grammar.** Suite **1045 (1043 pass, 2 skips)**.
+`POST /api/query`, `/api/query/validate`, `/api/query/fields`,
+`GET/POST/DELETE /api/queries`, and a treemap box that accepts the full
+grammar with live parse feedback, autocomplete and a saved-views chip strip.
+
+**Known gap, stated rather than implied:** `POST /api/query` takes `scanId`
+only. The `root`/index path is NOT wired — so `src/services/query/toSql.ts`,
+which is written and proven against real SQLite, has no route calling it yet.
+Wire it when the index path is needed, and pass the executor's `now` into
+`toSql(ast, now)` or the two halves disagree at an age boundary.
+
+**Phase 2 traps:**
+
+- **`treemapMatch` and `renderSearchOverlay` must stay adjacent.**
+  `tests/indexSearch.test.ts` slices `public/index.html` between those two
+  literal function names. Anything inserted between them, or a rename, breaks
+  a test whose failure message will not mention what you did.
+- **SQLite `LIKE` folds ASCII only; JS `toLowerCase()` folds Unicode.** Pushing
+  `name:café` to SQL missed `CAFÉ.txt` — a strict subset, which a post-filter
+  cannot repair. Non-ASCII needles are not pushed.
+- **`store.childCount` returns 0 for a directory nobody could list**, not just
+  for an empty one. Always pair it with `hasChildArray`.
+- **The browser pane throttles timers and serves stale `getComputedStyle`.**
+  An inline `border-color: #ff453a` read back as the old value; the screenshot
+  showed the correct red. Verify CSS visually, not by computed style, and
+  front the tab (`tabs_select`) before timing anything.
+
+---
+
 ## v4 — Phase 0 and Phase 1 complete (26 August 2026)
 
 **Six commits on `main`, unpushed.** Suite **970 (968 pass, 2 skips)**, up from
