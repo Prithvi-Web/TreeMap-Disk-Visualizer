@@ -262,13 +262,48 @@ function usedFixture(): { dir: string; file: string; cleanup: () => void } {
   return { dir, file, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
-test('the provider answers with a real date on this machine', async () => {
+/**
+ * Both halves of the contract, because which one runs depends on the machine.
+ *
+ * This is not a Windows work-around. Whether last-opened dates exist at all is
+ * a real property of the host: NTFS last-access updates have been off by
+ * default since Vista, so a Windows runner legitimately reports the feature
+ * unavailable — and that path had never been exercised live anywhere, only
+ * through parse fixtures. Asserting both branches covers it for the first
+ * time, and a skip would have covered nothing.
+ *
+ * The earlier version of these tests hard-asserted `available === true`, which
+ * encoded a macOS/Linux assumption and failed on Windows CI. The code was
+ * right; the tests were.
+ */
+function assertUnavailableIsHonest(result: { available: boolean; reason?: string; values: Record<string, unknown>; stats: { requested: number; computed: number; skipped: number; failed: number } }, requested: number): void {
+  assert.equal(result.available, false);
+  // §2.4: unavailable is a first-class state — it must say WHY, in a sentence
+  // a person can act on, and offer nothing.
+  assert.ok(result.reason && result.reason.length > 20, `an unavailable provider must explain itself, got: ${JSON.stringify(result.reason)}`);
+  assert.deepEqual(result.values, {}, 'and must not invent a single date');
+  assert.equal(result.stats.requested, requested);
+  assert.equal(result.stats.computed, 0);
+  // Nothing was attempted, so nothing failed — reporting these as failures
+  // would make an honest "this machine cannot do that" look like a malfunction.
+  assert.equal(result.stats.failed, 0);
+  assert.equal(result.stats.requested, result.stats.computed + result.stats.skipped + result.stats.failed);
+}
+
+test('the provider either answers with a real date, or says why it cannot', async () => {
   const fixture = usedFixture();
   try {
     clearFactCache();
     const out = await computeFacts('scan-lu', [fixture.file], ['lastUsed'], new AbortController().signal);
     const result = out.lastUsed;
-    assert.equal(result.available, true, result.reason ?? '');
+
+    if (!result.available) {
+      // A host that does not record file openings at all — a Windows runner
+      // with NTFS last-access tracking off, or a wholly `noatime` system.
+      assertUnavailableIsHonest(result, 1);
+      return;
+    }
+
     const fact = result.values[fixture.file] as { lastUsedMs: number | null; source: string; caveat?: string };
     assert.ok(fact, 'the fixture got an answer');
     assert.equal(typeof fact.lastUsedMs, 'number');
@@ -288,7 +323,13 @@ test('a path that vanished since the scan is skipped, never dated zero', async (
     clearFactCache();
     const out = await computeFacts('scan-lu2', [fixture.file, ghost], ['lastUsed'], new AbortController().signal);
     const result = out.lastUsed;
+
+    // The rule under test holds either way: the vanished path is ABSENT from
+    // `values`. It is never present with a zero date, which would render as
+    // 1 January 1970 and read as "ancient — safe to delete".
     assert.equal(Object.prototype.hasOwnProperty.call(result.values, ghost), false);
+
+    if (!result.available) { assertUnavailableIsHonest(result, 2); return; }
     assert.deepEqual(result.stats, { requested: 2, computed: 1, skipped: 1, failed: 0 });
   } finally {
     fixture.cleanup();
