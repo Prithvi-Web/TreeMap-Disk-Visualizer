@@ -95,7 +95,7 @@ A size-proportional icon grid with multi-select, sorting, and virtual scrolling 
 <td width="50%" valign="top">
 
 ### 📦 Apps
-**How much disk does each application own?** Every app's total, split into **app / caches / data / logs**, with a **"Clear caches safely"** button (Trash-only, never touches your data) and click-through into the treemap. Files no app owns land in an honest "Everything else" bucket, so the totals always match the scan.
+**How much disk does each application own?** Every app's total, split into **app / caches / data / logs**, with a **"Clear caches safely"** button (Trash-only, never touches your data) and click-through into the treemap. Files no app owns land in an honest "Everything else" bucket, so the totals always match the scan. 
 
 </td>
 </tr>
