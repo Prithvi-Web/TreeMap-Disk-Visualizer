@@ -11,6 +11,7 @@
     "test": "node scripts/run-tests.js",
     "typecheck": "tsc --noEmit",
     "capabilities:report": "tsx scripts/report-capabilities.ts",
+    "bench:v4": "tsx scripts/bench-v4.ts",
     "mcp": "tsx src/mcp/index.ts",
     "app": "npm run build && electron .",
     "dist": "npm run build && npm run fetch:gdu && electron-builder",

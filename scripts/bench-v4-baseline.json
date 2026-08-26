@@ -1,0 +1,11 @@
+{
+  "recordedAt": "2026-08-26T03:03:39.642Z",
+  "platform": "darwin-arm64",
+  "node": "v24.16.0",
+  "loadAvg": "2.41 / 3.07 / 3.13",
+  "engine": "gdu-turbo",
+  "fixtureFiles": 50000,
+  "scanMedianMs": 1497.878125000001,
+  "scanResolutionPct": 0.9987214966773232,
+  "scanItems": 50102
+}
