@@ -1910,3 +1910,64 @@ test('an embedder can name the folder to scan, and it beats session restore', ()
   assert.match(restore, /startScan\(wanted\)/, 'the request goes through the same path the Scan button takes');
   assert.match(restore, /!state\.root && !state\.scanning/, 'and still loses to a user who got there first');
 });
+
+test('the click is answered before the index probe, not after it', () => {
+  // startScan asks the server whether the folder is indexed, and then may fetch
+  // the whole indexed tree — measured at 400ms for the index probe alone on a
+  // large root. Doing that before any UI change left the button reading "Scan"
+  // with no spinner for the whole time, which reads as a missed click.
+  const code = appCode();
+  const start = code.indexOf('async function startScan(path');
+  assert.ok(start !== -1, 'startScan must exist');
+  const end = code.indexOf('async function startScanRequest', start);
+  assert.ok(end > start, 'startScanRequest must follow it');
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 200, 'the startScan slice is non-empty');
+
+  const chromeAt = fn.indexOf('beginScanChrome(');
+  const probeAt = fn.indexOf('indexStatusFor(path)');
+  assert.ok(chromeAt !== -1, 'startScan shows the scanning chrome itself');
+  assert.ok(probeAt !== -1, 'and it probes the index');
+  assert.ok(chromeAt < probeAt, 'the chrome must come FIRST — that is the whole fix');
+  assert.match(fn, /message: 'Starting scan…'/, 'and it says what it is doing');
+});
+
+test('a tree painted from the index does not borrow another scan’s id', () => {
+  // The index cannot grant a scanId. The one left in state belongs to a
+  // different scan — possibly of another folder, possibly one the user just
+  // stopped, which answers 500 SCAN_FAILED to every scanId-keyed endpoint.
+  // finishScan would then fire three of those AND open a live-watch
+  // EventSource on it, which reconnects on failure — a request storm against a
+  // rate-limited server, immediately after every Stop-then-rescan.
+  const code = appCode();
+  const start = code.indexOf('async function openFromIndex');
+  assert.ok(start !== -1, 'openFromIndex must exist');
+  const end = code.indexOf('async function startScan(path', start);
+  assert.ok(end > start, 'startScan must follow it');
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 200, 'the openFromIndex slice is non-empty');
+
+  const clearAt = fn.indexOf('state.scanId = null');
+  const finishAt = fn.indexOf('finishScan(');
+  assert.ok(clearAt !== -1, 'the stale id is cleared');
+  assert.ok(finishAt > clearAt, 'and cleared BEFORE finishScan runs on it');
+});
+
+test('finishScan does no scanId-keyed work when there is no scanId', () => {
+  const code = appCode();
+  const start = code.indexOf('async function finishScan');
+  assert.ok(start !== -1, 'finishScan must exist');
+  const end = code.indexOf('function renderBigFiles', start);
+  assert.ok(end > start, 'renderBigFiles must follow it');
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 500, 'the finishScan slice is non-empty');
+
+  const guardAt = fn.indexOf('if (!state.scanId) {');
+  const listAt = fn.indexOf('/api/large-files?scanId=');
+  assert.ok(guardAt !== -1, 'there is a no-scanId branch');
+  assert.ok(listAt > guardAt, 'and it returns before the scanId-keyed calls');
+  // The panels must not claim the folder is empty — it plainly is not.
+  const branch = fn.slice(guardAt, listAt);
+  assert.match(branch, /showListsPending\(\)/, 'the panels show loading, not "No files found."');
+  assert.match(branch, /emit\(TOPIC\.scan, null\)/, 'views are told there is no scan yet');
+});

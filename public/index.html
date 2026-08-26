@@ -3831,6 +3831,19 @@ function restoreDashboardPanels() {
   else $('donutLegend').innerHTML = '<div class="muted">Run a scan to see the breakdown.</div>';
 }
 
+/**
+ * The three dashboard lists, shown as loading rather than as empty.
+ *
+ * Used when a tree has been painted from the index but no scan has granted an
+ * id yet: the lists are genuinely on their way, so "No files found." would be
+ * a lie about a folder that plainly has files.
+ */
+function showListsPending() {
+  $('bigFiles').innerHTML = skeletonRows(6);
+  $('bigFolders').innerHTML = skeletonRows(6);
+  $('donutLegend').innerHTML = skeletonRows(5, 24);
+}
+
 /** Ask the server to stop one scan. Split out because Stop can be pressed
  *  before the scan request has answered, and that scanId still has to be
  *  cancelled — by whichever entry point is the only code that ever sees it. */
@@ -3937,7 +3950,7 @@ async function showFastRescanStat(scanId) {
  * instead of replacing them with skeletons. Wiping a perfectly good tree to
  * show a spinner would make the instant open pointless.
  */
-function beginScanChrome({ quiet = false } = {}) {
+function beginScanChrome({ quiet = false, message = '' } = {}) {
   state.scanning = true;
   state.abortScan = null; // no stream yet — Stop before the request answers has no scanId
   state.scanGen++; // this scan's identity while its request is in flight
@@ -3949,7 +3962,12 @@ function beginScanChrome({ quiet = false } = {}) {
   $('progressTrack').classList.add('active');
   $('scanStatus').classList.remove('error');
   if (quiet) {
-    $('scanStatus').innerHTML = icon('refresh', 14) + '<span>Checking for changes…</span>';
+    // `message` lets the caller say what is actually happening. A first scan
+    // enters here too — startScan shows the chrome before it knows whether the
+    // index will paint — and "Checking for changes" would be a lie there.
+    $('scanStatus').innerHTML = message
+      ? icon('loader', 14, REDUCED ? '' : 'spin') + '<span>' + escapeHtml(message) + '</span>'
+      : icon('refresh', 14) + '<span>Checking for changes…</span>';
     return;
   }
   $('scanStatus').innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + '<span>Starting scan…</span>';
@@ -4025,6 +4043,13 @@ async function openFromIndex(path, info) {
   // unlock them. What the index buys is the instant paint.
   state.root = data.root;
   indexTree(data.root);
+  // The index cannot grant a scanId, and the one sitting in state belongs to a
+  // DIFFERENT scan — the last one, which may have been of another folder, or
+  // may have been stopped and now answers 500 to everything. Either way it does
+  // not describe this tree. Clearing it makes every scanId-keyed view take its
+  // existing "no scan yet" branch and wait for the background scan a moment
+  // later, instead of rendering another folder's data or a wall of errors.
+  state.scanId = null;
   // `state.lastScan` is deliberately NOT written here. It has one shape,
   // { when, durationMs }, and finishScan sets it a moment later — writing a
   // different shape from here left `when` undefined, which the "since your last
@@ -4076,6 +4101,14 @@ async function startScan(path, opts = {}) {
   if (state.scanning) { toast('A scan is already running', 'error'); return; }
   closeEventSource();
   disableLive({ keepWanted: true }); // the new scanId gets a fresh watch session
+
+  // Answer the click BEFORE the index probe below, which is a network round
+  // trip — measured at 400ms on a large indexed root, and longer again when it
+  // goes on to fetch the tree. Doing that first left the button reading "Scan"
+  // with no spinner for the whole time, which reads as the app having missed
+  // the click. `quiet` because we do not yet know whether the index will paint;
+  // startScanRequest re-enters with the real value a moment later.
+  beginScanChrome({ quiet: true, message: 'Starting scan…' });
 
   // A1: if this folder is already indexed, paint from the index first so the
   // user sees their tree immediately, then let the scan refresh it underneath.
@@ -4308,6 +4341,16 @@ async function finishScan(root, durationMs, stats) {
   void loadCostEstimate(); // C1
   state.largest = []; state.types = []; state.bigFolders = [];
   $('statLargest').textContent = '–';
+  // Painted from the index: there is no scan yet, so these three would be
+  // `?scanId=null` (404) or, worse, the previous scan's id (500 after a stop,
+  // or another folder's data). The background scan calls finishScan again with
+  // a real id in a moment, and that is what fills them in.
+  if (!state.scanId) {
+    showListsPending();
+    emit(TOPIC.scan, null);
+    switchView(state.view);
+    return;
+  }
   try {
     const [lf, ft, lfo] = await Promise.all([
       api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`),

@@ -159,6 +159,16 @@ function schemaSql(): string {
     -- index seek AND the results come back already sorted — otherwise a
     -- popular extension means sorting hundreds of thousands of rows per query.
     CREATE INDEX IF NOT EXISTS idx_nodes_ext ON nodes(ext, size DESC);
+    -- The allocation accountant looks up one hard-link family at a time
+    -- (WHERE root_id = ? AND ino = ?), up to 200 times per report. Without
+    -- this, SQLite falls back to idx_nodes_mtime and rescans every row in the
+    -- root for each one: measured on a real 1,013,072-node home index, those
+    -- 200 lookups took 48.3 SECONDS. better-sqlite3 is synchronous, so that
+    -- was 48 seconds with the whole event loop blocked — every other request
+    -- queued behind it, which is what made opening Settings freeze the app.
+    -- With this index the same 200 lookups take 1 ms. It costs ~15 MB on a
+    -- 209 MB index, and is built once on the next open of an existing one.
+    CREATE INDEX IF NOT EXISTS idx_nodes_ino ON nodes(root_id, ino);
   `;
 }
 

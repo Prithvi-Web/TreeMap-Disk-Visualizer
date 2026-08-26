@@ -288,3 +288,41 @@ test('an ordinary single-name file reports all of its bytes as exclusive', async
     await fsp.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('a hard-link family is found by index seek, never by rescanning the root', async () => {
+  // accountFor looks up one family at a time — WHERE root_id = ? AND ino = ? —
+  // up to 200 times per report. Without an index on ino, SQLite falls back to
+  // idx_nodes_mtime and rescans EVERY row in the root for each one. Measured on
+  // a real 1,013,072-node home index those 200 lookups took 48.3 seconds; and
+  // because better-sqlite3 is synchronous, that was 48 seconds with the event
+  // loop blocked, so every other request queued behind it. Opening Settings
+  // fires this, which is what made the whole app freeze.
+  //
+  // The plan is what this asserts, not the schema text: an index that exists
+  // but is not chosen would leave the bug exactly as it was.
+  const dir = await mkTmp();
+  try {
+    await fsp.writeFile(path.join(dir, 'a.bin'), Buffer.alloc(4096, 1));
+    await fsp.link(path.join(dir, 'a.bin'), path.join(dir, 'b.bin'));
+    await buildIndex(dir);
+
+    const { openIndex } = await import('../src/services/indexEngine');
+    const handle = openIndex();
+    const plan = handle
+      .prepare('EXPLAIN QUERY PLAN SELECT id FROM nodes WHERE root_id = ? AND ino = ? AND is_dir = 0')
+      .all(1, 1) as { detail: string }[];
+    const detail = plan.map((p) => p.detail).join(' | ');
+
+    assert.match(detail, /idx_nodes_ino/, `the ino lookup must be an index seek, got: ${detail}`);
+    assert.ok(!/idx_nodes_mtime/.test(detail), `must not fall back to the mtime index: ${detail}`);
+    assert.ok(!/SCAN nodes\b/.test(detail), `must not scan the table: ${detail}`);
+
+    // And the report itself still comes out right with the index in place.
+    const summary = await accountFor(dir);
+    assert.ok(summary, 'a summary is produced');
+    assert.equal(summary.hardlinkFamilies, 1, 'the one family is found');
+    assert.equal(summary.hardlinkedNames, 1, 'and the extra name is counted once');
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
