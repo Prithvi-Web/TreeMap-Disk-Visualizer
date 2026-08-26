@@ -1,61 +1,60 @@
 # TreeMap — session handoff
 
-**Date:** 3 August 2026
-**Status:** **v3.0.0 shipped; six post-release commits on `main` AWAITING THE
-USER'S GITHUB DESKTOP PUSH** (`d3aa336` settings-open fix + rounded floating
-sidebar · `de867ce` UI performance (backdrop-blur cull, static blobs,
-content-visibility, delegation, formatDate memo) · `f731994` three UI defects
-(donut legend overflow, light-theme --warn contrast, picker aria-labels) ·
-`5fba59a` **session restore** (boot reloads the last scan; contract-tested;
-spec in `docs/superpowers/specs/`) · `935c211` polish (row rhythm, amber
-reclaim pills, sidebar shadow) · plus the earlier `f1be026`). Suite is now
-**829 (827 pass, 2 skips)**. The scroll architecture changed: **the window
-never scrolls; `main` is the app's one scroller** — the sidebar is a floating
-rounded card pinned in place. `.glass` no longer live-blurs (in-flow cards use
-`--glass-strong` tint; only sidebar/modals/search/tm-timebar keep real
-backdrop blur). These fixes reach the user's installed app only after a new
-release (recipe below) — v3.1.0 is the natural next step when the user is
-present to re-grant Full Disk Access and push/publish.
+**Date:** 25 August 2026
+**Status:** **v3.2.0 committed, AWAITING THE USER'S GITHUB DESKTOP PUSH + RELEASE.**
+Three commits on `main` since the v3.1.0 release: `879eff7` scan cancellation,
+`6a0debd` the VS Code extension, and the `Release v3.2.0` version bump.
+Suite is **899 (897 pass, 2 platform skips)**; typecheck clean; build clean.
 
-**Previous release status (28 July):** ALL 21 FEATURES SHIPPED · PHASE 5 COMPLETE · v3.0.0 BUILT.
-Phase 0 ✅ · Phase 1 ✅ (A1–A5) · Phase 2 ✅ (B1–B5) · Phase 3 ✅ (C1–C8) ·
-Phase 4 ✅ (D1, D2, D3) · **Phase 5 ✅ (1–5)** — only the push + publish remain,
-and both are the user's to do.
-**Suite:** 828 (826 pass, 2 platform-skips) · typecheck clean · zero console errors
-Working tree clean, no dev server running, nothing of mine left on the user's
-machine (checked: `~/Library/Services` empty, no `fleet.json` in the real
-app-data, no stray node processes).
+**Two features shipped this session, both from the user's own spec:**
 
-**⚠️ SIX COMMITS ON `main` AWAITING THE USER'S GITHUB DESKTOP PUSH:**
-`0dc4136` UI layout fixes + Fleet pairing instructions · `c2fedaa` README sweep
-+ views.svg · `80208ee` treemap toolbar wrap · `4d037e2` handoff · `764c18d`
-app-owned secrets + tool-owned empty folders · `f6adaf7` **Release v3.0.0**.
+1. **Stop a running scan.** The Scan button becomes a red Stop while a scan is
+   in flight. `POST /api/scan/:scanId/cancel` settles the record, and a gdu
+   subprocess is killed rather than left to finish its shard (measured: one
+   process before, zero after). Design doc:
+   `docs/superpowers/specs/2026-08-25-scan-cancellation-design.md`.
+2. **A VS Code extension** in `vscode-extension/`. Clones or reuses a TreeMap
+   checkout, builds it, runs its server as a child process, frames the
+   visualizer in a webview. Design doc:
+   `docs/superpowers/specs/2026-08-25-vscode-extension-design.md`.
 
-**✅ v3.0.0 IS PUBLISHED AND FULLY VERIFIED (29 Jul 2026).** The user pushed
-(3-OS Tests green at `c430c90` after the Windows separator fix) and published
-"v3.0.0 - 21 Updates"; Build & Release succeeded from `c430c90`, so the release
-carries every commit including the CI fix. Verified per recipe step 7:
-**9 assets** (one more than v2.x — `TreeMap.3.0.0.exe` is the **D3 portable
-Windows build**, from `win.target: ["nsis","portable"]`; GitHub stores the
-space as a dot). Both ymls read 3.0.0; zip/dmg/Setup-exe sha512+size match
-byte-exact; DMG mounts with a 3.0.0 app, gdu bundled, codesign clean; zip app
-codesign clean; both exes have MZ headers; `releases/latest` → v3.0.0; and the
-shipped app.asar contains this session's markers (appOwned 5, ownsItsContents
-2, fleet-help 10, treemapCanvasHeight 3). **Verification trap: raw `grep` on
-app.asar reports zero even for strings that ARE there** (BSD grep chokes on
-the binary) — `npx asar extract` first, then grep the extracted files.
+**⚠️ THE RELEASE IS THE USER'S STEP AND IS WHAT THEY ACTUALLY WANT.** Their
+stated goal is "people to be easily able to download the .dmg and .exe". That
+happens through `.github/workflows/release.yml`, which builds BOTH on real
+macOS and Windows runners when a `v*` tag is published. Do NOT try to build
+Windows installers on the Mac — electron-builder needs Wine, which is not
+installed, and CI does it properly anyway. Steps 6–7 of the release recipe
+below are all that remain.
 
-**v3.0.0 is built, installed to `/Applications` and smoke-tested** (`/api/system`
-answers, `/api/capabilities` reports `version: 3.0.0`, bundle carries
-`Resources/gdu/gdu`, `codesign --verify --deep --strict` passes,
-`npm rebuild better-sqlite3` done and the suite re-run green afterwards).
+**New traps found this session (all paid for):**
 
-**⚠️ THE USER MUST RE-GRANT FULL DISK ACCESS.** The reinstall reset it, and
-scans of Desktop/Documents/home now return 0 items and sit at "running". This is
-trap 5, not a regression — proven by scanning a TCC-free path in the same
-installed build, which completed normally. Tell them:
-`open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"`
-→ toggle TreeMap off→on → relaunch.
+- **A review subagent with write access edited the source mid-review.** One
+  transiently mutated `gduScanner.ts` to test the new tests and restored it;
+  another left a `clearTimeout` in `tests/scanCancel.test.ts` that got swept
+  into a commit and made the file hang. **Use read-only agents (`agentType:
+  'Explore'`) for review, and `git diff` the whole tree before committing.**
+- **Never leave a non-unref'd `setTimeout` armed in a passing test.** The SSE
+  cancellation test's 8s watchdog held the event loop for its full duration
+  after the test passed — 8.8s per run of that file. Clear it on BOTH settle
+  paths from inside the promise; clearing it from the outer `finally` instead
+  made the test hang.
+- **`npm` on Windows is `npm.cmd`.** libuv's PATH search only appends `.com`
+  and `.exe` and never reads PATHEXT, so `spawn('npm', …, {shell:false})` is
+  ENOENT there. Spawning `npm.cmd` directly is not the fix either — Node
+  refuses a `.cmd` without a shell since the CVE-2024-27980 mitigation. Route
+  npm through `cmd.exe /d /s /c`; keep `git` on a direct spawn, because git is
+  the one handed user-controlled values.
+- **`Write` can emit literal control bytes into a regex character class.** A
+  `[\s -]` written that way landed on disk as raw `\x00-\x1f`, invisible in
+  review. Prefer an explicit `charCodeAt` scan over a class with a range.
+- **The dashboard's `mount()` is a no-op**, so `switchView` cannot repaint the
+  three panels `beginScanChrome` turns into skeletons. Any path that ends a
+  scan without `finishScan` must call `restoreDashboardPanels()`.
+
+**Pre-existing defect found in passing, NOT fixed (out of scope):** the A1
+instant-index-open path calls `finishScan` before any scanId exists, firing
+three `?scanId=null` requests that 404 on every boot. A background task was
+spawned for it.
 
 Spec: `/Users/prithvivinay/Desktop/TreeMap-Master-Implementation-Prompt.md`
 
