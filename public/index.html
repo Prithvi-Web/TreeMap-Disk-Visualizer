@@ -555,6 +555,9 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .tm-legend .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block;
   box-shadow: inset 0 0 0 1px rgba(0,0,0,0.22); }
 .tm-foot .hint { margin-left: auto; color: var(--text-3); display: flex; align-items: center; gap: 6px; }
+/* §6.2's footnote. Deliberately not a toast: a caveat about what the map is
+   showing has to stay on screen for as long as the map does. */
+.tm-altnote { margin: 6px 4px 0; font-size: 11.5px; color: var(--text-3); line-height: 1.5; }
 
 /* ── Grid view ── */
 .grid-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -692,8 +695,22 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
    the page rather than a picture on a page. Everything here is a token from
    the existing palette: a third view inventing its own greys would show up
    immediately beside the Treemap it is meant to be the same map as. */
+/* A studio backdrop, not a panel. The city is lit from the upper right, so the
+   light in the room comes from there too — a flat fill behind a lit object is
+   the single thing that most makes 3D read as a sticker. */
 #cityWrap { position: relative; border-radius: var(--r-lg); overflow: hidden;
-  border: 1px solid var(--hairline); height: clamp(360px, calc(100vh - 250px), 1100px); }
+  border: 1px solid var(--hairline); height: clamp(360px, calc(100vh - 250px), 1100px);
+  background:
+    radial-gradient(120% 90% at 68% 8%, rgba(120,150,210,0.16), transparent 58%),
+    radial-gradient(90% 70% at 22% 100%, rgba(10,132,255,0.10), transparent 62%),
+    linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), inset 0 -40px 80px -40px rgba(0,0,0,0.55); }
+:root[data-theme="light"] #cityWrap {
+  background:
+    radial-gradient(120% 90% at 68% 8%, rgba(150,175,225,0.30), transparent 58%),
+    radial-gradient(90% 70% at 22% 100%, rgba(0,122,255,0.10), transparent 62%),
+    linear-gradient(180deg, #f7f8fc, #e9ecf3);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), inset 0 -40px 80px -40px rgba(20,30,60,0.16); }
 #cityCanvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
 #cityCanvas:active { cursor: grabbing; }
 #cityCanvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -705,18 +722,38 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
   background: var(--glass-strong); backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-sat));
   -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-sat));
   box-shadow: var(--shadow-2); font-size: 12px; color: var(--text-2); line-height: 1.5; }
-.city-card .cc-name { display: block; font-weight: 600; color: var(--text-1); font-size: 12.5px;
-  margin-bottom: 3px; word-break: break-all; }
-.city-card .cc-row { display: flex; gap: 10px; justify-content: space-between; }
+.city-card { transition: opacity 120ms var(--ease); }
+.city-card .cc-head { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
+.city-card .cc-dot { width: 9px; height: 9px; border-radius: 3px; flex: none;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.18); }
+.city-card .cc-name { font-weight: 650; color: var(--text-1); font-size: 12.5px;
+  letter-spacing: -0.01em; word-break: break-all; line-height: 1.3; }
+.city-card .cc-row { display: flex; gap: 14px; justify-content: space-between;
+  padding: 2px 0; font-size: 11.5px; }
+.city-card .cc-row span { color: var(--text-3); }
 .city-card .cc-row b { color: var(--text-1); font-weight: 600; font-variant-numeric: tabular-nums; }
+.city-card .cc-hint { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--hairline);
+  font-size: 10.5px; color: var(--text-3); }
+@media (prefers-reduced-motion: reduce) { .city-card { transition: none; } }
 
 /* The level-of-detail notice. §6.1 requires the threshold to be stated, never
    silent — a map that quietly drew 4,000 of 251,000 things and said nothing
    would be lying by omission about what the user is looking at. */
-.city-lod { position: absolute; left: 12px; bottom: 12px; z-index: 3; padding: 6px 11px;
+.city-lod { position: absolute; left: 14px; bottom: 14px; z-index: 3; padding: 7px 13px;
   border-radius: 999px; border: 1px solid var(--hairline); background: var(--glass);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  font-size: 11.5px; color: var(--text-2); }
+  backdrop-filter: blur(18px) saturate(160%); -webkit-backdrop-filter: blur(18px) saturate(160%);
+  box-shadow: var(--shadow-1);
+  font-size: 11px; letter-spacing: 0.01em; color: var(--text-2); }
+/* The legend's swatches carry the same ramp the map does, so the key is the
+   thing itself rather than a description of it. */
+.tm-legend .city-ramp { display: inline-flex; align-items: center; gap: 7px; }
+.tm-legend .city-ramp i { width: 54px; height: 7px; border-radius: 999px; display: inline-block; }
+/* The legend is a row of instruments, so it stays a row: wrapping mid-phrase
+   ("Colour" on one line, "= what kind of files it holds" on the next) reads as
+   a layout failure rather than as a key. */
+#cityLegend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; }
+#cityLegend .tml-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+@media (max-width: 1100px) { #cityLegend .tml-item { white-space: normal; } }
 
 .city-table { margin-top: 12px; }
 .city-table > summary { cursor: pointer; font-size: 12px; color: var(--text-2); padding: 6px 2px;
@@ -2032,9 +2069,13 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
       <button class="btn" id="tmUpBtn" title="Zoom out one level (Escape)" aria-label="Zoom out one level"><span data-icon="arrowUp"></span></button>
       <div class="crumbs" id="tmCrumbs"></div>
       <div class="tm-controls">
-        <div class="seg" id="tmViewSeg" role="tablist" aria-label="Treemap or sunburst layout">
+        <!-- v4 §6.2 — four lenses on one tree. Not four views: same root, same
+             breadcrumbs, same depth, same colour mode, same highlight box. -->
+        <div class="seg" id="tmViewSeg" role="tablist" aria-label="Map layout">
           <button type="button" data-vm="treemap" aria-selected="true" title="Squarified treemap">Treemap</button>
           <button type="button" data-vm="sunburst" aria-selected="false" title="Radial sunburst">Sunburst</button>
+          <button type="button" data-vm="circles" aria-selected="false" title="Nested circle packing — every folder is a circle holding its children">Circles</button>
+          <button type="button" data-vm="voronoi" aria-selected="false" title="Voronoi treemap — cells whose areas are proportional to bytes, solved by Lloyd's algorithm">Voronoi</button>
         </div>
         <div class="field" id="tmSearchWrap">
           <span data-icon="search"></span>
@@ -2091,6 +2132,9 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
       <span class="num" id="tmStatus"></span>
       <span class="hint"><span data-icon="mouse"></span>click a folder to drill in · right-click for actions · Esc to go up</span>
     </div>
+    <!-- v4 §6.2 — where an alternate renderer had to approximate, it says so
+         here, in the same place every time. Never hidden in a console log. -->
+    <div class="tm-altnote" id="tmAltNote" role="status" aria-live="polite" hidden></div>
   </section>
 
   <!-- ═══════════ Disk City (v4 §6.1) ═══════════
@@ -3089,7 +3133,7 @@ $('themeToggle').addEventListener('click', () => {
   document.documentElement.dataset.theme = next;
   localStorage.setItem('tm-theme', next);
   applyThemeButton();
-  if (state.treemap.nodes.length && state.view === 'treemap') drawTreemap();
+  if (state.view === 'treemap' && drawnCells().length) drawView();
   if (state.donut.segs.length) drawDonut(1);
 });
 applyThemeButton();
@@ -3267,11 +3311,13 @@ const state = {
   bigFolders: [],
   savedViews: [],
   savedViewsLoaded: false,
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null } },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null } },
   // v4 §6.1 — Disk City. Deliberately holds NO tree of its own: the root and
   // the nodes are the Treemap's, so the two are the same arrangement rather
   // than two arrangements that resemble each other.
   city: { blocks: [], hover: null, pan: { x: 0, y: 0 }, zoom: 1, fit: 1, drawn: 0, total: 0, aggregated: 0,
+          zoomTarget: 1, zoomRaf: 0, morphRaf: 0, morphStart: 0, painted: 0,
+          contentBounds: { x0: -87, x1: 87, y0: -26, y1: 50 },
           height: localStorage.getItem('tm-cityheight') || 'staleness',
           colour: localStorage.getItem('tm-citycolour') || 'reclaim',
           counts: new Map(), countsFor: null, unresolved: 0, raf: 0, drag: null },
@@ -5297,10 +5343,11 @@ async function loadTreemap(rootPath, animate = false) {
   const zoom = $('treemapZoom');
   if (animate && !REDUCED) zoom.classList.add('zooming');
   try {
-    if (state.treemap.mode === 'sunburst') {
-      // Sunburst lays out client-side from the in-memory tree, so unlike the
-      // treemap it needs the real children — fetch them if this branch was
-      // pruned, otherwise it draws a hollow ring for a folder full of files.
+    if (isSun() || isCells()) {
+      // The sunburst and §6.2's two renderers lay out client-side from the
+      // in-memory tree, so unlike the treemap they need the real children —
+      // fetch them if this branch was pruned, otherwise they draw a hollow
+      // ring, or an empty circle, for a folder full of files.
       const node = (await ensureSubtree(rootPath)) || state.root;
       if (seq !== tmLoadSeq) return; // superseded while fetching
       if (!node) return;
@@ -5313,7 +5360,7 @@ async function loadTreemap(rootPath, animate = false) {
       $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
       exitHistoryState();
       refreshTimebar();
-      drawSunburst();
+      if (isSun()) drawSunburst(); else drawCells();
     } else {
       const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(rootPath)}`);
       if (seq !== tmLoadSeq) return; // a newer view/root load has superseded this fetch
@@ -5423,7 +5470,7 @@ function renderTmLegend() {
  * one that matters.
  */
 function reclaimCoverageNote() {
-  const drawn = isSun() ? (state.treemap.arcs || []) : (state.treemap.pxRects || []);
+  const drawn = drawnCells();
   let total = 0;
   let scored = 0;
   let unscorable = 0;
@@ -5729,6 +5776,29 @@ function renderSearchOverlay() {
   const hits = state.treemap.matchedPaths;
   const isMatch = grammar ? (n) => hits.has(n.path) : (n) => treemapMatch(n, q);
 
+  // v4 §6.2 — the same two passes over circles or Voronoi cells. Everything
+  // non-matching is dimmed, parents included: a parent's exposed rim left
+  // bright while its contents dim reads as a match that is not one.
+  if (isCells()) {
+    for (const c of state.treemap.cells) {
+      if (isMatch(c.n)) continue;
+      altCellPath(ctx, c);
+      ctx.fillStyle = scrim;
+      ctx.fill();
+    }
+    for (const c of state.treemap.cells) {
+      if (!isMatch(c.n)) continue;
+      matches++;
+      altCellPath(ctx, c);
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = c.leaf ? 1.5 : 2.5;
+      ctx.stroke();
+    }
+    state.treemap.matches = matches;
+    updateTmStatus();
+    return;
+  }
+
   // Dim non-matching leaves first, then outline matches on top.
   for (const r of state.treemap.pxRects) {
     if (r.frame) continue;
@@ -5766,9 +5836,17 @@ function updateTmStatus() {
       `Preview · ${formatBytes(tmPreview.freedBytes)} would be freed · ${formatBytes(state.treemap.rootSize)} total today`;
     return;
   }
-  $('tmStatus').textContent = q
-    ? `${formatCount(state.treemap.matches)} match${state.treemap.matches === 1 ? '' : 'es'} for “${q}” · ${formatBytes(state.treemap.rootSize)} total`
-    : `${formatCount(state.treemap.nodes.length)} nodes · ${formatCount(state.treemap.pxRects.length)} drawn · ${formatBytes(state.treemap.rootSize)} total`;
+  if (q) {
+    $('tmStatus').textContent =
+      `${formatCount(state.treemap.matches)} match${state.treemap.matches === 1 ? '' : 'es'} for “${q}” · ${formatBytes(state.treemap.rootSize)} total`;
+    return;
+  }
+  // With no query the count belongs to whichever renderer drew: "nodes drawn"
+  // means nothing about a sunburst's rings or §6.2's shapes, and writing it
+  // anyway would overwrite a true line with a plausible one.
+  if (isSun() || isCells()) return;
+  $('tmStatus').textContent =
+    `${formatCount(state.treemap.nodes.length)} nodes · ${formatCount(state.treemap.pxRects.length)} drawn · ${formatBytes(state.treemap.rootSize)} total`;
 }
 /* ───────────────────── Shared Canvas 2D toolkit (§3.4) ─────────────────────
    The primitives every canvas panel needs, in one place: DPR-correct sizing,
@@ -6243,7 +6321,14 @@ function tmHatchPattern(ctx) {
 function enterCartPreview() {
   if (tmPreview.on) { exitCartPreview(); return; }
   if (state.view !== 'treemap') { toast('Open the Treemap view to preview what the cart frees', 'error'); return; }
-  if (isSun()) { toast('The preview re-lays out the treemap — switch the map back from Sunburst first', 'error'); return; }
+  if (isSun() || isCells()) {
+    // §4.3's preview re-tiles rectangles, and the hatched freed block only
+    // means anything in a rectangular layout. Naming the renderer the user is
+    // actually looking at beats a message about a mode they did not pick.
+    const names = { sunburst: 'Sunburst', circles: 'Circles', voronoi: 'Voronoi' };
+    toast(`The preview re-lays out the treemap — switch the map back from ${names[state.treemap.mode]} first`, 'error');
+    return;
+  }
   if (state.treemap.history.active) { toast('Leave the time slider first — the preview works on the live map', 'error'); return; }
   if (!state.treemap.nodes.length) { toast('Nothing is drawn yet', 'error'); return; }
   if (!state.cart.size) { toast('Your cart is empty — there is nothing to take out of the map', 'error'); return; }
@@ -6284,7 +6369,7 @@ function exitCartPreview(silent = false) {
   state.treemap.hover = null;
   state.treemap.kbSel = null;
   syncCartPreviewChrome();
-  if (!silent && state.view === 'treemap' && !isSun()) drawTreemap();
+  if (!silent && state.view === 'treemap' && isRectMap()) drawTreemap();
 }
 
 /** Banner text, toggle state and the wrap outline — one place, both directions. */
@@ -6458,9 +6543,9 @@ const TM_SCORE_CAP = 6000;
 
 function fetchScoresForTreemap() {
   if (state.treemap.colorMode !== 'reclaim' || !state.scanId) return;
-  // Both renderers, because Reclaim is a colour mode and the sunburst paints
+  // Every renderer, because Reclaim is a colour mode and all four paint
   // through the same cellRgb. Their entries are shaped alike: `{ n, ... }`.
-  const drawn = isSun() ? (state.treemap.arcs || []) : (state.treemap.pxRects || []);
+  const drawn = drawnCells();
   if (!drawn.length) return;
   const paths = [];
   for (const r of drawn) {
@@ -6561,6 +6646,11 @@ async function setHistoryIndex(i) {
     state.treemap.hover = null;
     state.treemap.kbSel = null;
     if (isSun()) animateSunburstTo(layout.tree);
+    // §6.2's renderers re-lay out from the historical tree the same way they
+    // do from the live one. They are not animated between snapshots: both are
+    // global optimisations, so a cell's position between two scans is not a
+    // path anything travelled and tweening it would invent a motion.
+    else if (isCells()) drawCells();
     else animateTreemapTo(layout.nodes);
     updateTimeLabel();
   } catch (e) {
@@ -6655,6 +6745,9 @@ function onLiveActivity(frame) {
   // Region lookup for pulse placement, built once per frame.
   const byPath = new Map();
   if (isSun()) for (const a of state.treemap.arcs) byPath.set(a.n.path, { arc: a });
+  // §6.2 — a pulse is a shape lit up, and these shapes are neither a rectangle
+  // nor an arc. `cell` is drawn through the same path function that painted it.
+  else if (isCells()) for (const c of state.treemap.cells) byPath.set(c.n.path, { cell: c });
   else for (const r of state.treemap.pxRects) byPath.set(r.n.path, { rect: r });
 
   for (const ev of frame.events) {
@@ -6698,6 +6791,9 @@ function drawLivePulses() {
     } else if (p.arc) {
       sectorPath(tmCtx, p.arc.cx, p.arc.cy, p.arc.rInner, p.arc.rOuter, p.arc.a0, p.arc.a1);
       tmCtx.fill();
+    } else if (p.cell) {
+      altCellPath(tmCtx, p.cell);
+      tmCtx.fill();
     }
   }
 }
@@ -6726,6 +6822,7 @@ async function liveRelayout() {
   if (!live.on || live.dirty <= 0 || state.scanning || state.treemap.history.active || state.view !== 'treemap') return;
   live.dirty = 0;
   if (isSun()) { animateSunburstTo(sunburstRoot()); return; }
+  if (isCells()) { drawCells(); return; } // re-solved from the tree the watcher just updated
   try {
     const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(state.treemap.rootPath)}`);
     if (!live.on) return;
@@ -6814,16 +6911,25 @@ $('tmLiveToggle').addEventListener('click', () => {
 /* ───────────────────────────── Sunburst / radial view (Feature 3) ───────────────────────────── */
 function isSun() { return state.treemap.mode === 'sunburst'; }
 function drawView() {
-  isSun() ? drawSunburst() : drawTreemap();
+  if (isSun()) drawSunburst();
+  else if (isCells()) drawCells();
+  else drawTreemap();
   // The drawn set changes on every zoom, depth change, resize and rescan, so
   // the scores that back the Reclaim colour mode are re-asked for here rather
   // than only when the mode is switched on. `ensureScores` skips everything
   // already known, so the repeat calls after the first cost nothing.
   if (state.treemap.colorMode === 'reclaim') fetchScoresForTreemap();
 }
-function presentView() { isSun() ? presentSunburst() : presentTreemap(); }
+function presentView() {
+  if (isSun()) presentSunburst();
+  else if (isCells()) presentCells();
+  else presentTreemap();
+}
 function viewHit(cx, cy, leavesOnly) {
   if (isSun()) return sunburstHit(cx, cy);
+  // The alternate renderers already answer with the deepest shape, which is
+  // the leaf wherever there is one — so `leavesOnly` needs no second pass.
+  if (isCells()) return cellsHit(cx, cy);
   return leavesOnly ? (treemapHit(cx, cy, true) || treemapHit(cx, cy)) : treemapHit(cx, cy);
 }
 function sunRingCount() { return Math.max(2, Math.min(7, state.treemap.maxDepth)); }
@@ -6844,17 +6950,7 @@ function sunburstRoot() {
 
 /** Size the canvas + buffer for the sunburst; returns the shared geometry. */
 function sunburstGeometry() {
-  const wrap = $('treemapWrap');
-  const cssW = wrap.clientWidth - 20;
-  const cssH = treemapCanvasHeight(wrap);
-  const dpr = window.devicePixelRatio || 1;
-  tmCanvas.style.width = cssW + 'px';
-  tmCanvas.style.height = cssH + 'px';
-  const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
-  if (tmCanvas.width !== pw) tmCanvas.width = pw;
-  if (tmCanvas.height !== ph) tmCanvas.height = ph;
-  if (tmBuffer.width !== pw) tmBuffer.width = pw;
-  if (tmBuffer.height !== ph) tmBuffer.height = ph;
+  const { cssW, cssH, dpr } = tmSizeCanvas();
   const rings = sunRingCount();
   const outerR = Math.max(60, Math.min(cssW, cssH) / 2 - 18);
   const innerR0 = outerR / (rings + 1);
@@ -7060,10 +7156,1333 @@ function sunburstHit(clientX, clientY) {
   return best;
 }
 
+/* ═══════════════ v4 §6.2 — Alternate renderers: the maths ═══════════════
+
+   Two more layouts over the SAME tree the treemap and the sunburst draw:
+   nested circle packing, and a weighted centroidal Voronoi treemap. Neither is
+   a new view — both are entries in the Treemap view's segmented control, and
+   both read `sunburstRoot()`, so switching between the four is switching lens,
+   not switching data.
+
+   Everything in this block is deliberately a **plain function of its
+   arguments**: no `state`, no canvas, no DOM. That is what lets
+   `tests/circlePack.test.ts` and `tests/voronoiTreemap.test.ts` lift these out
+   of this file and drive them against oracles built from first principles,
+   which is the same standard §6.1's draw order was held to. A layout that is
+   only ever checked by looking at it is a layout nobody can prove.
+
+   Both are pure Canvas 2D maths. No WebGL, no D3, no dependency — §7.        */
+
+/* ── Smallest enclosing circle (Welzl) ──────────────────────────────────── */
+
+/** Does circle `a` completely contain circle `b`? */
+function packEncloses(a, b) {
+  const dr = a.r - b.r + Math.max(a.r, b.r, 1) * 1e-9;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  return dr > 0 && dr * dr > dx * dx + dy * dy;
+}
+
+/** The circle through one circle: itself. */
+function packBasis1(a) { return { x: a.x, y: a.y, r: a.r }; }
+
+/** The smallest circle enclosing two, which spans the far side of each. */
+function packBasis2(a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y, dr = b.r - a.r;
+  const l = Math.sqrt(dx * dx + dy * dy);
+  // Concentric: the bigger one already encloses the other.
+  if (l < 1e-12) return a.r >= b.r ? packBasis1(a) : packBasis1(b);
+  return {
+    x: (a.x + b.x + (dx / l) * dr) / 2,
+    y: (a.y + b.y + (dy / l) * dr) / 2,
+    r: (l + a.r + b.r) / 2,
+  };
+}
+
+/**
+ * The smallest circle enclosing three — the Apollonius problem, solved in
+ * closed form.
+ *
+ * The unknown circle is internally tangent to all three, so its centre is the
+ * point equidistant-minus-radius from each. Writing the two linear conditions
+ * that come from subtracting the tangency equations pairwise leaves the centre
+ * as an affine function of the unknown radius, and substituting that back into
+ * one tangency equation gives a quadratic in the radius. `A` degenerating to
+ * zero is the collinear-centres case, where the quadratic is really linear —
+ * hence the branch rather than a bare division.
+ */
+function packBasis3(a, b, c) {
+  const a2 = a.x - b.x, a3 = a.x - c.x;
+  const b2 = a.y - b.y, b3 = a.y - c.y;
+  const c2 = b.r - a.r, c3 = c.r - a.r;
+  const d1 = a.x * a.x + a.y * a.y - a.r * a.r;
+  const d2 = d1 - b.x * b.x - b.y * b.y + b.r * b.r;
+  const d3 = d1 - c.x * c.x - c.y * c.y + c.r * c.r;
+  const ab = a3 * b2 - a2 * b3;
+  if (Math.abs(ab) < 1e-12) return packBasis2(a, b); // centres coincide pairwise
+  const xa = (b2 * d3 - b3 * d2) / (ab * 2) - a.x;
+  const xb = (b3 * c2 - b2 * c3) / ab;
+  const ya = (a3 * d2 - a2 * d3) / (ab * 2) - a.y;
+  const yb = (a2 * c3 - a3 * c2) / ab;
+  const A = xb * xb + yb * yb - 1;
+  const B = 2 * (a.r + xa * xb + ya * yb);
+  const C = xa * xa + ya * ya - a.r * a.r;
+  let r;
+  if (Math.abs(A) > 1e-9) {
+    const disc = B * B - 4 * A * C;
+    if (!(disc >= 0)) return packBasis2(a, b); // numerically impossible triple
+    r = -(B + Math.sqrt(disc)) / (2 * A);
+  } else {
+    if (Math.abs(B) < 1e-12) return packBasis2(a, b);
+    r = -C / B;
+  }
+  return { x: a.x + xa + xb * r, y: a.y + ya + yb * r, r };
+}
+
+/**
+ * A deterministic shuffle.
+ *
+ * Welzl's expected-linear bound needs the input in random order, and a layout
+ * that moved when nothing about the disk had changed would be a defect rather
+ * than a flourish. So the order is randomised by a fixed-seed xorshift: the
+ * same input always produces the same packing, in this session and the next.
+ */
+function packShuffled(items) {
+  const out = items.slice();
+  let h = 0x9e3779b9;
+  for (let i = out.length - 1; i > 0; i--) {
+    h ^= h << 13; h ^= h >>> 17; h ^= h << 5;
+    const j = (h >>> 0) % (i + 1);
+    const t = out[i]; out[i] = out[j]; out[j] = t;
+  }
+  return out;
+}
+
+/** The smallest circle containing every circle in `circles`. */
+function packEnclose(circles) {
+  if (!circles.length) return { x: 0, y: 0, r: 0 };
+  const cs = packShuffled(circles);
+  let e = null;
+  for (let i = 0; i < cs.length; i++) {
+    if (e && packEncloses(e, cs[i])) continue;
+    e = packBasis1(cs[i]);
+    for (let j = 0; j < i; j++) {
+      if (packEncloses(e, cs[j])) continue;
+      e = packBasis2(cs[i], cs[j]);
+      for (let k = 0; k < j; k++) {
+        if (packEncloses(e, cs[k])) continue;
+        e = packBasis3(cs[i], cs[j], cs[k]);
+      }
+    }
+  }
+  return e;
+}
+
+/* ── Front-chain packing (Wang et al.) ──────────────────────────────────── */
+
+/**
+ * Put `c` tangent to both `a` and `b`, on the anticlockwise side.
+ *
+ * In the frame where `b - a` is the first axis, the tangency conditions are
+ * two circles' worth of Pythagoras and reduce to one linear and one quadratic
+ * equation; `Math.max(0, …)` under the root is the guard for the case where
+ * `a` and `b` are further apart than `c` can bridge, which floating point can
+ * produce even when the geometry says otherwise.
+ */
+function packPlace(a, b, c) {
+  const dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy;
+  if (!(d2 > 0)) { c.x = a.x + a.r + c.r; c.y = a.y; return; }
+  const ra = a.r + c.r, rb = b.r + c.r;
+  const x = (d2 + ra * ra - rb * rb) / (2 * d2);
+  const y = Math.sqrt(Math.max(0, (ra * ra) / d2 - x * x));
+  c.x = a.x + x * dx - y * dy;
+  c.y = a.y + x * dy + y * dx;
+}
+
+/** Do two circles overlap by more than rounding error? */
+function packIntersects(a, b) {
+  const dr = a.r + b.r - 1e-6;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  return dr > 0 && dr * dr > dx * dx + dy * dy;
+}
+
+/** How close to the origin is the gap between this chain link and the next? */
+function packChainScore(node) {
+  const a = node.c, b = node.next.c;
+  const ab = a.r + b.r;
+  if (!(ab > 0)) return Infinity;
+  const dx = (a.x * b.r + b.x * a.r) / ab;
+  const dy = (a.y * b.r + b.y * a.r) / ab;
+  return dx * dx + dy * dy;
+}
+
+/**
+ * Pack circles around the origin, each touching its neighbours.
+ *
+ * The front chain: keep the circles on the outside of the packing so far in a
+ * ring, always add the next circle into the gap nearest the centre, and if it
+ * lands on top of something, delete the span it crossed from the ring and try
+ * again. Wang, Wang, Dai and Zhang, 2006.
+ *
+ * `budget` is not decoration. The retry is the one unbounded thing in the
+ * algorithm, and while it is proven to terminate on well-formed input, this
+ * one is fed the sizes of whatever is on a stranger's disk. A packing that
+ * spins forever would freeze the tab; a packing that stops early is visibly
+ * wrong and says so through `unresolved`, which the caller shows. §6.2 asks
+ * for exactly this on the Voronoi side and the reasoning is not different here.
+ */
+function packSiblings(circles) {
+  const n = circles.length;
+  let unresolved = 0;
+  if (n === 0) return { circles, unresolved };
+  circles[0].x = 0; circles[0].y = 0;
+  if (n === 1) return { circles, unresolved };
+  // The first pair straddles the origin rather than starting at it: the gap
+  // chosen for each later circle is the one nearest the origin, so a packing
+  // that began off-centre would grow lopsided.
+  circles[0].x = -circles[1].r; circles[1].x = circles[0].r; circles[1].y = 0;
+  if (n === 2) return { circles, unresolved };
+  packPlace(circles[0], circles[1], circles[2]);
+
+  let A = { c: circles[0] }, B = { c: circles[1] }, C = { c: circles[2] };
+  A.next = C.prev = B; B.next = A.prev = C; C.next = B.prev = A;
+
+  let budget = 64 * n + 256;
+  outer: for (let i = 3; i < n; i++) {
+    const cc = circles[i];
+    // Tangent to the two links of the chosen gap, and on the OUTSIDE of the
+    // chain. The argument order is what decides that: `packPlace` puts the new
+    // circle anticlockwise of the a→b direction, so passing the gap's links in
+    // chain order would place it *inside* the packing, on top of what is
+    // already there. Measured, not reasoned about — with the arguments the
+    // other way round a ten-circle pack overlapped by 59 units in a 200-unit
+    // radius, which the sibling-overlap test now pins at zero.
+    packPlace(B.c, A.c, cc);
+    let j = B.next, k = A.prev, sj = B.c.r, sk = A.c.r;
+    do {
+      if (sj <= sk) {
+        if (packIntersects(j.c, cc)) {
+          if (--budget < 0) { unresolved++; break; }
+          B = j; A.next = B; B.prev = A; i--; continue outer;
+        }
+        sj += j.c.r; j = j.next;
+      } else {
+        if (packIntersects(k.c, cc)) {
+          if (--budget < 0) { unresolved++; break; }
+          A = k; A.next = B; B.prev = A; i--; continue outer;
+        }
+        sk += k.c.r; k = k.prev;
+      }
+    } while (j !== k.next);
+
+    const node = { c: cc, prev: A, next: B };
+    A.next = node; B.prev = node; B = node;
+    let best = packChainScore(A), t = node;
+    while ((t = t.next) !== B) {
+      const s = packChainScore(t);
+      if (s < best) { best = s; A = t; }
+    }
+    B = A.next;
+  }
+  return { circles, unresolved };
+}
+
+/**
+ * Lay a list of sizes out as circles inside a circle of radius `R` at the
+ * origin.
+ *
+ * Radii go as the square root of the value, so **area** is proportional to
+ * bytes — the same promise the treemap's rectangles make, which is the whole
+ * reason the two are comparable at a glance.
+ *
+ * A value of zero gets no circle at all rather than a circle of radius zero:
+ * an invisible dot that can still be hovered is a hit target for something the
+ * user cannot see. They are counted in `omitted` and the caller says so.
+ */
+function circlePackChildren(values, R, opts) {
+  const padding = (opts && opts.padding) || 0.02;
+  const cap = (opts && opts.maxCircles) || 4096;
+  const idx = [];
+  for (let i = 0; i < values.length; i++) if (values[i] > 0) idx.push(i);
+  // Biggest first: front-chain packing is markedly tighter that way, and it
+  // also makes the cap drop the least significant things rather than a
+  // arbitrary tail.
+  idx.sort((p, q) => values[q] - values[p]);
+  const omitted = values.length - Math.min(idx.length, cap);
+  let omittedValue = 0;
+  for (let i = 0; i < values.length; i++) if (!(values[i] > 0)) omittedValue += Math.max(0, values[i]);
+  for (let i = cap; i < idx.length; i++) omittedValue += values[idx[i]];
+  const kept = idx.slice(0, cap);
+  if (!kept.length) return { circles: [], omitted, omittedValue, unresolved: 0 };
+
+  const cs = kept.map((i) => ({ i, r: Math.sqrt(values[i]), x: 0, y: 0 }));
+  const packed = packSiblings(cs);
+  const hull = packEnclose(cs);
+  // Scale the packing into the target circle, leaving a hairline of padding so
+  // a child never appears to touch its parent's rim — which reads as a child
+  // that has escaped rather than one that fits.
+  const k = hull.r > 0 ? (R * (1 - padding)) / hull.r : 0;
+  const circles = cs.map((c) => ({
+    i: c.i,
+    x: (c.x - hull.x) * k,
+    y: (c.y - hull.y) * k,
+    r: c.r * k,
+  }));
+  return { circles, omitted, omittedValue, unresolved: packed.unresolved };
+}
+
+/* ── Weighted centroidal Voronoi (Lloyd + power weights) ────────────────── */
+
+/**
+ * Clip a convex polygon to the half-plane `nx·x + ny·y ≤ c` (Sutherland–Hodgman).
+ *
+ * The whole Voronoi construction is this function called in a loop, which is
+ * why it is worth being careful here: `da - db` can only be divided by when
+ * the two endpoints are strictly on opposite sides, and both branches below
+ * enter only in that case, so the division cannot produce a NaN.
+ */
+function polyClip(poly, nx, ny, c) {
+  const out = [];
+  const n = poly.length;
+  if (!n) return out;
+  let A = poly[n - 1];
+  let da = nx * A.x + ny * A.y - c;
+  for (let i = 0; i < n; i++) {
+    const B = poly[i];
+    const db = nx * B.x + ny * B.y - c;
+    if (db <= 0) {
+      if (da > 0) {
+        const t = da / (da - db);
+        out.push({ x: A.x + (B.x - A.x) * t, y: A.y + (B.y - A.y) * t });
+      }
+      out.push(B);
+    } else if (da <= 0) {
+      const t = da / (da - db);
+      out.push({ x: A.x + (B.x - A.x) * t, y: A.y + (B.y - A.y) * t });
+    }
+    A = B; da = db;
+  }
+  return out;
+}
+
+/** Signed area of a polygon (positive anticlockwise). */
+function polyArea(poly) {
+  let a = 0;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    a += poly[j].x * poly[i].y - poly[i].x * poly[j].y;
+  }
+  return a / 2;
+}
+
+/** Area centroid, falling back to the vertex mean on a degenerate polygon. */
+function polyCentroid(poly) {
+  if (!poly.length) return null;
+  let a = 0, cx = 0, cy = 0;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const f = poly[j].x * poly[i].y - poly[i].x * poly[j].y;
+    a += f;
+    cx += (poly[j].x + poly[i].x) * f;
+    cy += (poly[j].y + poly[i].y) * f;
+  }
+  // A sliver with no area has no area centroid, and dividing by it is exactly
+  // where a NaN enters a layout and never leaves again.
+  if (Math.abs(a) < 1e-12) {
+    let sx = 0, sy = 0;
+    for (const p of poly) { sx += p.x; sy += p.y; }
+    return { x: sx / poly.length, y: sy / poly.length };
+  }
+  return { x: cx / (3 * a), y: cy / (3 * a) };
+}
+
+/** Axis-aligned bounds of a polygon. */
+function polyBounds(poly) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of poly) {
+    if (p.x < x0) x0 = p.x;
+    if (p.x > x1) x1 = p.x;
+    if (p.y < y0) y0 = p.y;
+    if (p.y > y1) y1 = p.y;
+  }
+  return poly.length ? { x0, y0, x1, y1 } : { x0: 0, y0: 0, x1: 0, y1: 0 };
+}
+
+/**
+ * Shrink a convex polygon inward by `d` on every edge.
+ *
+ * An inset of a convex polygon is that polygon clipped by each of its own
+ * edges moved inward, so this is `polyClip` again rather than a second piece
+ * of geometry to keep in step with it. Returns an empty polygon when the
+ * inset eats the shape, which is the honest answer for a sliver.
+ */
+function polyInset(poly, d) {
+  if (poly.length < 3) return [];
+  const c = polyCentroid(poly);
+  if (!c) return [];
+  let out = poly;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const ax = poly[j].x, ay = poly[j].y, bx = poly[i].x, by = poly[i].y;
+    let nx = by - ay, ny = ax - bx;
+    const len = Math.hypot(nx, ny);
+    if (!(len > 0)) continue; // a repeated vertex contributes no edge
+    nx /= len; ny /= len;
+    // Point the normal away from the interior, so "≤ c" is the inside.
+    if (nx * c.x + ny * c.y > nx * ax + ny * ay) { nx = -nx; ny = -ny; }
+    out = polyClip(out, nx, ny, nx * ax + ny * ay - d);
+    if (out.length < 3) return [];
+  }
+  return out;
+}
+
+/** Is a point inside a polygon? Ray casting; used for site placement only. */
+function polyContains(poly, px, py) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * The power diagram of weighted sites, clipped to a convex boundary.
+ *
+ * A site owns the points where `|p − s|² − w` is smallest. Subtracting that
+ * expression for two sites cancels the `|p|²` term, so every boundary between
+ * two cells is a straight line and each cell is an intersection of
+ * half-planes — which is why plain polygon clipping is the whole algorithm and
+ * no Delaunay triangulation is needed.
+ *
+ * Because the boundary is convex and half-plane intersection preserves
+ * convexity, every cell that comes out of here is convex. Nesting relies on
+ * that: a child layout takes its parent's cell as its own boundary.
+ */
+function powerCells(sites, boundary) {
+  const cells = new Array(sites.length);
+  for (let i = 0; i < sites.length; i++) {
+    const si = sites[i];
+    const ki = si.x * si.x + si.y * si.y - si.w;
+    let poly = boundary;
+    for (let j = 0; j < sites.length; j++) {
+      if (j === i || !poly.length) continue;
+      const sj = sites[j];
+      const nx = 2 * (sj.x - si.x), ny = 2 * (sj.y - si.y);
+      if (nx === 0 && ny === 0) continue; // coincident: no line separates them
+      poly = polyClip(poly, nx, ny, (sj.x * sj.x + sj.y * sj.y - sj.w) - ki);
+    }
+    cells[i] = poly;
+  }
+  return cells;
+}
+
+/**
+ * Seed sites inside a convex polygon, deterministically.
+ *
+ * The additive-recurrence (golden-ratio) sequence spreads points far more
+ * evenly than a pseudo-random one and is completely reproducible, which
+ * matters twice over: Lloyd's algorithm converges much faster from an even
+ * start, and a map that re-arranged itself on every repaint would be unusable
+ * regardless of how correct its areas were.
+ */
+function voronoiSeedSites(boundary, n) {
+  const bb = polyBounds(boundary);
+  const w = bb.x1 - bb.x0, h = bb.y1 - bb.y0;
+  const out = [];
+  const PHI = 0.6180339887498949, PHI2 = 0.7548776662466927;
+  let tries = 0;
+  for (let i = 0; out.length < n && tries < n * 64 + 512; i++, tries++) {
+    const u = (0.5 + PHI * i) % 1, v = (0.5 + PHI2 * i) % 1;
+    const x = bb.x0 + u * w, y = bb.y0 + v * h;
+    if (polyContains(boundary, x, y)) out.push({ x, y, w: 0 });
+  }
+  // A boundary so thin that rejection sampling cannot land in it still has a
+  // centroid, so fall back to stacking the remainder there with a tiny spread
+  // rather than returning fewer sites than were asked for.
+  const c = polyCentroid(boundary) || { x: bb.x0, y: bb.y0 };
+  for (let i = out.length; i < n; i++) {
+    out.push({ x: c.x + (i % 7) * 1e-3, y: c.y + ((i * 3) % 11) * 1e-3, w: 0 });
+  }
+  return out;
+}
+
+/**
+ * One Lloyd run: alternate moving the sites and reweighting them, and hand
+ * back the best diagram seen rather than the last one.
+ *
+ * Three forces:
+ *
+ *   1. move every site to the centroid of its own cell — this is what stops
+ *      the picture degenerating into slivers, and it has to keep running to
+ *      the end: every schedule that faded it out was measured and every one
+ *      of them made convergence *worse*, not better;
+ *   2. scale every site's weight by how far its area is off target, so a cell
+ *      that is too small pushes its own boundaries outward on the next pass;
+ *   3. cap each weight against its neighbours' — see below, this one is the
+ *      difference between converging and not.
+ *
+ * **The neighbour cap is relative, and that was the whole ball game.** Capping
+ * each weight at its own distance-to-nearest-neighbour — the obvious reading,
+ * and what the first version did — leaves a big cell unable to grow whenever a
+ * small sibling happens to sit near it, because the cap is an absolute number
+ * and weights only mean anything as differences. Measured on a folder-shaped
+ * distribution the worst cell was 389% off its true share and stayed there.
+ * Capping `w_i` at `min_j (w_j + d_ij²)` instead — the condition that actually
+ * matters, that no site may be swallowed by a neighbour — took the same input
+ * to 1.95%.
+ *
+ * **Best, not last.** On a hard input this oscillates rather than diverging:
+ * one measured run reached 17% at pass 346 and was at 25% by pass 1200. The
+ * whole diagram is one array of polygons, so remembering the best one costs a
+ * reference, and returning the worst one for want of it would be silly.
+ *
+ * `anneal` narrows the per-pass weight change as the run goes on, which is
+ * what damps that oscillation; `seeded` says the caller has already put an
+ * approximate weight on each site, in which case the early passes are already
+ * close and the wide steps would only throw them off.
+ */
+function voronoiSolve(sites, target, boundary, opts) {
+  const o = opts || {};
+  const maxIterations = o.maxIterations || 600;
+  const tolerance = o.tolerance === undefined ? 0.02 : o.tolerance;
+  const anneal = o.anneal || 0;
+  // A hair under 1: at exactly 1 the neighbour's site sits precisely on the
+  // shared edge, which is the degenerate case rather than a valid one.
+  const SLACK = 0.99;
+  const n = sites.length;
+  const boundaryArea = Math.abs(polyArea(boundary));
+  const minArea = boundaryArea * 1e-9;
+
+  let best = null, bestError = Infinity, iterations = 0;
+
+  for (let iter = 1; iter <= maxIterations; iter++) {
+    iterations = iter;
+    const cells = powerCells(sites, boundary);
+    let maxError = 0;
+    for (let i = 0; i < n; i++) {
+      const err = Math.abs(Math.abs(polyArea(cells[i])) - target[i]) / target[i];
+      if (err > maxError) maxError = err;
+    }
+    if (maxError < bestError) { bestError = maxError; best = cells; }
+    if (maxError <= tolerance) return { cells, maxError, iterations, converged: true };
+    if (iter === maxIterations) break; // cap reached: keep the best, say so
+
+    // Per-pass weight change, clamped. Unclamped, a cell a thousand times too
+    // small multiplies its weight by a thousand in one step, overshoots, and
+    // the diagram rings for hundreds of passes working it back off.
+    let rMax = 2, rMin = 0.5;
+    if (anneal) {
+      const k = 1 + Math.pow(1 - iter / maxIterations, anneal);
+      rMax = k; rMin = 1 / k;
+    }
+    for (let i = 0; i < n; i++) {
+      const area = Math.abs(polyArea(cells[i]));
+      if (area > minArea) {
+        const c = polyCentroid(cells[i]);
+        if (c && Number.isFinite(c.x) && Number.isFinite(c.y)) { sites[i].x = c.x; sites[i].y = c.y; }
+      }
+      // A swallowed cell keeps its position — there is no centroid to move to —
+      // and is rescued by the weight step rather than by a guess.
+      const rate = Math.min(rMax, Math.max(rMin, target[i] / Math.max(area, minArea)));
+      const w = sites[i].w * rate;
+      // Floor at a hair above zero, never back at a starting weight: a cell
+      // that has shrunk its way down to nothing must STAY small relative to its
+      // neighbours, and resetting it throws the whole diagram back to the
+      // beginning. Measured: the reset version stalled a 56-cell folder at 32%
+      // error where the floor converges to 2%.
+      sites[i].w = Number.isFinite(w) ? Math.max(1e-9, w) : 1e-9;
+    }
+
+    // No site may be swallowed by a neighbour: past that point its cell is
+    // empty, its own weight explodes, and the two trade places forever instead
+    // of converging. Read from a snapshot so the cap does not depend on which
+    // order the sites happen to be visited in.
+    const w = sites.map((si) => si.w);
+    for (let i = 0; i < n; i++) {
+      let cap = Infinity;
+      for (let j = 0; j < n; j++) {
+        if (j === i) continue;
+        const dx = sites[j].x - sites[i].x, dy = sites[j].y - sites[i].y;
+        const c = w[j] + (dx * dx + dy * dy) * SLACK;
+        if (c < cap) cap = c;
+      }
+      if (Number.isFinite(cap) && cap > 0) sites[i].w = Math.min(sites[i].w, cap);
+    }
+  }
+  return { cells: best || [], maxError: bestError, iterations, converged: false };
+}
+
+/**
+ * A Voronoi treemap: cells whose areas are proportional to `values`.
+ *
+ * **The iteration cap is hard, and required.** §6.2: "a pathological input
+ * cannot hang the frame." A run that hits the cap returns the best diagram it
+ * found, with `converged: false` and the error it reached, and the caller
+ * prints that rather than quietly presenting an inexact map as an exact one.
+ *
+ * **Two starts, keep the better.** Seeding each weight from the area that site
+ * is supposed to end up with makes the first pass an approximate answer rather
+ * than a uniform one, and on ordinary folder distributions that is a five- to
+ * ten-fold speed-up — 886 passes down to 105, 548 down to 56. On a folder with
+ * one enormous child and a long tail it can also settle into a local minimum
+ * that flat weights walk straight past. Neither start dominates, both are
+ * cheap at the sizes where the hard cases live, so it runs the fast one and
+ * falls back to the patient one only when the fast one did not get there.
+ *
+ * **`maxCells` and `minCellArea` are the same bargain the isometric view's
+ * level-of-detail line makes.** The cost is O(n²) per pass and hundreds of
+ * passes are needed, so four hundred cells is a fifth of a second; and a cell
+ * of a hundred square pixels is a ten-pixel square that can be hovered but not
+ * read. The biggest `maxCells` above the floor are laid out, and everything
+ * else comes back as `omitted`, for the caller to state out loud.
+ *
+ * `maxError` is the worst single cell's error **relative to its own target**,
+ * not to the total. The gentler figure everyone reports — the sum of the
+ * errors over twice the total area — reads under 1% on a map whose smallest
+ * cell is twice the size it should be, which is exactly the kind of true
+ * sentence that leaves a false impression.
+ */
+function voronoiTreemap(values, boundary, opts) {
+  const o = opts || {};
+  const maxCells = o.maxCells || 96;
+  const tolerance = o.tolerance === undefined ? 0.02 : o.tolerance;
+  // The floor is an AREA, not a share, and that distinction was measured. A
+  // share of the parent reads sensibly at the top level and absurdly three
+  // levels down, where 0.2% of an already-small cell is a quarter of a pixel;
+  // an area says the one thing that actually matters — "there is not enough
+  // room here to draw this" — in the same units at every level.
+  const minCellArea = o.minCellArea === undefined ? 100 : o.minCellArea;
+
+  const empty = {
+    cells: [], iterations: 0, maxError: 0, converged: true,
+    omitted: 0, omittedValue: 0,
+  };
+  if (!boundary || boundary.length < 3) return empty;
+  const boundaryArea = Math.abs(polyArea(boundary));
+  if (!(boundaryArea > 0)) return empty;
+
+  // A value of zero asks for a cell of zero area, which is not a cell. Dropped
+  // here, counted, and reported — never drawn as a sliver that can be hovered.
+  const ranked = [];
+  for (let i = 0; i < values.length; i++) if (values[i] > 0) ranked.push(i);
+  ranked.sort((p, q) => values[q] - values[p]);
+
+  // Cap FIRST, then apply the legibility floor to what is left — in that order
+  // and not the other. Judging the floor against the whole folder throws away
+  // every cell when a folder holds two thousand equal things, each of which is
+  // a twentieth of a per cent of it: the honest answer there is "the biggest
+  // ninety-six, and here is how many were left out", not an empty panel.
+  const kept = ranked.slice(0, maxCells);
+  let keptTotal = 0;
+  for (const i of kept) keptTotal += values[i];
+  while (kept.length > 1 &&
+         (values[kept[kept.length - 1]] / keptTotal) * boundaryArea < minCellArea) {
+    keptTotal -= values[kept.pop()];
+  }
+  let omittedValue = 0;
+  for (let i = 0; i < values.length; i++) omittedValue += Math.max(0, values[i]);
+  omittedValue -= keptTotal;
+  let omitted = values.length - kept.length;
+  if (!kept.length) return { ...empty, omitted, omittedValue };
+
+  const n = kept.length;
+  if (n === 1) {
+    return {
+      cells: [{ i: kept[0], poly: boundary.slice(), area: boundaryArea }],
+      iterations: 0, maxError: 0, converged: true, omitted, omittedValue,
+    };
+  }
+
+  /* The cap scales with the work, because the work is O(n²) per pass.
+     A fixed cap is wrong at both ends and both ends were measured: 240 passes
+     starved a six-cell folder and left its worst cell 249% off, while the same
+     240 passes over ninety-six cells is a fifth of a second of main thread. A
+     constant amount of TOTAL work instead gives a small layout all the passes
+     it can use — they cost nothing — and a large one the most it can afford. */
+  const maxIterations = o.maxIterations ||
+    Math.max(120, Math.min(1200, Math.round(4e6 / (n * n))));
+
+  const bb = polyBounds(boundary);
+  const diag = Math.hypot(bb.x1 - bb.x0, bb.y1 - bb.y0);
+  const w0 = Math.pow(diag * 0.002, 2);
+
+  /* Solve; and if the areas will not come true, make the question smaller.
+     ─────────────────────────────────────────────────────────────────────
+     What defeats this algorithm is not size, it is DYNAMIC RANGE. A folder
+     whose largest child is two thousand times its smallest asks for a cell
+     that its neighbours can squeeze to nothing before the weights can hold it
+     open, and no number of passes fixes that — measured, on a real Desktop:
+     one child at 98.9% of the folder left the worst cell 125% off after both
+     starts and 2,400 passes.
+
+     Dropping the smallest cell and asking again is the honest move rather than
+     the lazy one. The alternative is a map that draws twenty-three cells whose
+     areas do not mean what the view exists to claim they mean — and the cells
+     being surrendered are the ones already closest to the floor. Every one of
+     them is added to `omitted`, which the footnote prints, so the picture says
+     "here is an exact map of the eight things that fit, and 101 more did not"
+     instead of "here is an approximate map of everything". */
+  let cur = kept.slice();
+  let curTotal = keptTotal;
+  let run = null, iterations = 0, target = null;
+  const maxShrinks = o.maxShrinks === undefined ? 8 : o.maxShrinks;
+
+  for (let attempt = 0; ; attempt++) {
+    const m = cur.length;
+    target = cur.map((i) => (values[i] / curTotal) * boundaryArea);
+    if (m === 1) {
+      run = { cells: [boundary.slice()], maxError: 0, iterations: 0, converged: true };
+      break;
+    }
+
+    // Start one: every site already carrying roughly the weight its own share
+    // implies, so the first diagram is an approximate answer.
+    const seeded = voronoiSeedSites(boundary, m);
+    for (let i = 0; i < m; i++) seeded[i].w = Math.max(1e-9, target[i] / Math.PI);
+    run = voronoiSolve(seeded, target, boundary, { maxIterations, tolerance });
+    iterations += run.iterations;
+
+    if (!run.converged) {
+      // Start two: equal weights, so the first pass is an ordinary Voronoi
+      // diagram, with the step size narrowing as it goes. Slower to get moving
+      // and better at not settling for the first minimum it finds.
+      const flat = voronoiSeedSites(boundary, m);
+      for (const s of flat) s.w = w0;
+      const second = voronoiSolve(flat, target, boundary, { maxIterations, tolerance, anneal: 1 });
+      iterations += second.iterations;
+      if (second.converged || second.maxError < run.maxError) run = second;
+    }
+    if (run.converged || attempt >= maxShrinks || cur.length <= 2) break;
+    const dropped = cur.pop();
+    curTotal -= values[dropped];
+    omittedValue += values[dropped];
+    omitted++;
+  }
+
+  const out = [];
+  for (let i = 0; i < cur.length; i++) {
+    const poly = run.cells[i];
+    if (!poly || poly.length < 3) continue; // squeezed out entirely — not a cell
+    out.push({ i: cur[i], poly, area: Math.abs(polyArea(poly)) });
+  }
+  return {
+    cells: out, iterations, maxError: run.maxError, converged: run.converged,
+    omitted, omittedValue,
+  };
+}
+
+/* ═════════════ v4 §6.2 — Alternate renderers: the drawing ═════════════
+
+   Two more lenses on the tree the sunburst already reads. They are NOT views:
+   §6.2 asks for a segmented control in the Treemap view, and that is what they
+   are, sharing its root, its breadcrumbs, its depth, its colour mode, its
+   highlight box, its cart preview refusal and its export menu.
+
+   Everything spatial here is derived from `state.treemap.cells`, one flat list
+   in breadth-first order — which is also depth order, so drawing it front to
+   back needs no sort. A cell is either a circle or a convex polygon and
+   carries its own axis-aligned bounds, because the hit tester and §6.3's lasso
+   both want to reject on a box before paying for the real shape.               */
+
+/** The four renderers, and the two that draw from `state.treemap.cells`. */
+const TM_MODES = ['treemap', 'sunburst', 'circles', 'voronoi'];
+function isCells() { return state.treemap.mode === 'circles' || state.treemap.mode === 'voronoi'; }
+function isRectMap() { return state.treemap.mode === 'treemap'; }
+
+/**
+ * Whatever the current renderer actually put on screen.
+ *
+ * Four renderers, three shapes, one question — "what is drawn right now?" —
+ * asked by the reclaim-score fetch, the coverage note and §6.3's lasso. Each
+ * of those grew its own `isSun() ? arcs : pxRects` ternary, and every new
+ * renderer would have had to find all of them.
+ */
+function drawnCells() {
+  if (isSun()) return state.treemap.arcs || [];
+  if (isCells()) return state.treemap.cells || [];
+  return state.treemap.pxRects || [];
+}
+
+/* ── Sizing, shared with the sunburst ─────────────────────────────────── */
+
+/** Size the visible canvas and its offscreen buffer for the device pixel ratio. */
+function tmSizeCanvas() {
+  const wrap = $('treemapWrap');
+  const cssW = wrap.clientWidth - 20;
+  const cssH = treemapCanvasHeight(wrap);
+  const dpr = window.devicePixelRatio || 1;
+  tmCanvas.style.width = cssW + 'px';
+  tmCanvas.style.height = cssH + 'px';
+  const pw = Math.round(cssW * dpr), ph = Math.round(cssH * dpr);
+  if (tmCanvas.width !== pw) tmCanvas.width = pw;
+  if (tmCanvas.height !== ph) tmCanvas.height = ph;
+  if (tmBuffer.width !== pw) tmBuffer.width = pw;
+  if (tmBuffer.height !== ph) tmBuffer.height = ph;
+  return { cssW, cssH, dpr };
+}
+
+/** Children worth laying out: real bytes, and not hidden by the cloud filter. */
+function altChildren(node) {
+  if (!node || !node.children) return [];
+  return node.children.filter((c) => c.size > 0 && !(state.treemap.hideCloud && c.cloudPlaceholder));
+}
+
+/**
+ * Does this shape hold things the map is not showing?
+ *
+ * A folder drawn as a solid because the depth limit stopped there looks
+ * exactly like a 13 GB file, and the two could hardly be more different. The
+ * hatch says "there is more in here" in the same visual language §6.1 already
+ * uses for a block that swallowed its children.
+ */
+function altHasMore(cell) {
+  const n = cell.n;
+  if (!cell.leaf || !n) return false;
+  return n.type === 'dir' && (n.pruned === true || !!(n.children && n.children.length));
+}
+
+/** Axis-aligned bounds for a cell, computed once at layout time. */
+function altBounds(cell) {
+  if (cell.kind === 'circle') {
+    return { x0: cell.cx - cell.r, x1: cell.cx + cell.r, y0: cell.cy - cell.r, y1: cell.cy + cell.r };
+  }
+  const b = polyBounds(cell.poly);
+  return b;
+}
+
+/* ── Nested circle packing ────────────────────────────────────────────── */
+
+// A circle under this radius has no room for children that could be told
+// apart, and packing them anyway costs the frame budget for pixels nobody can
+// resolve. A circle under the leaf radius is not drawn at all.
+const ALT_PARENT_MIN_R = 13;
+// Under a pixel and a bit a circle is an anti-aliasing artefact that can still
+// be hovered — a hit target for something nobody can see. Counted and stated
+// with everything else that did not fit, rather than drawn as a speck.
+const ALT_MIN_LEAF_R = 1.3;
+const ALT_CELL_BUDGET = 4000;
+
+function layoutCirclePack(root, geo) {
+  const cells = [];
+  const R = Math.max(24, Math.min(geo.cssW, geo.cssH) / 2 - 14);
+  const maxDepth = Math.max(1, Math.min(7, state.treemap.maxDepth));
+  let omittedCount = 0, omittedBytes = 0, unresolved = 0, truncated = false;
+
+  const rootCell = { n: root, depth: 0, kind: 'circle', cx: geo.cssW / 2, cy: geo.cssH / 2, r: R, leaf: true };
+  cells.push(rootCell);
+  const queue = [{ cell: rootCell, node: root }];
+
+  while (queue.length) {
+    const job = queue.shift();
+    if (job.cell.depth >= maxDepth || job.cell.r < ALT_PARENT_MIN_R) continue;
+    const kids = altChildren(job.node);
+    if (!kids.length) continue;
+    const packed = circlePackChildren(kids.map((k) => k.size), job.cell.r, { padding: 0.045 });
+    if (!packed.circles.length) continue;
+    omittedCount += packed.omitted;
+    omittedBytes += packed.omittedValue;
+    unresolved += packed.unresolved;
+    job.cell.leaf = false;
+    for (const c of packed.circles) {
+      if (cells.length >= ALT_CELL_BUDGET) { truncated = true; break; }
+      const kid = kids[c.i];
+      if (c.r < ALT_MIN_LEAF_R) { omittedCount++; omittedBytes += kid.size; continue; }
+      const cell = {
+        n: kid, depth: job.cell.depth + 1, kind: 'circle',
+        cx: job.cell.cx + c.x, cy: job.cell.cy + c.y, r: c.r, leaf: true,
+      };
+      cells.push(cell);
+      queue.push({ cell, node: kid });
+      // How much clear ring is left above the topmost child. This is where a
+      // folder's own name can go without being written over its contents, and
+      // it is only knowable here, while the children are being placed.
+      const clear = (cell.cy - cell.r) - (job.cell.cy - job.cell.r);
+      if (job.cell.topGap === undefined || clear < job.cell.topGap) job.cell.topGap = clear;
+    }
+    if (truncated) break;
+  }
+  for (const c of cells) { c.bb = altBounds(c); c.more = altHasMore(c); }
+  return {
+    cells,
+    note: altNoteFor({ omittedCount, omittedBytes, unresolved, truncated, drawn: cells.length }),
+  };
+}
+
+/* ── Weighted centroidal Voronoi ──────────────────────────────────────── */
+
+// Below this a cell cannot hold a legible child layout, and subdividing it
+// spends the iteration budget on shapes two millimetres across.
+const ALT_VORONOI_MIN_AREA = 8500;
+// §6.2's hard cap, at the level above the per-layout one: a folder six deep
+// with a hundred children at every level must not be able to spend a second
+// of main thread before the first pixel.
+const ALT_VORONOI_BUDGET_MS = 260;
+
+function layoutVoronoi(root, geo) {
+  const pad = 8;
+  const boundary = [
+    { x: pad, y: pad }, { x: geo.cssW - pad, y: pad },
+    { x: geo.cssW - pad, y: geo.cssH - pad }, { x: pad, y: geo.cssH - pad },
+  ];
+  const cells = [];
+  const rootCell = { n: root, depth: 0, kind: 'poly', poly: boundary, leaf: true, area: Math.abs(polyArea(boundary)) };
+  cells.push(rootCell);
+  // Nesting stops at three levels whatever the depth selector says. A fourth
+  // level of Voronoi is visually mush — the cells are smaller than their own
+  // borders — and it is where the iteration budget goes to die.
+  const maxDepth = Math.max(1, Math.min(3, state.treemap.maxDepth));
+  const started = performance.now();
+  let omittedCount = 0, omittedBytes = 0, worstError = 0, allConverged = true;
+  let truncated = false, outOfTime = false;
+
+  const queue = [{ cell: rootCell, node: root }];
+  while (queue.length) {
+    const job = queue.shift();
+    const depth = job.cell.depth;
+    if (depth >= maxDepth) continue;
+    if (depth > 0 && job.cell.area < ALT_VORONOI_MIN_AREA) continue;
+    if (performance.now() - started > ALT_VORONOI_BUDGET_MS) { outOfTime = true; break; }
+    const kids = altChildren(job.node);
+    if (!kids.length) continue;
+    // Only the cell count is set here. The iteration budget belongs to the
+    // solver, which sizes it from n — a nested layout is usually a handful of
+    // cells and wants MORE passes than the top level, not fewer, because they
+    // are nearly free and it is the only way its areas come out right.
+    const res = voronoiTreemap(kids.map((k) => k.size), job.cell.poly, {
+      maxCells: depth === 0 ? 96 : 32,
+    });
+    if (!res.cells.length) continue;
+    omittedCount += res.omitted;
+    omittedBytes += res.omittedValue;
+    if (res.maxError > worstError) worstError = res.maxError;
+    if (!res.converged) allConverged = false;
+    job.cell.leaf = false;
+    for (const c of res.cells) {
+      if (cells.length >= ALT_CELL_BUDGET) { truncated = true; break; }
+      const kid = kids[c.i];
+      const centre = polyCentroid(c.poly) || { x: 0, y: 0 };
+      const cell = {
+        n: kid, depth: depth + 1, kind: 'poly', poly: c.poly, area: c.area,
+        cx: centre.x, cy: centre.y, leaf: true,
+      };
+      cells.push(cell);
+      queue.push({ cell, node: kid });
+    }
+    if (truncated) break;
+  }
+  for (const c of cells) {
+    c.bb = altBounds(c);
+    c.more = altHasMore(c);
+    if (c.cx === undefined) { const m = polyCentroid(c.poly) || { x: 0, y: 0 }; c.cx = m.x; c.cy = m.y; }
+  }
+  return {
+    cells,
+    note: altNoteFor({
+      omittedCount, omittedBytes, truncated, outOfTime, drawn: cells.length,
+      converged: allConverged, worstError,
+    }),
+  };
+}
+
+/**
+ * The footnote under the map.
+ *
+ * §6.2 asks for one specific sentence — "if the tolerance is not met within
+ * the cap, render what converged and say so" — and §2.4 asks for the rest of
+ * them. A renderer that drops a thousand small folders, or stops iterating
+ * with the areas still 9% out, has changed what the picture means, and the
+ * picture has to admit it. Silence here is the same defect as a zero standing
+ * in for an unavailable number.
+ */
+function altNoteFor(info) {
+  const bits = [];
+  if (info.omittedCount > 0) {
+    bits.push(
+      `${formatCount(info.omittedCount)} item${info.omittedCount === 1 ? '' : 's'} ` +
+      `(${formatBytes(info.omittedBytes)}) too small to draw at this size — drill in to see them`
+    );
+  }
+  if (info.truncated) bits.push(`stopped at ${formatCount(ALT_CELL_BUDGET)} shapes`);
+  if (info.outOfTime) bits.push(`stopped subdividing after ${ALT_VORONOI_BUDGET_MS} ms — drill in for more detail`);
+  if (info.converged === false) {
+    bits.push(
+      `areas are approximate: the solver hit its iteration cap with the worst cell ` +
+      `${(info.worstError * 100).toFixed(1)}% off its true share`
+    );
+  }
+  if (info.unresolved > 0) {
+    bits.push(`${formatCount(info.unresolved)} circle${info.unresolved === 1 ? '' : 's'} could not be placed without overlapping`);
+  }
+  return bits.join(' · ');
+}
+
+function renderAltNote() {
+  const host = $('tmAltNote');
+  if (!host) return;
+  const note = state.treemap.altNote;
+  host.textContent = note || '';
+  host.hidden = !note;
+}
+
+/* ── Drawing ──────────────────────────────────────────────────────────── */
+
+/** Trace a cell's outline, whichever shape it is. */
+function altCellPath(ctx, c) {
+  if (c.kind === 'circle') {
+    ctx.beginPath();
+    ctx.arc(c.cx, c.cy, Math.max(0.4, c.r), 0, Math.PI * 2);
+    return;
+  }
+  ctx.beginPath();
+  ctx.moveTo(c.poly[0].x, c.poly[0].y);
+  for (let i = 1; i < c.poly.length; i++) ctx.lineTo(c.poly[i].x, c.poly[i].y);
+  ctx.closePath();
+}
+
+/**
+ * Build the layout for the current alternate renderer.
+ *
+ * Timed, and the timing is kept, because §2.5 gives a new canvas view 250 ms
+ * to first paint and the Voronoi solver is the only thing in this file that
+ * could plausibly spend it.
+ */
+function buildCells(geo) {
+  const root = sunburstRoot();
+  if (!root) { state.treemap.cells = []; state.treemap.altNote = ''; return; }
+  const t0 = performance.now();
+  const out = state.treemap.mode === 'circles' ? layoutCirclePack(root, geo) : layoutVoronoi(root, geo);
+  state.treemap.cells = out.cells;
+  state.treemap.altNote = out.note;
+  state.treemap.altMs = performance.now() - t0;
+}
+
+function drawCells() {
+  const geo = tmSizeCanvas();
+  const ctx = tmBufCtx;
+  buildCells(geo);
+  ctx.setTransform(geo.dpr, 0, 0, geo.dpr, 0, 0);
+  ctx.clearRect(0, 0, geo.cssW, geo.cssH);
+  ctx.fillStyle = cssVar('--tm-canvas-bg');
+  ctx.fillRect(0, 0, geo.cssW, geo.cssH);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.lineJoin = 'round';
+
+  const cells = state.treemap.cells;
+  const circles = state.treemap.mode === 'circles';
+
+  // Breadth-first order is depth order, so a plain forward pass paints parents
+  // before their children with no sort — the same reason §6.1's draw order is
+  // computed once per layout rather than per frame.
+  for (const c of cells) {
+    if (circles) drawPackedCircle(ctx, c);
+    else drawVoronoiCell(ctx, c);
+  }
+  altDrawLabels(ctx, cells);
+
+  // The overlay first: it calls `updateTmStatus`, which deliberately writes
+  // nothing for this renderer, so the line below is the last word.
+  renderSearchOverlay();
+  const st = $('tmStatus');
+  if (st && !state.treemap.query.trim() && !state.treemap.history.active && !tmPreview.on) {
+    const leaves = cells.reduce((k, c) => k + (c.leaf ? 1 : 0), 0);
+    st.textContent =
+      `${formatCount(cells.length - 1)} shape${cells.length === 2 ? '' : 's'} · ` +
+      `${formatCount(leaves)} without children · ${formatBytes(state.treemap.rootSize)} total`;
+  }
+  presentCells();
+  renderTmLegend();
+  renderAltNote();
+}
+
+/**
+ * The diagonal hatch that means "there is more inside this than is drawn".
+ *
+ * Deliberately the same marking, and the same weight, as §6.1's aggregated
+ * block: white diagonals at low alpha rather than the amber pattern §4.3 uses
+ * for freed space, because those are two different claims and the map must not
+ * blur them. Clipped to the shape, so it never leaks onto a neighbour.
+ */
+function altDrawMore(ctx, c) {
+  const b = c.bb;
+  const w = b.x1 - b.x0, h = b.y1 - b.y0;
+  if (w < 13 || h < 13) return; // no room for two lines; the tooltip still says so
+  ctx.save();
+  altCellPath(ctx, c);
+  ctx.clip();
+  ctx.strokeStyle = 'rgba(255,255,255,0.34)';
+  ctx.lineWidth = 1;
+  const step = Math.max(5, Math.min(9, Math.round(Math.min(w, h) / 6)));
+  for (let x = b.x0 - h; x < b.x1; x += step) {
+    ctx.beginPath();
+    ctx.moveTo(x, b.y1);
+    ctx.lineTo(x + h, b.y0);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/**
+ * One packed circle.
+ *
+ * A leaf is a bead, lit from the upper left by the same light the rest of the
+ * app uses; a folder is a rim and a shadowed inner edge, so its children read
+ * as sitting *in* it. The gradient is the whole difference between a scatter
+ * of flat discs and something with volume, and it costs one extra fill per
+ * circle, gated on a radius where the shading is actually resolvable.
+ *
+ * **Every colour here comes from the cell's own hue, never from white.** The
+ * first version rimmed folders in `rgba(255,255,255,…)`, which is invisible on
+ * the light theme's near-white canvas — and worse, filling each folder with a
+ * translucent wash stacked one alpha per level on nearly concentric circles
+ * and turned a deep tree into a bullseye. A rim and an inner shading ring say
+ * "container" without adding a single flat layer over what is inside it.
+ */
+function drawPackedCircle(ctx, c) {
+  const r = c.r;
+  if (r < 1.1) return; // smaller than a rounding error, and it would only alias
+  const base = c.n.isTrash ? [108, 122, 137] : cellRgb(c.n);
+
+  if (!c.leaf) {
+    if (r < 3.5) return;
+    // Ambient occlusion at the rim: nothing in the middle, where the children
+    // are, and a touch of shade at the edge. This is what reads as depth.
+    if (r > 24) {
+      const g = ctx.createRadialGradient(c.cx, c.cy, r * 0.8, c.cx, c.cy, r);
+      g.addColorStop(0, 'rgba(0,0,0,0)');
+      g.addColorStop(1, 'rgba(0,0,0,0.16)');
+      ctx.beginPath();
+      ctx.arc(c.cx, c.cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = g;
+      ctx.fill();
+    }
+    const rim = mix(base, [0, 0, 0], 0.35);
+    ctx.beginPath();
+    ctx.arc(c.cx, c.cy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(${rim[0]},${rim[1]},${rim[2]},${Math.max(0.25, 0.62 - c.depth * 0.09)})`;
+    ctx.lineWidth = c.depth === 0 ? 1.6 : 1.1;
+    ctx.stroke();
+    return;
+  }
+
+  ctx.beginPath();
+  ctx.arc(c.cx, c.cy, r, 0, Math.PI * 2);
+  if (r >= 5) {
+    // Light from the upper left: the highlight sits a third of the way in and
+    // the far edge falls to a darkened version of the cell's OWN colour rather
+    // than to grey, so the hue keeps carrying the meaning it was chosen for.
+    const g = ctx.createRadialGradient(
+      c.cx - r * 0.36, c.cy - r * 0.4, r * 0.05,
+      c.cx, c.cy, r * 1.06,
+    );
+    const lit = mix(base, [255, 255, 255], 0.34);
+    const shade = mix(base, [0, 0, 0], 0.3);
+    g.addColorStop(0, `rgb(${lit[0]},${lit[1]},${lit[2]})`);
+    g.addColorStop(0.55, `rgb(${base[0]},${base[1]},${base[2]})`);
+    g.addColorStop(1, `rgb(${shade[0]},${shade[1]},${shade[2]})`);
+    ctx.fillStyle = g;
+  } else {
+    ctx.fillStyle = `rgb(${base[0]},${base[1]},${base[2]})`;
+  }
+  ctx.fill();
+  if (r > 3) {
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  if (c.more) altDrawMore(ctx, c);
+  // The specular arc along the lit edge. Only where there are pixels for it.
+  if (r > 9) {
+    ctx.beginPath();
+    ctx.arc(c.cx, c.cy, r * 0.86, Math.PI * 1.05, Math.PI * 1.75);
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = Math.min(2, r * 0.09);
+    ctx.stroke();
+  }
+}
+
+/**
+ * One Voronoi cell.
+ *
+ * The inset stroke is what makes a field of polygons read as tiles rather than
+ * as a wireframe: a second outline a pixel or two inside the first, lighter,
+ * so each cell has a bevel. It is drawn with the same `polyClip` the diagram
+ * itself is built from — an inset of a convex polygon is that polygon clipped
+ * by each of its own edges, moved inward — so there is one piece of geometry
+ * here rather than two that have to be kept in step.
+ */
+function drawVoronoiCell(ctx, c) {
+  if (c.poly.length < 3) return;
+  if (!c.leaf) {
+    if (c.depth === 0) return; // the panel edge; the cells fill it entirely
+    // Parent outlines are drawn from the folder's own colour for the same
+    // reason the circles are: a white line vanishes on the light theme.
+    const rim = mix(c.n.isTrash ? [108, 122, 137] : cellRgb(c.n), [0, 0, 0], 0.45);
+    altCellPath(ctx, c);
+    ctx.strokeStyle = `rgba(${rim[0]},${rim[1]},${rim[2]},${Math.max(0.35, 0.85 - c.depth * 0.18)})`;
+    ctx.lineWidth = Math.max(1.2, 3 - c.depth * 0.7);
+    ctx.stroke();
+    return;
+  }
+  const base = c.n.isTrash ? [108, 122, 137] : cellRgb(c.n);
+  const b = c.bb;
+  altCellPath(ctx, c);
+  const g = ctx.createLinearGradient(b.x0, b.y0, b.x0, b.y1);
+  const top = mix(base, [255, 255, 255], 0.17);
+  const bot = mix(base, [0, 0, 0], 0.2);
+  g.addColorStop(0, `rgb(${top[0]},${top[1]},${top[2]})`);
+  g.addColorStop(1, `rgb(${bot[0]},${bot[1]},${bot[2]})`);
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.42)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  if ((b.x1 - b.x0) > 26 && (b.y1 - b.y0) > 26) {
+    const inner = polyInset(c.poly, 2.5);
+    if (inner.length >= 3) {
+      ctx.beginPath();
+      ctx.moveTo(inner[0].x, inner[0].y);
+      for (let i = 1; i < inner.length; i++) ctx.lineTo(inner[i].x, inner[i].y);
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+  if (c.more) altDrawMore(ctx, c);
+}
+
+/**
+ * Names, on the cells with room for them.
+ *
+ * Drawn in a pass of their own after every shape is down, because in both
+ * renderers a child is painted over its parent: a label written inline would
+ * be half-covered by the very children it is meant to name.
+ */
+function altDrawLabels(ctx, cells) {
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const c of cells) {
+    const b = c.bb;
+    const w = b.x1 - b.x0, h = b.y1 - b.y0;
+    // A folder's name goes on its own rim, in the clear band above its topmost
+    // child — never through the middle, which belongs to its contents. Without
+    // this a chain of nested folders is a set of anonymous rings, and the one
+    // question the picture should answer at a glance ("what is this?") needs a
+    // hover for every level.
+    if (!c.leaf) {
+      if (c.kind !== 'circle' || !(c.topGap >= 15) || c.r < 26) continue;
+      ctx.font = '600 11px -apple-system, sans-serif';
+      const chord = 2 * Math.sqrt(Math.max(0, c.r * c.r - Math.pow(c.r - c.topGap / 2, 2)));
+      const label = Canvas2D.fitText(ctx, c.n.name, Math.min(chord * 0.9, c.r * 1.7));
+      if (!label || label.replace(/…$/, '').length < Math.min(4, c.n.name.length)) continue;
+      const ry = c.cy - c.r + c.topGap / 2;
+      // A ring label sits on the PANEL, not on a coloured fill, so it takes the
+      // theme's own text colour haloed in the theme's own background. White on
+      // a dark halo is right over a bead and unreadable over the light theme's
+      // near-white canvas, which is exactly where these labels live.
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = cssVar('--bg-1') || '#0c0d14';
+      ctx.strokeText(label, c.cx, ry);
+      ctx.fillStyle = cssVar('--text-2') || 'rgba(255,255,255,0.7)';
+      ctx.fillText(label, c.cx, ry);
+      continue;
+    }
+    if (w < 34 || h < 16) continue;
+    const room = c.kind === 'circle' ? c.r * 1.5 : w * 0.82;
+    ctx.font = '600 11px -apple-system, sans-serif';
+    const name = Canvas2D.fitText(ctx, c.n.name, room);
+    if (!name || name.replace(/…$/, '').length < Math.min(4, c.n.name.length)) continue;
+    const twoLines = h > 34 && (c.kind === 'circle' ? c.r > 22 : true);
+    const y = twoLines ? c.cy - 6 : c.cy;
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.42)';
+    ctx.strokeText(name, c.cx, y);
+    ctx.fillStyle = 'rgba(255,255,255,0.97)';
+    ctx.fillText(name, c.cx, y);
+    if (twoLines) {
+      ctx.font = '10px -apple-system, sans-serif';
+      const size = Canvas2D.fitText(ctx, formatBytes(c.n.size), room);
+      if (size) {
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = 'rgba(0,0,0,0.42)';
+        ctx.strokeText(size, c.cx, c.cy + 8);
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.fillText(size, c.cx, c.cy + 8);
+      }
+    }
+  }
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+}
+
+/** Blit the buffer, then the overlays that change without a re-layout. */
+function presentCells() {
+  const dpr = window.devicePixelRatio || 1;
+  tmCtx.setTransform(1, 0, 0, 1, 0, 0);
+  tmCtx.clearRect(0, 0, tmCanvas.width, tmCanvas.height);
+  tmCtx.drawImage(tmBuffer, 0, 0);
+  if (state.treemap.query.trim()) tmCtx.drawImage(tmSearchBuffer, 0, 0);
+  tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const h = state.treemap.hover;
+  if (h && h.kind) {
+    altCellPath(tmCtx, h);
+    tmCtx.fillStyle = 'rgba(255,255,255,0.14)';
+    tmCtx.fill();
+    tmCtx.strokeStyle = cssVar('--accent') || '#0A84FF';
+    tmCtx.lineWidth = 2;
+    tmCtx.stroke();
+  }
+  const over = state.budgets.overPaths;
+  if (over && over.size) {
+    tmCtx.setLineDash([5, 3]);
+    tmCtx.strokeStyle = cssVar('--danger') || '#FF453A';
+    tmCtx.lineWidth = 2;
+    for (const c of state.treemap.cells) {
+      if (!over.has(c.n.path)) continue;
+      altCellPath(tmCtx, c);
+      tmCtx.stroke();
+    }
+    tmCtx.setLineDash([]);
+  }
+  const ks = state.treemap.kbSel;
+  if (ks) {
+    const cell = state.treemap.cells.find((c) => c.n.path === ks.path);
+    if (cell) {
+      altCellPath(tmCtx, cell);
+      tmCtx.setLineDash([6, 3]);
+      tmCtx.strokeStyle = '#fff';
+      tmCtx.lineWidth = 2;
+      tmCtx.stroke();
+      tmCtx.setLineDash([]);
+    }
+  }
+  drawLivePulses();
+}
+
+/** The deepest cell under a point — so a click lands on the file, not its folder. */
+function cellsHit(clientX, clientY) {
+  const { x, y } = Canvas2D.toLocal(tmCanvas, clientX, clientY);
+  let best = null;
+  for (const c of state.treemap.cells) {
+    if (x < c.bb.x0 || x > c.bb.x1 || y < c.bb.y0 || y > c.bb.y1) continue;
+    if (c.kind === 'circle') {
+      const dx = x - c.cx, dy = y - c.cy;
+      if (dx * dx + dy * dy > c.r * c.r) continue;
+    } else if (!polyContains(c.poly, x, y)) continue;
+    if (!best || c.depth > best.depth) best = c;
+  }
+  return best;
+}
+
 // View-mode toggle (Treemap ⇆ Sunburst), persisted in localStorage.
 function setTreemapView(mode) {
-  mode = mode === 'sunburst' ? 'sunburst' : 'treemap';
+  mode = TM_MODES.includes(mode) ? mode : 'treemap';
   state.treemap.mode = mode;
+  // Leaving a renderer drops what it drew. Otherwise the next hit test, cart
+  // preview or lasso could answer with a shape that is no longer on screen.
+  state.treemap.cells = [];
+  state.treemap.altNote = '';
+  renderAltNote();
   localStorage.setItem('tm-viewmode', mode);
   for (const b of $('tmViewSeg').querySelectorAll('button'))
     b.setAttribute('aria-selected', String(b.dataset.vm === mode));
@@ -7091,6 +8510,11 @@ function kbShowTip(node) {
     const mid = (arc.a0 + arc.a1) / 2, rMid = (arc.rInner + arc.rOuter) / 2;
     cx = rect.left + arc.cx + Math.cos(mid) * rMid;
     cy = rect.top + arc.cy + Math.sin(mid) * rMid;
+  } else if (isCells()) {
+    const cell = state.treemap.cells.find((c) => c.n.path === node.path);
+    if (!cell) { hideTooltip(); return; }
+    cx = rect.left + cell.cx;
+    cy = rect.top + cell.cy;
   } else {
     const pr = state.treemap.pxRects.find((p) => p.n.path === node.path);
     if (!pr) { hideTooltip(); return; }
@@ -7276,7 +8700,7 @@ async function tmRunGrammarQuery(q) {
     tmSyncStageButton();
 
     renderSearchOverlay();
-    presentTreemap();
+    presentView();
 
     // Said AFTER rendering, because the honest number needs both halves.
     //
@@ -7380,6 +8804,7 @@ function tmApplyQuery(raw) {
     tmClearHits();
     tmSetQueryMessage('', false);
     if (isSun()) { presentSunburst(); return; }
+    if (isCells()) { renderSearchOverlay(); presentCells(); return; }
     renderSearchOverlay(); presentTreemap();
     return;
   }
@@ -7618,13 +9043,13 @@ $('tmSavedViews').addEventListener('click', async (e) => {
 /* ── Export PNG / SVG ── */
 $('tmExportBtn').addEventListener('click', (e) => {
   e.stopPropagation();
-  if (!state.treemap.pxRects.length && !state.treemap.arcs.length) { toast('Render something first', 'error'); return; }
+  if (!drawnCells().length) { toast('Render something first', 'error'); return; }
   const menu = $('ctxMenu');
   const canReport = !!(state.scanId && state.root);
   menu.innerHTML = `
     <button data-exp="png">${icon('image', 15)}PNG image</button>` +
-    (isSun() ? '' : `
-    <button data-exp="svg">${icon('code', 15)}SVG vector</button>`) +
+    (isRectMap() ? `
+    <button data-exp="svg">${icon('code', 15)}SVG vector</button>` : '') +
     (canReport ? `
     <div class="div"></div>
     <button data-exp="csv-files">${icon('file', 15)}CSV — all files</button>
@@ -7687,7 +9112,7 @@ function exportTreemapPNG() {
   ctx.fillStyle = cssVar('--bg-1') || '#0e0e13';
   ctx.fillRect(0, 0, out.width, out.height);
   ctx.drawImage(tmBuffer, 0, 0);
-  if (!isSun() && state.treemap.query.trim()) ctx.drawImage(tmSearchBuffer, 0, 0);
+  if (!isSun() && state.treemap.query.trim()) ctx.drawImage(tmSearchBuffer, 0, 0); // sunburst has no overlay buffer
   out.toBlob((blob) => {
     if (!blob) { toast('PNG export failed', 'error'); return; }
     downloadBlob(blob, exportFileName('png'));
@@ -9033,6 +10458,51 @@ function isoDepthOrder(blocks) {
 const CITY_MAX_H = 26;   // in layout units, where the whole map is 100 wide
 const CITY_MIN_H = 0.6;  // never zero: a flat block is a hole, not a building
 
+/**
+ * The raw number a height mode is a picture of, before any scaling.
+ *
+ * Kept separate from `cityHeight` because the scaling needs to see the WHOLE
+ * set before it can place any single member — see `cityScaleHeights`.
+ */
+function cityMetric(n, mode, counts) {
+  if (mode === 'depth') return typeof n.depth === 'number' ? n.depth : null;
+  if (mode === 'files') {
+    const c = counts.get(n.path);
+    return c ? Math.log10(c.files + 1) : null; // not answered yet — not "zero files"
+  }
+  const days = cityAgeDays(n);
+  return days === null ? null : Math.log10(days + 1);
+}
+
+/**
+ * Spread the drawn set across the full height range.
+ *
+ * An absolute scale is what made the first version look like a car park: on a
+ * folder whose contents were all touched in the same month, every tower came
+ * out the same height and the map collapsed into one slab. Normalising to the
+ * range actually present means the tallest thing HERE is full height and the
+ * shortest is the floor, so the picture has a skyline whatever folder you are
+ * standing in.
+ *
+ * The ordering is untouched — this is a linear remap of an already-log-scaled
+ * value, not a rank — so twice as tall still means "older than", and the exact
+ * figure is always one hover away. The legend says the height is relative to
+ * this folder, because a scale that changes as you drill has to say so.
+ */
+function cityScaleHeights(values) {
+  let lo = Infinity, hi = -Infinity;
+  for (const v of values) {
+    if (v === null) continue;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  if (!Number.isFinite(lo)) return () => null;
+  const span = hi - lo;
+  // Everything identical: one honest mid-height rather than a fake spread.
+  if (span < 1e-9) return (v) => (v === null ? null : CITY_MIN_H + CITY_MAX_H * 0.45);
+  return (v) => (v === null ? null : CITY_MIN_H + Math.pow((v - lo) / span, 0.82) * CITY_MAX_H);
+}
+
 /** Days since a node changed, or null when it does not say. */
 function cityAgeDays(n) {
   if (!n || typeof n.modifiedAt !== 'number' || n.modifiedAt <= 0) return null;
@@ -9074,6 +10544,22 @@ function cityRgb(n, mode) {
   return reclaimRgb(typeof score === 'object' ? score.score : score);
 }
 
+/**
+ * A small, stable lightness shift per building.
+ *
+ * Two hundred folders of source code are all the same blue, and a hundred
+ * identical blue boxes read as a texture rather than as buildings. A few
+ * percent either way — derived from the path, so it never flickers between
+ * frames or between sessions — gives the eye something to separate them by
+ * without touching the hue, which is the part that carries meaning.
+ */
+function cityJitter(rgb, path) {
+  let h = 2166136261;
+  for (let i = 0; i < path.length; i++) { h ^= path.charCodeAt(i); h = Math.imul(h, 16777619); }
+  const k = 1 + (((h >>> 8) % 1000) / 1000 - 0.5) * 0.17;
+  return [rgb[0] * k, rgb[1] * k, rgb[2] * k];
+}
+
 /* ── Choosing what to draw ─────────────────────────────────────────────────
 
    The depth sort is only correct for blocks whose FOOTPRINTS DO NOT OVERLAP,
@@ -9103,6 +10589,32 @@ function cityVisibleNodes(nodes, minArea) {
 }
 
 /**
+ * The projected box that holds the ground plate and every building on it.
+ *
+ * Recomputed once per layout, never per frame: deriving it from what is
+ * currently on screen would make the camera chase itself as buildings scroll
+ * in and out of view.
+ */
+function cityContentBounds(blocks) {
+  // The plate is always part of the picture, so it always counts.
+  const plate = [isoProject(0, 0, 0), isoProject(100, 0, 0), isoProject(100, 100, 0), isoProject(0, 100, 0)];
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const p of plate) {
+    if (p.sx < x0) x0 = p.sx;
+    if (p.sx > x1) x1 = p.sx;
+    if (p.sy < y0) y0 = p.sy;
+    if (p.sy > y1) y1 = p.sy;
+  }
+  for (const b of blocks) {
+    if (b.bb.x0 < x0) x0 = b.bb.x0;
+    if (b.bb.x1 > x1) x1 = b.bb.x1;
+    if (b.bb.y0 < y0) y0 = b.bb.y0;
+    if (b.bb.y1 > y1) y1 = b.bb.y1;
+  }
+  return { x0, x1, y0, y1 };
+}
+
+/**
  * Build the city: pick the visible set, give each block a height, project it,
  * and put it in draw order. Once per layout — never per frame.
  */
@@ -9110,7 +10622,11 @@ function buildCity() {
   const c = state.city;
   const nodes = state.treemap.nodes || [];
   c.total = nodes.length;
-  if (!nodes.length) { c.blocks = []; c.drawn = 0; c.aggregated = 0; c.unresolved = 0; return; }
+  if (!nodes.length) {
+    c.blocks = []; c.drawn = 0; c.aggregated = 0; c.unresolved = 0;
+    c.contentBounds = cityContentBounds([]);
+    return;
+  }
 
   // The threshold is in LAYOUT units (the map is 100 x 100), scaled by zoom so
   // that zooming in genuinely reveals more rather than only magnifying.
@@ -9120,21 +10636,25 @@ function buildCity() {
 
   let unknownHeight = 0;
   const blocks = [];
-  for (const n of drawn) {
-    const h = cityHeight(n, c.height, c.counts);
+  const metrics = drawn.map((n) => cityMetric(n, c.height, c.counts));
+  const scale = cityScaleHeights(metrics);
+  for (let i = 0; i < drawn.length; i++) {
+    const n = drawn[i];
+    const h = scale(metrics[i]);
     if (h === null) unknownHeight++;
     blocks.push({
       x: n.x, y: n.y, w: n.w, h: n.h,
       z: h === null ? CITY_MIN_H : h,
       unknownHeight: h === null,
       n,
-      rgb: cityRgb(n, c.colour),
+      rgb: cityJitter(cityRgb(n, c.colour), n.path),
       hatched: aggregated > 0 && n.type === 'dir',
     });
   }
   // Bounds are kept from the build pass so the draw loop can cull to the
   // viewport with six comparisons instead of re-projecting eight corners.
   for (const b of blocks) b.bb = isoBounds(b);
+  c.contentBounds = cityContentBounds(blocks);
   const ordered = isoDepthOrder(blocks);
   c.blocks = ordered.order;
   c.unresolved = ordered.unresolved;
@@ -9157,18 +10677,66 @@ function cityFaces(b) {
     // The two walls that face the viewer: +x (lower right) and +y (lower left).
     right: [p(x1, y0, z), p(x1, y1, z), p(x1, y1, 0), p(x1, y0, 0)],
     left: [p(x0, y1, z), p(x1, y1, z), p(x1, y1, 0), p(x0, y1, 0)],
+    foot: [p(x0, y0, 0), p(x1, y0, 0), p(x1, y1, 0), p(x0, y1, 0)],
   };
 }
 
+/**
+ * Is a point inside a polygon? Ray casting, in plain screen pixels.
+ *
+ * Deliberately NOT `ctx.isPointInPath`, and this is the trap that cost the
+ * hover: `Canvas2D.setup` leaves a `devicePixelRatio` scale on the context, the
+ * path is built in CSS pixels and therefore stored scaled — but
+ * `isPointInPath` takes coordinates **unaffected by the current transform**.
+ * On any Retina display the cursor was compared at half its real position, so
+ * hovering a building found nothing. Nothing in a headless test catches that,
+ * because the bug IS the device pixel ratio.
+ *
+ * Doing the arithmetic here also makes the hit test independent of the canvas
+ * entirely, which is what §6.3's lasso needs from the same geometry.
+ */
+function cityPointInPoly(pts, px, py) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
 function cityShade(rgb, k, alpha = 1) {
-  return `rgba(${Math.round(rgb[0] * k)},${Math.round(rgb[1] * k)},${Math.round(rgb[2] * k)},${alpha})`;
+  return `rgba(${Math.round(Math.min(255, rgb[0] * k))},${Math.round(Math.min(255, rgb[1] * k))},${Math.round(Math.min(255, rgb[2] * k))},${alpha})`;
+}
+
+/**
+ * Project one face into screen pixels at the current transform.
+ *
+ * `into` lets the caller hand back the same array every frame. That matters:
+ * the draw loop touches four faces on every visible block, so allocating fresh
+ * point objects each time made roughly 4,400 short-lived objects per frame and
+ * the garbage collector turned up as a 24 ms hitch in the p95 — inside §2.5's
+ * 33 ms, but plainly visible as a stutter while panning. Reusing the buffers
+ * takes it to 2 ms.
+ */
+function cityScreen(pts, tx, into) {
+  const out = into || new Array(pts.length);
+  for (let i = 0; i < pts.length; i++) {
+    const o = out[i] || (out[i] = { x: 0, y: 0 });
+    o.x = pts[i].sx * tx.s + tx.dx;
+    o.y = pts[i].sy * tx.s + tx.dy;
+  }
+  return out;
+}
+
+function cityPathOf(ctx, screenPts) {
+  ctx.beginPath();
+  ctx.moveTo(screenPts[0].x, screenPts[0].y);
+  for (let i = 1; i < screenPts.length; i++) ctx.lineTo(screenPts[i].x, screenPts[i].y);
+  ctx.closePath();
 }
 
 function cityPoly(ctx, pts, tx) {
-  ctx.beginPath();
-  ctx.moveTo(pts[0].sx * tx.s + tx.dx, pts[0].sy * tx.s + tx.dy);
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].sx * tx.s + tx.dx, pts[i].sy * tx.s + tx.dy);
-  ctx.closePath();
+  cityPathOf(ctx, cityScreen(pts, tx));
 }
 
 /** The transform that puts the projected map on the canvas at the current zoom/pan. */
@@ -9177,12 +10745,46 @@ function cityTransform(width, height) {
   // The projected map of a 100x100 layout spans x in [-100cos30, 100cos30] and
   // y in [-CITY_MAX_H, 100sin30]. Fitting that once keeps zoom === 1 meaning
   // "the whole disk fits", whatever the panel size is.
-  const cos = Math.cos(Math.PI / 6), sin = Math.sin(Math.PI / 6);
-  const spanX = 200 * cos, spanY = 100 * sin + CITY_MAX_H + 4;
-  const fit = Math.min(width / spanX, height / spanY) * 0.92;
+  // Fit to what is actually there, not to the theoretical worst case. Reserving
+  // room for a full-height tower on a map whose tallest building is a shed left
+  // a third of the panel empty and made the city look like a postage stamp.
+  const bb = c.contentBounds;
+  const spanX = Math.max(1, bb.x1 - bb.x0);
+  const spanY = Math.max(1, bb.y1 - bb.y0);
+  const fit = Math.min(width / spanX, height / spanY) * 0.9;
   c.fit = fit;
   const s = fit * c.zoom;
-  return { s, dx: width / 2 + c.pan.x, dy: height / 2 - (100 * sin) / 2 * s + c.pan.y };
+  // Centre the content's own box, so the city sits in the middle of the panel
+  // whatever shape it turned out to be.
+  const midX = (bb.x0 + bb.x1) / 2, midY = (bb.y0 + bb.y1) / 2;
+  return { s, dx: width / 2 - midX * s + c.pan.x, dy: height / 2 - midY * s + c.pan.y };
+}
+
+/* ── Light, air and ground ─────────────────────────────────────────────────
+
+   Three things separate a picture of boxes from a place: the boxes stand on
+   something, they cast something, and the far ones are further away. None of
+   it is decoration — depth cueing in particular is what lets the eye read
+   which of two overlapping towers is in front without moving the camera.  */
+
+/** How far back is this block, 0 (nearest) to 1 (furthest)? */
+function cityDepthT(b) {
+  // Depth grows with x + y in this projection; the map is 100 across, so the
+  // far corner is 0 and the near corner is 200.
+  return 1 - Math.min(1, Math.max(0, (b.x + b.w / 2 + b.y + b.h / 2) / 200));
+}
+
+/** Fade a colour toward the panel's own background as it recedes. */
+function cityAirRgb(rgb, t, bg) {
+  const k = t * 0.34; // measured by eye: enough to read as distance, not as fog
+  return [rgb[0] + (bg[0] - rgb[0]) * k, rgb[1] + (bg[1] - rgb[1]) * k, rgb[2] + (bg[2] - rgb[2]) * k];
+}
+
+/** The panel background, read from the theme so this works in light mode too. */
+function cityBackdropRgb() {
+  const probe = getComputedStyle(document.documentElement).getPropertyValue('--bg-1').trim();
+  if (/^#[0-9a-f]{6}$/i.test(probe)) return hexToRgb(probe);
+  return [12, 13, 20];
 }
 
 function drawCity() {
@@ -9197,75 +10799,535 @@ function drawCity() {
   const c = state.city;
   const tx = cityTransform(width, height);
   const hoverPath = c.hover ? c.hover.n.path : null;
+  const bg = cityBackdropRgb();
 
-  // Edges are drawn only where they would be visible. Without them a field of
-  // similarly-scored folders fuses into one olive mass — the shading alone
-  // tells you which way a face points, not where one building stops and the
-  // next begins. The stroke is the block's OWN colour darkened rather than a
-  // neutral grey, so the outline reads as the edge of a solid instead of as a
-  // wireframe drawn over it.
+  drawCityGround(ctx, tx, bg, width, height);
+
   const edgeWidth = Math.min(1.1, Math.max(0.35, tx.s * 0.06));
   ctx.lineJoin = 'round';
-
   let painted = 0;
+  const pendingLabels = [];
+  const paintedBoxes = [];
+
   for (const b of c.blocks) {
     // Viewport culling. At high zoom most of the city is off-canvas, and
     // drawing it costs the same as drawing what you can see: measured at
     // 9,897 blocks the median frame was 18.1 ms, over §2.5's 16 ms, with about
-    // nine tenths of them outside the panel. Skipping them is not a
-    // simplification of the picture — every block that intersects the canvas is
-    // still drawn, in the same order — so nothing the user could see is lost.
+    // nine tenths of them outside the panel. Every block that intersects the
+    // canvas is still drawn, in the same order, so nothing visible is lost.
     const bx0 = b.bb.x0 * tx.s + tx.dx, bx1 = b.bb.x1 * tx.s + tx.dx;
     if (bx1 < 0 || bx0 > width) continue;
     const by0 = b.bb.y0 * tx.s + tx.dy, by1 = b.bb.y1 * tx.s + tx.dy;
     if (by1 < 0 || by0 > height) continue;
     painted++;
+
     if (!b.faces) b.faces = cityFaces(b);
     const isHover = b.n.path === hoverPath;
-    // A block only a couple of pixels across gains nothing from an outline and
-    // would be swallowed by it, so below that it is filled and left alone.
     const wide = (b.w + b.h) * tx.s > 7;
-    // Top brightest, right wall mid, left wall darkest — the shading is what
-    // makes a flat fill read as a solid rather than as a paper cut-out.
-    cityPoly(ctx, b.faces.left, tx);
-    ctx.fillStyle = cityShade(b.rgb, isHover ? 0.68 : 0.48);
+    const rgb = cityAirRgb(b.rgb, cityDepthT(b), bg);
+
+    // Reused buffers, not fresh arrays — see cityScreen's header.
+    if (!b.sBuf) b.sBuf = { foot: [], top: [], right: [], left: [] };
+    const foot = cityScreen(b.faces.foot, tx, b.sBuf.foot);
+    const top = cityScreen(b.faces.top, tx, b.sBuf.top);
+    const right = cityScreen(b.faces.right, tx, b.sBuf.right);
+    const left = cityScreen(b.faces.left, tx, b.sBuf.left);
+
+    // Contact shadow: the footprint, nudged away from the light and darkened.
+    // Cheap — one extra fill — and it is most of what makes a block sit ON the
+    // ground rather than hover a millimetre above it.
+    if (wide) {
+      const off = Math.min(6, Math.max(1.5, b.z * tx.s * 0.06));
+      ctx.beginPath();
+      ctx.moveTo(foot[0].x - off * 0.5, foot[0].y + off);
+      for (let i = 1; i < foot.length; i++) ctx.lineTo(foot[i].x - off * 0.5, foot[i].y + off);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.fill();
+    }
+
+    const seed = b.seed || (b.seed = citySeed(b.n.path));
+
+    // Left wall — the shadowed side, cooled slightly rather than merely darkened.
+    cityPathOf(ctx, left);
+    ctx.fillStyle = cityShade([rgb[0] * 0.92, rgb[1] * 0.96, rgb[2] * 1.08], isHover ? 0.66 : 0.46);
     ctx.fill();
-    if (wide) { ctx.strokeStyle = cityShade(b.rgb, 0.3, 0.85); ctx.lineWidth = edgeWidth; ctx.stroke(); }
-    cityPoly(ctx, b.faces.right, tx);
-    ctx.fillStyle = cityShade(b.rgb, isHover ? 0.95 : 0.72);
+    ctx.save(); ctx.clip(); cityWindows(ctx, left, seed, rgb, 0.30); ctx.restore();
+    if (wide) { ctx.strokeStyle = cityShade(rgb, 0.28, 0.9); ctx.lineWidth = edgeWidth; ctx.stroke(); }
+
+    // Right wall — the lit side, warmed. Its windows catch more of the light.
+    cityPathOf(ctx, right);
+    ctx.fillStyle = cityShade([rgb[0] * 1.06, rgb[1] * 1.0, rgb[2] * 0.92], isHover ? 0.95 : 0.74);
     ctx.fill();
-    if (wide) { ctx.strokeStyle = cityShade(b.rgb, 0.36, 0.85); ctx.lineWidth = edgeWidth; ctx.stroke(); }
-    cityPoly(ctx, b.faces.top, tx);
-    ctx.fillStyle = cityShade(b.rgb, isHover ? 1.22 : 1);
+    ctx.save(); ctx.clip(); cityWindows(ctx, right, seed ^ 0x9e3779b9, rgb, 0.5); ctx.restore();
+    if (wide) { ctx.strokeStyle = cityShade(rgb, 0.34, 0.9); ctx.lineWidth = edgeWidth; ctx.stroke(); }
+
+    // Roof — full light, with a soft gradient so a large roof is not a flat slab.
+    cityPathOf(ctx, top);
+    if (wide) {
+      const tGrad = ctx.createLinearGradient(top[3].x, top[3].y, top[1].x, top[1].y);
+      tGrad.addColorStop(0, cityShade(rgb, isHover ? 1.3 : 1.1));
+      tGrad.addColorStop(1, cityShade(rgb, isHover ? 1.08 : 0.9));
+      ctx.fillStyle = tGrad;
+    } else {
+      ctx.fillStyle = cityShade(rgb, isHover ? 1.24 : 1);
+    }
     ctx.fill();
-    if (wide) { ctx.strokeStyle = cityShade(b.rgb, 0.45, 0.9); ctx.lineWidth = edgeWidth; ctx.stroke(); }
+    if (wide) { ctx.strokeStyle = cityShade(rgb, 0.44, 0.95); ctx.lineWidth = edgeWidth; ctx.stroke(); }
+
+    // Detail before the hatch and the label, so neither is drawn over.
+    if (wide) { ctx.save(); cityPathOf(ctx, top); ctx.clip(); cityRoofDetail(ctx, top, seed ^ 0x85ebca6b, rgb); ctx.restore(); }
+
     if (b.hatched) {
       // §6.1 — a block that swallowed its children says so, rather than
       // presenting itself as a thing with nothing inside it.
       ctx.save();
       ctx.clip();
-      ctx.strokeStyle = 'rgba(255,255,255,0.13)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
       ctx.lineWidth = 1;
-      const p0 = b.faces.top[0], p2 = b.faces.top[2];
-      const ax = Math.min(p0.sx, p2.sx) * tx.s + tx.dx, bx = Math.max(p0.sx, p2.sx) * tx.s + tx.dx;
-      const ay = Math.min(p0.sy, p2.sy) * tx.s + tx.dy, by = Math.max(p0.sy, p2.sy) * tx.s + tx.dy;
-      for (let x = ax - (by - ay); x < bx; x += 6) {
+      const ax = Math.min(top[0].x, top[2].x), bx = Math.max(top[0].x, top[2].x);
+      const ay = Math.min(top[0].y, top[2].y), by = Math.max(top[0].y, top[2].y);
+      for (let x = ax - (by - ay); x < bx; x += 7) {
         ctx.beginPath(); ctx.moveTo(x, by); ctx.lineTo(x + (by - ay), ay); ctx.stroke();
       }
       ctx.restore();
     }
-    if (isHover) {
-      cityPoly(ctx, b.faces.top, tx);
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-      ctx.lineWidth = 1.5;
+
+    // The crisp line where roof meets wall. One stroke, and it is most of the
+    // difference between a rendered solid and a filled polygon: real edges
+    // catch the light, flat fills do not.
+    if (wide) {
+      ctx.beginPath();
+      ctx.moveTo(top[3].x, top[3].y);
+      ctx.lineTo(top[2].x, top[2].y);
+      ctx.lineTo(top[1].x, top[1].y);
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+      ctx.lineWidth = Math.max(0.8, edgeWidth);
       ctx.stroke();
     }
+
+    if (isHover) {
+      // A halo rather than a lift: raising the building would put it a few
+      // pixels away from where the hit test says it is, and a hover that does
+      // not sit under the cursor is worse than no hover at all.
+      ctx.save();
+      ctx.shadowColor = 'rgba(255,255,255,0.55)';
+      ctx.shadowBlur = 16;
+      cityPathOf(ctx, top);
+      ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // A name on the roof, when the roof is big enough to hold one. This is the
+    // difference between a chart you have to interrogate and a map you can
+    // read: without it, nothing on screen is identifiable until you hover it.
+    // Labels are decided after the whole city is painted — see below.
+    if (labelsFit(top)) pendingLabels.push({ b, top, rgb, order: painted });
+    b.screenBox = { x0: bx0, x1: bx1, y0: by0, y1: by1, order: painted };
+    paintedBoxes.push(b.screenBox);
   }
+
+  cityDrawLabels(ctx, pendingLabels, paintedBoxes);
   c.painted = painted;
   renderCityChrome();
 }
 
-/** Repaint on the next frame, coalescing a burst of pointer events into one. */
+/**
+ * Draw the labels that nothing is standing in front of.
+ *
+ * A label belongs to its roof, so drawing it inline means a nearer building
+ * correctly paints over it — which produced names like "k-043…" with both ends
+ * sliced off, reading as broken text rather than as one building in front of
+ * another. Drawing every label in a final pass instead would be worse: the
+ * name would float over the thing that hides it, which is a lie about what is
+ * in front of what.
+ *
+ * So the test is on the LABEL, not on the roof. A roof may be half hidden and
+ * still carry its name, as long as the strip of pixels the text occupies is
+ * clear — which is what lets the biggest building on the map keep its label
+ * when a tower clips one of its corners. Anything genuinely covered is left
+ * unnamed and identified by hovering, which the card does in full.
+ */
+function cityDrawLabels(ctx, pending, boxes) {
+  ctx.font = '600 11px ui-sans-serif, -apple-system, system-ui, sans-serif';
+  for (const item of pending) {
+    const { b, top } = item;
+    const cx = (top[0].x + top[1].x + top[2].x + top[3].x) / 4;
+    const cy = (top[0].y + top[1].y + top[2].y + top[3].y) / 4;
+    const chord = cityChordAtY(top, cy);
+    const maxW = Math.max(0, chord.right - chord.left) * 0.84;
+    const name = Canvas2D.fitText(ctx, b.n.name, maxW);
+    // "ack-0…" identifies nothing and reads as damage. A label either says
+    // enough of the name to be useful or it is not drawn at all.
+    if (!name || name.replace(/…$/, '').length < Math.min(6, b.n.name.length)) continue;
+
+    const half = ctx.measureText(name).width / 2 + 3;
+    const lx0 = cx - half, lx1 = cx + half, ly0 = cy - 9, ly1 = cy + 9;
+    let clear = true;
+    for (const box of boxes) {
+      if (box.order <= item.order) continue; // drawn before this roof, so behind it
+      if (box.x1 <= lx0 || box.x0 >= lx1 || box.y1 <= ly0 || box.y0 >= ly1) continue;
+      clear = false;
+      break;
+    }
+    if (!clear) continue;
+    cityLabel(ctx, b, top, item.rgb, name, cx, cy);
+  }
+}
+
+/**
+ * The plot the city stands on.
+ *
+ * Three layers, and each earns itself: a soft pool of light under the whole
+ * thing so the plate is not a hard-edged card floating on the panel; the plot
+ * itself, lit from the same corner as the buildings; and a faint plan grid,
+ * which is what makes a surface read as ground rather than as a grey shape.
+ */
+function drawCityGround(ctx, tx, bg, width, height) {
+  const corners = [isoProject(0, 0, 0), isoProject(100, 0, 0), isoProject(100, 100, 0), isoProject(0, 100, 0)];
+  if (!drawCityGround.buf) drawCityGround.buf = [];
+  const g = cityScreen(corners, tx, drawCityGround.buf);
+  const cx = (g[0].x + g[2].x) / 2, cy = (g[0].y + g[2].y) / 2;
+  const rx = Math.abs(g[1].x - g[3].x) / 2, ry = Math.abs(g[2].y - g[0].y) / 2;
+
+  // A pool of light beneath the plot. Drawn first and generously wide, so the
+  // ground appears to sit IN the room rather than on top of a picture of one.
+  const pool = ctx.createRadialGradient(cx, cy + ry * 0.35, Math.max(1, rx * 0.1), cx, cy + ry * 0.35, Math.max(2, rx * 1.35));
+  pool.addColorStop(0, 'rgba(0,0,0,0.34)');
+  pool.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = pool;
+  ctx.fillRect(0, 0, width, height);
+
+  cityPathOf(ctx, g);
+  const lit = ctx.createLinearGradient(g[1].x, g[1].y, g[3].x, g[3].y);
+  lit.addColorStop(0, `rgba(${Math.min(255, bg[0] + 26)},${Math.min(255, bg[1] + 30)},${Math.min(255, bg[2] + 42)},0.96)`);
+  lit.addColorStop(1, `rgba(${Math.min(255, bg[0] + 6)},${Math.min(255, bg[1] + 8)},${Math.min(255, bg[2] + 14)},0.96)`);
+  ctx.fillStyle = lit;
+  ctx.fill();
+
+  // The plan grid, clipped to the plot. Ten divisions is enough to read as a
+  // surface and few enough that it never competes with the buildings.
+  ctx.save();
+  ctx.clip();
+  ctx.strokeStyle = 'rgba(255,255,255,0.045)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 10; i++) {
+    const t = i * 10;
+    const a = cityScreen([isoProject(t, 0, 0), isoProject(t, 100, 0)], tx);
+    ctx.beginPath(); ctx.moveTo(a[0].x, a[0].y); ctx.lineTo(a[1].x, a[1].y); ctx.stroke();
+    const b = cityScreen([isoProject(0, t, 0), isoProject(100, t, 0)], tx);
+    ctx.beginPath(); ctx.moveTo(b[0].x, b[0].y); ctx.lineTo(b[1].x, b[1].y); ctx.stroke();
+  }
+  ctx.restore();
+
+  // The plot's own rim: bright along the two near edges, invisible along the
+  // far ones, which is where the light is coming from.
+  ctx.beginPath();
+  ctx.moveTo(g[1].x, g[1].y); ctx.lineTo(g[2].x, g[2].y); ctx.lineTo(g[3].x, g[3].y);
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+/**
+ * Windows.
+ *
+ * This is the single thing that turns a bar chart into a skyline. A wall is a
+ * parallelogram, so the grid is laid out by interpolating along its own two
+ * edges rather than in screen axes — that keeps the rows parallel to the
+ * building instead of to the monitor, which is what would immediately give it
+ * away as a texture pasted on top.
+ *
+ * Which windows are lit is derived from the path and the cell index, so a
+ * building looks the same every frame, at every zoom, and in every session.
+ * Random lighting would shimmer on every repaint.
+ *
+ * Gated hard on size: below roughly a thumbnail there is no room for a grid,
+ * and drawing one anyway costs frames and reads as noise. Measured cost is in
+ * the phase notes.
+ */
+function cityWindows(ctx, quad, seed, rgb, lit) {
+  // quad: [topA, topB, bottomB, bottomA] — going along the top, then down.
+  const wpx = Math.hypot(quad[1].x - quad[0].x, quad[1].y - quad[0].y);
+  const hpx = Math.hypot(quad[3].x - quad[0].x, quad[3].y - quad[0].y);
+  if (wpx < 26 || hpx < 22) return;
+
+  const cols = Math.max(2, Math.min(9, Math.floor(wpx / 11)));
+  const rows = Math.max(2, Math.min(14, Math.floor(hpx / 10)));
+  const inset = 0.16;
+
+  let h = seed;
+  const next = () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return (h >>> 0) / 4294967296; };
+
+  // Bilinear on the quad's own corners: P(u,v) walks the wall, not the screen.
+  const at = (u, v) => ({
+    x: quad[0].x + (quad[1].x - quad[0].x) * u + (quad[3].x - quad[0].x) * v,
+    y: quad[0].y + (quad[1].y - quad[0].y) * u + (quad[3].y - quad[0].y) * v,
+  });
+
+  for (let r = 0; r < rows; r++) {
+    for (let cN = 0; cN < cols; cN++) {
+      const on = next() > 0.62;
+      const u0 = (cN + inset) / cols, u1 = (cN + 1 - inset) / cols;
+      const v0 = (r + inset) / rows, v1 = (r + 1 - inset) / rows;
+      const p00 = at(u0, v0), p10 = at(u1, v0), p11 = at(u1, v1), p01 = at(u0, v1);
+      ctx.beginPath();
+      ctx.moveTo(p00.x, p00.y); ctx.lineTo(p10.x, p10.y);
+      ctx.lineTo(p11.x, p11.y); ctx.lineTo(p01.x, p01.y);
+      ctx.closePath();
+      ctx.fillStyle = on
+        ? `rgba(${Math.min(255, rgb[0] * 1.7 + 60)},${Math.min(255, rgb[1] * 1.7 + 52)},${Math.min(255, rgb[2] * 1.4 + 26)},${lit})`
+        : 'rgba(0,0,0,0.30)';
+      ctx.fill();
+    }
+  }
+}
+
+/**
+ * Rooftop detail on a large roof.
+ *
+ * A folder that holds most of a disk gets most of the map, and at low height
+ * that is an enormous flat plane — the single thing that made the first pass
+ * read as a chart rather than a place. Real roofs are not empty: this lays a
+ * faint panel grid in the building's own axes and stands a few plant boxes on
+ * it, which breaks the plane up without inventing any information.
+ *
+ * Purely decorative, and deliberately so. It carries no data, which is why it
+ * is drawn at very low contrast and never near a label.
+ */
+function cityRoofDetail(ctx, top, seed, rgb) {
+  const wpx = Math.hypot(top[1].x - top[0].x, top[1].y - top[0].y);
+  const hpx = Math.hypot(top[3].x - top[0].x, top[3].y - top[0].y);
+  if (wpx < 90 || hpx < 60) return;
+
+  const at = (u, v) => ({
+    x: top[0].x + (top[1].x - top[0].x) * u + (top[3].x - top[0].x) * v,
+    y: top[0].y + (top[1].y - top[0].y) * u + (top[3].y - top[0].y) * v,
+  });
+
+  // Panel seams, in the roof's own axes so they run with the building.
+  const cols = Math.max(3, Math.min(12, Math.round(wpx / 46)));
+  const rows = Math.max(3, Math.min(12, Math.round(hpx / 46)));
+  ctx.strokeStyle = 'rgba(0,0,0,0.13)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < cols; i++) {
+    const a = at(i / cols, 0), b = at(i / cols, 1);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+  for (let j = 1; j < rows; j++) {
+    const a = at(0, j / rows), b = at(1, j / rows);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+
+  // A few plant boxes, placed deterministically so they never crawl.
+  let h = seed;
+  const next = () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return (h >>> 0) / 4294967296; };
+  const units = Math.min(5, Math.max(1, Math.round((wpx * hpx) / 26000)));
+  for (let i = 0; i < units; i++) {
+    const u = 0.12 + next() * 0.68, v = 0.12 + next() * 0.68;
+    const du = 0.06 + next() * 0.07, dv = 0.06 + next() * 0.07;
+    const q = [at(u, v), at(u + du, v), at(u + du, v + dv), at(u, v + dv)];
+    const riseY = Math.min(9, Math.max(3, hpx * 0.035));
+    // The box's own little walls, so it stands rather than lies flat.
+    ctx.beginPath();
+    ctx.moveTo(q[1].x, q[1].y - riseY); ctx.lineTo(q[2].x, q[2].y - riseY);
+    ctx.lineTo(q[2].x, q[2].y); ctx.lineTo(q[1].x, q[1].y);
+    ctx.closePath();
+    ctx.fillStyle = cityShade(rgb, 0.62, 0.95); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(q[3].x, q[3].y - riseY); ctx.lineTo(q[2].x, q[2].y - riseY);
+    ctx.lineTo(q[2].x, q[2].y); ctx.lineTo(q[3].x, q[3].y);
+    ctx.closePath();
+    ctx.fillStyle = cityShade(rgb, 0.5, 0.95); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(q[0].x, q[0].y - riseY); ctx.lineTo(q[1].x, q[1].y - riseY);
+    ctx.lineTo(q[2].x, q[2].y - riseY); ctx.lineTo(q[3].x, q[3].y - riseY);
+    ctx.closePath();
+    ctx.fillStyle = cityShade(rgb, 1.16, 0.95); ctx.fill();
+  }
+}
+
+/** A stable 32-bit seed for one path, so a building never re-rolls its windows. */
+function citySeed(path) {
+  let h = 2166136261;
+  for (let i = 0; i < path.length; i++) { h ^= path.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0) || 1;
+}
+
+/** Is this roof big enough that a label would help rather than clutter? */
+function labelsFit(top) {
+  const cy = (top[0].y + top[1].y + top[2].y + top[3].y) / 4;
+  const chord = cityChordAtY(top, cy);
+  const h = Math.abs(top[2].y - top[0].y);
+  return chord.right - chord.left > 62 && h > 24;
+}
+
+/** Where a horizontal line at `y` enters and leaves a convex polygon. */
+function cityChordAtY(pts, y) {
+  let left = Infinity, right = -Infinity;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[j], b = pts[i];
+    if ((a.y > y) === (b.y > y)) continue; // edge does not cross this line
+    const x = a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x);
+    if (x < left) left = x;
+    if (x > right) right = x;
+  }
+  return Number.isFinite(left) ? { left, right } : { left: 0, right: 0 };
+}
+
+/**
+ * Draw a name on a roof.
+ *
+ * Clipped to the roof and centred on its middle, so a label can never spill
+ * onto the building behind it — which, with a painter's algorithm, is exactly
+ * how a label ends up floating over something it does not belong to.
+ */
+function cityLabel(ctx, b, top, rgb, name, cx, cy) {
+  ctx.save();
+  cityPathOf(ctx, top);
+  ctx.clip();
+  ctx.font = '600 11px ui-sans-serif, -apple-system, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // Legible on any roof colour: a halo in the opposite direction to the fill.
+  const light = rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114 > 150;
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = light ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)';
+  ctx.strokeText(name, cx, cy);
+  ctx.fillStyle = light ? 'rgba(18,20,26,0.96)' : 'rgba(255,255,255,0.96)';
+  ctx.fillText(name, cx, cy);
+  ctx.restore();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+}
+
+/* ── Motion ────────────────────────────────────────────────────────────────
+
+   Three transitions, and each exists because the alternative is a jump cut
+   that costs the viewer their place:
+
+     - changing what height means REBUILDS every tower, so they grow into it
+     - zooming steps by a fixed notch, so the camera eases rather than snaps
+     - drilling into a folder replaces the whole city, so it settles in
+
+   All of them are skipped wholesale under `prefers-reduced-motion`, which the
+   file already honours in five other places. Skipped, not shortened: a person
+   who asked for no motion gets the end state immediately.
+
+   The height morph is capped by block count. Animating means recomputing every
+   block's geometry each frame, which is fine for the few hundred a normal view
+   draws and is not fine for ten thousand — so above the cap the new heights
+   simply apply, which is the same answer the reduced-motion path gives.      */
+const CITY_MORPH_MS = 420;
+const CITY_MORPH_MAX_BLOCKS = 4000;
+
+const cityEase = (t) => 1 - Math.pow(1 - t, 3); // easeOutCubic: quick, then settles
+
+/** Start a height morph from whatever is on screen to whatever was just built. */
+function cityMorphHeights(previousByPath) {
+  const c = state.city;
+  if (REDUCED || c.blocks.length > CITY_MORPH_MAX_BLOCKS || !previousByPath.size) return false;
+  let moved = 0;
+  for (const b of c.blocks) {
+    const was = previousByPath.get(b.n.path);
+    if (was === undefined || Math.abs(was - b.z) < 0.01) { delete b.z1; continue; }
+    b.z0 = was;
+    b.z1 = b.z;
+    b.z = was;
+    b.faces = null;
+    b.bb = isoBounds(b);
+    moved++;
+  }
+  if (!moved) return false;
+  c.morphStart = performance.now();
+  cityRunMorph();
+  return true;
+}
+
+function cityRunMorph() {
+  const c = state.city;
+  if (c.morphRaf) cancelAnimationFrame(c.morphRaf);
+  const step = () => {
+    const t = Math.min(1, (performance.now() - c.morphStart) / CITY_MORPH_MS);
+    const k = cityEase(t);
+    for (const b of c.blocks) {
+      if (b.z1 === undefined) continue;
+      b.z = b.z0 + (b.z1 - b.z0) * k;
+      b.faces = null;
+      b.bb = isoBounds(b);
+    }
+    drawCity();
+    if (t < 1) { c.morphRaf = requestAnimationFrame(step); return; }
+    c.morphRaf = 0;
+    for (const b of c.blocks) {
+      if (b.z1 === undefined) continue;
+      b.z = b.z1;
+      delete b.z1;
+      b.faces = null;
+      b.bb = isoBounds(b);
+    }
+    drawCity();
+  };
+  c.morphRaf = requestAnimationFrame(step);
+}
+
+/** Ease the camera toward a zoom target instead of snapping to it. */
+function cityAnimateZoom(target) {
+  const c = state.city;
+  c.zoomTarget = Math.max(0.4, Math.min(14, target));
+  if (REDUCED) { c.zoom = c.zoomTarget; cityAfterZoom(); cityInvalidate(); return; }
+  if (c.zoomRaf) return;
+  const step = () => {
+    const gap = c.zoomTarget - c.zoom;
+    if (Math.abs(gap) < 0.002) {
+      c.zoom = c.zoomTarget;
+      c.zoomRaf = 0;
+      cityAfterZoom();
+      cityInvalidate();
+      return;
+    }
+    c.zoom += gap * 0.22; // enough damping to feel like weight rather than lag
+    cityInvalidate();
+    c.zoomRaf = requestAnimationFrame(step);
+  };
+  c.zoomRaf = requestAnimationFrame(step);
+}
+
+/**
+ * Zoom changes which blocks clear the pixel threshold, so the layout is rebuilt
+ * — but only once the gesture settles. §6.1's "computed once per layout" is
+ * what keeps a wheel spin from re-sorting on every tick.
+ */
+function cityAfterZoom() {
+  const c = state.city;
+  clearTimeout(c.zoomTimer);
+  c.zoomTimer = setTimeout(() => {
+    if (state.view !== 'city') return;
+    const before = new Map(c.blocks.map((b) => [b.n.path, b.z]));
+    buildCity();
+    if (!cityMorphHeights(before)) drawCity();
+    renderCityTable();
+    cityFetchFacts();
+  }, 130);
+}
+
+/** A new folder is a new city; let it rise rather than cutting to it. */
+function cityEnter() {
+  const c = state.city;
+  if (REDUCED || !c.blocks.length || c.blocks.length > CITY_MORPH_MAX_BLOCKS) { drawCity(); return; }
+  for (const b of c.blocks) {
+    b.z0 = 0;
+    b.z1 = b.z;
+    b.z = 0;
+    b.faces = null;
+    b.bb = isoBounds(b);
+  }
+  c.morphStart = performance.now();
+  cityRunMorph();
+}
+
 function cityInvalidate() {
   const c = state.city;
   if (c.raf) return;
@@ -9294,12 +11356,22 @@ function renderCityChrome() {
 
   const legend = $('cityLegend');
   if (legend) {
-    const heightLabel = { staleness: 'how long since anything changed', files: 'how many files are inside', depth: 'how deeply nested it is' }[c.height];
+    // "in this folder" is not padding: the scale is normalised to what is on
+    // screen, so a tower is tall relative to its neighbours rather than on an
+    // absolute scale, and a legend that implied otherwise would be wrong.
+    const heightLabel = { staleness: 'how long since anything changed, within this folder', files: 'how many files are inside, within this folder', depth: 'how deeply nested it is' }[c.height];
     const colourLabel = { reclaim: 'how safe and worthwhile it is to reclaim', type: 'what kind of files it holds', age: 'how recently it changed' }[c.colour];
+    // The colour key is the ramp itself, not a sentence about it.
+    const ramp = c.colour === 'reclaim'
+      ? `linear-gradient(90deg, rgb(${C_RC_LOW.join(',')}), rgb(${C_AMBER.join(',')}), rgb(${C_TEAL.join(',')}))`
+      : c.colour === 'age'
+        ? `linear-gradient(90deg, rgb(${ageRgb(Date.now()).join(',')}), rgb(${ageRgb(Date.now() - 3 * 365 * 86400000).join(',')}))`
+        : '';
     legend.innerHTML =
       `<span class="tml-item"><b>Footprint</b> = size on disk</span>` +
       `<span class="tml-item"><b>Height</b> = ${escapeHtml(heightLabel)}</span>` +
-      `<span class="tml-item"><b>Colour</b> = ${escapeHtml(colourLabel)}</span>`;
+      `<span class="tml-item city-ramp"><b>Colour</b> = ${escapeHtml(colourLabel)}` +
+      (ramp ? `<i style="background:${ramp}"></i>` : '') + `</span>`;
   }
 
   const status = $('cityStatus');
@@ -9375,7 +11447,7 @@ async function loadCity(rootPath) {
   renderCrumbs($('cityCrumbs'), state.treemap.rootPath, (p) => loadCity(p));
   $('cityUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
   buildCity();
-  drawCity();
+  cityEnter();
   renderCityTable();
   cityFetchFacts();
 }
@@ -9396,7 +11468,7 @@ function cityFetchFacts() {
   if (c.colour === 'reclaim') {
     void ensureScores(paths, () => {
       if (state.view !== 'city') return;
-      for (const b of state.city.blocks) b.rgb = cityRgb(b.n, state.city.colour);
+      for (const b of state.city.blocks) b.rgb = cityJitter(cityRgb(b.n, state.city.colour), b.n.path);
       cityInvalidate();
     });
   }
@@ -9450,24 +11522,22 @@ async function cityLoadCounts(paths, key) {
  */
 function cityHit(px, py) {
   const c = state.city;
-  const canvas = $('cityCanvas');
-  if (!canvas) return null;
-  const tx = cityTransform(Math.max(120, $('cityWrap').clientWidth), Math.max(120, $('cityWrap').clientHeight));
-  const ctx = canvas.getContext('2d');
+  const wrap = $('cityWrap');
+  if (!wrap) return null;
+  const tx = cityTransform(Math.max(120, wrap.clientWidth), Math.max(120, wrap.clientHeight));
   for (let i = c.blocks.length - 1; i >= 0; i--) {
     const b = c.blocks[i];
-    // Reject on the bounding box before paying for a path. This is stricter
-    // than the draw loop's viewport cull — the cursor is a point, so anything
-    // whose box does not contain it cannot be the answer — and it keeps the
-    // hit tester agreeing with the painter, which is the disagreement the
-    // Canvas2D toolkit's header warns about.
+    // Reject on the bounding box before projecting anything. The cursor is a
+    // point, so a block whose box does not contain it cannot be the answer.
     if (px < b.bb.x0 * tx.s + tx.dx || px > b.bb.x1 * tx.s + tx.dx) continue;
     if (py < b.bb.y0 * tx.s + tx.dy || py > b.bb.y1 * tx.s + tx.dy) continue;
     if (!b.faces) b.faces = cityFaces(b);
-    for (const face of [b.faces.top, b.faces.right, b.faces.left]) {
-      cityPoly(ctx, face, tx);
-      if (ctx.isPointInPath(px, py)) return b;
-    }
+    // Front to back over the SAME order the painter used, so the answer is
+    // always the building the user can actually see.
+    if (!b.sBuf) b.sBuf = { foot: [], top: [], right: [], left: [] };
+    if (cityPointInPoly(cityScreen(b.faces.top, tx, b.sBuf.top), px, py)) return b;
+    if (cityPointInPoly(cityScreen(b.faces.right, tx, b.sBuf.right), px, py)) return b;
+    if (cityPointInPoly(cityScreen(b.faces.left, tx, b.sBuf.left), px, py)) return b;
   }
   return null;
 }
@@ -9480,22 +11550,46 @@ function cityShowCard(b, px, py) {
   const days = cityAgeDays(b.n);
   const count = c.counts.get(b.n.path);
   const score = reclaim.scores.get(b.n.path);
-  const rows = [
-    ['Size', formatBytes(b.n.size)],
-    ['Last changed', days === null ? 'not recorded' : (Math.round(days) + ' days ago')],
-  ];
-  if (count) rows.push(['Holds', `${formatCount(count.files)} files in ${formatCount(count.dirs)} folders`]);
+  const share = state.treemap.rootSize ? (b.n.size / state.treemap.rootSize) * 100 : null;
+
+  const rows = [['Size', formatBytes(b.n.size)]];
+  if (share !== null && share >= 0.1) rows.push(['Share of this folder', share.toFixed(1) + '%']);
+  rows.push(['Last changed', days === null ? 'not recorded' : cityAgeWords(days)]);
+  if (count) rows.push(['Holds', `${formatCount(count.files)} files · ${formatCount(count.dirs)} folders`]);
+  else if (c.height === 'files') rows.push(['Holds', 'still counting…']);
   if (c.colour === 'reclaim') {
-    rows.push(['Reclaim score', score === undefined || score === null ? 'not scored'
-      : String(Math.round(typeof score === 'object' ? score.score : score))]);
+    rows.push(['Reclaim score', score === undefined || score === null
+      ? 'not scored'
+      : String(Math.round(typeof score === 'object' ? score.score : score)) + ' / 100']);
   }
-  card.innerHTML = `<span class="cc-name">${escapeHtml(b.n.name)}</span>` +
-    rows.map(([k, v]) => `<span class="cc-row"><span>${escapeHtml(k)}</span><b>${escapeHtml(v)}</b></span>`).join('');
+
+  const swatch = `rgb(${b.rgb.map((v) => Math.round(v)).join(',')})`;
+  card.innerHTML =
+    `<div class="cc-head"><span class="cc-dot" style="background:${swatch}"></span>` +
+    `<span class="cc-name">${escapeHtml(b.n.name)}</span></div>` +
+    rows.map(([k, v]) => `<div class="cc-row"><span>${escapeHtml(k)}</span><b>${escapeHtml(v)}</b></div>`).join('') +
+    (b.n.type === 'dir' ? `<div class="cc-hint">Click to go inside · Esc to come back out</div>` : '');
   card.hidden = false;
+
+  // Kept inside the panel and away from the cursor, flipping side rather than
+  // being clamped: a card pinned to the right edge covers what you are pointing at.
   const wrap = $('cityWrap');
-  const cw = card.offsetWidth || 220, ch = card.offsetHeight || 70;
-  card.style.left = Math.min(Math.max(8, px + 16), wrap.clientWidth - cw - 8) + 'px';
-  card.style.top = Math.min(Math.max(8, py + 16), wrap.clientHeight - ch - 8) + 'px';
+  const cw = card.offsetWidth || 230, ch = card.offsetHeight || 90;
+  const left = px + 18 + cw > wrap.clientWidth ? px - 18 - cw : px + 18;
+  const top = py + 18 + ch > wrap.clientHeight ? py - 18 - ch : py + 18;
+  card.style.left = Math.max(8, Math.min(left, wrap.clientWidth - cw - 8)) + 'px';
+  card.style.top = Math.max(8, Math.min(top, wrap.clientHeight - ch - 8)) + 'px';
+}
+
+/** "3 weeks ago", not "21 days" — the card is read at a glance. */
+function cityAgeWords(days) {
+  if (days < 1) return 'today';
+  if (days < 2) return 'yesterday';
+  if (days < 14) return `${Math.round(days)} days ago`;
+  if (days < 60) return `${Math.round(days / 7)} weeks ago`;
+  if (days < 730) return `${Math.round(days / 30.4)} months ago`;
+  const years = days / 365.25;
+  return `${years.toFixed(years < 10 ? 1 : 0)} years ago`;
 }
 
 function cityDrillInto(node) {
@@ -9549,18 +11643,7 @@ function cityOnPointerUp(e) {
 function cityOnWheel(e) {
   e.preventDefault();
   const c = state.city;
-  const before = c.zoom;
-  c.zoom = Math.max(0.4, Math.min(14, c.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
-  if (c.zoom === before) return;
-  // Zoom changes which blocks clear the pixel threshold, so the layout is
-  // rebuilt — but only once the gesture settles, because §6.1's "computed once
-  // per layout" is what keeps a zoom from re-sorting on every wheel tick.
-  clearTimeout(c.zoomTimer);
-  c.zoomTimer = setTimeout(() => {
-    if (state.view !== 'city') return;
-    buildCity(); drawCity(); renderCityTable(); cityFetchFacts();
-  }, 140);
-  cityInvalidate();
+  cityAnimateZoom((c.zoomTarget || c.zoom) * (e.deltaY < 0 ? 1.14 : 1 / 1.14));
 }
 
 function cityOnKey(e) {
@@ -9571,8 +11654,8 @@ function cityOnKey(e) {
   else if (e.key === 'ArrowRight') { c.pan.x -= step; cityInvalidate(); e.preventDefault(); }
   else if (e.key === 'ArrowUp') { c.pan.y += step; cityInvalidate(); e.preventDefault(); }
   else if (e.key === 'ArrowDown') { c.pan.y -= step; cityInvalidate(); e.preventDefault(); }
-  else if (e.key === '+' || e.key === '=') { c.zoom = Math.min(14, c.zoom * 1.2); buildCity(); cityInvalidate(); e.preventDefault(); }
-  else if (e.key === '-' || e.key === '_') { c.zoom = Math.max(0.4, c.zoom / 1.2); buildCity(); cityInvalidate(); e.preventDefault(); }
+  else if (e.key === '+' || e.key === '=') { cityAnimateZoom((c.zoomTarget || c.zoom) * 1.25); e.preventDefault(); }
+  else if (e.key === '-' || e.key === '_') { cityAnimateZoom((c.zoomTarget || c.zoom) / 1.25); e.preventDefault(); }
 }
 
 function cityOnResize() { cityInvalidate(); }
@@ -9583,7 +11666,11 @@ function citySetHeight(mode) {
   for (const b of $('cityHeightSeg').querySelectorAll('button')) {
     b.setAttribute('aria-selected', String(b.dataset.h === mode));
   }
-  buildCity(); drawCity(); renderCityTable(); cityFetchFacts();
+  const before = new Map(state.city.blocks.map((b) => [b.n.path, b.z]));
+  buildCity();
+  if (!cityMorphHeights(before)) drawCity();
+  renderCityTable();
+  cityFetchFacts();
 }
 
 function citySetColour(mode) {
@@ -9607,8 +11694,7 @@ $('cityColorSeg').addEventListener('click', (e) => {
 $('cityUpBtn').addEventListener('click', () => cityUp());
 $('cityReset').addEventListener('click', () => {
   state.city.pan = { x: 0, y: 0 };
-  state.city.zoom = 1;
-  buildCity(); drawCity(); renderCityTable();
+  cityAnimateZoom(1);
 });
 $('cityTableWrap').addEventListener('toggle', () => { if ($('cityTableWrap').open) renderCityTable(); });
 $('cityTable').addEventListener('click', (e) => {
@@ -9650,6 +11736,8 @@ registerView({
     // repainting a hidden canvas for the rest of the session.
     const c = state.city;
     if (c.raf) { cancelAnimationFrame(c.raf); c.raf = 0; }
+    if (c.morphRaf) { cancelAnimationFrame(c.morphRaf); c.morphRaf = 0; }
+    if (c.zoomRaf) { cancelAnimationFrame(c.zoomRaf); c.zoomRaf = 0; }
     clearTimeout(c.zoomTimer);
     cityLoadSeq++; // invalidate anything still in flight
     const canvas = $('cityCanvas');
@@ -10351,7 +12439,8 @@ async function loadBudgets() {
   } catch { state.budgets.list = []; }
   state.budgets.overPaths = new Set(state.budgets.list.filter(b => b.overBy > 0).map(b => b.path));
   renderBudgetWidget();
-  if (state.view === 'treemap' && state.treemap.mode === 'treemap') presentView();
+  // The sunburst has no budget-border pass; the other three do.
+  if (state.view === 'treemap' && !isSun()) presentView();
 }
 
 function renderBudgetWidget() {

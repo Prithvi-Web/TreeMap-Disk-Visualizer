@@ -1,13 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import path from 'node:path';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 import { squarify } from '../src/utils/treemap';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+import { lift } from './fixtures/liftFrontend';
 
 /**
  * Disk City's projection and draw order (v4 §6.1).
@@ -26,28 +21,6 @@ const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), '
  * the view ray and see which block is genuinely nearer. If the shipped
  * ordering ever disagrees with physics, this fails.
  */
-
-/** Lift named function declarations out of the app script and evaluate them. */
-function lift<T>(names: string[], returns: string): T {
-  const parts: string[] = [];
-  for (const name of names) {
-    const start = INDEX.indexOf(`function ${name}(`);
-    assert.notEqual(start, -1, `function ${name} was located in public/index.html`);
-    const open = INDEX.indexOf('{', start);
-    let depth = 0;
-    let end = open;
-    for (let i = open; i < INDEX.length; i++) {
-      if (INDEX[i] === '{') depth++;
-      else if (INDEX[i] === '}') {
-        depth--;
-        if (depth === 0) { end = i + 1; break; }
-      }
-    }
-    assert.ok(end > open, `function ${name} has a balanced body`);
-    parts.push(INDEX.slice(start, end));
-  }
-  return new Function(`${parts.join('\n')}\nreturn ${returns};`)() as T;
-}
 
 interface Block { x: number; y: number; w: number; h: number; z: number }
 interface Pt { sx: number; sy: number }
