@@ -91,12 +91,36 @@ interface ManifestMember {
   hash: string;
   /** Symlinks only: what the link pointed at. */
   target?: string;
+  /**
+   * Modification and access time, so a restore puts back the file that was
+   * taken rather than a copy of it made today.
+   *
+   * Optional because manifests written before this existed do not carry it,
+   * and a restore of one of those must still work — it simply leaves the
+   * times as the restore wrote them, exactly as it always did.
+   *
+   * Not part of `digestOf`: the digest fingerprints *content*, and a file
+   * whose timestamps could not be read is still the same file.
+   */
+  mtimeMs?: number;
+  atimeMs?: number;
 }
 
 interface EntryManifest {
   originalPath: string;
   name: string;
   members: ManifestMember[];
+  /**
+   * A captured folder's OWN timestamps.
+   *
+   * Kept beside the member list rather than in it: the walk never emits a
+   * member for the item's own root, and adding one would change `digestOf`'s
+   * input for every new entry while saying nothing about content. Absent for a
+   * single file, whose own times are its member's, and for manifests written
+   * before timestamps were recorded.
+   */
+  rootMtimeMs?: number;
+  rootAtimeMs?: number;
 }
 
 export function capsuleRoot(): string {
@@ -247,6 +271,9 @@ interface WalkedMember {
   rel: string;
   kind: 'file' | 'dir' | 'symlink';
   size: number;
+  /** From the lstat the walk already performs; undefined when it could not. */
+  mtimeMs?: number;
+  atimeMs?: number;
 }
 
 /**
@@ -259,14 +286,21 @@ interface WalkedMember {
  * virtualenvs) are full of them. Empty directories are recorded too, so a
  * restored tree has the same shape and not merely the same files.
  */
-async function walkItem(root: string): Promise<{ members: WalkedMember[]; bytes: number; isFolder: boolean }> {
+async function walkItem(
+  root: string,
+  opts: { withDirTimes?: boolean } = {},
+): Promise<{ members: WalkedMember[]; bytes: number; isFolder: boolean }> {
   const stat = await fsp.lstat(root);
   if (stat.isSymbolicLink()) {
     const target = await fsp.readlink(root);
     return { members: [{ abs: root, rel: '', kind: 'symlink', size: Buffer.byteLength(target) }], bytes: 0, isFolder: false };
   }
   if (!stat.isDirectory()) {
-    return { members: [{ abs: root, rel: '', kind: 'file', size: stat.size }], bytes: stat.size, isFolder: false };
+    return {
+      members: [{ abs: root, rel: '', kind: 'file', size: stat.size, mtimeMs: stat.mtimeMs, atimeMs: stat.atimeMs }],
+      bytes: stat.size,
+      isFolder: false,
+    };
   }
 
   const members: WalkedMember[] = [];
@@ -275,6 +309,23 @@ async function walkItem(root: string): Promise<{ members: WalkedMember[]; bytes:
   while (queue.length) {
     const dir = queue.shift()!;
     if (dir.rel) members.push({ abs: dir.abs, rel: dir.rel, kind: 'dir', size: 0 });
+    // The directory's own times, read once. A directory's mtime is the last
+    // time its listing changed, which is a real fact about the folder and is
+    // otherwise lost the moment a restore writes the first child into it.
+    //
+    // Only when a manifest is actually going to be written. It is one extra
+    // lstat per directory — measured at 17 ms on a 3,001-directory tree, ~11%
+    // of the walk — and the dry run has no use for the answer. That walk is
+    // the one a person waits on with the confirmation dialog not yet open,
+    // so it does not pay for something only the capture needs.
+    if (opts.withDirTimes && dir.rel) {
+      const dirStat = await fsp.lstat(dir.abs).catch(() => null);
+      if (dirStat) {
+        const entry = members[members.length - 1];
+        entry.mtimeMs = dirStat.mtimeMs;
+        entry.atimeMs = dirStat.atimeMs;
+      }
+    }
     const dirents = await fsp.readdir(dir.abs, { withFileTypes: true });
     for (const dirent of dirents) {
       const abs = path.join(dir.abs, dirent.name);
@@ -287,7 +338,7 @@ async function walkItem(root: string): Promise<{ members: WalkedMember[]; bytes:
       } else if (dirent.isFile()) {
         const st = await fsp.lstat(abs).catch(() => null);
         if (!st) continue; // vanished mid-walk — nothing to protect
-        members.push({ abs, rel, kind: 'file', size: st.size });
+        members.push({ abs, rel, kind: 'file', size: st.size, mtimeMs: st.mtimeMs, atimeMs: st.atimeMs });
         bytes += st.size;
       }
       // Sockets, FIFOs and devices are deliberately skipped: they carry no
@@ -339,7 +390,7 @@ async function capture(
 
   let walked: { members: WalkedMember[]; bytes: number; isFolder: boolean };
   try {
-    walked = await walkItem(original);
+    walked = await walkItem(original, { withDirTimes: true });
   } catch (err) {
     const detail = err instanceof AppError ? err.message : `It could not be read (${err instanceof Error ? err.message : String(err)}).`;
     const code = err instanceof AppError ? err.code : 'CAPSULE_UNREADABLE';
@@ -396,7 +447,7 @@ async function capture(
 
       if (member.kind === 'dir') {
         await fsp.mkdir(dest, { recursive: true });
-        members.push({ rel: member.rel, kind: 'dir', size: 0, hash: '' });
+        members.push({ rel: member.rel, kind: 'dir', size: 0, hash: '', ...timesOf(member) });
         continue;
       }
       if (member.kind === 'symlink') {
@@ -421,10 +472,17 @@ async function capture(
       if (verify !== hash) {
         throw new Error(`the copy of ${member.rel || name} did not match what was read`);
       }
-      members.push({ rel: member.rel, kind: 'file', size: member.size, hash });
+      members.push({ rel: member.rel, kind: 'file', size: member.size, hash, ...timesOf(member) });
     }
 
-    const manifest: EntryManifest = { originalPath: original, name, members };
+    // The captured folder's own times, read from the original before it goes.
+    const rootTimes = walked.isFolder
+      ? await fsp.lstat(original).then(
+        (st) => ({ rootMtimeMs: st.mtimeMs, rootAtimeMs: st.atimeMs }),
+        () => ({}),
+      )
+      : {};
+    const manifest: EntryManifest = { originalPath: original, name, members, ...rootTimes };
     await fsp.writeFile(path.join(entryDir(id), 'manifest.json'), JSON.stringify(manifest, null, 2), 'utf8');
 
     const entry: TimeCapsuleEntry = {
@@ -454,6 +512,12 @@ async function capture(
     });
     return { path: original, protected: false, bytes: walked.bytes, code: 'CAPSULE_COPY_FAILED', detail };
   }
+}
+
+/** The recorded times, or nothing at all when the walk could not read them. */
+function timesOf(member: WalkedMember): { mtimeMs?: number; atimeMs?: number } {
+  if (typeof member.mtimeMs !== 'number' || !Number.isFinite(member.mtimeMs)) return {};
+  return { mtimeMs: member.mtimeMs, ...(Number.isFinite(member.atimeMs) ? { atimeMs: member.atimeMs } : {}) };
 }
 
 /** One fingerprint over every member, order-independent of the walk. */
@@ -997,6 +1061,26 @@ async function runRestoreAll(
   job.finishedAt = Date.now();
 }
 
+/**
+ * Put a member's recorded timestamps back.
+ *
+ * Best-effort by design: the bytes are already home and verified, and a
+ * filesystem that refuses `utimes` (or a manifest written before timestamps
+ * were recorded) must not turn a successful restore into a failed one. A file
+ * with the wrong date is a much smaller problem than a file that was rolled
+ * back for it.
+ *
+ * Symlinks are skipped: `lutimes` is not available everywhere, and a link's
+ * own timestamps carry nothing the target's do not.
+ */
+async function applyRecordedTimes(dest: string, member: ManifestMember): Promise<void> {
+  if (member.kind === 'symlink') return;
+  if (typeof member.mtimeMs !== 'number') return; // an older manifest
+  const mtime = new Date(member.mtimeMs);
+  const atime = typeof member.atimeMs === 'number' ? new Date(member.atimeMs) : mtime;
+  await fsp.utimes(dest, atime, mtime).catch(() => {});
+}
+
 async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest: EntryManifest): Promise<void> {
   const dataRoot = payloadRoot(entry.id);
   // Named for the invariant that makes removing them safe: every path in
@@ -1047,7 +1131,27 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
       if (hash !== member.hash) {
         throw new Error(`${member.rel || manifest.name} no longer matches the fingerprint recorded when it was protected`);
       }
+      await applyRecordedTimes(dest, member);
       job.filesDone++;
+    }
+
+    // Directories last, and deepest first: writing a child updates its
+    // parent's mtime, so a folder stamped before its contents were restored
+    // would immediately be re-stamped with the time of the restore. Sorting by
+    // descending path length is enough — a child's path is always longer than
+    // the parent it sits in.
+    const dirMembers = manifest.members
+      .filter((m) => m.kind === 'dir')
+      .sort((a, b) => b.rel.length - a.rel.length);
+    for (const member of dirMembers) {
+      await applyRecordedTimes(path.join(entry.originalPath, member.rel), member);
+    }
+    // The item's own folder is the shallowest of all, so it comes last.
+    if (entry.kind === 'folder' && typeof manifest.rootMtimeMs === 'number') {
+      await applyRecordedTimes(entry.originalPath, {
+        rel: '', kind: 'dir', size: 0, hash: '',
+        mtimeMs: manifest.rootMtimeMs, atimeMs: manifest.rootAtimeMs,
+      });
     }
 
     // Restored successfully: the bytes live at their real home again, so the

@@ -9551,15 +9551,15 @@ function cartCommitSummary(result) {
     html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(failed.length)} could not be moved to the Trash (${escapeHtml(failed[0].reason)}). Those are untouched, and their copies were discarded.</div>`;
   }
   if (trashed.length) {
-    // The caveat is stated here rather than discovered later. The Time Capsule
-    // has never recorded modification times — it verifies content, byte for
-    // byte, and writes it back fresh — so a restored file's "date modified"
-    // reads as the moment it came back. Harmless for most things, and not for
-    // an age-based rule: it will not match the restored file any more.
+    // The capsule verifies content byte for byte AND puts the recorded
+    // timestamps back, so this is a whole-file restore rather than a copy made
+    // today. It was not always: until the dates were recorded, an undo left
+    // everything looking modified just now, and an age-based rule stopped
+    // matching the very files it had just been used to find.
     html += `<div class="cart-mf-undo"><button class="btn" data-cart-undo="${escapeHtml(result.runId)}">` +
       `${icon('refresh', 14)}Undo this run</button>` +
       `<span class="muted">Puts all ${formatCount(trashed.length)} back where they were, from the Time Capsule — ` +
-      `byte for byte, though their <b>date modified</b> will read as the moment they came back.</span></div>`;
+      `byte for byte, with their original dates.</span></div>`;
   }
 
   $('confirmTitle').innerHTML = icon('checkCircle', 18) + 'Done';

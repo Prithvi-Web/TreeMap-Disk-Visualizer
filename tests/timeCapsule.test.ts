@@ -514,3 +514,121 @@ test('every capture records a verifiable fingerprint and a real file count', asy
 test.after(() => {
   fs.rmSync(process.env.TREEMAP_DATA_DIR!, { recursive: true, force: true });
 });
+
+/* ══════════════════ Timestamps survive the round trip ══════════════════ */
+
+/**
+ * A restore puts back the file that was taken, not a copy of it made today.
+ *
+ * The capsule verified content byte for byte and never recorded times, so a
+ * restored file's "date modified" was the moment it came back. Harmless for
+ * most things and not for anything that reasons about age: v4's Phase 4 found
+ * it directly, when `modified>90d` stopped matching logs an undo had just
+ * restored — the query was right and the dates were wrong.
+ */
+test('a restored file keeps the modification time it was captured with', async () => {
+  const dir = await mkTmp();
+  try {
+    const file = path.join(dir, 'old.log');
+    await fsp.writeFile(file, Buffer.alloc(2048, 9));
+    const when = new Date('2021-03-04T05:06:07.000Z');
+    await fsp.utimes(file, when, when);
+    const before = await fsp.lstat(file);
+
+    const { outcomes } = await protectItems([{ path: file }], {});
+    assert.equal(outcomes[0].protected, true);
+    await fsp.rm(file);
+
+    const job = await restoreAndWait(outcomes[0].entryId!);
+    assert.equal(job.status, 'complete');
+
+    const after = await fsp.lstat(file);
+    assert.equal(after.size, 2048, 'the content came back');
+    // Second precision: some filesystems store a coarser mtime than the
+    // millisecond JavaScript hands them, and the claim is "the date it had",
+    // not "the same float".
+    assert.equal(
+      Math.round(after.mtimeMs / 1000),
+      Math.round(before.mtimeMs / 1000),
+      `mtime was ${new Date(after.mtimeMs).toISOString()}, expected ${before.mtime.toISOString()}`,
+    );
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a restored folder keeps its own date, and so does everything inside it', async () => {
+  const dir = await mkTmp();
+  try {
+    const root = path.join(dir, 'project');
+    const nested = path.join(root, 'src', 'deep');
+    await fsp.mkdir(nested, { recursive: true });
+    await fsp.writeFile(path.join(nested, 'a.txt'), Buffer.alloc(64, 1));
+    await fsp.writeFile(path.join(root, 'b.txt'), Buffer.alloc(64, 2));
+
+    // Stamp deepest-first, so each stamp is not undone by writing a child.
+    const stamp = async (p: string, iso: string): Promise<void> => {
+      const d = new Date(iso);
+      await fsp.utimes(p, d, d);
+    };
+    await stamp(path.join(nested, 'a.txt'), '2020-01-02T03:04:05.000Z');
+    await stamp(path.join(root, 'b.txt'), '2020-02-03T04:05:06.000Z');
+    await stamp(nested, '2020-03-04T05:06:07.000Z');
+    await stamp(path.join(root, 'src'), '2020-04-05T06:07:08.000Z');
+    await stamp(root, '2020-05-06T07:08:09.000Z');
+
+    const want = {
+      'src/deep/a.txt': (await fsp.lstat(path.join(nested, 'a.txt'))).mtimeMs,
+      'b.txt': (await fsp.lstat(path.join(root, 'b.txt'))).mtimeMs,
+      'src/deep': (await fsp.lstat(nested)).mtimeMs,
+      src: (await fsp.lstat(path.join(root, 'src'))).mtimeMs,
+      '': (await fsp.lstat(root)).mtimeMs,
+    };
+
+    const { outcomes } = await protectItems([{ path: root }], {});
+    assert.equal(outcomes[0].protected, true);
+    await fsp.rm(root, { recursive: true, force: true });
+
+    const job = await restoreAndWait(outcomes[0].entryId!);
+    assert.equal(job.status, 'complete');
+
+    for (const [rel, expected] of Object.entries(want)) {
+      const got = (await fsp.lstat(rel ? path.join(root, rel) : root)).mtimeMs;
+      assert.equal(
+        Math.round(got / 1000),
+        Math.round(expected / 1000),
+        `${rel || '<the folder itself>'} came back with ${new Date(got).toISOString()}, expected ${new Date(expected).toISOString()}`,
+      );
+    }
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a manifest with no recorded times still restores, as it always did', async () => {
+  // Entries captured before timestamps were recorded must keep working: the
+  // bytes are what the capsule promises, and an older manifest is not a
+  // corrupt one.
+  const dir = await mkTmp();
+  try {
+    const file = path.join(dir, 'legacy.bin');
+    await fsp.writeFile(file, Buffer.alloc(512, 3));
+    const { outcomes } = await protectItems([{ path: file }], {});
+    const entryId = outcomes[0].entryId!;
+
+    // Strip the times back out, exactly as a pre-v4 manifest would look.
+    const manifestPath = path.join(capsuleRoot(), entryId, 'manifest.json');
+    const manifest = JSON.parse(await fsp.readFile(manifestPath, 'utf8'));
+    for (const m of manifest.members) { delete m.mtimeMs; delete m.atimeMs; }
+    delete manifest.rootMtimeMs;
+    delete manifest.rootAtimeMs;
+    await fsp.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+
+    await fsp.rm(file);
+    const job = await restoreAndWait(entryId);
+    assert.equal(job.status, 'complete', 'an older manifest restores rather than failing');
+    assert.equal((await fsp.lstat(file)).size, 512);
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});

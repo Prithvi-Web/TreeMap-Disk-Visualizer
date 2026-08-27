@@ -468,13 +468,14 @@ test('an informational cart dialog can never fall back to trashing a stale set',
   }
 });
 
-test('undo states the one thing it does not restore: the modification date', () => {
-  // The capsule verifies content and writes it back fresh; it has never
-  // recorded mtimes. Harmless for most things, and not for an age-based rule,
-  // which will no longer match the restored file. Said before the click.
+test('undo promises the original dates, because it now restores them', () => {
+  // Until the capsule recorded timestamps this said the opposite — that a
+  // restored file's date modified would read as the moment it came back. The
+  // promise and the behaviour have to move together, or the dialog is lying in
+  // whichever direction it was last edited.
   const body = slice('function cartCommitSummary', 'async function cartUndoRun');
-  assert.match(body, /date modified/);
-  assert.match(body, /byte for byte/);
+  assert.match(body, /byte for byte, with their original dates/);
+  assert.ok(!body.includes('will read as the moment'), 'the old caveat is gone');
 });
 
 test('the result summary restates what the manifest said would be left behind', () => {

@@ -237,19 +237,38 @@ capabilities available on this machine.
   confirmed by the files leaving the fixture and by the undo bringing them back
   byte-for-byte, not by listing the Trash.
 
-### One thing worth raising with the owner
+### The Time Capsule now restores timestamps — DONE, at the owner's request
 
-**The Time Capsule has never recorded modification times.** It verifies content
-byte for byte and writes it back fresh, so a restored file's *date modified*
-reads as the moment it came back. That is pre-existing B3 behaviour, not a
-Phase 4 regression — but Phase 4 is what makes it visible to ordinary manual
-deletes, and it bit during verification: after an undo, `modified>90d` no
-longer matched the restored logs. The undo dialog now says so plainly. Fixing
-it properly means recording an mtime per member in the capsule manifest and
-`utimes`-ing on restore, which changes B3's on-disk schema — deliberately not
-done unasked.
+It used to verify content byte for byte and write it back fresh, so a restored
+file's *date modified* was the moment it came back. Phase 4 made that visible
+to ordinary manual deletes, and it bit during verification: after an undo,
+`modified>90d` stopped matching the very logs it had just been used to find.
 
----
+`ManifestMember` now carries optional `mtimeMs`/`atimeMs`, and `EntryManifest`
+carries `rootMtimeMs`/`rootAtimeMs` for a captured folder's own times. Four
+things are worth knowing about the implementation:
+
+1. **Directories are stamped last, deepest first.** Writing a child updates its
+   parent's mtime, so a folder stamped before its contents were restored is
+   immediately re-stamped with the time of the restore. Sorting by descending
+   `rel.length` is sufficient — a child's path is always longer than its
+   parent's.
+2. **A folder's own times live on the manifest, not in `members`.** The walk
+   never emits a member for the item's own root, and adding one would change
+   `digestOf`'s input for every new entry while saying nothing about content.
+3. **The times are absent from `digestOf` deliberately.** The digest
+   fingerprints content; a file whose timestamps could not be read is still the
+   same file.
+4. **The per-directory `lstat` this needs is opt-in** — `walkItem(root,
+   { withDirTimes: true })`, set only by `capture`. It measured 17 ms on a
+   3,001-directory tree (~11% of the walk), and the dry run has no use for the
+   answer. That walk is the one a person waits on with the confirmation dialog
+   not yet open, so it does not pay for something only the capture needs.
+
+Old manifests carry no times and restore exactly as they always did — a test
+strips them back out and pins that. Verified live: after a commit and undo
+through the UI, a folder kept its own Feb 2024 date even though its child was
+written into it during the restore.
 
 ## Perf pass on the Phase 3 readers — and what "10x" actually costs (27 Aug 2026)
 

@@ -209,9 +209,10 @@ OpenAPI 3 spec).
      undoable run**: every item is copied into the Time Capsule and verified
      before anything is trashed, and the response carries a `runId` that
      `POST /api/cart/undo` restores in full — original paths, byte for byte,
-     even after the Trash has been emptied. (Content only: the capsule has
-     never recorded modification times, so a restored file's mtime is the
-     moment it came back.) It is a separate route from `DELETE /api/files`
+     with their original timestamps, even after the Trash has been emptied.
+     (Directory times are restored after their contents, so writing the
+     children back does not re-stamp the folder.) It is a separate route from
+     `DELETE /api/files`
      rather than a flag on it, because the two make different promises and
      `GET /api/capabilities` marks destructive endpoints one by one.
      **The refusal that matters:** anything too large for the capsule to
