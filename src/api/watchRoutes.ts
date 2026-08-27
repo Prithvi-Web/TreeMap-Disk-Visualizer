@@ -64,7 +64,23 @@ watchRouter.get('/watch/:scanId', async (req: Request, res: Response) => {
     'X-Accel-Buffering': 'no',
   });
   res.flushHeaders();
-  send(res, { type: 'init', idleMinutes: session.idleMinutes, engine: session.engine });
+  // §2.4: unavailable is a first-class state with a reason, never a blank that
+  // reads as "nothing is happening". A session with no watchers cannot report
+  // activity, so it says that rather than looking attentive.
+  const watching = session.watchers.length;
+  send(res, {
+    type: 'init',
+    idleMinutes: session.idleMinutes,
+    engine: session.engine,
+    watchers: watching,
+    ...(watching === 0
+      ? {
+        reason: 'This folder could not be watched for live changes — the system refused every watch on it. '
+          + 'Permissions, or a limit on how many folders can be watched at once, are the usual causes. '
+          + 'Rescan to see changes instead.',
+      }
+      : {}),
+  });
 
   const client: WatchClient = {
     res,

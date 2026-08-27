@@ -75,7 +75,15 @@ cartRouter.post('/cart/commit', idempotency, guardBodyPaths, requireInsideScanRo
   }
 
   if (dryRun) {
-    const plan = await planCartCommit(paths);
+    // `carryOver` continues the capacity simulation from the previous batch of
+    // a large cart. A dry run writes nothing, so without it each batch plans
+    // against the capsule as it stands now and promises room the earlier
+    // batches would already have used. Opaque to the caller: it is handed
+    // straight back in the next request.
+    const carry = Array.isArray((body as { carryOver?: unknown }).carryOver)
+      ? ((body as { carryOver?: unknown }).carryOver as Parameters<typeof planCartCommit>[1])
+      : undefined;
+    const plan = await planCartCommit(paths, carry);
     await appendAudit({
       action: 'cart.commit', source: 'http', tokenId: tokenIdFor('http'),
       paths, bytes: plan.bytesWouldFree, dryRun: true, outcome: 'ok',

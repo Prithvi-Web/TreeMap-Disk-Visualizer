@@ -591,6 +591,17 @@ export interface ProtectionForecast {
 
 export interface ProtectionPlan {
   available: boolean;
+  /**
+   * The capsule index as this plan would leave it — evictions applied, the
+   * items it accepted added.
+   *
+   * Pass it back as `opts.carryOver` to continue planning where this call
+   * stopped. A dry run writes nothing, so without it every call starts from
+   * the capsule as it stands *now* and a cart planned in several batches is
+   * optimistic: the later batches do not know the earlier ones would have
+   * filled it. Never persisted — it exists only to chain calls.
+   */
+  carryOver: TimeCapsuleEntry[];
   /** Present only when available === false. Shown verbatim. */
   reason?: string;
   items: ProtectionForecast[];
@@ -623,11 +634,19 @@ export interface ProtectionPlan {
  * It writes nothing: no capsule entries, no events, no payloads. The index is
  * read once and mutated only in memory.
  */
-export async function planProtection(paths: string[]): Promise<ProtectionPlan> {
+export async function planProtection(
+  paths: string[],
+  opts: { carryOver?: TimeCapsuleEntry[] } = {},
+): Promise<ProtectionPlan> {
   const capsule = capsuleAvailable();
   const store = await loadStore();
   const settings = await getSettings();
+  // The cap is a share of *usable* space and copying into the capsule moves
+  // bytes from free to used without changing the sum, so it is constant for
+  // the whole run — computed from the real index even when a carry-over is
+  // supplied, exactly as `capture` computes it once for a batch.
   const capacity = await capacityOf(store.entries, settings.timeCapsuleMaxPercent);
+  const startingEntries = opts.carryOver ?? store.entries;
 
   if (!capsule.available) {
     // Nothing would be protected, so nothing would be deleted. Every item says
@@ -637,14 +656,14 @@ export async function planProtection(paths: string[]): Promise<ProtectionPlan> {
     }));
     return {
       available: false, reason: capsule.reason, items,
-      bytesProtected: 0, bytesSkipped: 0, evicts: [],
+      bytesProtected: 0, bytesSkipped: 0, evicts: [], carryOver: startingEntries,
       capBytes: capacity.capBytes, usedBytes: capacity.usedBytes,
     };
   }
 
   // A shallow copy of the entry list, so the simulation can evict without the
   // real index ever changing. The entries themselves are never mutated.
-  let simulated = [...store.entries];
+  let simulated = [...startingEntries];
   const evicts: ProtectionPlan['evicts'] = [];
   const items: ProtectionForecast[] = [];
   let bytesProtected = 0;
@@ -704,6 +723,7 @@ export async function planProtection(paths: string[]): Promise<ProtectionPlan> {
   return {
     available: true, items, bytesProtected, bytesSkipped, evicts,
     capBytes: capacity.capBytes, usedBytes: capacity.usedBytes,
+    carryOver: simulated,
   };
 }
 

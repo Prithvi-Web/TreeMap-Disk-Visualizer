@@ -843,7 +843,23 @@ export interface WatchEvent {
 
 /** Frames streamed over GET /api/watch/:scanId. */
 export type WatchStreamEvent =
-  | { type: 'init'; idleMinutes: number; engine: 'recursive' | 'top-levels' }
+  | {
+      type: 'init';
+      idleMinutes: number;
+      engine: 'recursive' | 'top-levels';
+      /**
+       * How many OS watchers actually attached.
+       *
+       * `engine` says which strategy was *tried*, not whether it worked, and
+       * every attach in `watcher.ts` is wrapped in a swallowing catch — so a
+       * session that watched nothing at all used to look exactly like a quiet
+       * disk. Zero here means Live mode can never report anything, and the UI
+       * says so instead of sitting there looking attentive.
+       */
+      watchers: number;
+      /** Present only when `watchers` is 0. Shown verbatim. */
+      reason?: string;
+    }
   | { type: 'activity'; at: number; events: WatchEvent[] }
   | { type: 'paused'; reason: 'idle' | 'shutdown' };
 

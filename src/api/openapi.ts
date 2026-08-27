@@ -1638,7 +1638,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/watch/{scanId}',
-    summary: 'SSE live disk activity for a completed scan (init, activity, paused frames)',
+    summary: 'SSE live disk activity for a completed scan. The init frame carries "watchers": 0 with a "reason" when nothing on this folder could be watched, which is different from a quiet disk',
     tag: 'settings',
     destructive: false,
     parameters: [pathParam('scanId', 'Completed scan id')],

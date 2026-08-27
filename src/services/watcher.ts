@@ -118,6 +118,19 @@ export function topLevelDirs(root: FileNode, depth: number, cap: number): string
   return out;
 }
 
+/**
+ * Attach OS watchers, and leave behind an honest count of how many took.
+ *
+ * Recursive first; per-directory as a fallback where recursion is not
+ * available. Every attach can fail — permissions, a vanished directory, or
+ * Linux's `max_user_watches` — and each failure is deliberately swallowed,
+ * because one unwatchable subdirectory is not a reason to abandon the rest.
+ *
+ * What was missing is the total. `engine` says which strategy was *tried*, so
+ * a session that attached nothing reported `top-levels` and then sat silent,
+ * indistinguishable from a disk where nothing was happening. `session.watchers`
+ * is now read by the route and sent to the client, which says so.
+ */
 function attachWatchers(session: WatchSession): void {
   const handler = (dirBase: string) => (_event: string, filename: string | Buffer | null): void => {
     if (!filename) return;
@@ -135,6 +148,8 @@ function attachWatchers(session: WatchSession): void {
     /* recursion unavailable on this platform — fall back to top levels */
   }
   session.engine = 'top-levels';
+  // `topLevelDirs` always includes the root itself, so this list is never
+  // empty — reaching zero watchers means the root was unwatchable too.
   const fallbackDirs = session.store
     ? topLevelDirsInStore(session.store, FALLBACK_DEPTH, MAX_FALLBACK_WATCHERS)
     : topLevelDirs(session.root as FileNode, FALLBACK_DEPTH, MAX_FALLBACK_WATCHERS);

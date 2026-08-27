@@ -8,6 +8,7 @@ import {
   startCapsuleRestore,
   type ProtectionPlan,
 } from './timeCapsule';
+import type { TimeCapsuleEntry } from '../models/types';
 import type { TimeCapsuleJob } from '../models/types';
 
 /**
@@ -89,6 +90,13 @@ export interface CartDryRun {
   capsule: { available: boolean; reason?: string; capBytes: number; usedBytes: number };
   /** B2's preflight: what a program is holding open right now. */
   openHandles: OpenHandleReport;
+  /**
+   * The capsule index as this plan would leave it. A cart larger than one
+   * request is planned in several calls, and passing this into the next one is
+   * what stops the later batches assuming a capsule the earlier ones would
+   * already have filled.
+   */
+  carryOver: TimeCapsuleEntry[];
 }
 
 export interface CartCommitResult {
@@ -127,8 +135,11 @@ export function assertCartPaths(paths: unknown): asserts paths is string[] {
  * The open-handle report is *reported*, not enforced. A dry run describes; it
  * never refuses. The commit is where a held file stops the batch.
  */
-export async function planCartCommit(paths: string[]): Promise<CartDryRun> {
-  const plan = await planProtection(paths);
+export async function planCartCommit(
+  paths: string[],
+  carryOver?: TimeCapsuleEntry[],
+): Promise<CartDryRun> {
+  const plan = await planProtection(paths, carryOver ? { carryOver } : {});
   const openHandles = await checkOpenHandles(paths);
 
   const items: CartManifestItem[] = plan.items.map((item) => ({
@@ -154,6 +165,7 @@ export async function planCartCommit(paths: string[]): Promise<CartDryRun> {
       usedBytes: plan.usedBytes,
     },
     openHandles,
+    carryOver: plan.carryOver,
   };
 }
 

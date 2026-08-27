@@ -6529,6 +6529,14 @@ function enableLive() {
     if (frame.type === 'init') {
       live.idleMinutes = frame.idleMinutes;
       live.engine = frame.engine;
+      // §2.4 — a session that attached no watchers can never report anything.
+      // Left on, it is a control that looks attentive over a disk it cannot
+      // see; the honest move is to refuse it with the server's own reason.
+      if (frame.watchers === 0) {
+        disableLive({ keepWanted: false });
+        toast(frame.reason || 'This folder could not be watched for live changes.', 'error', 12000);
+        return;
+      }
     } else if (frame.type === 'activity') {
       onLiveActivity(frame);
     } else if (frame.type === 'paused') {
@@ -9402,13 +9410,17 @@ const CART_COMMIT_CHUNK = 500;
 
 /** The dry run over any number of paths, merged into one manifest. */
 async function cartDryRun(paths, onProgress) {
-  const merged = { dryRun: true, items: [], bytesWouldFree: 0, bytesSkipped: 0, evicts: [], capsule: null, openHandles: null, batches: 0 };
+  const merged = { dryRun: true, items: [], bytesWouldFree: 0, bytesSkipped: 0, evicts: [], capsule: null, openHandles: null, batches: 0, carryOver: null };
   for (let i = 0; i < paths.length; i += CART_COMMIT_CHUNK) {
     const chunk = paths.slice(i, i + CART_COMMIT_CHUNK);
     const part = await api('/api/cart/commit', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths: chunk, dryRun: true }),
+      // The capsule state the previous batch would have left behind. Without
+      // it each batch plans against the capsule as it stands now and promises
+      // room the earlier batches would already have used.
+      body: JSON.stringify({ paths: chunk, dryRun: true, ...(merged.carryOver ? { carryOver: merged.carryOver } : {}) }),
     });
+    merged.carryOver = part.carryOver;
     merged.items.push(...(part.items || []));
     merged.bytesWouldFree += part.bytesWouldFree || 0;
     merged.bytesSkipped += part.bytesSkipped || 0;
@@ -9465,12 +9477,11 @@ function cartManifestHtml(plan, missingFromScan) {
     html += `<div class="cart-mf-note">${formatCount(plan.evicts.length)} older Time Capsule ${plan.evicts.length === 1 ? 'copy' : 'copies'} will be dropped to make room, and can no longer be restored from there.</div>`;
   }
   if (plan.batches > 1) {
-    // A dry run writes nothing, so each batch works out the capsule's
-    // remaining room from how it stands right now — the later batches do not
-    // know the earlier ones would have filled it. For a cart this large that
-    // also strains the capsule, a few more items than this may end up left in
-    // place. Stated here rather than discovered in the result summary.
-    html += `<div class="cart-mf-note">Checked in ${formatCount(plan.batches)} batches. Each one works out the Time Capsule's remaining room as it stands now, so if the capsule runs short a few more of these may end up left in place than this says.</div>`;
+    // Each batch carries the capsule state the previous one would have left,
+    // so the arithmetic is cumulative and this figure is not optimistic. The
+    // batch count is still worth saying — it explains the pause — but it is no
+    // longer a caveat about accuracy.
+    html += `<div class="cart-mf-note">Checked in ${formatCount(plan.batches)} batches, each counting the Time Capsule room the one before it would have used.</div>`;
   }
   const conflicts = (plan.openHandles && plan.openHandles.conflicts) || [];
   if (conflicts.length) {

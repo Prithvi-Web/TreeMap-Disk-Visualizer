@@ -1129,26 +1129,20 @@ B5 zombie handles.
 Ordered by what would actually cost someone something. Everything below was
 checked against the code on `f90496f`, with all three CI platforms green.
 
-**A. `attachWatchers` can end with zero watchers and Live mode will not say so.**
-`src/services/watcher.ts` falls back from a recursive `fs.watch` to per-directory
-watches, and every one of those is wrapped in a swallowing `catch`. The `init`
-SSE event reports `engine: 'recursive' | 'top-levels'` but never how many
-watchers actually attached, so a session that watched *nothing* looks identical
-to a quiet disk. This is the same class as the `startWatcher` bug fixed in
-`21dbbca`, and the same fix applies: report the count, and let the client say
-"live updates are not available here" with the reason.
-*Narrower than it first looks* — `topLevelDirs` always includes the root, so
-this needs the root itself to be unwatchable (permissions, or Linux
-`max_user_watches` exhausted). Real, but not common. Worth a test either way.
+**A. ~~`attachWatchers` can end with zero watchers~~ — FIXED.** The `init` SSE
+frame now carries `watchers` (how many actually attached) and, at zero, a
+`reason`; the client refuses Live rather than sitting there looking attentive
+over a disk it cannot see. Same class as the `startWatcher` bug in `21dbbca`,
+same fix. `topLevelDirs` always including the root is what made the zero case
+rare rather than routine, and that is now pinned by a test.
 
-**B. A chunked cart dry run is optimistic about the Time Capsule.**
-Each batch of ≤500 works out the capsule's remaining room as it stands *now*,
-because a dry run writes nothing — so the later batches do not know the earlier
-ones would have filled it. For a cart over 500 items that also strains the
-capsule, the manifest can promise slightly more than the commit delivers. The
-UI states this when it needed more than one batch (`cartManifestHtml`), so it is
-honest, not silent. Making it exact means threading the simulated store through
-`planProtection` across calls.
+**B. ~~A chunked cart dry run is optimistic about the Time Capsule~~ — FIXED.**
+`planProtection` returns `carryOver`, the capsule index as that plan would leave
+it, and accepts it back to continue; `cartDryRun` threads it between batches.
+The arithmetic is cumulative now, so the manifest no longer promises room an
+earlier batch would already have used — and the caveat that admitted this is
+gone from `cartManifestHtml`, because the thing it admitted is gone. A test
+drives a chained plan beside an unchained one and asserts they differ.
 
 **C. A capsule eviction has never run live.** The `evicts[]` line in the commit
 manifest is covered by `planEviction`'s unit tests and by the plan's arithmetic,

@@ -578,3 +578,43 @@ test('a chunked commit that fails partway never claims nothing was deleted', () 
   assert.match(exec, /Stopped after/);
   assert.match(exec, /cartLastRun = result\.runId/, 'the partial run stays undoable');
 });
+
+/* ══════════════ a chunked dry run is cumulative, not optimistic ══════════════ */
+
+test('a plan continued with carryOver counts the room the previous batch used', async () => {
+  // A dry run writes nothing, so without threading the simulated index every
+  // batch of a large cart plans against the capsule as it stands NOW — and
+  // promises room the earlier batches would already have taken. The manifest
+  // then offers more than the commit delivers, which is exactly the surprise
+  // §4.4 exists to prevent.
+  const dir = await fixture('carry', 4, 8192);
+  try {
+    const paths = [0, 1, 2, 3].map((i) => path.join(dir, `f${i}.bin`));
+
+    const first = await planProtection(paths.slice(0, 2));
+    assert.equal(first.bytesProtected, 8192 * 2);
+    assert.ok(first.carryOver.length >= 2, 'the plan hands back what it would have added');
+
+    // Continued: the capsule already holds the first batch.
+    const chained = await planProtection(paths.slice(2), { carryOver: first.carryOver });
+    assert.equal(chained.carryOver.length, first.carryOver.length + 2,
+      'the second batch stacks on the first rather than starting over');
+
+    // Unchained, the same second batch sees a capsule that still looks empty.
+    const unchained = await planProtection(paths.slice(2));
+    assert.ok(unchained.carryOver.length < chained.carryOver.length,
+      'which is precisely the optimism the carry-over removes');
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the cart dry run threads the carry-over between batches', () => {
+  const dry = slice('async function cartDryRun', '/**\n * The manifest, as the confirmation dialog shows it.');
+  assert.match(dry, /carryOver: merged\.carryOver/, 'each batch sends the previous one back');
+  assert.match(dry, /merged\.carryOver = part\.carryOver/, 'and keeps what came out');
+  const manifest = slice('function cartManifestHtml', 'async function cartExecuteCommit');
+  assert.match(manifest, /each counting the Time Capsule room the one before it would have used/);
+  assert.ok(!manifest.includes('may end up left in place than this says'),
+    'the optimism caveat is gone, because the optimism is gone');
+});
