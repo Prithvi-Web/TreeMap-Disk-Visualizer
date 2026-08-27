@@ -632,3 +632,74 @@ test('saving an unrelated setting keeps the cached scores', async () => {
     await s.close();
   }
 });
+
+/* ══════════ a signal that cannot affect the answer is not computed ══════════ */
+
+test('a zero-weight component is skipped, not computed and discarded', async () => {
+  const s = await listen();
+  const fx = await scannedFixture(s.port);
+  try {
+    const { updateSettings } = await import('../src/services/settings');
+    const { DEFAULT_RECLAIM_WEIGHTS } = await import('../src/services/reclaimScore');
+    const { platform } = await import('../src/platform');
+
+    // Count the calls rather than time them: a timing assertion here would be
+    // a wall-clock test on a shared machine, which this repo has learned not
+    // to write. What matters is that the work does not happen at all.
+    const provider = platform() as unknown as { readDownloadOrigins: (p: string[]) => Promise<unknown> };
+    const real = provider.readDownloadOrigins.bind(provider);
+    let calls = 0;
+    provider.readDownloadOrigins = async (p: string[]) => { calls++; return real(p); };
+    try {
+      await updateSettings({ reclaimWeights: DEFAULT_RECLAIM_WEIGHTS });
+      await score(fx.scanId, [fx.video]);
+      assert.equal(calls, 1, 'with a positive weight the download record is read');
+
+      // Switching it off must stop the subprocess being spawned at all — the
+      // model already drops a zero-weight component, so computing it is work
+      // that cannot change the answer.
+      await updateSettings({ reclaimWeights: { ...DEFAULT_RECLAIM_WEIGHTS, redownloadable: 0 } });
+      calls = 0;
+      const fact = (await score(fx.scanId, [fx.video]))[fx.video];
+      assert.equal(calls, 0, 'with a zero weight nothing is spawned');
+      assert.ok(fact, 'and the file is still scored on everything else');
+      assert.ok(!fact.components.some((c) => c.id === 'redownloadable'));
+      assert.ok(!fact.missing.some((m) => m.id === 'redownloadable'),
+        'switched off is not the same as failed to compute');
+    } finally {
+      provider.readDownloadOrigins = real;
+      await updateSettings({ reclaimWeights: DEFAULT_RECLAIM_WEIGHTS });
+    }
+  } finally {
+    fx.cleanup();
+    await s.close();
+  }
+});
+
+test('skipping a component does not change the scores of the others', async () => {
+  const s = await listen();
+  const fx = await scannedFixture(s.port);
+  try {
+    const { updateSettings } = await import('../src/services/settings');
+    const { DEFAULT_RECLAIM_WEIGHTS } = await import('../src/services/reclaimScore');
+
+    await updateSettings({ reclaimWeights: { ...DEFAULT_RECLAIM_WEIGHTS, redownloadable: 0 } });
+    const skipped = (await score(fx.scanId, [fx.video]))[fx.video];
+
+    // The same weights, but with the component computed and then given zero
+    // weight, must produce the identical score — otherwise the optimisation
+    // has changed the answer rather than just the work.
+    assert.ok(skipped);
+    const contributions = skipped.components.map((c) => `${c.id}:${c.contribution}`);
+    await updateSettings({ reclaimWeights: { ...DEFAULT_RECLAIM_WEIGHTS, redownloadable: 0 } });
+    const again = (await score(fx.scanId, [fx.video]))[fx.video];
+    assert.ok(again);
+    assert.equal(again.score, skipped.score);
+    assert.deepEqual(again.components.map((c) => `${c.id}:${c.contribution}`), contributions);
+    assert.equal(again.confidence, skipped.confidence);
+    await updateSettings({ reclaimWeights: DEFAULT_RECLAIM_WEIGHTS });
+  } finally {
+    fx.cleanup();
+    await s.close();
+  }
+});

@@ -1,5 +1,6 @@
 import { runText, CommandUnavailableError, CommandFailedError } from '../exec';
 import type { DownloadOriginBatch, DownloadOriginBrief, ProvenanceInfo } from '../types';
+import { IO_SUBPROCESS_CONCURRENCY, chunk, mapConcurrent } from '../../utils/concurrency';
 
 /**
  * Download provenance on Linux (C3) via extended attributes.
@@ -187,14 +188,21 @@ export async function readDownloadOriginsLinux(paths: string[]): Promise<Downloa
   const mechanism = 'user.xdg.origin.url';
   if (paths.length === 0) return { available: true, origins, unchecked, mechanism };
 
-  for (let i = 0; i < paths.length; i += GETFATTR_BATCH) {
-    const chunk = paths.slice(i, i + GETFATTR_BATCH);
-    const values = await runGetfattr(chunk);
+  // Concurrent for the same reason as the macOS reader: `getfattr` sits in
+  // blocking syscalls, and one chunk at a time leaves the other cores idle.
+  // The 2.3x this bought on macOS was measured; on Linux it is inferred from
+  // the identical shape, and is recorded as inferred rather than measured.
+  const batches = chunk(paths, GETFATTR_BATCH);
+  const results = await mapConcurrent(batches, IO_SUBPROCESS_CONCURRENCY, (batch) => runGetfattr(batch));
+
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    const values = results[b];
     if (values === null) {
-      for (const p of chunk) unchecked.add(p);
+      for (const p of batch) unchecked.add(p);
       continue;
     }
-    for (const p of chunk) {
+    for (const p of batch) {
       const url = values.get(p);
       if (url === undefined) continue; // checked, no record
       origins.set(p, {

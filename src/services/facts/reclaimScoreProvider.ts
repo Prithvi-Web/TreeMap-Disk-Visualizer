@@ -118,11 +118,24 @@ export const reclaimScoreProvider: FactProvider<ReclaimScoreFactValue> = {
 
     /* ---- gather, concurrently: each of these mostly waits on a subprocess ---- */
 
+    // A component whose weight is 0 is excluded from the score entirely
+    // (`computeReclaimScore` drops it), so computing it is work that cannot
+    // change the answer. Skipping it is not an optimisation bolted on top of
+    // the model — it is the model's own rule, applied one step earlier.
+    //
+    // This is the one lever that removes whole subprocess trees rather than
+    // making them faster: turning `redownloadable` off in Settings stops
+    // `xattr` being spawned at all.
+    const wants = (id: ReclaimComponentId): boolean => (Number(weights[id]) || 0) > 0;
+    const needsLastUsed = wants('staleness');
+    const needsRecoverability = wants('elsewhere');
+    const needsOrigins = wants('redownloadable');
+
     const [inputs, lastUsed, recoverability, origins] = await Promise.all([
       scanInputsFor(scanId),
-      safely(lastUsedProvider.compute(scanId, known, signal), null),
-      safely(recoverabilityProvider.compute(scanId, known, signal), null),
-      safely(platform().readDownloadOrigins(known), null),
+      needsLastUsed ? safely(lastUsedProvider.compute(scanId, known, signal), null) : Promise.resolve(null),
+      needsRecoverability ? safely(recoverabilityProvider.compute(scanId, known, signal), null) : Promise.resolve(null),
+      needsOrigins ? safely(platform().readDownloadOrigins(known), null) : Promise.resolve(null),
     ]);
 
     if (signal.aborted) {
@@ -147,29 +160,37 @@ export const reclaimScoreProvider: FactProvider<ReclaimScoreFactValue> = {
       const parts: Partial<Record<ReclaimComponentId, ComponentInput>> = {};
 
       /* size */
-      const sv = sizeValue(bytes, inputs.sizes.p50, inputs.sizes.p99);
-      parts.size = sv === null
-        ? { known: false, reason: 'Every file in this scan is about the same size, so size cannot rank them.' }
-        : {
-            known: true,
-            value: sv,
-            why: `${formatBytesPlain(bytes)}, against a typical ${formatBytesPlain(inputs.sizes.p50)} in this scan`,
-          };
+      if (wants('size')) {
+        const sv = sizeValue(bytes, inputs.sizes.p50, inputs.sizes.p99);
+        parts.size = sv === null
+          ? { known: false, reason: 'Every file in this scan is about the same size, so size cannot rank them.' }
+          : {
+              known: true,
+              value: sv,
+              why: `${formatBytesPlain(bytes)}, against a typical ${formatBytesPlain(inputs.sizes.p50)} in this scan`,
+            };
+      }
+
+      // Components whose weight is 0 are left out of `parts` entirely rather
+      // than filled in with a placeholder: `computeReclaimScore` skips a
+      // zero-weight component before it ever looks at its input, so an
+      // absent entry and a computed one are indistinguishable to the score —
+      // and an absent one costs nothing to produce.
 
       /* staleness */
-      parts.staleness = stalenessOf(p, store.modifiedAt(id), lastUsed, now);
+      if (needsLastUsed) parts.staleness = stalenessOf(p, store.modifiedAt(id), lastUsed, now);
 
       /* regenerable */
-      parts.regenerable = regenerableOf(p, inputs, store.rootPath);
+      if (wants('regenerable')) parts.regenerable = regenerableOf(p, inputs, store.rootPath);
 
       /* redundant */
-      parts.redundant = dupes.forPath(p, bytes);
+      if (wants('redundant')) parts.redundant = dupes.forPath(p, bytes);
 
       /* redownloadable */
-      parts.redownloadable = redownloadableOf(p, origins, now);
+      if (needsOrigins) parts.redownloadable = redownloadableOf(p, origins, now);
 
       /* elsewhere */
-      parts.elsewhere = elsewhereOf(p, recoverability);
+      if (needsRecoverability) parts.elsewhere = elsewhereOf(p, recoverability);
 
       const score = computeReclaimScore(parts, weights);
       if (score === null) {

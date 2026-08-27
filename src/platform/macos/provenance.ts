@@ -1,5 +1,6 @@
 import { runText, CommandUnavailableError, CommandFailedError } from '../exec';
 import { runPlist } from './plist';
+import { IO_SUBPROCESS_CONCURRENCY, chunk, mapConcurrent } from '../../utils/concurrency';
 import type { DownloadOriginBatch, DownloadOriginBrief, ProvenanceInfo } from '../types';
 
 /**
@@ -139,6 +140,13 @@ export async function downloadOrigin(path: string): Promise<ProvenanceInfo | nul
  * ARG_MAX is 1 MiB on macOS and 2,000 absolute paths measured 255 KB, so this
  * is not tight — but `mdls` and `tmutil` are both chunked for exactly this
  * reason, and a spawn that fails on ARG_MAX loses the whole batch silently.
+ *
+ * Deliberately left at 500 after measuring: the batch-size axis is nearly
+ * flat (one spawn for 5,000 paths took 155 ms against 167 ms for ten, so a
+ * spawn is ~1.2 ms and the cost is the syscalls inside it). Raising this
+ * would have bought about 7% while pushing argv toward ARG_MAX on deeply
+ * nested trees. The 2.3x is in running the chunks concurrently instead —
+ * see `IO_SUBPROCESS_CONCURRENCY`.
  */
 const XATTR_BATCH = 500;
 
@@ -218,16 +226,24 @@ export async function readDownloadOriginsMac(paths: string[]): Promise<DownloadO
   const mechanism = 'com.apple.quarantine';
   if (paths.length === 0) return { available: true, origins, unchecked, mechanism };
 
-  for (let i = 0; i < paths.length; i += XATTR_BATCH) {
-    const chunk = paths.slice(i, i + XATTR_BATCH);
-    const values = await runXattr(chunk);
+  // Concurrent, because each `xattr` sits in blocking filesystem syscalls and
+  // one-at-a-time leaves the other cores idle. Measured: 168 ms sequential
+  // versus 74 ms at four in flight, over 5,000 paths.
+  const batches = chunk(paths, XATTR_BATCH);
+  const results = await mapConcurrent(batches, IO_SUBPROCESS_CONCURRENCY, (batch) => runXattr(batch));
+
+  // Folded back in input order, so the answer does not depend on which chunk
+  // happened to finish first.
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    const values = results[b];
     if (values === null) {
       // The whole chunk is unknown, not recordless. Which files in it had a
       // download record is exactly what we failed to learn.
-      for (const p of chunk) unchecked.add(p);
+      for (const p of batch) unchecked.add(p);
       continue;
     }
-    for (const p of chunk) {
+    for (const p of batch) {
       const raw = values.get(p);
       if (raw === undefined) continue; // checked, no record — a real answer
       const { downloadedAt, agent } = parseQuarantine(raw);

@@ -1,5 +1,86 @@
 # TreeMap — session handoff
 
+## Perf pass on the Phase 3 readers — and what "10x" actually costs (27 Aug 2026)
+
+CI on `189a4e8` was **green on all three OSes**: type-check and the full suite
+passed on macOS, Windows and Linux, zero annotations, and the "surface each
+failing test" step *skipped* (it is `if: failure()`). That run was the first
+time the Windows `Zone.Identifier` and Linux `getfattr` readers executed on
+their real operating systems.
+
+### What was measured, and what it changed
+
+Profiling the cold `reclaimScore` batch at 5,000 paths put the time here:
+
+| Component | Before | After |
+| --- | --- | --- |
+| `readDownloadOrigins` (macOS `xattr`) | 208.5 ms | **97.0 ms** |
+| `readLastUsed`, steady state | 46.0 ms | **21.1 ms** |
+| `recoverability` | 88.6 ms | 86.3 ms |
+| `scanInputsFor` (first, then cached) | 26.6 / 0.0 ms | 24.2 / 0.0 ms |
+| **`reclaimScore` cold, via the bench** | **319.9 ms** | **259.2 ms** |
+| `reclaimScore` warm | 2.7 ms | 2.7 ms |
+
+**The first hypothesis was wrong, and measuring is what caught it.** The
+obvious read of "208 ms over ten `xattr` spawns" is that spawning is
+expensive, so raise `XATTR_BATCH`. Measured, the batch-size axis is nearly
+flat — 5,000 paths in **one** spawn took 155 ms against 167 ms in ten, so a
+spawn is ~1.2 ms and the cost is the syscalls inside it. Raising the chunk
+size would have bought ~7% while pushing argv toward `ARG_MAX` on deep trees.
+
+The time was in **serialisation**, not spawning:
+
+- `xattr` chunks now run **four at a time** (168 → 74 ms in isolation).
+  Four, not eight: at eight the processes contend for the disk queue and for
+  the cores Node needs, and 5,000 paths measured 136.9 ms — barely better than
+  sequential. Four is the measured knee and matches the `HASH_CONCURRENCY`
+  the duplicate finder already settled on.
+- `readAtime` and the per-path mount lookups in `readLastUsedMac` were a
+  sequential `await` per path against Node's four-wide filesystem threadpool.
+  Now 32 in flight — higher than the subprocess ceiling on purpose, because
+  threadpool `lstat` does not compete for cores the way a spawned process
+  does.
+- **A component whose weight is 0 is no longer computed at all.** The model
+  already drops it, so computing it was work that could not change the
+  answer; turning `redownloadable` off in Settings now stops `xattr` being
+  spawned. A test counts the calls rather than timing them, and a second test
+  asserts the remaining components' scores are byte-identical either way — an
+  optimisation that changed the answer would be a defect, not a speed-up.
+
+`src/utils/concurrency.ts` is new and carries these numbers in its header.
+`mapConcurrent` already existed as **two private copies** (`duplicateFinder`,
+`perceptualDupes`); a third was not worth writing, but those two were left
+alone deliberately — consolidating them touches proven delete-path code for
+no functional gain. Worth doing on a quiet day.
+
+### Why there is no "10x" to give, stated with the measurements
+
+| Operation | Measured now |
+| --- | --- |
+| Scan 18,933 files (gdu-turbo) | **252 ms** (~75,000 items/s) |
+| Switch between all 13 views | **6.3 ms total**, slowest view 1.0 ms |
+| Treemap repaint, 4,717 drawn cells | **10.2 ms median**, 23.2 ms p95 |
+| Score an entire treemap, 4,722 cells, cold | **124 ms** |
+| Reclaim score, warm | **2.7 ms** |
+
+Nothing in that table has 10x in it, because nothing in it is slow. A view
+switch cannot be made ten times faster than 0.5 ms in any sense a person
+could perceive.
+
+The one operation where a user genuinely waits is scanning a whole disk —
+1.4M items in ~16 s. A 10x there is not an optimisation problem, it is a
+mechanism problem, and **§7 rules out the only mechanisms that would do it**:
+no MFT parsing, no `getattrlistbulk`, no N-API addons. Within the walkers the
+project is allowed to ship, gdu-turbo is already at the filesystem's speed.
+
+So the honest statement is: the readers this phase added got **2.1-2.2x** on
+the paths that were actually costing time, the cold end-to-end batch got
+**1.23x**, and everything else was already fast enough that the remaining
+wins are noise. Do not let a future session quietly redefine "10x" to mean a
+microbenchmark that was never on anyone's critical path.
+
+---
+
 ## v4 — Phase 3 complete: the Reclaim Score (26 August 2026)
 
 **Four commits on `main`, unpushed.** Suite **1118 (1116 pass, 2 skips)**, up

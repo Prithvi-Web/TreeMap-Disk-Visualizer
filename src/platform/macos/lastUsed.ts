@@ -4,6 +4,7 @@ import {
   ATIME_CAVEAT, lastUsedFromAtime, parseBsdMount, mountForPath, atimeSupportFromOptions, readAtime,
 } from '../atime';
 import type { CapabilityState, LastUsedInfo } from '../types';
+import { mapConcurrent } from '../../utils/concurrency';
 
 /**
  * Last-opened dates on macOS (v4 §1.1).
@@ -135,6 +136,16 @@ export function parseMdutilStatus(text: string): boolean {
 const SPOTLIGHT_PROBE_PATHS = 128;
 
 /**
+ * How many `lstat` calls are in flight at once.
+ *
+ * Deliberately well above the subprocess ceiling: these go to Node's
+ * filesystem threadpool rather than spawning anything, so they do not contend
+ * for the cores a `xattr` process needs. Measured over 5,000 paths: 43.9 ms
+ * sequential, 16.5 ms at this width.
+ */
+const ATIME_CONCURRENCY = 32;
+
+/**
  * How many paths one `mdls` invocation is given.
  *
  * Unchunked, a 2,000-path batch of long paths can exceed ARG_MAX; the spawn
@@ -205,13 +216,20 @@ export async function readLastUsedMac(paths: string[]): Promise<Map<string, Last
   // exist (trap 2 — one missing path would destroy the whole mdls batch), it
   // supplies the access time that is the default source, and it costs
   // essentially nothing.
+  // Concurrent rather than a sequential await per path. Node's filesystem
+  // threadpool is four wide by default and a serial loop uses one of it:
+  // measured over 5,000 paths, 43.9 ms sequential against 16.5 ms at 32 in
+  // flight. Higher than IO_SUBPROCESS_CONCURRENCY on purpose — these are
+  // threadpool lstat calls, not subprocesses, so they do not contend for
+  // cores the way a spawned `xattr` does.
+  const stats = await mapConcurrent(paths, ATIME_CONCURRENCY, (p) => readAtime(p));
   const alive: string[] = [];
   const atimes = new Map<string, number>();
-  for (const p of paths) {
-    const st = await readAtime(p);
+  for (let i = 0; i < paths.length; i++) {
+    const st = stats[i];
     if (!st) continue;
-    alive.push(p);
-    atimes.set(p, st.atimeMs);
+    alive.push(paths[i]);
+    atimes.set(paths[i], st.atimeMs);
   }
   if (alive.length === 0) return out;
 
@@ -223,7 +241,8 @@ export async function readLastUsedMac(paths: string[]): Promise<Map<string, Last
   // forbids outright — or, with the order reversed, blanked every good answer
   // in the batch. Mount options are cached, so asking per path is cheap.
   const noatimeByPath = new Map<string, string | null>();
-  for (const p of alive) noatimeByPath.set(p, await noatimeReason(p));
+  const reasons = await mapConcurrent(alive, ATIME_CONCURRENCY, (p) => noatimeReason(p));
+  for (let i = 0; i < alive.length; i++) noatimeByPath.set(alive[i], reasons[i]);
 
   const verdict = await spotlightIsProductive(alive);
 
