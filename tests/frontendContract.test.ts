@@ -39,6 +39,7 @@ const TAB_VIEWS = [
   'security', // C5 — secrets hygiene
   'fleet', // D1 — LAN fleet view
   'missing', // v4 §5 — The Missing Gigabytes
+  'city', // v4 §6.1 — Disk City, the isometric view
 ] as const;
 const MODAL_VIEWS = ['cleanModal', 'settingsModal'] as const;
 

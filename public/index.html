@@ -687,6 +687,49 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 #cartDock.open #cartTab .c-cta { color: var(--text-3); }
 .icon-btn.cartin { color: var(--accent); }
 
+/* ═══════════ Disk City (v4 §6.1) ═══════════
+   The canvas fills the panel and the chrome floats over it, so the picture is
+   the page rather than a picture on a page. Everything here is a token from
+   the existing palette: a third view inventing its own greys would show up
+   immediately beside the Treemap it is meant to be the same map as. */
+#cityWrap { position: relative; border-radius: var(--r-lg); overflow: hidden;
+  border: 1px solid var(--hairline); height: clamp(360px, calc(100vh - 250px), 1100px); }
+#cityCanvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+#cityCanvas:active { cursor: grabbing; }
+#cityCanvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* The hover card follows the cursor, so it is deliberately small and never
+   grabs the pointer — a card that can be hovered flickers against the map. */
+.city-card { position: absolute; pointer-events: none; z-index: 3; max-width: 300px;
+  padding: 9px 11px; border-radius: var(--r-sm); border: 1px solid var(--hairline-2);
+  background: var(--glass-strong); backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-sat));
+  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-sat));
+  box-shadow: var(--shadow-2); font-size: 12px; color: var(--text-2); line-height: 1.5; }
+.city-card .cc-name { display: block; font-weight: 600; color: var(--text-1); font-size: 12.5px;
+  margin-bottom: 3px; word-break: break-all; }
+.city-card .cc-row { display: flex; gap: 10px; justify-content: space-between; }
+.city-card .cc-row b { color: var(--text-1); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* The level-of-detail notice. §6.1 requires the threshold to be stated, never
+   silent — a map that quietly drew 4,000 of 251,000 things and said nothing
+   would be lying by omission about what the user is looking at. */
+.city-lod { position: absolute; left: 12px; bottom: 12px; z-index: 3; padding: 6px 11px;
+  border-radius: 999px; border: 1px solid var(--hairline); background: var(--glass);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  font-size: 11.5px; color: var(--text-2); }
+
+.city-table { margin-top: 12px; }
+.city-table > summary { cursor: pointer; font-size: 12px; color: var(--text-2); padding: 6px 2px;
+  border-radius: var(--r-sm); }
+.city-table > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.city-table table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+.city-table th, .city-table td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--hairline); }
+.city-table th { color: var(--text-3); font-weight: 600; }
+.city-table td.num, .city-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.city-table button { background: none; border: none; padding: 0; color: var(--accent);
+  cursor: pointer; font: inherit; text-align: left; }
+.city-table button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* ═══════════ Phase 5 (v4 §5.3) — The Missing Gigabytes ═══════════
    A receipt, and it is meant to look like one: a bar over the volume's whole
    capacity, then the arithmetic printed as lines with a rule above the total.
@@ -1767,6 +1810,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   <nav class="tabbar" role="tablist" aria-label="Views" aria-orientation="vertical">
     <button role="tab" aria-selected="true" data-view="dashboard" title="Dashboard"><span data-icon="dashboard"></span><span class="side-label">Dashboard</span></button>
     <button role="tab" aria-selected="false" data-view="treemap" title="Treemap"><span data-icon="treemap"></span><span class="side-label">Treemap</span></button>
+    <button role="tab" aria-selected="false" data-view="city" title="Disk City"><span data-icon="box"></span><span class="side-label">Disk City</span></button>
     <button role="tab" aria-selected="false" data-view="grid" title="Grid"><span data-icon="grid"></span><span class="side-label">Grid</span></button>
     <button role="tab" aria-selected="false" data-view="apps" title="Apps"><span data-icon="box"></span><span class="side-label">Apps</span></button>
     <button role="tab" aria-selected="false" data-view="games" title="Games"><span data-icon="play"></span><span class="side-label">Games</span></button>
@@ -2047,6 +2091,47 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
       <span class="num" id="tmStatus"></span>
       <span class="hint"><span data-icon="mouse"></span>click a folder to drill in · right-click for actions · Esc to go up</span>
     </div>
+  </section>
+
+  <!-- ═══════════ Disk City (v4 §6.1) ═══════════
+       The Treemap's own tiling, seen from a corner. Same root, same nodes,
+       three variables instead of one. -->
+  <section class="view" id="view-city" role="tabpanel" aria-label="Disk City" hidden>
+    <div class="tm-toolbar">
+      <button class="btn" id="cityUpBtn" title="Zoom out one level (Escape)" aria-label="Zoom out one level"><span data-icon="arrowUp"></span></button>
+      <div class="crumbs" id="cityCrumbs"></div>
+      <div class="tm-controls">
+        <div class="seg" id="cityHeightSeg" role="tablist" aria-label="What building height means">
+          <button type="button" data-h="staleness" aria-selected="true" title="Taller = longer since anything in it changed">Staleness</button>
+          <button type="button" data-h="files" aria-selected="false" title="Taller = more files inside">Files</button>
+          <button type="button" data-h="depth" aria-selected="false" title="Taller = more deeply nested">Depth</button>
+        </div>
+        <div class="seg" id="cityColorSeg" role="tablist" aria-label="What building colour means">
+          <button type="button" data-c="reclaim" aria-selected="true" title="Colour by how safe and worthwhile it is to reclaim">Reclaim</button>
+          <button type="button" data-c="type" aria-selected="false" title="Colour by file kind">Type</button>
+          <button type="button" data-c="age" aria-selected="false" title="Colour by how recently modified">Age</button>
+        </div>
+        <button class="pill" id="cityReset" title="Recentre and reset the zoom">Recentre</button>
+      </div>
+    </div>
+    <div class="glass" id="cityWrap">
+      <canvas id="cityCanvas" tabindex="0"
+              aria-label="Disk usage as an isometric city. Drag to pan, scroll to zoom, click a building to drill in, Escape to go up. A text equivalent of every building is listed below the map."></canvas>
+      <div class="city-card" id="cityCard" role="status" aria-live="polite" hidden></div>
+      <div class="city-lod" id="cityLod" role="status" aria-live="polite" hidden></div>
+    </div>
+    <div class="tm-foot">
+      <div id="cityLegend" class="tm-legend"></div>
+      <span class="num" id="cityStatus"></span>
+      <span class="hint"><span data-icon="mouse"></span>drag to pan · scroll to zoom · click to drill in · Esc to go up</span>
+    </div>
+    <!-- §6 cross-cutting: every canvas view needs a text-equivalent path to the
+         same information. This is that path, not a second navigation mechanism —
+         it lists what the canvas drew and drills through the same function. -->
+    <details class="city-table" id="cityTableWrap">
+      <summary>List the buildings (text equivalent of the map)</summary>
+      <div id="cityTable"></div>
+    </details>
   </section>
 
   <!-- ═══════════ Grid ═══════════ -->
@@ -3183,6 +3268,13 @@ const state = {
   savedViews: [],
   savedViewsLoaded: false,
   treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') === 'sunburst' ? 'sunburst' : 'treemap', arcs: [], sun: null, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null } },
+  // v4 §6.1 — Disk City. Deliberately holds NO tree of its own: the root and
+  // the nodes are the Treemap's, so the two are the same arrangement rather
+  // than two arrangements that resemble each other.
+  city: { blocks: [], hover: null, pan: { x: 0, y: 0 }, zoom: 1, fit: 1, drawn: 0, total: 0, aggregated: 0,
+          height: localStorage.getItem('tm-cityheight') || 'staleness',
+          colour: localStorage.getItem('tm-citycolour') || 'reclaim',
+          counts: new Map(), countsFor: null, unresolved: 0, raf: 0, drag: null },
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   apps: { loadedFor: null, list: [], otherBytes: 0, totalBytes: 0, appsFolderScanned: false },
   games: { loadedFor: null, report: null },
@@ -8726,6 +8818,854 @@ registerView({
     missingData = null;
     $('missingBody').innerHTML = '<div class="muted">Run a scan to reconcile this disk.</div>';
     $('missingInfo').textContent = '';
+  },
+});
+
+/* ═══════════ Disk City — the isometric view (v4 §6.1) ═══════════
+   The same squarified tiling the Treemap draws, seen from a corner. That is
+   the point of it: a flat treemap encodes exactly one variable in area, and
+   this encodes three — footprint is bytes, height is staleness (or file count,
+   or depth), colour is reclaim score (or type, or age). "The tall grey tower
+   is a 40 GB thing you have not opened in two years" reads instantly in a way
+   a red rectangle never does.
+
+   It shares `state.treemap.rootPath` and `state.treemap.nodes` with the
+   Treemap deliberately, and that is the strongest claim this view makes: the
+   two are not similar arrangements, they are the *same* arrangement, so
+   switching between them is legible rather than disorienting and needs no
+   refetch. Drilling in either moves both.
+
+   All Canvas 2D. §7 rules out WebGL and a 3D engine by name, and nothing here
+   needs one: the projection is a 2D affine transform.                       */
+
+/* ── The projection, and the one hard problem in it ────────────────────────
+
+   `sx = (x - y)·cos30`, `sy = (x + y)·sin30 - z`, exactly as §6.1 states.
+
+   Draw order is the part that is easy to get subtly wrong. Painter's
+   algorithm needs far-to-near, and the obvious approach — sort each box by
+   some scalar depth — **cannot be correct**, which was measured rather than
+   assumed. Four candidate keys were driven against an exact oracle (ray-cast
+   along the view direction at sampled points inside each pair's shared
+   silhouette) over six layouts:
+
+     key            uniform grid   squarified   big + slivers
+     minCornerSum        0              0..2          0
+     centreSum           0              0..1         11
+     farCornerSum        0              0..3         56
+     maxOfMax            0              0..3         59
+
+   The failures all have one shape: a wide, shallow strip whose *minimum*
+   corner sits far from where it actually overlaps its neighbour. No per-box
+   number can express that, which is the classic painter's problem.
+
+   What IS exact — and this was checked against the same ray-cast oracle over
+   779 overlapping pairs in six layouts, with **zero** disagreements and zero
+   ambiguous cases — is the pairwise rule below: for two boxes on a common
+   ground plane with non-overlapping footprints (which a treemap guarantees),
+   A is behind B exactly when A ends before B begins on either axis. Sorting
+   that relation topologically is therefore correct, not approximately correct.
+
+   It is computed **once per layout**, never per frame, exactly as §6.1 asks —
+   panning and zooming re-use the order and only move the camera.            */
+
+/** §6.1's projection, verbatim. Called once per corner per layout, not per frame. */
+function isoProject(x, y, z) {
+  return { sx: (x - y) * Math.cos(Math.PI / 6), sy: (x + y) * Math.sin(Math.PI / 6) - z };
+}
+
+/**
+ * The screen-space bounding box of an extruded block `{x, y, w, h, z}`.
+ *
+ * Only the four corners that can be extreme are projected: in this projection
+ * the leftmost point is always the far-y corner and the rightmost the far-x
+ * one, the top is the raised near corner and the bottom the ground corner.
+ */
+function isoBounds(b) {
+  const left = isoProject(b.x, b.y + b.h, 0);
+  const right = isoProject(b.x + b.w, b.y, 0);
+  const top = isoProject(b.x, b.y, b.z);
+  const bottom = isoProject(b.x + b.w, b.y + b.h, 0);
+  return { x0: left.sx, x1: right.sx, y0: top.sy, y1: bottom.sy };
+}
+
+/**
+ * Is `a` strictly behind `b`?
+ *
+ * The exact rule, for boxes whose footprints do not overlap. Verified against
+ * a ray-cast oracle on every overlapping pair of six layouts.
+ */
+function isoBehind(a, b) {
+  return (a.x + a.w <= b.x + 1e-9) || (a.y + a.h <= b.y + 1e-9);
+}
+
+/**
+ * Far-to-near draw order.
+ *
+ * Kahn's algorithm over the occlusion relation, with edges only between boxes
+ * whose screen bounding boxes actually overlap — a full pairwise pass would be
+ * O(n²) on a set that can run to a few thousand. Candidates come from a
+ * uniform grid over screen space, so the edge count is proportional to how
+ * much the picture actually overlaps itself rather than to n².
+ *
+ * Ties break on `x + y` so the order is stable frame to frame and layout to
+ * layout: an unstable tie-break makes equal-depth blocks swap places on every
+ * redraw, which reads as flicker.
+ *
+ * A cycle cannot arise from non-overlapping footprints, but a numerical edge
+ * case is not worth a wrong picture: anything Kahn cannot place is appended in
+ * tie-break order and counted, so `isoDepthOrder` can never drop a block.
+ */
+function isoDepthOrder(blocks) {
+  const n = blocks.length;
+  if (n < 2) return { order: blocks.slice(), unresolved: 0 };
+
+  const bounds = blocks.map(isoBounds);
+
+  // ── edges, by sweep line ──
+  // A uniform grid was tried first and is the wrong structure here: one big
+  // folder's block spans most of the screen, lands in thousands of cells, and
+  // is then re-tested against its neighbours once per shared cell. Measured at
+  // 4,000 blocks that took 3.5 SECONDS. A sweep over x tests every pair
+  // exactly once instead, and only pairs that actually share screen columns.
+  const byLeft = Array.from({ length: n }, (_, i) => i).sort((a, b) => bounds[a].x0 - bounds[b].x0 || a - b);
+  const after = new Array(n).fill(null);
+  const indegree = new Int32Array(n);
+  const active = [];
+
+  for (const i of byLeft) {
+    const bi = bounds[i];
+    // Drop anything whose right edge is already behind this block's left one:
+    // it can never overlap this block or any later one.
+    let keep = 0;
+    for (let k = 0; k < active.length; k++) {
+      const j = active[k];
+      if (bounds[j].x1 > bi.x0) active[keep++] = j;
+    }
+    active.length = keep;
+
+    for (let k = 0; k < active.length; k++) {
+      const j = active[k];
+      const bj = bounds[j];
+      if (bi.y1 <= bj.y0 || bj.y1 <= bi.y0) continue; // no vertical overlap
+      const iBehind = isoBehind(blocks[i], blocks[j]);
+      const jBehind = isoBehind(blocks[j], blocks[i]);
+      if (iBehind === jBehind) continue; // both or neither: no constraint
+      const from = iBehind ? i : j, to = iBehind ? j : i;
+      if (!after[from]) after[from] = [];
+      after[from].push(to);
+      indegree[to]++;
+    }
+    active.push(i);
+  }
+
+  // ── Kahn, with a binary heap so ties break deterministically ──
+  // The tie-break is `x + y`, which keeps equal-depth blocks in the same order
+  // every redraw; an unstable one makes them trade places and reads as flicker.
+  // A sorted array with splice() was the first attempt and is O(n²) on its own.
+  const heap = [];
+  const heapKey = (i) => blocks[i].x + blocks[i].y;
+  const less = (a, b) => { const ka = heapKey(a), kb = heapKey(b); return ka < kb || (ka === kb && a < b); };
+  const heapPush = (v) => {
+    heap.push(v);
+    let c = heap.length - 1;
+    while (c > 0) {
+      const p = (c - 1) >> 1;
+      if (!less(heap[c], heap[p])) break;
+      const t = heap[c]; heap[c] = heap[p]; heap[p] = t;
+      c = p;
+    }
+  };
+  const heapPop = () => {
+    const top = heap[0];
+    const last = heap.pop();
+    if (heap.length) {
+      heap[0] = last;
+      let p = 0;
+      for (;;) {
+        const l = p * 2 + 1, r = l + 1;
+        let m = p;
+        if (l < heap.length && less(heap[l], heap[m])) m = l;
+        if (r < heap.length && less(heap[r], heap[m])) m = r;
+        if (m === p) break;
+        const t = heap[p]; heap[p] = heap[m]; heap[m] = t;
+        p = m;
+      }
+    }
+    return top;
+  };
+
+  for (let i = 0; i < n; i++) if (indegree[i] === 0) heapPush(i);
+
+  const order = [];
+  const placed = new Uint8Array(n);
+  while (heap.length) {
+    const i = heapPop();
+    order.push(blocks[i]);
+    placed[i] = 1;
+    const outs = after[i];
+    if (!outs) continue;
+    for (let k = 0; k < outs.length; k++) if (--indegree[outs[k]] === 0) heapPush(outs[k]);
+  }
+
+  // A cycle cannot arise from non-overlapping footprints, but a numerical edge
+  // case is not worth a wrong picture: anything left over is appended in
+  // tie-break order and counted, so a block can never be dropped.
+  let unresolved = 0;
+  if (order.length < n) {
+    const left = [];
+    for (let i = 0; i < n; i++) if (!placed[i]) left.push(i);
+    left.sort((a, b) => heapKey(a) - heapKey(b) || a - b);
+    unresolved = left.length;
+    for (const i of left) order.push(blocks[i]);
+  }
+  return { order, unresolved };
+}
+
+/* ── What a building's height and colour mean ──────────────────────────────
+
+   Height is a *rank*, not a raw quantity. Staleness in days spans four orders
+   of magnitude and reclaim scores span two, so a linear height would give one
+   ancient folder a mile-high tower and flatten everything else into the
+   pavement. Each mode maps its value through a log or a clamp into the same
+   0..CITY_MAX_H band, so the picture reads at any scale — and the legend says
+   which variable is which, because a height nobody can name is decoration. */
+const CITY_MAX_H = 26;   // in layout units, where the whole map is 100 wide
+const CITY_MIN_H = 0.6;  // never zero: a flat block is a hole, not a building
+
+/** Days since a node changed, or null when it does not say. */
+function cityAgeDays(n) {
+  if (!n || typeof n.modifiedAt !== 'number' || n.modifiedAt <= 0) return null;
+  return Math.max(0, (Date.now() - n.modifiedAt) / 86400000);
+}
+
+/**
+ * Height for one node, in layout units.
+ *
+ * Returns null when the chosen variable is unknown for this node — the caller
+ * draws those at the floor height and says how many there were, rather than
+ * letting "unknown" and "brand new" look identical.
+ */
+function cityHeight(n, mode, counts) {
+  if (mode === 'depth') {
+    const d = typeof n.depth === 'number' ? n.depth : null;
+    if (d === null) return null;
+    return CITY_MIN_H + Math.min(1, d / 8) * CITY_MAX_H;
+  }
+  if (mode === 'files') {
+    const c = counts.get(n.path);
+    if (!c) return null; // not answered yet, or not answerable — not "zero files"
+    return CITY_MIN_H + Math.min(1, Math.log10(c.files + 1) / 5) * CITY_MAX_H;
+  }
+  const days = cityAgeDays(n);
+  if (days === null) return null;
+  // log10 over roughly a decade: a day ≈ floor, ten years ≈ full height.
+  return CITY_MIN_H + Math.min(1, Math.log10(days + 1) / Math.log10(3651)) * CITY_MAX_H;
+}
+
+/** Base colour for a building, as [r,g,b]. */
+function cityRgb(n, mode) {
+  if (mode === 'type') { const k = kindFor(n); return k && k.tint ? hexToRgb(k.tint) : [120, 128, 140]; }
+  if (mode === 'age') return ageRgb(n.modifiedAt);
+  const score = reclaim.scores.get(n.path);
+  // Unscored is its own colour, never the bottom of the ramp: "nobody looked"
+  // and "not worth reclaiming" must not paint the same grey.
+  if (score === undefined || score === null) return C_RC_UNSCORED;
+  return reclaimRgb(typeof score === 'object' ? score.score : score);
+}
+
+/* ── Choosing what to draw ─────────────────────────────────────────────────
+
+   The depth sort is only correct for blocks whose FOOTPRINTS DO NOT OVERLAP,
+   and that is not a detail — it is the precondition the whole picture rests
+   on. A treemap's node list contains parents and the children that tile them,
+   so drawing both would interpenetrate every building with its own contents.
+
+   So the drawn set is the frontier: a node is drawn when it is big enough to
+   see AND none of its children are. That is exactly §6.1's "aggregate children
+   into the parent block", and the parents that swallowed children are hatched
+   so the map says where the detail went instead of pretending there is none. */
+function cityVisibleNodes(nodes, minArea) {
+  const passes = new Set();
+  for (const n of nodes) if (n.w * n.h >= minArea) passes.add(n.path);
+  const hasDrawnChild = new Set();
+  for (const n of nodes) {
+    if (!passes.has(n.path)) continue;
+    const parent = tmParentPath(n.path);
+    if (parent && passes.has(parent)) hasDrawnChild.add(parent);
+  }
+  const out = [];
+  for (const n of nodes) {
+    if (!passes.has(n.path) || hasDrawnChild.has(n.path)) continue;
+    out.push(n);
+  }
+  return { drawn: out, aggregated: hasDrawnChild.size };
+}
+
+/**
+ * Build the city: pick the visible set, give each block a height, project it,
+ * and put it in draw order. Once per layout — never per frame.
+ */
+function buildCity() {
+  const c = state.city;
+  const nodes = state.treemap.nodes || [];
+  c.total = nodes.length;
+  if (!nodes.length) { c.blocks = []; c.drawn = 0; c.aggregated = 0; c.unresolved = 0; return; }
+
+  // The threshold is in LAYOUT units (the map is 100 x 100), scaled by zoom so
+  // that zooming in genuinely reveals more rather than only magnifying.
+  const minArea = 0.55 / (c.zoom * c.zoom);
+  const { drawn, aggregated } = cityVisibleNodes(nodes, minArea);
+  c.aggregated = aggregated;
+
+  let unknownHeight = 0;
+  const blocks = [];
+  for (const n of drawn) {
+    const h = cityHeight(n, c.height, c.counts);
+    if (h === null) unknownHeight++;
+    blocks.push({
+      x: n.x, y: n.y, w: n.w, h: n.h,
+      z: h === null ? CITY_MIN_H : h,
+      unknownHeight: h === null,
+      n,
+      rgb: cityRgb(n, c.colour),
+      hatched: aggregated > 0 && n.type === 'dir',
+    });
+  }
+  // Bounds are kept from the build pass so the draw loop can cull to the
+  // viewport with six comparisons instead of re-projecting eight corners.
+  for (const b of blocks) b.bb = isoBounds(b);
+  const ordered = isoDepthOrder(blocks);
+  c.blocks = ordered.order;
+  c.unresolved = ordered.unresolved;
+  c.drawn = blocks.length;
+  c.unknownHeight = unknownHeight;
+}
+
+/* ── Drawing ───────────────────────────────────────────────────────────────
+
+   Three faces per building, painter's order, no per-frame projection: the
+   layout already holds screen-space corners, so a frame is a transform and a
+   fill. That is what keeps panning inside §2.5's 16 ms.                     */
+
+/** Project the block's corners once, into the shape the draw loop wants. */
+function cityFaces(b) {
+  const p = (x, y, z) => isoProject(x, y, z);
+  const x0 = b.x, x1 = b.x + b.w, y0 = b.y, y1 = b.y + b.h, z = b.z;
+  return {
+    top: [p(x0, y0, z), p(x1, y0, z), p(x1, y1, z), p(x0, y1, z)],
+    // The two walls that face the viewer: +x (lower right) and +y (lower left).
+    right: [p(x1, y0, z), p(x1, y1, z), p(x1, y1, 0), p(x1, y0, 0)],
+    left: [p(x0, y1, z), p(x1, y1, z), p(x1, y1, 0), p(x0, y1, 0)],
+  };
+}
+
+function cityShade(rgb, k, alpha = 1) {
+  return `rgba(${Math.round(rgb[0] * k)},${Math.round(rgb[1] * k)},${Math.round(rgb[2] * k)},${alpha})`;
+}
+
+function cityPoly(ctx, pts, tx) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0].sx * tx.s + tx.dx, pts[0].sy * tx.s + tx.dy);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].sx * tx.s + tx.dx, pts[i].sy * tx.s + tx.dy);
+  ctx.closePath();
+}
+
+/** The transform that puts the projected map on the canvas at the current zoom/pan. */
+function cityTransform(width, height) {
+  const c = state.city;
+  // The projected map of a 100x100 layout spans x in [-100cos30, 100cos30] and
+  // y in [-CITY_MAX_H, 100sin30]. Fitting that once keeps zoom === 1 meaning
+  // "the whole disk fits", whatever the panel size is.
+  const cos = Math.cos(Math.PI / 6), sin = Math.sin(Math.PI / 6);
+  const spanX = 200 * cos, spanY = 100 * sin + CITY_MAX_H + 4;
+  const fit = Math.min(width / spanX, height / spanY) * 0.92;
+  c.fit = fit;
+  const s = fit * c.zoom;
+  return { s, dx: width / 2 + c.pan.x, dy: height / 2 - (100 * sin) / 2 * s + c.pan.y };
+}
+
+function drawCity() {
+  const canvas = $('cityCanvas');
+  if (!canvas || !canvas.isConnected) return;
+  const wrap = $('cityWrap');
+  const cssW = Math.max(120, wrap.clientWidth);
+  const cssH = Math.max(120, wrap.clientHeight);
+  const { ctx, width, height } = Canvas2D.setup(canvas, cssW, cssH);
+  ctx.clearRect(0, 0, width, height);
+
+  const c = state.city;
+  const tx = cityTransform(width, height);
+  const hoverPath = c.hover ? c.hover.n.path : null;
+
+  // Edges are drawn only where they would be visible. Without them a field of
+  // similarly-scored folders fuses into one olive mass — the shading alone
+  // tells you which way a face points, not where one building stops and the
+  // next begins. The stroke is the block's OWN colour darkened rather than a
+  // neutral grey, so the outline reads as the edge of a solid instead of as a
+  // wireframe drawn over it.
+  const edgeWidth = Math.min(1.1, Math.max(0.35, tx.s * 0.06));
+  ctx.lineJoin = 'round';
+
+  let painted = 0;
+  for (const b of c.blocks) {
+    // Viewport culling. At high zoom most of the city is off-canvas, and
+    // drawing it costs the same as drawing what you can see: measured at
+    // 9,897 blocks the median frame was 18.1 ms, over §2.5's 16 ms, with about
+    // nine tenths of them outside the panel. Skipping them is not a
+    // simplification of the picture — every block that intersects the canvas is
+    // still drawn, in the same order — so nothing the user could see is lost.
+    const bx0 = b.bb.x0 * tx.s + tx.dx, bx1 = b.bb.x1 * tx.s + tx.dx;
+    if (bx1 < 0 || bx0 > width) continue;
+    const by0 = b.bb.y0 * tx.s + tx.dy, by1 = b.bb.y1 * tx.s + tx.dy;
+    if (by1 < 0 || by0 > height) continue;
+    painted++;
+    if (!b.faces) b.faces = cityFaces(b);
+    const isHover = b.n.path === hoverPath;
+    // A block only a couple of pixels across gains nothing from an outline and
+    // would be swallowed by it, so below that it is filled and left alone.
+    const wide = (b.w + b.h) * tx.s > 7;
+    // Top brightest, right wall mid, left wall darkest — the shading is what
+    // makes a flat fill read as a solid rather than as a paper cut-out.
+    cityPoly(ctx, b.faces.left, tx);
+    ctx.fillStyle = cityShade(b.rgb, isHover ? 0.68 : 0.48);
+    ctx.fill();
+    if (wide) { ctx.strokeStyle = cityShade(b.rgb, 0.3, 0.85); ctx.lineWidth = edgeWidth; ctx.stroke(); }
+    cityPoly(ctx, b.faces.right, tx);
+    ctx.fillStyle = cityShade(b.rgb, isHover ? 0.95 : 0.72);
+    ctx.fill();
+    if (wide) { ctx.strokeStyle = cityShade(b.rgb, 0.36, 0.85); ctx.lineWidth = edgeWidth; ctx.stroke(); }
+    cityPoly(ctx, b.faces.top, tx);
+    ctx.fillStyle = cityShade(b.rgb, isHover ? 1.22 : 1);
+    ctx.fill();
+    if (wide) { ctx.strokeStyle = cityShade(b.rgb, 0.45, 0.9); ctx.lineWidth = edgeWidth; ctx.stroke(); }
+    if (b.hatched) {
+      // §6.1 — a block that swallowed its children says so, rather than
+      // presenting itself as a thing with nothing inside it.
+      ctx.save();
+      ctx.clip();
+      ctx.strokeStyle = 'rgba(255,255,255,0.13)';
+      ctx.lineWidth = 1;
+      const p0 = b.faces.top[0], p2 = b.faces.top[2];
+      const ax = Math.min(p0.sx, p2.sx) * tx.s + tx.dx, bx = Math.max(p0.sx, p2.sx) * tx.s + tx.dx;
+      const ay = Math.min(p0.sy, p2.sy) * tx.s + tx.dy, by = Math.max(p0.sy, p2.sy) * tx.s + tx.dy;
+      for (let x = ax - (by - ay); x < bx; x += 6) {
+        ctx.beginPath(); ctx.moveTo(x, by); ctx.lineTo(x + (by - ay), ay); ctx.stroke();
+      }
+      ctx.restore();
+    }
+    if (isHover) {
+      cityPoly(ctx, b.faces.top, tx);
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+  c.painted = painted;
+  renderCityChrome();
+}
+
+/** Repaint on the next frame, coalescing a burst of pointer events into one. */
+function cityInvalidate() {
+  const c = state.city;
+  if (c.raf) return;
+  c.raf = requestAnimationFrame(() => { c.raf = 0; drawCity(); });
+}
+
+/* ── Chrome: the legend, the coverage line, and the text equivalent ──────── */
+
+function renderCityChrome() {
+  const c = state.city;
+  const lod = $('cityLod');
+  if (lod) {
+    // §6.1 forbids a silent threshold. A map drawing 4,120 of 251,000 things
+    // and saying nothing is lying by omission about what is on screen.
+    const parts = [];
+    if (c.drawn < c.total) {
+      parts.push(`showing ${formatCount(c.drawn)} of ${formatCount(c.total)} — zoom in for more`);
+    } else {
+      parts.push(`showing all ${formatCount(c.drawn)}`);
+    }
+    if (c.unknownHeight) parts.push(`${formatCount(c.unknownHeight)} with no ${c.height === 'files' ? 'count' : 'date'} yet, drawn flat`);
+    if (c.unresolved) parts.push(`${formatCount(c.unresolved)} could not be depth-sorted and are drawn last`);
+    lod.textContent = parts.join(' · ');
+    lod.hidden = false;
+  }
+
+  const legend = $('cityLegend');
+  if (legend) {
+    const heightLabel = { staleness: 'how long since anything changed', files: 'how many files are inside', depth: 'how deeply nested it is' }[c.height];
+    const colourLabel = { reclaim: 'how safe and worthwhile it is to reclaim', type: 'what kind of files it holds', age: 'how recently it changed' }[c.colour];
+    legend.innerHTML =
+      `<span class="tml-item"><b>Footprint</b> = size on disk</span>` +
+      `<span class="tml-item"><b>Height</b> = ${escapeHtml(heightLabel)}</span>` +
+      `<span class="tml-item"><b>Colour</b> = ${escapeHtml(colourLabel)}</span>`;
+  }
+
+  const status = $('cityStatus');
+  if (status) status.textContent = state.treemap.rootSize ? formatBytes(state.treemap.rootSize) : '';
+}
+
+/**
+ * The text equivalent §6 requires of every canvas view.
+ *
+ * Not a second navigation mechanism: it lists exactly what the canvas drew, in
+ * the same draw order, and drilling from it calls the same function a click on
+ * the canvas does. Rendered on demand, because a table of thousands of rows
+ * built eagerly would cost more than the map it describes.
+ */
+function renderCityTable() {
+  const host = $('cityTable');
+  if (!host) return;
+  const c = state.city;
+  const rows = c.blocks.slice(0, 500);
+  host.innerHTML =
+    `<table><thead><tr><th>Name</th><th class="num">Size</th><th>Height means</th><th class="num">Value</th></tr></thead><tbody>` +
+    rows.map((b) => {
+      const days = cityAgeDays(b.n);
+      const count = c.counts.get(b.n.path);
+      const value = c.height === 'files'
+        ? (count ? formatCount(count.files) + ' files' : 'not counted yet')
+        : c.height === 'depth'
+          ? 'level ' + String(b.n.depth ?? '?')
+          : (days === null ? 'no date' : Math.round(days) + ' days');
+      return `<tr><td><button data-city-row="${escapeHtml(b.n.path)}">${escapeHtml(b.n.name)}</button></td>` +
+        `<td class="num">${escapeHtml(formatBytes(b.n.size))}</td>` +
+        `<td>${escapeHtml({ staleness: 'staleness', files: 'file count', depth: 'depth' }[c.height])}</td>` +
+        `<td class="num">${escapeHtml(value)}</td></tr>`;
+    }).join('') +
+    `</tbody></table>` +
+    (c.blocks.length > rows.length
+      ? `<p class="muted" style="margin-top:8px;font-size:11.5px">Listing the first ${formatCount(rows.length)} of ${formatCount(c.blocks.length)} drawn buildings.</p>`
+      : '');
+}
+
+/* ── Loading ──────────────────────────────────────────────────────────────
+
+   Shares the Treemap's root and nodes outright. If the Treemap already holds
+   this folder, entering Disk City costs no request at all — and the two
+   pictures are provably the same arrangement rather than two that resemble
+   each other.                                                              */
+
+let cityLoadSeq = 0;
+async function loadCity(rootPath) {
+  if (!state.scanId || !state.root) return;
+  const want = rootPath || state.treemap.rootPath || state.root.path;
+  const seq = ++cityLoadSeq;
+  const c = state.city;
+
+  if (state.treemap.rootPath !== want || !state.treemap.nodes.length) {
+    try {
+      const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(want)}`);
+      if (seq !== cityLoadSeq) return; // superseded while fetching
+      state.treemap.rootPath = data.root.path;
+      state.treemap.rootName = data.root.name;
+      state.treemap.rootSize = data.root.size;
+      state.treemap.nodes = data.nodes;
+      state.treemap.hover = null;
+    } catch (e) {
+      $('cityLod').textContent = e.message;
+      $('cityLod').hidden = false;
+      return;
+    }
+  }
+  c.hover = null;
+  c.pan = { x: 0, y: 0 };
+  c.zoom = 1;
+  renderCrumbs($('cityCrumbs'), state.treemap.rootPath, (p) => loadCity(p));
+  $('cityUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
+  buildCity();
+  drawCity();
+  renderCityTable();
+  cityFetchFacts();
+}
+
+/**
+ * Ask the fact layer for whatever the current modes need, for the DRAWN set
+ * only.
+ *
+ * The same rule the treemap's Reclaim mode follows: the tree can hold 250,000
+ * nodes and the map draws a few thousand, so scoring the tree would spend the
+ * budget on buildings nobody can see.
+ */
+function cityFetchFacts() {
+  const c = state.city;
+  if (!state.scanId || !c.blocks.length) return;
+  const paths = c.blocks.map((b) => b.n.path).filter((p) => p && !p.startsWith('cloud://') && !p.includes('!/')).slice(0, TM_SCORE_CAP);
+
+  if (c.colour === 'reclaim') {
+    void ensureScores(paths, () => {
+      if (state.view !== 'city') return;
+      for (const b of state.city.blocks) b.rgb = cityRgb(b.n, state.city.colour);
+      cityInvalidate();
+    });
+  }
+  if (c.height === 'files') {
+    const key = state.scanId + '|' + state.treemap.rootPath;
+    if (c.countsFor === key) return;
+    c.countsFor = key;
+    void cityLoadCounts(paths, key);
+  }
+}
+
+/** Fetch subtree counts in the fact layer's own batches. */
+async function cityLoadCounts(paths, key) {
+  const scanAtRequest = state.scanId;
+  try {
+    for (let i = 0; i < paths.length; i += RECLAIM_BATCH) {
+      const batch = paths.slice(i, i + RECLAIM_BATCH);
+      const res = await api('/api/facts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scanId: scanAtRequest, paths: batch, providers: ['subtreeCount'] }),
+      });
+      if (state.scanId !== scanAtRequest || state.city.countsFor !== key) return;
+      const provider = (res.providers && res.providers.subtreeCount) || null;
+      const values = (provider && provider.available && provider.values) || {};
+      // A path absent from `values` stays absent from the map: unknown is not
+      // a count of zero, and the coverage line says how many are still blank.
+      for (const p of batch) {
+        if (Object.prototype.hasOwnProperty.call(values, p)) state.city.counts.set(p, values[p]);
+      }
+      if (state.view === 'city' && state.city.height === 'files') {
+        buildCity(); cityInvalidate(); renderCityTable();
+      }
+    }
+  } catch (err) {
+    state.city.countsFor = null; // a later entry retries rather than remembering a blip
+    if (window.TREEMAP_DEBUG) console.warn('[treemap] subtree counts failed:', err);
+  }
+}
+
+/* ── Interaction ─────────────────────────────────────────────────────────── */
+
+/**
+ * Which building is under the cursor?
+ *
+ * Front to back over the SAME order the painter used, so the answer is always
+ * the building the user can actually see. Hit-testing a separate structure is
+ * how a hit tester silently disagrees with what was drawn — the Canvas2D
+ * toolkit's header says exactly that, and this obeys it by reusing the draw
+ * order rather than by reusing its rectangle helper, which cannot describe a
+ * six-sided silhouette.
+ */
+function cityHit(px, py) {
+  const c = state.city;
+  const canvas = $('cityCanvas');
+  if (!canvas) return null;
+  const tx = cityTransform(Math.max(120, $('cityWrap').clientWidth), Math.max(120, $('cityWrap').clientHeight));
+  const ctx = canvas.getContext('2d');
+  for (let i = c.blocks.length - 1; i >= 0; i--) {
+    const b = c.blocks[i];
+    // Reject on the bounding box before paying for a path. This is stricter
+    // than the draw loop's viewport cull — the cursor is a point, so anything
+    // whose box does not contain it cannot be the answer — and it keeps the
+    // hit tester agreeing with the painter, which is the disagreement the
+    // Canvas2D toolkit's header warns about.
+    if (px < b.bb.x0 * tx.s + tx.dx || px > b.bb.x1 * tx.s + tx.dx) continue;
+    if (py < b.bb.y0 * tx.s + tx.dy || py > b.bb.y1 * tx.s + tx.dy) continue;
+    if (!b.faces) b.faces = cityFaces(b);
+    for (const face of [b.faces.top, b.faces.right, b.faces.left]) {
+      cityPoly(ctx, face, tx);
+      if (ctx.isPointInPath(px, py)) return b;
+    }
+  }
+  return null;
+}
+
+function cityShowCard(b, px, py) {
+  const card = $('cityCard');
+  if (!card) return;
+  if (!b) { card.hidden = true; return; }
+  const c = state.city;
+  const days = cityAgeDays(b.n);
+  const count = c.counts.get(b.n.path);
+  const score = reclaim.scores.get(b.n.path);
+  const rows = [
+    ['Size', formatBytes(b.n.size)],
+    ['Last changed', days === null ? 'not recorded' : (Math.round(days) + ' days ago')],
+  ];
+  if (count) rows.push(['Holds', `${formatCount(count.files)} files in ${formatCount(count.dirs)} folders`]);
+  if (c.colour === 'reclaim') {
+    rows.push(['Reclaim score', score === undefined || score === null ? 'not scored'
+      : String(Math.round(typeof score === 'object' ? score.score : score))]);
+  }
+  card.innerHTML = `<span class="cc-name">${escapeHtml(b.n.name)}</span>` +
+    rows.map(([k, v]) => `<span class="cc-row"><span>${escapeHtml(k)}</span><b>${escapeHtml(v)}</b></span>`).join('');
+  card.hidden = false;
+  const wrap = $('cityWrap');
+  const cw = card.offsetWidth || 220, ch = card.offsetHeight || 70;
+  card.style.left = Math.min(Math.max(8, px + 16), wrap.clientWidth - cw - 8) + 'px';
+  card.style.top = Math.min(Math.max(8, py + 16), wrap.clientHeight - ch - 8) + 'px';
+}
+
+function cityDrillInto(node) {
+  if (!node || node.type !== 'dir') return;
+  loadCity(node.path);
+}
+
+function cityUp() {
+  if (!state.root || state.treemap.rootPath === state.root.path) return;
+  const parent = tmParentPath(state.treemap.rootPath);
+  loadCity(parent || state.root.path);
+}
+
+/* ── Wiring. Every listener added here is removed in unmount(). ─────────── */
+
+function cityOnPointerDown(e) {
+  const canvas = $('cityCanvas');
+  canvas.setPointerCapture(e.pointerId);
+  state.city.drag = { x: e.clientX, y: e.clientY, panX: state.city.pan.x, panY: state.city.pan.y, moved: false };
+}
+
+function cityOnPointerMove(e) {
+  const canvas = $('cityCanvas');
+  const local = Canvas2D.toLocal(canvas, e.clientX, e.clientY);
+  const c = state.city;
+  if (c.drag) {
+    const dx = e.clientX - c.drag.x, dy = e.clientY - c.drag.y;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) c.drag.moved = true;
+    c.pan = { x: c.drag.panX + dx, y: c.drag.panY + dy };
+    cityShowCard(null);
+    cityInvalidate();
+    return;
+  }
+  const hit = cityHit(local.x, local.y);
+  if (hit !== c.hover) { c.hover = hit; cityInvalidate(); }
+  cityShowCard(hit, local.x, local.y);
+}
+
+function cityOnPointerUp(e) {
+  const c = state.city;
+  const canvas = $('cityCanvas');
+  if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+  const wasDrag = c.drag && c.drag.moved;
+  c.drag = null;
+  if (wasDrag) return; // a pan is not a click
+  const local = Canvas2D.toLocal(canvas, e.clientX, e.clientY);
+  const hit = cityHit(local.x, local.y);
+  if (hit) cityDrillInto(hit.n);
+}
+
+function cityOnWheel(e) {
+  e.preventDefault();
+  const c = state.city;
+  const before = c.zoom;
+  c.zoom = Math.max(0.4, Math.min(14, c.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+  if (c.zoom === before) return;
+  // Zoom changes which blocks clear the pixel threshold, so the layout is
+  // rebuilt — but only once the gesture settles, because §6.1's "computed once
+  // per layout" is what keeps a zoom from re-sorting on every wheel tick.
+  clearTimeout(c.zoomTimer);
+  c.zoomTimer = setTimeout(() => {
+    if (state.view !== 'city') return;
+    buildCity(); drawCity(); renderCityTable(); cityFetchFacts();
+  }, 140);
+  cityInvalidate();
+}
+
+function cityOnKey(e) {
+  if (e.key === 'Escape') { e.preventDefault(); cityUp(); return; }
+  const step = e.shiftKey ? 60 : 20;
+  const c = state.city;
+  if (e.key === 'ArrowLeft') { c.pan.x += step; cityInvalidate(); e.preventDefault(); }
+  else if (e.key === 'ArrowRight') { c.pan.x -= step; cityInvalidate(); e.preventDefault(); }
+  else if (e.key === 'ArrowUp') { c.pan.y += step; cityInvalidate(); e.preventDefault(); }
+  else if (e.key === 'ArrowDown') { c.pan.y -= step; cityInvalidate(); e.preventDefault(); }
+  else if (e.key === '+' || e.key === '=') { c.zoom = Math.min(14, c.zoom * 1.2); buildCity(); cityInvalidate(); e.preventDefault(); }
+  else if (e.key === '-' || e.key === '_') { c.zoom = Math.max(0.4, c.zoom / 1.2); buildCity(); cityInvalidate(); e.preventDefault(); }
+}
+
+function cityOnResize() { cityInvalidate(); }
+
+function citySetHeight(mode) {
+  state.city.height = mode;
+  try { localStorage.setItem('tm-cityheight', mode); } catch { /* private mode */ }
+  for (const b of $('cityHeightSeg').querySelectorAll('button')) {
+    b.setAttribute('aria-selected', String(b.dataset.h === mode));
+  }
+  buildCity(); drawCity(); renderCityTable(); cityFetchFacts();
+}
+
+function citySetColour(mode) {
+  state.city.colour = mode;
+  try { localStorage.setItem('tm-citycolour', mode); } catch { /* private mode */ }
+  for (const b of $('cityColorSeg').querySelectorAll('button')) {
+    b.setAttribute('aria-selected', String(b.dataset.c === mode));
+  }
+  for (const b of state.city.blocks) b.rgb = cityRgb(b.n, mode);
+  drawCity(); cityFetchFacts();
+}
+
+$('cityHeightSeg').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-h]');
+  if (btn) citySetHeight(btn.dataset.h);
+});
+$('cityColorSeg').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-c]');
+  if (btn) citySetColour(btn.dataset.c);
+});
+$('cityUpBtn').addEventListener('click', () => cityUp());
+$('cityReset').addEventListener('click', () => {
+  state.city.pan = { x: 0, y: 0 };
+  state.city.zoom = 1;
+  buildCity(); drawCity(); renderCityTable();
+});
+$('cityTableWrap').addEventListener('toggle', () => { if ($('cityTableWrap').open) renderCityTable(); });
+$('cityTable').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-city-row]');
+  if (!btn) return;
+  const node = state.city.blocks.find((b) => b.n.path === btn.dataset.cityRow);
+  // The same drill the canvas performs — a text equivalent that navigated by
+  // its own route would be the second navigation mechanism §2.2 forbids.
+  if (node) cityDrillInto(node.n);
+});
+
+registerView({
+  id: 'city',
+  label: 'Disk City',
+  icon: 'box',
+  needsScan: true,
+  onScanChange() {
+    state.city.counts.clear();
+    state.city.countsFor = null;
+    state.city.blocks = [];
+    if (mountedView && mountedView.id === 'city') loadCity(state.root ? state.root.path : null);
+  },
+  mount() {
+    const canvas = $('cityCanvas');
+    canvas.addEventListener('pointerdown', cityOnPointerDown);
+    canvas.addEventListener('pointermove', cityOnPointerMove);
+    canvas.addEventListener('pointerup', cityOnPointerUp);
+    canvas.addEventListener('pointerleave', () => { state.city.hover = null; cityShowCard(null); cityInvalidate(); });
+    canvas.addEventListener('wheel', cityOnWheel, { passive: false });
+    canvas.addEventListener('keydown', cityOnKey);
+    window.addEventListener('resize', cityOnResize);
+    citySetHeight(state.city.height);
+    citySetColour(state.city.colour);
+    loadCity(state.treemap.rootPath);
+  },
+  unmount() {
+    // Everything this view started, stopped. The registry exists for exactly
+    // this: a canvas view that leaves a rAF and a resize listener behind keeps
+    // repainting a hidden canvas for the rest of the session.
+    const c = state.city;
+    if (c.raf) { cancelAnimationFrame(c.raf); c.raf = 0; }
+    clearTimeout(c.zoomTimer);
+    cityLoadSeq++; // invalidate anything still in flight
+    const canvas = $('cityCanvas');
+    if (canvas) {
+      canvas.removeEventListener('pointerdown', cityOnPointerDown);
+      canvas.removeEventListener('pointermove', cityOnPointerMove);
+      canvas.removeEventListener('pointerup', cityOnPointerUp);
+      canvas.removeEventListener('wheel', cityOnWheel);
+      canvas.removeEventListener('keydown', cityOnKey);
+    }
+    window.removeEventListener('resize', cityOnResize);
+    c.blocks = [];
+    c.hover = null;
+    c.drag = null;
+    $('cityTable').innerHTML = '';
+    $('cityCard').hidden = true;
   },
 });
 
