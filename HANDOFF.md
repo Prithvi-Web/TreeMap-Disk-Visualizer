@@ -1217,11 +1217,18 @@ The run that failed had `npm run build && npm test` **chained**, which is trap 1
 — though three deliberate attempts to reproduce it that way were all clean, so
 chaining is a suspicion rather than the cause.
 
-**To catch it, do not `tail` the output.** Capture the whole run and grep:
+**To catch it, keep the whole run and grep for the right marker.** Locally
+`npm test` uses the **spec** reporter even when piped — verified: 1,214 lines
+start with `✔` and none with `ok `. So `grep '^not ok'` finds nothing here and
+the name is lost, which is how this got away twice in one session, the second
+time following an earlier version of this very recipe. CI's workflow *does*
+read TAP. Grep for both:
 
 ```bash
-npm test 2>&1 | tee /tmp/suite.log | grep -E '^ℹ (pass|fail)'; grep -n '^not ok' /tmp/suite.log
+npm test 2>&1 > /tmp/suite.log; grep -E '^ℹ (pass|fail)' /tmp/suite.log
+grep -nE '^(✖|not ok)' /tmp/suite.log        # the name
+grep -A 12 -E '^(✖|not ok)' /tmp/suite.log   # the assertion under it
 ```
 
-That prints the counts *and* keeps the name. One more sighting with a name
-attached should settle which of the three it is.
+It is rare: **one failure in about twenty full-suite runs** on 27 Aug. One more
+sighting with a name attached should settle which of the three it is.
