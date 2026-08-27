@@ -8,6 +8,8 @@ import {
   compareTrees,
 } from '../services/diskScanner';
 import { getDuplicateJob } from '../services/duplicateFinder';
+import { computeFacts } from '../services/facts';
+import type { ReclaimScoreFactValue } from '../services/facts';
 import { collectCleanupSuggestions } from '../services/cleanupRules';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { getIgnoreMatchers } from '../services/settings';
@@ -304,6 +306,108 @@ export function buildMcpServer(): McpServer {
           sizeFormatted: formatBytes(f.size),
         }));
         return ok({ scanId, kind, count: files.length, files });
+      }),
+  );
+
+  /**
+   * §6 MCP parity for the Reclaim Score (v4 §3).
+   *
+   * Deliberately NOT "the safest things to delete". It is a ranking with its
+   * reasoning attached, and every entry carries the components that produced
+   * it, the ones that could not be computed, and a confidence — so an agent
+   * reading this can tell a high score built on six measured signals from one
+   * built on two, which is the difference between a suggestion and a guess.
+   *
+   * Nothing here selects, stages or deletes. An agent that wants to act on a
+   * ranking still goes through trash_paths, with its own confirmation and its
+   * own audit entry.
+   */
+  server.registerTool(
+    'reclaim_ranked',
+    {
+      title: 'Rank by how safe and worthwhile it is to reclaim',
+      description:
+        'The largest entries in a completed scan, re-ranked by Reclaim Score instead of by size — "what is ' +
+        'safest to delete" rather than "what is biggest". Each entry carries its full breakdown: which of the ' +
+        'six components answered and why, which could not be computed and for what reason, and a confidence ' +
+        'band derived from how much of the weighted total was actually measured. A component that could not be ' +
+        'computed is reported as missing, never as zero — so "unknown" and "worthless" are distinguishable. ' +
+        'Scoring costs per-file work, so this ranks the largest `candidates` entries rather than the whole tree, ' +
+        'and says how many it examined. Read-only: it never selects or deletes anything.',
+      inputSchema: {
+        scanId: z.string().min(1).describe('A completed scan from scan_path'),
+        kind: z.enum(['files', 'folders']).default('files').describe('Rank files or folders'),
+        limit: z.number().int().min(1).max(200).default(25).describe('How many ranked entries to return'),
+        minSizeBytes: z.number().int().min(0).default(1_048_576).describe('Ignore entries smaller than this'),
+        candidates: z.number().int().min(1).max(2000).default(500)
+          .describe('How many of the largest entries to score before ranking. Higher is slower and more thorough.'),
+        minScore: z.number().min(0).max(100).default(0).describe('Only return entries scoring at least this'),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ scanId, kind, limit, minSizeBytes, candidates, minScore }) =>
+      run(async () => {
+        const scan = requireCompleteScanMcp(scanId);
+        const store = storeOf(scan);
+
+        const pool = kind === 'folders'
+          ? collectLargestFolders(store, candidates, minSizeBytes)
+          : collectLargestFiles(store, candidates, minSizeBytes);
+        const paths = pool.map((e) => e.path);
+        if (paths.length === 0) {
+          return ok({ scanId, kind, examined: 0, scored: 0, count: 0, entries: [] });
+        }
+
+        // The same provider the HTTP sidecar serves — §6's rule that an MCP
+        // tool computes nothing its route counterpart does not.
+        const facts = await computeFacts(scanId, paths, ['reclaimScore'], new AbortController().signal);
+        const provider = facts.reclaimScore;
+        if (!provider.available) {
+          return ok({
+            scanId, kind, examined: paths.length, scored: 0, count: 0, entries: [],
+            unavailable: provider.reason,
+          });
+        }
+        const values = provider.values as Record<string, ReclaimScoreFactValue>;
+
+        const sizeOf = new Map(pool.map((e) => [e.path, e.size]));
+        const entries = paths
+          .map((p) => ({ path: p, size: sizeOf.get(p) ?? 0, fact: values[p] }))
+          .filter((e): e is { path: string; size: number; fact: ReclaimScoreFactValue } => e.fact !== undefined)
+          .filter((e) => e.fact.score >= minScore)
+          // Ties broken by size, then path: an agent paging through this must
+          // see a stable order, and two equal scores are otherwise free to
+          // swap between calls.
+          .sort((a, b) => b.fact.score - a.fact.score || b.size - a.size || a.path.localeCompare(b.path))
+          .slice(0, limit)
+          .map((e) => ({
+            path: e.path,
+            size: e.size,
+            sizeFormatted: formatBytes(e.size),
+            score: e.fact.score,
+            confidence: e.fact.confidence,
+            coverage: e.fact.coverage,
+            why: e.fact.components.map((c) => ({
+              component: c.id, value: c.value, contribution: c.contribution, because: c.why,
+            })),
+            couldNotCompute: e.fact.missing.map((m) => ({ component: m.id, because: m.reason })),
+          }));
+
+        const scored = Object.keys(values).length;
+        return ok({
+          scanId,
+          kind,
+          // Stated, not implied: this ranked the largest N, not the whole disk.
+          examined: paths.length,
+          scored,
+          notScored: paths.length - scored,
+          count: entries.length,
+          note:
+            `Ranked the ${paths.length} largest ${kind} at or above ${formatBytes(minSizeBytes)}; `
+            + `${scored} could be scored. A higher \`candidates\` examines more. `
+            + 'Scores rank and explain — they never select anything for deletion.',
+          entries,
+        });
       }),
   );
 

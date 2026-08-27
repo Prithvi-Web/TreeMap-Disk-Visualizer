@@ -9,6 +9,7 @@ import { factsNeeded } from './parse';
 import type { Ast } from './types';
 import type { RecoverabilityFact } from '../recoverabilityTypes';
 import type { LastUsedInfo } from '../../platform/types';
+import type { ReclaimScoreFactValue } from '../facts';
 
 /**
  * Running a parsed query against a scan (v4 §2.2).
@@ -107,7 +108,7 @@ async function fetchFacts(
   const out = new Map<string, EvalFacts>();
   for (const p of paths) out.set(p, {});
 
-  const providers = [...needed].filter((n) => n === 'lastUsed' || n === 'recoverability');
+  const providers = [...needed].filter((n) => n === 'lastUsed' || n === 'recoverability' || n === 'reclaimScore');
   if (providers.length === 0) return out;
 
   for (let i = 0; i < paths.length; i += FACT_BATCH) {
@@ -128,6 +129,8 @@ async function fetchFacts(
         if (id === 'lastUsed') {
           const info = raw as LastUsedInfo;
           facts.lastUsedMs = info.lastUsedMs;
+        } else if (id === 'reclaimScore') {
+          facts.score = (raw as ReclaimScoreFactValue).score;
         } else {
           const fact = raw as RecoverabilityFact;
           facts.elsewhere = fact.elsewhere;
@@ -162,12 +165,15 @@ async function degradedProviders(needed: Set<string>): Promise<Map<string, strin
     if (!git.available) degraded.set('gitStatus', git.reason ?? 'Git status is not available on this computer.');
     if (!backup.available) degraded.set('backupMembership', backup.reason ?? 'No backup system was found on this computer.');
   }
-  if (needed.has('reclaimScore')) {
-    degraded.set('reclaimScore', 'Reclaim scores are not built yet, so "score:" matches nothing. They arrive in a later release.');
-    // Both of these are honest dead ends rather than slow paths: the grammar
-    // accepts the field so the UI and the saved-query pipeline are complete,
-    // and the response says plainly that nothing can match.
-  }
+  // `reclaimScore` is no longer reported degraded up front: as of §3 it is a
+  // real provider, and unlike the others it is never wholly unavailable —
+  // it is built from six signals and states per file which of them answered.
+  // A machine with no git and no backup still scores every file on size,
+  // staleness and regenerability, so declaring the whole field degraded here
+  // would hide four working components behind two missing ones. When a file
+  // genuinely cannot be scored at all it is simply absent from the fact
+  // batch, and `score:` does not match it — which is the correct answer, not
+  // a degradation of the query.
   if (needed.has('duplicates')) {
     // Truthful: there is no wiring from the duplicate job into the query
     // evaluator yet. The earlier wording promised that running the Duplicates

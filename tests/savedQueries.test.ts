@@ -204,21 +204,64 @@ test('a query needing an unavailable signal is DEGRADED, not silently empty', as
   const { port, close } = await listen();
   const fixture = await scannedFixture(port);
   try {
-    // §2.2's specific example. `score:` cannot be answered at all yet, so the
-    // response must say so — an empty list alone would read as "nothing
-    // matched", which is a different and wrong claim.
-    const r = await req(port, 'POST', '/api/query', { scanId: fixture.scanId, q: 'score>70' });
+    // §2.2's point: an empty list alone reads as "nothing matched", which is a
+    // different and wrong claim from "this machine cannot answer that".
+    //
+    // `dupe:` is the right example now that §3 has made `score:` real. It is
+    // unconditionally unwired rather than machine-dependent, so this asserts
+    // the degradation contract without also asserting something about whoever
+    // is running the tests — `backup:yes` would pass here only because this
+    // Mac has no Time Machine.
+    const r = await req(port, 'POST', '/api/query', { scanId: fixture.scanId, q: 'dupe:yes' });
     assert.equal(r.status, 200);
     assert.equal(r.body.hits.length, 0);
     const providers = r.body.degraded.map((d: { provider: string }) => d.provider);
-    assert.ok(providers.includes('reclaimScore'), 'the missing signal is named');
-    assert.deepEqual(r.body.postFiltered, ['reclaimScore'], 'and it is reported as beyond the tree');
-    const reason = r.body.degraded.find((d: { provider: string }) => d.provider === 'reclaimScore').reason;
+    assert.ok(providers.includes('duplicates'), 'the missing signal is named');
+    assert.deepEqual(r.body.postFiltered, ['duplicates'], 'and it is reported as beyond the tree');
+    const reason = r.body.degraded.find((d: { provider: string }) => d.provider === 'duplicates').reason;
     assert.ok(reason.length > 20, 'and the reason is a sentence a person can act on');
 
     // A query needing nothing special is not degraded.
     const plain = await req(port, 'POST', '/api/query', { scanId: fixture.scanId, q: 'ext:mp4' });
     assert.deepEqual(plain.body.degraded, []);
+  } finally {
+    fixture.cleanup();
+    await close();
+  }
+});
+
+test('score: is a real filter now, not a stated dead end', async () => {
+  const { port, close } = await listen();
+  const fixture = await scannedFixture(port);
+  try {
+    // Phase 2 shipped the `score` field with an honest "not built yet" and a
+    // degraded marker. Phase 3 makes it answerable, and the marker has to go
+    // with it — a response that still said "reclaim scores are not built yet"
+    // while returning real matches would be worse than either state alone.
+    const all = await req(port, 'POST', '/api/query', { scanId: fixture.scanId, q: 'score>=0' });
+    assert.equal(all.status, 200);
+    assert.ok(all.body.hits.length > 0, 'every scorable file matches score>=0');
+
+    const providers = all.body.degraded.map((d: { provider: string }) => d.provider);
+    assert.ok(!providers.includes('reclaimScore'), 'the "not built yet" degradation is gone');
+
+    // `postFiltered` still names it: a score genuinely is computed per file
+    // after the tree is walked, and that cost is worth reporting.
+    assert.deepEqual(all.body.postFiltered, ['reclaimScore']);
+
+    // And the filter discriminates rather than matching everything.
+    const impossible = await req(port, 'POST', '/api/query', { scanId: fixture.scanId, q: 'score>99' });
+    assert.equal(impossible.status, 200);
+    assert.ok(impossible.body.hits.length < all.body.hits.length,
+      'a demanding threshold must narrow the set, or the field is not really being read');
+
+    // node_modules is regenerable, so it outranks a plain video of similar
+    // size — the whole reason the field exists.
+    const top = await req(port, 'POST', '/api/query', { scanId: fixture.scanId, q: 'score>40 type:dir' });
+    assert.equal(top.status, 200);
+    const paths = top.body.hits.map((h: { path: string }) => h.path);
+    assert.ok(paths.some((p: string) => p.endsWith('node_modules')),
+      `a regenerable folder should clear a middling threshold; got ${JSON.stringify(paths)}`);
   } finally {
     fixture.cleanup();
     await close();

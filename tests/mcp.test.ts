@@ -67,7 +67,7 @@ async function call(name: string, args: Record<string, unknown>): Promise<ToolRe
   return (await client.callTool({ name, arguments: args })) as ToolReply;
 }
 
-test('handshake lists exactly the eight documented tools', async () => {
+test('handshake lists exactly the nine documented tools', async () => {
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name).sort();
   assert.deepEqual(names, [
@@ -77,6 +77,7 @@ test('handshake lists exactly the eight documented tools', async () => {
     'forecast',
     'get_largest',
     'offload',
+    'reclaim_ranked', // v4 §3 — §6's MCP parity for the Reclaim Score
     'scan_path',
     'trash_paths',
   ]);
@@ -206,5 +207,80 @@ test('offload dryRun returns the exact copy plan and writes nothing', async () =
 test('unknown scanId comes back as a clean, coded error', async () => {
   const r = await call('get_largest', { scanId: 'nope', kind: 'files' });
   assert.equal(r.isError, true);
+  assert.match(r.content![0].text, /SCAN_NOT_FOUND/);
+});
+
+/* ══════════════════ reclaim_ranked (v4 §3, §6 MCP parity) ══════════════════ */
+
+test('reclaim_ranked ranks by safety rather than size, and shows its working', async () => {
+  const r = await call('reclaim_ranked', { scanId, kind: 'folders', minSizeBytes: 0, limit: 20 });
+  assert.ok(!r.isError, JSON.stringify(r.content));
+  const s = r.structuredContent!;
+
+  assert.ok(Array.isArray(s.entries) && s.entries.length > 0, 'the fixture has scorable folders');
+  // Stated coverage, not implied: this ranked the largest N, not the disk.
+  assert.equal(typeof s.examined, 'number');
+  assert.equal(typeof s.scored, 'number');
+  assert.equal(s.notScored, s.examined - s.scored);
+  assert.match(String(s.note), /never select/i, 'the note must say the ranking is not a selection');
+
+  for (const e of s.entries) {
+    assert.equal(typeof e.score, 'number');
+    assert.ok(e.score >= 0 && e.score <= 100);
+    assert.ok(['high', 'medium', 'low'].includes(e.confidence));
+    assert.ok(Array.isArray(e.why) && e.why.length > 0, `${e.path} scored with no reasoning`);
+    for (const w of e.why) assert.ok(String(w.because).trim().length > 8, `${e.path}/${w.component}: "${w.because}"`);
+    // §3.2: a component that could not be computed is named, never zeroed.
+    assert.ok(Array.isArray(e.couldNotCompute));
+    for (const m of e.couldNotCompute) assert.ok(String(m.because).trim().length > 8);
+    const overlap = e.why.map((w: any) => w.component)
+      .filter((c: string) => e.couldNotCompute.some((m: any) => m.component === c));
+    assert.deepEqual(overlap, [], 'a component is either answered or missing, never both');
+  }
+
+  // Sorted by score, descending — the whole point of the tool.
+  const scores = s.entries.map((e: any) => e.score);
+  assert.deepEqual(scores, [...scores].sort((a: number, b: number) => b - a));
+
+  // node_modules is regenerable, so it must beat the plain `sub` folder.
+  const nm = s.entries.find((e: any) => e.path.endsWith('node_modules'));
+  const sub = s.entries.find((e: any) => e.path.endsWith(`${path.sep}sub`));
+  assert.ok(nm, `node_modules must be ranked; got ${JSON.stringify(s.entries.map((e: any) => e.path))}`);
+  if (sub) assert.ok(nm.score > sub.score, `node_modules ${nm.score} vs sub ${sub.score}`);
+});
+
+test('reclaim_ranked is inert: it selects nothing and removes nothing', async () => {
+  const before = fs.readdirSync(fixtureRoot).sort();
+  const r = await call('reclaim_ranked', { scanId, minSizeBytes: 0, limit: 50 });
+  assert.ok(!r.isError);
+  assert.deepEqual(fs.readdirSync(fixtureRoot).sort(), before);
+  // Nothing in the payload marks anything as chosen — §3.2 forbids the score
+  // auto-selecting anywhere, and an agent reading a `selected` flag would act
+  // on it.
+  const body = JSON.stringify(r.structuredContent);
+  for (const word of ['"selected"', '"staged"', '"delete"', '"recommended"']) {
+    assert.ok(!body.includes(word), `reclaim_ranked must not imply a choice (${word})`);
+  }
+});
+
+test('reclaim_ranked filters by minScore and pages stably', async () => {
+  const all = await call('reclaim_ranked', { scanId, minSizeBytes: 0, limit: 100 });
+  const high = await call('reclaim_ranked', { scanId, minSizeBytes: 0, limit: 100, minScore: 99 });
+  assert.ok(!all.isError && !high.isError);
+  assert.ok(high.structuredContent!.entries.length <= all.structuredContent!.entries.length);
+  for (const e of high.structuredContent!.entries) assert.ok(e.score >= 99);
+
+  // The same call twice must give the same order, or an agent paging through
+  // it sees entries swap places and never reads some of them.
+  const again = await call('reclaim_ranked', { scanId, minSizeBytes: 0, limit: 100 });
+  assert.deepEqual(
+    again.structuredContent!.entries.map((e: any) => e.path),
+    all.structuredContent!.entries.map((e: any) => e.path),
+  );
+});
+
+test('reclaim_ranked refuses an unknown scan rather than answering emptily', async () => {
+  const r = await call('reclaim_ranked', { scanId: 'no-such-scan' });
+  assert.ok(r.isError);
   assert.match(r.content![0].text, /SCAN_NOT_FOUND/);
 });

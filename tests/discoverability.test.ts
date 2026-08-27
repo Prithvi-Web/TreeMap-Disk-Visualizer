@@ -148,7 +148,9 @@ test('capabilities and openapi are generated from the same endpoint registry', a
     assert.ok(caps.safety.trashOnlyDeletes && caps.safety.scannedRootRule);
     assert.deepEqual(caps.mcp.tools.slice().sort(), [
       'cleanup_suggestions', 'compare_scans', 'find_duplicates', 'forecast',
-      'get_largest', 'offload', 'scan_path', 'trash_paths',
+      'get_largest', 'offload',
+      'reclaim_ranked', // v4 §3 — §6's MCP parity for the Reclaim Score
+      'scan_path', 'trash_paths',
     ]);
   } finally {
     await close();

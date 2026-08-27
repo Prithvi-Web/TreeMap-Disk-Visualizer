@@ -13,9 +13,9 @@ OpenAPI 3 spec).
   agent does is consistent with what a person would see.
 - **MCP** — `npm run mcp` starts a stdio Model Context Protocol server
   (for Claude Desktop and similar clients) exposing: `scan_path`,
-  `get_largest`, `find_duplicates`, `cleanup_suggestions`, `forecast`,
-  `compare_scans`, `offload`, `trash_paths`. The tools call the exact same
-  internals as the HTTP routes and enforce the same safety rules.
+  `get_largest`, `reclaim_ranked`, `find_duplicates`, `cleanup_suggestions`,
+  `forecast`, `compare_scans`, `offload`, `trash_paths`. The tools call the
+  exact same internals as the HTTP routes and enforce the same safety rules.
 
 ## The core workflow: scan → inspect → dry-run → act
 

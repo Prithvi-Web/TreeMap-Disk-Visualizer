@@ -186,6 +186,7 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
       tools: [
         'scan_path',
         'get_largest',
+        'reclaim_ranked',
         'find_duplicates',
         'cleanup_suggestions',
         'forecast',

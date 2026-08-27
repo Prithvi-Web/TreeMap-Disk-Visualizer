@@ -30,7 +30,7 @@ const SORTS: SortKey[] = ['size', 'name', 'modified', 'path'];
 const BEYOND_TREE_REASONS: Record<string, string> = {
   lastUsed: 'last-opened dates are read per file after the scan is walked',
   recoverability: 'git, backup and cloud status are read per file after the scan is walked',
-  reclaimScore: 'reclaim scores are not built yet, so this matches nothing',
+  reclaimScore: 'reclaim scores are computed per file after the scan is walked, from six signals that each cost something',
   duplicates: 'duplicate detection is a separate job and is not wired into queries yet',
 };
 
