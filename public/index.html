@@ -629,7 +629,10 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
   border-radius: 50%; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex: none;
   transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
 .cart-item .rm:hover { background: var(--danger); color: #fff; }
-.cart-foot { display: flex; align-items: center; gap: 10px; padding: 12px 15px; border-top: 1px solid var(--hairline); }
+/* Wraps because v4 §4.3 added a fourth control: at 340px the row is full, and
+   a Move-to-Trash button pushed off the edge is worse than a second line. */
+.cart-foot { display: flex; align-items: center; gap: 8px; padding: 12px 15px; border-top: 1px solid var(--hairline); flex-wrap: wrap; }
+.cart-foot .total { flex-basis: 100%; }
 .cart-foot .total { font-size: 12.5px; color: var(--text-2); }
 .cart-foot .total b { color: var(--text-1); }
 .cart-foot .btn-danger { margin-left: auto; }
@@ -1339,6 +1342,18 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 #offloadBody .bp-item .pth { flex: none; }
 #offloadBody .bp-item .dt { flex: none; font-size: 11px; color: var(--text-3); }
 
+/* ── Phase 4 (v4 §4.3) — the simulated "after" ── */
+.tm-preview-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  z-index: 6; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  border-radius: var(--r-md); background: var(--bg-1); border: 1px solid var(--warn);
+  box-shadow: 0 6px 22px rgba(0,0,0,0.32); font-size: 12.5px; color: var(--text-1);
+  max-width: calc(100% - 28px); }
+.tm-preview-banner[hidden] { display: none; }
+.tm-preview-banner .ic { color: var(--warn); flex: none; }
+.tm-preview-banner #tmPreviewText { min-width: 0; line-height: 1.4; }
+.tm-preview-banner b { font-weight: 700; }
+#treemapWrap.previewing { outline: 2px dashed var(--warn); outline-offset: -2px; }
+
 /* ── Time-slider treemap (Feature 20) ── */
 .tm-timebar { display: flex; align-items: center; gap: 12px; padding: 8px 14px; margin-bottom: 10px; border-radius: var(--r-md); }
 /* Phase 2 (§2.4) — saved views and live query feedback. A sibling row of
@@ -1868,6 +1883,14 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       <button class="pill" id="tmDiffToggle" aria-pressed="false" title="Tint what grew green and what shrank red, compared with the previous snapshot">Diff</button>
     </div>
     <div class="glass" id="treemapWrap">
+      <!-- v4 §4.3 — the simulated "after". The banner is not decoration: a map
+           that shows space you do not have yet has to say so, all the time it
+           is on screen. -->
+      <div class="tm-preview-banner" id="tmPreviewBanner" role="status" aria-live="polite" hidden>
+        <span data-icon="eye" data-size="14"></span>
+        <span id="tmPreviewText"></span>
+        <button class="pill" id="tmPreviewExit">Exit preview</button>
+      </div>
       <div id="treemapZoom"><canvas id="treemapCanvas" tabindex="0" aria-label="Disk usage treemap. Click a directory to drill in, Escape to go up."></canvas></div>
       <div id="liveFeed" hidden aria-label="Live disk activity — top writers"></div>
     </div>
@@ -2491,6 +2514,8 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     </div>
     <div class="cart-foot">
       <span class="total" id="cartFootTotal"></span>
+      <!-- v4 §4.3 — client-side only; this never touches the server or the disk. -->
+      <button class="btn" id="cartPreview" aria-pressed="false" title="Re-lay the treemap out with these items removed. Nothing is deleted."><span data-icon="eye" data-size="14"></span>Preview after</button>
       <button class="btn" id="cartClear">Clear</button>
       <button class="btn btn-danger" id="cartTrash"><span data-icon="trash" data-size="14"></span>Move all to Trash</button>
     </div>
@@ -2719,6 +2744,9 @@ const PATHS = {
   gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
   globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
   shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+  // v4 §4.3 — the "Preview after" toggle and its banner. eyeOff already
+  // existed for the cloud-hiding control; this is its open-eye counterpart.
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
   eyeOff: '<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/>',
   mouse: '<rect x="5" y="2" width="14" height="20" rx="7"/><path d="M12 6v4"/>',
   diff: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/>',
@@ -3202,6 +3230,7 @@ const VIEWS = [
       tmCancelQueries();
       tmCloseHints();
       tmClearHits();
+      exitCartPreview(true); // §4.3 — never come back to a banner over a real map
       tmSetQueryMessage('', false);
       $('tmQueryBar').hidden = true;
       // Live mode keeps two intervals and a rAF loop alive; leaving the view
@@ -4976,6 +5005,9 @@ const tmSearchCtx = tmSearchBuffer.getContext('2d');
 let tmLoadSeq = 0;
 async function loadTreemap(rootPath, animate = false) {
   if (!state.scanId) return;
+  // §4.3 — a preview is a picture of one folder with one cart. Any load
+  // replaces both, so it is dropped silently rather than left to go stale.
+  exitCartPreview(true);
   const seq = ++tmLoadSeq;
   state.treemap.kbSel = null;
   const zoom = $('treemapZoom');
@@ -5187,6 +5219,33 @@ function drawTreemap() {
   // Pass 1: cushion-shaded leaf fills.
   for (const r of px) {
     if (r.frame) continue;
+
+    /* v4 §4.3 — a freed region. Hatched rather than filled, because the space
+       is not there yet: a solid block would read as "this is what you have",
+       which is exactly the false statement the preview exists to avoid. Same
+       reasoning as A3's hollow cloud placeholders, and the same visual family. */
+    if (r.n.freed) {
+      ctx.fillStyle = cssVar('--tm-canvas-bg');
+      ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
+      const hatch = tmHatchPattern(ctx);
+      if (hatch) {
+        ctx.save();
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = hatch;
+        ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
+        ctx.restore();
+      }
+      if (r.w > 6 && r.h > 6) {
+        ctx.save();
+        ctx.setLineDash([4, 3]);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = cssVar('--warn') || '#FF9F0A';
+        ctx.strokeRect(r.x + 1, r.y + 1, Math.max(1, r.w - 2), Math.max(1, r.h - 2));
+        ctx.restore();
+      }
+      continue;
+    }
+
     const base = r.n.isTrash ? [108, 122, 137] : cellRgb(r.n); // distinct gray-blue for the Trash cell
     const depthFade = Math.max(0.55, 1 - r.n.depth * 0.08);
 
@@ -5265,9 +5324,26 @@ function drawTreemap() {
   // through the tag — two strings on the same pixels, neither readable. Drop
   // the label below the tag when the cell is tall enough to take it, and leave
   // it out when it is not; the cell keeps its tooltip either way.
+  // Pass 3.5 (v4 §4.3): name each freed block, so the hatched area is not a
+  // mystery. Its own pass rather than part of pass 1, which must draw no text —
+  // the contract test's leaf-fill slice ends at the first textBaseline it finds.
+  if (tmPreview.on) {
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '600 11px -apple-system, sans-serif';
+    ctx.fillStyle = cssVar('--text-1');
+    for (const r of px) {
+      if (!r.n.freed || r.w < 74 || r.h < 26) continue;
+      ctx.fillText('Freed ' + formatBytes(r.n.size), r.x + r.w / 2, r.y + r.h / 2, r.w - 10);
+    }
+    ctx.restore();
+    ctx.textAlign = 'left'; // pass 4 assumes it, and save/restore does not cover a later pass
+  }
+
   ctx.textBaseline = 'top';
   for (const r of px) {
-    if (r.frame || r.w < 40 || r.h < 15) continue;
+    if (r.frame || r.n.freed || r.w < 40 || r.h < 15) continue;
     let ty = r.y + 4;
     const clash = tagRects.find(t =>
       r.x + 5 < t.x + t.w && r.x + r.w - 5 > t.x && ty < t.y + t.h && ty + 12 > t.y);
@@ -5553,6 +5629,365 @@ function presentTreemap() {
   drawLivePulses();
 }
 
+/* ═══════════ Phase 4 (v4 §4.3) — the simulated "after" ═══════════
+
+   A **client-side** re-layout of the map with the staged items taken out.
+   §4.3 forbids a server call, and the reason is not only latency: the layout
+   endpoint is one of the byte-locked golden responses (§2.1), so there is
+   nowhere on the server for a hypothetical tree to come from anyway.
+
+   ── The one decision that shapes everything below ──
+
+   The freed space **stays on the map**, hatched, instead of the survivors
+   growing to fill it.
+
+   Those two are mutually exclusive: area means bytes, so if the survivors
+   expanded into the vacated space, the same rectangle would silently be worth
+   more bytes than it was a second earlier, and every size comparison the user
+   made against the live map would be wrong. §4.3 asks for "freed regions
+   rendered in a distinct hatched style", which settles it — a freed region
+   that is still drawn is a region the survivors did not take.
+
+   So the re-layout is real but scale-preserving: inside each folder, the
+   staged children collapse into ONE hatched block of exactly their combined
+   size, and that folder's surviving children re-tile around it. The map still
+   totals what the disk totals today, and the hatched area is exactly what
+   comes back.
+
+   ── Where a staged path lands ──
+
+   A staged path is charged to the deepest drawn node that contains it:
+     * it IS a drawn node          → that node and its subtree go, and its
+                                     bytes join its parent's freed block;
+     * inside a drawn folder       → its bytes join that folder's own freed
+                                     block, which is where they actually are;
+     * inside a drawn leaf         → the leaf shrinks by that much and the
+                                     difference joins its parent's freed block,
+                                     because a leaf has no interior to draw in;
+     * outside this view entirely  → counted, and said out loud in the banner.
+   The four cases keep the arithmetic exact: every byte staged is either drawn
+   as hatched somewhere or reported as not being in this view.                */
+
+/**
+ * Worst aspect ratio of a row — the ranking function squarify greedily
+ * minimises. Ported with `tmSquarify` below.
+ */
+function tmWorstRatio(row, side) {
+  let sum = 0, max = -Infinity, min = Infinity;
+  for (const a of row) { sum += a; if (a > max) max = a; if (a < min) min = a; }
+  if (sum <= 0 || side <= 0) return Infinity;
+  const s2 = sum * sum, w2 = side * side;
+  return Math.max((w2 * max) / s2, s2 / (w2 * min));
+}
+
+/**
+ * Squarified layout — a port of `squarify()` in `src/utils/treemap.ts`.
+ *
+ * A second implementation is a cost, and it is paid deliberately: §4.3 rules
+ * out asking the server, and the server is where the only other one lives.
+ * What keeps the two honest is `tests/cartPreview.test.ts`, which pulls this
+ * function out of this file, runs it beside the real one over the same corpus
+ * and demands identical rectangles. If either drifts, that fails.
+ *
+ * Bruls, Huizing & van Wijk (2000): lay items into rows along the shorter side
+ * of what is left, growing a row while doing so improves its worst ratio.
+ */
+function tmSquarify(areas, rect) {
+  const result = new Array(areas.length);
+  let remaining = { x: rect.x, y: rect.y, w: rect.w, h: rect.h };
+  let i = 0;
+  while (i < areas.length) {
+    const side = Math.min(remaining.w, remaining.h);
+    const rowStart = i;
+    const row = [areas[i]];
+    i++;
+    while (i < areas.length) {
+      const candidate = [...row, areas[i]];
+      if (tmWorstRatio(candidate, side) <= tmWorstRatio(row, side)) { row.push(areas[i]); i++; }
+      else break;
+    }
+    let rowArea = 0;
+    for (const a of row) rowArea += a;
+    const thickness = side > 0 ? rowArea / side : 0;
+    if (remaining.w >= remaining.h) {
+      let y = remaining.y;
+      for (let k = 0; k < row.length; k++) {
+        const h = thickness > 0 ? row[k] / thickness : 0;
+        result[rowStart + k] = { x: remaining.x, y, w: thickness, h };
+        y += h;
+      }
+      remaining = { x: remaining.x + thickness, y: remaining.y, w: remaining.w - thickness, h: remaining.h };
+    } else {
+      let x = remaining.x;
+      for (let k = 0; k < row.length; k++) {
+        const w = thickness > 0 ? row[k] / thickness : 0;
+        result[rowStart + k] = { x, y: remaining.y, w, h: thickness };
+        x += w;
+      }
+      remaining = { x: remaining.x, y: remaining.y + thickness, w: remaining.w, h: remaining.h - thickness };
+    }
+  }
+  return result;
+}
+
+/** Preview state. `saved` is the exact node list to put back on exit (§4.3). */
+const tmPreview = { on: false, saved: null, freedBytes: 0, stagedInView: 0, outsideView: 0, outsideBytes: 0 };
+
+/**
+ * The directory part of a path, using whichever separator the path itself uses.
+ *
+ * The root's own separator is kept: `/Users` yields `/`, not `''`, and
+ * `C:\\Users` yields `C:\\`, not `C:`. Dropping it looks harmless until the
+ * scan is rooted at the whole disk — then every top-level folder reports a
+ * parent that matches no node, the child map comes out empty, and the preview
+ * silently has nothing to show on the one scan people run most.
+ */
+function tmParentPath(p) {
+  const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  if (i < 0) return '';
+  const head = p.slice(0, i);
+  if (head === '' || /^[A-Za-z]:$/.test(head)) return head + p[i];
+  return head;
+}
+
+/** Is `p` inside `dir` (and not `dir` itself)? Separator-aware, prefix-safe. */
+function tmIsInside(p, dir) {
+  if (!dir || p === dir) return false;
+  const sep = dir.includes('\\') ? '\\' : '/';
+  const base = dir.endsWith(sep) ? dir : dir + sep;
+  return p.startsWith(base);
+}
+
+/**
+ * Rebuild the parent → children relation the server laid out from.
+ *
+ * The flat node list is emitted breadth-first with a `depth` on every entry,
+ * so a node's parent is the entry whose path is its directory, with the
+ * current treemap root standing in at depth 0. Reconstructing it rather than
+ * deriving children from `state.pathIndex` is what makes the preview
+ * comparable to the live map: the same child sets, filtered by the same
+ * minSize, laid out by the same algorithm.
+ */
+function tmDrawnTree() {
+  const rootPath = state.treemap.rootPath;
+  const byPath = new Map();
+  const kids = new Map();
+  const root = { path: rootPath, size: state.treemap.rootSize, depth: 0, expanded: true };
+  byPath.set(rootPath, root);
+  for (const n of state.treemap.nodes) byPath.set(n.path, n);
+  for (const n of state.treemap.nodes) {
+    const parent = tmParentPath(n.path);
+    if (!byPath.has(parent)) continue; // a gap the layout skipped
+    if (!kids.has(parent)) kids.set(parent, []);
+    kids.get(parent).push(n);
+  }
+  return { root, byPath, kids };
+}
+
+/**
+ * The cart, reduced to the paths that stand alone.
+ *
+ * Staging a folder and then a file inside it is ordinary — the file's bytes
+ * are already counted in the folder's, and taking both would free the same
+ * space twice and produce a map whose areas do not add up.
+ */
+function tmCartRoots() {
+  const paths = [...state.cart];
+  return paths.filter((p) => !paths.some((q) => tmIsInside(p, q)));
+}
+
+/**
+ * Build the previewed node list.
+ *
+ * Pure: it reads `state.treemap.nodes`, the cart and the node cache and
+ * returns a new array. §4.3 requires that no state outlives the preview, and
+ * the cheapest way to guarantee that is a builder that mutates nothing.
+ */
+function tmBuildPreview() {
+  if (!state.treemap.nodes.length || !state.treemap.rootPath) return null;
+  const { root, byPath, kids } = tmDrawnTree();
+
+  const freedIn = new Map();   // path → bytes freed directly inside it
+  const removed = new Set();   // drawn nodes staged whole
+  const shrunk = new Map();    // drawn leaves that lost bytes from below
+
+  let stagedInView = 0, outsideView = 0, outsideBytes = 0;
+  const addFreed = (p, bytes) => freedIn.set(p, (freedIn.get(p) || 0) + bytes);
+
+  for (const p of tmCartRoots()) {
+    const node = cartNode(p);
+    const bytes = node ? node.size : null;
+
+    // Staging the folder the map is rooted at — or anything above it — frees
+    // everything on screen. Drawn as one hatched canvas, which is the truth.
+    if (p === root.path || tmIsInside(root.path, p)) {
+      stagedInView += root.size;
+      addFreed(root.path, root.size);
+      for (const n of state.treemap.nodes) removed.add(n.path);
+      continue;
+    }
+    if (!tmIsInside(p, root.path)) { outsideView++; outsideBytes += bytes || 0; continue; }
+
+    const drawn = byPath.get(p);
+    if (drawn) {
+      removed.add(p);
+      addFreed(tmParentPath(p), drawn.size);
+      stagedInView += drawn.size;
+      continue;
+    }
+    // Size unknown: never guessed at, and never silently dropped either.
+    if (bytes === null) { outsideView++; continue; }
+
+    let host = root;
+    for (const n of state.treemap.nodes) {
+      if (tmIsInside(p, n.path) && n.depth > host.depth) host = n;
+    }
+    stagedInView += bytes;
+    if (kids.has(host.path)) {
+      addFreed(host.path, bytes); // an interior block, where the bytes really are
+    } else {
+      // A leaf has no interior to draw in, so it shrinks and its parent's
+      // freed block grows by the same amount. The sum is unchanged.
+      shrunk.set(host.path, Math.min(host.size, (shrunk.get(host.path) || 0) + bytes));
+      addFreed(tmParentPath(host.path), bytes);
+    }
+  }
+
+  if (!freedIn.size) return { nodes: null, stagedInView: 0, outsideView, outsideBytes, freedBytes: 0 };
+
+  // Re-lay out from the root. Every parent keeps its ORIGINAL size as the
+  // denominator, so a surviving rectangle covers exactly the area it covers on
+  // the live map and only its position changes.
+  const out = [];
+  let freedTotal = 0;
+  const walk = (parent, rect, depth) => {
+    const children = (kids.get(parent.path) || []).filter((c) => !removed.has(c.path));
+    const freed = freedIn.get(parent.path) || 0;
+    const entries = children.map((c) => ({ node: c, size: Math.max(0, c.size - (shrunk.get(c.path) || 0)) }));
+    if (freed > 0) entries.push({ node: null, size: freed });
+    const live = entries.filter((e) => e.size > 0).sort((a, b) => b.size - a.size);
+    if (!live.length || parent.size <= 0 || rect.w <= 0 || rect.h <= 0) return;
+
+    const rectArea = rect.w * rect.h;
+    const rects = tmSquarify(live.map((e) => (e.size / parent.size) * rectArea), rect);
+    for (let k = 0; k < live.length; k++) {
+      const r = rects[k];
+      if (!r || r.w <= 0 || r.h <= 0) continue;
+      if (live[k].node === null) {
+        freedTotal += live[k].size;
+        out.push({
+          name: 'Freed', path: parent.path + ' — freed', size: live[k].size, type: 'dir',
+          depth: depth + 1, expanded: false, freed: true,
+          x: r.x, y: r.y, w: r.w, h: r.h,
+        });
+        continue;
+      }
+      const c = live[k].node;
+      out.push({ ...c, size: live[k].size, x: r.x, y: r.y, w: r.w, h: r.h });
+      if (c.expanded && kids.has(c.path) && r.w > 0.2 && r.h > 0.2) {
+        walk({ path: c.path, size: c.size }, r, depth + 1);
+      }
+    }
+  };
+  walk(root, { x: 0, y: 0, w: 100, h: 100 }, 0);
+  return { nodes: out, stagedInView, outsideView, outsideBytes, freedBytes: freedTotal };
+}
+
+/** Diagonal hatch, built once, in the current theme's ink. */
+let tmHatch = null;
+let tmHatchInk = '';
+function tmHatchPattern(ctx) {
+  const ink = cssVar('--text-3') || '#8a8a90';
+  if (tmHatch && tmHatchInk === ink) return tmHatch;
+  const tile = document.createElement('canvas');
+  tile.width = 8; tile.height = 8;
+  const t = tile.getContext('2d');
+  t.strokeStyle = ink;
+  t.lineWidth = 1.6;
+  t.beginPath();
+  // Two strokes, the second offset by a tile, so the diagonal runs continuously
+  // across tiles instead of showing a seam every 8 px.
+  t.moveTo(-2, 10); t.lineTo(10, -2);
+  t.moveTo(-2, 18); t.lineTo(18, -2);
+  t.stroke();
+  tmHatch = ctx.createPattern(tile, 'repeat');
+  tmHatchInk = ink;
+  return tmHatch;
+}
+
+/** Turn the preview on, or say honestly why it cannot run. */
+function enterCartPreview() {
+  if (tmPreview.on) { exitCartPreview(); return; }
+  if (state.view !== 'treemap') { toast('Open the Treemap view to preview what the cart frees', 'error'); return; }
+  if (isSun()) { toast('The preview re-lays out the treemap — switch the map back from Sunburst first', 'error'); return; }
+  if (state.treemap.history.active) { toast('Leave the time slider first — the preview works on the live map', 'error'); return; }
+  if (!state.treemap.nodes.length) { toast('Nothing is drawn yet', 'error'); return; }
+  if (!state.cart.size) { toast('Your cart is empty — there is nothing to take out of the map', 'error'); return; }
+
+  const built = tmBuildPreview();
+  if (!built || !built.nodes) {
+    toast(
+      built && built.outsideView
+        ? `None of the ${formatCount(built.outsideView)} staged item${built.outsideView === 1 ? '' : 's'} is inside this folder — open the folder they are in to preview them.`
+        : 'Nothing staged is drawn on this map.',
+      'error', 7000,
+    );
+    return;
+  }
+  tmPreview.on = true;
+  tmPreview.saved = state.treemap.nodes;
+  tmPreview.freedBytes = built.freedBytes;
+  tmPreview.stagedInView = built.stagedInView;
+  tmPreview.outsideView = built.outsideView;
+  tmPreview.outsideBytes = built.outsideBytes;
+  state.treemap.nodes = built.nodes;
+  state.treemap.hover = null;
+  state.treemap.kbSel = null;
+  syncCartPreviewChrome();
+  drawTreemap();
+}
+
+/** Put the map back exactly as it was. */
+function exitCartPreview(silent = false) {
+  if (!tmPreview.on) return;
+  const saved = tmPreview.saved;
+  tmPreview.on = false;
+  tmPreview.saved = null;
+  // The identical array, not a rebuilt one: §4.3 asks that exiting restore the
+  // exact prior view state, and re-fetching would re-run the server's layout —
+  // which could legitimately differ if a rescan landed while the preview was up.
+  if (saved) state.treemap.nodes = saved;
+  state.treemap.hover = null;
+  state.treemap.kbSel = null;
+  syncCartPreviewChrome();
+  if (!silent && state.view === 'treemap' && !isSun()) drawTreemap();
+}
+
+/** Banner text, toggle state and the wrap outline — one place, both directions. */
+function syncCartPreviewChrome() {
+  const btn = $('cartPreview');
+  if (btn) {
+    btn.setAttribute('aria-pressed', String(tmPreview.on));
+    btn.classList.toggle('active', tmPreview.on);
+  }
+  $('treemapWrap').classList.toggle('previewing', tmPreview.on);
+  const banner = $('tmPreviewBanner');
+  if (!banner) return;
+  banner.hidden = !tmPreview.on;
+  if (!tmPreview.on) return;
+  const outside = tmPreview.outsideView
+    ? ` <span class="muted">${formatCount(tmPreview.outsideView)} staged item${tmPreview.outsideView === 1 ? '' : 's'} ` +
+      `${tmPreview.outsideBytes ? `(${escapeHtml(formatBytes(tmPreview.outsideBytes))}) ` : ''}` +
+      `${tmPreview.outsideView === 1 ? 'is' : 'are'} outside this folder and not shown.</span>`
+    : '';
+  $('tmPreviewText').innerHTML =
+    `<b>Preview — nothing has been deleted.</b> The hatched areas are the ` +
+    `<b>${escapeHtml(formatBytes(tmPreview.freedBytes))}</b> this cart would free.` + outside;
+}
+
+$('cartPreview').addEventListener('click', () => enterCartPreview());
+$('tmPreviewExit').addEventListener('click', () => exitCartPreview());
+
 function treemapHit(clientX, clientY, leavesOnly = false) {
   // Through the shared toolkit: the deepest rectangle wins, so clicking a file
   // inside a folder selects the file rather than its parent.
@@ -5575,7 +6010,11 @@ tmCanvas.addEventListener('mousemove', (e) => {
       presentView();
     }
     if (hit) {
-      tmCanvas.style.cursor = (hit.n.type === 'dir' || hit.center) ? 'pointer' : 'default';
+      // §4.3 — a freed block is a hypothetical, not a file: no drill-in cursor,
+      // and no tooltip claiming a path that will not exist.
+      tmCanvas.style.cursor = hit.n.freed ? 'default'
+        : (hit.n.type === 'dir' || hit.center) ? 'pointer' : 'default';
+      if (hit.n.freed) { hideTooltip(); return; }
       const pct = state.treemap.rootSize > 0 ? (hit.n.size / state.treemap.rootSize) * 100 : 0;
       showTooltip(e.clientX, e.clientY, hit.n, pct);
     } else { tmCanvas.style.cursor = 'default'; hideTooltip(); }
@@ -5588,6 +6027,10 @@ tmCanvas.addEventListener('mouseleave', () => {
 });
 tmCanvas.addEventListener('click', (e) => {
   if (state.treemap.history.active) { hideTooltip(); return; } // historical view — read-only
+  // v4 §4.3 — the preview is a hypothetical, so drilling into it would load a
+  // real folder under a banner that says nothing has been deleted. Read-only,
+  // for the same reason the time slider is.
+  if (tmPreview.on) { hideTooltip(); return; }
   const hit = viewHit(e.clientX, e.clientY);
   if (!hit) return;
   if (hit.n && hit.n.isTrash) { hideTooltip(); openTrashModal(); return; }
@@ -5632,6 +6075,7 @@ async function expandContainerNode(n) {
 tmCanvas.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   if (state.treemap.history.active) return; // historical paths may no longer exist
+  if (tmPreview.on) return;                 // §4.3 — nothing here is real yet
   const hit = viewHit(e.clientX, e.clientY, true);
   if (hit && hit.n && hit.n.isTrash) { openTrashModal(); return; }
   if (hit && hit.n) showCtxMenu(e.clientX, e.clientY, hit.n);
@@ -8552,8 +8996,33 @@ function cartToggle(p) {
   if (!p) return;
   if (state.cart.has(p)) state.cart.delete(p); else state.cart.add(p);
   saveCart(); renderCart(); refreshCartButtons();
+  cartPreviewInvalidated();
 }
-function cartClear() { state.cart.clear(); saveCart(); renderCart(); refreshCartButtons(); }
+function cartClear() {
+  state.cart.clear(); saveCart(); renderCart(); refreshCartButtons();
+  cartPreviewInvalidated();
+}
+
+/**
+ * The cart changed, so a drawn preview is now a picture of a cart that no
+ * longer exists (v4 §4.3).
+ *
+ * Rebuilt rather than merely dropped: someone adding a second item while
+ * looking at the preview means "and this one too", and blanking the map at
+ * that moment would read as a bug. Emptying it exits, because a preview of
+ * nothing has nothing to show.
+ */
+function cartPreviewInvalidated() {
+  if (!tmPreview.on) return;
+  if (!state.cart.size) { exitCartPreview(); return; }
+  const saved = tmPreview.saved;
+  state.treemap.nodes = saved;      // rebuild from the real layout, never from a preview
+  tmPreview.on = false;
+  tmPreview.saved = null;
+  enterCartPreview();
+  // enterCartPreview refuses when nothing staged is on this map; if it did,
+  // the real layout is already back in place and the chrome is already off.
+}
 
 /**
  * Sync the +/✓ state of every per-row "add to cart" button currently on screen.
@@ -8909,6 +9378,10 @@ function reclaimReset() {
   reclaim.pending.clear();
 }
 subscribe(TOPIC.scan, reclaimReset);
+// §4.3 — a new scan replaces the very tree the preview was laid out from, so
+// the saved "restore me" node list is stale too. Dropped silently: the map is
+// about to be redrawn from the new scan anyway.
+subscribe(TOPIC.scan, () => exitCartPreview(true));
 
 /** The fact for a path, or undefined when it has not been asked for. */
 function scoreFor(path) {
@@ -12537,6 +13010,9 @@ document.addEventListener('keydown', (e) => {
       tmApplyQuery('');
       return;
     }
+    // §4.3 — ahead of "go up one folder", so Escape always means "get me out
+    // of the thing I am in" rather than navigating a hypothetical map.
+    if (state.view === 'treemap' && tmPreview.on) { exitCartPreview(); return; }
     if (state.view === 'treemap' && state.treemap.history.active) {
       const slider = $('tmTimeSlider');
       slider.value = slider.max;
