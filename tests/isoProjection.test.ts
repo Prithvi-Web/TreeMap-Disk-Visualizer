@@ -277,3 +277,95 @@ test('ordering a Disk City-sized scene stays well inside the first-paint budget'
   assert.equal(unresolved, 0);
   assert.ok(ms < 120, `depth-sorting ${scene.length} blocks took ${ms.toFixed(1)} ms, which must leave room to draw them`);
 });
+
+/* ═══════════════════ shadows, and where the light is (§6.1) ═══════════════════
+
+   The light in Disk City is not a taste decision, and these tests are the
+   reason it cannot quietly become one. Both signs are forced by the shading —
+   the +x wall is drawn lit and the +y wall shaded — and the MAGNITUDES are
+   forced by the painter's algorithm over a tiling with no bare ground: a
+   shadow that moved toward the viewer would fall only on buildings drawn after
+   it and be painted over by every one of them.
+
+   That was not reasoned out in advance. It was built the other way round
+   first, and the result was a city with cast shadows in the code and not one
+   of them visible on screen.                                                  */
+
+const CITY_LIGHT = lift<{ x: number; y: number }>(['CITY_LIGHT'], 'CITY_LIGHT');
+const cityHull = lift<(pts: Pt[]) => Pt[]>(['cityHull'], 'cityHull');
+const cityShadowShape = lift<(b: Block) => Pt[]>(
+  ['isoProject', 'cityHull', 'CITY_LIGHT', 'cityShadowShape'], 'cityShadowShape',
+);
+
+/** Shoelace area of a projected polygon. */
+function shoelace(pts: Pt[]): number {
+  let a = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    a += pts[j].sx * pts[i].sy - pts[i].sx * pts[j].sy;
+  }
+  return Math.abs(a / 2);
+}
+
+test('the hull of a set of points contains every one of them, and is convex', () => {
+  const pts: Pt[] = [
+    { sx: 0, sy: 0 }, { sx: 10, sy: 0 }, { sx: 10, sy: 10 }, { sx: 0, sy: 10 },
+    { sx: 5, sy: 5 }, // strictly interior: must not appear on the hull
+    { sx: 5, sy: 0 }, // collinear on an edge
+  ];
+  const hull = cityHull(pts);
+  assert.ok(hull.length >= 3 && hull.length <= 4, `a square's hull has four corners, got ${hull.length}`);
+  assert.ok(!hull.some((p) => p.sx === 5 && p.sy === 5), 'the interior point is not on the hull');
+  // Convex: every turn goes the same way.
+  let sign = 0;
+  for (let i = 0; i < hull.length; i++) {
+    const a = hull[i], b = hull[(i + 1) % hull.length], c = hull[(i + 2) % hull.length];
+    const cross = (b.sx - a.sx) * (c.sy - b.sy) - (b.sy - a.sy) * (c.sx - b.sx);
+    if (Math.abs(cross) < 1e-12) continue;
+    const s = Math.sign(cross);
+    if (sign === 0) sign = s; else assert.equal(s, sign, 'the hull turns the same way throughout');
+  }
+});
+
+test('a flat block casts a shadow exactly its own footprint', () => {
+  const flat = cityShadowShape({ x: 10, y: 20, w: 8, h: 6, z: 0 });
+  const foot = cityHull([
+    isoProject(10, 20, 0), isoProject(18, 20, 0), isoProject(18, 26, 0), isoProject(10, 26, 0),
+  ]);
+  assert.ok(Math.abs(shoelace(flat) - shoelace(foot)) < 1e-9);
+});
+
+test('a shadow grows with height, and never shrinks below the footprint', () => {
+  const base = { x: 10, y: 20, w: 8, h: 6 };
+  let previous = shoelace(cityShadowShape({ ...base, z: 0 }));
+  for (const z of [1, 4, 12, 26]) {
+    const area = shoelace(cityShadowShape({ ...base, z }));
+    assert.ok(area > previous, `z=${z}: the shadow is longer than at the height below it`);
+    previous = area;
+  }
+});
+
+test('a shadow runs AWAY from the viewer — the invariant the draw order needs', () => {
+  // Depth grows with x + y, so "away" means the swept footprint must land at a
+  // SMALLER x + y than it started. This is what puts a shadow on the roofs
+  // behind its caster, which are drawn earlier and can receive it. Flip it and
+  // every shadow in the city is painted over by the buildings in front.
+  assert.ok(CITY_LIGHT.x + CITY_LIGHT.y < 0,
+    `the light must sweep shadows toward the back (got x+y = ${CITY_LIGHT.x + CITY_LIGHT.y})`);
+  // And the two signs, which are what the shading already committed to: the
+  // +x wall is drawn as the lit one, the +y wall as the shaded one.
+  assert.ok(CITY_LIGHT.x < 0, 'the +x wall is lit, so the light travels in −x');
+  assert.ok(CITY_LIGHT.y > 0, 'the +y wall is shaded, so the light travels in +y');
+});
+
+test('a shadow reaches back past its own caster', () => {
+  // The consequence of the invariant above, asserted on the geometry rather
+  // than on the constant: some part of the shadow is strictly further back
+  // than every corner of the footprint that cast it.
+  const b = { x: 30, y: 30, w: 10, h: 10, z: 20 };
+  const shadow = cityShadowShape(b);
+  const footTop = Math.min(
+    ...[[30, 30], [40, 30], [40, 40], [30, 40]].map(([x, y]) => isoProject(x, y, 0).sy),
+  );
+  assert.ok(Math.min(...shadow.map((p) => p.sy)) < footTop - 1e-9,
+    'the shadow extends above the footprint on screen, which is backwards in this projection');
+});

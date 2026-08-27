@@ -30,7 +30,7 @@ export function lift<T>(names: string[], returns: string): T {
   const parts: string[] = [];
   for (const name of names) {
     const start = INDEX.indexOf(`function ${name}(`);
-    assert.notEqual(start, -1, `function ${name} was located in public/index.html`);
+    if (start === -1) { parts.push(liftConst(name)); continue; }
     const open = INDEX.indexOf('{', start);
     let depth = 0;
     let end = open;
@@ -45,4 +45,31 @@ export function lift<T>(names: string[], returns: string): T {
     parts.push(INDEX.slice(start, end));
   }
   return new Function(`${parts.join('\n')}\nreturn ${returns};`)() as T;
+}
+
+/**
+ * Lift a top-level `const NAME = …;` instead of a function.
+ *
+ * Some of what these tests need to pin is a constant rather than a routine —
+ * Disk City's light vector is the clearest case, since both its signs and the
+ * relative size of its components are load-bearing and a change to any of them
+ * silently breaks the picture. Re-declaring the value in the test file would
+ * make the test agree with itself rather than with the app.
+ *
+ * Deliberately narrow: a single statement ending at the first `;` that is not
+ * inside a bracket or a string. Anything more elaborate than that should be a
+ * function, and lifting it should look like one.
+ */
+function liftConst(name: string): string {
+  const start = INDEX.indexOf(`const ${name} = `);
+  assert.notEqual(start, -1, `function or const ${name} was located in public/index.html`);
+  let depth = 0;
+  for (let i = start; i < INDEX.length; i++) {
+    const ch = INDEX[i];
+    if (ch === '{' || ch === '[' || ch === '(') depth++;
+    else if (ch === '}' || ch === ']' || ch === ')') depth--;
+    else if (ch === ';' && depth === 0) return INDEX.slice(start, i + 1);
+    else if (ch === '\n' && depth === 0 && i > start + 8) break;
+  }
+  assert.fail(`const ${name} is a single-statement declaration`);
 }

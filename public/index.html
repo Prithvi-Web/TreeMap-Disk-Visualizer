@@ -11385,39 +11385,38 @@ function drawCity() {
     const rgb = cityAirRgb(b.rgb, cityDepthT(b), bg);
 
     // Reused buffers, not fresh arrays — see cityScreen's header.
-    if (!b.sBuf) b.sBuf = { foot: [], top: [], right: [], left: [] };
-    const foot = cityScreen(b.faces.foot, tx, b.sBuf.foot);
+    if (!b.sBuf) b.sBuf = { foot: [], top: [], right: [], left: [], shadow: [] };
     const top = cityScreen(b.faces.top, tx, b.sBuf.top);
     const right = cityScreen(b.faces.right, tx, b.sBuf.right);
     const left = cityScreen(b.faces.left, tx, b.sBuf.left);
 
-    // Contact shadow: the footprint, nudged away from the light and darkened.
-    // Cheap — one extra fill — and it is most of what makes a block sit ON the
-    // ground rather than hover a millimetre above it.
-    if (wide) {
-      const off = Math.min(6, Math.max(1.5, b.z * tx.s * 0.06));
-      ctx.beginPath();
-      ctx.moveTo(foot[0].x - off * 0.5, foot[0].y + off);
-      for (let i = 1; i < foot.length; i++) ctx.lineTo(foot[i].x - off * 0.5, foot[i].y + off);
-      ctx.closePath();
-      ctx.fillStyle = 'rgba(0,0,0,0.22)';
-      ctx.fill();
+    // The cast shadow, laid down before its own building — see cityPaintShadow.
+    if (wide && b.z > CITY_MIN_H * 1.05) {
+      if (!b.shadow) b.shadow = cityShadowShape(b);
+      cityPaintShadow(ctx, cityScreen(b.shadow, tx, b.sBuf.shadow));
     }
 
     const seed = b.seed || (b.seed = citySeed(b.n.path));
+    const tallness = Math.min(1, (b.z - CITY_MIN_H) / CITY_MAX_H);
 
     // Left wall — the shadowed side, cooled slightly rather than merely darkened.
     cityPathOf(ctx, left);
     ctx.fillStyle = cityShade([rgb[0] * 0.92, rgb[1] * 0.96, rgb[2] * 1.08], isHover ? 0.66 : 0.46);
     ctx.fill();
-    ctx.save(); ctx.clip(); cityWindows(ctx, left, seed, rgb, 0.30); ctx.restore();
+    ctx.save(); ctx.clip();
+    cityWindows(ctx, left, seed, rgb, 0.30);
+    if (wide) cityWallShading(ctx, left);
+    ctx.restore();
     if (wide) { ctx.strokeStyle = cityShade(rgb, 0.28, 0.9); ctx.lineWidth = edgeWidth; ctx.stroke(); }
 
     // Right wall — the lit side, warmed. Its windows catch more of the light.
     cityPathOf(ctx, right);
     ctx.fillStyle = cityShade([rgb[0] * 1.06, rgb[1] * 1.0, rgb[2] * 0.92], isHover ? 0.95 : 0.74);
     ctx.fill();
-    ctx.save(); ctx.clip(); cityWindows(ctx, right, seed ^ 0x9e3779b9, rgb, 0.5); ctx.restore();
+    ctx.save(); ctx.clip();
+    cityWindows(ctx, right, seed ^ 0x9e3779b9, rgb, 0.5);
+    if (wide) cityWallShading(ctx, right);
+    ctx.restore();
     if (wide) { ctx.strokeStyle = cityShade(rgb, 0.34, 0.9); ctx.lineWidth = edgeWidth; ctx.stroke(); }
 
     // Roof — full light, with a soft gradient so a large roof is not a flat slab.
@@ -11435,6 +11434,9 @@ function drawCity() {
 
     // Detail before the hatch and the label, so neither is drawn over.
     if (wide) { ctx.save(); cityPathOf(ctx, top); ctx.clip(); cityRoofDetail(ctx, top, seed ^ 0x85ebca6b, rgb); ctx.restore(); }
+    // The crown stands ON the roof rather than inside it, so it is drawn
+    // unclipped and after the roof detail it would otherwise be hidden under.
+    if (wide && tallness > 0.16) cityCrown(ctx, b, tx, rgb, tallness);
 
     if (b.hatched) {
       // §6.1 — a block that swallowed its children says so, rather than
@@ -11451,9 +11453,11 @@ function drawCity() {
       ctx.restore();
     }
 
-    // The crisp line where roof meets wall. One stroke, and it is most of the
-    // difference between a rendered solid and a filled polygon: real edges
-    // catch the light, flat fills do not.
+    // The crisp lines where roof meets wall, and down the near corner. One
+    // stroke each, and together they are most of the difference between a
+    // rendered solid and a filled polygon: real edges catch the light, flat
+    // fills do not. The vertical is the only edge in the whole silhouette
+    // that faces the viewer head-on, which is exactly where a rim light lands.
     if (wide) {
       ctx.beginPath();
       ctx.moveTo(top[3].x, top[3].y);
@@ -11462,6 +11466,14 @@ function drawCity() {
       ctx.strokeStyle = 'rgba(255,255,255,0.22)';
       ctx.lineWidth = Math.max(0.8, edgeWidth);
       ctx.stroke();
+      if (b.z * tx.s > 10) {
+        ctx.beginPath();
+        ctx.moveTo(right[1].x, right[1].y);
+        ctx.lineTo(right[2].x, right[2].y);
+        ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+        ctx.lineWidth = Math.max(0.7, edgeWidth * 0.9);
+        ctx.stroke();
+      }
     }
 
     if (isHover) {
@@ -11708,6 +11720,220 @@ function cityRoofDetail(ctx, top, seed, rgb) {
   }
 }
 
+/* ── Light, and what it does to the ground ──────────────────────────────────
+
+   One light, one direction, everywhere: from high on the RIGHT, which is
+   already what the right wall being the lit one means, what the backdrop's
+   warm corner means, and where every other lit thing in the app takes its
+   light from. Naming it once as a vector is what lets the shadows agree with
+   the shading instead of being drawn to taste.
+
+   Shadows are cast onto the GROUND ONLY, never onto other buildings. That is a
+   simplification and it is the right one here: a painter's algorithm has no
+   depth buffer to test against, so a building-on-building shadow would have to
+   be clipped against every block it might land on — at which point the sort
+   that §6.1 spent a whole commit getting right becomes a per-frame occlusion
+   problem. Ground shadows alone give the eye what it actually needs, which is
+   height: two towers of the same footprint are told apart instantly by how far
+   their shadows reach.                                                        */
+
+/**
+ * Where a shadow runs, per unit of height, in layout units.
+ *
+ * Both signs are forced by the shading, and the magnitudes by the painter's
+ * algorithm — this vector is not a taste decision:
+ *
+ *  - the +x wall is the lit one and the +y wall the shaded one, so the light
+ *    travels in −x and +y and the shadow must too;
+ *  - depth in this projection grows with x + y, and **a treemap tiles its
+ *    ground completely**. There is no bare floor anywhere for a shadow to land
+ *    on, so a shadow that moved toward the viewer would fall only on buildings
+ *    drawn after it and be painted over by every one of them. Measured, by
+ *    building exactly that and finding an empty plot: with `x + y` increasing,
+ *    not one shadow in the city was visible.
+ *
+ * So |x| > |y|: the sun sits to the right and a little in front, and shadows
+ * run back and to the left, over the roofs of the buildings behind — which are
+ * drawn earlier and can therefore receive them.
+ */
+const CITY_LIGHT = { x: -1.25, y: 0.45 };
+
+/**
+ * The convex hull of projected points — monotone chain.
+ *
+ * A block's shadow is its footprint swept along the light, which is the hull
+ * of the footprint and the footprint translated. Enumerating the resulting
+ * hexagon by hand needs a case per sign combination of the offset; the hull of
+ * eight points has no cases at all and costs about thirty comparisons.
+ */
+function cityHull(pts) {
+  const p = pts.slice().sort((a, b) => a.sx - b.sx || a.sy - b.sy);
+  const cross = (o, a, b) => (a.sx - o.sx) * (b.sy - o.sy) - (a.sy - o.sy) * (b.sx - o.sx);
+  const lower = [];
+  for (const q of p) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop();
+    lower.push(q);
+  }
+  const upper = [];
+  for (let i = p.length - 1; i >= 0; i--) {
+    const q = p[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop();
+    upper.push(q);
+  }
+  lower.pop(); upper.pop();
+  return lower.concat(upper);
+}
+
+/**
+ * One block's ground shadow, in projected (pre-transform) coordinates.
+ *
+ * Computed once per layout and cached on the block beside `faces`, because it
+ * only changes when the height does — which is exactly when `faces` is
+ * invalidated, so the two are cleared together.
+ */
+function cityShadowShape(b) {
+  const ox = b.z * CITY_LIGHT.x, oy = b.z * CITY_LIGHT.y;
+  const x0 = b.x, x1 = b.x + b.w, y0 = b.y, y1 = b.y + b.h;
+  const pts = [];
+  for (const corner of [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]) {
+    pts.push(isoProject(corner[0], corner[1], 0));
+    pts.push(isoProject(corner[0] + ox, corner[1] + oy, 0));
+  }
+  return cityHull(pts);
+}
+
+/**
+ * One building's shadow, drawn immediately before that building.
+ *
+ * The order is the whole design. Shadows here run BACK, onto roofs that were
+ * drawn earlier, so painting one just before its caster lays it correctly over
+ * the neighbours behind and lets the caster itself cover the part that falls
+ * on its own footprint. A single early pass — which is what one wants for a
+ * shadow on bare ground — puts every shadow under every building instead, and
+ * on a tiling with no bare ground that means under, full stop.
+ *
+ * Two fills, the outer slightly larger and fainter, for a penumbra.
+ * `ctx.filter = 'blur()'` would be truer and costs a full-canvas readback per
+ * building, which is not a trade worth making sixty times a second.
+ */
+function cityPaintShadow(ctx, screenPts) {
+  if (screenPts.length < 3) return;
+  let cx = 0, cy = 0;
+  for (const p of screenPts) { cx += p.x; cy += p.y; }
+  cx /= screenPts.length; cy /= screenPts.length;
+  for (const pass of [{ k: 1.07, a: 0.08 }, { k: 1.0, a: 0.17 }]) {
+    ctx.beginPath();
+    for (let i = 0; i < screenPts.length; i++) {
+      const x = cx + (screenPts[i].x - cx) * pass.k;
+      const y = cy + (screenPts[i].y - cy) * pass.k;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = `rgba(0,0,0,${pass.a})`;
+    ctx.fill();
+  }
+}
+
+/**
+ * What a wall does between the ground and the sky.
+ *
+ * Two effects in one gradient, because they are two ends of the same fact:
+ * light does not reach the crease where a wall meets the ground, and the top
+ * of a wall catches the sky. A wall filled with one flat value is the single
+ * most reliable way to make an extrusion look like a sticker; these two stops
+ * cost one fill between them and do most of the work of turning a shaded
+ * quadrilateral into a surface.
+ */
+function cityWallShading(ctx, quad) {
+  // quad: [topA, topB, bottomB, bottomA] — along the top, then down.
+  const topX = (quad[0].x + quad[1].x) / 2, topY = (quad[0].y + quad[1].y) / 2;
+  const botX = (quad[2].x + quad[3].x) / 2, botY = (quad[2].y + quad[3].y) / 2;
+  if (Math.hypot(botX - topX, botY - topY) < 14) return;
+  const g = ctx.createLinearGradient(botX, botY, topX, topY);
+  g.addColorStop(0, 'rgba(0,0,0,0.36)');      // the crease at the ground
+  g.addColorStop(0.30, 'rgba(0,0,0,0.07)');
+  g.addColorStop(0.86, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(190,214,255,0.14)'); // sky, caught along the parapet
+  ctx.fillStyle = g;
+  ctx.fill();
+}
+
+/**
+ * A crown on a tall building: a parapet cap, and a mast on the slim ones.
+ *
+ * This is what stops a skyline reading as a bar chart. Every real tower is
+ * finished at the top — a plant room, a parapet, a mast — and a field of
+ * boxes chopped flat is the tell that these are bars with shading on them.
+ * Purely architectural, carrying no data, which is why it is drawn from the
+ * building's own colour and never near the label.
+ *
+ * The crown is a smaller box standing on the roof, drawn through the same
+ * projection as its parent, so it stays put under pan, zoom and the height
+ * morph without any state of its own.
+ */
+function cityCrown(ctx, b, tx, rgb, tallness) {
+  const wpx = (b.w + b.h) * tx.s;
+  if (wpx < 26 || b.z * tx.s < 16) return;
+  const foot = (b.w + b.h) / 2;
+  const tower = b.z > foot * 0.4;
+
+  /* A tower is finished with a centred parapet; a slab gets a plant room off
+     to one side, sized and placed from a hash of its own path.
+
+     The uniform version — every roof with one concentric box at the same
+     fraction — was the tell. A dozen wide blocks each carrying an identical
+     lighter rectangle read as an overlay someone had drawn on the map rather
+     than as roofs, and the eye starts looking for what the rectangle MEANS.
+     It means nothing, so it has to look like nothing: varied, off-centre and
+     small enough to be furniture. Derived from the path, so a building keeps
+     the same roof at every zoom and in every session. */
+  let insetX = 0.24, insetY = 0.24, offX = 0, offY = 0, rise = 0.07;
+  if (!tower) {
+    const h = citySeed(b.n.path);
+    insetX = 0.32 + ((h >>> 3) % 90) / 500;
+    insetY = 0.32 + ((h >>> 11) % 90) / 500;
+    offX = ((((h >>> 17) % 100) / 100) - 0.5) * (1 - 2 * insetX) * 0.85;
+    offY = ((((h >>> 23) % 100) / 100) - 0.5) * (1 - 2 * insetY) * 0.85;
+    rise = 0.0;
+  }
+  const x0 = b.x + b.w * (insetX + offX), x1 = b.x + b.w * (1 - insetX + offX);
+  const y0 = b.y + b.h * (insetY + offY), y1 = b.y + b.h * (1 - insetY + offY);
+  const zc = tower
+    ? b.z + Math.min(2.2, Math.max(0.35, b.z * rise))
+    : b.z + Math.min(1.4, Math.max(0.28, foot * 0.05));
+  const p = (x, y, z) => isoProject(x, y, z);
+  const cap = cityScreen([p(x0, y0, zc), p(x1, y0, zc), p(x1, y1, zc), p(x0, y1, zc)], tx);
+  const rightF = cityScreen([p(x1, y0, zc), p(x1, y1, zc), p(x1, y1, b.z), p(x1, y0, b.z)], tx);
+  const leftF = cityScreen([p(x0, y1, zc), p(x1, y1, zc), p(x1, y1, b.z), p(x0, y1, b.z)], tx);
+  cityPathOf(ctx, leftF); ctx.fillStyle = cityShade(rgb, 0.44); ctx.fill();
+  cityPathOf(ctx, rightF); ctx.fillStyle = cityShade(rgb, 0.7); ctx.fill();
+  cityPathOf(ctx, cap); ctx.fillStyle = cityShade(rgb, 1.16); ctx.fill();
+
+  /* A mast, on very few buildings.
+     The first version put one on anything tall and slim, and at a working zoom
+     that was most of the map: forty white lines shooting out of a skyline read
+     as a data layer nobody could explain rather than as architecture. A mast
+     is only interesting when it is RARE, so this asks for three things at once
+     — genuinely tall for this folder, genuinely slender, and one in five by a
+     hash of the path so the same buildings keep theirs from frame to frame. */
+  const slim = (b.w + b.h) / 2 < b.z * 0.45;
+  if (!slim || tallness < 0.72 || b.z * tx.s < 54) return;
+  if ((citySeed(b.n.path) % 5) !== 0) return;
+  const mx = b.x + b.w / 2, my = b.y + b.h / 2;
+  const base = cityScreen([p(mx, my, zc)], tx)[0];
+  const tip = cityScreen([p(mx, my, zc + b.z * 0.16)], tx)[0];
+  ctx.beginPath();
+  ctx.moveTo(base.x, base.y);
+  ctx.lineTo(tip.x, tip.y);
+  ctx.strokeStyle = cityShade(rgb, 1.15, 0.75);
+  ctx.lineWidth = Math.max(0.8, Math.min(1.6, tx.s * 0.03));
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(tip.x, tip.y, Math.max(1, ctx.lineWidth * 1.1), 0, Math.PI * 2);
+  ctx.fillStyle = cityShade(rgb, 1.4, 0.85);
+  ctx.fill();
+}
+
 /** A stable 32-bit seed for one path, so a building never re-rolls its windows. */
 function citySeed(path) {
   let h = 2166136261;
@@ -11795,7 +12021,7 @@ function cityMorphHeights(previousByPath) {
     b.z0 = was;
     b.z1 = b.z;
     b.z = was;
-    b.faces = null;
+    b.faces = null; b.shadow = null;
     b.bb = isoBounds(b);
     moved++;
   }
@@ -11814,7 +12040,7 @@ function cityRunMorph() {
     for (const b of c.blocks) {
       if (b.z1 === undefined) continue;
       b.z = b.z0 + (b.z1 - b.z0) * k;
-      b.faces = null;
+      b.faces = null; b.shadow = null;
       b.bb = isoBounds(b);
     }
     drawCity();
@@ -11824,7 +12050,7 @@ function cityRunMorph() {
       if (b.z1 === undefined) continue;
       b.z = b.z1;
       delete b.z1;
-      b.faces = null;
+      b.faces = null; b.shadow = null;
       b.bb = isoBounds(b);
     }
     drawCity();
@@ -11880,7 +12106,7 @@ function cityEnter() {
     b.z0 = 0;
     b.z1 = b.z;
     b.z = 0;
-    b.faces = null;
+    b.faces = null; b.shadow = null;
     b.bb = isoBounds(b);
   }
   c.morphStart = performance.now();
