@@ -1,5 +1,145 @@
 # TreeMap — session handoff
 
+## v4 — Phase 3 complete: the Reclaim Score (26 August 2026)
+
+**Four commits on `main`, unpushed.** Suite **1118 (1116 pass, 2 skips)**, up
+from 1047. Typecheck clean, build clean, `npm run bench:v4` **7 pass / 3 not
+measurable in Node**. Every view driven in the real app; the isolated dev
+server (`treemap-p3`, port 4289) was stopped afterwards.
+
+| Commit | What |
+| --- | --- |
+| `062eb6e` | 3.1 the scoring model + user-editable weights |
+| `fdc5944` | 3.1 the fact provider that gathers the six signals |
+| `e55817c` | 3.1 `score:` in the query grammar + `reclaim_ranked` over MCP |
+| `16f755f` | 3.3 the badge, breakdown, colour mode, sorts and settings |
+
+### The one design rule everything else follows
+
+**A component that could not be computed is left out of the score and named —
+never counted as zero.** The obvious implementation multiplies every weight by
+its value and sums, unknowns contributing nothing, which silently ranks a file
+nobody can vouch for BELOW one positively known to be worthless. So the score
+renormalises over the weight that actually answered, `missing[]` names the rest
+with reasons, and `coverage` (the share of enabled weight that answered) is
+what `confidence` bands. If you change one thing in this feature, do not change
+that.
+
+Three kinds of "no answer" are kept apart, because each has a different fix:
+the mechanism cannot run here (no git, no backup) → missing with the
+capability's reason; it ran and found nothing (no rule matched, no download
+record) → a real zero; **it has not been asked** (duplicate hashing has never
+run for this scan) → missing, because "no duplicate found" is only true once
+something looked. Collapsing the last two turns "TreeMap has not checked" into
+"TreeMap checked and there is nothing", in the number people delete by.
+
+### New traps, all paid for
+
+- **`xattr -p` batches, and exits 1 for the ordinary case.** Measured: batched
+  `mdls` is ~0.36 ms/path — over §2.5's whole 400 ms budget alone — while one
+  `xattr` call over 2,000 absolute paths returns in ~50–100 ms. Its traps are
+  the ones this codebase already knows: exit 1 means "some file had no
+  attribute" (the `lsof` shape — read stdout, never the exit code); a
+  single-path call prints a **bare value with no path prefix** (the `mdls`
+  shape); and lines are matched against the *requested* paths rather than split
+  on the first colon, because a filename may contain `: `. Longest-first, so
+  `/x/a.txt` cannot claim `/x/a.txt.download`'s line. Unlike `mdls`, a
+  vanished path does **not** destroy the batch.
+- **A fact derived from settings needs its own invalidation.** The fact cache
+  is keyed on scan and path with a 30-minute TTL, which is right for a fact
+  about a tree and wrong for one computed from weights. Changing a weight left
+  every cached score untouched, with breakdowns listing components the user had
+  just switched off. `updateSettings` now calls
+  `clearFactCacheForProvider('reclaimScore')`, and **only when the weights
+  actually changed** — an unrelated save must not re-run `mdls` and `git` over
+  everything on screen.
+- **`getDuplicateJob` starts a job; `peekDuplicateJob` does not.** Scoring a
+  folder must not kick off a full-disk SHA-256 pass as a side effect. And
+  `job.groups` is the top **500** by reclaimable bytes while `groupCount` is
+  the real total — absence from that list proves nothing when it was
+  truncated, so the score reports unknown rather than "no duplicate".
+- **`collectCleanupSuggestions` caps `items` at 200 per rule.** Building a
+  path→rule map from its groups would score the 201st `node_modules` in a scan
+  as "no rule recognises this". It now takes an optional observer on the same
+  walk — one matcher, two consumers, because two matchers over the same rule
+  packs agree today and drift by the next rule anyone adds.
+- **Clean Up's checkbox `data-i` indexes `g.items`, and it feeds the delete
+  path.** `updateCleanSummary` reads it back as `smartGroups[g].items[i]`, so
+  rendering a re-ordered list with positional indices ticks one row and deletes
+  a different file. `smartItemsOf` pairs each item with its original index
+  before sorting. Verified in the running app, not just in a test.
+- **A repaint-driven callback can recurse.** `drawView` asks for the scores of
+  what it drew; the fetch's callback repaints. `ensureScores` therefore fires
+  its callback **only when new scores actually arrived** — "nothing fetched"
+  and "nothing changed" are the same statement, and without that the two called
+  each other forever once every visible cell was scored.
+- **`--surface-1` is a 5%-alpha tint, not a background.** The breakdown panel
+  used it and the donut legend read straight through the text. It joins the
+  liquid-glass layer like `#ctxMenu` — over an **opaque `--bg-1` base**,
+  because the shared 68% tint is fine for a small menu on a dimmed backdrop and
+  not for a 460×600 panel on bare content.
+- **Holding a DOM node across a repaint loses focus.** Every list carrying a
+  badge is rebuilt by `innerHTML` when the scores land, so the button that
+  opened the panel is gone by the time it closes and focus fell to `<body>`.
+  The path survives the repaint; the badge is re-found by it.
+- **`position: fixed` needs both axes clamped.** Its coordinates are
+  viewport-relative while the anchor's rect is wherever that row sits. A badge
+  below the fold put the panel at y=2227 in an 820px window: open, populated,
+  focused, invisible.
+- **A confidence letter beside a number in a disk tool reads as a unit.** The
+  badge said "66.4M" — every other figure on that row is a byte count. A
+  leading `~` for anything below high confidence cannot be misread.
+
+### Measured on this Mac
+
+| Budget | Measured | Limit |
+| --- | --- | --- |
+| `reclaimScore` sidecar, 5,000 paths cold, 3 batches | **319.9 ms** | ≤ 400 ms |
+| Treemap repaint in Reclaim mode, 4,717 drawn cells | **10.2 ms median, 23.2 ms p95** | ≤ 16 ms median / 33 ms p95 |
+| Switch to Reclaim (layout + repaint), 4,717 cells | **30.6 ms** | ≤ 50 ms |
+| Open / close the breakdown panel | **12.7 / 0.6 ms** | ≤ 50 ms |
+| Largest Files → Reclaim sort | **1.4 ms** | ≤ 50 ms |
+
+Load average 3.22 / 2.86 / 2.80 at the start of the bench run. `reclaimScore`
+is the tightest row in the gate and it is the **cold worst case** — in real use
+the two providers it composes are already cached by the same screenful.
+
+### Deliberate choices worth not "fixing"
+
+- **The colour ramp is absolute, not per-scan.** On this repository every score
+  lands between 3.7 and 44.8, so the map reads uniformly olive — which is the
+  correct statement: nothing here is a slam-dunk delete. Rescaling green to
+  mean "greenest in this folder" would make a folder of irreplaceable originals
+  look full of safe deletions, which is the exact dishonesty the size component
+  already refuses. The ramp does discriminate when scores do (a 3-year-old
+  `node_modules` at 87.6 is plainly green beside a fresh one at 53.7).
+- **Largest Files shows badges only under the Reclaim sort.** Scoring costs
+  per-file work; the dashboard's first paint should not pay it for a list most
+  people read by size. The toggle is right there.
+- **The treemap scores at most `TM_SCORE_CAP` (6,000) drawn cells**, and says
+  so: `reclaimCoverageNote()` renders "Scored N of M on screen" while batches
+  land, names the cap when one is hit, and says nothing once everything drawn
+  is scored. Silence there would read as "these are all fine" — 2,716 of 4,717
+  cells were unscored grey in the run that prompted this.
+
+### What could NOT be verified on this machine
+
+- **Windows `Zone.Identifier` bulk reads and Linux batched `getfattr`** — no
+  Windows or Linux machine. Both are covered by parser fixtures through the
+  tool seam; the honest-unavailable and ENOENT-is-a-real-absence paths are what
+  run here. The Linux batch parser in particular **has never executed against
+  the real `getfattr`**: it is written from the documented dump format, and its
+  octal-escape decoding is asserted only against hand-built fixtures.
+- **No Time Machine is configured on this Mac**, so `elsewhere` answers
+  `unknown` for everything outside a git repo. That is the honest path and the
+  one the UI was verified against — but the `likely` and `pathCovered` branches
+  have still never run live.
+- **`useCount` is always null here**, because `kMDItemLastUsedDate` is dead on
+  this macOS (see the Phase 1 notes). Staleness runs on access times, and the
+  breakdown says "not read in …" rather than "not opened in …" accordingly.
+
+---
+
 ## v4 — Phases 0–2 verified, reviewed, and INSTALLED (26 August 2026)
 
 `/Applications/TreeMap.app` was rebuilt from `cd30b21` and now carries Phases

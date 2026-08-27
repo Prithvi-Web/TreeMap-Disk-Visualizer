@@ -5041,10 +5041,47 @@ function renderTmLegend() {
     host.innerHTML = '<div class="tm-legend-bands">' + bands.map((b) =>
       `<span class="ab"><i class="sw" style="background:rgb(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]})"></i>${b.label}</span>`
     ).join('') + '</div>' +
-      '<span class="rc-legend-note">Greener means safer and more worthwhile to delete — right-click a cell for the reasoning.</span>';
+      `<span class="rc-legend-note">Greener means safer and more worthwhile to delete — right-click a cell for the reasoning.${reclaimCoverageNote()}</span>`;
   } else {
     host.innerHTML = '<span>1 MB</span><div class="legend-grad"></div><span>10 GB+</span>';
   }
+}
+
+/**
+ * How much of what is on screen actually carries a score.
+ *
+ * §2.4: partial is stated, not hidden. Everything unscored paints in the same
+ * grey, and without this the viewer cannot tell a cell TreeMap could not
+ * score from one it simply has not reached — 2,716 of 4,717 cells on a real
+ * repository, in the run that prompted this. Silence there reads as "these
+ * are all fine", which is a claim nobody made.
+ *
+ * Says nothing when everything drawn is scored, because a line reading
+ * "4,717 of 4,717" on every map is the noise that stops people reading the
+ * one that matters.
+ */
+function reclaimCoverageNote() {
+  const drawn = isSun() ? (state.treemap.arcs || []) : (state.treemap.pxRects || []);
+  let total = 0;
+  let scored = 0;
+  let unscorable = 0;
+  for (const r of drawn) {
+    const p = r.n && r.n.path;
+    if (!p) continue;
+    total++;
+    if (!reclaim.scores.has(p)) continue;
+    if (reclaim.scores.get(p) === null) unscorable++;
+    else scored++;
+  }
+  if (total === 0 || scored + unscorable >= total) {
+    // Everything on screen was asked about. Name the ones that came back
+    // unanswerable, since those are grey for a real reason.
+    return unscorable > 0
+      ? ` ${formatCount(unscorable)} of ${formatCount(total)} could not be scored.`
+      : '';
+  }
+  return ` Scored ${formatCount(scored)} of ${formatCount(total)} on screen`
+    + (total > TM_SCORE_CAP ? ` — TreeMap stops at ${formatCount(TM_SCORE_CAP)} at a time; drill in to score the rest.` : '; the rest are still loading.');
 }
 
 /**
@@ -5590,6 +5627,21 @@ function setTreemapColorMode(mode) {
  * can see. Re-run on every layout change, and cheap after the first because
  * `ensureScores` skips everything already known.
  */
+/**
+ * How many drawn cells one mode switch will score.
+ *
+ * Not the per-request cap: `ensureScores` chunks internally, so this is a
+ * ceiling on total work rather than on one call. A real map draws a few
+ * thousand cells — the rest are sub-pixel and never rendered — so this covers
+ * the visible set on an ordinary tree in about three requests.
+ *
+ * It is a cap all the same, and §2.4 does not allow a cap to be silent: when
+ * the drawn set exceeds it, the legend says how many of how many were scored,
+ * because a grey cell that was never asked about looks exactly like one
+ * TreeMap tried and failed to score.
+ */
+const TM_SCORE_CAP = 6000;
+
 function fetchScoresForTreemap() {
   if (state.treemap.colorMode !== 'reclaim' || !state.scanId) return;
   // Both renderers, because Reclaim is a colour mode and the sunburst paints
@@ -5599,12 +5651,15 @@ function fetchScoresForTreemap() {
   const paths = [];
   for (const r of drawn) {
     if (r.n && r.n.path) paths.push(r.n.path);
-    if (paths.length >= RECLAIM_BATCH) break;
+    if (paths.length >= TM_SCORE_CAP) break;
   }
   void ensureScores(paths, () => {
     // Only if the user is still looking at this: a repaint of a view they
     // navigated away from is wasted work, and worse, can land mid-render.
-    if (state.view === 'treemap' && state.treemap.colorMode === 'reclaim' && state.treemap.rootPath) drawView();
+    if (state.view === 'treemap' && state.treemap.colorMode === 'reclaim' && state.treemap.rootPath) {
+      drawView();
+      renderTmLegend(); // the coverage line changes as batches land
+    }
   });
 }
 $('tmColorSeg').addEventListener('click', (e) => {

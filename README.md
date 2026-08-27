@@ -81,7 +81,7 @@ Two more cards sit here. **Cost to Keep** prices the scanned data against Google
 <td width="50%" valign="top">
 
 ### 🗺️ Treemap
-A squarified treemap of every file, sized by bytes and colored **teal → amber → red**. Drill in, climb back with breadcrumbs + zoom-out, search with highlights (`report`, `*.zip`), pin **folder budgets** (over-budget folders get a red dashed border), and **export** the chart (PNG / SVG) or the whole scan (**CSV**, or a multi-page **PDF report**). A **time slider** appears once a folder has scan history: scrub to any past scan and watch the map morph — in the treemap *and* the sunburst — with a **diff overlay** tinting what grew green and what shrank red. And a **Live toggle** watches the scanned folder in real time: changed files pulse, regions re-flow as bytes move, and a "writing now" feed ranks the busiest paths by MB/min (auto-pauses when the disk goes quiet). **Containers are drillable**: .zip/.jar/.tar/.tar.gz/.iso (and Docker's data file, with the CLI) get a badge — click to look inside without extracting a byte, using the archive's own directory listing. Nothing inside an archive can be trashed or opened — only the archive itself. Right-click any file for **where it came from** — the site a download originated at, read from the OS's own quarantine and "where from" metadata. Only the **host** is shown until you click to reveal the full URL, it is written with `textContent` and never as HTML, no clickable link is ever built from it, and TreeMap never fetches it: a URL out of a downloaded file is untrusted input, and it is treated that way. 
+A squarified treemap of every file, sized by bytes and colored **teal → amber → red** — or by **Reclaim score**, which colors each cell by how safe and worthwhile it is to delete rather than how big it is (grey for anything TreeMap could not score, named in the legend rather than left to look like a low score). Drill in, climb back with breadcrumbs + zoom-out, search with highlights (`report`, `*.zip`), pin **folder budgets** (over-budget folders get a red dashed border), and **export** the chart (PNG / SVG) or the whole scan (**CSV**, or a multi-page **PDF report**). A **time slider** appears once a folder has scan history: scrub to any past scan and watch the map morph — in the treemap *and* the sunburst — with a **diff overlay** tinting what grew green and what shrank red. And a **Live toggle** watches the scanned folder in real time: changed files pulse, regions re-flow as bytes move, and a "writing now" feed ranks the busiest paths by MB/min (auto-pauses when the disk goes quiet). **Containers are drillable**: .zip/.jar/.tar/.tar.gz/.iso (and Docker's data file, with the CLI) get a badge — click to look inside without extracting a byte, using the archive's own directory listing. Nothing inside an archive can be trashed or opened — only the archive itself. Right-click any file for **where it came from** — the site a download originated at, read from the OS's own quarantine and "where from" metadata. Only the **host** is shown until you click to reveal the full URL, it is written with `textContent` and never as HTML, no clickable link is ever built from it, and TreeMap never fetches it: a URL out of a downloaded file is untrusted input, and it is treated that way. 
 
 </td>
 </tr>
@@ -89,7 +89,7 @@ A squarified treemap of every file, sized by bytes and colored **teal → amber 
 <td width="50%" valign="top">
 
 ### 🔲 Grid
-A size-proportional icon grid with multi-select, sorting, and virtual scrolling — buttery even on huge folders.
+A size-proportional icon grid with multi-select, sorting, and virtual scrolling — buttery even on huge folders. Sort by name, date, last accessed, type, size — or by **Reclaim score**, which answers *what is safest to delete* rather than *what is biggest*. Anything TreeMap could not score sorts last rather than as zero.
 
 </td>
 <td width="50%" valign="top">
@@ -148,6 +148,12 @@ Pick any two scans of the same folder for a file-level diff: **added, removed, g
 
 ### 🧹 Clean Up
 **Custom rules** (old / huge / by extension / duplicated), **Smart Suggestions** — sorted into **regenerable** (`node_modules`, Rust/Maven `target`, virtualenvs, build output — each shown with the command that restores it), **cache**, and **junk**, plus a per-profile **browser cache** breakdown (Chrome / Edge / Brave / Firefox / Safari) — and **Empty Folders**. Everything → Trash.
+
+**Reclaim Score** ranks by how safe *and* how worthwhile something is to delete, out of 100, from six signals TreeMap already has: how big it is (against this scan's own distribution, not a fixed threshold), how long since it was last opened, whether a rule pack says it rebuilds itself, whether an identical copy exists on this disk, whether it was downloaded, and whether a copy exists elsewhere (a pushed Git remote, a sync client, a backup). Every score is one click from its breakdown — what each signal contributed, in a sentence, and **what could not be computed**.
+
+That last part is the design. A signal TreeMap cannot read is **left out of the score and named**, never counted as zero: a file with no download record is not *less* redownloadable than one that was downloaded, it is *unknown*, and scoring it as zero would rank a file nobody can vouch for below one positively known to be worthless. Missing signals lower a confidence band instead, and the panel shows how much of the score was actually measured. Where last-opened dates are unavailable, the last-*changed* date stands in — stated in the sentence you read, and costing the score a confidence step, because a caveat nothing acts on is decoration.
+
+The weights live in **Settings → Reclaim Score** and are yours to change, with a reset to the defaults. A ranking whose reasoning you cannot inspect or adjust is an oracle, and this app does not ship oracles. Setting a weight to zero removes that signal from the score entirely — which is a different statement from it scoring zero. And the score never selects anything: it sorts, and it explains.
 
 Smart Suggestions come from **versioned rule packs** ([`src/services/rulepacks/`](src/services/rulepacks/)) rather than hard-coded logic, so adding a known offender is a JSON edit. Every group has a **“why is this suggested”** panel showing what matched, how confident the rule is, and how to put it back. A few of the biggest things on a disk — a Docker/WSL virtual disk, Windows.old, root-owned package caches — are listed **for their size only, with no delete option**, because the file *is* the data or the OS owns it; those show the supported way to reclaim the space instead.
 
@@ -406,6 +412,7 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 | `GET /api/scan/:id/budgets` | Saved folder budgets cross-referenced against this scan |
 | `GET /api/scan/:id/export?format=csv\|pdf` | Download the scan as CSV (files / folders) or a PDF report |
 | `GET /api/scans` | Completed scans currently in memory |
+| `POST /api/facts` | Per-path derived facts as a sidecar (`size`, `lastUsed`, `recoverability`, `reclaimScore`). A path absent from `values` was **not computable** — never a zero |
 | `GET /api/large-files?scanId=` | Top N largest files |
 | `GET /api/large-folders?scanId=` | Top N largest folders (recursive sizes) |
 | `GET /api/file-types?scanId=` | Size breakdown by extension |
@@ -565,12 +572,13 @@ No environment variables, ports, or API keys needed — it runs locally and talk
 
 ### What the AI can do
 
-Eight tools, all calling the exact same internals as the app — same validation, same safety rails:
+Nine tools, all calling the exact same internals as the app — same validation, same safety rails:
 
 | Tool | What it does |
 |---|---|
 | `scan_path` | Scan a folder → returns a `scanId` the other tools use |
 | `get_largest` | The biggest files or folders in a scan |
+| `reclaim_ranked` | The same entries re-ranked by **Reclaim score** — safest to delete first — each with its full breakdown and the signals that could not be read |
 | `find_duplicates` | True duplicates (size + SHA-256 content hashing) |
 | `cleanup_suggestions` | Known-reclaimable space: caches, regenerable build folders, junk |
 | `forecast` | Disk-full projection — *"full in ~58 days at current growth"* |

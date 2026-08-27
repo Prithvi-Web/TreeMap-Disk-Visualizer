@@ -88,7 +88,8 @@ OpenAPI 3 spec).
      The facts live in a sidecar because the scan responses are held
      byte-identical to the pre-rewrite baseline by
      `tests/goldenResponses.test.ts` — no field may be added to them.
-     Providers: `size` (the scan's own byte count) and `lastUsed`.
+     Providers: `size` (the scan's own byte count), `lastUsed`,
+     `recoverability` and `reclaimScore`.
      **`lastUsed`** answers when a path was last *opened*, which mtime cannot
      express: `{ lastUsedMs, useCount, source: 'spotlight'|'atime'|'none',
      caveat? }`. `source` is part of the value because the sources answer
@@ -115,6 +116,41 @@ OpenAPI 3 spec).
      `none` even inside a fully-pushed repo — `git status --porcelain` omits
      ignored files, so the repo reports clean while the remote has never held
      them.
+     **`reclaimScore`** answers "how safe and worthwhile is this to delete?"
+     as `{ score: 0-100, components[], confidence, missing[], coverage }`.
+     Nothing new is scanned: it composes the scan tree, `lastUsed`,
+     `recoverability`, the rule packs, the duplicate finder and the download
+     record into six weighted components, each carrying the plain-English
+     `why` that produced it.
+     **A component that could not be computed is listed in `missing[]` with
+     its reason and left out of the score entirely — never counted as zero.**
+     That is the whole design, and the reason is an ordering: a file with no
+     download record is not *less* redownloadable than one that was
+     downloaded, it is unknown, and scoring it zero would rank a file nobody
+     can vouch for below one positively known to be worthless. The score is
+     renormalised over the weight that actually answered, and `coverage` (the
+     share of enabled weight that did) is what `confidence` bands.
+     Three kinds of "no answer" are kept apart, because each has a different
+     thing a caller could do about it: the mechanism cannot run here (no git,
+     no backup system) → missing with the capability's reason; the mechanism
+     ran and found nothing (no rule matched, no download record) → a real
+     zero; the mechanism has not been asked (duplicate hashing has not run
+     for this scan) → missing, because "no duplicate found" is only true once
+     something looked. **Reading a score does not start a duplicate hash**,
+     and a scan whose duplicate list was truncated at its top 500 groups
+     reports absence from that list as unknown rather than as proof.
+     Where last-opened dates are unavailable the last-*changed* date stands
+     in — stated in the component's own `why` and costing the whole score a
+     confidence step, so §1.1's caveat stays load-bearing.
+     The weights are user-editable at `PUT /api/settings` under
+     `reclaimWeights` (six keys, 0-1 each; send `null` to restore the
+     defaults). **A weight of 0 removes that component from the score rather
+     than scoring it as worthless**, and changing any weight invalidates the
+     cached scores. A path the provider cannot score at all is absent from
+     `values`, never present with `score: 0`.
+     The score sorts and explains. **No code path anywhere selects, stages or
+     deletes on its behalf**, and `reclaim_ranked` carries no field implying
+     a choice.
    - `POST /api/query` with `{ scanId, q, limit?, offset?, sort? }` — **the
      query grammar**, and the highest-leverage surface in v4: every hard-coded
      view is a filter over the same tree, so a query is a view, a saved query
@@ -133,6 +169,13 @@ OpenAPI 3 spec).
      touches a scan); `GET /api/query/fields` serves the grammar so nothing
      duplicates it. `GET`/`POST`/`DELETE /api/queries` are saved views — a
      query that does not parse is refused rather than stored.
+     `score>70` filters on the reclaim score above. It appears in
+     `postFiltered`, because a score genuinely is computed per file after the
+     tree is walked, but it is **not** reported degraded: the score is built
+     from six signals and states per file which of them answered, so a
+     machine with no git and no backup still scores everything on size,
+     staleness and regenerability. A file that cannot be scored at all simply
+     does not match.
    - `GET /api/file-types`, `GET /api/empty-folders`, `GET /api/apps`,
      `GET /api/compare`, `GET /api/forecast` — further angles.
    - `GET`/`POST /api/platform/shell-integration` — the "Scan with TreeMap"

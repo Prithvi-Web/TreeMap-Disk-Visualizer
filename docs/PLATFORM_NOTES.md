@@ -205,6 +205,34 @@ shipped a confidently wrong answer.
    and the `.app` test matches the **first** `.app/` path segment so a Chrome
    helper resolves to Chrome itself, which is the thing `open` can reopen.
 
+9. **`xattr -p` reads a whole batch in one call, and exits 1 for the ordinary
+   case.** The Reclaim Score (v4 §3) needs a download record for up to 2,000
+   paths at a time, and the per-file C3 path costs two subprocesses each.
+   Measured here: batched `mdls` runs **~0.36 ms/path** — over §2.5's whole
+   400 ms sidecar budget on its own — while one `xattr -p com.apple.quarantine`
+   over 2,000 absolute paths (255 KB of argv, against a 1 MiB `ARG_MAX`)
+   returns in **~50–100 ms**, about 0.03 ms/path. So the bulk reader uses the
+   quarantine record alone, which surprise 5 above already established is the
+   *better* source; what it gives up is the origin URL, so the score's `why`
+   reads "downloaded by Chrome" and the detail panel still calls the full
+   `readProvenance()` for the one file a person is looking at.
+
+   Three shapes, all verified against the real tool:
+   - **Many paths** → one `<path>: <value>` line per file that has the
+     attribute; files without it print nothing to stdout.
+   - **Exactly one path** → the bare value with **no path prefix**, the same
+     trap `mdls` has (`src/platform/macos/lastUsed.ts`).
+   - **Any file lacking the attribute makes `xattr` exit 1**, which is the
+     normal case rather than a failure. The exit code carries no information;
+     stdout carries all of it. This is the `lsof` situation
+     `CommandFailedError` was written for — it keeps stdout on the error.
+
+   Output lines are matched against the paths that were **requested** rather
+   than split on the first colon: a filename may contain `: `, and splitting
+   would attach one file's download record to another file's row. Candidate
+   paths are matched longest-first so `/x/a.txt` cannot claim the line
+   belonging to `/x/a.txt.download`.
+
 ---
 
 ## Windows
@@ -217,6 +245,7 @@ shipped a confidently wrong answer.
 | Allocated size | `GetCompressedFileSize`, batched | 1 | falls back to logical size |
 | Placeholders | NTFS cloud reparse attributes, batched | 1 | — |
 | Provenance | `Zone.Identifier` alternate data stream | 1 | Non-NTFS volume → no record exists |
+| Bulk provenance (v4 §3) | the same stream, read concurrently | 1 | `ENOENT` = genuinely not downloaded; any other error = unknown |
 | Topology | `Get-PhysicalDisk` / `Get-VirtualDisk` / `Get-Volume` | 3 | — |
 | Snapshots | `Win32_ShadowCopy` (+ `mklink` to read) | 3 | System Protection off → stated plainly |
 | SMART | `smartctl --json` | 3 | Not installed → download link shown |
@@ -297,6 +326,7 @@ item that launches TreeMap with no path.
 | Allocated size | `lstat().blocks × 512` | 1 | Always available, exact |
 | Topology | `lsblk --json` (+ `zpool list -j`) | 3 | `lsblk` missing → stated |
 | Provenance | `getfattr user.xdg.origin.url` | 3 | Firefox records nothing — see below |
+| Bulk provenance (v4 §3) | `getfattr -n … --absolute-names` over a batch | 3 | Same; `attr` package absent → unavailable, stated |
 | Snapshots | `btrfs subvolume list -s` | 3 | Not Btrfs → stated plainly |
 | SMART | `smartctl --json` | 3 | Not installed → apt/dnf instructions |
 | Shell menu | Nautilus / Dolphin / Thunar, per-user | 3 | None present → stated |
@@ -322,6 +352,24 @@ subprocess per file — fine for an on-demand "what does this file really cost"
 tooltip, hopeless for sizing a tree. Whole-tree sizing therefore uses allocated
 blocks (exact per file, counting shared extents once per referencing file) and
 labels the total approximate, exactly as the macOS clone case does.
+
+### Bulk `getfattr` — written from the documented format, never run here
+
+The Reclaim Score's batch reader (v4 §3) parses a multi-file `getfattr` dump:
+`# file: <path>` headers followed by `attr="value"` lines, with files lacking
+the attribute producing **no block at all** and a non-zero exit — the same
+"exit code carries no information" shape as macOS `xattr` and `lsof`. Values
+are C-escaped with **octal** `\NNN` sequences; decimal would be the natural
+guess and would silently corrupt any URL containing an escaped byte, so the
+radix is spelled out in the decoder. `--absolute-names` is mandatory, since
+without it `getfattr` strips the leading slash and nothing would match the
+requested paths.
+
+**This has never executed on a real Linux system.** It is covered by parser
+fixtures only, and the caveat below applies with more force here than
+anywhere else: an *absence* of a record on Linux is weaker evidence than on
+macOS or Windows, which is why the mechanism name travels with every answer
+and is shown in the score's breakdown.
 
 ### Firefox records no provenance, and the UI must say so
 

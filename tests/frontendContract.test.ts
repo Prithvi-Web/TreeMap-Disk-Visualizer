@@ -2142,6 +2142,25 @@ test('the reclaim colour mode has a legend that names the unscored band', () => 
   assert.match(fn, /colorMode === 'reclaim'/, 'the mode has its own legend');
   assert.match(fn, /not scored/, 'and the unscored band is named rather than left to be guessed');
   assert.match(fn, /rc-legend-note/, '§3.3 asks for a one-line explanation of what the colours mean');
+  assert.match(fn, /reclaimCoverageNote\(\)/, 'and the legend states its own coverage');
+});
+
+test('a partly-scored map says how much of it is scored', () => {
+  const code = appCode();
+  const start = code.indexOf('function reclaimCoverageNote');
+  assert.notEqual(start, -1, 'reclaimCoverageNote must exist');
+  const fn = code.slice(start, code.indexOf('function treemapCanvasHeight', start));
+  assert.ok(fn.length > 300, 'the coverage slice is non-empty');
+  // §2.4: partial is stated, not hidden. Everything unscored paints the same
+  // grey, so without this a cell TreeMap could not score is indistinguishable
+  // from one it has not reached — 2,716 of 4,717 on a real repository.
+  assert.match(fn, /Scored \$\{formatCount\(scored\)\} of \$\{formatCount\(total\)\}/, 'the count is stated, not implied');
+  assert.match(fn, /could not be scored/, 'and genuinely unscorable cells are named separately');
+  assert.match(fn, /drill in to score the rest/, 'a cap names what would lift it');
+  // Silent when there is nothing to say — a line on every map is the noise
+  // that stops the one that matters from being read.
+  assert.match(fn, /scored \+ unscorable >= total/, 'a fully-scored map says nothing');
+  assert.match(code, /const TM_SCORE_CAP/, 'the ceiling is a named constant, not a literal');
 });
 
 test('the score is reachable from the keyboard and returns focus', () => {
