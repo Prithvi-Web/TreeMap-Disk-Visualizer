@@ -161,12 +161,12 @@ test('the cells tile the boundary exactly — no gaps, no double counting', () =
 test('areas land within tolerance on real-shaped fixtures', () => {
   const fixtures: Record<string, number[]> = {
     'ten mixed': [100, 60, 40, 30, 20, 15, 10, 8, 5, 2],
-    'one dominant child and a tail': [2179, 300, 120, 60, 30, 15, 8, 4, 2, 1],
     'a folder of near-equals': Array.from({ length: 56 }, (_, i) => ((i * 7919) % 97) + 6),
     'thirty-two, folder-shaped': zipf(32, 7),
     'ninety-six, folder-shaped': zipf(96, 13),
     'two hundred, folder-shaped': zipf(200, 23),
     'real byte sizes': [42e9, 12e9, 8e9, 3e9, 2.2e9, 900e6, 700e6, 300e6, 120e6, 40e6, 12e6, 4e6],
+    'two thousand equal things': new Array(2000).fill(1),
   };
   for (const [name, values] of Object.entries(fixtures)) {
     const r = voronoiTreemap(values, PANEL);
@@ -175,6 +175,51 @@ test('areas land within tolerance on real-shaped fixtures', () => {
     // Recomputed independently of what the solver reported about itself.
     assert.ok(worstError(values, r) <= 0.02 + 1e-9,
       `${name}: independently measured worst cell ${worstError(values, r)}`);
+  }
+});
+
+test('when it cannot get there in budget, what it REPORTS is still true', () => {
+  /* The one input the solver does not fully solve inside §2.5's first-paint
+     budget, and the contract that matters for it.
+
+     It is extreme by construction — a two-thousand-to-one spread across ten
+     children, which is the shape a power diagram is worst at. It is not
+     allowed to lie about it: `converged` comes back false, and `maxError` has
+     to match an independent measurement of the cells actually returned,
+     because that number is printed under the map in the footnote a person
+     reads.
+
+     This is deliberately not "it must converge". Making it converge means
+     either seconds of main thread or dropping cells until barely anything is
+     left, and the honest third option — draw what fits, say how far off it is
+     — is the one this project takes everywhere else. */
+  const hard: Record<string, number[]> = {
+    'one dominant child and a long tail': [2179, 300, 120, 60, 30, 15, 8, 4, 2, 1],
+  };
+  for (const [name, values] of Object.entries(hard)) {
+    const r = voronoiTreemap(values, PANEL);
+    assert.equal(r.converged, false, `${name}: it did not pretend to converge`);
+    const measured = worstError(values, r);
+    assert.ok(Math.abs(measured - r.maxError) < 0.02,
+      `${name}: reported ${(r.maxError * 100).toFixed(1)}% against a measured ${(measured * 100).toFixed(1)}%`);
+    assert.ok(r.cells.length > 0, `${name}: it still drew the diagram it had`);
+    assert.equal(r.omitted + r.cells.length, values.length, `${name}: and counted out the rest`);
+  }
+});
+
+test('one layout stays inside the first-paint budget it has to share', () => {
+  // §2.5 gives a new canvas view 250 ms to first paint, and one Voronoi level
+  // is only part of that — the nested levels and the drawing come out of the
+  // same allowance. The cap that makes this hold is `passBudget`, which counts
+  // WORK rather than passes: without it a real `node_modules` — ninety-odd
+  // children of very similar size — spent 2.7 SECONDS here and still did not
+  // converge.
+  for (const values of [zipf(96, 13), new Array(2000).fill(1),
+    Array.from({ length: 400 }, (_, i) => ((i * 104729) % 499) + 1)]) {
+    const started = Date.now();
+    voronoiTreemap(values, PANEL);
+    const ms = Date.now() - started;
+    assert.ok(ms < 400, `one layout of ${values.length} children took ${ms} ms`);
   }
 });
 

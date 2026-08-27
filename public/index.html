@@ -3313,7 +3313,7 @@ const state = {
   bigFolders: [],
   savedViews: [],
   savedViewsLoaded: false,
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null } },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, altZoom: null, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null } },
   // v4 §6.1 — Disk City. Deliberately holds NO tree of its own: the root and
   // the nodes are the Treemap's, so the two are the same arrangement rather
   // than two arrangements that resemble each other.
@@ -3578,6 +3578,14 @@ const VIEWS = [
       // tmAnimFrame is declared further down with `let`; unmount only ever runs
       // after the whole script has evaluated, so it is in scope by then.
       if (tmAnimFrame) { cancelAnimationFrame(tmAnimFrame); tmAnimFrame = 0; }
+      // §6.2's level transition, §6.3's lasso and §6.4's lens are all state
+      // that would otherwise survive into the next view: a rAF loop repainting
+      // a hidden canvas, a half-drawn selection, and a magnifier still held.
+      if (state.treemap.altZoomRaf) { cancelAnimationFrame(state.treemap.altZoomRaf); state.treemap.altZoomRaf = 0; }
+      state.treemap.altZoom = null;
+      lassoCancel();
+      state.lens.held = false;
+      state.lens.at = null;
     },
   },
   {
@@ -5347,6 +5355,15 @@ async function loadTreemap(rootPath, animate = false) {
   exitCartPreview(true);
   const seq = ++tmLoadSeq;
   state.treemap.kbSel = null;
+  // Captured before the tree is replaced: which node will still be on screen
+  // afterwards, and where it is right now. Drilling in, that is the folder
+  // being opened; climbing out, it is the one being left.
+  let shared = null, wasAt = null;
+  if (state.treemap.mode === 'circles' && state.treemap.rootPath && rootPath !== state.treemap.rootPath) {
+    if (rootPath.startsWith(state.treemap.rootPath)) shared = rootPath;
+    else if (state.treemap.rootPath.startsWith(rootPath)) shared = state.treemap.rootPath;
+    if (shared) wasAt = altCircleFor(shared);
+  }
   const zoom = $('treemapZoom');
   if (animate && !REDUCED) zoom.classList.add('zooming');
   try {
@@ -5367,7 +5384,14 @@ async function loadTreemap(rootPath, animate = false) {
       $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
       exitHistoryState();
       refreshTimebar();
-      if (isSun()) drawSunburst(); else drawCells();
+      if (isSun()) { drawSunburst(); }
+      else {
+        drawCells();
+        // §6.2's zoom between levels. `shared` is whichever of the two roots
+        // contains the other — the one node on screen both before and after,
+        // and therefore the only thing the eye can follow across the change.
+        if (state.treemap.mode === 'circles' && wasAt) altBeginZoom(shared, wasAt);
+      }
     } else {
       const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(rootPath)}`);
       if (seq !== tmLoadSeq) return; // a newer view/root load has superseded this fetch
@@ -7834,14 +7858,33 @@ function voronoiTreemap(values, boundary, opts) {
     };
   }
 
-  /* The cap scales with the work, because the work is O(n²) per pass.
-     A fixed cap is wrong at both ends and both ends were measured: 240 passes
-     starved a six-cell folder and left its worst cell 249% off, while the same
-     240 passes over ninety-six cells is a fifth of a second of main thread. A
-     constant amount of TOTAL work instead gives a small layout all the passes
-     it can use — they cost nothing — and a large one the most it can afford. */
+  /* Two caps, and the second one is not redundant.
+
+     The per-attempt cap scales with the work, because the work is O(n²) per
+     pass. A fixed number is wrong at both ends and both ends were measured:
+     240 passes starved a six-cell folder and left its worst cell 249% off,
+     while the same 240 over ninety-six cells is a fifth of a second of main
+     thread. A constant amount of TOTAL work instead gives a small layout every
+     pass it can use — they cost nothing — and a large one the most it can
+     afford.
+
+     `passBudget` then caps the whole call, across both starting points and
+     every shrink retry. Without it the retries multiply the per-attempt cap by
+     up to eighteen, and they did: a real `node_modules` — ninety-odd children
+     of very similar size, which is the worst possible shape for this
+     algorithm — spent **2.7 seconds** on one layout against §2.5's 250 ms
+     first-paint budget, and still did not converge. Two caps, because "how
+     long may one attempt take" and "how many attempts may there be" are
+     different questions and only bounding the first bounds nothing. */
   const maxIterations = o.maxIterations ||
-    Math.max(120, Math.min(1200, Math.round(4e6 / (n * n))));
+    Math.max(120, Math.min(1200, Math.round(1.5e6 / (n * n))));
+  // Both caps are expressed as WORK, not as a number of passes, because a pass
+  // over ninety cells costs sixteen times one over twenty-two. Measured at
+  // roughly 43 million half-plane clips a second on this machine, six million
+  // clips is about 140 ms — which leaves room inside §2.5's 250 ms for the
+  // nested levels and the drawing.
+  const passBudget = o.passBudget ||
+    Math.max(360, Math.min(6000, Math.round(6e6 / (n * n))));
 
   const bb = polyBounds(boundary);
   const diag = Math.hypot(bb.x1 - bb.x0, bb.y1 - bb.y0);
@@ -7866,7 +7909,12 @@ function voronoiTreemap(values, boundary, opts) {
   let cur = kept.slice();
   let curTotal = keptTotal;
   let run = null, iterations = 0, target = null;
-  const maxShrinks = o.maxShrinks === undefined ? 8 : o.maxShrinks;
+  // How many times it may give ground. Generous, because the real bound is
+  // `passBudget` above: on the inputs where many retries are needed the cells
+  // are few, and few cells make a pass almost free — a ten-child folder with a
+  // two-thousand-to-one spread wants to shed half its tail before the areas
+  // can come true, and doing so costs it about twenty milliseconds.
+  const maxShrinks = o.maxShrinks === undefined ? 24 : o.maxShrinks;
 
   for (let attempt = 0; ; attempt++) {
     const m = cur.length;
@@ -7875,29 +7923,57 @@ function voronoiTreemap(values, boundary, opts) {
       run = { cells: [boundary.slice()], maxError: 0, iterations: 0, converged: true };
       break;
     }
+    const left = passBudget - iterations;
+    if (left <= 0 && run) break; // out of budget, and something already drawn
+    // Never above the caller's cap. A floor here would quietly let an
+    // explicitly small `maxIterations` run longer than it asked to, which is
+    // the one thing a cap must not do.
+    const cap = Math.max(1, Math.min(maxIterations, left));
 
     // Start one: every site already carrying roughly the weight its own share
     // implies, so the first diagram is an approximate answer.
     const seeded = voronoiSeedSites(boundary, m);
     for (let i = 0; i < m; i++) seeded[i].w = Math.max(1e-9, target[i] / Math.PI);
-    run = voronoiSolve(seeded, target, boundary, { maxIterations, tolerance });
+    run = voronoiSolve(seeded, target, boundary, { maxIterations: cap, tolerance });
     iterations += run.iterations;
 
-    if (!run.converged) {
+    if (!run.converged && passBudget - iterations >= Math.min(20, maxIterations)) {
       // Start two: equal weights, so the first pass is an ordinary Voronoi
       // diagram, with the step size narrowing as it goes. Slower to get moving
       // and better at not settling for the first minimum it finds.
       const flat = voronoiSeedSites(boundary, m);
       for (const s of flat) s.w = w0;
-      const second = voronoiSolve(flat, target, boundary, { maxIterations, tolerance, anneal: 1 });
+      const second = voronoiSolve(flat, target, boundary, {
+        maxIterations: Math.min(cap, passBudget - iterations), tolerance, anneal: 1,
+      });
       iterations += second.iterations;
       if (second.converged || second.maxError < run.maxError) run = second;
     }
     if (run.converged || attempt >= maxShrinks || cur.length <= 2) break;
-    const dropped = cur.pop();
-    curTotal -= values[dropped];
-    omittedValue += values[dropped];
-    omitted++;
+    if (passBudget - iterations < Math.min(20, maxIterations)) break;
+    /* How much ground to give, and it is not one cell.
+
+       Every failed attempt costs passes proportional to n², so at large n the
+       budget buys only a couple of tries and the descent has to be worth them.
+       A real `node_modules` — 386 children, a wild spread — converges at about
+       thirty cells and cannot at fifty-eight; stepping down by one, or even by
+       a tenth, spent the whole budget in the fifties and produced a map that
+       was both incomplete AND 207% wrong, which is the worst of both outcomes.
+
+       So: a quarter while the layout is still expensive, a tenth while it is
+       middling, and one at a time once passes are cheap enough to try every
+       size on the way down — below sixteen cells the single step finds exact
+       answers that a bigger step steps straight over. */
+    const m2 = cur.length;
+    const give = m2 > 40 ? Math.max(1, Math.round((m2 - 2) * 0.25))
+      : m2 > 16 ? Math.max(1, Math.round((m2 - 2) * 0.1))
+      : 1;
+    for (let d = 0; d < give && cur.length > 2; d++) {
+      const dropped = cur.pop();
+      curTotal -= values[dropped];
+      omittedValue += values[dropped];
+      omitted++;
+    }
   }
 
   const out = [];
@@ -8054,10 +8130,12 @@ function layoutCirclePack(root, geo) {
 // Below this a cell cannot hold a legible child layout, and subdividing it
 // spends the iteration budget on shapes two millimetres across.
 const ALT_VORONOI_MIN_AREA = 8500;
-// §6.2's hard cap, at the level above the per-layout one: a folder six deep
-// with a hundred children at every level must not be able to spend a second
-// of main thread before the first pixel.
-const ALT_VORONOI_BUDGET_MS = 260;
+/* §6.2's hard cap, at the level above the per-layout one.
+   Checked BEFORE each nested layout, so the true worst case is this plus one
+   layout — which is why it is well under §2.5's 250 ms rather than equal to
+   it. Measured on a real `node_modules`: at 260 ms the first paint came in at
+   249 ms, which is inside the budget by an amount that is not a margin. */
+const ALT_VORONOI_BUDGET_MS = 150;
 
 function layoutVoronoi(root, geo) {
   const pad = 8;
@@ -8090,7 +8168,12 @@ function layoutVoronoi(root, geo) {
     // cells and wants MORE passes than the top level, not fewer, because they
     // are nearly free and it is the only way its areas come out right.
     const res = voronoiTreemap(kids.map((k) => k.size), job.cell.poly, {
-      maxCells: depth === 0 ? 96 : 32,
+      maxCells: depth === 0 ? 96 : 24,
+      // A nested cell is small, so the floor that makes something legible
+      // inside it is larger in proportion — and fewer, bigger cells is also
+      // what lets a nested level reach its tolerance rather than running out
+      // of passes and reporting a number nobody wants to read.
+      minCellArea: depth === 0 ? 100 : 170,
     });
     if (!res.cells.length) continue;
     omittedCount += res.omitted;
@@ -8195,6 +8278,112 @@ function buildCells(geo) {
   state.treemap.cells = out.cells;
   state.treemap.altNote = out.note;
   state.treemap.altMs = performance.now() - t0;
+}
+
+/* ── v4 §6.2 — the zoom between levels ────────────────────────────────────
+
+   "Animate the zoom transition between levels", and the reason it earns its
+   place is that circle packing hides WHERE you went. A treemap keeps a child
+   roughly where its parent's rectangle was; a packing re-solves from scratch,
+   so drilling into a bead produces a completely new arrangement with no
+   inherited geometry at all. Without the transition, one click replaces the
+   whole picture and the only way to know what you are looking at is the
+   breadcrumb.
+
+   The whole animation is one affine transform over the finished layout —
+   nothing is re-solved per frame, which is what keeps it inside the frame
+   budget on a map that took a few milliseconds to lay out. It runs from the
+   position the shared node USED to occupy on screen to the position it
+   occupies now, and that one rule covers both directions: drilling in, the
+   shared node is the new root and it grows out of the bead you clicked;
+   climbing out, the shared node is the old root and the panel shrinks back
+   into it.
+
+   Skipped entirely under `prefers-reduced-motion` — skipped, not shortened.  */
+const ALT_ZOOM_MS = 340;
+
+/** Where a path sits in the current layout, if it is drawn at all. */
+function altCircleFor(path) {
+  for (const c of state.treemap.cells) {
+    if (c.n.path === path && c.kind === 'circle') return { cx: c.cx, cy: c.cy, r: c.r };
+  }
+  return null;
+}
+
+/**
+ * Start the transition, given where the shared node was before the rebuild.
+ *
+ * Returns false when there is nothing to animate — a jump between unrelated
+ * folders, a node that was not on screen, or a reduced-motion preference — so
+ * the caller can simply paint the new layout.
+ */
+function altBeginZoom(sharedPath, wasAt) {
+  const z = state.treemap;
+  z.altZoom = null;
+  if (REDUCED || !wasAt || !sharedPath) return false;
+  const now = altCircleFor(sharedPath);
+  if (!now || !(now.r > 0) || !(wasAt.r > 0)) return false;
+  const k = wasAt.r / now.r;
+  // A transition that barely moves is a flicker, not a transition.
+  if (Math.abs(k - 1) < 0.04 && Math.hypot(now.cx - wasAt.cx, now.cy - wasAt.cy) < 6) return false;
+  z.altZoom = { k, from: wasAt, to: now, start: performance.now() };
+  altRunZoom();
+  return true;
+}
+
+function altRunZoom() {
+  const z = state.treemap;
+  if (z.altZoomRaf) cancelAnimationFrame(z.altZoomRaf);
+  const step = () => {
+    if (state.view !== 'treemap' || !isCells() || !z.altZoom) { z.altZoomRaf = 0; return; }
+    const t = Math.min(1, (performance.now() - z.altZoom.start) / ALT_ZOOM_MS);
+    z.altZoom.t = 1 - Math.pow(1 - t, 3); // easeOutCubic: quick, then settles
+    paintCells();
+    if (t < 1) { z.altZoomRaf = requestAnimationFrame(step); return; }
+    z.altZoom = null;
+    z.altZoomRaf = 0;
+    paintCells();
+  };
+  z.altZoomRaf = requestAnimationFrame(step);
+}
+
+/**
+ * Apply the transition's transform, if one is running.
+ *
+ * At `t = 0` the shared node is drawn exactly where it used to be, at `t = 1`
+ * the transform is the identity and the layout is drawn as laid out.
+ */
+function altZoomTransform(ctx, dpr) {
+  const z = state.treemap.altZoom;
+  if (!z) return;
+  const t = z.t || 0;
+  const k = z.k + (1 - z.k) * t;
+  const cx = z.from.cx + (z.to.cx - z.from.cx) * t;
+  const cy = z.from.cy + (z.to.cy - z.from.cy) * t;
+  ctx.translate(cx - k * z.to.cx, cy - k * z.to.cy);
+  ctx.scale(k, k);
+}
+
+/** Repaint the existing layout — no solve, no re-layout. Used by the transition. */
+function paintCells() {
+  const geo = tmSizeCanvas();
+  const ctx = tmBufCtx;
+  ctx.setTransform(geo.dpr, 0, 0, geo.dpr, 0, 0);
+  ctx.clearRect(0, 0, geo.cssW, geo.cssH);
+  ctx.fillStyle = cssVar('--tm-canvas-bg');
+  ctx.fillRect(0, 0, geo.cssW, geo.cssH);
+  ctx.save();
+  altZoomTransform(ctx, geo.dpr);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.lineJoin = 'round';
+  const circles = state.treemap.mode === 'circles';
+  for (const c of state.treemap.cells) {
+    if (circles) drawPackedCircle(ctx, c); else drawVoronoiCell(ctx, c);
+  }
+  altDrawLabels(ctx, state.treemap.cells);
+  ctx.restore();
+  presentCells();
 }
 
 function drawCells() {
@@ -8466,6 +8655,11 @@ function presentCells() {
   tmCtx.drawImage(tmBuffer, 0, 0);
   if (state.treemap.query.trim()) tmCtx.drawImage(tmSearchBuffer, 0, 0);
   tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // While the level transition is running the layout is drawn through a
+  // transform these overlays do not share, so a hover ring or a budget border
+  // would sit somewhere the shape it belongs to is not. They are back a third
+  // of a second later, on a picture that has stopped moving.
+  if (state.treemap.altZoom) { drawLivePulses(); lassoPaint(tmCtx); return; }
 
   const h = state.treemap.hover;
   if (h && h.kind) {
@@ -9038,6 +9232,8 @@ function setTreemapView(mode) {
   lassoCancel();
   // Leaving a renderer drops what it drew. Otherwise the next hit test, cart
   // preview or lasso could answer with a shape that is no longer on screen.
+  if (state.treemap.altZoomRaf) { cancelAnimationFrame(state.treemap.altZoomRaf); state.treemap.altZoomRaf = 0; }
+  state.treemap.altZoom = null;
   state.treemap.cells = [];
   state.treemap.altNote = '';
   renderAltNote();
