@@ -9,6 +9,9 @@ import {
 import { readJsonFile, writeJsonFile } from './storage';
 import { collectCleanupSuggestions } from './cleanupRules';
 import { matchCustomRules } from './scanQueries';
+import { parse } from './query/parse';
+import { isEmptyQuery } from './query/evaluate';
+import { executeAgainstScan } from './query/execute';
 import { getIgnoreMatchers } from './settings';
 import { startScan, getScan } from './diskScanner';
 import { storeOf } from './scanStore';
@@ -182,7 +185,26 @@ function normalizeMatch(raw: unknown): AutopilotMatch {
     }
     return out;
   }
-  throw new AppError(400, 'POLICY_MATCH_INVALID', 'A policy must match either cleanup suggestions or custom rules');
+  if (m.kind === 'query') {
+    // The one parser, at save time. §2.3 refuses to save a query that does not
+    // parse for exactly this reason: a policy whose query never parsed would
+    // either match nothing forever or fail at the least convenient moment, and
+    // save time is the only point at which a person is present to fix it.
+    const q = typeof m.q === 'string' ? m.q.trim() : '';
+    if (!q) throw new AppError(400, 'POLICY_MATCH_EMPTY', 'This policy needs a query to match on');
+    const parsed = parse(q);
+    if (!parsed.ok) {
+      throw new AppError(400, 'POLICY_QUERY_INVALID', `That query could not be understood: ${parsed.error}`);
+    }
+    // The same refusal an empty custom rule gets, for the same reason: a query
+    // with no terms selects every file under the policy's folder, which is
+    // never what anyone meant and unattended would be a disaster.
+    if (isEmptyQuery(parsed.ast)) {
+      throw new AppError(400, 'POLICY_MATCH_EMPTY', 'That query has no conditions — it would match every file in the folder');
+    }
+    return { kind: 'query', q };
+  }
+  throw new AppError(400, 'POLICY_MATCH_INVALID', 'A policy must match cleanup suggestions, custom rules, or a query');
 }
 
 /* ---------------- policies ---------------- */
@@ -246,6 +268,15 @@ export function selectCandidates(
   customHits: { path: string; name: string; size: number }[],
   match: AutopilotMatch,
 ): Candidate[] {
+  // A query match reuses the same hit list as a custom one — they differ in
+  // how the hits were found, not in what is done with them. Handled first so
+  // the `else` below keeps meaning "custom".
+  if (match.kind === 'query') {
+    return customHits
+      .map((hit) => ({ path: hit.path, name: hit.name, bytes: hit.size, reason: `matched your query: ${match.q}` }))
+      .sort((a, b) => b.bytes - a.bytes)
+      .slice(0, MAX_ITEMS_PER_RUN);
+  }
   const out: Candidate[] = [];
   if (match.kind === 'suggestion') {
     const wanted = new Set(match.groupIds);
@@ -364,6 +395,30 @@ async function resolveCandidates(policy: AutopilotPolicy): Promise<Candidate[]> 
   if (policy.match.kind === 'suggestion') {
     const ignore = await getIgnoreMatchers('suggest');
     return selectCandidates(collectCleanupSuggestions(source, ignore), [], policy.match);
+  }
+  if (policy.match.kind === 'query') {
+    // Through `executeAgainstScan` — the same evaluator the query box and
+    // POST /api/query use. §7 forbids a second query language and this is
+    // where a second one would otherwise start.
+    const parsed = parse(policy.match.q);
+    if (!parsed.ok) {
+      // Unreachable via normalizePolicy, which parses on save. Reached only if
+      // autopilot.json was hand-edited — and a policy that cannot be resolved
+      // must refuse rather than quietly select nothing, which would read as
+      // "your rule matched no files today".
+      throw new AppError(400, 'POLICY_QUERY_INVALID', `That policy's query could not be understood: ${parsed.error}`);
+    }
+    const controller = new AbortController();
+    const outcome = await executeAgainstScan(scan.scanId, parsed.ast, {
+      limit: MAX_ITEMS_PER_RUN, offset: 0, sort: 'size', signal: controller.signal,
+    });
+    if ('error' in outcome) throw new AppError(500, outcome.code, outcome.error);
+    // Directories are dropped: a query may legitimately ask for `type:dir`,
+    // but an unattended policy that trashes a folder because a query said so
+    // is a different blast radius from one that trashes the files in it. A
+    // person can still stage a folder by hand, where they can see it.
+    const files = outcome.hits.filter((h) => !h.isDir);
+    return selectCandidates([], files.map((h) => ({ path: h.path, name: h.name, size: h.size })), policy.match);
   }
   const hits = matchCustomRules(
     source,

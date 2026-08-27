@@ -746,7 +746,19 @@ export interface SnapshotRestoreOutcome {
  */
 export type AutopilotMatch =
   | { kind: 'suggestion'; groupIds: string[] }
-  | { kind: 'custom'; maxAgeMs?: number; minBytes?: number; exts?: string[] };
+  | { kind: 'custom'; maxAgeMs?: number; minBytes?: number; exts?: string[] }
+  /**
+   * A v4 §2 query — the third rung of §4.5's ladder: a saved view becomes a
+   * Clean Up rule, and a Clean Up rule becomes a policy, without a second
+   * matching engine anywhere along the way.
+   *
+   * The stored string is validated by the one parser at save time and parsed
+   * again at run time. A policy is a standing instruction to delete things
+   * unattended, so it inherits every rail the other two kinds have — and one
+   * extra refusal of its own: a query that matches everything is rejected,
+   * exactly as an empty custom rule is.
+   */
+  | { kind: 'query'; q: string };
 
 export interface AutopilotPolicy {
   id: string;

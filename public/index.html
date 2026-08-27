@@ -1302,6 +1302,9 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .delta-row .pill { flex: none; margin-left: 8px; }
 
 /* ── Autopilot (B1) ── */
+/* v4 §4.5 — parse feedback on a policy's query. */
+#apQueryStatus { font-size: 11.5px; }
+#apQueryStatus.bad { color: var(--danger); }
 #apPolicies .ap-policy .why { font-size: 11px; color: var(--text-3); }
 #apPolicies .ap-off { opacity: 0.55; }
 #apRuns .ap-reason { font-size: 12px; color: var(--text-2); line-height: 1.5; padding: 6px 10px 8px;
@@ -2120,10 +2123,21 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <div class="seg" id="apMatchSeg" role="tablist" aria-label="Match kind" style="margin-bottom:10px;">
           <button role="tab" aria-selected="true" data-apmatch="suggestion">Known reclaimable</button>
           <button role="tab" aria-selected="false" data-apmatch="custom">My own rules</button>
+          <button role="tab" aria-selected="false" data-apmatch="query">A query</button>
         </div>
         <div id="apMatchSuggestion">
           <div class="muted" style="margin-bottom:8px;">The same things Clean Up's Smart Suggestions find — each one safe to delete and rebuildable.</div>
           <div id="apGroupList"></div>
+        </div>
+        <!-- v4 §4.5 — the same grammar the treemap box and saved views use.
+             Checked by the one parser before the policy can be saved. -->
+        <div id="apMatchQuery" style="display:none;">
+          <div class="muted" style="margin-bottom:8px;">The same search language as the treemap box, e.g. <code>ext:log modified&gt;90d -in:node_modules</code>. It is checked before the policy can be saved, and a query with no conditions is refused — it would match every file in the folder.</div>
+          <div class="field" style="max-width:none;">
+            <span data-icon="search"></span>
+            <input type="text" id="apRuleQuery" placeholder="ext:log modified&gt;90d" aria-label="The query this policy matches on" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="muted" id="apQueryStatus" role="status" aria-live="polite" style="margin-top:6px;"></div>
         </div>
         <div id="apMatchCustom" style="display:none;">
           <div class="rule-row">
@@ -2225,6 +2239,20 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       </div>
       <div class="muted" style="margin-bottom:6px;">Nothing is removed until you confirm — and everything goes to the system Trash, recoverable any time.</div>
       <div id="cleanPaneRules">
+        <!-- v4 §4.5 — the ladder: a saved view is a Clean Up rule, and a Clean
+             Up rule is an Autopilot policy. One matching engine throughout. -->
+        <div class="seg" id="cleanRuleSeg" role="tablist" aria-label="Rule source" style="margin-bottom:10px;">
+          <button role="tab" aria-selected="true" data-rulesrc="simple">Simple rules</button>
+          <button role="tab" aria-selected="false" data-rulesrc="query">A saved view</button>
+        </div>
+        <div id="cleanRuleQuery" style="display:none;">
+          <div class="rule-row">
+            <span data-icon="search"></span><label for="cleanSavedView">Saved view</label>
+            <select id="cleanSavedView" aria-label="Saved view to use as a rule" style="flex:1;min-width:0;"></select>
+          </div>
+          <div class="muted" id="cleanSavedViewQ" style="margin:2px 0 6px;"></div>
+        </div>
+        <div id="cleanRuleSimple">
         <div class="rule-row">
           <input type="checkbox" id="ruleAgeOn" checked> <span data-icon="clock"></span><label for="ruleAgeOn">Older than</label>
           <input type="number" id="ruleAgeDays" value="180" min="0" aria-label="Days"> <span class="muted">days</span>
@@ -2240,7 +2268,14 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <div class="rule-row">
           <input type="checkbox" id="ruleDupOn"> <span data-icon="copy"></span><label for="ruleDupOn">Duplicates only <span class="muted">(same name + size elsewhere)</span></label>
         </div>
-        <button class="btn" id="cleanFindBtn" style="margin-top:4px;"><span data-icon="search"></span>Find matching files</button>
+        </div>
+        <div class="rule-row" style="margin-top:4px;">
+          <button class="btn" id="cleanFindBtn"><span data-icon="search"></span>Find matching files</button>
+          <!-- v4 §4.5 — promotion. Opens the existing editor, pre-filled; every
+               rail it has stays exactly as it is, including the mandatory
+               first-run preview. -->
+          <button class="btn" id="cleanPromoteBtn" title="Turn this rule into a scheduled Autopilot policy — you approve its first run before it deletes anything"><span data-icon="sparkles"></span>Make this an Autopilot policy</button>
+        </div>
         <div id="cleanResults"></div>
       </div>
       <div id="cleanPaneSmart" style="display:none;">
@@ -8353,6 +8388,10 @@ function describeMatch(match) {
   if (match.kind === 'suggestion') {
     return `${match.groupIds.length} kind${match.groupIds.length === 1 ? '' : 's'} of reclaimable file`;
   }
+  // v4 §4.5 — a query policy shows the query itself. The caller escapes; what
+  // matters here is that the standing instruction is legible at a glance
+  // rather than summarised into something that might not mean the same thing.
+  if (match.kind === 'query') return `files matching ${match.q}`;
   const parts = [];
   if (match.minBytes) parts.push(`over ${formatBytes(match.minBytes)}`);
   if (match.maxAgeMs) parts.push(`older than ${Math.round(match.maxAgeMs / 86400000)}d`);
@@ -8484,8 +8523,13 @@ function openPolicyEditor(policy) {
   $('apEnabled').checked = apDraft.enabled === true;
   $('apPreview').innerHTML = '';
 
-  const kind = apDraft.match?.kind === 'custom' ? 'custom' : 'suggestion';
+  const kind = apDraft.match?.kind === 'custom' ? 'custom'
+    : apDraft.match?.kind === 'query' ? 'query'
+    : 'suggestion';
   setApMatchKind(kind);
+  $('apRuleQuery').value = kind === 'query' ? (apDraft.match.q || '') : '';
+  $('apQueryStatus').textContent = '';
+  if (kind === 'query') void validateApQuery();
   if (kind === 'custom') {
     const m = apDraft.match;
     $('apRuleAgeOn').checked = m.maxAgeMs !== undefined;
@@ -8528,9 +8572,46 @@ function renderApGroupList(selected) {
 function setApMatchKind(kind) {
   $('apMatchSuggestion').style.display = kind === 'suggestion' ? '' : 'none';
   $('apMatchCustom').style.display = kind === 'custom' ? '' : 'none';
+  $('apMatchQuery').style.display = kind === 'query' ? '' : 'none';
   document.querySelectorAll('#apMatchSeg button').forEach(b =>
     b.setAttribute('aria-selected', String(b.dataset.apmatch === kind)));
 }
+
+/**
+ * Live parse feedback for a policy's query (v4 §4.5).
+ *
+ * Through `POST /api/query/validate`, the parse-only endpoint — the same one
+ * the treemap box uses, and for the same reason: §7 forbids a second query
+ * language, and a client-side check here would be one. The server refuses an
+ * unparseable query on save regardless; this only decides when the user finds
+ * out.
+ */
+let apQuerySeq = 0;
+async function validateApQuery() {
+  const q = $('apRuleQuery').value.trim();
+  const status = $('apQueryStatus');
+  const seq = ++apQuerySeq;
+  if (!q) { status.textContent = 'A policy needs a query to match on.'; status.classList.add('bad'); return; }
+  try {
+    await api('/api/query/validate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q }),
+    });
+    if (seq !== apQuerySeq) return;
+    status.textContent = 'That query is understood.';
+    status.classList.remove('bad');
+  } catch (e) {
+    if (seq !== apQuerySeq) return;
+    const where = typeof e.offset === 'number' ? ` (at character ${e.offset + 1})` : '';
+    status.textContent = (e.message || 'That query could not be understood.') + where;
+    status.classList.add('bad');
+  }
+}
+let apQueryDeb = 0;
+$('apRuleQuery').addEventListener('input', () => {
+  clearTimeout(apQueryDeb);
+  apQueryDeb = setTimeout(() => { void validateApQuery(); }, 150);
+});
 
 /** Read the dialog back into the wire shape the API validates. */
 function policyFromEditor() {
@@ -8538,6 +8619,11 @@ function policyFromEditor() {
   let match;
   if (kind === 'suggestion') {
     match = { kind: 'suggestion', groupIds: [...document.querySelectorAll('[data-ap-group]')].filter(c => c.checked).map(c => c.dataset.apGroup) };
+  } else if (kind === 'query') {
+    // Sent as typed. The server parses it and refuses both an unparseable
+    // query and one with no conditions — which would select every file under
+    // the policy's folder, unattended.
+    match = { kind: 'query', q: $('apRuleQuery').value.trim() };
   } else {
     match = { kind: 'custom' };
     if ($('apRuleAgeOn').checked) match.maxAgeMs = Math.max(1, Number($('apRuleAgeDays').value) || 180) * 86400000;
@@ -11488,6 +11574,7 @@ $('cleanupBtn').addEventListener('click', () => {
   $('cleanProgress').classList.remove('on');
   $('cleanProgressFill').style.width = '0%';
   cleanMatches = []; emptyFolders = []; smartGroups = [];
+  setCleanRuleSource('simple'); // §4.5 — the pane opens where it always did
   setCleanPane('rules', true);
   $('cleanModal').classList.add('open');
   // Walks the whole tree server-side, so it runs on open rather than on every
@@ -12050,7 +12137,145 @@ async function loadSmartSuggestions() {
   }
 }
 
+/* ── Phase 4 (v4 §4.5) — query → rule → policy ────────────────────────────
+   The pivot the query grammar was built for. A saved view is already a query;
+   this makes it a Clean Up rule, and the button beside it makes that rule an
+   Autopilot policy — with **every existing rail unchanged**.
+
+   The rails are worth naming, because §4.5 is explicit that none of them may
+   be weakened, bypassed or special-cased for this path: the first run of any
+   new policy is always a preview a human approves; per-run and rolling-weekly
+   byte caps; a cooldown; "ask me first above N GB"; and the Time Capsule on
+   everything. Promotion opens the *existing* editor pre-filled and saves
+   through the *existing* endpoint, so it inherits all of them by construction
+   rather than by remembering to re-apply them. `tests/queryToPolicy.test.ts`
+   asserts each one field by field on a promoted policy.
+
+   The matching engine is shared too: a saved view runs through POST /api/query
+   here, exactly as it does in the treemap box, and a promoted policy runs the
+   same AST through the same evaluator server-side. §7 forbids a second query
+   language, and three near-copies of one is how a project ends up with one. */
+
+/** 'simple' — the age/size/ext knobs; 'query' — a saved view. */
+let cleanRuleSource = 'simple';
+
+function setCleanRuleSource(src) {
+  cleanRuleSource = src === 'query' ? 'query' : 'simple';
+  $('cleanRuleSeg').querySelectorAll('button').forEach((b) =>
+    b.setAttribute('aria-selected', String(b.dataset.rulesrc === cleanRuleSource)));
+  $('cleanRuleSimple').style.display = cleanRuleSource === 'simple' ? '' : 'none';
+  $('cleanRuleQuery').style.display = cleanRuleSource === 'query' ? '' : 'none';
+  if (cleanRuleSource === 'query') void fillCleanSavedViews();
+}
+
+$('cleanRuleSeg').querySelectorAll('button').forEach((b) =>
+  b.addEventListener('click', () => setCleanRuleSource(b.dataset.rulesrc)));
+
+/** Populate the picker from the saved views, and show the query it stands for. */
+async function fillCleanSavedViews() {
+  await loadSavedViews();
+  const sel = $('cleanSavedView');
+  const views = state.savedViews || [];
+  if (!views.length) {
+    sel.innerHTML = '<option value="">No saved views yet</option>';
+    $('cleanSavedViewQ').textContent = 'Save one from the treemap search box first — type a query, then press Save view.';
+    return;
+  }
+  const keep = sel.value;
+  sel.innerHTML = views.map((v) => `<option value="${escapeHtml(v.id)}">${escapeHtml(v.name)}</option>`).join('');
+  if (keep && views.some((v) => v.id === keep)) sel.value = keep;
+  showCleanSavedViewQuery();
+}
+
+function selectedSavedView() {
+  return (state.savedViews || []).find((v) => v.id === $('cleanSavedView').value) || null;
+}
+
+function showCleanSavedViewQuery() {
+  const view = selectedSavedView();
+  // textContent, not innerHTML: a saved view's name and query are user text.
+  $('cleanSavedViewQ').textContent = view ? view.q : '';
+}
+$('cleanSavedView').addEventListener('change', showCleanSavedViewQuery);
+
+/**
+ * Promote whatever rule is showing into an Autopilot policy (§4.5).
+ *
+ * Opens the existing editor pre-filled and nothing more. It does not save, it
+ * does not enable, and it does not approve — the policy that comes out the
+ * other side still has to be previewed and approved by a person before it can
+ * delete anything, exactly like one typed from scratch.
+ */
+function promoteRuleToPolicy() {
+  if (!state.root) { toast('Scan a folder first — a policy needs somewhere to work', 'error'); return; }
+  let match;
+  let name;
+  if (cleanRuleSource === 'query') {
+    const view = selectedSavedView();
+    if (!view) { toast('Pick a saved view first', 'error'); return; }
+    match = { kind: 'query', q: view.q };
+    name = view.name;
+  } else {
+    const ageOn = $('ruleAgeOn').checked, sizeOn = $('ruleSizeOn').checked, extOn = $('ruleExtOn').checked;
+    const exts = $('ruleExts').value.split(',').map((x) => x.trim().toLowerCase().replace(/^\./, '')).filter(Boolean);
+    if (!ageOn && !sizeOn && !(extOn && exts.length)) {
+      // The duplicate rule has no policy equivalent — matchCustomRules' `dup`
+      // flag is not part of AutopilotMatch — so saying so is better than
+      // silently promoting a rule that means something different.
+      toast('Set an age, size or extension rule first — the duplicates-only rule cannot run unattended', 'error', 8000);
+      return;
+    }
+    match = { kind: 'custom' };
+    if (ageOn) match.maxAgeMs = Math.max(1, Number($('ruleAgeDays').value) || 180) * 86400000;
+    if (sizeOn) match.minBytes = Math.max(1, Number($('ruleSizeMb').value) || 100) * 1048576;
+    if (extOn && exts.length) match.exts = exts;
+    name = 'Clean Up rule';
+  }
+  closeModal('cleanModal');
+  openPolicyEditor({
+    name,
+    // The folder currently in view, which is the one the rule was just run
+    // against. Still editable in the dialog — and normalizePolicy refuses the
+    // root of the disk outright, whatever is passed here.
+    path: state.treemap.rootPath || state.root.path,
+    match,
+    maxBytesPerRun: null, maxBytesPerWeek: null, requireConfirmationAbove: null,
+    cooldownDays: 7,
+    // Both left at their safe defaults on purpose: a promoted policy previews
+    // every run and is switched off until the user turns it on themselves.
+    dryRunFirst: true, enabled: false,
+  });
+  switchView('autopilot');
+  toast('Pre-filled — nothing is scheduled until you save it, and its first run is always a preview you approve.', 'success', 9000);
+}
+$('cleanPromoteBtn').addEventListener('click', promoteRuleToPolicy);
+
+/** Run a saved view as a Clean Up rule, through the one query engine (§4.5). */
+async function findBySavedView() {
+  const view = selectedSavedView();
+  if (!view) { toast('Pick a saved view first', 'error'); return; }
+  const out = await api('/api/query', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scanId: state.scanId, q: view.q, limit: 500, sort: 'size' }),
+  });
+  // §2.2's degraded list is why this is not just a hit count: a query needing
+  // a signal this machine cannot supply must not come back looking like
+  // "nothing matched".
+  if ((out.degraded || []).length) {
+    toast((out.degraded || []).map((d) => d.reason).join(' '), 'error', 10000);
+  }
+  return {
+    files: (out.hits || []).filter((h) => !h.isDir).map((h) => ({
+      name: h.name, path: h.path, size: h.size, type: 'file', modifiedAt: h.mtimeMs,
+    })),
+    matched: out.total,
+    truncated: Boolean(out.truncated),
+  };
+}
+
 $('cleanFindBtn').addEventListener('click', async () => {
+  if (!state.scanId) { toast('Run a scan first', 'error'); return; }
+  if (cleanRuleSource === 'query') { void runCleanFind(findBySavedView); return; }
   const ageOn = $('ruleAgeOn').checked, sizeOn = $('ruleSizeOn').checked;
   const extOn = $('ruleExtOn').checked, dupOn = $('ruleDupOn').checked;
   const maxAgeMs = Number($('ruleAgeDays').value || 0) * 86400_000;
@@ -12069,12 +12294,23 @@ $('cleanFindBtn').addEventListener('click', async () => {
   if (extOn && exts.length) q.set('exts', exts.join(','));
   if (dupOn) q.set('dup', '1');
 
+  await runCleanFind(async () => api('/api/cleanup/rules?' + q.toString()));
+});
+
+/**
+ * Run one of the two rule sources and render its matches identically.
+ *
+ * Shared so the list, the checkboxes and the delete path are the same code
+ * whichever source produced the hits — §4.5's "evaluated through the same
+ * engine" is about the backend, and this is its counterpart in the UI.
+ */
+async function runCleanFind(fetcher) {
   const findBtn = $('cleanFindBtn');
   const findLabel = findBtn.innerHTML;
   findBtn.disabled = true;
   let data;
   try {
-    data = await api('/api/cleanup/rules?' + q.toString());
+    data = await fetcher();
   } catch (e) {
     toast(e.message, 'error');
     return;
@@ -12082,6 +12318,7 @@ $('cleanFindBtn').addEventListener('click', async () => {
     findBtn.disabled = false;
     findBtn.innerHTML = findLabel;
   }
+  if (!data) return; // the source reported its own problem
   cleanMatches = data.files;
   seedNodes(cleanMatches); // staged from here, so their sizes must resolve later
 
@@ -12116,7 +12353,7 @@ $('cleanFindBtn').addEventListener('click', async () => {
   });
   host.querySelectorAll('.clean-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
   updateCleanSummary();
-});
+}
 
 /** Selected paths + recoverable bytes for whichever pane is showing. */
 function activeCleanSelection() {

@@ -392,7 +392,7 @@ const schemas: Json = {
       id: str(),
       name: str('User-facing label'),
       path: str('The folder this policy may clean'),
-      match: opaque("{ kind: 'suggestion', groupIds[] } or { kind: 'custom', maxAgeMs?, minBytes?, exts[]? }"),
+      match: opaque("{ kind: 'suggestion', groupIds[] }, { kind: 'custom', maxAgeMs?, minBytes?, exts[]? }, or { kind: 'query', q } — a v4 §2 query, parsed on save and refused if it has no conditions"),
       maxBytesPerRun: nullable(int('Ceiling on one run; null = uncapped')),
       maxBytesPerWeek: nullable(int('Ceiling across a rolling 7 days; null = uncapped')),
       cooldownDays: int('Minimum days between runs; also acts as the schedule'),
