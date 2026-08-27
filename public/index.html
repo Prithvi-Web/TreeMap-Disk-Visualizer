@@ -7924,6 +7924,31 @@ function voronoiTreemap(values, boundary, opts) {
   let cur = kept.slice();
   let curTotal = keptTotal;
   let run = null, iterations = 0, target = null;
+  /* How far apart the biggest and smallest drawn cells may be — bounded from
+     the START, not only after a failure.
+
+     A first attempt on a set the solver cannot possibly resolve is the most
+     expensive thing this function can do and the least likely to pay: at
+     seventy cells it eats most of the pass budget, leaves no room to descend,
+     and ends with a diagram 584% out. Beginning inside a plausible range means
+     the first attempt usually just converges.
+
+     The bound scales with n² because that is how tolerance for spread actually
+     behaves — measured, on real folders: ten cells resolve a 3,000:1 spread,
+     thirty-six need about 250:1, seventy-odd about 120:1. The constant is set
+     so the curve sits slightly INSIDE each of those, because being one cell
+     too cautious costs a footnote line and being one too greedy costs the
+     claim the whole view rests on. */
+  let range = Math.max(80, Math.min(4000, 2.5e5 / (n * n)));
+  {
+    const floor = values[cur[0]] / range;
+    while (cur.length > 2 && values[cur[cur.length - 1]] < floor) {
+      const dropped = cur.pop();
+      curTotal -= values[dropped];
+      omittedValue += values[dropped];
+      omitted++;
+    }
+  }
   // How many times it may give ground. Generous, because the real bound is
   // `passBudget` above: on the inputs where many retries are needed the cells
   // are few, and few cells make a pass almost free — a ten-child folder with a
@@ -7966,24 +7991,57 @@ function voronoiTreemap(values, boundary, opts) {
     }
     if (run.converged || attempt >= maxShrinks || cur.length <= 2) break;
     if (passBudget - iterations < Math.min(20, maxIterations)) break;
-    /* How much ground to give, and it is not one cell.
 
-       Every failed attempt costs passes proportional to n², so at large n the
-       budget buys only a couple of tries and the descent has to be worth them.
-       A real `node_modules` — 386 children, a wild spread — converges at about
-       thirty cells and cannot at fifty-eight; stepping down by one, or even by
-       a tenth, spent the whole budget in the fifties and produced a map that
-       was both incomplete AND 207% wrong, which is the worst of both outcomes.
+    /* Halve the DYNAMIC RANGE, and drop whatever no longer fits inside it.
 
-       So: a quarter while the layout is still expensive, a tenth while it is
-       middling, and one at a time once passes are cheap enough to try every
-       size on the way down — below sixteen cells the single step finds exact
-       answers that a bigger step steps straight over. */
-    const m2 = cur.length;
-    const give = m2 > 40 ? Math.max(1, Math.round((m2 - 2) * 0.25))
-      : m2 > 16 ? Math.max(1, Math.round((m2 - 2) * 0.1))
+       This is the fix for the thing that actually defeats a power diagram, and
+       it took two wrong answers to find. It is not the number of cells — a
+       hundred near-equal siblings solve in fifty passes. It is the ratio
+       between the biggest cell and the smallest: a folder whose largest child
+       is 95% of it asks for neighbours a thousand times smaller, and no number
+       of passes produces those, because the constraint that keeps a site
+       inside its own cell puts a floor under how small that cell can get next
+       to its neighbours.
+
+       Dropping the smallest cell, or a quarter of them, only helps by
+       accident — it moves the ratio a little, and mostly it does not. Halving
+       the allowed range attacks the cause directly, and every real folder
+       measured lands inside two or three halvings:
+
+         Desktop      267% → 2% at 1/250     (24 children, 2 drawn)
+         Treemap      936% → 1% at 1/250     (36 children, 6 drawn)
+         node_modules 581% → 2% at 1/120     (386 children, 21 drawn)
+
+       What is given up is real and is stated: a cell a hundred times smaller
+       than the biggest thing on screen is a few pixels, and the footnote counts
+       it out by name. An exact map of six things beats an approximate map of
+       eleven, because "area is bytes" is the only claim this view makes. */
+    range /= 2;
+    const floor = values[cur[0]] / range;
+    const before = cur.length;
+    while (cur.length > 2 && values[cur[cur.length - 1]] < floor) {
+      const dropped = cur.pop();
+      curTotal -= values[dropped];
+      omittedValue += values[dropped];
+      omitted++;
+    }
+    /* Halving the range is the right lever for a lopsided folder and the wrong
+       one for a bunched one, where it can bite nothing at all — and a bunched
+       folder of ninety cells is expensive per attempt, so an attempt that
+       barely moves is an attempt wasted. So there is also a floor on how much
+       each pass gives up, scaled by how costly the layout still is: a quarter
+       while it is expensive, a tenth while it is middling, and one at a time
+       once passes are cheap enough to try every size on the way down. Below
+       sixteen cells the single step finds exact answers a bigger step goes
+       straight past.
+
+       Both levers, because the two failure modes are different and each one
+       alone leaves the other unfixed — measured: range-halving alone took a
+       real Desktop from 267% to 2% and left a ninety-six-cell fixture at 73%. */
+    const minDrop = before > 40 ? Math.max(1, Math.round((before - 2) * 0.25))
+      : before > 16 ? Math.max(1, Math.round((before - 2) * 0.1))
       : 1;
-    for (let d = 0; d < give && cur.length > 2; d++) {
+    while (cur.length > 2 && before - cur.length < minDrop) {
       const dropped = cur.pop();
       curTotal -= values[dropped];
       omittedValue += values[dropped];

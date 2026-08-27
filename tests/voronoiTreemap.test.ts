@@ -319,8 +319,13 @@ test('what was left out is reported, and the report adds up to the input', () =>
     assert.equal(r.omitted + r.cells.length, values.length, 'every input is drawn or counted out');
     const drawn = r.cells.reduce((s, c) => s + values[c.i], 0);
     const all = values.reduce((s, v) => s + Math.max(0, v), 0);
-    assert.ok(Math.abs(drawn + r.omittedValue - all) < 1e-6,
-      'the omitted bytes are exactly the bytes not drawn');
+    // Relative, not absolute. These are byte counts: a fixture summing to
+    // 108 GB is 1.08e11, where the gap between representable doubles is about
+    // 1.5e-5 — so an absolute epsilon of 1e-6 is asking two sums accumulated
+    // in different orders to be bit-identical, which is a test of addition
+    // rather than of the accounting. It passed for a while by luck.
+    assert.ok(Math.abs(drawn + r.omittedValue - all) <= all * 1e-12 + 1e-9,
+      `the omitted bytes are exactly the bytes not drawn (off by ${drawn + r.omittedValue - all})`);
   }
 });
 
