@@ -632,3 +632,51 @@ test('a manifest with no recorded times still restores, as it always did', async
     await fsp.rm(dir, { recursive: true, force: true });
   }
 });
+
+/* ══════════ Tidying up must never undo a restore that succeeded ══════════ */
+
+test('a restore survives a failure to delete the capsule’s own scratch copy', async () => {
+  // The bug this closes: `dropPayload` and `saveStore` ran INSIDE the try
+  // whose catch deletes every file the restore just wrote. So a failure to
+  // remove our own temporary copy — an antivirus scanner still holding it, a
+  // momentarily locked directory, a full disk — un-restored the user's data
+  // and reported the restore as failed. The bytes were home and hash-verified
+  // when that happened.
+  //
+  // Injected rather than waited for: on Windows this is an ordinary EPERM from
+  // a scanner holding a just-read file, and it cannot be provoked on macOS by
+  // any amount of retrying. `timeCapsule.ts` calls `fsp.rm` through the shared
+  // `fs.promises` object, so replacing the method there is the real code path
+  // failing, not a mock of it.
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'treemap-bookkeeping-'));
+  const target = await writeFile(path.join(dir, 'precious.txt'), 'the user’s only copy');
+  const realRm = fsp.rm;
+  try {
+    const { outcomes } = await protectItems([{ path: target, reason: 'test' }]);
+    const captured = outcomes[0];
+    assert.equal(captured.protected, true, captured.detail ?? 'the file was captured');
+    await realRm(target, { force: true }); // as a delete would leave it
+
+    let injected = 0;
+    (fsp as { rm: typeof fsp.rm }).rm = ((p: string, opts?: object) => {
+      // Only the capsule's own payload directory — never the restore's own
+      // rollback, which must still work when a restore genuinely fails.
+      if (String(p).startsWith(capsuleRoot()) && injected === 0) {
+        injected++;
+        return Promise.reject(Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' }));
+      }
+      return realRm(p as never, opts as never);
+    }) as typeof fsp.rm;
+
+    const job = await restoreAndWait(captured.entryId!);
+    (fsp as { rm: typeof fsp.rm }).rm = realRm;
+
+    assert.equal(injected, 1, 'the failure really was injected into the path under test');
+    assert.equal(job.status, 'complete', job.error ?? 'the restore reports success');
+    assert.ok(fs.existsSync(target), 'the file is back — tidying up must never take it away again');
+    assert.equal(await fsp.readFile(target, 'utf8'), 'the user’s only copy', 'and it is the real content');
+  } finally {
+    (fsp as { rm: typeof fsp.rm }).rm = realRm;
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});

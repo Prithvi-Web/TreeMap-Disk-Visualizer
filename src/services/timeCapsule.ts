@@ -1174,15 +1174,6 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
       });
     }
 
-    // Restored successfully: the bytes live at their real home again, so the
-    // capsule copy is redundant and giving its space back is the honest move.
-    const store = await loadStore();
-    const live = store.entries.find((e) => e.id === entry.id);
-    if (live) {
-      live.restoredAt = Date.now();
-      await dropPayload(live);
-    }
-    await saveStore(store);
     // Deliberately does NOT mark the job complete: a job can cover several
     // entries, and only runRestoreAll knows when the last one is home.
   } catch (err) {
@@ -1202,5 +1193,37 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
     if (job.status === 'error') job.error = err instanceof Error ? err.message : String(err);
     job.phase = 'done';
     job.finishedAt = Date.now();
+    return;
+  }
+
+  /**
+   * Bookkeeping, and it lives OUT here for a reason.
+   *
+   * The bytes are home and hash-verified by this point. These two calls only
+   * tidy up after that: they reclaim the capsule's own scratch copy and write
+   * the index. Both are filesystem writes that can fail for reasons that have
+   * nothing to do with the user's file — an antivirus scanner still holding
+   * the copy we just read, a directory momentarily locked, a full disk.
+   *
+   * They used to sit inside the `try` above, whose `catch` deletes every file
+   * the restore just wrote. So a failure to delete OUR OWN temporary copy
+   * un-restored the user's data and reported the restore as failed. That is
+   * the same shape as the `startWatcher` bug the handoff records: a subsystem
+   * reporting failure for something that had already succeeded — except this
+   * one takes the file with it.
+   *
+   * A failure here is logged and nothing else. The capsule keeping a redundant
+   * copy costs space; rolling back costs the user their file.
+   */
+  try {
+    const store = await loadStore();
+    const live = store.entries.find((e) => e.id === entry.id);
+    if (live) {
+      live.restoredAt = Date.now();
+      await dropPayload(live);
+    }
+    await saveStore(store);
+  } catch (err) {
+    console.error('[treemap] capsule bookkeeping after a successful restore failed:', err);
   }
 }
