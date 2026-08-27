@@ -418,6 +418,56 @@ test('when the device cannot be read, the longest matching mount point is the fa
   assert.equal(volumeForPath(MAC_VOLUMES, '/System/Volumes/VM/x')?.id, 'disk3s6');
 });
 
+test('mount-point matching reads the separator off the path, not off the host', async () => {
+  // The bug this closes broke the WINDOWS job and nothing else: `isUnder` used
+  // `path.sep`, so on a Windows host every one of these macOS-shaped fixtures
+  // matched no mount point at all and `resolveScanVolume` returned null. A
+  // pure function's answer must not depend on which machine is asking.
+  //
+  // It is not only a test-fixture problem. A `cloud://` scan root has forward
+  // slashes whatever the OS is, so a Windows host really does handle
+  // POSIX-shaped paths.
+  const posix = await resolveScanVolume(MAC_VOLUMES, '/System/Volumes/VM/sleepimage', () => Promise.resolve(null));
+  assert.ok(posix, 'a POSIX path resolves on every platform, including Windows');
+  assert.equal(posix.primary.id, 'disk3s6');
+
+  // And the Windows shape resolves everywhere too, including on this Mac.
+  const winVolumes: LogicalVolumeInfo[] = [
+    vol({ id: 'C', name: 'System', mountPoint: 'C:\\', filesystem: 'ntfs', kind: 'partition', usedBytes: 80 * GB }),
+    vol({ id: 'D', name: 'Data', mountPoint: 'D:\\', filesystem: 'ntfs', kind: 'partition', usedBytes: 20 * GB }),
+  ];
+  assert.equal(volumeForPath(winVolumes, 'C:\\Users\\me\\Downloads')?.id, 'C');
+  assert.equal(volumeForPath(winVolumes, 'D:\\media')?.id, 'D');
+  assert.equal(volumeForPath(winVolumes, 'E:\\elsewhere'), null, 'an unknown drive matches nothing');
+
+  const unc: LogicalVolumeInfo[] = [vol({ id: 'share', mountPoint: '\\\\server\\share', kind: 'partition' })];
+  assert.equal(volumeForPath(unc, '\\\\server\\share\\folder\\file.txt')?.id, 'share', 'UNC paths resolve too');
+});
+
+test('a backslash inside a POSIX filename is not read as a folder boundary', () => {
+  // Being lenient — treating both separators as boundaries everywhere — would
+  // be the obvious "fix" and it is wrong: `\` is a legal character in a POSIX
+  // filename, so a file literally named `a\b` would be reported as living
+  // inside a folder called `a` that does not exist.
+  const volumes: LogicalVolumeInfo[] = [
+    vol({ id: 'root', mountPoint: '/' }),
+    vol({ id: 'weird', mountPoint: '/x/a' }),
+  ];
+  assert.equal(volumeForPath(volumes, '/x/a\\b')?.id, 'root', 'the file is on /, not under /x/a');
+  assert.equal(volumeForPath(volumes, '/x/a/b')?.id, 'weird', 'a real child still resolves');
+});
+
+test('a sibling directory with a shared prefix is not treated as a parent', () => {
+  // `/Volumes/Disk2` must not be read as living under `/Volumes/Disk`.
+  const volumes: LogicalVolumeInfo[] = [
+    vol({ id: 'root', mountPoint: '/' }),
+    vol({ id: 'disk', mountPoint: '/Volumes/Disk' }),
+  ];
+  assert.equal(volumeForPath(volumes, '/Volumes/Disk2/file')?.id, 'root');
+  assert.equal(volumeForPath(volumes, '/Volumes/Disk/file')?.id, 'disk');
+  assert.equal(volumeForPath(volumes, '/Volumes/Disk')?.id, 'disk', 'the mount point itself is on itself');
+});
+
 test('a path on no known volume is an error, not a statement against nothing', async () => {
   await assert.rejects(
     () => buildStatement(scanFixture({ rootPath: '/nowhere' }), sourcesFixture({ volumes: [], devs: {} })),
