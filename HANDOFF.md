@@ -1362,3 +1362,31 @@ grep -A 12 -E '^(✖|not ok)' /tmp/suite.log   # the assertion under it
 
 It is rare: **one failure in about twenty full-suite runs** on 27 Aug. One more
 sighting with a name attached should settle which of the three it is.
+
+### A SECOND shape, seen 27 Aug at the start of Phase 6
+
+```
+code: 'ERR_ASSERTION', actual: true, expected: false, operator: 'strictEqual'
+```
+
+**This is not the same intermittent.** `true/false` cannot come from any of the
+three `expected 0, actual 1` candidates above, so the suite has two rare
+failures, not one. Seen once in **ten** full-suite runs that session; the name
+was lost again because `tail` caught the assertion after the summary had
+scrolled past.
+
+153 assertions in the suite have the `assert.equal(x, false)` shape. Only a
+handful take timing, a subprocess or the filesystem as input, and the two
+`scanCancel.test.ts` ones that look like candidates are **ruled out** — both
+build their scan record synchronously and set `status` by hand, so neither can
+race. What is left:
+
+| Candidate | Why it could see `true` |
+| --- | --- |
+| `openHandleGuard.test.ts:356` — `report.checked === false` | **Most likely.** Asserts `lsof` could NOT answer; if a contended `lsof` succeeds after all, `checked` is `true`. Trap 5 names the B5 `lsof` tests by name. |
+| `openHandleGuard.test.ts:172` — `complete === false` | A capped walk that did not get capped. |
+| `indexEngine.test.ts:723/735/738` — `startWatcher(gone) === false` | The watcher family, also trap 5's. `startWatcher` gained the ability to answer `false` honestly in Phase 4, so a watch that unexpectedly attaches is now visible here. |
+
+Same recipe as above to catch it, and **do not use `tail`** — the assertion
+prints after the summary, so a short tail shows the failure with no name and no
+count. Keep the whole log.
