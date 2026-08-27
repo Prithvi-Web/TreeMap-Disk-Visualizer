@@ -1360,6 +1360,12 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 #offloadBody .bp-item .dt { flex: none; font-size: 11px; color: var(--text-3); }
 
 /* ── Phase 4 (v4 §4.3) — the simulated "after" ── */
+/* Left-anchored and narrowed while the dock is open: the dock is a fixed
+   366px layer over the right of the map, and a centred banner disappeared
+   under it at 860px — the one width where the message matters most, because
+   there is least room to work out what happened. */
+body.cart-open .tm-preview-banner { left: 14px; transform: none;
+  max-width: calc(100% - 402px); }
 .tm-preview-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
   z-index: 6; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
   border-radius: var(--r-md); background: var(--bg-1); border: 1px solid var(--warn);
@@ -5279,7 +5285,7 @@ function drawTreemap() {
       const hatch = tmHatchPattern(ctx);
       if (hatch) {
         ctx.save();
-        ctx.globalAlpha = 0.45;
+        ctx.globalAlpha = 0.5;
         ctx.fillStyle = hatch;
         ctx.fillRect(r.x + 0.5, r.y + 0.5, Math.max(1, r.w - 1), Math.max(1, r.h - 1));
         ctx.restore();
@@ -5518,6 +5524,17 @@ function updateTmStatus() {
   if (state.treemap.history.active && !q) {
     const when = new Date(state.treemap.history.viewingAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     $('tmStatus').textContent = `Viewing ${when} · ${formatBytes(state.treemap.rootSize)} — drag the slider to Live to interact`;
+    return;
+  }
+  // v4 §4.3 — while a preview is up, the drawn set is a hypothetical, and the
+  // highlight overlay counts matches against it. Staging exactly what a query
+  // matched therefore produced "0 matches for ext:log modified>90d" under a
+  // map that had just hatched all twelve of them: a true sentence about the
+  // preview, read as a false one about the query. The banner is the
+  // authoritative message here, so the status line says what it is looking at.
+  if (tmPreview.on) {
+    $('tmStatus').textContent =
+      `Preview · ${formatBytes(tmPreview.freedBytes)} would be freed · ${formatBytes(state.treemap.rootSize)} total today`;
     return;
   }
   $('tmStatus').textContent = q
@@ -5942,11 +5959,19 @@ function tmBuildPreview() {
   return { nodes: out, stagedInView, outsideView, outsideBytes, freedBytes: freedTotal };
 }
 
-/** Diagonal hatch, built once, in the current theme's ink. */
+/**
+ * Diagonal hatch, built once, in the current theme's ink.
+ *
+ * Drawn in `--warn`, the same amber as the freed block's dashed border and the
+ * preview banner — one visual language for "this is not here yet". It started
+ * as `--text-3`, which is a dim tertiary *text* colour: measured against the
+ * dark canvas it came out at RGB 15 on a background of 7, a hatch nobody could
+ * see. A colour picked for small type is not a colour for a texture.
+ */
 let tmHatch = null;
 let tmHatchInk = '';
 function tmHatchPattern(ctx) {
-  const ink = cssVar('--text-3') || '#8a8a90';
+  const ink = cssVar('--warn') || '#FF9F0A';
   if (tmHatch && tmHatchInk === ink) return tmHatch;
   const tile = document.createElement('canvas');
   tile.width = 8; tile.height = 8;
@@ -8512,7 +8537,10 @@ function openPolicyEditor(policy) {
     maxBytesPerRun: null, maxBytesPerWeek: null, requireConfirmationAbove: null,
     cooldownDays: 7, dryRunFirst: true, enabled: false,
   };
-  $('apModalTitle').innerHTML = icon('sparkles', 18) + (policy ? 'Edit policy' : 'New policy');
+  // Keyed on the id, not on whether a draft was passed: v4 §4.5's promotion
+  // hands this a fully-formed draft that has never been saved, and calling
+  // that "Edit policy" tells the user they are changing something that exists.
+  $('apModalTitle').innerHTML = icon('sparkles', 18) + (policy && policy.id ? 'Edit policy' : 'New policy');
   $('apName').value = apDraft.name || '';
   $('apPath').value = apDraft.path || '';
   $('apCooldown').value = apDraft.cooldownDays ?? 7;
@@ -9206,7 +9234,7 @@ async function renderCart() {
   await ensureNodes([...state.cart]);
   const n = state.cart.size;
   dock.classList.toggle('show', n > 0);
-  if (n === 0) dock.classList.remove('open');
+  if (n === 0) cartDockToggle(false); // an empty cart closes the drawer, and the body class with it
   const total = cartTotalBytes();
   $('cartTabCount').textContent = String(n);
   $('cartTabTotal').textContent = formatBytes(total);
@@ -9295,7 +9323,12 @@ async function cartTrashAll() {
     onConfirmTrash = () => {};
   } else {
     cartCommitKey = 'cart-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
-    onConfirmTrash = () => cartExecuteCommit(willDelete.map((i) => i.path));
+    // The refusals travel with the commit. Only the deletable paths are sent,
+    // so the server has nothing to report as skipped — and a summary that said
+    // nothing about them would read as "everything went", one dialog after
+    // one that said a petabyte was being left behind.
+    const willNot = (plan.items || []).filter((i) => !i.willDelete);
+    onConfirmTrash = () => cartExecuteCommit(willDelete.map((i) => i.path), willNot);
   }
   $('confirmModal').classList.add('open');
 }
@@ -9345,8 +9378,14 @@ function cartManifestHtml(plan, missingFromScan) {
   return html;
 }
 
-/** Protect → verify → Trash, as one run. Idempotency-Key'd (§4.4 step 4). */
-async function cartExecuteCommit(paths) {
+/**
+ * Protect → verify → Trash, as one run. Idempotency-Key'd (§4.4 step 4).
+ *
+ * `foreseen` is what the dry run already refused; those paths are never sent,
+ * so they stay staged in the cart and are reported alongside anything the
+ * server refuses on the day.
+ */
+async function cartExecuteCommit(paths, foreseen = []) {
   let result;
   try {
     result = await api('/api/cart/commit', {
@@ -9363,7 +9402,13 @@ async function cartExecuteCommit(paths) {
   renderCart();
   refreshCartButtons();
   cartLastRun = result.trashed && result.trashed.length ? result.runId : null;
-  cartCommitSummary(result);
+  cartCommitSummary({
+    ...result,
+    skipped: [
+      ...(result.skipped || []),
+      ...foreseen.map((i) => ({ path: i.path, code: i.code, reason: i.reason })),
+    ],
+  });
   if (result.trashed && result.trashed.length) rescan();
 }
 
@@ -9386,7 +9431,7 @@ function cartCommitSummary(result) {
     html += `<div class="cart-mf-note">${escapeHtml(result.capsuleUnavailable)}</div>`;
   }
   if (skipped.length) {
-    html += `<div class="cart-mf-left"><b>${formatCount(skipped.length)} left in place</b> — still on your disk, not deleted:</div>` +
+    html += `<div class="cart-mf-left"><b>${formatCount(skipped.length)} left in place</b> — still on your disk, not deleted, and still in your cart:</div>` +
       `<div class="cart-mf-list">` + skipped.slice(0, 6).map((sk) =>
         `<div class="cart-mf-row"><span class="nm" title="${escapeHtml(sk.path)}">${escapeHtml(baseName(sk.path))}</span>` +
         `<span class="why">${escapeHtml(sk.reason || 'Could not be protected.')}</span></div>`).join('') +
@@ -9397,9 +9442,15 @@ function cartCommitSummary(result) {
     html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(failed.length)} could not be moved to the Trash (${escapeHtml(failed[0].reason)}). Those are untouched, and their copies were discarded.</div>`;
   }
   if (trashed.length) {
+    // The caveat is stated here rather than discovered later. The Time Capsule
+    // has never recorded modification times — it verifies content, byte for
+    // byte, and writes it back fresh — so a restored file's "date modified"
+    // reads as the moment it came back. Harmless for most things, and not for
+    // an age-based rule: it will not match the restored file any more.
     html += `<div class="cart-mf-undo"><button class="btn" data-cart-undo="${escapeHtml(result.runId)}">` +
       `${icon('refresh', 14)}Undo this run</button>` +
-      `<span class="muted">Puts all ${formatCount(trashed.length)} back where they were, from the Time Capsule.</span></div>`;
+      `<span class="muted">Puts all ${formatCount(trashed.length)} back where they were, from the Time Capsule — ` +
+      `byte for byte, though their <b>date modified</b> will read as the moment they came back.</span></div>`;
   }
 
   $('confirmTitle').innerHTML = icon('checkCircle', 18) + 'Done';
@@ -9447,9 +9498,23 @@ async function cartUndoRun(runId) {
 }
 
 // Drawer + delegated row-button wiring.
-$('cartTab').addEventListener('click', () => $('cartDock').classList.toggle('open'));
-$('cartTab').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('cartDock').classList.toggle('open'); } });
-$('cartCollapse').addEventListener('click', () => $('cartDock').classList.remove('open'));
+/**
+ * Open or close the drawer, and mirror that onto `<body>`.
+ *
+ * The mirror exists because the dock is `position: fixed` and the preview
+ * banner is inside the treemap, so CSS in the banner cannot otherwise know the
+ * dock is there. One toggle function rather than three inline handlers, so the
+ * class and the drawer cannot drift apart.
+ */
+function cartDockToggle(open) {
+  const dock = $('cartDock');
+  const next = open === undefined ? !dock.classList.contains('open') : open;
+  dock.classList.toggle('open', next);
+  document.body.classList.toggle('cart-open', next);
+}
+$('cartTab').addEventListener('click', () => cartDockToggle());
+$('cartTab').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cartDockToggle(); } });
+$('cartCollapse').addEventListener('click', () => cartDockToggle(false));
 $('cartClear').addEventListener('click', cartClear);
 $('cartTrash').addEventListener('click', cartTrashAll);
 document.addEventListener('click', (e) => {

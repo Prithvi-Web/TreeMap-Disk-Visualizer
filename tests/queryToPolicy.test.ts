@@ -312,3 +312,10 @@ test('the duplicates-only rule is refused for promotion rather than silently dro
   const body = slice('function promoteRuleToPolicy', "$('cleanPromoteBtn').addEventListener");
   assert.match(body, /duplicates-only rule cannot run unattended/);
 });
+
+test('a promoted draft is titled New policy, because nothing is being edited yet', () => {
+  // It arrives as a fully-formed draft with no id. Calling that "Edit policy"
+  // would tell the user they are changing something that already exists.
+  const body = slice('function openPolicyEditor', 'const kind = apDraft.match');
+  assert.match(body, /policy && policy\.id \? 'Edit policy' : 'New policy'/);
+});

@@ -1,5 +1,177 @@
 # TreeMap — session handoff
 
+## v4 — Phase 4 complete: the cart, made physical (27 August 2026)
+
+**Five commits on `main`.** Suite **1200+ (was 1120)**, typecheck clean, build
+clean, `npm run bench:v4` **7 pass / 3 not measurable in Node**, golden
+responses still byte-identical. Every view driven in the real app; the isolated
+dev server (`treemap-p4`, port 4292) and its fixture were removed afterwards.
+
+| Commit | What |
+| --- | --- |
+| `ab79e52` | 4.1 a cleanup target, and the meter that fills toward it |
+| `cf0e055` | 4.2 add-to-cart everywhere it belongs — and nowhere it does not |
+| `a2f7998` | 4.3 the simulated "after", laid out client-side |
+| `3f8f3a4` | 4.4 commit through the Time Capsule, as one undoable run |
+| `25328b8` | 4.5 saved view → Clean Up rule → Autopilot policy |
+
+### The one decision that shapes 4.3
+
+**The freed space stays on the map, hatched, instead of the survivors growing
+into it.** Those two cannot both happen, and the choice is not aesthetic: area
+means bytes, so if the survivors expanded into the vacated space, the same
+rectangle would silently be worth more bytes than it was a second earlier and
+every size comparison against the live map would be wrong. §4.3's own words —
+"freed regions rendered in a distinct hatched style" — settle it, because a
+freed region that is still drawn is one the survivors did not take.
+
+The re-layout is real all the same: inside each folder the staged children
+collapse into ONE hatched block of exactly their combined size and the
+survivors re-tile around it. A staged path is charged to the deepest drawn node
+containing it, in four cases (it IS a drawn node / inside a drawn folder /
+inside a drawn leaf, which shrinks / outside this view, which the banner says).
+The invariant that follows — **every staged byte is either hatched somewhere or
+reported as not in this view** — is asserted directly, because it is what makes
+the picture honest. Measured live: freed area 1406.25 of 10000 = 14.0625%, and
+18 MiB of 128 MiB is 14.0625% exactly.
+
+### The rule 4.4 rests on, and how it was actually proven
+
+**Anything too large for the Time Capsule to protect is left UNDELETED rather
+than deleted unprotected.** A capsule that quietly lets a delete through when
+it is full is worse than no capsule, because the user believes they are
+covered.
+
+Proven twice, both on the disk rather than in a mock. `tests/cartCommit.test.ts`
+builds a **1 PiB sparse file** (`truncate` sets the logical size, which is what
+`walkItem` measures and what the capsule would have to hold, while the volume
+allocates nothing), commits it, and asserts the file is still there at its full
+size. And live: staging it beside twelve real logs produced
+
+> 1 will be left in place (1.0 PB) — not deleted:
+> huge.sparse — Protecting it needs 1.0 PB, but the Time Capsule can only hold
+> 28.4 GB. It will be left alone rather than deleted without a backup.
+
+**before** the click, then deleted the twelve and left the sparse file untouched
+(0 allocated blocks, still 1 PB logical) and still staged in the cart.
+
+Skipped on Windows deliberately rather than "fixed": NTFS allocates
+truncate-only files solid, so the fixture would really try to write a petabyte.
+That is the handoff's own POSIX-shaped-but-different rule.
+
+### New traps, all paid for
+
+- **A ported algorithm needs a test that runs both copies.** §4.3 forbids a
+  server call and the only squarify lives on the server, so the frontend now
+  carries a port. `tests/cartPreview.test.ts` lifts it out of `index.html` with
+  a balanced-brace scan, evaluates it, and demands rectangles identical to
+  `src/utils/treemap.ts` over the same corpus — the technique
+  `indexSearch.test.ts` already used for the query box. Without it the two
+  drift silently and the preview stops being comparable to the live map.
+- **`tmParentPath('/Users')` returned `''`, not `'/'`.** Harmless everywhere
+  except the scan people actually run: rooted at `/`, every top-level folder
+  reported a parent matching no node, the child map came out empty and the
+  preview silently had nothing to show. Found by a test, not by reading.
+- **Trap 6, in its third form.** The freed block's label, drawn in pass 1,
+  introduced the first `ctx.textBaseline = 'middle'` in that pass — which is
+  the end anchor `frontendContract.test.ts` slices the leaf-fill pass on. The
+  slice quietly shrank and the cloud-placeholder assertions stopped looking at
+  anything. The label now has its own pass. **Pass 1 must draw no text.**
+- **`confirmOk` trashes `confirmPaths` whenever `onConfirmTrash` is null**, and
+  that array holds whatever the previous dialog left in it. An informational
+  dialog that merely leaves the callback unset arms its OK button with an
+  unrelated set of files. Both new dialogs clear the set AND install a real
+  no-op; a test pins it.
+- **A colour picked for small type is not a colour for a texture.** The hatch
+  started as `--text-3`; measured against the dark canvas it came out at RGB 15
+  on a background of 7 — invisible. It is `--warn` now, the same amber as the
+  block's dashed border and the banner, and reads at 241 luma of contrast in
+  dark and 243 in light.
+- **A preview map makes the query counter lie.** Staging exactly what a query
+  matched, then previewing, produced "0 matches for ext:log modified>90d" under
+  a map that had just hatched all twelve — a true sentence about the preview,
+  read as a false one about the query. The status line now says what it is
+  looking at while a preview is up.
+- **A `position: fixed` dock cannot be seen by CSS inside the map.** The cart
+  drawer is a fixed 366px layer, so at 860px it sat straight on top of the
+  centred preview banner — the one width where that message matters most.
+  `body.cart-open` is mirrored from one toggle function, and the banner
+  left-anchors and narrows while the drawer is open.
+- **Only the deletable paths are sent to the commit**, so the server has
+  nothing to report as skipped. The dry run's refusals are carried into the
+  summary explicitly, or a dialog saying "1 will be left in place (1.0 PB)" is
+  followed by one that reads as "everything went".
+- **Trap 26 again, first-hand:** a `for` loop with `await setTimeout` inside
+  one `javascript_tool` call never resolves in a hidden pane and dies at 30 s.
+  Drive multi-step UI sweeps as a `browser_batch` of alternating exec/wait
+  steps instead.
+
+### Measured on this Mac
+
+| Budget | Measured | Limit |
+| --- | --- | --- |
+| `npm run bench:v4` | 7 pass, 3 not measurable in Node | — |
+| Scan throughput (50,102 items) | **1431.2 ms · 35,008 items/s**, −4.5% vs baseline | ≤ +2% |
+| Per-node memory (1M / 5M) | **50.7 / 51.7 B/node** | ≤ 56 |
+| Fact sidecars (5,000 paths) | size 96 ms · lastUsed 194 ms · recoverability 113 ms · reclaimScore 260 ms | ≤ 400 ms |
+| Golden responses | byte-identical | unchanged |
+
+Load average 4.23 / 3.29 / 2.97 at the start of the bench run. 12/16
+capabilities available on this machine.
+
+### Deliberate choices worth not "fixing"
+
+- **The preview is read-only**, like the time slider: drilling into a
+  hypothetical map would load a real folder under a banner saying nothing has
+  been deleted. Clicks and the context menu are both refused, and a freed block
+  gets no tooltip claiming a path that will not exist.
+- **A query Autopilot policy never trashes a directory.** `type:dir` is a fair
+  thing to ask a query, and a person can stage a folder by hand where they can
+  see it — but an unattended policy doing it is a different blast radius. The
+  resolver keeps files only.
+- **The duplicates-only Clean Up rule refuses promotion** rather than being
+  dropped: `matchCustomRules`' `dup` flag has no `AutopilotMatch` equivalent,
+  and a promoted policy that quietly meant something narrower would be worse
+  than no button.
+- **Apps lost 251 cart buttons and that is the point.** Every location used to
+  carry one, which quietly widened "Clear caches safely" — cache and log
+  locations — into a one-click stage of the app itself or the user's documents.
+  Verified live over `~/Library`: Data 251 rows / **0** buttons, Logs 12/12,
+  Caches 129/129.
+
+### What could NOT be verified on this machine
+
+- **Games' shader-cache rows have never rendered against a real library.** No
+  Steam, Epic, GOG or itch.io install exists on this Mac, so `loadGames`
+  reports "no library found" here. The rendering rule is asserted from the
+  source (`tests/cleanupCart.test.ts`), and the parser fixtures in
+  `tests/gameLibraries.test.ts` are what prove the components; the honest
+  no-library path is what runs live.
+- **The Windows and Linux halves of everything above.** No Windows or Linux
+  machine. The sparse-file over-cap test is skipped on Windows by design, and
+  the preview's backslash path handling is covered only by unit fixtures.
+- **A capsule eviction has never happened live.** The `evicts[]` line in the
+  manifest is exercised by the plan's arithmetic and by
+  `tests/timeCapsule.test.ts`'s `planEviction` cases, but this Mac's capsule cap
+  is 28.4 GB and nothing in a fixture comes close.
+- **`~/.Trash` remains unreadable from the shell (TCC)**, so trash-only is
+  confirmed by the files leaving the fixture and by the undo bringing them back
+  byte-for-byte, not by listing the Trash.
+
+### One thing worth raising with the owner
+
+**The Time Capsule has never recorded modification times.** It verifies content
+byte for byte and writes it back fresh, so a restored file's *date modified*
+reads as the moment it came back. That is pre-existing B3 behaviour, not a
+Phase 4 regression — but Phase 4 is what makes it visible to ordinary manual
+deletes, and it bit during verification: after an undo, `modified>90d` no
+longer matched the restored logs. The undo dialog now says so plainly. Fixing
+it properly means recording an mtime per member in the capsule manifest and
+`utimes`-ing on restore, which changes B3's on-disk schema — deliberately not
+done unasked.
+
+---
+
 ## Perf pass on the Phase 3 readers — and what "10x" actually costs (27 Aug 2026)
 
 CI on `189a4e8` was **green on all three OSes**: type-check and the full suite

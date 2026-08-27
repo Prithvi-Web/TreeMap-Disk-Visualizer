@@ -452,3 +452,25 @@ test('an informational cart dialog can never fall back to trashing a stale set',
     assert.ok(!/onConfirmTrash = null;/.test(body), `${from} never leaves the callback null`);
   }
 });
+
+test('undo states the one thing it does not restore: the modification date', () => {
+  // The capsule verifies content and writes it back fresh; it has never
+  // recorded mtimes. Harmless for most things, and not for an age-based rule,
+  // which will no longer match the restored file. Said before the click.
+  const body = slice('function cartCommitSummary', 'async function cartUndoRun');
+  assert.match(body, /date modified/);
+  assert.match(body, /byte for byte/);
+});
+
+test('the result summary restates what the manifest said would be left behind', () => {
+  // Only the deletable paths are sent, so the server has nothing to report as
+  // skipped. A summary that said nothing about the rest would read as
+  // "everything went" — one dialog after the one that said otherwise.
+  const trash = slice('async function cartTrashAll', 'function cartManifestHtml');
+  assert.match(trash, /const willNot = \(plan\.items \|\| \[\]\)\.filter\(\(i\) => !i\.willDelete\)/);
+  assert.match(trash, /cartExecuteCommit\(willDelete\.map\(\(i\) => i\.path\), willNot\)/);
+  const exec = slice('async function cartExecuteCommit', 'function cartCommitSummary');
+  assert.match(exec, /\.\.\.foreseen\.map/, 'the foreseen refusals join the summary');
+  const summary = slice('function cartCommitSummary', 'async function cartUndoRun');
+  assert.match(summary, /still on your disk, not deleted, and still in your cart/);
+});

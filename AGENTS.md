@@ -154,7 +154,15 @@ OpenAPI 3 spec).
    - `POST /api/query` with `{ scanId, q, limit?, offset?, sort? }` — **the
      query grammar**, and the highest-leverage surface in v4: every hard-coded
      view is a filter over the same tree, so a query is a view, a saved query
-     is a Clean Up rule, and a rule is an Autopilot policy.
+     is a Clean Up rule, and a rule is an Autopilot policy — that last rung is
+     real, not aspirational: an Autopilot policy can carry
+     `match: { kind: 'query', q }`, parsed by this same parser on save and
+     resolved by this same evaluator on every run. A query that does not parse
+     cannot be saved as a policy, and neither can one with no conditions: it
+     would select every file under the policy's folder, unattended. A query
+     policy also never trashes a directory — `type:dir` is a fair thing to ask
+     a query, and a different blast radius for something running while nobody
+     is watching.
      `size>1gb ext:mp4,mov used>1y -in:node_modules elsewhere:proven` — terms
      are ANDed, `or` is an explicit keyword, parentheses group, and any term
      negates with a leading `-`. Sizes are decimal (`kb`=1000) with `kib`
@@ -197,6 +205,21 @@ OpenAPI 3 spec).
    - `POST /api/offload` with `{ scanId, paths, dest }` moves data to another
      drive the safe way: copy → verify SHA-256 → only then trash originals;
      any failure rolls back and leaves local data untouched.
+   - `POST /api/cart/commit` with `{ paths }` is the same delete **as one
+     undoable run**: every item is copied into the Time Capsule and verified
+     before anything is trashed, and the response carries a `runId` that
+     `POST /api/cart/undo` restores in full — original paths, byte for byte,
+     even after the Trash has been emptied. (Content only: the capsule has
+     never recorded modification times, so a restored file's mtime is the
+     moment it came back.) It is a separate route from `DELETE /api/files`
+     rather than a flag on it, because the two make different promises and
+     `GET /api/capabilities` marks destructive endpoints one by one.
+     **The refusal that matters:** anything too large for the capsule to
+     protect is **left undeleted** and named in `skipped[]` with its reason —
+     never deleted unprotected. `dryRun: true` returns that same verdict per
+     path *before* anything happens, along with the older capsule copies that
+     would be evicted to make room and B2's open-handle preflight. At most 500
+     paths per commit.
 
 Never skip step 1: destructive endpoints refuse paths that are not inside a
 root this server has actually scanned. Scanning is what grants (scoped,
@@ -209,8 +232,8 @@ read-what-you-saw) permission to act.
   double-gated: `POST /api/trash/empty` and `POST /api/system/snapshots/purge`
   both require `{ "confirm": true }`.
 - **The scanned-root rule.** Endpoints that read, open, move or delete a path
-  (`DELETE /api/files`, `/api/files/open`, `/api/files/terminal`,
-  `/api/files/preview`, `/api/offload`, `/api/git/gc`,
+  (`DELETE /api/files`, `/api/cart/commit`, `/api/files/open`,
+  `/api/files/terminal`, `/api/files/preview`, `/api/offload`, `/api/git/gc`,
   `/api/container/expand`) demand the path lie inside the root of a scan this
   server performed. Outside → `403 { code: "OUTSIDE_SCAN_ROOT" }`.
 - **Path sanitization.** All user-supplied paths are validated: `..` traversal
@@ -226,9 +249,10 @@ read-what-you-saw) permission to act.
 
 ## Safety rails for agents: dry runs, policy, audit, idempotency
 
-- **Dry runs.** `DELETE /api/files`, `POST /api/offload` and
-  `POST /api/offload/restore` accept `"dryRun": true` and return the **exact
-  manifest** — affected paths and bytes — while acting on nothing. A dry run
+- **Dry runs.** `DELETE /api/files`, `POST /api/cart/commit`,
+  `POST /api/offload` and `POST /api/offload/restore` accept `"dryRun": true`
+  and return the **exact manifest** — affected paths and bytes — while acting
+  on nothing. A dry run
   passes through every validation a real run would (path guards, policy,
   offload planning), so "dry run succeeded" genuinely means "the real run
   would act". **Always dry-run, show the user, then act.**
