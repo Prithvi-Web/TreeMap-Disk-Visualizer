@@ -198,10 +198,17 @@ export abstract class BaseProvider implements PlatformProvider {
       watcher.on('error', () => {
         /* the watch is best-effort; a dropped watch surfaces as index staleness */
       });
-    } catch {
-      // Watch could not be established at all (permissions, unsupported fs).
-      // The IndexEngine's staleness guard is what covers this case.
-      return () => {};
+    } catch (err) {
+      // Watch could not be established at all (permissions, unsupported fs,
+      // a descriptor limit). Rethrown rather than swallowed into a no-op
+      // unsubscribe, because the caller's whole contract is a boolean saying
+      // whether a watch attached: `startWatcher` catches this and returns
+      // false, `POST /api/index/watch` reports `watching: false`, and the Live
+      // toggle stays off. Returning a no-op here made all three say yes while
+      // nothing was being watched — and the only symptom was an index that
+      // quietly never updated. The staleness guard still covers the root; it
+      // just no longer has to cover a lie as well.
+      throw err;
     }
 
     return () => {

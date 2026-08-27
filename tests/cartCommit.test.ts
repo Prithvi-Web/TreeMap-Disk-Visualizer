@@ -40,19 +40,34 @@ const INDEX = readFileSync(path.join(__dirname_, '..', 'public', 'index.html'), 
  * exercise validation and refusal paths that stop before any delete.
  */
 
-after(() => {
+after(async () => {
+  if (shared) await shared.close();
   fs.rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
+/**
+ * One server for the whole file, started on first use.
+ *
+ * It used to be one per test. Node runs test FILES in parallel, and five
+ * server startups plus their scans is real contention on a three-core CI
+ * runner — which is the documented cause of the watcher tests in
+ * `indexEngine.test.ts` missing their FSEvents callbacks. Nothing here needs
+ * a fresh process; the rate limiter is what needed resetting between tests,
+ * and that is a function call.
+ */
+let shared: { port: number; close: () => Promise<void> } | null = null;
+
 async function listen() {
   resetRateLimiter();
+  if (shared) return { port: shared.port, close: async () => {} };
   const app = createApp(path.join(__dirname_, '..', 'public'));
   const server = http.createServer(app);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
-  return {
+  shared = {
     port: (server.address() as { port: number }).port,
     close: () => new Promise<void>((r) => server.close(() => r())),
   };
+  return { port: shared.port, close: async () => {} };
 }
 
 function req(

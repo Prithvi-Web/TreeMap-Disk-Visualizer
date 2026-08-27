@@ -283,10 +283,13 @@ test('a path containing LIKE wildcards is deleted precisely, not by pattern', as
     const root = await buildIndex(dir, { live: false });
     assert.equal(root.totalSize, 1600);
 
-    startWatcher(dir);
+    assert.equal(startWatcher(dir), true, 'the watcher attached at all');
     await fsp.rm(path.join(dir, '100%_backup'), { recursive: true, force: true });
     const took = await waitFor(() => getRoot(dir)!.totalSize === 900);
-    assert.ok(took >= 0, 'the wildcard-named folder was removed');
+    // Named for what actually failed. This used to read "the wildcard-named
+    // folder was removed", which is a claim about the disk — and the disk had
+    // done its part. What can fail here is the watcher noticing.
+    assert.notEqual(took, -1, 'the removal never reached the index — the watcher delivered nothing');
 
     const rootId = getRoot(dir)!.id;
     assert.equal(findNodeIdByPath(rootId, dir, path.join(dir, '100%_backup')), null, 'the wildcard-named folder is gone');
@@ -694,6 +697,46 @@ test('the index carries the seek paths readTree and the allocation report need',
       1,
     );
     assert.match(families, /idx_nodes_family/, `family counting must use the partial index: ${families}`);
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+/* ══════════════════════ The watcher's boolean means something ══════════════════════ */
+
+test('startWatcher reports false when no watch could be established', async () => {
+  // `startWatcher` promises "a watch attached", and `POST /api/index/watch`
+  // and the Live toggle both render that answer. It used to be incapable of
+  // saying no: `subscribeToChanges` caught its own failure and returned a
+  // no-op unsubscribe, so a permission error, an unsupported filesystem or a
+  // descriptor limit all came back as `true` with nothing being watched — an
+  // index that quietly never updated, under a control reading "Live".
+  const dir = await mkTmp();
+  try {
+    await fsp.writeFile(path.join(dir, 'a.bin'), Buffer.alloc(100));
+    await buildIndex(dir, { live: false });
+    assert.equal(startWatcher(dir), true, 'a watchable directory attaches');
+    stopWatcher(dir);
+
+    // A path that cannot be watched because it is not there.
+    const gone = path.join(dir, 'never-existed');
+    assert.equal(startWatcher(gone), false, 'an unwatchable path reports false, not true');
+  } finally {
+    stopWatcher(dir);
+    deleteIndex(dir);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a failed watch leaves no entry behind to be "stopped" later', async () => {
+  const dir = await mkTmp();
+  try {
+    const gone = path.join(dir, 'never-existed');
+    assert.equal(startWatcher(gone), false);
+    // The bookkeeping must agree with the answer: a second attempt has to be
+    // able to try again rather than short-circuit on a registered no-op.
+    assert.equal(startWatcher(gone), false, 'it is not remembered as attached');
+    stopWatcher(gone); // must not throw
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
   }

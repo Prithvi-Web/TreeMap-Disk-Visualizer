@@ -59,6 +59,51 @@ Skipped on Windows deliberately rather than "fixed": NTFS allocates
 truncate-only files solid, so the fixture would really try to write a petabyte.
 That is the handoff's own POSIX-shaped-but-different rule.
 
+### The macOS CI failure after the push, and what it actually was
+
+Two tests failed on the first push, both in `tests/indexEngine.test.ts`:
+`an external create, resize and delete each land within 2 seconds` (451) and
+`a path containing LIKE wildcards is deleted precisely` (453). Linux and
+Windows were green.
+
+Both are FSEvents-watcher timing assertions — the family trap 5 already names
+as flaky, and whose own code comment records a miss "on a green codebase". So
+the mechanism was not new. What was new is that Phase 4 added four test files,
+two of which do real work (capsule copies with SHA-256 verification, real
+scans), and Node runs test *files* in parallel: on a three-core runner that is
+exactly the contention the comment blames.
+
+**Do not widen the watcher budgets in response to this.** Three things were
+done instead, and the suite ran green four times in CI mode afterwards:
+
+1. `tests/cartCommit.test.ts` now starts **one** server for the file instead of
+   one per test. Five server startups plus their scans were load nothing in
+   that file needed.
+2. Test 453 now asserts `startWatcher(dir) === true` and fails with *the
+   removal never reached the index — the watcher delivered nothing*. It used to
+   say "the wildcard-named folder was removed", which is a claim about the
+   disk — and the disk had done its part. A failure that names the wrong
+   subsystem costs a session.
+3. The real bug underneath (below) — which is why 453 could not tell a watch
+   that never attached from one that was merely slow.
+
+### `startWatcher` could return true while watching nothing
+
+`startWatcher` promises a boolean meaning "a watch attached", and
+`POST /api/index/watch` and the Live toggle both render that answer. It was
+incapable of saying no: `PlatformBase.subscribeToChanges` caught its own
+`fs.watch` failure and returned a **no-op unsubscribe**, so a permission error,
+an unsupported filesystem or a descriptor limit all came back as `true` with
+nothing being watched. The only symptom was an index that quietly never
+updated, under a control reading "Live".
+
+The base implementation now rethrows, which `startWatcher`'s existing catch
+turns into `false` exactly as its own comment always said it would. Linux also
+watches the **root synchronously** before returning — `void seed(...)` meant
+the subscription was handed back before any watch existed at all — while a
+*subdirectory* failing stays a best-effort miss, because the tree is still
+watched, just not exhaustively. Two tests pin both halves.
+
 ### New traps, all paid for
 
 - **A ported algorithm needs a test that runs both copies.** §4.3 forbids a

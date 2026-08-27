@@ -152,7 +152,13 @@ export class LinuxProvider extends BaseProvider {
             },
           );
         });
-      } catch {
+      } catch (err) {
+        // The ROOT failing is the caller's boolean: `startWatcher` promises
+        // "a watch attached", and with the root unwatched nothing under it is
+        // ever seen. A subdirectory failing is a different thing — the tree is
+        // still watched, just not exhaustively — and stays a silent
+        // best-effort miss that index staleness covers.
+        if (dir === root) throw err;
         return; // watch limit reached or permission denied — index staleness covers it
       }
       watcher.on('error', () => {
@@ -176,6 +182,12 @@ export class LinuxProvider extends BaseProvider {
       }
     };
 
+    // The root's own watch is established SYNCHRONOUSLY, before returning, so
+    // the unsubscribe handed back corresponds to a watch that exists. `seed`
+    // walking the subtree stays async — on a large tree it is slow, and events
+    // in the root are what matter first — but a caller that gets a subscription
+    // back must not have to hope one appears later.
+    watchDir(root);
     void seed(root, 0);
 
     return () => {
