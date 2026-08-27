@@ -1,5 +1,5 @@
 import { promises as fsp } from 'fs';
-import type { ProvenanceInfo } from '../types';
+import type { DownloadOriginBatch, DownloadOriginBrief, ProvenanceInfo } from '../types';
 
 /**
  * Download provenance on Windows (C3) via the `Zone.Identifier` alternate data
@@ -99,4 +99,67 @@ export async function downloadOrigin(path: string): Promise<ProvenanceInfo | nul
     downloadedAt: null,
     mechanism: 'Zone.Identifier alternate data stream',
   };
+}
+
+/* ══════════════ Bulk download records for the Reclaim Score (v4 §3.1) ══════════════ */
+
+/**
+ * How many streams are read at once.
+ *
+ * These are plain file reads, so the limit is file descriptors rather than
+ * process spawns — 64 keeps a 2,000-path batch well inside any default
+ * handle budget while still saturating the disk queue.
+ */
+const ZONE_CONCURRENCY = 64;
+
+/**
+ * Download records for many paths at once.
+ *
+ * Windows is the cheap case: there is no subprocess to batch, because an
+ * alternate data stream is an ordinary file. The whole reader is `readFile`
+ * run with a concurrency limit.
+ *
+ * The distinction that matters is which error means what. `ENOENT` on the
+ * stream is the ordinary answer — the file was not downloaded, or it lives on
+ * a filesystem with no alternate data streams — and that is *checked, no
+ * record*. Anything else (a permission refusal, an I/O error) is **unknown**,
+ * and goes to `unchecked` so the score reports the component as missing
+ * rather than as "this was never downloaded".
+ */
+export async function readDownloadOriginsWindows(paths: string[]): Promise<DownloadOriginBatch> {
+  const origins = new Map<string, DownloadOriginBrief>();
+  const unchecked = new Set<string>();
+  const mechanism = 'Zone.Identifier alternate data stream';
+
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < paths.length) {
+      const p = paths[next++];
+      let raw: string;
+      try {
+        raw = await fsp.readFile(p + STREAM_SUFFIX, 'utf8');
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        // ENOENT: no stream, which is a real "not downloaded". Anything else
+        // is a failure to look, and must not be scored as an absence.
+        if (code !== 'ENOENT' && code !== 'ENOTDIR') unchecked.add(p);
+        continue;
+      }
+      const { hostUrl, referrerUrl } = parseZoneIdentifier(raw.replace(/^﻿/, ''));
+      const url = hostUrl ?? referrerUrl;
+      if (url === null) continue; // a stream with no URL records nothing
+      origins.set(p, {
+        host: hostOf(url),
+        // No Windows mechanism records a download timestamp. The file's own
+        // mtime would be a plausible-looking lie — an edited file's mtime has
+        // nothing to do with when it was downloaded.
+        downloadedAt: null,
+        agent: null,
+        mechanism,
+      });
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(ZONE_CONCURRENCY, paths.length) }, worker));
+  return { available: true, origins, unchecked, mechanism };
 }

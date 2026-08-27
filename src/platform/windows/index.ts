@@ -4,7 +4,7 @@ import os from 'os';
 import { BaseProvider } from '../base';
 import { commandExists, runJson } from '../exec';
 import { openHandlesFor } from './restartManager';
-import { downloadOrigin } from './zoneIdentifier';
+import { downloadOrigin, readDownloadOriginsWindows } from './zoneIdentifier';
 import { volumeTopology } from './topology';
 import { fileFactsBatch, toPlaceholderInfo } from './attributes';
 import { listSnapshots as vssSnapshots, snapshotAvailability } from './vss';
@@ -17,6 +17,7 @@ import { mapSmartctl, SmartctlJson } from '../macos';
 import type {
   CapabilityState,
   BackupMembership,
+  DownloadOriginBatch,
   LastUsedInfo,
   HardwareEncodeCapability,
   OpenHandleInfo,
@@ -131,6 +132,10 @@ export class WindowsProvider extends BaseProvider {
 
   override async getDownloadOrigin(p: string): Promise<ProvenanceInfo | null> {
     return downloadOrigin(p);
+  }
+
+  override readDownloadOrigins(paths: string[]): Promise<DownloadOriginBatch> {
+    return readDownloadOriginsWindows(paths);
   }
 
   /* ---------------- Topology (A5) ---------------- */

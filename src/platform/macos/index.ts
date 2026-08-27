@@ -5,7 +5,7 @@ import os from 'os';
 import { BaseProvider } from '../base';
 import { commandExists, runJson, reasonOf } from '../exec';
 import { openHandlesFor, zombieHandles } from './lsofGuard';
-import { downloadOrigin } from './provenance';
+import { downloadOrigin, readDownloadOriginsMac } from './provenance';
 import { volumeTopology } from './diskutil';
 import { listSnapshots as tmListSnapshots, mountSnapshot } from './tmutil';
 import { recoverFromSnapshots as macRecoverFromSnapshots } from './snapshotRecover';
@@ -20,6 +20,7 @@ import {
 import type {
   CapabilityState,
   CloneFamilyId,
+  DownloadOriginBatch,
   HardwareEncodeCapability,
   BackupMembership,
   LastUsedInfo,
@@ -100,6 +101,10 @@ export class MacOsProvider extends BaseProvider {
 
   override async getDownloadOrigin(p: string): Promise<ProvenanceInfo | null> {
     return downloadOrigin(p);
+  }
+
+  override readDownloadOrigins(paths: string[]): Promise<DownloadOriginBatch> {
+    return readDownloadOriginsMac(paths);
   }
 
   /* ---------------- Topology (A5) ---------------- */

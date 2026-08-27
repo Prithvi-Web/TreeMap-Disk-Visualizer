@@ -1,5 +1,5 @@
-import { runText, CommandUnavailableError } from '../exec';
-import type { ProvenanceInfo } from '../types';
+import { runText, CommandUnavailableError, CommandFailedError } from '../exec';
+import type { DownloadOriginBatch, DownloadOriginBrief, ProvenanceInfo } from '../types';
 
 /**
  * Download provenance on Linux (C3) via extended attributes.
@@ -85,4 +85,138 @@ export async function provenanceAvailable(): Promise<{ available: boolean; reaso
     }
     return { available: true };
   }
+}
+
+/* ══════════════ Bulk download records for the Reclaim Score (v4 §3.1) ══════════════ */
+
+/**
+ * Paths per `getfattr` invocation. Chunked for ARG_MAX, as `mdls` and
+ * `tmutil` are — a spawn that fails on argument length loses a whole batch
+ * and records no reason for it.
+ */
+const GETFATTR_BATCH = 500;
+
+/**
+ * Decode one `getfattr` text value.
+ *
+ * The default `text` encoding wraps the value in double quotes and escapes
+ * backslash, quote and every non-printable byte as a three-digit **octal**
+ * sequence. Decimal would be the natural guess and would silently corrupt any
+ * URL containing an escaped byte, so the radix is spelled out here.
+ */
+export function decodeGetfattrValue(raw: string): string {
+  let text = raw.trim();
+  if (text.startsWith('"') && text.endsWith('"') && text.length >= 2) {
+    text = text.slice(1, -1);
+  }
+  return text.replace(/\\(\\|"|[0-7]{3})/g, (_m, esc: string) => {
+    if (esc === '\\') return '\\';
+    if (esc === '"') return '"';
+    return String.fromCharCode(Number.parseInt(esc, 8));
+  });
+}
+
+/**
+ * Parse a multi-file `getfattr` dump.
+ *
+ *     # file: /home/me/a.zip
+ *     user.xdg.origin.url="https://example.com/a.zip"
+ *
+ *     # file: /home/me/b.iso
+ *     user.xdg.origin.url="https://mirror.example.org/b.iso"
+ *
+ * Files with no such attribute produce **no block at all** — their complaint
+ * goes to stderr — and `getfattr` then exits non-zero. As with `xattr` on
+ * macOS and `lsof` before it, the exit code carries no information here and
+ * stdout carries all of it.
+ *
+ * Returned paths are whatever the `# file:` header said, so the caller must
+ * pass `--absolute-names`; without it getfattr strips the leading slash and
+ * nothing would match the requested paths.
+ */
+export function parseGetfattrBatch(stdout: string): Map<string, string> {
+  const out = new Map<string, string>();
+  let current: string | null = null;
+
+  for (const line of stdout.replace(/\r\n/g, '\n').split('\n')) {
+    const header = /^#\s*file:\s*(.+)$/.exec(line);
+    if (header) {
+      current = header[1].trim();
+      continue;
+    }
+    if (current === null || line.length === 0) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    if (line.slice(0, eq).trim() !== ORIGIN_ATTR) continue;
+    const value = decodeGetfattrValue(line.slice(eq + 1));
+    // First wins: a duplicated attribute in one block is malformed output,
+    // and taking the last would let trailing junk overwrite a good value.
+    if (value.length > 0 && !out.has(current)) out.set(current, value);
+  }
+  return out;
+}
+
+/** One chunk, tolerating the exit-non-zero-with-good-stdout case. */
+async function runGetfattr(paths: string[]): Promise<Map<string, string> | null> {
+  try {
+    const raw = await runText('getfattr', ['-n', ORIGIN_ATTR, '--absolute-names', '--', ...paths], {
+      timeoutMs: 10_000,
+    });
+    return parseGetfattrBatch(raw);
+  } catch (err) {
+    if (err instanceof CommandUnavailableError) return null;
+    if (err instanceof CommandFailedError) return parseGetfattrBatch(err.stdout);
+    return null;
+  }
+}
+
+/**
+ * Download records for a batch of paths.
+ *
+ * Carries the caveat this module already states for the single-file reader,
+ * and it matters more here because the score would otherwise read an absence
+ * as evidence: `user.xdg.origin.url` is a freedesktop convention that
+ * Chromium-based browsers honour and **Firefox does not**. A file downloaded
+ * with Firefox has no attribute and never will, so "no record" on Linux is a
+ * weaker statement than on macOS or Windows — which is why the mechanism name
+ * travels with every answer and is shown in the score's breakdown.
+ */
+export async function readDownloadOriginsLinux(paths: string[]): Promise<DownloadOriginBatch> {
+  const origins = new Map<string, DownloadOriginBrief>();
+  const unchecked = new Set<string>();
+  const mechanism = 'user.xdg.origin.url';
+  if (paths.length === 0) return { available: true, origins, unchecked, mechanism };
+
+  for (let i = 0; i < paths.length; i += GETFATTR_BATCH) {
+    const chunk = paths.slice(i, i + GETFATTR_BATCH);
+    const values = await runGetfattr(chunk);
+    if (values === null) {
+      for (const p of chunk) unchecked.add(p);
+      continue;
+    }
+    for (const p of chunk) {
+      const url = values.get(p);
+      if (url === undefined) continue; // checked, no record
+      origins.set(p, {
+        host: hostOf(url),
+        // No Linux convention records a download timestamp; see above.
+        downloadedAt: null,
+        agent: null,
+        mechanism,
+      });
+    }
+  }
+
+  if (unchecked.size === paths.length) {
+    return {
+      available: false,
+      reason:
+        'getfattr is not installed, so TreeMap cannot read where a file was downloaded from. '
+        + 'Install the attr package to enable it.',
+      origins,
+      unchecked,
+      mechanism,
+    };
+  }
+  return { available: true, origins, unchecked, mechanism };
 }

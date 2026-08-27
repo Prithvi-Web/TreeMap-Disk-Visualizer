@@ -6,7 +6,7 @@ import { BaseProvider } from '../base';
 import { commandExists, runJson } from '../exec';
 import { openHandlesFor, zombieHandles } from './procFdGuard';
 import { volumeTopology, isRotational, queueDepth, topologyReason } from './topology';
-import { downloadOrigin, provenanceAvailable } from './provenance';
+import { downloadOrigin, provenanceAvailable, readDownloadOriginsLinux } from './provenance';
 import { listSnapshots as btrfsSnapshots, snapshotAvailability } from './btrfs';
 import { relativeToVolume } from '../snapshotPaths';
 import { registerShellIntegration, unregisterShellIntegration, isInstalled as linuxShellInstalled } from './shellIntegration';
@@ -16,6 +16,7 @@ import { mapSmartctl, SmartctlJson } from '../macos';
 import type {
   CapabilityState,
   BackupMembership,
+  DownloadOriginBatch,
   LastUsedInfo,
   ChangeEvent,
   HardwareEncodeCapability,
@@ -244,6 +245,10 @@ export class LinuxProvider extends BaseProvider {
 
   override async getDownloadOrigin(p: string): Promise<ProvenanceInfo | null> {
     return downloadOrigin(p);
+  }
+
+  override readDownloadOrigins(paths: string[]): Promise<DownloadOriginBatch> {
+    return readDownloadOriginsLinux(paths);
   }
 
   override async listSnapshots(volume: string): Promise<VolumeSnapshotRef[]> {

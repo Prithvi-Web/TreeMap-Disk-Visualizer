@@ -164,6 +164,63 @@ export interface ProvenanceInfo {
   mechanism: string;
 }
 
+/**
+ * A download record, read in bulk (v4 §3.1).
+ *
+ * Deliberately smaller than `ProvenanceInfo`, and the difference is a cost
+ * decision that is worth stating where it will be read.
+ *
+ * The full C3 provenance path costs **two subprocesses per file** on macOS —
+ * `mdls` for the origin URL and `xattr` for the quarantine record — which is
+ * fine for the one file whose detail panel is open and impossible for the
+ * 2,000 the Reclaim Score has to rank. Measured here: batched `mdls` runs
+ * ~0.36 ms per path, which alone exceeds §2.5's 400 ms sidecar budget, while
+ * one `xattr` call over 2,000 absolute paths returns in ~50-70 ms — about
+ * 0.03 ms per path.
+ *
+ * So the bulk reader uses the cheap mechanism on each OS and reports what
+ * that mechanism can actually see. On macOS that is the quarantine record,
+ * which by the C3 module's own measurements is the *better* source anyway:
+ * `kMDItemDownloadedDate` reads `(null)` on genuinely downloaded files, while
+ * quarantine carries both an accurate date and the downloading application.
+ * What it does not carry is the URL, so `host` is null there and the detail
+ * panel still calls `readProvenance()` for the one file a person is looking
+ * at. Neither reader guesses at what the other found.
+ */
+export interface DownloadOriginBrief {
+  /** Host the file came from, when the cheap mechanism records one. */
+  host: string | null;
+  /** Unix epoch ms the file was downloaded, when recorded. */
+  downloadedAt: number | null;
+  /** The application that downloaded it, where the OS records one. */
+  agent: string | null;
+  /** Which mechanism answered, named for the UI. */
+  mechanism: string;
+}
+
+/**
+ * One batch of download records.
+ *
+ * Three outcomes, kept apart because collapsing any two of them produces a
+ * confident falsehood:
+ *
+ *  - a path **in `origins`** has a record;
+ *  - a path in neither map was **checked and had none** — a real answer, and
+ *    the only one that may be scored as zero;
+ *  - a path **in `unchecked`** could not be looked at, which is unknown.
+ *
+ * `available: false` says the mechanism is missing machine-wide, and then
+ * every requested path is `unchecked` rather than recordless.
+ */
+export interface DownloadOriginBatch {
+  available: boolean;
+  /** Present when `available` is false. Plain English, shown verbatim. */
+  reason?: string;
+  origins: Map<string, DownloadOriginBrief>;
+  unchecked: Set<string>;
+  mechanism: string;
+}
+
 /* ---------- Last-used dates (v4 §1.1) ---------- */
 
 /**

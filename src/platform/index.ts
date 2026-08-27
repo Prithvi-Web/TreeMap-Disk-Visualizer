@@ -11,6 +11,7 @@ import {
   PlaceholderInfo,
   PlatformName,
   ProvenanceInfo,
+  DownloadOriginBatch,
   RawEntry,
   ShellIntegrationResult,
   SmartInfo,
@@ -65,6 +66,16 @@ export interface PlatformProvider {
   /* Drive health (C4) and provenance (C3) */
   getSmartData(devicePath: string): Promise<SmartInfo | null>;
   getDownloadOrigin(path: string): Promise<ProvenanceInfo | null>;
+  /**
+   * Download records for many paths at once (v4 §3.1).
+   *
+   * Separate from `getDownloadOrigin` rather than a loop around it, because
+   * the per-file reader costs two subprocesses per path on macOS and the
+   * Reclaim Score has to rank thousands. This one uses the cheapest
+   * mechanism each OS offers and says which; the per-file reader stays the
+   * richer answer for the single file whose detail panel is open.
+   */
+  readDownloadOrigins(paths: string[]): Promise<DownloadOriginBatch>;
 
   /* Volume topology (A5) and snapshots (B4) */
   listLogicalVolumes(): Promise<LogicalVolumeInfo[]>;

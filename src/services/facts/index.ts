@@ -2,6 +2,7 @@ import { registerFactProvider } from './registry';
 import { sizeProvider } from './sizeProvider';
 import { lastUsedProvider } from './lastUsedProvider';
 import { recoverabilityProvider } from './recoverabilityProvider';
+import { reclaimScoreProvider } from './reclaimScoreProvider';
 
 /**
  * The fact layer's entry point (§4.1).
@@ -23,6 +24,7 @@ import { clearFactCache } from './registry';
 registerFactProvider(sizeProvider);
 registerFactProvider(lastUsedProvider);
 registerFactProvider(recoverabilityProvider);
+registerFactProvider(reclaimScoreProvider);
 
 // Facts describe one scan's tree, so they die with it. Without this the
 // registry's own comment ("called when a scan is replaced") was aspirational:
@@ -45,3 +47,4 @@ export { unavailableBatch } from './types';
 export type { SizeFact } from './sizeProvider';
 export type { LastUsedFact } from './lastUsedProvider';
 export type { RecoverabilityFact } from '../recoverabilityTypes';
+export type { ReclaimScoreFactValue } from './reclaimScoreProvider';

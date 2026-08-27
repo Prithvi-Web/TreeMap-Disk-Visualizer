@@ -56,12 +56,28 @@ export function collectCleanupSuggestions(
   source: TreeSource,
   ignore: CompiledIgnore[],
   catalog: RuleCatalog = loadRuleCatalog(),
+  /**
+   * Called for every match, before the per-rule display cap applies.
+   *
+   * The Reclaim Score's `regenerable` component needs to know which rule
+   * claims an arbitrary path, and the groups this function returns cannot
+   * answer that: `items` stops at ITEMS_PER_RULE, so the 201st `node_modules`
+   * in a scan is claimed by a rule and absent from the list. Reading the
+   * capped list would have scored it as "no rule recognises this", which is a
+   * different and wrong statement.
+   *
+   * An observer on the existing walk rather than a second matcher, because
+   * two matchers over the same rule packs agree today and drift by the next
+   * rule anyone adds.
+   */
+  observe?: (rule: Rule, nodePath: string) => void,
 ): CleanupSuggestionGroup[] {
   const store = asStore(source);
   const now = Date.now();
 
   const groups = new Map<string, CleanupSuggestionGroup>();
   const add = (rule: Rule, node: number, nodePath: string): void => {
+    observe?.(rule, nodePath);
     let group = groups.get(rule.id);
     if (!group) {
       group = {

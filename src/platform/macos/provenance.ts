@@ -1,6 +1,6 @@
-import { runText, CommandUnavailableError } from '../exec';
+import { runText, CommandUnavailableError, CommandFailedError } from '../exec';
 import { runPlist } from './plist';
-import type { ProvenanceInfo } from '../types';
+import type { DownloadOriginBatch, DownloadOriginBrief, ProvenanceInfo } from '../types';
 
 /**
  * Download provenance on macOS (C3).
@@ -129,4 +129,124 @@ export async function downloadOrigin(path: string): Promise<ProvenanceInfo | nul
     downloadedAt,
     mechanism: url !== null ? 'kMDItemWhereFroms + com.apple.quarantine' : 'com.apple.quarantine',
   };
+}
+
+/* ══════════════ Bulk download records for the Reclaim Score (v4 §3.1) ══════════════ */
+
+/**
+ * How many paths one `xattr` invocation is given.
+ *
+ * ARG_MAX is 1 MiB on macOS and 2,000 absolute paths measured 255 KB, so this
+ * is not tight — but `mdls` and `tmutil` are both chunked for exactly this
+ * reason, and a spawn that fails on ARG_MAX loses the whole batch silently.
+ */
+const XATTR_BATCH = 500;
+
+/**
+ * Parse `xattr -p com.apple.quarantine -- <paths…>`.
+ *
+ * ── Three shapes, all verified against the real tool on macOS 15 ──
+ *
+ * 1. **Many paths** → one `\<path\>: \<value\>` line per file that has the
+ *    attribute. Files without it produce nothing on stdout; their errors go
+ *    to stderr.
+ * 2. **Exactly one path** → the bare value, with **no path prefix at all** —
+ *    the same shape trap `mdls` has, and the same fix: know how many paths
+ *    were sent.
+ * 3. **Any file lacking the attribute makes `xattr` exit 1**, which is the
+ *    ordinary case rather than a failure. The exit code carries no
+ *    information here; only stdout does. This is the `lsof` situation the
+ *    exec helper's `CommandFailedError` was written for.
+ *
+ * Lines are matched against the paths that were actually requested rather
+ * than split on the first colon: a filename may contain `: `, and splitting
+ * would attach one file's download record to another file's row.
+ */
+export function parseXattrBatch(stdout: string, paths: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const text = stdout.replace(/\r\n/g, '\n');
+
+  if (paths.length === 1) {
+    const value = text.trim();
+    if (value.length > 0) out.set(paths[0], value);
+    return out;
+  }
+
+  // Longest first, so a path that is a prefix of another cannot claim its
+  // line — /a/b.txt must not swallow the record for /a/b.txt.download.
+  const byLength = [...paths].sort((a, b) => b.length - a.length);
+
+  for (const line of text.split('\n')) {
+    if (line.length === 0) continue;
+    const match = byLength.find((p) => line.startsWith(p + ': '));
+    if (!match) continue;
+    const value = line.slice(match.length + 2).trim();
+    // An empty attribute is not a record. Storing it would make a file with a
+    // blank quarantine value look like a download whose date nobody knows.
+    if (value.length > 0 && !out.has(match)) out.set(match, value);
+  }
+  return out;
+}
+
+/** One chunk, tolerating the exit-1-with-good-stdout case. */
+async function runXattr(paths: string[]): Promise<Map<string, string> | null> {
+  try {
+    const raw = await runText('xattr', ['-p', 'com.apple.quarantine', '--', ...paths], { timeoutMs: 10_000 });
+    return parseXattrBatch(raw, paths);
+  } catch (err) {
+    if (err instanceof CommandUnavailableError) return null;
+    // Exit 1 means "at least one of these files has no quarantine record",
+    // which is the normal case — every file that DOES have one is already on
+    // stdout. Reading the exit code as failure here would report a whole
+    // batch as unknown whenever a single ordinary file appeared in it.
+    if (err instanceof CommandFailedError) return parseXattrBatch(err.stdout, paths);
+    return null;
+  }
+}
+
+/**
+ * Download records for a batch of paths, from the quarantine xattr alone.
+ *
+ * No `mdls`, so no origin URL — see `DownloadOriginBrief` for why. What this
+ * does supply is the downloading application and an accurate date, which is
+ * what the score's `why` line needs to read as a sentence: "downloaded by
+ * Chrome 14 months ago".
+ */
+export async function readDownloadOriginsMac(paths: string[]): Promise<DownloadOriginBatch> {
+  const origins = new Map<string, DownloadOriginBrief>();
+  const unchecked = new Set<string>();
+  const mechanism = 'com.apple.quarantine';
+  if (paths.length === 0) return { available: true, origins, unchecked, mechanism };
+
+  for (let i = 0; i < paths.length; i += XATTR_BATCH) {
+    const chunk = paths.slice(i, i + XATTR_BATCH);
+    const values = await runXattr(chunk);
+    if (values === null) {
+      // The whole chunk is unknown, not recordless. Which files in it had a
+      // download record is exactly what we failed to learn.
+      for (const p of chunk) unchecked.add(p);
+      continue;
+    }
+    for (const p of chunk) {
+      const raw = values.get(p);
+      if (raw === undefined) continue; // checked, no record — a real answer
+      const { downloadedAt, agent } = parseQuarantine(raw);
+      if (downloadedAt === null && agent === null) continue; // unparseable is no record
+      origins.set(p, { host: null, downloadedAt, agent, mechanism });
+    }
+  }
+
+  // `xattr` missing entirely would be extraordinary on macOS, but if every
+  // chunk failed there is nothing to report and saying so beats implying the
+  // whole batch was downloaded by nobody.
+  if (unchecked.size === paths.length) {
+    return {
+      available: false,
+      reason: 'The quarantine records that say where a file was downloaded from could not be read on this Mac.',
+      origins,
+      unchecked,
+      mechanism,
+    };
+  }
+  return { available: true, origins, unchecked, mechanism };
 }

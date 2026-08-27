@@ -17,6 +17,8 @@ import { getScan } from './diskScanner';
  */
 
 const PARTIAL_BYTES = 64 * 1024;
+/** How many groups a completed job reports. `groupCount` still counts them all. */
+export const REPORTED_GROUPS = 500;
 /** How many files are hashed concurrently. */
 const HASH_CONCURRENCY = 4;
 
@@ -25,6 +27,20 @@ const jobs = new Map<string, DuplicateJob>();
 export function cancelAllDuplicateJobs(): void {
   for (const job of jobs.values()) job.cancelled = true;
   jobs.clear();
+}
+
+/**
+ * The duplicate job for a scan **without starting one** (v4 §3.1).
+ *
+ * `getDuplicateJob` starts hashing if there is nothing to return, which is
+ * right for the Duplicates view and wrong for the Reclaim Score: scoring a
+ * folder must not kick off a full-disk SHA-256 pass as a side effect. The
+ * score reads what is already known and reports its `redundant` component as
+ * unavailable when nothing is — which is also the honest answer, since
+ * "no duplicate found" is only true once the hashing has actually run.
+ */
+export function peekDuplicateJob(scanId: string): DuplicateJob | undefined {
+  return jobs.get(scanId);
 }
 
 /**
@@ -146,7 +162,10 @@ async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void
   }
   groups.sort((a, b) => b.reclaimable - a.reclaimable);
 
-  job.groups = groups.slice(0, 500); // response-size guard; UI shows the top
+  // Response-size guard; the UI shows the top. `groupCount` below keeps the
+  // true total, and the difference is load-bearing for the Reclaim Score: a
+  // path absent from `groups` is only "not a duplicate" when every group fits.
+  job.groups = groups.slice(0, REPORTED_GROUPS);
   job.groupCount = groups.length;
   job.totalReclaimable = groups.reduce((sum, g) => sum + g.reclaimable, 0);
   job.status = 'complete';

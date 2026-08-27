@@ -309,6 +309,7 @@ async function measureFacts(): Promise<FactMeasurement[] | null> {
   const { resetRateLimiter } = await import('../src/middleware/rateLimiter');
   const { startScan, getScan } = await import('../src/services/diskScanner');
   const { clearFactCache } = await import('../src/services/facts');
+  const { clearScanInputs } = await import('../src/services/reclaimInputs');
 
   resetRateLimiter();
   const server = http.createServer(createApp(path.join(REPO, 'public')));
@@ -336,8 +337,15 @@ async function measureFacts(): Promise<FactMeasurement[] | null> {
     // blow the budget without the gate ever noticing — which is exactly what
     // a Spotlight-first `lastUsed` would have done at ~0.36 ms/path.
     const out: FactMeasurement[] = [];
-    for (const provider of ['size', 'lastUsed', 'recoverability']) {
+    // reclaimScore composes lastUsed and recoverability and adds a bulk
+    // download read, so it is the most expensive row here and the one that
+    // decides whether §2.5's budget is actually met. It is measured cold like
+    // the rest: in real use the two providers it composes are usually already
+    // cached by the same screenful of paths, which makes this the worst case
+    // rather than the typical one.
+    for (const provider of ['size', 'lastUsed', 'recoverability', 'reclaimScore']) {
       clearFactCache(); // cold: a cache hit would measure the Map, not the provider
+      clearScanInputs(); // and the per-scan distribution + rule walk, likewise
       let computed = 0;
       let requested = 0;
       const started = performance.now();

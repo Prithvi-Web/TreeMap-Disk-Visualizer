@@ -18,6 +18,7 @@ import {
   PlaceholderInfo,
   PlatformName,
   ProvenanceInfo,
+  DownloadOriginBatch,
   RawEntry,
   ShellIntegrationResult,
   SmartInfo,
@@ -268,6 +269,24 @@ export abstract class BaseProvider implements PlatformProvider {
 
   async getDownloadOrigin(_path: string): Promise<ProvenanceInfo | null> {
     return null;
+  }
+
+  /**
+   * No bulk mechanism by default.
+   *
+   * Every path comes back `unchecked` rather than recordless: a platform with
+   * no reader has not established that these files were never downloaded, and
+   * the Reclaim Score must report that component as unknown rather than
+   * scoring it zero.
+   */
+  async readDownloadOrigins(paths: string[]): Promise<DownloadOriginBatch> {
+    return {
+      available: false,
+      reason: 'This system has no way to read where a file was downloaded from.',
+      origins: new Map(),
+      unchecked: new Set(paths),
+      mechanism: 'none',
+    };
   }
 
   async listLogicalVolumes(): Promise<LogicalVolumeInfo[]> {
