@@ -139,6 +139,26 @@ function normalizeCloud(raw: unknown): AppSettings['cloud'] {
  * through a settings write is not a state anyone asked for. Turning it off is
  * a job for a visible switch, not for six sliders that all happen to be down.
  */
+/**
+ * The cleanup cart's optional target, in bytes (v4 §4.1).
+ *
+ * `null` is a real answer and the default: no target set, no meter shown.
+ * Anything unparseable or non-positive resolves to `null` rather than to a
+ * number, because a meter filling toward a goal nobody typed would be a claim
+ * about an intention the user never expressed. Capped at 1 PiB so a stray
+ * keystroke cannot produce a meter that can never move.
+ */
+const MAX_GOAL_BYTES = 1024 ** 5;
+function normalizeGoalBytes(raw: unknown): number | null {
+  // Typed before it is coerced. `Number(true)` is 1, so a stray boolean would
+  // otherwise become a one-byte target: a meter permanently at 100%, from a
+  // value nobody typed. Only a number or the string form of one is a target.
+  if (typeof raw !== 'number' && typeof raw !== 'string') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.min(MAX_GOAL_BYTES, Math.round(n));
+}
+
 function normalizeReclaimWeights(raw: unknown): ReclaimWeights {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_RECLAIM_WEIGHTS };
   const src = raw as Record<string, unknown>;
@@ -167,13 +187,14 @@ export async function getSettings(): Promise<AppSettings> {
       timeCapsuleMaxPercent: normalizeCapsulePercent(raw.timeCapsuleMaxPercent),
       cloud: normalizeCloud(raw.cloud),
       reclaimWeights: normalizeReclaimWeights(raw.reclaimWeights),
+      cleanupGoalBytes: normalizeGoalBytes(raw.cleanupGoalBytes),
     };
   }
   return cache;
 }
 
 /** Replace ignore list and/or schedules (input is re-validated here). */
-export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown }): Promise<AppSettings> {
+export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown }): Promise<AppSettings> {
   const current = await getSettings();
   const next: AppSettings = {
     ignore: patch.ignore !== undefined ? normalizeIgnore(patch.ignore) : current.ignore,
@@ -199,6 +220,11 @@ export async function updateSettings(patch: { ignore?: unknown; schedules?: unkn
     reclaimWeights: patch.reclaimWeights !== undefined
       ? normalizeReclaimWeights(patch.reclaimWeights)
       : current.reclaimWeights,
+    // `null` clears the target — the same "send null to reset" shape the
+    // weights use, so Settings needs no second endpoint to turn it off.
+    cleanupGoalBytes: patch.cleanupGoalBytes !== undefined
+      ? normalizeGoalBytes(patch.cleanupGoalBytes)
+      : current.cleanupGoalBytes,
   };
   // Preserve lastRunAt across edits that didn't intend to reset it.
   if (patch.schedules !== undefined) {

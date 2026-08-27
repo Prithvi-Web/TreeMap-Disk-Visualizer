@@ -560,8 +560,13 @@ const schemas: Json = {
           + 'A weight of 0 removes that component from the score rather than scoring it as worthless. '
           + 'Send null to restore the defaults.',
       ),
+      cleanupGoalBytes: nullable(int(
+        'Optional target for the cleanup cart, in bytes ("free 50 GB"). '
+          + 'null means no target is set, which is the default — the meter simply does not appear. '
+          + 'Send null to clear one.',
+      )),
     },
-    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights'],
+    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights', 'cleanupGoalBytes'],
   ),
 };
 
@@ -1618,7 +1623,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Replace whichever settings lists are present in the body',
     tag: 'settings',
     destructive: true,
-    requestBody: jsonBody(opaque('Any subset of AppSettings: ignore, schedules, budgets, forecastThresholdDays, watchIdleMinutes, cloud, reclaimWeights')),
+    requestBody: jsonBody(opaque('Any subset of AppSettings: ignore, schedules, budgets, forecastThresholdDays, watchIdleMinutes, cloud, reclaimWeights, cleanupGoalBytes')),
     responses: { '200': jsonResponse('Updated settings', ref('AppSettings')), '400': errorResponse('Bad shape') },
   },
   {

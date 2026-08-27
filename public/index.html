@@ -633,6 +633,22 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .cart-foot .total { font-size: 12.5px; color: var(--text-2); }
 .cart-foot .total b { color: var(--text-1); }
 .cart-foot .btn-danger { margin-left: auto; }
+/* ── Phase 4 (v4 §4.1) — the goal meter ──
+   A progress meter and nothing else. §4.1 rules out streaks, badges and
+   confetti by name: a reward loop pointed at deleting your own files would be
+   manipulation, and this product does not do that. The bar fills, it says how
+   far along it is, and when the target is met it says so once, plainly. */
+.cart-goal { padding: 10px 15px 11px; border-top: 1px solid var(--hairline); }
+.cart-goal .g-line { display: flex; align-items: baseline; gap: 8px; font-size: 11.5px; color: var(--text-2); margin-bottom: 6px; }
+.cart-goal .g-line b { color: var(--text-1); font-weight: 600; }
+.cart-goal .g-line .g-pct { margin-left: auto; color: var(--text-3); }
+.cart-goal .g-track { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.cart-goal .g-fill { height: 100%; border-radius: 3px; background: var(--accent);
+  transition: width 220ms ease; }
+.cart-goal.met .g-fill { background: var(--ok); }
+.cart-goal.met .g-line b { color: var(--ok); }
+@media (prefers-reduced-motion: reduce) { .cart-goal .g-fill { transition: none; } }
+
 #cartTab { display: flex; align-items: center; gap: 9px; padding: 11px 16px; cursor: pointer;
   border: 1px solid var(--hairline-2); border-radius: 999px; box-shadow: var(--shadow-2);
   --lg-tint: var(--lg-tint-strong);
@@ -2344,6 +2360,21 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <span class="muted" id="reclaimWeightsNote"></span>
       </div>
 
+      <!-- v4 §4.1 — a target for the cleanup cart. Optional, off by default,
+           and deliberately just a meter: no streaks, no badges, no confetti. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="cart"></span>Cleanup target</div>
+      <div class="muted" style="margin-bottom:10px;">Set how much you are trying to free and the cleanup cart shows a meter filling toward it. Leave it empty for no target — the meter then doesn't appear at all. It only measures what you have staged; nothing is ever deleted to reach it.</div>
+      <div class="rule-row">
+        <span data-icon="gauge"></span><label for="cleanupGoalValue">Free up</label>
+        <input type="number" id="cleanupGoalValue" min="0" step="any" placeholder="no target" aria-label="Cleanup target amount">
+        <select id="cleanupGoalUnit" aria-label="Cleanup target unit">
+          <option value="1073741824">GB</option>
+          <option value="1099511627776">TB</option>
+          <option value="1048576">MB</option>
+        </select>
+        <button class="btn" id="cleanupGoalClear"><span data-icon="x"></span>Clear target</button>
+      </div>
+
       <div class="set-h" style="margin-top:22px;"><span data-icon="cloud"></span>Cloud accounts</div>
       <div class="muted" style="margin-bottom:10px;">Scan your own Google Drive, Dropbox or OneDrive in the same treemap — <b>metadata only, no file contents are ever downloaded</b>, and sign-in tokens never leave this computer. Bring your own (free) API app: create one in the provider's developer console with redirect URI <code id="cloudRedirectUri">http://127.0.0.1:53682/oauth/callback</code>, then paste its client ID below.</div>
       <div id="cloudAccounts"></div>
@@ -2444,6 +2475,11 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
       <button class="close-x" id="cartCollapse" aria-label="Collapse cart"><span data-icon="x" data-size="14"></span></button>
     </div>
     <div class="cart-list" id="cartList"></div>
+    <!-- v4 §4.1 — hidden entirely until a target is set in Settings. -->
+    <div class="cart-goal" id="cartGoal" role="group" aria-label="Cleanup target" hidden>
+      <div class="g-line" id="cartGoalLine"></div>
+      <div class="g-track"><div class="g-fill" id="cartGoalFill" style="width:0%"></div></div>
+    </div>
     <div class="cart-foot">
       <span class="total" id="cartFootTotal"></span>
       <button class="btn" id="cartClear">Clear</button>
@@ -8452,6 +8488,60 @@ function refreshCartButtons() {
   });
 }
 
+/* ── Phase 4 (v4 §4.1) — the goal meter ────────────────────────────────────
+   An optional target ("free 50 GB") kept in Settings. The dock fills a bar
+   toward it and says, in words, how far along the cart is.
+
+   §4.1 forbids gamification by name — no confetti, no streaks, no badges — so
+   the "met" state is one sentence and a colour change, and there is no state
+   at all when no target is set. A meter is information; a reward loop aimed at
+   deleting your own files would be manipulation.
+
+   Held here rather than read from `settingsData` because that object is only
+   populated when the Settings modal is opened, and the meter has to be right
+   on the first paint after a reload. */
+let cartGoalBytes = null;
+
+/** Fetch the target once at boot. A failure leaves the meter hidden, not zero. */
+async function loadCartGoal() {
+  try {
+    const s = await api('/api/settings');
+    cartGoalBytes = typeof s.cleanupGoalBytes === 'number' && s.cleanupGoalBytes > 0 ? s.cleanupGoalBytes : null;
+  } catch {
+    cartGoalBytes = null;
+  }
+  renderCartGoal(cartTotalBytes());
+}
+
+/**
+ * Paint the meter for a staged total.
+ *
+ * `staged` is passed in rather than recomputed so this stays a pure render of
+ * a number the caller already has — renderCart resolves nodes before it knows
+ * the total, and reading it twice could show two different figures in the same
+ * frame.
+ */
+function renderCartGoal(staged) {
+  const host = $('cartGoal');
+  if (!host) return;
+  if (!cartGoalBytes) { host.hidden = true; return; }
+  host.hidden = false;
+  const pct = Math.min(100, (staged / cartGoalBytes) * 100);
+  const met = staged >= cartGoalBytes;
+  host.classList.toggle('met', met);
+  $('cartGoalFill').style.width = pct.toFixed(1) + '%';
+  $('cartGoalLine').innerHTML = met
+    // Plainly, once. The extra is stated rather than celebrated — it is a fact
+    // about the cart, not a prize.
+    ? `<b>Target met.</b> <span>${escapeHtml(formatBytes(staged))} staged toward ${escapeHtml(formatBytes(cartGoalBytes))}.</span>`
+    : `<span><b>${escapeHtml(formatBytes(staged))}</b> of ${escapeHtml(formatBytes(cartGoalBytes))} staged</span>` +
+      `<span class="g-pct num">${Math.round(pct)}%</span>`;
+  host.setAttribute('aria-label',
+    met
+      ? `Cleanup target met: ${formatBytes(staged)} staged toward ${formatBytes(cartGoalBytes)}`
+      : `Cleanup target: ${formatBytes(staged)} of ${formatBytes(cartGoalBytes)} staged, ${Math.round(pct)} percent`);
+}
+
 async function renderCart() {
   const dock = $('cartDock'); if (!dock) return;
   // The cart persists across sessions and its items may sit in a part of the
@@ -8466,6 +8556,7 @@ async function renderCart() {
   $('cartTabTotal').textContent = formatBytes(total);
   $('cartHeadCount').textContent = n + ' item' + (n === 1 ? '' : 's');
   $('cartFootTotal').innerHTML = `Reclaims <b>${formatBytes(total)}</b>`;
+  renderCartGoal(total);
   const list = $('cartList');
   if (n === 0) {
     list.innerHTML = '<div class="cart-empty">Your cart is empty.<br>Add files from any view to stage them for the Trash.</div>';
@@ -8529,6 +8620,7 @@ document.addEventListener('click', (e) => {
   if (rm) { e.preventDefault(); e.stopPropagation(); cartToggle(rm.getAttribute('data-cart-rm')); }
 });
 renderCart(); // reflect any persisted cart on load
+void loadCartGoal(); // §4.1 — the target, so the meter is right before Settings is ever opened
 
 /* ───────────────────────────── Quick-look preview pane (Feature 4) ───────────────────────────── */
 const PV_IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif']);
@@ -11842,7 +11934,38 @@ $('settingsBtn').addEventListener('click', async () => {
   $('watchIdleMin').value = settingsData.watchIdleMinutes ?? 10;
   $('capsuleRetentionDays').value = settingsData.timeCapsuleRetentionDays ?? 30;
   $('capsuleMaxPercent').value = settingsData.timeCapsuleMaxPercent ?? 10;
+  renderCleanupGoalFields();
   renderReclaimWeights();
+});
+
+/* ── Cleanup target (v4 §4.1) ──
+   Stored as bytes; shown in whichever unit divides evenly, largest first, so
+   50 GB comes back as "50 GB" rather than "51200 MB". An empty box is the
+   no-target state and is written back as `null`. */
+const CLEANUP_GOAL_UNITS = [1099511627776, 1073741824, 1048576];
+function renderCleanupGoalFields() {
+  const bytes = typeof settingsData.cleanupGoalBytes === 'number' && settingsData.cleanupGoalBytes > 0
+    ? settingsData.cleanupGoalBytes : null;
+  cartGoalBytes = bytes; // the dock and the dialog must never disagree
+  if (bytes === null) { $('cleanupGoalValue').value = ''; $('cleanupGoalUnit').value = '1073741824'; renderCartGoal(cartTotalBytes()); return; }
+  const unit = CLEANUP_GOAL_UNITS.find((u) => bytes % u === 0) ?? 1073741824;
+  $('cleanupGoalUnit').value = String(unit);
+  $('cleanupGoalValue').value = String(Math.round((bytes / unit) * 100) / 100);
+  renderCartGoal(cartTotalBytes());
+}
+
+/** The target as bytes, or null when the box is empty or nonsense. */
+function collectCleanupGoal() {
+  const raw = parseFloat($('cleanupGoalValue').value);
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return Math.round(raw * (Number($('cleanupGoalUnit').value) || 1073741824));
+}
+
+$('cleanupGoalClear').addEventListener('click', () => {
+  $('cleanupGoalValue').value = '';
+  cartGoalBytes = null;
+  renderCartGoal(cartTotalBytes());
+  $('settingsStatus').textContent = 'Target cleared — press Save to keep it';
 });
 
 /* ── Reclaim Score weights (v4 §3.2) ──
@@ -12142,11 +12265,12 @@ $('settingsSaveBtn').addEventListener('click', async () => {
   const timeCapsuleMaxPercent = Math.min(90, Math.max(1, Math.round(Number($('capsuleMaxPercent').value) || 10)));
   const cloud = collectCloudCreds();
   const reclaimWeights = collectReclaimWeights();
+  const cleanupGoalBytes = collectCleanupGoal(); // null clears the target (§4.1)
   try {
     settingsData = await api('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schedules, ignore, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights }),
+      body: JSON.stringify({ schedules, ignore, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes }),
     });
     renderSchedules();
     renderIgnores();
@@ -12154,6 +12278,7 @@ $('settingsSaveBtn').addEventListener('click', async () => {
     $('watchIdleMin').value = settingsData.watchIdleMinutes ?? 10;
     $('capsuleRetentionDays').value = settingsData.timeCapsuleRetentionDays ?? 30;
     $('capsuleMaxPercent').value = settingsData.timeCapsuleMaxPercent ?? 10;
+    renderCleanupGoalFields(); // re-read from the server's answer, not the form
     renderReclaimWeights();
     // Every cached score was computed under the previous weights, so keeping
     // them would show old numbers beside the new sliders until the next scan.

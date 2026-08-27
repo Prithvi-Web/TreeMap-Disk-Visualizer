@@ -475,6 +475,17 @@ export interface AppSettings {
    * scoring it as worthless.
    */
   reclaimWeights: ReclaimWeights;
+  /**
+   * An optional target for the cleanup cart, in bytes — "free 50 GB" (v4 §4.1).
+   *
+   * `null` means no target, which is the default and a perfectly good state:
+   * the meter simply does not appear. It is a progress meter and nothing more.
+   * §4.1 rules out streaks, badges and confetti explicitly, and the reason is
+   * worth stating where the field is declared: a progress meter is
+   * information, and a reward loop pointed at deleting your own files is
+   * manipulation.
+   */
+  cleanupGoalBytes: number | null;
 }
 
 /** A budget cross-referenced against a scan: how the folder measures up now. */
