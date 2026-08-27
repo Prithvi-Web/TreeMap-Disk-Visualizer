@@ -118,6 +118,72 @@ used space cannot be isolated from outside, so a "delta" computed for one would
 consist of everything else on the disk. `isMountPoint()` gates it, and a
 subfolder is told plainly why no comparison is shown.
 
+### The accounting statement reconciles a container, not a volume (v4 §5)
+
+Measured on macOS 15 / APFS, not assumed:
+
+```
+statfs('/')                    → 494.38 GB total, 305.61 GB free
+statfs('/System/Volumes/Data') → 494.38 GB total, 305.61 GB free   (identical)
+diskutil info -plist /         → APFSContainerSize 494384795648
+                                 APFSContainerFree 305612984320
+```
+
+Both mount points report the **container's** shared pool, and `diskutil` agrees
+with `statfs` to the byte. That is the correct reference number — it is the pool
+everything on the disk draws from, and the figure the Finder shows — and it
+makes the sibling volumes a real, large line: Preboot, VM, Update and an
+unmounted volume together hold ~12.5 GB that no scan of `/` ever walks.
+
+Container membership is read off the device identifier (`disk3s5` and
+`disk3s1s1` are both container `disk3`), because every volume in `diskutil
+list` reports the same *physical* disk when one SSD backs several containers.
+**Off APFS this line is always zero**, and that is a correctness rule rather
+than a gap: `statfs` on ext4 or NTFS describes that filesystem alone, so adding
+a sibling's usage would add bytes the total never contained.
+
+### Which volume a path is on: device id, never path prefix (v4 §5)
+
+`/Users` is a firmlink onto the writable volume, so `/Users/me/Desktop` is under
+the mount point `/` by string comparison while physically living on
+`/System/Volumes/Data`. Prefix matching therefore attributes a home-folder scan
+to the sealed 12 GB system volume and books the 163 GB data volume as somebody
+else's — an error the size of the disk.
+
+Measured: `stat('/').dev`, `stat('/System/Volumes/Data').dev` and
+`stat('/Users/me/…').dev` are all **16777233**, while `/System/Volumes/VM` is
+16777232. The kernel presents the firmlinked pair as one device, which is
+exactly the unit a scan of `/` walks — so grouping mount points by device id
+gets firmlinks right without naming a single one of them, and stays right on
+Linux and Windows where each filesystem simply has its own device.
+
+### Purgeable space cannot be read without native code (v4 §5)
+
+macOS exposes it only through `NSURLVolumeAvailableCapacityForImportantUsageKey`.
+Checked on this machine, not assumed: `diskutil info -plist`, `diskutil apfs
+list -plist` and `system_profiler -json SPStorageDataType` were each read and
+**none carries a purgeable figure** — `diskutil info` reports `FreeSpace = 0`
+and `VolumeSize = 0` for the sealed volume, and only container-level free space
+elsewhere. §7 forbids native modules, so the statement's purgeable line is
+unavailable with that reason, its bytes sit inside `unaccounted`, and
+`unaccounted` names it. It never reads 0.
+
+### `diskutil list -plist` can answer "no disks" and mean "ask again"
+
+Measured over 180 concurrent invocations: **9 of them (5%)** exited **0**, wrote
+nothing to stderr, and emitted a complete, well-formed 335-byte plist in which
+every array — `WholeDisks`, `AllDisksAndPartitions`, `AllDisks`,
+`VolumesFromDisks` — was empty. Nothing distinguishes it from a real answer
+except content that cannot be true: a running Mac is running *from* a disk. The
+trigger is contention for `diskarbitrationd`.
+
+`volumeTopology()` therefore refuses to pass on an answer that cannot be true:
+it re-asks, bounded at three attempts, and throws when it will not clear so the
+caller reports unavailable-with-reason. Every empty answer measured recovered on
+the **immediate** next call (6 of 6, no delay), so the retry re-asks a question
+the OS declined rather than inventing its answer. Verified against the load that
+caused it: 180 concurrent reads, 180 correct answers, zero empty successes.
+
 ### Why a Quick Action rather than a Finder Sync extension
 
 D2 offers either. A Finder Sync extension must be embedded in a **code-signed**

@@ -8666,20 +8666,41 @@ $('missingBody').addEventListener('click', (e) => {
   }
   const remedy = e.target.closest('[data-mg-remedy]');
   if (!remedy) return;
-  // Every remedy is an existing, already-gated flow. Nothing here is a second
-  // path to a destructive action — it is a signpost to the first one.
+  // Every remedy hands off to the control that ALREADY owns that action, by
+  // clicking it. Re-implementing "purge snapshots" here would be a second path
+  // to a destructive action — a second confirm dialog to keep in step, a second
+  // place for a gate to be forgotten. Handing off means there is still exactly
+  // one, and this view cannot drift away from it.
   const action = remedy.dataset.mgRemedy;
+  switchView('dashboard');
   if (action === 'scan-volume') {
-    switchView('dashboard');
-    toast('Choose the whole disk as the scan folder to account for every file');
+    const box = $('pathInput');
+    if (box) { box.value = missingData ? missingData.volume.mountPoint : '/'; box.focus(); }
+    toast('Press Scan to account for every file on this volume');
   } else if (action === 'purge-snapshots') {
-    switchView('dashboard');
-    toast('Local snapshots are managed from the Dashboard’s storage card, which asks before deleting any');
+    // The Dashboard's own button, with its own confirm modal and its own
+    // { confirm: true } call. Nothing about the gate lives here.
+    mgHandOff('snapPurgeBtn', 'Local snapshots are on the Dashboard — it asks before deleting any');
   } else if (action === 'review-open-handles') {
-    switchView('dashboard');
-    toast('Held space is on the Dashboard — TreeMap asks a program to quit, and never forces it');
+    mgHandOff('zombieCard', 'TreeMap asks a program to quit, and never forces it');
   }
 });
+
+/**
+ * Reveal a Dashboard control and, when it is a button, press it.
+ *
+ * The Dashboard paints its cards lazily, so the target may not exist yet on
+ * first switch; a frame's grace is enough and a miss falls back to saying where
+ * to look rather than silently doing nothing.
+ */
+function mgHandOff(id, fallbackMessage) {
+  requestAnimationFrame(() => {
+    const el = $(id);
+    if (!el || el.hidden || el.closest('[hidden]')) { toast(fallbackMessage); return; }
+    el.scrollIntoView({ block: 'center', behavior: 'auto' });
+    if (el.tagName === 'BUTTON') el.click();
+  });
+}
 
 registerView({
   id: 'missing',

@@ -1,5 +1,128 @@
 # TreeMap — session handoff
 
+## v4 — Phase 5 complete: The Missing Gigabytes (27 August 2026)
+
+**Three commits on `main`.** Suite **1251 (1249 pass, 2 skip, was 1220 with one
+failing)**, typecheck clean, build clean, `npm run bench:v4` **7 pass / 3 not
+measurable in Node** with scan throughput **2.5% FASTER** than baseline, golden
+responses still byte-identical.
+
+| Commit | What |
+| --- | --- |
+| `a6c53c7` | 5.0 diskutil can answer "no disks" and mean "ask again" |
+| `56125b4` | 5.1 one accounting statement, and it balances or names the gap |
+| `6f254cf` | 5.2 the receipt, and the two ways it can be read wrong |
+
+### The baseline was not green, and it was not a flake
+
+`A5: topology on this machine names real hardware and real mount points` failed
+in the full suite and passed alone — which reads exactly like trap 5's watcher
+family. It is not one.
+
+Measured over 180 concurrent `diskutil list -plist` calls: **9 (5%)** exit
+**0**, write nothing to stderr, and emit a complete, well-formed 335-byte plist
+in which every array is empty — `WholeDisks`, `AllDisksAndPartitions`,
+`AllDisks`, `VolumesFromDisks`. Nothing distinguishes it from a real answer
+except content that cannot be true: a running Mac runs *from* a disk.
+
+So `volumeTopology()` re-asks (bounded at three) and **throws** when it will
+not clear. Every empty answer measured recovered on the immediate next call, 6
+of 6, with no delay. Verified against the load that caused it: 180 concurrent
+reads, 180 correct answers, zero empty successes. Before the fix the same load
+gave 9 wrong ones.
+
+**The lesson, and it is trap 5's inverse:** trap 5 says read the failing test
+name before re-running. This adds — *and then check whether it is actually that
+family.* A test that fails only under contention is not automatically a timing
+flake; here it was a reader that returns a confidently wrong answer 5% of the
+time under load, and the Drives panel has been showing "no drives" that often
+for as long as it has existed.
+
+### The two numbers that decide whether the statement is right
+
+**The reference total is the container, not the volume.** `statfs('/')` and
+`statfs('/System/Volumes/Data')` return byte-identical answers here, and both
+agree with `diskutil info -plist`'s `APFSContainerSize`/`Free`. That is the
+pool everything draws from and the figure the Finder shows. It also makes the
+siblings a real line: Preboot, VM, Update and one unmounted volume hold ~12.5 GB
+that no scan of `/` ever walks — measured live at exactly 12.49 GB.
+
+**Which volume a scan is on is decided by `stat().dev`, never by path prefix.**
+`/Users` is a firmlink onto the data volume, so `/Users/me` is under `/` by
+string and on `/System/Volumes/Data` in fact. The first version of the file used
+prefix matching and therefore attributed a home-folder scan to the sealed 12 GB
+system volume while booking the 163 GB data volume as somebody else's — an error
+the size of the disk. `/`, the Data volume and everything under them all report
+device **16777233**; VM reports 16777232. The kernel presents the firmlinked
+pair as one device, which is exactly the unit a scan of `/` walks, so device
+grouping gets firmlinks right without naming one.
+
+### Two honest unavailables, both checked rather than assumed
+
+- **Purgeable cannot be read.** `diskutil info -plist`, `diskutil apfs list
+  -plist` and `system_profiler -json SPStorageDataType` were each read on this
+  machine and none carries the figure. It needs
+  `NSURLVolumeAvailableCapacityForImportantUsageKey`, a native API, and §7
+  forbids native modules. The line is unavailable with that reason, its bytes
+  sit in `unaccounted`, and `unaccounted` names it. It never reads 0.
+- **gdu cannot report what it was refused.** Pointed at a mode-000 directory,
+  `gdu -o-` exits 0 and emits it as an ordinary *empty* directory — no error
+  key, no annotation, indistinguishable from a directory that genuinely has
+  nothing in it, and `gdu --help` offers no flag that changes it. So on a gdu
+  scan the refusal count is unknown and says so. The walker now counts refusals
+  exactly (`readdirWithDeadline` used to collapse EACCES, ENOENT and its own
+  deadline into one `null`), and only the walker claims a zero.
+
+### New traps, all paid for
+
+- **A counter you added is not a counter that runs.** The refusal counting was
+  written into `processDirectory` and verified by reading. It never fired: the
+  default engine on this machine is **gdu**, not the walker, so the patched code
+  path was not the one executing. Found by chmod-000-ing a fixture directory and
+  watching `deniedDirs` stay at 0 — the mutation-before-believing rule, applied
+  to a counter rather than a test.
+- **`icon()` falls back to `file` for an unknown name, silently.** `pieChart` is
+  not in `PATHS`; the tab would have shipped wearing the wrong glyph with no
+  error anywhere. The registry has `pie`. **Check the name against `PATHS`
+  before using it.**
+- **`formatCount` already existed.** A second top-level `function formatCount`
+  overrides the first and quietly changes every other caller. Grep before
+  defining a helper in a 14,000-line file.
+- **Smooth scrolling is a no-op in the shipped shell.** Measured:
+  `main.scrollTo({ behavior: 'smooth' })` leaves `scrollTop` at 0 while the
+  identical call with `'auto'` lands exactly, and `prefers-reduced-motion` is
+  not set. Any control whose only feedback is a smooth scroll silently does
+  nothing here.
+- **A clipped caption looks exactly like a caption you forgot to write.** The
+  used-mark's label sat inside the bar, which clips its own overflow: the mark
+  drew, the label did not, and nothing errored. Only reading the DOM found it.
+
+### One place this deviates from §5.2, deliberately
+
+§5.2 asks for the hardlink/clone delta "shown as its own line". It is shown —
+as a note directly under the scanned line, carrying the exact figure (35 GB
+here) — but **not as a row in the arithmetic**, because the scan already counts
+each inode once and a second deduction would remove them twice. Making it a
+non-arithmetic row instead would break the one invariant the feature rests on:
+that every number in the value column sums to the total. On a receipt, a row
+the reader must *not* add is worse than a note. The clone limitation §5.2 also
+requires is stated in the same place, in the UI, in those words.
+
+### What could not be verified on this machine
+
+- **Snapshots with a size.** This Mac has zero local snapshots, and
+  `tmutil listlocalsnapshots` names them without sizing them anyway. The
+  zero-snapshot path ran live; the "N snapshots, size unknown" path and the
+  Windows `vssadmin` byte figure are covered by fixture tests only, and creating
+  a snapshot to test needs root.
+- **The purge-snapshots remedy.** Its button hands off to the Dashboard's
+  existing `snapPurgeBtn`, which is hidden when no snapshots exist — so the
+  handoff itself was never exercised end to end here. The open-handles and
+  scan-volume handoffs both were, live.
+- **Windows and Linux.** The container-siblings line is APFS-only by
+  construction and returns zero elsewhere, which is asserted by test but has
+  never run on either OS.
+
 ## v4 — Phase 4 complete: the cart, made physical (27 August 2026)
 
 **Five commits on `main`.** Suite **1200+ (was 1120)**, typecheck clean, build

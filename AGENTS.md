@@ -14,7 +14,8 @@ OpenAPI 3 spec).
 - **MCP** — `npm run mcp` starts a stdio Model Context Protocol server
   (for Claude Desktop and similar clients) exposing: `scan_path`,
   `get_largest`, `reclaim_ranked`, `find_duplicates`, `cleanup_suggestions`,
-  `forecast`, `compare_scans`, `offload`, `trash_paths`. The tools call the
+  `forecast`, `missing_gigabytes`, `compare_scans`, `offload`, `trash_paths`.
+  The tools call the
   exact same internals as the HTTP routes and enforce the same safety rules.
 
 ## The core workflow: scan → inspect → dry-run → act
@@ -72,6 +73,31 @@ OpenAPI 3 spec).
      re-encode video to HEVC. **Lossy, and the original is trashed once the new
      file verifies.** Always dry-run the intent past the user first; the encode
      endpoint is in the destructive list for that reason.
+   - `GET /api/missing-gigabytes?scanId=` — **one accounting statement for the
+     volume the scan lives on**, and the only endpoint here whose output is an
+     arithmetic claim. `{ volume, lines[], unaccountedBytes, coversWholeVolume,
+     caveats[] }`. Every line carries `{ id, label, bytes, available, reason?,
+     detail, count, notes[], remedy }`, and **the lines sum to
+     `volume.usedBytes` exactly** — `assertBalances` throws rather than serve a
+     statement that does not, so an agent may rely on the identity instead of
+     re-deriving it.
+
+     Two rules decide whether an agent reads this correctly.
+     **`bytes: null` means UNKNOWN and always carries a `reason`; `bytes: 0` is
+     a measurement.** Flattening them concludes a disk has no snapshots when
+     the truth is that nothing would size them. And **whatever the lines do not
+     explain is the `unaccounted` line**, which names every unknown line
+     sitting inside it — so the residual is attributable rather than mysterious.
+     `bytes` is signed: negative on a correction line, and negative on
+     `unaccounted` when copy-on-write clones made TreeMap count more than the
+     volume holds.
+
+     `coversWholeVolume: false` means the scan started inside the volume rather
+     than at it, so everything else on that volume is necessarily in the
+     residual; `caveats` says so in words. Read-only, and the `remedy` on a line
+     is a *description* of an existing, separately-gated endpoint — never a
+     second path to one.
+
    - `POST /api/facts` with `{ scanId, paths, providers }` — **per-path
      derived facts, delivered as a sidecar** rather than folded into the scan
      tree. Answers one object per requested provider:

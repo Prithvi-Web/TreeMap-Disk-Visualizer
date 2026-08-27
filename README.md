@@ -56,12 +56,12 @@
 
 <br>
 
-## ✨ The fifteen views
+## ✨ The sixteen views
 
-TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Fifteen views, one zero-dependency frontend.
+TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Sixteen views, one zero-dependency frontend.
 
 <div align="center">
-  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Grid, Apps, Games, Security, Fleet, Duplicates, Trends, Compare, Offloaded, Time Capsule, Autopilot, Clean Up, Scheduled + Ignore">
+  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Grid, Apps, Games, Security, Fleet, Missing GB, Duplicates, Trends, Compare, Offloaded, Time Capsule, Autopilot, Clean Up, Scheduled + Ignore">
 </div>
 
 <br>
@@ -120,6 +120,22 @@ Finds **keys, credentials and wallets sitting outside the folder they belong in*
 See how full your *other* computers are without walking over to them. **Off by default**, and it announces nothing until you turn it on. Machines exchange a **summary only** — the name you gave the machine and its OS, the volume's total/used/free, and the folder you last scanned with its time and size. That list is not a promise in a README, it's an **eleven-field allow-list in the code** ([`fleetSummary.ts`](src/services/fleet/fleetSummary.ts)) that is the only thing ever serialised, with a second check that throws rather than send a field whose name so much as *smells* like a file tree, a security finding or a provenance URL.
 
 **File trees, Security findings and download origins never cross the network, and there is no remote-delete route in the server at all** — not a disabled one, not a permission-gated one; it does not exist. Asking a peer to run a scan is a *separate* opt-in that peer must grant. Pairing is a **six-digit code**, compared in constant time, good for three minutes and one machine; a wrong guess doesn't cancel the window, so nobody on the network can interrupt a pairing by guessing. The LAN listener is a **separate server with three routes** — the main API is never mounted on it and stays bound to `127.0.0.1` — and it binds your specific private IPv4 addresses, never `0.0.0.0`. Discovery is hand-written mDNS over `dgram`, no dependency added.
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
+### 🥧 Missing GB — where the space actually went
+The complaint this answers is that **the numbers do not add up**: the Finder says 188 GB used, a disk tool shows 156 GB of files, and nothing explains the difference. This view is one accounting statement for the volume, printed as a receipt — a bar over the disk's whole capacity, then the arithmetic with a rule above the total.
+
+**It balances or it names the gap.** Every line is bytes, the lines sum to the volume's used space *exactly*, and whatever is left over gets its own **Unaccounted** line rather than being folded into the others to look tidy. That is enforced in code, not just tested: [`assertBalances`](src/services/missingGigabytes.ts) throws on every build of a statement, so a future line that forgets to join the sum fails loudly instead of shipping a receipt wrong by exactly its own size.
+
+The lines are files the scan walked, online-only files counted but not resident, filesystem snapshots, purgeable space, space held by programs still gripping a deleted file, **other volumes sharing the same storage pool**, and what the scan was refused. That sixth line is most of the point on a Mac: Preboot, VM and Update sit in the same APFS container as `/`, share its free space, and no scan of `/` ever walks them — about 12 GB a files-only tool simply loses.
+
+**An unknown is never shown as a zero.** A line that could not be measured says so, in full, with the real reason — and the Unaccounted line names it, so the gap is attributable rather than mysterious. Two on this Mac: **purgeable space**, which macOS reports only through a native API (`diskutil`, `diskutil apfs` and `system_profiler` were each checked and none carries the figure, and TreeMap ships no native code), and **what a gdu scan was refused**, because gdu emits a folder it could not open as an ordinary *empty* folder and exits 0. The built-in walker counts refusals exactly; only it claims a zero.
+
+Also stated rather than implied: hard links are already counted once by the scan, so they are a note under that line and not a second deduction; and copy-on-write clones **cannot** be told from real copies without native code, so where they exist that line is an over-count and the difference lands in Unaccounted. Every remedy offered is a signpost to an existing, separately-gated action — nothing here deletes anything.
 
 </td>
 </tr>
@@ -421,6 +437,7 @@ You can also trigger a test build anytime from **Actions → Build & Release →
 | `GET /api/scan/:id/stats` | Scan counters incl. engine, duration & fast-rescan cache usage |
 | `GET /api/scan/:id/budgets` | Saved folder budgets cross-referenced against this scan |
 | `GET /api/scan/:id/export?format=csv\|pdf` | Download the scan as CSV (files / folders) or a PDF report |
+| `GET /api/missing-gigabytes?scanId=` | The accounting statement for the volume: the lines sum to used space exactly, and the residual is its own `unaccounted` line. A line that could not be measured reports `bytes: null` with a reason, never `0` |
 | `GET /api/scans` | Completed scans currently in memory |
 | `POST /api/facts` | Per-path derived facts as a sidecar (`size`, `lastUsed`, `recoverability`, `reclaimScore`). A path absent from `values` was **not computable** — never a zero |
 | `GET /api/large-files?scanId=` | Top N largest files |
@@ -582,7 +599,7 @@ No environment variables, ports, or API keys needed — it runs locally and talk
 
 ### What the AI can do
 
-Nine tools, all calling the exact same internals as the app — same validation, same safety rails:
+Ten tools, all calling the exact same internals as the app — same validation, same safety rails:
 
 | Tool | What it does |
 |---|---|
@@ -592,6 +609,7 @@ Nine tools, all calling the exact same internals as the app — same validation,
 | `find_duplicates` | True duplicates (size + SHA-256 content hashing) |
 | `cleanup_suggestions` | Known-reclaimable space: caches, regenerable build folders, junk |
 | `forecast` | Disk-full projection — *"full in ~58 days at current growth"* |
+| `missing_gigabytes` | Reconcile the volume: every line in bytes, summing to used space exactly, with the leftover named rather than hidden. `bytes: null` means **unknown** and carries its reason — never the same as `0` |
 | `compare_scans` | What grew and what shrank between two scans |
 | `offload` | Move files to another drive the safe way: copy → verify → then trash originals |
 | `trash_paths` | Move files to the system Trash — never a hard delete |
