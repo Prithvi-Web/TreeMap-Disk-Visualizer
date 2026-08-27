@@ -270,6 +270,28 @@ strips them back out and pins that. Verified live: after a commit and undo
 through the UI, a folder kept its own Feb 2024 date even though its child was
 written into it during the restore.
 
+### The Linux CI failure: a test that assumed APFS
+
+`an item bigger than the whole capsule is left UNDELETED` manufactured its own
+precondition with a **1 PiB sparse file**. APFS took it happily; **ext4 caps a
+file at 16 TiB**, so Linux CI failed with `EFBIG` before the test body ever
+ran. macOS went green in the same run — the watcher work above had landed — so
+this was a straight swap of one red platform for another.
+
+The fixture is now sized from the capsule's **actual** cap (`planProtection([])`
+→ `capBytes`, plus a page), which is 28.5 GiB here and smaller on a CI disk —
+0.17% of ext4's ceiling. A test that manufactures its own precondition has to
+ask the machine what that precondition is, rather than pick a number that
+happened to work on the machine it was written on. A filesystem that still
+refuses the sparse file now `t.skip()`s with the reason instead of failing for
+something that is not the point.
+
+**Not yet proven on Linux or Windows:** the capsule's new timestamp round-trip
+tests. They are new in the same batch and have only run on macOS. Node's
+`utimes` on a directory goes through `FILE_FLAG_BACKUP_SEMANTICS` on Windows
+and should hold, and the product code swallows a `utimes` refusal so a restore
+can never fail for it — but the assertions themselves are unproven off macOS.
+
 ### The cart list is paged, because rebuilding it was a 44 ms block
 
 Measured with a 1,000-item cart: rebuilding `#cartList` is **44.1 ms**, and it

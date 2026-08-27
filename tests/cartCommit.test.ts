@@ -157,20 +157,38 @@ test('an item that is already gone is named, not counted as freeable', async () 
  * — `truncate` sets the logical size, which is what `walkItem` measures and
  * what the capsule would have to hold, while the volume allocates nothing.
  *
+ * Sized from the capsule's ACTUAL cap rather than a constant. The cap is a
+ * share of *this* volume's usable space, so a number comfortably over it on
+ * one machine need not be on another — and the constant this started with,
+ * 1 PiB, is past **ext4's 16 TiB maximum file size**: APFS took it happily and
+ * Linux CI failed with EFBIG before the test body ever ran. A test that
+ * manufactures its own precondition has to ask the machine what that
+ * precondition is.
+ *
  * Skipped on Windows deliberately rather than "fixed": NTFS allocates
- * truncate-only files solid, so this fixture would really try to write a
- * petabyte. That is the handoff's own POSIX-shaped-but-different rule.
+ * truncate-only files solid, so this fixture would really write the whole
+ * thing. That is the handoff's own POSIX-shaped-but-different rule.
  */
 const SPARSE_SKIP = process.platform === 'win32'
-  ? 'NTFS allocates truncate-only files solid, so a sparse fixture would really write a petabyte'
+  ? 'NTFS allocates truncate-only files solid, so a sparse fixture would really be written out in full'
   : false;
 
-test('an item bigger than the whole capsule is left UNDELETED, and says why', { skip: SPARSE_SKIP }, async () => {
+test('an item bigger than the whole capsule is left UNDELETED, and says why', { skip: SPARSE_SKIP }, async (t) => {
   const dir = await fixture('cap', 0, 0);
   try {
+    // Ask the capsule how much it can hold, then make something larger.
+    const { capBytes } = await planProtection([]);
+    const overCap = capBytes + 4096;
     const huge = path.join(dir, 'huge.sparse');
     await fsp.writeFile(huge, '');
-    await fsp.truncate(huge, 2 ** 50); // 1 PiB logical, ~0 allocated
+    try {
+      await fsp.truncate(huge, overCap);
+    } catch (err) {
+      // A filesystem that will not make a sparse file this large cannot host
+      // this test. Say so rather than fail for a reason that is not the point.
+      t.skip(`this filesystem refused a ${overCap}-byte sparse file (${(err as Error).message})`);
+      return;
+    }
     const small = path.join(dir, 'small.bin');
     await fsp.writeFile(small, Buffer.alloc(4096, 7));
 
@@ -179,7 +197,7 @@ test('an item bigger than the whole capsule is left UNDELETED, and says why', { 
     assert.equal(forHuge.willDelete, false, 'it is not going to be deleted');
     assert.equal(forHuge.code, 'CAPSULE_FULL');
     assert.match(forHuge.reason ?? '', /left alone rather than deleted without a backup/i);
-    assert.equal(plan.bytesSkipped, 2 ** 50, 'the skipped bytes are stated, not hidden');
+    assert.equal(plan.bytesSkipped, overCap, 'the skipped bytes are stated, not hidden');
 
     // The small one is unaffected: one refusal does not poison the batch.
     assert.equal(plan.items.find((i) => i.path === small)!.willDelete, true);
@@ -194,7 +212,7 @@ test('an item bigger than the whole capsule is left UNDELETED, and says why', { 
     assert.equal(result.skipped.length, 1);
     assert.equal(result.skipped[0].code, 'CAPSULE_FULL');
     assert.ok(fs.existsSync(huge), 'the file is still there');
-    assert.equal(fs.statSync(huge).size, 2 ** 50, 'untouched, at its full size');
+    assert.equal(fs.statSync(huge).size, overCap, 'untouched, at its full size');
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
   }
