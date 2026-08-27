@@ -128,6 +128,28 @@ export interface ScanResult {
   cloudFiles?: number;
   /** Logical bytes those cloud placeholders report but don't occupy on disk. */
   cloudBytes?: number;
+  /**
+   * What the scan was refused, so the accounting statement (Phase 5) can put a
+   * number on the space it cannot see instead of leaving it inside
+   * `unaccounted`.
+   *
+   * These are counts only, and deliberately so: a directory that will not open
+   * has an unknowable size, and a file whose `lstat` fails has no size either.
+   * Reporting "217 folders could not be read" is the whole of what is known —
+   * inventing bytes for them would be exactly the guess §10 forbids.
+   *
+   * Kept off `buildScanStats`: every scan response in §2.1's byte-identity list
+   * is shaped by an explicit whitelist, and these travel through Phase 5's own
+   * endpoint instead.
+   */
+  /** Directories the OS refused to list (EACCES/EPERM). */
+  deniedDirs?: number;
+  /** Directories that failed to list for any other reason, including the deadline. */
+  unreadableDirs?: number;
+  /** Individual entries whose `lstat` was refused (EACCES/EPERM). */
+  deniedEntries?: number;
+  /** Individual entries that failed to stat for any other reason. */
+  unreadableEntries?: number;
 }
 
 /** One rectangle of the squarified treemap, coordinates in percent (0–100). */

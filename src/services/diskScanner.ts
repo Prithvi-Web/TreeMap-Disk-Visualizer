@@ -46,24 +46,47 @@ const YIELD_EVERY = 2000;
  */
 const READDIR_DEADLINE_MS = 30_000;
 
-function readdirWithDeadline(p: string): Promise<Dirent[] | null> {
+/**
+ * Why a listing produced nothing.
+ *
+ * The distinction is Phase 5's: "denied" is space that exists and this user
+ * cannot see, which the accounting statement must name; "vanished" is a race
+ * with a delete and accounts for nothing; "timeout" is a wedged mount, which is
+ * neither. Collapsing all three into `null`, as this once did, meant the
+ * statement had no way to tell a disk it was refused from a disk that is empty.
+ */
+type ListingFailure = 'denied' | 'vanished' | 'timeout' | 'error';
+
+interface Listing {
+  entries: Dirent[] | null;
+  why: ListingFailure | null;
+}
+
+function readdirWithDeadline(p: string): Promise<Listing> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       console.warn(`[treemap] readdir gave up after ${READDIR_DEADLINE_MS / 1000}s: ${p}`);
-      resolve(null);
+      resolve({ entries: null, why: 'timeout' });
     }, READDIR_DEADLINE_MS);
     timer.unref();
     fsp.readdir(p, { withFileTypes: true }).then(
       (entries) => {
         clearTimeout(timer);
-        resolve(entries);
+        resolve({ entries, why: null });
       },
-      () => {
+      (err: NodeJS.ErrnoException) => {
         clearTimeout(timer);
-        resolve(null); // EACCES / EPERM / ENOENT(race) — skip silently
+        resolve({ entries: null, why: classifyFsError(err) });
       },
     );
   });
+}
+
+/** Map an fs errno onto the reason the statement reports. */
+export function classifyFsError(err: NodeJS.ErrnoException): ListingFailure {
+  if (err.code === 'EACCES' || err.code === 'EPERM') return 'denied';
+  if (err.code === 'ENOENT') return 'vanished';
+  return 'error';
 }
 
 const SCAN_TTL_MS = 30 * 60 * 1000; // 30 minutes after a scan settles
@@ -341,6 +364,10 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         scan.hardlinkedBytes = 0;
         scan.cloudFiles = 0;
         scan.cloudBytes = 0;
+        scan.deniedDirs = 0;
+        scan.unreadableDirs = 0;
+        scan.deniedEntries = 0;
+        scan.unreadableEntries = 0;
       }
       scan.engine = IO_THREADS > 4 ? 'turbo-walker' : 'walker';
     }
@@ -602,8 +629,15 @@ async function processDirectory(
   scan.walkedDirs = (scan.walkedDirs ?? 0) + 1;
 
   const listed = await readdirWithDeadline(dirPath);
-  if (!listed) return; // unreadable or unresponsive — the dir stays empty
-  let entries: Dirent[] = listed;
+  if (!listed.entries) {
+    // The dir still stays empty — but it is now counted, so Phase 5 can say
+    // "217 folders could not be read" rather than folding them into a residual.
+    // A vanished dir is a race with a delete and accounts for no space at all.
+    if (listed.why === 'denied') scan.deniedDirs = (scan.deniedDirs ?? 0) + 1;
+    else if (listed.why !== 'vanished') scan.unreadableDirs = (scan.unreadableDirs ?? 0) + 1;
+    return;
+  }
+  let entries: Dirent[] = listed.entries;
 
   scan.currentPath = dirPath;
 
@@ -648,7 +682,14 @@ async function processDirectory(
     );
 
     for (const result of settled) {
-      if (result.status !== 'fulfilled') continue; // entry vanished mid-scan
+      if (result.status !== 'fulfilled') {
+        // Usually a race with a delete, which costs nothing. A refusal is not:
+        // it is a real file whose size this user is not allowed to learn.
+        const why = classifyFsError(result.reason as NodeJS.ErrnoException);
+        if (why === 'denied') scan.deniedEntries = (scan.deniedEntries ?? 0) + 1;
+        else if (why !== 'vanished') scan.unreadableEntries = (scan.unreadableEntries ?? 0) + 1;
+        continue;
+      }
       const { input, fullPath, isDir, inoKey } = result.value;
       // Dedup hard links sequentially so concurrent workers can't race the set.
       if (inoKey) {
