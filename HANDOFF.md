@@ -1193,10 +1193,35 @@ fixtures; the honest no-library path is what runs live.
   guarantees are confirmed via the code path and files leaving the fixture, not
   by listing the Trash.
 
-## One intermittent worth knowing
+## One intermittent worth knowing — now narrowed to three candidates
 
-Across eight full-suite runs at the end of the last session, one run failed a
-single test and seven were clean; the failing name was not captured. The two
-known flake shapes here are the A1 live-index watcher test and the B5 `lsof`
-tests, both of which have only failed when another command was running in the
-same shell. If it recurs, **read the name before re-running** — and see trap 1.
+It recurred on 27 Aug: **one failure in nine full-suite runs** that day (the
+other eight clean, five plain and three with build chained in front). The name
+was lost again — `npm test | tail -6` shows the assertion but not the test — but
+this time the assertion detail survived:
+
+```
+code: 'ERR_ASSERTION', actual: 1, expected: 0, operator: 'strictEqual'
+```
+
+`expected 0, actual 1` narrows it to the three assertions in the suite that can
+produce that shape:
+
+| Candidate | Why it could see 1 |
+| --- | --- |
+| `openHandleGuard.test.ts:376` — `report.conflicts.length === 0` | **Most likely.** `lsof` sees a handle another process holds. This is trap 5's named flake shape, exactly. |
+| `cartCommit.test.ts:131` — `index.entries.length === 0` | A capsule entry surviving into the first test. Its DATA_DIR is a fresh mkdtemp per process, so this needs an explanation nobody has yet. |
+| `packageEcosystems.test.ts:136` — `entries.length === 0` | Least likely; no timing or cross-process input. |
+
+The run that failed had `npm run build && npm test` **chained**, which is trap 1
+— though three deliberate attempts to reproduce it that way were all clean, so
+chaining is a suspicion rather than the cause.
+
+**To catch it, do not `tail` the output.** Capture the whole run and grep:
+
+```bash
+npm test 2>&1 | tee /tmp/suite.log | grep -E '^ℹ (pass|fail)'; grep -n '^not ok' /tmp/suite.log
+```
+
+That prints the counts *and* keeps the name. One more sighting with a name
+attached should settle which of the three it is.
