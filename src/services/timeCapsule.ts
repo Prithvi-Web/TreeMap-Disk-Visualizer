@@ -512,6 +512,137 @@ export async function protectItems(
   return { runId, outcomes };
 }
 
+/** What a dry run says about one item it was asked to protect (v4 §4.4). */
+export interface ProtectionForecast {
+  path: string;
+  /** Bytes the capsule would have to hold — the walked total, not a stat. */
+  bytes: number;
+  /** True when the capsule could take it, evicting older copies if it must. */
+  willProtect: boolean;
+  /** Stable code when it could not: CAPSULE_FULL, CAPSULE_UNREADABLE, … */
+  code?: string;
+  /** The same sentence the real run would record. */
+  detail?: string;
+}
+
+export interface ProtectionPlan {
+  available: boolean;
+  /** Present only when available === false. Shown verbatim. */
+  reason?: string;
+  items: ProtectionForecast[];
+  /** Bytes that would be protected, and so deleted. */
+  bytesProtected: number;
+  /** Bytes that would be left alone because they could not be protected. */
+  bytesSkipped: number;
+  /** Older protections that would be evicted to make room, oldest first. */
+  evicts: { id: string; name: string; originalPath: string; bytes: number }[];
+  capBytes: number;
+  usedBytes: number;
+}
+
+/**
+ * What `protectAndTrash` would do, having done none of it (v4 §4.4).
+ *
+ * §2.3 requires every destructive endpoint to offer a dry run that returns the
+ * exact manifest "having acted on nothing, after passing through every
+ * validation the real run would." For a capsule-backed delete the interesting
+ * validation is capacity: an item too large to protect is **left undeleted**
+ * rather than deleted unprotected, and the user has to be able to see that
+ * before they commit, not discover it in a result summary afterwards.
+ *
+ * So this walks each item exactly as `capture` does — the same `walkItem`, so
+ * the same byte total and the same complexity refusal — and simulates
+ * `planEviction` cumulatively over a *copy* of the index, adding each item as
+ * it is accepted. That accumulation is the part a naive predictor gets wrong:
+ * ten 2 GB folders against a 15 GB cap protect seven and refuse three, not ten.
+ *
+ * It writes nothing: no capsule entries, no events, no payloads. The index is
+ * read once and mutated only in memory.
+ */
+export async function planProtection(paths: string[]): Promise<ProtectionPlan> {
+  const capsule = capsuleAvailable();
+  const store = await loadStore();
+  const settings = await getSettings();
+  const capacity = await capacityOf(store.entries, settings.timeCapsuleMaxPercent);
+
+  if (!capsule.available) {
+    // Nothing would be protected, so nothing would be deleted. Every item says
+    // so with the capsule's own reason rather than a per-item invention.
+    const items: ProtectionForecast[] = paths.map((path) => ({
+      path, bytes: 0, willProtect: false, code: 'CAPSULE_UNAVAILABLE', detail: capsule.reason,
+    }));
+    return {
+      available: false, reason: capsule.reason, items,
+      bytesProtected: 0, bytesSkipped: 0, evicts: [],
+      capBytes: capacity.capBytes, usedBytes: capacity.usedBytes,
+    };
+  }
+
+  // A shallow copy of the entry list, so the simulation can evict without the
+  // real index ever changing. The entries themselves are never mutated.
+  let simulated = [...store.entries];
+  const evicts: ProtectionPlan['evicts'] = [];
+  const items: ProtectionForecast[] = [];
+  let bytesProtected = 0;
+  let bytesSkipped = 0;
+
+  for (const path of paths) {
+    let walked: { members: WalkedMember[]; bytes: number; isFolder: boolean };
+    try {
+      walked = await walkItem(path);
+    } catch (err) {
+      const alreadyGone = (err as NodeJS.ErrnoException)?.code === 'ENOENT';
+      items.push({
+        path,
+        bytes: 0,
+        willProtect: false,
+        code: err instanceof AppError ? err.code : 'CAPSULE_UNREADABLE',
+        detail: alreadyGone
+          ? 'It is no longer there — nothing to delete.'
+          : err instanceof AppError
+            ? err.message
+            : `It could not be read (${err instanceof Error ? err.message : String(err)}).`,
+      });
+      continue;
+    }
+
+    const { evict, fits } = planEviction(simulated, capacity.capBytes, walked.bytes);
+    if (!fits) {
+      bytesSkipped += walked.bytes;
+      items.push({
+        path,
+        bytes: walked.bytes,
+        willProtect: false,
+        code: 'CAPSULE_FULL',
+        detail:
+          `Protecting it needs ${formatBytes(walked.bytes)}, but the Time Capsule can only hold ` +
+          `${formatBytes(capacity.capBytes)}. It will be left alone rather than deleted without a backup.`,
+      });
+      continue;
+    }
+    for (const victim of evict) {
+      evicts.push({ id: victim.id, name: victim.name, originalPath: victim.originalPath, bytes: victim.heldBytes });
+    }
+    const gone = new Set(evict.map((e) => e.id));
+    simulated = simulated.filter((e) => !gone.has(e.id));
+    // Stand in for the entry the real run would add, so the next item is
+    // planned against a capsule that already holds this one.
+    simulated.push({
+      id: `plan:${path}`, name: path, originalPath: path, kind: walked.isFolder ? 'folder' : 'file',
+      sizeBytes: walked.bytes, heldBytes: walked.bytes, hasPayload: true,
+      fileCount: walked.members.filter((m) => m.kind === 'file').length,
+      digest: '', capturedAt: Date.now(), runId: 'plan',
+    });
+    bytesProtected += walked.bytes;
+    items.push({ path, bytes: walked.bytes, willProtect: true });
+  }
+
+  return {
+    available: true, items, bytesProtected, bytesSkipped, evicts,
+    capBytes: capacity.capBytes, usedBytes: capacity.usedBytes,
+  };
+}
+
 /**
  * The one entry point for automated deletion: copy → verify → Trash.
  *

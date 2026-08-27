@@ -652,6 +652,20 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .cart-goal.met .g-line b { color: var(--ok); }
 @media (prefers-reduced-motion: reduce) { .cart-goal .g-fill { transition: none; } }
 
+/* ── Phase 4 (v4 §4.4) — the commit manifest and its result summary ── */
+.cart-mf-note { margin-top: 9px; font-size: 12px; color: var(--text-2); line-height: 1.5; }
+.cart-mf-left { margin-top: 12px; font-size: 12.5px; color: var(--text-1); }
+.cart-mf-list { margin-top: 5px; max-height: 168px; overflow-y: auto; border: 1px solid var(--hairline);
+  border-radius: var(--r-sm); }
+.cart-mf-row { display: flex; align-items: baseline; gap: 10px; padding: 5px 9px; font-size: 11.5px;
+  border-bottom: 1px solid var(--hairline); }
+.cart-mf-row:last-child { border-bottom: none; }
+.cart-mf-row .nm { font-weight: 600; flex: none; max-width: 42%; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.cart-mf-row .why { color: var(--text-3); line-height: 1.4; }
+.cart-mf-undo { margin-top: 13px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cart-mf-undo .muted { font-size: 11.5px; }
+
 #cartTab { display: flex; align-items: center; gap: 9px; padding: 11px 16px; cursor: pointer;
   border: 1px solid var(--hairline-2); border-radius: 999px; box-shadow: var(--shadow-2);
   --lg-tint: var(--lg-tint-strong);
@@ -9130,6 +9144,26 @@ async function renderCart() {
   }).join('');
 }
 
+/* ── Phase 4 (v4 §4.4) — committing the cart ──────────────────────────────
+   Four things §4.4 requires, in order:
+
+     1. a dry run FIRST, always, showing the exact manifest — every path, its
+        bytes, and any refusals with their reasons;
+     2. the commit routed through the Time Capsule, so the whole batch is one
+        undoable run — and anything too large to protect is left UNDELETED
+        rather than deleted unprotected, with the reason in the manifest;
+     3. one result summary with a one-click Undo this run;
+     4. an Idempotency-Key, so a retried commit cannot double-execute.
+
+   The dry run is not a preference or a checkbox. It is the only path: there is
+   no branch in this file that posts `dryRun: false` without first having shown
+   what came back from `dryRun: true`. */
+
+/** The run this session last committed, so "Undo" knows what to put back. */
+let cartLastRun = null;
+/** One key per confirmation, so a retry of the SAME commit cannot run twice. */
+let cartCommitKey = '';
+
 async function cartTrashAll() {
   // Resolve first. "Not in the current scan" must mean the scan really lacks
   // it — not that we haven't asked yet. A rescan clears nodeCache, and
@@ -9141,26 +9175,189 @@ async function cartTrashAll() {
     toast(missing ? 'Staged items aren’t in the current scan — rescan their folder first.' : 'Your cart is empty.', missing ? 'error' : 'success');
     return;
   }
-  const total = known.reduce((s, p) => s + (cartNode(p)?.size ?? 0), 0);
-  $('confirmText').innerHTML = `Move <b>${known.length} staged item${known.length === 1 ? '' : 's'}</b> (${formatBytes(total)}) to the Trash?` +
-    (missing
-      ? `<br><span style="color:var(--text-3)">${missing} item${missing === 1 ? '' : 's'} not in the current scan will stay in the cart.</span>`
-      : `<br><span style="color:var(--text-3)">You can restore them from the Trash at any time.</span>`);
+
+  const btn = $('cartTrash');
+  const label = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + 'Checking…';
+  let plan;
+  try {
+    plan = await api('/api/cart/commit', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: known, dryRun: true }),
+    });
+  } catch (e) {
+    toast('Could not work out what this would do: ' + e.message, 'error', 8000);
+    return;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = label;
+  }
+
+  const willDelete = (plan.items || []).filter((i) => i.willDelete);
+  resetOpenHandleWarning();  // and with it, the button back to "Move to Trash"
+  // The shared dialog trashes `confirmPaths` whenever no callback is set, and
+  // that array is whatever the LAST dialog left in it. Cleared here so neither
+  // branch below can arm the OK button with an unrelated set of files.
+  confirmPaths = [];
   $('confirmTitle').innerHTML = icon('trash', 18) + 'Move to Trash?';
-  onConfirmTrash = cartExecuteTrash;
+  $('confirmText').innerHTML = cartManifestHtml(plan, missing);
+  if (!willDelete.length) {
+    // Nothing would happen, so the button says so and does nothing — rather
+    // than reading "Move to Trash" over a dialog explaining that it cannot.
+    $('confirmOk').innerHTML = icon('x', 15) + 'Close';
+    onConfirmTrash = () => {};
+  } else {
+    cartCommitKey = 'cart-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+    onConfirmTrash = () => cartExecuteCommit(willDelete.map((i) => i.path));
+  }
   $('confirmModal').classList.add('open');
 }
-async function cartExecuteTrash() {
-  await ensureNodes([...state.cart]); // same reason as cartTrashAll
-  const paths = cartKnownPaths();
-  const result = await trashPaths(paths, { silent: true });
-  // pathIndex is still the pre-rescan tree here, so sizes are valid.
-  const recovered = result.deleted.reduce((s, p) => s + (cartNode(p)?.size ?? 0), 0);
-  result.deleted.forEach((p) => state.cart.delete(p));
-  saveCart(); renderCart(); refreshCartButtons();
-  if (result.deleted.length) toast(`Moved ${result.deleted.length} item${result.deleted.length === 1 ? '' : 's'} to Trash — ${formatBytes(recovered)} recovered`);
-  if (result.failed.length) toast(`${result.failed.length} couldn’t be trashed: ${result.failed[0].reason}`, 'error');
-  if (result.deleted.length) rescan();
+
+/**
+ * The manifest, as the confirmation dialog shows it.
+ *
+ * The skipped half is not a footnote: §4.4 says a refusal is shown in the
+ * manifest and "never hidden in a log", and an item the capsule cannot protect
+ * is an item that will still be on the disk afterwards. Saying that before the
+ * click is the difference between a guarantee and a surprise.
+ */
+function cartManifestHtml(plan, missingFromScan) {
+  const items = plan.items || [];
+  const going = items.filter((i) => i.willDelete);
+  const staying = items.filter((i) => !i.willDelete);
+  const rows = staying.slice(0, 6).map((i) =>
+    `<div class="cart-mf-row"><span class="nm" title="${escapeHtml(i.path)}">${escapeHtml(baseName(i.path))}</span>` +
+    `<span class="why">${escapeHtml(i.reason || 'Could not be protected.')}</span></div>`).join('');
+
+  let html = going.length
+    ? `Move <b>${formatCount(going.length)} item${going.length === 1 ? '' : 's'}</b> (${escapeHtml(formatBytes(plan.bytesWouldFree))}) to the Trash?`
+    : `<b>Nothing can be moved to the Trash right now.</b>`;
+
+  if (plan.capsule && plan.capsule.available === false) {
+    html += `<div class="cart-mf-note">${escapeHtml(plan.capsule.reason || 'The Time Capsule is unavailable.')}</div>`;
+  } else if (going.length) {
+    html += `<div class="cart-mf-note">Each one is copied into the <b>Time Capsule</b> and checked before anything is deleted, so the whole batch can be undone in one click — even after you empty the Trash.</div>`;
+  }
+  if (staying.length) {
+    html += `<div class="cart-mf-left"><b>${formatCount(staying.length)} will be left in place</b>` +
+      (plan.bytesSkipped ? ` (${escapeHtml(formatBytes(plan.bytesSkipped))})` : '') +
+      ` — not deleted:</div><div class="cart-mf-list">${rows}` +
+      (staying.length > 6 ? `<div class="cart-mf-row muted">…and ${formatCount(staying.length - 6)} more</div>` : '') +
+      `</div>`;
+  }
+  if (plan.evicts && plan.evicts.length) {
+    html += `<div class="cart-mf-note">${formatCount(plan.evicts.length)} older Time Capsule ${plan.evicts.length === 1 ? 'copy' : 'copies'} will be dropped to make room, and can no longer be restored from there.</div>`;
+  }
+  const conflicts = (plan.openHandles && plan.openHandles.conflicts) || [];
+  if (conflicts.length) {
+    html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(conflicts.length)} of these ${conflicts.length === 1 ? 'is' : 'are'} open in another program right now, which will stop the whole batch.</div>`;
+  }
+  if (missingFromScan) {
+    html += `<div class="cart-mf-note">${formatCount(missingFromScan)} item${missingFromScan === 1 ? '' : 's'} not in the current scan will stay in the cart.</div>`;
+  }
+  return html;
+}
+
+/** Protect → verify → Trash, as one run. Idempotency-Key'd (§4.4 step 4). */
+async function cartExecuteCommit(paths) {
+  let result;
+  try {
+    result = await api('/api/cart/commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': cartCommitKey },
+      body: JSON.stringify({ paths, dryRun: false }),
+    });
+  } catch (e) {
+    toast('Nothing was deleted: ' + e.message, 'error', 10000);
+    return;
+  }
+  (result.trashed || []).forEach((p) => state.cart.delete(p));
+  saveCart();
+  renderCart();
+  refreshCartButtons();
+  cartLastRun = result.trashed && result.trashed.length ? result.runId : null;
+  cartCommitSummary(result);
+  if (result.trashed && result.trashed.length) rescan();
+}
+
+/**
+ * One summary for the whole run, with the undo attached (§4.4 step 3).
+ *
+ * Skipped items are reported as **still on the disk**, because they are. The
+ * temptation is to fold them into a count of failures; they are not failures,
+ * they are the safety rule doing its job, and the wording says so.
+ */
+function cartCommitSummary(result) {
+  const trashed = result.trashed || [];
+  const skipped = result.skipped || [];
+  const failed = result.failedToTrash || [];
+
+  let html = trashed.length
+    ? `Moved <b>${formatCount(trashed.length)}</b> item${trashed.length === 1 ? '' : 's'} to the Trash — <b>${escapeHtml(formatBytes(result.bytesFreed || 0))}</b> recovered.`
+    : `<b>Nothing was deleted.</b>`;
+  if (result.capsuleUnavailable) {
+    html += `<div class="cart-mf-note">${escapeHtml(result.capsuleUnavailable)}</div>`;
+  }
+  if (skipped.length) {
+    html += `<div class="cart-mf-left"><b>${formatCount(skipped.length)} left in place</b> — still on your disk, not deleted:</div>` +
+      `<div class="cart-mf-list">` + skipped.slice(0, 6).map((sk) =>
+        `<div class="cart-mf-row"><span class="nm" title="${escapeHtml(sk.path)}">${escapeHtml(baseName(sk.path))}</span>` +
+        `<span class="why">${escapeHtml(sk.reason || 'Could not be protected.')}</span></div>`).join('') +
+      (skipped.length > 6 ? `<div class="cart-mf-row muted">…and ${formatCount(skipped.length - 6)} more</div>` : '') +
+      `</div>`;
+  }
+  if (failed.length) {
+    html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(failed.length)} could not be moved to the Trash (${escapeHtml(failed[0].reason)}). Those are untouched, and their copies were discarded.</div>`;
+  }
+  if (trashed.length) {
+    html += `<div class="cart-mf-undo"><button class="btn" data-cart-undo="${escapeHtml(result.runId)}">` +
+      `${icon('refresh', 14)}Undo this run</button>` +
+      `<span class="muted">Puts all ${formatCount(trashed.length)} back where they were, from the Time Capsule.</span></div>`;
+  }
+
+  $('confirmTitle').innerHTML = icon('checkCircle', 18) + 'Done';
+  $('confirmText').innerHTML = html;
+  // A summary is not a question. An explicit no-op, not a null callback: null
+  // means "fall back to trashing confirmPaths", which is the last thing a
+  // dialog reporting a completed delete should be able to do.
+  confirmPaths = [];
+  onConfirmTrash = () => {};
+  $('confirmOk').innerHTML = icon('check', 15) + 'Close';
+  $('confirmModal').classList.add('open');
+}
+
+/** Restore a whole committed run from the Time Capsule (§4.4 step 3). */
+async function cartUndoRun(runId) {
+  let job;
+  try {
+    job = await api('/api/cart/undo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'undo-' + runId },
+      body: JSON.stringify({ runId }),
+    });
+  } catch (e) {
+    toast('Could not undo: ' + e.message, 'error', 10000);
+    return;
+  }
+  closeModal('confirmModal');
+  // Through the same progress dialog every other copy-and-verify job uses —
+  // it IS the capsule's restore, not a second one (§10: no new pathway).
+  watchJob({
+    title: 'Putting everything back…',
+    icon: 'clock',
+    progressUrl: `/api/timecapsule/jobs/${encodeURIComponent(job.jobId)}/progress`,
+    cancelUrl: `/api/timecapsule/jobs/${encodeURIComponent(job.jobId)}/cancel`,
+    footNote: 'Every byte is checked against the fingerprint taken when it was protected.',
+    cancelledMessage: 'Undo cancelled — nothing was left half-written',
+    lostMessage: 'Lost the progress stream — reopen the Time Capsule tab for the result',
+    onComplete: () => {
+      toast(`Everything from that run is back — ${formatCount(job.entryCount)} item${job.entryCount === 1 ? '' : 's'}`);
+      cartLastRun = null;
+      rescan();
+    },
+    onSettled: () => { renderCart(); refreshCartButtons(); },
+  });
 }
 
 // Drawer + delegated row-button wiring.
@@ -9173,7 +9370,9 @@ document.addEventListener('click', (e) => {
   const add = e.target.closest('[data-cart-add]');
   if (add) { e.preventDefault(); e.stopPropagation(); cartToggle(add.getAttribute('data-cart-add')); return; }
   const rm = e.target.closest('[data-cart-rm]');
-  if (rm) { e.preventDefault(); e.stopPropagation(); cartToggle(rm.getAttribute('data-cart-rm')); }
+  if (rm) { e.preventDefault(); e.stopPropagation(); cartToggle(rm.getAttribute('data-cart-rm')); return; }
+  const undo = e.target.closest('[data-cart-undo]');
+  if (undo) { e.preventDefault(); e.stopPropagation(); void cartUndoRun(undo.getAttribute('data-cart-undo')); }
 });
 renderCart(); // reflect any persisted cart on load
 void loadCartGoal(); // §4.1 — the target, so the meter is right before Settings is ever opened

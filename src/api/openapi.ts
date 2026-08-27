@@ -2352,6 +2352,66 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     },
   },
 
+  /* ------------ the cleanup cart (v4 §4.4) ------------ */
+  {
+    method: 'post',
+    path: '/api/cart/commit',
+    summary: 'Commit the cleanup cart: protect in the Time Capsule, verify, then Trash — as one undoable run',
+    tag: 'cart',
+    destructive: true,
+    requestBody: jsonBody(
+      obj(
+        {
+          paths: arr(str(), 'Absolute paths inside a scanned root; at most 500'),
+          dryRun: bool('Return the exact manifest, having acted on nothing'),
+        },
+        ['paths'],
+      ),
+    ),
+    responses: {
+      '200': jsonResponse(
+        'The manifest (dryRun) or the result of the run',
+        obj(
+          {
+            dryRun: bool(),
+            runId: str('Only on a real run. The id POST /api/cart/undo takes'),
+            items: arr(opaque('{ path, bytes, willDelete, code?, reason? } — dry run only')),
+            bytesWouldFree: int('Dry run only'),
+            bytesSkipped: int('Dry run only: bytes that would be left behind, unprotectable'),
+            evicts: arr(opaque('{ id, name, originalPath, bytes } — older capsule copies that would be dropped to make room')),
+            capsule: opaque('{ available, reason?, capBytes, usedBytes }'),
+            openHandles: opaque("B2's preflight: what a program is holding open right now"),
+            trashed: arr(str(), 'Real run only'),
+            bytesFreed: int('Real run only'),
+            skipped: arr(opaque('{ path, code?, reason? } — left UNDELETED because they could not be protected')),
+            failedToTrash: arr(opaque('{ path, reason } — protected, then refused by the Trash; the copies were dropped')),
+            capsuleUnavailable: str('Set when the capsule cannot run at all. Nothing was deleted'),
+          },
+          ['dryRun'],
+        ),
+      ),
+      '400': errorResponse('PATHS_REQUIRED, TOO_MANY_PATHS or a rejected path'),
+      '403': errorResponse('OUTSIDE_SCAN_ROOT, VIRTUAL_PATH or a policy refusal'),
+      '409': errorResponse('OPEN_HANDLE_CONFLICT — something in the set is open'),
+    },
+  },
+  {
+    method: 'post',
+    path: '/api/cart/undo',
+    summary: 'Put a whole cart commit back from the Time Capsule, at the original paths',
+    tag: 'cart',
+    destructive: true,
+    requestBody: jsonBody(obj({ runId: str('The runId POST /api/cart/commit returned') }, ['runId'])),
+    responses: {
+      '202': jsonResponse(
+        'Restore started; follow it on GET /api/timecapsule/jobs/{jobId}/progress',
+        obj({ jobId: str(), entryCount: int(), bytesTotal: int() }, ['jobId', 'entryCount', 'bytesTotal']),
+      ),
+      '400': errorResponse('RUN_ID_REQUIRED'),
+      '409': errorResponse('CAPSULE_EMPTY — the copies are gone, so it cannot be undone'),
+    },
+  },
+
   /* ------------ facts (v4 §4.1) ------------ */
   {
     method: 'post',
@@ -2438,6 +2498,7 @@ export function buildOpenApiDocument(): Json {
       { name: 'cloud', description: "The user's own cloud accounts" },
       { name: 'facts', description: 'Per-path derived facts, delivered as a sidecar to the scan tree' },
       { name: 'query', description: 'The query grammar, and the views saved from it' },
+      { name: 'cart', description: 'Committing the cleanup cart through the Time Capsule, and undoing it' },
     ],
     paths,
     components: {

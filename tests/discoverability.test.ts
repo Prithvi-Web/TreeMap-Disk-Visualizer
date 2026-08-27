@@ -221,6 +221,11 @@ test('capabilities marks exactly the destructive endpoints as destructive', asyn
       'POST /api/autopilot/policies/{id}/approve',
       // Undo writes a whole tree back onto the filesystem.
       'POST /api/autopilot/runs/{id}/undo',
+      // The cart's commit protects every item in the Time Capsule before it
+      // trashes anything, and its undo writes a whole tree back. Both are as
+      // consequential as the delete they wrap, so both are declared.
+      'POST /api/cart/commit',
+      'POST /api/cart/undo',
       'POST /api/cloud/disconnect',
       'POST /api/cloud/trash',
       // Re-encoding rewrites a video: the picture is compressed again, losing
