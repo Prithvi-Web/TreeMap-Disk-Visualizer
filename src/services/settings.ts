@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { AppSettings, IgnoreEntry, ScheduleConfig, IgnoreScope, BudgetEntry, CloudCredentials } from '../models/types';
 import { readJsonFile, writeJsonFile } from './storage';
 import { compileIgnoreList, CompiledIgnore } from '../utils/glob';
+import { DEFAULT_RECLAIM_WEIGHTS, RECLAIM_COMPONENT_IDS, ReclaimWeights } from './reclaimScore';
 
 /**
  * Settings — the user's ignore list and scheduled scans, persisted to
@@ -127,6 +128,31 @@ function normalizeCloud(raw: unknown): AppSettings['cloud'] {
   return out;
 }
 
+/**
+ * Reclaim Score weights: each component 0-1, unknown keys dropped, missing
+ * keys filled from the defaults (v4 §3.2).
+ *
+ * An all-zero set is refused back to the defaults rather than stored. Zero on
+ * one component means "do not count this"; zero on every component means
+ * there is no score at all, and silently turning the whole feature off
+ * through a settings write is not a state anyone asked for. Turning it off is
+ * a job for a visible switch, not for six sliders that all happen to be down.
+ */
+function normalizeReclaimWeights(raw: unknown): ReclaimWeights {
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_RECLAIM_WEIGHTS };
+  const src = raw as Record<string, unknown>;
+  const out = { ...DEFAULT_RECLAIM_WEIGHTS };
+  let sum = 0;
+  for (const id of RECLAIM_COMPONENT_IDS) {
+    const n = Number(src[id]);
+    // Absent or unparseable keeps the default; present-and-invalid does too,
+    // because a NaN weight would propagate into every score in the app.
+    if (Number.isFinite(n) && n >= 0) out[id] = Math.min(1, Math.round(n * 1000) / 1000);
+    sum += out[id];
+  }
+  return sum > 0 ? out : { ...DEFAULT_RECLAIM_WEIGHTS };
+}
+
 export async function getSettings(): Promise<AppSettings> {
   if (!cache) {
     const raw = await readJsonFile<Partial<AppSettings>>(SETTINGS_FILE, {});
@@ -139,13 +165,14 @@ export async function getSettings(): Promise<AppSettings> {
       timeCapsuleRetentionDays: normalizeCapsuleRetention(raw.timeCapsuleRetentionDays),
       timeCapsuleMaxPercent: normalizeCapsulePercent(raw.timeCapsuleMaxPercent),
       cloud: normalizeCloud(raw.cloud),
+      reclaimWeights: normalizeReclaimWeights(raw.reclaimWeights),
     };
   }
   return cache;
 }
 
 /** Replace ignore list and/or schedules (input is re-validated here). */
-export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown }): Promise<AppSettings> {
+export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown }): Promise<AppSettings> {
   const current = await getSettings();
   const next: AppSettings = {
     ignore: patch.ignore !== undefined ? normalizeIgnore(patch.ignore) : current.ignore,
@@ -164,6 +191,13 @@ export async function updateSettings(patch: { ignore?: unknown; schedules?: unkn
       ? normalizeCapsulePercent(patch.timeCapsuleMaxPercent)
       : current.timeCapsuleMaxPercent,
     cloud: patch.cloud !== undefined ? normalizeCloud(patch.cloud) : current.cloud,
+    // Sending `null` is how Settings' "Reset to defaults" button asks for
+    // them back: the normalizer rejects a non-object to the defaults, so the
+    // reset needs no second endpoint and no client-side copy of the numbers
+    // that could drift from the ones the server actually uses.
+    reclaimWeights: patch.reclaimWeights !== undefined
+      ? normalizeReclaimWeights(patch.reclaimWeights)
+      : current.reclaimWeights,
   };
   // Preserve lastRunAt across edits that didn't intend to reset it.
   if (patch.schedules !== undefined) {

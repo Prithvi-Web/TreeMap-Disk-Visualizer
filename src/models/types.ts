@@ -4,6 +4,7 @@
  */
 
 import type { ScanStore } from '../services/scanStore';
+import type { ReclaimWeights } from '../services/reclaimScore';
 
 /** A single file or directory in the scanned tree. */
 export interface FileNode {
@@ -465,6 +466,15 @@ export interface AppSettings {
   timeCapsuleMaxPercent: number;
   /** Cloud provider app credentials (tokens live in cloud-tokens.json). */
   cloud: Partial<Record<'gdrive' | 'dropbox' | 'onedrive', CloudCredentials>>;
+  /**
+   * How much each component counts toward the Reclaim Score (v4 §3.2).
+   *
+   * Editable, and deliberately so: a ranking whose reasoning the user cannot
+   * inspect or adjust is an oracle, and TreeMap does not ship oracles. A
+   * weight of 0 removes that component from the score entirely rather than
+   * scoring it as worthless.
+   */
+  reclaimWeights: ReclaimWeights;
 }
 
 /** A budget cross-referenced against a scan: how the folder measures up now. */

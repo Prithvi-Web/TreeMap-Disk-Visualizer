@@ -550,8 +550,18 @@ const schemas: Json = {
       forecastThresholdDays: num(),
       watchIdleMinutes: num(),
       cloud: opaque('Per-provider OAuth app credentials (gdrive / dropbox / onedrive)'),
+      reclaimWeights: obj(
+        {
+          size: num(), staleness: num(), regenerable: num(),
+          redundant: num(), redownloadable: num(), elsewhere: num(),
+        },
+        ['size', 'staleness', 'regenerable', 'redundant', 'redownloadable', 'elsewhere'],
+        'How much each component counts toward the Reclaim Score, 0-1 each. '
+          + 'A weight of 0 removes that component from the score rather than scoring it as worthless. '
+          + 'Send null to restore the defaults.',
+      ),
     },
-    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud'],
+    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights'],
   ),
 };
 
@@ -1597,7 +1607,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'get',
     path: '/api/settings',
-    summary: 'User settings: ignore list, schedules, budgets, thresholds, cloud credentials',
+    summary: 'User settings: ignore list, schedules, budgets, thresholds, cloud credentials, Reclaim Score weights',
     tag: 'settings',
     destructive: false,
     responses: { '200': jsonResponse('Settings', ref('AppSettings')) },
@@ -1608,7 +1618,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Replace whichever settings lists are present in the body',
     tag: 'settings',
     destructive: true,
-    requestBody: jsonBody(opaque('Any subset of AppSettings: ignore, schedules, budgets, forecastThresholdDays, watchIdleMinutes, cloud')),
+    requestBody: jsonBody(opaque('Any subset of AppSettings: ignore, schedules, budgets, forecastThresholdDays, watchIdleMinutes, cloud, reclaimWeights')),
     responses: { '200': jsonResponse('Updated settings', ref('AppSettings')), '400': errorResponse('Bad shape') },
   },
   {
