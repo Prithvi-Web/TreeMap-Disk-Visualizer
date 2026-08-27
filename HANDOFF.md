@@ -1,5 +1,146 @@
 # TreeMap — session handoff
 
+## v4 — Phase 6 complete: the visual core (27 August 2026)
+
+**Five commits on `main`, on top of the two that were already there** (`25553a4`
+6.0 subtreeCount, `81191ef` 6.1 Disk City). Suite **1326 (1324 pass, 2 skip, was
+1275)**, typecheck clean, build clean, `npm run bench:v4` **7 pass / 3 not
+measurable in Node** with scan throughput **7.5% FASTER** than baseline, golden
+responses untouched — Phase 6 added **no endpoint and no field**, so there was
+nothing for §2.1 to object to.
+
+| Commit | What |
+| --- | --- |
+| `369b592` | 6.2 two more lenses on the same tree — circle packing and a Voronoi treemap |
+| `7aa65bc` | 6.3/6.4 a lasso and a magnifier |
+| `b00cd84` | 6.1 give the buildings a light to stand in |
+| `eb7f556` | 6.2 the Voronoi solver had no bound on its own work |
+| *(this one)* | 6.5 docs, the reduced-motion contract, and the highlight scrim |
+
+### The four bugs the browser found and the tests could not have
+
+Every one of these was invisible to reading and to unit tests, and each is now
+pinned by an assertion that fails on the mutation.
+
+**1. The circle packing's tangent placement was mirrored.** Nothing about the
+picture said so: every circle was still tangent to exactly two neighbours, they
+were simply tangent on the wrong side and lay on top of what was already there.
+A ten-circle pack overlapped by 59 units inside a 200-unit radius. Found by
+asserting sibling overlap directly rather than by looking at bubbles.
+
+**2. Disk City's shadows fell in a direction where none of them could ever be
+seen.** A treemap **tiles its ground completely** — there is no bare floor
+anywhere. Shadows swept toward the viewer land on ground belonging to buildings
+drawn later, and every one of those painted over its shadow. The light now
+sweeps back and to the left, onto roofs drawn earlier, and the sign of `x + y`
+is an asserted invariant rather than a constant somebody liked.
+
+**3. The Voronoi solver had no bound on its own work.** A real `node_modules`
+(386 children, wild spread) spent **2,715 ms** on one layout against §2.5's
+250 ms first-paint budget, and still reported its worst cell 466% off. The
+per-attempt iteration cap was doing exactly what it said; nothing bounded how
+many attempts there could be. Now capped as WORK across the whole call — a pass
+over ninety cells costs sixteen times one over twenty-two — with a descent that
+gives up a quarter of the cells while a layout is still expensive. Worst first
+paint measured after: **195.8 ms**.
+
+**4. The magnifier culled the label of the tile it was pointing at.** At 4× one
+cell often covers the whole lens, so its true centre is far outside the glass.
+Labels are placed on the part of the tile that is ON the glass now.
+
+### The Voronoi solver, and what it costs to make "area is bytes" true
+
+Four things were measured into it, each replacing something that looked
+reasonable:
+
+| Looked reasonable | What it did | What it is now |
+| --- | --- | --- |
+| Cap each weight at its own distance to its nearest neighbour | Big cell cannot grow when a small sibling sits near it — worst cell stuck at **389%** | Cap `w_i` at `min_j (w_j + d_ij²)` — the condition that actually matters. Same input: **1.95%** |
+| Reset a collapsed weight to the starting value | Throws the diagram back to the beginning — 56 cells stalled at **32%** | Floor it just above zero: **2%** |
+| A fixed iteration cap | 240 starves six cells to **249%** and is a fifth of a second over ninety-six | Scale it: constant total work, `1.5e6 / n²` |
+| Keep iterating until it converges | Cannot, on extreme dynamic range | Shrink the question and say how much: drop the smallest cell and ask again |
+
+The last one is the product decision. What defeats this algorithm is dynamic
+range, not size — one child at 98.9% of a real Desktop left the worst cell 125%
+off after both starting points and 2,400 passes. Dropping the cells already
+closest to the legibility floor turns "an approximate map of everything" into
+"an exact map of what fits, and a count of what did not", which is the trade
+this project makes everywhere else.
+
+**The reported error is per cell against its OWN target, never the sum over the
+diagram.** That gentler figure — the one every paper reports — reads under 1% on
+a map whose smallest cell is twice the size it should be.
+
+### §6.3's spec contradicts itself, and how it was resolved
+
+§6.3 asks for "freehand (hold Alt)" and, one sentence later, "Alt subtracts".
+Alt cannot do both. **Freehand won**, because a modifier that changes the SHAPE
+of a gesture must be decided before the drag starts while add-or-subtract can be
+decided at any point during it. Subtract moved to ⌘/Ctrl; Shift is accepted as a
+synonym for add so the muscle memory still works.
+
+**And no gesture empties the cart.** "Shift extends" reads as though a plain
+lasso should replace the selection, and replace is the one behaviour that could
+silently throw away staging done in four other views. A test asserts no code
+path in `lassoApply` can clear it.
+
+The sunburst is the one renderer with no lasso, and it says so rather than
+offering a dead gesture: its rings are drawn nested, so "everything whose centre
+is inside" would stage a folder and its contents twice and report a total the
+disk does not have.
+
+### Numbers, measured on this Mac
+
+Real folder, 328,278 files, 16.7 GB, in the browser:
+
+| | Measured | §2.5 budget |
+| --- | --- | --- |
+| Disk City first paint (4,108 blocks laid out) | 44.5 ms | 250 ms |
+| Disk City frame, 351 blocks | 4.2 ms median · 7.6 ms p95 | 16 / 33 ms |
+| Circle pack, worst first paint over four folders | 23.1 ms | 250 ms |
+| Voronoi, worst first paint over four folders | 195.8 ms | 250 ms |
+| Either, repaint during the level transition | 0.6 ms median · 1.5 ms p95 | 16 / 33 ms |
+| Magnifier overlay, added to a present pass | +0.2 ms median · +1.3 ms p95 | 16 / 33 ms |
+
+Lasso, driven live: a rubber band staged 194 items in one drag; ⌘ over the same
+region took the cart from 194 to 31 and reported the 38 it caught that were not
+in it; the Disk City lasso staged 74 buildings (15.5 GB) and did **not** drill
+into whatever was under the release.
+
+### What could NOT be verified in this session
+
+- **The 250k-node payload §2.5 names.** The biggest tree reachable here is
+  328,278 files, which the server prunes to a **3,867-node** payload at depth 6.
+  Every first-paint figure above is against that, not against 250k. The number
+  that IS at scale is Disk City's layout: 4,108 blocks sorted and projected in
+  44.5 ms, and `isoProjection.test.ts` orders 4,000 synthetic blocks in a test
+  that fails above 120 ms.
+- **A folder whose Voronoi map needs more than 24 shrink attempts.** The
+  synthetic 2,179:1 fixture is the only input in the suite that still comes back
+  `converged: false`, and it is covered by a test that asserts the *reporting*
+  is honest rather than that it converges. No real folder here reproduced it.
+- **`prefers-reduced-motion` under a real OS setting.** This machine is not set
+  to reduce motion and the preview browser cannot emulate it, so what runs here
+  is the animated path. The guarantee is asserted structurally instead: a
+  contract test requires every animation ENTRY POINT — `cityMorphHeights`,
+  `cityEnter`, `cityAnimateZoom`, `altBeginZoom` — to consult `REDUCED` before
+  it starts, and it fails when any one of them stops doing so.
+- **Windows and Linux.** Nothing in Phase 6 is per-OS — it is all Canvas 2D over
+  data the existing endpoints already return — but no non-Mac browser ran it.
+
+### Two things worth knowing about the renderers
+
+1. **The tree-based renderers see more than the treemap does.** Sunburst,
+   Circles and Voronoi read the in-memory tree through `ensureSubtree`; the
+   treemap draws the server's pruned payload with `minSize=4096`. On a folder of
+   very small files the treemap can legitimately show "0 nodes · 0 drawn" while
+   Circles shows seventeen. Pre-existing, and consistent between the three.
+2. **Scanning `/Users/prithvivinay` hung twice** on
+   `~/Library/Group Containers/BJ4HAAB9B3.ZoomClient3rd`, with the progress
+   counter frozen for twenty minutes. `~/Desktop` (328k files, 5.4 s) was used
+   instead. Not investigated and not obviously Phase 6's doing — it reproduced
+   before any change in this session — but somebody should look.
+
 ## v4 — Phase 5 complete: The Missing Gigabytes (27 August 2026)
 
 **Three commits on `main`.** Suite **1251 (1249 pass, 2 skip, was 1220 with one

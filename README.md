@@ -56,12 +56,12 @@
 
 <br>
 
-## ✨ The sixteen views
+## ✨ The seventeen views
 
-TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Sixteen views, one zero-dependency frontend.
+TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Seventeen views, one zero-dependency frontend.
 
 <div align="center">
-  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Grid, Apps, Games, Security, Fleet, Missing GB, Duplicates, Trends, Compare, Offloaded, Time Capsule, Autopilot, Clean Up, Scheduled + Ignore">
+  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Disk City, Grid, Apps, Games, Security, Fleet, Missing GB, Duplicates, Trends, Compare, Offloaded, Time Capsule, Autopilot, Clean Up, Scheduled + Ignore">
 </div>
 
 <br>
@@ -81,7 +81,25 @@ Two more cards sit here. **Cost to Keep** prices the scanned data against Google
 <td width="50%" valign="top">
 
 ### 🗺️ Treemap
-A squarified treemap of every file, sized by bytes and colored **teal → amber → red** — or by **Reclaim score**, which colors each cell by how safe and worthwhile it is to delete rather than how big it is (grey for anything TreeMap could not score, named in the legend rather than left to look like a low score). Drill in, climb back with breadcrumbs + zoom-out, search with highlights (`report`, `*.zip`), pin **folder budgets** (over-budget folders get a red dashed border), and **export** the chart (PNG / SVG) or the whole scan (**CSV**, or a multi-page **PDF report**). A **time slider** appears once a folder has scan history: scrub to any past scan and watch the map morph — in the treemap *and* the sunburst — with a **diff overlay** tinting what grew green and what shrank red. And a **Live toggle** watches the scanned folder in real time: changed files pulse, regions re-flow as bytes move, and a "writing now" feed ranks the busiest paths by MB/min (auto-pauses when the disk goes quiet). **Containers are drillable**: .zip/.jar/.tar/.tar.gz/.iso (and Docker's data file, with the CLI) get a badge — click to look inside without extracting a byte, using the archive's own directory listing. Nothing inside an archive can be trashed or opened — only the archive itself. Right-click any file for **where it came from** — the site a download originated at, read from the OS's own quarantine and "where from" metadata. Only the **host** is shown until you click to reveal the full URL, it is written with `textContent` and never as HTML, no clickable link is ever built from it, and TreeMap never fetches it: a URL out of a downloaded file is untrusted input, and it is treated that way. 
+A squarified treemap of every file, sized by bytes and colored **teal → amber → red** — or by **Reclaim score**, which colors each cell by how safe and worthwhile it is to delete rather than how big it is (grey for anything TreeMap could not score, named in the legend rather than left to look like a low score). Drill in, climb back with breadcrumbs + zoom-out, search with highlights (`report`, `*.zip`), pin **folder budgets** (over-budget folders get a red dashed border), and **export** the chart (PNG / SVG) or the whole scan (**CSV**, or a multi-page **PDF report**). A **time slider** appears once a folder has scan history: scrub to any past scan and watch the map morph — in the treemap *and* the sunburst — with a **diff overlay** tinting what grew green and what shrank red. And a **Live toggle** watches the scanned folder in real time: changed files pulse, regions re-flow as bytes move, and a "writing now" feed ranks the busiest paths by MB/min (auto-pauses when the disk goes quiet). **Containers are drillable**: .zip/.jar/.tar/.tar.gz/.iso (and Docker's data file, with the CLI) get a badge — click to look inside without extracting a byte, using the archive's own directory listing. Nothing inside an archive can be trashed or opened — only the archive itself. Right-click any file for **where it came from** — the site a download originated at, read from the OS's own quarantine and "where from" metadata. Only the **host** is shown until you click to reveal the full URL, it is written with `textContent` and never as HTML, no clickable link is ever built from it, and TreeMap never fetches it: a URL out of a downloaded file is untrusted input, and it is treated that way.
+
+**Four ways to draw the same tree.** A segmented control switches between the squarified **Treemap**, a radial **Sunburst**, nested **Circles** and a **Voronoi** map — same folder, same breadcrumbs, same depth, same colour mode, same highlight box. Circle packing sizes every circle so its *area* is its bytes, exactly as the rectangles do, and animates the zoom when you drill so you can see where you went; a folder's name sits on its own ring rather than through its contents. The Voronoi map solves for cells whose areas are proportional to bytes — a weighted centroidal diagram, iterated until no cell is more than 2% off its true share — and when a folder's sizes are too lopsided for that to be reachable in the time a frame allows, it **says so under the map**, with the worst cell's error, instead of presenting an approximation as exact. Anything too small to draw at the current size is counted and named there too.
+
+**Drag to lasso.** Rubber-band by default, freehand with ⌥, and everything whose centre falls inside is staged in the cleanup cart — with a running count and byte total while you drag, so you can see what you have caught before you let go. ⌘ (Ctrl) over a region takes those items back out. Nothing is deleted and no gesture ever empties the cart; the cart still runs its own dry run and confirmation. It works the same way in **Disk City**, where a modifier is needed because a plain drag pans.
+
+**Hold `Z` to magnify.** A circular lens at 4× over the parts of the map where tiles are two pixels wide, redrawn from the layout rather than scaled up from the picture — so the edges stay crisp and the names are legible at a size they were never drawn at. There is a **Lens** button for pinning it.
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
+### 🏙️ Disk City
+The Treemap's own tiling, seen from a corner — the *same* arrangement, not a similar one, so switching between them is legible rather than disorienting. A flat treemap encodes exactly one variable in area; this encodes three at once. **Footprint** is bytes, **height** is staleness (or file count, or nesting depth), **colour** is Reclaim score (or file kind, or age). *"The tall grey tower is a 40 GB thing you have not opened in two years"* reads instantly in a way a red rectangle never does.
+
+Pure Canvas 2D — an isometric projection is a 2D affine transform, and there is no WebGL, no 3D engine and no dependency anywhere in it. The draw order is a topological sort rather than a depth number, because **no per-box number can order a real treemap layout correctly** — that was measured against a ray-casting oracle, and four plausible scalar keys each got dozens of pairs wrong. Buildings are lit from one named direction, cast shadows onto the roofs behind them, and are finished with parapets, rooftop plant and the occasional mast; none of that carries data, which is why it is drawn at low contrast and never near a label.
+
+Drag to pan, scroll to zoom, click to go inside, Escape to come back out. Height is normalised to the folder you are standing in, and the legend says so. A block that swallowed its children is hatched rather than presented as a thing with nothing inside it, and the level-of-detail line always names its own threshold — *"showing 4,120 of 251,000 items"* — because a map that quietly drew a fraction of what it was given is lying by omission. Everything on it is also listed as a **text equivalent** below the map, in draw order.
 
 </td>
 </tr>

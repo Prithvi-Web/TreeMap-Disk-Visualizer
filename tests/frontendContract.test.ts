@@ -273,6 +273,48 @@ test('reduced motion is respected', () => {
   assert.match(INDEX, /prefers-reduced-motion/, 'animations must respect the OS setting');
 });
 
+test('every animation entry point asks REDUCED before it starts', () => {
+  /* v4 §6 cross-cutting: "every new animation … must too, degrading to an
+     instant transition". Checked structurally rather than by eye, because the
+     failure mode is invisible to anyone whose own machine is not set to reduce
+     motion — the animation simply runs, for someone else.
+
+     Each of these is a function that STARTS a loop. The ones that merely
+     continue one (`cityRunMorph`, `altRunZoom`) are deliberately not listed:
+     they can only be reached through a starter that has already asked. */
+  const starters = ['cityMorphHeights', 'cityEnter', 'cityAnimateZoom', 'altBeginZoom'];
+  for (const name of starters) {
+    const start = INDEX.indexOf(`function ${name}(`);
+    assert.notEqual(start, -1, `${name} exists`);
+    // The guard is the first thing that can return, so a short window is
+    // enough and a long one would pass on an unrelated mention further down.
+    const head = INDEX.slice(start, start + 460);
+    assert.match(head, /\bREDUCED\b/, `${name} checks REDUCED before it animates`);
+  }
+});
+
+test('the alternate renderers announce what they had to approximate', () => {
+  // §6.2 requires the footnote; §2.4 requires it to be visible rather than
+  // logged. A live region, so a screen reader hears the caveat change when the
+  // map does — and it is emphatically not a toast, because a caveat about what
+  // is on screen has to stay up for as long as the screen does.
+  assert.ok(INDEX.includes('id="tmAltNote"'), 'the footnote element exists');
+  const el = INDEX.slice(INDEX.indexOf('id="tmAltNote"') - 120, INDEX.indexOf('id="tmAltNote"') + 120);
+  assert.match(el, /role="status"/, 'the footnote is a status region');
+  assert.match(el, /aria-live="polite"/, 'and it is announced when it changes');
+});
+
+test('all four map renderers are reachable, and each is a labelled control', () => {
+  // §6.2: "selectable from a segmented control in the Treemap view — not new
+  // views". So they must NOT be tabs, and must be here.
+  for (const mode of ['treemap', 'sunburst', 'circles', 'voronoi']) {
+    assert.ok(INDEX.includes(`data-vm="${mode}"`), `the ${mode} renderer has a control`);
+    assert.ok(!INDEX.includes(`data-view="${mode === 'treemap' ? '\u0000' : mode}"`),
+      `${mode} is a renderer, not a view`);
+  }
+  assert.ok(INDEX.includes('id="tmLensToggle"'), '§6.4 the magnifier has a pinnable control');
+});
+
 test('modals trap focus and close on Escape', () => {
   const script = appScript();
   assert.match(script, /Escape/, '§3.6: Esc closes modals');

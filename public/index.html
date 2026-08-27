@@ -5811,12 +5811,27 @@ function renderSearchOverlay() {
   // non-matching is dimmed, parents included: a parent's exposed rim left
   // bright while its contents dim reads as a match that is not one.
   if (isCells()) {
+    // One path for everything that did not match, filled once. Separately
+    // filled shapes STACK where a child sits inside a folder that also did not
+    // match, and a doubled scrim washes the map out — measured on a real query
+    // where two matches were the only colour left on an almost white panel.
+    // Non-zero winding unions the subpaths instead, so an overlap costs
+    // nothing, which is what dimming should do.
+    ctx.beginPath();
+    let anyDim = false;
     for (const c of state.treemap.cells) {
       if (isMatch(c.n)) continue;
-      altCellPath(ctx, c);
-      ctx.fillStyle = scrim;
-      ctx.fill();
+      if (c.kind === 'circle') {
+        ctx.moveTo(c.cx + c.r, c.cy);
+        ctx.arc(c.cx, c.cy, Math.max(0.4, c.r), 0, Math.PI * 2);
+      } else {
+        ctx.moveTo(c.poly[0].x, c.poly[0].y);
+        for (let i = 1; i < c.poly.length; i++) ctx.lineTo(c.poly[i].x, c.poly[i].y);
+        ctx.closePath();
+      }
+      anyDim = true;
     }
+    if (anyDim) { ctx.fillStyle = scrim; ctx.fill(); }
     for (const c of state.treemap.cells) {
       if (!isMatch(c.n)) continue;
       matches++;
