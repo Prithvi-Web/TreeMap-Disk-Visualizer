@@ -88,6 +88,15 @@ jobs:
           {
             echo '## Failing tests'
             echo '```'
+            # The NAME alone is not enough to fix anything: two different
+            # asserts in one test fail with the same name, and a name without
+            # its assertion has already cost this project two sessions. The
+            # YAML block Node prints under each failure carries the actual
+            # values, so it goes in the summary with them.
+            grep -A 14 -E '^not ok' test-output.tap || echo '(none matched — see raw log)'
+            echo '```'
+            echo '## Failing test names'
+            echo '```'
             grep -n '^not ok' test-output.tap || echo '(none matched — see raw log)'
             grep -E '^# (tests|pass|fail|cancelled|skipped)' test-output.tap
             echo '```'
