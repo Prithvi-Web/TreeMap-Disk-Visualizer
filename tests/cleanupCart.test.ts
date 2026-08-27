@@ -164,3 +164,44 @@ test('Security findings have no cart path anywhere', () => {
   const body = slice(INDEX, 'function renderSecurity', 'function confirmRelocateSecret');
   assert.ok(!body.includes('data-cart-add'), 'security findings are never stageable for deletion');
 });
+
+/* ══════════════════════ the cart list is paged, and says so ══════════════════════ */
+
+test('the cart draws a page of rows, not the whole cart', () => {
+  // Measured: rebuilding the list is 44.1 ms for 1,000 rows, and it is rebuilt
+  // on every cart click — right at §2.5's 50 ms main-thread budget, and past
+  // it above ~1,100 items. Staging a 1,000-hit query is one click away, so
+  // that cart is not hypothetical. Paged: 8.2 ms.
+  assert.match(INDEX, /const CART_PAGE = 200;/);
+  const body = slice(INDEX, 'async function renderCart', 'async function cartTrashAll');
+  assert.match(body, /all\.slice\(0, cartShown\)/, 'only a page is drawn');
+  assert.match(body, /more staged, not listed here/, '§2.4: a cap that is not stated is a lie about the list');
+  assert.match(body, /data-cart-show-all/, 'and the rest can be asked for');
+});
+
+test('every cart total is computed from the whole cart, never from the drawn rows', () => {
+  // The paging must not reach the numbers. If it ever did, the dock would
+  // under-report what is staged — in the one panel whose job is to say how
+  // much is about to be deleted.
+  const body = slice(INDEX, 'async function renderCart', 'async function cartTrashAll');
+  assert.match(body, /const n = state\.cart\.size;/, 'the count is the Set size');
+  assert.match(body, /const total = cartTotalBytes\(\);/, 'and the total is over the Set');
+  const totals = INDEX.slice(INDEX.indexOf('function cartTotalBytes'), INDEX.indexOf('function cartToggle'));
+  assert.match(totals, /\[\.\.\.state\.cart\]\.reduce/, 'cartTotalBytes reads the Set, not the DOM');
+});
+
+test('showing all is delegated, like every other cart button', () => {
+  // A listener bound per render is attached to an element the next render
+  // throws away. That worked until something re-rendered between the bind and
+  // the click — which is exactly what happened while measuring this.
+  const body = slice(INDEX, "const undo = e.target.closest('[data-cart-undo]')", 'renderCart(); // reflect any persisted cart on load');
+  assert.match(body, /closest\('\[data-cart-show-all\]'\)/);
+  assert.match(body, /cartShown = Infinity/);
+});
+
+test('a commit or a clear resets the page, because it is a different list now', () => {
+  const clear = slice(INDEX, 'function cartClear()', 'Sync the +/✓ state');
+  assert.match(clear, /cartShown = CART_PAGE/);
+  const commit = slice(INDEX, 'async function cartExecuteCommit', 'function cartCommitSummary');
+  assert.match(commit, /cartShown = CART_PAGE/);
+});

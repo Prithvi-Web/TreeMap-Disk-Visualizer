@@ -270,6 +270,22 @@ strips them back out and pins that. Verified live: after a commit and undo
 through the UI, a folder kept its own Feb 2024 date even though its child was
 written into it during the restore.
 
+### The cart list is paged, because rebuilding it was a 44 ms block
+
+Measured with a 1,000-item cart: rebuilding `#cartList` is **44.1 ms**, and it
+is rebuilt on *every* cart click — right at §2.5's 50 ms main-thread budget and
+past it above about 1,100 items. Staging a 1,000-hit query is one click away,
+so that cart is not hypothetical.
+
+`CART_PAGE = 200` draws a page and states the remainder ("799 more staged, not
+listed here" + **Show all 999**), the same shape Duplicates already uses. Paged
+it is **8.2 ms**. Every total — the tab count, "Reclaims", the goal meter, the
+commit itself — is computed from the whole Set and is unaffected by what is
+drawn; a test pins that, because a dock that under-reported what is staged
+would be wrong in the one panel whose job is to say how much is about to go.
+
+---
+
 ## Perf pass on the Phase 3 readers — and what "10x" actually costs (27 Aug 2026)
 
 CI on `189a4e8` was **green on all three OSes**: type-check and the full suite

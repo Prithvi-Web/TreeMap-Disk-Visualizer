@@ -629,6 +629,10 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
   border-radius: 50%; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex: none;
   transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
 .cart-item .rm:hover { background: var(--danger); color: #fff; }
+/* v4 §4 — the "not everything is listed" row. Stated, never silent. */
+.cart-more { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; font-size: 11.5px; color: var(--text-3);
+  border-top: 1px solid var(--hairline); }
 /* Wraps because v4 §4.3 added a fourth control: at 340px the row is full, and
    a Move-to-Trash button pushed off the edge is worse than a second line. */
 .cart-foot { display: flex; align-items: center; gap: 8px; padding: 12px 15px; border-top: 1px solid var(--hairline); flex-wrap: wrap; }
@@ -9138,6 +9142,25 @@ $('budgetValue').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e
 state.cart = new Set();
 try { JSON.parse(localStorage.getItem('tm-cart') || '[]').forEach((p) => state.cart.add(p)); } catch {}
 
+/**
+ * How many cart rows are put in the DOM at once.
+ *
+ * Measured: rebuilding the list is **44.1 ms for 1,000 rows**, and the list is
+ * rebuilt on every cart click — right at §2.5's 50 ms main-thread budget, and
+ * past it above about 1,100 items. Staging a 1,000-hit query is one click
+ * away, so that is not a hypothetical cart.
+ *
+ * The same shape Duplicates already uses (`DUP_PAGE`): show a page, say how
+ * many are not shown, and offer to render the rest on an explicit click —
+ * which then pays the cost once, deliberately, rather than on every toggle.
+ * §2.4's rule applies: a cap that is not stated is a lie about the list.
+ *
+ * Every TOTAL — the tab count, "Reclaims", the goal meter, the commit itself —
+ * is computed from the whole Set and is unaffected by what is drawn.
+ */
+const CART_PAGE = 200;
+let cartShown = CART_PAGE;
+
 function saveCart() { localStorage.setItem('tm-cart', JSON.stringify([...state.cart])); }
 function cartHas(p) { return state.cart.has(p); }
 function cartNode(p) { return nodeFor(p); }
@@ -9152,7 +9175,9 @@ function cartToggle(p) {
   cartPreviewInvalidated();
 }
 function cartClear() {
-  state.cart.clear(); saveCart(); renderCart(); refreshCartButtons();
+  state.cart.clear();
+  cartShown = CART_PAGE; // a new list, not the one the user asked to see all of
+  saveCart(); renderCart(); refreshCartButtons();
   cartPreviewInvalidated();
 }
 
@@ -9271,7 +9296,9 @@ async function renderCart() {
     list.innerHTML = '<div class="cart-empty">Your cart is empty.<br>Add files from any view to stage them for the Trash.</div>';
     return;
   }
-  list.innerHTML = [...state.cart].map((p) => {
+  const all = [...state.cart];
+  const drawn = all.slice(0, cartShown);
+  list.innerHTML = drawn.map((p) => {
     const node = cartNode(p);
     const name = node ? node.name : (p.split(/[\\/]/).pop() || p);
     return `<div class="cart-item${node ? '' : ' missing'}">
@@ -9280,7 +9307,13 @@ async function renderCart() {
       <span class="sz num">${node ? formatBytes(node.size) : 'not in scan'}</span>
       <button class="rm" data-cart-rm="${escapeHtml(p)}" aria-label="Remove ${escapeHtml(name)} from cart">${icon('x', 13)}</button>
     </div>`;
-  }).join('');
+  }).join('')
+    // Never a silent truncation: the count above and the total below both cover
+    // everything, so the list has to say that it does not.
+    + (all.length > drawn.length
+      ? `<div class="cart-more"><span>${formatCount(all.length - drawn.length)} more staged, not listed here.</span>` +
+        `<button class="btn" data-cart-show-all>Show all ${formatCount(all.length)}</button></div>`
+      : '');
 }
 
 /* ── Phase 4 (v4 §4.4) — committing the cart ──────────────────────────────
@@ -9507,6 +9540,7 @@ async function cartExecuteCommit(paths, foreseen = []) {
     btn.innerHTML = label;
   }
   (result.trashed || []).forEach((p) => state.cart.delete(p));
+  cartShown = CART_PAGE;
   saveCart();
   renderCart();
   refreshCartButtons();
@@ -9632,7 +9666,13 @@ document.addEventListener('click', (e) => {
   const rm = e.target.closest('[data-cart-rm]');
   if (rm) { e.preventDefault(); e.stopPropagation(); cartToggle(rm.getAttribute('data-cart-rm')); return; }
   const undo = e.target.closest('[data-cart-undo]');
-  if (undo) { e.preventDefault(); e.stopPropagation(); void cartUndoRun(undo.getAttribute('data-cart-undo')); }
+  if (undo) { e.preventDefault(); e.stopPropagation(); void cartUndoRun(undo.getAttribute('data-cart-undo')); return; }
+  // Delegated like every other cart button. A listener bound per render is
+  // attached to an element the next render throws away, which is exactly the
+  // kind of thing that works until something re-renders between the bind and
+  // the click.
+  const showAll = e.target.closest('[data-cart-show-all]');
+  if (showAll) { e.preventDefault(); e.stopPropagation(); cartShown = Infinity; void renderCart(); }
 });
 renderCart(); // reflect any persisted cart on load
 void loadCartGoal(); // §4.1 — the target, so the meter is right before Settings is ever opened
