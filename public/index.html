@@ -810,7 +810,7 @@ body.preview-open #cartDock { right: 348px; }
 }
 .index-badge .dot {
   width: 7px; height: 7px; border-radius: 50%; flex: none;
-  background: var(--ok, #30D158);
+  background: var(--ok);
 }
 .index-badge.stale .dot { background: var(--warn, #FF9F0A); }
 /* The pulse is a liveness cue, so it is exactly the kind of decoration
@@ -1180,6 +1180,11 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .gp-base { background: var(--accent); }
 .gp-dlc { background: #bf5af2; }
 .gp-shaderCache { background: var(--warn); }
+/* v4 §4.2 — the one part of a game that is safe to stage. */
+.game-shaders { margin-top: 8px; border-top: 1px solid var(--hairline); padding-top: 7px; }
+.game-shader { display: flex; align-items: center; gap: 10px; padding: 4px 0; font-size: 12px; }
+.game-shader .pth { flex: 1; min-width: 0; color: var(--text-3); font-size: 10.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gp-workshop { background: #30d158; }
 .gp-compatPrefix { background: #64d2ff; }
 .game-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 7px; font-size: 11px; color: var(--text-3); }
@@ -1850,6 +1855,10 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
     <div class="tm-querybar glass" id="tmQueryBar" hidden>
       <div class="tm-saved" id="tmSavedViews"></div>
       <button class="pill" id="tmSaveView" title="Save this query as a view you can click again">Save view</button>
+      <!-- v4 §4.2 — query results are a list of reclaimable paths like any
+           other, so they get a way into the cart. Staging only: nothing is
+           deleted here, and the count is stated before anything moves. -->
+      <button class="pill" id="tmStageMatches" hidden title="Add every file this query matched to the cleanup cart">Stage matches</button>
       <div class="tm-queryerr" id="tmQueryErr" role="status" aria-live="polite" hidden></div>
     </div>
     <div class="tm-timebar glass" id="tmTimebar" hidden>
@@ -3192,6 +3201,7 @@ const VIEWS = [
       // so the NEXT entry resurrected the bar with a query from two views ago.
       tmCancelQueries();
       tmCloseHints();
+      tmClearHits();
       tmSetQueryMessage('', false);
       $('tmQueryBar').hidden = true;
       // Live mode keeps two intervals and a rAF loop alive; leaving the view
@@ -6392,6 +6402,40 @@ let tmQueryDeb = 0;
 let tmQuerySeq = 0;
 
 /**
+ * The last grammar query's hits, for "Stage matches" (v4 §4.2).
+ *
+ * Deliberately the SERVER's hit list rather than `state.treemap.matchedPaths`,
+ * which is the same set — but only the part of it the map happened to draw
+ * would be obvious to a reader, and staging "what is outlined" when the
+ * message above says "412 matches — 37 shown here" would stage the wrong
+ * thing. `truncated` is carried so the button can say what it is offering
+ * instead of implying it has everything.
+ */
+let tmLastHits = { q: '', paths: [], total: 0, truncated: false };
+
+/** Show / hide the Stage matches button for the current result (§4.2). */
+function tmSyncStageButton() {
+  const btn = $('tmStageMatches');
+  if (!btn) return;
+  const n = tmLastHits.paths.length;
+  btn.hidden = n === 0;
+  // The bar earns its row from three things now, and this is one of them —
+  // syncing here rather than at every call site is what keeps them agreeing.
+  tmSyncQueryBar();
+  if (n === 0) return;
+  btn.textContent = `Stage ${formatCount(n)} match${n === 1 ? '' : 'es'}`;
+  btn.title = tmLastHits.truncated
+    ? `Add the ${formatCount(n)} biggest of ${formatCount(tmLastHits.total)} matches to the cleanup cart. Nothing is deleted — staging only.`
+    : `Add ${formatCount(n)} matched file${n === 1 ? '' : 's'} to the cleanup cart. Nothing is deleted — staging only.`;
+}
+
+/** Clear the staged-matches offer. Called wherever a query stops being current. */
+function tmClearHits() {
+  tmLastHits = { q: '', paths: [], total: 0, truncated: false };
+  tmSyncStageButton();
+}
+
+/**
  * Invalidate every in-flight query response.
  *
  * Called on clear, on the bare-word path and on unmount. Without it a reply
@@ -6417,7 +6461,8 @@ function tmSyncQueryBar() {
   if (!bar) return;
   const hasViews = $('tmSavedViews').childElementCount > 0;
   const hasMessage = !$('tmQueryErr').hidden;
-  bar.hidden = !(hasViews || hasMessage) || state.view !== 'treemap';
+  const hasStage = !$('tmStageMatches').hidden;
+  bar.hidden = !(hasViews || hasMessage || hasStage) || state.view !== 'treemap';
 }
 
 /** Run a grammar query on the server and highlight what comes back. */
@@ -6437,6 +6482,18 @@ async function tmRunGrammarQuery(q) {
     if (seq !== tmQuerySeq) return; // a newer keystroke, a clear, or an unmount won
     state.treemap.matchedPaths = new Set((out.hits || []).map((h) => h.path));
     state.treemap.queryMode = 'grammar';
+    // §4.2 — keep the hits themselves so they can be staged. Directories are
+    // included exactly as the query returned them: `type:dir` is a legitimate
+    // thing to ask for, and dropping them here would silently narrow what the
+    // button stages relative to what the message says matched.
+    tmLastHits = {
+      q,
+      paths: (out.hits || []).map((h) => h.path),
+      total: out.total,
+      truncated: Boolean(out.truncated),
+    };
+    seedNodes((out.hits || []).map((h) => ({ path: h.path, name: h.name, size: h.size, type: h.isDir ? 'dir' : 'file', modifiedAt: h.mtimeMs })));
+    tmSyncStageButton();
 
     renderSearchOverlay();
     presentTreemap();
@@ -6466,9 +6523,38 @@ async function tmRunGrammarQuery(q) {
     }
   } catch (e) {
     if (seq !== tmQuerySeq) return;
+    tmClearHits(); // a failed query has no matches to stage — not stale ones
     tmSetQueryMessage(e.message || 'That query could not be run.', true);
   }
 }
+
+/**
+ * Stage every hit from the current query (v4 §4.2).
+ *
+ * Staging, never deleting: the cart is the only route to a deletion and it
+ * runs its own dry run and confirmation (§4.4). What this owes the user is an
+ * honest count — including saying when the list is the biggest N of a larger
+ * result rather than all of it.
+ */
+async function tmStageMatches() {
+  const paths = tmLastHits.paths;
+  if (!paths.length) return;
+  let added = 0;
+  for (const p of paths) if (!state.cart.has(p)) { state.cart.add(p); added++; }
+  saveCart();
+  await renderCart();
+  refreshCartButtons();
+  const already = paths.length - added;
+  toast(
+    `Staged ${formatCount(added)} item${added === 1 ? '' : 's'}` +
+    (already ? ` — ${formatCount(already)} ${already === 1 ? 'was' : 'were'} already in the cart` : '') +
+    (tmLastHits.truncated ? `. This query matched ${formatCount(tmLastHits.total)}; only the ${formatCount(paths.length)} biggest were returned.` : '') +
+    ' Nothing has been deleted.',
+    'success',
+    tmLastHits.truncated ? 9000 : 5000,
+  );
+}
+$('tmStageMatches').addEventListener('click', () => { void tmStageMatches(); });
 
 /**
  * Parse-only feedback while typing. Never runs a query.
@@ -6511,6 +6597,7 @@ function tmApplyQuery(raw) {
     tmCancelQueries();
     state.treemap.queryMode = 'bare';
     state.treemap.matchedPaths = null;
+    tmClearHits();
     tmSetQueryMessage('', false);
     if (isSun()) { presentSunburst(); return; }
     renderSearchOverlay(); presentTreemap();
@@ -9517,6 +9604,32 @@ const GAME_PART = {
   compatPrefix: { label: 'Proton prefix', hint: 'The Windows compatibility prefix, including saves for some games.' },
 };
 
+/**
+ * The shader-cache rows for one title (v4 §4.2).
+ *
+ * Games gets add-to-cart on the **shader cache only**. That restriction is the
+ * feature's original safety guarantee, not a default anyone may widen: the
+ * base install costs a redownload, the Workshop folder costs a re-subscribe,
+ * and a Proton prefix holds saves for some titles. A shader cache is the one
+ * part the game rebuilds by itself, which is exactly why "Clear shader caches
+ * safely" was the only button C7 ever shipped.
+ *
+ * Returns '' when a title has no shader cache, so nothing is drawn at all —
+ * §4.2 asks for no button rather than a disabled one.
+ */
+function gameCartRows(t) {
+  const shaders = (t.components || []).filter((c) => c.kind === 'shaderCache' && c.bytes > 0);
+  if (!shaders.length) return '';
+  return `<div class="game-shaders">` + shaders.map((c) => `
+        <div class="game-shader">
+          <span class="gl"><i class="gp-shaderCache"></i>Shader cache</span>
+          <span class="pth" title="${escapeHtml(c.path)}">${escapeHtml(c.path)}</span>
+          <span class="size-badge num">${formatBytes(c.bytes)}</span>
+          <button class="icon-btn" data-cart-add="${escapeHtml(c.path)}"
+            aria-label="Add the shader cache for ${escapeHtml(t.name)} to cleanup cart">${icon('plus', 13)}</button>
+        </div>`).join('') + `</div>`;
+}
+
 async function loadGames(force = false) {
   if (!state.scanId || !state.root) return;
   if (!force && state.games.loadedFor === state.scanId) { renderGames(); return; }
@@ -9586,11 +9699,15 @@ function renderGames() {
         <div class="game-bar">${bar}</div>
         <div class="game-legend">${legend}${t.dlcInsideBase && !parts.dlc
           ? '<span class="gl muted">DLC is installed inside the game — Steam does not separate it</span>' : ''}</div>
+        ${gameCartRows(t)}
       </div>`;
       }).join('') + `</div>`).join('');
 
   const btn = $('clearShadersBtn');
   if (btn) btn.addEventListener('click', clearShaderCaches);
+  // Staged shader caches must show as staged the moment the view repaints —
+  // the delegated click handler sets state, this reflects it.
+  refreshCartButtons();
 }
 
 /**
@@ -9622,6 +9739,20 @@ function clearShaderCaches() {
   };
   $('confirmModal').classList.add('open');
 }
+
+/**
+ * Which of an app's locations may be staged for deletion (v4 §4.2).
+ *
+ * Cache and logs — the same two categories "Clear caches safely" has always
+ * meant, and the same set `safeToClearPaths` is built from. Deliberately NOT
+ * `app` or `data`: an app bundle and a user's documents are the thing itself,
+ * not a rebuildable copy of it, and a per-row + button beside them would offer
+ * a one-click permanent-feeling delete of something no rule ever suggested.
+ *
+ * §4.2's "cache components only" is a safety guarantee written as a rendering
+ * rule, so `tests/cleanupCart.test.ts` asserts this set by name.
+ */
+const APP_CART_CATEGORIES = new Set(['cache', 'logs']);
 
 /** Short per-category summary for an app's header row, e.g. "caches 1.2 GB · data 3.4 GB". */
 function appCatSummary(app) {
@@ -9663,7 +9794,9 @@ function renderApps() {
           <span class="cat">${APP_CAT_LABEL[loc.category]}</span>
           <span class="lbl">${escapeHtml(loc.path)}</span>
           <span class="size-badge num" style="color:${sizeColor(loc.bytes)}">${formatBytes(loc.bytes)}</span>
-          <button class="icon-btn" data-cart-add="${escapeHtml(loc.path)}" aria-label="Add ${escapeHtml(loc.path)} to cleanup cart">${icon('plus', 13)}</button>
+          ${APP_CART_CATEGORIES.has(loc.category)
+            ? `<button class="icon-btn" data-cart-add="${escapeHtml(loc.path)}" aria-label="Add ${escapeHtml(loc.path)} to cleanup cart">${icon('plus', 13)}</button>`
+            : `<span class="adv-spacer" title="${escapeHtml(APP_CAT_LABEL[loc.category])} — this is the app or your own data, not a rebuildable cache, so TreeMap does not offer to stage it"></span>`}
         </div>`).join('') + `
       </div>
     </div>`).join('') + `
@@ -10857,7 +10990,11 @@ async function loadEmptyFolders() {
             <div class="nm">${escapeHtml(f.name)}</div>
             <div class="pth">${escapeHtml(f.path)}</div>
           </div>
+          <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
         </div>`).join('') + '</div>';
+    // v4 §4.2 — these are stageable one at a time, so their staged state has
+    // to be reflected the moment the list is rebuilt.
+    refreshCartButtons();
     updateCleanSummary();
   } catch (e) {
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
@@ -11298,7 +11435,9 @@ $('cleanFindBtn').addEventListener('click', async () => {
         </div>
         <span class="dt num">${formatDate(f.modifiedAt)}</span>
         <span class="size-badge num" style="color:${sizeColor(f.size)}">${formatBytes(f.size)}</span>
+        <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
       </div>`).join('') + '</div>';
+  refreshCartButtons(); // v4 §4.2
   $('cleanAll').addEventListener('change', (e) => {
     host.querySelectorAll('.clean-ck').forEach(ck => { ck.checked = e.target.checked; });
     updateCleanSummary();

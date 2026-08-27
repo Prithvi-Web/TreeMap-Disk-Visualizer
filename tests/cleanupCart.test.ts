@@ -29,11 +29,14 @@ const CODE = INDEX
   .replace(/(^|[^:'"\\])\/\/[^\n]*/g, '$1');
 
 /**
- * Phase 4 §4.1 — the cleanup cart's optional target and its meter.
+ * Phase 4 §4.1 / §4.2 — the cart's goal meter, and where a cart button is
+ * allowed to appear.
  *
  * The settings half is ordinary validation. The markup half is the part worth
- * a test: §4.1 rules out gamification by name, and "we did not build a reward
- * loop" is a claim that only stays true if something checks.
+ * a test: §4.2 says an app's **cache** components get a cart button and its
+ * data does not, and Games gets one on the **shader cache only**. Those are
+ * safety guarantees stated as rendering rules, and a rendering rule with no
+ * test is a rule until someone edits the template.
  */
 
 /* ══════════════════════ §4.1 the target ══════════════════════ */
@@ -91,10 +94,73 @@ test('the goal meter is a progress bar and nothing else — no gamification', ()
   }
 });
 
+/**
+ * Slice between two anchors, insisting both exist and the slice is non-empty.
+ *
+ * The handoff's trap 6, paid for three times: `indexOf(end)` without a start
+ * offset can find an earlier occurrence and slice backwards to nothing, and a
+ * silently empty slice makes every assertion over it pass.
+ */
+function slice(src: string, from: string, to: string): string {
+  const start = src.indexOf(from);
+  assert.notEqual(start, -1, `anchor not found: ${from}`);
+  const end = src.indexOf(to, start + from.length);
+  assert.notEqual(end, -1, `end anchor not found after ${from}: ${to}`);
+  const out = src.slice(start, end);
+  assert.ok(out.length > 100, `the slice ${from} → ${to} is suspiciously short`);
+  return out;
+}
+
 test('the meter is hidden outright when no target is set, rather than showing zero', () => {
   const start = INDEX.indexOf('function renderCartGoal');
   assert.notEqual(start, -1, 'renderCartGoal exists');
   const body = INDEX.slice(start, INDEX.indexOf('async function renderCart', start));
   assert.ok(body.length > 200, 'the renderCartGoal slice is non-empty');
   assert.match(body, /if \(!cartGoalBytes\) \{ host\.hidden = true; return; \}/);
+});
+
+/* ══════════════════════ §4.2 where a cart button may appear ══════════════════════ */
+
+/**
+ * The Apps breakdown lists an application's own bundle and its user data
+ * beside its caches. §4.2 allows a cart button on the cache components only —
+ * "Clear caches safely" has always meant cache and logs, and a per-row button
+ * that quietly widened that to Data would be the worst kind of regression:
+ * one click, no confirmation, and the file *is* the data.
+ */
+test('Apps offers a cart button on cache and log rows only', () => {
+  const start = INDEX.indexOf('function renderApps');
+  assert.notEqual(start, -1, 'renderApps exists');
+  const body = slice(INDEX, 'function renderApps', '/* ───────────────────────────── Duplicates view');
+  assert.match(body, /APP_CART_CATEGORIES/, 'the allowed categories are named, not inlined');
+  assert.match(body, /APP_CART_CATEGORIES\.has\(loc\.category\)/, 'the button is gated on the category');
+  // And the gate itself admits exactly cache and logs.
+  assert.match(INDEX, /const APP_CART_CATEGORIES = new Set\(\['cache', 'logs'\]\)/);
+});
+
+test('Games offers a cart button on the shader cache only', () => {
+  const start = INDEX.indexOf('function gameCartRows');
+  assert.notEqual(start, -1, 'gameCartRows exists');
+  const body = slice(INDEX, 'function gameCartRows', 'async function loadGames');
+  assert.match(body, /c\.kind === 'shaderCache'/, 'only shader-cache components are listed');
+  // Nothing else in the Games renderer may hand out a cart button.
+  const games = slice(INDEX, 'function renderGames', 'function clearShaderCaches');
+  assert.ok(games.includes('gameCartRows(t)'), 'the shader rows are actually rendered');
+  assert.ok(!games.includes('data-cart-add'), 'the title rows themselves carry no cart button');
+});
+
+test('advisory Smart Suggestion groups get no cart button at all — not a disabled one', () => {
+  const start = INDEX.indexOf('function renderSmartGroups');
+  assert.notEqual(start, -1);
+  const body = INDEX.slice(start, INDEX.indexOf('smartSortPills', start));
+  assert.ok(body.length > 500, 'the renderSmartGroups slice is non-empty');
+  assert.match(body, /\$\{adv \? '' : `<button class="icon-btn" data-cart-add=/,
+    'an advisory row renders an empty string where the button would be');
+});
+
+test('Security findings have no cart path anywhere', () => {
+  // §4.2: security findings have no delete path in the app at all, so they get
+  // no cart button — not a disabled one, none.
+  const body = slice(INDEX, 'function renderSecurity', 'function confirmRelocateSecret');
+  assert.ok(!body.includes('data-cart-add'), 'security findings are never stageable for deletion');
 });
