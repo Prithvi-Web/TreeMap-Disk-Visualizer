@@ -97,6 +97,19 @@ grouping gets firmlinks right without naming one.
   used-mark's label sat inside the bar, which clips its own overflow: the mark
   drew, the label did not, and nothing errored. Only reading the DOM found it.
 
+### A throw is the honest outcome; a 500 is not the honest presentation
+
+Making `volumeTopology()` throw was right — an empty topology returned as a
+success would be a zero. But the throw then reached the browser as a bare **500**
+through both `GET /api/platform/topology` and the new statement route, and a 500
+is not the unavailable-with-reason state §10 asks for. Both routes now map it to
+`409 CAPABILITY_UNAVAILABLE` carrying the reader's own words, which is what the
+tab already knows how to render.
+
+Found by reading the browser's console after driving every view — the server log
+had nothing, because `errorHandler` had handled it. **Check the client's network
+results, not only the server log.**
+
 ### One place this deviates from §5.2, deliberately
 
 §5.2 asks for the hardlink/clone delta "shown as its own line". It is shown —

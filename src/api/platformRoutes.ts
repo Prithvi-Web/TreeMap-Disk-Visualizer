@@ -67,7 +67,17 @@ platformRouter.get('/platform/topology', async (_req: Request, res: Response) =>
   if (!state.available) {
     throw new AppError(409, 'CAPABILITY_UNAVAILABLE', state.reason ?? 'Disk layout is not available on this system');
   }
-  const topology = await platform().getVolumeTopology();
+  // The reader refuses to pass on an answer that cannot be true (see
+  // macos/diskutil.ts) and throws when a re-read will not clear. That throw is
+  // the honest outcome, but a 500 is not the honest *presentation* of it: §10
+  // asks for an unavailable state carrying its reason, which is what the tab
+  // already knows how to render.
+  let topology;
+  try {
+    topology = await platform().getVolumeTopology();
+  } catch (err) {
+    throw new AppError(409, 'CAPABILITY_UNAVAILABLE', err instanceof Error ? err.message : String(err));
+  }
   res.json({ ...topology, capability: state });
 });
 

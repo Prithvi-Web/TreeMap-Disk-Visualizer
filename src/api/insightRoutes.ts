@@ -174,7 +174,14 @@ insightRouter.get('/missing-gigabytes', async (req: Request, res: Response) => {
       state.reason ?? 'The disk layout cannot be read on this system, so there is nothing to reconcile against.',
     );
   }
-  res.json({ ...(await buildStatement(scan)), capability: state });
+  // Same reason as GET /api/platform/topology: the layout reader throws rather
+  // than hand back an answer that cannot be true, and a statement with nothing
+  // to reconcile against is an unavailable feature, not a server fault.
+  try {
+    res.json({ ...(await buildStatement(scan)), capability: state });
+  } catch (err) {
+    throw new AppError(409, 'CAPABILITY_UNAVAILABLE', err instanceof Error ? err.message : String(err));
+  }
 });
 
 /** GET /api/git/repos?scanId= — pack/loose/LFS breakdown of every .git in the scan. */

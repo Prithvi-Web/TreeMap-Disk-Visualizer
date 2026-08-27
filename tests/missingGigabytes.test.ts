@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   buildStatement,
@@ -14,6 +18,10 @@ import {
 } from '../src/services/missingGigabytes';
 import type { LogicalVolumeInfo, VolumeTopology } from '../src/platform/types';
 import type { ScanResult } from '../src/models/types';
+import { createApp } from '../src/server';
+import { resetRateLimiter } from '../src/middleware/rateLimiter';
+import { startScan } from '../src/services/diskScanner';
+import { platform } from '../src/platform';
 
 /**
  * The Missing Gigabytes (Phase 5).
@@ -526,4 +534,82 @@ test('nothing holding anything is a zero, with no remedy offered', async () => {
   const line = lineOf(s, 'openHandles');
   assert.equal(line.bytes, 0);
   assert.equal(line.remedy, null, 'there is nothing to act on, so no button is offered');
+});
+
+/* ═══════ 8. The route turns an unreadable layout into an honest state ═══════ */
+
+async function listen() {
+  resetRateLimiter();
+  const app = createApp(path.join(__dirname, '..', 'public'));
+  const server = http.createServer(app);
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  return {
+    port: (server.address() as { port: number }).port,
+    close: () => new Promise<void>((r) => server.close(() => r())),
+  };
+}
+
+function get(port: number, url: string): Promise<{ status: number; body: Record<string, unknown> }> {
+  return new Promise((resolve, reject) => {
+    http
+      .get({ host: '127.0.0.1', port, path: url }, (res) => {
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => { buf += c; });
+        res.on('end', () => {
+          let parsed: unknown = buf;
+          try { parsed = JSON.parse(buf) as unknown; } catch { /* non-JSON */ }
+          resolve({ status: res.statusCode ?? 0, body: parsed as Record<string, unknown> });
+        });
+      })
+      .on('error', reject);
+  });
+}
+
+test('a layout that will not read is 409 with its reason, never a 500', async () => {
+  // `volumeTopology()` throws rather than hand back an answer that cannot be
+  // true — deliberately, because an empty topology returned as a success would
+  // be a zero. But a throw is only the honest OUTCOME; a 500 is not the honest
+  // PRESENTATION of it. §10 asks for an unavailable state carrying its reason,
+  // which is what the tab already knows how to render, so the route must turn
+  // one into the other. This is that contract, not a mock of it: the real route
+  // runs against a real scan, and only the disk-layout read is made to fail.
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'treemap-mg-'));
+  await fs.promises.writeFile(path.join(dir, 'a.txt'), 'hello');
+  const srv = await listen();
+  const provider = platform() as unknown as { getVolumeTopology: () => Promise<VolumeTopology> };
+  const real = provider.getVolumeTopology.bind(provider);
+  try {
+    const scan = await startScan(dir);
+    while (scan.status === 'running') await new Promise((r) => setTimeout(r, 50));
+
+    provider.getVolumeTopology = () =>
+      Promise.reject(new Error('diskutil reported no disks at all after 3 attempts, which cannot be true on a running system'));
+
+    const res = await get(srv.port, `/api/missing-gigabytes?scanId=${scan.scanId}`);
+    assert.equal(res.status, 409, 'an unreadable layout is a feature that is unavailable, not a server fault');
+    assert.equal(res.body.code, 'CAPABILITY_UNAVAILABLE');
+    assert.match(
+      String(res.body.error),
+      /cannot be true on a running system/,
+      "and the reader's own words survive to the UI, rather than being replaced by a generic message",
+    );
+
+    // Restored, the same request answers — so the 409 was about the layout and
+    // nothing else, and the failure is not sticky.
+    provider.getVolumeTopology = real;
+    const ok = await get(srv.port, `/api/missing-gigabytes?scanId=${scan.scanId}`);
+    assert.equal(ok.status, 200);
+    const lines = ok.body.lines as { bytes: number | null }[];
+    const volume = ok.body.volume as { usedBytes: number };
+    assert.equal(
+      lines.reduce((a, l) => a + (l.bytes ?? 0), 0),
+      volume.usedBytes,
+      'and the statement it serves balances on this real machine, not just on fixtures',
+    );
+  } finally {
+    provider.getVolumeTopology = real;
+    await srv.close();
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  }
 });
