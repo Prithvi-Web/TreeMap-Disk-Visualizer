@@ -6,6 +6,7 @@ import { appendAudit, tokenIdFor } from '../services/audit';
 import {
   assertCartPaths,
   commitCart,
+  normalizeRunId,
   planCartCommit,
   undoCartRun,
 } from '../services/cartCommit';
@@ -39,16 +40,21 @@ export const cartRouter = Router();
  * touched.
  *
  * Without it: copy → verify → Trash, as one run. The response carries a `runId`
- * that `POST /api/cart/undo` takes.
+ * that `POST /api/cart/undo` takes. Passing that `runId` back on a later
+ * request continues the same run, which is how a cart bigger than the
+ * per-request cap stays a single undoable unit.
  *
  * The refusal that matters: anything too large for the capsule is **left
  * undeleted** and named in `skipped`, never deleted unprotected.
  */
 cartRouter.post('/cart/commit', idempotency, guardBodyPaths, requireInsideScanRoot, async (req: Request, res: Response) => {
-  const body = req.body as { paths?: unknown; dryRun?: unknown };
+  const body = req.body as { paths?: unknown; dryRun?: unknown; runId?: unknown };
   assertCartPaths(body.paths);
   const paths = body.paths;
   const dryRun = body.dryRun === true;
+  // A cart larger than one request is committed in several, all carrying the
+  // runId the first one returned, so undo still puts the whole thing back.
+  const runId = normalizeRunId(body.runId);
 
   // The scan's own figures, for the policy caps. The capsule's walk produces
   // the exact totals, but a cap has to be checked *before* the walk — a policy
@@ -80,7 +86,7 @@ cartRouter.post('/cart/commit', idempotency, guardBodyPaths, requireInsideScanRo
 
   let result;
   try {
-    result = await commitCart(paths);
+    result = await commitCart(paths, runId);
   } catch (err) {
     // B2 refusing the batch is a real outcome and belongs in the audit trail
     // beside the policy refusals above, or the log shows a delete that simply

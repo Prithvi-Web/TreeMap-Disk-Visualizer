@@ -183,8 +183,14 @@ test('exiting restores the saved node list rather than rebuilding it', () => {
 });
 
 test('a staged folder and a file inside it are not both counted', () => {
+  // Counting both would free the same space twice and produce a map whose
+  // areas do not add up. Asserted on the ancestor walk that answers it — the
+  // pairwise `paths.some` inside `paths.filter` this replaced was 250,000
+  // string comparisons for a 500-item cart.
   const body = slice('function tmCartRoots', 'function tmBuildPreview');
-  assert.match(body, /paths\.filter\(\(p\) => !paths\.some\(\(q\) => tmIsInside\(p, q\)\)\)/);
+  assert.match(body, /const staged = new Set\(paths\)/);
+  assert.match(body, /if \(staged\.has\(dir\)\) return false/);
+  assert.match(body, /if \(dir === tmParentPath\(dir\)\) break/, 'and it terminates at the filesystem root');
 });
 
 test('the preview is read-only, like the time slider', () => {
@@ -401,4 +407,28 @@ test('a staged path inside an UNexpanded folder shrinks it and hatches beside it
   assert.equal(freed.length, 1);
   assert.equal(freed[0].path, '/r — freed', 'the freed block sits beside it, in the parent');
   assert.ok(Math.abs(areaOf(out.nodes!, (n) => n.depth === 1) - 10000) < 1e-6, 'the canvas still tiles');
+});
+
+/* ══════════════ a freed block is not a file ══════════════ */
+
+test('a freed block is never sent to the fact layer, nor counted as unreadable', () => {
+  // Its path is synthetic ("<parent> — freed"). It sanitizes cleanly and sits
+  // inside the scan root, so it passes the path guard and reaches the
+  // providers — which spend a batch slot on a file that never existed and come
+  // back with nothing, which the coverage note would then report as a file
+  // that could not be read. A count of unreadable files that includes
+  // something that is not a file is exactly the number this app refuses.
+  const fetcher = slice('function fetchScoresForTreemap', '$(\'tmColorSeg\').addEventListener');
+  assert.match(fetcher, /!r\.n\.freed/, 'freed blocks are excluded from the scoring batch');
+  const coverage = slice('function reclaimCoverageNote', 'Height for the treemap/sunburst canvas');
+  assert.match(coverage, /r\.n\.freed\) continue;/, 'and from the coverage denominator');
+});
+
+test('the preview is read-only for the keyboard, not just the mouse', () => {
+  // Delete used to trash a real file under a banner saying nothing had been
+  // deleted: the mouse handlers were guarded and this block was not. Same
+  // condition as the time slider, which was already here.
+  const nav = slice("// Feature 6 — keyboard navigation in the treemap", "if (e.key === 'Escape')");
+  assert.match(nav, /!state\.treemap\.history\.active && !tmPreview\.on/);
+  assert.match(nav, /case 'Delete':/, 'the guarded block really is the one with Delete in it');
 });

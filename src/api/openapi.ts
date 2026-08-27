@@ -2362,8 +2362,9 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     requestBody: jsonBody(
       obj(
         {
-          paths: arr(str(), 'Absolute paths inside a scanned root; at most 500'),
+          paths: arr(str(), 'Absolute paths inside a scanned root; at most 500 per request'),
           dryRun: bool('Return the exact manifest, having acted on nothing'),
+          runId: str('Continue the run a previous commit started, so a cart larger than one request is still ONE undoable unit. Must be the id that commit returned'),
         },
         ['paths'],
       ),

@@ -37,8 +37,35 @@ import type { TimeCapsuleJob } from '../models/types';
  * the four files allowed to remove anything — this is not one of them).
  */
 
-/** A cap on one commit, so a runaway client cannot ask for an unbounded walk. */
+/**
+ * A cap on one *request*, so a runaway client cannot ask for an unbounded walk.
+ *
+ * Not a cap on how much can be deleted: a larger cart is committed as several
+ * requests that all carry the same `runId`, so it is still one undoable run.
+ * The alternative — refusing outright above the cap — was a real regression,
+ * because staging a 1,000-hit query is one click away and the cart it produces
+ * could then never be committed at all.
+ */
 export const MAX_CART_PATHS = 500;
+
+/** The shape `crypto.randomUUID()` produces; nothing else is accepted as a runId. */
+const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Validate a caller-supplied runId, or `undefined` to start a fresh run.
+ *
+ * A runId is a grouping label stamped onto Time Capsule entries, and undo
+ * restores every entry carrying one — so an arbitrary string would let a
+ * client group unrelated commits together. Restricting it to the generated
+ * shape keeps the label meaningful without needing a registry of live runs.
+ */
+export function normalizeRunId(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  if (typeof raw !== 'string' || !RUN_ID_PATTERN.test(raw)) {
+    throw new AppError(400, 'BAD_RUN_ID', 'runId must be the id a previous commit returned');
+  }
+  return raw;
+}
 
 export interface CartManifestItem {
   path: string;
@@ -136,9 +163,12 @@ export async function planCartCommit(paths: string[]): Promise<CartDryRun> {
  * `reason` is stamped onto every capsule entry so the Time Capsule tab can say
  * where an item came from months later, the way an Autopilot run does.
  */
-export async function commitCart(paths: string[]): Promise<CartCommitResult> {
+export async function commitCart(paths: string[], runId?: string): Promise<CartCommitResult> {
   const result = await protectAndTrash(
     paths.map((path) => ({ path, reason: 'staged in the cleanup cart' })),
+    // Passing the run through is what makes a chunked commit one run: every
+    // capsule entry carries the same id, so `undoCartRun` gathers all of them.
+    runId ? { runId } : {},
   );
 
   const trashed = new Set(result.trashed);

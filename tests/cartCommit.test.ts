@@ -18,7 +18,7 @@ import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { planProtection, getCapsuleIndex, protectItems } from '../src/services/timeCapsule';
 import { initPortableMode, resetPortableMode } from '../src/services/portableMode';
-import { planCartCommit, commitCart, undoCartRun, MAX_CART_PATHS } from '../src/services/cartCommit';
+import { planCartCommit, commitCart, undoCartRun, normalizeRunId, MAX_CART_PATHS } from '../src/services/cartCommit';
 import { updateSettings } from '../src/services/settings';
 
 const __dirname_ = path.dirname(fileURLToPath(import.meta.url));
@@ -488,4 +488,74 @@ test('the result summary restates what the manifest said would be left behind', 
   assert.match(exec, /\.\.\.foreseen\.map/, 'the foreseen refusals join the summary');
   const summary = slice('function cartCommitSummary', 'async function cartUndoRun');
   assert.match(summary, /still on your disk, not deleted, and still in your cart/);
+});
+
+/* ══════════════════ a cart bigger than one request ══════════════════ */
+
+test('a runId is accepted only in the shape a commit actually returns', () => {
+  assert.equal(normalizeRunId(undefined), undefined);
+  assert.equal(normalizeRunId(''), undefined);
+  assert.equal(normalizeRunId(null), undefined);
+  const real = '1b4e28ba-2fa1-11d2-883f-0016d3cca427';
+  assert.equal(normalizeRunId(real), real);
+  // A runId groups Time Capsule entries and undo restores every entry carrying
+  // one, so an arbitrary string would let a caller group unrelated commits.
+  for (const bad of ['../../etc', 'run-1', 42, {}, 'x'.repeat(36), true]) {
+    assert.throws(() => normalizeRunId(bad), (err: any) => {
+      assert.equal(err.code, 'BAD_RUN_ID');
+      return true;
+    }, `${JSON.stringify(bad)} must be refused`);
+  }
+});
+
+test('a chunked commit is ONE run, so undo puts the whole cart back', async () => {
+  // The regression this closes: a query returns up to 1,000 hits and "Stage
+  // matches" stages all of them, so a cart above the 500-per-request cap is
+  // one click away. Before chunking, that cart could never be committed at
+  // all — the route refused it outright.
+  const dir = await fixture('chunked', 6, 1024);
+  try {
+    const all = Array.from({ length: 6 }, (_, i) => path.join(dir, `f${i}.bin`));
+    // Two "chunks" of three, the second continuing the first's run.
+    const first = await commitCart(all.slice(0, 3));
+    assert.ok(first.runId, 'the first chunk starts a run');
+    const second = await commitCart(all.slice(3), first.runId);
+    assert.equal(second.runId, first.runId, 'the second joins it rather than starting another');
+
+    for (const p of all) assert.ok(!fs.existsSync(p), 'everything was deleted');
+
+    // One undo, both chunks.
+    const job = await undoCartRun(first.runId);
+    assert.equal(job.entryCount, 6, 'the undo covers both chunks, not just one');
+    for (let i = 0; i < 200 && !all.every((p) => fs.existsSync(p)); i++) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    for (const p of all) {
+      assert.ok(fs.existsSync(p), `${p} came back`);
+      assert.equal(fs.statSync(p).size, 1024);
+    }
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the frontend chunks both halves of the commit at the server cap', () => {
+  assert.match(INDEX, /const CART_COMMIT_CHUNK = 500;/);
+  const dry = slice('async function cartDryRun', '/**\n * The manifest, as the confirmation dialog shows it.');
+  assert.match(dry, /i \+= CART_COMMIT_CHUNK/, 'the dry run is chunked too');
+  assert.match(dry, /merged\.bytesWouldFree \+= part\.bytesWouldFree/, 'and the manifests are merged');
+  const exec = slice('async function cartExecuteCommit', 'function cartCommitSummary');
+  assert.match(exec, /i \+= CART_COMMIT_CHUNK/);
+  assert.match(exec, /result\.runId \? \{ runId: result\.runId \} : \{\}/, 'later chunks join the first run');
+  assert.match(exec, /`\$\{cartCommitKey\}-\$\{i \/ CART_COMMIT_CHUNK\}`/, 'one idempotency key per chunk');
+});
+
+test('a chunked commit that fails partway never claims nothing was deleted', () => {
+  // Earlier chunks may already be gone, and they are recoverable through the
+  // run they belong to. "Nothing was deleted" is the one sentence that must
+  // not be sent when something was.
+  const exec = slice('async function cartExecuteCommit', 'function cartCommitSummary');
+  assert.match(exec, /if \(result\.trashed\.length\) \{/);
+  assert.match(exec, /Stopped after/);
+  assert.match(exec, /cartLastRun = result\.runId/, 'the partial run stays undoable');
 });

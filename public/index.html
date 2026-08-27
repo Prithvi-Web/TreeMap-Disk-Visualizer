@@ -5200,7 +5200,7 @@ function reclaimCoverageNote() {
   let unscorable = 0;
   for (const r of drawn) {
     const p = r.n && r.n.path;
-    if (!p) continue;
+    if (!p || r.n.freed) continue; // §4.3 — not a file, so not part of coverage
     total++;
     if (!reclaim.scores.has(p)) continue;
     if (reclaim.scores.get(p) === null) unscorable++;
@@ -5859,7 +5859,18 @@ function tmDrawnTree() {
  */
 function tmCartRoots() {
   const paths = [...state.cart];
-  return paths.filter((p) => !paths.some((q) => tmIsInside(p, q)));
+  // Ancestor lookup rather than the pairwise scan this started as. A cart may
+  // hold 500 paths, and `paths.some` inside `paths.filter` is 250,000 string
+  // comparisons for a question each path can answer about itself in a handful
+  // of Map probes: is any directory above me also staged?
+  const staged = new Set(paths);
+  return paths.filter((p) => {
+    for (let dir = tmParentPath(p); dir; dir = tmParentPath(dir)) {
+      if (staged.has(dir)) return false;
+      if (dir === tmParentPath(dir)) break; // reached the filesystem root
+    }
+    return true;
+  });
 }
 
 /**
@@ -5876,6 +5887,7 @@ function tmBuildPreview() {
   const freedIn = new Map();   // path → bytes freed directly inside it
   const removed = new Set();   // drawn nodes staged whole
   const shrunk = new Map();    // drawn leaves that lost bytes from below
+  let removedAll = false;      // the map's own root was staged: everything goes
 
   let stagedInView = 0, outsideView = 0, outsideBytes = 0;
   const addFreed = (p, bytes) => freedIn.set(p, (freedIn.get(p) || 0) + bytes);
@@ -5889,7 +5901,7 @@ function tmBuildPreview() {
     if (p === root.path || tmIsInside(root.path, p)) {
       stagedInView += root.size;
       addFreed(root.path, root.size);
-      for (const n of state.treemap.nodes) removed.add(n.path);
+      removedAll = true; // one flag; the walk below skips every child
       continue;
     }
     if (!tmIsInside(p, root.path)) { outsideView++; outsideBytes += bytes || 0; continue; }
@@ -5904,9 +5916,18 @@ function tmBuildPreview() {
     // Size unknown: never guessed at, and never silently dropped either.
     if (bytes === null) { outsideView++; continue; }
 
+    // Not drawn: charge it to the deepest drawn node that contains it.
+    //
+    // Found by walking UP from the path, not by scanning the drawn set. The
+    // scan version was O(staged × drawn) and measured 120 ms at 250k nodes —
+    // over §2.5's 50 ms main-thread budget, on the map size the budget exists
+    // for. Every ancestor of a path is a prefix of it, so the answer is a few
+    // Map probes.
     let host = root;
-    for (const n of state.treemap.nodes) {
-      if (tmIsInside(p, n.path) && n.depth > host.depth) host = n;
+    for (let dir = tmParentPath(p); dir; dir = tmParentPath(dir)) {
+      const hit = byPath.get(dir);
+      if (hit) { host = hit; break; }
+      if (dir === tmParentPath(dir)) break; // reached the filesystem root
     }
     stagedInView += bytes;
     if (kids.has(host.path)) {
@@ -5927,7 +5948,7 @@ function tmBuildPreview() {
   const out = [];
   let freedTotal = 0;
   const walk = (parent, rect, depth) => {
-    const children = (kids.get(parent.path) || []).filter((c) => !removed.has(c.path));
+    const children = removedAll ? [] : (kids.get(parent.path) || []).filter((c) => !removed.has(c.path));
     const freed = freedIn.get(parent.path) || 0;
     const entries = children.map((c) => ({ node: c, size: Math.max(0, c.size - (shrunk.get(c.path) || 0)) }));
     if (freed > 0) entries.push({ node: null, size: freed });
@@ -6214,7 +6235,11 @@ function fetchScoresForTreemap() {
   if (!drawn.length) return;
   const paths = [];
   for (const r of drawn) {
-    if (r.n && r.n.path) paths.push(r.n.path);
+    // v4 §4.3 — a freed block is a hypothetical, not a path. Asking the fact
+    // layer about it spends a batch slot on a file that never existed and
+    // comes back unanswerable, which the coverage note would then report as a
+    // file that could not be read.
+    if (r.n && r.n.path && !r.n.freed) paths.push(r.n.path);
     if (paths.length >= TM_SCORE_CAP) break;
   }
   void ensureScores(paths, () => {
@@ -9296,9 +9321,8 @@ async function cartTrashAll() {
   btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + 'Checking…';
   let plan;
   try {
-    plan = await api('/api/cart/commit', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths: known, dryRun: true }),
+    plan = await cartDryRun(known, (done) => {
+      btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Checking… ${formatCount(done)}/${formatCount(known.length)}`;
     });
   } catch (e) {
     toast('Could not work out what this would do: ' + e.message, 'error', 8000);
@@ -9331,6 +9355,45 @@ async function cartTrashAll() {
     onConfirmTrash = () => cartExecuteCommit(willDelete.map((i) => i.path), willNot);
   }
   $('confirmModal').classList.add('open');
+}
+
+/**
+ * How many paths one commit request carries (`MAX_CART_PATHS` server-side).
+ *
+ * A cart can easily exceed it — staging a 1,000-hit query is one click — so
+ * both halves of the commit are chunked rather than refused. The first commit
+ * request starts a run and every later one carries its `runId`, which is what
+ * keeps a chunked commit a single undoable unit.
+ */
+const CART_COMMIT_CHUNK = 500;
+
+/** The dry run over any number of paths, merged into one manifest. */
+async function cartDryRun(paths, onProgress) {
+  const merged = { dryRun: true, items: [], bytesWouldFree: 0, bytesSkipped: 0, evicts: [], capsule: null, openHandles: null, batches: 0 };
+  for (let i = 0; i < paths.length; i += CART_COMMIT_CHUNK) {
+    const chunk = paths.slice(i, i + CART_COMMIT_CHUNK);
+    const part = await api('/api/cart/commit', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: chunk, dryRun: true }),
+    });
+    merged.items.push(...(part.items || []));
+    merged.bytesWouldFree += part.bytesWouldFree || 0;
+    merged.bytesSkipped += part.bytesSkipped || 0;
+    merged.evicts.push(...(part.evicts || []));
+    // The capsule's own state is the same answer every time; keep the first.
+    if (!merged.capsule) merged.capsule = part.capsule;
+    // Open handles: the conflicts accumulate, the caveats come from the first.
+    if (!merged.openHandles) merged.openHandles = part.openHandles;
+    else if (part.openHandles && part.openHandles.conflicts) {
+      merged.openHandles = {
+        ...merged.openHandles,
+        conflicts: [...(merged.openHandles.conflicts || []), ...part.openHandles.conflicts],
+      };
+    }
+    merged.batches++;
+    if (onProgress) onProgress(Math.min(paths.length, i + chunk.length));
+  }
+  return merged;
 }
 
 /**
@@ -9368,6 +9431,14 @@ function cartManifestHtml(plan, missingFromScan) {
   if (plan.evicts && plan.evicts.length) {
     html += `<div class="cart-mf-note">${formatCount(plan.evicts.length)} older Time Capsule ${plan.evicts.length === 1 ? 'copy' : 'copies'} will be dropped to make room, and can no longer be restored from there.</div>`;
   }
+  if (plan.batches > 1) {
+    // A dry run writes nothing, so each batch works out the capsule's
+    // remaining room from how it stands right now — the later batches do not
+    // know the earlier ones would have filled it. For a cart this large that
+    // also strains the capsule, a few more items than this may end up left in
+    // place. Stated here rather than discovered in the result summary.
+    html += `<div class="cart-mf-note">Checked in ${formatCount(plan.batches)} batches. Each one works out the Time Capsule's remaining room as it stands now, so if the capsule runs short a few more of these may end up left in place than this says.</div>`;
+  }
   const conflicts = (plan.openHandles && plan.openHandles.conflicts) || [];
   if (conflicts.length) {
     html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(conflicts.length)} of these ${conflicts.length === 1 ? 'is' : 'are'} open in another program right now, which will stop the whole batch.</div>`;
@@ -9386,16 +9457,54 @@ function cartManifestHtml(plan, missingFromScan) {
  * server refuses on the day.
  */
 async function cartExecuteCommit(paths, foreseen = []) {
-  let result;
+  const btn = $('cartTrash');
+  const label = btn.innerHTML;
+  const result = { dryRun: false, runId: null, trashed: [], bytesFreed: 0, skipped: [], failedToTrash: [] };
   try {
-    result = await api('/api/cart/commit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': cartCommitKey },
-      body: JSON.stringify({ paths, dryRun: false }),
-    });
+    for (let i = 0; i < paths.length; i += CART_COMMIT_CHUNK) {
+      const chunk = paths.slice(i, i + CART_COMMIT_CHUNK);
+      if (paths.length > CART_COMMIT_CHUNK) {
+        btn.disabled = true;
+        btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') +
+          `Deleting… ${formatCount(Math.min(paths.length, i))}/${formatCount(paths.length)}`;
+      }
+      const part = await api('/api/cart/commit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // One key per chunk, derived from the confirmation's key: a retry of
+          // the SAME chunk replays, while the next chunk is a new request.
+          'Idempotency-Key': `${cartCommitKey}-${i / CART_COMMIT_CHUNK}`,
+        },
+        // Every chunk after the first joins the run the first one started, so
+        // "Undo this run" puts the whole cart back rather than one batch of it.
+        body: JSON.stringify({ paths: chunk, dryRun: false, ...(result.runId ? { runId: result.runId } : {}) }),
+      });
+      if (!result.runId) result.runId = part.runId;
+      result.trashed.push(...(part.trashed || []));
+      result.bytesFreed += part.bytesFreed || 0;
+      result.skipped.push(...(part.skipped || []));
+      result.failedToTrash.push(...(part.failedToTrash || []));
+      if (part.capsuleUnavailable) result.capsuleUnavailable = part.capsuleUnavailable;
+    }
   } catch (e) {
-    toast('Nothing was deleted: ' + e.message, 'error', 10000);
+    // Partial: earlier chunks may already have been deleted, and they are
+    // recoverable through the run they belong to. Saying "nothing was deleted"
+    // when something was is the one message that must not be sent here.
+    if (result.trashed.length) {
+      (result.trashed || []).forEach((p) => state.cart.delete(p));
+      saveCart(); renderCart(); refreshCartButtons();
+      cartLastRun = result.runId;
+      toast(`Stopped after ${formatCount(result.trashed.length)} item${result.trashed.length === 1 ? '' : 's'}: ${e.message}`, 'error', 12000);
+      cartCommitSummary(result);
+      rescan();
+    } else {
+      toast('Nothing was deleted: ' + e.message, 'error', 10000);
+    }
     return;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = label;
   }
   (result.trashed || []).forEach((p) => state.cart.delete(p));
   saveCart();
@@ -13476,7 +13585,8 @@ document.addEventListener('keydown', (e) => {
     }
   }
   // Feature 6 — keyboard navigation in the treemap / sunburst view.
-  if (state.view === 'treemap' && !typing && !mod && state.treemap.rootPath && !state.treemap.history.active) {
+  if (state.view === 'treemap' && !typing && !mod && state.treemap.rootPath
+      && !state.treemap.history.active && !tmPreview.on) {
     switch (e.key) {
       case '/': e.preventDefault(); $('tmSearch').focus(); return;
       case 'h': case 'ArrowLeft': case 'Backspace': e.preventDefault(); kbUp(); return;
