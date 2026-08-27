@@ -286,11 +286,10 @@ happened to work on the machine it was written on. A filesystem that still
 refuses the sparse file now `t.skip()`s with the reason instead of failing for
 something that is not the point.
 
-**Not yet proven on Linux or Windows:** the capsule's new timestamp round-trip
-tests. They are new in the same batch and have only run on macOS. Node's
-`utimes` on a directory goes through `FILE_FLAG_BACKUP_SEMANTICS` on Windows
-and should hold, and the product code swallows a `utimes` refusal so a restore
-can never fail for it — but the assertions themselves are unproven off macOS.
+**Now proven on all three.** The capsule's timestamp round-trip tests went
+green on Linux, macOS and Windows on `f90496f` — including the folder-mtime
+assertions, so Node's `utimes` on a directory holds on NTFS and ext4 as well as
+APFS. This paragraph used to say they were unproven; they are not any more.
 
 ### The cart list is paged, because rebuilding it was a 44 ms block
 
@@ -1124,6 +1123,43 @@ B5 zombie handles.
   grid item with auto margins otherwise shrink-wraps).
 
 ---
+
+## Open work a next session could pick up (verified, not guessed)
+
+Ordered by what would actually cost someone something. Everything below was
+checked against the code on `f90496f`, with all three CI platforms green.
+
+**A. `attachWatchers` can end with zero watchers and Live mode will not say so.**
+`src/services/watcher.ts` falls back from a recursive `fs.watch` to per-directory
+watches, and every one of those is wrapped in a swallowing `catch`. The `init`
+SSE event reports `engine: 'recursive' | 'top-levels'` but never how many
+watchers actually attached, so a session that watched *nothing* looks identical
+to a quiet disk. This is the same class as the `startWatcher` bug fixed in
+`21dbbca`, and the same fix applies: report the count, and let the client say
+"live updates are not available here" with the reason.
+*Narrower than it first looks* — `topLevelDirs` always includes the root, so
+this needs the root itself to be unwatchable (permissions, or Linux
+`max_user_watches` exhausted). Real, but not common. Worth a test either way.
+
+**B. A chunked cart dry run is optimistic about the Time Capsule.**
+Each batch of ≤500 works out the capsule's remaining room as it stands *now*,
+because a dry run writes nothing — so the later batches do not know the earlier
+ones would have filled it. For a cart over 500 items that also strains the
+capsule, the manifest can promise slightly more than the commit delivers. The
+UI states this when it needed more than one batch (`cartManifestHtml`), so it is
+honest, not silent. Making it exact means threading the simulated store through
+`planProtection` across calls.
+
+**C. A capsule eviction has never run live.** The `evicts[]` line in the commit
+manifest is covered by `planEviction`'s unit tests and by the plan's arithmetic,
+but this Mac's cap is 28.5 GiB and no fixture has come close. Someone with a
+smaller disk, or a deliberately lowered `timeCapsuleMaxPercent`, could prove it
+end to end.
+
+**D. Games' shader-cache rows have never rendered against a real library.**
+No Steam, Epic, GOG or itch.io install exists here, so `loadGames` reports "no
+library found". The rendering rule is asserted from source and the parsers have
+fixtures; the honest no-library path is what runs live.
 
 ## Known gaps and honest limitations (stated in the UI — don't "fix" the caveats)
 
