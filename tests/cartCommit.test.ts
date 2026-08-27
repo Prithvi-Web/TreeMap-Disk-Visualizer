@@ -16,7 +16,7 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
-import { planProtection, getCapsuleIndex, protectItems } from '../src/services/timeCapsule';
+import { planProtection, getCapsuleIndex, protectItems, capFor, planEviction, getCapsuleJob } from '../src/services/timeCapsule';
 import { initPortableMode, resetPortableMode } from '../src/services/portableMode';
 import { planCartCommit, commitCart, undoCartRun, normalizeRunId, MAX_CART_PATHS } from '../src/services/cartCommit';
 import { updateSettings } from '../src/services/settings';
@@ -173,12 +173,101 @@ const SPARSE_SKIP = process.platform === 'win32'
   ? 'NTFS allocates truncate-only files solid, so a sparse fixture would really be written out in full'
   : false;
 
+/**
+ * Wait for a restore JOB to finish, not for its side effects to appear.
+ *
+ * Polling `fs.existsSync` was the original approach and it is racy in a way
+ * that only shows under load: `copyWithHash` creates the destination and then
+ * streams into it, so a file EXISTS at zero bytes for as long as the copy
+ * takes. The poll would exit on existence and the next line would assert the
+ * size, reading 0. Measured: one failure in three full-suite runs on this Mac,
+ * and it is what the macOS CI job actually failed on — `0 !== 1024`.
+ *
+ * Waiting on the job also means a genuine failure names the right subsystem:
+ * a rolled-back restore reports its own error instead of "the file never came
+ * back", which is the same correction commit 21dbbca applied to the watcher
+ * test.
+ */
+async function undoAndWait(runId: string): Promise<{ entryCount: number }> {
+  const job = await undoCartRun(runId);
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const live = getCapsuleJob(job.jobId);
+    assert.ok(live, 'the restore job record must exist');
+    if (live.status !== 'running') {
+      assert.equal(live.status, 'complete', live.error ?? 'the restore finished without error');
+      return { entryCount: job.entryCount };
+    }
+    assert.ok(Date.now() < deadline, 'the restore did not finish within 20s');
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+/**
+ * The over-cap boundary, with capacity as a NUMBER rather than a measurement.
+ *
+ * The disk-backed test above cannot sit on the knife edge, because the cap is
+ * a share of live free space and free space moves under it. These do sit on it:
+ * the pure functions take the cap as an argument, so one byte either side of it
+ * is exactly reproducible and always will be.
+ */
+test('one byte over the cap does not fit; exactly at the cap does', () => {
+  const cap = 1_000_000;
+  assert.deepEqual(planEviction([], cap, cap), { evict: [], fits: true }, 'exactly full still fits');
+  assert.deepEqual(planEviction([], cap, cap + 1), { evict: [], fits: false }, 'one byte more does not');
+  assert.deepEqual(planEviction([], cap, 0), { evict: [], fits: true }, 'nothing always fits');
+});
+
+test('an item larger than the whole capsule is refused outright, never by eviction', () => {
+  // The dangerous shape: emptying the capsule to make room for something that
+  // still would not fit would destroy every existing undo and gain nothing.
+  const entries = [
+    { id: 'a', capturedAt: 1, heldBytes: 400_000, hasPayload: true },
+    { id: 'b', capturedAt: 2, heldBytes: 400_000, hasPayload: true },
+  ] as unknown as Parameters<typeof planEviction>[0];
+  const cap = 1_000_000;
+  const tooBig = planEviction(entries, cap, cap + 1);
+  assert.equal(tooBig.fits, false);
+  assert.deepEqual(tooBig.evict, [], 'nothing is evicted for an item that could never fit');
+
+  // And something that CAN fit still evicts oldest-first to make room.
+  const fitsAfterEviction = planEviction(entries, cap, 700_000);
+  assert.equal(fitsAfterEviction.fits, true);
+  assert.ok(fitsAfterEviction.evict.length > 0, 'room is made rather than the item refused');
+});
+
+test('the cap is a share of usable space, so it does not shrink as the capsule fills', () => {
+  // Free space alone would make the cap shrink as the capsule grows, so "10%"
+  // would mean something different at every moment.
+  assert.equal(capFor(1000, 0, 10), 100);
+  assert.equal(capFor(900, 100, 10), 100, 'the same 10% once the capsule holds 100');
+  assert.equal(capFor(0, 1000, 10), 100, 'and still the same when nothing is free');
+  // An unreadable volume falls back to a fixed, stated ceiling rather than 0 —
+  // a cap of 0 would silently turn every delete into an unprotected one.
+  assert.ok(capFor(null, 0, 10) > 0, 'unknown free space is never a cap of zero');
+});
+
 test('an item bigger than the whole capsule is left UNDELETED, and says why', { skip: SPARSE_SKIP }, async (t) => {
   const dir = await fixture('cap', 0, 0);
   try {
     // Ask the capsule how much it can hold, then make something larger.
     const { capBytes } = await planProtection([]);
-    const overCap = capBytes + 4096;
+    // DOUBLE the cap, not `cap + 4096`.
+    //
+    // `capBytes` is a share of the volume's *live* free space, so it is a
+    // moving target: at the default 10%, free space rising by 40 KB moves the
+    // cap by 4 KB. A fixture sized 4 KB over it therefore stopped being over
+    // it between this call and the commit below, and the commit — which
+    // measures capacity again, correctly — protected and deleted the file the
+    // plan had just promised to leave alone. Measured: 2 failures in 8 runs on
+    // an idle Mac, each taking 80-105 s because the capsule really did copy
+    // the sparse petabyte before deleting it.
+    //
+    // Doubling means free space would have to double for the verdict to flip,
+    // which cannot happen mid-test. The knife-edge itself is covered
+    // deterministically by the capFor/planEviction test below, where capacity
+    // is a number rather than a measurement.
+    const overCap = capBytes * 2 + 4096;
     const huge = path.join(dir, 'huge.sparse');
     await fsp.writeFile(huge, '');
     try {
@@ -321,12 +410,8 @@ test('undo restores every entry a run protected, at its original path', async ()
     for (const p of paths) await fsp.rm(p);
     for (const p of paths) assert.ok(!fs.existsSync(p));
 
-    const job = await undoCartRun(runId);
+    const job = await undoAndWait(runId);
     assert.equal(job.entryCount, 2);
-    // The restore is a job; wait for the files rather than for a status field.
-    for (let i = 0; i < 200 && !paths.every((p) => fs.existsSync(p)); i++) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
     for (const p of paths) {
       assert.ok(fs.existsSync(p), `${p} came back`);
       assert.equal(fs.statSync(p).size, 2048, 'byte-for-byte, not a placeholder');
@@ -544,11 +629,8 @@ test('a chunked commit is ONE run, so undo puts the whole cart back', async () =
     for (const p of all) assert.ok(!fs.existsSync(p), 'everything was deleted');
 
     // One undo, both chunks.
-    const job = await undoCartRun(first.runId);
+    const job = await undoAndWait(first.runId);
     assert.equal(job.entryCount, 6, 'the undo covers both chunks, not just one');
-    for (let i = 0; i < 200 && !all.every((p) => fs.existsSync(p)); i++) {
-      await new Promise((r) => setTimeout(r, 25));
-    }
     for (const p of all) {
       assert.ok(fs.existsSync(p), `${p} came back`);
       assert.equal(fs.statSync(p).size, 1024);
