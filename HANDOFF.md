@@ -151,11 +151,45 @@ watched, just not exhaustively. Two tests pin both halves.
   Drive multi-step UI sweeps as a `browser_batch` of alternating exec/wait
   steps instead.
 
+### §4 acceptance, run end to end
+
+"Stage items from four different views, preview the after-map, commit, undo —
+and the disk returns to its prior state with the files back at their original
+paths." Done exactly, on a 72 MB fixture, each item staged through its own real
+cart button:
+
+| View | Staged |
+| --- | --- |
+| Largest Files (Dashboard) | `holiday.mov` |
+| Duplicates | `Dupes/original.bin` |
+| Empty Folders (Clean Up) | `Empties/` |
+| Clean Up custom rules | `app-1.log`, `app-2.log` |
+
+The preview drew **three** hatched regions — Media 20 MB, Dupes 6 MB, Logs
+3 MB — one per folder that lost bytes, with the top level still tiling exactly
+10000/10000 of the canvas. The commit freed 29.0 MB, matching the manifest to
+the byte (73,728 KB → 44,064 KB). The undo brought all of it back and
+`shasum -a 256` over all twelve files was **identical to the pre-commit
+listing**, with `Empties/a/b` and `Empties/c` restored as directories rather
+than as nothing.
+
+The goal meter's **Target met** state was captured live in the same run
+(29.0 MB staged against a 20 MB target).
+
+### One trap this cost
+
+**`dev-isolated.js` writes to `os.tmpdir()`, which on macOS is
+`/var/folders/…`, not `/tmp`.** Removing `/tmp/treemap-dev-data` cleans up
+nothing, and a target set in an earlier session reappears in the next one
+looking like a bug in the settings code. Resolve it with
+`node -e "console.log(require('path').join(require('os').tmpdir(),'treemap-dev-data'))"`.
+
 ### Measured on this Mac
 
 | Budget | Measured | Limit |
 | --- | --- | --- |
 | `npm run bench:v4` | 7 pass, 3 not measurable in Node | — |
+| `tmBuildPreview` at the 20,000-node payload cap, 500 staged | **12.6 ms** | ≤ 50 ms (§2.5) |
 | Scan throughput (50,102 items) | **1431.2 ms · 35,008 items/s**, −4.5% vs baseline | ≤ +2% |
 | Per-node memory (1M / 5M) | **50.7 / 51.7 B/node** | ≤ 56 |
 | Fact sidecars (5,000 paths) | size 96 ms · lastUsed 194 ms · recoverability 113 ms · reclaimScore 260 ms | ≤ 400 ms |
