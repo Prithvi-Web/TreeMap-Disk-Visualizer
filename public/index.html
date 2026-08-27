@@ -687,6 +687,126 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 #cartDock.open #cartTab .c-cta { color: var(--text-3); }
 .icon-btn.cartin { color: var(--accent); }
 
+/* ═══════════ Phase 5 (v4 §5.3) — The Missing Gigabytes ═══════════
+   A receipt, and it is meant to look like one: a bar over the volume's whole
+   capacity, then the arithmetic printed as lines with a rule above the total.
+   §5.3 asks for the receipt metaphor by name, and the reason is that a receipt
+   is a thing that is *supposed* to add up — which is exactly the claim the page
+   is making.
+
+   The segment colours are one system, not a rainbow: blue is what TreeMap can
+   see, the warm hues are space something else is holding, and the residual is
+   hatched rather than coloured because it is the one segment that is not a
+   measurement of anything. Both themes get their own values — the dark set is
+   too light to read on white, and Apple's own light variants are darker for
+   exactly that reason. */
+:root {
+  --mg-scanned:      #0A84FF;
+  --mg-snapshots:    #BF5AF2;
+  --mg-handles:      #FF9F0A;
+  --mg-volumes:      #64D2FF;
+  --mg-residual:     rgba(255,255,255,0.26);
+  --mg-residual-bg:  rgba(255,255,255,0.07);
+  --mg-free:         rgba(255,255,255,0.055);
+}
+:root[data-theme="light"] {
+  --mg-scanned:      #007AFF;
+  --mg-snapshots:    #AF52DE;
+  --mg-handles:      #FF9500;
+  --mg-volumes:      #32ADE6;
+  --mg-residual:     rgba(10,15,30,0.30);
+  --mg-residual-bg:  rgba(10,15,30,0.06);
+  --mg-free:         rgba(10,15,30,0.05);
+}
+
+.mg-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 3px; }
+.mg-head .mg-vol { font-size: 15px; font-weight: 600; color: var(--text-1); }
+.mg-head .mg-mp { font-size: 12px; color: var(--text-3); }
+.mg-head .mg-cap { margin-left: auto; font-size: 12.5px; color: var(--text-2); }
+.mg-head .mg-cap b { color: var(--text-1); font-weight: 600; }
+
+/* The bar spans the volume's TOTAL capacity, so "used" is a position on it
+   rather than the whole of it — which is the only way free space can be seen
+   in the same picture as what is filling it. */
+.mg-bar { position: relative; height: 34px; border-radius: var(--r-sm); overflow: hidden;
+  background: var(--mg-free); border: 1px solid var(--hairline); display: flex; margin-top: 14px; }
+.mg-seg { border: none; padding: 0; height: 100%; min-width: 2px; cursor: pointer; position: relative;
+  transition: filter var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
+  border-right: 1px solid var(--bg-1); }
+.mg-seg:last-child { border-right: none; }
+.mg-seg:hover, .mg-seg:focus-visible { filter: brightness(1.22); z-index: 2; }
+.mg-seg:focus-visible { outline: 2px solid var(--text-1); outline-offset: -3px; }
+.mg-seg.is-scanned   { background: var(--mg-scanned); }
+.mg-seg.is-snapshots { background: var(--mg-snapshots); }
+.mg-seg.is-handles   { background: var(--mg-handles); }
+.mg-seg.is-volumes   { background: var(--mg-volumes); }
+/* Hatched, deliberately: the residual is the one segment that is not a
+   measurement, and it should not look like the others. */
+.mg-seg.is-residual  { background: repeating-linear-gradient(45deg,
+    var(--mg-residual) 0 5px, var(--mg-residual-bg) 5px 10px); }
+
+/* Where the volume's used space actually ends.
+
+   It sits in the WRAPPER, not in the bar: the bar clips its own overflow so the
+   segments keep their rounded corners, which silently ate this label the first
+   time it was written — the mark drew, the caption did not, and nothing said so.
+
+   When the statement balances, this lands exactly at the end of the last
+   segment, which is the point. It earns its place in the case where it does
+   not: over-counted clones push the segments PAST the volume's real used
+   space, and this is what makes that visible instead of impossible. */
+.mg-usedmark { position: absolute; top: 0; height: 34px; width: 2px; background: var(--text-1);
+  opacity: 0.55; pointer-events: none; }
+.mg-usedmark::after { content: attr(data-label); position: absolute; top: 100%; left: 0;
+  transform: translateX(-50%); margin-top: 6px; font-size: 10.5px; color: var(--text-3);
+  white-space: nowrap; }
+/* Close to the right-hand end, a centred caption would run out of the card. */
+.mg-usedmark.at-end::after { transform: translateX(-100%); }
+.mg-usedmark.at-start::after { transform: none; }
+.mg-barwrap { position: relative; margin-bottom: 26px; }
+
+.mg-legend { display: flex; flex-wrap: wrap; gap: 6px 15px; margin-top: 30px; font-size: 11.5px; color: var(--text-2); }
+.mg-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.mg-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+/* ── the statement itself ── */
+.mg-receipt { margin-top: 20px; }
+.mg-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 18px; padding: 11px 0;
+  border-bottom: 1px solid var(--hairline); align-items: baseline; }
+.mg-row:last-child { border-bottom: none; }
+.mg-row .mg-l { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.mg-row .mg-sw { width: 9px; height: 9px; border-radius: 2px; flex: none; transform: translateY(-1px); }
+.mg-row .mg-name { font-weight: 600; color: var(--text-1); font-size: 13px; }
+.mg-row .mg-count { font-size: 11.5px; color: var(--text-3); }
+.mg-row .mg-v { font-size: 13.5px; font-weight: 600; color: var(--text-1);
+  font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.mg-row .mg-v.mg-unknown { color: var(--text-3); font-weight: 500; font-style: italic; }
+.mg-row .mg-v.mg-minus { color: var(--text-2); }
+.mg-row .mg-detail { grid-column: 1 / -1; font-size: 12px; color: var(--text-2); line-height: 1.55; max-width: 74ch; }
+.mg-row .mg-reason { grid-column: 1 / -1; font-size: 12px; color: var(--warn); line-height: 1.55; max-width: 74ch; }
+:root[data-theme="light"] .mg-row .mg-reason { color: #9a6b00; }
+.mg-row .mg-notes { grid-column: 1 / -1; margin: 2px 0 0; padding-left: 15px; }
+.mg-row .mg-notes li { font-size: 11.5px; color: var(--text-3); line-height: 1.55; max-width: 74ch; }
+.mg-row .mg-remedy { grid-column: 1 / -1; margin-top: 8px; display: flex; align-items: center;
+  gap: 10px; flex-wrap: wrap; }
+.mg-row .mg-remedy .muted { font-size: 11px; max-width: 60ch; line-height: 1.5; }
+.mg-row.mg-focus { background: var(--surface-1); border-radius: var(--r-sm);
+  box-shadow: 0 0 0 1px var(--hairline-2); }
+.mg-row.is-residual .mg-name { color: var(--text-1); }
+
+/* The rule above the total — the visual claim that everything above it sums
+   to what is below it. */
+.mg-total { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: baseline;
+  margin-top: 4px; padding-top: 14px; border-top: 2px solid var(--text-1); }
+.mg-total .mg-name { font-size: 14px; font-weight: 700; color: var(--text-1); }
+.mg-total .mg-v { font-size: 16px; font-weight: 700; color: var(--text-1);
+  font-variant-numeric: tabular-nums; }
+.mg-total .mg-sub { grid-column: 1 / -1; font-size: 11.5px; color: var(--text-3); margin-top: 5px; }
+.mg-caveat { margin-top: 16px; padding: 11px 13px; border-radius: var(--r-sm);
+  background: var(--surface-1); border: 1px solid var(--hairline);
+  font-size: 12px; color: var(--text-2); line-height: 1.55; }
+@media (prefers-reduced-motion: reduce) { .mg-seg { transition: none; } }
+
 /* ── Quick-look preview pane (Feature 4) ── */
 #previewPane { position: fixed; top: 58px; right: 0; bottom: 0; width: 330px; max-width: 88vw; z-index: 72;
   display: flex; flex-direction: column;
@@ -1652,6 +1772,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
     <button role="tab" aria-selected="false" data-view="games" title="Games"><span data-icon="play"></span><span class="side-label">Games</span></button>
     <button role="tab" aria-selected="false" data-view="security" title="Security"><span data-icon="shield"></span><span class="side-label">Security</span></button>
     <button role="tab" aria-selected="false" data-view="fleet" title="Fleet"><span data-icon="globe"></span><span class="side-label">Fleet</span></button>
+    <button role="tab" aria-selected="false" data-view="missing" title="Missing GB"><span data-icon="pie"></span><span class="side-label">Missing GB</span></button>
     <button role="tab" aria-selected="false" data-view="duplicates" title="Duplicates"><span data-icon="copy"></span><span class="side-label">Duplicates</span></button>
     <button role="tab" aria-selected="false" data-view="trends" title="Trends"><span data-icon="trendUp"></span><span class="side-label">Trends</span></button>
     <button role="tab" aria-selected="false" data-view="compare" title="Compare"><span data-icon="diff"></span><span class="side-label">Compare</span></button>
@@ -1965,6 +2086,18 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
     <div class="card glass">
       <h2><span data-icon="globe"></span>Other Machines</h2>
       <div id="fleetBody"><div class="muted">Loading…</div></div>
+    </div>
+  </section>
+
+  <!-- ═══════════ The Missing Gigabytes (v4 §5) ═══════════
+       One accounting statement for the volume the scan lives on. The receipt
+       either balances or names the gap; it never quietly folds the residual
+       into another line to look tidy. -->
+  <section class="view" id="view-missing" role="tabpanel" aria-label="Missing Gigabytes" hidden>
+    <div class="card glass">
+      <h2><span data-icon="pie"></span>Where the space actually went</h2>
+      <div class="apps-info muted" id="missingInfo"></div>
+      <div id="missingBody" aria-live="polite"><div class="muted">Run a scan to reconcile this disk.</div></div>
     </div>
   </section>
 
@@ -8349,6 +8482,230 @@ registerView({
   // useful with no scan loaded and never shows the empty-state screen.
   needsScan: false,
   mount() { loadCapsule(); },
+});
+
+/* ═══════════ The Missing Gigabytes (v4 §5) ═══════════
+   One page that reconciles a volume, printed as a receipt.
+
+   The design rule the whole view turns on: **an unknown is never drawn as a
+   zero.** A line whose bytes could not be measured gets no bar segment, prints
+   "unknown" rather than "0 B", and states its reason in full — and the residual
+   line names it, so the gap is attributable rather than mysterious. Rendering
+   an unmeasured line as an empty segment would be the same lie in pixels.
+
+   The bar spans the volume's whole capacity rather than just its used part,
+   because free space is half of what a user is asking about, and a mark shows
+   where "used" actually ends. Segments carry only positive lines: a negative
+   line is a correction to the line above it, so it nets off there and is still
+   printed in full in the statement below.                                  */
+
+const MG_SEG = {
+  scanned:      { cls: 'is-scanned',   colour: 'var(--mg-scanned)' },
+  snapshots:    { cls: 'is-snapshots', colour: 'var(--mg-snapshots)' },
+  openHandles:  { cls: 'is-handles',   colour: 'var(--mg-handles)' },
+  otherVolumes: { cls: 'is-volumes',   colour: 'var(--mg-volumes)' },
+  unaccounted:  { cls: 'is-residual',  colour: 'var(--mg-residual)' },
+};
+
+let missingData = null;
+let missingLoading = false;
+
+/** Fetch the statement. A failure says so; it never leaves a stale receipt up. */
+async function loadMissing() {
+  const body = $('missingBody');
+  if (!state.scanId) {
+    missingData = null;
+    body.innerHTML = '<div class="muted">Run a scan to reconcile this disk.</div>';
+    $('missingInfo').textContent = '';
+    return;
+  }
+  if (missingLoading) return;
+  missingLoading = true;
+  body.innerHTML = '<div class="muted">Reconciling…</div>';
+  try {
+    missingData = await api(`/api/missing-gigabytes?scanId=${encodeURIComponent(state.scanId)}`);
+    renderMissing();
+  } catch (e) {
+    missingData = null;
+    $('missingInfo').textContent = '';
+    body.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
+  } finally {
+    missingLoading = false;
+  }
+}
+
+/**
+ * Net a line against the corrections that belong to it.
+ *
+ * Cloud placeholders are a negative line that exists to take back what the
+ * scanned line over-reported. In the arithmetic they are their own row, in full
+ * view; in the *bar* they simply make the scanned segment shorter, because a
+ * stacked bar has no way to draw a negative width and faking one would be worse
+ * than netting it.
+ */
+function mgSegmentBytes(lines, id) {
+  let total = lines.find(l => l.id === id)?.bytes ?? 0;
+  if (id === 'scanned') total += lines.find(l => l.id === 'cloudPlaceholders')?.bytes ?? 0;
+  return total;
+}
+
+function renderMissing() {
+  const d = missingData;
+  if (!d) return;
+  const body = $('missingBody');
+  const total = d.volume.totalBytes;
+
+  $('missingInfo').textContent =
+    `Read from ${d.volume.mechanism}. Every line below is a measurement or an honest unknown; ` +
+    `they sum to the volume's used space exactly.`;
+
+  /* ── the bar ── */
+  const segs = [];
+  for (const id of ['scanned', 'snapshots', 'openHandles', 'otherVolumes', 'unaccounted']) {
+    const line = d.lines.find(l => l.id === id);
+    if (!line) continue;
+    const bytes = mgSegmentBytes(d.lines, id);
+    // A line with no measurement gets no segment at all. A zero-byte segment
+    // would be indistinguishable from an unknown one, and they are opposites.
+    if (line.bytes === null || bytes <= 0) continue;
+    segs.push({ id, line, bytes });
+  }
+  const drawn = segs.reduce((a, x) => a + x.bytes, 0);
+  // Normally the segments fit inside the capacity and the remainder is free
+  // space. When TreeMap has over-counted (clones), they can exceed what the
+  // volume says is used — the mark makes that visible rather than hiding it.
+  const denom = Math.max(total, drawn);
+  const pct = b => (b / denom) * 100;
+  const usedPct = pct(d.volume.usedBytes);
+
+  const barHtml =
+    `<div class="mg-barwrap"><div class="mg-bar" role="group" aria-label="How this volume's space is used">` +
+    segs.map(sgroup =>
+      `<button type="button" class="mg-seg ${MG_SEG[sgroup.id].cls}" data-mg-seg="${sgroup.id}" ` +
+      `style="width:${pct(sgroup.bytes).toFixed(3)}%" ` +
+      `aria-label="${escapeHtml(sgroup.line.label)}: ${escapeHtml(formatBytes(sgroup.bytes))}. Show details." ` +
+      `title="${escapeHtml(sgroup.line.label)} — ${escapeHtml(formatBytes(sgroup.bytes))}"></button>`
+    ).join('') +
+    `</div>` +
+    `<div class="mg-usedmark ${usedPct > 88 ? 'at-end' : usedPct < 6 ? 'at-start' : ''}" ` +
+    `style="left:${usedPct.toFixed(3)}%" ` +
+    `data-label="${escapeHtml(formatBytes(d.volume.usedBytes))} used"></div>` +
+    `<div class="mg-legend">` +
+    segs.map(sgroup =>
+      `<span><i style="background:${MG_SEG[sgroup.id].colour}"></i>${escapeHtml(sgroup.line.label)}</span>`
+    ).join('') +
+    `<span><i style="background:var(--mg-free)"></i>Free — ${escapeHtml(formatBytes(d.volume.freeBytes))}</span>` +
+    `</div></div>`;
+
+  /* ── the statement ── */
+  const rows = d.lines.map(line => {
+    const seg = MG_SEG[line.id];
+    const known = line.bytes !== null;
+    const value = known
+      ? `<div class="mg-v ${line.bytes < 0 ? 'mg-minus' : ''}">${line.bytes < 0 ? '−' : ''}${escapeHtml(formatBytes(Math.abs(line.bytes)))}</div>`
+      : `<div class="mg-v mg-unknown">unknown</div>`;
+    const count = line.count !== null
+      ? `<span class="mg-count">${escapeHtml(formatCount(line.count))} ${line.count === 1 ? 'item' : 'items'}</span>` : '';
+    return (
+      `<div class="mg-row ${line.id === 'unaccounted' ? 'is-residual' : ''}" data-mg-row="${line.id}">` +
+        `<div class="mg-l">` +
+          (seg ? `<span class="mg-sw" style="background:${seg.colour}"></span>` : '') +
+          `<span class="mg-name">${escapeHtml(line.label)}</span>${count}` +
+        `</div>` +
+        value +
+        `<div class="mg-detail">${escapeHtml(line.detail)}</div>` +
+        (line.reason ? `<div class="mg-reason">${escapeHtml(line.reason)}</div>` : '') +
+        (line.notes.length
+          ? `<ul class="mg-notes">${line.notes.map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ul>` : '') +
+        (line.remedy
+          ? `<div class="mg-remedy">` +
+              `<button class="btn" data-mg-remedy="${line.remedy.action}">${escapeHtml(line.remedy.label)}</button>` +
+              `<span class="muted">${escapeHtml(line.remedy.caveat)}</span>` +
+            `</div>`
+          : '') +
+      `</div>`
+    );
+  }).join('');
+
+  const totalHtml =
+    `<div class="mg-total">` +
+      `<div class="mg-name">Used on ${escapeHtml(d.volume.mountPoint)}</div>` +
+      `<div class="mg-v">${escapeHtml(formatBytes(d.volume.usedBytes))}</div>` +
+      `<div class="mg-sub">Every line above, added together, is exactly this number. ` +
+      `${escapeHtml(formatBytes(d.volume.freeBytes))} of ${escapeHtml(formatBytes(total))} is still free.</div>` +
+    `</div>`;
+
+  body.innerHTML =
+    `<div class="mg-head">` +
+      `<span class="mg-vol">${escapeHtml(d.volume.mountPoint === '/' ? 'This disk' : d.volume.mountPoint)}</span>` +
+      `<span class="mg-mp">${escapeHtml(d.rootPath)}</span>` +
+      `<span class="mg-cap"><b>${escapeHtml(formatBytes(d.volume.usedBytes))}</b> used of ${escapeHtml(formatBytes(total))}</span>` +
+    `</div>` +
+    barHtml +
+    `<div class="mg-receipt">${rows}${totalHtml}</div>` +
+    d.caveats.map(c => `<div class="mg-caveat">${escapeHtml(c)}</div>`).join('');
+}
+
+/* Segment → its row. Delegated, so re-rendering never leaves listeners behind. */
+$('missingBody').addEventListener('click', (e) => {
+  const seg = e.target.closest('[data-mg-seg]');
+  if (seg) {
+    const row = $('missingBody').querySelector(`[data-mg-row="${seg.dataset.mgSeg}"]`);
+    if (row) {
+      $('missingBody').querySelectorAll('.mg-row.mg-focus').forEach(r => r.classList.remove('mg-focus'));
+      row.classList.add('mg-focus');
+      // Instant, deliberately. Measured in the shipped shell: smooth scrolling
+      // is a no-op here — `main.scrollTo({ behavior: 'smooth' })` leaves
+      // scrollTop at 0 while the identical call with 'auto' lands exactly, and
+      // prefers-reduced-motion is not set. A segment that silently fails to
+      // reveal its row is a broken control, and the polish is not worth that;
+      // the row stays highlighted, which is the signal that actually matters.
+      row.scrollIntoView({ block: 'center', behavior: 'auto' });
+    }
+    return;
+  }
+  const remedy = e.target.closest('[data-mg-remedy]');
+  if (!remedy) return;
+  // Every remedy is an existing, already-gated flow. Nothing here is a second
+  // path to a destructive action — it is a signpost to the first one.
+  const action = remedy.dataset.mgRemedy;
+  if (action === 'scan-volume') {
+    switchView('dashboard');
+    toast('Choose the whole disk as the scan folder to account for every file');
+  } else if (action === 'purge-snapshots') {
+    switchView('dashboard');
+    toast('Local snapshots are managed from the Dashboard’s storage card, which asks before deleting any');
+  } else if (action === 'review-open-handles') {
+    switchView('dashboard');
+    toast('Held space is on the Dashboard — TreeMap asks a program to quit, and never forces it');
+  }
+});
+
+registerView({
+  id: 'missing',
+  label: 'Missing GB',
+  icon: 'pie',
+  needsScan: true,
+  // Without the disk layout there is nothing to reconcile against, so the tab
+  // disables itself with the capability's own words rather than rendering a
+  // page of blanks.
+  capabilityKey: 'volumeTopology',
+  onScanChange() {
+    // Entering mid-scan gets a truthful "still running" from the server, and a
+    // user left looking at it would have no way back: nothing re-fetches on its
+    // own. So a scan landing while this view is open re-reconciles immediately.
+    missingData = null;
+    if (mountedView && mountedView.id === 'missing') loadMissing();
+  },
+  mount() { loadMissing(); },
+  unmount() {
+    // Nothing is left holding memory: the statement is small, but the receipt
+    // it paints is not, and the registry exists to stop exactly that
+    // accumulating across view switches.
+    missingData = null;
+    $('missingBody').innerHTML = '<div class="muted">Run a scan to reconcile this disk.</div>';
+    $('missingInfo').textContent = '';
+  },
 });
 
 /* ───────────────────────────── Autopilot tab (B1) ─────────────────────────────

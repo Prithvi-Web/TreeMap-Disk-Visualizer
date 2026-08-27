@@ -998,6 +998,63 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   },
   {
     method: 'get',
+    path: '/api/missing-gigabytes',
+    summary:
+      "One accounting statement for the volume the scan lives on: every line is bytes, the lines sum to the volume's used space exactly, and whatever is left over is its own `unaccounted` line rather than being hidden in the others",
+    tag: 'insights',
+    destructive: false,
+    parameters: [scanIdQuery],
+    responses: {
+      '200': jsonResponse(
+        'The statement',
+        obj(
+          {
+            scanId: str(),
+            rootPath: str(),
+            volume: obj(
+              {
+                mountPoint: str(),
+                totalBytes: num(),
+                usedBytes: num(),
+                freeBytes: num(),
+                mechanism: str('How the figure was obtained, for the footnote'),
+              },
+              ['mountPoint', 'totalBytes', 'usedBytes', 'freeBytes', 'mechanism'],
+            ),
+            lines: arr(
+              obj(
+                {
+                  id: str("One of: scanned, cloudPlaceholders, snapshots, purgeable, openHandles, otherVolumes, unscannable, unaccounted"),
+                  label: str(),
+                  bytes: nullable(
+                    num(
+                      'Signed — negative for a correction. NULL means unknown and must never be rendered as 0; a line that is genuinely zero carries 0.',
+                    ),
+                  ),
+                  available: bool(),
+                  reason: str('Present only when available is false. Show verbatim.'),
+                  detail: str(),
+                  count: nullable(num()),
+                  notes: arr(str(), 'Facts belonging to this line but outside the arithmetic'),
+                  remedy: nullable(opaque('An existing, already-gated action; never a second path to one')),
+                },
+                ['id', 'label', 'bytes', 'available', 'detail', 'count', 'notes', 'remedy'],
+              ),
+            ),
+            unaccountedBytes: num('Signed. Negative means TreeMap counted more than the volume holds, which shared storage produces.'),
+            coversWholeVolume: bool('False when the scan started inside the volume rather than at it'),
+            caveats: arr(str()),
+            generatedAt: num(),
+          },
+          ['scanId', 'rootPath', 'volume', 'lines', 'unaccountedBytes', 'coversWholeVolume', 'caveats', 'generatedAt'],
+        ),
+      ),
+      '404': errorResponse('Unknown scanId'),
+      '409': errorResponse('The scan is still running, or the disk layout cannot be read on this system'),
+    },
+  },
+  {
+    method: 'get',
     path: '/api/compression/candidates',
     summary: 'Large video in an older codec that HEVC would store in less space, with ESTIMATED savings',
     tag: 'insights',

@@ -67,7 +67,7 @@ async function call(name: string, args: Record<string, unknown>): Promise<ToolRe
   return (await client.callTool({ name, arguments: args })) as ToolReply;
 }
 
-test('handshake lists exactly the nine documented tools', async () => {
+test('handshake lists exactly the ten documented tools', async () => {
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name).sort();
   assert.deepEqual(names, [
@@ -76,6 +76,7 @@ test('handshake lists exactly the nine documented tools', async () => {
     'find_duplicates',
     'forecast',
     'get_largest',
+    'missing_gigabytes', // v4 §5 — §6's MCP parity for the accounting statement
     'offload',
     'reclaim_ranked', // v4 §3 — §6's MCP parity for the Reclaim Score
     'scan_path',
@@ -277,6 +278,59 @@ test('reclaim_ranked filters by minScore and pages stably', async () => {
     again.structuredContent!.entries.map((e: any) => e.path),
     all.structuredContent!.entries.map((e: any) => e.path),
   );
+});
+
+/* ══════════════ missing_gigabytes (v4 §5, §6 MCP parity) ══════════════ */
+
+test('missing_gigabytes balances: the lines sum to the volume total, exactly', async () => {
+  const r = await call('missing_gigabytes', { scanId });
+  assert.ok(!r.isError, JSON.stringify(r.content));
+  const s = r.structuredContent!;
+  const sum = (s.lines as { bytes: number | null }[]).reduce((a, l) => a + (l.bytes ?? 0), 0);
+  assert.equal(sum, s.volume.usedBytes, 'an agent must be able to check the arithmetic itself');
+  assert.equal(
+    s.lines.find((l: { id: string }) => l.id === 'unaccounted').bytes,
+    s.unaccountedBytes,
+  );
+});
+
+test('missing_gigabytes keeps unknown and zero apart, which is the whole point', async () => {
+  const r = await call('missing_gigabytes', { scanId });
+  const s = r.structuredContent!;
+  for (const line of s.lines as { id: string; bytes: number | null; available: boolean; reason?: string }[]) {
+    if (line.bytes === null) {
+      // An agent that reads null as 0 concludes a disk has no snapshots when
+      // the truth is that nothing would size them. So a null always explains.
+      assert.equal(line.available, false, `${line.id}: unknown bytes must not claim to be available`);
+      assert.ok(line.reason && line.reason.length > 10, `${line.id}: an unknown must carry its reason`);
+    } else {
+      assert.equal(typeof line.bytes, 'number');
+    }
+  }
+  // And the residual names every unknown that is hiding inside it.
+  const residual = s.lines.find((l: { id: string }) => l.id === 'unaccounted');
+  for (const line of s.lines as { bytes: number | null; label: string; id: string }[]) {
+    if (line.bytes === null) assert.ok(residual.detail.includes(line.label), `${line.id} must be named in the residual`);
+  }
+});
+
+test('missing_gigabytes is inert, and offers no action of its own', async () => {
+  const before = fs.readdirSync(fixtureRoot).sort();
+  const r = await call('missing_gigabytes', { scanId });
+  assert.ok(!r.isError);
+  assert.deepEqual(fs.readdirSync(fixtureRoot).sort(), before);
+  // The remedies the HTTP view links to are separately gated endpoints. This
+  // tool must not read as if it can take them.
+  const body = JSON.stringify(r.structuredContent);
+  for (const word of ['"deleted"', '"purged"', '"freed"']) {
+    assert.ok(!body.includes(word), `missing_gigabytes must not imply it acted (${word})`);
+  }
+});
+
+test('missing_gigabytes refuses an unknown scan rather than answering emptily', async () => {
+  const r = await call('missing_gigabytes', { scanId: 'no-such-scan' });
+  assert.ok(r.isError);
+  assert.match(r.content![0].text, /SCAN_NOT_FOUND/);
 });
 
 test('reclaim_ranked refuses an unknown scan rather than answering emptily', async () => {

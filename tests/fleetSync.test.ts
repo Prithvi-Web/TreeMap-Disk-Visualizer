@@ -308,6 +308,8 @@ test('the boundary check rejects every per-node fact v4 derives', () => {
     'recoverability', 'elsewhere', 'lastUsed', 'lastUsedMs', // §1
     'journal', 'journalEntries', // §7.3
     'note', 'notes', 'folderNotes', // §9.5
+    'unaccounted', 'unaccountedBytes', 'statement', 'accountingStatement', // §5
+    'purgeable', 'purgeableBytes', 'unscannable', 'mountPoint', // §5
   ];
   for (const field of facts) {
     assert.ok(isForbiddenSummaryField(field), `a "${field}" field must be refused at the boundary`);
@@ -331,11 +333,18 @@ test('a reclaim score smuggled onto a summary is dropped by the allow-list', () 
     reclaimScore: 92,
     recoverability: { elsewhere: 'none' },
     notes: ['client archive, keep until 2027'],
+    // §5 — an accounting statement is a description of this machine's disks,
+    // right down to the name of every volume attached to it.
+    statement: { lines: [{ id: 'snapshots', bytes: 42 }], mountPoint: "/Volumes/Bob's Backup" },
+    unaccountedBytes: 7,
   } as unknown as FleetSummary;
   const wire = serialiseSummary(hostile) as Record<string, unknown>;
   assert.equal(Object.keys(wire).length, SUMMARY_FIELDS.length);
   assert.equal(wire.reclaimScore, undefined);
   assert.equal(wire.recoverability, undefined);
   assert.equal(wire.notes, undefined);
+  assert.equal(wire.statement, undefined);
+  assert.equal(wire.unaccountedBytes, undefined);
   assert.ok(!JSON.stringify(wire).includes('2027'), 'and no note text reaches the wire');
+  assert.ok(!JSON.stringify(wire).includes('Bob'), 'and no volume name reaches it either');
 });

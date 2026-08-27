@@ -4,7 +4,7 @@ import path from 'path';
 import { platform } from '../platform';
 import { wholeDiskOf } from '../platform/macos/diskutil';
 import { getSnapshotAccounting } from './snapshotAccounting';
-import { zombieReport } from './zombieHandles';
+import { groupZombies } from './zombieHandles';
 import { storeOf } from './scanStore';
 import type { ScanResult } from '../models/types';
 import type { LogicalVolumeInfo, VolumeTopology } from '../platform/types';
@@ -178,8 +178,25 @@ export function liveSources(): StatementSources {
     },
     devOf,
     snapshots: getSnapshotAccounting,
-    zombies: zombieReport,
+    zombies: leanZombieReport,
   };
+}
+
+/**
+ * The held-space figures, without the part this page does not show.
+ *
+ * `zombieReport()` finishes by resolving each holder's `.app` bundle, which
+ * costs **one `ps` per process** — and on this machine 305 processes are
+ * holding a deleted file, so that is 305 subprocesses for a field the receipt
+ * never prints. Measured: 568 ms with the enrichment, 226 ms without, and the
+ * three numbers this line actually uses — total bytes, process count,
+ * unknown-size count — came back identical both times.
+ *
+ * The Held-space view still calls the full `zombieReport()`, because it names
+ * the applications and genuinely needs them.
+ */
+async function leanZombieReport(): Promise<ZombieReport> {
+  return { ...groupZombies(await platform().getZombieHandles()), scannedAt: Date.now() };
 }
 
 /**

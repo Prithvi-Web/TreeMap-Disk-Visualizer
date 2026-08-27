@@ -22,6 +22,8 @@ import { guardQueryPath, guardBodyPath, guardBodyPaths, requireInsideScanRoot, i
 import { getAppAttribution } from '../services/appAttribution';
 import { storeOf } from '../services/scanStore';
 import { getForecast } from '../services/forecast';
+import { buildStatement } from '../services/missingGigabytes';
+import { capabilityState } from '../platform/capabilities';
 import { expandContainer } from '../services/containerScanner';
 import { findGitRepos, runGitGc } from '../services/gitScanner';
 import { scanPackageEcosystems } from '../services/packageEcosystemScanner';
@@ -147,6 +149,32 @@ insightRouter.get('/empty-folders', (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const ignoreJunk = String(req.query.ignoreJunk ?? 'true') !== 'false';
   res.json(collectEmptyFolders(storeOf(scan), ignoreJunk));
+});
+
+/**
+ * GET /api/missing-gigabytes?scanId= — the accounting statement (Phase 5).
+ *
+ * A **new** endpoint, and necessarily so: every per-scan response in §2.1's
+ * byte-identity list is locked, and this adds facts about a scan rather than
+ * changing what a scan says. Nothing here is destructive; the two remedies it
+ * offers are descriptions of endpoints that already exist and already have
+ * their own gates, not a second path to them.
+ *
+ * Gated on `volumeTopology`, because a statement that cannot read the disk
+ * layout has nothing to reconcile against — and a tab disabled with the
+ * capability's own reason is better than a panel of blanks.
+ */
+insightRouter.get('/missing-gigabytes', async (req: Request, res: Response) => {
+  const scan = requireCompleteScan(req, req.query.scanId);
+  const state = await capabilityState('volumeTopology');
+  if (!state.available) {
+    throw new AppError(
+      409,
+      'CAPABILITY_UNAVAILABLE',
+      state.reason ?? 'The disk layout cannot be read on this system, so there is nothing to reconcile against.',
+    );
+  }
+  res.json({ ...(await buildStatement(scan)), capability: state });
 });
 
 /** GET /api/git/repos?scanId= — pack/loose/LFS breakdown of every .git in the scan. */

@@ -38,6 +38,7 @@ const TAB_VIEWS = [
   'games', // C7 — game libraries
   'security', // C5 — secrets hygiene
   'fleet', // D1 — LAN fleet view
+  'missing', // v4 §5 — The Missing Gigabytes
 ] as const;
 const MODAL_VIEWS = ['cleanModal', 'settingsModal'] as const;
 

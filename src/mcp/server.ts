@@ -14,6 +14,7 @@ import { collectCleanupSuggestions } from '../services/cleanupRules';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { getIgnoreMatchers } from '../services/settings';
 import { getForecast } from '../services/forecast';
+import { buildStatement } from '../services/missingGigabytes';
 import { prepareOffload, startOffload, getOffloadJob } from '../services/offload';
 import { moveToTrash } from '../services/cleaner';
 import { checkOpenHandles, describeConflicts } from '../services/openHandleGuard';
@@ -407,6 +408,62 @@ export function buildMcpServer(): McpServer {
             + `${scored} could be scored. A higher \`candidates\` examines more. `
             + 'Scores rank and explain — they never select anything for deletion.',
           entries,
+        });
+      }),
+  );
+
+  /**
+   * §6 MCP parity for The Missing Gigabytes (v4 §5).
+   *
+   * The whole value to an agent is the same as to a person: it can tell the
+   * difference between "this line is zero" and "nobody would tell me what this
+   * line is". `bytes: null` means unknown and carries a `reason`; a genuine
+   * zero carries `0`. An agent that flattens the two will conclude a disk has
+   * no snapshots when the truth is that nothing could size them.
+   *
+   * Read-only, and it offers no remedy of its own: the two actions the HTTP
+   * view links to are existing, separately gated endpoints, and an agent takes
+   * them by calling those — not by asking this tool to act.
+   */
+  server.registerTool(
+    'missing_gigabytes',
+    {
+      title: 'Reconcile a volume — where the space actually went',
+      description:
+        'One accounting statement for the volume a completed scan lives on. Every line is bytes, the lines sum ' +
+        "to the volume's used space EXACTLY, and whatever is left over is its own `unaccounted` line rather " +
+        'than being folded into the others — a statement that always balances because it was forced to is not ' +
+        'evidence of anything. Lines cover: files the scan walked, online-only files counted but not resident, ' +
+        'filesystem snapshots, purgeable space, space held by programs with deleted files still open, other ' +
+        'volumes sharing the same storage pool, and what the scan was refused. ' +
+        'CRITICAL for interpreting the result: `bytes: null` means UNKNOWN and comes with a `reason`; it is ' +
+        'never the same as `bytes: 0`, which is a measurement. The `unaccounted` line names every unknown line ' +
+        'sitting inside it. Read-only; it never selects or deletes anything.',
+      inputSchema: {
+        scanId: z.string().min(1).describe('A completed scan from scan_path'),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ scanId }) =>
+      run(async () => {
+        const scan = requireCompleteScanMcp(scanId);
+        // The same builder the HTTP route serves — §6's rule that an MCP tool
+        // computes nothing its route counterpart does not.
+        const statement = await buildStatement(scan);
+        return ok({
+          ...statement,
+          lines: statement.lines.map((l) => ({
+            ...l,
+            bytesFormatted: l.bytes === null ? null : formatBytes(l.bytes),
+          })),
+          volumeFormatted: {
+            total: formatBytes(statement.volume.totalBytes),
+            used: formatBytes(statement.volume.usedBytes),
+            free: formatBytes(statement.volume.freeBytes),
+          },
+          note:
+            'Every line with a numeric `bytes` sums to volume.usedBytes exactly. A line with `bytes: null` is '
+            + 'unknown, not zero — its real value is inside `unaccounted`, which lists it by name.',
         });
       }),
   );

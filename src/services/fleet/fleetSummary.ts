@@ -65,6 +65,12 @@ const FORBIDDEN_SUBSTRINGS = [
   'recoverab', 'elsewhere', 'lastused', // §1 — recoverability and last-opened dates
   'journal', // §7.3 — the disk journal
   'note', // §9.5 — notes pinned to folders
+  // §5 — the accounting statement. Its lines are a description of what this
+  // machine is holding: how much sits in snapshots, how much a program is
+  // still gripping, how many folders refused the scan. `mount` goes with them
+  // because a volume name is as identifying as a path — /Volumes/Bob's Backup
+  // says who owns the machine, and `path` alone does not catch it.
+  'unaccounted', 'statement', 'purgeable', 'unscannable', 'mount',
 ];
 
 /**
