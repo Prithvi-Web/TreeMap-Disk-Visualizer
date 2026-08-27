@@ -35,6 +35,7 @@ onScanForgotten((scanId) => clearFactCache(scanId));
 export {
   computeFacts,
   clearFactCache,
+  clearFactCacheForProvider,
   factCacheSize,
   factProviderIds,
   getFactProvider,

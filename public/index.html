@@ -957,6 +957,66 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .smart-group.advisory { border-color: rgba(255,159,10,0.42); background: rgba(255,159,10,0.07); }
 .smart-group.advisory .adv-mark { flex: none; display: inline-flex; color: var(--warn); }
 .adv-spacer { flex: none; width: 17px; }
+/* ══ Phase 3 (v4 §3.3) — the Reclaim Score badge, breakdown and legend ══
+   The breakdown deliberately reuses .smart-why's markup and styling: §3.2
+   requires every score to be one click from its components, and Smart
+   Suggestions already answers "why is this suggested" in exactly that shape.
+   A second panel that said the same thing differently would be worse than
+   reuse even if it looked better. */
+.rc-badge { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
+  font-weight: 600; font-variant-numeric: tabular-nums; padding: 2px 8px; border-radius: 99px;
+  border: 1px solid currentColor; background: transparent; cursor: pointer; line-height: 1.5; }
+.rc-badge:hover, .rc-badge:focus-visible { background: color-mix(in srgb, currentColor 14%, transparent); }
+/* A score built on two of six signals must not look like one built on all
+   six. Low confidence is dashed — visible before the number is read. */
+.rc-badge.conf-low { border-style: dashed; }
+.rc-badge.conf-medium { border-style: solid; opacity: 0.88; }
+.rc-none { flex: none; font-size: 11px; color: var(--text-3); font-style: italic; }
+.rc-why { margin: 2px 0 8px; padding: 9px 11px; border-radius: 8px; background: var(--surface-2);
+  border: 1px solid var(--hairline); font-size: 12px; line-height: 1.55; color: var(--text-2); }
+.rc-why-row { display: flex; align-items: baseline; gap: 8px; }
+.rc-why-row + .rc-why-row { margin-top: 4px; }
+.rc-why-row .rc-k { flex: none; min-width: 152px; color: var(--text-1); font-weight: 500; }
+.rc-why-row .rc-v { flex: 1; min-width: 0; }
+.rc-why-row .rc-n { flex: none; font-variant-numeric: tabular-nums; color: var(--text-3); font-size: 11px; }
+.rc-why .rc-missing .rc-k { color: var(--warn); }
+.rc-why hr { border: 0; border-top: 1px solid var(--hairline); margin: 8px 0; }
+.rc-why code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  padding: 1px 5px; border-radius: 4px; background: var(--surface-3); }
+.rc-why .rc-foot { margin-top: 8px; font-size: 11.5px; color: var(--text-3); }
+/* The popover form, for surfaces with no room for an inline panel. */
+/* Joins the liquid-glass layer rather than inventing a background: --surface-1
+   is a near-transparent tint meant to sit ON something opaque, and using it
+   here let the donut legend behind the panel show straight through the
+   breakdown. Same treatment as #ctxMenu and #tooltip, which are the two
+   floating surfaces this one behaves like. */
+#rcPopover { position: fixed; z-index: 211; width: min(460px, calc(100vw - 24px)); max-height: 70vh;
+  overflow: auto; padding: 12px 14px;
+  /* The shared strong tint is ~68% opaque, which is right for #ctxMenu (small)
+     and for .modal (which sits on a dimmed backdrop). This panel is ~460x600
+     and sits straight on the content, with no scrim — at 68% the rows behind
+     it read straight through the breakdown, in dark mode especially. So it
+     keeps the glass sheen and the blur, over an OPAQUE base. */
+  --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02) 42%, rgba(255,255,255,0) 68%), var(--bg-1);
+  --lg-blur: 26px;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-md);
+  box-shadow: var(--shadow-3); }
+#rcPopover[hidden] { display: none; }
+#rcPopover .rc-pop-head { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; font-size: 13px; }
+#rcPopover .rc-pop-head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#rcPopover .rc-why { margin: 0; background: transparent; border: 0; padding: 0; }
+.rc-legend-note { color: var(--text-3); font-size: 11px; margin-left: 8px; }
+/* The weight sliders. `.rule-row` is a non-wrapping flex row, so the help
+   line under each label needs the row to wrap — without it the text was
+   squeezed into a ~90px column beside the slider and read as a footnote
+   nobody would finish. */
+.rw-row { flex-wrap: wrap; align-items: center; }
+.rw-row > label { min-width: 190px; flex: none; }
+.rw-row > input[type="range"] { flex: 1 1 160px; min-width: 120px; }
+.rw-row > .rw-val { flex: none; min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; }
+.rw-row > .rw-help { flex-basis: 100%; margin-left: 190px; font-size: 11.5px; color: var(--text-3);
+  margin-top: 2px; line-height: 1.45; }
+@media (max-width: 620px) { .rw-row > .rw-help { margin-left: 0; } }
 /* ── C6: package-manager leftovers, grouped by ecosystem ── */
 .pkg-eco { margin-bottom: 10px; }
 .pkg-echead { display: flex; align-items: baseline; gap: 10px; padding: 4px 2px 5px; font-size: 12.5px; }
@@ -1712,7 +1772,14 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
           </div>
         </div>
         <div class="card glass">
-          <h2><span data-icon="trendUp"></span>Largest Files</h2>
+          <h2><span data-icon="trendUp"></span>Largest Files
+            <!-- v4 §3.3 — the same ten files, ordered by the question people
+                 actually have. Sorting, not filtering: nothing leaves the list. -->
+            <div class="seg" id="bigFilesSort" role="tablist" aria-label="Sort largest files by" style="margin-left:auto;">
+              <button type="button" data-sort="size" aria-selected="true" title="Biggest first">Size</button>
+              <button type="button" data-sort="reclaim" aria-selected="false" title="Safest and most worthwhile to delete first">Reclaim</button>
+            </div>
+          </h2>
           <div id="bigFiles"><div class="muted">Run a scan to find your biggest files.</div></div>
         </div>
         <div class="card glass">
@@ -1751,6 +1818,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <div class="seg" id="tmColorSeg" role="tablist" aria-label="Treemap color mode">
           <button type="button" data-mode="size" aria-selected="true" title="Color cells by file size">Size</button>
           <button type="button" data-mode="age" aria-selected="false" title="Color cells by how recently modified">Age</button>
+          <button type="button" data-mode="reclaim" aria-selected="false" title="Color cells by how safe and worthwhile they are to reclaim">Reclaim</button>
         </div>
         <label for="tmDepth">Depth</label>
         <select id="tmDepth" aria-label="Treemap depth">
@@ -1801,6 +1869,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <option value="name">Name</option>
         <option value="date">Date modified</option>
         <option value="accessed">Last accessed</option>
+        <option value="reclaim">Reclaim score</option>
         <option value="type">Type</option>
       </select>
     </div>
@@ -2264,6 +2333,17 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
         <span class="muted">% of this disk — oldest copies go first, and anything too big to fit is left undeleted rather than deleted unprotected</span>
       </div>
 
+      <!-- v4 §3.2: "a score the user cannot inspect or adjust is an oracle, and
+           this app does not ship oracles." These are the weights every reclaim
+           score in the app is computed from. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="gauge"></span>Reclaim Score</div>
+      <div class="muted" style="margin-bottom:10px;">TreeMap ranks files by how safe and worthwhile they are to delete, out of 100. These sliders decide how much each signal counts. Set one to zero to leave it out of the score entirely — that is different from it scoring zero, and a signal TreeMap simply <b>could not read</b> is left out too rather than counted against the file.</div>
+      <div id="reclaimWeights"></div>
+      <div class="rule-row" style="margin-top:8px;">
+        <button class="btn" id="reclaimResetBtn"><span data-icon="refresh"></span>Reset to defaults</button>
+        <span class="muted" id="reclaimWeightsNote"></span>
+      </div>
+
       <div class="set-h" style="margin-top:22px;"><span data-icon="cloud"></span>Cloud accounts</div>
       <div class="muted" style="margin-bottom:10px;">Scan your own Google Drive, Dropbox or OneDrive in the same treemap — <b>metadata only, no file contents are ever downloaded</b>, and sign-in tokens never leave this computer. Bring your own (free) API app: create one in the provider's developer console with redirect URI <code id="cloudRedirectUri">http://127.0.0.1:53682/oauth/callback</code>, then paste its client ID below.</div>
       <div id="cloudAccounts"></div>
@@ -2392,6 +2472,12 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 </aside>
 
 <div id="ctxMenu" role="menu"></div>
+
+<!-- v4 §3.2: a reclaim score is never a bare number — every one of them is a
+     click from the components that produced it. This is the popover form, for
+     the surfaces (treemap, dashboard rows, grid) that have no room to expand
+     a panel inline. -->
+<div id="rcPopover" role="dialog" aria-modal="false" aria-labelledby="rcPopTitle" hidden></div>
 <!-- D3 · Portable first-run screen. Shown once per session, before anything is
      scanned, because "this leaves no trace" is a promise the user has to be
      told about to rely on. -->
@@ -2741,6 +2827,23 @@ function ageRgb(modifiedAt) {
   for (const b of AGE_BANDS) if (days < b.maxDays) return b.rgb;
   return C_RED;
 }
+/* ══ Reclaim Score → color scale (v4 §3.3) ══
+   Runs the OTHER way from the size ramp on purpose. Red means "big" on the
+   size scale and would mean "safe to delete" here, which is the same colour
+   carrying opposite advice on two views of the same tree. So low scores are
+   the neutral grey of "leave this alone" and high scores climb to the teal
+   the app already uses for good news. */
+const C_RC_LOW = hexToRgb('#5A6472');
+/** Outside the ramp: no score, as distinct from a score of zero. */
+const C_RC_UNSCORED = hexToRgb('#3A4048');
+function reclaimRgb(score) {
+  const t = Math.max(0, Math.min(1, (Number(score) || 0) / 100));
+  return t < 0.5 ? mix(C_RC_LOW, C_AMBER, t * 2) : mix(C_AMBER, C_TEAL, (t - 0.5) * 2);
+}
+function reclaimColor(score, alpha = 1) {
+  const c = reclaimRgb(score);
+  return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
+}
 /* ── Diff overlay (time slider): green = grew, red = shrank vs previous snapshot ── */
 const C_DIFF_SAME = [116, 122, 134];
 function diffRgb(n) {
@@ -2758,7 +2861,16 @@ function cellRgb(n) {
     // snapshot time), so history shows size — or the diff overlay.
     return state.treemap.history.diff ? diffRgb(n) : sizeRgb(n.size);
   }
-  return state.treemap.colorMode === 'age' ? ageRgb(n.modifiedAt) : sizeRgb(n.size);
+  if (state.treemap.colorMode === 'age') return ageRgb(n.modifiedAt);
+  if (state.treemap.colorMode === 'reclaim') {
+    const fact = scoreFor(n.path);
+    // Not yet fetched, or not scorable at all. Either way this cell has no
+    // score, and painting it at the bottom of the ramp would say "leave this
+    // alone" about a file nobody has assessed. The unscored grey is outside
+    // the ramp entirely, and the legend names it.
+    return fact ? reclaimRgb(fact.score) : C_RC_UNSCORED;
+  }
+  return sizeRgb(n.size);
 }
 
 /* ───────────────────────────── App state ───────────────────────────── */
@@ -2774,6 +2886,8 @@ const DUP_PAGE = 100;
 
 const state = {
   view: 'dashboard',
+  /** Largest Files ordering: by bytes, or by v4 §3's reclaim score. */
+  bigFilesSort: localStorage.getItem('tm-bigfiles-sort') === 'reclaim' ? 'reclaim' : 'size',
   system: null,
   trash: null,
   snapshots: null,
@@ -4444,7 +4558,7 @@ async function finishScan(root, durationMs, stats) {
     $('statLargest').textContent = largest ? `${largest.name} · ${formatBytes(largest.size)}` : '–';
   } catch (e) { toast('Could not load stats: ' + e.message, 'error'); }
 
-  renderBigFiles();
+  refreshBigFiles();
   renderBigFolders();
   state.donut.animated = false;
   renderDonut();
@@ -4608,8 +4722,14 @@ window.addEventListener('beforeunload', closeEventSource);
 function renderBigFiles() {
   const host = $('bigFiles');
   if (!state.largest.length) { host.innerHTML = '<div class="muted">No files found.</div>'; return; }
-  const max = state.largest[0].size || 1;
-  host.innerHTML = state.largest.map((f, i) => `
+  // The bar is always scaled against the biggest file, whichever order the
+  // rows are in: a bar that rescaled itself to the top row would make the
+  // reclaim ordering look like a size ordering.
+  const max = state.largest.reduce((m, f) => Math.max(m, f.size), 1);
+  const rows = state.bigFilesSort === 'reclaim'
+    ? [...state.largest].sort(byReclaimDesc((f) => f.path))
+    : state.largest;
+  host.innerHTML = rows.map((f, i) => `
     <div class="bigfile">
       ${chipFor(f)}
       <div class="meta">
@@ -4617,6 +4737,7 @@ function renderBigFiles() {
         <div class="pth" title="${escapeHtml(f.path)}">${escapeHtml(f.path)}</div>
       </div>
       <div class="bar-track"><div class="bar" style="width:${Math.max(4, (f.size / max) * 100)}%;background:${sizeColor(f.size)};"></div></div>
+      ${reclaimBadge(f.path, scoreFor(f.path)) || (state.bigFilesSort === 'reclaim' && scoreKnown(f.path) ? '<span class="rc-none" title="None of the six signals could be read for this file">not scored</span>' : '')}
       <span class="size-badge num" style="color:${sizeColor(f.size)};">${formatBytes(f.size)}</span>
       <span class="actions">
         <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 14)}</button>
@@ -4631,13 +4752,43 @@ function renderBigFiles() {
   host.querySelectorAll('.bigfile').forEach((row, i) => {
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      const f = state.largest[i];
+      // `rows`, not `state.largest`: under the Reclaim sort the two differ,
+      // and indexing the wrong one opens the context menu for a file the
+      // user did not right-click.
+      const f = rows[i];
       if (!f) return;
       showCtxMenu(e.clientX, e.clientY, nodeFor(f.path) || { ...f, type: 'file' });
     });
   });
   refreshCartButtons();
 }
+
+/**
+ * The Size / Reclaim toggle on the Largest Files card.
+ *
+ * Scores are fetched for the ten rows only, and only once the user asks for
+ * that order — the dashboard's first paint must not wait on six signals per
+ * file for a list most people read by size. The rows repaint when the scores
+ * land, so the toggle itself is instant.
+ */
+function refreshBigFiles() {
+  renderBigFiles();
+  if (state.bigFilesSort === 'reclaim' && state.largest.length) {
+    void ensureScores(state.largest.map((f) => f.path), renderBigFiles);
+  }
+}
+function setBigFilesSort(mode) {
+  state.bigFilesSort = mode === 'reclaim' ? 'reclaim' : 'size';
+  localStorage.setItem('tm-bigfiles-sort', state.bigFilesSort);
+  for (const b of $('bigFilesSort').querySelectorAll('button'))
+    b.setAttribute('aria-selected', String(b.dataset.sort === state.bigFilesSort));
+  refreshBigFiles();
+}
+$('bigFilesSort').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-sort]');
+  if (btn) setBigFilesSort(btn.dataset.sort);
+});
+setBigFilesSort(state.bigFilesSort); // reflect the persisted choice on load
 
 /* ───────────────────────────── Dashboard: largest folders ───────────────────────────── */
 function renderBigFolders() {
@@ -4877,6 +5028,20 @@ function renderTmLegend() {
     host.innerHTML = '<div class="tm-legend-bands">' + AGE_BANDS.map((b) =>
       `<span class="ab"><i class="sw" style="background:rgb(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]})"></i>${b.label}</span>`
     ).join('') + '</div>';
+  } else if (state.treemap.colorMode === 'reclaim') {
+    // §3.3 asks for "a legend and a one-line explanation of what the colours
+    // mean". The unscored swatch earns its place: it is not the bottom of the
+    // ramp, and a viewer who reads it as "safe to leave" has been misled.
+    const bands = [
+      { rgb: C_RC_LOW, label: 'keep' },
+      { rgb: C_AMBER, label: 'maybe' },
+      { rgb: C_TEAL, label: 'safest to reclaim' },
+      { rgb: C_RC_UNSCORED, label: 'not scored' },
+    ];
+    host.innerHTML = '<div class="tm-legend-bands">' + bands.map((b) =>
+      `<span class="ab"><i class="sw" style="background:rgb(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]})"></i>${b.label}</span>`
+    ).join('') + '</div>' +
+      '<span class="rc-legend-note">Greener means safer and more worthwhile to delete — right-click a cell for the reasoning.</span>';
   } else {
     host.innerHTML = '<span>1 MB</span><div class="legend-grad"></div><span>10 GB+</span>';
   }
@@ -5402,13 +5567,45 @@ $('tmCloudToggle').addEventListener('click', () => {
   if (state.treemap.rootPath) drawView();
 });
 // Feature 1 — Size/Age heatmap color mode toggle (persisted in localStorage).
+const TM_COLOR_MODES = ['size', 'age', 'reclaim'];
 function setTreemapColorMode(mode) {
-  mode = mode === 'age' ? 'age' : 'size';
+  mode = TM_COLOR_MODES.includes(mode) ? mode : 'size';
   state.treemap.colorMode = mode;
   localStorage.setItem('tm-colormode', mode);
   for (const b of $('tmColorSeg').querySelectorAll('button'))
     b.setAttribute('aria-selected', String(b.dataset.mode === mode));
   if (state.treemap.rootPath) drawView(); else renderTmLegend();
+  // Painting comes first and the scores follow, so switching mode is instant
+  // and the map fills in. Painting behind the fetch would stall the toggle on
+  // a subprocess round trip for every cell on screen.
+  if (mode === 'reclaim') fetchScoresForTreemap();
+}
+
+/**
+ * Scores for the cells actually on screen, then one repaint.
+ *
+ * Deliberately the drawn rectangles rather than the whole pruned tree: the
+ * tree can hold 250,000 nodes and the map draws a few thousand of them, so
+ * scoring the tree would spend most of a 2,000-path budget on cells nobody
+ * can see. Re-run on every layout change, and cheap after the first because
+ * `ensureScores` skips everything already known.
+ */
+function fetchScoresForTreemap() {
+  if (state.treemap.colorMode !== 'reclaim' || !state.scanId) return;
+  // Both renderers, because Reclaim is a colour mode and the sunburst paints
+  // through the same cellRgb. Their entries are shaped alike: `{ n, ... }`.
+  const drawn = isSun() ? (state.treemap.arcs || []) : (state.treemap.pxRects || []);
+  if (!drawn.length) return;
+  const paths = [];
+  for (const r of drawn) {
+    if (r.n && r.n.path) paths.push(r.n.path);
+    if (paths.length >= RECLAIM_BATCH) break;
+  }
+  void ensureScores(paths, () => {
+    // Only if the user is still looking at this: a repaint of a view they
+    // navigated away from is wasted work, and worse, can land mid-render.
+    if (state.view === 'treemap' && state.treemap.colorMode === 'reclaim' && state.treemap.rootPath) drawView();
+  });
 }
 $('tmColorSeg').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-mode]');
@@ -5735,7 +5932,14 @@ $('tmLiveToggle').addEventListener('click', () => {
 
 /* ───────────────────────────── Sunburst / radial view (Feature 3) ───────────────────────────── */
 function isSun() { return state.treemap.mode === 'sunburst'; }
-function drawView() { isSun() ? drawSunburst() : drawTreemap(); }
+function drawView() {
+  isSun() ? drawSunburst() : drawTreemap();
+  // The drawn set changes on every zoom, depth change, resize and rescan, so
+  // the scores that back the Reclaim colour mode are re-asked for here rather
+  // than only when the mode is switched on. `ensureScores` skips everything
+  // already known, so the repeat calls after the first cost nothing.
+  if (state.treemap.colorMode === 'reclaim') fetchScoresForTreemap();
+}
 function presentView() { isSun() ? presentSunburst() : presentTreemap(); }
 function viewHit(cx, cy, leavesOnly) {
   if (isSun()) return sunburstHit(cx, cy);
@@ -6702,6 +6906,7 @@ function showTooltip(x, y, node, pctOfRoot = null) {
   tip.dataset.y = String(y);
   if (pctOfRoot !== null) tip.dataset.pct = String(pctOfRoot); else delete tip.dataset.pct;
   resolveAllocation(node);
+  resolveScore(node);
 
   const k = kindFor(node);
   tip.innerHTML = `
@@ -6717,13 +6922,62 @@ function showTooltip(x, y, node, pctOfRoot = null) {
     (state.view === 'grid' && state.grid.sort === 'accessed'
       ? ` · accessed ${node.accessedAt ? formatDate(node.accessedAt) : '—'}` : '') +
     `</div>` +
-    allocationTooltipLine(node);
+    allocationTooltipLine(node) +
+    reclaimTooltipLine(node);
   tip.style.display = 'block';
   const pad = 14;
   const w = tip.offsetWidth, h = tip.offsetHeight;
   tip.style.left = Math.min(x + pad, window.innerWidth - w - 10) + 'px';
   tip.style.top = (y + pad + h > window.innerHeight - 10 ? y - h - 8 : y + pad) + 'px';
 }
+/**
+ * Fetch this node's reclaim score on hover, and repaint the tooltip when it
+ * lands — the same shape as `resolveAllocation` above, for the same reason:
+ * a hover must never wait on a subprocess.
+ *
+ * Only in the Reclaim colour mode. Scoring on every hover in every mode would
+ * spend the fact budget on files nobody asked a question about, and put a
+ * line in the tooltip that most people never want to see.
+ */
+function resolveScore(node) {
+  if (!node || !node.path || state.treemap.colorMode !== 'reclaim') return;
+  if (scoreKnown(node.path)) return;
+  void ensureScores([node.path], () => {
+    const tip = $('tooltip');
+    if (tip.style.display !== 'none' && tip.dataset.path === node.path) {
+      showTooltip(Number(tip.dataset.x), Number(tip.dataset.y), node, tip.dataset.pct ? Number(tip.dataset.pct) : null);
+    }
+  });
+}
+
+/**
+ * The score line in a tooltip.
+ *
+ * Shown only in the Reclaim colour mode, where the number explains what the
+ * user is already looking at. It names the single largest contributor rather
+ * than the bare figure: "74 — mostly because it rebuilds itself" is a
+ * sentence someone can disagree with, and 74 alone is not. The full breakdown
+ * is a right-click away, which the line says.
+ */
+function reclaimTooltipLine(node) {
+  if (state.treemap.colorMode !== 'reclaim' || !node || !node.path) return '';
+  const fact = scoreFor(node.path);
+  if (!fact) {
+    // Asked and unanswerable is a real state and gets a real sentence; not
+    // yet asked says nothing, because the answer is a moment away.
+    return scoreKnown(node.path)
+      ? `<div class="t-line">Reclaim score — none of the six signals could be read for this.</div>`
+      : '';
+  }
+  const top = fact.components.reduce((best, c) => (best && best.contribution >= c.contribution ? best : c), null);
+  const lead = top && top.contribution > 0 ? ` — mostly ${escapeHtml(top.label.toLowerCase())}` : '';
+  const unknowns = fact.missing.length
+    ? ` · ${fact.missing.length} signal${fact.missing.length === 1 ? '' : 's'} unknown`
+    : '';
+  return `<div class="t-line num"><span class="t-strong" style="color:${reclaimColor(fact.score)}">Reclaim ${fact.score}</span>` +
+    `${lead}${unknowns} · right-click for the breakdown</div>`;
+}
+
 function hideTooltip() { $('tooltip').style.display = 'none'; }
 
 /* ───────────────────────────── Context menu ───────────────────────────── */
@@ -6768,6 +7022,7 @@ function showCtxMenu(x, y, node) {
     ${node.type === 'file' ? `<button data-act="preview">${icon('search', 15)}Quick Look</button>` : ''}
     <button data-act="copy">${icon('copy', 15)}Copy path</button>
     <button data-act="cart">${icon(inCart ? 'check' : 'cart', 15)}${inCart ? 'Remove from Cart' : 'Add to Cart'}</button>
+    <button data-act="score">${icon('help', 15)}Why this reclaim score?</button>
     ${node.isTrash ? '' : `<button data-act="offload">${icon('archive', 15)}Offload…</button>`}
     ${node.type === 'dir' ? `<div class="div"></div>
     ${node.isTrash ? '' : `<button data-act="terminal">${icon('terminal', 15)}Open Terminal Here</button>`}
@@ -6786,6 +7041,11 @@ function showCtxMenu(x, y, node) {
     if (act === 'copy') copyPath(ctxTarget.path);
     if (act === 'terminal') openTerminal(ctxTarget.path);
     if (act === 'cart') cartToggle(ctxTarget.path);
+    // §3.2: every score in the UI is one click from its components. The
+    // treemap has a tooltip rather than a clickable row, so the right-click
+    // menu is where a cell's breakdown opens. The path is captured now
+    // because ctxTarget is reassigned by the next right-click.
+    if (act === 'score') { const p = ctxTarget.path; ensureScores([p]).then(() => openReclaimWhy(p, null, { x, y })); }
     if (act === 'offload') startOffloadFlow([ctxTarget.path]);
     if (act === 'budget') openBudgetDialog(ctxTarget);
     if (act === 'budget-remove') removeBudget(ctxTarget.path);
@@ -8371,6 +8631,314 @@ function closePreview() {
 function previewIsOpen() { const p = $('previewPane'); return p && !p.hidden && p.classList.contains('open'); }
 $('pvClose').addEventListener('click', closePreview);
 
+/* ══════════════════ Phase 3 (v4 §3) — the Reclaim Score ══════════════════
+ *
+ * "What is biggest" is the question every view already answers. This is the
+ * one people actually have: what is safest to delete. The server computes it
+ * from six signals and hands back the full reasoning; everything here is the
+ * join and the presentation.
+ *
+ * ── Why the scores live in a side map and not on the nodes ──
+ *
+ * §2.1 holds the scan responses to byte-identity against a recorded baseline,
+ * so nothing may be added to them — not even an optional field. Scores arrive
+ * through POST /api/facts keyed by path and are joined here. Grafting them
+ * onto tree nodes would work and would be the obvious thing to do; it would
+ * also mean the next person to serialise a subtree ships a field that breaks
+ * tests/goldenResponses.test.ts for reasons no error message will explain.
+ *
+ * ── Three states, kept apart ──
+ *
+ *   not asked   — absent from `scores`. The UI shows nothing.
+ *   asked, none — `null`. The server could not score this path, and the UI
+ *                 says so in words rather than showing a zero.
+ *   scored      — the fact, with its components, its `missing` list and a
+ *                 confidence band.
+ *
+ * Collapsing the middle state into a zero is the mistake the whole phase is
+ * built to avoid, so it is representable here too.
+ */
+const RECLAIM_BATCH = 2000; // MAX_FACT_PATHS in src/api/factRoutes.ts
+
+const reclaim = {
+  /** path → fact | null. null means asked and unanswerable, never zero. */
+  scores: new Map(),
+  /** In flight, so two hovers over the same cell make one request. */
+  pending: new Set(),
+  /** The weights in force, for the breakdown's footer. Loaded with settings. */
+  weights: null,
+};
+
+/** Forget everything: a new scan means every score describes a stale tree. */
+function reclaimReset() {
+  reclaim.scores.clear();
+  reclaim.pending.clear();
+}
+subscribe(TOPIC.scan, reclaimReset);
+
+/** The fact for a path, or undefined when it has not been asked for. */
+function scoreFor(path) {
+  const hit = reclaim.scores.get(path);
+  return hit === null ? undefined : hit;
+}
+
+/** True once this path has been asked about, whatever the answer was. */
+function scoreKnown(path) { return reclaim.scores.has(path); }
+
+/**
+ * Fetch scores for these paths, skipping anything already known or in flight.
+ *
+ * Resolves when every batch has landed. Callers that only want to repaint
+ * pass a callback rather than awaiting, because the common case — a hover —
+ * must not hold anything up.
+ *
+ * **`onLanded` fires only when new scores actually arrived**, and that is a
+ * contract rather than an optimisation. The treemap's callback repaints, and
+ * a repaint re-asks for the scores of whatever it just drew; if this fired on
+ * a request where everything was already cached, the two would call each
+ * other forever. "Nothing was fetched" and "nothing changed" are the same
+ * statement, so the callback has nothing to say.
+ */
+async function ensureScores(paths, onLanded) {
+  if (!state.scanId) return;
+  const wanted = [];
+  const seen = new Set();
+  for (const p of paths) {
+    if (!p || typeof p !== 'string') continue;
+    // cloud:// and in-archive paths are listings, not files on this disk;
+    // the server would refuse them and the refusal would cost a round trip.
+    if (p.startsWith('cloud://') || p.includes('!/')) continue;
+    if (reclaim.scores.has(p) || reclaim.pending.has(p) || seen.has(p)) continue;
+    seen.add(p);
+    wanted.push(p);
+  }
+  if (!wanted.length) return; // nothing fetched, so nothing changed — see above
+  for (const p of wanted) reclaim.pending.add(p);
+
+  const scanAtRequest = state.scanId;
+  try {
+    for (let i = 0; i < wanted.length; i += RECLAIM_BATCH) {
+      const batch = wanted.slice(i, i + RECLAIM_BATCH);
+      const res = await api('/api/facts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scanId: scanAtRequest, paths: batch, providers: ['reclaimScore'] }),
+      });
+      // A scan that changed under a request in flight would otherwise file
+      // the previous tree's verdicts against the new one's paths.
+      if (state.scanId !== scanAtRequest) return;
+      const provider = (res.providers && res.providers.reclaimScore) || null;
+      const values = (provider && provider.available && provider.values) || {};
+      for (const p of batch) {
+        // Absent from `values` is the server saying it could not score this.
+        // Recorded as null so we neither ask again in a loop nor invent a 0.
+        reclaim.scores.set(p, Object.prototype.hasOwnProperty.call(values, p) ? values[p] : null);
+      }
+    }
+  } catch (err) {
+    // A score is an enrichment, never a blocker. Failing silently here is
+    // deliberate: the badge simply does not appear, and every surface below
+    // renders without it. Paths are dropped from `scores` so a later hover
+    // retries rather than remembering a transient failure for the session.
+    for (const p of wanted) reclaim.scores.delete(p);
+    if (window.TREEMAP_DEBUG) console.warn('[treemap] reclaim scores failed:', err);
+  } finally {
+    for (const p of wanted) reclaim.pending.delete(p);
+  }
+  if (onLanded) onLanded();
+}
+
+/** "high" / "medium" / "low" as a phrase a person can act on. */
+function reclaimConfidenceWording(fact) {
+  const measured = Math.round((fact.coverage || 0) * 100);
+  if (fact.confidence === 'high') return `high — ${measured}% of this score was actually measured`;
+  if (fact.confidence === 'medium') return `medium — only ${measured}% of this score was measured`;
+  return `low — only ${measured}% of this score was measured, so treat it as a hint`;
+}
+
+/**
+ * The badge. Always a button, never a bare number (§3.2).
+ *
+ * `path` is carried on the element rather than closed over so the same markup
+ * works inside an innerHTML write, which is how every list in this file is
+ * built.
+ */
+function reclaimBadge(path, fact) {
+  if (!fact) return '';
+  const colour = reclaimColor(fact.score);
+  // A tilde, not a letter.
+  //
+  // The first version suffixed the confidence initial — "66.4M", "43.3H" —
+  // and in a disk tool that reads as 66.4 megabytes. Every other number on
+  // the same row is a byte count, so a letter glued to this one is not a
+  // subtle ambiguity, it is the wrong reading by default. A leading "~" says
+  // "approximately" and cannot be mistaken for a unit.
+  const approx = fact.confidence === 'high' ? '' : '~';
+  const conf = `${fact.confidence} confidence`;
+  return `<button type="button" class="rc-badge conf-${escapeHtml(fact.confidence)}" style="color:${colour}"
+    data-rc-why="${escapeHtml(path)}"
+    aria-label="Reclaim score ${fact.score} out of 100, ${escapeHtml(conf)}. Show what it is made of."
+    title="Reclaim score ${fact.score}/100 — ${escapeHtml(conf)}. Click for the breakdown."
+    >${approx}${fact.score}</button>`;
+}
+
+/**
+ * The breakdown, in the same shape as Smart Suggestions' "why is this
+ * suggested" panel — §3.2 asks for that reuse by name.
+ *
+ * Components that answered come first with what each contributed, then the
+ * ones that could not, then the confidence and the weights footer. The
+ * missing block is not an afterthought: it is the difference between a score
+ * that means something and one that merely looks like it does.
+ */
+function reclaimWhyHtml(fact) {
+  const rows = fact.components.map((c) => `
+    <div class="rc-why-row">
+      <span class="rc-k">${escapeHtml(c.label)}</span>
+      <span class="rc-v">${escapeHtml(c.why)}</span>
+      <span class="rc-n">+${c.contribution.toFixed(1)}</span>
+    </div>`).join('');
+  const missing = fact.missing.length ? `<hr>` + fact.missing.map((m) => `
+    <div class="rc-why-row rc-missing">
+      <span class="rc-k">${escapeHtml(labelForComponent(m.id))}</span>
+      <span class="rc-v">${escapeHtml(m.reason)}</span>
+      <span class="rc-n">not counted</span>
+    </div>`).join('') : '';
+  return `<div class="rc-why">
+    ${rows}${missing}
+    <hr>
+    <div class="rc-why-row"><span class="rc-k">Confidence</span><span class="rc-v">${escapeHtml(reclaimConfidenceWording(fact))}</span></div>
+    <div class="rc-foot">A missing signal is left out of the score, never counted as zero — that is why the confidence moves.
+      Change what counts, and by how much, in Settings → Reclaim Score. This ranks and explains; it never selects anything for deletion.</div>
+  </div>`;
+}
+
+/** Labels for components that did not answer, and so carry no label of their own. */
+const RC_LABELS = {
+  size: 'Size',
+  staleness: 'How long since it was used',
+  regenerable: 'Rebuilds itself',
+  redundant: 'Another copy on this disk',
+  redownloadable: 'Came from somewhere',
+  elsewhere: 'A copy exists elsewhere',
+};
+function labelForComponent(id) { return RC_LABELS[id] || id; }
+
+/* ── the popover ── */
+
+let rcPopoverPath = null;
+let rcPopoverOpener = null;
+
+/**
+ * Open the breakdown for one path.
+ *
+ * Anchored to the element that opened it where there is one, and to a point
+ * otherwise — the treemap's cells are canvas pixels, not elements, so the
+ * right-click menu passes the coordinates it was opened at.
+ */
+function openReclaimWhy(path, anchorEl, point) {
+  const fact = scoreFor(path);
+  const pop = $('rcPopover');
+  if (!fact) {
+    // Asked and unanswerable: say which, rather than opening an empty panel.
+    toast(scoreKnown(path)
+      ? 'TreeMap could not score this — none of the six signals could be read for it.'
+      : 'That score has not been worked out yet.', 'success', 5000);
+    return;
+  }
+  rcPopoverPath = path;
+  rcPopoverOpener = anchorEl || null;
+  pop.innerHTML = `
+    <div class="rc-pop-head">
+      <span class="rc-badge conf-${escapeHtml(fact.confidence)}" style="color:${reclaimColor(fact.score)}" aria-hidden="true">${fact.confidence === 'high' ? '' : '~'}${fact.score}</span>
+      <b id="rcPopTitle" title="${escapeHtml(path)}">${escapeHtml(path.split(/[\\/]/).filter(Boolean).pop() || path)}</b>
+      <div style="flex:1"></div>
+      <button class="icon-btn" id="rcPopClose" aria-label="Close the score breakdown">${icon('x', 14)}</button>
+    </div>
+    ${reclaimWhyHtml(fact)}`;
+  pop.hidden = false;
+
+  // Positioned after it is measurable: flipped above the anchor when it will
+  // not fit below, and then CLAMPED into the viewport on both axes.
+  //
+  // The clamp is not belt-and-braces. `position: fixed` coordinates are
+  // viewport-relative, while the anchor's rect is wherever that row happens
+  // to be — and a row below the fold has a `top` larger than the window. In a
+  // narrow window this put the panel at y=2227 in an 820px viewport: opened,
+  // populated, focused, and completely invisible.
+  const r = anchorEl ? anchorEl.getBoundingClientRect()
+    : point ? { left: point.x, top: point.y, bottom: point.y }
+    : { left: window.innerWidth / 2, top: 120, bottom: 120 };
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  const maxTop = Math.max(10, window.innerHeight - h - 10);
+  const preferred = r.bottom + 8 + h > window.innerHeight - 10 ? r.top - h - 8 : r.bottom + 8;
+  pop.style.left = Math.max(10, Math.min(r.left, window.innerWidth - w - 10)) + 'px';
+  pop.style.top = Math.max(10, Math.min(preferred, maxTop)) + 'px';
+
+  $('rcPopClose').addEventListener('click', closeReclaimWhy);
+  $('rcPopClose').focus();
+}
+
+function closeReclaimWhy() {
+  const pop = $('rcPopover');
+  if (pop.hidden) return;
+  const path = rcPopoverPath;
+  const opener = rcPopoverOpener;
+  pop.hidden = true;
+  pop.innerHTML = '';
+  rcPopoverPath = null;
+  rcPopoverOpener = null;
+
+  // Focus goes back where it came from, or it lands on <body> and a keyboard
+  // user loses their place in the list they were reading.
+  //
+  // The element cannot simply be held onto: every list carrying these badges
+  // is rebuilt by innerHTML when the scores land, so by the time the panel
+  // closes the button that opened it has usually been replaced by an
+  // identical one. Holding the reference silently dropped focus to <body>.
+  // The path is stable across those repaints, so the badge is re-found.
+  if (opener && document.contains(opener)) { opener.focus(); return; }
+  if (!path) return;
+  const escaped = window.CSS && CSS.escape ? CSS.escape(path) : path.replace(/["\\]/g, '\\$&');
+  const replacement = document.querySelector(`[data-rc-why="${escaped}"]`);
+  if (replacement) replacement.focus();
+}
+
+// One delegated listener for every badge in the app, present and future —
+// each list is rebuilt by innerHTML, and per-row listeners would be re-bound
+// on every repaint.
+document.addEventListener('click', (e) => {
+  const badge = e.target.closest('[data-rc-why]');
+  if (badge) {
+    e.preventDefault();
+    e.stopPropagation();
+    openReclaimWhy(badge.dataset.rcWhy, badge);
+    return;
+  }
+  if (!$('rcPopover').hidden && !e.target.closest('#rcPopover')) closeReclaimWhy();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('rcPopover').hidden) { e.stopPropagation(); closeReclaimWhy(); }
+}, true);
+
+/* ── sorting ──
+ *
+ * A path with no score sorts last rather than as zero. Sorting unknowns to
+ * the bottom of a "safest to delete" list is the only honest placement: the
+ * top of that list is a recommendation, and nothing TreeMap has not assessed
+ * belongs there.
+ */
+function byReclaimDesc(pathOf) {
+  return (a, b) => {
+    const fa = scoreFor(pathOf(a));
+    const fb = scoreFor(pathOf(b));
+    if (fa && fb) return fb.score - fa.score || (b.size || 0) - (a.size || 0);
+    if (fa) return -1;
+    if (fb) return 1;
+    return (b.size || 0) - (a.size || 0);
+  };
+}
+
 /* ───────────────────────────── Grid view ───────────────────────────── */
 const GAP = 12, MIN_SQ = 48, MAX_SQ = 256;
 const gridScroll = $('gridScroll');
@@ -8391,6 +8959,10 @@ function gridItems() {
     s === 'accessed' ? ((b.accessedAt || 0) - (a.accessedAt || 0)) || b.size - a.size :
     s === 'type' ? (a.type !== b.type ? (a.type === 'dir' ? -1 : 1) : (a.extension || '').localeCompare(b.extension || '') || b.size - a.size) :
     b.size - a.size);
+  // v4 §3.3 — ranked by what is safest to reclaim rather than by what is
+  // biggest. Applied after the switch because it needs the whole list: an
+  // entry with no score yet sorts last, not as zero.
+  if (s === 'reclaim') items.sort(byReclaimDesc((it) => it.path));
   return items;
 }
 
@@ -8424,6 +8996,19 @@ async function renderGrid() {
   // on scanId/path so the pre-scan state still shows the normal empty view.
   const gridNode = state.pathIndex.get(state.grid.path);
   const unloaded = !!state.scanId && !!state.grid.path && (!gridNode || !!gridNode.pruned);
+
+  // Scores for this folder's children, before the sort that needs them.
+  // Bounded by the folder's own contents rather than the tree's, and awaited
+  // only when the sort actually depends on it — every other sort paints at
+  // once and picks the badges up on the next repaint.
+  if (state.grid.sort === 'reclaim') {
+    const node = state.pathIndex.get(state.grid.path);
+    const kids = (node && node.children) || [];
+    if (kids.length) {
+      await ensureScores(kids.slice(0, RECLAIM_BATCH).map((k) => k.path));
+      if (seq !== gridSeq) return;
+    }
+  }
 
   const items = gridItems();
   layoutGrid(items);
@@ -9914,6 +10499,30 @@ $('browseUseBtn').addEventListener('click', () => {
 let cleanMatches = [];   // Custom Rules pane — matched file nodes
 let emptyFolders = [];   // Empty Folders pane — { name, path }
 let smartGroups = [];    // Smart Suggestions pane — rule groups from the API
+/**
+ * How the Smart Suggestions items are ordered (v4 §3.3).
+ *
+ * 'size' is the order the rules produce and the one people have learned to
+ * read; 'reclaim' re-ranks within each group by the score. Not persisted: it
+ * is a way of looking at one set of results, not a preference.
+ */
+let smartSort = 'size';
+
+/**
+ * One group's items in the active order, each paired with its index in
+ * `g.items`.
+ *
+ * The pair is load-bearing, not tidiness. Every checkbox carries
+ * `data-i`, and `updateCleanSummary` reads it back as
+ * `smartGroups[g].items[i]` to decide what gets trashed. Rendering a
+ * re-ordered list with positional indices would tick one row and delete a
+ * different file.
+ */
+function smartItemsOf(g) {
+  const pairs = g.items.map((it, i) => ({ it, i }));
+  if (smartSort !== 'reclaim') return pairs;
+  return pairs.sort(byReclaimDesc((p) => p.it.path));
+}
 let cleanPane = 'rules';
 
 $('cleanupBtn').addEventListener('click', () => {
@@ -10347,6 +10956,113 @@ function catalogNote(catalog) {
   return ` <span class="smart-catalog">Rule packs: ${escapeHtml(names)} · ${rules} rules · updated ${escapeHtml(updated)}</span>`;
 }
 
+/**
+ * Paint the Smart Suggestions groups.
+ *
+ * Extracted from `loadSmartSuggestions` so the Reclaim ordering can repaint
+ * without re-fetching: the groups are already in `smartGroups`, and asking
+ * the server for them again to change a sort order would be a round trip to
+ * learn nothing new.
+ */
+function renderSmartGroups(catalog) {
+  const host = $('smartResults');
+  const catLabel = { regenerable: 'Regenerables', cache: 'Caches', junk: 'Junk' };
+  const present = ['regenerable', 'cache', 'junk'].filter(c => smartGroups.some(g => g.category === c));
+  const filterPills = present.length > 1
+    ? `<div class="smart-filters" role="tablist" aria-label="Filter suggestions by type">
+        <button class="pill active" data-cat="all">All</button>` +
+        present.map(c => `<button class="pill" data-cat="${c}">${catLabel[c]}</button>`).join('') + `</div>`
+    : '';
+  // v4 §3.3 — every rule here already says a thing is safe to remove. The
+  // score answers the next question: which of them is most worth removing.
+  // A toggle rather than a default, because the rule order is what people
+  // have learned to read.
+  const sortPills = `<div class="smart-filters" role="group" aria-label="Order suggestions">
+    <button class="pill${smartSort === 'size' ? ' active' : ''}" data-smartsort="size">Biggest first</button>
+    <button class="pill${smartSort === 'reclaim' ? ' active' : ''}" data-smartsort="reclaim">Safest to reclaim first</button>
+  </div>`;
+  host.innerHTML = `<div class="muted" style="margin-bottom:8px;">Found by ${smartGroups.length} rule${smartGroups.length > 1 ? 's' : ''} — nothing is pre-selected, tick what you want gone.${catalogNote(catalog)}</div>` +
+    filterPills + sortPills +
+    smartGroups.map((g, gi) => {
+      // An advisory group is shown for its size, never offered for deletion:
+      // the file IS the data (a VM disk), or the OS owns it. It gets no
+      // checkboxes at all, and names the supported way to reclaim it instead.
+      const adv = !!g.advisory;
+      return `
+    <div class="smart-group cat-${g.category}${adv ? ' advisory' : ''}" data-cat="${g.category}">
+      <div class="rule-row">
+        ${adv
+          ? `<span class="adv-mark" title="TreeMap will not offer to move this to the Trash" aria-label="Not safe to trash">${icon('alert', 14)}</span>`
+          : `<input type="checkbox" class="smart-all" data-g="${gi}" aria-label="Select all in ${escapeHtml(g.title)}">`}
+        <b>${escapeHtml(g.title)}</b>
+        <span class="smart-desc">${escapeHtml(g.description)}</span>
+        ${g.regenerateCmd ? `<code class="regen-cmd" title="Restore with: ${escapeHtml(g.regenerateCmd)}">${escapeHtml(g.regenerateCmd)}</code><span class="rc-lbl">to restore</span>` : ''}
+        ${adv && g.adviceCommand ? `<code class="regen-cmd" title="Reclaim with: ${escapeHtml(g.adviceCommand)}">${escapeHtml(g.adviceCommand)}</code><span class="rc-lbl">to reclaim</span>` : ''}
+        <button class="icon-btn why-btn" data-why="${gi}" aria-expanded="false" aria-controls="smartWhy${gi}"
+          title="Why is this suggested?" aria-label="Why is ${escapeHtml(g.title)} suggested?">${icon('help', 13)}</button>
+        <span class="size-badge num" style="color:${sizeColor(g.totalSize)}">${g.items.length} · ${formatBytes(g.totalSize)}</span>
+      </div>
+      <div class="smart-why" id="smartWhy${gi}" hidden>
+        <div class="smart-why-line"><b>What matched:</b> ${escapeHtml(g.why || 'This rule did not record what it matches.')}</div>
+        <div class="smart-why-line"><b>Confidence:</b> ${escapeHtml(confidenceWording(g.confidence, adv))}</div>
+        <div class="smart-why-line"><b>${adv ? 'What this is' : 'Why it is safe'}:</b> ${escapeHtml(g.description)}</div>
+        ${g.regenerateCmd ? `<div class="smart-why-line"><b>Put it back with:</b> <code>${escapeHtml(g.regenerateCmd)}</code></div>` : ''}
+        ${adv ? `<div class="smart-why-line"><b>Do not move this to the Trash.</b>${g.adviceCommand ? ` Reclaim it instead: <code>${escapeHtml(g.adviceCommand)}</code>` : ''}</div>` : ''}
+      </div>
+      <div class="clean-list">` + smartItemsOf(g).map(({ it, i }) => `
+        <div class="clean-item">
+          ${adv ? '<span class="adv-spacer"></span>' : `<input type="checkbox" class="smart-ck" data-g="${gi}" data-i="${i}" aria-label="Select ${escapeHtml(it.path)}">`}
+          ${chipFor({ type: it.type, extension: it.type === 'file' ? (it.name.split('.').pop() || '').toLowerCase() : undefined }, 13)}
+          <div class="meta">
+            <div class="nm">${escapeHtml(it.name)}</div>
+            <div class="pth">${escapeHtml(it.path)}</div>
+          </div>
+          <span class="dt num">${formatDate(it.modifiedAt)}</span>
+          ${reclaimBadge(it.path, scoreFor(it.path))}
+          <span class="size-badge num">${formatBytes(it.size)}</span>
+          ${adv ? '' : `<button class="icon-btn" data-cart-add="${escapeHtml(it.path)}" aria-label="Add ${escapeHtml(it.name)} to cleanup cart">${icon('plus', 13)}</button>`}
+        </div>`).join('') + `</div>
+    </div>`;
+    }).join('');
+  host.querySelectorAll('.why-btn').forEach(b => b.addEventListener('click', () => {
+    const panel = $(`smartWhy${b.dataset.why}`);
+    const open = panel.hidden;
+    panel.hidden = !open;
+    b.setAttribute('aria-expanded', String(open));
+    b.classList.toggle('on', open);
+  }));
+  host.querySelectorAll('.smart-all').forEach(all => all.addEventListener('change', () => {
+    host.querySelectorAll(`.smart-ck[data-g="${all.dataset.g}"]`).forEach(ck => { ck.checked = all.checked; });
+    updateCleanSummary();
+  }));
+  host.querySelectorAll('.smart-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
+  host.querySelectorAll('[data-smartsort]').forEach(p => p.addEventListener('click', () => {
+    smartSort = p.dataset.smartsort === 'reclaim' ? 'reclaim' : 'size';
+    if (smartSort !== 'reclaim') { renderSmartGroups(catalog); return; }
+    // Score what is on screen, then repaint once. Bounded by the fact
+    // route's own per-request cap: the suggestion list can run to
+    // thousands of items across rules, and the count of what was not
+    // scored is stated rather than left to be inferred from a gap.
+    const paths = [];
+    for (const g of smartGroups) for (const it of g.items) if (paths.length < RECLAIM_BATCH) paths.push(it.path);
+    if (paths.length) toast('Working out reclaim scores…', 'success', 2000);
+    void ensureScores(paths, () => renderSmartGroups(catalog));
+    renderSmartGroups(catalog);
+  }));
+  host.querySelectorAll('.smart-filters .pill[data-cat]').forEach(p => p.addEventListener('click', () => {
+    const cat = p.dataset.cat;
+    // Scoped to [data-cat]: the Reclaim ordering lives in a second
+    // .smart-filters row, and an unscoped selector cleared its active state
+    // every time someone picked a category.
+    host.querySelectorAll('.smart-filters .pill[data-cat]').forEach(x => x.classList.toggle('active', x === p));
+    host.querySelectorAll('.smart-group').forEach(g => {
+      g.style.display = (cat === 'all' || g.dataset.cat === cat) ? '' : 'none';
+    });
+  }));
+  refreshCartButtons();
+  updateCleanSummary();
+}
+
 async function loadSmartSuggestions() {
   renderGitRepos();
   const hadPackages = await renderPackageOrphans();
@@ -10372,76 +11088,7 @@ async function loadSmartSuggestions() {
       updateCleanSummary();
       return;
     }
-    const catLabel = { regenerable: 'Regenerables', cache: 'Caches', junk: 'Junk' };
-    const present = ['regenerable', 'cache', 'junk'].filter(c => smartGroups.some(g => g.category === c));
-    const filterPills = present.length > 1
-      ? `<div class="smart-filters" role="tablist" aria-label="Filter suggestions by type">
-          <button class="pill active" data-cat="all">All</button>` +
-          present.map(c => `<button class="pill" data-cat="${c}">${catLabel[c]}</button>`).join('') + `</div>`
-      : '';
-    host.innerHTML = `<div class="muted" style="margin-bottom:8px;">Found by ${smartGroups.length} rule${smartGroups.length > 1 ? 's' : ''} — nothing is pre-selected, tick what you want gone.${catalogNote(data.catalog)}</div>` +
-      filterPills +
-      smartGroups.map((g, gi) => {
-        // An advisory group is shown for its size, never offered for deletion:
-        // the file IS the data (a VM disk), or the OS owns it. It gets no
-        // checkboxes at all, and names the supported way to reclaim it instead.
-        const adv = !!g.advisory;
-        return `
-      <div class="smart-group cat-${g.category}${adv ? ' advisory' : ''}" data-cat="${g.category}">
-        <div class="rule-row">
-          ${adv
-            ? `<span class="adv-mark" title="TreeMap will not offer to move this to the Trash" aria-label="Not safe to trash">${icon('alert', 14)}</span>`
-            : `<input type="checkbox" class="smart-all" data-g="${gi}" aria-label="Select all in ${escapeHtml(g.title)}">`}
-          <b>${escapeHtml(g.title)}</b>
-          <span class="smart-desc">${escapeHtml(g.description)}</span>
-          ${g.regenerateCmd ? `<code class="regen-cmd" title="Restore with: ${escapeHtml(g.regenerateCmd)}">${escapeHtml(g.regenerateCmd)}</code><span class="rc-lbl">to restore</span>` : ''}
-          ${adv && g.adviceCommand ? `<code class="regen-cmd" title="Reclaim with: ${escapeHtml(g.adviceCommand)}">${escapeHtml(g.adviceCommand)}</code><span class="rc-lbl">to reclaim</span>` : ''}
-          <button class="icon-btn why-btn" data-why="${gi}" aria-expanded="false" aria-controls="smartWhy${gi}"
-            title="Why is this suggested?" aria-label="Why is ${escapeHtml(g.title)} suggested?">${icon('help', 13)}</button>
-          <span class="size-badge num" style="color:${sizeColor(g.totalSize)}">${g.items.length} · ${formatBytes(g.totalSize)}</span>
-        </div>
-        <div class="smart-why" id="smartWhy${gi}" hidden>
-          <div class="smart-why-line"><b>What matched:</b> ${escapeHtml(g.why || 'This rule did not record what it matches.')}</div>
-          <div class="smart-why-line"><b>Confidence:</b> ${escapeHtml(confidenceWording(g.confidence, adv))}</div>
-          <div class="smart-why-line"><b>${adv ? 'What this is' : 'Why it is safe'}:</b> ${escapeHtml(g.description)}</div>
-          ${g.regenerateCmd ? `<div class="smart-why-line"><b>Put it back with:</b> <code>${escapeHtml(g.regenerateCmd)}</code></div>` : ''}
-          ${adv ? `<div class="smart-why-line"><b>Do not move this to the Trash.</b>${g.adviceCommand ? ` Reclaim it instead: <code>${escapeHtml(g.adviceCommand)}</code>` : ''}</div>` : ''}
-        </div>
-        <div class="clean-list">` + g.items.map((it, i) => `
-          <div class="clean-item">
-            ${adv ? '<span class="adv-spacer"></span>' : `<input type="checkbox" class="smart-ck" data-g="${gi}" data-i="${i}" aria-label="Select ${escapeHtml(it.path)}">`}
-            ${chipFor({ type: it.type, extension: it.type === 'file' ? (it.name.split('.').pop() || '').toLowerCase() : undefined }, 13)}
-            <div class="meta">
-              <div class="nm">${escapeHtml(it.name)}</div>
-              <div class="pth">${escapeHtml(it.path)}</div>
-            </div>
-            <span class="dt num">${formatDate(it.modifiedAt)}</span>
-            <span class="size-badge num">${formatBytes(it.size)}</span>
-            ${adv ? '' : `<button class="icon-btn" data-cart-add="${escapeHtml(it.path)}" aria-label="Add ${escapeHtml(it.name)} to cleanup cart">${icon('plus', 13)}</button>`}
-          </div>`).join('') + `</div>
-      </div>`;
-      }).join('');
-    host.querySelectorAll('.why-btn').forEach(b => b.addEventListener('click', () => {
-      const panel = $(`smartWhy${b.dataset.why}`);
-      const open = panel.hidden;
-      panel.hidden = !open;
-      b.setAttribute('aria-expanded', String(open));
-      b.classList.toggle('on', open);
-    }));
-    host.querySelectorAll('.smart-all').forEach(all => all.addEventListener('change', () => {
-      host.querySelectorAll(`.smart-ck[data-g="${all.dataset.g}"]`).forEach(ck => { ck.checked = all.checked; });
-      updateCleanSummary();
-    }));
-    host.querySelectorAll('.smart-ck').forEach(ck => ck.addEventListener('change', updateCleanSummary));
-    host.querySelectorAll('.smart-filters .pill').forEach(p => p.addEventListener('click', () => {
-      const cat = p.dataset.cat;
-      host.querySelectorAll('.smart-filters .pill').forEach(x => x.classList.toggle('active', x === p));
-      host.querySelectorAll('.smart-group').forEach(g => {
-        g.style.display = (cat === 'all' || g.dataset.cat === cat) ? '' : 'none';
-      });
-    }));
-    refreshCartButtons();
-    updateCleanSummary();
+    renderSmartGroups(data.catalog);
   } catch (e) {
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }
@@ -11140,6 +11787,95 @@ $('settingsBtn').addEventListener('click', async () => {
   $('watchIdleMin').value = settingsData.watchIdleMinutes ?? 10;
   $('capsuleRetentionDays').value = settingsData.timeCapsuleRetentionDays ?? 30;
   $('capsuleMaxPercent').value = settingsData.timeCapsuleMaxPercent ?? 10;
+  renderReclaimWeights();
+});
+
+/* ── Reclaim Score weights (v4 §3.2) ──
+   Six sliders and a reset. §3.2 requires the weights to be user-editable, and
+   the reason is not configurability for its own sake: a ranking whose
+   reasoning cannot be inspected or adjusted is an oracle, and this app makes a
+   point of not shipping any. */
+const RECLAIM_WEIGHT_ROWS = [
+  ['staleness', 'How long since it was used', 'Files nobody has opened in years rank higher.'],
+  ['regenerable', 'Rebuilds itself', 'Caches and dependency folders a command can restore.'],
+  ['elsewhere', 'A copy exists elsewhere', 'Pushed to a remote, or uploaded by a sync client.'],
+  ['redundant', 'Another copy on this disk', 'An identical file found by the Duplicates view.'],
+  ['size', 'Size', 'How big it is, measured against the rest of this scan.'],
+  ['redownloadable', 'Came from somewhere', 'Downloaded files you could fetch again.'],
+];
+
+function renderReclaimWeights() {
+  const host = $('reclaimWeights');
+  if (!host) return;
+  const weights = (settingsData && settingsData.reclaimWeights) || {};
+  host.innerHTML = RECLAIM_WEIGHT_ROWS.map(([id, label, help]) => {
+    const value = Math.round((Number(weights[id]) || 0) * 100);
+    return `<div class="rule-row rw-row">
+      <label for="rw-${id}">${escapeHtml(label)}</label>
+      <input type="range" id="rw-${id}" data-weight="${id}" min="0" max="100" step="1" value="${value}"
+             aria-describedby="rwh-${id}" aria-valuetext="${value} percent">
+      <span class="num rw-val" id="rwv-${id}">${value}%</span>
+      <span class="rw-help" id="rwh-${id}">${escapeHtml(help)}</span>
+    </div>`;
+  }).join('');
+  host.querySelectorAll('[data-weight]').forEach((slider) => {
+    slider.addEventListener('input', () => {
+      $(`rwv-${slider.dataset.weight}`).textContent = slider.value + '%';
+      // A range input announces its raw number; without this a screen reader
+      // says "22" for a control whose whole meaning is "22 percent".
+      slider.setAttribute('aria-valuetext', slider.value + ' percent');
+      updateReclaimWeightsNote();
+    });
+  });
+  updateReclaimWeightsNote();
+}
+
+/** Read the sliders back as the 0-1 weights the API stores. */
+function collectReclaimWeights() {
+  const out = {};
+  for (const [id] of RECLAIM_WEIGHT_ROWS) {
+    const slider = $(`rw-${id}`);
+    if (slider) out[id] = Math.min(1, Math.max(0, Number(slider.value) / 100));
+  }
+  return out;
+}
+
+/**
+ * Say what the current sliders mean, including the one setting that does
+ * nothing: all six at zero. The server refuses that back to the defaults
+ * rather than storing a score nobody can compute, so the note warns before
+ * Save rather than letting the value silently snap back afterwards.
+ */
+function updateReclaimWeightsNote() {
+  const note = $('reclaimWeightsNote');
+  if (!note) return;
+  const values = collectReclaimWeights();
+  const total = Object.values(values).reduce((a, b) => a + b, 0);
+  const off = Object.entries(values).filter(([, v]) => v === 0).length;
+  note.textContent = total === 0
+    ? 'Every signal is off, so there would be no score at all — saving this restores the defaults instead.'
+    : off > 0
+      ? `${off} signal${off === 1 ? '' : 's'} switched off — they are left out of the score rather than counted as zero.`
+      : '';
+}
+
+$('reclaimResetBtn').addEventListener('click', () => {
+  // `null` is how the API's normalizer is asked for the defaults, so the
+  // numbers live in exactly one place — the server — and this button cannot
+  // drift from them.
+  void (async () => {
+    try {
+      settingsData = await api('/api/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reclaimWeights: null }),
+      });
+      renderReclaimWeights();
+      reclaimReset(); // every cached score was computed under the old weights
+      toast('Reclaim Score weights reset to defaults');
+    } catch (e) {
+      toast('Could not reset: ' + e.message, 'error');
+    }
+  })();
 });
 
 /* ── Cloud accounts (Feature 25) ── */
@@ -11350,11 +12086,12 @@ $('settingsSaveBtn').addEventListener('click', async () => {
   const timeCapsuleRetentionDays = Math.min(365, Math.max(1, Math.round(Number($('capsuleRetentionDays').value) || 30)));
   const timeCapsuleMaxPercent = Math.min(90, Math.max(1, Math.round(Number($('capsuleMaxPercent').value) || 10)));
   const cloud = collectCloudCreds();
+  const reclaimWeights = collectReclaimWeights();
   try {
     settingsData = await api('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schedules, ignore, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud }),
+      body: JSON.stringify({ schedules, ignore, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights }),
     });
     renderSchedules();
     renderIgnores();
@@ -11362,6 +12099,12 @@ $('settingsSaveBtn').addEventListener('click', async () => {
     $('watchIdleMin').value = settingsData.watchIdleMinutes ?? 10;
     $('capsuleRetentionDays').value = settingsData.timeCapsuleRetentionDays ?? 30;
     $('capsuleMaxPercent').value = settingsData.timeCapsuleMaxPercent ?? 10;
+    renderReclaimWeights();
+    // Every cached score was computed under the previous weights, so keeping
+    // them would show old numbers beside the new sliders until the next scan.
+    reclaimReset();
+    if (state.view === 'treemap' && state.treemap.colorMode === 'reclaim' && state.treemap.rootPath) drawView();
+    if (state.bigFilesSort === 'reclaim') refreshBigFiles();
     $('settingsStatus').textContent = 'Saved';
     toast('Settings saved — ignore rules apply from the next scan');
     setTimeout(() => { if ($('settingsStatus').textContent === 'Saved') $('settingsStatus').textContent = ''; }, 2500);
@@ -11721,6 +12464,7 @@ window.TreeMap = {
       ['#selectionBar', { scale: 34, ab: 2 }],
       ['#previewPane',  { scale: 40, ab: 2 }],
       ['#ctxMenu',      { scale: 26, ab: 1.5 }],
+      ['#rcPopover',    { scale: 30, ab: 2 }],
       ['#tooltip',      { scale: 20, ab: 1.5 }],
       ['.toast',        { scale: 28, ab: 2 }],
       ['.tm-timebar',   { scale: 26, ab: 1.5 }],

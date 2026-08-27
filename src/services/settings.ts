@@ -3,6 +3,7 @@ import { AppSettings, IgnoreEntry, ScheduleConfig, IgnoreScope, BudgetEntry, Clo
 import { readJsonFile, writeJsonFile } from './storage';
 import { compileIgnoreList, CompiledIgnore } from '../utils/glob';
 import { DEFAULT_RECLAIM_WEIGHTS, RECLAIM_COMPONENT_IDS, ReclaimWeights } from './reclaimScore';
+import { clearFactCacheForProvider } from './facts/registry';
 
 /**
  * Settings — the user's ignore list and scheduled scans, persisted to
@@ -208,8 +209,19 @@ export async function updateSettings(patch: { ignore?: unknown; schedules?: unkn
       }
     }
   }
+  // A reclaim score is derived from these weights, and the fact layer caches
+  // it for thirty minutes keyed only on scan and path. Changing a weight
+  // therefore makes every cached score an answer to a question nobody is
+  // asking any more — and the breakdown beside it would list components the
+  // user had just switched off. Compared rather than cleared unconditionally,
+  // so saving an unrelated setting does not throw the cache away.
+  const weightsChanged = RECLAIM_COMPONENT_IDS.some(
+    (id) => current.reclaimWeights[id] !== next.reclaimWeights[id],
+  );
+
   cache = next;
   await writeJsonFile(SETTINGS_FILE, cache);
+  if (weightsChanged) clearFactCacheForProvider('reclaimScore');
   return cache;
 }
 

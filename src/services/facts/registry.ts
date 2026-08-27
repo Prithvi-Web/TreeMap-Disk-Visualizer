@@ -163,6 +163,25 @@ export function clearFactCache(scanId?: string): void {
   }
 }
 
+/**
+ * Forget one provider's cached facts, across every scan.
+ *
+ * Needed because a fact can depend on something other than the tree it
+ * describes. The reclaim score is computed from user-editable weights, so
+ * changing them makes every cached score wrong — not stale by a little, but
+ * an answer to a question nobody is asking any more. Without this the app
+ * showed old scores for up to the full thirty-minute TTL, with breakdowns
+ * listing components the user had just switched off.
+ *
+ * Deliberately per-provider rather than a blanket clear: dropping `lastUsed`
+ * and `recoverability` too would re-run `mdls` and `git` over everything on
+ * screen to answer a question that has not changed.
+ */
+export function clearFactCacheForProvider(providerId: string): void {
+  const marker = SEP + providerId + SEP;
+  for (const k of cache.keys()) if (k.includes(marker)) cache.delete(k);
+}
+
 /** Entry count — for tests and the bench harness, not for callers. */
 export function factCacheSize(): number {
   return cache.size;

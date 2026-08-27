@@ -573,3 +573,62 @@ test('Linux: a getfattr dump for a different attribute is ignored, not mis-read'
   const stdout = ['# file: /home/me/a.zip', 'user.something.else="nope"', ''].join('\n');
   assert.equal(parseGetfattrBatch(stdout).size, 0);
 });
+
+/* ══════════ changing the weights invalidates the cached scores ══════════ */
+
+test('editing a weight drops the cached scores rather than serving stale ones', async () => {
+  const s = await listen();
+  const fx = await scannedFixture(s.port);
+  try {
+    const { updateSettings } = await import('../src/services/settings');
+    const { DEFAULT_RECLAIM_WEIGHTS } = await import('../src/services/reclaimScore');
+    await updateSettings({ reclaimWeights: DEFAULT_RECLAIM_WEIGHTS });
+
+    const before = (await score(fx.scanId, [fx.video]))[fx.video];
+    assert.ok(before);
+    assert.ok(before.components.length > 1, 'the fixture scores on several components by default');
+
+    // Only staleness left on. Everything else must vanish from the breakdown.
+    await updateSettings({
+      reclaimWeights: { size: 0, staleness: 1, regenerable: 0, redundant: 0, redownloadable: 0, elsewhere: 0 },
+    });
+
+    const after = (await score(fx.scanId, [fx.video]))[fx.video];
+    assert.ok(after);
+    assert.deepEqual(after.components.map((c) => c.id), ['staleness'],
+      'a score cached under the old weights would still list components the user just switched off');
+    assert.deepEqual(after.missing, [], 'switched-off components are not "missing" — they are not part of the score');
+
+    // And back again, to prove the invalidation is not one-directional.
+    await updateSettings({ reclaimWeights: DEFAULT_RECLAIM_WEIGHTS });
+    const restored = (await score(fx.scanId, [fx.video]))[fx.video];
+    assert.ok(restored);
+    assert.deepEqual(restored.components.map((c) => c.id), before.components.map((c) => c.id));
+    assert.equal(restored.score, before.score);
+  } finally {
+    fx.cleanup();
+    await s.close();
+  }
+});
+
+test('saving an unrelated setting keeps the cached scores', async () => {
+  const s = await listen();
+  const fx = await scannedFixture(s.port);
+  try {
+    const { updateSettings } = await import('../src/services/settings');
+    const { DEFAULT_RECLAIM_WEIGHTS } = await import('../src/services/reclaimScore');
+    const { factCacheSize } = await import('../src/services/facts');
+    await updateSettings({ reclaimWeights: DEFAULT_RECLAIM_WEIGHTS });
+    await score(fx.scanId, [fx.video, fx.nodeModules, fx.archive]);
+    const cached = factCacheSize();
+    assert.ok(cached > 0, 'the scores are cached to begin with');
+
+    // Changing the forecast threshold must not re-run mdls and git over
+    // everything on screen to answer a question that has not changed.
+    await updateSettings({ forecastThresholdDays: 45 });
+    assert.equal(factCacheSize(), cached, 'an unrelated save must not empty the cache');
+  } finally {
+    fx.cleanup();
+    await s.close();
+  }
+});

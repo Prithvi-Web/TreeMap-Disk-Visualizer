@@ -53,7 +53,19 @@ export const SUMMARY_FIELDS = [
  * builder emit one of these, `serialiseSummary` throws rather than sending it.
  * A crash here is enormously preferable to a quiet disclosure.
  */
-const FORBIDDEN_SUBSTRINGS = ['finding', 'secret', 'credential', 'provenance', 'url', 'children', 'tree', 'path'];
+const FORBIDDEN_SUBSTRINGS = [
+  'finding', 'secret', 'credential', 'provenance', 'url', 'children', 'tree', 'path',
+  // v4 §6 names these explicitly. None of them can reach here today — the
+  // allow-list above is a fixed list and nothing adds to it — but that is
+  // exactly the assumption this second check exists to stop depending on.
+  // Every per-node fact v4 derives is a statement about the contents of this
+  // machine's disks, which is the category §D1 bans outright, so each one is
+  // named here as it is built rather than after something leaks.
+  'reclaim', 'score', // §3 — the reclaim score and its components
+  'recoverab', 'elsewhere', 'lastused', // §1 — recoverability and last-opened dates
+  'journal', // §7.3 — the disk journal
+  'note', // §9.5 — notes pinned to folders
+];
 
 /**
  * Copy exactly the allowed fields, and refuse anything that smells like the
@@ -61,18 +73,31 @@ const FORBIDDEN_SUBSTRINGS = ['finding', 'secret', 'credential', 'provenance', '
  * §D1 lists "root path" among the summary fields — so it is exempted by name
  * rather than by loosening the rule.
  */
+/**
+ * Would this field name be refused by the second check?
+ *
+ * Exported so it can be tested directly, and that is not a convenience. The
+ * allow-list above means a field like `reclaimScore` never reaches the loop
+ * below — `serialiseSummary` copies only from `SUMMARY_FIELDS`, so a smuggled
+ * field is dropped long before anything inspects its name. The second check
+ * only ever fires if somebody *adds* a field to that list, which is precisely
+ * the future mistake it exists to catch and precisely the one a test cannot
+ * reach through the public function. So the predicate is testable on its own.
+ */
+export function isForbiddenSummaryField(key: string): boolean {
+  if (key === 'lastScanPath') return false; // named in §D1's own list of summary fields
+  const lower = key.toLowerCase();
+  return FORBIDDEN_SUBSTRINGS.some((banned) => lower.includes(banned));
+}
+
 export function serialiseSummary(summary: FleetSummary): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const key of SUMMARY_FIELDS) {
     out[key] = summary[key];
   }
   for (const key of Object.keys(out)) {
-    if (key === 'lastScanPath') continue; // named in §D1's own list of summary fields
-    const lower = key.toLowerCase();
-    for (const banned of FORBIDDEN_SUBSTRINGS) {
-      if (lower.includes(banned)) {
-        throw new Error(`fleet summary would have sent a "${key}" field — refusing`);
-      }
+    if (isForbiddenSummaryField(key)) {
+      throw new Error(`fleet summary would have sent a "${key}" field — refusing`);
     }
   }
   return out;

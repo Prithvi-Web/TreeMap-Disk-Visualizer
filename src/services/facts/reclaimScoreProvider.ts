@@ -1,3 +1,4 @@
+import path from 'path';
 import { getScan } from '../diskScanner';
 import { storeOf } from '../scanStore';
 import { platform } from '../../platform';
@@ -159,7 +160,7 @@ export const reclaimScoreProvider: FactProvider<ReclaimScoreFactValue> = {
       parts.staleness = stalenessOf(p, store.modifiedAt(id), lastUsed, now);
 
       /* regenerable */
-      parts.regenerable = regenerableOf(p, inputs);
+      parts.regenerable = regenerableOf(p, inputs, store.rootPath);
 
       /* redundant */
       parts.redundant = dupes.forPath(p, bytes);
@@ -224,7 +225,11 @@ function stalenessOf(
   };
 }
 
-function regenerableOf(p: string, inputs: Awaited<ReturnType<typeof scanInputsFor>>): ComponentInput {
+function regenerableOf(
+  p: string,
+  inputs: Awaited<ReturnType<typeof scanInputsFor>>,
+  scanRoot: string,
+): ComponentInput {
   if (!inputs.claims.available) {
     return { known: false, reason: inputs.claims.reason ?? 'The cleanup rules could not be read, so TreeMap cannot tell whether this rebuilds itself.' };
   }
@@ -239,7 +244,14 @@ function regenerableOf(p: string, inputs: Awaited<ReturnType<typeof scanInputsFo
   // restored with npm install". Sentences, in the same voice the Smart
   // Suggestions "why" panel already uses ("Put it back with:").
   const restore = claim.restoreCommand ? ` Put it back with \`${claim.restoreCommand}\`.` : '';
-  const where = claim.claimedPath === p ? '' : `It sits inside ${claim.claimedPath}, which TreeMap recognises. `;
+  // Relative to the scan root, because the absolute form wrapped over three
+  // lines of the breakdown panel and buried the sentence that matters. The
+  // panel already names the file; what this line has to add is WHICH folder
+  // upstream is the one that rebuilds — "alpha/node_modules", not 140
+  // characters of temp directory.
+  const where = claim.claimedPath === p
+    ? ''
+    : `It sits inside ${displayPath(claim.claimedPath, scanRoot)}, which TreeMap recognises. `;
   return {
     known: true,
     value: regenerableValue(claim.confidence),
@@ -367,6 +379,20 @@ function duplicatePicture(scanId: string): { forPath: (p: string, bytes: number)
       return { known: true, value: 0, why: 'no identical copy of this was found in the scan' };
     },
   };
+}
+
+/**
+ * A path as it should read inside a sentence: relative to the scan root.
+ *
+ * Falls back to the absolute path when the two are unrelated — a claim from
+ * outside the scanned tree is not something to quietly shorten into
+ * ambiguity.
+ */
+function displayPath(target: string, scanRoot: string): string {
+  if (!scanRoot) return target;
+  const rel = path.relative(scanRoot, target);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return target;
+  return rel;
 }
 
 /**

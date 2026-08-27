@@ -12,7 +12,7 @@ import {
   defaultConfig, handlePeerRequest, isPrivateIPv4, lanAddresses, pairingOffer,
   resetFleetConfig, secretMatches, verifyPairingCode,
 } from '../src/services/fleet/fleetSync';
-import { FleetSummary, SUMMARY_FIELDS, buildSummary, serialiseSummary } from '../src/services/fleet/fleetSummary';
+import { FleetSummary, SUMMARY_FIELDS, buildSummary, isForbiddenSummaryField, serialiseSummary } from '../src/services/fleet/fleetSummary';
 
 /**
  * §D1 — LAN fleet view.
@@ -288,4 +288,54 @@ test('a malformed stored config can never turn the feature on', async () => {
   assert.equal(cfg.allowRemoteScan, false);
   assert.deepEqual(cfg.peers, [], 'entries that are not peers are dropped');
   assert.equal(cfg.port, DEFAULT_FLEET_PORT);
+});
+
+/* ══════════ v4 §6: no derived fact ever crosses the network ══════════ */
+
+test('the boundary check rejects every per-node fact v4 derives', () => {
+  // §6 names these by category: reclaim scores, journal entries, notes and
+  // recoverability verdicts. Each is a statement about what is on this
+  // machine's disks — the category §D1 bans outright.
+  //
+  // Asserted against the predicate rather than through `serialiseSummary`,
+  // and that distinction is the point. The allow-list already makes these
+  // unreachable: a smuggled `reclaimScore` is dropped before its name is ever
+  // inspected (the test below proves that). The second check only fires if
+  // someone ADDS one of these to SUMMARY_FIELDS — the exact future mistake it
+  // exists to catch, and one no call to the public function can reproduce.
+  const facts = [
+    'reclaimScore', 'score', 'scoreComponents', 'reclaimWeights', // §3
+    'recoverability', 'elsewhere', 'lastUsed', 'lastUsedMs', // §1
+    'journal', 'journalEntries', // §7.3
+    'note', 'notes', 'folderNotes', // §9.5
+  ];
+  for (const field of facts) {
+    assert.ok(isForbiddenSummaryField(field), `a "${field}" field must be refused at the boundary`);
+  }
+});
+
+test('the eleven fields §D1 does allow still pass the same check', () => {
+  // A substring ban is easy to widen past what it meant to catch, and a guard
+  // that quietly made the summary unsendable would look exactly like the
+  // fleet being broken.
+  for (const key of SUMMARY_FIELDS) {
+    assert.equal(isForbiddenSummaryField(key), false, `${key} must still be sendable`);
+  }
+  const out = serialiseSummary(summary());
+  assert.equal(Object.keys(out).length, SUMMARY_FIELDS.length);
+});
+
+test('a reclaim score smuggled onto a summary is dropped by the allow-list', () => {
+  const hostile = {
+    ...summary(),
+    reclaimScore: 92,
+    recoverability: { elsewhere: 'none' },
+    notes: ['client archive, keep until 2027'],
+  } as unknown as FleetSummary;
+  const wire = serialiseSummary(hostile) as Record<string, unknown>;
+  assert.equal(Object.keys(wire).length, SUMMARY_FIELDS.length);
+  assert.equal(wire.reclaimScore, undefined);
+  assert.equal(wire.recoverability, undefined);
+  assert.equal(wire.notes, undefined);
+  assert.ok(!JSON.stringify(wire).includes('2027'), 'and no note text reaches the wire');
 });

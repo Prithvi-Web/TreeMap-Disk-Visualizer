@@ -1318,10 +1318,24 @@ test('cart buttons are only rewritten when their state actually changed', () => 
 
 /* ══════════════ Smart Suggestions are rule-pack sourced (§C8) ══════════════ */
 
+/**
+ * The suggestion markup lives in `renderSmartGroups`, which v4 §3.3 split out
+ * of `loadSmartSuggestions` so the Reclaim ordering can repaint without
+ * re-fetching. The guarantees below are about the markup, so they follow it.
+ */
+function smartGroupsFn(code: string): string {
+  const start = code.indexOf('function renderSmartGroups');
+  assert.notEqual(start, -1, 'renderSmartGroups must be findable');
+  const end = code.indexOf('async function loadSmartSuggestions', start);
+  assert.notEqual(end, -1, 'renderSmartGroups must be followed by loadSmartSuggestions');
+  const fn = code.slice(start, end);
+  assert.ok(fn.length > 0, 'the renderSmartGroups slice must not be empty');
+  return fn;
+}
+
 test('every suggestion group offers a "why is this suggested" affordance', () => {
   const code = appCode();
-  const fn = code.slice(code.indexOf('async function loadSmartSuggestions'), code.indexOf("$('cleanFindBtn')"));
-  assert.ok(fn.length > 0, 'loadSmartSuggestions must be findable');
+  const fn = smartGroupsFn(code);
   assert.match(fn, /class="icon-btn why-btn" data-why=/, 'each group gets a why control');
   assert.match(fn, /aria-expanded="false" aria-controls="smartWhy/, 'and it is announced as a disclosure');
   assert.match(fn, /What matched:/, 'the panel says what the rule matched');
@@ -1331,7 +1345,7 @@ test('every suggestion group offers a "why is this suggested" affordance', () =>
 
 test('an advisory group is never offered for deletion', () => {
   const code = appCode();
-  const fn = code.slice(code.indexOf('async function loadSmartSuggestions'), code.indexOf("$('cleanFindBtn')"));
+  const fn = smartGroupsFn(code);
   assert.match(fn, /const adv = !!g\.advisory;/, 'advisory groups are identified');
   // No select-all, no per-item checkbox, no cart button — the three ways an
   // item can reach the delete path.
@@ -1343,7 +1357,12 @@ test('an advisory group is never offered for deletion', () => {
 
 test('a broken rule pack is reported as unavailable, with its reason', () => {
   const code = appCode();
-  const fn = code.slice(code.indexOf('async function loadSmartSuggestions'), code.indexOf("$('cleanFindBtn')"));
+  // This one stays with the loader: it is about what happens to the FETCH,
+  // and the fetch never reaches renderSmartGroups when the catalog is broken.
+  const start = code.indexOf('async function loadSmartSuggestions');
+  assert.notEqual(start, -1, 'loadSmartSuggestions must be findable');
+  const fn = code.slice(start, code.indexOf("$('cleanFindBtn')", start));
+  assert.ok(fn.length > 0, 'the loadSmartSuggestions slice must not be empty');
   assert.match(fn, /data\.available === false/, 'the unavailable state is handled');
   assert.match(fn, /Smart Suggestions are unavailable/, 'and named as unavailable, not as "nothing found"');
   assert.match(fn, /escapeHtml\(data\.reason/, 'carrying the specific reason from the server');
@@ -1352,7 +1371,7 @@ test('a broken rule pack is reported as unavailable, with its reason', () => {
 test('the rule-pack catalog states which packs produced the list, and when', () => {
   const code = appCode();
   assert.match(code, /function catalogNote/, 'provenance is rendered');
-  const fn = code.slice(code.indexOf('function catalogNote'), code.indexOf('async function loadSmartSuggestions'));
+  const fn = code.slice(code.indexOf('function catalogNote'), code.indexOf('function renderSmartGroups'));
   assert.match(fn, /Rule packs:/);
   assert.match(fn, /updated \$\{escapeHtml\(updated\)\}/, 'a stale catalog must be visible as stale');
 });
@@ -1970,4 +1989,178 @@ test('finishScan does no scanId-keyed work when there is no scanId', () => {
   const branch = fn.slice(guardAt, listAt);
   assert.match(branch, /showListsPending\(\)/, 'the panels show loading, not "No files found."');
   assert.match(branch, /emit\(TOPIC\.scan, null\)/, 'views are told there is no scan yet');
+});
+
+/* ══════════════ Reclaim Score in the UI (v4 §3.2, §3.3) ══════════════ */
+
+/**
+ * §3.2 lists four rules the frontend has to keep, and each is a way the score
+ * could quietly become an oracle:
+ *
+ *   - it is never displayed as a bare number;
+ *   - a component that could not be computed is named, never counted as zero;
+ *   - the weights are editable, with a reset;
+ *   - nothing is ever auto-selected.
+ *
+ * They are asserted structurally because all four are invisible in a
+ * screenshot: a score with a missing signal looks exactly like a score
+ * without one until you read what produced it.
+ */
+
+test('a reclaim score is never rendered as a bare number', () => {
+  const code = appCode();
+  // Every score reaches the DOM through reclaimBadge, and that badge is a
+  // button carrying the path its breakdown needs.
+  assert.match(code, /function reclaimBadge\(path, fact\)/, 'one place builds every badge');
+  const start = code.indexOf('function reclaimBadge');
+  const fn = code.slice(start, code.indexOf('function reclaimWhyHtml', start));
+  assert.ok(fn.length > 100, 'the reclaimBadge slice is non-empty');
+  assert.match(fn, /<button type="button" class="rc-badge/, 'the badge is a control, not a label');
+  assert.match(fn, /data-rc-why="\$\{escapeHtml\(path\)\}"/, 'and carries the path its breakdown needs');
+  assert.match(fn, /aria-label="Reclaim score \$\{fact\.score\} out of 100/, 'and announces itself in full');
+  // Confidence is never a letter glued to the number. Every other figure on
+  // the same row is a byte count, so "66.4M" reads as 66.4 megabytes — the
+  // wrong reading by default, not a subtle ambiguity.
+  assert.match(fn, /const approx = fact\.confidence === 'high' \? '' : '~';/, 'uncertainty reads as "approximately"');
+  assert.ok(!/rc-conf/.test(code), 'no confidence initial is rendered anywhere');
+
+  // The tooltip is the one surface that shows a score without being a
+  // button — a canvas cell has nothing to click. §3.2 still applies to it, so
+  // it has to name the way to the reasoning rather than ending at a number.
+  const tip = code.slice(code.indexOf('function reclaimTooltipLine'), code.indexOf('function hideTooltip'));
+  assert.ok(tip.length > 200, 'the reclaimTooltipLine slice is non-empty');
+  assert.match(tip, /right-click for the breakdown/, 'the tooltip points at its own reasoning');
+  assert.match(tip, /fact\.missing\.length/, 'and says how many signals were unknown');
+  // And the right-click menu it names actually opens that breakdown.
+  assert.match(code, /data-act="score"/, 'the context menu offers the breakdown');
+  assert.match(code, /if \(act === 'score'\)[^\n]*openReclaimWhy/, 'and wires it to the panel');
+});
+
+test('the breakdown names every component that could NOT be computed', () => {
+  const code = appCode();
+  const start = code.indexOf('function reclaimWhyHtml');
+  assert.notEqual(start, -1, 'reclaimWhyHtml must exist');
+  const fn = code.slice(start, code.indexOf('const RC_LABELS', start));
+  assert.ok(fn.length > 200, 'the reclaimWhyHtml slice is non-empty');
+  assert.match(fn, /fact\.missing\.length/, 'the missing list is rendered, not dropped');
+  assert.match(fn, /escapeHtml\(m\.reason\)/, 'each carries its own reason, escaped');
+  assert.match(fn, /not counted/, 'and is labelled as excluded rather than as zero');
+  assert.match(fn, /never counted as zero/, 'the panel says so in words too');
+  // §3.2: the score sorts and explains; it never selects.
+  assert.match(fn, /never selects anything for deletion/, 'and states that it selects nothing');
+});
+
+test('an unscored path is distinguishable from a zero everywhere it appears', () => {
+  const code = appCode();
+  // The three-state map is the mechanism: absent / null / fact.
+  assert.match(code, /function scoreFor\(path\)/, 'scoreFor exists');
+  assert.match(code, /return hit === null \? undefined : hit;/, 'null (asked, unanswerable) never reads as a fact');
+  assert.match(code, /function scoreKnown\(path\)/, 'and "asked" is separately answerable');
+  // The treemap paints unscored cells outside the colour ramp.
+  assert.match(code, /const C_RC_UNSCORED/, 'unscored has its own colour');
+  const cell = code.slice(code.indexOf('function cellRgb'), code.indexOf('function cellRgb') + 700);
+  assert.match(cell, /fact \? reclaimRgb\(fact\.score\) : C_RC_UNSCORED/, 'and it is used rather than the ramp floor');
+});
+
+test('sorting by reclaim puts unscored entries last, never at zero', () => {
+  const code = appCode();
+  const start = code.indexOf('function byReclaimDesc');
+  assert.notEqual(start, -1, 'byReclaimDesc must exist');
+  const fn = code.slice(start, start + 600);
+  assert.match(fn, /if \(fa\) return -1;/, 'a scored entry outranks an unscored one');
+  assert.match(fn, /if \(fb\) return 1;/, 'in both directions');
+  // Everything that offers the order uses the one comparator.
+  assert.match(code, /items\.sort\(byReclaimDesc/, 'the grid uses it');
+  assert.match(code, /\.sort\(byReclaimDesc\(\(f\) => f\.path\)\)/, 'the dashboard list uses it');
+  assert.match(code, /pairs\.sort\(byReclaimDesc/, 'Clean Up uses it');
+});
+
+test('re-ordering Clean Up cannot tick the wrong file', () => {
+  const code = appCode();
+  const start = code.indexOf('function smartItemsOf');
+  assert.notEqual(start, -1, 'smartItemsOf must exist');
+  const fn = code.slice(start, start + 500);
+  // The checkbox's data-i is read back as smartGroups[g].items[i] by
+  // updateCleanSummary, which decides what gets trashed. A re-ordered list
+  // rendered with positional indices would select a different file than the
+  // row the user ticked.
+  assert.match(fn, /g\.items\.map\(\(it, i\) => \(\{ it, i \}\)\)/, 'each item keeps its index in g.items');
+  assert.match(code, /smartItemsOf\(g\)\.map\(\(\{ it, i \}\) =>/, 'and the markup renders that index, not the position');
+  assert.match(code, /class="smart-ck" data-g="\$\{gi\}" data-i="\$\{i\}"/, 'onto the checkbox');
+});
+
+test('the weights are editable, resettable, and the reset comes from the server', () => {
+  const code = appCode();
+  assert.match(code, /const RECLAIM_WEIGHT_ROWS/, 'the six weights are listed');
+  assert.match(code, /function renderReclaimWeights/, 'and rendered as controls');
+  assert.match(code, /function collectReclaimWeights/, 'and read back on save');
+  assert.ok(INDEX.includes('id="reclaimResetBtn"'), 'there is a reset control');
+  const reset = code.slice(code.indexOf("$('reclaimResetBtn')"), code.indexOf("$('reclaimResetBtn')") + 800);
+  // Sending null asks the server's own normalizer for the defaults, so the
+  // numbers exist in exactly one place and the button cannot drift from them.
+  assert.match(reset, /reclaimWeights: null/, 'reset asks the server for its defaults');
+  assert.match(reset, /reclaimReset\(\)/, 'and drops scores computed under the old weights');
+});
+
+test('changing the weights invalidates the cached scores', () => {
+  const code = appCode();
+  const save = code.slice(code.indexOf("$('settingsSaveBtn')"), code.indexOf("$('settingsSaveBtn')") + 1800);
+  assert.match(save, /reclaimWeights/, 'the weights are saved');
+  assert.match(save, /reclaimReset\(\)/, 'and the cache is dropped, or old numbers sit beside new sliders');
+});
+
+test('a new scan drops every score, since they describe the previous tree', () => {
+  const code = appCode();
+  assert.match(code, /subscribe\(TOPIC\.scan, reclaimReset\)/, 'scores die with their scan');
+  const fn = code.slice(code.indexOf('function reclaimReset'), code.indexOf('function scoreFor'));
+  assert.match(fn, /reclaim\.scores\.clear\(\)/);
+  assert.match(fn, /reclaim\.pending\.clear\(\)/, 'including anything in flight');
+});
+
+test('a score request that outlives its scan is discarded, not misfiled', () => {
+  const code = appCode();
+  const start = code.indexOf('async function ensureScores');
+  const fn = code.slice(start, code.indexOf('function reclaimConfidenceWording', start));
+  assert.ok(fn.length > 400, 'the ensureScores slice is non-empty');
+  assert.match(fn, /if \(state\.scanId !== scanAtRequest\) return;/,
+    'a scan that changed mid-flight must not have the previous tree’s verdicts filed against it');
+  // The three-state contract: absent from `values` is recorded as null.
+  assert.match(fn, /hasOwnProperty\.call\(values, p\) \? values\[p\] : null/,
+    'a path the server could not score is remembered as null, not invented as 0');
+  // The no-op return is what stops drawView -> fetchScoresForTreemap ->
+  // ensureScores -> repaint -> drawView recursing forever once every visible
+  // cell is already scored. Anchored on the code, not on the comment beside
+  // it: appCode() strips comments.
+  assert.match(fn, /if \(!wanted\.length\) return;/, 'a request with nothing to fetch fires no callback');
+});
+
+test('the reclaim colour mode has a legend that names the unscored band', () => {
+  const code = appCode();
+  const start = code.indexOf('function renderTmLegend');
+  const fn = code.slice(start, code.indexOf('function treemapCanvasHeight', start));
+  assert.ok(fn.length > 200, 'the renderTmLegend slice is non-empty');
+  assert.match(fn, /colorMode === 'reclaim'/, 'the mode has its own legend');
+  assert.match(fn, /not scored/, 'and the unscored band is named rather than left to be guessed');
+  assert.match(fn, /rc-legend-note/, '§3.3 asks for a one-line explanation of what the colours mean');
+});
+
+test('the score is reachable from the keyboard and returns focus', () => {
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function openReclaimWhy'), code.indexOf('// One delegated listener'));
+  assert.ok(fn.length > 400, 'the popover slice is non-empty');
+  assert.match(fn, /\$\('rcPopClose'\)\.focus\(\)/, 'opening moves focus into the panel');
+  assert.match(fn, /opener\.focus\(\); return;/, 'and closing puts it back where it came from');
+  // Every list carrying these badges is rebuilt by innerHTML when the scores
+  // land, so the button that opened the panel is usually gone by the time it
+  // closes. Holding the element dropped focus to <body> — verified in the
+  // real app before this was written. The path survives the repaint.
+  assert.match(fn, /data-rc-why="\$\{escaped\}"/, 'the badge is re-found by path after a repaint');
+  assert.match(fn, /CSS\.escape\(path\)/, 'and the path is escaped before it becomes a selector');
+  assert.match(code, /e\.key === 'Escape' && !\$\('rcPopover'\)\.hidden/, 'Escape closes it');
+  // position:fixed coordinates are viewport-relative while the anchor's rect
+  // is wherever that row sits. Without a clamp, a badge below the fold put
+  // the panel at y=2227 in an 820px window — open, populated, invisible.
+  assert.match(fn, /Math\.max\(10, Math\.min\(preferred, maxTop\)\)/, 'the panel is clamped into the viewport vertically');
+  assert.match(fn, /Math\.max\(10, Math\.min\(r\.left, window\.innerWidth - w - 10\)\)/, 'and horizontally');
+  assert.ok(INDEX.includes('aria-label="Close the score breakdown"'), 'the close control is labelled');
 });
