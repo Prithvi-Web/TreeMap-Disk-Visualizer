@@ -53,6 +53,37 @@ interface DiskutilEntry {
 
 interface DiskutilList {
   AllDisksAndPartitions?: DiskutilEntry[];
+  /**
+   * Every whole disk, as bare identifiers. Read only to tell a genuine answer
+   * from a failed one — see `isImpossiblyEmpty`.
+   */
+  WholeDisks?: string[];
+}
+
+/**
+ * Did `diskutil` answer "there are no disks at all"?
+ *
+ * A running Mac is running *from* a disk, so zero whole disks is not a fact
+ * about the machine — it is a failed read wearing a success's clothes.
+ *
+ * ── Measured, on this Mac (macOS 15), 180 concurrent invocations ──
+ *
+ * 9 of them (5%) exited **0**, wrote **nothing to stderr**, and emitted a
+ * complete, well-formed 335-byte plist in which every array — `WholeDisks`,
+ * `AllDisksAndPartitions`, `AllDisks`, `VolumesFromDisks` — was empty. There
+ * is no other signal to distinguish it from a real answer: not the exit code,
+ * not stderr, not the document's shape. Only the content, which cannot be true.
+ *
+ * The trigger is contention for `diskarbitrationd` — the suite forks heavily
+ * and runs test files in parallel, which is where this first showed itself, as
+ * an A5 assertion failing in the full run and passing alone.
+ *
+ * Left unhandled it is a confidently wrong answer of exactly the kind §10
+ * forbids: the Drives panel would show no drives, and the accounting statement
+ * would reconcile against a volume it believed had no size.
+ */
+export function isImpossiblyEmpty(doc: DiskutilList): boolean {
+  return (doc.AllDisksAndPartitions ?? []).length === 0 && (doc.WholeDisks ?? []).length === 0;
 }
 
 /**
@@ -220,8 +251,38 @@ export async function enrichTopology(topology: VolumeTopology): Promise<VolumeTo
   return topology;
 }
 
-export async function volumeTopology(): Promise<VolumeTopology> {
-  const doc = await runPlist<DiskutilList>('diskutil', ['list', '-plist']);
+/** Attempts before an impossibly-empty answer is reported as a failure. */
+const TOPOLOGY_ATTEMPTS = 3;
+
+/**
+ * Read the layout, refusing to pass on an answer that cannot be true.
+ *
+ * The retry is bounded and the give-up is loud. Every empty answer measured
+ * here recovered on the *immediate* next call — 6 of 6, with no delay — so the
+ * condition is transient and a retry is the honest remedy rather than a paper
+ * over: we are re-asking a question the OS declined to answer, not inventing
+ * the answer.
+ *
+ * When it does not clear, this **throws**. That is deliberate: the caller turns
+ * a throw into an unavailable-with-reason state, and §10's rule is that an
+ * unavailable signal says so. An empty topology returned as a success would be
+ * a zero — the one thing it must never be.
+ *
+ * `read` is injectable so the retry and the give-up can both be tested without
+ * having to lose a race with `diskarbitrationd` on purpose.
+ */
+export async function volumeTopology(
+  read: () => Promise<DiskutilList> = () => runPlist<DiskutilList>('diskutil', ['list', '-plist']),
+): Promise<VolumeTopology> {
+  let doc = await read();
+  for (let attempt = 1; attempt < TOPOLOGY_ATTEMPTS && isImpossiblyEmpty(doc); attempt++) {
+    doc = await read();
+  }
+  if (isImpossiblyEmpty(doc)) {
+    throw new Error(
+      `diskutil reported no disks at all after ${String(TOPOLOGY_ATTEMPTS)} attempts, which cannot be true on a running system — the disk layout could not be read`,
+    );
+  }
   const topology = await enrichTopology(mapTopology(doc));
   topology.mechanism = 'diskutil list -plist + statfs';
   return topology;

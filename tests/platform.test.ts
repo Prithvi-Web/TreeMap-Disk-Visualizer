@@ -9,7 +9,7 @@ import { platform, platformNameOf } from '../src/platform';
 import { getCapabilities, invalidateCapabilities } from '../src/platform/capabilities';
 import { parseLsofRecords, resolveZombies, openHandlesFor } from '../src/platform/macos/lsofGuard';
 import { parseQuarantine, hostOf } from '../src/platform/macos/provenance';
-import { mapTopology, enrichTopology, wholeDiskOf } from '../src/platform/macos/diskutil';
+import { mapTopology, enrichTopology, wholeDiskOf, isImpossiblyEmpty, volumeTopology } from '../src/platform/macos/diskutil';
 import { parseSnapshotList, parseSnapshotDate } from '../src/platform/macos/tmutil';
 import { decodeICloudStubName, providerForPath } from '../src/platform/macos/allocation';
 import { mapSmartctl } from '../src/platform/macos';
@@ -244,6 +244,53 @@ test('mapTopology collapses the system volume and its boot snapshot into one', (
     ],
   });
   assert.deepEqual(mirrored.logicalVolumes.map((v) => v.id), ['disk3s1']);
+});
+
+/**
+ * The empty answer that exits 0.
+ *
+ * Measured on this Mac: 9 of 180 concurrent `diskutil list -plist` calls came
+ * back exit 0, stderr empty, and every array in the document empty. Nothing but
+ * the content distinguishes it from a real answer, and the content cannot be
+ * true — a running Mac runs from a disk. See the header on `isImpossiblyEmpty`.
+ */
+test('an impossibly empty diskutil answer is recognised, and a real one is not', () => {
+  // The recorded shape, verbatim in structure: every array present and empty.
+  assert.equal(isImpossiblyEmpty({ AllDisksAndPartitions: [], WholeDisks: [] }), true);
+  // Absent keys are the same failure wearing a different hat.
+  assert.equal(isImpossiblyEmpty({}), true);
+  // A real answer, however sparse, is not empty: one bare disk with no
+  // partitions is a legitimate machine (a freshly erased external drive).
+  assert.equal(isImpossiblyEmpty({ AllDisksAndPartitions: [{ DeviceIdentifier: 'disk0' }], WholeDisks: [] }), false);
+  assert.equal(isImpossiblyEmpty({ AllDisksAndPartitions: [], WholeDisks: ['disk0'] }), false);
+});
+
+test('volumeTopology re-asks when diskutil answers the impossible, and never returns it', async () => {
+  const real = { AllDisksAndPartitions: [{ DeviceIdentifier: 'disk0', Size: 8 }], WholeDisks: ['disk0'] };
+  const empty = { AllDisksAndPartitions: [], WholeDisks: [] };
+
+  // Transient: every empty answer measured recovered on the immediate retry.
+  let calls = 0;
+  const flaky = await volumeTopology(() => {
+    calls++;
+    return Promise.resolve(calls === 1 ? empty : real);
+  });
+  assert.equal(calls, 2, 'the impossible answer is re-asked, not accepted');
+  assert.equal(flaky.physicalDisks.length, 1, 'and the real answer is what comes back');
+
+  // Persistent: this must FAIL, loudly. An empty topology returned as a success
+  // would be a zero, and §10 forbids a zero standing in for an unknown.
+  let attempts = 0;
+  await assert.rejects(
+    () =>
+      volumeTopology(() => {
+        attempts++;
+        return Promise.resolve(empty);
+      }),
+    /cannot be true on a running system/,
+    'a layout that will not read is an error, never an empty list of drives',
+  );
+  assert.equal(attempts, 3, 'bounded — it does not retry forever');
 });
 
 test('enrichTopology fills free space from the real filesystem and never overwrites APFS usage', { skip: !IS_MAC }, async () => {
