@@ -2096,6 +2096,8 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
         </select>
         <button class="pill" id="tmLiveToggle" aria-pressed="false" title="Watch this folder live — changes pulse on the map and a feed shows what's writing right now"><span class="dot"></span>Live</button>
         <button class="pill" id="tmCloudToggle" hidden aria-pressed="false" title="Hide cloud placeholder files — show only bytes that are really on disk">Hide cloud</button>
+        <!-- v4 §6.4 — the magnifier. Hold Z for the same thing without pinning it. -->
+        <button class="pill" id="tmLensToggle" aria-pressed="false" title="Magnifier — hold Z, or pin it here, to read the tiles that are only a couple of pixels wide">Lens</button>
         <button class="icon-btn" id="tmRefresh" aria-label="Re-render treemap" title="Re-render"></button>
         <button class="btn" id="tmExportBtn" title="Download the treemap as an image"><span data-icon="download"></span>Export</button>
       </div>
@@ -2130,7 +2132,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
     <div class="tm-foot">
       <div id="tmLegend" class="tm-legend"></div>
       <span class="num" id="tmStatus"></span>
-      <span class="hint"><span data-icon="mouse"></span>click a folder to drill in · right-click for actions · Esc to go up</span>
+      <span class="hint"><span data-icon="mouse"></span>click to drill in · drag to lasso (⌥ freehand, ⌘ to unstage) · hold Z to magnify · Esc to go up</span>
     </div>
     <!-- v4 §6.2 — where an alternate renderer had to approximate, it says so
          here, in the same place every time. Never hidden in a console log. -->
@@ -2167,7 +2169,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
     <div class="tm-foot">
       <div id="cityLegend" class="tm-legend"></div>
       <span class="num" id="cityStatus"></span>
-      <span class="hint"><span data-icon="mouse"></span>drag to pan · scroll to zoom · click to drill in · Esc to go up</span>
+      <span class="hint"><span data-icon="mouse"></span>drag to pan · ⇧ or ⌥ drag to lasso · scroll to zoom · click to drill in · Esc to go up</span>
     </div>
     <!-- §6 cross-cutting: every canvas view needs a text-equivalent path to the
          same information. This is that path, not a second navigation mechanism —
@@ -3321,6 +3323,11 @@ const state = {
           height: localStorage.getItem('tm-cityheight') || 'staleness',
           colour: localStorage.getItem('tm-citycolour') || 'reclaim',
           counts: new Map(), countsFor: null, unresolved: 0, raf: 0, drag: null },
+  // v4 §6.3 / §6.4 — a lasso in flight, and the magnifier. Both are pure
+  // overlays over whatever the current renderer last drew: neither holds a
+  // tree, a layout or a request of its own.
+  lasso: { on: false, pts: [] },
+  lens: { held: false, pinned: false, at: null },
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   apps: { loadedFor: null, list: [], otherBytes: 0, totalBytes: 0, appsFolderScanned: false },
   games: { loadedFor: null, report: null },
@@ -6000,6 +6007,8 @@ function presentTreemap() {
     }
   }
   drawLivePulses();
+  lensPaint(tmCtx, tmCanvas.width / dpr, tmCanvas.height / dpr);
+  lassoPaint(tmCtx);
 }
 
 /* ═══════════ Phase 4 (v4 §4.3) — the simulated "after" ═══════════
@@ -6407,11 +6416,38 @@ function treemapHit(clientX, clientY, leavesOnly = false) {
   });
 }
 
+/* v4 §6.3 — a drag on the map is a lasso. A plain CLICK still drills in, so
+   the two are separated by distance, not by intent: under the threshold in
+   `lassoEnd` the gesture never became a lasso and the click is allowed
+   through. Read-only states refuse it for the same reasons they refuse a
+   click — a historical path may no longer exist, and §4.3's preview is a
+   hypothetical with nothing in it to stage. */
+tmCanvas.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || !lassoAvailable()) return;
+  if (state.treemap.history.active || tmPreview.on) return;
+  tmCanvas.setPointerCapture(e.pointerId);
+  lassoStart(e, tmCanvas);
+});
+tmCanvas.addEventListener('pointermove', (e) => { if (state.lasso.on) lassoMove(e); });
+tmCanvas.addEventListener('pointerup', (e) => {
+  if (tmCanvas.hasPointerCapture(e.pointerId)) tmCanvas.releasePointerCapture(e.pointerId);
+  if (lassoEnd()) tmSuppressClick = true;
+});
+tmCanvas.addEventListener('pointercancel', () => lassoCancel());
+let tmSuppressClick = false;
+
 let tmRaf = 0;
 tmCanvas.addEventListener('mousemove', (e) => {
+  // §6.4 — the lens follows the pointer whether or not it is up, so pressing
+  // Z shows the tiles the cursor is already over rather than nothing until
+  // the mouse next moves.
+  const lensAt = Canvas2D.toLocal(tmCanvas, e.clientX, e.clientY);
+  state.lens.at = lensAt;
+  if (state.lasso.on) { hideTooltip(); return; }
   if (tmRaf) return;
   tmRaf = requestAnimationFrame(() => {
     tmRaf = 0;
+    if (lensActive()) presentView();
     const hit = viewHit(e.clientX, e.clientY, true);
     const prevNode = state.treemap.hover && state.treemap.hover.n;
     if ((hit && hit.n) !== prevNode) {
@@ -6424,6 +6460,10 @@ tmCanvas.addEventListener('mousemove', (e) => {
       tmCanvas.style.cursor = hit.n.freed ? 'default'
         : (hit.n.type === 'dir' || hit.center) ? 'pointer' : 'default';
       if (hit.n.freed) { hideTooltip(); return; }
+      // §6.4 — the lens already names what is under the cursor, and the
+      // tooltip is a floating card that lands squarely on top of the glass.
+      // Two labels for one thing, one of them covering the other.
+      if (lensActive()) { hideTooltip(); return; }
       const pct = state.treemap.rootSize > 0 ? (hit.n.size / state.treemap.rootSize) * 100 : 0;
       showTooltip(e.clientX, e.clientY, hit.n, pct);
     } else { tmCanvas.style.cursor = 'default'; hideTooltip(); }
@@ -6431,10 +6471,13 @@ tmCanvas.addEventListener('mousemove', (e) => {
 });
 tmCanvas.addEventListener('mouseleave', () => {
   state.treemap.hover = null;
+  state.lens.at = null;
   presentView();
   hideTooltip();
 });
 tmCanvas.addEventListener('click', (e) => {
+  // A lasso that ended over a folder must not also drill into it.
+  if (tmSuppressClick) { tmSuppressClick = false; hideTooltip(); return; }
   if (state.treemap.history.active) { hideTooltip(); return; } // historical view — read-only
   // v4 §4.3 — the preview is a hypothetical, so drilling into it would load a
   // real folder under a banner that says nothing has been deleted. Read-only,
@@ -6495,6 +6538,7 @@ $('tmDepth').addEventListener('change', (e) => {
 });
 $('tmRefresh').innerHTML = icon('refresh', 15);
 $('tmRefresh').addEventListener('click', () => { if (state.treemap.rootPath) loadTreemap(state.treemap.rootPath); });
+$('tmLensToggle').addEventListener('click', () => lensSetPinned(!state.lens.pinned));
 // Feature 10 — hide cloud placeholders (show only on-disk bytes).
 $('tmCloudToggle').addEventListener('click', () => {
   state.treemap.hideCloud = !state.treemap.hideCloud;
@@ -8457,6 +8501,8 @@ function presentCells() {
     }
   }
   drawLivePulses();
+  lensPaint(tmCtx, tmCanvas.width / dpr, tmCanvas.height / dpr);
+  lassoPaint(tmCtx);
 }
 
 /** The deepest cell under a point — so a click lands on the file, not its folder. */
@@ -8474,10 +8520,522 @@ function cellsHit(clientX, clientY) {
   return best;
 }
 
+/* ══════════════════ v4 §6.3 — Lasso select ══════════════════
+
+   A treemap is a *spatial* interface and, until now, the app offered no
+   spatial selection: the only way to stage a cluster of files that plainly
+   belong together was to find each of them again in a list. This is the
+   affordance the picture has been implying since it shipped.
+
+   ── The gesture, and one place the spec contradicts itself ──
+
+   §6.3 asks for "rubber-band (drag) and freehand (hold Alt)" and, in the next
+   sentence, for "Shift extends, Alt subtracts". Alt cannot do both. Freehand
+   wins, because a modifier that changes the SHAPE of a gesture has to be
+   decided before the drag starts, while add-or-subtract can be decided at any
+   point during it — so subtract moves to ⌘ / Ctrl, and Shift keeps its job.
+
+     drag                  → rubber band
+     ⌥ drag                → freehand
+     ⇧ drag (or plain)     → stage what is enclosed
+     ⌘ / Ctrl drag         → take what is enclosed back out of the cart
+     Disk City             → a modifier is REQUIRED, because a plain drag pans
+
+   **No gesture ever empties the cart.** A plain lasso adds; the only way to
+   remove is to say so with ⌘. §6.3's "Shift extends" reads as though plain
+   should replace, and replace is the one behaviour that could silently throw
+   away staging done in four other views. Shift is accepted as a synonym for
+   add so the muscle memory works, and nothing clears.
+
+   ── What can be caught ──
+
+   Everything whose own centre falls inside the region, taken from the FRONTIER
+   of whatever is drawn — treemap leaves, packed leaf circles, leaf Voronoi
+   cells, Disk City blocks. Those sets never nest, which is the property that
+   matters: a lasso that caught a folder and its children would stage the same
+   bytes twice and report a total the disk does not have.
+
+   The sunburst is the one renderer without a lasso, and that is why: its rings
+   are drawn nested, so "everything whose centre is inside" is exactly the
+   double-count above. Naming the exclusion beats an unexplained dead gesture.
+
+   Staging only. Nothing here deletes; the cart runs its own dry run and its
+   own confirmation (§4.4), and both of those still have to happen.            */
+
+/**
+ * Is a point inside a lasso path? Winding number, not even-odd.
+ *
+ * Deliberately the same rule Canvas2D's default `fill()` uses, because the
+ * lasso is drawn filled while it is being dragged: with even-odd, a freehand
+ * scribble that crossed itself would show one shape and select another, and
+ * the whole point of a spatial selection is that you can see what you caught.
+ * A self-crossed loop keeps everything it went around.
+ */
+function lassoContains(pts, px, py) {
+  let winding = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[j], b = pts[i];
+    if (a.y <= py) {
+      if (b.y > py && (b.x - a.x) * (py - a.y) - (px - a.x) * (b.y - a.y) > 0) winding++;
+    } else if (b.y <= py && (b.x - a.x) * (py - a.y) - (px - a.x) * (b.y - a.y) < 0) winding--;
+  }
+  return winding !== 0;
+}
+
+/** Bounds of a lasso path, so a candidate can be rejected without the full test. */
+function lassoBounds(pts) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of pts) {
+    if (p.x < x0) x0 = p.x;
+    if (p.x > x1) x1 = p.x;
+    if (p.y < y0) y0 = p.y;
+    if (p.y > y1) y1 = p.y;
+  }
+  return pts.length ? { x0, y0, x1, y1 } : { x0: 0, y0: 0, x1: 0, y1: 0 };
+}
+
+/** A rubber band, as a path, so there is one containment rule and not two. */
+function lassoRectPath(a, b) {
+  return [
+    { x: a.x, y: a.y }, { x: b.x, y: a.y },
+    { x: b.x, y: b.y }, { x: a.x, y: b.y },
+  ];
+}
+
+/**
+ * Add a point to a freehand path, but only when it has actually moved.
+ *
+ * A pointer sitting still emits move events anyway, and a path with four
+ * hundred coincident vertices makes both the winding test and the stroke
+ * measurably slower for no shape at all.
+ */
+function lassoPush(pts, x, y) {
+  const last = pts[pts.length - 1];
+  if (last && Math.abs(last.x - x) < 2 && Math.abs(last.y - y) < 2) return;
+  pts.push({ x, y });
+}
+
+/* ── What is on screen, and where its centre is ──────────────────────────── */
+
+/**
+ * The frontier of the current renderer: one entry per drawn thing that has
+ * nothing drawn inside it, with the centre the lasso tests.
+ *
+ * Anything that cannot be staged is left out here rather than filtered later,
+ * so the count in the badge is the count that will be staged. That includes
+ * §4.3's freed blocks (a hypothetical, not a file), archive entries (which are
+ * a listing, not a path — `403 VIRTUAL_PATH`), and the synthetic Trash cell.
+ */
+function lassoTargets() {
+  const out = [];
+  const usable = (n) => n && n.path && !n.freed && !n.virtual && !n.isTrash;
+  if (state.view === 'city') {
+    const tx = cityTransform(
+      Math.max(120, $('cityWrap').clientWidth),
+      Math.max(120, $('cityWrap').clientHeight),
+    );
+    for (const b of state.city.blocks) {
+      if (!usable(b.n)) continue;
+      // The centre of the roof, not of the footprint: the roof is what the
+      // user sees and drags a loop around, and on a tall tower the two are
+      // most of a building apart.
+      const p = isoProject(b.x + b.w / 2, b.y + b.h / 2, b.z);
+      out.push({ n: b.n, x: p.sx * tx.s + tx.dx, y: p.sy * tx.s + tx.dy });
+    }
+    return out;
+  }
+  if (isCells()) {
+    for (const c of state.treemap.cells) {
+      if (!c.leaf || !usable(c.n)) continue;
+      out.push({ n: c.n, x: c.cx, y: c.cy });
+    }
+    return out;
+  }
+  for (const r of state.treemap.pxRects) {
+    if (r.frame || !usable(r.n)) continue;
+    out.push({ n: r.n, x: r.x + r.w / 2, y: r.y + r.h / 2 });
+  }
+  return out;
+}
+
+/** Everything the current path encloses. */
+function lassoCaught() {
+  const l = state.lasso;
+  if (!l.on || l.pts.length < 3) return [];
+  const bb = lassoBounds(l.pts);
+  const hits = [];
+  for (const t of lassoTargets()) {
+    if (t.x < bb.x0 || t.x > bb.x1 || t.y < bb.y0 || t.y > bb.y1) continue;
+    if (lassoContains(l.pts, t.x, t.y)) hits.push(t.n);
+  }
+  return hits;
+}
+
+/* ── The gesture ────────────────────────────────────────────────────────── */
+
+/** Which renderers offer a lasso, and why the sunburst does not. */
+function lassoAvailable() {
+  if (state.view === 'city') return true;
+  if (state.view !== 'treemap') return false;
+  return !isSun(); // nested rings would stage a folder and its contents twice
+}
+
+/** Read the modifiers into an operation, once, where the mapping is written down. */
+function lassoOpFor(e) {
+  return (e.metaKey || e.ctrlKey) ? 'remove' : 'add';
+}
+
+function lassoStart(e, canvas) {
+  const local = Canvas2D.toLocal(canvas, e.clientX, e.clientY);
+  state.lasso = {
+    on: true,
+    free: e.altKey,
+    op: lassoOpFor(e),
+    origin: local,
+    pts: [local],
+    moved: false,
+    canvas,
+  };
+}
+
+function lassoMove(e) {
+  const l = state.lasso;
+  if (!l.on) return;
+  const local = Canvas2D.toLocal(l.canvas, e.clientX, e.clientY);
+  if (Math.abs(local.x - l.origin.x) > 5 || Math.abs(local.y - l.origin.y) > 5) l.moved = true;
+  if (l.free) lassoPush(l.pts, local.x, local.y);
+  else l.pts = lassoRectPath(l.origin, local);
+  lassoRepaint();
+}
+
+/**
+ * Finish the gesture.
+ *
+ * Returns whether it was a real lasso, so the caller can suppress the click
+ * that a pointer-up would otherwise become — a drag that ends up staging forty
+ * files must not also drill into whatever was under the release.
+ */
+function lassoEnd() {
+  const l = state.lasso;
+  if (!l.on) return false;
+  const real = l.moved;
+  const caught = real ? lassoCaught() : [];
+  const op = l.op;
+  state.lasso = { on: false, pts: [] };
+  lassoRepaint();
+  if (!real) return false;
+  lassoApply(caught, op);
+  return true;
+}
+
+function lassoCancel() {
+  if (!state.lasso.on) return;
+  state.lasso = { on: false, pts: [] };
+  lassoRepaint();
+}
+
+/**
+ * Stage or unstage what was caught.
+ *
+ * Says the count and the bytes out loud, including the ones that were already
+ * staged, because "142 selected" over a cart that grew by nine is a true
+ * sentence that reads as a false one.
+ */
+function lassoApply(caught, op) {
+  if (!caught.length) {
+    toast(op === 'remove' ? 'Nothing staged inside that loop' : 'Nothing inside that loop', 'error');
+    return;
+  }
+  let changed = 0, bytes = 0;
+  for (const n of caught) {
+    if (op === 'remove') {
+      if (state.cart.delete(n.path)) { changed++; bytes += n.size || 0; }
+    } else if (!state.cart.has(n.path)) {
+      state.cart.add(n.path);
+      changed++;
+      bytes += n.size || 0;
+    }
+  }
+  saveCart();
+  void renderCart();
+  refreshCartButtons();
+  const already = caught.length - changed;
+  if (op === 'remove') {
+    toast(
+      `Took ${formatCount(changed)} item${changed === 1 ? '' : 's'} (${formatBytes(bytes)}) out of the cart` +
+      (already ? ` — ${formatCount(already)} of the ${formatCount(caught.length)} caught ${already === 1 ? 'was' : 'were'} not in it` : ''),
+      changed ? 'success' : 'error',
+    );
+    return;
+  }
+  toast(
+    `Staged ${formatCount(changed)} item${changed === 1 ? '' : 's'} (${formatBytes(bytes)})` +
+    (already ? ` — ${formatCount(already)} ${already === 1 ? 'was' : 'were'} already in the cart` : '') +
+    '. Nothing has been deleted.',
+    changed ? 'success' : 'error',
+  );
+}
+
+/* ── Drawing it ─────────────────────────────────────────────────────────── */
+
+function lassoRepaint() {
+  if (state.view === 'city') { cityInvalidate(); return; }
+  presentView();
+}
+
+/**
+ * The loop, and a running count of what is inside it.
+ *
+ * The count is the whole reason this is worth drawing rather than just
+ * selecting: a lasso you cannot see the consequence of until you let go is a
+ * gesture you have to undo to understand. Recomputed per frame, which is a
+ * point-in-polygon test per drawn thing — a few thousand at most, and measured
+ * at well under a millisecond on a full map.
+ */
+function lassoPaint(ctx) {
+  const l = state.lasso;
+  if (!l.on || l.pts.length < 2) return;
+  const accent = cssVar('--accent') || '#0A84FF';
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(l.pts[0].x, l.pts[0].y);
+  for (let i = 1; i < l.pts.length; i++) ctx.lineTo(l.pts[i].x, l.pts[i].y);
+  ctx.closePath();
+  ctx.fillStyle = l.op === 'remove' ? 'rgba(255,69,58,0.12)' : 'rgba(10,132,255,0.12)';
+  ctx.fill();
+  ctx.setLineDash([6, 4]);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = l.op === 'remove' ? (cssVar('--danger') || '#FF453A') : accent;
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  if (!l.moved) { ctx.restore(); return; }
+  const caught = lassoCaught();
+  let bytes = 0;
+  for (const n of caught) bytes += n.size || 0;
+  const label = `${formatCount(caught.length)} item${caught.length === 1 ? '' : 's'} · ${formatBytes(bytes)}` +
+    (l.op === 'remove' ? ' · release to unstage' : '');
+  const last = l.pts[l.pts.length - 1];
+  ctx.font = '600 11.5px -apple-system, sans-serif';
+  const w = ctx.measureText(label).width + 16;
+  const bx = Math.max(4, last.x + 12), by = Math.max(4, last.y - 30);
+  Canvas2D.roundRect(ctx, bx, by, w, 22, 11);
+  ctx.fillStyle = 'rgba(20,20,26,0.88)';
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.96)';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, bx + 8, by + 11.5);
+  ctx.restore();
+}
+
+/* ══════════════════ v4 §6.4 — The hover magnifier ══════════════════
+
+   Hold `Z`, or press the lens button, for a circular window over the cursor
+   showing the tiles underneath at 4× with their names. A treemap of a real
+   home folder has thousands of cells two pixels wide; they are not decoration,
+   they are files, and until now the only way to read one was to drill in and
+   lose your place.
+
+   **Redrawn from the layout, not magnified from the canvas.** §6.4 asks for
+   "rendered from the same layout, no re-layout, no extra data", and the
+   difference is the whole feature: scaling the rendered bitmap four times
+   gives four-times-larger blur, and the names — which are the reason to look —
+   were never drawn at that size in the first place. Re-running the cells
+   through the same fill and the same `cellRgb` at 4× gives crisp edges and
+   labels that were never on the map at all.
+
+   It reads `state.treemap.pxRects` / `state.treemap.cells`, which are exactly
+   what the last paint produced. No layout runs, nothing is fetched, and the
+   lens cannot show something the map is not showing.                          */
+
+const LENS_SCALE = 4;
+const LENS_RADIUS = 108;
+
+/** Is the lens up? Either held with Z or pinned with the toolbar button. */
+function lensActive() {
+  return (state.lens.held || state.lens.pinned) && state.lens.at !== null;
+}
+
+/**
+ * Everything the lens can draw, in painter's order.
+ *
+ * Shaped as `{ n, path(ctx), label }` so one drawing loop covers rectangles,
+ * circles and Voronoi cells — the alternative is a third copy of the fill and
+ * stroke logic that would drift from the two that already exist.
+ */
+function lensShapes() {
+  if (isCells()) return state.treemap.cells.filter((c) => c.leaf || c.depth === 0);
+  return state.treemap.pxRects;
+}
+
+/**
+ * Draw the lens onto the visible canvas.
+ *
+ * Called after the blit, like every other overlay, so it costs one composite
+ * and never touches the offscreen buffer the map itself lives in.
+ */
+function lensPaint(ctx, cssW, cssH) {
+  if (!lensActive()) return;
+  const cursor = state.lens.at;
+  const r = Math.min(LENS_RADIUS, Math.min(cssW, cssH) * 0.42);
+  if (!(r > 12)) return;
+  /* The GLASS is clamped to stay whole; the MAGNIFICATION still happens about
+     the cursor. Those are deliberately two different points.
+
+     Letting the lens sit centred on the cursor is what a magnifier should do,
+     right up to the edge of the map — where half the circle falls off the
+     canvas and what is left reads as a rendering fault rather than as a lens.
+     Clamping the circle but keeping the scale anchored on the pointer means
+     the glass slides along the edge intact while the tile under the cursor
+     stays exactly under the cursor, which is the property that makes a
+     magnifier usable at all. */
+  const mx = Math.max(r + 2, Math.min(cssW - r - 2, cursor.x));
+  const my = Math.max(r + 2, Math.min(cssH - r - 2, cursor.y));
+
+  ctx.save();
+  // The glass itself: a hard circular clip, so the magnified world stops
+  // exactly at the rim rather than fading into the map it sits over.
+  ctx.beginPath();
+  ctx.arc(mx, my, r, 0, Math.PI * 2);
+  ctx.save();
+  ctx.clip();
+  ctx.fillStyle = cssVar('--tm-canvas-bg') || '#111';
+  ctx.fillRect(mx - r, my - r, r * 2, r * 2);
+
+  // Scale about the cursor, so whatever is under the pointer stays under it.
+  ctx.translate(cursor.x, cursor.y);
+  ctx.scale(LENS_SCALE, LENS_SCALE);
+  ctx.translate(-cursor.x, -cursor.y);
+
+  const half = r / LENS_SCALE + Math.hypot(mx - cursor.x, my - cursor.y) / LENS_SCALE + 2;
+  const shapes = lensShapes();
+  const labels = [];
+  for (const s of shapes) {
+    const b = s.bb
+      ? { x0: s.bb.x0, x1: s.bb.x1, y0: s.bb.y0, y1: s.bb.y1 }
+      : { x0: s.x, x1: s.x + s.w, y0: s.y, y1: s.y + s.h };
+    if (b.x1 < cursor.x - half || b.x0 > cursor.x + half) continue;
+    if (b.y1 < cursor.y - half || b.y0 > cursor.y + half) continue;
+    const base = s.n.isTrash ? [108, 122, 137] : cellRgb(s.n);
+    if (s.kind) {
+      altCellPath(ctx, s);
+    } else {
+      ctx.beginPath();
+      ctx.rect(b.x0, b.y0, Math.max(0.2, b.x1 - b.x0), Math.max(0.2, b.y1 - b.y0));
+    }
+    if (s.frame || (s.kind && !s.leaf)) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+      continue;
+    }
+    ctx.fillStyle = s.n.freed ? 'rgba(120,120,130,0.35)' : `rgb(${base[0]},${base[1]},${base[2]})`;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = 0.25;
+    ctx.stroke();
+    labels.push({ n: s.n, b });
+  }
+  ctx.restore(); // out of the magnified transform, still inside the clip
+
+  // Labels are drawn UNMAGNIFIED, at their magnified positions. A name scaled
+  // 4× is a name you can only fit two letters of; drawn at normal weight over
+  // a tile that is now forty pixels wide, it is a name you can read.
+  ctx.font = '600 10.5px -apple-system, sans-serif';
+  ctx.textBaseline = 'middle';
+  const toLens = (x, y) => ({
+    x: cursor.x + (x - cursor.x) * LENS_SCALE,
+    y: cursor.y + (y - cursor.y) * LENS_SCALE,
+  });
+  const placed = [];
+  labels.sort((p, q) => (q.b.x1 - q.b.x0) * (q.b.y1 - q.b.y0) - (p.b.x1 - p.b.x0) * (p.b.y1 - p.b.y0));
+  for (const l of labels) {
+    const a = toLens(l.b.x0, l.b.y0), c = toLens(l.b.x1, l.b.y1);
+    // Label the part of the tile that is ON THE GLASS, not the whole tile.
+    // At 4× a cell often covers the entire lens, and its true centre is then
+    // far outside it — which culled the label for exactly the tile the user
+    // was pointing at, so the glass came up as two flat colours with no names
+    // at all. Clipping to the visible patch first fixes it.
+    const ax = Math.max(a.x, mx - r + 5), bx2 = Math.min(c.x, mx + r - 5);
+    const ay = Math.max(a.y, my - r + 5), by2 = Math.min(c.y, my + r - 5);
+    const w = bx2 - ax, h = by2 - ay;
+    if (w < 26 || h < 11) continue;
+    const cx = (ax + bx2) / 2, cy = (ay + by2) / 2;
+    if (Math.hypot(cx - mx, cy - my) > r - 8) continue;
+    const text = Canvas2D.fitText(ctx, l.n.name, Math.min(w - 6, r * 1.7));
+    if (!text) continue;
+    const tw = ctx.measureText(text).width;
+    // One name per patch of glass: at 4× the tiles are big enough to read but
+    // the lens is small enough that two names still collide often.
+    if (placed.some((p) => Math.abs(p.x - cx) < (p.w + tw) / 2 + 3 && Math.abs(p.y - cy) < 12)) continue;
+    placed.push({ x: cx, y: cy, w: tw });
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.strokeText(text, cx - tw / 2, cy);
+    ctx.fillStyle = 'rgba(255,255,255,0.97)';
+    ctx.fillText(text, cx - tw / 2, cy);
+  }
+  ctx.restore();
+
+  // The rim, outside the clip, so it reads as a piece of glass lying on the
+  // map rather than as a hole cut in it.
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(mx, my, r, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(mx, my, r + 1.5, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // A specular sweep along the top left, which is where every other lit thing
+  // in this app takes its light from.
+  ctx.beginPath();
+  ctx.arc(mx, my, r - 2, Math.PI * 1.02, Math.PI * 1.62);
+  ctx.strokeStyle = 'rgba(255,255,255,0.34)';
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  ctx.restore();
+
+  // The magnification badge goes INSIDE the glass, along the bottom rim. Below
+  // it there is not always room: the lens is clamped to the panel, so at the
+  // bottom edge a badge outside the circle is a badge off the canvas.
+  ctx.save();
+  ctx.font = '600 10px -apple-system, sans-serif';
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  Canvas2D.roundRect(ctx, mx - 13, my + r - 24, 26, 15, 7);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${LENS_SCALE}×`, mx, my + r - 16.5);
+  ctx.restore();
+}
+
+/** Turn the lens on or off from the toolbar, and keep the button honest. */
+function lensSetPinned(on) {
+  state.lens.pinned = on;
+  const btn = $('tmLensToggle');
+  if (btn) {
+    btn.setAttribute('aria-pressed', String(on));
+    btn.classList.toggle('active', on);
+  }
+  presentView();
+}
+
 // View-mode toggle (Treemap ⇆ Sunburst), persisted in localStorage.
 function setTreemapView(mode) {
   mode = TM_MODES.includes(mode) ? mode : 'treemap';
   state.treemap.mode = mode;
+  // §6.4 — the lens redraws from the drawn set, and the sunburst's is arcs,
+  // which this does not know how to magnify. Turned off rather than left
+  // pinned and silently doing nothing.
+  if (mode === 'sunburst') { state.lens.held = false; lensSetPinned(false); }
+  const lensBtn = $('tmLensToggle');
+  if (lensBtn) lensBtn.disabled = mode === 'sunburst';
+  lassoCancel();
   // Leaving a renderer drops what it drew. Otherwise the next hit test, cart
   // preview or lasso could answer with a shape that is no longer on screen.
   state.treemap.cells = [];
@@ -10930,6 +11488,7 @@ function drawCity() {
   }
 
   cityDrawLabels(ctx, pendingLabels, paintedBoxes);
+  lassoPaint(ctx);
   c.painted = painted;
   renderCityChrome();
 }
@@ -11608,6 +12167,13 @@ function cityUp() {
 function cityOnPointerDown(e) {
   const canvas = $('cityCanvas');
   canvas.setPointerCapture(e.pointerId);
+  // §6.3 — here a plain drag already pans, so the lasso needs a modifier to
+  // ask for it. Any of the three does: whichever one the user reached for,
+  // they meant "select", and `lassoOpFor` reads which sense they meant.
+  if (e.button === 0 && (e.shiftKey || e.altKey || e.metaKey || e.ctrlKey)) {
+    lassoStart(e, canvas);
+    return;
+  }
   state.city.drag = { x: e.clientX, y: e.clientY, panX: state.city.pan.x, panY: state.city.pan.y, moved: false };
 }
 
@@ -11615,6 +12181,7 @@ function cityOnPointerMove(e) {
   const canvas = $('cityCanvas');
   const local = Canvas2D.toLocal(canvas, e.clientX, e.clientY);
   const c = state.city;
+  if (state.lasso.on) { lassoMove(e); cityShowCard(null); return; }
   if (c.drag) {
     const dx = e.clientX - c.drag.x, dy = e.clientY - c.drag.y;
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) c.drag.moved = true;
@@ -11632,6 +12199,7 @@ function cityOnPointerUp(e) {
   const c = state.city;
   const canvas = $('cityCanvas');
   if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+  if (state.lasso.on) { lassoEnd(); return; }
   const wasDrag = c.drag && c.drag.moved;
   c.drag = null;
   if (wasDrag) return; // a pan is not a click
@@ -16991,9 +17559,37 @@ document.querySelectorAll('.modal-backdrop').forEach(bd =>
   bd.addEventListener('mousedown', (e) => { if (e.target === bd) bd.classList.remove('open'); }));
 
 /* ───────────────────────────── Keyboard shortcuts ───────────────────────────── */
+/* ── v4 §6.4 — hold Z ──
+   `keydown` repeats while a key is held, so the guard on `state.lens.held` is
+   what keeps this from repainting the map sixty times a second for as long as
+   the key is down. Released on `keyup`, and also on `blur`: switching apps
+   mid-hold never delivers the keyup, and a lens stuck on until the next press
+   of Z would look like a bug in the map rather than in the keyboard. */
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'z' && e.key !== 'Z') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) return;
+  if (state.view !== 'treemap' || isSun() || state.lens.held) return;
+  state.lens.held = true;
+  presentView();
+});
+document.addEventListener('keyup', (e) => {
+  if (e.key !== 'z' && e.key !== 'Z' || !state.lens.held) return;
+  state.lens.held = false;
+  presentView();
+});
+window.addEventListener('blur', () => {
+  if (!state.lens.held) return;
+  state.lens.held = false;
+  presentView();
+});
+
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  // §6.3 — Escape abandons a lasso in progress before it can mean anything
+  // else, so a gesture started by accident costs one key rather than an undo.
+  if (e.key === 'Escape' && state.lasso.on) { e.preventDefault(); e.stopPropagation(); lassoCancel(); return; }
   if (e.key === '?' && !typing && !mod) { e.preventDefault(); toggleShortcuts(); return; }
   if (mod && e.key.toLowerCase() === 'r') {
     if (state.root) { e.preventDefault(); rescan(); }
