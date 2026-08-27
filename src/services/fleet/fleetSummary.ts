@@ -71,6 +71,9 @@ const FORBIDDEN_SUBSTRINGS = [
   // because a volume name is as identifying as a path — /Volumes/Bob's Backup
   // says who owns the machine, and `path` alone does not catch it.
   'unaccounted', 'statement', 'purgeable', 'unscannable', 'mount',
+  // §6.1 — how many files sit under a path is a description of this machine's
+  // disks just as surely as the paths themselves are.
+  'subtree', 'filecount',
 ];
 
 /**

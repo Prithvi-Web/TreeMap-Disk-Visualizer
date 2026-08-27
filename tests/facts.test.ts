@@ -603,7 +603,7 @@ test('the fact route adds nothing to the byte-locked scan responses', async () =
   try {
     const result = await req(port, 'GET', `/api/scan/${fixture.scanId}/result`);
     assert.equal(result.status, 200);
-    for (const forbidden of ['facts', 'reclaimScore', 'lastUsed', 'recoverability', 'note']) {
+    for (const forbidden of ['facts', 'reclaimScore', 'lastUsed', 'recoverability', 'note', 'subtreeCount']) {
       assert.equal(forbidden in result.body, false, `/result must not carry "${forbidden}"`);
     }
     const nodes = await req(port, 'POST', `/api/scan/${fixture.scanId}/nodes`, {
@@ -611,7 +611,7 @@ test('the fact route adds nothing to the byte-locked scan responses', async () =
     });
     const node = nodes.body.nodes[path.join(fixture.root, 'small.txt')];
     assert.ok(node, 'the fixture node resolved');
-    for (const forbidden of ['facts', 'reclaimScore', 'lastUsed', 'recoverability', 'note']) {
+    for (const forbidden of ['facts', 'reclaimScore', 'lastUsed', 'recoverability', 'note', 'subtreeCount']) {
       assert.equal(forbidden in node, false, `node payloads must not carry "${forbidden}"`);
     }
   } finally {

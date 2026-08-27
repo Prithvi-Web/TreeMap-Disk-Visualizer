@@ -310,6 +310,7 @@ test('the boundary check rejects every per-node fact v4 derives', () => {
     'note', 'notes', 'folderNotes', // §9.5
     'unaccounted', 'unaccountedBytes', 'statement', 'accountingStatement', // §5
     'purgeable', 'purgeableBytes', 'unscannable', 'mountPoint', // §5
+    'subtreeCount', 'subtreeCounts', 'fileCount', // §6.1
   ];
   for (const field of facts) {
     assert.ok(isForbiddenSummaryField(field), `a "${field}" field must be refused at the boundary`);
