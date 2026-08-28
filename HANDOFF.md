@@ -1,5 +1,74 @@
 # TreeMap — session handoff
 
+## v4 — Phase 6 finished, and the CI red run explained (28 August 2026)
+
+**The red macOS check was never Phase 6.** Phase 6's own tests have not failed
+once, on any platform, in any run. The failures were pre-existing, and reading
+them was the whole difficulty: job logs need admin rights
+(`403 Must have admin rights to Repository`), step summaries are not in the
+REST API, and the step that was supposed to publish annotations **could not
+finish** — GitHub runs `shell: bash` as `bash -e -o pipefail`, so the step's
+`grep '^# Error'`, which matches nothing on an ordinary failure, killed it
+before it wrote the summary. Every red run published a test NAME and threw its
+assertion away.
+
+### What was actually failing
+
+| Failing test | OS | Cause |
+| --- | --- | --- |
+| `agent summary: raw+formatted bytes…` | Windows | `diskUsage` spawned PowerShell with a 10 s ceiling; a loaded runner missed it, the forecast reported `freeBytes: 0` |
+| `with no env vars, the API is open…` | Windows | same call, uncaught in `/api/system` → 500 |
+| `an external create, resize and delete…` | macOS | **two** causes: a transient `lstat` read as a deletion, and a `fs.watch` that attaches and delivers nothing |
+| `reading a tree stays sub-quadratic…` | macOS | a ratio of two single timings; reproduced at **25.6x** on linear code |
+
+`diskUsage` now answers from `statfs` — one syscall, no subprocess — with the
+OS tools kept as a bounded fallback. `tests/diskUsage.test.ts` cross-checks the
+two on whatever platform CI is running, so the Windows question is answered on
+the runner rather than in a comment.
+
+### The bug that was worth the search
+
+A bare `catch { stat = null /* gone */ }` around the watcher's `lstat`, where
+`stat === null` runs `deleteSubtree`. Injecting ONE `EMFILE` deleted a live
+50,000-byte file from the index while it sat on disk. Full account below under
+"The long-standing intermittent". The same bug class was then found in twelve
+other places; the ones that could destroy or misreport user data are fixed and
+listed there.
+
+### Phase 6 itself
+
+Audited requirement by requirement against §6.1-§6.4. Three real defects, all
+fixed and all verified in the running app on a 322 MB scan rather than by
+reading:
+
+- **The LOD texture was wrong in both directions.** `hatched` keyed off a
+  single number for the whole layout, so it marked nothing in exactly the case
+  the texture exists for. Measured after: 127 of 236 drawn folders marked,
+  matching an independent recomputation exactly.
+- **Switching Disk City's colour dropped the per-building jitter.** Type mode
+  has only **5** base colours, so 731 buildings flattened into 5, with 334
+  identical in one group. After: 293 distinct shades in that group.
+- **Escape did nothing in Disk City** unless the canvas had been clicked.
+  §6.1 asks for "Escape to climb out"; it now has exactly one owner.
+
+`tests/isoProjection.test.ts` gained the LOD-threshold coverage §6.1's "Tests:"
+paragraph asks for and that had never existed — which is what let the texture
+bug ship.
+
+### Verified
+
+```
+npm run build      clean
+npm run typecheck  clean
+npm test           1,378 tests · 1,376 pass · 0 fail · 2 skip
+npm run bench:v4   7 pass / 3 not measurable in Node
+```
+
+Driven in the browser: all four renderers, Disk City with drill-in and Escape,
+a real mouse-drag lasso (9 items staged, no accidental drill), the 4x
+magnifier, all 15 views, zero console errors.
+
+
 ## v4 — Phase 6 complete: the visual core (27 August 2026)
 
 **Five commits on `main`, on top of the two that were already there** (`25553a4`
@@ -1262,10 +1331,24 @@ B5 zombie handles.
 
 ## CI: how it stays green, and how to diagnose it
 
-- **Job logs are login-gated even on public repos.** The workflow prints every
-  failing TAP line as PUBLIC annotations (cap 10/step) and the full list into
-  the step summary — read them via `GET /repos/…/check-runs/<jobId>/annotations`
-  (no auth). Never scroll the GitHub log viewer with scripts; it freezes the tab.
+- **Job logs are login-gated even on public repos** — `GET
+  /repos/…/actions/jobs/<id>/logs` answers `403 Must have admin rights`, and
+  step summaries are not in the REST API at all. **Annotations are the only
+  public channel**, so the workflow puts the ASSERTION in the annotation, not
+  just the test name: read them with
+  `GET /repos/…/check-runs/<jobId>/annotations` (no auth needed). Informative
+  failures are sorted ahead of `error: 'test failed'` wrappers so the 10-per-
+  step cap keeps the useful ones, and async `# Error` lines share that budget
+  rather than being appended past it. Never scroll the GitHub log viewer with
+  scripts; it freezes the tab.
+- **The annotator is `scripts/tap-annotate.js`,** plain CommonJS run by `node`
+  — not `npx tsx`. It is the last-resort diagnostic step: when the job died in
+  `npm ci`, a transpiler is not there to explain it. It is unit-tested against
+  a RECORDED real `node --test` TAP file (`tests/fixtures/real-node.tap`),
+  because four assertion-dropping defects survived hand-written fixtures.
+- **The reporter is pinned** (`npm test -- --test-reporter=tap`). Node's
+  default depends on the version and on whether stdout is a TTY, and the
+  annotator reads TAP.
 - **Wall-clock policy:** absolute latency asserts are sized for loaded shared
   runners. Machine-independent relationships are the real invariants.
 - `.gitattributes` pins LF. `scripts/run-tests.js` expands the test glob in JS.
@@ -1464,7 +1547,116 @@ fixtures; the honest no-library path is what runs live.
   guarantees are confirmed via the code path and files leaving the fixture, not
   by listing the Trash.
 
-## One intermittent worth knowing — now narrowed to three candidates
+## A watch that attaches and says nothing
+
+**macOS `fs.watch(recursive)` can attach without error and then deliver
+nothing at all.** Not a theory — captured from a traced full-suite run on this
+Mac, with a per-callback trace on the raw `fs.watch` handler:
+
+```
+1787883135353 attach  …/T/tm-index-SZcWM7
+1787883150385 detach  …/T/tm-index-SZcWM7      ← 15,032 ms later
+```
+
+Zero callbacks in between. The process wrote a file into that directory nine
+milliseconds after attaching and polled for fifteen seconds. The very next
+root in the same process got its first callback in **eleven milliseconds**, so
+this is not the machine being slow — that one watch was simply dead. Roughly
+one full-suite run in fifteen, only under load; never once standalone across
+70+ isolated runs.
+
+Nothing in `indexEngine` can make a silent watch speak, and the app has no way
+to tell a dead watcher from a quiet directory, so `getRoot().live` still reads
+`true`. That limit is stated rather than hidden.
+
+**What was done instead: make the two causes distinguishable.**
+`indexEngine` counts the events the OS actually delivers per root
+(`watcherEventCount`), and the three live-update tests triage a miss:
+
+| what happened | what the test does |
+| --- | --- |
+| the OS delivered **no** events at all | **skips**, saying so and naming this section |
+| the OS delivered events and the change still did not land | **fails**, saying `this IS a bug here: the OS delivered N event(s)` |
+
+Both halves are verified by mutation: a `fs.watch` stubbed to swallow every
+callback produces the skip; reverting the `meansGone` fix so events arrive and
+are dropped produces the failure. **Do not "simplify" that triage into a plain
+assertion.** The single message it replaces — `never landed in the index at
+all` — was printed for both causes, and three sessions of this project were
+spent chasing the wrong one.
+
+## The long-standing intermittent: FOUND, and it was not a flaky test
+
+**Root cause: a bare `catch` that read every `lstat` failure as "this file no
+longer exists".** `src/services/indexEngine.ts` and `src/platform/base.ts`
+both wrapped the watcher's `lstat` in `catch { stat = null /* gone */ }`, and
+`stat === null` runs `deleteSubtree`. `ENOENT` means gone; `EMFILE`, `ENFILE`,
+`EACCES`, `EIO` and friends mean *could not find out* — and `EMFILE` is
+routine in a process that opens thousands of files to scan a disk, which is
+why CI saw this and an idle laptop did not.
+
+It was found by INJECTING one errno rather than by reasoning about it. Two
+measurements, on a machine where nothing had been deleted:
+
+| Injected | Before | After |
+| --- | --- | --- |
+| One `EMFILE` on an indexed 50,000-byte file | index dropped it — **total went 60000 → 10000 while the file sat on disk** | 60000, unchanged |
+| One `EMFILE` on a newly created file | never indexed, and never re-examined — `never landed in the index at all` | lands 400 ms later, via the retry |
+
+The second row is the CI failure verbatim: `an external create, resize and
+delete each land within 2 seconds`, macOS, `actual: -1`. Reproduced locally at
+about 1 run in 40 under load, and it is the same defect as the first row —
+only milder, because there was no row to delete yet.
+
+**The rule now lives in `src/utils/errno.ts` (`meansGone`)** and is applied in
+the base watcher, the Linux watcher, `applyPendingChanges`, `ensureParents`,
+`storage.readJsonFile` and `timeCapsule.reconcileCapsule`. An undecidable
+answer leaves the index exactly as it was and re-asks on the next flush, up to
+`MAX_CHANGE_ATTEMPTS`; past that the root is marked **stale**, which is the
+word this codebase already uses for "a change may have been missed".
+
+`tests/watcherTransientErrors.test.ts` pins it. Reverting `meansGone` fails
+four of its five tests; removing only the retry fails two; and *a real deletion
+is still applied* passes throughout, so the suite is not merely detecting
+change.
+
+### Where else the same bug class was found
+
+Same audit, same shape — a failure read as a fact — all fixed:
+
+- **`storage.readJsonFile` returned "empty" for any read error**, and twelve
+  callers are read-modify-write, so "start fresh" quietly meant "overwrite what
+  was there". Now only `ENOENT` (absent) and unparseable JSON return the
+  fallback; anything else throws.
+- **`timeCapsule.reconcileCapsule`** reads that store, concludes every payload
+  directory is an orphan, and `rm -rf`s it — from an unattended timer. One
+  transient errno would have destroyed the protected copy of every file the
+  user had ever deleted through TreeMap. Fixed at the source, plus a guard
+  that refuses the orphan sweep when the index lists nothing while payloads
+  exist on disk.
+- **`policy.getPolicy`** returned no allowedRoots, no protectedPaths and no
+  byte cap — the exact shape that disables every guard rail on agent deletion.
+  A security boundary failing open, fixed by the same `readJsonFile` change.
+- **`timeCapsule`'s `hasPayload` downgrade** is one-way and was triggered by
+  any `stat` error, permanently retiring an intact payload.
+- **`offload`'s `diskUsage(...).catch(() => ({ free: 0 }))`** re-invented the
+  "0.0 GB free" bug that `diskUsage` had just been changed to prevent. It now
+  refuses with `DEST_SPACE_UNKNOWN` rather than printing a false number.
+
+### Still open, and deliberately not fixed here
+
+The **open-handle delete guard** documents a three-state contract — checked /
+checked-but-incomplete / not-checked — that no code path can currently
+produce: all three platform backends return `[]` on failure, so a probe that
+never ran reports "nothing is open" and the delete proceeds. `complete` has no
+consumers and is hardcoded `true`. Fixing it means widening the platform
+contract across three backends, which is a larger change than this session's
+scope; the honesty machinery is already written and merely disconnected.
+`src/services/trash.ts` silently under-counts unreadable trash locations, and
+`snapshotRecovery` reports "this system has no snapshots" when the probe
+merely failed. All three are worth a session of their own.
+
+## One intermittent worth knowing — now narrowed to three candidates (SUPERSEDED — kept for the record)
 
 It recurred on 27 Aug: **one failure in nine full-suite runs** that day (the
 other eight clean, five plain and three with build chained in front). The name
