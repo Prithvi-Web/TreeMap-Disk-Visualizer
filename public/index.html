@@ -12903,6 +12903,23 @@ function cityOnPointerUp(e) {
   if (hit) cityDrillInto(hit.n);
 }
 
+/**
+ * The pointer left the canvas: drop the hover, and the card that follows it.
+ *
+ * A named function rather than the inline closure it used to be, because
+ * `mount()` runs on every visit to this view and `#cityCanvas` is static
+ * markup that outlives all of them. An anonymous listener cannot be removed
+ * by reference, so `unmount()` could not take it off and each visit left
+ * another copy attached — measured going 1 → 4 across three visits. Harmless
+ * per call and unbounded across a session, which is the exact leak §4.3 makes
+ * the registry responsible for closing.
+ */
+function cityOnPointerLeave() {
+  state.city.hover = null;
+  cityShowCard(null);
+  cityInvalidate();
+}
+
 function cityOnWheel(e) {
   e.preventDefault();
   const c = state.city;
@@ -12995,7 +13012,7 @@ registerView({
     canvas.addEventListener('pointerdown', cityOnPointerDown);
     canvas.addEventListener('pointermove', cityOnPointerMove);
     canvas.addEventListener('pointerup', cityOnPointerUp);
-    canvas.addEventListener('pointerleave', () => { state.city.hover = null; cityShowCard(null); cityInvalidate(); });
+    canvas.addEventListener('pointerleave', cityOnPointerLeave);
     canvas.addEventListener('wheel', cityOnWheel, { passive: false });
     canvas.addEventListener('keydown', cityOnKey);
     window.addEventListener('resize', cityOnResize);
@@ -13018,6 +13035,7 @@ registerView({
       canvas.removeEventListener('pointerdown', cityOnPointerDown);
       canvas.removeEventListener('pointermove', cityOnPointerMove);
       canvas.removeEventListener('pointerup', cityOnPointerUp);
+      canvas.removeEventListener('pointerleave', cityOnPointerLeave);
       canvas.removeEventListener('wheel', cityOnWheel);
       canvas.removeEventListener('keydown', cityOnKey);
     }

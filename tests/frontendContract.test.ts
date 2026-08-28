@@ -2311,3 +2311,75 @@ test('the score is reachable from the keyboard and returns focus', () => {
   assert.match(fn, /Math\.max\(10, Math\.min\(r\.left, window\.innerWidth - w - 10\)\)/, 'and horizontally');
   assert.ok(INDEX.includes('aria-label="Close the score breakdown"'), 'the close control is labelled');
 });
+
+/* ══════════ A view takes back every listener it puts down (§4.3) ══════════ */
+
+/**
+ * Slice out the body of `name() { … }` starting at `from`, by matching braces.
+ *
+ * Deliberately brace-matching rather than a regex: these bodies contain object
+ * literals, arrow functions and template strings, and a non-greedy `\}` finds
+ * the first of those instead of the end of the method.
+ */
+function methodBody(code: string, name: string, from: number): { body: string; end: number } | null {
+  const at = code.indexOf(`${name}() {`, from);
+  if (at === -1) return null;
+  const open = code.indexOf('{', at);
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    if (code[i] === '{') depth++;
+    else if (code[i] === '}') {
+      depth--;
+      if (depth === 0) return { body: code.slice(open + 1, i), end: i };
+    }
+  }
+  return null;
+}
+
+/** Every `mount()`/`unmount()` pair in the view registry, in file order. */
+function viewLifecycles(): { mount: string; unmount: string; at: number }[] {
+  const code = appCode();
+  const out: { mount: string; unmount: string; at: number }[] = [];
+  let from = 0;
+  for (;;) {
+    const mount = methodBody(code, 'mount', from);
+    if (!mount) break;
+    const unmount = methodBody(code, 'unmount', mount.end);
+    if (!unmount) break;
+    out.push({ mount: mount.body, unmount: unmount.body, at: mount.end });
+    from = unmount.end;
+  }
+  return out;
+}
+
+test('a view that adds a listener on mount takes it off on unmount', () => {
+  // The registry's whole reason for existing, and the one rule it could not
+  // enforce from inside itself. Disk City is the only view that binds in
+  // `mount()`, and it shipped with `pointerleave` added on every visit and
+  // removed by nothing — measured going from one handler to four across three
+  // visits to the tab. Every call was harmless and the total was unbounded,
+  // which is exactly how a leak of this shape survives review.
+  //
+  // The canvases are static markup, so they outlive every mount; there is no
+  // element teardown to launder a missed removal.
+  const lifecycles = viewLifecycles();
+  assert.ok(lifecycles.length > 0, 'the registry must have at least one mount/unmount pair to check');
+  for (const { mount, unmount } of lifecycles) {
+    const added = [...mount.matchAll(/addEventListener\('([a-z]+)'\s*,\s*([^,)]+)/g)];
+    for (const [, event, handler] of added) {
+      const name = handler.trim();
+      // An inline closure cannot be passed to removeEventListener at all, so
+      // this is not a style rule: an anonymous handler is unremovable by
+      // construction, and the assertion below could never pass for one.
+      assert.match(
+        name,
+        /^[A-Za-z_$][\w$]*$/,
+        `the "${event}" listener must be a named function so unmount can take it off, not ${name}`,
+      );
+      assert.ok(
+        unmount.includes(`removeEventListener('${event}', ${name})`),
+        `unmount must removeEventListener('${event}', ${name})`,
+      );
+    }
+  }
+});
