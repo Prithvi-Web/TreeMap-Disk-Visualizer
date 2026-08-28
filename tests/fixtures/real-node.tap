@@ -1,0 +1,259 @@
+TAP version 13
+# Subtest: a passing one
+ok 1 - a passing one
+  ---
+  duration_ms: 0.357292
+  type: 'test'
+  ...
+# Subtest: long deep-equal that elides rows
+not ok 2 - long deep-equal that elides rows
+  ---
+  duration_ms: 0.806833
+  type: 'test'
+  location: '/repo/tests/sample.test.js:6:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    ... Skipped lines
+    
+      [
+        0,
+        1,
+        2,
+        3,
+    ...
+        18,
+    +   19
+    -   999
+      ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 0
+    1: 1
+    2: 2
+    3: 3
+    4: 4
+    5: 5
+    6: 6
+    7: 7
+    8: 8
+    9: 9
+    10: 10
+    11: 11
+    12: 12
+    13: 13
+    14: 14
+    15: 15
+    16: 16
+    17: 17
+    18: 18
+    19: 999
+  actual:
+    0: 0
+    1: 1
+    2: 2
+    3: 3
+    4: 4
+    5: 5
+    6: 6
+    7: 7
+    8: 8
+    9: 9
+    10: 10
+    11: 11
+    12: 12
+    13: 13
+    14: 14
+    15: 15
+    16: 16
+    17: 17
+    18: 18
+    19: 19
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (/repo/tests/sample.test.js:9:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1306:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:897:18)
+    Test.postRun (node:internal/test_runner/test:1447:19)
+    Test.run (node:internal/test_runner/test:1372:12)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)
+  ...
+# Subtest: object comparison
+not ok 3 - object comparison
+  ---
+  duration_ms: 0.179375
+  type: 'test'
+  location: '/repo/tests/sample.test.js:12:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      {
+    +   a: 1
+    -   a: 2
+      }
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    a: 2
+  actual:
+    a: 1
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (/repo/tests/sample.test.js:12:42)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1306:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:897:18)
+    Test.postRun (node:internal/test_runner/test:1447:19)
+    Test.run (node:internal/test_runner/test:1372:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+  ...
+# Subtest: an apostrophe in the message
+not ok 4 - an apostrophe in the message
+  ---
+  duration_ms: 0.040167
+  type: 'test'
+  location: '/repo/tests/sample.test.js:14:1'
+  failureType: 'testCodeFailure'
+  error: "could not read the volume's free space"
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    TestContext.<anonymous> (/repo/tests/sample.test.js:15:9)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1306:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:897:18)
+    Test.postRun (node:internal/test_runner/test:1447:19)
+    Test.run (node:internal/test_runner/test:1372:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+  ...
+# Subtest: a failing todo
+not ok 5 - a failing todo # TODO
+  ---
+  duration_ms: 0.086583
+  type: 'test'
+  location: '/repo/tests/sample.test.js:18:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    1 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/repo/tests/sample.test.js:18:55)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1306:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:897:18)
+    Test.postRun (node:internal/test_runner/test:1447:19)
+    Test.run (node:internal/test_runner/test:1372:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+  ...
+# Subtest: a name with \# hash and: colon
+not ok 6 - a name with \# hash and: colon
+  ---
+  duration_ms: 0.053583
+  type: 'test'
+  location: '/repo/tests/sample.test.js:20:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    3 !== 4
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 4
+  actual: 3
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (/repo/tests/sample.test.js:20:54)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1306:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:897:18)
+    Test.postRun (node:internal/test_runner/test:1447:19)
+    Test.run (node:internal/test_runner/test:1372:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+  ...
+# Subtest: parent with a nested failure
+    # Subtest: the nested child
+    not ok 1 - the nested child
+      ---
+      duration_ms: 0.112916
+      type: 'test'
+      location: '/repo/tests/sample.test.js:23:11'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        
+        5 !== 6
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 6
+      actual: 5
+      operator: 'strictEqual'
+      stack: |-
+        TestContext.<anonymous> (/repo/tests/sample.test.js:23:51)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1306:25)
+        Test.start (node:internal/test_runner/test:1177:17)
+        TestContext.test (node:internal/test_runner/test:380:20)
+        TestContext.<anonymous> (/repo/tests/sample.test.js:23:11)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1306:25)
+        Test.processPendingSubtests (node:internal/test_runner/test:897:18)
+        Test.postRun (node:internal/test_runner/test:1447:19)
+      ...
+    1..1
+not ok 7 - parent with a nested failure
+  ---
+  duration_ms: 0.521208
+  type: 'test'
+  location: '/repo/tests/sample.test.js:22:1'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: an assertion message containing TAP
+not ok 8 - an assertion message containing TAP
+  ---
+  duration_ms: 0.093875
+  type: 'test'
+  location: '/repo/tests/sample.test.js:26:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    not ok 999 - phantom failure
+      ---
+      error: injected
+      ...
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  operator: 'fail'
+  stack: |-
+    TestContext.<anonymous> (/repo/tests/sample.test.js:27:10)
+    Test.runInAsyncScope (node:async_hooks:227:14)
+    Test.run (node:internal/test_runner/test:1306:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:897:18)
+    Test.postRun (node:internal/test_runner/test:1447:19)
+    Test.run (node:internal/test_runner/test:1372:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+  ...
+1..8
+# tests 9
+# suites 0
+# pass 1
+# fail 7
+# cancelled 0
+# skipped 0
+# todo 1
+# duration_ms 42.059458

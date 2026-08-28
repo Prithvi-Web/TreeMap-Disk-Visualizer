@@ -58,7 +58,13 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          npm test 2>&1 | tee test-output.tap
+          # `--test-reporter=tap` is PINNED rather than inherited. Node's
+          # default reporter depends on the version and on whether stdout is a
+          # TTY — this repo has already recorded that `npm test` uses the SPEC
+          # reporter locally even when piped. The annotator below reads TAP, so
+          # leaving the format to a default makes the diagnostic step silently
+          # useless the day Node is bumped.
+          npm test -- --test-reporter=tap 2>&1 | tee test-output.tap
         env:
           # Tests must never touch the real app-data directory: scan tests
           # write snapshots, and a shared directory is how junk roots ended up
@@ -66,44 +72,28 @@ jobs:
           TREEMAP_DATA_DIR: ${{ runner.temp }}/treemap-test-data
 
       - name: Surface each failing test as an annotation
-        # Job logs require authentication to read, but annotations are public
-        # on the run page and through the checks API — so a failure names its
-        # failing tests where anyone (or any tool) can see them, instead of
-        # burying them in a virtualized log viewer.
+        # Job logs require admin rights to read through the REST API, and step
+        # summaries are not exposed there at all — so annotations are the only
+        # way a failure reaches anyone who was not watching the run. The
+        # annotator therefore puts the ASSERTION in the annotation, not just
+        # the test name: a name on its own has now cost this project three
+        # sessions, most recently three red runs in a row whose only public
+        # record was `not ok 4 - agent summary: ...`.
+        #
+        # It replaces inline bash that could not finish. GitHub runs
+        # `shell: bash` as `bash -e -o pipefail`, and the old step's second
+        # pipeline was `grep '^# Error' … | head -5 | while …`. An ordinary
+        # failure has no `# Error` lines, so that grep exited 1, pipefail
+        # promoted it, and `-e` killed the step before it ever wrote the step
+        # summary — the very place the assertions were supposed to go.
         if: failure()
         shell: bash
-        run: |
-          # GitHub caps error annotations at 10 per step, so the annotations
-          # carry the first failures and the step summary carries them ALL —
-          # the first Windows run had more failures than the cap could show.
-          grep -n '^not ok' test-output.tap | head -10 | while IFS= read -r line; do
-            echo "::error title=Failing test::${line}"
-          done
-          # Post-test async errors print as '# Error:' comments with the real
-          # cause (e.g. an unhandledRejection after a test ended) — without
-          # this, a file-level failure annotates only as 'test failed'.
-          grep -n '^# Error' test-output.tap | head -5 | while IFS= read -r line; do
-            echo "::error title=Async error after a test::${line}"
-          done
-          {
-            echo '## Failing tests'
-            echo '```'
-            # The NAME alone is not enough to fix anything: two different
-            # asserts in one test fail with the same name, and a name without
-            # its assertion has already cost this project two sessions. The
-            # YAML block Node prints under each failure carries the actual
-            # values, so it goes in the summary with them.
-            grep -A 14 -E '^not ok' test-output.tap || echo '(none matched — see raw log)'
-            echo '```'
-            echo '## Failing test names'
-            echo '```'
-            grep -n '^not ok' test-output.tap || echo '(none matched — see raw log)'
-            grep -E '^# (tests|pass|fail|cancelled|skipped)' test-output.tap
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          grep -E '^# (tests|pass|fail|cancelled|skipped)' test-output.tap | while IFS= read -r line; do
-            echo "::warning title=Suite summary::${line}"
-          done
+        # Plain `node`, not `npx tsx`: this is the last-resort diagnostic step
+        # and it must not need a transpiler, a registry fetch, or the Windows
+        # `.cmd` shim that `scripts/run-tests.js` exists to avoid. `failure()`
+        # also fires when the job died in `npm ci`, and `tsx` would not be
+        # installed to explain that.
+        run: node scripts/tap-annotate.js test-output.tap
 
       - name: Report this machine's detected capabilities
         # Not an assertion — a record. Reading what each OS actually detected is
