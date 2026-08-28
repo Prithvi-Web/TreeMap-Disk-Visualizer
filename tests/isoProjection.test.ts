@@ -369,3 +369,149 @@ test('a shadow reaches back past its own caster', () => {
   assert.ok(Math.min(...shadow.map((p) => p.sy)) < footTop - 1e-9,
     'the shadow extends above the footprint on screen, which is backwards in this projection');
 });
+
+/* ══════════════════ §6.1's level-of-detail threshold ══════════════════ */
+
+/**
+ * The LOD pass, which §6.1's "Tests:" paragraph names explicitly and which
+ * had no test at all.
+ *
+ * That gap was not free. `hatched` — the texture §6.1 requires a block to
+ * carry when it has swallowed its children — was written as
+ * `aggregated > 0 && n.type === 'dir'`, a single number for the WHOLE layout.
+ * `aggregated` counts interior nodes DROPPED because they had a drawn child,
+ * so it is wrong in both directions, and the tests below fail on each:
+ *
+ *   - when only top-level folders survive the threshold — the case the
+ *     texture exists for, every block swallowing an entire subtree — nothing
+ *     had a drawn child, the count was zero, and NOTHING was marked;
+ *   - once it was non-zero, every drawn folder was marked, including
+ *     childless ones, claiming contents that are not there.
+ */
+interface LodNode { path: string; w: number; h: number; type?: string; expanded?: boolean }
+const cityVisibleNodes = lift<
+  (nodes: LodNode[], minArea: number) => { drawn: LodNode[]; aggregated: number }
+>(['tmParentPath', 'cityVisibleNodes'], 'cityVisibleNodes');
+
+/** A folder tree shaped like a real payload: a parent and the children tiling it. */
+const LOD_TREE: LodNode[] = [
+  { path: '/r/big', w: 6, h: 6, type: 'dir', expanded: true },
+  { path: '/r/big/a', w: 3, h: 3, type: 'dir', expanded: true },
+  { path: '/r/big/a/leaf', w: 1, h: 1, type: 'file' },
+  { path: '/r/big/b', w: 2, h: 2, type: 'file' },
+  // `expanded: false` with no children in the payload is what the SERVER
+  // emits for a folder it stopped at — `maxDepth`, `minSize`, `maxNodes`, or
+  // a rect too small to subdivide. At the client's `maxDepth = 4` that is
+  // every folder on the deepest layer, so it is the common case.
+  { path: '/r/truncated', w: 5, h: 5, type: 'dir', expanded: false },
+];
+
+test('the drawn set is the frontier: a parent is dropped once a child is drawn', () => {
+  // The precondition the whole picture rests on — the depth sort is only
+  // correct for footprints that do not overlap, and a parent drawn together
+  // with the children tiling it interpenetrates every one of them.
+  const { drawn } = cityVisibleNodes(LOD_TREE, 1); // everything passes
+  const paths = drawn.map((n) => n.path).sort();
+  assert.deepEqual(paths, ['/r/big/a/leaf', '/r/big/b', '/r/truncated'], 'only the leaves of what passed');
+  assert.ok(!paths.includes('/r/big'), 'the parent gave way to its children');
+  assert.ok(!paths.includes('/r/big/a'), 'and so did the intermediate folder');
+});
+
+test('raising the threshold aggregates children back into the parent', () => {
+  // §6.1: "below a pixel threshold, aggregate children into the parent block".
+  const coarse = cityVisibleNodes(LOD_TREE, 25); // 6x6 = 36 and 5x5 = 25 pass; 3x3 = 9 does not
+  assert.deepEqual(coarse.drawn.map((n) => n.path).sort(), ['/r/big', '/r/truncated']);
+  assert.ok(coarse.drawn.length < cityVisibleNodes(LOD_TREE, 1).drawn.length, 'fewer blocks than at full detail');
+});
+
+test('the frontier property that makes the texture rule sound', () => {
+  /**
+   * §6.1 marks an aggregated block with a texture. `buildCity` marks every
+   * drawn FOLDER, and this is why that is exactly right rather than lazy: a
+   * node is drawn only when no child of it is drawn, so a drawn folder is
+   * always standing in for contents that are not on screen.
+   *
+   * The two narrower rules that were tried both UNDER-marked, which is the
+   * dangerous direction — an unmarked block claims it is showing everything.
+   * `aggregated > 0` is one number for the whole layout, and it is 0 here
+   * precisely when every drawn block is hiding a whole subtree. "Has a child
+   * in the payload" misses every folder the server stopped at, which on a
+   * real 2,759-node payload was 102 of 229.
+   */
+  const coarse = cityVisibleNodes(LOD_TREE, 25);
+  assert.equal(coarse.aggregated, 0, 'nothing was dropped for having a drawn child — so the old flag was 0');
+  for (const n of coarse.drawn) {
+    if (n.type !== 'dir') continue;
+    const hasDrawnChild = coarse.drawn.some((o) => o !== n && o.path.startsWith(`${n.path}/`));
+    assert.equal(hasDrawnChild, false, `${n.path} is drawn, so by the frontier property none of its children are`);
+  }
+});
+
+test('a folder the SERVER stopped at is still drawn, and the payload cannot tell you what it holds', () => {
+  // Why the texture rule cannot be derived from the payload alone.
+  // `/r/truncated` has no children in the node list because the server never
+  // emitted them — at the client's `maxDepth = 4` that is every folder on the
+  // deepest layer of a real scan, each standing for a whole subtree.
+  const { drawn } = cityVisibleNodes(LOD_TREE, 1);
+  assert.ok(drawn.some((n) => n.path === '/r/truncated'), 'it is drawn');
+  assert.ok(!LOD_TREE.some((n) => n.path.startsWith('/r/truncated/')), 'with nothing under it in the payload');
+  assert.equal(
+    LOD_TREE.find((n) => n.path === '/r/truncated')!.expanded,
+    false,
+    'and the only hint is the server’s own flag, which says it stopped',
+  );
+});
+
+test('the frontier holds at every threshold, so no drawn block contains another', () => {
+  // The precondition the depth sort rests on, and the same property the
+  // texture rule rests on. Checked across the whole threshold range rather
+  // than at one convenient value.
+  for (const minArea of [0.5, 1, 4, 9, 25, 30]) {
+    const { drawn } = cityVisibleNodes(LOD_TREE, minArea);
+    for (const a of drawn) {
+      for (const b of drawn) {
+        if (a === b) continue;
+        assert.ok(!b.path.startsWith(`${a.path}/`), `at minArea ${String(minArea)}, ${b.path} is inside ${a.path}`);
+      }
+    }
+  }
+});
+
+test('the count of drawn blocks is what the "showing N of M" line reports', () => {
+  // §6.1 requires the threshold be stated "never silently", and the number in
+  // that sentence is this one. A drawn set that disagreed with the count
+  // would make the sentence a lie while every pixel stayed correct.
+  for (const minArea of [1, 5, 26, 1000]) {
+    const { drawn } = cityVisibleNodes(LOD_TREE, minArea);
+    assert.equal(
+      drawn.length,
+      drawn.filter((n) => n.w * n.h >= minArea).length,
+      'every drawn block passed the threshold it was drawn under',
+    );
+  }
+});
+
+test('a threshold above everything draws nothing rather than guessing', () => {
+  const { drawn, aggregated } = cityVisibleNodes(LOD_TREE, 1e9);
+  assert.deepEqual(drawn, [], 'nothing passes, so nothing is drawn');
+  assert.equal(aggregated, 0);
+});
+
+test('the frontier holds on a deep chain, not just one level', () => {
+  const chain: LodNode[] = [
+    { path: '/c', w: 10, h: 10, type: 'dir' },
+    { path: '/c/1', w: 8, h: 8, type: 'dir' },
+    { path: '/c/1/2', w: 6, h: 6, type: 'dir' },
+    { path: '/c/1/2/3', w: 4, h: 4, type: 'dir' },
+    { path: '/c/1/2/3/4', w: 2, h: 2, type: 'file' },
+  ];
+  // Only the deepest survivor is drawn at each threshold, and everything
+  // above it is marked as hiding what it swallowed.
+  assert.deepEqual(cityVisibleNodes(chain, 1).drawn.map((n) => n.path), ['/c/1/2/3/4']);
+  const coarse = cityVisibleNodes(chain, 17);
+  assert.deepEqual(coarse.drawn.map((n) => n.path), ['/c/1/2']);
+  // And it is a folder standing alone on screen with two more levels beneath
+  // it in the payload — which is precisely what the texture is for.
+  assert.ok(chain.some((n) => n.path.startsWith('/c/1/2/')), 'there really is more underneath');
+  assert.equal(coarse.drawn[0].type, 'dir', 'so the block that survived is marked');
+});

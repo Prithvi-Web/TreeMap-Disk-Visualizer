@@ -4206,8 +4206,13 @@ async function loadTrash() {
     const t = await api('/api/trash/size');
     state.trash = t;
     const el = $('trashFact');
-    if (t && t.totalBytes > 0) {
-      $('sysTrash').textContent = formatBytes(t.totalBytes) + (t.itemCount ? ` · ${formatCount(t.itemCount)}` : '');
+    // `complete: false` means the sweep could not read part of the Trash, so
+    // zero bytes is a floor, not a fact — on macOS without Full Disk Access
+    // that is the everyday case. Hiding the chip then tells the user their
+    // Trash is empty when TreeMap simply could not look.
+    if (t && (t.totalBytes > 0 || t.complete === false)) {
+      const size = t.complete === false ? `at least ${formatBytes(t.totalBytes)}` : formatBytes(t.totalBytes);
+      $('sysTrash').textContent = size + (t.itemCount ? ` · ${formatCount(t.itemCount)}` : '');
       el.hidden = false;
     } else {
       el.hidden = true;
@@ -4216,10 +4221,17 @@ async function loadTrash() {
 }
 function openTrashModal() {
   const t = state.trash;
-  $('trashModalMeta').textContent = t ? `· ${formatBytes(t.totalBytes)} · ${formatCount(t.itemCount)} item${t.itemCount === 1 ? '' : 's'}` : '';
+  const atLeast = t && t.complete === false;
+  $('trashModalMeta').textContent = t
+    ? `· ${atLeast ? 'at least ' : ''}${formatBytes(t.totalBytes)} · ${formatCount(t.itemCount)} item${t.itemCount === 1 ? '' : 's'}`
+    : '';
   const body = $('trashModalBody');
   if (!t || !t.items || !t.items.length) {
-    body.innerHTML = `<div class="muted" style="padding:18px 2px;display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} The Trash is empty.</div>`;
+    // "The Trash is empty" is a claim about the disk. Only make it when the
+    // sweep actually finished; otherwise say what happened and how to fix it.
+    body.innerHTML = atLeast
+      ? `<div class="muted" style="padding:18px 2px;display:flex;align-items:flex-start;gap:8px;">${icon('alert', 15)}<span>${escapeHtml(t.incompleteReason || 'Part of the Trash could not be read, so TreeMap cannot say what is in it.')}</span></div>`
+      : `<div class="muted" style="padding:18px 2px;display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} The Trash is empty.</div>`;
   } else {
     body.innerHTML = '<div class="trash-list">' + t.items.map((it) =>
       `<div class="trash-item">${chipFor({ type: 'file', extension: (it.name.split('.').pop() || '').toLowerCase() }, 14)}` +
@@ -4227,7 +4239,10 @@ function openTrashModal() {
       `<span class="sz num">${formatBytes(it.size)}</span></div>`
     ).join('') + '</div>';
   }
-  $('emptyTrashBtn').disabled = !(t && t.itemCount > 0);
+  // Enabled when there is something to empty OR when we could not tell —
+  // the platform's own emptier has permissions the enumeration does not, so
+  // refusing to even try is the one thing that cannot help.
+  $('emptyTrashBtn').disabled = !(t && (t.itemCount > 0 || t.complete === false));
   $('trashModal').classList.add('open');
 }
 $('trashFact').addEventListener('click', openTrashModal);
@@ -4236,12 +4251,15 @@ $('trashFact').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.k
 /* Empty Trash — irreversible, so it goes through the standard confirm modal. */
 $('emptyTrashBtn').addEventListener('click', () => {
   const t = state.trash;
-  if (!t || !t.itemCount) return;
+  if (!t || (!t.itemCount && t.complete !== false)) return;
   closeModal('trashModal');
   $('confirmTitle').innerHTML = icon('trash', 18) + 'Empty the Trash?';
-  $('confirmText').innerHTML =
-    `Permanently delete <b>${formatCount(t.itemCount)} item${t.itemCount === 1 ? '' : 's'}</b> (${formatBytes(t.totalBytes)})?` +
-    `<br><span style="color:var(--text-3)">This empties the system Trash and cannot be undone.</span>`;
+  $('confirmText').innerHTML = t.complete === false
+    // Never quote a figure as the amount being permanently deleted when the
+    // figure is a floor. Say what is not known, and let the user decide.
+    ? `Empty the system Trash?<br><span style="color:var(--text-3)">${escapeHtml(t.incompleteReason || 'TreeMap could not read the Trash, so it cannot say how much this frees.')} This cannot be undone.</span>`
+    : `Permanently delete <b>${formatCount(t.itemCount)} item${t.itemCount === 1 ? '' : 's'}</b> (${formatBytes(t.totalBytes)})?` +
+      `<br><span style="color:var(--text-3)">This empties the system Trash and cannot be undone.</span>`;
   onConfirmTrash = emptyTrashAction;
   $('confirmModal').classList.add('open');
 });
@@ -11431,8 +11449,11 @@ const CITY_MIN_H = 0.6;  // never zero: a flat block is a hole, not a building
 /**
  * The raw number a height mode is a picture of, before any scaling.
  *
- * Kept separate from `cityHeight` because the scaling needs to see the WHOLE
- * set before it can place any single member — see `cityScaleHeights`.
+ * Kept separate from the scaling because the scaling needs to see the WHOLE
+ * set before it can place any single member — see `cityScaleHeights`. (There
+ * used to be a `cityHeight` that did both against an absolute band; it was
+ * superseded by this pair and has been removed, because a dead function that
+ * looks authoritative is an invitation to call it.)
  */
 function cityMetric(n, mode, counts) {
   if (mode === 'depth') return typeof n.depth === 'number' ? n.depth : null;
@@ -11479,29 +11500,6 @@ function cityAgeDays(n) {
   return Math.max(0, (Date.now() - n.modifiedAt) / 86400000);
 }
 
-/**
- * Height for one node, in layout units.
- *
- * Returns null when the chosen variable is unknown for this node — the caller
- * draws those at the floor height and says how many there were, rather than
- * letting "unknown" and "brand new" look identical.
- */
-function cityHeight(n, mode, counts) {
-  if (mode === 'depth') {
-    const d = typeof n.depth === 'number' ? n.depth : null;
-    if (d === null) return null;
-    return CITY_MIN_H + Math.min(1, d / 8) * CITY_MAX_H;
-  }
-  if (mode === 'files') {
-    const c = counts.get(n.path);
-    if (!c) return null; // not answered yet, or not answerable — not "zero files"
-    return CITY_MIN_H + Math.min(1, Math.log10(c.files + 1) / 5) * CITY_MAX_H;
-  }
-  const days = cityAgeDays(n);
-  if (days === null) return null;
-  // log10 over roughly a decade: a day ≈ floor, ten years ≈ full height.
-  return CITY_MIN_H + Math.min(1, Math.log10(days + 1) / Math.log10(3651)) * CITY_MAX_H;
-}
 
 /** Base colour for a building, as [r,g,b]. */
 function cityRgb(n, mode) {
@@ -11555,6 +11553,10 @@ function cityVisibleNodes(nodes, minArea) {
     if (!passes.has(n.path) || hasDrawnChild.has(n.path)) continue;
     out.push(n);
   }
+  // `aggregated` is the count of interior nodes dropped because a child of
+  // theirs was drawn. It is reported, not used to decide anything — it was
+  // once the basis of the `hatched` flag, and being a single number for the
+  // whole layout it was wrong in both directions. See `buildCity`.
   return { drawn: out, aggregated: hasDrawnChild.size };
 }
 
@@ -11593,7 +11595,7 @@ function buildCity() {
   const nodes = state.treemap.nodes || [];
   c.total = nodes.length;
   if (!nodes.length) {
-    c.blocks = []; c.drawn = 0; c.aggregated = 0; c.unresolved = 0;
+    c.blocks = []; c.drawn = 0; c.aggregated = 0; c.unresolved = 0; c.unknownHeight = 0;
     c.contentBounds = cityContentBounds([]);
     return;
   }
@@ -11618,7 +11620,25 @@ function buildCity() {
       unknownHeight: h === null,
       n,
       rgb: cityJitter(cityRgb(n, c.colour), n.path),
-      hatched: aggregated > 0 && n.type === 'dir',
+      // A drawn FOLDER always stands for contents that are not drawn, so the
+      // texture §6.1 asks for is exactly "this block is a folder".
+      //
+      // That follows from the drawn set being the frontier: a node is drawn
+      // only when NO child of it is drawn, and a folder with no contents has
+      // no size, so it can never clear the area threshold to be drawn at all.
+      // Verified against a real 2,759-node payload: of 236 drawn folders,
+      // zero had a drawn child and zero had zero size.
+      //
+      // Two narrower predicates were tried and both under-marked, which is
+      // the direction that matters — an unmarked block claims it is showing
+      // you everything:
+      //   - `aggregated > 0`, a single flag for the whole layout, marked
+      //     NOTHING in the case the texture exists for (nothing had a drawn
+      //     child, so the count was zero);
+      //   - "has a child in the payload" missed every folder the SERVER
+      //     stopped at — 102 of 229 on that same payload, each one standing
+      //     for a subtree the payload never described.
+      hatched: n.type === 'dir',
     });
   }
   // Bounds are kept from the build pass so the draw loop can cull to the
@@ -12872,7 +12892,13 @@ function cityOnWheel(e) {
 }
 
 function cityOnKey(e) {
-  if (e.key === 'Escape') { e.preventDefault(); cityUp(); return; }
+  // Escape is deliberately NOT handled here. The document-level handler owns
+  // it, so that it works whether or not the canvas has been clicked — which
+  // §6.1 asks for and this binding alone could not deliver. Handling it in
+  // both places climbed only one level by luck: `cityUp` reads
+  // `state.treemap.rootPath`, which `loadCity` updates asynchronously, so two
+  // synchronous calls happened to resolve to the same parent. That is a
+  // coincidence to remove, not to rely on.
   const step = e.shiftKey ? 60 : 20;
   const c = state.city;
   if (e.key === 'ArrowLeft') { c.pan.x += step; cityInvalidate(); e.preventDefault(); }
@@ -12904,7 +12930,11 @@ function citySetColour(mode) {
   for (const b of $('cityColorSeg').querySelectorAll('button')) {
     b.setAttribute('aria-selected', String(b.dataset.c === mode));
   }
-  for (const b of state.city.blocks) b.rgb = cityRgb(b.n, mode);
+  // Through `cityJitter`, exactly as the build pass does. Without it, two
+  // hundred folders of the same kind flatten into one undifferentiated slab
+  // the moment you switch to Type or Age — which is the thing the jitter was
+  // written to prevent — until something happens to rebuild the layout.
+  for (const b of state.city.blocks) b.rgb = cityJitter(cityRgb(b.n, mode), b.n.path);
   drawCity(); cityFetchFacts();
 }
 
@@ -13489,6 +13519,16 @@ function renderOpenHandleWarning(report, pathCount) {
       host.className = 'checking';
       host.hidden = false;
       host.textContent = report.reason || 'TreeMap couldn’t check whether these files are in use.';
+      return;
+    }
+    // "Checked, found nothing" and "checked as much as it could reach, found
+    // nothing in that part" are different facts, and only the first means the
+    // set is clear. The server has always carried `complete` for this and the
+    // UI has never read it — because until now nothing computed it.
+    if (report.complete === false) {
+      host.className = 'checking';
+      host.hidden = false;
+      host.textContent = report.reason || 'TreeMap could not check every file in this set, so some open files may not be listed.';
       return;
     }
     host.hidden = true;
@@ -18348,6 +18388,14 @@ document.addEventListener('keydown', (e) => {
       treemapUp();
       return;
     }
+    // §6.1 asks for "Escape to climb out", and this is the only place that
+    // implements it. It used to live on `cityOnKey`, bound to the CANVAS, so
+    // it fired only once the canvas had focus — and nothing focuses it on
+    // entering the view. Arriving at Disk City and pressing Escape did
+    // nothing at all, while every other view's Escape works without a click
+    // first. The canvas binding keeps the arrow-key panning and the zoom
+    // keys, which are canvas gestures; this key is not.
+    if (state.view === 'city') { cityUp(); return; }
     if (state.view === 'grid') {
       if (state.grid.selection.size) { state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true); }
       else gridUp();
