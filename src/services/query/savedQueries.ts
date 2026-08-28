@@ -82,7 +82,22 @@ export async function listSavedQueries(): Promise<SavedQuery[]> {
   // frontend expects a colour.
   const clean = queries.map(sanitize).filter((q): q is SavedQuery => q !== null);
   // Pinned first, then newest — the order the chip strip renders in.
-  return clean.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdMs - a.createdMs);
+  //
+  // The `id` tie-break is not decoration: `createdMs` is `Date.now()`, so two
+  // queries saved inside the same millisecond compared EQUAL and the order
+  // fell through to whatever the sort happened to do with them, making the
+  // chip strip's order undefined for the one case a user can actually produce
+  // — saving two views in quick succession.
+  //
+  // Honest about what this does and does not fix: ids are random UUIDs, so
+  // the resulting order is STABLE but arbitrary. Two queries saved in the
+  // same millisecond will always come back the same way round; that way
+  // round is not necessarily newest-first. Making it genuinely newest-first
+  // needs a monotonic sequence stamped at save time, which changes the stored
+  // shape — worth doing, and deliberately not smuggled into this change.
+  return clean.sort(
+    (a, b) => Number(b.pinned) - Number(a.pinned) || b.createdMs - a.createdMs || a.id.localeCompare(b.id),
+  );
 }
 
 export type SaveResult =

@@ -19,16 +19,23 @@ function countNodes(n: FileNode): number {
   return c;
 }
 
+/**
+ * Wait for a scan to finish — with a deadline.
+ *
+ * `node:test` has no default per-test timeout, so an unbounded poll does not
+ * fail when a scan never settles: it HANGS THE WHOLE JOB, and CI reports
+ * nothing at all rather than a failing test. `incrementalRescan.test.ts`
+ * already does this correctly; this is the same loop.
+ */
 async function settle(scanId: string): Promise<ScanResult> {
-  await new Promise<void>((r) => {
-    const iv = setInterval(() => {
-      if (getScan(scanId)!.status !== 'running') {
-        clearInterval(iv);
-        r();
-      }
-    }, 25);
-  });
-  return getScan(scanId)!;
+  const t0 = Date.now();
+  for (;;) {
+    const s = getScan(scanId);
+    assert.ok(s, 'scan record must exist');
+    if (s.status !== 'running') return s;
+    assert.ok(Date.now() - t0 < 30_000, `scan ${scanId} never settled — timed out after 30s`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
 }
 
 /** A tree with a hard link, a symlink, a nested dir and an empty dir. */

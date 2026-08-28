@@ -631,7 +631,13 @@ test('a layout that will not read is 409 with its reason, never a 500', async ()
   const real = provider.getVolumeTopology.bind(provider);
   try {
     const scan = await startScan(dir);
-    while (scan.status === 'running') await new Promise((r) => setTimeout(r, 50));
+    // Bounded: an unbounded poll on a scan that never settles hangs the whole
+    // CI job instead of failing one test, and a hung job reports nothing.
+    const t0 = Date.now();
+    while (scan.status === 'running') {
+      assert.ok(Date.now() - t0 < 30_000, 'the fixture scan never settled — timed out after 30s');
+      await new Promise((r) => setTimeout(r, 50));
+    }
 
     provider.getVolumeTopology = () =>
       Promise.reject(new Error('diskutil reported no disks at all after 3 attempts, which cannot be true on a running system'));
