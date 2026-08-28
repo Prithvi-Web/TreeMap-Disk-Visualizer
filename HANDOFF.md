@@ -55,6 +55,30 @@ reading:
 paragraph asks for and that had never existed — which is what let the texture
 bug ship.
 
+### Two things the tests do to the REAL machine
+
+**1. A test emptied the maintainer's Trash, about eighteen times.**
+`tests/trashInfo.test.ts` called the real `emptyTrash()`, which on macOS runs
+`osascript … empty trash`. Two commits opened it and neither was enough alone:
+one stopped `emptyTrash` short-circuiting on an unreadable Trash (right — "I
+cannot see it" is not "it is empty", and on this Mac it genuinely cannot see
+it), which removed the early return that had been keeping the emptier from
+running; the next added a test that calls it.
+
+`TREEMAP_TRASH_DIR` now redirects `trashDirs()`, and under it `emptyTrash`
+clears that directory directly rather than invoking a platform emptier — those
+take no path argument, so running one empties the real Trash whatever
+`trashDirs` was pointed at. **The boundary is in the source, deliberately, not
+in the test's good intentions.** Verified by canary: an item placed in the real
+Trash survives a full `npm test`.
+
+**2. The suite still leaves about nine fixtures in the real Trash per run.**
+Pre-existing, and correct in spirit — `moveToTrash` is trash-only by design and
+the tests exercise it for real. But it accumulates, and it cannot clean up
+after itself on a Mac where `~/.Trash` is unreadable. Forty runs in one session
+put a hundred items there. Worth giving the same treatment as
+`TREEMAP_TRASH_DIR` if anyone touches those tests.
+
 ### The bug class this session was really about
 
 One shape, found thirteen times: **a failure read as a fact.** A `catch` that
@@ -89,7 +113,7 @@ wrong answer costs THERE.** That question is the whole lesson.
 ```
 npm run build      clean
 npm run typecheck  clean
-npm test           1,391 tests · 1,389 pass · 0 fail · 2 skip
+npm test           1,403 tests · 1,401 pass · 0 fail · 2 skip
 npm run bench:v4   7 pass / 3 not measurable in Node
 ```
 
