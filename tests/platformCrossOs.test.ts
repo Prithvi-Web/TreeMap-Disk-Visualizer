@@ -601,3 +601,20 @@ test('windows: asArray normalises ConvertTo-Json single-result collapse', () => 
   assert.deepEqual(asArray(null), []);
   assert.deepEqual(asArray(undefined), []);
 });
+
+test('linux: an unreadable /proc is an error, not "nothing is open"', async () => {
+  // `listPids` used to answer `[]` when `readdir('/proc')` failed, which empties
+  // the whole descriptor sweep — and `checkOpenHandles` turns an empty sweep
+  // into `checked: true` with no conflicts. That is a clean bill of health from
+  // a probe that never ran, and `moveToTrash` proceeds on it. The module's own
+  // contract forbids exactly that answer, and the `checked: false` state it
+  // should produce instead already existed and was already tested.
+  //
+  // Runs on every OS: the /proc root is a parameter, so a path that is not
+  // there exercises the same branch a permission failure would.
+  await assert.rejects(
+    () => readOpenDescriptors(path.join(os.tmpdir(), 'tm-no-such-proc-9f2a1c')),
+    (err: unknown) => err instanceof Error && (err as NodeJS.ErrnoException).code !== undefined,
+    'a /proc that cannot be read propagates rather than reporting an empty machine',
+  );
+});
