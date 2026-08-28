@@ -1,5 +1,163 @@
 # TreeMap — session handoff
 
+## v4 — CI green on all three OSes, and four Phase 6 defects (28 August 2026)
+
+The ask was two things: CI reading green everywhere, and Phase 6 finished with
+nothing left wrong in it. Both were still open, and for different reasons.
+
+### The red CI check
+
+One test, on Windows only, in every run since the `statfs` rewrite:
+`a path that does not exist is refused, not answered with zero`. It was right
+to fail. The two platforms answer a missing path differently and **both are
+correct** — on Unix `statfs`/`df` need the path itself, so it is an error; on
+Windows the question is about the VOLUME, and `D:\no\such\path` resolves to
+`D:`, which exists. The test asserted the POSIX *mechanism* and so encoded
+"reject" as the rule. The rule is narrower: never invent a number. It now
+asserts the invariant — refuse, or answer about a real volume — and a
+fabricated zero fails on every platform. A second test covers the case with no
+honest answer anywhere: a path on a volume that is not there.
+
+macOS and Linux were already green; the earlier failures on both are recorded
+in the section below and were fixed before this session.
+
+### Four Phase 6 defects, all found by driving the app rather than reading it
+
+**1. Disk City leaked a listener on every visit.** `mount()` attached
+`pointerleave` as an inline closure, which `removeEventListener` cannot take
+back, so `unmount()` did not list it and the canvas — static markup that
+outlives every mount — accumulated one more handler per visit. Measured going
+1 → 4 across three visits. Now a named `cityOnPointerLeave`, removed with its
+siblings. `tests/frontendContract.test.ts` gained the general rule rather than
+a test for this one case: every listener a `mount()` adds must be a named
+function and must be removed by the matching `unmount()`. It fails, naming the
+event, when the closure is put back.
+
+**2. The circle-pack layout had no clock, and the comment saying it did not
+need one was wrong by 4x.** `buildCells` stated that "the Voronoi solver is the
+only thing in this file that could plausibly spend" §2.5's 250 ms first-paint
+budget. Measured on `~/Library/Application Support/Claude`:
+`layoutCirclePack` spent **1,102 ms** in one synchronous block, against 55–198
+ms for the capped solver on the same tree. Two nested packs were 1,089 ms of
+it — one of them 740 ms packing 4,239 circles into an 18-pixel radius, where
+13 came out large enough to draw. `ALT_CELL_BUDGET` could never catch it: it
+bounds the shapes that come *out*, and the cost is spent before a cell exists.
+§6.2 asks for a hard cap so "a pathological input cannot hang the frame", and a
+cap only one of the two renderers honoured is not that. `ALT_VORONOI_BUDGET_MS`
+is now `ALT_LAYOUT_BUDGET_MS` and both solvers check it, with the same footnote
+under the map. **The budget is still not met — see "What is still wrong" below.**
+
+**3. A stored channel mode this build does not have rendered as
+`Height = undefined`.** Disk City persists both switchable channels by name and
+`localStorage` outlives the build that wrote it. The only guard was
+`|| 'staleness'`, which catches an *absent* value and not a *meaningless* one —
+the same distinction `meansAbsent` and `meansGone` exist for elsewhere in this
+repo. Seen on screen, and it survived every reload. The legend's wording maps
+are now the list of modes that exist, `cityMode()` sanitises against them, and
+both setters sanitise **before** they persist, so a poisoned value is repaired
+rather than rewritten.
+
+**4. A test claimed another test's temp directory as its own leak.**
+`gduScan removes its temp files even when a shard fails` globbed
+`treemap-gdu-*` over the shared `os.tmpdir()`, which also matches
+`treemap-gdu-precision-XXXXXX` — created by `incrementalRescan.test.ts`, which
+runs concurrently. It failed exactly that way once in this session. The filter
+is now `/^treemap-gdu-[A-Za-z0-9]{6}$/`, which is precisely what `mkdtemp`
+produces for this prefix. Proven by reproducing the race directly: the old
+predicate goes 6 → 7 and fails, the new one stays 5 → 5. This never turned CI
+red, but it could have, on any OS.
+
+### The three canvas budgets, measured in a browser for the first time
+
+`npm run bench:v4` has always printed these three as NOT MEASURED HERE, because
+the harness runs in Node. They are now measured, on a real scan of `/Users/prithvivinay`
+— 1,000,301 items scanned, pruned to **250,296 nodes**, which is the 250k the
+budget is written against.
+
+| Budget | Limit | Measured | Verdict |
+| --- | --- | --- | --- |
+| Disk City, first paint | ≤ 250 ms | **3.2 ms** | PASS |
+| Disk City, interaction frame | ≤ 16 ms median, ≤ 33 ms p95 | **3.1 ms median, 17.1 ms p95**, max 21.7 ms, over 300 frames of a pan/zoom | PASS |
+| Main-thread block, single UI action | ≤ 50 ms | Disk City colour 7.8–10.9 ms · height 3.7–16.3 ms · zoom 13.2 ms · treemap colour 20.9–23.7 ms · renderer switch 0.3–1.5 ms | PASS |
+| Alternate-renderer layout (same 50 ms rule) | ≤ 50 ms | **145–986 ms** | **FAIL — see below** |
+
+**How the frame figures were taken, and what they are not.** The browser pane in
+this session is never visible, so `requestAnimationFrame` does not fire and true
+rAF timings are not obtainable here — a 30-frame probe returned zero frames.
+What is reported instead is the app's own per-frame WORK: the real pointer and
+wheel handlers driven at 60 Hz-equivalent for a 5-second gesture, with the rAF
+scheduler flushed synchronously and each `drawCity` timed. That is the dominant
+term in a frame and the part this code controls; it is **not** a measurement of
+delivered frame rate, and nobody has measured delivered frame rate on this
+machine. §6.2's acceptance line — "Disk City renders a real home folder at
+≥ 30 fps while panning" — therefore remains unverified by measurement, though
+the per-frame work is 5x under the budget that would produce it.
+
+### What is still wrong, and the trade I did not make on my own
+
+**The alternate-renderer layout still breaks §2.5's budgets on a pathological
+folder.** After the clock: 145 ms warm, **986 ms cold** on
+`~/Library/Application Support/Claude`, against 250 ms for a first paint and
+50 ms for a main-thread block. The clock cannot close it, and this is
+structural rather than a tuning problem: it bounds when the *next* pack may
+start, never how long one takes, so the worst case is the budget plus one pack —
+and one pack here is 740 ms.
+
+The cause is specific and measured. `layoutCirclePack` subdivides any parent
+above `ALT_PARENT_MIN_R` (13 px). At R=18.8 with 4,239 children, only 23% of
+that parent's bytes are in children big enough to draw; the other 77% is packed
+at full cost and then discarded by the `r < ALT_MIN_LEAF_R` test.
+
+The fix that works is a coverage guard: estimate each child's drawn radius from
+its share of the parent (O(n), no packing), and if the children that could be
+drawn do not account for enough of the parent's bytes, do not subdivide it at
+all — draw it as a hatched leaf, which is already this app's language for
+"there is more in here", and count the children in the note as it already does.
+Measured on that folder: it removes 155.7 ms of 165.9 ms warm and both cold
+pathologies.
+
+**I did not ship it, because the threshold is a judgement about the picture and
+not about correctness, and §2.5 says to propose the trade rather than ship past
+it.** At a 0.9 threshold two parents stop subdividing: the R=18.8 one at 0.23
+coverage, which is plainly right, and an R=63.8 one at 0.842, which currently
+draws 42 legible beads and would lose them. Capping the pack instead of skipping
+it is the other option and it is worse: it shrinks the hull, so the surviving
+beads inflate to fill the parent — 21.7% in radius on that folder — and the
+map would claim those few files are the whole folder. **The empty space in a
+sparse bead is the honest part of that picture.** Pick a threshold, or say to
+leave it, and it is a ten-line change either way.
+
+### Verified
+
+```
+npm run build            clean
+npm run typecheck        clean
+npm test                 1,411 tests · 1,409 pass · 0 fail · 2 skip   (was 1,404)
+npm run bench:v4         7 pass · 3 not measurable in Node (measured in the browser, above)
+npm run capabilities:report   12/16 available on this Mac
+```
+
+Driven in the browser on a 250,296-node scan: all four renderers; Disk City
+with drill-in, Escape from the document (not the canvas), the height and colour
+segments, the LOD line and the text equivalent (89 rows); the lasso in all four
+of its senses — plain and shift add, ⌘ and Ctrl remove, ⌥ freehand at 37 points
+— staging and unstaging through the real cart; the magnifier by held Z and by
+its pinned toggle; light and dark; a 760 px window with no horizontal overflow.
+Zero console errors throughout. Every focusable control in the Disk City and
+Treemap views carries a label, and the canvas carries its own description.
+
+### What I could NOT verify on this machine
+
+- **Windows and Linux.** The `diskUsage` fix is the honest-invariant form and
+  passes on macOS; the Windows branch it was written for runs only on CI. The
+  new assertion is satisfied by either outcome, so it cannot fail for a
+  platform reason again — but that it *passes* on Windows is something only the
+  runner can say.
+- **Delivered frame rate.** See above: per-frame work, not fps.
+- **The cold-path circle-pack figure on any machine but this one.** 986 ms is
+  one Mac under a load average around 4, and the cold/warm gap is 6x.
+
+
 ## v4 — Phase 6 finished, and the CI red run explained (28 August 2026)
 
 **The red macOS check was never Phase 6.** Phase 6's own tests have not failed
