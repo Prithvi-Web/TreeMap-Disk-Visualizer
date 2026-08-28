@@ -6,6 +6,7 @@ import { sanitizePath } from '../utils/pathSanitizer';
 import { moveToTrash } from './cleaner';
 import { AppError } from '../middleware/errorHandler';
 import type { SnapshotCandidate, SnapshotSearchResult, SnapshotRestoreOutcome } from '../models/types';
+import { meansGone } from '../utils/errno';
 
 /**
  * Snapshot recovery — getting back a file the Trash no longer has (B4).
@@ -73,15 +74,27 @@ export async function findDeleted(targetPath: string): Promise<SnapshotSearchRes
   const capability = await capabilityState('snapshotRestore');
   const provider = platform();
 
-  const snapshots = await provider.listSnapshots(volumeFor(original)).catch(() => []);
+  const volume = volumeFor(original);
+  let listFailed: string | null = null;
+  const snapshots = await provider.listSnapshots(volume).catch((err: unknown) => {
+    listFailed = err instanceof Error ? err.message : String(err);
+    return [];
+  });
   if (snapshots.length === 0) {
     return {
       path: original,
       candidates: [],
-      confirmed: provider.canInspectSnapshotsUnprivileged(),
+      // A listing that FAILED is not a confirmed absence. This file already
+      // models the distinction one level down — a candidate is `'possible'`
+      // rather than `'present'` when it has not been looked inside — and the
+      // same honesty belongs here: "there is nothing older to recover from"
+      // is the sentence that makes someone stop looking for a lost file, and
+      // it must not be printed on the strength of a `tmutil` timeout.
+      confirmed: listFailed === null && provider.canInspectSnapshotsUnprivileged(),
       capability,
-      reason: capability.reason
-        ?? 'This system has no filesystem snapshots, so there is nothing older to recover from.',
+      reason: listFailed !== null
+        ? `The snapshots on ${volume} could not be listed (${String(listFailed)}). This does not mean there is nothing to recover — try again.`
+        : capability.reason ?? `No filesystem snapshots were found on ${volume}, so there is nothing older to recover from.`,
     };
   }
 
@@ -146,7 +159,19 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
     ? sanitizePath(request.destination)
     : defaultRestoreTarget(original);
 
-  const occupied = await fsp.lstat(destination).then(() => true).catch(() => false);
+  // ENOENT is the only answer that means "nothing is there". Any other errno
+  // — EACCES on the parent, ELOOP, EIO — means the question was not answered,
+  // and `false` here is not a harmless default: unlike the Time Capsule and
+  // offload paths, snapshot recovery does NOT go through `copyWithHash`'s
+  // `wx` flag. It ends in `cp -a` running as root on macOS, and `fsp.cp` with
+  // force on Linux and Windows. A wrong "nothing is there" is a privileged
+  // overwrite of a live file.
+  const occupied = await fsp.lstat(destination).then(() => true).catch((err: NodeJS.ErrnoException) => {
+    if (meansGone(err)) return false;
+    throw new AppError(409, 'DESTINATION_UNVERIFIABLE',
+      `TreeMap could not check what is at ${destination} (${err.code ?? 'unknown error'}), so it did not restore over it. ` +
+      'Try again, or choose another destination.');
+  });
   if (occupied && !request.overwrite) {
     throw new AppError(409, 'DESTINATION_OCCUPIED',
       `Something already exists at ${destination}. Recovered files are written beside the original rather than over it — ` +
@@ -161,20 +186,56 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
       throw new AppError(409, 'DESTINATION_IS_FOLDER',
         `${destination} is a folder. Remove it yourself if you really mean to replace it.`);
     }
-    // The replaced file goes to the Trash rather than being unlinked. Nothing
-    // in TreeMap hard-deletes, and this is the one spot in a *recovery* feature
-    // where a careless `rm` would destroy the newer copy while restoring an
-    // older one. B2's open-file guard applies here too, so replacing a file
-    // something else is using is refused rather than done behind its back.
-    await moveToTrash([destination]);
   }
 
+  // Everything that can refuse this restore is settled BEFORE the existing
+  // file is touched.
+  //
+  // The trash step used to run first, so a `listSnapshots` that came back
+  // empty left the user's file in the Trash and handed them `NO_SNAPSHOTS`
+  // as the explanation — for a restore that never started. The same window
+  // covered a declined password prompt below.
   const provider = platform();
-  const snapshots = await provider.listSnapshots(volumeFor(original)).catch(() => []);
+  const volume = volumeFor(original);
+  let listFailed: string | null = null;
+  const snapshots = await provider.listSnapshots(volume).catch((err: unknown) => {
+    listFailed = err instanceof Error ? err.message : String(err);
+    return [];
+  });
   if (snapshots.length === 0) {
     const capability = await capabilityState('snapshotRestore');
-    throw new AppError(409, 'NO_SNAPSHOTS',
-      capability.reason ?? 'This system has no filesystem snapshots to recover from.');
+    // Three different facts, three different sentences. The old code had one:
+    // "This system has no filesystem snapshots to recover from" — asserted
+    // whenever the list came back empty, including when it came back empty
+    // because the listing FAILED. And `capability.reason` is undefined
+    // precisely on a machine that does have snapshots, so the false sentence
+    // appeared exactly where it was wrong.
+    throw new AppError(
+      409,
+      listFailed === null ? 'NO_SNAPSHOTS' : 'SNAPSHOTS_UNREADABLE',
+      listFailed !== null
+        ? `The snapshots on ${volume} could not be listed (${String(listFailed)}), so nothing was recovered. This does not mean there is nothing to recover — try again.`
+        : capability.reason ?? `No filesystem snapshots were found on ${volume}.`,
+    );
+  }
+
+  if (occupied && request.overwrite) {
+    // The replaced file goes to the Trash rather than being unlinked. Nothing
+    // in TreeMap hard-deletes, and this is the one spot in a *recovery*
+    // feature where a careless `rm` would destroy the newer copy while
+    // restoring an older one. B2's open-file guard applies here too, so
+    // replacing a file something else is using is refused rather than done
+    // behind its back.
+    //
+    // The RESULT is checked. `moveToTrash` reports failures rather than
+    // throwing, so ignoring it meant a file that could not be trashed was
+    // treated as cleared — and then handed to a recovery path that overwrites
+    // it as root.
+    const trashed = await moveToTrash([destination]);
+    if (trashed.failed.length > 0) {
+      throw new AppError(409, 'DESTINATION_NOT_CLEARED',
+        `${destination} could not be moved to the Trash (${trashed.failed[0].reason}), so nothing was restored over it.`);
+    }
   }
 
   const result = await provider.recoverFromSnapshots(snapshots, original, destination);

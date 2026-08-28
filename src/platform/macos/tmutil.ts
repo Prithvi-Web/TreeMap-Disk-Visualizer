@@ -74,13 +74,27 @@ export function parseSnapshotDate(name: string): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
+/**
+ * The local snapshots on a volume.
+ *
+ * `tmutil` missing is a genuine "nothing to offer" and answers `[]`. Anything
+ * else is rethrown, because the alternative is a lie the caller repeats: a
+ * 15-second timeout, a kill, or an I/O error used to come back as an empty
+ * list, and the recovery path turns an empty list into the sentence "This
+ * system has no filesystem snapshots to recover from." Telling someone
+ * looking for a lost file that there is nothing to recover from, when the
+ * truth is that the question was not answered, is the one failure this
+ * feature cannot afford — they stop looking.
+ *
+ * Both callers (`snapshotRecovery`) already catch, and now distinguish.
+ */
 export async function listSnapshots(volume: string): Promise<VolumeSnapshotRef[]> {
   try {
     const stdout = await runText('tmutil', ['listlocalsnapshots', volume], { timeoutMs: 15_000 });
     return parseSnapshotList(stdout, volume);
   } catch (err) {
-    if (err instanceof CommandUnavailableError) return [];
-    return []; // no snapshots, or the volume has none — both are "nothing to offer"
+    if (err instanceof CommandUnavailableError) return []; // no Time Machine here at all
+    throw err;
   }
 }
 

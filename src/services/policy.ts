@@ -1,5 +1,5 @@
 import { AgentPolicy } from '../models/types';
-import { readJsonFile } from './storage';
+import { readJsonFileChecked } from './storage';
 import { isInside } from '../utils/pathSanitizer';
 import { allScans } from './diskScanner';
 import { storeOf } from './scanStore';
@@ -26,9 +26,32 @@ import { formatBytes } from '../utils/formatBytes';
 
 export const POLICY_FILE = 'agent-policy.json';
 
-/** Read and normalize the policy; malformed fields fall back to "no restriction". */
+/**
+ * Read and normalize the policy; malformed FIELDS fall back to "no
+ * restriction", but an unreadable or unparseable FILE does not.
+ *
+ * The difference is the whole security posture. Every enforcement below
+ * short-circuits on an empty policy — `assertScanAllowed` returns immediately
+ * when `allowedRoots` is empty, the `protectedPaths` loop never runs, and
+ * `assertBytesCap` returns when the cap is null. So "the policy file could
+ * not be read" and "the user configured no restrictions" produce byte-
+ * identical behaviour: every guard rail off, silently.
+ *
+ * An ABSENT file genuinely means no restrictions, and is documented above as
+ * today's behaviour. A file that is there and will not parse is a different
+ * fact, and this boundary fails closed on it: refusing an operation is
+ * recoverable, and quietly permitting one is not.
+ */
 export async function getPolicy(): Promise<AgentPolicy> {
-  const raw = await readJsonFile<Partial<AgentPolicy>>(POLICY_FILE, {});
+  const loaded = await readJsonFileChecked<Partial<AgentPolicy>>(POLICY_FILE);
+  if (!loaded.ok && loaded.reason === 'corrupt') {
+    throw new AppError(
+      403,
+      'POLICY_UNREADABLE',
+      `agent-policy.json could not be read (${loaded.detail}), so TreeMap refused rather than acting as if you had set no limits. Fix or remove the file.`,
+    );
+  }
+  const raw: Partial<AgentPolicy> = loaded.ok ? loaded.value : {};
   return {
     allowedRoots: Array.isArray(raw.allowedRoots)
       ? raw.allowedRoots.filter((r): r is string => typeof r === 'string' && r.length > 0)

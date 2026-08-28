@@ -2,6 +2,7 @@ import { promises as fsp } from 'fs';
 import path from 'path';
 import os from 'os';
 import { isEphemeral } from './portableMode';
+import { meansGone } from '../utils/errno';
 
 /**
  * Storage — tiny JSON-file persistence in the platform's app-data directory.
@@ -37,7 +38,31 @@ export function appDataDir(): string {
 /** Serialize writes per file so two near-simultaneous saves can't interleave. */
 const writeQueues = new Map<string, Promise<void>>();
 
-/** Read a JSON file from the app-data dir; returns `fallback` when missing/corrupt. */
+/**
+ * Read a JSON file from the app-data dir.
+ *
+ * `fallback` is for the two DECIDED facts: the file is not there yet
+ * (`ENOENT` on first run), or it is there and is not JSON. Both genuinely
+ * mean "there is nothing usable here, start fresh".
+ *
+ * Every other errno is not a decided fact, and inventing one here is
+ * expensive because almost every caller is a read-modify-write: returning the
+ * fallback made them PERSIST it, so "start fresh" quietly became "overwrite
+ * what was there". One transient `EMFILE` — routine in a process that opens
+ * thousands of files to scan a disk — reached all of these:
+ *
+ *   - `reconcileCapsule` read an empty index, concluded every payload
+ *     directory on disk was an orphan, and deleted the protected copy of
+ *     every file the user had ever removed through TreeMap;
+ *   - `getPolicy` returned no allowedRoots, no protectedPaths and no byte
+ *     cap, which is exactly the shape that disables every guard rail on
+ *     agent and API deletion;
+ *   - `saveTokens` dropped one cloud provider's credentials while saving
+ *     another's.
+ *
+ * So an undecidable read throws. Callers that legitimately want to carry on
+ * without the file can catch it; callers that were about to write must not.
+ */
 export async function readJsonFile<T>(name: string, fallback: T): Promise<T> {
   if (isEphemeral()) {
     const held = memoryFiles.get(name);
@@ -48,11 +73,64 @@ export async function readJsonFile<T>(name: string, fallback: T): Promise<T> {
       return fallback;
     }
   }
+  let raw: string;
   try {
-    const raw = await fsp.readFile(path.join(appDataDir(), name), 'utf8');
+    raw = await fsp.readFile(path.join(appDataDir(), name), 'utf8');
+  } catch (err) {
+    if (meansGone(err)) return fallback; // not there yet — first run
+    throw err; // could not tell — say so rather than answer "empty"
+  }
+  try {
     return JSON.parse(raw) as T;
   } catch {
-    return fallback; // ENOENT on first run, or unreadable JSON — start fresh
+    return fallback; // there, but not JSON — nothing usable to preserve
+  }
+}
+
+/** Why `readJsonFile` fell back, for callers that must treat the cases apart. */
+export type JsonLoad<T> =
+  | { ok: true; value: T }
+  | { ok: false; reason: 'absent' }
+  | { ok: false; reason: 'corrupt'; detail: string };
+
+/**
+ * `readJsonFile` with the reason attached.
+ *
+ * Most callers are right to treat "not there" and "not parseable" the same
+ * way — both mean there is nothing usable to preserve, and starting fresh is
+ * the only thing left to do. Two callers are not:
+ *
+ *   - **`getPolicy`.** An empty policy is `{ allowedRoots: [], protectedPaths:
+ *     [], maxBytesPerOperation: null }`, and every enforcement returns
+ *     immediately on that shape. So a corrupt `agent-policy.json` silently
+ *     switches off every guard rail on agent and API deletion. That boundary
+ *     has to fail CLOSED.
+ *   - **`reconcileCapsule`.** An empty index makes every payload directory on
+ *     disk look orphaned, and the sweep deletes orphans. It must be able to
+ *     tell "the user's capsule really is empty" from "the index would not
+ *     parse", because only the first authorises deleting anything.
+ */
+export async function readJsonFileChecked<T>(name: string): Promise<JsonLoad<T>> {
+  if (isEphemeral()) {
+    const held = memoryFiles.get(name);
+    if (held === undefined) return { ok: false, reason: 'absent' };
+    try {
+      return { ok: true, value: JSON.parse(held) as T };
+    } catch (err) {
+      return { ok: false, reason: 'corrupt', detail: err instanceof Error ? err.message : String(err) };
+    }
+  }
+  let raw: string;
+  try {
+    raw = await fsp.readFile(path.join(appDataDir(), name), 'utf8');
+  } catch (err) {
+    if (meansGone(err)) return { ok: false, reason: 'absent' };
+    throw err;
+  }
+  try {
+    return { ok: true, value: JSON.parse(raw) as T };
+  } catch (err) {
+    return { ok: false, reason: 'corrupt', detail: err instanceof Error ? err.message : String(err) };
   }
 }
 

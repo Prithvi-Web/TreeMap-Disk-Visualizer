@@ -2,6 +2,7 @@ import { execFile } from 'child_process';
 import { promises as fsp } from 'fs';
 import path from 'path';
 import os from 'os';
+import { meansGone } from '../utils/errno';
 
 /**
  * Trash accounting (Feature 8). Best-effort, read-only sizing of the system
@@ -26,13 +27,38 @@ export interface TrashInfo {
   itemCount: number;
   paths: string[];
   items: TrashItem[];
+  /**
+   * False when any trash location or subtree could not be read, so
+   * `totalBytes` and `itemCount` are floors rather than facts.
+   *
+   * This is not hypothetical. On macOS `~/.Trash` is TCC-protected, and a
+   * build without Full Disk Access gets **EPERM** from `readdir` — measured
+   * on the maintainer's own Mac against a Trash holding hundreds of items.
+   * Every failure was swallowed with `continue`, so the app reported zero
+   * bytes, rendered "The Trash is empty.", disabled Empty Trash, and
+   * `emptyTrash()` short-circuited to `emptied: true, freedBytes: 0`. A
+   * disk-space tool telling someone their full Trash is empty is the worst
+   * shape this bug class takes, so the incompleteness is now carried out
+   * rather than discarded.
+   */
+  complete: boolean;
+  /** Why the sweep was incomplete, in one sentence a person can act on. */
+  incompleteReason?: string;
 }
 
 const MAX_ENTRIES = 200_000; // overall traversal budget so a huge Trash can't hang the request
 const MAX_ITEMS = 500; // cap on the returned top-level item list
 
+/** What a sweep could not read, so the caller can say so instead of guessing. */
+interface SweepProblems {
+  /** An errno seen while reading a directory or entry, first one wins. */
+  code: string | null;
+  /** True once anything at all was skipped, including the entry budget. */
+  any: boolean;
+}
+
 /** Recursive byte size of a directory, bounded by a shared entry budget. */
-async function dirSize(dir: string, budget: { n: number }): Promise<number> {
+async function dirSize(dir: string, budget: { n: number }, problems: SweepProblems): Promise<number> {
   let total = 0;
   const stack = [dir];
   while (stack.length && budget.n > 0) {
@@ -40,21 +66,32 @@ async function dirSize(dir: string, budget: { n: number }): Promise<number> {
     let entries;
     try {
       entries = await fsp.readdir(d, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      // A subtree that could not be read contributes zero bytes, which is a
+      // FLOOR and not a measurement. Recorded rather than swallowed.
+      if (!meansGone(err)) noteProblem(problems, err);
       continue;
     }
     for (const ent of entries) {
-      if (budget.n-- <= 0) break;
+      if (budget.n-- <= 0) { problems.any = true; break; }
       const full = path.join(d, ent.name);
       try {
         if (ent.isDirectory() && !ent.isSymbolicLink()) stack.push(full);
         else total += (await fsp.lstat(full)).size;
-      } catch {
-        /* entry vanished or unreadable — skip */
+      } catch (err) {
+        // A vanished entry is ordinary in a Trash being emptied elsewhere;
+        // an unreadable one means the total is short by an unknown amount.
+        if (!meansGone(err)) noteProblem(problems, err);
       }
     }
   }
+  if (stack.length > 0) problems.any = true; // budget ran out with work left
   return total;
+}
+
+function noteProblem(problems: SweepProblems, err: unknown): void {
+  problems.any = true;
+  if (problems.code === null) problems.code = (err as NodeJS.ErrnoException).code ?? 'unknown';
 }
 
 /** Per-platform directories that hold trashed items. */
@@ -89,22 +126,30 @@ export async function getTrashInfo(): Promise<TrashInfo> {
   const dirs = await trashDirs();
   const budget = { n: MAX_ENTRIES };
   const items: TrashItem[] = [];
+  const problems: SweepProblems = { code: null, any: false };
   let totalBytes = 0;
 
   for (const dir of dirs) {
     let entries;
     try {
       entries = await fsp.readdir(dir, { withFileTypes: true });
-    } catch {
-      continue; // location doesn't exist on this machine — skip
+    } catch (err) {
+      // ENOENT genuinely means "this location doesn't exist on this machine"
+      // — `trashDirs` synthesises a path per mounted volume, so most of them
+      // legitimately are not there. Every OTHER errno means a location that
+      // DOES exist could not be read, and its contents are missing from the
+      // totals below.
+      if (!meansGone(err)) noteProblem(problems, err);
+      continue;
     }
     for (const ent of entries) {
       const full = path.join(dir, ent.name);
       let size = 0;
       try {
-        if (ent.isDirectory() && !ent.isSymbolicLink()) size = await dirSize(full, budget);
+        if (ent.isDirectory() && !ent.isSymbolicLink()) size = await dirSize(full, budget, problems);
         else size = (await fsp.lstat(full)).size;
-      } catch {
+      } catch (err) {
+        if (!meansGone(err)) noteProblem(problems, err);
         continue;
       }
       totalBytes += size;
@@ -119,7 +164,20 @@ export async function getTrashInfo(): Promise<TrashInfo> {
     itemCount: items.length,
     paths: items.map((i) => i.path),
     items: items.slice(0, MAX_ITEMS),
+    complete: !problems.any,
+    ...(problems.any ? { incompleteReason: describeSweepProblem(problems.code) } : {}),
   };
+}
+
+/** One actionable sentence for why the Trash could not be fully measured. */
+function describeSweepProblem(code: string | null): string {
+  if (code === 'EPERM' || code === 'EACCES') {
+    return process.platform === 'darwin'
+      ? 'macOS would not let TreeMap read the Trash. Give it Full Disk Access in System Settings › Privacy & Security to see what is in there.'
+      : 'TreeMap does not have permission to read part of the Trash, so this total is a minimum.';
+  }
+  if (code === null) return 'The Trash is larger than TreeMap walks in one pass, so this total is a minimum.';
+  return `Part of the Trash could not be read (${code}), so this total is a minimum.`;
 }
 
 /* ---------- Empty Trash ---------- */
@@ -199,7 +257,15 @@ async function clearFreedesktopTrash(failed: EmptyTrashResult['failed']): Promis
  */
 export async function emptyTrash(): Promise<EmptyTrashResult> {
   const before = await getTrashInfo();
-  if (before.itemCount === 0) {
+  // `itemCount === 0` is only a reason to do nothing when the count is a
+  // MEASUREMENT. When the sweep could not read the Trash — EPERM from a
+  // TCC-protected `~/.Trash` is the everyday case on macOS without Full Disk
+  // Access — the count is zero because nothing could be seen, and returning
+  // `emptied: true, freedBytes: 0` told the user their Trash was emptied when
+  // TreeMap had not looked at it, let alone touched it. Run the platform's
+  // own emptier instead: it has its own permissions, and it can succeed where
+  // the enumeration could not.
+  if (before.itemCount === 0 && before.complete) {
     return { emptied: true, freedBytes: 0, itemCount: 0, failed: [] };
   }
 

@@ -282,7 +282,16 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
   // mtime) can be substituted from cache instead of re-walked.
   let cache: Map<string, FileNode> | null = null;
   if (opts.incremental) {
-    const cachedRoot = await readJsonFile<FileNode | null>(cacheFileName(rootPath), null);
+    // `.catch(() => null)` for the same reason the ignore-matcher read above
+    // catches: this is an optimisation, and `null` already means "no usable
+    // cache, do a full walk". Without it, `readJsonFile`'s new throw on an
+    // undecidable errno aborts the whole scan — and because an fs error
+    // carries a string `code`, `errorHandler` maps EACCES/EPERM to
+    // `403 PERMISSION_DENIED`, telling the user they lack permission on a
+    // folder they can read perfectly well. On Windows that is not theoretical:
+    // `writeJsonFile` finishes with a rename, and a read racing it gives
+    // EPERM/EBUSY.
+    const cachedRoot = await readJsonFile<FileNode | null>(cacheFileName(rootPath), null).catch(() => null);
     if (cachedRoot && cachedRoot.path === rootPath && cachedRoot.type === 'dir') {
       cache = buildDirCache(cachedRoot);
     }

@@ -270,9 +270,23 @@ export async function prepareOffload(
   }
   const bytesTotal = plan.reduce((s, p) => s + p.size, 0);
 
-  const { free } = await diskUsage(destDir).catch(() => ({ free: 0 }));
-  if (free < bytesTotal * FREE_SPACE_MARGIN) {
-    throw new AppError(400, 'DEST_FULL', `Not enough space at the destination — need ${(bytesTotal / 1073741824).toFixed(1)} GB, only ${(free / 1073741824).toFixed(1)} GB free`);
+  // `null`, never `{ free: 0 }`. Substituting zero here tells the user
+  // "only 0.0 GB free" about a drive that may be empty — a specific, false
+  // number about their own hardware, produced by a `catch`. `diskUsage` was
+  // deliberately changed to reject rather than return zero for exactly this
+  // reason (see its comment, and the two Windows CI failures behind it);
+  // re-inventing the zero at the call site puts the bug straight back.
+  // `forecast.ts` handles the same call the honest way and is the model.
+  const usage = await diskUsage(destDir).catch(() => null);
+  if (usage === null) {
+    throw new AppError(
+      400,
+      'DEST_SPACE_UNKNOWN',
+      "Could not read how much free space the destination has, so this offload was not started. The drive may be disconnected or busy — check it and try again.",
+    );
+  }
+  if (usage.free < bytesTotal * FREE_SPACE_MARGIN) {
+    throw new AppError(400, 'DEST_FULL', `Not enough space at the destination — need ${(bytesTotal / 1073741824).toFixed(1)} GB, only ${(usage.free / 1073741824).toFixed(1)} GB free`);
   }
 
   // B2, up front. `moveToTrash` guards the originals at the end of the job
@@ -372,23 +386,48 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       job.error = `Offloaded everything, but ${trashed.failed.length} original${trashed.failed.length === 1 ? '' : 's'} couldn't be moved to the Trash: ${trashed.failed[0].reason}`;
     }
 
-    const store = await loadManifest();
-    const now = Date.now();
-    for (const r of results) {
-      store.entries.push({
-        id: crypto.randomUUID(),
-        name: path.basename(r.src),
-        originalPath: r.src,
-        destPath: r.dest,
-        destRoot: destDir,
-        size: r.size,
-        hash: r.hash,
-        offloadedAt: now,
-      });
+    // BOOKKEEPING, past the point of no return — and therefore never a reason
+    // to roll back.
+    //
+    // Everything above has already happened: the copies are written and their
+    // SHA-256 verified, and the originals are in the Trash. The outer `catch`
+    // calls `rollback`, which deletes every copy this job created — so a
+    // throw from here would delete the verified destination copies while the
+    // only other copies sit in a Trash the user is about to empty, having
+    // just been told the offload failed.
+    //
+    // It is not hypothetical. `loadManifest` reads a JSON file, and
+    // `readJsonFile` now rethrows an undecidable errno rather than answering
+    // "empty" — `EMFILE` in a process that opens thousands of files to scan a
+    // disk, or `ENOSPC` on the app-data volume from `saveManifest`. This is
+    // the same reasoning the OPEN_HANDLE_CONFLICT branch above already
+    // applies, and it holds with more force here because the originals are
+    // already gone.
+    try {
+      const store = await loadManifest();
+      const now = Date.now();
+      for (const r of results) {
+        store.entries.push({
+          id: crypto.randomUUID(),
+          name: path.basename(r.src),
+          originalPath: r.src,
+          destPath: r.dest,
+          destRoot: destDir,
+          size: r.size,
+          hash: r.hash,
+          offloadedAt: now,
+        });
+      }
+      store.destinations[destDir] = { lastSeenAt: now };
+      await saveManifest(store);
+      await writeDestManifest(destDir, store.entries);
+    } catch (err) {
+      // The files are where they should be; only the record of them failed.
+      // Say so precisely, because it is the record that Restore reads.
+      job.error =
+        `Everything was copied and verified to ${destDir}, and the originals were moved to the Trash — but the offload record could not be saved ` +
+        `(${err instanceof Error ? err.message : String(err)}). The files are safe at the destination; Restore may not list them until this is fixed.`;
     }
-    store.destinations[destDir] = { lastSeenAt: now };
-    await saveManifest(store);
-    await writeDestManifest(destDir, store.entries);
 
     job.phase = 'done';
     job.status = 'complete';

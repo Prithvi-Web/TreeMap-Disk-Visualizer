@@ -8,7 +8,7 @@ import {
   TimeCapsuleJob,
   TimeCapsuleStatus,
 } from '../models/types';
-import { appDataDir, readJsonFile, writeJsonFile } from './storage';
+import { appDataDir, readJsonFile, readJsonFileChecked, writeJsonFile } from './storage';
 import { isEphemeral } from './portableMode';
 import { moveToTrash } from './cleaner';
 import { getSettings } from './settings';
@@ -16,6 +16,7 @@ import { diskUsage } from './diskUsage';
 import { copyWithHash, hashFile, CopyCancelled } from '../utils/copyVerify';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
+import { meansGone } from '../utils/errno';
 
 /**
  * Time Capsule — recovery beyond the OS Trash (B3).
@@ -896,21 +897,77 @@ export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entr
   await fsp.mkdir(root, { recursive: true }).catch(() => {});
   const store = await loadStore();
 
+  // Why the index is empty decides whether anything may be deleted below.
+  // `loadStore` cannot say — it flattens absent and corrupt into `entries: []`
+  // — so the reason is read separately here.
+  const loaded = await readJsonFileChecked<Partial<CapsuleStore>>(INDEX_FILE);
+  const indexUnparseable = !loaded.ok && loaded.reason === 'corrupt';
+
   const known = new Set(store.entries.map((e) => e.id));
   let orphansRemoved = 0;
+  // A directory listing that could not be read is not an empty capsule —
+  // and `[]` here is harmless only because nothing is deleted from it.
   const onDisk = await fsp.readdir(root, { withFileTypes: true }).catch(() => []);
-  for (const dirent of onDisk) {
-    if (!dirent.isDirectory() || known.has(dirent.name)) continue;
-    const orphanCapsuleDir = path.join(root, dirent.name);
-    await fsp.rm(orphanCapsuleDir, { recursive: true, force: true }).catch(() => {});
-    orphansRemoved++;
+  const payloadDirs = onDisk.filter((d) => d.isDirectory());
+
+  // The one deletion in this function, and the guard in front of it.
+  //
+  // "Every directory here is an orphan" is a conclusion drawn entirely from
+  // the index, so it is only as good as the index — and one unreadable index
+  // would `rm -rf` the protected copy of every file the user has ever deleted
+  // through TreeMap, unattended, from a maintenance timer.
+  //
+  // The guard keys off WHY the index is empty, not off the count. An index
+  // that PARSED and holds no entries is a decided fact — a capsule the user
+  // has emptied — and the sweep proceeds, so stale directories are still
+  // cleaned up. An index that would not parse is not a fact about the disk,
+  // and nothing is deleted on the strength of it. (An index that could not be
+  // READ at all never reaches here: `readJsonFile` throws for an undecidable
+  // errno rather than answering "empty".)
+  if (!indexUnparseable) {
+    for (const dirent of payloadDirs) {
+      if (known.has(dirent.name)) continue;
+      const orphanCapsuleDir = path.join(root, dirent.name);
+      await fsp.rm(orphanCapsuleDir, { recursive: true, force: true }).catch(() => {});
+      orphansRemoved++;
+    }
+  } else if (payloadDirs.length > 0) {
+    // Through the capsule's own event log, not `console.error`: in a packaged
+    // build stdout goes nowhere a user will look, and this says the only copy
+    // of files the app protected may be at risk.
+    recordEvent(store, {
+      at: Date.now(),
+      kind: 'lost',
+      name: 'Time Capsule index',
+      originalPath: path.join(root, INDEX_FILE),
+      sizeBytes: 0,
+      detail:
+        `The Time Capsule index could not be read, so the ${String(payloadDirs.length)} recovery ` +
+        'folders on disk were left alone rather than deleted as orphans. Nothing has been lost, but ' +
+        'Restore cannot list them until the index is repaired or removed.',
+    });
+    await saveStore(store);
   }
 
   let entriesLost = 0;
   for (const entry of store.entries) {
     if (!entry.hasPayload) continue;
-    const exists = await fsp.stat(entryDir(entry.id)).then(() => true).catch(() => false);
-    if (exists) continue;
+    // "Could not stat it" is not "it is gone", and here the difference is
+    // one-way: `hasPayload = false` is never revisited (the line above skips
+    // such entries on every later sweep) and `startCapsuleRestore` refuses
+    // them outright. So a single `EIO` from a capsule on an external or
+    // network volume permanently retires a payload that is sitting there
+    // intact — and writes a log line telling the user it cannot be restored,
+    // which is not true.
+    let missing: boolean;
+    try {
+      await fsp.stat(entryDir(entry.id));
+      missing = false;
+    } catch (err) {
+      if (!meansGone(err)) continue; // ask again next sweep; the entry is already correct
+      missing = true;
+    }
+    if (!missing) continue;
     entry.heldBytes = 0;
     entry.hasPayload = false;
     entriesLost++;

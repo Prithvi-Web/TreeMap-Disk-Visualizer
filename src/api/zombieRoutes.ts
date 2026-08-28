@@ -27,7 +27,21 @@ zombieRouter.get('/zombie-handles', async (_req: Request, res: Response) => {
   if (!state.available) {
     throw new AppError(409, 'CAPABILITY_UNAVAILABLE', state.reason ?? 'Held-space detection is not available on this system');
   }
-  const report = await zombieReport();
+  // The probe can now fail loudly instead of answering `[]`: `lsof` being
+  // killed or truncated used to come back as "no held files", which is a
+  // confident zero from a check that did not run. A failure here is the same
+  // shape as the capability being unavailable — the feature could not answer
+  // — so it is reported the same way rather than as a server fault.
+  let report;
+  try {
+    report = await zombieReport();
+  } catch (err) {
+    throw new AppError(
+      409,
+      'CAPABILITY_UNAVAILABLE',
+      `Held-space detection could not run: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   res.json({ ...report, capability: state });
 });
 
