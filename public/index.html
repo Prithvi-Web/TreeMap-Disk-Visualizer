@@ -8222,10 +8222,20 @@ function layoutCirclePack(root, geo) {
   const rootCell = { n: root, depth: 0, kind: 'circle', cx: geo.cssW / 2, cy: geo.cssH / 2, r: R, leaf: true };
   cells.push(rootCell);
   const queue = [{ cell: rootCell, node: root }];
+  const started = performance.now();
+  let outOfTime = false;
 
   while (queue.length) {
     const job = queue.shift();
     if (job.cell.depth >= maxDepth || job.cell.r < ALT_PARENT_MIN_R) continue;
+    // The same clock the Voronoi solver runs under, and for the same reason:
+    // the cell budget below bounds how many shapes come OUT of this loop, not
+    // how long the packing that produces them takes. A single pack of 4,239
+    // values into an 18-pixel radius was measured at 740 ms, and the cell
+    // budget never saw it because the cost is spent before a cell exists.
+    // Checked after the first level has been laid out, never before it, so a
+    // slow machine yields a coarse picture rather than an empty one.
+    if (job.cell.depth > 0 && performance.now() - started > ALT_LAYOUT_BUDGET_MS) { outOfTime = true; break; }
     const kids = altChildren(job.node);
     if (!kids.length) continue;
     const packed = circlePackChildren(kids.map((k) => k.size), job.cell.r, { padding: 0.045 });
@@ -8255,7 +8265,7 @@ function layoutCirclePack(root, geo) {
   for (const c of cells) { c.bb = altBounds(c); c.more = altHasMore(c); }
   return {
     cells,
-    note: altNoteFor({ omittedCount, omittedBytes, unresolved, truncated, drawn: cells.length }),
+    note: altNoteFor({ omittedCount, omittedBytes, unresolved, truncated, outOfTime, drawn: cells.length }),
   };
 }
 
@@ -8268,8 +8278,19 @@ const ALT_VORONOI_MIN_AREA = 8500;
    Checked BEFORE each nested layout, so the true worst case is this plus one
    layout — which is why it is well under §2.5's 250 ms rather than equal to
    it. Measured on a real `node_modules`: at 260 ms the first paint came in at
-   249 ms, which is inside the budget by an amount that is not a margin. */
-const ALT_VORONOI_BUDGET_MS = 150;
+   249 ms, which is inside the budget by an amount that is not a margin.
+
+   It applies to BOTH solvers. It used to be Voronoi's alone, on the reasoning
+   recorded in `buildCells` that the Voronoi solver "is the only thing in this
+   file that could plausibly spend" the 250 ms budget. That was measured and
+   is false: `layoutCirclePack` had no clock on it at all, and on
+   `~/Library/Application Support/Claude` it spent **1,102 ms** in one
+   synchronous block — four times the whole first-paint budget and five times
+   what the capped solver beside it is allowed. Two nested packs accounted for
+   1,089 ms of it. §6.2 asks for a hard cap so "a pathological input cannot
+   hang the frame"; a cap that only one of the two renderers honours is not
+   that.                                                                     */
+const ALT_LAYOUT_BUDGET_MS = 150;
 
 function layoutVoronoi(root, geo) {
   const pad = 8;
@@ -8294,7 +8315,7 @@ function layoutVoronoi(root, geo) {
     const depth = job.cell.depth;
     if (depth >= maxDepth) continue;
     if (depth > 0 && job.cell.area < ALT_VORONOI_MIN_AREA) continue;
-    if (performance.now() - started > ALT_VORONOI_BUDGET_MS) { outOfTime = true; break; }
+    if (performance.now() - started > ALT_LAYOUT_BUDGET_MS) { outOfTime = true; break; }
     const kids = altChildren(job.node);
     if (!kids.length) continue;
     // Only the cell count is set here. The iteration budget belongs to the
@@ -8361,7 +8382,7 @@ function altNoteFor(info) {
     );
   }
   if (info.truncated) bits.push(`stopped at ${formatCount(ALT_CELL_BUDGET)} shapes`);
-  if (info.outOfTime) bits.push(`stopped subdividing after ${ALT_VORONOI_BUDGET_MS} ms — drill in for more detail`);
+  if (info.outOfTime) bits.push(`stopped subdividing after ${ALT_LAYOUT_BUDGET_MS} ms — drill in for more detail`);
   if (info.converged === false) {
     bits.push(
       `areas are approximate: the solver hit its iteration cap with the worst cell ` +
@@ -8401,8 +8422,15 @@ function altCellPath(ctx, c) {
  * Build the layout for the current alternate renderer.
  *
  * Timed, and the timing is kept, because §2.5 gives a new canvas view 250 ms
- * to first paint and the Voronoi solver is the only thing in this file that
- * could plausibly spend it.
+ * to first paint and both solvers here can spend it.
+ *
+ * This comment used to say the Voronoi solver was "the only thing in this file
+ * that could plausibly spend it", and that sentence is why `layoutCirclePack`
+ * shipped with no clock on it. It was wrong by a factor of four: measured at
+ * 1,102 ms on `~/Library/Application Support/Claude`, against 55–198 ms for
+ * the capped solver on the same tree. The lesson is the one this repo keeps
+ * relearning — a budget that is reasoned about rather than measured is not a
+ * budget, and `altMs` exists precisely so the reasoning can be checked.
  */
 function buildCells(geo) {
   const root = sunburstRoot();

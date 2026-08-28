@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { lift } from './fixtures/liftFrontend';
+import { lift, INDEX } from './fixtures/liftFrontend';
 
 /**
  * Nested circle packing (v4 §6.2).
@@ -301,4 +301,82 @@ test('the same input packs the same way twice — no drift between sessions', ()
   const a = JSON.stringify(circlePackChildren(values, 120).circles);
   const b = JSON.stringify(circlePackChildren(values, 120).circles);
   assert.equal(a, b);
+});
+
+/* ═════════ The layout clock, which only one of the two solvers had ═════════ */
+
+const altNoteFor = lift<(i: Record<string, unknown>) => string>(
+  ['formatCount', 'formatBytes', 'ALT_CELL_BUDGET', 'ALT_LAYOUT_BUDGET_MS', 'altNoteFor'], 'altNoteFor',
+);
+
+/** A named function's source, brace-matched out of the shipped frontend. */
+function fnSource(name: string): string {
+  const start = INDEX.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `function ${name} must exist`);
+  const open = INDEX.indexOf('{', start);
+  let depth = 0;
+  for (let i = open; i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}') { depth--; if (depth === 0) return INDEX.slice(start, i + 1); }
+  }
+  throw new Error(`function ${name} has an unbalanced body`);
+}
+
+test('BOTH alternate renderers lay out under a wall clock', () => {
+  // §6.2 asks for "a hard iteration cap so a pathological input cannot hang
+  // the frame". The Voronoi solver had one from the start; `layoutCirclePack`
+  // had none, and the comment on `buildCells` said in so many words that the
+  // Voronoi solver was "the only thing in this file that could plausibly
+  // spend" the 250 ms first-paint budget.
+  //
+  // That was measured on ~/Library/Application Support/Claude and it was
+  // wrong by a factor of four: 1,102 ms in one synchronous block, of which
+  // two nested packs were 1,089 ms — one of them 740 ms spent packing 4,239
+  // circles into an 18-pixel radius, where 13 of them ended up large enough
+  // to draw. The cell budget could not catch it, because the cost is spent
+  // before a single cell exists.
+  for (const solver of ['layoutCirclePack', 'layoutVoronoi']) {
+    const src = fnSource(solver);
+    assert.match(src, /const started = performance\.now\(\);/, `${solver} must start a clock`);
+    assert.match(
+      src,
+      /performance\.now\(\) - started > ALT_LAYOUT_BUDGET_MS/,
+      `${solver} must check the shared layout budget, not a private one`,
+    );
+    assert.match(src, /outOfTime = true/, `${solver} must record that it ran out of time`);
+    // The flag has to reach the NOTE, not merely exist. Dropping it from this
+    // one call is a silent truncation that every other assertion here passes.
+    const call = src.slice(src.indexOf('altNoteFor('));
+    assert.match(call, /altNoteFor\(\{[^}]*\boutOfTime\b/, `${solver} must hand outOfTime to altNoteFor`);
+  }
+});
+
+test('the clock is checked before the work, not after it', () => {
+  // A budget consulted after the expensive call has already returned is a
+  // report, not a cap. Both solvers must test the clock inside the queue loop
+  // and BREAK, so the next pack never starts.
+  for (const solver of ['layoutCirclePack', 'layoutVoronoi']) {
+    const src = fnSource(solver);
+    const check = src.indexOf('ALT_LAYOUT_BUDGET_MS');
+    assert.notEqual(check, -1);
+    const line = src.slice(check, src.indexOf('\n', check));
+    assert.match(line, /outOfTime = true; break;/, `${solver} must stop rather than note and continue`);
+  }
+  // And the first level is never skipped: an empty picture is not a cheaper
+  // picture, it is a wrong one.
+  assert.match(
+    fnSource('layoutCirclePack'),
+    /job\.cell\.depth > 0 && performance\.now\(\) - started > ALT_LAYOUT_BUDGET_MS/,
+    'the circle solver always lays out depth 0 before consulting the clock',
+  );
+});
+
+test('running out of time is stated, never silently truncated', () => {
+  // §2.4: partial is stated, not hidden. A map that stopped subdividing looks
+  // exactly like a map that had nothing more to show.
+  const note = altNoteFor({ omittedCount: 0, omittedBytes: 0, unresolved: 0, truncated: false, outOfTime: true, drawn: 12 });
+  assert.match(note, /stopped subdividing after 150 ms/, 'the note says it stopped, and after how long');
+  assert.match(note, /drill in for more detail/, 'and what the user can do about it');
+  const quiet = altNoteFor({ omittedCount: 0, omittedBytes: 0, unresolved: 0, truncated: false, outOfTime: false, drawn: 12 });
+  assert.equal(quiet, '', 'a layout that finished says nothing');
 });
