@@ -201,6 +201,22 @@ test('only a real absence counts as gone', () => {
   assert.equal(meansGone(Object.assign(new Error('x'), { errno: -4058 })), true, 'UV_ENOENT on Windows');
   assert.equal(meansAbsent(Object.assign(new Error('x'), { errno: -4052 })), true, 'UV_ENOTDIR on Windows');
 
+  // And the numeric path must keep the two predicates APART. Sharing one set
+  // made `meansGone` behave exactly like `meansAbsent` there, so the retry
+  // loop the wider set exists to prevent came straight back — the same
+  // shared-helper slip, one level down.
+  const numeric = (n: number): NodeJS.ErrnoException => Object.assign(new Error('lost its code'), { errno: n });
+  assert.equal(meansGone(numeric(-62)), true, 'ELOOP (darwin) may be treated as gone by a stat');
+  assert.equal(meansAbsent(numeric(-62)), false, 'but it is not "the file is not there"');
+  assert.equal(meansGone(numeric(-24)), false, 'EMFILE is neither');
+
+  // The walk must see past this codebase's OWN error classes, which all carry
+  // a string `code` (`POLICY_UNREADABLE`, `SCAN_FAILED`) — stopping at the
+  // first one made the wrapped fs error invisible, defeating the walk's
+  // entire purpose.
+  const appish = Object.assign(new Error('outer'), { code: 'POLICY_UNREADABLE', cause: err('ENOENT') });
+  assert.equal(meansAbsent(appish), true, 'the fs cause underneath is still found');
+
   // A wrapped error still answers, because this codebase chains them now.
   assert.equal(meansGone(new Error('outer', { cause: err('ENOENT') })), true, 'the cause is walked');
   assert.equal(meansGone(new Error('outer', { cause: err('EMFILE') })), false);

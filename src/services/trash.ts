@@ -208,8 +208,25 @@ function describeSweepProblem(code: string | null): string {
 /* ---------- Empty Trash ---------- */
 
 export interface EmptyTrashResult {
-  /** True when every trash location is empty afterwards. */
+  /**
+   * The emptier ran and nothing reported a failure.
+   *
+   * NOT "the Trash is empty afterwards" — that is `verified`, and the two
+   * come apart on the commonest macOS configuration there is. Requiring
+   * confirmation here reported a SUCCESSFUL Finder empty as a failure
+   * ("Emptied 0 B, but some items could not be removed") on any Mac without
+   * Full Disk Access, because the re-read that would have confirmed it is
+   * exactly the read that permission denies. An irreversible operation that
+   * worked must not be announced as broken.
+   */
   emptied: boolean;
+  /**
+   * The Trash was re-read afterwards and really is empty.
+   *
+   * False when the sweep could not read it — the emptying may still have
+   * worked, and `emptied` says whether it was attempted without error.
+   */
+  verified: boolean;
   freedBytes: number;
   itemCount: number;
   /** Per-location failures — one location failing never aborts the rest. */
@@ -315,7 +332,7 @@ export async function emptyTrash(): Promise<EmptyTrashResult> {
   // own emptier instead: it has its own permissions, and it can succeed where
   // the enumeration could not.
   if (before.itemCount === 0 && before.complete) {
-    return { emptied: true, freedBytes: 0, itemCount: 0, failed: [] };
+    return { emptied: true, verified: true, freedBytes: 0, itemCount: 0, failed: [] };
   }
 
   const failed: EmptyTrashResult['failed'] = [];
@@ -362,14 +379,19 @@ export async function emptyTrash(): Promise<EmptyTrashResult> {
   //
   // `ran` matters too: if no platform mechanism executed at all, nothing was
   // emptied whatever the counts say.
-  const emptied = ran && after.complete && after.itemCount === 0;
+  // Two different claims, and conflating them is what turned a successful
+  // empty into an error message. `emptied` is what this process did;
+  // `verified` is what it could afterwards see.
+  const emptied = ran && failed.length === 0;
+  const verified = after.complete && after.itemCount === 0;
   return {
     emptied,
+    verified,
     freedBytes: Math.max(0, before.totalBytes - after.totalBytes),
     itemCount: Math.max(0, before.itemCount - after.itemCount),
-    // A fallback that finished the job makes earlier attempts uninteresting —
-    // but only when we can see that it finished. Discarding the failures on
-    // an unreadable Trash is how a total failure was reported as a success.
+    // A mechanism that finished the job makes earlier attempts uninteresting.
+    // Keyed on `emptied` (nothing failed) rather than on `verified`, because
+    // an unreadable Trash must not manufacture a failure list either.
     failed: emptied ? [] : failed,
   };
 }

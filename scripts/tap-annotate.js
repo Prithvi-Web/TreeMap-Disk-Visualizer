@@ -156,16 +156,25 @@ function parseTap(text) {
     out.push({ line: atLine, name: unescapeName(name), fields });
   }
 
-  // Drop `describe` SUITE wrappers. Node prints one for every failing suite
-  // but excludes it from `# fail N` — measured: two nested `describe` levels
-  // give 4 real failures, 2 wrappers, and `# fail 4`. Reporting them
-  // double-counts against that figure and spends capped annotation slots on
-  // lines that name no cause.
+  // Drop `describe` SUITE wrappers whose only content is "N subtests failed".
+  // Node prints one for every failing suite but excludes it from `# fail N` —
+  // measured: two nested `describe` levels give 4 real failures, 2 wrappers,
+  // and `# fail 4`. Reporting them double-counts against that figure and
+  // spends capped annotation slots on lines that name no cause.
   //
-  // `type`, not the message: a `test()` parent with a failing subtest carries
-  // the SAME `error: 'N subtests failed'` and IS counted, so filtering on the
-  // message drops real failures. Only `type: 'suite'` marks the uncounted one.
-  const kept = out.filter((f) => f.fields.type !== 'suite');
+  // `type` ALONE is not the test, and getting that wrong was worse than the
+  // problem it fixed. Node uses `type: 'suite'` for two different things, and
+  // the other one is `failureType: 'hookFailed'` — a `before`/`after` that
+  // threw. There, the suite line is the ONLY record of the cause: the child
+  // tests all pass, `# fail` reads 0, node exits 1, and dropping it left the
+  // annotator emitting no error at all and printing "No `not ok` line was
+  // found in this TAP output", which is false. A red build with nothing to
+  // read is exactly what this file exists to prevent.
+  //
+  // A `test()` parent with a failing subtest carries the same
+  // `'N subtests failed'` message and IS counted, so the message alone is not
+  // the test either. Both fields together are.
+  const kept = out.filter((f) => !(f.fields.type === 'suite' && f.fields.failureType === 'subtestsFailed'));
 
   // A failure carrying a real assertion outranks one that only says "test
   // failed": when the cap bites, the informative ones must be the survivors.

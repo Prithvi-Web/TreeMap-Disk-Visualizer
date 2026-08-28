@@ -197,8 +197,12 @@ export abstract class BaseProvider implements PlatformProvider {
         // mis-joined path) produced a count of zero, and the acceptance test
         // that reads the count would SKIP green on it. The number has to mean
         // "the OS spoke", not "we passed it on".
-        notifyWatchDelivery(root);
+        //
+        // After the `closed` guard, though: a late callback from a watcher
+        // that has been unsubscribed would otherwise be credited to whatever
+        // watch is now attached to the same root.
         if (closed || filename === null) return;
+        notifyWatchDelivery(root);
         const full = path.join(root, filename);
         fsp
           .lstat(full)

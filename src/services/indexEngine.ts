@@ -13,7 +13,7 @@ import { parseQuery, extensionOf, escapeLike } from '../utils/searchQuery';
 import type { ChangeEvent, Unsubscribe } from '../platform/types';
 import { onWatchDelivery } from '../platform/types';
 import type { FileNode } from '../models/types';
-import { meansGone } from '../utils/errno';
+import { meansAbsent, meansGone } from '../utils/errno';
 
 /**
  * IndexEngine (A1) — the persistent, live-updated file index.
@@ -809,17 +809,34 @@ export function watcherEventCount(rootPath: string): number | null {
  * turns that into pressure that relents, which is the only kind that can let
  * the condition clear.
  */
+/** The backoff level a root's pending flush was scheduled at. */
+const flushLevels = new Map<string, number>();
+
 function scheduleFlush(rootPath: string, attempts = 0): void {
-  if (flushTimers.has(rootPath)) return;
   // Capped at 4x. The backoff exists to relieve pressure, not to make the
   // index slow to notice things: doubling all the way to the attempt limit
   // would put the last retry twelve seconds after the change, which is well
   // outside what "live" should mean. 400, 800, then 1,600 ms three times —
   // about six seconds of patience in total.
-  const delay = FLUSH_MS * Math.pow(2, Math.min(attempts, 2));
+  const level = Math.min(attempts, 2);
+  const existing = flushTimers.get(rootPath);
+  if (existing) {
+    // A pending flush at a LOWER level does not hold. Returning early here is
+    // what made the backoff a no-op in the scenario it was written for: under
+    // EMFILE a fresh watcher event arrives with `attempts: 0`, asks for
+    // 400 ms, wins, and every subsequent retry early-returns onto it. The
+    // timer is replaced rather than a scan of the queue being run per event —
+    // that scan cost 756 ms of blocked event loop on a 20,000-event burst,
+    // inside the `fs.watch` callback.
+    if ((flushLevels.get(rootPath) ?? 0) >= level) return;
+    clearTimeout(existing);
+  }
+  const delay = FLUSH_MS * Math.pow(2, level);
+  flushLevels.set(rootPath, level);
   flushTimers.set(
     rootPath,
     setTimeout(() => {
+      flushLevels.delete(rootPath);
       flushTimers.delete(rootPath);
       // Caught here, and it has to be: this is a bare timer callback, so a
       // rejection has nobody above it. `applyPendingChanges` can now throw —
@@ -829,7 +846,16 @@ function scheduleFlush(rootPath: string, attempts = 0): void {
       // The burst is lost, which the staleness guard already covers; the
       // process is not.
       void applyPendingChanges(rootPath).catch((err: unknown) => {
-        console.error(`[treemap] index flush failed for ${rootPath}:`, err);
+        // The queue is taken and deleted before any work, so a throw from
+        // inside the burst loses every remaining change. The comment here
+        // used to say "the staleness guard already covers it" — nothing did:
+        // `retryOrMarkStale` is never reached on that path, so a `SQLITE_FULL`
+        // would evaporate into one log line while the index went on
+        // reporting itself fresh. Marking it here is what makes the claim in
+        // that sentence true.
+        const root = getRoot(rootPath);
+        if (root) markRootStale(rootPath, root.id, root.builtAt);
+        console.error(`[treemap] index flush failed for ${rootPath}, root marked stale:`, err);
       });
     }, delay),
   );
@@ -853,14 +879,13 @@ function enqueueChange(rootPath: string, change: PendingChange): void {
   const prior = queue.get(change.path);
   const attempts = Math.max(change.attempts, prior ? prior.attempts : 0);
   queue.set(change.path, { ...change, attempts });
-  // The MERGED count, and the highest one queued for this root — not the
-  // incoming change's. `scheduleFlush` keeps the earliest timer, so during a
-  // burst under EMFILE a fresh event's `attempts: 0` would ask for 400 ms,
-  // win, and every retry's longer delay would early-return onto it. The
-  // backoff was a no-op in exactly the scenario it exists for.
-  let worst = attempts;
-  for (const queued of queue.values()) worst = Math.max(worst, queued.attempts);
-  scheduleFlush(rootPath, worst);
+  // The merged count for THIS path only. Scanning the whole queue for the
+  // worst was O(n^2) across a burst — measured at 756 ms of blocked event
+  // loop for 20,000 events, synchronously inside the `fs.watch` callback,
+  // which is every HTTP response and SSE heartbeat stalled for that long.
+  // `scheduleFlush` now raises an existing timer's delay instead, which is
+  // O(1) and is what actually makes the backoff hold.
+  scheduleFlush(rootPath, attempts);
 }
 
 export function startWatcher(rootPath: string): boolean {
@@ -905,14 +930,27 @@ function retryOrMarkStale(rootPath: string, rootId: number, builtAt: number | nu
   // freshly rebuilt index stale, and `AND state = 'ready'` would not stop it
   // because a rebuilt root is exactly that. Matching the build stamp means
   // the row has to be the same row this burst was working on.
-  if (db && builtAt !== null) {
-    try {
-      db.prepare("UPDATE roots SET state = 'stale' WHERE id = ? AND built_at = ? AND state = 'ready'").run(rootId, builtAt);
-    } catch {
-      /* the database went away underneath us; the next open rebuilds anyway */
-    }
-  }
+  markRootStale(rootPath, rootId, builtAt);
   return false;
+}
+
+/**
+ * Record that this root may have missed a change.
+ *
+ * `built_at` is part of the predicate, not decoration. `rootId` is read before
+ * a burst's awaits, and `buildIndex` DELETEs the roots row and INSERTs a new
+ * one — SQLite reuses a rowid when the deleted row held the maximum — so a
+ * flush still in flight when a rebuild finishes could mark a freshly rebuilt
+ * index stale, and `AND state = 'ready'` would not stop it because a rebuilt
+ * root is exactly that.
+ */
+function markRootStale(_rootPath: string, rootId: number, builtAt: number | null): void {
+  if (!db || builtAt === null) return;
+  try {
+    db.prepare("UPDATE roots SET state = 'stale' WHERE id = ? AND built_at = ? AND state = 'ready'").run(rootId, builtAt);
+  } catch {
+    /* the database went away underneath us; the next open rebuilds anyway */
+  }
 }
 
 export function stopWatcher(rootPath: string): void {
@@ -930,6 +968,7 @@ export function stopWatcher(rootPath: string): void {
     clearTimeout(timer);
     flushTimers.delete(rootPath);
   }
+  flushLevels.delete(rootPath);
   pendingByRoot.delete(rootPath);
   eventsSeenByRoot.delete(rootPath);
 }
@@ -995,7 +1034,16 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
       // `an external create ... within 2 seconds` failed on macOS CI: the
       // insert was skipped, nothing re-examined the file, and the change was
       // lost for good rather than late.
-      if (meansGone(err)) stat = null;
+      // `meansAbsent`, not `meansGone`. `errno.ts` states the rule — the
+      // narrow set wherever the answer decides whether stored state may be
+      // discarded — and this is the site in this file that runs
+      // `deleteSubtree`. It was the one place the rule was written for and
+      // not applied to. The "retry loop that never clears" justification for
+      // the wider set does not hold here either: this path is bounded by
+      // MAX_CHANGE_ATTEMPTS, after which the root is marked stale, and stale
+      // is the right answer for a path that cannot be resolved. Deleting its
+      // subtree from the index is not.
+      if (meansAbsent(err)) stat = null;
       else undecided = true;
     }
     if (!stillOpen()) return applied;

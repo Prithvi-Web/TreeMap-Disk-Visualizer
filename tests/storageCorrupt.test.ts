@@ -66,6 +66,26 @@ test('the backup is made once, however many times the file is read', async () =>
   });
 });
 
+test('a SECOND, different corruption is kept as well', async () => {
+  // The sidecar outlives the process, so a per-FILE check meant: corrupt,
+  // backed up, user repairs it, months later it corrupts differently — the
+  // sidecar exists, so the new bytes were destroyed by the next save with no
+  // backup and no log line, because the message lived inside the branch that
+  // copies. The check has to be per incident.
+  await withDataDir(async (dir) => {
+    const { readJsonFile } = await import('../src/services/storage');
+    fs.writeFileSync(path.join(dir, 'settings.json'), '{first corruption');
+    await readJsonFile('settings.json', {});
+    fs.writeFileSync(path.join(dir, 'settings.json'), '{a DIFFERENT corruption');
+    await readJsonFile('settings.json', {});
+
+    const backups = fs.readdirSync(dir).filter((f) => f.includes('.corrupt'));
+    assert.equal(backups.length, 2, `both incidents kept, found: ${backups.join(', ')}`);
+    const contents = backups.map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).sort();
+    assert.deepEqual(contents, ['{a DIFFERENT corruption', '{first corruption']);
+  });
+});
+
 test('an absent store is a first run, and leaves nothing behind', async () => {
   // The caveat has to mean something: a `.corrupt` file appearing on a fresh
   // install would be alarming and wrong.

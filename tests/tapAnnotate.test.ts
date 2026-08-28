@@ -316,3 +316,34 @@ test('the reported count agrees with the counter on suites too', () => {
   const counter = annotate.parseCounts(SUITES).find((c) => c.startsWith('# fail '));
   assert.equal(reported, Number(counter!.slice('# fail '.length)), `parsed ${reported}, suite said ${counter}`);
 });
+
+/**
+ * A third recording: a suite whose `after()` hook throws while every test
+ * passes. Node exits 1, `# fail` reads **0**, and the suite line is the only
+ * record of the cause.
+ */
+const HOOK = fs.readFileSync(path.join(__dirname, 'fixtures', 'real-node-hook.tap'), 'utf8');
+
+test('a hook failure is reported — it is the only record there is', () => {
+  // Filtering `type: 'suite'` outright dropped this, and the annotator then
+  // printed "No `not ok` line was found in this TAP output" — false, and in
+  // the one artefact that exists to be trusted when nothing else is readable.
+  // A red build with nothing to read is precisely what this file prevents.
+  const parsed = annotate.parseTap(HOOK);
+  assert.equal(parsed.length, 1, 'the suite line is kept');
+  assert.equal(parsed[0].fields.failureType, 'hookFailed');
+  assert.equal(parsed[0].fields.error, 'could not close the database');
+
+  const { annotations, summary } = annotate.render(HOOK);
+  assert.ok(annotations.some((a) => a.startsWith('::error') && a.includes('could not close the database')),
+    'and it reaches an annotation, which is the only public channel');
+  assert.ok(!summary.includes('No `not ok` line was found'), 'the summary must not deny what it was given');
+});
+
+test('the counter check does not apply to a hook failure, and that is expected', () => {
+  // `# fail 0` with one reported failure is CORRECT here: node excludes the
+  // suite wrapper from the count but still exits non-zero. Recorded so the
+  // count-agreement test above is not "fixed" by re-dropping this line.
+  assert.equal(annotate.parseCounts(HOOK).find((c) => c.startsWith('# fail ')), '# fail 0');
+  assert.equal(annotate.parseTap(HOOK).length, 1);
+});

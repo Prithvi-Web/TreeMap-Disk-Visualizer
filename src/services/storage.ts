@@ -110,16 +110,22 @@ export async function readJsonFile<T>(name: string, fallback: T): Promise<T> {
 async function preserveCorrupt(name: string, err: unknown): Promise<void> {
   try {
     const dir = appDataDir();
+    const source = path.join(dir, name);
     const backup = path.join(dir, `${name}.corrupt`);
-    await fsp.access(backup).then(
-      () => undefined, // already kept from an earlier read; leave the first one
-      async () => {
-        await fsp.copyFile(path.join(dir, name), backup);
-        console.error(
-          `[treemap] ${name} could not be parsed (${err instanceof Error ? err.message : String(err)}). ` +
-            `The original is kept at ${backup}; TreeMap is continuing with defaults.`,
-        );
-      },
+    const current = await fsp.readFile(source);
+
+    // Once per INCIDENT, not once per file. The sidecar outlives the process,
+    // so a per-file check meant: corrupt, backed up, user repairs it, months
+    // later it corrupts differently — sidecar exists, new bytes destroyed by
+    // the next save, no backup and no log line, because the message lived
+    // inside the branch that copies.
+    const kept = await fsp.readFile(backup).catch(() => null);
+    if (kept !== null && kept.equals(current)) return; // same incident, already kept
+    const target = kept === null ? backup : `${backup}-${String(Date.now())}`;
+    await fsp.copyFile(source, target);
+    console.error(
+      `[treemap] ${name} could not be parsed (${err instanceof Error ? err.message : String(err)}). ` +
+        `The original is kept at ${target}.`,
     );
   } catch {
     /* best effort — the caller still gets its fallback */

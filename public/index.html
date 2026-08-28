@@ -10601,8 +10601,11 @@ async function runOffloadJob(paths, dest) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ scanId: state.scanId, paths, dest }),
     });
-    watchOffloadJob(resp.jobId, 'Offloading…', () => {
-      toast('Offloaded and verified — originals are in the Trash');
+    watchOffloadJob(resp.jobId, 'Offloading…', (ev) => {
+      // Silent when a warning has already been shown. This line says the
+      // originals are in the Trash, which is exactly what the warning may be
+      // denying — the two appeared together, the false one last.
+      if (!ev || !ev.warning) toast('Offloaded and verified — originals are in the Trash');
       loadOffloadIndex();
       rescan();
     });
@@ -10618,8 +10621,8 @@ async function runRestoreJob(ids) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
     });
-    watchOffloadJob(resp.jobId, 'Restoring…', () => {
-      toast('Restored and verified');
+    watchOffloadJob(resp.jobId, 'Restoring…', (ev) => {
+      if (!ev || !ev.warning) toast('Restored and verified');
       loadOffloadIndex();
     });
   } catch (e) {

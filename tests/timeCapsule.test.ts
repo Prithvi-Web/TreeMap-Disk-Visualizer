@@ -792,3 +792,45 @@ test('an index that parses and holds nothing DOES clean up, so nothing leaks', a
     await fsp.rm(path.join(root, 'payload-genuinely-orphaned'), { recursive: true, force: true });
   }
 });
+
+test('a MISSING index is not permission to delete what it would have described', async () => {
+  /**
+   * The half that stayed open after the corrupt-index refusal, and the one
+   * that mattered more, because the app walked the user into it: the refusal
+   * message used to end "until that file is repaired or moved". Moving it
+   * makes it ABSENT, an absent index read as a first run, and a first run
+   * deletes every payload folder as an orphan. Measured from that exact
+   * sentence — the remedy the app printed was the thing that destroyed the
+   * data the refusal had just protected.
+   *
+   * A genuine first run has no index AND no payloads, so it loses nothing.
+   */
+  const root = capsuleRoot();
+  await fsp.mkdir(path.join(root, 'payload-orphaned-by-a-missing-index'), { recursive: true });
+  try {
+    await withCapsuleIndex(null, async () => {
+      const result = await reconcileCapsule();
+      assert.equal(result.orphansRemoved, 0, 'an index that is not there authorises nothing');
+      assert.ok(fs.existsSync(path.join(root, 'payload-orphaned-by-a-missing-index')));
+    });
+  } finally {
+    await fsp.rm(path.join(root, 'payload-orphaned-by-a-missing-index'), { recursive: true, force: true });
+  }
+});
+
+test('the refusal never tells the user to move or delete the index', async () => {
+  // The message is the remedy. A sentence that says "or moved" hands the user
+  // the destructive path in the same breath as the protection.
+  await withCapsuleIndex('{"entries":[', async () => {
+    await assert.rejects(
+      () => getCapsuleIndex(),
+      (err: unknown) => {
+        const m = (err as Error).message;
+        assert.match(m, /repaired/, 'it says what to do');
+        assert.match(m, /Do NOT delete or move it/i, 'and what not to do');
+        assert.ok(!/repaired or moved|repair or move/i.test(m), 'never the version that destroys the payloads');
+        return true;
+      },
+    );
+  });
+});

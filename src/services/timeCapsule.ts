@@ -167,9 +167,11 @@ export class CapsuleIndexUnreadableError extends AppError {
     super(
       500,
       'CAPSULE_INDEX_UNREADABLE',
-      `The Time Capsule index at ${path.join(appDataDir(), INDEX_FILE)} could not be read (${detail}). ` +
-        'TreeMap will not change the capsule until that file is repaired or moved, because every entry ' +
-        'in it is the only record of a file it is holding.',
+      `The Time Capsule index (${INDEX_FILE}, in TreeMap's app-data folder) could not be read (${detail}). ` +
+        'TreeMap will not change the capsule until it is repaired, because every entry in it is the only ' +
+        'record of a file it is holding. Do NOT delete or move it — the recovery folders beside it are ' +
+        'named by entries in that file, and without it they cannot be matched to anything. A copy of the ' +
+        'unreadable file is kept alongside it with a .corrupt suffix.',
     );
     this.name = 'CapsuleIndexUnreadableError';
   }
@@ -194,13 +196,28 @@ export class CapsuleIndexUnreadableError extends AppError {
  * An ABSENT index is a genuine first run and still returns an empty store.
  */
 async function loadStore(): Promise<CapsuleStore> {
+  return (await loadStoreWithProvenance()).store;
+}
+
+/**
+ * The store, plus whether it came from a file that was actually there.
+ *
+ * `parsed: false` means the index is ABSENT — a first run — and only
+ * `reconcileCapsule` needs to know, because absence is the one thing that
+ * looks identical to "the user has never protected anything" and is not:
+ * a capsule root full of payload folders says otherwise.
+ */
+async function loadStoreWithProvenance(): Promise<{ store: CapsuleStore; parsed: boolean }> {
   const loaded = await readJsonFileChecked<Partial<CapsuleStore>>(INDEX_FILE);
   if (!loaded.ok && loaded.reason === 'corrupt') throw new CapsuleIndexUnreadableError(loaded.detail);
   const raw: Partial<CapsuleStore> = loaded.ok ? loaded.value : {};
   return {
-    version: typeof raw.version === 'number' ? raw.version : SCHEMA_VERSION,
-    entries: Array.isArray(raw.entries) ? raw.entries : [],
-    events: Array.isArray(raw.events) ? raw.events : [],
+    parsed: loaded.ok,
+    store: {
+      version: typeof raw.version === 'number' ? raw.version : SCHEMA_VERSION,
+      entries: Array.isArray(raw.entries) ? raw.entries : [],
+      events: Array.isArray(raw.events) ? raw.events : [],
+    },
   };
 }
 
@@ -940,8 +957,9 @@ export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entr
   // empty one, so this is the only place that has to know the difference —
   // and it knows it by being told, not by asking a second time.
   let store: CapsuleStore;
+  let indexParsed: boolean;
   try {
-    store = await loadStore();
+    ({ store, parsed: indexParsed } = await loadStoreWithProvenance());
   } catch (err) {
     if (!(err instanceof CapsuleIndexUnreadableError)) throw err;
     const onDisk = await fsp.readdir(root, { withFileTypes: true }).catch(() => []);
@@ -980,6 +998,27 @@ export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entr
   // What reaches here is an index that PARSED. Zero entries is then a decided
   // fact — a capsule the user emptied — and the sweep proceeds, so stale
   // directories are still cleaned up rather than accumulating for ever.
+  // A MISSING index is not authority to delete either, and this is the half
+  // that was left open: the refusal above covers a corrupt file, and the
+  // remedy a user is most likely to reach for on being told a file is broken
+  // is to move it out of the way — which makes it absent, which used to read
+  // as a first run, which deleted every payload. Measured, from the exact
+  // sentence this app printed.
+  //
+  // A real first run has no index AND no payload folders, so it loses
+  // nothing. Payload folders with no index means the capsule has been used
+  // and its record is gone: the folders are named by entries in that file, so
+  // deleting them destroys the only copies while restoring them needs a human
+  // either way.
+  if (!indexParsed && payloadDirs.length > 0) {
+    console.error(
+      `[treemap] capsule reconcile: no index at ${path.join(appDataDir(), INDEX_FILE)}, but ` +
+        `${String(payloadDirs.length)} recovery folders are on disk. They were LEFT ALONE — an index that is ` +
+        'missing is not permission to delete what it would have described.',
+    );
+    return { orphansRemoved: 0, entriesLost: 0 };
+  }
+
   for (const dirent of payloadDirs) {
     if (known.has(dirent.name)) continue;
     const orphanCapsuleDir = path.join(root, dirent.name);

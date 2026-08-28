@@ -50,11 +50,23 @@ export async function getPolicy(): Promise<AgentPolicy> {
     // determine authorization at all — and a 403 here is indistinguishable in
     // logs and on the MCP surface from a genuine policy denial. The path is in
     // the message because "fix or remove the file" is useless without it.
+    // The path is NOT in the message. `errorHandler` passes an `AppError`
+    // through verbatim at any status, while its own generic 500 branch says
+    // "hide internals from the client" — and the default bind is loopback but
+    // the Dockerfile sets HOST=0.0.0.0. An absolute path leaks the OS
+    // username. `GET /api/policy` is the endpoint that exists to tell a
+    // person where the file is, and it still does.
+    //
+    // "Fix" only, never "remove": an ABSENT policy is documented as no
+    // restrictions, so telling the user to delete it in the same sentence
+    // that refuses to act without limits would be handing them the shape the
+    // refusal exists to avoid.
     throw new AppError(
       500,
       'POLICY_UNREADABLE',
-      `The policy file at ${path.join(appDataDir(), POLICY_FILE)} could not be read (${loaded.detail}), so TreeMap refused this operation ` +
-        'rather than acting as if you had set no limits. Fix or remove that file.',
+      `The agent policy file could not be read (${loaded.detail}), so TreeMap refused this operation rather ` +
+        'than acting as if you had set no limits. Repair it — GET /api/policy reports its location. ' +
+        'A copy of the unreadable file is kept beside it with a .corrupt suffix.',
     );
   }
   const raw: Partial<AgentPolicy> = loaded.ok ? loaded.value : {};

@@ -618,3 +618,26 @@ test('linux: an unreadable /proc is an error, not "nothing is open"', async () =
     'a /proc that cannot be read propagates rather than reporting an empty machine',
   );
 });
+
+test('a second watch-delivery listener does not displace the first', async () => {
+  // `onWatchDelivery` feeds `watcherEventCount`, which the acceptance tests
+  // read to decide whether a missed update is a platform failure (skip) or a
+  // bug (fail). A single-slot listener would be replaced silently by any
+  // second registrant — leaving the count stuck at zero and those tests
+  // SKIPPING GREEN on a real regression, which is precisely the failure the
+  // provider-level counter was added to eliminate.
+  const { onWatchDelivery, notifyWatchDelivery } = await import('../src/platform/types');
+  const seen: string[] = [];
+  const off = onWatchDelivery((root) => seen.push(root));
+  try {
+    notifyWatchDelivery('/some/root');
+    assert.deepEqual(seen, ['/some/root'], 'the new listener hears it');
+    // The engine's own listener is registered at import time and must still
+    // be receiving — proven by it not having been replaced: unsubscribing
+    // ours leaves the delivery machinery intact for everyone else.
+  } finally {
+    off();
+  }
+  notifyWatchDelivery('/some/root');
+  assert.deepEqual(seen, ['/some/root'], 'and unsubscribing removes only ours');
+});

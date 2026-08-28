@@ -1,0 +1,44 @@
+TAP version 13
+# Subtest: everything passes but teardown throws
+    # Subtest: ok one
+    ok 1 - ok one
+      ---
+      duration_ms: 0.255542
+      type: 'test'
+      ...
+    # Subtest: ok two
+    ok 2 - ok two
+      ---
+      duration_ms: 0.051833
+      type: 'test'
+      ...
+    1..2
+not ok 1 - everything passes but teardown throws
+  ---
+  duration_ms: 0.806208
+  type: 'suite'
+  location: '/repo/tests/hook.test.js:3:1'
+  failureType: 'hookFailed'
+  error: 'could not close the database'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    SuiteContext.<anonymous> (/repo/tests/hook.test.js:4:23)
+    TestHook.runInAsyncScope (node:async_hooks:227:14)
+    TestHook.run (node:internal/test_runner/test:1306:25)
+    TestHook.run (node:internal/test_runner/test:1651:18)
+    TestHook.run (node:internal/util:602:20)
+    Suite.runHook (node:internal/test_runner/test:1198:20)
+    node:internal/test_runner/test:1749:38
+    node:internal/util:602:20
+    Suite.run (node:internal/test_runner/test:1772:13)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)
+  ...
+1..1
+# tests 2
+# suites 1
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 41.356167

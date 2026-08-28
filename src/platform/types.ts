@@ -88,14 +88,27 @@ export interface OpenHandleBatch {
  * from "the watch delivered and something downstream lost it" — a distinction
  * that decides whether a missed update is a platform limitation or a bug.
  */
-let watchDeliveryListener: ((root: string) => void) | null = null;
+const watchDeliveryListeners = new Set<(root: string) => void>();
 
-export function onWatchDelivery(fn: ((root: string) => void) | null): void {
-  watchDeliveryListener = fn;
+/**
+ * A SET, not a slot. A single-slot listener is replaced silently by the next
+ * registrant, and what it feeds is `watcherEventCount` — which the acceptance
+ * tests read to decide whether a missed update is a platform failure (skip)
+ * or a bug (fail). A listener quietly overwritten means a count stuck at
+ * zero, which means SKIP GREEN on a real regression: exactly the failure the
+ * provider-level counter was introduced to eliminate, reintroduced one level
+ * up by the mechanism introducing it.
+ *
+ * Returns an unsubscribe, so a test can add one without displacing the
+ * engine's.
+ */
+export function onWatchDelivery(fn: (root: string) => void): () => void {
+  watchDeliveryListeners.add(fn);
+  return () => watchDeliveryListeners.delete(fn);
 }
 
 export function notifyWatchDelivery(root: string): void {
-  if (watchDeliveryListener) watchDeliveryListener(root);
+  for (const fn of watchDeliveryListeners) fn(root);
 }
 
 export type Unsubscribe = () => void;

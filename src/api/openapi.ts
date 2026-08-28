@@ -630,7 +630,20 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'meta',
     destructive: false,
     responses: {
-      '200': jsonResponse('Policy', obj({ policy: ref('AgentPolicy'), file: str('Absolute path of agent-policy.json') }, ['policy', 'file'])),
+      '200': jsonResponse(
+        'The policy, or — when the file exists and will not parse — `policy: null` with `unreadable: true` and a reason. ' +
+          'This endpoint answers in that state ON PURPOSE: every other policy-gated call refuses with POLICY_UNREADABLE, ' +
+          'and this is the one that tells a person where the file is.',
+        obj(
+          {
+            policy: ref('AgentPolicy'),
+            file: str('Absolute path of agent-policy.json'),
+            unreadable: bool('Present and true when the file could not be parsed; `policy` is then null'),
+            reason: str('Why it could not be parsed'),
+          },
+          ['file'],
+        ),
+      ),
     },
   },
   {
@@ -2160,7 +2173,8 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       '500': errorResponse(
         'CAPSULE_INDEX_UNREADABLE — the index file exists and will not parse. Every capsule operation refuses ' +
           'in this state rather than acting on an invented empty capsule, because each entry is the only record ' +
-          'of a file it is holding. The message names the file to repair or move.',
+          'of a file it is holding. The message names the file to repair — never to move or delete it, which ' +
+          'would make the next sweep read an ABSENT index, call it a first run, and remove every recovery folder.',
       ),
     },
   },

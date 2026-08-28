@@ -45,9 +45,15 @@ function errnoOf(err: unknown): { code?: string; errno?: number } | null {
   // and a wrapped fs error with the answer inside it must not read as "could
   // not tell" just because the wrapper carries no code of its own. The depth
   // bound also terminates a cyclic cause chain.
-  for (let e: unknown = err, depth = 0; e != null && depth < 4; e = (e as { cause?: unknown }).cause, depth++) {
+  for (let e: unknown = err, depth = 0; e != null && depth < 8; e = (e as { cause?: unknown }).cause, depth++) {
     const node = e as NodeJS.ErrnoException;
-    if (typeof node.code === 'string') return { code: node.code };
+    // An ERRNO-shaped code only. This codebase's own error classes —
+    // `AppError`, `PathRejectedError`, `CapsuleIndexUnreadableError` — all
+    // carry a string `code` too (`POLICY_UNREADABLE`, `SCAN_FAILED`), so
+    // stopping at the first string made the wrapped fs error underneath
+    // invisible the moment one of them wrapped it. The walk exists precisely
+    // for wrapped errors.
+    if (typeof node.code === 'string' && /^E[A-Z]+$/.test(node.code)) return { code: node.code };
     if (typeof node.errno === 'number') return { errno: node.errno };
   }
   return null;
@@ -59,8 +65,21 @@ function errnoOf(err: unknown): { code?: string; errno?: number } | null {
  * Unix ones and both are listed — checking only `-2`/`-20` would have made
  * this fallback silently dead on the platform with the most cross-boundary
  * machinery.
+ *
+ * There are two sets for the same reason there are two predicates. Sharing
+ * one made `meansGone` behave exactly like `meansAbsent` on the numeric path,
+ * so the retry loop the widening was written to prevent came straight back —
+ * the shared-helper slip, one level down.
  */
 const ABSENT_ERRNO = new Set([-2, -20, -4058, -4052]);
+/** ELOOP, ENAMETOOLONG, EINVAL — Unix (darwin, linux) then Windows. */
+const UNRESOLVABLE_ERRNO = new Set([
+  ...ABSENT_ERRNO,
+  -62, -40, // ELOOP: darwin, linux
+  -63, -36, // ENAMETOOLONG: darwin, linux
+  -22, // EINVAL, same on both
+  -4067, -4092, -4071, // UV_ELOOP, UV_ENAMETOOLONG, UV_EINVAL on Windows
+]);
 
 /** Is this failure a plain "it is not there"? Use where state is at stake. */
 export function meansAbsent(err: unknown): boolean {
@@ -75,5 +94,5 @@ export function meansGone(err: unknown): boolean {
   const found = errnoOf(err);
   if (!found) return false;
   if (found.code !== undefined) return UNRESOLVABLE.has(found.code);
-  return found.errno !== undefined && ABSENT_ERRNO.has(found.errno);
+  return found.errno !== undefined && UNRESOLVABLE_ERRNO.has(found.errno);
 }
