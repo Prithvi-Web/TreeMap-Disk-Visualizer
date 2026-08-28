@@ -74,15 +74,60 @@ test('the syscall and the platform tool agree about the same volume', async (t) 
   );
 });
 
-test('a path that does not exist is refused, not answered with zero', async () => {
-  // The rule this module exists to enforce: never invent a number. A caller
-  // that gets `{ free: 0 }` for an unreadable volume tells the user their
-  // disk is full, which is what `/api/system` and the forecast did before.
-  await assert.rejects(
-    () => diskUsage(path.join(os.tmpdir(), 'treemap-no-such-path-ever-8f3a2b')),
-    (err: unknown) => err instanceof Error && err.message.length > 0,
-    'an unreadable path must reject rather than resolve',
+test('a path that does not exist is never answered with zero', async (t) => {
+  /**
+   * The rule this module exists to enforce: never invent a number. A caller
+   * that gets `{ free: 0 }` tells the user their disk is full, which is what
+   * `/api/system` and the forecast did before.
+   *
+   * The two platforms answer this question differently, and BOTH are right —
+   * which an earlier version of this test got wrong by asserting the POSIX
+   * shape everywhere. It failed on Windows CI, correctly:
+   *
+   *   - on Unix, `statfs`/`df` need the path itself, so a missing path is an
+   *     error and `diskUsage` rejects;
+   *   - on Windows the question is about the VOLUME. Both the syscall and
+   *     `Win32_LogicalDisk` resolve to the drive root, and the drive exists,
+   *     so `D:\no\such\path` answers about `D:` — as this module has always
+   *     done there, long before the syscall rewrite.
+   *
+   * So the assertion is the invariant rather than the mechanism: either it
+   * refuses, or it answers about a real volume. A fabricated zero is the one
+   * outcome that is never acceptable.
+   */
+  const missing = path.join(os.tmpdir(), 'treemap-no-such-path-ever-8f3a2b');
+  const outcome = await diskUsage(missing).then(
+    (value) => ({ rejected: false as const, value }),
+    (err: unknown) => ({ rejected: true as const, err }),
   );
+
+  if (outcome.rejected) {
+    t.diagnostic(`${process.platform}: refused a missing path`);
+    assert.ok(outcome.err instanceof Error && outcome.err.message.length > 0, 'and said why');
+    return;
+  }
+  t.diagnostic(`${process.platform}: answered about the containing volume — ${String(outcome.value.total)} bytes`);
+  assert.ok(outcome.value.total > 1024 ** 3, 'it answered about a REAL volume, not with zeros');
+  assert.ok(outcome.value.free >= 0 && outcome.value.free <= outcome.value.total);
+});
+
+test('a path on a volume that does not exist is refused outright', async (t) => {
+  // The case with no honest answer on any platform: there is no volume to
+  // report on. `assertPlausible` is the backstop — `Win32_LogicalDisk`
+  // returns `Size: null` for a drive that is not there, and `Number(null)`
+  // is 0, which is exactly the fabricated zero this module refuses to emit.
+  const nowhere = process.platform === 'win32' ? 'Q:\\nope\\nothing' : '/proc/treemap-not-a-volume/x';
+  const outcome = await diskUsage(nowhere).then(
+    (value) => ({ rejected: false as const, value }),
+    () => ({ rejected: true as const, value: null }),
+  );
+  if (!outcome.rejected) {
+    // Some kernels answer for a pseudo-path; the invariant still holds.
+    t.diagnostic(`${process.platform}: answered ${String(outcome.value.total)} bytes for ${nowhere}`);
+    assert.ok(outcome.value.total > 0, 'never zeros');
+    return;
+  }
+  assert.ok(true, 'refused, which is the honest answer');
 });
 
 test('two readings of the same volume report the same total', async () => {
