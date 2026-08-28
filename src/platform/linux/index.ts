@@ -21,6 +21,7 @@ import type {
   ChangeEvent,
   HardwareEncodeCapability,
   OpenHandleInfo,
+  OpenHandleBatch,
   PlaceholderInfo,
   PlatformName,
   ProvenanceInfo,
@@ -33,6 +34,7 @@ import type {
   VolumeTopology,
   ZombieHandleInfo,
 } from '../types';
+import { meansGone } from '../../utils/errno';
 
 /**
  * Linux platform provider.
@@ -142,7 +144,26 @@ export class LinuxProvider extends BaseProvider {
               // inside it will ever be seen.
               if (st.isDirectory()) watchDir(full);
             },
-            () => {
+            (err: unknown) => {
+              // Same rule as the base provider: only a real absence is a
+              // deletion. An `EMFILE` here says nothing about whether the
+              // path is still there, and the index acts on what it is told.
+              if (!meansGone(err)) {
+                onChange({ path: full, kind: 'unknown', at: Date.now() });
+                // The watch is dropped even though the path may still exist.
+                // Keeping it would hold an inotify watch open under exactly
+                // the descriptor-exhaustion condition that produced the
+                // failure, and `max_user_watches` is this provider's known
+                // ceiling. `watchDir` is idempotent, so the next event under
+                // the parent re-establishes it; a missed subtree in the
+                // meantime is what index staleness already covers.
+                const unreadable = watchers.get(full);
+                if (unreadable) {
+                  unreadable.close();
+                  watchers.delete(full);
+                }
+                return;
+              }
               onChange({ path: full, kind: 'deleted', at: Date.now() });
               const gone = watchers.get(full);
               if (gone) {
@@ -209,8 +230,11 @@ export class LinuxProvider extends BaseProvider {
     return openHandlesFor([p]);
   }
 
-  override async getOpenHandlesBatch(paths: string[]): Promise<OpenHandleInfo[]> {
-    return openHandlesFor(paths);
+  override async getOpenHandlesBatch(paths: string[]): Promise<OpenHandleBatch> {
+    // Complete by construction: the /proc sweep covers every path, so there is nothing to truncate.
+    // A probe that FAILS throws, and `checkOpenHandles` turns that into
+    // `checked: false` rather than an empty, confident answer.
+    return { handles: await openHandlesFor(paths), complete: true };
   }
 
   override async getZombieHandles(): Promise<ZombieHandleInfo[]> {

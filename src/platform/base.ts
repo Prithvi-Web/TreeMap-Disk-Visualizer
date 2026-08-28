@@ -15,6 +15,7 @@ import {
   LastUsedInfo,
   LogicalVolumeInfo,
   OpenHandleInfo,
+  OpenHandleBatch,
   PlaceholderInfo,
   PlatformName,
   ProvenanceInfo,
@@ -29,6 +30,7 @@ import {
   VolumeTopology,
   ZombieHandleInfo,
 } from './types';
+import { meansGone } from '../utils/errno';
 
 /**
  * BaseProvider — everything the three platforms genuinely share.
@@ -193,7 +195,15 @@ export abstract class BaseProvider implements PlatformProvider {
         fsp
           .lstat(full)
           .then(() => onChange({ path: full, kind: 'modified', at: Date.now() }))
-          .catch(() => onChange({ path: full, kind: 'deleted', at: Date.now() }));
+          .catch((err: unknown) =>
+            // Only a real absence is a deletion. An `EMFILE` on a loaded
+            // machine, or an `EIO` from a failing volume, says nothing about
+            // whether the file is still there — and reporting it as `deleted`
+            // is a claim the index acts on. `unknown` is what ChangeKind has
+            // always offered for exactly this: something happened here, go
+            // and look, and do not assume what you will find.
+            onChange({ path: full, kind: meansGone(err) ? 'deleted' : 'unknown', at: Date.now() }),
+          );
       });
       watcher.on('error', () => {
         /* the watch is best-effort; a dropped watch surfaces as index staleness */
@@ -235,10 +245,12 @@ export abstract class BaseProvider implements PlatformProvider {
    * batch correctly — an unknown platform reporting "nothing is open" would be
    * a confident wrong answer in the one place §B2 exists to prevent it.
    */
-  async getOpenHandlesBatch(paths: string[]): Promise<OpenHandleInfo[]> {
-    const out: OpenHandleInfo[] = [];
-    for (const p of paths) out.push(...(await this.getOpenHandles(p)));
-    return out;
+  async getOpenHandlesBatch(paths: string[]): Promise<OpenHandleBatch> {
+    const per = await Promise.all(paths.map((p) => this.getOpenHandles(p)));
+    // The per-path fallback sees exactly what the single-path form sees, so
+    // it is complete by construction — a provider that can only answer one
+    // path at a time has no truncation to report.
+    return { handles: per.flat(), complete: true };
   }
 
   async getZombieHandles(): Promise<ZombieHandleInfo[]> {

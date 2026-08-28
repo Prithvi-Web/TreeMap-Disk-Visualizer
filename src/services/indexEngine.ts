@@ -12,6 +12,7 @@ import { neverDescend } from '../utils/mountBoundaries';
 import { parseQuery, extensionOf, escapeLike } from '../utils/searchQuery';
 import type { ChangeEvent, Unsubscribe } from '../platform/types';
 import type { FileNode } from '../models/types';
+import { meansGone } from '../utils/errno';
 
 /**
  * IndexEngine (A1) — the persistent, live-updated file index.
@@ -717,39 +718,154 @@ const FLUSH_MS = 400;
 interface PendingChange {
   path: string;
   kind: ChangeEvent['kind'];
+  /**
+   * How many flushes have already tried and failed to resolve this path.
+   * A change is only ever re-queued when the filesystem could not say what
+   * happened — never to paper over a decision that was actually made.
+   */
+  attempts: number;
 }
+
+/**
+ * How many times a change whose `lstat` could not be resolved is re-asked
+ * before the root is called stale instead.
+ *
+ * Five attempts at the 400 ms flush cadence is about two seconds of patience,
+ * which covers the descriptor-exhaustion and busy-volume blips this exists
+ * for while still bounding the work. Past that the honest answer is not
+ * "try forever" but "this index may have missed something" — which is what
+ * `stale` has always meant.
+ */
+export const MAX_CHANGE_ATTEMPTS = 5;
 
 const pendingByRoot = new Map<string, Map<string, PendingChange>>();
 const flushTimers = new Map<string, NodeJS.Timeout>();
 
+/**
+ * How many change events the OS has actually delivered for each watched root
+ * since its watcher attached.
+ *
+ * This exists because `fs.watch` can attach without error and then deliver
+ * NOTHING. Captured on macOS under load, from one traced run: the watcher
+ * attached, the process wrote a file into the watched directory, and fifteen
+ * seconds later the watcher was detached having never once fired — while the
+ * next root in the same process got its first callback in eleven
+ * milliseconds. Nothing in this file can make a silent watch speak, but the
+ * difference between "the OS said nothing" and "the OS spoke and the index
+ * mishandled it" is the difference between a platform limitation and a bug,
+ * and it must be possible to tell them apart.
+ */
+const eventsSeenByRoot = new Map<string, number>();
+
+/**
+ * Change events delivered for `rootPath` since its watcher attached, or null
+ * when no watcher is attached.
+ *
+ * Zero, on a root where something demonstrably changed, means the watch is
+ * not delivering — see `eventsSeenByRoot`.
+ */
+export function watcherEventCount(rootPath: string): number | null {
+  return watchers.has(rootPath) ? (eventsSeenByRoot.get(rootPath) ?? 0) : null;
+}
+
+/**
+ * Make sure a flush is coming for this root, without stacking timers.
+ *
+ * Retries back off. Under descriptor exhaustion EVERY path in a burst is
+ * undecidable at once, not one — so a ten-thousand-event build burst would
+ * become fifty thousand `lstat` calls at a flat 400 ms cadence, in the
+ * process that is already out of descriptors. Doubling the delay per attempt
+ * turns that into pressure that relents, which is the only kind that can let
+ * the condition clear.
+ */
+function scheduleFlush(rootPath: string, attempts = 0): void {
+  if (flushTimers.has(rootPath)) return;
+  // Capped at 4x. The backoff exists to relieve pressure, not to make the
+  // index slow to notice things: doubling all the way to the attempt limit
+  // would put the last retry twelve seconds after the change, which is well
+  // outside what "live" should mean. 400, 800, then 1,600 ms three times —
+  // about six seconds of patience in total.
+  const delay = FLUSH_MS * Math.pow(2, Math.min(attempts, 2));
+  flushTimers.set(
+    rootPath,
+    setTimeout(() => {
+      flushTimers.delete(rootPath);
+      void applyPendingChanges(rootPath);
+    }, delay),
+  );
+}
+
+/** Queue one change and make sure it will be flushed. */
+function enqueueChange(rootPath: string, change: PendingChange): void {
+  let queue = pendingByRoot.get(rootPath);
+  if (!queue) {
+    queue = new Map();
+    pendingByRoot.set(rootPath, queue);
+  }
+  // Last write for a path wins: a file created then deleted inside one
+  // window is a delete, and applying both in order costs a wasted stat.
+  //
+  // The ATTEMPT COUNT carries forward, though. A path that keeps producing
+  // events while staying unreadable — a directory whose permissions changed,
+  // which Linux deliberately keeps watching — would otherwise have its
+  // counter reset by every new event and retry for ever, which is the one
+  // thing `MAX_CHANGE_ATTEMPTS` exists to prevent.
+  const prior = queue.get(change.path);
+  queue.set(change.path, {
+    ...change,
+    attempts: Math.max(change.attempts, prior ? prior.attempts : 0),
+  });
+  scheduleFlush(rootPath, change.attempts);
+}
+
 export function startWatcher(rootPath: string): boolean {
   if (watchers.has(rootPath)) return true;
   try {
+    eventsSeenByRoot.set(rootPath, 0);
     const unsubscribe = platform().subscribeToChanges(rootPath, (event) => {
-      let queue = pendingByRoot.get(rootPath);
-      if (!queue) {
-        queue = new Map();
-        pendingByRoot.set(rootPath, queue);
-      }
-      // Last write for a path wins: a file created then deleted inside one
-      // window is a delete, and applying both in order costs a wasted stat.
-      queue.set(event.path, { path: event.path, kind: event.kind });
-
-      if (!flushTimers.has(rootPath)) {
-        flushTimers.set(
-          rootPath,
-          setTimeout(() => {
-            flushTimers.delete(rootPath);
-            void applyPendingChanges(rootPath);
-          }, FLUSH_MS),
-        );
-      }
+      eventsSeenByRoot.set(rootPath, (eventsSeenByRoot.get(rootPath) ?? 0) + 1);
+      enqueueChange(rootPath, { path: event.path, kind: event.kind, attempts: 0 });
     });
     watchers.set(rootPath, unsubscribe);
     return true;
   } catch {
     return false; // watch could not be established; the root stays stale
   }
+}
+
+/**
+ * Ask again about a change the filesystem could not resolve, or admit the
+ * index is out of step. Returns true when another attempt is coming.
+ *
+ * The watcher check is load-bearing: re-queueing after `stopWatcher` would
+ * rebuild the very flush machinery it just tore down, and a live timer would
+ * hold the event loop open after the caller asked for everything to stop.
+ */
+function retryOrMarkStale(rootPath: string, rootId: number, builtAt: number | null, change: PendingChange): boolean {
+  if (watchers.has(rootPath) && change.attempts + 1 < MAX_CHANGE_ATTEMPTS) {
+    enqueueChange(rootPath, { ...change, attempts: change.attempts + 1 });
+    return true;
+  }
+  // `stale` already means "this index may have missed a change" — the state
+  // a root gets when its watcher was not attached continuously. A change this
+  // process saw and could not apply is the same fact, so it reuses the same
+  // word rather than inventing a second one the UI would have to learn.
+  //
+  // `built_at` is part of the predicate, not decoration. `rootId` was read
+  // before this burst's awaits, and `buildIndex` DELETEs the roots row and
+  // INSERTs a new one — SQLite reuses a rowid when the deleted row held the
+  // maximum. So a flush still in flight when a rebuild finishes could mark a
+  // freshly rebuilt index stale, and `AND state = 'ready'` would not stop it
+  // because a rebuilt root is exactly that. Matching the build stamp means
+  // the row has to be the same row this burst was working on.
+  if (db && builtAt !== null) {
+    try {
+      db.prepare("UPDATE roots SET state = 'stale' WHERE id = ? AND built_at = ? AND state = 'ready'").run(rootId, builtAt);
+    } catch {
+      /* the database went away underneath us; the next open rebuilds anyway */
+    }
+  }
+  return false;
 }
 
 export function stopWatcher(rootPath: string): void {
@@ -768,6 +884,7 @@ export function stopWatcher(rootPath: string): void {
     flushTimers.delete(rootPath);
   }
   pendingByRoot.delete(rootPath);
+  eventsSeenByRoot.delete(rootPath);
 }
 
 export function stopAllWatchers(): void {
@@ -819,12 +936,29 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
 
   for (const change of queue.values()) {
     let stat: Awaited<ReturnType<typeof fsp.lstat>> | null = null;
+    let undecided = false;
     try {
       stat = await fsp.lstat(change.path);
-    } catch {
-      stat = null; // gone
+    } catch (err) {
+      // "Could not tell" is not "gone". This `catch` used to swallow every
+      // errno and fall through to the `stat === null` branch below, which
+      // runs `deleteSubtree`. Injecting ONE `EMFILE` here removed a live
+      // 50,000-byte file from the index while it sat on disk, and a
+      // directory would have taken its whole subtree along. It is also why
+      // `an external create ... within 2 seconds` failed on macOS CI: the
+      // insert was skipped, nothing re-examined the file, and the change was
+      // lost for good rather than late.
+      if (meansGone(err)) stat = null;
+      else undecided = true;
     }
     if (!stillOpen()) return applied;
+
+    if (undecided) {
+      // Leave every row exactly as it is — the last thing actually observed
+      // beats a guess — and ask again on the next flush.
+      retryOrMarkStale(rootPath, root.id, root.builtAt, change);
+      continue;
+    }
 
     if (stat === null) {
       const nodeId = findNodeIdByPath(root.id, rootPath, change.path);
@@ -870,7 +1004,25 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
         }
         applied++;
       } else {
-        const parentId = await ensureParents(handle, root.id, rootPath, path.dirname(change.path));
+        let parentId: number | null = null;
+        try {
+          parentId = await ensureParents(handle, root.id, rootPath, path.dirname(change.path));
+        } catch (err) {
+          // `ensureParents` rethrows an unresolvable `lstat`, and the same
+          // rule applies: do not invent an answer, and do not drop the child
+          // because its parent was briefly unreadable.
+          //
+          // But it also runs SQL and recurses, so `SQLITE_FULL`, a busy or
+          // corrupt database, or a closed handle land here too. Retrying five
+          // times and then calling the root "stale" would report a database
+          // fault as index staleness — a wrong diagnosis of a condition that
+          // is not going to clear on its own. Only a filesystem errno is
+          // retried; anything else is a real failure and propagates.
+          if ((err as NodeJS.ErrnoException | null)?.code === undefined) throw err;
+          if (!stillOpen()) return applied;
+          retryOrMarkStale(rootPath, root.id, root.builtAt, change);
+          continue;
+        }
         if (!stillOpen()) return applied;
         if (parentId !== null) {
           insertNode.run(
@@ -924,8 +1076,13 @@ async function ensureParents(
   let stat: Awaited<ReturnType<typeof fsp.lstat>>;
   try {
     stat = await fsp.lstat(dirPath);
-  } catch {
-    return null; // vanished again already — nothing to hang the child on
+  } catch (err) {
+    // Vanished again already — nothing to hang the child on.
+    if (meansGone(err)) return null;
+    // Anything else is undecidable, and returning null here would report
+    // "there is no such directory" on the strength of a descriptor shortage.
+    // The caller turns this into a retry.
+    throw err;
   }
   if (db !== handle) return null; // closed mid-await — see applyPendingChanges
   if (!stat.isDirectory()) return null;
