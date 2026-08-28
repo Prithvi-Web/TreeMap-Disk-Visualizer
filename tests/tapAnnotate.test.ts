@@ -35,6 +35,14 @@ const annotate = require('../scripts/tap-annotate') as {
  * below is a recording of exactly that, checked in verbatim, and the tests
  * read it rather than a convenient invention.
  */
+/**
+ * Recorded from `node --test --test-reporter=tap` on Node 24. CI runs Node 20,
+ * and that mismatch is deliberate rather than overlooked: this file tests the
+ * PARSER against a real artifact, not the runner that produced it. If node's
+ * TAP shape ever changes, the parser is format-tolerant and the annotator only
+ * runs on an already-failing job, so the cost of a drift is a poorer
+ * annotation rather than a red build. Re-record it if node's output changes.
+ */
 const REAL = fs.readFileSync(path.join(__dirname, 'fixtures', 'real-node.tap'), 'utf8');
 const byName = (name: string): { line: number; name: string; fields: Record<string, string> } => {
   const found = annotate.parseTap(REAL).find((f) => f.name === name);
