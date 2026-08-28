@@ -55,12 +55,41 @@ reading:
 paragraph asks for and that had never existed — which is what let the texture
 bug ship.
 
+### The bug class this session was really about
+
+One shape, found thirteen times: **a failure read as a fact.** A `catch` that
+turns "I could not find out" into "there is nothing there", and a caller that
+then acts on it. Where the caller deletes or overwrites, the cost is the
+user's data.
+
+The place it hides is a SHARED helper. Every round of review found at least one
+defect introduced while fixing the previous round's, and each was the same
+mistake: reason correctly about one call site, then put the reasoning somewhere
+several call sites share.
+
+- `meansGone` was widened with `ELOOP`/`ENAMETOOLONG`/`EINVAL` for the
+  watcher's `lstat`, where a path the kernel will never resolve may as well be
+  gone. The same helper is used by `readJsonFile`, so an unresolvable
+  `timecapsule.json` became "first run", an empty index, and every recovery
+  payload deleted in one pass. Now two predicates: **`meansAbsent`** wherever
+  the answer decides whether stored state may be discarded, **`meansGone`**
+  for `stat`.
+- `reconcileCapsule` was guarded against a corrupt index — and three other
+  paths reached the same ending through `loadStore`'s fallback. The refusal
+  now lives in `loadStore`.
+- The first capsule guard *saved* the empty fallback, so the next launch
+  deleted everything; renaming the index aside was measured to do the same,
+  because an absent index is a decided "first run".
+
+**If you change one of these predicates, walk every call site and ask what a
+wrong answer costs THERE.** That question is the whole lesson.
+
 ### Verified
 
 ```
 npm run build      clean
 npm run typecheck  clean
-npm test           1,378 tests · 1,376 pass · 0 fail · 2 skip
+npm test           1,391 tests · 1,389 pass · 0 fail · 2 skip
 npm run bench:v4   7 pass / 3 not measurable in Node
 ```
 
