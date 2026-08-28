@@ -2155,7 +2155,14 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Items copied aside before an automated delete, with capacity and history',
     tag: 'timecapsule',
     destructive: false,
-    responses: { '200': jsonResponse('The capsule index', ref('TimeCapsuleIndex')) },
+    responses: {
+      '200': jsonResponse('The capsule index', ref('TimeCapsuleIndex')),
+      '500': errorResponse(
+        'CAPSULE_INDEX_UNREADABLE — the index file exists and will not parse. Every capsule operation refuses ' +
+          'in this state rather than acting on an invented empty capsule, because each entry is the only record ' +
+          'of a file it is holding. The message names the file to repair or move.',
+      ),
+    },
   },
   {
     method: 'post',

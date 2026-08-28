@@ -717,6 +717,40 @@ async function withCapsuleIndex<T>(contents: string | null, fn: () => Promise<T>
   }
 }
 
+test('every door into the capsule refuses an index it cannot parse', async () => {
+  /**
+   * Guarding `reconcileCapsule` alone left three other ways to the same
+   * ending, because they all shared `loadStore`'s fallback to
+   * `{ entries: [] }`. Persisting that empty store over the corrupt file is
+   * what makes the NEXT sweep read a perfectly valid index listing nothing
+   * and delete every payload as an orphan — so `protectItems`, the restore
+   * completion path and the capture rollback each got there by a different
+   * route.
+   *
+   * The refusal therefore lives in `loadStore`, and this test walks the doors
+   * rather than the one that was noticed first.
+   */
+  const file = capsuleIndexPath();
+  const corrupt = '{"version":1,"entries":[{"id":"unterminated"';
+  const victim = path.join(os.tmpdir(), `tm-capsule-door-${String(Date.now())}.txt`);
+  await fsp.writeFile(victim, 'hello');
+  try {
+    for (const [name, run] of [
+      ['protectItems', () => protectItems([{ path: victim }] as never, {} as never)],
+      ['pruneExpired', () => pruneExpired()],
+      ['deleteCapsuleEntry', () => deleteCapsuleEntry('anything')],
+      ['getCapsuleIndex', () => getCapsuleIndex()],
+    ] as [string, () => Promise<unknown>][]) {
+      await withCapsuleIndex(corrupt, async () => {
+        await assert.rejects(run, /could not be read/i, `${name} must refuse rather than act on an invented empty capsule`);
+        assert.equal(fs.readFileSync(file, 'utf8'), corrupt, `${name} must leave the corrupt index byte-for-byte`);
+      });
+    }
+  } finally {
+    await fsp.rm(victim, { force: true });
+  }
+});
+
 test('an index that will not parse blocks the orphan sweep, on every sweep', async () => {
   const root = capsuleRoot();
   await fsp.mkdir(path.join(root, 'payload-unreferenced-a'), { recursive: true });

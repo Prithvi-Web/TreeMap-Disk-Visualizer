@@ -154,8 +154,49 @@ function payloadRoot(id: string): string {
   return path.join(entryDir(id), 'data');
 }
 
+/**
+ * Thrown when the index exists and cannot be parsed. Never a fallback.
+ *
+ * An `AppError` so the reason survives the trip to the client. The generic
+ * handler replaces an unmapped `Error`'s message with "Internal server error",
+ * which would hide the one sentence that tells the user which file to fix —
+ * and this is a state only they can clear.
+ */
+export class CapsuleIndexUnreadableError extends AppError {
+  constructor(readonly detail: string) {
+    super(
+      500,
+      'CAPSULE_INDEX_UNREADABLE',
+      `The Time Capsule index at ${path.join(appDataDir(), INDEX_FILE)} could not be read (${detail}). ` +
+        'TreeMap will not change the capsule until that file is repaired or moved, because every entry ' +
+        'in it is the only record of a file it is holding.',
+    );
+    this.name = 'CapsuleIndexUnreadableError';
+  }
+}
+
+/**
+ * The capsule index, or a refusal — never a silent empty store.
+ *
+ * This is the ONE place the distinction can be enforced, and it has to be
+ * here rather than at each caller. An unparseable index falling back to
+ * `{ entries: [] }` does not merely lose a listing: every one of the six
+ * writers below then persists that empty store over the real file, and the
+ * next `reconcileCapsule` reads a perfectly valid index listing nothing and
+ * deletes every payload on disk as an orphan.
+ *
+ * That is not the same bug as the one `reconcileCapsule` already guards — it
+ * is the same ENDING reached through `protectItems`, through the restore
+ * completion path, through the capture rollback. Guarding the sweep alone
+ * left three other doors open, which is what happens when a rule is applied
+ * at call sites instead of at the thing they all share.
+ *
+ * An ABSENT index is a genuine first run and still returns an empty store.
+ */
 async function loadStore(): Promise<CapsuleStore> {
-  const raw = await readJsonFile<Partial<CapsuleStore>>(INDEX_FILE, {});
+  const loaded = await readJsonFileChecked<Partial<CapsuleStore>>(INDEX_FILE);
+  if (!loaded.ok && loaded.reason === 'corrupt') throw new CapsuleIndexUnreadableError(loaded.detail);
+  const raw: Partial<CapsuleStore> = loaded.ok ? loaded.value : {};
   return {
     version: typeof raw.version === 'number' ? raw.version : SCHEMA_VERSION,
     entries: Array.isArray(raw.entries) ? raw.entries : [],
@@ -895,13 +936,29 @@ export async function pruneExpired(now = Date.now()): Promise<{ removed: number;
 export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entriesLost: number }> {
   const root = capsuleRoot();
   await fsp.mkdir(root, { recursive: true }).catch(() => {});
-  const store = await loadStore();
-
-  // Why the index is empty decides whether anything may be deleted below.
-  // `loadStore` cannot say — it flattens absent and corrupt into `entries: []`
-  // — so the reason is read separately here.
-  const loaded = await readJsonFileChecked<Partial<CapsuleStore>>(INDEX_FILE);
-  const indexUnparseable = !loaded.ok && loaded.reason === 'corrupt';
+  // `loadStore` now REFUSES an unparseable index rather than answering with an
+  // empty one, so this is the only place that has to know the difference —
+  // and it knows it by being told, not by asking a second time.
+  let store: CapsuleStore;
+  try {
+    store = await loadStore();
+  } catch (err) {
+    if (!(err instanceof CapsuleIndexUnreadableError)) throw err;
+    const onDisk = await fsp.readdir(root, { withFileTypes: true }).catch(() => []);
+    const stranded = onDisk.filter((d) => d.isDirectory()).length;
+    // Nothing is written, moved or deleted. Every one of those three was
+    // measured to end with the payloads gone — writing the fallback makes the
+    // next sweep delete them, and so does renaming the index aside, because an
+    // absent index is a decided "first run". The sweep stays blocked until a
+    // person acts. The cost is stale folders in one directory; the
+    // alternative is destroying the only copy of files this app promised to
+    // protect.
+    console.error(
+      `[treemap] capsule reconcile: ${err.message} ` +
+        `${String(stranded)} recovery folders are on disk and were LEFT ALONE.`,
+    );
+    return { orphansRemoved: 0, entriesLost: 0 };
+  }
 
   const known = new Set(store.entries.map((e) => e.id));
   let orphansRemoved = 0;
@@ -910,55 +967,24 @@ export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entr
   const onDisk = await fsp.readdir(root, { withFileTypes: true }).catch(() => []);
   const payloadDirs = onDisk.filter((d) => d.isDirectory());
 
-  // The one deletion in this function, and the guard in front of it.
+  // The one deletion in this function.
   //
   // "Every directory here is an orphan" is a conclusion drawn entirely from
   // the index, so it is only as good as the index — and one unreadable index
   // would `rm -rf` the protected copy of every file the user has ever deleted
-  // through TreeMap, unattended, from a maintenance timer.
+  // through TreeMap, unattended, from a maintenance timer. `loadStore` is what
+  // makes that impossible: it refuses an unparseable index rather than
+  // answering with an empty one, and the caller above returns without
+  // touching anything.
   //
-  // The guard keys off WHY the index is empty, not off the count. An index
-  // that PARSED and holds no entries is a decided fact — a capsule the user
-  // has emptied — and the sweep proceeds, so stale directories are still
-  // cleaned up. An index that would not parse is not a fact about the disk,
-  // and nothing is deleted on the strength of it. (An index that could not be
-  // READ at all never reaches here: `readJsonFile` throws for an undecidable
-  // errno rather than answering "empty".)
-  if (!indexUnparseable) {
-    for (const dirent of payloadDirs) {
-      if (known.has(dirent.name)) continue;
-      const orphanCapsuleDir = path.join(root, dirent.name);
-      await fsp.rm(orphanCapsuleDir, { recursive: true, force: true }).catch(() => {});
-      orphansRemoved++;
-    }
-  } else if (payloadDirs.length > 0) {
-    // NOTHING IS WRITTEN, MOVED OR DELETED ON THIS PATH, and each of those
-    // three is a separate lesson.
-    //
-    // `store` here is `{ entries: [] }` — the fallback `loadStore` returns for
-    // an index that would not parse. Saving it would replace the corrupt file
-    // with a valid empty one, so the NEXT sweep would parse it happily, find
-    // no entries, and delete every payload as an orphan. Measured: the guard
-    // alone turned an immediate `rm -rf` into one that fires on the following
-    // launch.
-    //
-    // Renaming the corrupt index aside has the same ending by a different
-    // road — an ABSENT index is a decided "first run", so the next sweep
-    // deletes the payloads with a clear conscience. Also measured.
-    //
-    // So the sweep stays blocked until a person acts. The cost is some stale
-    // directories in one folder; the alternative is destroying the only copy
-    // of files this app promised to protect. A capsule the user has
-    // legitimately emptied is NOT this case — that index parses, holds zero
-    // entries, and the sweep above runs normally — so nothing accumulates in
-    // the ordinary course of things.
-    console.error(
-      '[treemap] capsule reconcile: the Time Capsule index at ' +
-        `${path.join(appDataDir(), INDEX_FILE)} could not be parsed. ` +
-        `${String(payloadDirs.length)} recovery folders are on disk and were LEFT ALONE rather than ` +
-        'deleted as orphans — they may be the only copy of files removed through TreeMap. ' +
-        'Repair or move that file to let cleanup resume.',
-    );
+  // What reaches here is an index that PARSED. Zero entries is then a decided
+  // fact — a capsule the user emptied — and the sweep proceeds, so stale
+  // directories are still cleaned up rather than accumulating for ever.
+  for (const dirent of payloadDirs) {
+    if (known.has(dirent.name)) continue;
+    const orphanCapsuleDir = path.join(root, dirent.name);
+    await fsp.rm(orphanCapsuleDir, { recursive: true, force: true }).catch(() => {});
+    orphansRemoved++;
   }
 
   let entriesLost = 0;
@@ -998,7 +1024,7 @@ export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entr
 
   // Never persist a store that came from an index we could not read: every
   // field of it is a fallback, and writing it makes the fallback the truth.
-  if (!indexUnparseable && (orphansRemoved > 0 || entriesLost > 0)) await saveStore(store);
+  if (orphansRemoved > 0 || entriesLost > 0) await saveStore(store);
   return { orphansRemoved, entriesLost };
 }
 
