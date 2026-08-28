@@ -1,4 +1,5 @@
 import { test, after } from 'node:test';
+import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { promises as fsp } from 'node:fs';
@@ -28,7 +29,7 @@ import path from 'node:path';
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-transient-data-'));
 process.env.TREEMAP_DATA_DIR = DATA_DIR;
 
-import { buildIndex, getRoot, stopAllWatchers, closeIndex, deleteIndex, MAX_CHANGE_ATTEMPTS } from '../src/services/indexEngine';
+import { buildIndex, getRoot, stopAllWatchers, closeIndex, deleteIndex, MAX_CHANGE_ATTEMPTS, watcherEventCount } from '../src/services/indexEngine';
 import { meansGone, meansAbsent } from '../src/utils/errno';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -86,6 +87,34 @@ function failLstat(match: string, code: string, opts: { forMs?: number } = {}): 
     },
     calls: () => calls,
   };
+}
+
+/**
+ * Every test here drives the real watcher, so every one of them inherits the
+ * platform limitation `indexEngine.test.ts` documents: on macOS `fs.watch`
+ * can attach without error and deliver nothing at all, roughly one loaded
+ * full-suite run in fifteen. That is not what any of these tests is about.
+ *
+ * Caught by this file's own `a real deletion is still applied` timing out in
+ * a stress run — the triage was written for the acceptance tests and not
+ * applied to the tests that were added alongside it, which is the same
+ * one-call-site mistake this session keeps finding.
+ *
+ * Returns false when the OS said nothing, having skipped the test. A count
+ * above zero means the watch IS delivering, so any remaining failure is this
+ * codebase's and is reported as one.
+ */
+function watchIsDelivering(t: TestContext, dir: string, what: string): boolean {
+  const delivered = watcherEventCount(dir);
+  if (delivered === 0) {
+    t.skip(
+      `the OS watch on ${dir} delivered no events at all, so "${what}" could not be observed. ` +
+      'fs.watch attached without error and stayed silent — a platform failure, not an index one. ' +
+      'See HANDOFF.md, "a watch that attaches and says nothing".',
+    );
+    return false;
+  }
+  return true;
 }
 
 /** Poll until the predicate holds, returning how long it took, or -1. */
@@ -216,6 +245,7 @@ test('a transient lstat failure does not delete a file that is still on disk', a
     // Wait for the engine to have actually ASKED — a fixed sleep would pass
     // on a slow runner before the watcher had done anything, proving nothing.
     const asked = await waitFor(() => injected!.calls() > 0);
+    if (asked === -1 && !watchIsDelivering(t, dir, 'the change')) return;
     assert.notEqual(asked, -1, 'the watcher noticed the change and tried to stat it');
 
     // Now let it keep failing across several flush intervals. Whatever the
@@ -250,6 +280,7 @@ test('a transient lstat failure does not delete a file that is still on disk', a
     t.after(() => { injected?.release(); });
     await fsp.appendFile(path.join(dir, 'keep', 'big.bin'), Buffer.alloc(7_000, 3));
     const landed = await waitFor(() => getRoot(dir)!.totalSize === 67_000);
+    if (landed === -1 && !watchIsDelivering(t, dir, 'the regrown file')) return;
     assert.notEqual(landed, -1, 'the retry re-read the file once the disk answered, and the index caught up');
   } finally {
     injected?.release();
@@ -280,10 +311,12 @@ test('a transient lstat failure delays a new file into the index, it does not lo
     await fsp.writeFile(path.join(dir, 'new.bin'), Buffer.alloc(5000));
 
     const asked = await waitFor(() => injected.calls() > 0);
+    if (asked === -1 && !watchIsDelivering(t, dir, 'the new file')) return;
     assert.notEqual(asked, -1, 'the watcher noticed the new file and tried to stat it');
     assert.equal(getRoot(dir)!.totalSize, 1000, 'nothing invented while the answer was unavailable');
 
     const took = await waitFor(() => getRoot(dir)!.totalSize === 6000);
+    if (took === -1 && !watchIsDelivering(t, dir, 'the create')) return;
     assert.notEqual(took, -1, 'the create landed once the disk answered, rather than never');
   } finally {
     stopWatcherAndClean(dir);
@@ -305,6 +338,7 @@ test('a change that never resolves marks the root stale rather than pretending',
     await fsp.writeFile(path.join(dir, 'stubborn.bin'), Buffer.alloc(7000));
 
     const took = await waitFor(() => getRoot(dir)!.state === 'stale');
+    if (took === -1 && !watchIsDelivering(t, dir, 'the unresolvable change')) return;
     assert.notEqual(took, -1, 'the retries are bounded and the root ends up stale');
     // More than the two a single pass costs — the watcher classifies the
     // event with one `lstat` and `applyPendingChanges` decides with another,
@@ -324,7 +358,7 @@ test('a change that never resolves marks the root stale rather than pretending',
   }
 });
 
-test('a real deletion is still applied, exactly as before', async () => {
+test('a real deletion is still applied, exactly as before', async (t) => {
   // The fix must not have bought its safety by ignoring deletions.
   const dir = await mkTmp();
   try {
@@ -335,6 +369,7 @@ test('a real deletion is still applied, exactly as before', async () => {
 
     await fsp.unlink(path.join(dir, 'doomed.bin'));
     const took = await waitFor(() => getRoot(dir)!.totalSize === 1000);
+    if (took === -1 && !watchIsDelivering(t, dir, 'the deletion')) return;
     assert.notEqual(took, -1, 'ENOENT still means gone, and the row goes with it');
     assert.equal(getRoot(dir)!.state, 'ready', 'an ordinary deletion does not make a root stale');
   } finally {
