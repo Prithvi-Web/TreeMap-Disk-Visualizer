@@ -1526,7 +1526,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: {
       '200': jsonResponse('Dry-run manifest (dryRun: true only)', ref('OffloadDryRunManifest')),
       '202': jsonResponse('Job started (progress via SSE)', obj({ jobId: str() }, ['jobId'])),
-      '400': errorResponse('Bad destination / too many files / not enough space'),
+      '400': errorResponse('Bad destination / too many files / not enough space (DEST_FULL), or DEST_SPACE_UNKNOWN when the destination\u2019s free space could not be read at all — the drive may be disconnected or busy, and no offload was started'),
       '403': errorResponse('Sources outside every scanned root, or refused by agent-policy.json'),
     },
   },
@@ -2226,7 +2226,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         { restored: bool(), originalPath: str(), restoredTo: str(), fromSnapshotId: nullable(str()), sizeBytes: int() },
         ['restored', 'originalPath', 'restoredTo', 'fromSnapshotId', 'sizeBytes'],
       )),
-      '409': errorResponse('DESTINATION_OCCUPIED, NO_SNAPSHOTS, NOT_IN_ANY_SNAPSHOT, or AUTHORIZATION_DECLINED when the password prompt was dismissed'),
+      '409': errorResponse('DESTINATION_OCCUPIED, DESTINATION_IS_FOLDER, DESTINATION_UNVERIFIABLE (the destination could not be checked, so nothing was written over it), DESTINATION_NOT_CLEARED (the file being replaced could not be moved to the Trash), NO_SNAPSHOTS, SNAPSHOTS_UNREADABLE (the snapshot list could not be read — NOT the same as there being none), NOT_IN_ANY_SNAPSHOT, or AUTHORIZATION_DECLINED when the password prompt was dismissed'),
     },
   },
   {

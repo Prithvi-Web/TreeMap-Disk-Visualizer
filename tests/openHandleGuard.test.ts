@@ -388,7 +388,7 @@ test('"delete anyway" skips the check entirely', { skip: !IS_MAC }, async () => 
   const provider = platform() as unknown as { getOpenHandlesBatch: (p: string[]) => Promise<unknown> };
   const original = provider.getOpenHandlesBatch.bind(provider);
   provider.getOpenHandlesBatch = (paths: string[]) =>
-    Promise.resolve(paths.map((p) => ({ path: p, pid: 999999, processName: 'Pretend' })));
+    Promise.resolve({ handles: paths.map((p) => ({ path: p, pid: 999999, processName: 'Pretend' })), complete: true });
   const missing = path.join(os.tmpdir(), 'tm-b2-never-existed.bin');
   try {
     await assert.rejects(() => moveToTrash([missing]), /OPEN_HANDLE_CONFLICT|open right now/);
@@ -405,10 +405,13 @@ test('our own process reading a file is not reported as a conflict', async () =>
   const provider = platform() as unknown as { getOpenHandlesBatch: (p: string[]) => Promise<unknown> };
   const original = provider.getOpenHandlesBatch.bind(provider);
   provider.getOpenHandlesBatch = (paths: string[]) =>
-    Promise.resolve([
-      { path: paths[0], pid: process.pid, processName: 'TreeMap' },
-      { path: paths[0], pid: process.pid + 1, processName: 'Someone Else' },
-    ]);
+    Promise.resolve({
+      handles: [
+        { path: paths[0], pid: process.pid, processName: 'TreeMap' },
+        { path: paths[0], pid: process.pid + 1, processName: 'Someone Else' },
+      ],
+      complete: true,
+    });
   try {
     const report = await checkOpenHandles(['/tmp/x']);
     assert.equal(report.conflicts.length, 1, 'TreeMap hashing a file for the duplicate finder is not a warning');
@@ -475,4 +478,45 @@ test('nothing outside Cleaner removes a user file', async () => {
   };
   await scan(servicesDir);
   assert.deepEqual(offenders, [], 'a bare delete outside Cleaner bypasses the Trash and this guard');
+});
+
+test('a probe that could not cover the whole set says so, and does not read as clear', () => {
+  // The three-state contract at the top of `openHandleGuard.ts` promised
+  // this and could not deliver it: `complete` was hardcoded `true`, while
+  // Windows' Restart Manager computed the real value in four places and the
+  // caller threw it away with `const { files } = …`. A `node_modules` delete
+  // passes RM_MAX_RESOURCES routinely, so the common case reported a partial
+  // probe as a whole one.
+  return (async () => {
+    const provider = platform() as unknown as { getOpenHandlesBatch: (p: string[]) => Promise<unknown> };
+    const original = provider.getOpenHandlesBatch.bind(provider);
+    provider.getOpenHandlesBatch = () => Promise.resolve({ handles: [], complete: false });
+    try {
+      const report = await checkOpenHandles(['/tmp/x']);
+      assert.equal(report.checked, true, 'the probe did run');
+      assert.equal(report.complete, false, 'but it could not see everything');
+      assert.deepEqual(report.conflicts, [], 'and it found nothing in what it could see');
+      assert.ok(report.reason && /could not check every file/i.test(report.reason),
+        'the reason says so rather than leaving an empty conflict list to speak for itself');
+    } finally {
+      provider.getOpenHandlesBatch = original;
+    }
+  })();
+});
+
+test('a complete probe carries no partial-coverage caveat', () => {
+  // The caveat has to mean something: attaching it to a complete sweep would
+  // train people to ignore it.
+  return (async () => {
+    const provider = platform() as unknown as { getOpenHandlesBatch: (p: string[]) => Promise<unknown> };
+    const original = provider.getOpenHandlesBatch.bind(provider);
+    provider.getOpenHandlesBatch = () => Promise.resolve({ handles: [], complete: true });
+    try {
+      const report = await checkOpenHandles(['/tmp/x']);
+      assert.equal(report.complete, true);
+      assert.ok(!report.reason || !/could not check every file/i.test(report.reason));
+    } finally {
+      provider.getOpenHandlesBatch = original;
+    }
+  })();
 });

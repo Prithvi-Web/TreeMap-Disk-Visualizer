@@ -3,7 +3,7 @@ import path from 'path';
 import os from 'os';
 import { BaseProvider } from '../base';
 import { commandExists, runJson } from '../exec';
-import { openHandlesFor } from './restartManager';
+import { openHandlesFor, openHandlesBatchFor } from './restartManager';
 import { downloadOrigin, readDownloadOriginsWindows } from './zoneIdentifier';
 import { volumeTopology } from './topology';
 import { fileFactsBatch, toPlaceholderInfo } from './attributes';
@@ -21,6 +21,7 @@ import type {
   LastUsedInfo,
   HardwareEncodeCapability,
   OpenHandleInfo,
+  OpenHandleBatch,
   PlaceholderInfo,
   PlatformName,
   ProvenanceInfo,
@@ -84,8 +85,11 @@ export class WindowsProvider extends BaseProvider {
     return openHandlesFor([p]);
   }
 
-  override async getOpenHandlesBatch(paths: string[]): Promise<OpenHandleInfo[]> {
-    return openHandlesFor(paths);
+  override async getOpenHandlesBatch(paths: string[]): Promise<OpenHandleBatch> {
+    // The one provider that can genuinely be incomplete: Restart Manager caps
+    // registration at RM_MAX_RESOURCES, and an unreadable subtree cannot be
+    // registered at all. `openHandlesBatchFor` reports both.
+    return openHandlesBatchFor(paths);
   }
 
   /**

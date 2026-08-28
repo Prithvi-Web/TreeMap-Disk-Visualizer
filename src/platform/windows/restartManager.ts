@@ -1,7 +1,7 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
 import { runPowerShellJson, asArray } from './powershell';
-import type { OpenHandleInfo } from '../types';
+import type { OpenHandleInfo, OpenHandleBatch } from '../types';
 
 /**
  * Open-file detection on Windows (B2) via the Restart Manager API.
@@ -221,19 +221,34 @@ export async function expandForRegistration(
   return { files, complete };
 }
 
+/** Single-path form; the batch form below is what carries completeness. */
 export async function openHandlesFor(paths: string[]): Promise<OpenHandleInfo[]> {
-  if (paths.length === 0) return [];
-  const { files } = await expandForRegistration(paths);
-  if (files.length === 0) return [];
-  try {
-    const raw = await runPowerShellJson<unknown>(RM_SCRIPT, {
-      timeoutMs: 30_000,
-      env: { TREEMAP_PATHS: files.join('\n') },
-    });
-    return mapRestartManagerOutput(raw, paths);
-  } catch {
-    // A failure here must not block a delete; it degrades to "no information",
-    // which the capability state already tells the user about.
-    return [];
-  }
+  return (await openHandlesBatchFor(paths)).handles;
+}
+
+/**
+ * The batch form, with the completeness `expandForRegistration` already knows.
+ *
+ * That flag used to be computed in four places and then discarded by
+ * `const { files } = …`, so a `node_modules` delete — which passes
+ * RM_MAX_RESOURCES routinely — reported a partial probe as a complete one.
+ */
+export async function openHandlesBatchFor(paths: string[]): Promise<OpenHandleBatch> {
+  if (paths.length === 0) return { handles: [], complete: true };
+  const { files, complete } = await expandForRegistration(paths);
+  if (files.length === 0) return { handles: [], complete };
+  // Rethrown, not swallowed. The old comment here said a failure "degrades to
+  // 'no information', which the capability state already tells the user
+  // about" — but the capability is consulted BEFORE the probe, so once
+  // Restart Manager is available a failed run was indistinguishable from a
+  // clean one: `checkOpenHandles` reported `checked: true` and no conflicts,
+  // and the delete went ahead. On Windows that ends as a raw OS error at the
+  // trash step with no "Chrome has this open" explanation, which is exactly
+  // what this guard exists to give. `checkOpenHandles` already turns a throw
+  // into the honest `checked: false` state.
+  const raw = await runPowerShellJson<unknown>(RM_SCRIPT, {
+    timeoutMs: 30_000,
+    env: { TREEMAP_PATHS: files.join('\n') },
+  });
+  return { handles: mapRestartManagerOutput(raw, paths), complete };
 }

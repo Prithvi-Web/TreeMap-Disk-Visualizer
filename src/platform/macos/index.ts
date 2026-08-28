@@ -25,6 +25,7 @@ import type {
   BackupMembership,
   LastUsedInfo,
   OpenHandleInfo,
+  OpenHandleBatch,
   PlaceholderInfo,
   PlatformName,
   ProvenanceInfo,
@@ -69,8 +70,11 @@ export class MacOsProvider extends BaseProvider {
   }
 
   /** Batch form — one lsof call for the whole delete set, per §B2. */
-  override async getOpenHandlesBatch(paths: string[]): Promise<OpenHandleInfo[]> {
-    return openHandlesFor(paths);
+  override async getOpenHandlesBatch(paths: string[]): Promise<OpenHandleBatch> {
+    // Complete by construction: one `lsof` enumeration covers every path, so there is nothing to truncate.
+    // A probe that FAILS throws, and `checkOpenHandles` turns that into
+    // `checked: false` rather than an empty, confident answer.
+    return { handles: await openHandlesFor(paths), complete: true };
   }
 
   override async getZombieHandles(): Promise<ZombieHandleInfo[]> {

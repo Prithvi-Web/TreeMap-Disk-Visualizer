@@ -81,9 +81,9 @@ export async function checkOpenHandles(paths: string[]): Promise<OpenHandleRepor
   }
 
   const startedAt = Date.now();
-  let handles: OpenHandleInfo[];
+  let batch: { handles: OpenHandleInfo[]; complete: boolean };
   try {
-    handles = await platform().getOpenHandlesBatch(paths);
+    batch = await platform().getOpenHandlesBatch(paths);
   } catch (err) {
     // A broken probe must not block a delete, and must not pretend to be a
     // clean bill of health either (§6, failure isolation).
@@ -96,8 +96,15 @@ export async function checkOpenHandles(paths: string[]): Promise<OpenHandleRepor
     };
   }
 
+  // `complete` comes from the provider now. It used to be hardcoded `true`,
+  // which made the three-state contract at the top of this file a two-state
+  // one: Windows' Restart Manager computed the flag in four places and the
+  // caller discarded it, so a `node_modules` delete past RM_MAX_RESOURCES
+  // reported a partial probe as a whole one.
+  const partialReason =
+    'TreeMap could not check every file in this set, so some open files may not be listed.';
   return {
-    conflicts: handles
+    conflicts: batch.handles
       .filter((h) => h.pid !== process.pid) // our own read of a file is not a conflict
       .map((h) => ({
         path: h.path,
@@ -106,8 +113,10 @@ export async function checkOpenHandles(paths: string[]): Promise<OpenHandleRepor
         ...(h.openPath && h.openPath !== h.path ? { openPath: h.openPath } : {}),
       })),
     checked: true,
-    complete: true,
-    ...(state.reason ? { reason: state.reason } : {}),
+    complete: batch.complete,
+    ...(batch.complete
+      ? (state.reason ? { reason: state.reason } : {})
+      : { reason: state.reason ? `${partialReason} ${state.reason}` : partialReason }),
     elapsedMs: Date.now() - startedAt,
   };
 }

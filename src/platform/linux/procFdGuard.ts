@@ -34,14 +34,19 @@ import type { OpenHandleInfo, ZombieHandleInfo } from '../types';
 
 const DELETED_SUFFIX = ' (deleted)';
 
-/** Numeric entries of /proc are the process ids. */
+/**
+ * Numeric entries of /proc are the process ids.
+ *
+ * A failure to read /proc is rethrown rather than answered with `[]`. No pids
+ * means no descriptors means no conflicts, which `checkOpenHandles` would
+ * report as `checked: true` with a clean result — "nothing is open", from a
+ * probe that never ran. That is the one answer this module's contract forbids,
+ * and the `checked: false` state it should produce instead already exists.
+ * (The per-pid `continue` further down is a different case and stays: another
+ * user's process is genuinely unreadable, and the capability reason says so.)
+ */
 async function listPids(procRoot: string): Promise<number[]> {
-  let entries: string[];
-  try {
-    entries = await fsp.readdir(procRoot);
-  } catch {
-    return [];
-  }
+  const entries: string[] = await fsp.readdir(procRoot);
   const pids: number[] = [];
   for (const name of entries) {
     if (name.length === 0 || name.charCodeAt(0) < 48 || name.charCodeAt(0) > 57) continue;

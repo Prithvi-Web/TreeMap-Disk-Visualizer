@@ -122,22 +122,37 @@ async function realpathOrSelf(p: string): Promise<string> {
 }
 
 /**
- * Run lsof, tolerating its non-zero exits.
+ * Run lsof, tolerating its non-zero exits — but only the ones that mean
+ * something.
  *
- * Measured: lsof exits 1 when nothing matches (the common, boring case) *and*
- * when any single path argument no longer exists — while still printing
- * complete records for every path that does. Both are ordinary during a delete
- * batch, where files legitimately vanish between listing and confirming, so a
- * non-zero exit with usable stdout is data, not failure. A missing binary is
- * the one case that genuinely yields nothing.
+ * Measured: lsof exits **1** when nothing matches (the common, boring case)
+ * *and* when any single path argument no longer exists — while still printing
+ * complete records for every path that does. Both are ordinary during a
+ * delete batch, where files legitimately vanish between listing and
+ * confirming, so `exitCode === 1` with usable stdout is data, not failure.
+ *
+ * Every OTHER failure reports `exitCode: null` — measured on this Mac, that
+ * is what a timeout kill and a `maxBuffer` overflow both produce. Those used
+ * to be treated identically to the exit-1 case, which meant a killed run
+ * returned empty stdout and a TRUNCATED run returned a partial record set,
+ * and both were then reported to the caller as `checked: true` with no
+ * conflicts. Reproduced: with `lsof` replaced by a stub that prints partial
+ * output and exits 1, a file genuinely held open by another process came back
+ * as `{ conflicts: 0, checked: true, complete: true }` — indistinguishable
+ * from a clean answer, and `moveToTrash` proceeds on it.
+ *
+ * This module's own header states the rule it was violating: a guard that
+ * cannot check must never answer "nothing is open". So anything that is not
+ * the understood exit-1 case is rethrown, and `checkOpenHandles` turns it
+ * into the `checked: false` state it has always had — and always tested.
  */
-async function runLsof(args: string[], timeoutMs: number, maxBuffer?: number): Promise<string | null> {
+async function runLsof(args: string[], timeoutMs: number, maxBuffer?: number): Promise<string> {
   try {
     return await runText('lsof', args, { timeoutMs, ...(maxBuffer ? { maxBuffer } : {}) });
   } catch (err) {
-    if (err instanceof CommandUnavailableError) return null;
-    if (err instanceof CommandFailedError) return err.stdout;
-    return null;
+    if (err instanceof CommandUnavailableError) throw err;
+    if (err instanceof CommandFailedError && err.exitCode === 1) return err.stdout;
+    throw err;
   }
 }
 
@@ -168,8 +183,6 @@ export async function openHandlesFor(paths: string[]): Promise<OpenHandleInfo[]>
 
   const resolved = await Promise.all(paths.map(async (p) => [await realpathOrSelf(p), p] as const));
   const stdout = await runLsof(['-F', 'pcnfsi', '-w'], 30_000, 64 * 1024 * 1024);
-  if (stdout === null) return [];
-
   return intersectHandles(parseLsofRecords(stdout), resolved);
 }
 
@@ -231,7 +244,6 @@ export function intersectHandles(
  */
 export async function zombieHandles(): Promise<ZombieHandleInfo[]> {
   const stdout = await runLsof(['-F', 'pcnfsi', '-w'], 30_000, 64 * 1024 * 1024);
-  if (stdout === null) return [];
   return resolveZombies(parseLsofRecords(stdout), (p) => fsp.stat(p).then((st) => st.ino));
 }
 

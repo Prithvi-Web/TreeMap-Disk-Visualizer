@@ -8,6 +8,7 @@ import {
   HardwareEncodeCapability,
   LogicalVolumeInfo,
   OpenHandleInfo,
+  OpenHandleBatch,
   PlaceholderInfo,
   PlatformName,
   ProvenanceInfo,
@@ -55,7 +56,7 @@ export interface PlatformProvider {
    * 10,000 subprocesses, which §B2 calls out as unusably slow. Every provider
    * answers a batch with a single enumeration.
    */
-  getOpenHandlesBatch(paths: string[]): Promise<OpenHandleInfo[]>;
+  getOpenHandlesBatch(paths: string[]): Promise<OpenHandleBatch>;
   getZombieHandles(): Promise<ZombieHandleInfo[]>;
 
   /* Byte-accurate sizing (A2) and placeholders (A3) */

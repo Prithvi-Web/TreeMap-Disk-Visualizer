@@ -67,6 +67,21 @@ export interface ChangeEvent {
   at: number;
 }
 
+/**
+ * A batch open-handle probe, and whether it could see the whole set.
+ *
+ * `complete: false` is not the same as "nothing is open" and must never be
+ * rendered as one — Windows' Restart Manager caps registration at
+ * RM_MAX_RESOURCES, which a `node_modules` delete passes routinely, and an
+ * unreadable subtree is invisible to the probe rather than absent from it.
+ * The flag was computed and then dropped on the floor for exactly that case;
+ * it is carried now.
+ */
+export interface OpenHandleBatch {
+  handles: OpenHandleInfo[];
+  complete: boolean;
+}
+
 export type Unsubscribe = () => void;
 
 /* ---------- Open handles (B2) and zombie handles (B5) ---------- */
