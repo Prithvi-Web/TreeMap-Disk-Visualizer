@@ -82,8 +82,47 @@ export async function readJsonFile<T>(name: string, fallback: T): Promise<T> {
   }
   try {
     return JSON.parse(raw) as T;
+  } catch (err) {
+    // "Nothing usable to preserve" is true of the PARSE and false of the
+    // bytes. Nine stores in this app are read-modify-write, so returning the
+    // fallback means the very next save replaces the unreadable file with a
+    // partial one — and a half-readable `offload-manifest.json` is the only
+    // record of where a user's offloaded files went, while
+    // `cloud-tokens.json` is credentials for providers other than the one
+    // being saved.
+    //
+    // So the original is kept aside first, once, and only then does the
+    // caller get its fallback. Convenient behaviour for preferences (they
+    // reset), without the convenience costing anything irreversible.
+    await preserveCorrupt(name, err);
+    return fallback;
+  }
+}
+
+/**
+ * Keep an unparseable store next to itself before anyone overwrites it.
+ *
+ * Once only — `readJsonFile` sits on hot paths (`getPolicy` runs on every
+ * enforcement), so a corrupt file must not trigger a rename on every call.
+ * Best-effort throughout: this runs while something is already wrong, and
+ * failing to make a backup must not turn a degraded read into a hard error.
+ */
+async function preserveCorrupt(name: string, err: unknown): Promise<void> {
+  try {
+    const dir = appDataDir();
+    const backup = path.join(dir, `${name}.corrupt`);
+    await fsp.access(backup).then(
+      () => undefined, // already kept from an earlier read; leave the first one
+      async () => {
+        await fsp.copyFile(path.join(dir, name), backup);
+        console.error(
+          `[treemap] ${name} could not be parsed (${err instanceof Error ? err.message : String(err)}). ` +
+            `The original is kept at ${backup}; TreeMap is continuing with defaults.`,
+        );
+      },
+    );
   } catch {
-    return fallback; // there, but not JSON — nothing usable to preserve
+    /* best effort — the caller still gets its fallback */
   }
 }
 
@@ -130,6 +169,7 @@ export async function readJsonFileChecked<T>(name: string): Promise<JsonLoad<T>>
   try {
     return { ok: true, value: JSON.parse(raw) as T };
   } catch (err) {
+    await preserveCorrupt(name, err);
     return { ok: false, reason: 'corrupt', detail: err instanceof Error ? err.message : String(err) };
   }
 }
