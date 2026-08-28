@@ -575,7 +575,14 @@ export interface OffloadJob {
 /** Events streamed over the offload SSE progress endpoint. */
 export type OffloadStreamEvent =
   | { type: 'progress'; phase: OffloadPhase; filesDone: number; fileCount: number; bytesDone: number; bytesTotal: number; currentPath: string }
-  | { type: 'complete'; filesDone: number; bytesDone: number }
+  /**
+   * `warning` is set when the job finished but something the user needs to
+   * know went wrong on the way — the originals could not be trashed, or the
+   * offload record could not be written. Without it those `job.error` strings
+   * were unreachable: `complete` carried no message, there is no
+   * `GET /api/offload/:jobId`, and the UI toasted an unqualified success.
+   */
+  | { type: 'complete'; filesDone: number; bytesDone: number; warning?: string }
   | { type: 'error'; message: string }
   | { type: 'cancelled' }
   | { type: 'shutdown' };
@@ -688,7 +695,14 @@ export interface TimeCapsuleJob {
 /** Events streamed over the Time Capsule SSE progress endpoint. */
 export type TimeCapsuleStreamEvent =
   | { type: 'progress'; phase: TimeCapsulePhase; filesDone: number; fileCount: number; bytesDone: number; bytesTotal: number; currentPath: string }
-  | { type: 'complete'; filesDone: number; bytesDone: number }
+  /**
+   * `warning` is set when the job finished but something the user needs to
+   * know went wrong on the way — the originals could not be trashed, or the
+   * offload record could not be written. Without it those `job.error` strings
+   * were unreachable: `complete` carried no message, there is no
+   * `GET /api/offload/:jobId`, and the UI toasted an unqualified success.
+   */
+  | { type: 'complete'; filesDone: number; bytesDone: number; warning?: string }
   | { type: 'error'; message: string }
   | { type: 'cancelled' }
   | { type: 'shutdown' };

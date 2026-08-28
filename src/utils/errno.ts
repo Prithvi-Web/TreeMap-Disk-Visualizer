@@ -22,29 +22,68 @@
  * this codebase can ship, so the distinction gets its own tested function.
  */
 /**
- * Codes that mean the path is not there, or cannot be there.
+ * The plain absences: this path is not there, and nothing is pretending
+ * otherwise.
  *
- * `ENOENT` and `ENOTDIR` are the plain absences. The other three describe a
- * path the kernel will never resolve however many times it is asked —
- * a symlink cycle, a component past `NAME_MAX`, an ill-formed path. Treating
- * those as "could not find out" is not conservative, it is a loop: the
- * condition never clears, so every event for such a path burns the full
- * retry budget and then marks the root stale, permanently. A deep
- * `node_modules` past `PATH_MAX` on Linux would do that on every event.
+ * This is the narrow set, and it is the one to reach for whenever the answer
+ * decides whether STORED STATE may be discarded or overwritten.
  */
-const GONE = new Set(['ENOENT', 'ENOTDIR', 'ELOOP', 'ENAMETOOLONG', 'EINVAL']);
+const ABSENT = new Set(['ENOENT', 'ENOTDIR']);
 
-export function meansGone(err: unknown): boolean {
-  // `cause` is walked because this codebase now chains errors (`diskUsage`
-  // does), and a wrapped fs error with the answer inside it must not read as
-  // "could not tell" just because the wrapper carries no code of its own.
+/**
+ * The absences, plus paths the kernel will never resolve however many times
+ * it is asked: a symlink cycle, a component past `NAME_MAX`, an ill-formed
+ * path.
+ *
+ * Only correct for a `lstat`/`stat` that is asking "is this entry still
+ * there?" — where an unresolvable path may as well be gone, and retrying it
+ * is a loop that never clears, burning the full retry budget and marking the
+ * root stale on every event.
+ *
+ * It is NOT correct for reading a file whose contents are the state. An
+ * `ELOOP` on `timecapsule.json` says nothing about whether the user has
+ * recovery payloads; answering "absent" there produced an empty index, and
+ * the orphan sweep then deleted every payload on disk in a single pass.
+ * Measured, not imagined — which is why the two predicates are now separate
+ * despite describing overlapping sets.
+ */
+const UNRESOLVABLE = new Set([...ABSENT, 'ELOOP', 'ENAMETOOLONG', 'EINVAL']);
+
+/** Walk an error and its causes for the first fs errno anyone recorded. */
+function errnoOf(err: unknown): { code?: string; errno?: number } | null {
+  // `cause` is walked because this codebase chains errors (`diskUsage` does),
+  // and a wrapped fs error with the answer inside it must not read as "could
+  // not tell" just because the wrapper carries no code of its own. The depth
+  // bound also terminates a cyclic cause chain.
   for (let e: unknown = err, depth = 0; e != null && depth < 4; e = (e as { cause?: unknown }).cause, depth++) {
-    const code = (e as NodeJS.ErrnoException).code;
-    if (typeof code === 'string') return GONE.has(code);
-    // An error that crossed a worker/structuredClone boundary loses its own
-    // properties but keeps `errno`. -2 is ENOENT, -20 is ENOTDIR.
-    const errno = (e as NodeJS.ErrnoException).errno;
-    if (typeof errno === 'number') return errno === -2 || errno === -20;
+    const node = e as NodeJS.ErrnoException;
+    if (typeof node.code === 'string') return { code: node.code };
+    if (typeof node.errno === 'number') return { errno: node.errno };
   }
-  return false;
+  return null;
+}
+
+/**
+ * libuv's numeric codes, for an error that lost its own properties crossing a
+ * worker or `structuredClone` boundary. The Windows values differ from the
+ * Unix ones and both are listed — checking only `-2`/`-20` would have made
+ * this fallback silently dead on the platform with the most cross-boundary
+ * machinery.
+ */
+const ABSENT_ERRNO = new Set([-2, -20, -4058, -4052]);
+
+/** Is this failure a plain "it is not there"? Use where state is at stake. */
+export function meansAbsent(err: unknown): boolean {
+  const found = errnoOf(err);
+  if (!found) return false;
+  if (found.code !== undefined) return ABSENT.has(found.code);
+  return found.errno !== undefined && ABSENT_ERRNO.has(found.errno);
+}
+
+/** Is this a `stat` failure that may as well be treated as gone? */
+export function meansGone(err: unknown): boolean {
+  const found = errnoOf(err);
+  if (!found) return false;
+  if (found.code !== undefined) return UNRESOLVABLE.has(found.code);
+  return found.errno !== undefined && ABSENT_ERRNO.has(found.errno);
 }

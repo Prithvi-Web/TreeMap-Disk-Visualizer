@@ -1,5 +1,6 @@
 import { AgentPolicy } from '../models/types';
-import { readJsonFileChecked } from './storage';
+import path from 'path';
+import { appDataDir, readJsonFileChecked } from './storage';
 import { isInside } from '../utils/pathSanitizer';
 import { allScans } from './diskScanner';
 import { storeOf } from './scanStore';
@@ -45,10 +46,15 @@ export const POLICY_FILE = 'agent-policy.json';
 export async function getPolicy(): Promise<AgentPolicy> {
   const loaded = await readJsonFileChecked<Partial<AgentPolicy>>(POLICY_FILE);
   if (!loaded.ok && loaded.reason === 'corrupt') {
+    // 500, not 403. Nothing about the CALLER is forbidden — the server cannot
+    // determine authorization at all — and a 403 here is indistinguishable in
+    // logs and on the MCP surface from a genuine policy denial. The path is in
+    // the message because "fix or remove the file" is useless without it.
     throw new AppError(
-      403,
+      500,
       'POLICY_UNREADABLE',
-      `agent-policy.json could not be read (${loaded.detail}), so TreeMap refused rather than acting as if you had set no limits. Fix or remove the file.`,
+      `The policy file at ${path.join(appDataDir(), POLICY_FILE)} could not be read (${loaded.detail}), so TreeMap refused this operation ` +
+        'rather than acting as if you had set no limits. Fix or remove that file.',
     );
   }
   const raw: Partial<AgentPolicy> = loaded.ok ? loaded.value : {};

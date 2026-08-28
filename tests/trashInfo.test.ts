@@ -105,3 +105,20 @@ test('any unreadable errno counts, not just the one that was seen in the wild', 
  * cannot read at all) or an export invented for the test. An assertion that
  * cannot fail is worse than an admitted gap.
  */
+
+test('emptying an unreadable Trash is never reported as a success', async () => {
+  // The short-circuit at the top of `emptyTrash` was fixed first, and the same
+  // wrong conclusion survived at the bottom: `after.itemCount === 0` was read
+  // as "it is empty now" when it actually meant "still nothing visible". Every
+  // emptier could throw and the result was `emptied: true, freedBytes: 0,
+  // failed: []` — the failures discarded — which the UI toasts as "Trash
+  // emptied".
+  const { emptyTrash } = await import('../src/services/trash');
+  const restore = failReaddir('.Trash', 'EPERM');
+  try {
+    const result = await emptyTrash();
+    assert.equal(result.emptied, false, 'nothing can be claimed about a Trash that could not be read');
+  } finally {
+    restore();
+  }
+});

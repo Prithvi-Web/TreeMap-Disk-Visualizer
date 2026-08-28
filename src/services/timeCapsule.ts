@@ -16,7 +16,7 @@ import { diskUsage } from './diskUsage';
 import { copyWithHash, hashFile, CopyCancelled } from '../utils/copyVerify';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
-import { meansGone } from '../utils/errno';
+import { meansAbsent } from '../utils/errno';
 
 /**
  * Time Capsule — recovery beyond the OS Trash (B3).
@@ -932,21 +932,33 @@ export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entr
       orphansRemoved++;
     }
   } else if (payloadDirs.length > 0) {
-    // Through the capsule's own event log, not `console.error`: in a packaged
-    // build stdout goes nowhere a user will look, and this says the only copy
-    // of files the app protected may be at risk.
-    recordEvent(store, {
-      at: Date.now(),
-      kind: 'lost',
-      name: 'Time Capsule index',
-      originalPath: path.join(root, INDEX_FILE),
-      sizeBytes: 0,
-      detail:
-        `The Time Capsule index could not be read, so the ${String(payloadDirs.length)} recovery ` +
-        'folders on disk were left alone rather than deleted as orphans. Nothing has been lost, but ' +
-        'Restore cannot list them until the index is repaired or removed.',
-    });
-    await saveStore(store);
+    // NOTHING IS WRITTEN, MOVED OR DELETED ON THIS PATH, and each of those
+    // three is a separate lesson.
+    //
+    // `store` here is `{ entries: [] }` — the fallback `loadStore` returns for
+    // an index that would not parse. Saving it would replace the corrupt file
+    // with a valid empty one, so the NEXT sweep would parse it happily, find
+    // no entries, and delete every payload as an orphan. Measured: the guard
+    // alone turned an immediate `rm -rf` into one that fires on the following
+    // launch.
+    //
+    // Renaming the corrupt index aside has the same ending by a different
+    // road — an ABSENT index is a decided "first run", so the next sweep
+    // deletes the payloads with a clear conscience. Also measured.
+    //
+    // So the sweep stays blocked until a person acts. The cost is some stale
+    // directories in one folder; the alternative is destroying the only copy
+    // of files this app promised to protect. A capsule the user has
+    // legitimately emptied is NOT this case — that index parses, holds zero
+    // entries, and the sweep above runs normally — so nothing accumulates in
+    // the ordinary course of things.
+    console.error(
+      '[treemap] capsule reconcile: the Time Capsule index at ' +
+        `${path.join(appDataDir(), INDEX_FILE)} could not be parsed. ` +
+        `${String(payloadDirs.length)} recovery folders are on disk and were LEFT ALONE rather than ` +
+        'deleted as orphans — they may be the only copy of files removed through TreeMap. ' +
+        'Repair or move that file to let cleanup resume.',
+    );
   }
 
   let entriesLost = 0;
@@ -964,7 +976,10 @@ export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entr
       await fsp.stat(entryDir(entry.id));
       missing = false;
     } catch (err) {
-      if (!meansGone(err)) continue; // ask again next sweep; the entry is already correct
+      // `meansAbsent`, not the wider stat predicate: `hasPayload = false` is
+      // ONE-WAY — later sweeps skip such entries and Restore refuses them — so
+      // a wrong "gone" retires an intact payload for good.
+      if (!meansAbsent(err)) continue; // ask again next sweep; the entry is already correct
       missing = true;
     }
     if (!missing) continue;
@@ -981,7 +996,9 @@ export async function reconcileCapsule(): Promise<{ orphansRemoved: number; entr
     });
   }
 
-  if (orphansRemoved > 0 || entriesLost > 0) await saveStore(store);
+  // Never persist a store that came from an index we could not read: every
+  // field of it is a fallback, and writing it makes the fallback the truth.
+  if (!indexUnparseable && (orphansRemoved > 0 || entriesLost > 0)) await saveStore(store);
   return { orphansRemoved, entriesLost };
 }
 

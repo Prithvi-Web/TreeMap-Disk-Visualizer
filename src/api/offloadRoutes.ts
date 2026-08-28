@@ -179,7 +179,7 @@ offloadRouter.get('/offload/:jobId/progress', (req: Request, res: Response) => {
   res.flushHeaders();
 
   const finish = (j: OffloadJob): void => {
-    if (j.status === 'complete') send(res, { type: 'complete', filesDone: j.filesDone, bytesDone: j.bytesDone });
+    if (j.status === 'complete') send(res, { type: 'complete', filesDone: j.filesDone, bytesDone: j.bytesDone, ...(j.error ? { warning: j.error } : {}) });
     else if (j.status === 'cancelled') send(res, { type: 'cancelled' });
     else send(res, { type: 'error', message: j.error ?? 'Offload failed' });
     closeClient(client);

@@ -30,6 +30,7 @@ import {
   VolumeTopology,
   ZombieHandleInfo,
 } from './types';
+import { notifyWatchDelivery } from './types';
 import { meansGone } from '../utils/errno';
 
 /**
@@ -190,6 +191,13 @@ export abstract class BaseProvider implements PlatformProvider {
 
     try {
       watcher = fs.watch(root, { recursive: true, persistent: false }, (_type, filename) => {
+        // Counted HERE, at the OS callback, before any of this provider's own
+        // logic can drop it. Counting downstream — at the engine's subscriber
+        // — would mean a regression in this method (a swallowed event, a
+        // mis-joined path) produced a count of zero, and the acceptance test
+        // that reads the count would SKIP green on it. The number has to mean
+        // "the OS spoke", not "we passed it on".
+        notifyWatchDelivery(root);
         if (closed || filename === null) return;
         const full = path.join(root, filename);
         fsp

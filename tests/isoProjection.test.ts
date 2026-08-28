@@ -388,7 +388,7 @@ test('a shadow reaches back past its own caster', () => {
  *   - once it was non-zero, every drawn folder was marked, including
  *     childless ones, claiming contents that are not there.
  */
-interface LodNode { path: string; w: number; h: number; type?: string; expanded?: boolean }
+interface LodNode { path: string; w: number; h: number; type?: string; expanded?: boolean; isTrash?: boolean; container?: string }
 const cityVisibleNodes = lift<
   (nodes: LodNode[], minArea: number) => { drawn: LodNode[]; aggregated: number }
 >(['tmParentPath', 'cityVisibleNodes'], 'cityVisibleNodes');

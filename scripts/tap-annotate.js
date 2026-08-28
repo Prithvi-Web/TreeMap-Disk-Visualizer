@@ -142,7 +142,9 @@ function parseTap(text) {
       // that ended an unterminated block — that line is the next failure, and
       // skipping it is how the previous version dropped every other one of
       // several consecutive bare `not ok` lines.
-      i = terminated ? j : Math.max(i, j - 1);
+      // `j` is always at least `i + 2` when a block was opened, so the
+      // "resume before" case can never land on or behind the `not ok` itself.
+      i = terminated ? j : j - 1;
     }
     // With no YAML block at all, `i` is untouched, so the loop's own `i++`
     // moves to the very next line rather than jumping over it.
@@ -154,9 +156,20 @@ function parseTap(text) {
     out.push({ line: atLine, name: unescapeName(name), fields });
   }
 
+  // Drop `describe` SUITE wrappers. Node prints one for every failing suite
+  // but excludes it from `# fail N` — measured: two nested `describe` levels
+  // give 4 real failures, 2 wrappers, and `# fail 4`. Reporting them
+  // double-counts against that figure and spends capped annotation slots on
+  // lines that name no cause.
+  //
+  // `type`, not the message: a `test()` parent with a failing subtest carries
+  // the SAME `error: 'N subtests failed'` and IS counted, so filtering on the
+  // message drops real failures. Only `type: 'suite'` marks the uncounted one.
+  const kept = out.filter((f) => f.fields.type !== 'suite');
+
   // A failure carrying a real assertion outranks one that only says "test
   // failed": when the cap bites, the informative ones must be the survivors.
-  return out
+  return kept
     .map((f, idx) => ({ f, idx, informative: f.fields.error && f.fields.error !== 'test failed' ? 0 : 1 }))
     .sort((a, b) => a.informative - b.informative || a.idx - b.idx)
     .map((x) => x.f);

@@ -112,6 +112,12 @@ function assertLanded(
 ): boolean {
   if (elapsedMs === -1) {
     const delivered = watcherEventCount(ctx.dir);
+    if (delivered === null) {
+      // No watcher is attached at all, which is a different failure from
+      // either of the two below and must not be dressed up as one — the
+      // earlier version printed "the OS delivered null event(s)".
+      assert.fail(`${what} never landed, and no watcher is attached to ${ctx.dir} — the watch was never established or was stopped early.`);
+    }
     if (delivered === 0) {
       ctx.t.skip(
         `the OS watch on ${ctx.dir} delivered no events at all in ${String(WATCH_CEILING_MS)}ms, ` +

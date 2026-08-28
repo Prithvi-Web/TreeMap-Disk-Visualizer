@@ -44,7 +44,18 @@ metaRouter.get('/audit', async (req: Request, res: Response) => {
  * be theatre. The human edits the JSON file.
  */
 metaRouter.get('/policy', async (_req: Request, res: Response) => {
-  res.json({ policy: await getPolicy(), file: path.join(appDataDir(), POLICY_FILE) });
+  const file = path.join(appDataDir(), POLICY_FILE);
+  // This is the one endpoint that tells a person WHERE the policy file is, so
+  // it must keep answering when that file is the thing that is broken.
+  // `getPolicy` now refuses on an unparseable policy — correct for every
+  // enforcement path, and exactly wrong here, where failing would hide the
+  // path the user needs in order to fix it.
+  try {
+    res.json({ policy: await getPolicy(), file });
+  } catch (err) {
+    if (!(err instanceof AppError) || err.code !== 'POLICY_UNREADABLE') throw err;
+    res.json({ policy: null, unreadable: true, reason: err.message, file });
+  }
 });
 
 /**

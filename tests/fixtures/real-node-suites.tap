@@ -1,0 +1,130 @@
+TAP version 13
+# Subtest: a suite
+    # Subtest: a failing it
+    not ok 1 - a failing it
+      ---
+      duration_ms: 0.546084
+      type: 'test'
+      location: '/repo/tests/suite.test.js:4:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        
+        1 !== 2
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 2
+      actual: 1
+      operator: 'strictEqual'
+      stack: |-
+        TestContext.<anonymous> (/repo/tests/suite.test.js:4:37)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1306:25)
+        Test.start (node:internal/test_runner/test:1177:17)
+        node:internal/test_runner/test:1769:71
+        node:internal/per_context/primordials:466:82
+        new Promise (<anonymous>)
+        new SafePromise (node:internal/per_context/primordials:435:3)
+        node:internal/per_context/primordials:466:9
+        Array.map (<anonymous>)
+      ...
+    # Subtest: deeper
+        # Subtest: another failing it
+        not ok 1 - another failing it
+          ---
+          duration_ms: 0.088833
+          type: 'test'
+          location: '/repo/tests/suite.test.js:5:30'
+          failureType: 'testCodeFailure'
+          error: |-
+            Expected values to be strictly equal:
+            
+            3 !== 4
+            
+          code: 'ERR_ASSERTION'
+          name: 'AssertionError'
+          expected: 4
+          actual: 3
+          operator: 'strictEqual'
+          stack: |-
+            TestContext.<anonymous> (/repo/tests/suite.test.js:5:70)
+            Test.runInAsyncScope (node:async_hooks:227:14)
+            Test.run (node:internal/test_runner/test:1306:25)
+            Test.start (node:internal/test_runner/test:1177:17)
+            node:internal/test_runner/test:1769:71
+            node:internal/per_context/primordials:466:82
+            new Promise (<anonymous>)
+            new SafePromise (node:internal/per_context/primordials:435:3)
+            node:internal/per_context/primordials:466:9
+            Array.map (<anonymous>)
+          ...
+        1..1
+    not ok 2 - deeper
+      ---
+      duration_ms: 0.149125
+      type: 'suite'
+      location: '/repo/tests/suite.test.js:5:3'
+      failureType: 'subtestsFailed'
+      error: '1 subtest failed'
+      code: 'ERR_TEST_FAILURE'
+      ...
+    1..2
+not ok 1 - a suite
+  ---
+  duration_ms: 1.073333
+  type: 'suite'
+  location: '/repo/tests/suite.test.js:3:1'
+  failureType: 'subtestsFailed'
+  error: '2 subtests failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: a plain parent
+    # Subtest: a failing child
+    not ok 1 - a failing child
+      ---
+      duration_ms: 0.07425
+      type: 'test'
+      location: '/repo/tests/suite.test.js:7:47'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        
+        5 !== 6
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 6
+      actual: 5
+      operator: 'strictEqual'
+      stack: |-
+        TestContext.<anonymous> (/repo/tests/suite.test.js:7:86)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1306:25)
+        Test.start (node:internal/test_runner/test:1177:17)
+        TestContext.test (node:internal/test_runner/test:380:20)
+        TestContext.<anonymous> (/repo/tests/suite.test.js:7:47)
+        Test.runInAsyncScope (node:async_hooks:227:14)
+        Test.run (node:internal/test_runner/test:1306:25)
+        Test.processPendingSubtests (node:internal/test_runner/test:897:18)
+        Suite.postRun (node:internal/test_runner/test:1447:19)
+      ...
+    1..1
+not ok 2 - a plain parent
+  ---
+  duration_ms: 0.176625
+  type: 'test'
+  location: '/repo/tests/suite.test.js:7:1'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..2
+# tests 4
+# suites 2
+# pass 0
+# fail 4
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 39.409125

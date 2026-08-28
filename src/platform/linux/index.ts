@@ -35,6 +35,7 @@ import type {
   ZombieHandleInfo,
 } from '../types';
 import { meansGone } from '../../utils/errno';
+import { notifyWatchDelivery } from '../types';
 
 /**
  * Linux platform provider.
@@ -135,6 +136,10 @@ export class LinuxProvider extends BaseProvider {
       let watcher: fs.FSWatcher;
       try {
         watcher = fs.watch(dir, { persistent: false }, (_type, filename) => {
+          // Reported at the OS callback, like the base provider — see
+          // `notifyWatchDelivery`. `root`, not `dir`: the consumer keys on the
+          // root it subscribed to, not on whichever nested directory fired.
+          notifyWatchDelivery(root);
           if (closed || filename === null) return;
           const full = path.join(dir, filename);
           fsp.lstat(full).then(

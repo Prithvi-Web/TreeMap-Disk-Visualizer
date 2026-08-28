@@ -10657,6 +10657,12 @@ function watchJob(opts) {
       $('offloadCurrent').textContent = ev.currentPath;
     } else if (ev.type === 'complete') {
       done();
+      // A job can finish AND have something the user must know: the originals
+      // were not trashed, or the offload record could not be written. That
+      // used to be carried only in a `job.error` the client never saw, so the
+      // one case where files are at the destination but Restore cannot list
+      // them was reported as an unqualified success.
+      if (ev.warning) toast(ev.warning, 'error', 12000);
       opts.onComplete(ev);
     } else if (ev.type === 'error') {
       done();
@@ -11638,7 +11644,16 @@ function buildCity() {
       //   - "has a child in the payload" missed every folder the SERVER
       //     stopped at — 102 of 229 on that same payload, each one standing
       //     for a subtree the payload never described.
-      hatched: n.type === 'dir',
+      // Two exceptions to "every drawn folder", and only two.
+      //
+      // The synthetic Trash cell (`maybeInjectTrash`) is `type: 'dir'` with no
+      // subtree at all — it is a single figure, so a texture on it would claim
+      // contents the map cannot show and the user cannot drill into.
+      //
+      // A container is an archive with virtual children, and it arrives as
+      // `type: 'file'` — so the plain rule missed it while it genuinely does
+      // hide what is inside.
+      hatched: (n.type === 'dir' || !!n.container) && !n.isTrash,
     });
   }
   // Bounds are kept from the build pass so the draw loop can cull to the
@@ -13511,6 +13526,15 @@ async function checkOpenHandlesFor(paths) {
 function renderOpenHandleWarning(report, pathCount) {
   const host = $('confirmOpenHandles');
   const conflicts = report.conflicts || [];
+  // "The probe could not cover the whole set" is true whether or not it found
+  // something in the part it DID cover, and it is most important when it did:
+  // Windows' Restart Manager truncates at RM_MAX_RESOURCES, which a
+  // `node_modules` delete passes routinely, so "3 files in use" there may be
+  // three of an unknown number. Kept above the empty-list branch for that
+  // reason.
+  const partial = report.checked !== false && report.complete === false
+    ? (report.reason || 'TreeMap could not check every file in this set, so some open files may not be listed.')
+    : '';
 
   if (!conflicts.length) {
     // "Couldn't check" is not "nothing is open" (§2.2) — say which it was, but
@@ -13525,10 +13549,10 @@ function renderOpenHandleWarning(report, pathCount) {
     // nothing in that part" are different facts, and only the first means the
     // set is clear. The server has always carried `complete` for this and the
     // UI has never read it — because until now nothing computed it.
-    if (report.complete === false) {
+    if (partial) {
       host.className = 'checking';
       host.hidden = false;
-      host.textContent = report.reason || 'TreeMap could not check every file in this set, so some open files may not be listed.';
+      host.textContent = partial;
       return;
     }
     host.hidden = true;
@@ -13569,7 +13593,10 @@ function renderOpenHandleWarning(report, pathCount) {
   host.hidden = false;
   host.innerHTML =
     `<div class="oh-head">${icon('alert', 15)}<div><b>${subject}</b> ${consequence}</div></div>` +
-    `<ul>${rows}${hiddenCount > 0 ? `<li class="oh-file">and ${hiddenCount} other program${hiddenCount === 1 ? '' : 's'}</li>` : ''}</ul>`;
+    `<ul>${rows}${hiddenCount > 0 ? `<li class="oh-file">and ${hiddenCount} other program${hiddenCount === 1 ? '' : 's'}</li>` : ''}</ul>` +
+    // A truncated probe that found something is still truncated, and this is
+    // the case it matters most in — the list below may be part of a longer one.
+    (partial ? `<div class="oh-file" style="margin-top:6px;">${escapeHtml(partial)}</div>` : '');
 
   // The button now says what it actually does. The user has read the warning;
   // taking the choice away would just send them to Finder to do it unguarded.

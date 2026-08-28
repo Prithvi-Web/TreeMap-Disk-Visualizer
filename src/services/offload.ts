@@ -379,7 +379,7 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
       // job says exactly that. Rethrowing anything else keeps real failures
       // rolling back as before.
       if (!(err instanceof AppError) || err.code !== 'OPEN_HANDLE_CONFLICT') throw err;
-      job.error = `Everything was copied and verified, but the originals are still here: ${err.message}`;
+      job.error = `Everything was copied and verified to ${destDir}, but the originals are still here: ${err.message}`;
     }
     if (trashed.failed.length) {
       // Copies are safe at the destination; report the leftovers honestly.
@@ -424,9 +424,16 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
     } catch (err) {
       // The files are where they should be; only the record of them failed.
       // Say so precisely, because it is the record that Restore reads.
-      job.error =
-        `Everything was copied and verified to ${destDir}, and the originals were moved to the Trash — but the offload record could not be saved ` +
-        `(${err instanceof Error ? err.message : String(err)}). The files are safe at the destination; Restore may not list them until this is fixed.`;
+      //
+      // APPENDED, never assigned: `job.error` may already say the originals
+      // are still on disk (an OPEN_HANDLE_CONFLICT, or a trash that reported
+      // failures). Overwriting it would replace a true warning with the false
+      // claim that the originals were trashed, and lose the more important
+      // half.
+      const bookkeeping =
+        `The offload record could not be saved (${err instanceof Error ? err.message : String(err)}). ` +
+        `The files are copied and verified at ${destDir}; Restore may not list them until this is fixed.`;
+      job.error = job.error ? `${job.error} Also: ${bookkeeping}` : bookkeeping;
     }
 
     job.phase = 'done';

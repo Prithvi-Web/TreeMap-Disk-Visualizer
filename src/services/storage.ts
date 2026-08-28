@@ -2,7 +2,7 @@ import { promises as fsp } from 'fs';
 import path from 'path';
 import os from 'os';
 import { isEphemeral } from './portableMode';
-import { meansGone } from '../utils/errno';
+import { meansAbsent } from '../utils/errno';
 
 /**
  * Storage — tiny JSON-file persistence in the platform's app-data directory.
@@ -77,7 +77,7 @@ export async function readJsonFile<T>(name: string, fallback: T): Promise<T> {
   try {
     raw = await fsp.readFile(path.join(appDataDir(), name), 'utf8');
   } catch (err) {
-    if (meansGone(err)) return fallback; // not there yet — first run
+    if (meansAbsent(err)) return fallback; // not there yet — first run
     throw err; // could not tell — say so rather than answer "empty"
   }
   try {
@@ -124,7 +124,7 @@ export async function readJsonFileChecked<T>(name: string): Promise<JsonLoad<T>>
   try {
     raw = await fsp.readFile(path.join(appDataDir(), name), 'utf8');
   } catch (err) {
-    if (meansGone(err)) return { ok: false, reason: 'absent' };
+    if (meansAbsent(err)) return { ok: false, reason: 'absent' };
     throw err;
   }
   try {

@@ -2,7 +2,7 @@ import { execFile } from 'child_process';
 import { promises as fsp } from 'fs';
 import path from 'path';
 import os from 'os';
-import { meansGone } from '../utils/errno';
+import { meansAbsent } from '../utils/errno';
 
 /**
  * Trash accounting (Feature 8). Best-effort, read-only sizing of the system
@@ -69,7 +69,7 @@ async function dirSize(dir: string, budget: { n: number }, problems: SweepProble
     } catch (err) {
       // A subtree that could not be read contributes zero bytes, which is a
       // FLOOR and not a measurement. Recorded rather than swallowed.
-      if (!meansGone(err)) noteProblem(problems, err);
+      if (!meansAbsent(err)) noteProblem(problems, err);
       continue;
     }
     for (const ent of entries) {
@@ -81,7 +81,7 @@ async function dirSize(dir: string, budget: { n: number }, problems: SweepProble
       } catch (err) {
         // A vanished entry is ordinary in a Trash being emptied elsewhere;
         // an unreadable one means the total is short by an unknown amount.
-        if (!meansGone(err)) noteProblem(problems, err);
+        if (!meansAbsent(err)) noteProblem(problems, err);
       }
     }
   }
@@ -139,7 +139,7 @@ export async function getTrashInfo(): Promise<TrashInfo> {
       // legitimately are not there. Every OTHER errno means a location that
       // DOES exist could not be read, and its contents are missing from the
       // totals below.
-      if (!meansGone(err)) noteProblem(problems, err);
+      if (!meansAbsent(err)) noteProblem(problems, err);
       continue;
     }
     for (const ent of entries) {
@@ -149,7 +149,7 @@ export async function getTrashInfo(): Promise<TrashInfo> {
         if (ent.isDirectory() && !ent.isSymbolicLink()) size = await dirSize(full, budget, problems);
         else size = (await fsp.lstat(full)).size;
       } catch (err) {
-        if (!meansGone(err)) noteProblem(problems, err);
+        if (!meansAbsent(err)) noteProblem(problems, err);
         continue;
       }
       totalBytes += size;
@@ -285,12 +285,24 @@ export async function emptyTrash(): Promise<EmptyTrashResult> {
   }
 
   const after = await getTrashInfo();
-  const emptied = after.itemCount === 0;
+  // `after.itemCount === 0` is only evidence of an empty Trash when the sweep
+  // could actually READ it. With EPERM — the default state on macOS without
+  // Full Disk Access — it is zero because nothing was visible, so this
+  // reported `emptied: true, freedBytes: 0, failed: []` even when every
+  // emptier command had thrown. The guard added earlier only fixed the
+  // short-circuit at the top of this function; the same wrong conclusion was
+  // still being drawn at the bottom.
+  //
+  // `ran` matters too: if no platform mechanism executed at all, nothing was
+  // emptied whatever the counts say.
+  const emptied = ran && after.complete && after.itemCount === 0;
   return {
     emptied,
     freedBytes: Math.max(0, before.totalBytes - after.totalBytes),
     itemCount: Math.max(0, before.itemCount - after.itemCount),
-    // A fallback that finished the job makes earlier attempts uninteresting.
+    // A fallback that finished the job makes earlier attempts uninteresting —
+    // but only when we can see that it finished. Discarding the failures on
+    // an unreadable Trash is how a total failure was reported as a success.
     failed: emptied ? [] : failed,
   };
 }

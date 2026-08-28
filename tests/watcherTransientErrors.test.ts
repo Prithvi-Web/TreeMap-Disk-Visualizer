@@ -29,7 +29,7 @@ const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-transient-data-'));
 process.env.TREEMAP_DATA_DIR = DATA_DIR;
 
 import { buildIndex, getRoot, stopAllWatchers, closeIndex, deleteIndex, MAX_CHANGE_ATTEMPTS } from '../src/services/indexEngine';
-import { meansGone } from '../src/utils/errno';
+import { meansGone, meansAbsent } from '../src/utils/errno';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const mkTmp = (): Promise<string> => fsp.mkdtemp(path.join(os.tmpdir(), 'tm-transient-'));
@@ -106,6 +106,57 @@ after(() => {
 
 /* ------------------------------- the rule ------------------------------- */
 
+test('the two predicates are not the same predicate, and that is the point', () => {
+  const err = (code: string): NodeJS.ErrnoException => Object.assign(new Error(code), { code });
+
+  // `meansGone` answers "may this stat be treated as gone?" — where a path
+  // the kernel will never resolve may as well be, and retrying is a loop.
+  // `meansAbsent` answers "is this file simply not there?" — asked wherever
+  // the answer decides whether STORED STATE may be discarded.
+  //
+  // Sharing one predicate across both is not hypothetical: widening it for
+  // the watcher silently widened `storage.readJsonFile`, and an `ELOOP` on
+  // `timecapsule.json` then read as "first run" — an empty index, on which
+  // the orphan sweep deletes every recovery payload on disk. Measured, in one
+  // pass, before these were split.
+  for (const code of ['ELOOP', 'ENAMETOOLONG', 'EINVAL']) {
+    assert.equal(meansGone(err(code)), true, `${code}: a stat may treat it as gone`);
+    assert.equal(meansAbsent(err(code)), false, `${code}: but it is NOT "the file is not there"`);
+  }
+  for (const code of ['ENOENT', 'ENOTDIR']) {
+    assert.equal(meansGone(err(code)), true, `${code} is gone`);
+    assert.equal(meansAbsent(err(code)), true, `${code} is absent`);
+  }
+  for (const code of ['EMFILE', 'EACCES', 'EIO']) {
+    assert.equal(meansGone(err(code)), false);
+    assert.equal(meansAbsent(err(code)), false);
+  }
+});
+
+test('a config read answers "absent" only for a real absence', async () => {
+  // The call site the split exists for, exercised end to end rather than
+  // through the predicate alone.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-errno-store-'));
+  const prior = process.env.TREEMAP_DATA_DIR;
+  process.env.TREEMAP_DATA_DIR = dir;
+  try {
+    const { readJsonFileChecked } = await import('../src/services/storage');
+    assert.deepEqual(await readJsonFileChecked('missing.json'), { ok: false, reason: 'absent' });
+
+    // A two-link symlink loop: `readFile` gives ELOOP.
+    fs.symlinkSync(path.join(dir, 'b.json'), path.join(dir, 'a.json'));
+    fs.symlinkSync(path.join(dir, 'a.json'), path.join(dir, 'b.json'));
+    await assert.rejects(
+      () => readJsonFileChecked('a.json'),
+      (e: unknown) => (e as NodeJS.ErrnoException).code === 'ELOOP',
+      'an unresolvable config path must throw, never read as "first run"',
+    );
+  } finally {
+    process.env.TREEMAP_DATA_DIR = prior;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('only a real absence counts as gone', () => {
   const err = (code: string): NodeJS.ErrnoException => Object.assign(new Error(code), { code });
   assert.equal(meansGone(err('ENOENT')), true, 'the path is not there');
@@ -116,6 +167,10 @@ test('only a real absence counts as gone', () => {
   assert.equal(meansGone(err('ELOOP')), true, 'a symlink cycle will not resolve on the sixth attempt either');
   assert.equal(meansGone(err('ENAMETOOLONG')), true, 'nor will a path past NAME_MAX');
   assert.equal(meansGone(err('EINVAL')), true, 'nor an ill-formed one');
+  // libuv's Windows numbers differ from the Unix ones; checking only -2/-20
+  // made this fallback silently dead on Windows.
+  assert.equal(meansGone(Object.assign(new Error('x'), { errno: -4058 })), true, 'UV_ENOENT on Windows');
+  assert.equal(meansAbsent(Object.assign(new Error('x'), { errno: -4052 })), true, 'UV_ENOTDIR on Windows');
 
   // A wrapped error still answers, because this codebase chains them now.
   assert.equal(meansGone(new Error('outer', { cause: err('ENOENT') })), true, 'the cause is walked');

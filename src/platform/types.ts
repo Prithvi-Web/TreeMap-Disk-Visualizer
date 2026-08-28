@@ -82,6 +82,22 @@ export interface OpenHandleBatch {
   complete: boolean;
 }
 
+/**
+ * Called by a provider the instant the OS hands it a change callback, before
+ * any filtering. Consumers use it to tell "the watch is not delivering" apart
+ * from "the watch delivered and something downstream lost it" — a distinction
+ * that decides whether a missed update is a platform limitation or a bug.
+ */
+let watchDeliveryListener: ((root: string) => void) | null = null;
+
+export function onWatchDelivery(fn: ((root: string) => void) | null): void {
+  watchDeliveryListener = fn;
+}
+
+export function notifyWatchDelivery(root: string): void {
+  if (watchDeliveryListener) watchDeliveryListener(root);
+}
+
 export type Unsubscribe = () => void;
 
 /* ---------- Open handles (B2) and zombie handles (B5) ---------- */

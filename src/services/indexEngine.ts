@@ -11,6 +11,7 @@ import { neverDescend } from '../utils/mountBoundaries';
 // path ever meets LIKE at all.
 import { parseQuery, extensionOf, escapeLike } from '../utils/searchQuery';
 import type { ChangeEvent, Unsubscribe } from '../platform/types';
+import { onWatchDelivery } from '../platform/types';
 import type { FileNode } from '../models/types';
 import { meansGone } from '../utils/errno';
 
@@ -738,6 +739,26 @@ interface PendingChange {
  */
 export const MAX_CHANGE_ATTEMPTS = 5;
 
+/**
+ * A directory's own `lstat` could not be resolved — the one failure inside
+ * `ensureParents` that is worth retrying.
+ *
+ * Tagged rather than sniffed. The first version of this check asked whether
+ * the error carried a string `code`, on the reasoning that a filesystem errno
+ * has one and a database fault does not. Measured against the driver, that is
+ * backwards: `SqliteError` ALWAYS carries a code (`SQLITE_FULL`,
+ * `SQLITE_BUSY`, `SQLITE_CORRUPT`), so disk-full and corruption were retried
+ * five times and then reported as index staleness — a wrong diagnosis of a
+ * condition that will not clear — while the one error it did rethrow was the
+ * code-less `TypeError: The database connection is not open`.
+ */
+class UnresolvedParentError extends Error {
+  constructor(cause: unknown) {
+    super('a parent directory could not be resolved', { cause });
+    this.name = 'UnresolvedParentError';
+  }
+}
+
 const pendingByRoot = new Map<string, Map<string, PendingChange>>();
 const flushTimers = new Map<string, NodeJS.Timeout>();
 
@@ -756,6 +777,16 @@ const flushTimers = new Map<string, NodeJS.Timeout>();
  * and it must be possible to tell them apart.
  */
 const eventsSeenByRoot = new Map<string, number>();
+
+// Registered once, at the PROVIDER's OS callback rather than at this module's
+// subscriber. The difference decides what a missed update means: counting
+// downstream would let a regression inside `subscribeToChanges` itself — a
+// swallowed event, a mis-joined path — report zero, and the acceptance test
+// that reads this would skip green on a real bug.
+onWatchDelivery((root) => {
+  if (!watchers.has(root)) return; // a late callback must not resurrect an entry
+  eventsSeenByRoot.set(root, (eventsSeenByRoot.get(root) ?? 0) + 1);
+});
 
 /**
  * Change events delivered for `rootPath` since its watcher attached, or null
@@ -790,7 +821,16 @@ function scheduleFlush(rootPath: string, attempts = 0): void {
     rootPath,
     setTimeout(() => {
       flushTimers.delete(rootPath);
-      void applyPendingChanges(rootPath);
+      // Caught here, and it has to be: this is a bare timer callback, so a
+      // rejection has nobody above it. `applyPendingChanges` can now throw —
+      // a database fault propagates by design — and there is no
+      // `unhandledRejection` handler outside the packaged Electron build, so
+      // under `npm start` or the MCP server that would take the process down.
+      // The burst is lost, which the staleness guard already covers; the
+      // process is not.
+      void applyPendingChanges(rootPath).catch((err: unknown) => {
+        console.error(`[treemap] index flush failed for ${rootPath}:`, err);
+      });
     }, delay),
   );
 }
@@ -811,22 +851,29 @@ function enqueueChange(rootPath: string, change: PendingChange): void {
   // counter reset by every new event and retry for ever, which is the one
   // thing `MAX_CHANGE_ATTEMPTS` exists to prevent.
   const prior = queue.get(change.path);
-  queue.set(change.path, {
-    ...change,
-    attempts: Math.max(change.attempts, prior ? prior.attempts : 0),
-  });
-  scheduleFlush(rootPath, change.attempts);
+  const attempts = Math.max(change.attempts, prior ? prior.attempts : 0);
+  queue.set(change.path, { ...change, attempts });
+  // The MERGED count, and the highest one queued for this root — not the
+  // incoming change's. `scheduleFlush` keeps the earliest timer, so during a
+  // burst under EMFILE a fresh event's `attempts: 0` would ask for 400 ms,
+  // win, and every retry's longer delay would early-return onto it. The
+  // backoff was a no-op in exactly the scenario it exists for.
+  let worst = attempts;
+  for (const queued of queue.values()) worst = Math.max(worst, queued.attempts);
+  scheduleFlush(rootPath, worst);
 }
 
 export function startWatcher(rootPath: string): boolean {
   if (watchers.has(rootPath)) return true;
   try {
-    eventsSeenByRoot.set(rootPath, 0);
     const unsubscribe = platform().subscribeToChanges(rootPath, (event) => {
-      eventsSeenByRoot.set(rootPath, (eventsSeenByRoot.get(rootPath) ?? 0) + 1);
       enqueueChange(rootPath, { path: event.path, kind: event.kind, attempts: 0 });
     });
+    // Set only once the watch is established. Setting it before
+    // `subscribeToChanges` leaked an entry for every root whose watch failed,
+    // because `stopAllWatchers` iterates `watchers`, which never held it.
     watchers.set(rootPath, unsubscribe);
+    eventsSeenByRoot.set(rootPath, 0);
     return true;
   } catch {
     return false; // watch could not be established; the root stays stale
@@ -1008,17 +1055,10 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
         try {
           parentId = await ensureParents(handle, root.id, rootPath, path.dirname(change.path));
         } catch (err) {
-          // `ensureParents` rethrows an unresolvable `lstat`, and the same
-          // rule applies: do not invent an answer, and do not drop the child
-          // because its parent was briefly unreadable.
-          //
-          // But it also runs SQL and recurses, so `SQLITE_FULL`, a busy or
-          // corrupt database, or a closed handle land here too. Retrying five
-          // times and then calling the root "stale" would report a database
-          // fault as index staleness — a wrong diagnosis of a condition that
-          // is not going to clear on its own. Only a filesystem errno is
-          // retried; anything else is a real failure and propagates.
-          if ((err as NodeJS.ErrnoException | null)?.code === undefined) throw err;
+          // Only the tagged case is retried. `ensureParents` also runs SQL and
+          // recurses, so a database fault reaches here too and must propagate
+          // rather than be re-asked five times and relabelled as staleness.
+          if (!(err instanceof UnresolvedParentError)) throw err;
           if (!stillOpen()) return applied;
           retryOrMarkStale(rootPath, root.id, root.builtAt, change);
           continue;
@@ -1081,8 +1121,8 @@ async function ensureParents(
     if (meansGone(err)) return null;
     // Anything else is undecidable, and returning null here would report
     // "there is no such directory" on the strength of a descriptor shortage.
-    // The caller turns this into a retry.
-    throw err;
+    // Tagged so the caller can retry THIS and nothing else.
+    throw new UnresolvedParentError(err);
   }
   if (db !== handle) return null; // closed mid-await — see applyPendingChanges
   if (!stat.isDirectory()) return null;

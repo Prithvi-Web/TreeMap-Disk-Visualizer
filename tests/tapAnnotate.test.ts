@@ -288,3 +288,31 @@ test('the reported line number points at the failure, not at its YAML terminator
     assert.ok(lines[f.line - 1].includes(f.name.replace(/#/g, '\\#')), 'and it should be THIS failure’s line');
   }
 });
+
+/**
+ * A second recording, from a file using `describe`/`it` plus a `test()` parent
+ * with a failing subtest. This repo has no `describe` today, which is exactly
+ * why it needs a fixture: the shape is one `npm i`-of-a-new-test-style away,
+ * and it is the shape that made the parsed count disagree with `# fail N`.
+ */
+const SUITES = fs.readFileSync(path.join(__dirname, 'fixtures', 'real-node-suites.tap'), 'utf8');
+
+test('a describe wrapper is not reported, but a test parent is', () => {
+  // Node prints a `not ok` for a failing `describe` and EXCLUDES it from
+  // `# fail N`; a `test()` parent with a failing subtest carries the same
+  // `error: 'N subtests failed'` message and IS counted. Filtering on that
+  // message therefore drops real failures — only `type: 'suite'` separates
+  // them, which is why the parser keys on the type.
+  const names = annotate.parseTap(SUITES).map((f) => f.name);
+  assert.ok(!names.includes('a suite'), 'the describe wrapper is dropped');
+  assert.ok(!names.includes('deeper'), 'and the nested one');
+  assert.ok(names.includes('a plain parent'), 'but a test() parent is kept — node counts it');
+  assert.ok(names.includes('a failing it') && names.includes('another failing it'));
+  assert.ok(names.includes('a failing child'));
+});
+
+test('the reported count agrees with the counter on suites too', () => {
+  const reported = annotate.parseTap(SUITES).length;
+  const counter = annotate.parseCounts(SUITES).find((c) => c.startsWith('# fail '));
+  assert.equal(reported, Number(counter!.slice('# fail '.length)), `parsed ${reported}, suite said ${counter}`);
+});

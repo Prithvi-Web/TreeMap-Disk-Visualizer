@@ -680,3 +680,81 @@ test('a restore survives a failure to delete the capsule’s own scratch copy', 
     await fsp.rm(dir, { recursive: true, force: true });
   }
 });
+
+/* ─────────── An index the sweep cannot read is not an empty capsule ─────────── */
+
+/**
+ * `reconcileCapsule` deletes every payload directory the index does not list.
+ * That conclusion is drawn entirely from the index, so it is only ever as good
+ * as the index — and `loadStore` falls back to `{ entries: [] }` for a file it
+ * cannot parse. An empty index makes EVERY payload look orphaned.
+ *
+ * The sweep runs unattended, from a timer, on every launch. Getting this wrong
+ * destroys the only copy of every file the user has deleted through TreeMap,
+ * so all three of "write it back", "move it aside" and "delete anyway" are
+ * tested against, not just the last one:
+ *
+ *   - writing the fallback store replaces the corrupt file with a VALID empty
+ *     one, so the next sweep parses it happily and deletes everything;
+ *   - renaming the corrupt file aside has the same ending, because an absent
+ *     index is a decided "first run".
+ *
+ * Both were measured before they were ruled out.
+ */
+const capsuleIndexPath = (): string => path.join(process.env.TREEMAP_DATA_DIR!, 'timecapsule.json');
+
+async function withCapsuleIndex<T>(contents: string | null, fn: () => Promise<T>): Promise<T> {
+  const file = capsuleIndexPath();
+  const had = fs.existsSync(file);
+  const before = had ? fs.readFileSync(file) : null;
+  try {
+    if (contents === null) fs.rmSync(file, { force: true });
+    else fs.writeFileSync(file, contents);
+    return await fn();
+  } finally {
+    if (before !== null) fs.writeFileSync(file, before);
+    else fs.rmSync(file, { force: true });
+  }
+}
+
+test('an index that will not parse blocks the orphan sweep, on every sweep', async () => {
+  const root = capsuleRoot();
+  await fsp.mkdir(path.join(root, 'payload-unreferenced-a'), { recursive: true });
+  await fsp.mkdir(path.join(root, 'payload-unreferenced-b'), { recursive: true });
+  try {
+    await withCapsuleIndex('{"version":1,"entries":[{"id":"truncated"', async () => {
+      const first = await reconcileCapsule();
+      assert.equal(first.orphansRemoved, 0, 'nothing is deleted on the strength of an index we cannot read');
+      assert.ok(fs.existsSync(path.join(root, 'payload-unreferenced-a')));
+
+      // The second sweep is the one the earlier guard failed: it had written
+      // the empty fallback back, so this call parsed it and deleted everything.
+      const second = await reconcileCapsule();
+      assert.equal(second.orphansRemoved, 0, 'and still nothing on the next launch');
+      assert.ok(fs.existsSync(path.join(root, 'payload-unreferenced-b')), 'the payloads survive both sweeps');
+
+      const still = fs.readFileSync(capsuleIndexPath(), 'utf8');
+      assert.match(still, /truncated/, 'the corrupt file is left byte-for-byte — it is the only record of what those folders held');
+    });
+  } finally {
+    await fsp.rm(path.join(root, 'payload-unreferenced-a'), { recursive: true, force: true });
+    await fsp.rm(path.join(root, 'payload-unreferenced-b'), { recursive: true, force: true });
+  }
+});
+
+test('an index that parses and holds nothing DOES clean up, so nothing leaks', async () => {
+  // The other half. Blocking on "the index looks empty" rather than on "the
+  // index could not be read" would strand stale folders for ever in the one
+  // state a user can actually produce — a capsule they emptied themselves.
+  const root = capsuleRoot();
+  await fsp.mkdir(path.join(root, 'payload-genuinely-orphaned'), { recursive: true });
+  try {
+    await withCapsuleIndex(JSON.stringify({ version: 1, entries: [], events: [] }), async () => {
+      const result = await reconcileCapsule();
+      assert.ok(result.orphansRemoved >= 1, 'a valid empty index is a decided fact, and the sweep runs');
+      assert.equal(fs.existsSync(path.join(root, 'payload-genuinely-orphaned')), false);
+    });
+  } finally {
+    await fsp.rm(path.join(root, 'payload-genuinely-orphaned'), { recursive: true, force: true });
+  }
+});

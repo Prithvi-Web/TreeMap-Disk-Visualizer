@@ -6,7 +6,7 @@ import { sanitizePath } from '../utils/pathSanitizer';
 import { moveToTrash } from './cleaner';
 import { AppError } from '../middleware/errorHandler';
 import type { SnapshotCandidate, SnapshotSearchResult, SnapshotRestoreOutcome } from '../models/types';
-import { meansGone } from '../utils/errno';
+import { meansAbsent } from '../utils/errno';
 
 /**
  * Snapshot recovery — getting back a file the Trash no longer has (B4).
@@ -167,7 +167,9 @@ export async function restoreFromSnapshot(request: RestoreRequest): Promise<Snap
   // force on Linux and Windows. A wrong "nothing is there" is a privileged
   // overwrite of a live file.
   const occupied = await fsp.lstat(destination).then(() => true).catch((err: NodeJS.ErrnoException) => {
-    if (meansGone(err)) return false;
+    // `meansAbsent`, not the wider stat predicate: a wrong "nothing is there"
+    // ends in a root-privileged `cp -a` over a live file.
+    if (meansAbsent(err)) return false;
     throw new AppError(409, 'DESTINATION_UNVERIFIABLE',
       `TreeMap could not check what is at ${destination} (${err.code ?? 'unknown error'}), so it did not restore over it. ` +
       'Try again, or choose another destination.');
