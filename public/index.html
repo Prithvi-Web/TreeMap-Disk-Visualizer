@@ -6046,6 +6046,20 @@ function presentTreemap() {
     }
   }
   drawLivePulses();
+  /* Set the transform before the overlays, do not inherit it.
+
+     Everything above this line sets `dpr` INSIDE its own `if` — a hover ring,
+     a budget border, a keyboard cursor — and each is optional. With none of
+     them showing, the transform is still the identity set at the top of this
+     function, and §6.4's lens and §6.3's lasso then draw in device pixels
+     while being handed CSS dimensions: half the size, at half the position.
+
+     It looked fine in every hand test, because a hand on a trackpad is
+     hovering a cell, which sets the transform on the way past. It shows up the
+     moment the pointer is over a gap, or the Lens is pinned and the pointer
+     leaves the map. This is the same trap `cityHit` documents — the bug IS the
+     device pixel ratio — one function over. */
+  tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
   lensPaint(tmCtx, tmCanvas.width / dpr, tmCanvas.height / dpr);
   lassoPaint(tmCtx);
 }
@@ -12282,7 +12296,7 @@ const cityEase = (t) => 1 - Math.pow(1 - t, 3); // easeOutCubic: quick, then set
 /** Start a height morph from whatever is on screen to whatever was just built. */
 function cityMorphHeights(previousByPath) {
   const c = state.city;
-  if (REDUCED || c.blocks.length > CITY_MORPH_MAX_BLOCKS || !previousByPath.size) return false;
+  if (REDUCED || document.hidden || c.blocks.length > CITY_MORPH_MAX_BLOCKS || !previousByPath.size) return false;
   let moved = 0;
   for (const b of c.blocks) {
     const was = previousByPath.get(b.n.path);
@@ -12300,10 +12314,30 @@ function cityMorphHeights(previousByPath) {
   return true;
 }
 
+/** Put every block at the height it was actually laid out with. */
+function cityFinishMorph() {
+  const c = state.city;
+  for (const b of c.blocks) {
+    if (b.z1 === undefined) continue;
+    b.z = b.z1;
+    delete b.z1;
+    b.faces = null; b.shadow = null;
+    b.bb = isoBounds(b);
+  }
+}
+
 function cityRunMorph() {
   const c = state.city;
   if (c.morphRaf) cancelAnimationFrame(c.morphRaf);
   const step = () => {
+    // A hidden tab does not run rAF at all, and this animation begins by
+    // REPLACING every height with a placeholder. If the page is hidden between
+    // the first frame and the second, the city is left permanently flat — and
+    // height is two of the three things Disk City exists to show. Finish
+    // immediately instead. The guards on the two entry points stop this being
+    // reachable in the ordinary case; this is the one that catches a tab
+    // hidden mid-morph, which no entry check can.
+    if (document.hidden) { cityFinishMorph(); c.morphRaf = 0; drawCity(); return; }
     const t = Math.min(1, (performance.now() - c.morphStart) / CITY_MORPH_MS);
     const k = cityEase(t);
     for (const b of c.blocks) {
@@ -12315,13 +12349,7 @@ function cityRunMorph() {
     drawCity();
     if (t < 1) { c.morphRaf = requestAnimationFrame(step); return; }
     c.morphRaf = 0;
-    for (const b of c.blocks) {
-      if (b.z1 === undefined) continue;
-      b.z = b.z1;
-      delete b.z1;
-      b.faces = null; b.shadow = null;
-      b.bb = isoBounds(b);
-    }
+    cityFinishMorph();
     drawCity();
   };
   c.morphRaf = requestAnimationFrame(step);
@@ -12370,7 +12398,7 @@ function cityAfterZoom() {
 /** A new folder is a new city; let it rise rather than cutting to it. */
 function cityEnter() {
   const c = state.city;
-  if (REDUCED || !c.blocks.length || c.blocks.length > CITY_MORPH_MAX_BLOCKS) { drawCity(); return; }
+  if (REDUCED || document.hidden || !c.blocks.length || c.blocks.length > CITY_MORPH_MAX_BLOCKS) { drawCity(); return; }
   for (const b of c.blocks) {
     b.z0 = 0;
     b.z1 = b.z;

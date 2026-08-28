@@ -293,6 +293,65 @@ test('every animation entry point asks REDUCED before it starts', () => {
   }
 });
 
+test('an animation that replaces state first asks whether frames will arrive', () => {
+  /* A hidden tab does not run `requestAnimationFrame` at all.
+
+     For an animation that only interpolates, that costs nothing — it simply
+     does not play. For one that begins by REPLACING the thing it is animating
+     with a placeholder, it is a defect with no symptom in the code: Disk City's
+     entry sets every building's height to zero and lets the loop raise them, so
+     with no frames the city stays permanently flat — and height is two of the
+     three variables the whole view exists to encode. Found by opening it in a
+     background tab; every block reported z = 0.
+
+     `animateTreemapTo` and `animateSunburstTo` had guarded on this since they
+     were written. These are the two that had not. */
+  for (const name of ['cityEnter', 'cityMorphHeights']) {
+    const start = INDEX.indexOf(`function ${name}(`);
+    assert.notEqual(start, -1, `${name} exists`);
+    assert.match(INDEX.slice(start, start + 460), /document\.hidden/,
+      `${name} refuses to animate when no frames will come`);
+  }
+  // And the loop itself finishes rather than stalling if the tab is hidden
+  // after it has already started — which no entry check can cover.
+  const run = INDEX.indexOf('function cityRunMorph(');
+  assert.match(INDEX.slice(run, run + 900), /document\.hidden[\s\S]{0,120}cityFinishMorph/,
+    'a morph interrupted by a hidden tab lands on the real heights');
+});
+
+test('canvas overlays set the pixel-ratio transform, never inherit it', () => {
+  /* Every `present*` function starts by blitting at the identity transform and
+     then sets the device-pixel-ratio transform for the vector overlays. The
+     trap is that each overlay above sets it INSIDE its own `if` — a hover ring,
+     a budget border, a keyboard cursor — and all of them are optional. With
+     none of them showing, §6.4's lens and §6.3's lasso inherited the identity
+     and drew in device pixels while being handed CSS dimensions: half size, at
+     half position.
+
+     It survived every hand test, because a hand on a trackpad is hovering a
+     cell, which sets the transform on the way past. It appears the moment the
+     pointer is over a gap between cells, or the Lens is pinned and the pointer
+     leaves the map. `cityHit` documents the same trap one function over — "the
+     bug IS the device pixel ratio".
+
+     So the assertion is on the ORDER and the NESTING: an unconditional
+     `setTransform(dpr` at the function's own indentation, after the last
+     optional overlay and before the lens. */
+  for (const fn of ['presentTreemap', 'presentCells']) {
+    const start = INDEX.indexOf(`function ${fn}(`);
+    assert.notEqual(start, -1, `${fn} exists`);
+    const end = INDEX.indexOf('\n}', start);
+    const body = INDEX.slice(start, end);
+    const lens = body.indexOf('lensPaint(');
+    const lasso = body.indexOf('lassoPaint(');
+    const overlay = lens === -1 ? lasso : (lasso === -1 ? lens : Math.min(lens, lasso));
+    assert.notEqual(overlay, -1, `${fn} draws at least one canvas overlay`);
+    // Two-space indent — a statement in the function body, not inside a branch.
+    assert.match(body.slice(0, overlay), /\n  tmCtx\.setTransform\(dpr,/,
+      `${fn} sets the DPR transform unconditionally before its overlays`);
+  }
+});
+
 test('the alternate renderers announce what they had to approximate', () => {
   // §6.2 requires the footnote; §2.4 requires it to be visible rather than
   // logged. A live region, so a screen reader hears the caveat change when the
