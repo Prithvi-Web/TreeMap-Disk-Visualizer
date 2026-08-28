@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { squarify } from '../src/utils/treemap';
-import { lift } from './fixtures/liftFrontend';
+import { lift, INDEX } from './fixtures/liftFrontend';
 
 /**
  * Disk City's projection and draw order (v4 §6.1).
@@ -514,4 +514,75 @@ test('the frontier holds on a deep chain, not just one level', () => {
   // it in the payload — which is precisely what the texture is for.
   assert.ok(chain.some((n) => n.path.startsWith('/c/1/2/')), 'there really is more underneath');
   assert.equal(coarse.drawn[0].type, 'dir', 'so the block that survived is marked');
+});
+
+/* ════ A stored channel mode this build does not have (v4 §6.1, §2.4) ════ */
+
+const CITY_HEIGHT_LABEL = lift<Record<string, string>>(['CITY_HEIGHT_LABEL'], 'CITY_HEIGHT_LABEL');
+const CITY_COLOUR_LABEL = lift<Record<string, string>>(['CITY_COLOUR_LABEL'], 'CITY_COLOUR_LABEL');
+const cityMode = lift<(m: unknown, labels: Record<string, string>, fb: string) => string>(
+  ['cityMode'], 'cityMode',
+);
+
+test('an unrecognised stored mode falls back rather than reaching the legend', () => {
+  // Disk City persists both switchable channels by NAME, and localStorage
+  // outlives the build that wrote it. A mode renamed or dropped later leaves a
+  // string behind that is still a string and no longer means anything — and
+  // the legend looks its wording up by that key, so the miss reached the
+  // screen as "Height = undefined". Verified in the running app before this
+  // was written, and it survived every reload: the only guard was
+  // `|| 'staleness'`, which catches an absent value and not a meaningless one.
+  assert.equal(cityMode('stale', CITY_HEIGHT_LABEL, 'staleness'), 'staleness');
+  assert.equal(cityMode('some-mode-from-a-future-build', CITY_HEIGHT_LABEL, 'staleness'), 'staleness');
+  assert.equal(cityMode('nonsense', CITY_COLOUR_LABEL, 'reclaim'), 'reclaim');
+  // Absent and malformed answer the same way, which is the point.
+  for (const junk of [null, undefined, '', 0, {}, []]) {
+    assert.equal(cityMode(junk, CITY_HEIGHT_LABEL, 'staleness'), 'staleness', `${String(junk)} must not survive`);
+  }
+  // Inherited property names are not modes either.
+  assert.equal(cityMode('toString', CITY_HEIGHT_LABEL, 'staleness'), 'staleness');
+  assert.equal(cityMode('constructor', CITY_COLOUR_LABEL, 'reclaim'), 'reclaim');
+  // And every real mode still passes through untouched.
+  for (const m of Object.keys(CITY_HEIGHT_LABEL)) assert.equal(cityMode(m, CITY_HEIGHT_LABEL, 'staleness'), m);
+  for (const m of Object.keys(CITY_COLOUR_LABEL)) assert.equal(cityMode(m, CITY_COLOUR_LABEL, 'reclaim'), m);
+});
+
+test('every mode the segmented controls offer has a legend sentence', () => {
+  // The maps are the list of modes that exist AND the legend's wording, so a
+  // button whose mode is missing from them renders an empty explanation.
+  const buttons = (seg: string, attr: string): string[] => {
+    const at = INDEX.indexOf(`id="${seg}"`);
+    assert.notEqual(at, -1, `${seg} must exist`);
+    const block = INDEX.slice(at, INDEX.indexOf('</div>', at));
+    return [...block.matchAll(new RegExp(`${attr}="([a-z]+)"`, 'g'))].map((m) => m[1]);
+  };
+  const heights = buttons('cityHeightSeg', 'data-h');
+  const colours = buttons('cityColorSeg', 'data-c');
+  assert.deepEqual(heights.slice().sort(), Object.keys(CITY_HEIGHT_LABEL).sort(), 'height buttons and labels agree');
+  assert.deepEqual(colours.slice().sort(), Object.keys(CITY_COLOUR_LABEL).sort(), 'colour buttons and labels agree');
+  for (const label of [...Object.values(CITY_HEIGHT_LABEL), ...Object.values(CITY_COLOUR_LABEL)]) {
+    assert.ok(label.length > 10, `"${label}" must actually explain the channel`);
+  }
+});
+
+test('both channel setters sanitise before they store', () => {
+  // Storing first and validating later would write the bad value to disk, so
+  // the next launch starts poisoned even after the fix.
+  for (const [fn, map, fallback] of [
+    ['citySetHeight', 'CITY_HEIGHT_LABEL', 'staleness'],
+    ['citySetColour', 'CITY_COLOUR_LABEL', 'reclaim'],
+  ]) {
+    const start = INDEX.indexOf(`function ${fn}(`);
+    assert.notEqual(start, -1, `${fn} must exist`);
+    const src = INDEX.slice(start, start + 400);
+    assert.match(
+      src,
+      new RegExp(`const mode = cityMode\\(requested, ${map}, '${fallback}'\\);`),
+      `${fn} must sanitise what it was handed`,
+    );
+    assert.ok(
+      src.indexOf('cityMode(') < src.indexOf('localStorage.setItem'),
+      `${fn} must sanitise BEFORE it persists`,
+    );
+  }
 });

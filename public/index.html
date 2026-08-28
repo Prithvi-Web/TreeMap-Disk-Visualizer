@@ -11271,6 +11271,52 @@ registerView({
   },
 });
 
+/* ── What the two switchable channels mean, and which values exist ────────
+
+   These are the legend's wording AND the list of modes that are real. Both
+   jobs on purpose: the legend reads a mode straight out of these maps, so a
+   mode that is not here has no label, and `cityMode()` below is what stops
+   one reaching the legend in the first place.
+
+   "in this folder" is not padding: the height scale is normalised to what is
+   on screen, so a tower is tall relative to its neighbours rather than on an
+   absolute scale, and a legend that implied otherwise would be wrong.       */
+const CITY_HEIGHT_LABEL = {
+  staleness: 'how long since anything changed, within this folder',
+  files: 'how many files are inside, within this folder',
+  depth: 'how deeply nested it is',
+};
+const CITY_COLOUR_LABEL = {
+  reclaim: 'how safe and worthwhile it is to reclaim',
+  type: 'what kind of files it holds',
+  age: 'how recently it changed',
+};
+
+/**
+ * A channel mode this build actually has, or the default.
+ *
+ * `localStorage` outlives the code that wrote it. Both of Disk City's channels
+ * are persisted by name, so a mode renamed or dropped in a later build leaves
+ * behind a value that is a perfectly good string and no longer means anything.
+ * The legend looks its wording up in the maps above and rendered the miss as
+ * `Height = undefined` — which §2.4 rules out in as many words: never a blank,
+ * never a plausible-looking default, and never a word the user cannot act on.
+ *
+ * Observed, not theorised: setting an unknown mode put exactly that sentence
+ * on screen, and it survived every reload afterwards, because the only guard
+ * on the read path was `|| 'staleness'` and that catches an absent value
+ * rather than a meaningless one. The distinction is the same one `meansAbsent`
+ * and `meansGone` exist for elsewhere in this repo.
+ *
+ * Applied in the two setters rather than at the `state` literal, because the
+ * maps are declared here with the rest of Disk City and the literal is built
+ * long before this point in the file — reading them there is a temporal dead
+ * zone, not a lookup.
+ */
+function cityMode(mode, labels, fallback) {
+  return Object.prototype.hasOwnProperty.call(labels, mode) ? mode : fallback;
+}
+
 /* ═══════════ Disk City — the isometric view (v4 §6.1) ═══════════
    The same squarified tiling the Treemap draws, seen from a corner. That is
    the point of it: a flat treemap encodes exactly one variable in area, and
@@ -12639,8 +12685,8 @@ function renderCityChrome() {
     // "in this folder" is not padding: the scale is normalised to what is on
     // screen, so a tower is tall relative to its neighbours rather than on an
     // absolute scale, and a legend that implied otherwise would be wrong.
-    const heightLabel = { staleness: 'how long since anything changed, within this folder', files: 'how many files are inside, within this folder', depth: 'how deeply nested it is' }[c.height];
-    const colourLabel = { reclaim: 'how safe and worthwhile it is to reclaim', type: 'what kind of files it holds', age: 'how recently it changed' }[c.colour];
+    const heightLabel = CITY_HEIGHT_LABEL[c.height];
+    const colourLabel = CITY_COLOUR_LABEL[c.colour];
     // The colour key is the ramp itself, not a sentence about it.
     const ramp = c.colour === 'reclaim'
       ? `linear-gradient(90deg, rgb(${C_RC_LOW.join(',')}), rgb(${C_AMBER.join(',')}), rgb(${C_TEAL.join(',')}))`
@@ -12974,7 +13020,8 @@ function cityOnKey(e) {
 
 function cityOnResize() { cityInvalidate(); }
 
-function citySetHeight(mode) {
+function citySetHeight(requested) {
+  const mode = cityMode(requested, CITY_HEIGHT_LABEL, 'staleness');
   state.city.height = mode;
   try { localStorage.setItem('tm-cityheight', mode); } catch { /* private mode */ }
   for (const b of $('cityHeightSeg').querySelectorAll('button')) {
@@ -12987,7 +13034,8 @@ function citySetHeight(mode) {
   cityFetchFacts();
 }
 
-function citySetColour(mode) {
+function citySetColour(requested) {
+  const mode = cityMode(requested, CITY_COLOUR_LABEL, 'reclaim');
   state.city.colour = mode;
   try { localStorage.setItem('tm-citycolour', mode); } catch { /* private mode */ }
   for (const b of $('cityColorSeg').querySelectorAll('button')) {
