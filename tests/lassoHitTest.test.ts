@@ -168,3 +168,29 @@ test('everything the lasso can catch is something the cart can hold', () => {
     assert.ok(body.includes(guard), `lassoTargets excludes on ${guard}`);
   }
 });
+
+test('a loop that catches only unstageable things says WHY, not "nothing"', () => {
+  /* Drawn inside an expanded archive, a lasso goes around plenty of shapes and
+     can stage none of them — every entry there is a listing the server refuses
+     with VIRTUAL_PATH. Reporting that as "nothing inside that loop", over a map
+     visibly full of blocks, reads as a broken gesture rather than as the
+     guarantee it actually is. Measured live: 11 shapes caught, 0 stageable.
+
+     So the excluded shapes are carried out of `lassoTargets` with a reason
+     attached rather than filtered away silently, and `lassoApply` names the
+     commonest one. */
+  const targets = INDEX.slice(
+    INDEX.indexOf('function lassoTargets('), INDEX.indexOf('\n}\n', INDEX.indexOf('function lassoTargets(')));
+  assert.match(targets, /skipReason/, 'lassoTargets attaches a reason rather than dropping the shape');
+  assert.match(targets, /archive/, 'and the archive case is one of the reasons it can give');
+
+  const caught = INDEX.slice(
+    INDEX.indexOf('function lassoCaught('), INDEX.indexOf('\n}\n', INDEX.indexOf('function lassoCaught(')));
+  assert.match(caught, /skipped/, 'lassoCaught reports what it had to leave out');
+  assert.match(caught, /hits/, 'separately from what it caught');
+
+  const apply = INDEX.slice(
+    INDEX.indexOf('function lassoApply('), INDEX.indexOf('\n}\n', INDEX.indexOf('function lassoApply(')));
+  assert.match(apply, /caught\.skipped/, 'lassoApply reads the reasons');
+  assert.match(apply, /cannot be staged/, 'and says so in words rather than reporting nothing');
+});

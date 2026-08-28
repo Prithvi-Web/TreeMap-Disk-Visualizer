@@ -273,6 +273,28 @@ test('reduced motion is respected', () => {
   assert.match(INDEX, /prefers-reduced-motion/, 'animations must respect the OS setting');
 });
 
+/**
+ * The body of a function up to and including its first `return`.
+ *
+ * Comment-stripped, and that is the whole point. The first version of these
+ * two tests searched a fixed window of the RAW source, and both of the guards
+ * they were meant to protect could be deleted without either test noticing —
+ * because the prose explaining why the guard mattered still contained the word
+ * being searched for. Verified by deleting them: two of three mutations passed.
+ *
+ * Bounding at the first `return` is the other half: a guard is a thing that
+ * returns early, so anywhere later in the function is not a guard.
+ */
+function guardWindow(name: string): string {
+  const code = appCode();
+  const start = code.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `${name} exists in the script`);
+  const open = code.indexOf('{', start);
+  const firstReturn = code.indexOf('return', open);
+  assert.notEqual(firstReturn, -1, `${name} has an early return to guard with`);
+  return code.slice(open, firstReturn + 12);
+}
+
 test('every animation entry point asks REDUCED before it starts', () => {
   /* v4 §6 cross-cutting: "every new animation … must too, degrading to an
      instant transition". Checked structurally rather than by eye, because the
@@ -282,14 +304,9 @@ test('every animation entry point asks REDUCED before it starts', () => {
      Each of these is a function that STARTS a loop. The ones that merely
      continue one (`cityRunMorph`, `altRunZoom`) are deliberately not listed:
      they can only be reached through a starter that has already asked. */
-  const starters = ['cityMorphHeights', 'cityEnter', 'cityAnimateZoom', 'altBeginZoom'];
-  for (const name of starters) {
-    const start = INDEX.indexOf(`function ${name}(`);
-    assert.notEqual(start, -1, `${name} exists`);
-    // The guard is the first thing that can return, so a short window is
-    // enough and a long one would pass on an unrelated mention further down.
-    const head = INDEX.slice(start, start + 460);
-    assert.match(head, /\bREDUCED\b/, `${name} checks REDUCED before it animates`);
+  for (const name of ['cityMorphHeights', 'cityEnter', 'cityAnimateZoom', 'altBeginZoom']) {
+    assert.match(guardWindow(name), /\bREDUCED\b/,
+      `${name} checks REDUCED before its first return`);
   }
 });
 
@@ -297,26 +314,34 @@ test('an animation that replaces state first asks whether frames will arrive', (
   /* A hidden tab does not run `requestAnimationFrame` at all.
 
      For an animation that only interpolates, that costs nothing — it simply
-     does not play. For one that begins by REPLACING the thing it is animating
-     with a placeholder, it is a defect with no symptom in the code: Disk City's
-     entry sets every building's height to zero and lets the loop raise them, so
-     with no frames the city stays permanently flat — and height is two of the
-     three variables the whole view exists to encode. Found by opening it in a
-     background tab; every block reported z = 0.
+     does not play. For one that begins by REPLACING the thing it is animating,
+     it is a defect with no symptom in the code. Two were found by driving the
+     app in a background tab:
+
+       - Disk City's entry sets every building's height to zero and lets the
+         loop raise them, so with no frames the city stays permanently flat —
+         and height is two of the three variables that view encodes. Measured:
+         all 356 blocks at z = 0.
+       - §6.2's level transition is worse, because `presentCells` sits out the
+         hover ring, the budget borders and the keyboard cursor for as long as
+         one is running. A transition that never ends suppresses all three for
+         good — measured still running 2.6 s after the drill.
 
      `animateTreemapTo` and `animateSunburstTo` had guarded on this since they
-     were written. These are the two that had not. */
-  for (const name of ['cityEnter', 'cityMorphHeights']) {
-    const start = INDEX.indexOf(`function ${name}(`);
-    assert.notEqual(start, -1, `${name} exists`);
-    assert.match(INDEX.slice(start, start + 460), /document\.hidden/,
+     were written. These four had not. */
+  for (const name of ['cityEnter', 'cityMorphHeights', 'cityAnimateZoom', 'altBeginZoom']) {
+    assert.match(guardWindow(name), /document\.hidden/,
       `${name} refuses to animate when no frames will come`);
   }
-  // And the loop itself finishes rather than stalling if the tab is hidden
-  // after it has already started — which no entry check can cover.
-  const run = INDEX.indexOf('function cityRunMorph(');
-  assert.match(INDEX.slice(run, run + 900), /document\.hidden[\s\S]{0,120}cityFinishMorph/,
-    'a morph interrupted by a hidden tab lands on the real heights');
+  // And each loop lands on the real end state if the tab is hidden AFTER it
+  // starts, which no entry check can cover.
+  const code = appCode();
+  const morph = code.indexOf('function cityRunMorph(');
+  assert.match(code.slice(morph, morph + 700), /document\.hidden[\s\S]{0,120}cityFinishMorph/,
+    'a height morph interrupted by a hidden tab lands on the real heights');
+  const zoomLoop = code.indexOf('function altRunZoom(');
+  assert.match(code.slice(zoomLoop, zoomLoop + 700), /document\.hidden[\s\S]{0,90}altZoom = null/,
+    'a level transition interrupted by a hidden tab releases the overlays');
 });
 
 test('canvas overlays set the pixel-ratio transform, never inherit it', () => {

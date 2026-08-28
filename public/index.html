@@ -3135,7 +3135,9 @@ $('themeToggle').addEventListener('click', () => {
   document.documentElement.dataset.theme = next;
   localStorage.setItem('tm-theme', next);
   applyThemeButton();
-  if (state.view === 'treemap' && drawnCells().length) drawView();
+  // Colour changed; nothing moved. The two solvers behind §6.2 therefore
+  // repaint rather than re-solve — see `repaintCells`.
+  if (state.view === 'treemap' && drawnCells().length) { isCells() ? repaintCells() : drawView(); }
   if (state.donut.segs.length) drawDonut(1);
 });
 applyThemeButton();
@@ -3583,6 +3585,16 @@ const VIEWS = [
       // a hidden canvas, a half-drawn selection, and a magnifier still held.
       if (state.treemap.altZoomRaf) { cancelAnimationFrame(state.treemap.altZoomRaf); state.treemap.altZoomRaf = 0; }
       state.treemap.altZoom = null;
+      // A resize that lands after the view is gone would solve a layout for a
+      // canvas nobody is looking at, and paint it there.
+      clearTimeout(tmResizeDeb);
+      // And the drawn set goes with the view, exactly as Disk City's blocks do.
+      // These are the shapes §6.2 solved for a canvas that is no longer on
+      // screen — each holding a polygon and a node — and `mount` rebuilds them
+      // on the way back in. Keeping them is the leak the registry exists to
+      // close; the only reason it went unnoticed is that they are small.
+      state.treemap.cells = [];
+      state.treemap.altNote = '';
       lassoCancel();
       state.lens.held = false;
       state.lens.at = null;
@@ -6607,7 +6619,8 @@ function setTreemapColorMode(mode) {
   localStorage.setItem('tm-colormode', mode);
   for (const b of $('tmColorSeg').querySelectorAll('button'))
     b.setAttribute('aria-selected', String(b.dataset.mode === mode));
-  if (state.treemap.rootPath) drawView(); else renderTmLegend();
+  // Colour, not geometry: §6.2's solved renderers repaint rather than re-solve.
+  if (state.treemap.rootPath) { isCells() ? repaintCells() : drawView(); } else renderTmLegend();
   // Painting comes first and the scores follow, so switching mode is instant
   // and the map fills in. Painting behind the fetch would stall the toggle on
   // a subprocess round trip for every cell on screen.
@@ -6657,7 +6670,10 @@ function fetchScoresForTreemap() {
     // Only if the user is still looking at this: a repaint of a view they
     // navigated away from is wasted work, and worse, can land mid-render.
     if (state.view === 'treemap' && state.treemap.colorMode === 'reclaim' && state.treemap.rootPath) {
-      drawView();
+      // Scores land in batches, so this runs several times per folder. Behind
+      // §6.2's Voronoi renderer a re-solve here would be a fifth of a second of
+      // main thread per batch, arriving at the arrangement already on screen.
+      isCells() ? repaintCells() : drawView();
       renderTmLegend(); // the coverage line changes as batches land
     }
   });
@@ -6667,7 +6683,20 @@ $('tmColorSeg').addEventListener('click', (e) => {
   if (btn) setTreemapColorMode(btn.dataset.mode);
 });
 setTreemapColorMode(state.treemap.colorMode); // reflect persisted choice on load
-window.addEventListener('resize', () => { if (state.view === 'treemap' && state.treemap.rootPath) drawView(); });
+/* A resize DOES move everything, so the layout has to be redone — but a window
+   drag emits a continuous stream of these, and §6.2's Voronoi solve is up to a
+   fifth of a second each. Re-solving per event turns a window drag into a
+   slideshow, so the two solved renderers wait for the drag to settle; the
+   treemap and the sunburst are cheap enough to keep following the edge live. */
+let tmResizeDeb = 0;
+window.addEventListener('resize', () => {
+  if (state.view !== 'treemap' || !state.treemap.rootPath) return;
+  if (!isCells()) { drawView(); return; }
+  clearTimeout(tmResizeDeb);
+  tmResizeDeb = setTimeout(() => {
+    if (state.view === 'treemap' && isCells() && state.treemap.rootPath) drawCells();
+  }, 160);
+});
 
 /* ── Feature 20 — time-slider treemap: scrub through snapshot history ── */
 const HISTORY_CACHE_MAX = 40;
@@ -8407,7 +8436,15 @@ function altCircleFor(path) {
 function altBeginZoom(sharedPath, wasAt) {
   const z = state.treemap;
   z.altZoom = null;
-  if (REDUCED || !wasAt || !sharedPath) return false;
+  /* `document.hidden` matters MORE here than anywhere else in this file.
+     A hidden tab runs no frames, so `altRunZoom` would never clear `altZoom` —
+     and `presentCells` deliberately sits out the hover ring, the budget borders
+     and the keyboard cursor for as long as a transition is running. A drill
+     performed while the tab was hidden therefore left those three overlays
+     suppressed permanently, long after the user came back. Measured: 2.6
+     seconds after a drill, `altZoomRaf` was still set and `altZoom` still
+     truthy. There is nothing to animate anyway when nobody is watching. */
+  if (REDUCED || document.hidden || !wasAt || !sharedPath) return false;
   const now = altCircleFor(sharedPath);
   if (!now || !(now.r > 0) || !(wasAt.r > 0)) return false;
   const k = wasAt.r / now.r;
@@ -8423,6 +8460,9 @@ function altRunZoom() {
   if (z.altZoomRaf) cancelAnimationFrame(z.altZoomRaf);
   const step = () => {
     if (state.view !== 'treemap' || !isCells() || !z.altZoom) { z.altZoomRaf = 0; return; }
+    // Hidden after the transition began — no entry check can cover that, and
+    // leaving `altZoom` set would keep the overlays suppressed for good.
+    if (document.hidden) { z.altZoom = null; z.altZoomRaf = 0; paintCells(); return; }
     const t = Math.min(1, (performance.now() - z.altZoom.start) / ALT_ZOOM_MS);
     z.altZoom.t = 1 - Math.pow(1 - t, 3); // easeOutCubic: quick, then settles
     paintCells();
@@ -8500,13 +8540,7 @@ function drawCells() {
   // The overlay first: it calls `updateTmStatus`, which deliberately writes
   // nothing for this renderer, so the line below is the last word.
   renderSearchOverlay();
-  const st = $('tmStatus');
-  if (st && !state.treemap.query.trim() && !state.treemap.history.active && !tmPreview.on) {
-    const leaves = cells.reduce((k, c) => k + (c.leaf ? 1 : 0), 0);
-    st.textContent =
-      `${formatCount(cells.length - 1)} shape${cells.length === 2 ? '' : 's'} · ` +
-      `${formatCount(leaves)} without children · ${formatBytes(state.treemap.rootSize)} total`;
-  }
+  renderCellsStatus();
   presentCells();
   renderTmLegend();
   renderAltNote();
@@ -8734,14 +8768,63 @@ function altDrawLabels(ctx, cells) {
   ctx.textBaseline = 'alphabetic';
 }
 
+/**
+ * Redraw §6.2's renderers without re-solving them.
+ *
+ * Colour is the only thing a theme change moves, and the layout is in canvas
+ * pixels that have not shifted — so re-running the solver would spend up to a
+ * fifth of a second arriving at the arrangement already on screen. §2.5 gives a
+ * single UI action 50 ms of main thread; a theme toggle in the Voronoi
+ * renderer was measured at nearly four times that, all of it recomputing an
+ * answer it already had.
+ *
+ * The overlay is re-rendered because its scrim colour IS theme-dependent.
+ */
+function repaintCells() {
+  if (!isCells()) return;
+  renderSearchOverlay();
+  renderCellsStatus();
+  paintCells();
+}
+
+/**
+ * The status line for §6.2's renderers.
+ *
+ * Its own function because `updateTmStatus` deliberately writes nothing here —
+ * "nodes drawn" is not a true sentence about circles or Voronoi cells — and
+ * something therefore has to put the line back whenever a query clears it.
+ * Doing that by re-running `drawCells` would re-solve a layout that can take a
+ * fifth of a second, to update one line of text.
+ */
+function renderCellsStatus() {
+  const st = $('tmStatus');
+  if (!st || !isCells()) return;
+  if (state.treemap.query.trim() || state.treemap.history.active || tmPreview.on) return;
+  const cells = state.treemap.cells;
+  const leaves = cells.reduce((k, c) => k + (c.leaf ? 1 : 0), 0);
+  st.textContent =
+    `${formatCount(Math.max(0, cells.length - 1))} shape${cells.length === 2 ? '' : 's'} · ` +
+    `${formatCount(leaves)} without children · ${formatBytes(state.treemap.rootSize)} total`;
+}
+
 /** Blit the buffer, then the overlays that change without a re-layout. */
 function presentCells() {
   const dpr = window.devicePixelRatio || 1;
   tmCtx.setTransform(1, 0, 0, 1, 0, 0);
   tmCtx.clearRect(0, 0, tmCanvas.width, tmCanvas.height);
   tmCtx.drawImage(tmBuffer, 0, 0);
-  if (state.treemap.query.trim()) tmCtx.drawImage(tmSearchBuffer, 0, 0);
   tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (state.treemap.query.trim()) {
+    /* The dim-and-outline overlay is a bitmap of the layout, so during §6.2's
+       level transition it has to move with the layout. `tmBuffer` already has
+       the transform baked in — `paintCells` applied it while drawing — but the
+       search buffer is rendered once, unmoved, and compositing it flat would
+       park the scrim over a map sliding out from under it. */
+    tmCtx.save();
+    if (state.treemap.altZoom) altZoomTransform(tmCtx, dpr);
+    tmCtx.drawImage(tmSearchBuffer, 0, 0, tmSearchBuffer.width / dpr, tmSearchBuffer.height / dpr);
+    tmCtx.restore();
+  }
   // While the level transition is running the layout is drawn through a
   // transform these overlays do not share, so a hover ring or a budget border
   // would sit somewhere the shape it belongs to is not. They are back a third
@@ -8909,6 +8992,20 @@ function lassoPush(pts, x, y) {
  */
 function lassoTargets() {
   const out = [];
+  /* Why a shape cannot be staged, or null when it can.
+     Returned rather than filtered away, because "your loop caught nothing"
+     and "everything your loop caught is an archive listing" are different
+     facts and only one of them is actionable. Inside a .zip every block on
+     screen is a virtual entry, and a lasso there used to report an empty
+     loop over a map visibly full of things. */
+  const skipReason = (n) => {
+    if (!n || !n.path || n.isTrash) return null; // the Trash cell is not a path
+    // Only one reason, because only one is reachable. §4.3's freed blocks are
+    // the other unstageable thing on any map, and a lasso cannot be started
+    // while the preview is up — so a message about them could never be read.
+    if (n.virtual) return 'entries inside an archive, which is a listing rather than files on disk';
+    return null;
+  };
   const usable = (n) => n && n.path && !n.freed && !n.virtual && !n.isTrash;
   if (state.view === 'city') {
     const tx = cityTransform(
@@ -8916,40 +9013,55 @@ function lassoTargets() {
       Math.max(120, $('cityWrap').clientHeight),
     );
     for (const b of state.city.blocks) {
-      if (!usable(b.n)) continue;
+      const skip = skipReason(b.n);
+      if (!skip && !usable(b.n)) continue;
       // The centre of the roof, not of the footprint: the roof is what the
       // user sees and drags a loop around, and on a tall tower the two are
       // most of a building apart.
       const p = isoProject(b.x + b.w / 2, b.y + b.h / 2, b.z);
-      out.push({ n: b.n, x: p.sx * tx.s + tx.dx, y: p.sy * tx.s + tx.dy });
+      out.push({ n: b.n, x: p.sx * tx.s + tx.dx, y: p.sy * tx.s + tx.dy, skip });
     }
     return out;
   }
   if (isCells()) {
     for (const c of state.treemap.cells) {
-      if (!c.leaf || !usable(c.n)) continue;
-      out.push({ n: c.n, x: c.cx, y: c.cy });
+      if (!c.leaf) continue;
+      const skip = skipReason(c.n);
+      if (!skip && !usable(c.n)) continue;
+      out.push({ n: c.n, x: c.cx, y: c.cy, skip });
     }
     return out;
   }
   for (const r of state.treemap.pxRects) {
-    if (r.frame || !usable(r.n)) continue;
-    out.push({ n: r.n, x: r.x + r.w / 2, y: r.y + r.h / 2 });
+    if (r.frame) continue;
+    const skip = skipReason(r.n);
+    if (!skip && !usable(r.n)) continue;
+    out.push({ n: r.n, x: r.x + r.w / 2, y: r.y + r.h / 2, skip });
   }
   return out;
 }
 
-/** Everything the current path encloses. */
+/**
+ * Everything the current path encloses, split by whether it can be staged.
+ *
+ * `hits` is what the badge counts and what the cart receives. `skipped` is
+ * everything the loop genuinely went around that cannot be staged, grouped by
+ * the reason, so the toast can name it instead of saying "nothing".
+ */
 function lassoCaught() {
   const l = state.lasso;
-  if (!l.on || l.pts.length < 3) return [];
+  const empty = { hits: [], skipped: new Map() };
+  if (!l.on || l.pts.length < 3) return empty;
   const bb = lassoBounds(l.pts);
   const hits = [];
+  const skipped = new Map();
   for (const t of lassoTargets()) {
     if (t.x < bb.x0 || t.x > bb.x1 || t.y < bb.y0 || t.y > bb.y1) continue;
-    if (lassoContains(l.pts, t.x, t.y)) hits.push(t.n);
+    if (!lassoContains(l.pts, t.x, t.y)) continue;
+    if (t.skip) skipped.set(t.skip, (skipped.get(t.skip) || 0) + 1);
+    else hits.push(t.n);
   }
-  return hits;
+  return { hits, skipped };
 }
 
 /* ── The gesture ────────────────────────────────────────────────────────── */
@@ -9000,7 +9112,7 @@ function lassoEnd() {
   const l = state.lasso;
   if (!l.on) return false;
   const real = l.moved;
-  const caught = real ? lassoCaught() : [];
+  const caught = real ? lassoCaught() : { hits: [], skipped: new Map() };
   const op = l.op;
   state.lasso = { on: false, pts: [] };
   lassoRepaint();
@@ -9023,12 +9135,26 @@ function lassoCancel() {
  * sentence that reads as a false one.
  */
 function lassoApply(caught, op) {
-  if (!caught.length) {
+  const hits = caught.hits;
+  if (!hits.length) {
+    // Name the reason when there is one. A loop drawn inside an archive goes
+    // around plenty of things and can stage none of them, and "nothing inside
+    // that loop" over a map full of blocks reads as a broken gesture rather
+    // than as the guarantee it actually is.
+    const reasons = [...caught.skipped.entries()].sort((a, b) => b[1] - a[1]);
+    if (reasons.length) {
+      const [why, n] = reasons[0];
+      toast(
+        `${formatCount(n)} thing${n === 1 ? '' : 's'} in that loop cannot be staged: ${why}.`,
+        'error', 7000,
+      );
+      return;
+    }
     toast(op === 'remove' ? 'Nothing staged inside that loop' : 'Nothing inside that loop', 'error');
     return;
   }
   let changed = 0, bytes = 0;
-  for (const n of caught) {
+  for (const n of hits) {
     if (op === 'remove') {
       if (state.cart.delete(n.path)) { changed++; bytes += n.size || 0; }
     } else if (!state.cart.has(n.path)) {
@@ -9040,11 +9166,11 @@ function lassoApply(caught, op) {
   saveCart();
   void renderCart();
   refreshCartButtons();
-  const already = caught.length - changed;
+  const already = hits.length - changed;
   if (op === 'remove') {
     toast(
       `Took ${formatCount(changed)} item${changed === 1 ? '' : 's'} (${formatBytes(bytes)}) out of the cart` +
-      (already ? ` — ${formatCount(already)} of the ${formatCount(caught.length)} caught ${already === 1 ? 'was' : 'were'} not in it` : ''),
+      (already ? ` — ${formatCount(already)} of the ${formatCount(hits.length)} caught ${already === 1 ? 'was' : 'were'} not in it` : ''),
       changed ? 'success' : 'error',
     );
     return;
@@ -9091,7 +9217,7 @@ function lassoPaint(ctx) {
   ctx.setLineDash([]);
 
   if (!l.moved) { ctx.restore(); return; }
-  const caught = lassoCaught();
+  const caught = lassoCaught().hits;
   let bytes = 0;
   for (const n of caught) bytes += n.size || 0;
   const label = `${formatCount(caught.length)} item${caught.length === 1 ? '' : 's'} · ${formatBytes(bytes)}` +
@@ -9645,7 +9771,10 @@ function tmApplyQuery(raw) {
     tmClearHits();
     tmSetQueryMessage('', false);
     if (isSun()) { presentSunburst(); return; }
-    if (isCells()) { renderSearchOverlay(); presentCells(); return; }
+    // §6.2 — the overlay's own `updateTmStatus` writes nothing for these
+    // renderers, so clearing the box would otherwise leave "2 matches for …"
+    // standing over a map with no query on it.
+    if (isCells()) { renderSearchOverlay(); renderCellsStatus(); presentCells(); return; }
     renderSearchOverlay(); presentTreemap();
     return;
   }
@@ -11518,7 +11647,6 @@ function cityFaces(b) {
     // The two walls that face the viewer: +x (lower right) and +y (lower left).
     right: [p(x1, y0, z), p(x1, y1, z), p(x1, y1, 0), p(x1, y0, 0)],
     left: [p(x0, y1, z), p(x1, y1, z), p(x1, y1, 0), p(x0, y1, 0)],
-    foot: [p(x0, y0, 0), p(x1, y0, 0), p(x1, y1, 0), p(x0, y1, 0)],
   };
 }
 
@@ -11668,7 +11796,7 @@ function drawCity() {
     const rgb = cityAirRgb(b.rgb, cityDepthT(b), bg);
 
     // Reused buffers, not fresh arrays — see cityScreen's header.
-    if (!b.sBuf) b.sBuf = { foot: [], top: [], right: [], left: [], shadow: [] };
+    if (!b.sBuf) b.sBuf = { top: [], right: [], left: [], shadow: [] };
     const top = cityScreen(b.faces.top, tx, b.sBuf.top);
     const right = cityScreen(b.faces.right, tx, b.sBuf.right);
     const left = cityScreen(b.faces.left, tx, b.sBuf.left);
@@ -12359,9 +12487,13 @@ function cityRunMorph() {
 function cityAnimateZoom(target) {
   const c = state.city;
   c.zoomTarget = Math.max(0.4, Math.min(14, target));
-  if (REDUCED) { c.zoom = c.zoomTarget; cityAfterZoom(); cityInvalidate(); return; }
+  // No frames means no easing, and easing is the only thing that moves `zoom`
+  // toward `zoomTarget` — so without this the camera would stop where it was
+  // and the map would silently ignore the zoom.
+  if (REDUCED || document.hidden) { c.zoom = c.zoomTarget; cityAfterZoom(); cityInvalidate(); return; }
   if (c.zoomRaf) return;
   const step = () => {
+    if (document.hidden) { c.zoom = c.zoomTarget; c.zoomRaf = 0; cityAfterZoom(); cityInvalidate(); return; }
     const gap = c.zoomTarget - c.zoom;
     if (Math.abs(gap) < 0.002) {
       c.zoom = c.zoomTarget;
@@ -12616,7 +12748,9 @@ function cityHit(px, py) {
     if (!b.faces) b.faces = cityFaces(b);
     // Front to back over the SAME order the painter used, so the answer is
     // always the building the user can actually see.
-    if (!b.sBuf) b.sBuf = { foot: [], top: [], right: [], left: [] };
+    // Same shape the draw loop allocates, so the hit tester and the painter
+    // share one set of buffers rather than each quietly making its own.
+    if (!b.sBuf) b.sBuf = { top: [], right: [], left: [], shadow: [] };
     if (cityPointInPoly(cityScreen(b.faces.top, tx, b.sBuf.top), px, py)) return b;
     if (cityPointInPoly(cityScreen(b.faces.right, tx, b.sBuf.right), px, py)) return b;
     if (cityPointInPoly(cityScreen(b.faces.left, tx, b.sBuf.left), px, py)) return b;
