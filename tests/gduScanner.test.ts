@@ -125,15 +125,38 @@ test('gdu and the walker report identical bytes and hardlinks on the same tree',
   }
 });
 
+/**
+ * Is this one of `gduScan`'s own temp directories?
+ *
+ * `gduScanner.ts` creates them with `mkdtemp(tmpdir()/'treemap-gdu-')`, so the
+ * name is that prefix plus exactly the six characters `mkdtemp` appends —
+ * never another hyphen.
+ *
+ * The precision matters because the test below asserts that nothing survived,
+ * and the whole suite shares one `os.tmpdir()`. A `startsWith('treemap-gdu-')`
+ * filter also claimed `treemap-gdu-precision-XXXXXX`, which
+ * `incrementalRescan.test.ts` creates for a completely unrelated fixture, and
+ * the two files run concurrently — so whether this test passed depended on
+ * which one happened to be mid-flight. It failed exactly that way once in this
+ * session, reporting another test's fixture as a leaked temp directory.
+ *
+ * The bug class is the one this repo keeps finding: something unrecognised
+ * read as a fact about our own code. Here it costs a red CI run rather than
+ * data, but the shape is identical.
+ */
+function isGduTemp(name: string): boolean {
+  return /^treemap-gdu-[A-Za-z0-9]{6}$/.test(name);
+}
+
 test('gduScan removes its temp files even when a shard fails', async (t) => {
   const bin = await findGduBinary();
   if (!bin) return t.skip('gdu not available on this machine');
 
-  const before = (await fsp.readdir(os.tmpdir())).filter((n) => n.startsWith('treemap-gdu-'));
+  const before = (await fsp.readdir(os.tmpdir())).filter(isGduTemp);
   const scan = createScanRecord('/definitely/not/a/real/path');
   await assert.rejects(() => gduScan(scan, bin, () => undefined));
-  const after = (await fsp.readdir(os.tmpdir())).filter((n) => n.startsWith('treemap-gdu-'));
-  assert.deepEqual(after, before, 'no treemap-gdu-* temp dir may survive a failure');
+  const after = (await fsp.readdir(os.tmpdir())).filter(isGduTemp);
+  assert.deepEqual(after, before, "no directory of gduScan's own may survive a failure");
 });
 
 test('a cancelled scan stops sharding instead of walking the whole tree', async (t) => {
