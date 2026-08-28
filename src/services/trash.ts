@@ -95,7 +95,32 @@ function noteProblem(problems: SweepProblems, err: unknown): void {
 }
 
 /** Per-platform directories that hold trashed items. */
+/**
+ * Where the Trash lives — or, under `TREEMAP_TRASH_DIR`, a directory a test
+ * owns.
+ *
+ * The override exists because a test in this repo ran the REAL emptier
+ * against the REAL Trash and emptied it, repeatedly, on the maintainer's own
+ * machine. It reached it by accident: the test injected a `readdir` failure
+ * matched on the suffix `.Trash`, which is the macOS layout, so on any other
+ * platform the injection missed and `emptyTrash()` ran for real —
+ * `Clear-RecycleBin -Force` on Windows, `gio trash --empty` on Linux. On
+ * macOS the injection DID fire, and that turned out to be worse: an
+ * unreadable Trash is exactly the state in which `emptyTrash` declines to
+ * short-circuit and runs the platform emptier.
+ *
+ * A test that irreversibly deletes user data must not be able to reach the
+ * real location at all, so this is a hard boundary rather than a convention.
+ * `TREEMAP_DATA_DIR` already establishes the pattern for the same reason.
+ */
+export function trashDirOverride(): string | null {
+  const override = process.env.TREEMAP_TRASH_DIR;
+  return override && override.length > 0 ? override : null;
+}
+
 async function trashDirs(): Promise<string[]> {
+  const override = trashDirOverride();
+  if (override) return [override];
   const home = os.homedir();
   const dirs: string[] = [];
   if (process.platform === 'darwin') {
@@ -228,6 +253,30 @@ function runArgv(cmd: string, args: string[]): Promise<void> {
   });
 }
 
+/**
+ * Empty one directory's contents, for the test override only.
+ *
+ * Never the system Trash: the platform emptiers take no path argument, so
+ * running one under the override would empty the real Trash whatever
+ * `trashDirs` was pointed at.
+ */
+async function clearDirectoryContents(dir: string, failed: EmptyTrashResult['failed']): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(dir);
+  } catch (err) {
+    if (!meansAbsent(err)) failed.push({ location: dir, reason: err instanceof Error ? err.message : String(err) });
+    return;
+  }
+  for (const name of entries) {
+    try {
+      await fsp.rm(path.join(dir, name), { recursive: true, force: true });
+    } catch (err) {
+      failed.push({ location: path.join(dir, name), reason: err instanceof Error ? err.message : String(err) });
+    }
+  }
+}
+
 /** Freedesktop fallback: remove the contents of Trash/files and Trash/info. */
 async function clearFreedesktopTrash(failed: EmptyTrashResult['failed']): Promise<void> {
   for (const filesDir of await trashDirs()) {
@@ -271,6 +320,16 @@ export async function emptyTrash(): Promise<EmptyTrashResult> {
 
   const failed: EmptyTrashResult['failed'] = [];
   let ran = false;
+
+  // Under the override this is a directory the caller owns, not the system
+  // Trash, so the platform emptier must not be invoked — `Clear-RecycleBin`
+  // and `osascript … empty trash` do not take a path and would empty the real
+  // one regardless of what `trashDirs` says.
+  const override = trashDirOverride();
+  if (override) {
+    await clearDirectoryContents(override, failed);
+    ran = failed.length === 0;
+  } else {
   for (const { cmd, args } of emptyTrashCommands()) {
     try {
       await runArgv(cmd, args);
@@ -281,7 +340,15 @@ export async function emptyTrash(): Promise<EmptyTrashResult> {
     }
   }
   if (!ran && process.platform !== 'darwin' && process.platform !== 'win32') {
+    // The freedesktop fallback is what actually empties the Trash on a Linux
+    // box without `gio`, so it has to report that it ran. Leaving `ran` false
+    // there made a successful empty come back as
+    // `{ emptied: false, freedBytes: 6144 }` — a result that contradicts
+    // itself, on a platform in this repo's CI matrix and its own Dockerfile.
+    const before = failed.length;
     await clearFreedesktopTrash(failed);
+    ran = failed.length === before;
+  }
   }
 
   const after = await getTrashInfo();

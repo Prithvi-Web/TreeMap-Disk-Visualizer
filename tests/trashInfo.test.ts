@@ -5,34 +5,49 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-trash-data-'));
-
-import { getTrashInfo } from '../src/services/trash';
-
 /**
- * What `getTrashInfo` reports when it cannot read the Trash.
+ * The Trash sweep, and what it reports when it cannot read.
  *
- * This had no test of any kind, and the gap was not academic. On macOS
- * `~/.Trash` is TCC-protected: a build without Full Disk Access gets `EPERM`
- * from `readdir`, which was swallowed with `continue`. Measured on the
- * maintainer's own Mac, against a Trash that plainly was not empty:
+ * **Every test here runs against a directory it owns**, via
+ * `TREEMAP_TRASH_DIR`. That is not tidiness. The first version of this file
+ * injected a `readdir` failure matched on the suffix `.Trash` — the macOS
+ * layout — and called the real `emptyTrash()`. Two things followed:
  *
- *     { complete: false, totalBytes: 0, itemCount: 0 }   ← now
- *     { totalBytes: 0, itemCount: 0 }                    ← before, presented as fact
+ *   - on Linux and Windows the injection could never fire, because their
+ *     trash directories end in `Trash/files` and `$Recycle.Bin`, so two
+ *     assertions would have failed on CI;
+ *   - on macOS the injection DID fire, and that was worse. An unreadable
+ *     Trash is exactly the state in which `emptyTrash` declines to
+ *     short-circuit and runs `osascript … empty trash`. It emptied the
+ *     maintainer's own Trash, on every full-suite run, for about eighteen
+ *     runs before a review caught it.
  *
- * and the UI turned that zero into "The Trash is empty.", a disabled Empty
- * Trash button, and an `emptyTrash()` that returned `emptied: true` without
- * running anything. A disk-space tool telling someone their full Trash is
- * empty is the worst shape this bug class takes.
+ * A test that can irreversibly delete a user's data must not be able to reach
+ * the real location at all, so the boundary is in the source rather than in
+ * this file's good intentions.
  */
 
 const liveFs = require('fs').promises as typeof import('fs').promises;
 
-/** Fail `readdir` for one path suffix with a given errno. */
-function failReaddir(match: string, code: string): () => void {
+/** A trash-shaped directory this test owns, with the app pointed at it. */
+async function withTrash<T>(fn: (dir: string) => Promise<T>): Promise<T> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-trash-fixture-'));
+  const prior = process.env.TREEMAP_TRASH_DIR;
+  process.env.TREEMAP_TRASH_DIR = dir;
+  try {
+    return await fn(dir);
+  } finally {
+    if (prior === undefined) delete process.env.TREEMAP_TRASH_DIR;
+    else process.env.TREEMAP_TRASH_DIR = prior;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Fail `readdir` for one exact directory with a given errno. */
+function failReaddir(target: string, code: string): () => void {
   const original = liveFs.readdir;
   (liveFs as unknown as { readdir: unknown }).readdir = async (p: unknown, ...rest: unknown[]): Promise<unknown> => {
-    if (String(p).endsWith(match)) {
+    if (String(p) === target) {
       const err: NodeJS.ErrnoException = new Error(`${code}: injected, readdir`);
       err.code = code;
       throw err;
@@ -44,81 +59,113 @@ function failReaddir(match: string, code: string): () => void {
   };
 }
 
-test('a readable Trash reports a complete sweep', async () => {
-  const info = await getTrashInfo();
-  assert.equal(typeof info.complete, 'boolean', 'completeness is always stated');
-  assert.ok(info.totalBytes >= 0);
-  assert.ok(info.itemCount >= 0);
-  // On a machine that CAN read it, the reason must be absent — an
-  // "at least" caveat on a complete measurement is its own kind of dishonesty.
-  if (info.complete) assert.equal(info.incompleteReason, undefined);
+test('a readable Trash is measured, and says so', async () => {
+  await withTrash(async (dir) => {
+    const { getTrashInfo } = await import('../src/services/trash');
+    await fsp.writeFile(path.join(dir, 'a.bin'), Buffer.alloc(4096));
+    await fsp.writeFile(path.join(dir, 'b.bin'), Buffer.alloc(2048));
+    const info = await getTrashInfo();
+    assert.equal(info.complete, true, 'the sweep finished');
+    assert.equal(info.incompleteReason, undefined, 'so it carries no caveat — the caveat has to mean something');
+    assert.equal(info.itemCount, 2);
+    assert.equal(info.totalBytes, 6144);
+  });
 });
 
 test('an unreadable Trash is reported as incomplete, not as empty', async () => {
-  const restore = failReaddir('.Trash', 'EPERM');
-  try {
-    const info = await getTrashInfo();
-    assert.equal(info.complete, false, 'the sweep says it did not finish');
-    assert.ok(info.incompleteReason && info.incompleteReason.length > 0, 'and says why, in a sentence');
-    assert.match(info.incompleteReason!, /Full Disk Access|permission/i, 'the reason names something the user can act on');
-  } finally {
-    restore();
-  }
-});
-
-test('a vanished Trash location is NOT reported as a problem', async () => {
-  // `trashDirs` synthesises a path per mounted volume, so most of them
-  // legitimately do not exist. Treating ENOENT as a failure would put an
-  // "at least" caveat on every complete measurement, which trains people to
-  // ignore it — the caveat has to mean something.
-  const restore = failReaddir('.Trash', 'ENOENT');
-  try {
-    const info = await getTrashInfo();
-    assert.equal(info.complete, true, 'an absent location is not an unreadable one');
-    assert.equal(info.incompleteReason, undefined);
-  } finally {
-    restore();
-  }
-});
-
-test('any unreadable errno counts, not just the one that was seen in the wild', async () => {
-  // EPERM is what this Mac produces, but the rule is about the CLASS. If the
-  // check were written against EPERM alone, an EACCES or EIO Trash would go
-  // back to reporting a confident zero.
-  for (const code of ['EACCES', 'EIO', 'EBUSY', 'ETIMEDOUT']) {
-    const restore = failReaddir('.Trash', code);
+  // The live case on the maintainer's Mac: `~/.Trash` is TCC-protected, so
+  // `readdir` returns EPERM and every failure used to be swallowed. The app
+  // reported zero bytes, rendered "The Trash is empty.", and disabled the
+  // Empty Trash button — about a Trash that was not empty.
+  await withTrash(async (dir) => {
+    const { getTrashInfo } = await import('../src/services/trash');
+    await fsp.writeFile(path.join(dir, 'unseen.bin'), Buffer.alloc(4096));
+    const restore = failReaddir(dir, 'EPERM');
     try {
       const info = await getTrashInfo();
-      assert.equal(info.complete, false, `${code} must mark the sweep incomplete`);
-      assert.ok(info.incompleteReason, `${code} must carry a reason`);
+      assert.equal(info.complete, false, 'the sweep says it did not finish');
+      assert.equal(info.itemCount, 0, 'and reports what it could see, which is nothing');
+      assert.ok(info.incompleteReason, 'with a reason');
+      assert.match(info.incompleteReason!, /Full Disk Access|permission/i, 'naming something the user can act on');
     } finally {
       restore();
     }
-  }
+  });
+});
+
+test('a vanished Trash location is NOT a problem', async () => {
+  // `trashDirs` synthesises a path per mounted volume, so most legitimately do
+  // not exist. Treating ENOENT as a failure would put an "at least" caveat on
+  // every complete measurement, which trains people to ignore it.
+  await withTrash(async (dir) => {
+    const { getTrashInfo } = await import('../src/services/trash');
+    const restore = failReaddir(dir, 'ENOENT');
+    try {
+      const info = await getTrashInfo();
+      assert.equal(info.complete, true, 'an absent location is not an unreadable one');
+      assert.equal(info.incompleteReason, undefined);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test('any unreadable errno counts, not just the one seen in the wild', async () => {
+  // EPERM is what this Mac produces, but the rule is about the CLASS. Written
+  // against EPERM alone, an EACCES or EIO Trash would go back to reporting a
+  // confident zero.
+  await withTrash(async (dir) => {
+    const { getTrashInfo } = await import('../src/services/trash');
+    for (const code of ['EACCES', 'EIO', 'EBUSY', 'ETIMEDOUT']) {
+      const restore = failReaddir(dir, code);
+      try {
+        const info = await getTrashInfo();
+        assert.equal(info.complete, false, `${code} must mark the sweep incomplete`);
+        assert.ok(info.incompleteReason, `${code} must carry a reason`);
+      } finally {
+        restore();
+      }
+    }
+  });
+});
+
+test('emptying really empties, and says so', async () => {
+  await withTrash(async (dir) => {
+    const { emptyTrash } = await import('../src/services/trash');
+    await fsp.writeFile(path.join(dir, 'a.bin'), Buffer.alloc(4096));
+    await fsp.mkdir(path.join(dir, 'folder'), { recursive: true });
+    await fsp.writeFile(path.join(dir, 'folder', 'b.bin'), Buffer.alloc(2048));
+
+    const result = await emptyTrash();
+    assert.equal(result.emptied, true, 'it ran, it finished, and it can see that it did');
+    assert.deepEqual(result.failed, []);
+    assert.deepEqual(await fsp.readdir(dir), [], 'the directory really is empty');
+  });
+});
+
+test('emptying an unreadable Trash is never reported as a success', async () => {
+  // `after.itemCount === 0` means "still nothing visible", not "it is empty
+  // now". Every emptier could fail and the result was
+  // `emptied: true, freedBytes: 0, failed: []` — which the UI toasts as
+  // "Trash emptied".
+  await withTrash(async (dir) => {
+    const { emptyTrash } = await import('../src/services/trash');
+    await fsp.writeFile(path.join(dir, 'a.bin'), Buffer.alloc(4096));
+    const restore = failReaddir(dir, 'EPERM');
+    try {
+      const result = await emptyTrash();
+      assert.equal(result.emptied, false, 'nothing can be claimed about a Trash that could not be read');
+    } finally {
+      restore();
+    }
+  });
 });
 
 /*
- * Not tested here, and deliberately: the sub-DIRECTORY failure path inside
- * `dirSize`, and the 200,000-entry budget. Both set the same flag through the
- * same helper as the cases above, and reaching them from outside the module
- * would need either a fixture inside the real Trash (which this machine
- * cannot read at all) or an export invented for the test. An assertion that
- * cannot fail is worse than an admitted gap.
+ * Not tested here, deliberately: the platform emptiers themselves
+ * (`osascript`, `Clear-RecycleBin`, `gio trash --empty`). They take no path
+ * argument, so there is no way to exercise them without emptying the real
+ * Trash of whoever is running the suite — which is precisely the mistake this
+ * file was rewritten to make impossible. `emptyTrashCommands()` is a pure
+ * function and its output is asserted in `tests/platformCrossOs.test.ts`.
  */
-
-test('emptying an unreadable Trash is never reported as a success', async () => {
-  // The short-circuit at the top of `emptyTrash` was fixed first, and the same
-  // wrong conclusion survived at the bottom: `after.itemCount === 0` was read
-  // as "it is empty now" when it actually meant "still nothing visible". Every
-  // emptier could throw and the result was `emptied: true, freedBytes: 0,
-  // failed: []` — the failures discarded — which the UI toasts as "Trash
-  // emptied".
-  const { emptyTrash } = await import('../src/services/trash');
-  const restore = failReaddir('.Trash', 'EPERM');
-  try {
-    const result = await emptyTrash();
-    assert.equal(result.emptied, false, 'nothing can be claimed about a Trash that could not be read');
-  } finally {
-    restore();
-  }
-});
