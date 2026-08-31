@@ -9,10 +9,11 @@
  * they became, and (where the mapping is an approximation, or where a term was
  * dropped) a note saying why.
  *
- * The Ollama passthrough and the HTTP route are deliberately NOT here. This
- * module is a pure function with no imports, no network, no clock and no
- * randomness: the same input always produces the same output, so it can run on
- * every keystroke and be tested exhaustively.
+ * The HTTP route is deliberately NOT here. This module is a pure function
+ * with no imports, no network, no clock and no randomness: the same input
+ * always produces the same output, so it can run on every keystroke and be
+ * tested exhaustively. (A briefly-shipped optional Ollama passthrough was
+ * removed at the owner's request — the table IS the feature.)
  *
  * ── The invariant ──
  *

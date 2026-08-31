@@ -356,11 +356,11 @@ read-what-you-saw) permission to act.
 - **Plain-words translation (v4 §9.6).** `POST /api/nl-query { text }`
   translates natural phrasing into the query grammar and **never executes**
   — no hits, no totals; run the returned `q` through `POST /api/query`
-  yourself, after showing it. `source` is `"rules"` (the deterministic
-  phrase table) or `"ollama"` (the user's own opt-in local model, whose
-  output is only returned if the real parser accepts it). With the model
-  off — the shipped default — zero network code runs; a recorder server in
-  tests/nlQuery.test.ts holds that as a fact.
+  yourself, after showing it. The deterministic phrase table is the whole
+  feature and it is entirely offline — tests/nlQuery.test.ts statically
+  asserts the query services contain zero network code. (An optional local
+  Ollama passthrough shipped briefly and was removed at the owner's
+  request.)
 - **Idempotency.** Destructive endpoints honor an `Idempotency-Key` header:
   repeating a successful request with the same key within ~10 minutes replays
   the stored response (`Idempotency-Replayed: true`) instead of executing

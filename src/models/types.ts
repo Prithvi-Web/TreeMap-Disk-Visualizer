@@ -515,27 +515,11 @@ export interface AppSettings {
    */
   humanScaleUnits: boolean;
   /**
-   * Optional local-model passthrough for the plain-words search box
-   * (v4 §9.6). Strictly opt-in and off by default; with it off, zero network
-   * code runs. The endpoint defaults to loopback Ollama and the translated
-   * query is ALWAYS shown for approval before anything executes.
-   */
-  nlOllama: NlOllamaConfig;
-  /**
    * Whether the guided first run has been completed or skipped (v4 §9.2).
    * Persisted here so a read-only portable session — which persists nothing —
    * honestly shows the tour again.
    */
   tourDone: boolean;
-}
-
-/** The §9.6 local-model configuration, normalized hard in settings.ts. */
-export interface NlOllamaConfig {
-  enabled: boolean;
-  /** http(s) origin of the user's own Ollama, default http://127.0.0.1:11434. */
-  endpoint: string;
-  /** Model name to ask for, e.g. "llama3.2". Empty = not yet chosen. */
-  model: string;
 }
 
 /** A budget cross-referenced against a scan: how the folder measures up now. */

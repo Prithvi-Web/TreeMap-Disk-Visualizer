@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { AppSettings, IgnoreEntry, ScheduleConfig, IgnoreScope, BudgetEntry, CloudCredentials, NlOllamaConfig } from '../models/types';
+import { AppSettings, IgnoreEntry, ScheduleConfig, IgnoreScope, BudgetEntry, CloudCredentials } from '../models/types';
 import { readJsonFile, writeJsonFile } from './storage';
 import { compileIgnoreList, CompiledIgnore } from '../utils/glob';
 import { DEFAULT_RECLAIM_WEIGHTS, RECLAIM_COMPONENT_IDS, ReclaimWeights } from './reclaimScore';
@@ -174,29 +174,6 @@ function normalizeReclaimWeights(raw: unknown): ReclaimWeights {
   return sum > 0 ? out : { ...DEFAULT_RECLAIM_WEIGHTS };
 }
 
-/**
- * The §9.6 local-model config. Normalized hard because every field is a
- * safety property: `enabled` accepts only boolean true (a truthy string must
- * not switch on a network feature), the endpoint must parse as an http(s)
- * URL or it falls back to loopback Ollama, and only the origin is kept — a
- * path or query on the endpoint has no business in a base URL.
- */
-const NL_OLLAMA_DEFAULT_ENDPOINT = 'http://127.0.0.1:11434';
-function normalizeNlOllama(raw: unknown): NlOllamaConfig {
-  const out: NlOllamaConfig = { enabled: false, endpoint: NL_OLLAMA_DEFAULT_ENDPOINT, model: '' };
-  if (!raw || typeof raw !== 'object') return out;
-  const r = raw as Record<string, unknown>;
-  out.enabled = r.enabled === true;
-  if (typeof r.endpoint === 'string') {
-    try {
-      const u = new URL(r.endpoint.trim().slice(0, 300));
-      if (u.protocol === 'http:' || u.protocol === 'https:') out.endpoint = u.origin;
-    } catch { /* unparseable stays at the loopback default */ }
-  }
-  if (typeof r.model === 'string') out.model = r.model.trim().slice(0, 100);
-  return out;
-}
-
 export async function getSettings(): Promise<AppSettings> {
   if (!cache) {
     const raw = await readJsonFile<Partial<AppSettings>>(SETTINGS_FILE, {});
@@ -215,7 +192,6 @@ export async function getSettings(): Promise<AppSettings> {
       // are cosmetic, and a malformed settings file should not silently
       // remove a default-on feature.
       humanScaleUnits: raw.humanScaleUnits !== false,
-      nlOllama: normalizeNlOllama(raw.nlOllama),
       // Only boolean true counts: a truthy string in a hand-edited file must
       // not silence a tour the user never saw (v4 §9.2).
       tourDone: raw.tourDone === true,
@@ -225,7 +201,7 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 /** Replace ignore list and/or schedules (input is re-validated here). */
-export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown; nlOllama?: unknown; tourDone?: unknown }): Promise<AppSettings> {
+export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown; tourDone?: unknown }): Promise<AppSettings> {
   const current = await getSettings();
   const next: AppSettings = {
     ignore: patch.ignore !== undefined ? normalizeIgnore(patch.ignore) : current.ignore,
@@ -259,9 +235,6 @@ export async function updateSettings(patch: { ignore?: unknown; schedules?: unkn
     humanScaleUnits: patch.humanScaleUnits !== undefined
       ? patch.humanScaleUnits !== false
       : current.humanScaleUnits,
-    nlOllama: patch.nlOllama !== undefined
-      ? normalizeNlOllama(patch.nlOllama)
-      : current.nlOllama,
     tourDone: patch.tourDone !== undefined
       ? patch.tourDone === true
       : current.tourDone,

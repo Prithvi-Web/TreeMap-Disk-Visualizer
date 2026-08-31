@@ -9,9 +9,10 @@ import type { NlMatch } from '../src/services/query/nlIntent';
  * Phase 9.6 — the deterministic natural-language intent table (v4 §9.6).
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * NOTE: this file tests ONLY the pure translator. The HTTP route, the Ollama
- * passthrough, and the "shows the translated query before running it, always"
- * UI contract are the parent session's job and get their tests there.
+ * NOTE: this file tests the pure translator, the HTTP route, and the
+ * "shows the translated query before running it, always" UI contract.
+ * (The briefly-shipped Ollama passthrough was removed at the owner's request;
+ * a static test below proves the whole feature carries zero network code.)
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * The invariant defended above all others: EVERY query this module can emit
@@ -300,7 +301,7 @@ test('a sweep of natural sentences: every translation and every shown term parse
   }
 });
 
-/* ═══════════ Route + Ollama opt-in (parent session, v4 §9.6) ═══════════ */
+/* ═══════════ The route (parent session, v4 §9.6) ═══════════ */
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -308,7 +309,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
-import { updateSettings, getSettings } from '../src/services/settings';
 
 process.env.TREEMAP_DATA_DIR = process.env.TREEMAP_DATA_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-nl-route-'));
 
@@ -363,81 +363,11 @@ test('POST /api/nl-query translates deterministically and NEVER executes', async
   }
 });
 
-test('with the local model OFF, zero network runs — proven with a recorder, not a claim', async () => {
-  // A recorder standing where Ollama would be: if the route so much as
-  // connects while disabled, this test sees it.
-  let hits = 0;
-  const recorder = http.createServer((_req, res) => { hits++; res.end('{}'); });
-  await new Promise<void>((r) => recorder.listen(0, '127.0.0.1', r));
-  const recorderPort = (recorder.address() as { port: number }).port;
 
-  const { port, close } = await listenApp();
-  try {
-    await updateSettings({ nlOllama: { enabled: false, endpoint: `http://127.0.0.1:${recorderPort}`, model: 'llama3.2' } });
-    const r = await reqHttp(port, 'POST', '/api/nl-query', { text: 'qwerty asdf zxcv' });
-    assert.equal(r.status, 200);
-    assert.equal(r.body.ok, false, 'nothing translatable and no model = an honest refusal');
-    assert.ok(String(r.body.reason).length > 10, 'with a reason');
-    assert.equal(hits, 0, 'the disabled model was never contacted — not once');
-  } finally {
-    await updateSettings({ nlOllama: { enabled: false, endpoint: 'http://127.0.0.1:11434', model: '' } });
-    await close();
-    await new Promise<void>((r) => recorder.close(() => r()));
-  }
-});
 
-test('with the model ON, its output is only trusted after the real grammar accepts it', async () => {
-  let asked = 0;
-  let answer = 'size>1gb ext:mp4,mov';
-  const fake = http.createServer((req, res) => {
-    asked++;
-    let buf = '';
-    req.on('data', (c) => { buf += c; });
-    req.on('end', () => {
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ response: answer }));
-    });
-  });
-  await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
-  const fakePort = (fake.address() as { port: number }).port;
 
-  const { port, close } = await listenApp();
-  try {
-    await updateSettings({ nlOllama: { enabled: true, endpoint: `http://127.0.0.1:${fakePort}`, model: 'llama3.2' } });
 
-    const good = await reqHttp(port, 'POST', '/api/nl-query', { text: 'qwerty asdf zxcv' });
-    assert.equal(good.body.ok, true, JSON.stringify(good.body));
-    assert.equal(good.body.source, 'ollama');
-    assert.equal(good.body.q, 'size>1gb ext:mp4,mov');
-    assert.ok(asked >= 1, 'the enabled model was consulted');
-    assert.ok(!('hits' in good.body), 'still never executes');
 
-    // A model that answers garbage must be refused — its words never become a
-    // query the user is invited to run. (Note: bare words like "DROP TABLE"
-    // are VALID grammar — basename substrings — and injection is already
-    // impossible at the SQL layer; what must be refused is output the real
-    // parser rejects, like an unknown field or broken grouping.)
-    answer = 'wibble:nonsense (((';
-    const bad = await reqHttp(port, 'POST', '/api/nl-query', { text: 'more gibberish here' });
-    assert.equal(bad.body.ok, false);
-    assert.match(String(bad.body.reason), /could not|not a valid|understand/i);
-  } finally {
-    await updateSettings({ nlOllama: { enabled: false, endpoint: 'http://127.0.0.1:11434', model: '' } });
-    await close();
-    await new Promise<void>((r) => fake.close(() => r()));
-  }
-});
-
-test('nlOllama settings normalize hard: off by default, loopback default endpoint', async () => {
-  const fresh = await getSettings();
-  assert.equal(fresh.nlOllama.enabled, false, 'off is the only shippable default');
-  assert.equal(fresh.nlOllama.endpoint, 'http://127.0.0.1:11434');
-  const junk = await updateSettings({ nlOllama: { enabled: 'yes', endpoint: 'not a url', model: 42 } });
-  assert.equal(junk.nlOllama.enabled, false, 'only boolean true enables');
-  assert.equal(junk.nlOllama.endpoint, 'http://127.0.0.1:11434', 'a broken endpoint falls back to loopback');
-  assert.equal(junk.nlOllama.model, '', 'a non-string model is dropped');
-  await updateSettings({ nlOllama: { enabled: false, endpoint: 'http://127.0.0.1:11434', model: '' } });
-});
 
 test('the NL box shows the translation before anything runs — structurally', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -467,33 +397,22 @@ test('absurd durations still parse — the invariant holds at 1e21 years', () =>
   if (weeks.ok) assert.equal(parse(weeks.q).ok, true, `weeks form too — got "${weeks.q}"`);
 });
 
-test('a hostile local "model" cannot balloon the server — the body read is capped', async () => {
-  // Review finding 4: anything can squat on an unprivileged loopback port.
-  // A gigabyte of garbage from it must cost a refusal, not the heap.
-  let sawNumPredict = false;
-  const fake = http.createServer((req2, res) => {
-    let buf = '';
-    req2.on('data', (c) => { buf += c; });
-    req2.on('end', () => {
-      try { sawNumPredict = typeof JSON.parse(buf).options?.num_predict === 'number'; } catch { /* ignore */ }
-      res.setHeader('Content-Type', 'application/json');
-      // 300 KB of padding around a valid shape — far past any honest answer.
-      res.end(JSON.stringify({ response: 'size>1gb', padding: 'x'.repeat(300_000) }));
-    });
-  });
-  await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
-  const fakePort = (fake.address() as { port: number }).port;
-  const { port, close } = await listenApp();
-  try {
-    await updateSettings({ nlOllama: { enabled: true, endpoint: `http://127.0.0.1:${fakePort}`, model: 'llama3.2' } });
-    const r = await reqHttp(port, 'POST', '/api/nl-query', { text: 'total gibberish zzz' });
-    assert.equal(r.status, 200);
-    assert.equal(r.body.ok, false, 'an oversized answer is refused');
-    assert.match(String(r.body.reason), /answer|large|model/i);
-    assert.equal(sawNumPredict, true, 'the request bounds the model output too (num_predict)');
-  } finally {
-    await updateSettings({ nlOllama: { enabled: false, endpoint: 'http://127.0.0.1:11434', model: '' } });
-    await close();
-    await new Promise<void>((r) => fake.close(() => r()));
+
+
+test('the plain-words feature contains zero network code — statically, not as a promise', () => {
+  // The Ollama passthrough was removed at the owner's request. This holds the
+  // stronger property that replaced it: nothing under the query services or
+  // their route can so much as spell a network call.
+  const files = [
+    path.join(__dirname, '..', 'src', 'services', 'query', 'nlIntent.ts'),
+    path.join(__dirname, '..', 'src', 'api', 'queryRoutes.ts'),
+  ];
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'src', 'services', 'query', 'nlOllama.ts')),
+    'the passthrough module is gone');
+  for (const f of files) {
+    const src = fs.readFileSync(f, 'utf8');
+    for (const marker of ['fetch(', "require('http", 'from \'http', 'XMLHttpRequest', 'net.connect']) {
+      assert.ok(!src.includes(marker), `${path.basename(f)} must not contain ${marker}`);
+    }
   }
 });

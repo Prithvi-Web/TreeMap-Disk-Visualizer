@@ -2948,21 +2948,9 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
         <span>Show human-scale equivalents in tooltips</span>
       </label>
 
-      <!-- v4 §9.6 — the plain-words box's optional local model. Off by
-           default; with it off, zero network code runs. The translated query
-           is ALWAYS shown for approval before anything executes. -->
+      <!-- v4 §9.6 — the plain-words box: the offline phrase table only. -->
       <div class="set-h" style="margin-top:22px;"><span data-icon="sparkles"></span>Ask in plain words</div>
-      <div class="muted" style="margin-bottom:10px;">The ✨ button beside the treemap's highlight box turns plain words into a search — "big videos I haven't opened in a year" becomes <b class="num">size&gt;1gb ext:mp4,… used&gt;1y</b>. The translation is <b>always shown for you to check and edit before it runs</b>. The built-in phrase table works entirely offline. Optionally, if you run <b>Ollama</b> yourself, TreeMap can ask it about phrasings the table doesn't know — off by default, only your own endpoint, and with it off no network code runs at all.</div>
-      <label class="rule-row" style="cursor:pointer;">
-        <input type="checkbox" id="nlOllamaEnabled">
-        <span>Use my own local Ollama for phrases the built-in table can't translate</span>
-      </label>
-      <div class="rule-row" style="margin-top:8px;">
-        <label for="nlOllamaEndpoint">Endpoint</label>
-        <input type="text" id="nlOllamaEndpoint" placeholder="http://127.0.0.1:11434" aria-label="Ollama endpoint" style="flex:1;">
-        <label for="nlOllamaModel">Model</label>
-        <input type="text" id="nlOllamaModel" placeholder="llama3.2" aria-label="Ollama model name" style="width:110px;">
-      </div>
+      <div class="muted" style="margin-bottom:10px;">The ✨ button beside the treemap's highlight box turns plain words into a search — "big videos I haven't opened in a year" becomes <b class="num">size&gt;1gb ext:mp4,… used&gt;1y</b>. The translation is <b>always shown for you to check and edit before it runs</b>, and the built-in phrase table works entirely offline — nothing here ever touches the network.</div>
 
       <!-- v4 §9.2 — the tour's way back, since Skip promises one. -->
       <div class="set-h" style="margin-top:22px;"><span data-icon="help"></span>Welcome tour</div>
@@ -15728,8 +15716,7 @@ async function nlTranslate() {
       // model's words and the user's own can never become markup.
       $('nlResult').value = res.q;
       const bits = [];
-      if (res.source === 'ollama') bits.push(res.note || 'translated by your local model — check it');
-      else if (res.matched && res.matched.length) bits.push(`understood: ${res.matched.map((m) => m.phrase).join(', ')}`);
+      if (res.matched && res.matched.length) bits.push(`understood: ${res.matched.map((m) => m.phrase).join(', ')}`);
       if (res.unmatched && res.unmatched.length) bits.push(`ignored: ${res.unmatched.join(', ')}`);
       $('nlDetail').textContent = bits.join(' · ');
       $('nlResult').focus();
@@ -20620,10 +20607,6 @@ $('settingsBtn').addEventListener('click', async () => {
   renderCleanupGoalFields();
   renderReclaimWeights();
   $('humanScaleToggle').checked = settingsData.humanScaleUnits !== false;
-  const nl = settingsData.nlOllama || { enabled: false, endpoint: 'http://127.0.0.1:11434', model: '' };
-  $('nlOllamaEnabled').checked = nl.enabled === true;
-  $('nlOllamaEndpoint').value = nl.endpoint || 'http://127.0.0.1:11434';
-  $('nlOllamaModel').value = nl.model || '';
 });
 
 /* ── Cleanup target (v4 §4.1) ──
@@ -20955,16 +20938,11 @@ $('settingsSaveBtn').addEventListener('click', async () => {
   const reclaimWeights = collectReclaimWeights();
   const cleanupGoalBytes = collectCleanupGoal(); // null clears the target (§4.1)
   const humanScaleUnits = $('humanScaleToggle').checked; // §9.3
-  const nlOllama = { // §9.6 — the server normalizes hard; this is just the form
-    enabled: $('nlOllamaEnabled').checked,
-    endpoint: $('nlOllamaEndpoint').value.trim() || 'http://127.0.0.1:11434',
-    model: $('nlOllamaModel').value.trim(),
-  };
   try {
     settingsData = await api('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schedules, ignore, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes, humanScaleUnits, nlOllama }),
+      body: JSON.stringify({ schedules, ignore, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes, humanScaleUnits }),
     });
     humanScaleOn = settingsData.humanScaleUnits !== false;
     renderSchedules();
