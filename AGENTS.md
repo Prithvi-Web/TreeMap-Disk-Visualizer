@@ -33,6 +33,11 @@ OpenAPI 3 spec).
    deterministic order.
 2. **Inspect.** With the `scanId`:
    - `GET /api/large-files` / `GET /api/large-folders` — the big things.
+   - `GET /api/scan/{scanId}/calendar` — bytes and file counts per local day
+     (from the scan's own mtimes, exact). `?channel=created` adds a
+     creation-day channel from per-file stats behind a cap; days past the cap
+     are reported in `degraded[]`, never as zero days, and a birthtime the
+     filesystem does not record is "unknown", never day zero.
    - `GET /api/cleanup/suggestions` — known-reclaimable space: regenerable
      build dirs (with the command that rebuilds each), tool/browser caches,
      OS junk. Exact byte totals. Sourced from versioned rule packs

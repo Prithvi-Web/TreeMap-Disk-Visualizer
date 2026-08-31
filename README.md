@@ -27,7 +27,7 @@
 <br><br>
 
 <kbd><a href="#-download-the-app-for-users">⬇ Download</a></kbd> &nbsp;
-<kbd><a href="#-the-fifteen-views">✨ Features</a></kbd> &nbsp;
+<kbd><a href="#-the-eighteen-views">✨ Features</a></kbd> &nbsp;
 <kbd><a href="#-run-from-source--web-mode-3-commands">🚀 Run it</a></kbd> &nbsp;
 <kbd><a href="#-use-it-with-ai-mcp">🤖 AI / MCP</a></kbd> &nbsp;
 <kbd><a href="#-api-overview">🔌 API</a></kbd> &nbsp;
@@ -56,12 +56,12 @@
 
 <br>
 
-## ✨ The seventeen views
+## ✨ The eighteen views
 
-TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Seventeen views, one zero-dependency frontend.
+TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Eighteen views, one zero-dependency frontend.
 
 <div align="center">
-  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Disk City, Grid, Apps, Games, Security, Fleet, Missing GB, Duplicates, Trends, Compare, Offloaded, Time Capsule, Autopilot, Clean Up, Scheduled + Ignore">
+  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Disk City, Grid, Apps, Games, Security, Fleet, Missing GB, Duplicates, Trends, Calendar, Compare, Offloaded, Time Capsule, Autopilot, Clean Up, Scheduled + Ignore">
 </div>
 
 <br>
@@ -168,6 +168,9 @@ Finds **true** duplicates (size + streamed SHA-256), grouped with reclaimable sp
 
 ### 📈 Trends
 Every scan saves a lightweight snapshot, charted over time per folder — with a clear **"what grew / what shrank since last scan"** breakdown.
+
+### 📅 Calendar
+A GitHub-style heatmap of **bytes written per day** — one cell per day, weeks as columns, years stacked. Toggle between **modified** (exact, from the scan itself) and **created** (per-file stats behind a cap, with any unread days reported honestly rather than drawn as empty). Hover for a day's total and file count; **click a day — or drag across a range — and the treemap filters to those files**, through the same query grammar as the search box, so the result is exactly what typing `modified:2026-03-14` would show.
 
 </td>
 </tr>

@@ -1483,6 +1483,19 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 #confirmOpenHandles .oh-file { color: var(--text-3); }
 
 /* ── Time Capsule (B3) ── */
+/* v4 §7.2 — the calendar heatmap. Levels are opacity steps of one hue so the
+   scale reads in both themes; an absent day keeps the bare surface colour —
+   visually distinct from level 1, because "nothing counted" is not "a little". */
+.cal-year { margin: 12px 0 6px; font-weight: 600; }
+.cal-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 12px); gap: 3px; width: max-content; max-width: 100%; overflow-x: auto; padding-bottom: 4px; }
+.cal-cell { width: 12px; height: 12px; border-radius: 3px; border: none; padding: 0; background: var(--surface-2); cursor: default; }
+.cal-cell[data-date] { cursor: pointer; }
+.cal-cell[data-lv="1"] { background: color-mix(in srgb, var(--ok) 28%, transparent); }
+.cal-cell[data-lv="2"] { background: color-mix(in srgb, var(--ok) 52%, transparent); }
+.cal-cell[data-lv="3"] { background: color-mix(in srgb, var(--ok) 76%, transparent); }
+.cal-cell[data-lv="4"] { background: var(--ok); }
+.cal-cell.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cal-legend { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
 .capsule-gauge { display: flex; align-items: center; gap: 12px; margin: 2px 0 14px; }
 .capsule-gauge .bar-track { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .capsule-gauge .bar { height: 100%; border-radius: 3px; background: var(--accent); transition: width .3s ease; }
@@ -1856,6 +1869,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
     <button role="tab" aria-selected="false" data-view="missing" title="Missing GB"><span data-icon="pie"></span><span class="side-label">Missing GB</span></button>
     <button role="tab" aria-selected="false" data-view="duplicates" title="Duplicates"><span data-icon="copy"></span><span class="side-label">Duplicates</span></button>
     <button role="tab" aria-selected="false" data-view="trends" title="Trends"><span data-icon="trendUp"></span><span class="side-label">Trends</span></button>
+    <button role="tab" aria-selected="false" data-view="calendar" title="Calendar"><span data-icon="calendar"></span><span class="side-label">Calendar</span></button>
     <button role="tab" aria-selected="false" data-view="compare" title="Compare"><span data-icon="diff"></span><span class="side-label">Compare</span></button>
     <button role="tab" aria-selected="false" data-view="offloaded" title="Offloaded"><span data-icon="archive"></span><span class="side-label">Offloaded</span></button>
     <button role="tab" aria-selected="false" data-view="capsule" title="Time Capsule"><span data-icon="clock"></span><span class="side-label">Time Capsule</span></button>
@@ -2354,6 +2368,25 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   </section>
 
   <!-- ═══════════ Time Capsule (B3) ═══════════ -->
+  <section class="view" id="view-calendar" role="tabpanel" aria-label="Calendar heatmap of bytes written per day" hidden>
+    <div class="card glass">
+      <h2><span data-icon="calendar"></span>Calendar</h2>
+      <div class="rule-row" style="align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
+        <div class="seg" id="calChannelSeg" role="tablist" aria-label="Calendar channel">
+          <button type="button" data-ch="modified" aria-selected="true" title="Bytes modified per day — read from the scan itself, exact">Modified</button>
+          <button type="button" data-ch="created" aria-selected="false" title="Bytes created per day — needs per-file stats, capped and reported honestly">Created</button>
+        </div>
+        <span class="muted" id="calHint">Click a day to see those files on the treemap · drag across days for a range</span>
+      </div>
+      <div id="calBody"><div class="muted">Run a scan first.</div></div>
+      <div class="cal-legend muted num" id="calLegend" hidden>
+        <span>less</span><span class="cal-cell" data-lv="1"></span><span class="cal-cell" data-lv="2"></span><span class="cal-cell" data-lv="3"></span><span class="cal-cell" data-lv="4"></span><span>more</span>
+        <span id="calMax" style="margin-left:10px;"></span>
+      </div>
+      <div class="muted" id="calDegraded" role="status" style="margin-top:8px;" hidden></div>
+    </div>
+  </section>
+
   <section class="view" id="view-capsule" role="tabpanel" aria-label="Time Capsule" hidden>
     <div class="card glass">
       <h2><span data-icon="clock"></span>Time Capsule</h2>
@@ -11765,6 +11798,164 @@ function forgetCapsuleEntry(id) {
 $('capsuleSearch').addEventListener('input', () => {
   state.capsule.q = $('capsuleSearch').value;
   renderCapsule();
+});
+
+/* ═══════════ Calendar heatmap (v4 §7.2) ═══════════
+   One cell per local day, coloured by bytes counted that day. The grid only
+   claims what the backend counted: an absent day stays surface-coloured (for
+   the modified channel that genuinely means nothing changed; for the created
+   channel it may mean "not read before the stat cap", and the degraded note
+   under the grid says exactly that). A day click or drag becomes a Phase 2
+   query — the grammar's path, not a bespoke filter — so what the treemap then
+   shows is exactly what typing the same query would show. */
+let calChannel = 'modified';
+let calData = null;
+let calSeq = 0;
+let calDragA = null, calDragB = null, calSuppressClick = false;
+
+function calLevel(bytes, max) {
+  if (!bytes || max <= 0) return 0;
+  // sqrt spreads a heavy-tailed distribution across the four steps; a linear
+  // scale paints one hot day level 4 and everything else level 1.
+  const r = Math.sqrt(bytes / max);
+  return Math.max(1, Math.min(4, Math.ceil(r * 4)));
+}
+
+function calNextDay(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const next = new Date(y, m - 1, d + 1); // local, matching the grammar's local-day rule
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`;
+}
+
+async function loadCalendar() {
+  const body = $('calBody');
+  if (!state.scanId) {
+    calData = null;
+    body.innerHTML = '<div class="muted">Run a scan first.</div>';
+    $('calDegraded').hidden = true; $('calLegend').hidden = true;
+    return;
+  }
+  const seq = ++calSeq;
+  body.innerHTML = '<div class="muted">Counting bytes per day…</div>';
+  try {
+    const url = `/api/scan/${encodeURIComponent(state.scanId)}/calendar` + (calChannel === 'created' ? '?channel=created' : '');
+    const data = await api(url);
+    if (seq !== calSeq || state.view !== 'calendar') return; // superseded
+    calData = data;
+    renderCalendar();
+  } catch (e) {
+    if (seq !== calSeq) return;
+    calData = null;
+    body.innerHTML = `<div class="muted">Could not build the calendar: ${escapeHtml(e.message)}</div>`;
+    $('calDegraded').hidden = true; $('calLegend').hidden = true;
+  }
+}
+
+function renderCalendar() {
+  const body = $('calBody');
+  const days = (calChannel === 'created' ? calData.created : calData.modified) || [];
+  const deg = calData.degraded || [];
+  $('calDegraded').hidden = deg.length === 0;
+  $('calDegraded').textContent = deg.map((d) => d.reason).join(' ');
+  if (!days.length) {
+    body.innerHTML = `<div class="muted">${calChannel === 'created' && deg.length
+      ? 'No creation days could be counted — see the note below.'
+      : 'No days to show for this scan.'}</div>`;
+    $('calLegend').hidden = true;
+    return;
+  }
+  const byDate = new Map(days.map((d) => [d.date, d]));
+  const max = days.reduce((m, d) => Math.max(m, d.bytes), 0);
+  const years = [...new Set(days.map((d) => Number(d.date.slice(0, 4))))].sort((a, b) => b - a);
+  const pad = (n) => String(n).padStart(2, '0');
+  const parts = [];
+  for (const year of years) {
+    const inYear = days.filter((d) => d.date.startsWith(String(year)));
+    const first = inYear[0].date, last = inYear[inYear.length - 1].date;
+    // Columns are weeks, anchored on the Sunday on or before the first counted
+    // day; the span runs only across counted territory, not a decorative year.
+    const [fy, fm, fd] = first.split('-').map(Number);
+    const start = new Date(fy, fm - 1, fd - new Date(fy, fm - 1, fd).getDay());
+    const [ly, lm, ld] = last.split('-').map(Number);
+    const end = new Date(ly, lm - 1, ld);
+    const cells = [];
+    for (let t = new Date(start); t <= end; t.setDate(t.getDate() + 1)) {
+      const iso = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+      const day = byDate.get(iso);
+      if (!day) {
+        const why = calChannel === 'created' && deg.length ? 'nothing counted (see note below)' : 'nothing counted this day';
+        cells.push(`<span class="cal-cell" role="presentation" title="${iso} — ${why}"></span>`);
+        continue;
+      }
+      const label = `${iso} — ${formatBytes(day.bytes)} · ${day.count} file${day.count === 1 ? '' : 's'}`;
+      cells.push(`<button class="cal-cell" data-date="${iso}" data-lv="${calLevel(day.bytes, max)}" title="${label}" aria-label="${label}"></button>`);
+    }
+    parts.push(`<div class="cal-year num">${year}</div><div class="cal-grid">${cells.join('')}</div>`);
+  }
+  body.innerHTML = parts.join('');
+  $('calLegend').hidden = false;
+  $('calMax').textContent = `top day ${formatBytes(max)}`;
+}
+
+/** A day (or a dragged range) becomes a query and the treemap answers it. */
+function calApplyRange(a, b) {
+  const q = a === b ? `${calChannel}:${a}` : `${calChannel}>=${a} ${calChannel}<${calNextDay(b)}`;
+  switchView('treemap');
+  $('tmSearch').value = q;
+  clearTimeout(tmQueryDeb);
+  tmApplyQuery(q);
+}
+
+function calPaintDrag() {
+  const [a, b] = calDragA <= calDragB ? [calDragA, calDragB] : [calDragB, calDragA];
+  $('calBody').querySelectorAll('.cal-cell[data-date]').forEach((c) => {
+    c.classList.toggle('sel', c.dataset.date >= a && c.dataset.date <= b);
+  });
+}
+
+/* Static top-level bindings, like the slider's — nothing for unmount to own. */
+$('calChannelSeg').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-ch]');
+  if (!btn) return;
+  calChannel = btn.dataset.ch;
+  for (const b of $('calChannelSeg').querySelectorAll('button'))
+    b.setAttribute('aria-selected', String(b.dataset.ch === calChannel));
+  loadCalendar();
+});
+$('calBody').addEventListener('pointerdown', (e) => {
+  const c = e.target.closest('.cal-cell[data-date]');
+  if (!c) return;
+  calDragA = calDragB = c.dataset.date;
+  e.preventDefault();
+});
+$('calBody').addEventListener('pointerover', (e) => {
+  if (!calDragA) return;
+  const c = e.target.closest('.cal-cell[data-date]');
+  if (c && c.dataset.date !== calDragB) { calDragB = c.dataset.date; calPaintDrag(); }
+});
+window.addEventListener('pointerup', () => {
+  if (!calDragA) return;
+  const [a, b] = calDragA <= calDragB ? [calDragA, calDragB] : [calDragB, calDragA];
+  calDragA = calDragB = null;
+  calSuppressClick = true; // the click that follows this pointerup is the same gesture
+  calApplyRange(a, b);
+});
+$('calBody').addEventListener('click', (e) => {
+  // Keyboard activation: Enter/Space on a cell arrives here with no pointer
+  // gesture before it. A mouse click was already handled at pointerup.
+  if (calSuppressClick) { calSuppressClick = false; return; }
+  const c = e.target.closest('.cal-cell[data-date]');
+  if (c) calApplyRange(c.dataset.date, c.dataset.date);
+});
+
+registerView({
+  id: 'calendar',
+  label: 'Calendar',
+  icon: 'calendar',
+  needsScan: true,
+  onScanChange() { calData = null; }, // the old scan's days belong to the old tree
+  mount() { loadCalendar(); },
 });
 
 registerView({

@@ -40,6 +40,7 @@ const TAB_VIEWS = [
   'fleet', // D1 — LAN fleet view
   'missing', // v4 §5 — The Missing Gigabytes
   'city', // v4 §6.1 — Disk City, the isometric view
+  'calendar', // v4 §7.2 — the calendar heatmap
 ] as const;
 const MODAL_VIEWS = ['cleanModal', 'settingsModal'] as const;
 
