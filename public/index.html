@@ -3315,7 +3315,7 @@ const state = {
   bigFolders: [],
   savedViews: [],
   savedViewsLoaded: false,
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, altZoom: null, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null } },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, altZoom: null, altRaf: 0, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null } },
   // v4 §6.1 — Disk City. Deliberately holds NO tree of its own: the root and
   // the nodes are the Treemap's, so the two are the same arrangement rather
   // than two arrangements that resemble each other.
@@ -3583,7 +3583,10 @@ const VIEWS = [
       // §6.2's level transition, §6.3's lasso and §6.4's lens are all state
       // that would otherwise survive into the next view: a rAF loop repainting
       // a hidden canvas, a half-drawn selection, and a magnifier still held.
+      // §2.5's refinement loop is the same shape of leak and leaves by the
+      // same door.
       if (state.treemap.altZoomRaf) { cancelAnimationFrame(state.treemap.altZoomRaf); state.treemap.altZoomRaf = 0; }
+      altRefineCancel();
       state.treemap.altZoom = null;
       // A resize that lands after the view is gone would solve a layout for a
       // canvas nobody is looking at, and paint it there.
@@ -8268,21 +8271,32 @@ function altCoverageGate(kids, r) {
   return { skip: false, packKids, omittedCount, omittedBytes };
 }
 
-function layoutCirclePack(root, geo) {
-  const cells = [];
-  const R = Math.max(24, Math.min(geo.cssW, geo.cssH) / 2 - 14);
+function layoutCirclePack(root, geo, resume) {
+  // A `resume` is the state a previous slice ran out of clock on: the queue of
+  // parents still to subdivide, the cells laid so far, and the counters the
+  // footnote is built from. §2.5's refinement loop hands it back one animation
+  // frame later, so the picture finishes across frames instead of in one block.
+  const S = resume || {
+    cells: [], queue: [], omittedCount: 0, omittedBytes: 0, unresolved: 0, truncated: false,
+  };
+  const cells = S.cells;
+  const queue = S.queue;
+  if (!resume) {
+    const R = Math.max(24, Math.min(geo.cssW, geo.cssH) / 2 - 14);
+    const rootCell = { n: root, depth: 0, kind: 'circle', cx: geo.cssW / 2, cy: geo.cssH / 2, r: R, leaf: true };
+    cells.push(rootCell);
+    queue.push({ cell: rootCell, node: root });
+  }
   const maxDepth = Math.max(1, Math.min(7, state.treemap.maxDepth));
-  let omittedCount = 0, omittedBytes = 0, unresolved = 0, truncated = false;
-
-  const rootCell = { n: root, depth: 0, kind: 'circle', cx: geo.cssW / 2, cy: geo.cssH / 2, r: R, leaf: true };
-  cells.push(rootCell);
-  const queue = [{ cell: rootCell, node: root }];
+  let { omittedCount, omittedBytes, unresolved, truncated } = S;
   const started = performance.now();
   let outOfTime = false;
 
   while (queue.length) {
-    const job = queue.shift();
-    if (job.cell.depth >= maxDepth || job.cell.r < ALT_PARENT_MIN_R) continue;
+    // Peeked, not shifted: a job the clock refuses stays queued for the next
+    // slice rather than silently vanishing from the picture.
+    const job = queue[0];
+    if (job.cell.depth >= maxDepth || job.cell.r < ALT_PARENT_MIN_R) { queue.shift(); continue; }
     // The same clock the Voronoi solver runs under, and for the same reason:
     // the cell budget below bounds how many shapes come OUT of this loop, not
     // how long the packing that produces them takes. A single pack of 4,239
@@ -8291,6 +8305,7 @@ function layoutCirclePack(root, geo) {
     // Checked after the first level has been laid out, never before it, so a
     // slow machine yields a coarse picture rather than an empty one.
     if (job.cell.depth > 0 && performance.now() - started > ALT_LAYOUT_BUDGET_MS) { outOfTime = true; break; }
+    queue.shift();
     const kids = altChildren(job.node);
     if (!kids.length) continue;
     // The gate first: a pack that would mostly produce specks is not run at
@@ -8324,8 +8339,16 @@ function layoutCirclePack(root, geo) {
     if (truncated) break;
   }
   for (const c of cells) { c.bb = altBounds(c); c.more = altHasMore(c); }
+  S.omittedCount = omittedCount;
+  S.omittedBytes = omittedBytes;
+  S.unresolved = unresolved;
+  S.truncated = truncated;
   return {
     cells,
+    // The truncated break leaves the clock unfired, so this is exactly
+    // "the queue is either empty or stopped for a reason no next slice fixes".
+    done: !outOfTime,
+    resume: S,
     note: altNoteFor({ omittedCount, omittedBytes, unresolved, truncated, outOfTime, drawn: cells.length }),
   };
 }
@@ -8339,12 +8362,11 @@ const ALT_VORONOI_MIN_AREA = 8500;
    Checked BEFORE each nested layout, so the true worst case is this plus one
    layout. 45 ms rather than the 150 it shipped at, because the binding budget
    was never the 250 ms first paint — it is §2.5's 50 ms ceiling on a single
-   main-thread block, which the whole layout runs as. With the coverage gate
-   bounding what any one pack can cost, this ceiling is what bounds the series;
-   a tree with more detail than 45 ms buys stops subdividing, says so in the
-   footnote, and hands the rest to drill-in — which re-runs the layout on the
-   chosen subtree with a fresh clock, so the detail is reachable, one gesture
-   deep, instead of bought by freezing the tab.
+   main-thread block, and with the refinement loop in `buildCells` the clock
+   now ends a SLICE, not the layout: the queue comes back one animation frame
+   later and the picture fills in across frames, each block under this
+   ceiling, until nothing is left to subdivide. The coverage gate above bounds
+   what any one pack inside a slice can cost.
 
    It applies to BOTH solvers. It used to be Voronoi's alone, on the reasoning
    recorded in `buildCells` that the Voronoi solver "is the only thing in this
@@ -8358,30 +8380,42 @@ const ALT_VORONOI_MIN_AREA = 8500;
    that.                                                                     */
 const ALT_LAYOUT_BUDGET_MS = 45;
 
-function layoutVoronoi(root, geo) {
-  const pad = 8;
-  const boundary = [
-    { x: pad, y: pad }, { x: geo.cssW - pad, y: pad },
-    { x: geo.cssW - pad, y: geo.cssH - pad }, { x: pad, y: geo.cssH - pad },
-  ];
-  const cells = [];
-  const rootCell = { n: root, depth: 0, kind: 'poly', poly: boundary, leaf: true, area: Math.abs(polyArea(boundary)) };
-  cells.push(rootCell);
+function layoutVoronoi(root, geo, resume) {
+  // Resumable for the same reason as `layoutCirclePack` above: a slice that
+  // runs out of clock returns its queue, and §2.5's refinement loop finishes
+  // the picture across frames rather than in one main-thread block.
+  const S = resume || {
+    cells: [], queue: [], omittedCount: 0, omittedBytes: 0, worstError: 0,
+    allConverged: true, truncated: false,
+  };
+  const cells = S.cells;
+  const queue = S.queue;
+  if (!resume) {
+    const pad = 8;
+    const boundary = [
+      { x: pad, y: pad }, { x: geo.cssW - pad, y: pad },
+      { x: geo.cssW - pad, y: geo.cssH - pad }, { x: pad, y: geo.cssH - pad },
+    ];
+    const rootCell = { n: root, depth: 0, kind: 'poly', poly: boundary, leaf: true, area: Math.abs(polyArea(boundary)) };
+    cells.push(rootCell);
+    queue.push({ cell: rootCell, node: root });
+  }
   // Nesting stops at three levels whatever the depth selector says. A fourth
   // level of Voronoi is visually mush — the cells are smaller than their own
   // borders — and it is where the iteration budget goes to die.
   const maxDepth = Math.max(1, Math.min(3, state.treemap.maxDepth));
   const started = performance.now();
-  let omittedCount = 0, omittedBytes = 0, worstError = 0, allConverged = true;
-  let truncated = false, outOfTime = false;
+  let { omittedCount, omittedBytes, worstError, allConverged, truncated } = S;
+  let outOfTime = false;
 
-  const queue = [{ cell: rootCell, node: root }];
   while (queue.length) {
-    const job = queue.shift();
+    // Peeked, not shifted — an out-of-clock job belongs to the next slice.
+    const job = queue[0];
     const depth = job.cell.depth;
-    if (depth >= maxDepth) continue;
-    if (depth > 0 && job.cell.area < ALT_VORONOI_MIN_AREA) continue;
+    if (depth >= maxDepth) { queue.shift(); continue; }
+    if (depth > 0 && job.cell.area < ALT_VORONOI_MIN_AREA) { queue.shift(); continue; }
     if (performance.now() - started > ALT_LAYOUT_BUDGET_MS) { outOfTime = true; break; }
+    queue.shift();
     const kids = altChildren(job.node);
     if (!kids.length) continue;
     // Only the cell count is set here. The iteration budget belongs to the
@@ -8420,8 +8454,15 @@ function layoutVoronoi(root, geo) {
     c.more = altHasMore(c);
     if (c.cx === undefined) { const m = polyCentroid(c.poly) || { x: 0, y: 0 }; c.cx = m.x; c.cy = m.y; }
   }
+  S.omittedCount = omittedCount;
+  S.omittedBytes = omittedBytes;
+  S.worstError = worstError;
+  S.allConverged = allConverged;
+  S.truncated = truncated;
   return {
     cells,
+    done: !outOfTime,
+    resume: S,
     note: altNoteFor({
       omittedCount, omittedBytes, truncated, outOfTime, drawn: cells.length,
       converged: allConverged, worstError,
@@ -8500,12 +8541,55 @@ function altCellPath(ctx, c) {
  */
 function buildCells(geo) {
   const root = sunburstRoot();
+  altRefineCancel();
   if (!root) { state.treemap.cells = []; state.treemap.altNote = ''; return; }
   const t0 = performance.now();
   const out = state.treemap.mode === 'circles' ? layoutCirclePack(root, geo) : layoutVoronoi(root, geo);
   state.treemap.cells = out.cells;
-  state.treemap.altNote = out.note;
+  state.treemap.altNote = out.done ? out.note : altRefiningNote(out.cells.length);
+  // The cost of THIS slice — the block a user gesture actually paid — not the
+  // eventual total. §2.5's 50 ms rule is about blocks, and this is the block.
   state.treemap.altMs = performance.now() - t0;
+  if (!out.done) altRefineSchedule(root, geo, out.resume);
+}
+
+/* ── §2.5's refinement loop ──────────────────────────────────────────────
+   The layout clock used to be the end of the story: a tree with more detail
+   than the budget buys was drawn coarse, permanently, with a footnote. Now
+   the clock only ends the SLICE — the layout returns its queue, and this loop
+   hands it back one animation frame later, repainting as the picture fills
+   in. Every individual block stays under the clock; nothing is lost; the
+   footnote says "still laying out" while it is true and settles to the
+   layout's own last word when it is not. Cancelled by the next buildCells
+   (a resize, a drill, a renderer switch), by setTreemapView, and by the
+   view's unmount — the same three doors the zoom transition uses.          */
+let altRefineSeq = 0;
+
+function altRefiningNote(drawn) {
+  return `still laying out — ${formatCount(drawn)} shapes so far`;
+}
+
+function altRefineCancel() {
+  altRefineSeq++;
+  if (state.treemap.altRaf) { cancelAnimationFrame(state.treemap.altRaf); state.treemap.altRaf = 0; }
+}
+
+function altRefineSchedule(root, geo, resume) {
+  const seq = ++altRefineSeq;
+  const mode = state.treemap.mode;
+  state.treemap.altRaf = requestAnimationFrame(() => {
+    state.treemap.altRaf = 0;
+    if (seq !== altRefineSeq || state.view !== 'treemap' || state.treemap.mode !== mode || !isCells()) return;
+    // The drill-in transition owns the canvas while it runs; keep the queue
+    // warm and try again next frame rather than repainting under it.
+    if (state.treemap.altZoomRaf) { altRefineSchedule(root, geo, resume); return; }
+    const out = mode === 'circles' ? layoutCirclePack(root, geo, resume) : layoutVoronoi(root, geo, resume);
+    state.treemap.cells = out.cells;
+    state.treemap.altNote = out.done ? out.note : altRefiningNote(out.cells.length);
+    repaintCells();
+    renderAltNote();
+    if (!out.done) altRefineSchedule(root, geo, out.resume);
+  });
 }
 
 /* ── v4 §6.2 — the zoom between levels ────────────────────────────────────
@@ -9558,6 +9642,7 @@ function setTreemapView(mode) {
   // Leaving a renderer drops what it drew. Otherwise the next hit test, cart
   // preview or lasso could answer with a shape that is no longer on screen.
   if (state.treemap.altZoomRaf) { cancelAnimationFrame(state.treemap.altZoomRaf); state.treemap.altZoomRaf = 0; }
+  altRefineCancel();
   state.treemap.altZoom = null;
   state.treemap.cells = [];
   state.treemap.altNote = '';

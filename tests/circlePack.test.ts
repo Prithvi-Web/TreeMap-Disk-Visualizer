@@ -480,3 +480,43 @@ test('layoutCirclePack consults the gate before it pays for a pack', () => {
   assert.notEqual(packAt, -1, 'the layout still packs');
   assert.ok(gateAt < packAt, 'and the gate is asked first');
 });
+
+/* ═════════════ The refinement loop — the clock ends a slice, not the map ═════════════ */
+
+test('both solvers are resumable, and buildCells schedules the next slice', () => {
+  // §2.5's 50 ms block rule is met by slicing, not by settling for a coarse
+  // picture: a layout that runs out of clock returns its queue as `resume`,
+  // and buildCells hands it back one animation frame later. These are the
+  // load-bearing joints of that loop; if any of them goes, the picture
+  // silently reverts to permanently-coarse and nothing else fails.
+  for (const name of ['layoutCirclePack', 'layoutVoronoi']) {
+    const src = fnSource(name);
+    assert.match(src, /function \w+\(root, geo, resume\)/, `${name} accepts a resume state`);
+    assert.match(src, /done: !outOfTime/, `${name} says whether it finished`);
+    assert.match(src, /resume: S/, `${name} returns its queue for the next slice`);
+    assert.match(src, /const job = queue\[0\]/, `${name} peeks before the clock so an out-of-clock job is not lost`);
+  }
+  const build = fnSource('buildCells');
+  assert.match(build, /altRefineCancel\(\)/, 'a rebuild cancels the previous refinement');
+  assert.match(build, /if \(!out\.done\) altRefineSchedule\(/, 'an unfinished layout is continued');
+  const sched = fnSource('altRefineSchedule');
+  assert.match(sched, /requestAnimationFrame/, 'continuation waits for a frame');
+  assert.match(sched, /state\.treemap\.mode !== mode/, 'a renderer switch orphans the old queue');
+});
+
+test('while refining, the footnote says so in plain words', () => {
+  const altRefiningNote = lift<(drawn: number) => string>(
+    ['formatCount', 'altRefiningNote'], 'altRefiningNote',
+  );
+  assert.equal(altRefiningNote(1234), 'still laying out — 1,234 shapes so far');
+});
+
+test('the treemap unmount and setTreemapView both cancel the refinement loop', () => {
+  // The registry's rule: every rAF a view starts, its unmount stops. The
+  // refinement rAF lives on state.treemap.altRaf; both exits must close it.
+  const src = fnSource('setTreemapView');
+  assert.match(src, /altRefineCancel\(\)/, 'switching renderer cancels refinement');
+  const unmountAt = INDEX.indexOf("id: 'treemap'");
+  const unmountSrc = INDEX.slice(unmountAt, INDEX.indexOf("id: 'grid'", unmountAt));
+  assert.match(unmountSrc, /altRefineCancel\(\)/, 'leaving the view cancels refinement');
+});
