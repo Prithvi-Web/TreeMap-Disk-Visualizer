@@ -50,6 +50,11 @@ function treeFileName(rootPath: string): string {
   return `snapshot-trees-${h}.json`;
 }
 
+/** All stored snapshot trees for one root, keyed by snapshot id. */
+export async function readSnapshotTrees(rootPath: string): Promise<Record<string, SnapshotTreeNode>> {
+  return readJsonFile<TreeStore>(treeFileName(rootPath), {});
+}
+
 /**
  * Compact a scan tree to one shape rung: largest `perDir` children per
  * directory, `depth` levels deep. Sizes are kept as-is (not re-summed), so a
