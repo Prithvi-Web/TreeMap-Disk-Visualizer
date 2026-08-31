@@ -295,6 +295,19 @@ function guardWindow(name: string): string {
   return code.slice(open, firstReturn + 12);
 }
 
+test('no id rides on a data-icon span — the injector replaces the element wholesale', () => {
+  /* The icon injector does `el.outerHTML = icon(...)` on every [data-icon]
+     span at boot, which destroys the element along with every attribute on
+     it. An id put there dies silently, and the first $(...) that reaches for
+     it returns null — found live as a load-time crash that killed every
+     binding declared after it. The id belongs on a wrapper around the
+     data-icon span, never on the span itself. */
+  const offenders = [...INDEX.matchAll(/<span[^>]*data-icon=[^>]*>/g)]
+    .map((m) => m[0])
+    .filter((tag) => /\bid=/.test(tag));
+  assert.deepEqual(offenders, [], 'ids on data-icon spans do not survive icon injection');
+});
+
 test('every animation entry point asks REDUCED before it starts', () => {
   /* v4 §6 cross-cutting: "every new animation … must too, degrading to an
      instant transition". Checked structurally rather than by eye, because the
@@ -304,7 +317,7 @@ test('every animation entry point asks REDUCED before it starts', () => {
      Each of these is a function that STARTS a loop. The ones that merely
      continue one (`cityRunMorph`, `altRunZoom`) are deliberately not listed:
      they can only be reached through a starter that has already asked. */
-  for (const name of ['cityMorphHeights', 'cityEnter', 'cityAnimateZoom', 'altBeginZoom']) {
+  for (const name of ['cityMorphHeights', 'cityEnter', 'cityAnimateZoom', 'altBeginZoom', 'lapseStart']) {
     assert.match(guardWindow(name), /\bREDUCED\b/,
       `${name} checks REDUCED before its first return`);
   }

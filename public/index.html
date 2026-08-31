@@ -2113,8 +2113,23 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
     </div>
     <div class="tm-timebar glass" id="tmTimebar" hidden>
       <span data-icon="clock" data-size="14"></span>
+      <!-- v4 §7.1 — transport. Bindings are static top-level like the
+           slider's, so the named-listener rule for mount() does not apply. -->
+      <button class="icon-btn" id="tmLapsePlay" aria-label="Play time-lapse" title="Play through this folder's history — rectangles morph between snapshots">
+        <!-- ids live on wrappers: the injector replaces the [data-icon] span
+             wholesale, so an id put there would not survive boot. -->
+        <span id="tmLapseIconPlay"><span data-icon="play" data-size="14"></span></span>
+        <span id="tmLapseIconPause" hidden><span data-icon="pause" data-size="14"></span></span>
+      </button>
       <input type="range" id="tmTimeSlider" min="0" max="0" step="1" value="0" aria-label="Scrub through this folder's scan history">
       <span class="tm-timelabel num" id="tmTimeLabel">Live</span>
+      <div class="seg" id="tmLapseSpeed" role="tablist" aria-label="Time-lapse playback speed">
+        <button type="button" data-speed="0.5" aria-selected="false" title="Half speed">½×</button>
+        <button type="button" data-speed="1" aria-selected="true" title="Normal speed — about a second per snapshot">1×</button>
+        <button type="button" data-speed="2" aria-selected="false" title="Double speed">2×</button>
+        <button type="button" data-speed="4" aria-selected="false" title="Quadruple speed">4×</button>
+      </div>
+      <button class="pill" id="tmLapseLoop" aria-pressed="false" title="Start again from the oldest snapshot when playback reaches the end">Loop</button>
       <button class="pill" id="tmDiffToggle" aria-pressed="false" title="Tint what grew green and what shrank red, compared with the previous snapshot">Diff</button>
     </div>
     <div class="glass" id="treemapWrap">
@@ -3078,6 +3093,7 @@ const PATHS = {
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
   calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
   ban: '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
   cart: '<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.5 2.5h2l2.6 12.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6l1.6-7.4H5.1"/>',
   keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M10 14h4"/>',
@@ -3315,7 +3331,7 @@ const state = {
   bigFolders: [],
   savedViews: [],
   savedViewsLoaded: false,
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, altZoom: null, altRaf: 0, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null } },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, altZoom: null, altRaf: 0, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null }, lapse: { playing: false, raf: 0, pos: 0, speed: 1, loop: false, seq: 0 } },
   // v4 §6.1 — Disk City. Deliberately holds NO tree of its own: the root and
   // the nodes are the Treemap's, so the two are the same arrangement rather
   // than two arrangements that resemble each other.
@@ -3588,6 +3604,9 @@ const VIEWS = [
       if (state.treemap.altZoomRaf) { cancelAnimationFrame(state.treemap.altZoomRaf); state.treemap.altZoomRaf = 0; }
       altRefineCancel();
       state.treemap.altZoom = null;
+      // §7.1's playback is the same shape of leak — a rAF loop repainting a
+      // canvas nobody is looking at — and leaves by the same door.
+      lapseStop();
       // A resize that lands after the view is gone would solve a layout for a
       // canvas nobody is looking at, and paint it there.
       clearTimeout(tmResizeDeb);
@@ -6725,6 +6744,7 @@ const HISTORY_CACHE_MAX = 40;
 /** Drop history mode without reloading (called whenever a live layout lands). */
 function exitHistoryState() {
   const h = state.treemap.history;
+  lapseStop(); // §7.1 — leaving history always ends playback (Escape, live layout landing)
   h.active = false;
   h.tree = null;
   h.seq++; // invalidate any in-flight history fetch
@@ -6746,7 +6766,9 @@ async function refreshTimebar() {
   if (!state.root || state.treemap.rootPath !== state.root.path) { bar.hidden = true; return; }
   try {
     const data = await api('/api/snapshots?path=' + encodeURIComponent(state.root.path));
-    h.snaps = (data.snapshots || []).filter((s) => s.hasTree);
+    // §7.1 — ordered and tree-bearing only: a treeless snapshot is a gap the
+    // slider and playback both skip, never a tree to guess at.
+    h.snaps = lapseOrderedSnaps(data.snapshots || []);
   } catch { h.snaps = []; }
   // The newest snapshot is the scan you're looking at — history needs two.
   if (h.snaps.length < 2) { bar.hidden = true; return; }
@@ -6767,6 +6789,22 @@ function updateTimeLabel() {
   label.textContent = `${new Date(s.takenAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${formatBytes(s.totalSize)}`;
 }
 
+/**
+ * Fetch-or-remember one snapshot's layout. The cache discipline lived inside
+ * setHistoryIndex until §7.1 needed the same bytes for playback segments and
+ * prefetch; one function now owns the LRU so the two callers cannot diverge.
+ */
+async function historyLayoutFor(snap) {
+  const h = state.treemap.history;
+  let layout = h.cache.get(snap.id);
+  if (!layout || !layout.tree) { // missing or from an older response shape
+    layout = await api(`/api/snapshots/tree?path=${encodeURIComponent(state.root.path)}&at=${snap.takenAt}`);
+    h.cache.set(snap.id, layout);
+    if (h.cache.size > HISTORY_CACHE_MAX) h.cache.delete(h.cache.keys().next().value);
+  }
+  return layout;
+}
+
 /** Scrub to slider position i (h.snaps.length = Live). */
 async function setHistoryIndex(i) {
   const h = state.treemap.history;
@@ -6778,12 +6816,7 @@ async function setHistoryIndex(i) {
   const snap = h.snaps[i];
   const seq = ++h.seq;
   try {
-    let layout = h.cache.get(snap.id);
-    if (!layout || !layout.tree) { // missing or from an older response shape
-      layout = await api(`/api/snapshots/tree?path=${encodeURIComponent(state.root.path)}&at=${snap.takenAt}`);
-      h.cache.set(snap.id, layout);
-      if (h.cache.size > HISTORY_CACHE_MAX) h.cache.delete(h.cache.keys().next().value);
-    }
+    const layout = await historyLayoutFor(snap);
     if (seq !== h.seq || state.view !== 'treemap') return; // superseded
     if (state.live.on) { disableLive(); toast('Live mode paused while viewing history'); }
     h.active = true;
@@ -6840,8 +6873,191 @@ function animateTreemapTo(newNodes) {
   tmAnimFrame = requestAnimationFrame(tick);
 }
 
+/* ── v4 §7.1 — time-lapse interpolation, as pure functions ──
+   Lifted whole by tests/timelapse.test.ts (liftFrontend.ts explains why they
+   live here and not in src/). lapseLerpNodes morphs one snapshot's rectangle
+   layout into the next: matched rectangles travel linearly; arrivals bloom
+   from their own centre — animateTreemapTo's convention — and departures
+   shrink into theirs, gone at t=1, because nothing may be drawn for a file
+   that no longer exists. Non-geometry fields come from the destination:
+   colour and depth describe where playback is going, not a blend. Draw order
+   is the destination's, departures on top so they stay visible while they go. */
+function lapseLerpNodes(a, b, t) {
+  const tt = Math.max(0, Math.min(1, t));
+  const byPathA = new Map(a.map((n) => [n.path, n]));
+  const out = [];
+  for (const m of b) {
+    const o = byPathA.get(m.path);
+    if (o) {
+      byPathA.delete(m.path);
+      out.push({
+        ...m,
+        x: o.x + (m.x - o.x) * tt,
+        y: o.y + (m.y - o.y) * tt,
+        w: o.w + (m.w - o.w) * tt,
+        h: o.h + (m.h - o.h) * tt,
+        size: o.size + (m.size - o.size) * tt,
+      });
+    } else {
+      const cx = m.x + m.w / 2, cy = m.y + m.h / 2;
+      out.push({ ...m, x: cx + (m.x - cx) * tt, y: cy + (m.y - cy) * tt, w: m.w * tt, h: m.h * tt });
+    }
+  }
+  if (tt < 1) {
+    for (const o of a) {
+      if (!byPathA.has(o.path)) continue; // survived into b — already emitted above
+      const cx = o.x + o.w / 2, cy = o.y + o.h / 2;
+      out.push({ ...o, x: o.x + (cx - o.x) * tt, y: o.y + (cy - o.y) * tt, w: o.w * (1 - tt), h: o.h * (1 - tt) });
+    }
+  }
+  return out;
+}
+
+/* A snapshot without a tree cannot be interpolated through, and synthesising
+   an intermediate tree would be a guess — §7.1 says a gap. Filtering it out
+   makes playback interpolate straight across the hole: the time axis is
+   segments, so the gap costs nothing and fabricates nothing. Returns a new
+   array; the caller's is untouched. */
+function lapseOrderedSnaps(snaps) {
+  return (snaps || []).filter((s) => s && s.hasTree).sort((x, y) => x.takenAt - y.takenAt);
+}
+
+/* ── v4 §7.1 — transport: play/pause, speed, loop ──
+   One rAF loop advances a fractional position over segments (one segment =
+   snapshot k → k+1, LAPSE_SEG_MS at 1×). The rectangle renderer draws
+   lapseLerpNodes frames; sunburst and the solved renderers step discretely at
+   crossings through the same dispatch the slider uses, because a cell's
+   position between two scans is not a path anything travelled. The slider and
+   label update only at crossings: an interpolated byte total would be an
+   invented number. */
+const LAPSE_SEG_MS = 1000;
+
+function lapseReflect() {
+  const L = state.treemap.lapse;
+  const play = $('tmLapsePlay');
+  if (!play) return;
+  play.setAttribute('aria-label', L.playing ? 'Pause time-lapse' : 'Play time-lapse');
+  $('tmLapseIconPlay').hidden = L.playing;
+  $('tmLapseIconPause').hidden = !L.playing;
+  for (const b of $('tmLapseSpeed').querySelectorAll('button'))
+    b.setAttribute('aria-selected', String(Number(b.dataset.speed) === L.speed));
+  const loop = $('tmLapseLoop');
+  loop.classList.toggle('active', L.loop);
+  loop.setAttribute('aria-pressed', String(L.loop));
+}
+
+function lapseStop() {
+  const L = state.treemap.lapse;
+  L.seq++; // orphan the running tick before cancelling, so a queued frame is inert
+  if (L.raf) cancelAnimationFrame(L.raf);
+  L.raf = 0;
+  L.playing = false;
+  lapseReflect();
+}
+
+/** Warm the cache for the segments about to play; a miss never stalls a fetch already running. */
+const lapseFetching = new Set();
+function lapsePrefetch(from) {
+  const h = state.treemap.history;
+  for (let j = from; j < Math.min(from + 3, h.snaps.length); j++) {
+    const snap = h.snaps[j];
+    if (!snap || h.cache.get(snap.id)?.tree || lapseFetching.has(snap.id)) continue;
+    lapseFetching.add(snap.id);
+    historyLayoutFor(snap).catch(() => {}).finally(() => lapseFetching.delete(snap.id));
+  }
+}
+
+/** Sync the per-snapshot surfaces at a crossing: slider, label, history state. */
+function lapseApplySnap(j, layout) {
+  const h = state.treemap.history;
+  h.active = true;
+  h.index = j;
+  h.viewingAt = layout.snapshot.takenAt;
+  h.tree = layout.tree || null;
+  state.treemap.rootSize = layout.root.size;
+  $('tmTimeSlider').value = String(j);
+  updateTimeLabel();
+}
+
+function lapseStart() {
+  const h = state.treemap.history;
+  const L = state.treemap.lapse;
+  // With reduced motion, playback still plays but steps discretely from
+  // snapshot to snapshot — the same degradation §6 asks of every animation.
+  // Sunburst and the solved renderers step discretely regardless (the rule
+  // setHistoryIndex states: tweening a global optimisation invents a motion).
+  const discrete = REDUCED || !isRectMap();
+  if (h.snaps.length < 2 || L.playing || state.view !== 'treemap') return;
+  if (state.live.on) { disableLive(); toast('Live mode paused while playing history'); }
+  const seq = ++L.seq;
+  // Start from the slider; from Live or the end, start over at the oldest.
+  const cur = Number($('tmTimeSlider').value);
+  L.pos = cur >= h.snaps.length - 1 ? 0 : cur;
+  L.playing = true;
+  lapseReflect();
+  lapsePrefetch(Math.floor(L.pos));
+  let last = performance.now();
+  let crossed = -1;
+  const end = h.snaps.length - 1;
+  const tick = async (now) => {
+    if (seq !== L.seq) return; // stopped, restarted, or superseded
+    const dt = Math.min(now - last, 100); // a background tab must not teleport on return
+    last = now;
+    const k = Math.min(Math.floor(L.pos), end - 1);
+    const a = h.cache.get(h.snaps[k].id);
+    const b = h.cache.get(h.snaps[k + 1].id);
+    if (!a?.tree || !b?.tree) {
+      // Hold the clock while a segment's bytes are still arriving — playback
+      // waits rather than skipping time it never showed.
+      lapsePrefetch(k);
+      L.raf = requestAnimationFrame(tick);
+      return;
+    }
+    L.pos = Math.min(L.pos + (dt / LAPSE_SEG_MS) * L.speed, end);
+    const j = Math.floor(L.pos);
+    if (j !== crossed) {
+      crossed = j;
+      lapsePrefetch(j + 1);
+      if (discrete) {
+        setHistoryIndex(j); // the slider's own dispatch: fetch, draw, label
+      } else {
+        try { lapseApplySnap(j, await historyLayoutFor(h.snaps[j])); }
+        catch (e) { toast('Could not load that point in time: ' + e.message, 'error'); lapseStop(); return; }
+        if (seq !== L.seq) return; // stopped while the layout loaded
+      }
+    }
+    if (!discrete && L.pos < end) {
+      const t = L.pos - j;
+      state.treemap.nodes = lapseLerpNodes(a.nodes, b.nodes, L.pos < j + 1 ? t : 1);
+      drawTreemap();
+    }
+    if (L.pos >= end) {
+      if (!discrete) { state.treemap.nodes = b.nodes; drawTreemap(); }
+      if (L.loop) { L.pos = 0; crossed = -1; lapsePrefetch(0); }
+      else { L.raf = 0; L.playing = false; lapseReflect(); return; }
+    }
+    L.raf = requestAnimationFrame(tick);
+  };
+  L.raf = requestAnimationFrame(tick);
+}
+
+$('tmLapsePlay').addEventListener('click', () => {
+  state.treemap.lapse.playing ? lapseStop() : lapseStart();
+});
+$('tmLapseSpeed').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-speed]');
+  if (!btn) return;
+  state.treemap.lapse.speed = Number(btn.dataset.speed);
+  lapseReflect();
+});
+$('tmLapseLoop').addEventListener('click', () => {
+  state.treemap.lapse.loop = !state.treemap.lapse.loop;
+  lapseReflect();
+});
+
 let tmTimeDebounce = 0;
 $('tmTimeSlider').addEventListener('input', () => {
+  lapseStop(); // §7.1 — the hand on the slider outranks the transport
   updateTimeLabel(); // label tracks the thumb instantly
   clearTimeout(tmTimeDebounce);
   tmTimeDebounce = setTimeout(() => setHistoryIndex(Number($('tmTimeSlider').value)), 120);
@@ -9632,6 +9848,7 @@ function lensSetPinned(on) {
 function setTreemapView(mode) {
   mode = TM_MODES.includes(mode) ? mode : 'treemap';
   state.treemap.mode = mode;
+  lapseStop(); // §7.1 — a renderer switch ends playback; the new renderer decides how to show history
   // §6.4 — the lens redraws from the drawn set, and the sunburst's is arcs,
   // which this does not know how to magnify. Turned off rather than left
   // pinned and silently doing nothing.
