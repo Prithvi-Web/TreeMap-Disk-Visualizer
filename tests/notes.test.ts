@@ -493,3 +493,9 @@ test('the treemap paints a glyph for noted folders, and the tooltip explains the
   const tipFn = INDEX_HTML.slice(INDEX_HTML.indexOf('function noteTooltipLine'), INDEX_HTML.indexOf('function noteTooltipLine') + 900);
   assert.match(tipFn, /suggestions paused here/, 'a suppressing note says what it is doing');
 });
+
+test('the tooltip truncates note text by code points, never through an emoji', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const fn = html.slice(html.indexOf('function noteTooltipLine'), html.indexOf('function noteTooltipLine') + 900);
+  assert.match(fn, /\[\.\.\.n\.text\]/, 'truncation walks code points, so no lone surrogates render as �');
+});

@@ -11553,7 +11553,10 @@ function noteTooltipLine(node) {
   if (!node || !node.path) return '';
   const n = noteFor(node.path);
   if (!n) return '';
-  const brief = n.text.length > 140 ? n.text.slice(0, 140) + '…' : n.text;
+  // Truncated by code points, not UTF-16 units — a slice through the middle
+  // of an emoji leaves a lone surrogate rendering as �.
+  const chars = [...n.text];
+  const brief = chars.length > 140 ? chars.slice(0, 140).join('') + '…' : n.text;
   return `<div class="t-line"><span class="t-strong">Note:</span> ${escapeHtml(brief)}` +
     (n.suppress ? ' · suggestions paused here' : '') + '</div>';
 }
@@ -16021,8 +16024,12 @@ function tourRender() {
   }
   const skip = host.querySelector('[data-tour-skip]');
   if (skip) skip.addEventListener('click', () => { void tourFinish('Tour skipped — reset it any time in Settings'); });
+  // The card takes focus so keyboard users land on its primary action — but
+  // never out of a text field. A scan completing repaints this card, and
+  // yanking the caret from someone mid-word is how a coach becomes a pest.
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
   const primary = host.querySelector('.btn-primary') || host.querySelector('button');
-  if (primary) primary.focus();
+  if (primary && !typing) primary.focus();
 }
 
 function tourAdvanceWin() {
@@ -16057,6 +16064,11 @@ subscribe(TOPIC.scan, () => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && tour.active && !$('tourOverlay').hidden) {
+    // Esc with a modal or popover up means "close that" — the global handler
+    // owns it, and one keypress must never both close a dialog AND throw the
+    // tour away. Only a bare Esc, with nothing else claiming it, skips.
+    if (document.querySelector('.modal-backdrop.open') || !$('nlPop').hidden
+        || $('ctxMenu').style.display === 'block') return;
     // Esc dismisses the tour like Skip does — and persists that choice, so
     // it cannot nag someone who already said no with their keyboard.
     void tourFinish('Tour skipped — reset it any time in Settings');

@@ -95,3 +95,25 @@ test('the welcome card never focuses a hidden input — found by driving the zer
   assert.match(handler, /offsetParent === null/, 'visibility is checked, not assumed');
   assert.match(handler, /openBrowse\(null\)/, 'the hidden case opens the folder browser instead');
 });
+
+test('one Escape never closes a dialog AND skips the tour', () => {
+  // The tour's document-level Esc must yield whenever a modal, the ctx menu
+  // or the plain-words popover is up — the global handlers own that press.
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const at = html.indexOf("e.key === 'Escape' && tour.active");
+  assert.notEqual(at, -1, 'the tour Esc handler exists');
+  const handler = html.slice(at, at + 700);
+  const guard = handler.indexOf('.modal-backdrop.open');
+  const finish = handler.indexOf('tourFinish');
+  assert.notEqual(guard, -1, 'open modals are checked');
+  assert.ok(guard < finish, 'and checked BEFORE the skip fires');
+  assert.match(handler, /nlPop/, 'the plain-words popover counts too');
+});
+
+test('the tour card never steals focus from a text field', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const at = html.indexOf('const primary = host.querySelector');
+  const around = html.slice(at - 500, at + 300);
+  assert.match(around, /INPUT\|TEXTAREA\|SELECT/, 'the active element is checked');
+  assert.match(around, /!typing\) primary\.focus\(\)/, 'focus only moves when nobody is typing');
+});
