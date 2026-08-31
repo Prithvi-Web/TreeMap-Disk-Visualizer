@@ -233,13 +233,21 @@ const IMG_EXIF_BYTES = Buffer.from(
   'base64',
 );
 
+let imagesWritten = false;
 async function writeImages(): Promise<void> {
+  // Once. Every test calls this, and the fixtures are byte-identical each
+  // time — but rewriting them raced Windows CI: the previous test's sharp
+  // decode can still hold shot.jpg's handle when the next write opens it,
+  // and Windows refuses to replace an open file (both red runs — sharp's
+  // EINVAL and node's UNKNOWN — were this race in different masks).
+  if (imagesWritten) return;
   const sharp = require('sharp');
   const raw = Buffer.alloc(32 * 32 * 3);
   for (let i = 0; i < raw.length; i++) raw[i] = (i * 7) % 256;
   await sharp(raw, { raw: { width: 32, height: 32, channels: 3 } }).png().toFile(IMG_A);
   await sharp(raw, { raw: { width: 32, height: 32, channels: 3 } }).png().toFile(IMG_B);
   fs.writeFileSync(IMG_EXIF, IMG_EXIF_BYTES);
+  imagesWritten = true;
 }
 
 function fileNode(p: string, modifiedAt: number): FileNode {
