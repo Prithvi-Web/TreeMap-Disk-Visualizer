@@ -3380,7 +3380,7 @@ const state = {
   bigFolders: [],
   savedViews: [],
   savedViewsLoaded: false,
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, altZoom: null, altRaf: 0, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null }, lapse: { playing: false, raf: 0, pos: 0, speed: 1, loop: false, seq: 0, onDone: null } },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, altZoom: null, altRaf: 0, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null }, lapse: { playing: false, raf: 0, pos: 0, speed: 1, loop: false, seq: 0, onDone: null, completed: false } },
   // v4 §6.1 — Disk City. Deliberately holds NO tree of its own: the root and
   // the nodes are the Treemap's, so the two are the same arrangement rather
   // than two arrangements that resemble each other.
@@ -5049,7 +5049,10 @@ async function finishScan(root, durationMs, stats) {
   if (dirs !== null) countUp($('statDirs'), dirs);
   $('statLastScan').textContent = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
   renderDiskNotes();
-  toast(`Scan complete — ${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} files`}`);
+  // finishScan runs twice per scan by design — the index-first instant paint
+  // (scanId still null, see the gate below), then the real completion. One
+  // scan gets ONE completion toast, on the pass that actually completed (QA D3).
+  if (state.scanId) toast(`Scan complete — ${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} files`}`);
 
   // Painted. Now the expensive server-side walks, filling in behind it.
   void loadWhatsNew(); // "what's new" banner — fetches its snapshots behind the paint too
@@ -6810,6 +6813,10 @@ function exitHistoryState() {
 async function refreshTimebar() {
   const bar = $('tmTimebar');
   if (!bar) return;
+  // Never rewrite the timeline under a running playback: the tick indexes
+  // into h.snaps live, and the store drops the oldest snapshot at its cap —
+  // segments, slider and label would silently disagree (review RD9).
+  if (state.treemap.lapse.playing) return;
   $('tmLiveToggle').hidden = isCloudScan(); // live watching is local-disk only
   const h = state.treemap.history;
   if (!state.root || state.treemap.rootPath !== state.root.path) { bar.hidden = true; return; }
@@ -6945,7 +6952,10 @@ function lapseLerpNodes(a, b, t) {
         y: o.y + (m.y - o.y) * tt,
         w: o.w + (m.w - o.w) * tt,
         h: o.h + (m.h - o.h) * tt,
-        size: o.size + (m.size - o.size) * tt,
+        // Geometry morphs; size does NOT — it prints as text in labels and
+        // tooltips, and a lerped byte count is an invented number. The source
+        // snapshot's size is the one the slider and label are showing.
+        size: o.size,
       });
     } else {
       const cx = m.x + m.w / 2, cy = m.y + m.h / 2;
@@ -6976,7 +6986,7 @@ function lapseOrderedSnaps(snaps) {
    thin out evenly but the span never shrinks — the last snapshot is always
    the last frame, and `capped` is returned so the UI can say what was cut. */
 function lapseSampleTimes(snapCount, fps, cap) {
-  if (snapCount < 2) return { times: [], capped: false };
+  if (snapCount < 2 || cap < 1) return { times: [], capped: false };
   const segs = snapCount - 1;
   const natural = segs * fps + 1;
   if (natural <= cap) {
@@ -6984,6 +6994,8 @@ function lapseSampleTimes(snapCount, fps, cap) {
     for (let i = 0; i < natural; i++) times.push(Math.min(i / fps, segs));
     return { times, capped: false };
   }
+  // cap 1 would divide by zero below; one frame means the final snapshot.
+  if (cap === 1) return { times: [segs], capped: true };
   const times = [];
   for (let i = 0; i < cap; i++) times.push((segs * i) / (cap - 1));
   return { times, capped: true };
@@ -6998,6 +7010,8 @@ function lapseSampleTimes(snapCount, fps, cap) {
    label update only at crossings: an interpolated byte total would be an
    invented number. */
 const LAPSE_SEG_MS = 1000;
+/** How long the clock may hold for a segment's bytes before stopping honestly. */
+const LAPSE_HOLD_MAX_MS = 8000;
 
 function lapseReflect() {
   const L = state.treemap.lapse;
@@ -7039,6 +7053,18 @@ function lapsePrefetch(from) {
   }
 }
 
+/**
+ * The slider's dispatch plus the slider itself: setHistoryIndex never writes
+ * the slider (its caller IS the slider, already there), so every programmatic
+ * seek — a discrete crossing, a renderer switch keeping your place — must
+ * move the thumb and label itself or both keep claiming "Live" (QA D1).
+ */
+function lapseSeekTo(i) {
+  $('tmTimeSlider').value = String(i);
+  updateTimeLabel();
+  setHistoryIndex(i);
+}
+
 /** Sync the per-snapshot surfaces at a crossing: slider, label, history state. */
 function lapseApplySnap(j, layout) {
   const h = state.treemap.history;
@@ -7059,54 +7085,83 @@ function lapseStart() {
   // Sunburst and the solved renderers step discretely regardless (the rule
   // setHistoryIndex states: tweening a global optimisation invents a motion).
   const discrete = REDUCED || !isRectMap();
-  if (h.snaps.length < 2 || L.playing || state.view !== 'treemap') return;
+  // During an export only the export itself may start playback (review H4).
+  if (h.snaps.length < 2 || L.playing || state.view !== 'treemap' || (lapseExporting && !lapseInternalStart)) return;
   if (state.live.on) { disableLive(); toast('Live mode paused while playing history'); }
   const seq = ++L.seq;
+  // A scrub's 260 ms morph must not fight the transport for the node set.
+  cancelAnimationFrame(tmAnimFrame);
   // Start from the slider; from Live or the end, start over at the oldest.
   const cur = Number($('tmTimeSlider').value);
   L.pos = cur >= h.snaps.length - 1 ? 0 : cur;
   L.playing = true;
+  L.completed = false;
   lapseReflect();
   lapsePrefetch(Math.floor(L.pos));
   let last = performance.now();
   let crossed = -1;
+  let holdSince = 0; // when the clock started waiting for bytes; 0 = not waiting
   const end = h.snaps.length - 1;
   const tick = async (now) => {
     if (seq !== L.seq) return; // stopped, restarted, or superseded
     const dt = Math.min(now - last, 100); // a background tab must not teleport on return
     last = now;
-    const k = Math.min(Math.floor(L.pos), end - 1);
-    const a = h.cache.get(h.snaps[k].id);
-    const b = h.cache.get(h.snaps[k + 1].id);
+    // Advance first, then look at the segment the NEW position sits in.
+    // Reading the pair before advancing drew one frame of the previous
+    // segment at every crossing — a visible backward blink (review RD5).
+    const pos = Math.min(L.pos + (dt / LAPSE_SEG_MS) * L.speed, end);
+    const k = Math.min(Math.floor(pos), end - 1);
+    const sa = h.snaps[k], sb = h.snaps[k + 1];
+    if (!sa || !sb) { lapseStop(); return; } // the timeline was rewritten under us (review RD9)
+    const a = h.cache.get(sa.id);
+    const b = h.cache.get(sb.id);
     if (!a?.tree || !b?.tree) {
       // Hold the clock while a segment's bytes are still arriving — playback
-      // waits rather than skipping time it never showed.
+      // waits rather than skipping time it never showed. But not forever: a
+      // server that keeps refusing would spin this loop silently for good,
+      // and a WebM export waiting on onDone would record a frozen canvas
+      // indefinitely (review RD4).
+      if (!holdSince) holdSince = now;
+      if (now - holdSince > LAPSE_HOLD_MAX_MS) {
+        toast('Playback stopped — a snapshot could not be loaded', 'error');
+        lapseStop();
+        return;
+      }
       lapsePrefetch(k);
       L.raf = requestAnimationFrame(tick);
       return;
     }
-    L.pos = Math.min(L.pos + (dt / LAPSE_SEG_MS) * L.speed, end);
-    const j = Math.floor(L.pos);
+    holdSince = 0;
+    L.pos = pos;
+    const j = Math.floor(pos);
     if (j !== crossed) {
       crossed = j;
       lapsePrefetch(j + 1);
       if (discrete) {
-        setHistoryIndex(j); // the slider's own dispatch: fetch, draw, label
+        lapseSeekTo(j); // slider + label + the slider's own dispatch (QA D1)
       } else {
-        try { lapseApplySnap(j, await historyLayoutFor(h.snaps[j])); }
-        catch (e) { toast('Could not load that point in time: ' + e.message, 'error'); lapseStop(); return; }
-        if (seq !== L.seq) return; // stopped while the layout loaded
+        let layout;
+        try {
+          layout = await historyLayoutFor(h.snaps[j]);
+        } catch (e) {
+          if (seq !== L.seq) return; // an orphaned fetch must not stop a NEWER run (review RD3)
+          toast('Could not load that point in time: ' + e.message, 'error');
+          lapseStop();
+          return;
+        }
+        if (seq !== L.seq) return; // stopped while the layout loaded — apply nothing (review RD2)
+        lapseApplySnap(j, layout);
       }
     }
-    if (!discrete && L.pos < end) {
-      const t = L.pos - j;
-      state.treemap.nodes = lapseLerpNodes(a.nodes, b.nodes, L.pos < j + 1 ? t : 1);
+    if (!discrete && pos < end) {
+      state.treemap.nodes = lapseLerpNodes(a.nodes, b.nodes, pos - k);
       drawTreemap();
     }
-    if (L.pos >= end) {
+    if (pos >= end) {
       if (!discrete) { state.treemap.nodes = b.nodes; drawTreemap(); }
       if (L.loop) { L.pos = 0; crossed = -1; lapsePrefetch(0); }
       else {
+        L.completed = true; // a finished run — the WebM toast tells this apart from a stop (review RD10)
         L.raf = 0; L.playing = false; lapseReflect();
         const cb = L.onDone; L.onDone = null; if (cb) cb();
         return;
@@ -7117,16 +7172,22 @@ function lapseStart() {
   L.raf = requestAnimationFrame(tick);
 }
 
+/* The transport is the export's instrument while one runs: a Play would fight
+   the sampler for the canvas, a Loop would make the promised "one run" never
+   end (review H1). The slider stays free — a scrub honestly ends the take. */
 $('tmLapsePlay').addEventListener('click', () => {
+  if (lapseExporting) { toast('An export is running — it drives playback itself', 'error'); return; }
   state.treemap.lapse.playing ? lapseStop() : lapseStart();
 });
 $('tmLapseSpeed').addEventListener('click', (e) => {
+  if (lapseExporting) { toast('An export is running — it drives playback itself', 'error'); return; }
   const btn = e.target.closest('button[data-speed]');
   if (!btn) return;
   state.treemap.lapse.speed = Number(btn.dataset.speed);
   lapseReflect();
 });
 $('tmLapseLoop').addEventListener('click', () => {
+  if (lapseExporting) { toast('An export is running — it drives playback itself', 'error'); return; }
   state.treemap.lapse.loop = !state.treemap.lapse.loop;
   lapseReflect();
 });
@@ -9924,7 +9985,8 @@ function lensSetPinned(on) {
 function setTreemapView(mode) {
   mode = TM_MODES.includes(mode) ? mode : 'treemap';
   state.treemap.mode = mode;
-  lapseStop(); // §7.1 — a renderer switch ends playback; the new renderer decides how to show history
+  const hist = state.treemap.history; // read before the reload lands and exits history
+  lapseStop(); // §7.1 — a renderer switch ends playback; scrubbed position is re-dispatched below
   // §6.4 — the lens redraws from the drawn set, and the sunburst's is arcs,
   // which this does not know how to magnify. Turned off rather than left
   // pinned and silently doing nothing.
@@ -9944,7 +10006,18 @@ function setTreemapView(mode) {
   for (const b of $('tmViewSeg').querySelectorAll('button'))
     b.setAttribute('aria-selected', String(b.dataset.vm === mode));
   state.treemap.hover = null;
-  if (state.treemap.rootPath) loadTreemap(state.treemap.rootPath);
+  if (state.treemap.rootPath) {
+    // A renderer switch keeps your place in history instead of silently
+    // snapping to Live (QA D5): the live layout's landing exits history as
+    // always, then the same index is re-dispatched for the new renderer.
+    const wasAt = hist && hist.active ? hist.index : null;
+    const load = loadTreemap(state.treemap.rootPath);
+    if (wasAt !== null && load && typeof load.then === 'function') {
+      load.then(() => {
+        if (state.view === 'treemap' && state.treemap.mode === mode) lapseSeekTo(wasAt);
+      }).catch(() => {});
+    }
+  }
 }
 $('tmViewSeg').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-vm]');
@@ -10612,6 +10685,8 @@ self.onmessage = (e) => {
 }
 
 let lapseExporting = false;
+/** Set only around the WebM export's own lapseStart — the one caller allowed past the export guard. */
+let lapseInternalStart = false;
 async function exportTimelapseGif() {
   const h = state.treemap.history;
   if (lapseExporting) { toast('An export is already running', 'error'); return; }
@@ -10639,6 +10714,9 @@ async function exportTimelapseGif() {
     const savedNodes = state.treemap.nodes;
     const frames = [];
     for (let i = 0; i < times.length; i++) {
+      // Leaving the view mid-export would size drawTreemap from a hidden
+      // wrap (negative canvas dims) — abort with the reason, not a mystery.
+      if (state.view !== 'treemap') throw new Error('the Treemap view was left mid-export');
       const t = times[i];
       const k = Math.min(Math.floor(t), h.snaps.length - 2);
       state.treemap.nodes = lapseLerpNodes(layouts[k].nodes, layouts[k + 1].nodes, t - k);
@@ -10648,6 +10726,9 @@ async function exportTimelapseGif() {
       offCtx.drawImage(tmBuffer, 0, 0, w, hh);
       frames.push(new Uint8Array(offCtx.getImageData(0, 0, w, hh).data.buffer.slice(0)));
       status.textContent = `Sampling frame ${i + 1}/${times.length}…`;
+      // Yield between frames: 150 synchronous draw+read passes would freeze
+      // the UI with a progress line that never paints (review H3).
+      await new Promise((r) => setTimeout(r, 0));
     }
     state.treemap.nodes = savedNodes;
     drawTreemap();
@@ -10687,9 +10768,10 @@ async function exportTimelapseWebm() {
   lapseStop();
   const L = state.treemap.lapse;
   const prevLoop = L.loop;
+  let stream = null;
   try {
     const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
-    const stream = $('treemapCanvas').captureStream(30);
+    stream = $('treemapCanvas').captureStream(30);
     const rec = new MediaRecorder(stream, { mimeType: mime });
     const chunks = [];
     rec.ondataavailable = (ev) => { if (ev.data.size) chunks.push(ev.data); };
@@ -10699,18 +10781,23 @@ async function exportTimelapseWebm() {
     L.loop = false; // one run is what was promised
     rec.start(200);
     const runEnded = new Promise((resolve) => { L.onDone = resolve; });
-    lapseStart();
+    lapseInternalStart = true;
+    try { lapseStart(); } finally { lapseInternalStart = false; }
     if (!L.playing) { rec.stop(); await stopped; throw new Error('playback did not start'); }
     await runEnded; // natural end or the user stopping it — either ends the take
     rec.stop();
     await stopped;
-    stream.getTracks().forEach((t) => t.stop());
     if (!chunks.length) throw new Error('the recorder produced no data');
     downloadBlob(new Blob(chunks, { type: mime }), exportFileName('webm'));
-    toast('WebM saved — one full playback run');
+    // The toast tells a finished run from an interrupted one — claiming "one
+    // full playback run" for a stopped take would be a lie (review RD10).
+    toast(L.completed ? 'WebM saved — one full playback run' : 'WebM saved — a partial take; playback was stopped early');
   } catch (e) {
     toast('Could not export the WebM: ' + e.message, 'error');
   } finally {
+    // The capture track is hardware in use — release it on EVERY exit,
+    // including the throws above (review H2).
+    if (stream) stream.getTracks().forEach((t) => t.stop());
     L.loop = prevLoop;
     L.onDone = null;
     lapseExporting = false;
@@ -11861,7 +11948,7 @@ async function loadCalendar() {
     calData = data;
     renderCalendar();
   } catch (e) {
-    if (seq !== calSeq) return;
+    if (seq !== calSeq || state.view !== 'calendar') return;
     calData = null;
     body.innerHTML = `<div class="muted">Could not build the calendar: ${escapeHtml(e.message)}</div>`;
     $('calDegraded').hidden = true; $('calLegend').hidden = true;
@@ -11896,8 +11983,23 @@ function renderCalendar() {
     const [ly, lm, ld] = last.split('-').map(Number);
     const end = new Date(ly, lm - 1, ld);
     const cells = [];
-    for (let t = new Date(start); t <= end; t.setDate(t.getDate() + 1)) {
+    // Iterate and compare by ISO string, bounded: comparing Date objects
+    // breaks in zones where DST skips midnight (the constructed midnight is
+    // 01:00 and the final day falls out of `t <= end`), and the Sunday
+    // anchor can reach back into the previous December — those padding days
+    // belong to their own year's grid and stay inert here, or a counted
+    // Dec 29 renders as a live button under the next year's header too
+    // (QA D7, review H8).
+    const t = new Date(start);
+    const jan1 = `${year}-01-01`;
+    for (let guard = 0; guard < 372; guard++) {
       const iso = `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+      if (iso > last) break;
+      t.setDate(t.getDate() + 1);
+      if (iso < jan1) {
+        cells.push('<span class="cal-cell" role="presentation"></span>');
+        continue;
+      }
       const day = byDate.get(iso);
       if (!day) {
         const why = calChannel === 'created' && deg.length ? 'nothing counted (see note below)' : 'nothing counted this day';
@@ -11924,10 +12026,10 @@ function calApplyRange(a, b) {
 }
 
 function calPaintDrag() {
+  const cells = $('calBody').querySelectorAll('.cal-cell[data-date]');
+  if (!calDragA) { cells.forEach((c) => c.classList.remove('sel')); return; }
   const [a, b] = calDragA <= calDragB ? [calDragA, calDragB] : [calDragB, calDragA];
-  $('calBody').querySelectorAll('.cal-cell[data-date]').forEach((c) => {
-    c.classList.toggle('sel', c.dataset.date >= a && c.dataset.date <= b);
-  });
+  cells.forEach((c) => c.classList.toggle('sel', c.dataset.date >= a && c.dataset.date <= b));
 }
 
 /* Static top-level bindings, like the slider's — nothing for unmount to own. */
@@ -11947,8 +12049,16 @@ $('calBody').addEventListener('pointerdown', (e) => {
 });
 $('calBody').addEventListener('pointerover', (e) => {
   if (!calDragA) return;
+  // A release this page never saw (outside the window, a touch-cancel):
+  // hovering with no button down must not keep growing a selection whose
+  // next stray pointerup would fire a query the user never made (QA D4).
+  if (e.buttons === 0) { calDragA = calDragB = null; calPaintDrag(); return; }
   const c = e.target.closest('.cal-cell[data-date]');
   if (c && c.dataset.date !== calDragB) { calDragB = c.dataset.date; calPaintDrag(); }
+});
+$('calBody').addEventListener('pointercancel', () => {
+  calDragA = calDragB = null;
+  calPaintDrag();
 });
 window.addEventListener('pointerup', () => {
   if (!calDragA) return;
@@ -11998,7 +12108,7 @@ async function loadJournal() {
     if (note) $('journalPortable').textContent = note.reason;
     renderJournal(data.entries || []);
   } catch (e) {
-    if (seq !== journalSeq) return;
+    if (seq !== journalSeq || state.view !== 'journal') return;
     body.innerHTML = `<div class="muted">Could not read the journal: ${escapeHtml(e.message)}</div>`;
   }
 }
@@ -12036,8 +12146,9 @@ function journalOpen(entry) {
   const iso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const q = `modified:${iso}`;
   const root = state.root ? state.root.path : null;
-  const sep = entry.path.includes('\\') ? '\\' : '/';
-  const inScan = root && (entry.path === root || entry.path.startsWith(root + sep));
+  // Both separators are tried: sniffing one from entry.path misreads a POSIX
+  // filename that happens to contain a backslash (review H9).
+  const inScan = root && (entry.path === root || entry.path.startsWith(root + '/') || entry.path.startsWith(root + '\\'));
   if (!inScan) {
     $('pathInput').value = entry.rootPath;
     switchView('dashboard');
@@ -17497,12 +17608,18 @@ async function loadCompareOptions() {
     $('cmpA').innerHTML = html;
     $('cmpB').innerHTML = html;
 
-    // Defaults: newest two entries of the current (or first) root, older → newer.
+    // Defaults: newest two entries OF THE SAME KIND for the current (or
+    // first) root, older → newer. "Newest two overall" always paired the
+    // newest scan with the snapshot that scan itself saved — same timestamp,
+    // mixed kinds, and the exact pair the Run button refuses (QA D2).
     const rootKey = state.root && byRoot.has(state.root.path) ? state.root.path : [...byRoot.keys()][0];
     const list = byRoot.get(rootKey).sort((x, y) => y.when - x.when);
-    $('cmpB').value = `${list[0].kind}:${list[0].id}`;
-    if (list.length > 1) $('cmpA').value = `${list[1].kind}:${list[1].id}`;
-    $('cmpInfo').textContent = list.length < 2 ? 'Only one record of this folder so far — scan it again to have something to compare.' : '';
+    const scans = list.filter((o) => o.kind === 'scan');
+    const snaps = list.filter((o) => o.kind === 'snap');
+    const pool = scans.length >= 2 ? scans : snaps.length >= 2 ? snaps : list;
+    $('cmpB').value = `${pool[0].kind}:${pool[0].id}`;
+    if (pool.length > 1) $('cmpA').value = `${pool[1].kind}:${pool[1].id}`;
+    $('cmpInfo').textContent = pool.length < 2 ? 'Only one record of this folder so far — scan it again to have something to compare.' : '';
   } catch (e) {
     toast('Could not load scans: ' + e.message, 'error');
   }
@@ -17550,25 +17667,38 @@ $('cmpRunBtn').addEventListener('click', async () => {
    there is nothing for unmount to take back; the one static listener
    (resize) checks the canvas is still on screen before it draws. */
 let cmpSplit = null; // { a, b, whenA, whenB } — percent-node layouts
+let cmpSplitSeq = 0;
 
 async function initCmpSplit(rootPath, whenA, whenB) {
+  const seq = ++cmpSplitSeq;
   const note = $('cmpSplitNote');
+  // Left of the divider is promised to be the OLDER — keep that promise even
+  // when the user picked the pair newest-first (review RD7).
+  const [tA, tB] = whenA <= whenB ? [whenA, whenB] : [whenB, whenA];
   try {
     const [la, lb] = await Promise.all([
-      api(`/api/snapshots/tree?path=${encodeURIComponent(rootPath)}&at=${whenA}`),
-      api(`/api/snapshots/tree?path=${encodeURIComponent(rootPath)}&at=${whenB}`),
+      api(`/api/snapshots/tree?path=${encodeURIComponent(rootPath)}&at=${tA}`),
+      api(`/api/snapshots/tree?path=${encodeURIComponent(rootPath)}&at=${tB}`),
     ]);
+    if (seq !== cmpSplitSeq) return; // a slower earlier compare must not paint over a newer one (review RD6)
     // closestSnapshot answers with the nearest stored tree; if both picks
     // resolve to the same one there is nothing to wipe between — say so.
     if (la.snapshot.takenAt === lb.snapshot.takenAt) {
-      $('cmpSplitCard').hidden = true;
+      const card = $('cmpSplitCard');
+      if (card) card.hidden = true;
       return;
     }
     cmpSplit = { a: la.nodes, b: lb.nodes, whenA: la.snapshot.takenAt, whenB: lb.snapshot.takenAt };
+    // The footer speaks for what the canvas actually shows — the nearest
+    // STORED trees, which can differ from the picked times (review H11).
+    const foot = $('cmpSplitFoot');
+    if (foot) foot.innerHTML =
+      `<span>◀ ${new Date(cmpSplit.whenA).toLocaleString()}</span><span>${new Date(cmpSplit.whenB).toLocaleString()} ▶</span>`;
     const range = $('cmpSplitRange');
     range.addEventListener('input', () => cmpSplitDraw());
     cmpSplitDraw();
   } catch (e) {
+    if (seq !== cmpSplitSeq) return;
     cmpSplit = null;
     if (note) note.textContent = `No split view: ${e.message}`;
   }
@@ -17591,7 +17721,11 @@ function cmpSplitDraw() {
     ctx.fillStyle = cssVar('--bg-1') || '#0e0e13';
     ctx.fillRect(0, 0, cw, ch);
     for (const n of nodes) {
-      if (n.type === 'dir') continue; // files carry the bytes; dirs would paint over them
+      // Only EXPANDED dirs are frames around their children; an unexpanded
+      // dir (depth cap, pruned children) is a leaf cell carrying the deep
+      // bytes — skipping every dir left most of a real tree as background
+      // holes (review RD1).
+      if (n.expanded) continue;
       const x = (n.x / 100) * cw, y = (n.y / 100) * ch;
       const w = (n.w / 100) * cw, h = (n.h / 100) * ch;
       if (w < 0.5 || h < 0.5) continue;
@@ -17618,6 +17752,7 @@ window.addEventListener('resize', () => {
 });
 
 function renderCompare(r) {
+  cmpSplit = null; // a fresh card owns the canvas; a stale draw must find nothing
   const counts = { added: 0, removed: 0, grew: 0, shrank: 0 };
   for (const en of r.entries) {
     counts[en.sizeA === null ? 'added' : en.sizeB === null ? 'removed' : en.delta > 0 ? 'grew' : 'shrank']++;
@@ -17633,9 +17768,8 @@ function renderCompare(r) {
         <input type="range" id="cmpSplitRange" min="0" max="100" step="1" value="50"
                aria-label="Reveal divider between the two scans — left of it shows the older scan, right the newer" aria-valuetext="50 percent">
       </div>
-      <div class="rule-row num muted" style="justify-content:space-between;">
-        <span>◀ ${new Date(r.whenA).toLocaleString()}</span>
-        <span>${new Date(r.whenB).toLocaleString()} ▶</span>
+      <div class="rule-row num muted" id="cmpSplitFoot" style="justify-content:space-between;">
+        <span>Loading the two maps…</span>
       </div>
       <div class="muted" id="cmpSplitNote" role="status"></div>
     </div>` : '';

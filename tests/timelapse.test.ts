@@ -50,7 +50,7 @@ const lapseOrderedSnaps = lift<(snaps: Snap[]) => Snap[]>(
 const N = (path: string, x: number, y: number, w: number, h: number, size: number, extra: Record<string, unknown> = {}): LapseNode =>
   ({ path, x, y, w, h, size, ...extra });
 
-const geom = (n: LapseNode) => ({ x: n.x, y: n.y, w: n.w, h: n.h, size: n.size });
+const geom = (n: LapseNode) => ({ x: n.x, y: n.y, w: n.w, h: n.h });
 
 test('a node present in both layouts sits exactly at the endpoints', () => {
   const a = [N('/r/a', 0, 0, 100, 50, 1000)];
@@ -59,7 +59,7 @@ test('a node present in both layouts sits exactly at the endpoints', () => {
   assert.deepEqual(geom(lapseLerpNodes(a, b, 1)[0]), geom(b[0]));
 });
 
-test('matched geometry and size move monotonically toward the target', () => {
+test('matched geometry moves monotonically toward the target', () => {
   const a = [N('/r/a', 0, 10, 100, 80, 1000)];
   const b = [N('/r/a', 50, 0, 20, 40, 200)];
   let prevDist = Infinity;
@@ -67,12 +67,27 @@ test('matched geometry and size move monotonically toward the target', () => {
     const [n] = lapseLerpNodes(a, b, t);
     const dist =
       Math.abs(n.x - b[0].x) + Math.abs(n.y - b[0].y) +
-      Math.abs(n.w - b[0].w) + Math.abs(n.h - b[0].h) +
-      Math.abs(n.size - b[0].size);
+      Math.abs(n.w - b[0].w) + Math.abs(n.h - b[0].h);
     assert.ok(dist <= prevDist, `distance to target never grows (t=${t}: ${dist} > ${prevDist})`);
     prevDist = dist;
   }
   assert.equal(prevDist, 0, 'arrives exactly at the target');
+});
+
+test('size is never interpolated — every printed byte total is a real snapshot\'s', () => {
+  // Geometry may morph; the size field feeds labels and tooltips as TEXT, and
+  // a lerped byte count would be an invented number (the transport's own
+  // rule). A matched node carries the SOURCE snapshot's size — the same
+  // snapshot the slider, label and rootSize are showing mid-segment.
+  const a = [N('/r/a', 0, 0, 100, 50, 1000)];
+  const b = [N('/r/a', 40, 20, 60, 30, 400)];
+  for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+    assert.equal(lapseLerpNodes(a, b, t)[0].size, 1000, `size stays the source's at t=${t}`);
+  }
+  // An arrival has no source: its own (destination) size is the only truth.
+  assert.equal(lapseLerpNodes([], b, 0.5)[0].size, 400);
+  // A departure keeps the size it really had.
+  assert.equal(lapseLerpNodes(a, [], 0.5)[0].size, 1000);
 });
 
 test('t is clamped to [0, 1]', () => {
@@ -166,6 +181,13 @@ test('the cap thins the samples but never the span — and says so', () => {
 test('fewer than two snapshots yields no samples', () => {
   assert.deepEqual(lapseSampleTimes(1, 10, 150), { times: [], capped: false });
   assert.deepEqual(lapseSampleTimes(0, 10, 150), { times: [], capped: false });
+});
+
+test('a degenerate cap still answers finitely — one frame means the final snapshot', () => {
+  // Unreachable with the shipped constant, but the function is exported as a
+  // general sampler and cap-1 would otherwise divide by zero into NaN times.
+  assert.deepEqual(lapseSampleTimes(5, 10, 1), { times: [4], capped: true });
+  assert.deepEqual(lapseSampleTimes(5, 10, 0), { times: [], capped: false });
 });
 
 test('a treeless snapshot is a gap, never a guess', () => {
