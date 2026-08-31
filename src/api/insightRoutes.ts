@@ -28,6 +28,7 @@ import { expandContainer } from '../services/containerScanner';
 import { findGitRepos, runGitGc } from '../services/gitScanner';
 import { scanPackageEcosystems } from '../services/packageEcosystemScanner';
 import { scanGameLibraries } from '../services/gameLibraryScanner';
+import { scanMediaLibraries, guardMediaReport } from '../services/mediaLibraryScanner';
 import { collectSecurityFindings, relocateSecret, SECURITY_PATTERNS } from '../services/securityHygieneScanner';
 import { readProvenance } from '../services/provenanceTracker';
 import { getDriveHealth } from '../services/driveHealthMonitor';
@@ -220,6 +221,22 @@ insightRouter.get('/packages/orphans', async (req: Request, res: Response) => {
 insightRouter.get('/games', (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   res.json({ scanId: scan.scanId, ...scanGameLibraries(storeOf(scan)) });
+});
+
+/**
+ * GET /api/media?scanId= — media libraries in the scan, split into parts.
+ *
+ * Photos (.photoslibrary), Final Cut (.fcpbundle), iMovie (.imovielibrary),
+ * Lightroom (.lrcat + sibling .lrdata) and Capture One (.cocatalog), each
+ * split into originals / derivatives / database against its own documented
+ * layout. Only derivatives ever carry a removable flag, each with the cost of
+ * regenerating it as prose; a library whose layout is unrecognised reports
+ * its total size only. The §B2 guard runs over every library's parts, so one
+ * the owning app holds open says who holds it and offers nothing.
+ */
+insightRouter.get('/media', async (req: Request, res: Response) => {
+  const scan = requireCompleteScan(req, req.query.scanId);
+  res.json({ scanId: scan.scanId, ...(await guardMediaReport(scanMediaLibraries(storeOf(scan)))) });
 });
 
 /**

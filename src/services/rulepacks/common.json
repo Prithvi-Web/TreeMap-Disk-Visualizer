@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "pack": "common",
-  "updated": "2026-07-28",
+  "updated": "2026-08-30",
   "rules": [
     {
       "id": "regen-node-modules",
@@ -161,6 +161,50 @@
       "withinPath": "{home}/Downloads",
       "olderThanDays": 90,
       "minSizeBytes": 1048576
+    },
+    {
+      "id": "media-lightroom-previews",
+      "kind": "directory",
+      "title": "Lightroom previews",
+      "description": "Rendered previews beside a Lightroom Classic catalog — never your photos, which live outside the catalog. Lightroom re-renders previews as you browse; the first scroll through each folder is slower. Only the default catalog names are matched here — renamed catalogs are found by the media-library scan.",
+      "category": "regenerable",
+      "confidence": "high",
+      "action": "advice",
+      "adviceCommand": "Lightroom Classic ▸ Edit ▸ Catalog Settings ▸ File Handling ▸ Automatically Discard 1:1 Previews",
+      "os": ["darwin", "win32"],
+      "names": [
+        "lightroom catalog previews.lrdata",
+        "lightroom catalog-v12 previews.lrdata",
+        "lightroom catalog-v13 previews.lrdata"
+      ]
+    },
+    {
+      "id": "media-lightroom-smart-previews",
+      "kind": "directory",
+      "title": "Lightroom smart previews",
+      "description": "Compressed stand-ins that let Lightroom Classic edit with the originals offline. Rebuilt on demand, but until then offline editing is unavailable — never your photos, which live outside the catalog.",
+      "category": "regenerable",
+      "confidence": "high",
+      "action": "advice",
+      "adviceCommand": "Lightroom Classic ▸ Library ▸ Previews ▸ Build Smart Previews",
+      "os": ["darwin", "win32"],
+      "names": [
+        "lightroom catalog smart previews.lrdata",
+        "lightroom catalog-v12 smart previews.lrdata",
+        "lightroom catalog-v13 smart previews.lrdata"
+      ]
+    },
+    {
+      "id": "media-captureone-cache",
+      "kind": "location",
+      "title": "Capture One catalog cache",
+      "description": "Thumbnails and proxies inside the default Capture One catalog. Re-created as images are browsed — the first pass through each folder is slower. Originals and the catalog database are never touched.",
+      "category": "regenerable",
+      "confidence": "high",
+      "action": "advice",
+      "adviceCommand": "Capture One ▸ Image ▸ Regenerate Previews",
+      "os": ["darwin", "win32"],
+      "paths": ["{home}/Pictures/Capture One Catalog.cocatalog/Cache"]
     }
   ]
 }
