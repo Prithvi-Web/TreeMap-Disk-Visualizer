@@ -30,14 +30,14 @@ settingsRouter.get('/settings', async (_req: Request, res: Response) => {
  * the same rules as scan paths.
  */
 settingsRouter.put('/settings', async (req: Request, res: Response) => {
-  const body = req.body as { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown; nlOllama?: unknown };
+  const body = req.body as { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown; nlOllama?: unknown; tourDone?: unknown };
   if (body.ignore === undefined && body.schedules === undefined && body.budgets === undefined
       && body.forecastThresholdDays === undefined && body.watchIdleMinutes === undefined
       && body.timeCapsuleRetentionDays === undefined && body.timeCapsuleMaxPercent === undefined
       && body.cloud === undefined && body.reclaimWeights === undefined
       && body.cleanupGoalBytes === undefined && body.humanScaleUnits === undefined
-      && body.nlOllama === undefined) {
-    throw new AppError(400, 'NOTHING_TO_UPDATE', 'Body must include "ignore", "schedules", "budgets", "forecastThresholdDays", "watchIdleMinutes", "timeCapsuleRetentionDays", "timeCapsuleMaxPercent", "cloud", "reclaimWeights", "cleanupGoalBytes", "humanScaleUnits" and/or "nlOllama"');
+      && body.nlOllama === undefined && body.tourDone === undefined) {
+    throw new AppError(400, 'NOTHING_TO_UPDATE', 'Body must include "ignore", "schedules", "budgets", "forecastThresholdDays", "watchIdleMinutes", "timeCapsuleRetentionDays", "timeCapsuleMaxPercent", "cloud", "reclaimWeights", "cleanupGoalBytes", "humanScaleUnits", "nlOllama" and/or "tourDone"');
   }
   if (body.schedules !== undefined) {
     if (!Array.isArray(body.schedules)) {

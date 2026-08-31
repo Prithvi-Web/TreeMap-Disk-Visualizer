@@ -672,8 +672,9 @@ const schemas: Json = {
         ['enabled', 'endpoint', 'model'],
         'Optional local-model passthrough for the plain-words box (v4 §9.6). The translated query is always shown for approval before anything executes.',
       ),
+      tourDone: bool('Whether the guided first run (v4 §9.2) was completed or skipped. Only boolean true counts.'),
     },
-    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights', 'cleanupGoalBytes', 'humanScaleUnits', 'nlOllama'],
+    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights', 'cleanupGoalBytes', 'humanScaleUnits', 'nlOllama', 'tourDone'],
   ),
 };
 

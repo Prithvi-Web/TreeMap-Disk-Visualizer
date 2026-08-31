@@ -521,6 +521,12 @@ export interface AppSettings {
    * query is ALWAYS shown for approval before anything executes.
    */
   nlOllama: NlOllamaConfig;
+  /**
+   * Whether the guided first run has been completed or skipped (v4 §9.2).
+   * Persisted here so a read-only portable session — which persists nothing —
+   * honestly shows the tour again.
+   */
+  tourDone: boolean;
 }
 
 /** The §9.6 local-model configuration, normalized hard in settings.ts. */

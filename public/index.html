@@ -1259,6 +1259,17 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 #cmdkList .cmdk-row[aria-selected="true"] { background: var(--accent); color: #fff; }
 #cmdkList .cmdk-row[aria-selected="true"] .hint { color: rgba(255,255,255,0.75); }
 .cmdk-foot { font-size: 11px; margin: 8px 4px 2px; }
+/* ── v4 §9.2: the first-run coach card ── */
+#tourOverlay { position: fixed; inset: 0; z-index: 96; pointer-events: none; }
+#tourOverlay[hidden] { display: none; }
+.tour-card { pointer-events: auto; position: absolute; right: 18px; bottom: 86px;
+  width: min(360px, calc(100vw - 32px)); padding: 15px 16px;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); }
+.tour-card h4 { margin: 0 0 7px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.tour-card p { margin: 0 0 10px; font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
+.tour-card .tour-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.tour-card .tour-step { color: var(--text-3); font-size: 10.5px; margin-bottom: 5px;
+  text-transform: uppercase; letter-spacing: 0.4px; }
 #rcPopover .rc-pop-head { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; font-size: 13px; }
 #rcPopover .rc-pop-head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #rcPopover .rc-why { margin: 0; background: transparent; border: 0; padding: 0; }
@@ -2836,6 +2847,15 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   </div>
 </div>
 
+<!-- ═══════════ Guided first run (v4 §9.2) ═══════════
+     A floating coach card, NOT a modal: the whole point is that the user
+     drives the real UI — picks the folder, clicks the real Add buttons —
+     while the card narrates. pointer-events pass through everywhere except
+     the card itself. -->
+<div id="tourOverlay" role="dialog" aria-modal="false" aria-label="Welcome tour" hidden>
+  <div class="tour-card glass" id="tourCard"></div>
+</div>
+
 <!-- ═══════════ Command palette (v4 §9.1) ═══════════
      ⌘K / Ctrl+K. One box over everything: views, actions, saved views and
      recent scan roots, fuzzy-matched. Focus returns to where it was. -->
@@ -2940,6 +2960,13 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
         <input type="text" id="nlOllamaEndpoint" placeholder="http://127.0.0.1:11434" aria-label="Ollama endpoint" style="flex:1;">
         <label for="nlOllamaModel">Model</label>
         <input type="text" id="nlOllamaModel" placeholder="llama3.2" aria-label="Ollama model name" style="width:110px;">
+      </div>
+
+      <!-- v4 §9.2 — the tour's way back, since Skip promises one. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="help"></span>Welcome tour</div>
+      <div class="rule-row">
+        <button class="btn" id="tourResetBtn"><span data-icon="refresh"></span>Show the welcome tour again</button>
+        <span class="muted" style="font-size:12px;">Three quick wins, staged only when you click, nothing deleted.</span>
       </div>
 
       <div class="set-h" style="margin-top:22px;"><span data-icon="cloud"></span>Cloud accounts</div>
@@ -4421,6 +4448,9 @@ async function loadSystem() {
   try {
     const sys = await api('/api/system');
     state.system = sys;
+    // The tour's welcome card offers "scan my home folder" only once it
+    // knows where home is; repaint it if it went up first (§9.2).
+    if (typeof tour !== 'undefined' && tour.active && tour.step === 'welcome') tourRender();
     $('sysHost').textContent = sys.hostname;
     $('sysPlatform').textContent = ({ darwin:'macOS', win32:'Windows', linux:'Linux' })[sys.platform] || sys.platform;
     $('sysTotal').textContent = formatBytes(sys.totalDisk);
@@ -15879,6 +15909,165 @@ function cmdkScrollSel() {
   const el = document.getElementById(`cmdk-opt-${cmdkSel}`);
   if (el) el.scrollIntoView({ block: 'nearest' });
 }
+
+/* ───────────────────── v4 §9.2 — the guided first run ─────────────────────
+ *
+ * A coach card, not a wizard: the user drives the real UI while the card
+ * narrates. Three promises, each held by tests/firstRun.test.ts:
+ *
+ *  - The tour NEVER stages anything itself. Staging happens only when the
+ *    user clicks the card's Add button, which goes through cartAddMany —
+ *    the one cart, its own pipeline.
+ *  - Every win comes from /api/cleanup/suggestions — the same engine, the
+ *    same rules, the same confidence the Clean Up view shows. Advisory
+ *    groups (which have no delete path anywhere) are never offered.
+ *  - Skippable at every step; completing OR skipping persists tourDone
+ *    through settings, so a read-only portable session honestly forgets.
+ */
+const tour = { active: false, step: 'welcome', wins: [], winIx: 0, staged: 0 };
+
+function tourMaybeStart(done) {
+  if (done === true || tour.active) return;
+  tour.active = true;
+  tour.step = state.scanId ? 'map' : 'welcome';
+  tourRender();
+}
+
+async function tourFinish(message) {
+  if (!tour.active) return;
+  tour.active = false;
+  $('tourOverlay').hidden = true;
+  if (message) toast(message);
+  try {
+    await api('/api/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tourDone: true }),
+    });
+  } catch { /* a failed write means the tour offers itself again next launch — honest */ }
+}
+
+function tourRender() {
+  if (!tour.active) return;
+  const host = $('tourCard');
+  $('tourOverlay').hidden = false;
+  const skipBtn = `<button class="btn" data-tour-skip>Skip the tour</button>`;
+  if (tour.step === 'welcome') {
+    const home = state.system && state.system.homeDir;
+    host.innerHTML = `
+      <div class="tour-step">Welcome · step 1 of 4</div>
+      <h4>${icon('treemap', 16)}See where your disk went</h4>
+      <p>TreeMap draws every file and folder as a map — the bigger the rectangle, the more space it takes. Start by scanning a folder${home ? ', or just use your home folder' : ' (type a path in the box up top)'}.</p>
+      <div class="tour-row">
+        ${home ? `<button class="btn btn-primary" data-tour-home>Scan my home folder</button>` : ''}
+        <button class="btn" data-tour-pick>I’ll pick my own</button>
+        ${skipBtn}
+      </div>`;
+    if (home) host.querySelector('[data-tour-home]').addEventListener('click', () => { startScan(home); });
+    host.querySelector('[data-tour-pick]').addEventListener('click', () => { $('pathInput').focus(); $('pathInput').select(); });
+  } else if (tour.step === 'map') {
+    host.innerHTML = `
+      <div class="tour-step">The map · step 2 of 4</div>
+      <h4>${icon('treemap', 16)}This is your disk as a map</h4>
+      <p>Every rectangle is a file or folder; bigger means more space. Click one to drill in, press <kbd>Esc</kbd> to climb back out, and hover anything for the details.</p>
+      <div class="tour-row">
+        <button class="btn btn-primary" data-tour-wins>Show me what I could free</button>
+        ${skipBtn}
+      </div>`;
+    host.querySelector('[data-tour-wins]').addEventListener('click', () => { void tourLoadWins(); });
+  } else if (tour.step === 'clean') {
+    host.innerHTML = `
+      <div class="tour-step">All done</div>
+      <h4>${icon('checkCircle', 16)}This folder looks clean</h4>
+      <p>TreeMap has nothing safe to suggest here — no caches, no rebuildable folders, no obvious junk. That is a good result, and the honest end of the tour.</p>
+      <div class="tour-row"><button class="btn btn-primary" data-tour-done>Finish</button></div>`;
+    host.querySelector('[data-tour-done]').addEventListener('click', () => { void tourFinish('Tour complete'); });
+  } else if (tour.step === 'win') {
+    const g = tour.wins[tour.winIx];
+    const already = g.items.every((it) => state.cart.has(it.path));
+    host.innerHTML = `
+      <div class="tour-step">Quick win ${tour.winIx + 1} of ${tour.wins.length} · step 3 of 4</div>
+      <h4>${icon('sparkles', 16)}${escapeHtml(g.title)} — ${formatBytes(g.totalSize)}</h4>
+      <p>${escapeHtml(g.description)}${g.why ? ` <span class="muted">${escapeHtml(g.why)}</span>` : ''}</p>
+      <div class="tour-row">
+        <button class="btn btn-primary" data-tour-add ${already ? 'disabled' : ''}>${already ? 'Already in the cart' : 'Add to cart'}</button>
+        <button class="btn" data-tour-next>${tour.winIx + 1 < tour.wins.length ? 'Skip this one' : 'Not this one'}</button>
+        ${skipBtn}
+      </div>`;
+    host.querySelector('[data-tour-add]').addEventListener('click', () => {
+      // The one place the tour touches the cart — inside the user's click.
+      tour.staged += cartAddMany(g.items.map((it) => it.path));
+      tourAdvanceWin();
+    });
+    host.querySelector('[data-tour-next]').addEventListener('click', tourAdvanceWin);
+  } else if (tour.step === 'cart') {
+    host.innerHTML = `
+      <div class="tour-step">The cart · step 4 of 4</div>
+      <h4>${icon('cart', 16)}Staged — deleted only when you say so</h4>
+      <p>${tour.staged > 0
+        ? `Everything you added is waiting in the cleanup cart at the bottom. Nothing has been deleted.`
+        : `You added nothing — also fine. The cart at the bottom is where anything you stage waits.`}
+        Committing the cart runs a preview first, protects files in the Time Capsule, and every run has a one-click Undo.</p>
+      <div class="tour-row"><button class="btn btn-primary" data-tour-done>Finish</button></div>`;
+    host.querySelector('[data-tour-done]').addEventListener('click', () => { void tourFinish('Tour complete — the map is yours'); });
+  }
+  const skip = host.querySelector('[data-tour-skip]');
+  if (skip) skip.addEventListener('click', () => { void tourFinish('Tour skipped — reset it any time in Settings'); });
+  const primary = host.querySelector('.btn-primary') || host.querySelector('button');
+  if (primary) primary.focus();
+}
+
+function tourAdvanceWin() {
+  if (tour.winIx + 1 < tour.wins.length) {
+    tour.winIx += 1;
+  } else {
+    tour.step = 'cart';
+  }
+  tourRender();
+}
+
+async function tourLoadWins() {
+  if (!state.scanId) return;
+  let groups = [];
+  try {
+    const res = await api(`/api/cleanup/suggestions?scanId=${state.scanId}`);
+    groups = (res && res.groups) || [];
+  } catch { groups = []; }
+  // The normal engine's own output, minus what has no delete path: advisory
+  // groups are information, not wins, and offering them would break the
+  // app-wide rule that they carry no cart button.
+  tour.wins = groups.filter((g) => !g.advisory && g.totalSize > 0 && g.items.length > 0).slice(0, 3);
+  tour.winIx = 0;
+  tour.step = tour.wins.length ? 'win' : 'clean';
+  tourRender();
+}
+
+// A scan landing while the welcome card is up means the user took the step —
+// move with them. Any later scans leave the tour where it is.
+subscribe(TOPIC.scan, () => {
+  if (tour.active && tour.step === 'welcome') { tour.step = 'map'; tourRender(); }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && tour.active && !$('tourOverlay').hidden) {
+    // Esc dismisses the tour like Skip does — and persists that choice, so
+    // it cannot nag someone who already said no with their keyboard.
+    void tourFinish('Tour skipped — reset it any time in Settings');
+  }
+});
+// Settings promises a way back, so here it is: clear the flag and start over.
+$('tourResetBtn').addEventListener('click', () => {
+  void (async () => {
+    try {
+      await api('/api/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tourDone: false }),
+      });
+      closeModal('settingsModal');
+      tour.active = false; // restartable even in the session that finished it
+      tourMaybeStart(false);
+    } catch (e) { toast('Could not reset the tour: ' + e.message, 'error'); }
+  })();
+});
+/* ───────────── end §9.2 ───────────── */
 $('budgetValue').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commitBudget(); } });
 
 /* ───────────────────────────── Cleanup cart (Feature 2) ───────────────────────────── */
@@ -15922,6 +16111,23 @@ function cartClear() {
   cartShown = CART_PAGE; // a new list, not the one the user asked to see all of
   saveCart(); renderCart(); refreshCartButtons();
   cartPreviewInvalidated();
+}
+
+/**
+ * Bulk door on the ONE cart (v4 §9.2's tour stages whole suggestion groups).
+ * Same persistence, same render pipeline as cartToggle — run once instead of
+ * per item, because cartToggle's per-call render cost 30.5 ms at 1,500 rows
+ * and a 200-item group would multiply that into seconds of blocked thread.
+ */
+function cartAddMany(paths) {
+  let added = 0;
+  for (const p of paths) {
+    if (p && !state.cart.has(p)) { state.cart.add(p); added++; }
+  }
+  if (!added) return 0;
+  saveCart(); renderCart(); refreshCartButtons();
+  cartPreviewInvalidated();
+  return added;
 }
 
 /**
@@ -15987,8 +16193,11 @@ async function loadCartGoal() {
   try {
     const s = await api('/api/settings');
     cartGoalBytes = typeof s.cleanupGoalBytes === 'number' && s.cleanupGoalBytes > 0 ? s.cleanupGoalBytes : null;
-    // §9.3 rides the same boot read: one settings fetch serves both.
+    // §9.3 and §9.2 ride the same boot read: one settings fetch serves all
+    // three, and a server that cannot answer starts no tour (better silent
+    // than nagging over an error).
     humanScaleOn = s.humanScaleUnits !== false;
+    tourMaybeStart(s.tourDone === true);
   } catch {
     cartGoalBytes = null;
   }

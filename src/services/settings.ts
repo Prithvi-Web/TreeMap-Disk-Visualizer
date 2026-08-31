@@ -216,13 +216,16 @@ export async function getSettings(): Promise<AppSettings> {
       // remove a default-on feature.
       humanScaleUnits: raw.humanScaleUnits !== false,
       nlOllama: normalizeNlOllama(raw.nlOllama),
+      // Only boolean true counts: a truthy string in a hand-edited file must
+      // not silence a tour the user never saw (v4 §9.2).
+      tourDone: raw.tourDone === true,
     };
   }
   return cache;
 }
 
 /** Replace ignore list and/or schedules (input is re-validated here). */
-export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown; nlOllama?: unknown }): Promise<AppSettings> {
+export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown; nlOllama?: unknown; tourDone?: unknown }): Promise<AppSettings> {
   const current = await getSettings();
   const next: AppSettings = {
     ignore: patch.ignore !== undefined ? normalizeIgnore(patch.ignore) : current.ignore,
@@ -259,6 +262,9 @@ export async function updateSettings(patch: { ignore?: unknown; schedules?: unkn
     nlOllama: patch.nlOllama !== undefined
       ? normalizeNlOllama(patch.nlOllama)
       : current.nlOllama,
+    tourDone: patch.tourDone !== undefined
+      ? patch.tourDone === true
+      : current.tourDone,
   };
   // Preserve lastRunAt across edits that didn't intend to reset it.
   if (patch.schedules !== undefined) {
