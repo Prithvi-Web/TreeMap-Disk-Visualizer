@@ -1,5 +1,110 @@
 # TreeMap — session handoff
 
+## v4 — Phase 7 complete, and the time dimension became one view (30 August 2026, later)
+
+The ask was: pick up Phase 7 from the entry below and run it to done, with
+agents, flawlessly — then (mid-phase, from the owner) merge Calendar,
+Journal and Compare into one view. All of it shipped.
+
+### What shipped
+
+**7.1b — the transport.** Play/pause, ½×/1×/2×/4×, loop on the timebar. One
+rAF loop advances a fractional position over segments (1 s per snapshot at
+1×, dt clamped ≤100 ms); the rectangle renderer draws `lapseLerpNodes`
+frames — matched rects travel linearly, arrivals bloom from their own
+centre, departures shrink into theirs, gone at t=1. Sunburst and the solved
+renderers step discretely at crossings through `lapseSeekTo` (slider +
+label + setHistoryIndex — the slider's dispatch never writes the slider).
+Sizes are NEVER interpolated: a matched rect morphs geometry but carries
+the source snapshot's byte count, because labels and tooltips print that
+field as fact. Stops at every door: scrub, Escape, renderer switch,
+unmount; a renderer switch now re-dispatches your place in history instead
+of silently snapping to Live.
+
+**7.1c — history export.** GIF: sampled offscreen through the real
+drawTreemap at 10 fps (≤480 px, capped ~150 frames, cap stated), encoded in
+a Worker built from the four shipped GIF functions' own source
+(Function.prototype.toString → Blob; gifLzwEncode wrapped in-worker for
+per-frame progress). WebM: captureStream + MediaRecorder feature-detected,
+one real playback run recorded via the lapse `onDone` hook; the toast says
+"partial take" when the run was stopped early. Both live in the Export
+menu, gated on two snapshots + rect map.
+
+**7.2 — the calendar.** `GET /api/scan/:scanId/calendar`: per-LOCAL-day
+bytes/counts from the tree's own mtimes (exact), `?channel=created` behind
+the query engine's own STAT_CAP (shared constant, not a copy) with
+`degraded[]` prose for capped/unreadable/unknown — and mtimes ≤ 0 skip into
+a `modifiedUnknown` note, never a 1969 bucket. The heatmap view: weeks as
+columns, years stacked, four opacity steps on a sqrt scale; day clicks and
+drag-ranges become Phase 2 queries (`modified:2026-03-14`), which is why
+`matchesDate`'s `=` now ends at the next LOCAL midnight — the old
+value+24h window disagreed with the calendar twice a year at DST.
+
+**7.3 — the journal.** `src/services/journal.ts` copies audit.ts's queue
+whole, plus in-queue rotation (2000 → newest 1000 via tmp+rename; a failed
+rotation unlinks its tmp file). Fed from the scheduler tick only —
+deliberately NOT a watcher subscriber (would pin watch sessions open
+forever; documented at both seams). Attribution never guesses: an app only
+by containment, "you" only when a REMOVAL-action audit entry (files.trash,
+cart.commit, offload.start, …) inside the window covers ≥ half the shrink —
+approvals, policy saves and restores can no longer claim it — and otherwise
+exactly "an unidentified process". A growth cancelling against a vanished
+sibling reports the remainder coarsely at the parent rather than vanishing.
+`GET /api/journal` reads newest-first; nothing writes it over HTTP.
+
+**7.4 — the split-slider.** History pairs in Compare paint both snapshot
+layouts into one canvas — newer in full, older clipped left of the divider
+(unexpanded dirs paint; only expanded frames are skipped). The divider is a
+native range (arrows/Home/End are the platform's), aria-valuetext narrates,
+the pair is ordered by takenAt however it was picked, and the footer names
+the stored trees the canvas actually shows.
+
+**The History view (owner's mid-phase ask).** Calendar, Journal and Compare
+are now ONE tab with an internal three-button segment. Panels kept their
+ids, loaders and guards; the three registrations folded into one; sidebar
+is fifteen tabs. README says seventeen views.
+
+### The adversarial pass — run before calling any of this done
+
+Two code reviewers and one app-driving QA agent, all instructed to refute.
+They were right to exist: **3 real backend defects** (the "you" attribution
+trusting non-removal audit actions; the vanishing residual; the DST
+disagreement), **10 real frontend defects** (stale-tick races around the
+crossing await, a backward blink at every crossing, the split view skipping
+most of a real tree, interpolated sizes printed as fact, playback holding
+the clock forever on a dead server, …) and **QA's D1** (discrete playback
+never moved the slider — found only by driving) all survived a green
+1,479-test suite. All fixed, each behind a test that failed first.
+
+### Verified
+
+```
+npm run build            clean
+npm run typecheck        clean
+npm test                 1,486 tests · 1,484 pass · 0 fail · 2 skip   (was 1,432)
+app driven               every 7.x surface + the merged History view, on the isolated dev server
+```
+
+### What I could NOT verify on this machine, and why
+
+- A full-length WebM recording: the preview pane starves the page of
+  animation frames, so only the interrupted-take path could run end-to-end
+  (it delivered a real vp9 file). Needs one run in the real Electron window.
+- Delivered frame rate (inherited pane limitation; per-slice work measured).
+- The one-line scheduler → journal wiring under a genuinely due schedule
+  (recordScanJournal itself is integration-tested against a real scan).
+
+### Known, deliberately left
+
+- audit.ts and journal.ts share the torn-tail flaw (a crash mid-append can
+  cost the next line); fixing journal alone would fork the copied
+  discipline — fix both together or not at all.
+- The 429 console noise at boot (QA D8) predates Phase 7; the api wrapper
+  retries and recovers.
+- `views.svg` still draws the pre-merge tab strip (cosmetic; regenerate).
+- The degraded "read for N files" prose counts failed stats in N —
+  inherited verbatim from execute.ts; change both or neither.
+
 ## v4 — Phase 6 closed for real, Phase 7 opened (30 August 2026)
 
 The ask was: confirm Phase 6 is complete, then run Phase 7 to done. Phase 6 is
