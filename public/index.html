@@ -149,6 +149,124 @@ button { font-family: inherit; color: inherit; }
 .blob.b4 { width: 380px; height: 380px; top: 12%; left: 42%;
   background: radial-gradient(circle, rgba(100,210,255,0.10), transparent 65%); }
 
+/* ══════════ FX: Border Beam — styles ══════════
+   Static half of the FxBeam splice (the per-instance gradients, masks and
+   keyframes are generated at runtime by the FX: Border Beam script block).
+   Everything scalar lives here as --fxb-* tokens so the whole effect can be
+   re-tuned — and re-themed — without touching the generator: dark values on
+   :root (the app default), light overrides under :root[data-theme="light"].
+   Color: the beam palette is the app's blue/black family built from
+   --accent #0A84FF (the original "ocean" variant re-tuned); the tokens below
+   carry only the achromatic shine/shadow parts and the per-type ladder of
+   opacity / saturation / brightness from the original theme presets. */
+
+/* ── Tuning tokens (dark defaults) ── */
+:root {
+  /* The traveling highlight + conic bloom: white on dark, black on light.
+     --fxb-shine-a scales the stop alphas (the original's light ladder is
+     ≈ 0.73 × the dark one). */
+  --fxb-shine: 255, 255, 255;
+  --fxb-shine-a: 1;
+
+  /* md — full ring on cards */
+  --fxb-md-stroke: 0.26;
+  --fxb-md-inner: 0.42;
+  --fxb-md-bloom: 0.24;
+  --fxb-md-sat: 1.2;
+  --fxb-md-bright: 1.3;
+  --fxb-md-shadow: rgba(255, 255, 255, 0.27);
+
+  /* sm — compact ring on pills and small buttons */
+  --fxb-sm-stroke: 0.46;
+  --fxb-sm-inner: 0.24;
+  --fxb-sm-bloom: 0.38;
+  --fxb-sm-sat: 1.2;
+  --fxb-sm-bright: 1.3;
+  --fxb-sm-shadow: rgba(255, 255, 255, 0.3);
+
+  /* line — bottom traveling glow on bars and inputs */
+  --fxb-line-stroke: 1;      /* CSS clamps opacity; original 1.14 is a clamp-to-1 */
+  --fxb-line-inner: 0.7;
+  --fxb-line-bloom: 0.8;
+  --fxb-line-sat: 1.2;
+  --fxb-line-bright: 1.3;
+  --fxb-line-shadow: rgba(255, 255, 255, 0.1);
+
+  /* pulse-inner — contained breathe */
+  --fxb-pi-stroke: 1;        /* original 1.54, clamped by CSS anyway */
+  --fxb-pi-inner: 0.44;
+  --fxb-pi-bloom: 0.66;
+  --fxb-pi-sat: 1.2;
+  --fxb-pi-bright: 0.75;
+
+  /* pulse-outside — outward halo */
+  --fxb-po-stroke: 0.94;
+  --fxb-po-inner: 0.34;
+  --fxb-po-bloom: 0.3;
+  --fxb-po-sat: 1.2;
+  --fxb-po-bright: 1.9;
+  --fxb-po-core-blur: 3px;
+  --fxb-po-bloom-blur: 22.5px;
+}
+
+/* ── Light theme overrides (original light presets, ocean-family tuned) ── */
+:root[data-theme="light"] {
+  --fxb-shine: 0, 0, 0;
+  --fxb-shine-a: 0.73;
+
+  --fxb-md-stroke: 0.12;
+  --fxb-md-inner: 0.26;
+  --fxb-md-bloom: 0.34;
+  --fxb-md-sat: 1.5;
+  --fxb-md-shadow: rgba(0, 0, 0, 0.14);
+
+  --fxb-sm-stroke: 0.12;
+  --fxb-sm-inner: 0.3;
+  --fxb-sm-bloom: 0.16;
+  --fxb-sm-sat: 1.8;
+  --fxb-sm-shadow: rgba(0, 0, 0, 0.14);
+
+  --fxb-line-stroke: 0.16;
+  --fxb-line-inner: 0.32;
+  --fxb-line-bloom: 0.3;
+  --fxb-line-sat: 1.95;
+  --fxb-line-shadow: rgba(0, 0, 0, 0.14);
+
+  --fxb-pi-stroke: 0.32;
+  --fxb-pi-inner: 0.4;
+  --fxb-pi-bloom: 0.8;
+  --fxb-pi-sat: 0.75;
+  --fxb-pi-bright: 1.3;
+
+  --fxb-po-stroke: 1;        /* original 1.96, clamped by CSS anyway */
+  --fxb-po-inner: 1;         /* original 1.04, clamped */
+  --fxb-po-bloom: 0.42;
+  --fxb-po-sat: 0.6;
+  --fxb-po-bright: 1.7;
+  --fxb-po-core-blur: 6px;
+  --fxb-po-bloom-blur: 15px;
+}
+
+/* ── Shared base (per-instance rules only add what differs) ── */
+[data-fxbeam] { position: relative; }
+[data-fxbeam] > [data-fxbeam-bloom] {
+  display: none;
+  position: absolute;
+  pointer-events: none;
+}
+
+/* Belt and braces on top of the REDUCED-aware generator: even if a beam was
+   generated before the preference flipped, no beam layer may animate. */
+@media (prefers-reduced-motion: reduce) {
+  [data-fxbeam],
+  [data-fxbeam]::before,
+  [data-fxbeam]::after,
+  [data-fxbeam] > [data-fxbeam-bloom] {
+    animation: none !important;
+  }
+}
+/* ══ end FX: Border Beam styles ══ */
+
 /* ════════════════════════════ Primitives ════════════════════════════ */
 /* Liquid Glass lens — technique ported from rdev/liquid-glass-react (MIT).
    The LG engine (bottom of file) generates a per-size displacement-map SVG filter
@@ -1942,6 +2060,50 @@ input.fxgoo-range { position: relative; z-index: 1; }
 .seg button[aria-selected="true"] { background: transparent; color: var(--text-1); box-shadow: none; }
 :root[data-theme="light"] .seg button[aria-selected="true"] { background: transparent; }
 /* ═══ end FX: Liquid Goo styles ═══ */
+/* ═══════════════ FX: Thinking Orbs (styles) ═══════════════ */
+/* The orb paints its own monochrome ink per theme (light dots on dark,
+   dark dots on light — resolved live from data-theme / prefers-color-
+   scheme by the engine), and the canvas stays transparent, so it sits
+   correctly on any surface in BOTH themes with zero color rules here.
+   The CSS box is set inline by mount() (20px or 64px — tuned designs,
+   not a scale factor); this only settles layout behaviour. */
+.fx-orb { display: block; flex: none; pointer-events: none; user-select: none; }
+/* Inline placement beside 11–13px text: the 20px preset hangs on the
+   text box's vertical centre instead of the baseline. */
+.fx-orb-inline { display: inline-block; vertical-align: middle; }
+/* ═══ end FX: Thinking Orbs (styles) ═══ */
+
+/* ═══ FX: living-surface wiring — wells and strips ═══
+   A well is a stable container an orb mounts into; :empty makes an idle well
+   cost nothing, so wiring never toggles `hidden` by hand. A strip is a
+   pointer-transparent overlay the "line" beam attaches to instead of the
+   search wrap itself — the beam sets overflow:hidden on its host, and both
+   wraps anchor dropdown panels that must overflow. */
+.fx-orb-well { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.fx-orb-well:empty { display: none; }
+.fx-canvas-orb { position: absolute; z-index: 5; pointer-events: none; }
+#tmScanOrb { left: 50%; top: 50%; transform: translate(-50%, -50%); }
+/* The wrap pins the hero to the donut canvas itself, so a wrapped flex row
+   cannot drift it off-centre. */
+.donut-canvas-wrap { position: relative; flex: none; display: flex; }
+#dashScanOrb { left: 50%; top: 50%; transform: translate(-50%, -50%); }
+/* A glass chip under the shaping orb: the monochrome ink needs a quiet
+   surface to read against, and the treemap beneath it is anything but. */
+#tmShapeOrb { left: 14px; bottom: 14px; padding: 5px; border-radius: 999px;
+  background: var(--glass-strong); border: 1px solid var(--hairline); box-shadow: var(--shadow-1); }
+.donut-row { position: relative; }
+.scan-status-row { display: flex; align-items: center; gap: 8px; }
+.scan-status-row .scan-status { flex: 1 1 auto; min-width: 0; }
+/* The status keeps its own 14px top margin; the well matches it so the pair
+   stays on one baseline. */
+.scan-status-row .fx-orb-well { margin-top: 14px; }
+.nl-pending { display: flex; align-items: center; gap: 8px; margin-top: 9px;
+  font-size: 11.5px; color: var(--text-2); }
+.fx-beam-strip { position: absolute; inset: 0; pointer-events: none; z-index: 1;
+  border-radius: var(--r-sm); }
+#gsearchBeamStrip { border-radius: 11px; } /* matches #gsearch */
+/* ═══ end FX: living-surface wiring styles ═══ */
+
 </style>
 </head>
 <body>
@@ -1983,6 +2145,10 @@ input.fxgoo-range { position: relative; z-index: 1; }
            aria-label="Search all indexed files" aria-expanded="false"
            aria-controls="gsearchResults" role="combobox" aria-autocomplete="list"
            autocomplete="off" spellcheck="false">
+    <!-- FX wiring: the "line" beam lives on this overlay strip, not on the
+         wrap — the beam sets overflow:hidden on its host, and the wrap anchors
+         the results panel, which must overflow. -->
+    <span class="fx-beam-strip" id="gsearchBeamStrip" aria-hidden="true"></span>
     <button class="gsearch-rail-btn" id="gsearchRailBtn" aria-label="Search all indexed files" title="Search (/)" tabindex="-1">
       <span data-icon="search" data-size="15"></span>
     </button>
@@ -2103,7 +2269,14 @@ input.fxgoo-range { position: relative; z-index: 1; }
           <label class="fast-rescan" id="fastRescanWrap" hidden>
             <input type="checkbox" id="fastRescan"><span data-icon="zap" data-size="13"></span>Fast rescan — reuse cache for unchanged folders
           </label>
-          <div class="scan-status" id="scanStatus">No scan yet — pick a folder above.</div>
+          <!-- FX wiring: the well is where the "searching" orb lives while a
+               scan runs. It must sit OUTSIDE #scanStatus — followScanProgress
+               rewrites that innerHTML on every progress frame, which would
+               strand a mounted orb's observers. -->
+          <div class="scan-status-row">
+            <span class="fx-orb-well" id="scanOrbWell"></span>
+            <div class="scan-status" id="scanStatus">No scan yet — pick a folder above.</div>
+          </div>
           <!-- A1: the index indicator. Green "always current" when a live
                watcher is attached; amber when the index exists but missed
                events and is being rechecked. Hidden when there is no index. -->
@@ -2177,7 +2350,13 @@ input.fxgoo-range { position: relative; z-index: 1; }
         <div class="card glass">
           <h2><span data-icon="pie"></span>File Types by Size</h2>
           <div class="donut-row">
-            <canvas id="donutCanvas" width="230" height="230" aria-label="File type breakdown donut chart" role="img"></canvas>
+            <!-- FX wiring: the wrap anchors the 64px "searching" hero to the
+                 donut's own centre — the dashboard's empty-while-scanning
+                 surface — wherever the flex row happens to wrap. -->
+            <div class="donut-canvas-wrap">
+              <canvas id="donutCanvas" width="230" height="230" aria-label="File type breakdown donut chart" role="img"></canvas>
+              <div class="fx-orb-well fx-canvas-orb" id="dashScanOrb"></div>
+            </div>
             <div class="donut-legend" id="donutLegend"><div class="muted">Run a scan to see the breakdown.</div></div>
           </div>
         </div>
@@ -2232,6 +2411,9 @@ input.fxgoo-range { position: relative; z-index: 1; }
           <input type="text" id="tmSearch" placeholder="Highlight… (try size&gt;1gb)" aria-label="Highlight matching files in the treemap"
                  role="combobox" aria-expanded="false" aria-controls="tmQueryHints" aria-autocomplete="list"
                  autocomplete="off" spellcheck="false">
+          <!-- FX wiring: same overlay-strip trick as #gsearch — the field
+               anchors the hints panel, so the beam cannot own the field. -->
+          <span class="fx-beam-strip" id="tmSearchBeamStrip" aria-hidden="true"></span>
           <div class="gsearch-panel tm-hints" id="tmQueryHints" role="listbox" aria-label="Query fields" hidden></div>
         </div>
         <!-- v4 §9.6 — plain words in, a checkable query out. The popover always
@@ -2240,6 +2422,9 @@ input.fxgoo-range { position: relative; z-index: 1; }
         <div id="nlPop" class="glass" role="dialog" aria-modal="false" aria-labelledby="nlPopTitle" hidden>
           <div class="set-h" id="nlPopTitle" style="margin:0 0 8px;">Ask in plain words</div>
           <input type="text" id="nlInput" placeholder="big videos I haven't opened in a year" aria-label="Describe what to find, in plain words" autocomplete="off" spellcheck="false" style="width:100%;">
+          <!-- FX wiring: shown only while the /api/nl-query round-trip is in
+               flight — the "weaving" orb mounts into the well. -->
+          <div class="nl-pending" id="nlPending" role="status" hidden><span class="fx-orb-well"></span><span>Translating…</span></div>
           <div id="nlOut" hidden>
             <div class="muted" style="font-size:11.5px;margin:9px 0 4px;">Translates to — check it, edit it, then run:</div>
             <input type="text" id="nlResult" class="num" aria-label="The translated query — edit it before running" autocomplete="off" spellcheck="false" style="width:100%;">
@@ -2318,6 +2503,13 @@ input.fxgoo-range { position: relative; z-index: 1; }
         <button class="pill" id="tmPreviewExit">Exit preview</button>
       </div>
       <div id="treemapZoom"><canvas id="treemapCanvas" tabindex="0" aria-label="Disk usage treemap. Click a directory to drill in, Escape to go up."></canvas></div>
+      <!-- FX wiring: two orb wells over the canvas. The centred one holds the
+           64px "searching" hero while a first scan runs against an empty map;
+           the corner chip holds the 20px "shaping" orb while §2.5's refinement
+           loop is still subdividing across frames. Both are display:none while
+           empty, so they cost nothing when idle. -->
+      <div class="fx-orb-well fx-canvas-orb" id="tmScanOrb"></div>
+      <div class="fx-orb-well fx-canvas-orb" id="tmShapeOrb"></div>
       <div id="liveFeed" hidden aria-label="Live disk activity — top writers"></div>
     </div>
     <div class="tm-foot">
@@ -4483,6 +4675,9 @@ const VIEWS = [
       // is watching.
       clearTimeout(state.dup.pollTimer); state.dup.pollTimer = 0;
       clearTimeout(state.near.pollTimer); state.near.pollTimer = 0;
+      // The solving orb is the same shape of leak — a mounted orb is a live
+      // rAF client — and leaves by the same door.
+      fxOrbHide('dup');
       // Hiding a view does not free it. A big near-duplicate result left tens of
       // thousands of nodes and ~1,500 cart buttons in the document, and every
       // later cart click in every other view paid for them.
@@ -4562,6 +4757,11 @@ function switchView(name) {
   });
   hideTooltip(); hideCtxMenu();
   $('emptyState').style.display = empty ? 'flex' : 'none';
+  // FX: the zero-state CTA halo lives and dies with the welcome screen, and
+  // the scan hero follows the active view — both are functions of the state
+  // this function just set.
+  fxEmptyCtaSync(empty);
+  fxScanHeroSync();
   renderCapabilityNotice(view, blocked);
 
   if (empty || blocked) { mountedView = view; return; }
@@ -5437,16 +5637,24 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   $('headerSpin').innerHTML = icon('loader', 15, REDUCED ? '' : 'spin');
   $('progressTrack').classList.add('active');
   $('scanStatus').classList.remove('error');
+  // FX: the card's traveling beam and the "searching" orb mark the one state
+  // this function owns. endScanChrome is the single funnel every scan exit
+  // passes through (finish, fail, stop), so activation and deactivation are
+  // the same pair of lines in two places. The orb replaces the old loader
+  // icon in the status line — one activity indicator, not two.
+  FxBeam.attach($('scanStatus').closest('.card'), { type: 'md', active: true });
+  fxOrbShow('scan', $('scanOrbWell'), 'searching');
+  fxScanHeroSync();
   if (quiet) {
     // `message` lets the caller say what is actually happening. A first scan
     // enters here too — startScan shows the chrome before it knows whether the
     // index will paint — and "Checking for changes" would be a lie there.
     $('scanStatus').innerHTML = message
-      ? icon('loader', 14, REDUCED ? '' : 'spin') + '<span>' + escapeHtml(message) + '</span>'
+      ? '<span>' + escapeHtml(message) + '</span>'
       : icon('refresh', 14) + '<span>Checking for changes…</span>';
     return;
   }
-  $('scanStatus').innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + '<span>Starting scan…</span>';
+  $('scanStatus').innerHTML = '<span>Starting scan…</span>';
   $('bigFiles').innerHTML = skeletonRows(6);
   $('bigFolders').innerHTML = skeletonRows(6);
   $('donutLegend').innerHTML = skeletonRows(5, 24);
@@ -5675,7 +5883,9 @@ function followScanProgress(scanId, path, fast, t0) {
     if (msg.type === 'progress') {
       const secs = (performance.now() - t0) / 1000;
       const rate = secs > 0.2 ? Math.round(msg.scanned / secs) : 0;
-      status.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') +
+      // The "searching" orb in the well beside this line is the activity
+      // indicator now — the status carries only the numbers.
+      status.innerHTML =
         `<span class="num">${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`;
       $('scanMeta').textContent = msg.currentPath;
@@ -5724,7 +5934,7 @@ async function startCloudScan(providerId, providerName) {
   try {
     beginScanChrome();
     const gen = state.scanGen; // this request's identity for the abandon check below
-    $('scanStatus').innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `<span>Listing ${escapeHtml(providerName)}…</span>`;
+    $('scanStatus').innerHTML = `<span>Listing ${escapeHtml(providerName)}…</span>`;
     const t0 = performance.now();
     const resp = await api('/api/cloud/scan', {
       method: 'POST',
@@ -5745,6 +5955,10 @@ function endScanChrome() {
   $('headerSpin').classList.remove('on');
   $('progressTrack').classList.remove('active');
   $('scanMeta').textContent = '';
+  // FX: the other half of beginScanChrome's pair — beam fades, orbs destroyed.
+  FxBeam.attach($('scanStatus').closest('.card'), { type: 'md', active: false });
+  fxOrbHide('scan');
+  fxScanHeroSync();
 }
 
 function failScan(message) {
@@ -6866,6 +7080,2391 @@ const Canvas2D = {
     ctx.restore();
   },
 };
+
+/* ═══════════════ FX: Thinking Orbs ═══════════════ */
+/* Dotted 3D thought-orb activity indicators, ported verbatim from
+   thinking-orbs v0.3.1 (MIT © Jakub Antalik) — nine hand-tuned states
+   (working / searching / solving / listening / connecting / weaving /
+   composing / breathing / shaping), each shipped at two purpose-tuned
+   sizes (64 chat-avatar, 20 inline-text; separate designs, not a scale
+   factor). Strictly monochrome ink: light dots on dark, dark dots on
+   light, resolved live from an ancestor data-theme attr / dark|light
+   class, else prefers-color-scheme. Plain 2D canvas arc fills only —
+   no filters, no WebGL.
+
+   Usage:
+     const orb = FxOrbs.mount(container, { state: 'searching', size: 20 });
+     orb.setState('solving'); orb.pause(); orb.resume(); orb.destroy();
+
+   One shared clock + ONE shared rAF loop drives every mounted orb, and
+   the loop fully stops when no orb is animating or the tab is hidden.
+   REDUCED (the app-wide prefers-reduced-motion const) renders a single
+   static frame and never animates. The geometry core is deliberately
+   closure-free and Math-only, so tests/fxOrbs tests evaluate it in Node
+   and compare against thinking-orbs' published golden frame vectors. */
+const FxOrbs = (() => {
+
+  /* ── core: shared primitives (thinking-orbs src/engine/core.ts) ──
+     Honestly 3D — rotated, depth-shaded, z-sorted. Depth is carried by
+     dot size and ink weight alone. `white` is the paper-theme ink value
+     in [0,1]; on a dark substrate the painter mirrors it (1 - white) so
+     near dots read bright — the same depth language, inverted paper. */
+
+  function lerp(a, b, f) {
+    return a + (b - a) * f;
+  }
+
+  function frac(x) {
+    return x - Math.floor(x);
+  }
+
+  /** Deterministic hash in [0, 1). */
+  function hashD(a, b) {
+    const h = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
+    return h - Math.floor(h);
+  }
+
+  /** Value noise on a 2D lattice — smooth, deterministic, cheap. */
+  function vnoise(x, y) {
+    const xi = Math.floor(x);
+    const yi = Math.floor(y);
+    let fx = x - xi;
+    let fy = y - yi;
+    fx = fx * fx * (3 - 2 * fx);
+    fy = fy * fy * (3 - 2 * fy);
+    const a = hashD(xi, yi);
+    const b = hashD(xi + 1, yi);
+    const c = hashD(xi, yi + 1);
+    const d = hashD(xi + 1, yi + 1);
+    return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+  }
+
+  /** Stable directions on a unit sphere (Fibonacci lattice). */
+  function fibDir(i, n) {
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    const y = 1 - (2 * (i + 0.5)) / n;
+    const rad = Math.sqrt(1 - y * y);
+    const a = i * golden;
+    return [rad * Math.cos(a), y, rad * Math.sin(a)];
+  }
+
+  /** Shortest signed angular distance, wrapped to (-π, π]. */
+  function angleDelta(a, b) {
+    return Math.atan2(Math.sin(a - b), Math.cos(a - b));
+  }
+
+  /** Shared spin + tilt + orthographic projection. */
+  function makeProj(yaw, tilt, cx, cy, scale) {
+    const st = Math.sin(tilt);
+    const ct = Math.cos(tilt);
+    const sy = Math.sin(yaw);
+    const cyw = Math.cos(yaw);
+    return (x, y, z) => {
+      const x1 = x * cyw + z * sy;
+      const z1 = -x * sy + z * cyw;
+      const y1 = y * ct - z1 * st;
+      const z2 = y * st + z1 * ct;
+      return [cx + x1 * scale, cy - y1 * scale, z2];
+    };
+  }
+
+  /**
+   * Turn raw mode output into a finished frame: drop invisible marks,
+   * clamp radii to the mode's floor, z-sort far→near into draw order.
+   * A frame is a complete set of draw instructions — every value final,
+   * array order = draw order — which is what lets the golden-vector
+   * tests compare numbers instead of pixels.
+   */
+  function finalizeFrame(dots, lines, rMin = 0.3) {
+    const visible = [];
+    for (const d of dots) {
+      if ((d.a ?? 1) < 0.02) continue;
+      d.r = Math.max(rMin, d.r);
+      visible.push(d);
+    }
+    visible.sort((a, b) => a.z - b.z);
+    return { dots: visible, lines: lines.filter((l) => (l.a ?? 1) >= 0.02) };
+  }
+
+  /** Painter: matte grayscale dots; dark substrates mirror the ink. */
+  function fxPaintDots(ctx, dots, dark) {
+    for (const d of dots) {
+      const alpha = d.a ?? 1;
+      const w = Math.min(1, Math.max(0, d.white));
+      const g = Math.round((dark ? 1 - w : w) * 255);
+      ctx.fillStyle = `rgba(${g},${g},${g},${alpha})`;
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  /** Stroke pass for edge-based modes. Runs first so nodes sit on top. */
+  function fxPaintLines(ctx, lines, dark) {
+    for (const l of lines) {
+      const alpha = l.a ?? 1;
+      const w = Math.min(1, Math.max(0, l.white));
+      const g = Math.round((dark ? 1 - w : w) * 255);
+      ctx.strokeStyle = `rgba(${g},${g},${g},${alpha})`;
+      ctx.lineWidth = l.w;
+      ctx.beginPath();
+      ctx.moveTo(l.x1, l.y1);
+      ctx.lineTo(l.x2, l.y2);
+      ctx.stroke();
+    }
+  }
+
+  /** Paint a finished frame. Lines first, so nodes sit on their edges. */
+  function paintFrame(ctx, frame, dark) {
+    if (frame.lines.length) fxPaintLines(ctx, frame.lines, dark);
+    fxPaintDots(ctx, frame.dots, dark);
+  }
+
+  /**
+   * Dot radii were tuned for a 300pt frame; sub-linear scaling keeps
+   * small spinners legible. Lower pow = radii shrink less with size.
+   */
+  function radiusScale(size, pow) {
+    return (size / 300) ** pow;
+  }
+
+  /* ── profiles: density rows + multiplier machinery (profiles.ts) ── */
+
+  // 2-D lattices (rings × dots-per-ring) come in pairs — each side takes
+  // √scale so the TOTAL dot count scales by `scale`; flat lists scale
+  // linearly. `iconD` sets the morph outline's sampling density.
+  const COUNT_PAIRS = [
+    ['latRings', 'lonDensity'],
+    ['rings', 'lonDensity'],
+    ['lanes', 'segs']
+  ];
+  const COUNT_KEYS = ['orbitN', 'ghostN', 'nodeN', 'strandN', 'signals'];
+  const ICON_DENSITY_KEYS = ['iconD'];
+
+  // Every key that sets a dot's rendered radius — scaling all of them
+  // keeps a dot's near/far falloff intact while resizing the mark.
+  const RADIUS_KEYS = [
+    'rBase',
+    'rDepth',
+    'rActive',
+    'rDot',
+    'ghostR',
+    'partR',
+    'partRDepth',
+    'nodeR',
+    'nodeRDepth'
+  ];
+
+  function scaleCounts(opts, scale) {
+    const out = { ...opts };
+    const done = new Set();
+    const rt = Math.sqrt(scale);
+    for (const [a, b] of COUNT_PAIRS) {
+      const va = out[a];
+      const vb = out[b];
+      if (va != null && vb != null && !done.has(a) && !done.has(b)) {
+        out[a] = Math.max(2, Math.round(va * rt));
+        out[b] = Math.max(2, Math.round(vb * rt));
+        done.add(a);
+        done.add(b);
+      }
+    }
+    for (const k of COUNT_KEYS) {
+      const v = out[k];
+      // 0 means the mode opted out of that layer entirely (ring has no
+      // ghost sphere) — scaling must not resurrect it as one stray dot
+      if (v != null && v !== 0 && !done.has(k)) out[k] = Math.max(1, Math.round(v * scale));
+    }
+    for (const k of ICON_DENSITY_KEYS) {
+      const v = out[k];
+      if (v != null) out[k] = Math.max(0.02, v * scale);
+    }
+    return out;
+  }
+
+  function scaleRadii(opts, scale) {
+    const out = { ...opts };
+    for (const k of RADIUS_KEYS) {
+      const v = out[k];
+      if (v != null) out[k] = v * scale;
+    }
+    // remember the multiplier itself — spacing-derived radii (the morph
+    // outline) use it, since they aren't based on any single radius key
+    out.rSizeMul = (out.rSizeMul ?? 1) * scale;
+    return out;
+  }
+
+  /** Base (fine) profiles per mode, before preset multipliers. */
+  const BASE_PROFILES = {
+    globe: {
+      latRings: 17,
+      lonDensity: 44,
+      rBase: 0.6,
+      rDepth: 1.7,
+      rBoost: 1.0,
+      inkFar: 0.62,
+      inkSpan: 0.54,
+      rsPow: 0.6,
+      rMin: 0.3
+    },
+    orbits: {
+      orbitN: 12,
+      ghostN: 40,
+      ghostR: 0.9,
+      ghostA: 0.5,
+      particles: 3,
+      partR: 1.2,
+      partRDepth: 1.6,
+      rsPow: 0.6,
+      rMin: 0.3
+    },
+    rubik: {
+      latRings: 15,
+      lonDensity: 40,
+      moveCount: 14,
+      rBase: 0.6,
+      rDepth: 1.7,
+      rActive: 0.3,
+      inkFar: 0.62,
+      inkSpan: 0.54,
+      rsPow: 0.6,
+      rMin: 0.3
+    },
+    wave: {
+      rings: 15,
+      lonDensity: 40,
+      rBase: 0.6,
+      rDepth: 1.7,
+      rsPow: 0.6,
+      rMin: 0.3
+    },
+    web: {
+      nodeN: 30,
+      thr: 0.72,
+      signals: 5,
+      nodeR: 1.4,
+      nodeRDepth: 1.8,
+      lineW: 0.8,
+      rsPow: 0.6,
+      rMin: 0.3
+    },
+    braid: {
+      strandN: 52,
+      turns: 3.0,
+      ghostN: 150,
+      rBase: 1.2,
+      rDepth: 1.8,
+      rsPow: 0.6,
+      rMin: 0.3
+    },
+    ribbon: {
+      lanes: 5,
+      segs: 88,
+      ghostN: 150,
+      rBase: 1.1,
+      rDepth: 1.7,
+      rsPow: 0.6,
+      rMin: 0.3
+    },
+    // ring shares ribbon's painter; faceOn cancels the camera tilt and
+    // moves the undulation onto the radius; no ghost sphere behind it
+    ring: {
+      lanes: 5,
+      segs: 88,
+      ghostN: 0,
+      faceOn: 1,
+      rBase: 1.1,
+      rDepth: 1.7,
+      rsPow: 0.6,
+      rMin: 0.3
+    },
+    morph: {
+      rDot: 0.021,
+      iconD: 1,
+      rMin: 0.25
+    }
+  };
+
+  /* ── orbits: particles on tilted orbits — "working" (orbits.ts) ── */
+
+  const frameOrbits = (size, t, o) => {
+    const cx = size / 2;
+    const cy = size / 2;
+    const R = (size / 2) * 0.82;
+    const pt = makeProj(t * 0.12, 0.3, cx, cy, 1);
+    const rs = radiusScale(size, o.rsPow ?? 0.6);
+
+    const dots = [];
+    const orbitN = o.orbitN ?? 12;
+    const ghostN = o.ghostN ?? 40;
+    const particles = o.particles ?? 3;
+
+    // orbits: each a tilted circle — a ghost path + running particles
+    for (let orb = 0; orb < orbitN; orb++) {
+      const h1 = hashD(orb, 1.7);
+      const h2 = hashD(orb, 5.2);
+      const h3 = hashD(orb, 8.9);
+      const ro = R * (0.45 + 0.52 * h1);
+      const th = h1 * 2 * Math.PI;
+      const phi = Math.acos(2 * h2 - 1);
+      // orbit plane basis (u, v ⟂ normal n)
+      const nx = Math.sin(phi) * Math.cos(th);
+      const ny = Math.cos(phi);
+      const nz = Math.sin(phi) * Math.sin(th);
+      let ux = -ny;
+      let uy = nx;
+      const uz = 0;
+      const ul = Math.max(1e-6, Math.sqrt(ux * ux + uy * uy));
+      ux /= ul;
+      uy /= ul;
+      const vx = ny * uz - nz * uy;
+      const vy = nz * ux - nx * uz;
+      const vz = nx * uy - ny * ux;
+      const speed = (0.25 + 0.55 * h3) * (h3 > 0.5 ? 1 : -1);
+
+      // ghost path
+      for (let k = 0; k < ghostN; k++) {
+        const a = (k / ghostN) * 2 * Math.PI;
+        const [px, py, z] = pt(
+          (ux * Math.cos(a) + vx * Math.sin(a)) * ro,
+          (uy * Math.cos(a) + vy * Math.sin(a)) * ro,
+          (uz * Math.cos(a) + vz * Math.sin(a)) * ro
+        );
+        const depth = (z / ro + 1) / 2;
+        dots.push({
+          x: px,
+          y: py,
+          z,
+          r: (o.ghostR ?? 0.9) * rs,
+          white: 0.72,
+          a: (o.ghostA ?? 0.5) * (0.4 + 0.6 * depth)
+        });
+      }
+      // the particles doing the work
+      for (let m = 0; m < particles; m++) {
+        const a = t * speed + (m / particles) * 2 * Math.PI + h2 * 6;
+        const [px, py, z] = pt(
+          (ux * Math.cos(a) + vx * Math.sin(a)) * ro,
+          (uy * Math.cos(a) + vy * Math.sin(a)) * ro,
+          (uz * Math.cos(a) + vz * Math.sin(a)) * ro
+        );
+        const depth = (z / ro + 1) / 2;
+        dots.push({
+          x: px,
+          y: py,
+          z,
+          r: ((o.partR ?? 1.2) + (o.partRDepth ?? 1.6) * depth) * rs,
+          white: 0.3 - 0.22 * depth
+        });
+      }
+    }
+    return finalizeFrame(dots, [], o.rMin);
+  };
+
+  /* ── lattice trio: globe / rubik / wave (lattice.ts) ── */
+
+  // The solver heartbeat (rubik): rapid eased moves scramble, then
+  // replay in reverse (palindrome) so everything clicks back to solved.
+  function solveCycle(time, count, slotDur, rest) {
+    const cyc = 2 * count * slotDur + rest;
+    const tc = time % cyc;
+    const amount = new Array(count).fill(0);
+    let active = -1;
+    if (tc < 2 * count * slotDur) {
+      const slot = Math.floor(tc / slotDur);
+      const p = (tc - slot * slotDur) / slotDur;
+      const cl = Math.min(1, p / 0.7);
+      const ep = 1 - (1 - cl) ** 3; // machine ease-out
+      if (slot < count) {
+        for (let i = 0; i < slot; i++) amount[i] = 1;
+        amount[slot] = ep;
+        active = slot;
+      } else {
+        const u = 2 * count - 1 - slot;
+        for (let i = 0; i < u; i++) amount[i] = 1;
+        amount[u] = 1 - ep;
+        active = u;
+      }
+    }
+    return { amount, active };
+  }
+
+  function applyMoves(pt3, moves, sc) {
+    let [x, y, z] = pt3;
+    let inActive = false;
+    for (let i = 0; i < moves.length; i++) {
+      if (sc.amount[i] <= 0) continue;
+      const mv = moves[i];
+      const coord = mv.axis === 0 ? x : mv.axis === 1 ? y : z;
+      if (coord < mv.lo || coord >= mv.hi) continue;
+      if (i === sc.active) inActive = true;
+      const a = mv.ang * sc.amount[i];
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      if (mv.axis === 0) {
+        const y2 = y * ca - z * sa;
+        z = y * sa + z * ca;
+        y = y2;
+      } else if (mv.axis === 1) {
+        const x2 = x * ca + z * sa;
+        z = -x * sa + z * ca;
+        x = x2;
+      } else {
+        const x2 = x * ca - y * sa;
+        y = x * sa + y * ca;
+        x = x2;
+      }
+    }
+    return [x, y, z, inActive];
+  }
+
+  function makeMoves(count) {
+    const moves = [];
+    for (let i = 0; i < count; i++) {
+      const axis = Math.min(2, Math.floor(hashD(i, 2.3) * 3));
+      const lo = -1.0 + 0.5 * Math.min(3, Math.floor(hashD(i, 5.9) * 4));
+      const dir = hashD(i, 7.7) < 0.5 ? 1 : -1;
+      moves.push({ axis, lo, hi: lo + 0.5, ang: (dir * Math.PI) / 2 });
+    }
+    return moves;
+  }
+
+  // Globe: lat/long field, a scan meridian sweeps — "searching"
+  const frameGlobe = (size, t, o) => {
+    const spin = 0.5;
+    const cx = size / 2;
+    const cy = size / 2;
+    const radius = (size / 2) * 0.82;
+    const tilt = 0.4 + 0.06 * Math.sin(t * 0.35);
+    const pt = makeProj(t * spin, tilt, cx, cy, radius);
+    // scan sweeps relative to the spin; scanMul scales that relative rate
+    const scan = t * (spin + (1.7 - spin) * (o.scanMul ?? 1));
+    const rs = radiusScale(size, o.rsPow ?? 0.6);
+    const dimBase = o.dimBase ?? 1;
+
+    const dots = [];
+    const latRings = o.latRings ?? 17;
+    const lonDensity = o.lonDensity ?? 44;
+    for (let li = 0; li <= latRings; li++) {
+      const lat = -Math.PI / 2 + (li / latRings) * Math.PI;
+      const cosLat = Math.cos(lat);
+      const sinLat = Math.sin(lat);
+      const lonCount = Math.max(1, Math.round(Math.abs(cosLat) * lonDensity));
+      for (let lj = 0; lj < lonCount; lj++) {
+        const lon = (lj / lonCount) * 2 * Math.PI;
+        const [px, py, z] = pt(cosLat * Math.cos(lon), sinLat, cosLat * Math.sin(lon));
+        const depth = (z + 1) / 2;
+        // the scan: a moving meridian read as a size ripple, not a shine
+        const d = angleDelta(lon + t * spin, scan);
+        const boost = Math.exp(-(d * d) / 0.18) * Math.max(0, z);
+        dots.push({
+          x: px,
+          y: py,
+          z,
+          r: ((o.rBase ?? 0.6) + (o.rDepth ?? 1.7) * depth + (o.rBoost ?? 1) * boost) * rs,
+          white: (o.inkFar ?? 0.62) - (o.inkSpan ?? 0.54) * depth,
+          // dimBase < 1 fades un-scanned dots so the meridian reads clearly
+          a: dimBase + (1 - dimBase) * Math.min(1, boost)
+        });
+      }
+    }
+    return finalizeFrame(dots, [], o.rMin);
+  };
+
+  // Rubik: bands twist in quarter turns, scramble → solve — "solving"
+  const frameRubik = (size, t, o) => {
+    const cx = size / 2;
+    const cy = size / 2;
+    const R = (size / 2) * 0.82;
+    const pt = makeProj(t * 0.55, 0.35 + 0.1 * Math.sin(t * 0.9), cx, cy, R);
+    const rs = radiusScale(size, o.rsPow ?? 0.6);
+    const moveCount = o.moveCount ?? 14;
+    const moves = makeMoves(moveCount);
+    const sc = solveCycle(t, moveCount, 0.42, 1.2);
+
+    const dots = [];
+    const latRings = o.latRings ?? 15;
+    const lonDensity = o.lonDensity ?? 40;
+    for (let li = 0; li <= latRings; li++) {
+      const lat = -Math.PI / 2 + (li / latRings) * Math.PI;
+      const cosLat = Math.cos(lat);
+      const sinLat = Math.sin(lat);
+      const lonCount = Math.max(1, Math.round(Math.abs(cosLat) * lonDensity));
+      for (let lj = 0; lj < lonCount; lj++) {
+        const lon = (lj / lonCount) * 2 * Math.PI;
+        const [x, y, z, inActive] = applyMoves(
+          [cosLat * Math.cos(lon), sinLat, cosLat * Math.sin(lon)],
+          moves,
+          sc
+        );
+        const [px, py, zr] = pt(x, y, z);
+        const depth = (zr + 1) / 2;
+        // the band being turned inks a touch darker — the "hand"
+        dots.push({
+          x: px,
+          y: py,
+          z: zr,
+          r: ((o.rBase ?? 0.6) + (o.rDepth ?? 1.7) * depth + (inActive ? (o.rActive ?? 0.3) : 0)) * rs,
+          white: (o.inkFar ?? 0.62) - (o.inkSpan ?? 0.54) * depth - (inActive ? 0.14 : 0)
+        });
+      }
+    }
+    return finalizeFrame(dots, [], o.rMin);
+  };
+
+  // Wave: a waveform rolls through the rings — "listening"
+  const frameWave = (size, t, o) => {
+    const cx = size / 2;
+    const cy = size / 2;
+    // 0.76 base × 1.15 — the undulation pulls the sphere inward, so wave
+    // read ~15% smaller than the other lattice modes; scaled to match
+    const R = (size / 2) * 0.874;
+    const pt = makeProj(t * 0.18, 0.38, cx, cy, 1);
+    const rs = radiusScale(size, o.rsPow ?? 0.6);
+
+    const dots = [];
+    const rings = o.rings ?? 15;
+    const lonDensity = o.lonDensity ?? 40;
+    for (let ri = 0; ri <= rings; ri++) {
+      const lat = -Math.PI / 2 + (ri / rings) * Math.PI;
+      const cosLat = Math.cos(lat);
+      const sinLat = Math.sin(lat);
+      // two waves, different tempi — organic, never quite repeating
+      const w = 0.62 * Math.sin(t * 2.1 - ri * 0.52) + 0.38 * Math.sin(t * 1.27 + ri * 0.83);
+      const rr = R * (0.88 + 0.105 * w);
+      const lonCount = Math.max(1, Math.round(Math.abs(cosLat) * lonDensity));
+      for (let lj = 0; lj < lonCount; lj++) {
+        const lon = (lj / lonCount) * 2 * Math.PI;
+        const [px, py, z] = pt(cosLat * Math.cos(lon) * rr, sinLat * rr, cosLat * Math.sin(lon) * rr);
+        const depth = (z / R + 1) / 2;
+        const crest = Math.max(0, w);
+        dots.push({
+          x: px,
+          y: py,
+          z,
+          r: ((o.rBase ?? 0.6) + (o.rDepth ?? 1.7) * depth) * (1 + 0.4 * crest) * rs,
+          white: 0.66 - 0.56 * depth - 0.1 * crest
+        });
+      }
+    }
+    return finalizeFrame(dots, [], o.rMin);
+  };
+
+  /* ── web: a constellation wires itself — "connecting" (web.ts) ── */
+
+  const frameWeb = (size, t, o) => {
+    const cx = size / 2;
+    const cy = size / 2;
+    const R = (size / 2) * 0.8 * (o.spread ?? 1);
+    // the projector carries the radius as its scale, so node vectors stay
+    // unit-length and distances below are in unit-sphere space
+    const pt = makeProj(t * 0.12, 0.32, cx, cy, R);
+    const rs = radiusScale(size, o.rsPow ?? 0.6);
+
+    const nodeN = o.nodeN ?? 30;
+    const thr = o.thr ?? 0.72;
+    const nodeR = o.nodeR ?? 1.4;
+    const nodeRDepth = o.nodeRDepth ?? 1.8;
+
+    // nodes: fib lattice + slow noise wander, renormalised to the surface
+    const nodes = [];
+    for (let i = 0; i < nodeN; i++) {
+      const d = fibDir(i, nodeN);
+      const x = d[0] + 0.3 * (vnoise(i * 0.31 + 9, t * 0.24) - 0.5) * 2;
+      const y = d[1] + 0.3 * (vnoise(i * 0.53 + 27, t * 0.21) - 0.5) * 2;
+      const z = d[2] + 0.3 * (vnoise(i * 0.77 + 55, t * 0.27) - 0.5) * 2;
+      const l = Math.sqrt(x * x + y * y + z * z);
+      nodes.push([x / l, y / l, z / l]);
+    }
+
+    const lines = [];
+    const dots = [];
+
+    // edges between close neighbours, alpha by proximity + depth
+    for (let i = 0; i < nodeN; i++) {
+      for (let j = i + 1; j < nodeN; j++) {
+        const dx = nodes[i][0] - nodes[j][0];
+        const dy = nodes[i][1] - nodes[j][1];
+        const dz = nodes[i][2] - nodes[j][2];
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist >= thr) continue;
+        const [x1, y1, z1] = pt(nodes[i][0], nodes[i][1], nodes[i][2]);
+        const [x2, y2, z2] = pt(nodes[j][0], nodes[j][1], nodes[j][2]);
+        const depth = ((z1 + z2) / 2 + 1) / 2;
+        lines.push({
+          x1,
+          y1,
+          x2,
+          y2,
+          white: 0.42,
+          a: (1 - dist / thr) * (0.3 + 0.55 * depth),
+          w: Math.max(0.6, (o.lineW ?? 0.8) * rs)
+        });
+      }
+    }
+
+    for (let i = 0; i < nodeN; i++) {
+      const [px, py, z] = pt(nodes[i][0], nodes[i][1], nodes[i][2]);
+      const depth = (z + 1) / 2;
+      const pulse = 1 + 0.25 * Math.sin(t * 1.4 + i * 2.7);
+      dots.push({
+        x: px,
+        y: py,
+        z,
+        r: (nodeR + nodeRDepth * depth) * pulse * rs,
+        white: 0.55 - 0.45 * depth
+      });
+    }
+
+    // signals: bright packets running between paired nodes
+    const signals = o.signals ?? 5;
+    for (let s = 0; s < signals; s++) {
+      const seg = Math.floor(t * 0.55 + s * 7.31);
+      const a = Math.floor(hashD(seg, s * 3.1 + 1.7) * nodeN);
+      const b = Math.floor(hashD(seg, s * 5.7 + 4.2) * nodeN);
+      if (a === b) continue;
+      const f = frac(t * 0.55 + s * 7.31);
+      const x = lerp(nodes[a][0], nodes[b][0], f);
+      const y = lerp(nodes[a][1], nodes[b][1], f);
+      const z = lerp(nodes[a][2], nodes[b][2], f);
+      const l = Math.max(1e-6, Math.sqrt(x * x + y * y + z * z));
+      const [px, py, zr] = pt(x / l, y / l, z / l);
+      const depth = (zr + 1) / 2;
+      dots.push({
+        x: px,
+        y: py,
+        z: zr,
+        r: (nodeR * 1.5 + nodeRDepth * depth) * rs,
+        white: 0.05,
+        a: 0.5 + 0.5 * depth
+      });
+    }
+
+    return finalizeFrame(dots, lines, o.rMin);
+  };
+
+  /* ── braid: three strands plait the sphere — "weaving" (braid.ts) ── */
+
+  const frameBraid = (size, t, o) => {
+    const cx = size / 2;
+    const cy = size / 2;
+    const R = (size / 2) * 0.76;
+    const pt = makeProj(t * 0.4, 0.3, cx, cy, 1);
+    const rs = radiusScale(size, o.rsPow ?? 0.6);
+
+    const dots = [];
+    const ghostN = o.ghostN ?? 150;
+    for (let i = 0; i < ghostN; i++) {
+      const d = fibDir(i, ghostN);
+      const [px, py, z] = pt(d[0] * R, d[1] * R, d[2] * R);
+      const depth = (z / R + 1) / 2;
+      dots.push({ x: px, y: py, z, r: 0.8 * rs, white: 0.78, a: 0.1 + 0.22 * depth });
+    }
+
+    const strandN = o.strandN ?? 52;
+    const turns = o.turns ?? 3;
+    for (let s = 0; s < 3; s++) {
+      const phase = (s / 3) * 2 * Math.PI;
+      for (let i = 0; i < strandN; i++) {
+        // u walks pole to pole; frac() drift slides the strand along
+        const u = (frac(i / strandN + t * 0.045) * 2 - 1) * 0.96;
+        const surf = Math.sqrt(Math.max(0, 1 - u * u));
+        const endFade = Math.min(1, (1 - Math.abs(u)) / 0.1);
+        const a = u * Math.PI * turns + phase;
+        // radial breathing: strands trade places — the plait's over/under
+        const weave = 1 + 0.075 * Math.sin(u * Math.PI * turns * 2 + phase * 2 + t * 0.8);
+        const rr = surf * R * weave;
+        const [px, py, zr] = pt(Math.cos(a) * rr, u * R * weave, Math.sin(a) * rr);
+        const depth = (zr / R + 1) / 2;
+        dots.push({
+          x: px,
+          y: py,
+          z: zr,
+          r: ((o.rBase ?? 1.2) + (o.rDepth ?? 1.8) * depth) * rs,
+          white: 0.55 - 0.45 * depth,
+          a: endFade * (0.45 + 0.55 * depth)
+        });
+      }
+    }
+    return finalizeFrame(dots, [], o.rMin);
+  };
+
+  /* ── ribbon / ring: sash & breathing circle (ribbon.ts) ──
+     The same painter drives "composing" (ribbon) and "breathing" (ring),
+     via the faceOn flag: face-on cancels the camera tilt and moves the
+     undulation onto the in-plane radius. */
+
+  const frameRibbon = (size, t, o) => {
+    const cx = size / 2;
+    const cy = size / 2;
+    const R = (size / 2) * 0.78;
+    // spin scales the 3D tumble; spin=0 freezes the band's orientation,
+    // leaving only the traveling undulation
+    const spin = o.spin ?? 1;
+    const camTilt = 0.3;
+    const pt = makeProj(t * 0.1 * spin, camTilt, cx, cy, 1);
+    const rs = radiusScale(size, o.rsPow ?? 0.6);
+
+    const dots = [];
+    const ghostN = o.ghostN ?? 150;
+    for (let i = 0; i < ghostN; i++) {
+      const d = fibDir(i, ghostN);
+      const [px, py, z] = pt(d[0] * R, d[1] * R, d[2] * R);
+      const depth = (z / R + 1) / 2;
+      dots.push({ x: px, y: py, z, r: 0.8 * rs, white: 0.78, a: 0.1 + 0.22 * depth });
+    }
+
+    // The band plane, precessing (frozen when spin=0). Face-on sets
+    // ta = -camTilt so the band reads as a true circle, not an ellipse.
+    const ya = t * 0.24 * spin;
+    const ta = o.faceOn ? -camTilt : 0.55 + 0.3 * Math.sin(t * 0.18) * spin;
+    const ux = Math.cos(ya);
+    const uy = 0;
+    const uz = Math.sin(ya);
+    const vx = -uz * Math.sin(ta);
+    const vy = Math.cos(ta);
+    const vz = ux * Math.sin(ta);
+    // plane normal n = u × v
+    const nx = uy * vz - uz * vy;
+    const ny = uz * vx - ux * vz;
+    const nz = ux * vy - uy * vx;
+
+    // Radial lobes swell past R, so pull the base radius in by (most of)
+    // the wobble amplitude — the silhouette stays inside the frame.
+    const wobAmp = 0.23 * (o.wobMul ?? 1);
+    const baseR = o.faceOn ? R / (1 + 0.85 * wobAmp) : R;
+
+    const baseLanes = o.lanes ?? 5;
+    const segs = o.segs ?? 88;
+    const lanes = Math.max(1, Math.round(baseLanes * (o.bandMul ?? 1)));
+    for (let w = 0; w < lanes; w++) {
+      const laneOff = (w - (lanes - 1) / 2) * 0.075;
+      const edge = Math.abs(w - (lanes - 1) / 2) / Math.max(1, (lanes - 1) / 2);
+      for (let k = 0; k < segs; k++) {
+        const a = (k / segs) * 2 * Math.PI;
+        // the undulation: two traveling waves along the band; wobMul
+        // scales the deformation — 0 is a clean band
+        const wob =
+          (0.16 * Math.sin(a * 3 - t * 1.7 + w * 0.22) + 0.07 * Math.sin(a * 5 + t * 1.1)) *
+          (o.wobMul ?? 1);
+        // Face-on modulates the in-plane RADIUS so lobes genuinely swell
+        // and pinch; ribbon keeps the out-of-plane sash wobble.
+        const radial = o.faceOn ? 1 + wob : 1;
+        const off = o.faceOn ? laneOff : laneOff + wob;
+        const x = ux * Math.cos(a) + vx * Math.sin(a) + nx * off;
+        const y = uy * Math.cos(a) + vy * Math.sin(a) + ny * off;
+        const z = uz * Math.cos(a) + vz * Math.sin(a) + nz * off;
+        const l = Math.sqrt(x * x + y * y + z * z);
+        const rr = baseR * radial;
+        const [px, py, zr] = pt((x / l) * rr, (y / l) * rr, (z / l) * rr);
+        const depth = (zr / R + 1) / 2;
+        dots.push({
+          x: px,
+          y: py,
+          z: zr,
+          r: ((o.rBase ?? 1.1) + (o.rDepth ?? 1.7) * depth) * (1 - 0.25 * edge) * rs,
+          white: 0.52 - 0.44 * depth + 0.18 * edge,
+          a: 0.4 + 0.6 * depth
+        });
+      }
+    }
+    return finalizeFrame(dots, [], o.rMin);
+  };
+
+  /* ── morph: circle → triangle → square outline — "shaping" (morph.ts) ──
+     Each shape is a closed path parameterised by arc length (top-centre
+     start, clockwise); every frame blends the two neighbouring paths,
+     then lays the dots EVENLY along the blended outline. */
+
+  function smoothE(x) {
+    return x * x * (3 - 2 * x);
+  }
+
+  function polyPath(verts) {
+    const V = verts.length;
+    const L = [];
+    let total = 0;
+    for (let i = 0; i < V; i++) {
+      const a = verts[i];
+      const b = verts[(i + 1) % V];
+      const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      L.push(l);
+      total += l;
+    }
+    return (f) => {
+      let target = f * total;
+      let i = 0;
+      while (target > L[i] && i < V - 1) {
+        target -= L[i];
+        i++;
+      }
+      const a = verts[i];
+      const b = verts[(i + 1) % V];
+      const ff = L[i] ? Math.min(1, target / L[i]) : 0;
+      return [a[0] + (b[0] - a[0]) * ff, a[1] + (b[1] - a[1]) * ff];
+    };
+  }
+
+  const MORPH_CIRCLE = (f) => {
+    const a = -Math.PI / 2 + f * 2 * Math.PI;
+    return [Math.cos(a) * 0.24, Math.sin(a) * 0.24];
+  };
+  const MORPH_TRIANGLE = polyPath([
+    [0.0, -0.26],
+    [0.24, 0.16],
+    [-0.24, 0.16]
+  ]);
+  // 5-vertex walk so the path STARTS at top-centre like the other shapes
+  const MORPH_SQUARE = polyPath([
+    [0, -0.2],
+    [0.2, -0.2],
+    [0.2, 0.2],
+    [-0.2, 0.2],
+    [-0.2, -0.2]
+  ]);
+  const MORPH_CYCLE = [MORPH_CIRCLE, MORPH_TRIANGLE, MORPH_SQUARE];
+
+  // low floor keeps sparse outlines possible while never degenerating
+  function morphN(d) {
+    return Math.max(6, Math.round(34 * d));
+  }
+
+  const MORPH_HOLD = 1.4;
+  const MORPH_MORPH = 0.9;
+  const MORPH_SEG = MORPH_HOLD + MORPH_MORPH;
+
+  const frameMorph = (size, t, o) => {
+    const K = MORPH_CYCLE.length;
+    const tc = t % (MORPH_SEG * K);
+    const k = Math.floor(tc / MORPH_SEG);
+    const local = tc - k * MORPH_SEG;
+    const m = local > MORPH_HOLD ? smoothE((local - MORPH_HOLD) / MORPH_MORPH) : 0;
+    const sprd = o.spread ?? 1;
+
+    // blend the two shape PATHS at m, then measure the blended outline
+    const pA = MORPH_CYCLE[k];
+    const pB = MORPH_CYCLE[(k + 1) % K];
+    const M = 160;
+    const pts = [];
+    for (let i = 0; i < M; i++) {
+      const f = i / M;
+      const a = pA(f);
+      const b = pB(f);
+      pts.push([(a[0] + (b[0] - a[0]) * m) * sprd, (a[1] + (b[1] - a[1]) * m) * sprd]);
+    }
+    const L = [];
+    let total = 0;
+    for (let i = 0; i < M; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % M];
+      const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      L.push(l);
+      total += l;
+    }
+
+    // dot radius depends ONLY on rDot (the size knob); the count sets the
+    // gaps. Formed shapes breathe a little (uniform pulse).
+    const n = morphN(o.iconD ?? 1);
+    const re = (o.rDot ?? 0.021) * 1.35 * sprd;
+    const pulse = 1 + 0.02 * Math.sin(local * 3.1);
+
+    const dots = [];
+    const c2 = size / 2;
+    let seg = 0;
+    let acc = 0;
+    for (let k2 = 0; k2 < n; k2++) {
+      const target = (k2 / n) * total;
+      while (acc + L[seg] < target && seg < M - 1) {
+        acc += L[seg];
+        seg++;
+      }
+      const a = pts[seg];
+      const b = pts[(seg + 1) % M];
+      const f = L[seg] ? Math.min(1, (target - acc) / L[seg]) : 0;
+      const x = (a[0] + (b[0] - a[0]) * f) * pulse;
+      const y = (a[1] + (b[1] - a[1]) * f) * pulse;
+      dots.push({
+        x: c2 + x * size,
+        y: c2 + y * size,
+        z: 0,
+        r: Math.max(0.35, re * size),
+        white: 0.1
+      });
+    }
+    return finalizeFrame(dots, [], o.rMin);
+  };
+
+  /* ── registry + presets (registry.ts, presets.ts) ── */
+
+  const MODE_FRAMES = {
+    orbits: frameOrbits,
+    globe: frameGlobe,
+    rubik: frameRubik,
+    wave: frameWave,
+    web: frameWeb,
+    braid: frameBraid,
+    ribbon: frameRibbon,
+    // ring shares ribbon's geometry — the faceOn profile flag switches it
+    ring: frameRibbon,
+    morph: frameMorph
+  };
+
+  const STATE_TO_MODE = {
+    working: 'orbits',
+    searching: 'globe',
+    solving: 'rubik',
+    listening: 'wave',
+    connecting: 'web',
+    weaving: 'braid',
+    composing: 'ribbon',
+    breathing: 'ring',
+    shaping: 'morph'
+  };
+
+  // The shipped tunings: nine states × two sizes, baked from inkform's
+  // tuning session. count/size are multipliers over the base fine
+  // profiles; speed multiplies the shared clock.
+  const PRESETS = {
+    orbits: {
+      64: { speed: 1.885, count: 1, size: 1 },
+      20: { speed: 3.9, count: 0.238, size: 2.4 }
+    },
+    globe: {
+      64: { speed: 2.015, count: 0.42, size: 1.15, extra: { scanMul: 4.08, dimBase: 0.45 } },
+      20: { speed: 2.665, count: 0.105, size: 1.75, extra: { scanMul: 4.335, dimBase: 0.45 } }
+    },
+    rubik: {
+      64: { speed: 1.82, count: 0.35, size: 1.05 },
+      20: { speed: 1.95, count: 0.088, size: 1.9 }
+    },
+    wave: {
+      64: { speed: 4.388, count: 0.341, size: 1 },
+      20: { speed: 3.998, count: 0.105, size: 1.6 }
+    },
+    web: {
+      64: { speed: 3.315, count: 1.35, size: 0.95 },
+      20: { speed: 6.63, count: 0.25, size: 1.52 }
+    },
+    braid: {
+      64: { speed: 1.625, count: 0.5, size: 1 },
+      20: { speed: 2.75, count: 0.1125, size: 1.36 }
+    },
+    ribbon: {
+      64: { speed: 2.34, count: 0.25, size: 0.85, extra: { spin: 0, bandMul: 3.9, wobMul: 1 } },
+      20: { speed: 3.12, count: 0.051, size: 1.073, extra: { spin: 0, bandMul: 4.94, wobMul: 1 } }
+    },
+    ring: {
+      64: { speed: 3.24, count: 0.25, size: 0.956, extra: { spin: 0, bandMul: 3.627, wobMul: 0.368 } },
+      20: { speed: 3.78, count: 0.028, size: 1.622, extra: { spin: 0, bandMul: 3.968, wobMul: 0.565 } }
+    },
+    morph: {
+      64: { speed: 2.405, count: 0.702, size: 0.395, extra: { spread: 1.45 } },
+      20: { speed: 2.08, count: 0.53, size: 1.011, extra: { spread: 1.45 } }
+    }
+  };
+
+  const presetCache = new Map();
+
+  /** Resolve a (state, size) pair to mode + fully-scaled draw options. */
+  function resolvePreset(state, size) {
+    const key = `${state}-${size}`;
+    const hit = presetCache.get(key);
+    if (hit) return hit;
+
+    const mode = STATE_TO_MODE[state];
+    const preset = PRESETS[mode][size];
+    let opts = { ...BASE_PROFILES[mode] };
+    if (preset.count !== 1) opts = scaleCounts(opts, preset.count);
+    if (preset.size !== 1) opts = scaleRadii(opts, preset.size);
+    if (preset.extra) opts = { ...opts, ...preset.extra };
+
+    const resolved = { mode, speed: preset.speed, opts };
+    presetCache.set(key, resolved);
+    return resolved;
+  }
+
+  /** Per-state default aria-labels (overridable via opts.ariaLabel). */
+  const LABELS = {
+    working: 'Working…',
+    searching: 'Searching…',
+    solving: 'Solving…',
+    listening: 'Listening…',
+    connecting: 'Connecting…',
+    weaving: 'Weaving…',
+    composing: 'Composing…',
+    breathing: 'Thinking…',
+    shaping: 'Shaping…'
+  };
+
+  /* ── theme resolution (theme.ts, sans React) ──
+     Ancestor data-theme="dark|light" attr or dark/light class (TreeMap
+     sets data-theme on <html>), watched live via MutationObserver; else
+     prefers-color-scheme, subscribed live. Pre-resolution fallback is
+     dark, matching the app's default theme. */
+
+  function ancestorTheme(el) {
+    let node = el;
+    while (node) {
+      const attr = node.getAttribute('data-theme');
+      if (attr === 'dark') return true;
+      if (attr === 'light') return false;
+      if (node.classList.contains('dark')) return true;
+      if (node.classList.contains('light')) return false;
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  function systemDark() {
+    return typeof matchMedia === 'undefined' || matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+
+  /* ── the vanilla mount: one shared clock, ONE shared rAF loop ──
+     Every mounted orb registers in `animating`; the single loop renders
+     them all off one performance.now() clock (so instances stay in
+     phase) and fully stops the moment the set is empty or the tab is
+     hidden. REDUCED users get one static frame and no loop at all. */
+
+  const orbsMounted = new Set(); // every un-destroyed orb
+  const orbsAnimating = new Set(); // orbs currently animating
+  let orbRaf = 0;
+  let orbLooping = false;
+
+  function orbTick() {
+    if (!orbLooping) return;
+    const now = performance.now() / 1000;
+    for (const orb of orbsAnimating) orb.render(now * orb.effSpeed);
+    orbRaf = requestAnimationFrame(orbTick);
+  }
+
+  function orbStartLoop() {
+    if (orbLooping || orbsAnimating.size === 0 || document.hidden) return;
+    orbLooping = true;
+    orbRaf = requestAnimationFrame(orbTick);
+  }
+
+  function orbStopLoop() {
+    if (!orbLooping) return;
+    orbLooping = false;
+    cancelAnimationFrame(orbRaf);
+  }
+
+  function orbOnVisibility() {
+    if (document.hidden) orbStopLoop();
+    else orbStartLoop();
+  }
+
+  /**
+   * Mount an orb into `container`.
+   *
+   * opts: { state, size (64|20), speed?, ariaLabel?, paused? }
+   * returns { setState(s), pause(), resume(), destroy() }
+   */
+  function mount(container, opts = {}) {
+    const state = opts.state ?? 'working';
+    const size = opts.size ?? 64;
+    const userSpeed = opts.speed ?? 1;
+    if (!STATE_TO_MODE[state]) throw new Error(`FxOrbs: unknown state "${state}"`);
+    if (size !== 64 && size !== 20) throw new Error(`FxOrbs: size must be 64 or 20, got ${size}`);
+
+    const canvas = document.createElement('canvas');
+    canvas.className = 'fx-orb';
+    canvas.setAttribute('role', 'img');
+    const customLabel = opts.ariaLabel;
+    canvas.setAttribute('aria-label', customLabel || LABELS[state]);
+    // dpr-correct backing store, capped at 2 like the source library; the
+    // pixel-ratio transform is (re)applied on the context every frame
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.round(size * dpr);
+    canvas.height = Math.round(size * dpr);
+    canvas.style.width = size + 'px';
+    canvas.style.height = size + 'px';
+    container.appendChild(canvas);
+    const ctx = canvas.getContext('2d');
+
+    let mode;
+    let modeOpts;
+    let destroyed = false;
+    let paused = !!opts.paused;
+
+    // resolve AFTER appending, so ancestor data-theme/classes are visible
+    let dark = (() => {
+      const fromTree = ancestorTheme(canvas);
+      return fromTree === null ? systemDark() : fromTree;
+    })();
+
+    const orb = {
+      effSpeed: 1,
+      lastT: 0,
+      render(tSec) {
+        orb.lastT = tSec;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, size, size);
+        paintFrame(ctx, MODE_FRAMES[mode](size, tSec, modeOpts), dark);
+      }
+    };
+
+    const applyState = (s) => {
+      const r = resolvePreset(s, size);
+      mode = r.mode;
+      modeOpts = r.opts;
+      orb.effSpeed = r.speed * userSpeed;
+      if (!customLabel) canvas.setAttribute('aria-label', LABELS[s]);
+    };
+    applyState(state);
+
+    // live theme: ancestor attr/class flips + OS scheme switches. Static
+    // orbs (REDUCED or paused) repaint their held frame in the new ink.
+    const reTheme = () => {
+      const fromTree = ancestorTheme(canvas);
+      const next = fromTree === null ? systemDark() : fromTree;
+      if (next === dark || destroyed) return;
+      dark = next;
+      orb.render(orb.lastT);
+    };
+    const mq = typeof matchMedia !== 'undefined' ? matchMedia('(prefers-color-scheme: dark)') : null;
+    mq?.addEventListener('change', reTheme);
+    let mo = null;
+    if (typeof MutationObserver !== 'undefined') {
+      mo = new MutationObserver(reTheme);
+      mo.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['class', 'data-theme'],
+        subtree: true
+      });
+    }
+
+    if (orbsMounted.size === 0) document.addEventListener('visibilitychange', orbOnVisibility);
+    orbsMounted.add(orb);
+
+    const stopAnimating = () => {
+      orbsAnimating.delete(orb);
+      if (orbsAnimating.size === 0) orbStopLoop();
+    };
+
+    // Reduced motion → one static, deterministic frame; never animate.
+    if (REDUCED) {
+      orb.render(0);
+    } else {
+      // paint immediately — no blank canvas before the first rAF, and a
+      // paused mount still shows its representative frame
+      orb.render((performance.now() / 1000) * orb.effSpeed);
+      if (!paused) {
+        orbsAnimating.add(orb);
+        orbStartLoop();
+      }
+    }
+
+    return {
+      setState(s) {
+        if (destroyed) return;
+        if (!STATE_TO_MODE[s]) throw new Error(`FxOrbs: unknown state "${s}"`);
+        applyState(s);
+        // repaint now in the new mode; the loop (if running) carries on
+        orb.render(REDUCED ? 0 : (performance.now() / 1000) * orb.effSpeed);
+      },
+      pause() {
+        if (destroyed || paused) return;
+        paused = true;
+        stopAnimating();
+      },
+      resume() {
+        if (destroyed || !paused) return;
+        paused = false;
+        if (REDUCED) return; // reduced motion never animates
+        orbsAnimating.add(orb);
+        orbStartLoop();
+      },
+      destroy() {
+        if (destroyed) return;
+        destroyed = true;
+        stopAnimating();
+        orbsMounted.delete(orb);
+        if (orbsMounted.size === 0) document.removeEventListener('visibilitychange', orbOnVisibility);
+        mq?.removeEventListener('change', reTheme);
+        mo?.disconnect();
+        canvas.remove();
+      }
+    };
+  }
+
+  return {
+    mount,
+    // The pure geometry surface, exposed for the extraction tests: the
+    // golden-vector suite runs these in Node and compares numbers.
+    engine: {
+      resolvePreset,
+      MODE_FRAMES,
+      STATE_TO_MODE,
+      PRESETS,
+      BASE_PROFILES,
+      LABELS,
+      finalizeFrame,
+      radiusScale,
+      scaleCounts,
+      scaleRadii
+    }
+  };
+})();
+/* ═══ end FX: Thinking Orbs ═══ */
+
+/* ═══════════════ FX: Border Beam ═══════════════
+   Vanilla port of the border-beam library (React → plain JS).
+   Five types, one voice:
+     rotate family — "md" (full ring), "sm" (compact ring), "line" (bottom
+     traveling glow with breathe + spike oscillators);
+     pulse family  — "pulse-inner" (contained breathe), "pulse-outside"
+     (outward halo behind the element).
+   The colorful/sunset palettes were NOT ported; every gradient stop below is
+   re-tuned into the app's blue/black family built from --accent #0A84FF,
+   using the original "ocean" variant as the structural reference (same
+   positions, sizes, offsets and alpha ladders — only hues moved).
+
+   API:  FxBeam.attach(el, { type, active, duration?, strength? })
+         FxBeam.detach(el)
+   attach is idempotent — attaching to an already-attached element
+   reconfigures it in place (same id, same injected style tag).
+
+   Behaviour contract:
+   - Honors the app's REDUCED const: no rotation, no travel, no pulse — a
+     static subtle glow instead, applied and removed instantly (no fades).
+   - Pauses when document.hidden and when scrolled offscreen
+     (IntersectionObserver, 256px early margin), like the original.
+   - Zero idle cost when inactive: no rAF, no timers, no matching animation
+     selectors once the fade-out completes.
+   - The pulse breathing runs on ONE shared ~30fps rAF loop across all
+     instances (port of pulseDriver.ts) and stops entirely when no pulse
+     instance is active.
+   Scalar tuning (per-type opacities, saturation, brightness, shadows) lives
+   in the FX: Border Beam styles block as --fxb-* custom properties, dark on
+   :root with :root[data-theme="light"] overrides, so those flip with the
+   theme live; structural theme differences (line palette geometry, pulse
+   oscillator parameters) regenerate via a data-theme MutationObserver. */
+const FxBeam = (() => {
+  const TYPES = ['md', 'sm', 'line', 'pulse-inner', 'pulse-outside'];
+
+  /* ── Palette — the blue/black family (ocean-derived, --accent-anchored) ──
+     Every rgb is a comma-joined triplet so gradients can wrap it in either
+     rgb() or rgba(). Positions/sizes are verbatim from the original tables. */
+  const PALETTE = {
+    /* md ring + both pulse types build from these 9 blobs. */
+    border: [
+      { rgb: '70, 105, 235',  x: '33%',   y: '-7.4%', w: 70,  h: 40 },
+      { rgb: '10, 132, 255',  x: '12%',   y: '-5%',   w: 60,  h: 35 },
+      { rgb: '45, 100, 210',  x: '2.1%',  y: '68.3%', w: 40,  h: 70 },
+      { rgb: '64, 156, 255',  x: '2.1%',  y: '68.3%', w: 20,  h: 35 },
+      { rgb: '90, 140, 255',  x: '74.4%', y: '100%',  w: 180, h: 32 },
+      { rgb: '30, 150, 255',  x: '55%',   y: '100%',  w: 85,  h: 26 },
+      { rgb: '110, 170, 255', x: '93.9%', y: '0%',    w: 74,  h: 32 },
+      { rgb: '60, 130, 240',  x: '100%',  y: '27.1%', w: 26,  h: 42 },
+      { rgb: '100, 150, 255', x: '100%',  y: '27.1%', w: 52,  h: 48 },
+    ],
+    /* sm — compact blobs for ~70×36 controls; inner layer reuses these at
+       the original alpha ladder. */
+    small: [
+      { rgb: '40, 145, 235', x: '2%',   y: '68%',  w: 9,  h: 18 },
+      { rgb: '30, 120, 210', x: '2%',   y: '68%',  w: 4,  h: 8  },
+      { rgb: '80, 120, 250', x: '72%',  y: '-3%',  w: 59, h: 9  },
+      { rgb: '10, 132, 255', x: '74%',  y: '100%', w: 42, h: 7  },
+      { rgb: '95, 145, 255', x: '100%', y: '27%',  w: 10, h: 17 },
+      { rgb: '60, 115, 240', x: '100%', y: '27%',  w: 10, h: 18 },
+      { rgb: '35, 140, 255', x: '100%', y: '27%',  w: 5,  h: 10 },
+      { rgb: '85, 135, 245', x: '100%', y: '27%',  w: 11, h: 12 },
+    ],
+    smallInnerAlphas: [0.5, 0.45, 0.35, 0.35, 0.3, 0.4, 0.3, 0.3],
+    /* line — traveling-glow blob fields; geometry differs per theme in the
+       original, so both tables ship. dx/dy are px offsets from the beam x. */
+    line: {
+      dark: [
+        { rgb: '70, 110, 240',  w: 36, h: 36, dx: 0,   dy: 2  },
+        { rgb: '10, 132, 255',  w: 30, h: 32, dx: 39,  dy: 0  },
+        { rgb: '50, 110, 215',  w: 33, h: 28, dx: -36, dy: 2  },
+        { rgb: '95, 125, 255',  w: 29, h: 34, dx: -54, dy: 0  },
+        { rgb: '40, 150, 255',  w: 27, h: 30, dx: 51,  dy: -1 },
+        { rgb: '85, 140, 255',  w: 36, h: 24, dx: 21,  dy: 1  },
+        { rgb: '60, 120, 235',  w: 30, h: 22, dx: -21, dy: 0  },
+        { rgb: '75, 130, 245',  w: 25, h: 28, dx: 66,  dy: 1  },
+        { rgb: '105, 155, 255', w: 23, h: 30, dx: -66, dy: -1 },
+      ],
+      light: [
+        { rgb: '25, 75, 200',  w: 45, h: 36, dx: 0,    dy: 2  },
+        { rgb: '10, 100, 225', w: 35, h: 32, dx: 65,   dy: 0  },
+        { rgb: '40, 90, 195',  w: 40, h: 28, dx: -60,  dy: 2  },
+        { rgb: '70, 85, 225',  w: 35, h: 34, dx: -90,  dy: 0  },
+        { rgb: '20, 110, 235', w: 38, h: 30, dx: 85,   dy: -1 },
+        { rgb: '55, 95, 245',  w: 50, h: 24, dx: 35,   dy: 1  },
+        { rgb: '35, 105, 215', w: 40, h: 22, dx: -35,  dy: 0  },
+        { rgb: '50, 90, 230',  w: 35, h: 28, dx: 110,  dy: 1  },
+        { rgb: '80, 110, 250', w: 30, h: 30, dx: -110, dy: -1 },
+      ],
+    },
+    /* line inner-perimeter layer: colors are line.dark's, geometry+alpha are
+       the original lineInnerGradientData values. */
+    lineInner: [
+      { a: 0.48, w: 33, h: 30, dx: 0,   dy: 0  },
+      { a: 0.42, w: 24, h: 26, dx: 39,  dy: -3 },
+      { a: 0.48, w: 27, h: 24, dx: -36, dy: 0  },
+      { a: 0.42, w: 23, h: 28, dx: -54, dy: -2 },
+      { a: 0.50, w: 24, h: 24, dx: 51,  dy: -1 },
+      { a: 0.45, w: 30, h: 20, dx: 21,  dy: 0  },
+      { a: 0.40, w: 25, h: 18, dx: -21, dy: -2 },
+      { a: 0.45, w: 21, h: 24, dx: 66,  dy: 0  },
+      { a: 0.52, w: 18, h: 26, dx: -66, dy: -1 },
+    ],
+    /* line bloom spike colors (5 fixed spikes at 36/50/64/78/92%). */
+    lineSpikes: {
+      dark: [
+        { rgb: '85, 130, 255', a1: 1,    a2: 1    },
+        { rgb: '70, 140, 235', a1: 0.59, a2: 0.29 },
+        { rgb: '40, 120, 255', a1: 1,    a2: 1    },
+        { rgb: '90, 130, 220', a1: 0.91, a2: 0.45 },
+        { rgb: '110, 150, 255', a1: 1,   a2: 1    },
+      ],
+      light: [
+        { rgb: '30, 60, 190',  a1: 1,   a2: 0.8  },
+        { rgb: '25, 90, 210',  a1: 0.7, a2: 0.46 },
+        { rgb: '15, 70, 200',  a1: 1,   a2: 0.82 },
+        { rgb: '45, 100, 195', a1: 1,   a2: 0.7  },
+        { rgb: '60, 80, 215',  a1: 1,   a2: 0.78 },
+      ],
+    },
+    /* The two edge spikes at 8% / 22% (primary/secondary spike colors). */
+    lineEdgeSpike: {
+      dark:  { p: '80, 140, 255', s: '100, 130, 240', sTip: 0.98, pMid: 1,    sMid: 0.49 },
+      light: { p: '20, 70, 190',  s: '50, 100, 205',  sTip: 1,    pMid: 0.85, sMid: 0.7  },
+    },
+  };
+
+  /* ── Pulse geometry tables (verbatim from the original) ── */
+  const PULSE_RING_MAP = [
+    { r: 1, q: 'tl' }, { r: 2, q: 'tl' }, { r: 3, q: 'bl' },
+    { r: 1, q: 'bl' }, { r: 2, q: 'br' }, { r: 3, q: 'br' },
+    { r: 1, q: 'tr' }, { r: 2, q: 'tr' }, { r: 3, q: 'tr' },
+  ];
+  const PULSE_INNER_SIZES = [
+    [65, 35], [55, 30], [35, 65], [15, 30], [173, 28], [80, 22], [69, 28], [22, 38], [47, 44],
+  ];
+  const PULSE_INNER_BLOOM = [
+    { ci: 0, w: 84,  h: 48 }, { ci: 1, w: 72,  h: 42 }, { ci: 2, w: 48, h: 84 },
+    { ci: 4, w: 216, h: 38 }, { ci: 5, w: 102, h: 31 }, { ci: 6, w: 89, h: 38 },
+    { ci: 8, w: 62,  h: 58 },
+  ];
+  const PULSE_OUTER_CORE = [
+    { ci: 0, r: 1, q: 'tl', w: 80, h: 19, x: '27%',  y: '0%'   },
+    { ci: 6, r: 2, q: 'tr', w: 74, h: 11, x: '73%',  y: '-1%'  },
+    { ci: 7, r: 3, q: 'tr', w: 15, h: 44, x: '100%', y: '33%'  },
+    { ci: 8, r: 1, q: 'br', w: 19, h: 38, x: '101%', y: '72%'  },
+    { ci: 4, r: 2, q: 'br', w: 84, h: 13, x: '67%',  y: '100%' },
+    { ci: 1, r: 3, q: 'bl', w: 60, h: 21, x: '24%',  y: '101%' },
+    { ci: 2, r: 1, q: 'bl', w: 17, h: 40, x: '0%',   y: '60%'  },
+    { ci: 3, r: 2, q: 'tl', w: 13, h: 32, x: '-1%',  y: '28%'  },
+  ];
+  const PULSE_OUTER_BLOOM = [
+    { ci: 0, w: 110, h: 30, x: '27%',  y: '3%'  },
+    { ci: 6, w: 100, h: 20, x: '73%',  y: '1%'  },
+    { ci: 7, w: 26,  h: 62, x: '100%', y: '33%' },
+    { ci: 8, w: 30,  h: 56, x: '101%', y: '72%' },
+    { ci: 4, w: 120, h: 22, x: '67%',  y: '99%' },
+    { ci: 1, w: 88,  h: 32, x: '24%',  y: '99%' },
+    { ci: 2, w: 28,  h: 58, x: '0%',   y: '60%' },
+  ];
+
+  /* Hue drift, re-tuned for a committed blue theme: the original swung ±30°
+     (and rotated pulse hues a full 360°, a rainbow). Here the drift stays a
+     shimmer WITHIN the blue family. */
+  const HUE_RANGE = 12;        /* md/sm ping-pong, ±deg over 12s */
+  const LINE_HUE_RANGE = 8;    /* line is capped lower, like the original 13 */
+  const PULSE_HUE_RANGE = 14;  /* pulse ping-pongs instead of rotating 360° */
+
+  /* ── Pure oscillator math (port of pulseDriver.ts) ── */
+  const TWO_PI = Math.PI * 2;
+  /** Cosine ease-in-out ping-pong: 0 at phase 0/1, 1 at phase 0.5. */
+  function pingPong(phase) { return (1 - Math.cos(TWO_PI * phase)) / 2; }
+  /** Value of one oscillator {a, b, period, delay} at tSec (deterministic). */
+  function oscValue(osc, tSec) {
+    return osc.a + (osc.b - osc.a) * pingPong((tSec - osc.delay) / osc.period);
+  }
+  /** Hue ping-pong between -range and +range over period seconds. */
+  function hueValue(range, period, tSec) {
+    return -range + 2 * range * pingPong(tSec / period);
+  }
+
+  /** Theme/duration-tuned breathing parameters (verbatim from the original). */
+  function pulseParams(type, theme, duration) {
+    const isDark = theme === 'dark';
+    const durScale = duration / 2.3;
+    if (type === 'pulse-inner') {
+      return {
+        sp: 0.28, dr: isDark ? 33 : 40, op: isDark ? 0.48 : 0.45,
+        gh: isDark ? 0.34 : 0.22,
+        bs: (isDark ? 1.9 : 2.6) * durScale,
+        ss: (isDark ? 2.6 : 4.6) * durScale,
+        ghs: (isDark ? 2.4 : 5.5) * durScale,
+        huePeriod: 16,
+      };
+    }
+    return {
+      sp: isDark ? 0.28 : 0.36, dr: isDark ? 14 : 19,
+      op: isDark ? 0.46 : 0, gh: isDark ? 0.16 : 0.58,
+      bs: (isDark ? 2.3 : 3.7) * durScale,
+      ss: (isDark ? 6.4 : 4.6) * durScale,
+      ghs: (isDark ? 2.4 : 3.8) * durScale,
+      huePeriod: 14,
+    };
+  }
+
+  /** The 17 desynced oscillators of one pulse instance (verbatim table). */
+  function oscillatorDefs(id, p) {
+    const { sp, dr, op, gh, bs, ss, ghs } = p;
+    return [
+      { prop: `--fxb-bw1-${id}`, a: 1 - sp,        b: 1 + sp * 1.1,  period: ss * 0.9,  delay: 0,         unit: ''   },
+      { prop: `--fxb-bh1-${id}`, a: 1 + sp * 0.9,  b: 1 - sp * 0.85, period: ss * 1.26, delay: 0,         unit: ''   },
+      { prop: `--fxb-bx1-${id}`, a: -dr,           b: dr * 0.9,      period: bs * 1.6,  delay: 0,         unit: 'px' },
+      { prop: `--fxb-by1-${id}`, a: dr * 0.55,     b: -dr * 0.7,     period: bs * 1.6,  delay: 0,         unit: 'px' },
+      { prop: `--fxb-bw2-${id}`, a: 1 + sp,        b: 1 - sp * 0.85, period: ss * 1.1,  delay: 0,         unit: ''   },
+      { prop: `--fxb-bh2-${id}`, a: 1 - sp * 0.8,  b: 1 + sp * 1.05, period: ss * 0.81, delay: 0,         unit: ''   },
+      { prop: `--fxb-bx2-${id}`, a: dr * 0.8,      b: -dr * 0.9,     period: bs * 1.88, delay: 0,         unit: 'px' },
+      { prop: `--fxb-by2-${id}`, a: -dr,           b: dr * 0.65,     period: bs * 1.88, delay: 0,         unit: 'px' },
+      { prop: `--fxb-bw3-${id}`, a: 1 - sp * 0.6,  b: 1 + sp * 1.15, period: ss * 0.98, delay: 0,         unit: ''   },
+      { prop: `--fxb-bh3-${id}`, a: 1 + sp * 0.75, b: 1 - sp,        period: ss * 1.4,  delay: 0,         unit: ''   },
+      { prop: `--fxb-bx3-${id}`, a: -dr * 0.6,     b: dr,            period: bs * 1.45, delay: 0,         unit: 'px' },
+      { prop: `--fxb-by3-${id}`, a: -dr * 0.85,    b: dr * 0.45,     period: bs * 1.45, delay: 0,         unit: 'px' },
+      { prop: `--fxb-bgh-${id}`, a: 1 - gh,        b: 1 + gh,        period: ghs,       delay: 0,         unit: ''   },
+      { prop: `--fxb-bop-tl-${id}`, a: 1 - op, b: 1, period: bs,        delay: 0,         unit: '' },
+      { prop: `--fxb-bop-tr-${id}`, a: 1 - op, b: 1, period: bs * 1.32, delay: bs * 0.28, unit: '' },
+      { prop: `--fxb-bop-bl-${id}`, a: 1 - op, b: 1, period: bs * 0.84, delay: bs * 0.55, unit: '' },
+      { prop: `--fxb-bop-br-${id}`, a: 1 - op, b: 1, period: bs * 1.58, delay: bs * 0.83, unit: '' },
+    ];
+  }
+
+  /* ── Opts validation ── */
+  function normalizeOpts(opts) {
+    const o = (opts && typeof opts === 'object') ? opts : {};
+    const type = o.type === undefined ? 'md' : o.type;
+    if (TYPES.indexOf(type) === -1) {
+      throw new TypeError(`FxBeam: unknown type "${String(type)}" — expected one of ${TYPES.join(', ')}`);
+    }
+    const active = o.active === undefined ? true : !!o.active;
+    const isPulse = type === 'pulse-inner' || type === 'pulse-outside';
+    const defDur = type === 'line' ? 3.1 : isPulse ? 2.3 : 1.96;
+    let duration = Number(o.duration);
+    if (!Number.isFinite(duration) || duration <= 0) duration = defDur;
+    let strength = Number(o.strength);
+    if (!Number.isFinite(strength)) strength = 1;
+    strength = Math.max(0, Math.min(1, strength));
+    return { type, active, duration, strength };
+  }
+
+  /* ── CSS generation ─────────────────────────────────────────────────────
+     One rule block per instance, injected as its own <style> tag (no id —
+     tagged data-fxbeam-style). Scalar tuning comes from the --fxb-* tokens
+     in the styles block, so md/sm output is theme-agnostic; line and pulse
+     are theme-resolved and regenerate when data-theme flips. When `reduced`
+     is true no animation properties or keyframes are emitted at all — the
+     layers hold a static subtle glow, and JS sets the opacity var directly. */
+
+  const gradEllipse = (w, h, x, y, color) =>
+    `radial-gradient(ellipse ${w}px ${h}px at ${x} ${y}, ${color}, transparent)`;
+
+  /** Theme-flipping shine stop: white on dark, black on light, alpha scaled
+      by the --fxb-shine-a token (the original's light alphas ≈ dark × .73). */
+  const shine = (a) => `rgba(var(--fxb-shine), calc(${a} * var(--fxb-shine-a, 1)))`;
+
+  function shineConic(id) {
+    return `conic-gradient(from var(--fxb-a-${id}), transparent 0%, transparent 54%, ${shine(0.1)} 57%, ${shine(0.3)} 60%, ${shine(0.6)} 63%, ${shine(0.75)} 66%, ${shine(0.6)} 69%, ${shine(0.3)} 72%, ${shine(0.1)} 75%, transparent 78%, transparent 100%)`;
+  }
+  function bloomConic(id) {
+    return `conic-gradient(from var(--fxb-a-${id}), transparent 0%, transparent 58%, ${shine(0.03)} 62%, ${shine(0.08)} 65%, ${shine(0.2)} 67%, ${shine(0.45)} 69%, ${shine(0.85)} 70%, ${shine(0.85)} 70.5%, ${shine(0.45)} 71.5%, ${shine(0.2)} 73%, ${shine(0.08)} 75%, ${shine(0.03)} 78%, transparent 82%)`;
+  }
+
+  /* The rotating window masks are alpha-only, identical in both themes. */
+  function windowMask(id) {
+    return `conic-gradient(from var(--fxb-a-${id}), transparent 0%, transparent 30%, rgba(255, 255, 255, 0.1) 36%, rgba(255, 255, 255, 0.35) 44%, white 52%, white 80%, rgba(255, 255, 255, 0.35) 86%, rgba(255, 255, 255, 0.1) 92%, transparent 95%, transparent 100%)`;
+  }
+  function smallWindowMask(id) {
+    return `conic-gradient(from var(--fxb-a-${id}), transparent 0%, transparent 22%, rgba(255, 255, 255, 0.12) 28%, rgba(255, 255, 255, 0.4) 36%, white 46%, white 82%, rgba(255, 255, 255, 0.4) 88%, rgba(255, 255, 255, 0.12) 94%, transparent 97%, transparent 100%)`;
+  }
+  const RING_MASK = 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)';
+  const EDGE_FRAME_MASK = 'linear-gradient(white, transparent 28px, transparent calc(100% - 28px), white), linear-gradient(to right, white, transparent 28px, transparent calc(100% - 28px), white)';
+
+  function borderGradients() {
+    return PALETTE.border.map(c => gradEllipse(c.w, c.h, c.x, c.y, `rgb(${c.rgb})`)).join(', ');
+  }
+  function borderInnerGradients() {
+    return PALETTE.border
+      .map(c => gradEllipse(Math.round(c.w * 0.9), Math.round(c.h * 0.9), c.x, c.y, `rgba(${c.rgb}, 0.45)`))
+      .join(', ');
+  }
+  function smallGradients() {
+    return PALETTE.small.map(c => gradEllipse(c.w, c.h, c.x, c.y, `rgb(${c.rgb})`)).join(', ');
+  }
+  function smallInnerGradients() {
+    return PALETTE.small
+      .map((c, i) => gradEllipse(c.w, c.h, c.x, c.y, `rgba(${c.rgb}, ${PALETTE.smallInnerAlphas[i]})`))
+      .join(', ');
+  }
+
+  function baseRegs(id) {
+    return `@property --fxb-a-${id} { syntax: "<angle>"; initial-value: 0deg; inherits: true; }
+@property --fxb-o-${id} { syntax: "<number>"; initial-value: 0; inherits: true; }`;
+  }
+
+  function fadeKeyframes(id) {
+    return `@keyframes fxb-fade-in-${id} { to { --fxb-o-${id}: 1; } }
+@keyframes fxb-fade-out-${id} { from { --fxb-o-${id}: 1; } to { --fxb-o-${id}: 0; } }`;
+  }
+
+  function pausedRule(id) {
+    return `[data-fxbeam="${id}"][data-fxbeam-paused],
+[data-fxbeam="${id}"][data-fxbeam-paused]::after,
+[data-fxbeam="${id}"][data-fxbeam-paused]::before,
+[data-fxbeam="${id}"][data-fxbeam-paused] > [data-fxbeam-bloom] {
+  animation-play-state: paused !important;
+}`;
+  }
+
+  function hueKeyframes(id, range, tok) {
+    return `@keyframes fxb-hue-${id} {
+  0%, 100% { filter: hue-rotate(-${range}deg) brightness(var(--fxb-${tok}-bright, 1.3)) saturate(var(--fxb-${tok}-sat, 1.2)); }
+  50% { filter: hue-rotate(${range}deg) brightness(var(--fxb-${tok}-bright, 1.3)) saturate(var(--fxb-${tok}-sat, 1.2)); }
+}`;
+  }
+
+  const opacityCalc = (id, tok, layer) =>
+    `calc(var(--fxb-o-${id}) * var(--fxb-${tok}-${layer}, 1) * var(--fxb-strength, 1))`;
+
+  /* md — full ring: rotating shine + colored ring (::after), masked inner
+     wash (::before), blurred conic bloom (child div). */
+  function buildRotateCSS(id, type, duration, radius, reduced) {
+    const sm = type === 'sm';
+    const tok = sm ? 'sm' : 'md';
+    const innerR = Math.max(0, radius - 1);
+    const anim = reduced ? '' : `\n  animation: fxb-hue-${id} 12s ease-in-out infinite;`;
+    const wrapperAnim = (fade) => reduced ? '' :
+      `\n  animation: fxb-spin-${id} ${duration}s linear infinite, fxb-${fade}-${id} ${fade === 'fade-in' ? '0.6' : '0.5'}s ease forwards;`;
+    const colorG = sm ? smallGradients() : borderGradients();
+    const innerG = sm ? smallInnerGradients() : borderInnerGradients();
+    const afterMask = `${windowMask(id)}, ${RING_MASK}`;
+    const beforeMask = sm
+      ? smallWindowMask(id)
+      : `${windowMask(id)}, ${EDGE_FRAME_MASK}`;
+    const beforeComposite = sm ? 'add' : 'intersect, add';
+    const beforeWebkitComposite = sm ? 'source-over' : 'source-in, source-over';
+    const shadowSpread = sm ? '5px 1px' : '9px 1px';
+    return `${baseRegs(id)}
+[data-fxbeam="${id}"] {
+  position: relative;
+  border-radius: ${radius}px;
+  overflow: hidden;
+}
+[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
+}
+[data-fxbeam="${id}"][data-fxbeam-fading] {${wrapperAnim('fade-out')}
+}
+[data-fxbeam="${id}"][data-fxbeam-on]::after,
+[data-fxbeam="${id}"][data-fxbeam-fading]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: ${innerR}px;
+  padding: 1px;
+  clip-path: inset(0 round ${radius}px);
+  background: ${shineConic(id)}, ${colorG};
+  -webkit-mask: ${afterMask};
+  -webkit-mask-composite: source-in, xor;
+  mask: ${afterMask};
+  mask-composite: intersect, exclude;
+  pointer-events: none;
+  z-index: 2;
+  opacity: ${opacityCalc(id, tok, 'stroke')};${anim}
+}
+[data-fxbeam="${id}"][data-fxbeam-on]::before,
+[data-fxbeam="${id}"][data-fxbeam-fading]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: ${radius}px;
+  clip-path: inset(0 round ${radius}px);
+  background: ${innerG};
+  box-shadow: inset 0 0 ${shadowSpread} var(--fxb-${tok}-shadow, rgba(255, 255, 255, 0.27));
+  -webkit-mask-image: ${beforeMask};
+  -webkit-mask-composite: ${beforeWebkitComposite};
+  mask-image: ${beforeMask};
+  mask-composite: ${beforeComposite};
+  pointer-events: none;
+  z-index: 1;
+  opacity: ${opacityCalc(id, tok, 'inner')};${anim}
+}
+[data-fxbeam="${id}"] > [data-fxbeam-bloom] {
+  border-radius: ${innerR}px;
+  clip-path: inset(0 round ${radius}px);
+  inset: 0;
+  background: ${bloomConic(id)};
+  -webkit-mask: ${RING_MASK};
+  -webkit-mask-composite: xor;
+  mask: ${RING_MASK};
+  mask-composite: exclude;
+  padding: 1px;
+  filter: blur(8px) brightness(var(--fxb-${tok}-bright, 1.3)) saturate(var(--fxb-${tok}-sat, 1.2));
+  z-index: 3;
+  opacity: 0;
+}
+[data-fxbeam="${id}"][data-fxbeam-on] > [data-fxbeam-bloom],
+[data-fxbeam="${id}"][data-fxbeam-fading] > [data-fxbeam-bloom] {
+  display: block;
+  opacity: ${opacityCalc(id, tok, 'bloom')};
+}
+${reduced ? '' : `@keyframes fxb-spin-${id} { to { --fxb-a-${id}: 360deg; } }
+${fadeKeyframes(id)}
+${hueKeyframes(id, HUE_RANGE, tok)}
+${pausedRule(id)}`}`;
+  }
+
+  /* line — bottom traveling glow with breathe + spike oscillators. Theme-
+     resolved: the palettes' geometry differs per theme. */
+  function lineGrads(entries, id, alphas) {
+    return entries.map((c, i) => {
+      const ox = c.dx === 0 ? '' : (c.dx > 0 ? ` + ${c.dx}px` : ` - ${-c.dx}px`);
+      const oy = c.dy === 0 ? '' : (c.dy > 0 ? ` + ${c.dy}px` : ` - ${-c.dy}px`);
+      const color = alphas ? `rgba(${c.rgb}, ${alphas[i]})` : `rgb(${c.rgb})`;
+      return `radial-gradient(ellipse calc(${c.w}px * var(--fxb-w-${id})) calc(${c.h}px * var(--fxb-h-${id})) at calc(var(--fxb-x-${id}) * 100%${ox}) calc(100%${oy}), ${color}, transparent)`;
+    }).join(', ');
+  }
+
+  function lineBloomGradients(id, isDark) {
+    const es = PALETTE.lineEdgeSpike[isDark ? 'dark' : 'light'];
+    const sp = PALETTE.lineSpikes[isDark ? 'dark' : 'light'];
+    const a = (rgb, al) => `rgba(${rgb}, ${al})`;
+    const sc1 = a(es.p, 1);
+    const sc1mid = a(es.p, es.pMid);
+    const sc2 = a(es.s, es.sTip);
+    const sc2mid = a(es.s, es.sMid);
+    const spike = (i, sizeExpr, at, midPct, endPct) =>
+      `radial-gradient(ellipse ${sizeExpr} at ${at}, ${a(sp[i].rgb, sp[i].a1)}, ${a(sp[i].rgb, sp[i].a2)} ${midPct}%, transparent ${endPct}%)`;
+    const parts = [
+      `radial-gradient(ellipse calc(0.8px * var(--fxb-spike-${id})) calc(92px * var(--fxb-h-${id})) at 8% calc(100% - 2px), ${sc1}, ${sc1mid} 30%, transparent 88%)`,
+      `radial-gradient(ellipse calc(10px * var(--fxb-spike2-${id})) calc(35px * var(--fxb-h-${id})) at 22% calc(100% - 4px), ${sc2}, ${sc2mid} 50%, transparent 95%)`,
+      spike(0, `calc(2px * (2 - var(--fxb-spike-${id}))) calc(72px * var(--fxb-h-${id}))`, `36% calc(100% - 3px)`, 40, 90),
+      spike(1, `calc(14px * var(--fxb-spike2-${id})) calc(28px * var(--fxb-h-${id}))`, `50% calc(100% - 2px)`, 55, 96),
+      spike(2, `calc(1.2px * (2 - var(--fxb-spike2-${id}))) calc(85px * var(--fxb-h-${id}))`, `64% calc(100% - 4px)`, 35, 89),
+      spike(3, `calc(7px * var(--fxb-spike-${id})) calc(45px * var(--fxb-h-${id}))`, `78% calc(100% - 2px)`, 48, 94),
+      spike(4, `calc(${isDark ? '0.6px' : '1px'} * (2 - var(--fxb-spike-${id}))) calc(60px * var(--fxb-h-${id}))`, `92% calc(100% - 3px)`, 42, 91),
+    ];
+    if (isDark) {
+      parts.push(
+        `radial-gradient(ellipse calc(21px * var(--fxb-spike-${id})) calc(15px * var(--fxb-spike2-${id})) at calc(var(--fxb-x-${id}) * 100%) calc(100% + 1px), rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.9) 20%, rgba(255, 255, 255, 0.5) 50%, transparent 100%)`,
+        `radial-gradient(ellipse calc(42px * var(--fxb-w-${id})) calc(40px * var(--fxb-h-${id})) at calc(var(--fxb-x-${id}) * 100%) 100%, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.12) 25%, rgba(255, 255, 255, 0.03) 55%, transparent 80%)`
+      );
+    } else {
+      parts.push(
+        `radial-gradient(ellipse calc(50px * var(--fxb-w-${id})) calc(32px * var(--fxb-h-${id})) at calc(var(--fxb-x-${id}) * 100%) calc(100%), rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.18) 30%, rgba(0, 0, 0, 0.03) 60%, transparent 85%)`
+      );
+    }
+    return parts.join(', ');
+  }
+
+  function buildLineCSS(id, theme, duration, radius, reduced) {
+    const isDark = theme === 'dark';
+    const innerR = Math.max(0, radius - 1);
+    const entries = PALETTE.line[isDark ? 'dark' : 'light'];
+    const innerEntries = PALETTE.lineInner.map((g, i) => ({ rgb: PALETTE.line.dark[i].rgb, w: g.w, h: g.h, dx: g.dx, dy: g.dy }));
+    const innerAlphas = PALETTE.lineInner.map(g => g.a);
+    const anim = reduced ? '' : `\n  animation: fxb-hue-${id} 12s ease-in-out infinite;`;
+    const bloomAnim = reduced
+      ? `\n  filter: blur(8px) brightness(var(--fxb-line-bright, 1.3)) saturate(var(--fxb-line-sat, 1.2));`
+      : `\n  animation: fxb-hue-bloom-${id} 8s ease-in-out infinite;`;
+    const wrapperAnim = (fade) => reduced ? '' : `
+  animation:
+    fxb-travel-${id} ${duration}s linear infinite,
+    fxb-edge-${id} ${duration}s linear infinite,
+    fxb-breathe-${id} ${(duration * 1.3).toFixed(1)}s ease-in-out infinite,
+    fxb-spike-${id} ${(duration * 1.33).toFixed(1)}s ease-in-out infinite,
+    fxb-spike2-${id} ${(duration * 1.7).toFixed(1)}s ease-in-out infinite,
+    fxb-${fade}-${id} ${fade === 'fade-in' ? '0.6' : '0.5'}s ease forwards;`;
+    const whiteHighlight = isDark
+      ? `radial-gradient(ellipse calc(24px * var(--fxb-w-${id})) calc(28px * var(--fxb-h-${id})) at calc(var(--fxb-x-${id}) * 100%) calc(100% + 2px), rgba(255, 255, 255, 0.38) 0%, rgba(255, 255, 255, 0.12) 30%, transparent 65%)`
+      : `radial-gradient(ellipse calc(35px * var(--fxb-w-${id})) calc(28px * var(--fxb-h-${id})) at calc(var(--fxb-x-${id}) * 100%) calc(100% + 2px), rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.25) 35%, transparent 70%)`;
+    const travelMask = `radial-gradient(ellipse calc(78px * var(--fxb-w-${id})) calc(60px * var(--fxb-h-${id})) at calc(var(--fxb-x-${id}) * 100%) 100%, white 0%, rgba(255, 255, 255, 0.5) 45%, transparent 100%)`;
+    const bloomMask = `radial-gradient(ellipse calc(84px * var(--fxb-w-${id})) calc(110px * var(--fxb-h-${id})) at calc(var(--fxb-x-${id}) * 100%) 100%, white 0%, rgba(255, 255, 255, 0.5) 35%, transparent 100%)`;
+    const numProps = ['x', 'w', 'h', 'spike', 'spike2', 'edge'];
+    const regs = numProps
+      .map(n => `@property --fxb-${n}-${id} { syntax: "<number>"; initial-value: ${n === 'x' ? 0 : 1}; inherits: true; }`)
+      .join('\n');
+    return `${regs}
+@property --fxb-o-${id} { syntax: "<number>"; initial-value: 0; inherits: true; }
+[data-fxbeam="${id}"] {
+  position: relative;
+  border-radius: ${radius}px;
+  overflow: hidden;
+}
+[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
+}
+[data-fxbeam="${id}"][data-fxbeam-fading] {${wrapperAnim('fade-out')}
+}
+[data-fxbeam="${id}"][data-fxbeam-on]::after,
+[data-fxbeam="${id}"][data-fxbeam-fading]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: ${innerR}px;
+  padding: 1px;
+  clip-path: inset(0 round ${radius}px);
+  background: ${whiteHighlight}, ${lineGrads(entries, id, null)};
+  -webkit-mask: ${travelMask}, ${RING_MASK};
+  -webkit-mask-composite: source-in, xor;
+  mask: ${travelMask}, ${RING_MASK};
+  mask-composite: intersect, exclude;
+  pointer-events: none;
+  z-index: 2;
+  opacity: calc(var(--fxb-o-${id}) * var(--fxb-edge-${id}) * var(--fxb-line-stroke, 1) * var(--fxb-strength, 1));${anim}
+}
+[data-fxbeam="${id}"][data-fxbeam-on]::before,
+[data-fxbeam="${id}"][data-fxbeam-fading]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: ${radius}px;
+  clip-path: inset(0 round ${radius}px);
+  background: ${lineGrads(innerEntries, id, innerAlphas)};
+  box-shadow: inset 0 0 9px 1px var(--fxb-line-shadow, rgba(255, 255, 255, 0.1));
+  -webkit-mask-image: ${travelMask}, ${EDGE_FRAME_MASK};
+  -webkit-mask-composite: source-in, source-over;
+  mask-image: ${travelMask}, ${EDGE_FRAME_MASK};
+  mask-composite: intersect, add;
+  pointer-events: none;
+  z-index: 1;
+  opacity: calc(var(--fxb-o-${id}) * var(--fxb-edge-${id}) * var(--fxb-line-inner, 1) * var(--fxb-strength, 1));${anim}
+}
+[data-fxbeam="${id}"] > [data-fxbeam-bloom] {
+  inset: 0;
+  border-radius: ${innerR}px;
+  clip-path: inset(0 round ${radius}px);
+  -webkit-mask: ${bloomMask};
+  mask: ${bloomMask};
+  background: ${lineBloomGradients(id, isDark)};
+  z-index: 3;
+  opacity: 0;
+}
+[data-fxbeam="${id}"][data-fxbeam-on] > [data-fxbeam-bloom],
+[data-fxbeam="${id}"][data-fxbeam-fading] > [data-fxbeam-bloom] {
+  display: block;
+  opacity: calc(var(--fxb-o-${id}) * var(--fxb-edge-${id}) * var(--fxb-line-bloom, 1) * var(--fxb-strength, 1));${bloomAnim}
+}
+${reduced ? '' : `@keyframes fxb-travel-${id} {
+  0%   { --fxb-x-${id}: 0.06; --fxb-w-${id}: 0.5; }
+  10%  { --fxb-x-${id}: 0.15; --fxb-w-${id}: 0.8; }
+  20%  { --fxb-x-${id}: 0.25; --fxb-w-${id}: 1.1; }
+  30%  { --fxb-x-${id}: 0.35; --fxb-w-${id}: 1.3; }
+  40%  { --fxb-x-${id}: 0.44; --fxb-w-${id}: 1.45; }
+  50%  { --fxb-x-${id}: 0.5;  --fxb-w-${id}: 1.5; }
+  60%  { --fxb-x-${id}: 0.56; --fxb-w-${id}: 1.45; }
+  70%  { --fxb-x-${id}: 0.65; --fxb-w-${id}: 1.3; }
+  80%  { --fxb-x-${id}: 0.75; --fxb-w-${id}: 1.1; }
+  90%  { --fxb-x-${id}: 0.85; --fxb-w-${id}: 0.8; }
+  100% { --fxb-x-${id}: 0.94; --fxb-w-${id}: 0.5; }
+}
+@keyframes fxb-edge-${id} {
+  0%    { --fxb-edge-${id}: 0; }
+  12.5% { --fxb-edge-${id}: 0; }
+  32.5% { --fxb-edge-${id}: 1; }
+  67.5% { --fxb-edge-${id}: 1; }
+  87.5% { --fxb-edge-${id}: 0; }
+  100%  { --fxb-edge-${id}: 0; }
+}
+@keyframes fxb-breathe-${id} {
+  0%, 100% { --fxb-h-${id}: 0.8; }
+  25%      { --fxb-h-${id}: 1.25; }
+  55%      { --fxb-h-${id}: 0.85; }
+  80%      { --fxb-h-${id}: 1.3; }
+}
+@keyframes fxb-spike-${id} {
+  0%   { --fxb-spike-${id}: 0.8; }
+  25%  { --fxb-spike-${id}: 1.3; }
+  50%  { --fxb-spike-${id}: 0.9; }
+  75%  { --fxb-spike-${id}: 1.4; }
+  100% { --fxb-spike-${id}: 0.8; }
+}
+@keyframes fxb-spike2-${id} {
+  0%   { --fxb-spike2-${id}: 1.2; }
+  25%  { --fxb-spike2-${id}: 0.7; }
+  50%  { --fxb-spike2-${id}: 1.4; }
+  75%  { --fxb-spike2-${id}: 0.8; }
+  100% { --fxb-spike2-${id}: 1.2; }
+}
+${fadeKeyframes(id)}
+@keyframes fxb-hue-${id} {
+  0%, 100% { filter: hue-rotate(-${LINE_HUE_RANGE}deg) brightness(var(--fxb-line-bright, 1.3)) saturate(var(--fxb-line-sat, 1.2)); }
+  50% { filter: hue-rotate(${LINE_HUE_RANGE}deg) brightness(var(--fxb-line-bright, 1.3)) saturate(var(--fxb-line-sat, 1.2)); }
+}
+@keyframes fxb-hue-bloom-${id} {
+  0%, 100% { filter: blur(8px) hue-rotate(-${LINE_HUE_RANGE + 10}deg) brightness(var(--fxb-line-bright, 1.3)) saturate(var(--fxb-line-sat, 1.2)); }
+  50% { filter: blur(8px) hue-rotate(${LINE_HUE_RANGE + 10}deg) brightness(var(--fxb-line-bright, 1.3)) saturate(var(--fxb-line-sat, 1.2)); }
+}
+${pausedRule(id)}`}`;
+  }
+
+  /* ── Pulse CSS ── */
+  function pulseRegs(id) {
+    const numbers = ['bw1', 'bh1', 'bw2', 'bh2', 'bw3', 'bh3', 'bgh', 'bop-tl', 'bop-tr', 'bop-bl', 'bop-br'];
+    const lengths = ['bx1', 'by1', 'bx2', 'by2', 'bx3', 'by3'];
+    return numbers.map(n => `@property --fxb-${n}-${id} { syntax: "<number>"; initial-value: 1; inherits: true; }`).join('\n')
+      + '\n' + lengths.map(n => `@property --fxb-${n}-${id} { syntax: "<length>"; initial-value: 0px; inherits: true; }`).join('\n')
+      + `\n@property --fxb-o-${id} { syntax: "<number>"; initial-value: 0; inherits: true; }`
+      + `\n@property --fxb-hue-${id} { syntax: "<angle>"; initial-value: 0deg; inherits: true; }`;
+  }
+
+  function pulseGrad(rgb, w, h, region, quad, x, y, id) {
+    return `radial-gradient(ellipse calc(${w}px * var(--fxb-bw${region}-${id}) * var(--fxb-sx, 1)) calc(${h}px * var(--fxb-bh${region}-${id}) * var(--fxb-bgh-${id}) * var(--fxb-sy, 1)) at calc(${x} + var(--fxb-bx${region}-${id})) calc(${y} + var(--fxb-by${region}-${id})), rgba(${rgb}, var(--fxb-bop-${quad}-${id})), transparent)`;
+  }
+
+  function pulseRingGradients(id) {
+    return PALETTE.border.map((c, i) => {
+      const { r, q } = PULSE_RING_MAP[i];
+      return pulseGrad(c.rgb, c.w, c.h, r, q, c.x, c.y, id);
+    }).join(', ');
+  }
+
+  function pulseInnerGradients(id, isDark) {
+    const grads = PALETTE.border.map((c, i) => {
+      const { r, q } = PULSE_RING_MAP[i];
+      const [w, h] = PULSE_INNER_SIZES[i];
+      return pulseGrad(c.rgb, w, h, r, q, c.x, c.y, id);
+    });
+    const cornerRGB = isDark ? '255, 255, 255' : '0, 0, 0';
+    const cornerAlpha = isDark ? 0.18 : 0.08;
+    const corners = [['0%', '0%', 'tl'], ['100%', '0%', 'tr'], ['0%', '100%', 'bl'], ['100%', '100%', 'br']];
+    for (const [x, y, q] of corners) {
+      grads.push(`radial-gradient(ellipse 60px 60px at ${x} ${y}, rgba(${cornerRGB}, calc(${cornerAlpha} * var(--fxb-bop-${q}-${id}))), transparent 70%)`);
+    }
+    return grads.join(', ');
+  }
+
+  function pulseCoreGradients(id) {
+    return PULSE_OUTER_CORE.map(e => {
+      const c = PALETTE.border[e.ci];
+      return pulseGrad(c.rgb, e.w, e.h, e.r, e.q, e.x, e.y, id);
+    }).join(', ');
+  }
+
+  /* Frozen bloom: literal alpha at the breathing time-average, so the
+     heavily-blurred bitmap is painted once and cached by the compositor
+     (the single biggest per-frame saving in the original 1.2 rewrite). */
+  function pulseBloomStatic(table, frozenAlpha) {
+    const a = +frozenAlpha.toFixed(3);
+    return table.map(e => {
+      const c = PALETTE.border[e.ci];
+      const x = e.x !== undefined ? e.x : c.x;
+      const y = e.y !== undefined ? e.y : c.y;
+      return `radial-gradient(ellipse calc(${e.w}px * var(--fxb-sx, 1)) calc(${e.h}px * var(--fxb-sy, 1)) at ${x} ${y}, rgba(${c.rgb}, ${a}), transparent)`;
+    }).join(', ');
+  }
+
+  function buildPulseCSS(id, type, theme, duration, radius, reduced) {
+    const isDark = theme === 'dark';
+    const outside = type === 'pulse-outside';
+    const tok = outside ? 'po' : 'pi';
+    const { op } = pulseParams(type, theme, duration);
+    const hueFilter = reduced ? '' : `hue-rotate(var(--fxb-hue-${id})) `;
+    const bs = `brightness(var(--fxb-${tok}-bright, 1)) saturate(var(--fxb-${tok}-sat, 1.2))`;
+    const ringAnim = `filter: ${hueFilter}${bs};`;
+    const bloomBlurVar = outside ? `var(--fxb-po-bloom-blur, 22.5px)` : '8px';
+    const coreBlurVar = `var(--fxb-po-core-blur, 3px)`;
+    const bloomAnim = `filter: blur(${bloomBlurVar}) ${hueFilter}${bs};`;
+    const coreAnim = `filter: blur(${coreBlurVar}) ${hueFilter}${bs};`;
+    const wrapperAnim = (fade) => reduced ? '' : `\n  animation: fxb-${fade}-${id} ${fade === 'fade-in' ? '0.6' : '0.5'}s ease forwards;`;
+    const bloomG = pulseBloomStatic(outside ? PULSE_OUTER_BLOOM : PULSE_INNER_BLOOM, 1 - op * 0.5);
+    /* pulse-outside outward-glow constants, ported from the v5 c6 defaults. */
+    const sw = 0.95, shScale = 0.9;
+    if (outside) {
+      return `${pulseRegs(id)}
+[data-fxbeam="${id}"] {
+  position: relative;
+  border-radius: ${radius}px;
+  overflow: visible;
+  isolation: isolate;
+}
+[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
+}
+[data-fxbeam="${id}"][data-fxbeam-fading] {${wrapperAnim('fade-out')}
+}
+[data-fxbeam="${id}"][data-fxbeam-on]::after,
+[data-fxbeam="${id}"][data-fxbeam-fading]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: ${radius}px;
+  padding: 1px;
+  clip-path: inset(0 round ${radius}px);
+  background: ${pulseCoreGradients(id)};
+  -webkit-mask: ${RING_MASK};
+  -webkit-mask-composite: xor;
+  mask: ${RING_MASK};
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 2;
+  will-change: opacity, filter;
+  opacity: ${opacityCalc(id, tok, 'stroke')};
+  ${ringAnim}
+}
+[data-fxbeam="${id}"][data-fxbeam-on]::before,
+[data-fxbeam="${id}"][data-fxbeam-fading]::before {
+  content: "";
+  position: absolute;
+  inset: -10px;
+  z-index: -1;
+  border-radius: ${radius + 10}px;
+  background: ${pulseCoreGradients(id)};
+  transform: scale(${sw}, ${shScale});
+  pointer-events: none;
+  will-change: opacity, filter;
+  opacity: ${opacityCalc(id, tok, 'inner')};
+  ${coreAnim}
+}
+[data-fxbeam="${id}"] > [data-fxbeam-bloom] {
+  inset: -30px;
+  z-index: -1;
+  border-radius: ${radius + 30}px;
+  background: ${bloomG};
+  transform: scale(${sw}, ${shScale});
+  will-change: transform;
+  opacity: 0;
+}
+[data-fxbeam="${id}"][data-fxbeam-on] > [data-fxbeam-bloom],
+[data-fxbeam="${id}"][data-fxbeam-fading] > [data-fxbeam-bloom] {
+  display: block;
+  opacity: ${opacityCalc(id, tok, 'bloom')};
+  ${bloomAnim}
+}
+${reduced ? '' : `${fadeKeyframes(id)}
+${pausedRule(id)}`}`;
+    }
+    return `${pulseRegs(id)}
+[data-fxbeam="${id}"] {
+  position: relative;
+  border-radius: ${radius}px;
+  overflow: hidden;
+  isolation: isolate;
+}
+[data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
+}
+[data-fxbeam="${id}"][data-fxbeam-fading] {${wrapperAnim('fade-out')}
+}
+[data-fxbeam="${id}"][data-fxbeam-on]::after,
+[data-fxbeam="${id}"][data-fxbeam-fading]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: ${radius}px;
+  padding: 1px;
+  clip-path: inset(0 round ${radius}px);
+  background: ${pulseRingGradients(id)};
+  -webkit-mask: ${RING_MASK};
+  -webkit-mask-composite: xor;
+  mask: ${RING_MASK};
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 2;
+  will-change: opacity, filter;
+  opacity: ${opacityCalc(id, tok, 'stroke')};
+  ${ringAnim}
+}
+[data-fxbeam="${id}"][data-fxbeam-on]::before,
+[data-fxbeam="${id}"][data-fxbeam-fading]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: ${radius}px;
+  clip-path: inset(0 round ${radius}px);
+  background: ${pulseInnerGradients(id, isDark)};
+  -webkit-mask-image: ${EDGE_FRAME_MASK};
+  -webkit-mask-composite: source-over;
+  mask-image: ${EDGE_FRAME_MASK};
+  mask-composite: add;
+  pointer-events: none;
+  z-index: 1;
+  will-change: opacity, filter;
+  opacity: ${opacityCalc(id, tok, 'inner')};
+  ${ringAnim}
+}
+[data-fxbeam="${id}"] > [data-fxbeam-bloom] {
+  inset: 0;
+  border-radius: ${radius}px;
+  clip-path: inset(0 round ${radius}px);
+  background: ${bloomG};
+  -webkit-mask: ${RING_MASK};
+  -webkit-mask-composite: xor;
+  mask: ${RING_MASK};
+  mask-composite: exclude;
+  padding: 1px;
+  z-index: 3;
+  will-change: opacity;
+  opacity: 0;
+}
+[data-fxbeam="${id}"][data-fxbeam-on] > [data-fxbeam-bloom],
+[data-fxbeam="${id}"][data-fxbeam-fading] > [data-fxbeam-bloom] {
+  display: block;
+  opacity: ${opacityCalc(id, tok, 'bloom')};
+  ${bloomAnim}
+}
+${reduced ? '' : `${fadeKeyframes(id)}
+${pausedRule(id)}`}`;
+  }
+
+  /** Complete per-instance CSS for a type × theme (pure — safe to unit test). */
+  function buildCSS(id, type, theme, duration, radius, reduced) {
+    if (type === 'line') return buildLineCSS(id, theme, duration, radius, reduced);
+    if (type === 'pulse-inner' || type === 'pulse-outside') return buildPulseCSS(id, type, theme, duration, radius, reduced);
+    return buildRotateCSS(id, type, duration, radius, reduced);
+  }
+
+  /* ── Shared ~30fps pulse driver (port of pulseDriver.ts) ── */
+  const driven = new Set();
+  let rafId = null;
+  let lastFrame = 0;
+  const FRAME_INTERVAL = 1000 / 30 - 2;
+
+  function driverFrame(ts) {
+    rafId = requestAnimationFrame(driverFrame);
+    if (document.hidden) return;
+    if (ts - lastFrame < FRAME_INTERVAL) return;
+    lastFrame = ts;
+    const tSec = ts / 1000;
+    driven.forEach((inst) => {
+      const cfg = inst.driverCfg;
+      for (const osc of cfg.oscillators) {
+        const value = oscValue(osc, tSec);
+        inst.el.style.setProperty(osc.prop, osc.unit === 'px' ? `${value.toFixed(2)}px` : value.toFixed(4));
+      }
+      if (cfg.hue) {
+        inst.el.style.setProperty(cfg.hue.prop, `${hueValue(cfg.hue.range, cfg.hue.period, tSec).toFixed(2)}deg`);
+      }
+    });
+  }
+  function driverStart() {
+    if (rafId == null) { lastFrame = 0; rafId = requestAnimationFrame(driverFrame); }
+  }
+  function driverStopIfIdle() {
+    if (driven.size === 0 && rafId != null) { cancelAnimationFrame(rafId); rafId = null; }
+  }
+
+  /* ── Instance registry + lifecycle ── */
+  const registry = new Map();
+  let seq = 0;
+  let wired = false;
+  let io = null;
+  let ro = null;
+
+  function resolveTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  }
+
+  function detectRadius(el, type) {
+    let r = NaN;
+    try { r = parseFloat(getComputedStyle(el).borderTopLeftRadius); } catch { /* detached */ }
+    if (!Number.isFinite(r) || r < 0) r = NaN;
+    if (Number.isNaN(r) || r === 0) r = type === 'sm' ? 10 : 13; /* app --r-sm / --r-md */
+    return r;
+  }
+
+  function ensureWiring() {
+    if (wired) return;
+    wired = true;
+    document.addEventListener('visibilitychange', () => {
+      registry.forEach((inst) => { syncPaused(inst); syncDriver(inst); });
+    });
+    /* Theme flips: md/sm CSS is token-driven and needs nothing; line and
+       pulse have theme-resolved structure, so rebuild those. */
+    const mo = new MutationObserver(() => {
+      registry.forEach((inst) => {
+        if (inst.cfg.type !== 'md' && inst.cfg.type !== 'sm') rebuild(inst);
+      });
+    });
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    if (typeof IntersectionObserver !== 'undefined') {
+      io = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          const inst = registry.get(entry.target);
+          if (!inst) continue;
+          inst.visible = entry.isIntersecting;
+          syncPaused(inst); syncDriver(inst);
+        }
+      }, { rootMargin: '256px' });
+    }
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const inst = registry.get(entry.target);
+          if (inst) measureGlowScale(inst);
+        }
+      });
+    }
+  }
+
+  /* pulse-outside glow geometry is authored for a ~350×140 reference card;
+     scale the halo per-axis to the element it actually wraps. */
+  function measureGlowScale(inst) {
+    const rect = inst.el.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const clamp = (v) => Math.max(0.35, Math.min(4, v));
+    inst.el.style.setProperty('--fxb-sx', String(+clamp(rect.width / 350).toFixed(3)));
+    inst.el.style.setProperty('--fxb-sy', String(+clamp(rect.height / 140).toFixed(3)));
+  }
+
+  function isPulseType(type) { return type === 'pulse-inner' || type === 'pulse-outside'; }
+
+  function syncPaused(inst) {
+    const lit = inst.on || inst.fading;
+    const paused = lit && (document.hidden || !inst.visible);
+    if (paused) inst.el.setAttribute('data-fxbeam-paused', '');
+    else inst.el.removeAttribute('data-fxbeam-paused');
+  }
+
+  function syncDriver(inst) {
+    const wants = isPulseType(inst.cfg.type) && (inst.on || inst.fading)
+      && inst.visible && !document.hidden && !REDUCED && !!inst.driverCfg;
+    if (wants && !driven.has(inst)) { driven.add(inst); driverStart(); }
+    else if (!wants && driven.has(inst)) { driven.delete(inst); driverStopIfIdle(); }
+  }
+
+  function rebuild(inst) {
+    const { type, duration } = inst.cfg;
+    const theme = resolveTheme();
+    inst.styleEl.textContent = buildCSS(inst.id, type, theme, duration, inst.radius, REDUCED);
+    if (isPulseType(type) && !REDUCED) {
+      const p = pulseParams(type, theme, duration);
+      inst.driverCfg = {
+        oscillators: oscillatorDefs(inst.id, p),
+        hue: { prop: `--fxb-hue-${inst.id}`, range: PULSE_HUE_RANGE, period: p.huePeriod },
+      };
+    } else {
+      inst.driverCfg = null;
+    }
+    if (ro) {
+      if (type === 'pulse-outside') { ro.observe(inst.el); measureGlowScale(inst); }
+      else {
+        ro.unobserve(inst.el);
+        inst.el.style.removeProperty('--fxb-sx');
+        inst.el.style.removeProperty('--fxb-sy');
+      }
+    }
+    syncDriver(inst);
+  }
+
+  function finishOff(inst) {
+    inst.on = false;
+    inst.fading = false;
+    if (inst.fadeTimer) { clearTimeout(inst.fadeTimer); inst.fadeTimer = null; }
+    inst.el.removeAttribute('data-fxbeam-on');
+    inst.el.removeAttribute('data-fxbeam-fading');
+    inst.el.removeAttribute('data-fxbeam-paused');
+    inst.el.style.removeProperty(`--fxb-o-${inst.id}`);
+    syncDriver(inst);
+  }
+
+  function activate(inst) {
+    /* Animation entry point — REDUCED first (§6): no fade, no rotation, no
+       pulse; the generated CSS is already static, so lighting the attribute
+       shows a still, subtle glow. */
+    if (inst.fadeTimer) { clearTimeout(inst.fadeTimer); inst.fadeTimer = null; }
+    inst.on = true;
+    inst.fading = false;
+    inst.el.removeAttribute('data-fxbeam-fading');
+    inst.el.setAttribute('data-fxbeam-on', '');
+    if (REDUCED) {
+      inst.el.style.setProperty(`--fxb-o-${inst.id}`, '1');
+      if (inst.cfg.type === 'line') {
+        /* Park the traveling glow mid-track instead of at the far-left. */
+        inst.el.style.setProperty(`--fxb-x-${inst.id}`, '0.5');
+        inst.el.style.setProperty(`--fxb-w-${inst.id}`, '1.5');
+      }
+    }
+    syncPaused(inst);
+    syncDriver(inst);
+  }
+
+  function deactivate(inst) {
+    if (REDUCED || (!inst.on && !inst.fading)) { finishOff(inst); return; }
+    inst.on = false;
+    inst.fading = true;
+    inst.el.removeAttribute('data-fxbeam-on');
+    inst.el.setAttribute('data-fxbeam-fading', '');
+    syncPaused(inst);
+    syncDriver(inst);
+    /* Safety net: display:none (or a paused subtree) never fires
+       animationend; settle the fade-out after its 0.5s + margin. */
+    inst.fadeTimer = setTimeout(() => { if (inst.fading) finishOff(inst); }, 800);
+  }
+
+  function createInstance(el) {
+    ensureWiring();
+    const id = 'fxb' + (++seq);
+    const styleEl = document.createElement('style');
+    styleEl.setAttribute('data-fxbeam-style', id);
+    document.head.appendChild(styleEl);
+    const bloom = document.createElement('div');
+    bloom.setAttribute('data-fxbeam-bloom', '');
+    bloom.setAttribute('aria-hidden', 'true');
+    el.appendChild(bloom);
+    const inst = {
+      id, el, styleEl, bloom,
+      cfg: null, radius: 13, driverCfg: null,
+      on: false, fading: false, visible: true, fadeTimer: null,
+      onAnimEnd: null,
+    };
+    inst.onAnimEnd = (e) => {
+      if (e.target !== el) return;
+      if (e.animationName === `fxb-fade-out-${id}` && inst.fading) finishOff(inst);
+    };
+    el.addEventListener('animationend', inst.onAnimEnd);
+    el.setAttribute('data-fxbeam', id);
+    if (io) io.observe(el);
+    return inst;
+  }
+
+  function attach(el, opts) {
+    if (!el || el.nodeType !== 1) throw new TypeError('FxBeam.attach: expected an element');
+    const cfg = normalizeOpts(opts);
+    let inst = registry.get(el);
+    if (!inst) {
+      inst = createInstance(el);
+      registry.set(el, inst);
+    }
+    const wasLit = inst.on || inst.fading;
+    inst.cfg = cfg;
+    inst.radius = detectRadius(el, cfg.type);
+    el.style.setProperty('--fxb-strength', String(cfg.strength));
+    rebuild(inst);
+    if (cfg.active && !wasLit) activate(inst);
+    else if (!cfg.active && wasLit) deactivate(inst);
+    else if (cfg.active && inst.fading) activate(inst); /* re-lit mid-fade */
+    return el;
+  }
+
+  function detach(el) {
+    const inst = registry.get(el);
+    if (!inst) return;
+    finishOff(inst);
+    if (io) io.unobserve(el);
+    if (ro) ro.unobserve(el);
+    el.removeEventListener('animationend', inst.onAnimEnd);
+    if (inst.bloom.parentNode) inst.bloom.parentNode.removeChild(inst.bloom);
+    if (inst.styleEl.parentNode) inst.styleEl.parentNode.removeChild(inst.styleEl);
+    el.removeAttribute('data-fxbeam');
+    el.style.removeProperty('--fxb-strength');
+    el.style.removeProperty('--fxb-sx');
+    el.style.removeProperty('--fxb-sy');
+    el.style.removeProperty(`--fxb-o-${inst.id}`);
+    registry.delete(el);
+  }
+
+  return {
+    attach,
+    detach,
+    /* Pure logic, exposed for the node:test extraction suite. */
+    _internals: {
+      TYPES, PALETTE, HUE_RANGE, LINE_HUE_RANGE, PULSE_HUE_RANGE,
+      PULSE_RING_MAP, PULSE_INNER_SIZES, PULSE_INNER_BLOOM, PULSE_OUTER_CORE, PULSE_OUTER_BLOOM,
+      pingPong, oscValue, hueValue, pulseParams, oscillatorDefs, normalizeOpts, buildCSS,
+    },
+  };
+})();
+/* ═══ end FX: Border Beam ═══ */
+
+/* ═══════════════ FX: living-surface wiring ═══════════════
+   Every beam and orb in the app marks a real state, and each one is switched
+   by the function that owns that state — never by a poll. The helpers here
+   exist for one contract: every FxOrbs.mount has exactly one paired destroy
+   (the same rule registerView enforces for timers), even when the surface an
+   orb sits on is later rewritten with innerHTML. Handles are keyed by
+   surface, so a re-entry retargets in place instead of stacking mounts. */
+
+const fxOrbLive = new Map(); // surface key -> { orb, slot }
+
+/**
+ * Mount (or retarget) the keyed 20px/64px orb inside `host`. The orb gets its
+ * own slot element so a host whose innerHTML is later rewritten can only ever
+ * strand the slot, never an untracked handle — fxOrbHide still finds and
+ * destroys the orb (destroy is safe on a detached canvas).
+ */
+function fxOrbShow(key, host, orbState, opts = {}) {
+  const cur = fxOrbLive.get(key);
+  if (cur && cur.slot.parentNode === host && cur.slot.isConnected) { cur.orb.setState(orbState); return; }
+  fxOrbHide(key);
+  if (!host) return;
+  const slot = document.createElement('span');
+  slot.className = 'fx-orb-slot fx-orb-inline';
+  host.appendChild(slot);
+  fxOrbLive.set(key, { orb: FxOrbs.mount(slot, { state: orbState, size: opts.size || 20 }), slot });
+}
+
+/** The paired destroy. Idempotent, and safe after the host was rewritten. */
+function fxOrbHide(key) {
+  const cur = fxOrbLive.get(key);
+  if (!cur) return;
+  fxOrbLive.delete(key);
+  cur.orb.destroy();
+  cur.slot.remove();
+}
+
+/**
+ * The 64px "searching" hero on the active view's empty surface, while a FIRST
+ * scan runs. `!state.root` is what keeps this honest: a rescan leaves the old
+ * picture up, and a hero over real data would be decoration. At most one hero
+ * exists, in the well of whichever view is actually on screen — an orb in a
+ * hidden view would keep drawing frames nobody sees.
+ * Called from the scan chrome funnel (begin/endScanChrome) and switchView —
+ * the two owners of the state it renders.
+ */
+function fxScanHeroSync() {
+  const busy = state.scanning && !state.root;
+  const well = !busy ? null
+    : state.view === 'treemap' ? $('tmScanOrb')
+    : state.view === 'dashboard' ? $('dashScanOrb')
+    : null;
+  if (well) fxOrbShow('scanHero', well, 'searching', { size: 64 });
+  else fxOrbHide('scanHero');
+}
+
+/**
+ * §2.5's refinement loop, made visible: the "shaping" chip is up exactly while
+ * a circles/Voronoi layout still has queued subdivision slices. On/off comes
+ * from buildCells and altRefineSchedule (the owners of `done`), and
+ * altRefineCancel — every one of that loop's exit doors, the view's unmount
+ * included — drops it.
+ */
+function fxShapeSync(refining) {
+  if (refining) fxOrbShow('shape', $('tmShapeOrb'), 'shaping');
+  else fxOrbHide('shape');
+}
+
+/** The one glow in the zero state: the primary CTA, only while the welcome
+    screen is what the user is looking at. */
+function fxEmptyCtaSync(showing) {
+  FxBeam.attach($('emptyBrowseBtn'), { type: 'pulse-outside', active: showing });
+}
+
+/* One-shot pulse on the cart tab when the staged count RISES. renderCart is
+   the single render funnel for cart state, so it is the one caller. Seeded at
+   -1: the boot restore of a persisted cart is not an increase the user just
+   caused, and must not glow. */
+let fxCartSeen = -1;
+let fxCartPulseTimer = 0;
+function fxCartPulseSync(count) {
+  if (fxCartSeen >= 0 && count > fxCartSeen) {
+    FxBeam.attach($('cartTab'), { type: 'pulse-inner', active: true });
+    clearTimeout(fxCartPulseTimer);
+    fxCartPulseTimer = setTimeout(() => FxBeam.attach($('cartTab'), { type: 'pulse-inner', active: false }), 2000);
+  }
+  fxCartSeen = count;
+}
+
+/* The "line" beam on both search fields, lit only while focused. It attaches
+   to the overlay strip, never the wrap — see the styles block for why. */
+for (const [inputId, stripId] of [['gsearch', 'gsearchBeamStrip'], ['tmSearch', 'tmSearchBeamStrip']]) {
+  $(inputId).addEventListener('focus', () => FxBeam.attach($(stripId), { type: 'line', active: true }));
+  $(inputId).addEventListener('blur', () => FxBeam.attach($(stripId), { type: 'line', active: false }));
+}
+/* ═══ end FX: living-surface wiring ═══ */
 
 /** Kept as a free function: it is called from the treemap's hot draw loop. */
 function roundRect(ctx, x, y, w, h, r) {
@@ -9689,6 +12288,7 @@ function buildCells(geo) {
   // eventual total. §2.5's 50 ms rule is about blocks, and this is the block.
   state.treemap.altMs = performance.now() - t0;
   if (!out.done) altRefineSchedule(root, geo, out.resume);
+  fxShapeSync(!out.done); // FX: the shaping chip is up while slices remain
 }
 
 /* ── §2.5's refinement loop ──────────────────────────────────────────────
@@ -9710,6 +12310,9 @@ function altRefiningNote(drawn) {
 function altRefineCancel() {
   altRefineSeq++;
   if (state.treemap.altRaf) { cancelAnimationFrame(state.treemap.altRaf); state.treemap.altRaf = 0; }
+  // FX: every door out of the refinement loop — the next buildCells, a
+  // renderer switch, the view's unmount — also takes the shaping orb with it.
+  fxShapeSync(false);
 }
 
 function altRefineSchedule(root, geo, resume) {
@@ -9727,6 +12330,7 @@ function altRefineSchedule(root, geo, resume) {
     repaintCells();
     renderAltNote();
     if (!out.done) altRefineSchedule(root, geo, out.resume);
+    fxShapeSync(!out.done); // FX: the chip settles the moment the queue does
   });
 }
 
@@ -11477,6 +14081,9 @@ async function exportTimelapseGif() {
   if (lapseExporting) { toast('An export is already running', 'error'); return; }
   if (h.snaps.length < 2 || !isRectMap()) { toast('History export needs two snapshots and the rectangle map', 'error'); return; }
   lapseExporting = true;
+  // FX: "composing" beside the Export control, exactly while lapseExporting
+  // holds — the finally that clears the flag clears the orb.
+  fxOrbShow('export', $('tmExportBtn').closest('.tb-group'), 'composing');
   lapseStop();
   const status = $('tmStatus');
   try {
@@ -11536,6 +14143,7 @@ async function exportTimelapseGif() {
     toast('Could not export the GIF: ' + e.message, 'error');
   } finally {
     lapseExporting = false;
+    fxOrbHide('export');
     drawTreemap(); // whatever happened, the status line goes back to the truth
   }
 }
@@ -11550,6 +14158,7 @@ async function exportTimelapseWebm() {
     return;
   }
   lapseExporting = true;
+  fxOrbShow('export', $('tmExportBtn').closest('.tb-group'), 'composing'); // FX: same pair as the GIF path
   lapseStop();
   const L = state.treemap.lapse;
   const prevLoop = L.loop;
@@ -11586,6 +14195,7 @@ async function exportTimelapseWebm() {
     L.loop = prevLoop;
     L.onDone = null;
     lapseExporting = false;
+    fxOrbHide('export');
   }
 }
 
@@ -12443,6 +15053,9 @@ function renderDock() {
   for (const id of ['tmDock', 'cityDock']) {
     const el = $(id);
     if (!el) continue;
+    // FX: a tile a drag-hover beam ever touched holds an FxBeam instance; the
+    // rewrite below would orphan it. Detach is idempotent, so every tile goes.
+    el.querySelectorAll('.drive-tile').forEach((t) => FxBeam.detach(t));
     el.innerHTML = rows;
     el.hidden = dockVolumes.length === 0;
   }
@@ -12519,11 +15132,15 @@ for (const dockId of ['tmDock', 'cityDock']) {
     if (!tile || ![...e.dataTransfer.types].includes('application/x-treemap-cart')) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
+    // FX: the drop target breathes only while the cart hovers it. Gated on
+    // the class — dragover repeats every few ms, and the attach belongs to
+    // the ENTER edge, not to every frame of the hover.
+    if (!tile.classList.contains('drop-ok')) FxBeam.attach(tile, { type: 'md', active: true });
     tile.classList.add('drop-ok');
   });
   dockEl.addEventListener('dragleave', (e) => {
     const tile = e.target.closest('.drive-tile');
-    if (tile) tile.classList.remove('drop-ok');
+    if (tile) { tile.classList.remove('drop-ok'); FxBeam.attach(tile, { type: 'md', active: false }); }
   });
   dockEl.addEventListener('drop', (e) => {
     const tile = e.target.closest('.drive-tile');
@@ -12533,6 +15150,7 @@ for (const dockId of ['tmDock', 'cityDock']) {
     if (!tile || ![...e.dataTransfer.types].includes('application/x-treemap-cart')) return;
     e.preventDefault();
     tile.classList.remove('drop-ok');
+    FxBeam.attach(tile, { type: 'md', active: false });
     dockDrop(tile.dataset.vol);
   });
 }
@@ -15675,7 +18293,10 @@ $('apBrowseBtn').addEventListener('click', () =>
 
 $('apPreviewBtn').addEventListener('click', async () => {
   const host = $('apPreview');
-  host.innerHTML = `<div class="muted" style="margin-top:14px;">Checking what this would delete…</div>`;
+  // FX: the "working" orb lives exactly as long as the simulate round-trip;
+  // the finally below destroys it on every exit, the error paths included.
+  host.innerHTML = `<div class="muted" style="margin-top:14px;display:flex;align-items:center;gap:8px;"><span class="fx-orb-well"></span>Checking what this would delete…</div>`;
+  fxOrbShow('ap', host.querySelector('.fx-orb-well'), 'working');
   try {
     const result = await api('/api/autopilot/simulate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -15694,6 +18315,8 @@ $('apPreviewBtn').addEventListener('click', async () => {
       (result.skipped.length ? `<div class="ap-skipped">${icon('alert', 12)} <span>${escapeHtml(result.skipped[0].reason)}</span></div>` : '');
   } catch (e) {
     host.innerHTML = `<div class="ap-reason">${escapeHtml(e.message)}</div>`;
+  } finally {
+    fxOrbHide('ap');
   }
 });
 
@@ -16264,6 +18887,10 @@ function nlClose(opts = {}) {
   pop.hidden = true;
   $('nlOut').hidden = true;
   $('nlReason').hidden = true;
+  // FX: a close mid-translation must not leave the weaving orb running in a
+  // hidden popover. Idempotent, so the finally in nlTranslate is still safe.
+  fxOrbHide('nl');
+  $('nlPending').hidden = true;
   $('tmNlBtn').setAttribute('aria-expanded', 'false');
   // A close that hands off elsewhere (Run → the highlight box; a view
   // unmount) skips the button focus, or the caret would bounce twice and a
@@ -16274,6 +18901,10 @@ async function nlTranslate() {
   const text = $('nlInput').value.trim();
   if (!text) return;
   $('nlReason').hidden = true;
+  // FX: the "weaving" orb is up for exactly the /api/nl-query round-trip —
+  // the finally below and nlClose (a close mid-flight) both drop it.
+  $('nlPending').hidden = false;
+  fxOrbShow('nl', $('nlPending').querySelector('.fx-orb-well'), 'weaving');
   try {
     const res = await api('/api/nl-query', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -16299,6 +18930,9 @@ async function nlTranslate() {
     $('nlOut').hidden = true;
     $('nlReason').hidden = false;
     $('nlReason').textContent = 'Translation failed: ' + e.message;
+  } finally {
+    fxOrbHide('nl');
+    $('nlPending').hidden = true;
   }
 }
 function nlRunTranslated() {
@@ -16926,6 +19560,7 @@ async function renderCart() {
   // staged file reads as "not in scan" and drops out of the delete.
   await ensureNodes([...state.cart]);
   const n = state.cart.size;
+  fxCartPulseSync(n); // FX: one ~2s pulse when the staged count rises
   dock.classList.toggle('show', n > 0);
   if (n === 0) cartDockToggle(false); // an empty cart closes the drawer, and the body class with it
   const total = cartTotalBytes();
@@ -18557,11 +21192,14 @@ async function loadDuplicates(force = false) {
   state.dup.status = 'loading';
   state.dup.selection.clear();
   clearTimeout(state.dup.pollTimer);
+  fxOrbHide('dup'); // a re-entry rewrites the progress card — never strand the old orb
   $('dupSummary').textContent = 'Looking for duplicates…';
   updateDupToolbar();
-  $('dupBody').innerHTML = `<div class="card glass dup-progress">${icon('loader', 22, REDUCED ? '' : 'spin')}
+  // FX: the "solving" orb replaces the loader icon; same slot in the card.
+  $('dupBody').innerHTML = `<div class="card glass dup-progress"><span class="fx-orb-well"></span>
     <span id="dupProgText">Comparing file sizes…</span>
     <div class="track"><div class="fill" id="dupProgFill"></div></div></div>`;
+  fxOrbShow('dup', $('dupBody').querySelector('.fx-orb-well'), 'solving');
 
   const poll = async () => {
     if (state.dup.loadedFor !== key) return; // a newer request superseded this one
@@ -18576,6 +21214,7 @@ async function loadDuplicates(force = false) {
         state.dup.pollTimer = setTimeout(poll, 700);
         return;
       }
+      fxOrbHide('dup'); // the hunt settled — the orb goes before the card does
       state.dup.status = 'complete';
       state.dup.groups = data.groups;
       state.dup.groupCount = data.groupCount;
@@ -18586,6 +21225,7 @@ async function loadDuplicates(force = false) {
       for (const g of data.groups) seedNodes(g.files.map((f) => ({ ...f, size: g.size, type: 'file' })));
       renderDuplicates();
     } catch (e) {
+      fxOrbHide('dup');
       state.dup.status = 'error';
       $('dupSummary').textContent = '';
       $('dupBody').innerHTML = `<div class="card glass"><div class="muted">Duplicate search failed: ${escapeHtml(e.message)}</div></div>`;
@@ -21452,17 +24092,22 @@ async function connectCloud(providerId) {
     toast('Approve access in the browser tab that just opened');
     // The loopback listener completes silently — poll until it does.
     clearInterval(cloudConnectPoll);
+    // FX: the "connecting" orb rides the provider's own row for as long as
+    // the handshake is genuinely pending; every way the poll can end drops it.
+    fxOrbShow('cloud', document.querySelector(`.cloud-row[data-provider="${providerId}"] .rule-row`), 'connecting');
     const t0 = Date.now();
     cloudConnectPoll = setInterval(async () => {
-      if (Date.now() - t0 > 5 * 60_000) { clearInterval(cloudConnectPoll); return; }
+      if (Date.now() - t0 > 5 * 60_000) { clearInterval(cloudConnectPoll); fxOrbHide('cloud'); return; }
       await loadCloudStatus();
       if (state.cloud.providers.find(p => p.id === providerId)?.connected) {
         clearInterval(cloudConnectPoll);
+        fxOrbHide('cloud'); // before the rerender rewrites the row it sits on
         toast('Connected ✓');
         renderCloudAccounts();
       }
     }, 2500);
   } catch (e) {
+    fxOrbHide('cloud');
     toast(e.message, 'error');
   }
 }
