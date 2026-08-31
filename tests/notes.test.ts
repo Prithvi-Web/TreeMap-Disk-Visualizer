@@ -626,3 +626,14 @@ test('the agent summary respects notes — teeth for a wire the review found unt
     await fsp.rm(fx, { recursive: true, force: true });
   }
 });
+
+test('the suggestions surface names what a pausing note is hiding — never a silent absence', () => {
+  // QA finding 8: "nothing matches" with folders quietly excluded reads as
+  // good news. One honest line whenever a pausing note exists.
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const at = html.indexOf('const pausedNotes');
+  assert.notEqual(at, -1, 'the surface counts pausing notes');
+  const region = html.slice(at, at + 900);
+  assert.match(region, /excluded by a note that pauses suggestions/, 'and says so, with the way back');
+  assert.match(region, /n\.suppress/, 'label-only notes do not trigger the hint');
+});

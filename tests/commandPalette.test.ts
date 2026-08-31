@@ -139,3 +139,21 @@ test('the shortcuts panel teaches the new keys', () => {
     || INDEX.includes('<kbd>⌘K</kbd></div><div>Command palette'),
     'the shortcuts panel names the palette');
 });
+
+/* ═══════════ QA driver findings (round 1) ═══════════ */
+
+test('recent roots read the field the API actually serves — no [object Object] rows', () => {
+  const fn = INDEX.slice(INDEX.indexOf('async function cmdkLoadRoots'), INDEX.indexOf('async function cmdkLoadRoots') + 700);
+  assert.match(fn, /r\.rootPath === 'string'/, 'listSnapshotRoots serves rootPath, and only a string is accepted');
+  assert.ok(!fn.includes('String(r)'), 'nothing coerces an object into a label');
+});
+
+test('an empty palette browses everything; only typed queries trim to twelve', () => {
+  const fn = INDEX.slice(INDEX.indexOf('function cmdkRender'), INDEX.indexOf('function cmdkRender') + 1600);
+  assert.match(fn, /q \? 12 : scored\.length/, 'the cap applies to searches, not to browsing');
+});
+
+test('opening the palette clears any hovering tooltip first', () => {
+  const fn = INDEX.slice(INDEX.indexOf('function cmdkOpen'), INDEX.indexOf('function cmdkOpen') + 400);
+  assert.match(fn, /hideTooltip\(\)/, 'a stale hover card must not float above the palette');
+});

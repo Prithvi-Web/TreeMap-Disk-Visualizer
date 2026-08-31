@@ -5722,7 +5722,10 @@ function renderCrumbs(host, path, onPick) {
       `${i === 0 ? icon('hardDrive', 13) : ''}${escapeHtml(c.name)}</button>`;
   }).join('');
   host.querySelectorAll('button').forEach(b => {
-    b.addEventListener('click', () => onPick(b.dataset.p));
+    // hideTooltip: the card describes a cell of the map being navigated away
+    // from — QA caught a keyboard-selection tooltip surviving a crumb jump
+    // and floating over the palette opened next.
+    b.addEventListener('click', () => { hideTooltip(); onPick(b.dataset.p); });
     // Right-click a breadcrumb folder to set/edit its budget (Feature 15).
     b.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -15820,8 +15823,14 @@ const CMDK_ACTIONS = [
 let cmdkRoots = [];
 async function cmdkLoadRoots() {
   try {
+    // listSnapshotRoots serves { rootPath, count, … } — QA caught the wrong
+    // field here rendering a "Scan again: [object Object]" row whose dedupe
+    // against the open folder also never matched.
     const { roots } = await api('/api/snapshots');
-    cmdkRoots = (roots || []).map((r) => (r && r.path) ? r.path : String(r)).slice(0, 8);
+    cmdkRoots = (roots || [])
+      .map((r) => (r && typeof r.rootPath === 'string') ? r.rootPath : null)
+      .filter(Boolean)
+      .slice(0, 8);
   } catch { cmdkRoots = []; }
 }
 
@@ -15867,7 +15876,10 @@ function cmdkRender() {
   // Stable order: score first, then registry order (Array.prototype.sort is
   // stable), so equal scores never jitter between keystrokes.
   scored.sort((a, b) => b.s - a.s);
-  cmdkShown = scored.slice(0, 12).map((x) => x.item);
+  // An empty box BROWSES — capping it at 12 hid three views and every action
+  // from the arrow keys (QA finding 4). The list scrolls; only typed queries
+  // trim to the best dozen.
+  cmdkShown = scored.slice(0, q ? 12 : scored.length).map((x) => x.item);
   // Free text is never a dead end: whatever was typed can always become a
   // file search, which is where the old ⌘K muscle memory still lands.
   if (q) {
@@ -15895,6 +15907,7 @@ function cmdkRun(i) {
 }
 
 function cmdkOpen() {
+  hideTooltip(); // a stale hover card must not float above the palette
   cmdkPrevFocus = document.activeElement;
   cmdkSel = 0;
   $('cmdkInput').value = '';
@@ -16124,6 +16137,10 @@ $('tourResetBtn').addEventListener('click', () => {
       });
       closeModal('settingsModal');
       tour.active = false; // restartable even in the session that finished it
+      // A restart in a scanned session opens at "this is your disk as a map"
+      // — so put the map on screen (QA finding 5: the card narrated a view
+      // the user wasn't looking at).
+      if (state.scanId && state.view !== 'treemap') switchView('treemap');
       tourMaybeStart(false);
     } catch (e) { toast('Could not reset the tour: ' + e.message, 'error'); }
   })();
@@ -19747,13 +19764,22 @@ async function loadSmartSuggestions() {
       return;
     }
     smartGroups = data.groups;
+    // §9.5 honesty (QA finding 8): folders paused by a note are excluded
+    // server-side, and an absence with no stated cause reads as good news.
+    // One line, only when a pausing note actually exists.
+    const pausedNotes = [...state.notes.values()].filter((n) => n.suppress).length;
+    const noteHint = pausedNotes
+      ? `<div class="muted" style="font-size:11.5px;padding:2px 2px 8px;">${icon('doc', 13)} ${pausedNotes === 1 ? 'One folder is' : `${pausedNotes} folders are`} excluded by a note that pauses suggestions — edit the note to include ${pausedNotes === 1 ? 'it' : 'them'} again.</div>`
+      : '';
     if (!smartGroups.length) {
-      host.innerHTML = (hadBrowsers || hadPackages) ? ''
-        : `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon('checkCircle', 15)} Nothing in this scan matches the common-junk rules.</div>`;
+      host.innerHTML = ((hadBrowsers || hadPackages) ? ''
+        : `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:12px 2px;">${icon('checkCircle', 15)} Nothing in this scan matches the common-junk rules.</div>`)
+        + noteHint;
       updateCleanSummary();
       return;
     }
     renderSmartGroups(data.catalog);
+    if (noteHint) host.insertAdjacentHTML('beforeend', noteHint);
   } catch (e) {
     host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   }

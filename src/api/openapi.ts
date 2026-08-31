@@ -1950,7 +1950,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Replace whichever settings lists are present in the body',
     tag: 'settings',
     destructive: true,
-    requestBody: jsonBody(opaque('Any subset of AppSettings: ignore, schedules, budgets, forecastThresholdDays, watchIdleMinutes, cloud, reclaimWeights, cleanupGoalBytes')),
+    requestBody: jsonBody(opaque('Any subset of AppSettings: ignore, schedules, budgets, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes, humanScaleUnits, tourDone')),
     responses: { '200': jsonResponse('Updated settings', ref('AppSettings')), '400': errorResponse('Bad shape') },
   },
   {
