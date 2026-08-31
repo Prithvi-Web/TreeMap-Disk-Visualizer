@@ -1496,6 +1496,10 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .cal-cell[data-lv="4"] { background: var(--ok); }
 .cal-cell.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cal-legend { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
+/* v4 §7.4 — the compare split view */
+.cmp-split { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
+.cmp-split canvas { width: 100%; height: 300px; display: block; border-radius: 10px; }
+.cmp-split input[type="range"] { width: 100%; }
 .capsule-gauge { display: flex; align-items: center; gap: 12px; margin: 2px 0 14px; }
 .capsule-gauge .bar-track { flex: 1; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .capsule-gauge .bar { height: 100%; border-radius: 3px; background: var(--accent); transition: width .3s ease; }
@@ -2368,7 +2372,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
     </div>
   </section>
 
-  <!-- ═══════════ Time Capsule (B3) ═══════════ -->
+  <!-- ═══════════ Calendar (v4 §7.2) ═══════════ -->
   <section class="view" id="view-calendar" role="tabpanel" aria-label="Calendar heatmap of bytes written per day" hidden>
     <div class="card glass">
       <h2><span data-icon="calendar"></span>Calendar</h2>
@@ -2388,6 +2392,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
     </div>
   </section>
 
+  <!-- ═══════════ Journal (v4 §7.3) ═══════════ -->
   <section class="view" id="view-journal" role="tabpanel" aria-label="Disk journal — what changed, day by day" hidden>
     <div class="card glass">
       <h2><span data-icon="activity"></span>Journal</h2>
@@ -2397,6 +2402,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
     </div>
   </section>
 
+  <!-- ═══════════ Time Capsule (B3) ═══════════ -->
   <section class="view" id="view-capsule" role="tabpanel" aria-label="Time Capsule" hidden>
     <div class="card glass">
       <h2><span data-icon="clock"></span>Time Capsule</h2>
@@ -17526,11 +17532,89 @@ $('cmpRunBtn').addEventListener('click', async () => {
       renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: diff.truncated, deep: true, whenA: a.when, whenB: b.when });
     } else {
       const diff = await api(`/api/snapshots/compare?a=${a.id}&b=${b.id}`);
-      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: false, deep: false, whenA: diff.a.takenAt, whenB: diff.b.takenAt });
+      // §7.4 — a same-root snapshot pair also gets the split-slider maps.
+      renderCompare({ entries: diff.entries, totalDelta: diff.totalDelta, truncated: false, deep: false, whenA: diff.a.takenAt, whenB: diff.b.takenAt, splitRoot: a.rootPath });
     }
   } catch (e) {
     body.innerHTML = `<div class="card glass"><div class="muted">Compare failed: ${escapeHtml(e.message)}</div></div>`;
   }
+});
+
+/* ── §7.4 — the split-slider: two snapshot treemaps behind one divider ──
+   Both layouts come from /api/snapshots/tree (percent-space rects, the same
+   shape the live renderer draws), painted into ONE canvas: the newer map in
+   full, then the older clipped to the divider's left — a photo-comparison
+   wipe. The divider is a NATIVE range input so arrows, Home and End are the
+   platform's own; aria-valuetext narrates the position, the reclaim-weight
+   sliders' pattern. Everything lives on elements this render created, so
+   there is nothing for unmount to take back; the one static listener
+   (resize) checks the canvas is still on screen before it draws. */
+let cmpSplit = null; // { a, b, whenA, whenB } — percent-node layouts
+
+async function initCmpSplit(rootPath, whenA, whenB) {
+  const note = $('cmpSplitNote');
+  try {
+    const [la, lb] = await Promise.all([
+      api(`/api/snapshots/tree?path=${encodeURIComponent(rootPath)}&at=${whenA}`),
+      api(`/api/snapshots/tree?path=${encodeURIComponent(rootPath)}&at=${whenB}`),
+    ]);
+    // closestSnapshot answers with the nearest stored tree; if both picks
+    // resolve to the same one there is nothing to wipe between — say so.
+    if (la.snapshot.takenAt === lb.snapshot.takenAt) {
+      $('cmpSplitCard').hidden = true;
+      return;
+    }
+    cmpSplit = { a: la.nodes, b: lb.nodes, whenA: la.snapshot.takenAt, whenB: lb.snapshot.takenAt };
+    const range = $('cmpSplitRange');
+    range.addEventListener('input', () => cmpSplitDraw());
+    cmpSplitDraw();
+  } catch (e) {
+    cmpSplit = null;
+    if (note) note.textContent = `No split view: ${e.message}`;
+  }
+}
+
+function cmpSplitDraw() {
+  const canvas = $('cmpSplitCanvas');
+  if (!canvas || !cmpSplit) return;
+  const range = $('cmpSplitRange');
+  const pct = Number(range.value);
+  range.setAttribute('aria-valuetext',
+    `${pct} percent — left of the divider: ${new Date(cmpSplit.whenA).toLocaleString()}, right: ${new Date(cmpSplit.whenB).toLocaleString()}`);
+  const cw = canvas.clientWidth, ch = canvas.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(cw * dpr)) canvas.width = Math.round(cw * dpr);
+  if (canvas.height !== Math.round(ch * dpr)) canvas.height = Math.round(ch * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // own the matrix — never scale on top of an inherited one
+  const paint = (nodes) => {
+    ctx.fillStyle = cssVar('--bg-1') || '#0e0e13';
+    ctx.fillRect(0, 0, cw, ch);
+    for (const n of nodes) {
+      if (n.type === 'dir') continue; // files carry the bytes; dirs would paint over them
+      const x = (n.x / 100) * cw, y = (n.y / 100) * ch;
+      const w = (n.w / 100) * cw, h = (n.h / 100) * ch;
+      if (w < 0.5 || h < 0.5) continue;
+      ctx.fillStyle = sizeColor(n.size, 0.92);
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+      ctx.strokeRect(x + 0.5, y + 0.5, Math.max(0, w - 1), Math.max(0, h - 1));
+    }
+  };
+  const splitX = (pct / 100) * cw;
+  paint(cmpSplit.b); // the newer scan, in full
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, splitX, ch);
+  ctx.clip();
+  paint(cmpSplit.a); // the older scan, revealed left of the divider
+  ctx.restore();
+  ctx.fillStyle = cssVar('--accent') || '#0A84FF';
+  ctx.fillRect(splitX - 1, 0, 2, ch);
+}
+
+window.addEventListener('resize', () => {
+  if (state.view === 'compare' && $('cmpSplitCanvas')) cmpSplitDraw();
 });
 
 function renderCompare(r) {
@@ -17540,7 +17624,22 @@ function renderCompare(r) {
   }
   const up = r.totalDelta >= 0;
   const maxD = Math.abs(r.entries[0]?.delta ?? 0) || 1;
-  $('cmpBody').innerHTML = `
+  const splitCard = r.splitRoot ? `
+    <div class="card glass" id="cmpSplitCard">
+      <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>Split view</h2>
+      <div class="muted" style="margin-bottom:8px;">Drag the divider — or focus it and use the arrow keys; Home and End snap. Left of the line is the older scan, right is the newer.</div>
+      <div class="cmp-split">
+        <canvas id="cmpSplitCanvas" aria-hidden="true"></canvas>
+        <input type="range" id="cmpSplitRange" min="0" max="100" step="1" value="50"
+               aria-label="Reveal divider between the two scans — left of it shows the older scan, right the newer" aria-valuetext="50 percent">
+      </div>
+      <div class="rule-row num muted" style="justify-content:space-between;">
+        <span>◀ ${new Date(r.whenA).toLocaleString()}</span>
+        <span>${new Date(r.whenB).toLocaleString()} ▶</span>
+      </div>
+      <div class="muted" id="cmpSplitNote" role="status"></div>
+    </div>` : '';
+  $('cmpBody').innerHTML = splitCard + `
     <div class="card glass">
       <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>${new Date(r.whenA).toLocaleString()} → ${new Date(r.whenB).toLocaleString()}${r.deep ? '' : ' · top-level folders only'}</h2>
       <div class="muted num" style="margin-bottom:12px;">Total ${up ? 'grew' : 'shrank'} by
@@ -17550,6 +17649,7 @@ function renderCompare(r) {
         ? r.entries.slice(0, 200).map(en => deltaRow(en, maxD, { offerSnapshots: true })).join('')
         : `<div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No differences — nothing changed between these two.</div>`}
     </div>`;
+  if (r.splitRoot) initCmpSplit(r.splitRoot, r.whenA, r.whenB);
   wireSnapshotActions($('cmpBody'));
 }
 

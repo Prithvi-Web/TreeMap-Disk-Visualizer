@@ -310,6 +310,24 @@ test('no id rides on a data-icon span — the injector replaces the element whol
   assert.deepEqual(offenders, [], 'ids on data-icon spans do not survive icon injection');
 });
 
+test('the compare split view exists and follows the reclaim slider keyboard pattern', () => {
+  /* v4 §7.4: the divider must be a NATIVE range input — arrows, Home and End
+     come from the platform, not from hand-rolled key handling — with a live
+     aria-valuetext, the same pattern the reclaim-weight sliders set. And its
+     canvas must own its pixel-ratio transform (setTransform, never scale on
+     top of an inherited matrix), the rule the overlay test below enforces for
+     the static canvases. */
+  const code = appCode();
+  const start = code.indexOf('function initCmpSplit');
+  assert.notEqual(start, -1, 'initCmpSplit exists in the script');
+  const end = code.indexOf('function renderCompare');
+  assert.notEqual(end, -1, 'renderCompare still exists');
+  const split = code.slice(start, start + 6000);
+  assert.match(split, /type="range"/, 'the divider is a native range input');
+  assert.match(split, /aria-valuetext/, 'the divider announces its position');
+  assert.match(split, /setTransform\(/, 'the split canvas sets its own dpr transform');
+});
+
 test('every animation entry point asks REDUCED before it starts', () => {
   /* v4 §6 cross-cutting: "every new animation … must too, degrading to an
      instant transition". Checked structurally rather than by eye, because the
