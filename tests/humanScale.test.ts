@@ -487,3 +487,48 @@ test('the tooltip line shows nothing without comparables, and always carries its
   assert.match(resolver, /HS_MIN_BYTES/, 'only over the ~1 GB floor');
   assert.match(resolver, /state\.scanId !== scanAtRequest\) return/, 'a stale answer cannot cross scans');
 });
+
+test('one request cannot walk forever: the batch budget skips the tail honestly', async () => {
+  // 2,000 deep directories in one request could visit billions of nodes with
+  // only a per-path cap — a synchronous walk that would block the event loop
+  // for seconds. The batch budget bounds the whole request; paths past it
+  // are SKIPPED (absent from values, counted in stats), never zeroed.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-humanscale-batch-'));
+  const dirs: string[] = [];
+  for (let d = 0; d < 6; d++) {
+    const dir = path.join(root, `bucket_${d}`);
+    fs.mkdirSync(dir);
+    for (let i = 0; i < 12; i++) {
+      fs.writeFileSync(path.join(dir, `p_${i}.jpg`), Buffer.alloc(1000));
+    }
+    dirs.push(dir);
+  }
+  const { port, close } = await listen();
+  try {
+    const scanId = await scanned(port, root);
+    // Per-path cap huge, batch budget 30: each bucket costs 13 visits
+    // (itself + 12 files), so roughly two buckets fit and the rest must not.
+    const restore = setHumanScaleWalkCapForTests(1_000_000, 30);
+    try {
+      const controller = new AbortController();
+      const out = await computeFacts(scanId, dirs, ['humanScale'], controller.signal);
+      const r = out.humanScale;
+      assert.equal(r.available, true);
+      const answered = Object.keys(r.values).length;
+      assert.ok(answered >= 1, 'the budget covers at least the first path');
+      assert.ok(answered < dirs.length, `and runs out before the batch ends (answered ${answered} of ${dirs.length})`);
+      assert.equal(r.stats.requested, dirs.length);
+      assert.equal(r.stats.computed + r.stats.skipped + r.stats.failed, r.stats.requested,
+        'coverage arithmetic still holds under the budget');
+      for (const d of dirs.slice(0, answered)) {
+        assert.ok((r.values as any)[d], 'answered paths carry real values');
+      }
+    } finally {
+      restore();
+      clearFactCache(scanId);
+    }
+  } finally {
+    await close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

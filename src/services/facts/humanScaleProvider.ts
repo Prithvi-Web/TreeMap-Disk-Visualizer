@@ -69,19 +69,35 @@ export const MIN_COMPARABLE = 10;
 export const WALK_CAP = 500_000;
 
 /**
- * The live cap. Mutable only through `setHumanScaleWalkCapForTests`: proving
- * the capped branch against the real constant would need a half-million-node
- * fixture, so — following the `setFactCacheLimitsForTests` precedent — the
- * seam is named for what it is so nobody mistakes it for a tuning knob.
+ * Whole-request walk budget. The per-path cap alone is not a bound: a batch
+ * of 2,000 deep directories at 500k nodes each could visit a BILLION nodes
+ * in one synchronous compute() — seconds of blocked event loop from a single
+ * request. The batch budget caps the request's total; paths past it are
+ * skipped and counted, never zeroed, so the response still states its own
+ * coverage (§2.4). The UI asks for one path per hover and never feels this;
+ * it exists for the API and MCP callers who can ask for two thousand.
+ */
+export const BATCH_WALK_CAP = 2_000_000;
+
+/**
+ * The live caps. Mutable only through `setHumanScaleWalkCapForTests`:
+ * proving the capped branches against the real constants would need
+ * million-node fixtures, so — following the `setFactCacheLimitsForTests`
+ * precedent — the seam is named for what it is so nobody mistakes it for a
+ * tuning knob.
  */
 let walkCap = WALK_CAP;
+let batchWalkCap = BATCH_WALK_CAP;
 
-/** Shrink the walk cap for a test. Returns a restore function. */
-export function setHumanScaleWalkCapForTests(cap: number): () => void {
+/** Shrink the walk caps for a test. Returns a restore function. */
+export function setHumanScaleWalkCapForTests(cap: number, batchCap?: number): () => void {
   const previous = walkCap;
+  const previousBatch = batchWalkCap;
   walkCap = cap;
+  if (batchCap !== undefined) batchWalkCap = batchCap;
   return () => {
     walkCap = previous;
+    batchWalkCap = previousBatch;
   };
 }
 
@@ -121,19 +137,26 @@ for (const e of MUSIC_EXTENSIONS) KIND_OF_EXTENSION.set(e, 'music');
  * the caller is still listening and a truncated sample that states itself
  * is more useful than silence.
  */
-function walkDir(store: ScanStore, dirId: number, signal: AbortSignal): HumanScaleFact | null {
+function walkDir(
+  store: ScanStore,
+  dirId: number,
+  signal: AbortSignal,
+  /** Nodes this walk may visit — min of the per-path cap and what is left of the batch budget. */
+  allowance: number,
+): { fact: HumanScaleFact; visited: number } | null {
   const tallies: Record<HumanScaleKind, { count: number; bytes: number }> = {
     photos: { count: 0, bytes: 0 },
     videos: { count: 0, bytes: 0 },
     music: { count: 0, bytes: 0 },
   };
 
+  const limit = Math.min(walkCap, allowance);
   const stack: number[] = [dirId];
   let visited = 0;
   let capped = false;
 
   while (stack.length > 0) {
-    if (visited >= walkCap) {
+    if (visited >= limit) {
       capped = true;
       break;
     }
@@ -178,8 +201,10 @@ function walkDir(store: ScanStore, dirId: number, signal: AbortSignal): HumanSca
 
   // The optional stays absent on a full walk — a `capped: false` would make
   // every consumer check a field that only ever matters when it is true.
-  if (capped) return { bytes: dirBytes, capped: true, equivalents };
-  return { bytes: dirBytes, equivalents };
+  const fact: HumanScaleFact = capped
+    ? { bytes: dirBytes, capped: true, equivalents }
+    : { bytes: dirBytes, equivalents };
+  return { fact, visited };
 }
 
 export const humanScaleProvider: FactProvider<HumanScaleFact> = {
@@ -205,6 +230,7 @@ export const humanScaleProvider: FactProvider<HumanScaleFact> = {
     const store = storeOf(scan);
     const values = new Map<string, HumanScaleFact>();
     let skipped = 0;
+    let batchBudget = batchWalkCap;
 
     for (let i = 0; i < paths.length; i++) {
       // Same contract as every other provider: an abort leaves the rest
@@ -226,14 +252,23 @@ export const humanScaleProvider: FactProvider<HumanScaleFact> = {
         skipped++;
         continue;
       }
-      const fact = walkDir(store, id, signal);
-      if (fact === null) {
+      // The batch budget: once this request has visited its share of nodes,
+      // every remaining path is skipped — stated in the stats — rather than
+      // walked. One request must not be able to block the event loop for
+      // seconds however many deep directories it names.
+      if (batchBudget <= 0) {
+        skipped++;
+        continue;
+      }
+      const walked = walkDir(store, id, signal, batchBudget);
+      if (walked === null) {
         // Aborted mid-walk: this path is skipped whole, and the loop-top
         // check catches every path after it on the next iteration.
         skipped++;
         continue;
       }
-      values.set(paths[i], fact);
+      batchBudget -= walked.visited;
+      values.set(paths[i], walked.fact);
     }
 
     return {
