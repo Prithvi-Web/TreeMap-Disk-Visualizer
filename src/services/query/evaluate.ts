@@ -160,8 +160,16 @@ export function matchesDate(
     // `modified:2023-01-01` means "on that day", not "at that exact
     // millisecond". Literal equality is technically defensible and practically
     // useless: it silently matches nothing, which looks identical to a folder
-    // with nothing in it.
-    if (op === '=') return timestampMs >= value && timestampMs < value + DAY_MS;
+    // with nothing in it. The day's end is the NEXT LOCAL MIDNIGHT, not
+    // value + 24h — DST makes two local days a year 23 or 25 hours long, and
+    // a fixed window would drop the 25-hour day's last hour and steal the
+    // 23-hour day's next morning (v4 §7.2's calendar buckets true local days
+    // and hands its clicks to this operator; the two must agree).
+    if (op === '=') {
+      const d = new Date(value);
+      const nextMidnight = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+      return timestampMs >= value && timestampMs < nextMidnight;
+    }
     return compare(timestampMs, op, value);
   }
   return compare(now - timestampMs, op, value);

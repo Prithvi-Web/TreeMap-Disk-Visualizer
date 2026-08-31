@@ -470,6 +470,13 @@ scanRouter.get('/scan/:scanId/treemap', guardQueryPath('root'), (req: Request, r
  * rules live in the service (src/services/calendarAggregate.ts).
  */
 scanRouter.get('/scan/:scanId/calendar', (req: Request, res: Response) => {
+  // A malformed request is refused before the scan's state is consulted — a
+  // garbage channel on a still-running scan is a 400, not a 202 that would
+  // invite polling a request that can never succeed.
+  const channel = String(req.query.channel ?? 'modified');
+  if (channel !== 'modified' && channel !== 'created') {
+    throw new AppError(400, 'BAD_CHANNEL', 'channel must be "modified" or "created"');
+  }
   const scan = requireScan(req, req.params.scanId);
   if (scan.status === 'running') {
     res.status(202).json({ status: 'running', scanned: scan.scanned });
@@ -477,11 +484,6 @@ scanRouter.get('/scan/:scanId/calendar', (req: Request, res: Response) => {
   }
   if (scan.status === 'error' || (!scan.store && !scan.root)) {
     throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
-  }
-
-  const channel = String(req.query.channel ?? 'modified');
-  if (channel !== 'modified' && channel !== 'created') {
-    throw new AppError(400, 'BAD_CHANNEL', 'channel must be "modified" or "created"');
   }
 
   const result = aggregateCalendar(storeOf(scan), { includeCreated: channel === 'created' });

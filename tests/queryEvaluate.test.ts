@@ -179,6 +179,32 @@ test('the two modes genuinely disagree, which is the point', () => {
   assert.equal(hit('modified<2020-01-01', recent), false, 'timestamp < 2020: not recent');
 });
 
+test('"=" on a date means the local calendar day, even when DST makes it 23 or 25 hours', () => {
+  /* v4 §7.2 clicks a calendar day and applies `modified:that-day`; the
+     calendar buckets true local days. A fixed 24-hour window disagrees with
+     the calendar twice a year — on the 25-hour day it drops the last hour,
+     on the 23-hour day it steals the next morning — so clicked-day counts
+     would not match what the query then shows. */
+  const realTZ = process.env.TZ;
+  process.env.TZ = 'America/New_York';
+  try {
+    // Prove the pin took before trusting any assertion below.
+    assert.equal(new Date(Date.UTC(2026, 0, 15, 12)).getTimezoneOffset(), 300,
+      'the TZ pin did not reach Date — the DST asserts below would be meaningless');
+    // Nov 1 2026: fall back — a 25-hour local day.
+    const nov1 = new Date(2026, 10, 1).getTime();
+    const lateNov1 = new Date(2026, 10, 1, 23, 59).getTime();
+    assert.equal(matchesDate(lateNov1, 'absolute', '=', nov1, NOW), true, 'a 25-hour day still owns its 23:59');
+    // Mar 8 2026: spring forward — a 23-hour local day.
+    const mar8 = new Date(2026, 2, 8).getTime();
+    const earlyMar9 = new Date(2026, 2, 9, 0, 30).getTime();
+    assert.equal(matchesDate(earlyMar9, 'absolute', '=', mar8, NOW), false, 'a 23-hour day does not steal the next morning');
+  } finally {
+    if (realTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = realTZ;
+  }
+});
+
 test('matchesDate refuses a null timestamp rather than treating it as epoch', () => {
   // A null must never compare as 1 Jan 1970, which would make every
   // "older than" query match everything unknown.

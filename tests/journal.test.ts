@@ -238,6 +238,57 @@ test('the audit log only speaks for real, successful deletions inside the window
   assert.equal(attributeChange('/Users/x/Downloads', 4.1 * GB, [], [auditLine()], 1000), UNATTRIBUTED);
 });
 
+test('"you" requires a removal action — approvals, policy saves and restores never claim it', () => {
+  // autopilot.approve audits the WATCHED folder with dryRun:false/ok — a
+  // shrink there is exactly where a false "you" would otherwise land.
+  assert.equal(
+    attributeChange('/Users/x/Downloads', -4.1 * GB, [], [auditLine({ action: 'autopilot.approve', paths: ['/Users/x/Downloads'], bytes: null })], 1000),
+    UNATTRIBUTED,
+  );
+  assert.equal(
+    attributeChange('/Users/x/Downloads', -4.1 * GB, [], [auditLine({ action: 'autopilot.policies', paths: ['/Users/x/Downloads'], bytes: null })], 1000),
+    UNATTRIBUTED,
+  );
+  // snapshots.restore ADDS bytes; a coincident shrink is not TreeMap's doing.
+  assert.equal(
+    attributeChange('/Users/x/Downloads', -4.1 * GB, [], [auditLine({ action: 'snapshots.restore' })], 1000),
+    UNATTRIBUTED,
+  );
+  // The real removal paths still speak.
+  assert.equal(attributeChange('/Users/x/Downloads', -4.1 * GB, [], [auditLine({ action: 'cart.commit' })], 1000), 'you');
+  assert.equal(attributeChange('/Users/x/Downloads', -4.1 * GB, [], [auditLine({ action: 'offload.start' })], 1000), 'you');
+});
+
+test('"you" requires the magnitude to roughly fit — a 150 MB trash does not explain a 20 GB shrink', () => {
+  assert.equal(
+    attributeChange('/Users/x/Downloads', -20 * GB, [], [auditLine({ bytes: 150 * MB })], 1000),
+    UNATTRIBUTED,
+  );
+  // Half-covered is enough — sizes drift between scans.
+  assert.equal(attributeChange('/Users/x/Downloads', -4.1 * GB, [], [auditLine({ bytes: 2.1 * GB })], 1000), 'you');
+  // An unknown byte count vouches for nothing.
+  assert.equal(attributeChange('/Users/x/Downloads', -20 * GB, [], [auditLine({ bytes: null })], 1000), UNATTRIBUTED);
+  // Two smaller deletions can cover the shrink together.
+  assert.equal(
+    attributeChange('/Users/x/Downloads', -4 * GB, [], [auditLine({ bytes: 1.5 * GB }), auditLine({ bytes: 1.5 * GB, paths: ['/Users/x/Downloads/other.iso'] })], 1000),
+    'you',
+  );
+});
+
+test('a residual that cancels against an unmatched child is still reported, coarsely at the parent', () => {
+  // Docker grew +14 GB (a matched child); a folder the current snapshot no
+  // longer stores shrank −14 GB. The root nets to zero, the walk descends,
+  // and without the residual rule the −14 GB would be reported NOWHERE —
+  // a significant change rendered indistinguishable from "nothing happened".
+  const prev = node('x', 100 * GB, [node('Docker', 10 * GB), node('gone', 14 * GB), node('rest', 76 * GB)]);
+  const curr = node('x', 100 * GB, [node('Docker', 24 * GB), node('rest', 76 * GB)]);
+  const culprits = significantChanges(prev, curr, '/Users/x');
+  const byPath = new Map(culprits.map((c) => [c.path, c.delta]));
+  assert.equal(culprits.length, 2);
+  assert.equal(byPath.get('/Users/x/Docker'), 14 * GB, 'the matched grower is still pinned deep');
+  assert.equal(byPath.get('/Users/x'), -14 * GB, 'the unexplained remainder is reported where it is known, never dropped');
+});
+
 /* ─────────────── Sentences ─────────────── */
 
 test('sentences read like the feature promises, from the entry fields alone', () => {

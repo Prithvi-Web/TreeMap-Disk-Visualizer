@@ -12,6 +12,7 @@ import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { createScanRecord } from '../src/services/diskScanner';
 import { aggregateCalendar, STAT_CAP } from '../src/services/calendarAggregate';
+import { STAT_CAP as QUERY_STAT_CAP } from '../src/services/query/execute';
 import { FileNode } from '../src/models/types';
 
 /**
@@ -298,8 +299,26 @@ test('unreadable files are counted and reported, not treated as non-matching', (
   });
 });
 
-test('the default stat cap matches the query engine budget', () => {
-  assert.equal(STAT_CAP, 20_000);
+test('the default stat cap IS the query engine budget — one constant, not a copy', () => {
+  assert.equal(STAT_CAP, QUERY_STAT_CAP, 'the two budgets must be the same exported constant');
+});
+
+test('an mtime the filesystem never recorded is unknown, not a 1969 day', () => {
+  // diskScanner's own rule: a zero timestamp means "never recorded — omit
+  // rather than let a 1970 date surface anywhere". The always-on modified
+  // channel must hold it too, and say what it skipped.
+  return withTz('America/New_York', () => {
+    const result = aggregateCalendar(flatTree([
+      { name: 'no-mtime.bin', size: 100, modifiedAt: 0 },
+      { name: 'negative.bin', size: 50, modifiedAt: -1 },
+      { name: 'real.bin', size: 200, modifiedAt: new Date(2026, 5, 10, 12).getTime() },
+    ]));
+    assert.deepEqual(result.modified.map((d) => d.date), ['2026-06-10'], 'no 1969/1970 bucket may exist');
+    assert.equal(result.modified[0].bytes, 200);
+    const note = result.degraded.find((d) => d.provider === 'modifiedUnknown');
+    assert.ok(note, 'the skipped files are reported, never silently absent');
+    assert.match(note!.reason, /\b2\b/, 'the count of unknown-mtime files is stated');
+  });
 });
 
 /* ------------------------------ the route ------------------------------ */

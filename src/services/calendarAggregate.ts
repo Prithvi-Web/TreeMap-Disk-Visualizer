@@ -1,5 +1,6 @@
 import fs from 'fs';
 import { TreeSource, asStore } from './scanStore';
+import { STAT_CAP as QUERY_STAT_CAP } from './query/execute';
 
 /**
  * calendarAggregate — per-local-day activity for the calendar view.
@@ -22,8 +23,8 @@ import { TreeSource, asStore } from './scanStore';
  * the cap prevented reading is absent, never reported as zero.
  */
 
-/** Same per-request stat budget as the query engine's `created:` term. */
-export const STAT_CAP = 20_000;
+/** THE query engine's `created:` stat budget — shared, not copied, so the two cannot drift. */
+export const STAT_CAP = QUERY_STAT_CAP;
 
 export interface CalendarDay {
   /** Local calendar day, 'YYYY-MM-DD'. */
@@ -95,9 +96,15 @@ export function aggregateCalendar(source: TreeSource, opts: CalendarOptions = {}
   let statsCapped = 0;
   let statsFailed = 0;
   let statsUnknown = 0;
+  let mtimeUnknown = 0;
 
   store.eachFile(store.rootId, (id) => {
-    add(modified, localDayKey(store.modifiedAt(id)), store.size(id));
+    // diskScanner's rule, held here too: a timestamp of 0 (or worse) means
+    // "never recorded" — skipped and reported, never bucketed onto 1969/1970
+    // as if that were a real day of work.
+    const mtime = store.modifiedAt(id);
+    if (mtime > 0) add(modified, localDayKey(mtime), store.size(id));
+    else mtimeUnknown++;
 
     if (!opts.includeCreated) return;
     if (statsSpent >= statCap) {
@@ -131,6 +138,9 @@ export function aggregateCalendar(source: TreeSource, opts: CalendarOptions = {}
   }
   if (statsUnknown > 0) {
     degraded.set('createdUnknown', `${statsUnknown.toLocaleString()} file${statsUnknown === 1 ? ' has' : 's have'} no recorded creation time on this filesystem, so they are not in the created days.`);
+  }
+  if (mtimeUnknown > 0) {
+    degraded.set('modifiedUnknown', `${mtimeUnknown.toLocaleString()} file${mtimeUnknown === 1 ? ' has' : 's have'} no recorded modification time, so they are not in the modified days.`);
   }
 
   return {

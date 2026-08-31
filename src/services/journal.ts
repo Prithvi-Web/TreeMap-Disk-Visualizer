@@ -66,7 +66,7 @@ export function journalFilePath(): string {
 async function countLines(file: string): Promise<number> {
   try {
     const raw = await fsp.readFile(file, 'utf8');
-    return raw.split('\n').filter((l) => l.length > 0).length;
+    return raw.split('\n').filter((l) => l.trim().length > 0).length;
   } catch {
     return 0; // no journal yet
   }
@@ -97,16 +97,22 @@ export function appendJournal(entry: Omit<JournalEntry, 'at'>): Promise<void> {
         // Same serialised task as the append above — the queue is what makes
         // this rewrite atomic with respect to every other append.
         const raw = await fsp.readFile(file, 'utf8');
-        const tail = raw.split('\n').filter((l) => l.length > 0).slice(-JOURNAL_KEEP_LINES);
+        const tail = raw.split('\n').filter((l) => l.trim().length > 0).slice(-JOURNAL_KEEP_LINES);
         const tmp = file + '.tmp';
         await fsp.writeFile(tmp, tail.join('\n') + '\n', 'utf8');
         await fsp.rename(tmp, file);
         lineCount = tail.length;
       }
     })
-    .catch((err: unknown) => {
+    .catch(async (err: unknown) => {
       console.error('[treemap] journal append failed:', err);
       lineCount = null; // recount next time rather than trusting a torn state
+      // A rotation that died between writeFile and rename leaves its tmp file
+      // behind; it is never read, but a crash artifact is still litter. The
+      // named tmpPath is what shows the delete-guard sweep this is our own
+      // app-data scratch file, never a user file.
+      const tmpPath = journalFilePath() + '.tmp';
+      await fsp.unlink(tmpPath).catch(() => {});
     });
   return queue;
 }
@@ -177,6 +183,12 @@ export function significantChanges(prev: SnapshotTreeNode, curr: SnapshotTreeNod
     // how two changes that null out at the root are still both found).
     if (significantKids.length && (Math.abs(delta - explained) < SIGNIFICANT_BYTES || Math.abs(delta) < SIGNIFICANT_BYTES)) {
       for (const kid of significantKids) walk(kid.p, kid.c, join(nodePath, kid.c.n));
+      // Whatever the matched children do NOT explain is still a real change —
+      // a growth that cancels against a vanished (unmatched) sibling would
+      // otherwise be narrated as pure growth on a net-zero disk. The exact
+      // remainder is reported here, coarsely, where it is known.
+      const remainder = delta - explained;
+      if (Math.abs(remainder) >= SIGNIFICANT_BYTES) out.push({ path: nodePath, delta: remainder });
       return;
     }
     if (Math.abs(delta) >= SIGNIFICANT_BYTES) out.push({ path: nodePath, delta });
@@ -201,6 +213,25 @@ export function significantChanges(prev: SnapshotTreeNode, curr: SnapshotTreeNod
  * exactly UNATTRIBUTED: the journal states what it knows, not what it
  * suspects.
  */
+/**
+ * The audit actions whose real runs REMOVE the audited paths' bytes from this
+ * machine — the only ones that may vouch for a shrink as "you". Everything
+ * else the audit records (approving a policy, saving one, restoring a file —
+ * which ADDS bytes) writes ok/dryRun:false lines over the very folders where
+ * a coincidental shrink is likeliest, and counting those painted "you" onto
+ * deletions the user never made. An action not on this list falls through to
+ * app containment or UNATTRIBUTED — understated, never invented.
+ */
+const REMOVAL_ACTIONS = new Set([
+  'files.trash',
+  'cloud.trash',
+  'cart.commit',
+  'offload.start',
+  'compression.encode',
+  'git.gc',
+  'security.relocate',
+]);
+
 export function attributeChange(
   changedPath: string,
   delta: number,
@@ -209,14 +240,20 @@ export function attributeChange(
   sinceMs: number,
 ): string {
   if (delta < 0) {
-    const yours = audit.some(
+    const matching = audit.filter(
       (e) =>
+        REMOVAL_ACTIONS.has(e.action) &&
         e.outcome === 'ok' &&
         !e.dryRun &&
         e.at >= sinceMs &&
         e.paths.some((p) => isInside(p, changedPath) || isInside(changedPath, p)),
     );
-    if (yours) return 'you';
+    // The claim must also fit the size of the hole: deletions covering at
+    // least half the shrink may speak for it (sizes drift between scans);
+    // a 150 MB trash does not explain 20 GB, and an entry whose bytes the
+    // operation could not know vouches for nothing.
+    const covered = matching.reduce((sum, e) => sum + (e.bytes ?? 0), 0);
+    if (matching.length > 0 && covered >= -delta / 2) return 'you';
   }
   let best: { name: string; depth: number } | null = null;
   for (const app of apps) {

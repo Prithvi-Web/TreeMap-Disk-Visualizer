@@ -43,7 +43,8 @@ const CANDIDATE_CAP = 20_000;
 const FACT_BATCH = 2000;
 
 /** `created` costs a stat; this bounds how many a single query may spend. */
-const STAT_CAP = 20_000;
+/** Exported so v4 §7.2's calendar shares the budget rather than copying it. */
+export const STAT_CAP = 20_000;
 
 export interface QueryHit {
   path: string;
