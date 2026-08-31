@@ -375,8 +375,108 @@ test('running out of time is stated, never silently truncated', () => {
   // §2.4: partial is stated, not hidden. A map that stopped subdividing looks
   // exactly like a map that had nothing more to show.
   const note = altNoteFor({ omittedCount: 0, omittedBytes: 0, unresolved: 0, truncated: false, outOfTime: true, drawn: 12 });
-  assert.match(note, /stopped subdividing after 150 ms/, 'the note says it stopped, and after how long');
+  assert.match(note, /stopped subdividing after 45 ms/, 'the note says it stopped, and after how long');
   assert.match(note, /drill in for more detail/, 'and what the user can do about it');
   const quiet = altNoteFor({ omittedCount: 0, omittedBytes: 0, unresolved: 0, truncated: false, outOfTime: false, drawn: 12 });
   assert.equal(quiet, '', 'a layout that finished says nothing');
+});
+
+/* ═══════════ The coverage gate — packs that cannot draw are not run ═══════════ */
+
+/**
+ * §2.5 close-out (the trade HANDOFF.md left open, now taken).
+ *
+ * A pack's cost is spent on every child; its value is only the children big
+ * enough to draw. The measured pathology packed 4,239 circles into an
+ * 18.8-pixel parent to draw 13 of them — 740 ms for specks. The gate estimates
+ * each child's drawn radius WITHOUT packing — r ≈ R·0.955·√(share) — and that
+ * estimate can only over-state: a real pack's hull is never denser than
+ * area-perfect, so a child estimated under the leaf floor is provably
+ * undrawable. Two consequences, both tested here:
+ *
+ *  - a parent whose drawable children hold under ALT_COVERAGE_MIN of its bytes
+ *    is not subdivided at all — it stays a hatched leaf, counted in the note;
+ *  - above the line, provably-undrawable children are dropped BEFORE the pack,
+ *    which bounds the survivors' inflation at √(1/ALT_COVERAGE_MIN) ≈ 5.4% in
+ *    radius — the price of not spending 80 ms packing four thousand invisible
+ *    circles around one giant.
+ */
+interface GateKid { size: number }
+interface GateResult {
+  skip: boolean;
+  packKids: GateKid[];
+  omittedCount: number;
+  omittedBytes: number;
+}
+const altCoverageGate = lift<(kids: GateKid[], r: number) => GateResult>(
+  ['ALT_MIN_LEAF_R', 'ALT_COVERAGE_MIN', 'altCoverageGate'], 'altCoverageGate',
+);
+
+test('the measured pathology — 23% drawable — is not subdivided', () => {
+  const kids: GateKid[] = [{ size: 2300 }];
+  for (let i = 0; i < 4238; i++) kids.push({ size: 7700 / 4238 });
+  const gate = altCoverageGate(kids, 18.8);
+  assert.equal(gate.skip, true, 'a parent that is mostly specks stays solid');
+  assert.equal(gate.omittedCount, kids.length, 'every child is counted in the note');
+  assert.ok(Math.abs(gate.omittedBytes - 10000) < 1e-6, 'and every byte');
+});
+
+test('the recorded trade: 84% drawable still hatches, and that is the chosen threshold', () => {
+  // HANDOFF.md names this exact parent: R=63.8, coverage 0.842, currently 42
+  // legible beads. Below ALT_COVERAGE_MIN it stops subdividing — the beads
+  // become a hatched circle whose drill-in shows them at full size. This test
+  // exists so the loss is a decision with a witness, not a side effect.
+  const kids: GateKid[] = [];
+  for (let i = 0; i < 42; i++) kids.push({ size: 84200 / 42 });
+  for (let i = 0; i < 4000; i++) kids.push({ size: 15800 / 4000 });
+  const gate = altCoverageGate(kids, 63.8);
+  assert.equal(gate.skip, true);
+});
+
+test('a dense folder passes the gate untouched', () => {
+  const kids: GateKid[] = Array.from({ length: 20 }, () => ({ size: 5 }));
+  const gate = altCoverageGate(kids, 100);
+  assert.equal(gate.skip, false);
+  assert.equal(gate.packKids.length, 20, 'every drawable child is packed');
+  assert.equal(gate.omittedCount, 0);
+  assert.equal(gate.omittedBytes, 0);
+});
+
+test('one giant among thousands of specks: the giant packs, the specks never do', () => {
+  // Coverage is ~99.6% — far above the gate — but 4,238 of the children are
+  // provably under the leaf floor. Packing them anyway was measured at 80 ms
+  // warm; the gate hands the pack exactly one circle instead.
+  const kids: GateKid[] = [{ size: 999000 }];
+  for (let i = 0; i < 4238; i++) kids.push({ size: 1 });
+  const gate = altCoverageGate(kids, 18.8);
+  assert.equal(gate.skip, false, 'the folder subdivides — its bytes are drawable');
+  assert.equal(gate.packKids.length, 1, 'only the giant reaches the pack');
+  assert.equal(gate.omittedCount, 4238);
+  assert.equal(gate.omittedBytes, 4238);
+});
+
+test('the gate partitions the children exactly — nothing lost, nothing doubled', () => {
+  const kids: GateKid[] = Array.from({ length: 500 }, (_, i) => ({ size: (i % 97) + 1 }));
+  const total = kids.reduce((s, k) => s + k.size, 0);
+  const gate = altCoverageGate(kids, 40);
+  assert.equal(gate.packKids.length + gate.omittedCount, kids.length);
+  const packed = gate.packKids.reduce((s: number, k: GateKid) => s + k.size, 0);
+  assert.ok(Math.abs(packed + gate.omittedBytes - total) < 1e-6);
+});
+
+test('children with no bytes at all skip without dividing by zero', () => {
+  const gate = altCoverageGate([{ size: 0 }, { size: 0 }], 50);
+  assert.equal(gate.skip, true);
+  assert.equal(gate.omittedCount, 2);
+  assert.equal(gate.omittedBytes, 0);
+  assert.ok(Number.isFinite(gate.omittedBytes));
+});
+
+test('layoutCirclePack consults the gate before it pays for a pack', () => {
+  const src = fnSource('layoutCirclePack');
+  const gateAt = src.indexOf('altCoverageGate(');
+  const packAt = src.indexOf('circlePackChildren(');
+  assert.notEqual(gateAt, -1, 'the layout calls the gate');
+  assert.notEqual(packAt, -1, 'the layout still packs');
+  assert.ok(gateAt < packAt, 'and the gate is asked first');
 });

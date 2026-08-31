@@ -8211,7 +8211,62 @@ const ALT_PARENT_MIN_R = 13;
 // be hovered — a hit target for something nobody can see. Counted and stated
 // with everything else that did not fit, rather than drawn as a speck.
 const ALT_MIN_LEAF_R = 1.3;
+// The coverage gate's line (§2.5 close-out): a parent whose DRAWABLE children
+// hold less than this share of its bytes is not subdivided — it stays a
+// hatched leaf. 0.9 is the threshold HANDOFF.md's measurements were taken at:
+// it catches both packs that broke the budget on the pathological folder, and
+// it bounds the bead inflation the pre-filter below it can cause at
+// √(1/0.9) ≈ 5.4% in radius. The one picture it costs is recorded as a test.
+const ALT_COVERAGE_MIN = 0.9;
 const ALT_CELL_BUDGET = 4000;
+
+/**
+ * Decide, without packing, whether subdividing a parent is worth what it
+ * costs — and which children are worth handing to the pack at all.
+ *
+ * The estimate is r ≈ R·0.955·√(bytes/total): the child's byte share, as
+ * area, inside the parent's usable radius. It can only OVER-state a radius —
+ * a real pack's hull is never denser than area-perfect — so a child estimated
+ * under ALT_MIN_LEAF_R is provably undrawable, and dropping it before the
+ * pack changes nothing the post-pack filter would have kept. What it does
+ * change is the cost: the measured pathology spent 740 ms packing 4,239
+ * circles to draw 13 of them, and a folder holding one giant among thousands
+ * of specks spent 80 ms to draw one.
+ *
+ * When the drawable children hold less than ALT_COVERAGE_MIN of the parent's
+ * bytes the parent is not subdivided at all: a picture that is mostly empty
+ * space is better told as a hatched leaf — this app's language for "there is
+ * more in here" — with the children counted in the note, and drill-in showing
+ * them at full size. Above the line, the survivors inflate by at most
+ * √(1/ALT_COVERAGE_MIN) in radius from the specks' absence, which the
+ * threshold bounds at ~5.4%.
+ */
+function altCoverageGate(kids, r) {
+  let total = 0;
+  for (const kid of kids) total += kid.size;
+  if (!(total > 0)) {
+    return { skip: true, packKids: [], omittedCount: kids.length, omittedBytes: 0 };
+  }
+  const estScale = r * 0.955; // 1 − the pack's own padding
+  const floorShare = (ALT_MIN_LEAF_R / estScale) * (ALT_MIN_LEAF_R / estScale);
+  const packKids = [];
+  let drawableBytes = 0;
+  let omittedCount = 0;
+  let omittedBytes = 0;
+  for (const kid of kids) {
+    if (kid.size / total >= floorShare) {
+      packKids.push(kid);
+      drawableBytes += kid.size;
+    } else {
+      omittedCount++;
+      omittedBytes += kid.size;
+    }
+  }
+  if (drawableBytes / total < ALT_COVERAGE_MIN) {
+    return { skip: true, packKids: [], omittedCount: kids.length, omittedBytes: total };
+  }
+  return { skip: false, packKids, omittedCount, omittedBytes };
+}
 
 function layoutCirclePack(root, geo) {
   const cells = [];
@@ -8238,7 +8293,13 @@ function layoutCirclePack(root, geo) {
     if (job.cell.depth > 0 && performance.now() - started > ALT_LAYOUT_BUDGET_MS) { outOfTime = true; break; }
     const kids = altChildren(job.node);
     if (!kids.length) continue;
-    const packed = circlePackChildren(kids.map((k) => k.size), job.cell.r, { padding: 0.045 });
+    // The gate first: a pack that would mostly produce specks is not run at
+    // all, and provably-undrawable children never reach the one that is.
+    const gate = altCoverageGate(kids, job.cell.r);
+    omittedCount += gate.omittedCount;
+    omittedBytes += gate.omittedBytes;
+    if (gate.skip) continue;
+    const packed = circlePackChildren(gate.packKids.map((k) => k.size), job.cell.r, { padding: 0.045 });
     if (!packed.circles.length) continue;
     omittedCount += packed.omitted;
     omittedBytes += packed.omittedValue;
@@ -8246,7 +8307,7 @@ function layoutCirclePack(root, geo) {
     job.cell.leaf = false;
     for (const c of packed.circles) {
       if (cells.length >= ALT_CELL_BUDGET) { truncated = true; break; }
-      const kid = kids[c.i];
+      const kid = gate.packKids[c.i];
       if (c.r < ALT_MIN_LEAF_R) { omittedCount++; omittedBytes += kid.size; continue; }
       const cell = {
         n: kid, depth: job.cell.depth + 1, kind: 'circle',
@@ -8276,9 +8337,14 @@ function layoutCirclePack(root, geo) {
 const ALT_VORONOI_MIN_AREA = 8500;
 /* §6.2's hard cap, at the level above the per-layout one.
    Checked BEFORE each nested layout, so the true worst case is this plus one
-   layout — which is why it is well under §2.5's 250 ms rather than equal to
-   it. Measured on a real `node_modules`: at 260 ms the first paint came in at
-   249 ms, which is inside the budget by an amount that is not a margin.
+   layout. 45 ms rather than the 150 it shipped at, because the binding budget
+   was never the 250 ms first paint — it is §2.5's 50 ms ceiling on a single
+   main-thread block, which the whole layout runs as. With the coverage gate
+   bounding what any one pack can cost, this ceiling is what bounds the series;
+   a tree with more detail than 45 ms buys stops subdividing, says so in the
+   footnote, and hands the rest to drill-in — which re-runs the layout on the
+   chosen subtree with a fresh clock, so the detail is reachable, one gesture
+   deep, instead of bought by freezing the tab.
 
    It applies to BOTH solvers. It used to be Voronoi's alone, on the reasoning
    recorded in `buildCells` that the Voronoi solver "is the only thing in this
@@ -8290,7 +8356,7 @@ const ALT_VORONOI_MIN_AREA = 8500;
    1,089 ms of it. §6.2 asks for a hard cap so "a pathological input cannot
    hang the frame"; a cap that only one of the two renderers honours is not
    that.                                                                     */
-const ALT_LAYOUT_BUDGET_MS = 150;
+const ALT_LAYOUT_BUDGET_MS = 45;
 
 function layoutVoronoi(root, geo) {
   const pad = 8;
