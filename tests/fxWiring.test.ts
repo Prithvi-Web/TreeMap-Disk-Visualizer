@@ -90,13 +90,15 @@ function makeHarness(): Harness {
     attach(el: FakeEl, opts: Record<string, unknown>) { beamCalls.push([el, opts]); return el; },
     detach() {},
   };
-  const documentStub = { createElement: () => fakeEl() };
+  // addEventListener: the hover-ambience wiring registers document-level
+  // pointer listeners at load; the harness only needs them inert.
+  const documentStub = { createElement: () => fakeEl(), addEventListener: () => {} };
   const src = wiringSection();
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const fx = new Function(
     'FxOrbs', 'FxBeam', '$', 'document', 'state', 'setTimeout', 'clearTimeout',
     `'use strict'; ${src}
-     return { fxOrbShow, fxOrbHide, fxScanHeroSync, fxShapeSync, fxEmptyCtaSync, fxCartPulseSync, fxOrbLive };`,
+     return { fxOrbShow, fxOrbHide, fxScanHeroSync, fxShapeSync, fxEmptyCtaSync, fxApBreatheSync, fxCartPulseSync, fxOrbLive };`,
   )(
     FxOrbs, FxBeam, $, documentStub, state,
     (fn: () => void) => { timers.push(fn); return timers.length; },
@@ -168,6 +170,22 @@ test('the shaping chip is a strict function of the refinement queue', () => {
   assert.equal(h.mounts[0].destroyed, 1, 'queue drained, chip destroyed');
 });
 
+test('the autopilot heartbeat mounts breathing at 20px only while armed, and is idempotent', () => {
+  const h = makeHarness();
+  h.fx.fxApBreatheSync(false);
+  assert.equal(h.mounts.length, 0, 'unarmed means no orb at all');
+  h.fx.fxApBreatheSync(true);
+  assert.equal(h.mounts.length, 1);
+  assert.equal(h.mounts[0].state, 'breathing');
+  assert.equal(h.mounts[0].size, 20, 'chip scale, not avatar scale');
+  assert.equal(h.mounts[0].container.parentNode, h.els.apBreatheWell, 'in the policies-card well');
+  h.fx.fxApBreatheSync(true);
+  assert.equal(h.mounts.length, 1, 'staying armed does not remount');
+  h.fx.fxApBreatheSync(false);
+  assert.equal(h.mounts[0].destroyed, 1, 'disarming destroys it');
+  assert.equal((h.fx.fxOrbLive as Map<string, unknown>).size, 0);
+});
+
 test('the cart pulse fires only on an increase, once, and switches itself off', () => {
   const h = makeHarness();
   h.fx.fxCartPulseSync(5); // boot restore of a persisted cart
@@ -216,10 +234,12 @@ test('every orb state used by the wiring is one of the nine the engine ships', (
 test('scan chrome: begin lights the card beam and searching orb; end — the single exit funnel — kills both', () => {
   const begin = slice('function beginScanChrome(', 'function endScanChrome(');
   const end = slice('function endScanChrome(', 'function failScan(');
-  assert.match(begin, /FxBeam\.attach\(\$\('scanStatus'\)\.closest\('\.card'\), \{ type: 'md', active: true \}\)/);
+  // Routed through fxStateBeam since the beams round: the scan card is hover-
+  // ambience territory, and the state must own the host outright while lit.
+  assert.match(begin, /fxStateBeam\(\$\('scanStatus'\)\.closest\('\.card'\), \{ type: 'md', active: true \}\)/);
   assert.match(begin, /fxOrbShow\('scan', \$\('scanOrbWell'\), 'searching'\)/);
   assert.match(begin, /fxScanHeroSync\(\)/, 'a starting scan syncs the hero');
-  assert.match(end, /FxBeam\.attach\(\$\('scanStatus'\)\.closest\('\.card'\), \{ type: 'md', active: false \}\)/);
+  assert.match(end, /fxStateBeam\(\$\('scanStatus'\)\.closest\('\.card'\), \{ type: 'md', active: false \}\)/);
   assert.match(end, /fxOrbHide\('scan'\)/);
   assert.match(end, /fxScanHeroSync\(\)/, 'an ending scan syncs the hero too');
   // The funnel claim itself: fail and finish both pass through endScanChrome.
@@ -285,6 +305,57 @@ test('plain words: the weaving orb cannot outlive the popover or the round-trip'
   assert.match(translate, /finally \{\s*fxOrbHide\('nl'\);/, 'settle drops it');
   assert.match(close, /fxOrbHide\('nl'\)/, 'a close mid-flight drops it too');
   assert.match(INDEX, /<div class="nl-pending" id="nlPending" role="status" hidden>/, 'and the row starts hidden');
+});
+
+test('plain words: the listening chip is focus-scoped, yields to the translate, and dies with the popover', () => {
+  // The chip marks "awaiting typing" — a real, observable input state. Its
+  // exit doors: blur, the translate round-trip starting (working ≠
+  // listening), and nlClose for a dismissal that never fires a blur.
+  const wiring = wiringSection();
+  assert.match(wiring, /\$\('nlInput'\)\.addEventListener\('focus', \(\) => fxOrbShow\('nlListen', \$\('nlListenWell'\), 'listening'\)\)/);
+  assert.match(wiring, /\$\('nlInput'\)\.addEventListener\('blur', \(\) => fxOrbHide\('nlListen'\)\)/);
+  const close = slice('function nlClose(', 'async function nlTranslate(');
+  assert.match(close, /fxOrbHide\('nlListen'\)/, 'nlClose is the backstop');
+  const translate = slice('async function nlTranslate(', 'function nlRunTranslated(');
+  const hideAt = translate.indexOf("fxOrbHide('nlListen')");
+  const weaveAt = translate.indexOf("fxOrbShow('nl',");
+  assert.ok(hideAt !== -1 && weaveAt !== -1 && hideAt < weaveAt,
+    'the chip yields BEFORE the weaving orb mounts — never two orbs for one state');
+  assert.match(translate, /document\.activeElement === \$\('nlInput'\)[\s\S]{0,80}fxOrbShow\('nlListen'/,
+    'and returns after settle only if the person is still in the field');
+  assert.match(INDEX, /<span class="fx-orb-well" id="nlListenWell"><\/span>/, 'the well exists beside the field');
+});
+
+test('autopilot heartbeat: armed is derived in the render funnel, and every exit door disarms', () => {
+  const render = slice('function renderAutopilot(', 'function describeMatch(');
+  assert.match(render, /fxApBreatheSync\(policies\.some\(p => p\.enabled && p\.approvedAt && !p\.dryRunFirst\)\)/,
+    'the same predicate the info line counts as "actively cleaning up"');
+  const load = slice('async function loadAutopilot(', 'function renderAutopilot(');
+  assert.match(load, /fxApBreatheSync\(false\)/, 'a failed load claims nothing');
+  const reg = slice("id: 'autopilot',", 'Trash (confirm + execute)');
+  assert.match(reg, /unmount\(\) \{ fxApBreatheSync\(false\); \}/, 'the view unmount is a destroy door');
+  assert.match(INDEX, /<span class="fx-orb-well" id="apBreatheWell"/, 'the well lives in the card header, outside the innerHTML-rewritten lists');
+  assert.match(wiringSection(), /fxOrbShow\('apBreathe', \$\('apBreatheWell'\), 'breathing', \{ ariaLabel:/,
+    'with an honest label, not the generic Thinking…');
+});
+
+test('drive tiles: the liquid bend rides the same drag edges as the beam, and the rebuild detaches it', () => {
+  const drag = slice("for (const dockId of ['tmDock', 'cityDock'])", 'async function runRestoreJob(');
+  assert.match(drag, /FxGoo\.bendAttach\(tile\)/, 'attach on the hover (idempotent, keyed on the tile)');
+  assert.match(drag, /FxGoo\.bendPull\(tile,/, 'the pull tracks the cursor');
+  const releases = (drag.match(/FxGoo\.bendRelease\(tile\)/g) || []).length;
+  assert.equal(releases, 2, 'dragleave AND drop both release — release then self-destroys on settle');
+  assert.match(slice('function renderDock(', 'async function dockDrop('),
+    /querySelectorAll\('\.drive-tile'\)\.forEach\(\(t\) => FxGoo\.detach\(t\)\)/,
+    'the dock rewrite tears down a mid-drag bend before innerHTML orphans it');
+});
+
+test('the goo auto-apply wires the bouncier timebar profile and the search detach pair', () => {
+  const footer = slice('FX: Liquid Goo — liquid thumb on every segmented control', '</script>');
+  assert.match(footer, /FxGoo\.slider\(\$\('tmTimeSlider'\), \{ move: \{ wobble: 0\.62, trail: 0\.66, stretch: 0\.4 \} \}\)/,
+    'the scrubber gets the tuned MoveTuning profile, not the seg default');
+  assert.match(footer, /FxGoo\.detachPair\(\$\('tmSearchWrap'\), \$\('tmNlBtn'\), \{ focusEl: \$\('tmSearch'\) \}\)/,
+    'the plain-words button is the second body of the search field goo group');
 });
 
 test('drive tiles: the drag beam has an enter edge, two exit edges, and a rebuild detach', () => {

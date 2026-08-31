@@ -198,3 +198,29 @@ test('mount honors REDUCED, sets the dpr transform, and labels the canvas', () =
   assert.match(src, /removeEventListener\('visibilitychange'/, 'the shared loop unhooks visibility when the last orb dies');
   assert.match(src, /document\.hidden/, 'and the loop refuses to run on a hidden tab');
 });
+
+test('REDUCED renders the representative frame, never the degenerate t=0 pose', () => {
+  // Upstream (ThinkingOrb.tsx:59–61) freezes at frame(0.6) because the t=0
+  // poses are degenerate — morph is a plain circle, the wave a flat line. A
+  // regression back to render(0) would silently ship those to every
+  // reduced-motion user, so both static-render sites are pinned.
+  const src = section();
+  assert.match(src, /orb\.render\(0\.6\);/, 'the mount-time static frame is t=0.6');
+  assert.match(src, /orb\.render\(REDUCED \? 0\.6 :/, 'setState repaints at the same representative time');
+  assert.ok(!/orb\.render\(0\)/.test(src), 'no render(0) call site remains');
+});
+
+test('each orb pauses itself offscreen and resumes on the one shared clock', () => {
+  // The per-instance IntersectionObserver (ThinkingOrb.tsx:80–100): a
+  // hidden panel or a scrolled-away card must stop costing frames, and
+  // because every orb renders off the single shared performance.now()
+  // clock, a resume re-joins in phase by construction.
+  const src = section();
+  assert.match(src, /typeof IntersectionObserver !== 'undefined'/, 'guarded for engines without IO');
+  assert.match(src, /io = new IntersectionObserver/, 'one observer per mount');
+  assert.match(src, /io\.observe\(canvas\)/, 'watching the orb canvas itself');
+  assert.match(src, /if \(ioVisible\) startAnimating\(\); else stopAnimating\(\);/, 'visibility drives the loop membership');
+  assert.match(src, /io\?\.disconnect\(\);/, 'destroy disconnects it — no observer outlives its orb');
+  // the gate is one function, so paused/REDUCED/offscreen cannot disagree
+  assert.match(src, /if \(destroyed \|\| REDUCED \|\| paused \|\| !ioVisible\) return;/, 'the single animate gate');
+});

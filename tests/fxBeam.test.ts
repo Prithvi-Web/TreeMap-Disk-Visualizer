@@ -57,8 +57,14 @@ interface Internals {
   hueValue: (range: number, period: number, tSec: number) => number;
   pulseParams: (type: string, theme: string, duration: number) => Record<string, number>;
   oscillatorDefs: (id: string, p: Record<string, number>) => Osc[];
-  normalizeOpts: (opts?: unknown) => { type: string; active: boolean; duration: number; strength: number };
-  buildCSS: (id: string, type: string, theme: string, duration: number, radius: number, reduced: boolean) => string;
+  normalizeOpts: (opts?: unknown) => {
+    type: string; active: boolean; duration: number; strength: number;
+    opacity?: number; brightness?: number; saturation?: number; hueRange?: number;
+    staticColors?: boolean; borderRadius?: number;
+    onActivate?: (el: unknown) => void; onDeactivate?: (el: unknown) => void;
+  };
+  buildCSS: (id: string, type: string, theme: string, duration: number, radius: number, reduced: boolean,
+    knobs?: { hueRange?: number; staticColors?: boolean }) => string;
 }
 
 const section = extractSection();
@@ -253,4 +259,113 @@ test('the pulse loop is shared, ~30fps-capped, and stops when idle', () => {
   assert.match(src, /driven\.size === 0[\s\S]{0,80}cancelAnimationFrame/, 'no instances → no rAF loop');
   assert.match(src, /document\.hidden/, 'the loop and lifecycle know about hidden documents');
   assert.match(src, /IntersectionObserver/, 'offscreen instances pause');
+});
+
+/* ══════════════════ Per-attach knobs (upstream types.ts port) ══════════════════ */
+
+test('normalizeOpts: unspecified knobs leave the four-key shape untouched — back-compat is structural', () => {
+  const I = instantiate();
+  const base = I.normalizeOpts({ type: 'md', active: true });
+  assert.deepEqual(Object.keys(base).sort(), ['active', 'duration', 'strength', 'type'],
+    'no knob key exists unless the caller supplied it');
+});
+
+test('normalizeOpts: opacity is the PORT_PLAN clamp — [0,1], nonsense repairs to 1', () => {
+  const I = instantiate();
+  assert.equal(I.normalizeOpts({ opacity: 1.9 }).opacity, 1, 'four upstream presets exceed 1 — clamped');
+  assert.equal(I.normalizeOpts({ opacity: -0.5 }).opacity, 0, 'floors at 0');
+  assert.equal(I.normalizeOpts({ opacity: 0.35 }).opacity, 0.35, 'in-range passes through');
+  assert.equal(I.normalizeOpts({ opacity: 'solid' }).opacity, 1, 'a supplied non-number repairs to the full-on default');
+  assert.ok(!('opacity' in I.normalizeOpts({})), 'absent stays absent');
+});
+
+test('normalizeOpts: brightness/saturation clamp to [0,3] and drop when nonsense', () => {
+  const I = instantiate();
+  assert.equal(I.normalizeOpts({ brightness: 1.9 }).brightness, 1.9, 'the pulse preset value survives');
+  assert.equal(I.normalizeOpts({ brightness: 9 }).brightness, 3, 'caps at 3');
+  assert.equal(I.normalizeOpts({ saturation: 0.6 }).saturation, 0.6);
+  assert.equal(I.normalizeOpts({ saturation: -1 }).saturation, undefined, 'negative drops to the token default');
+  assert.equal(I.normalizeOpts({ brightness: 'high' }).brightness, undefined, 'non-numbers drop to the token default');
+});
+
+test('normalizeOpts: hueRange clamps to the upstream 30° ceiling — the palette contract', () => {
+  const I = instantiate();
+  assert.equal(I.normalizeOpts({ hueRange: 19 }).hueRange, 19);
+  assert.equal(I.normalizeOpts({ hueRange: 360 }).hueRange, 30, 'the original rainbow stays unported');
+  assert.equal(I.normalizeOpts({ hueRange: -4 }).hueRange, 0, 'no negative ranges');
+  assert.equal(I.normalizeOpts({ hueRange: 0 }).hueRange, 0, 'zero — a pinned hue — is a valid choice');
+});
+
+test('normalizeOpts: staticColors coerces, borderRadius must be a non-negative number, callbacks must be functions', () => {
+  const I = instantiate();
+  assert.equal(I.normalizeOpts({ staticColors: 1 }).staticColors, true);
+  assert.equal(I.normalizeOpts({ staticColors: false }).staticColors, false);
+  assert.equal(I.normalizeOpts({ borderRadius: 10 }).borderRadius, 10);
+  assert.equal(I.normalizeOpts({ borderRadius: -3 }).borderRadius, undefined, 'negative radii fall back to measuring');
+  assert.equal(I.normalizeOpts({ borderRadius: 'round' }).borderRadius, undefined);
+  const fn = () => {};
+  assert.equal(I.normalizeOpts({ onActivate: fn }).onActivate, fn, 'a function passes through by reference');
+  assert.equal(I.normalizeOpts({ onActivate: 'later' }).onActivate, undefined, 'anything else is dropped, never called');
+  assert.equal(I.normalizeOpts({ onDeactivate: fn }).onDeactivate, fn);
+});
+
+test('buildCSS: omitting the knobs bag is byte-identical to passing it empty — every pre-knob caller is safe', () => {
+  const I = instantiate();
+  for (const type of I.TYPES) {
+    assert.equal(
+      I.buildCSS('t9', type, 'dark', 2.5, 13, false),
+      I.buildCSS('t9', type, 'dark', 2.5, 13, false, {}),
+      `${type}: the 6-arg call and the empty bag agree`
+    );
+  }
+});
+
+test('buildCSS: a custom hueRange lands in the drift keyframes for the rotate and line families', () => {
+  const I = instantiate();
+  const md = I.buildCSS('t9', 'md', 'dark', 1.96, 13, false, { hueRange: 19 });
+  assert.ok(md.includes('hue-rotate(-19deg)') && md.includes('hue-rotate(19deg)'), 'md ping-pongs at ±19°');
+  const line = I.buildCSS('t9', 'line', 'dark', 3.1, 13, false, { hueRange: 6 });
+  assert.ok(line.includes('hue-rotate(-6deg)') && line.includes('hue-rotate(6deg)'), 'line at ±6°');
+  assert.ok(line.includes('hue-rotate(-16deg)') && line.includes('hue-rotate(16deg)'), 'the line bloom keeps its +10° offset');
+});
+
+test('buildCSS: staticColors freezes the hue but never the motion or the brightness/saturation tokens', () => {
+  const I = instantiate();
+  for (const type of I.TYPES) {
+    const css = I.buildCSS('t9', type, 'dark', 2.5, 13, false, { staticColors: true });
+    assert.ok(!css.includes('@keyframes fxb-hue'), `${type}: no hue keyframes remain`);
+    assert.ok(!css.includes('hue-rotate('), `${type}: no hue-rotate() term remains`);
+    assert.ok(css.includes(`fxb-fade-in-t9`), `${type}: fades still run — staticColors is not reduced motion`);
+    assert.match(css, /brightness\(var\(--fxb-[a-z]+-bright/, `${type}: the brightness token still applies, statically`);
+    let depth = 0;
+    for (const ch of css) { if (ch === '(') depth++; else if (ch === ')') depth--; assert.ok(depth >= 0); }
+    assert.equal(depth, 0, `${type} staticColors parens balance`);
+    assert.equal((css.match(/{/g) || []).length, (css.match(/}/g) || []).length, `${type} staticColors braces balance`);
+  }
+  const md = I.buildCSS('t9', 'md', 'dark', 1.96, 13, false, { staticColors: true });
+  assert.ok(md.includes('fxb-spin-t9'), 'the md ring still rotates');
+  const line = I.buildCSS('t9', 'line', 'dark', 3.1, 13, false, { staticColors: true });
+  assert.ok(line.includes('fxb-travel-t9') && line.includes('fxb-breathe-t9'), 'the line glow still travels and breathes');
+});
+
+test('the lifecycle honors the knobs: radius override skips measuring, detach clears the overrides, edges fire callbacks', () => {
+  const src = section;
+  const attachAt = src.indexOf('function attach(');
+  assert.notEqual(attachAt, -1);
+  const attachBody = src.slice(attachAt, src.indexOf('function detach(', attachAt));
+  assert.match(attachBody, /if \(cfg\.borderRadius !== undefined\) inst\.radius = cfg\.borderRadius;/,
+    'a supplied borderRadius wins over the computed-style read');
+  assert.match(attachBody, /inst\.cfg\.borderRadius !== undefined\) inst\.radius = detectRadius/,
+    'dropping the override on a later attach goes back to measuring');
+  assert.match(attachBody, /activate\(inst\); fireCb\(cfg\.onActivate, el\)/, 'the lit edge fires onActivate');
+  assert.match(attachBody, /deactivate\(inst\); fireCb\(cfg\.onDeactivate, el\)/, 'the unlit edge fires onDeactivate');
+  const detachBody = src.slice(src.indexOf('function detach('), src.indexOf('return {', src.indexOf('function detach(')));
+  assert.match(detachBody, /--fxb-\$\{t\}-bright/, 'detach clears the per-attach brightness overrides');
+  assert.match(detachBody, /if \(wasLit && inst\.cfg\) fireCb\(inst\.cfg\.onDeactivate, el\)/,
+    'detaching a lit beam is its deactivation edge');
+  assert.match(src, /function fireCb\(fn, el\) \{[\s\S]{0,160}try \{ fn\(el\); \} catch/,
+    'a throwing callback never breaks the lifecycle');
+  assert.match(src, /const opacity = inst\.cfg\.opacity === undefined \? 1 : inst\.cfg\.opacity;/,
+    'opacity folds into the strength var as a second master fader');
+  assert.match(src, /hue: staticColors \? null :/, 'staticColors withholds the pulse driver hue config');
 });

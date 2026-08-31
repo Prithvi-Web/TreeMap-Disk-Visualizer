@@ -61,9 +61,22 @@ test('FX: Charts — section evaluates in Node and exposes the full API', () => 
     assert.ok(k in fx, `FxCharts.${k} exists`);
   }
   for (const k of ['scaleLinear', 'scaleTime', 'niceTicks', 'monotone', 'bezierPoint',
-    'ramp', 'lerpColor', 'arcLayout', 'polar', 'linreg', 'extent']) {
+    'ramp', 'lerpColor', 'arcLayout', 'polar', 'linreg', 'extent', 'alpha']) {
     assert.equal(typeof fx.math[k], 'function', `FxCharts.math.${k} is a function`);
   }
+});
+
+test('alpha re-alphas theme tokens without shifting hue — and never guesses', () => {
+  const { math } = loadFxCharts();
+  // The crosshair fade builds its transparent stops from whatever --text-3
+  // holds; hex and rgb()/rgba() are the two shapes tokens actually use.
+  assert.equal(math.alpha('#0A84FF', 0), 'rgba(10,132,255,0)');
+  assert.equal(math.alpha('rgba(255,255,255,0.42)', 0), 'rgba(255,255,255,0)');
+  assert.equal(math.alpha('rgb(10, 12, 20)', 0.5), 'rgba(10,12,20,0.5)');
+  // Anything else falls back to fully transparent rather than fading
+  // through a wrong color.
+  assert.equal(math.alpha('var(--text-3)', 0), 'rgba(0,0,0,0)');
+  assert.equal(math.alpha('', 0), 'rgba(0,0,0,0)');
 });
 
 /* ══════════════════ nice ticks: niceness + coverage ══════════════════ */

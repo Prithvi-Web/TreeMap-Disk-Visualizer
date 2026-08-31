@@ -116,7 +116,10 @@ test('the meter is hidden outright when no target is set, rather than showing ze
   assert.notEqual(start, -1, 'renderCartGoal exists');
   const body = INDEX.slice(start, INDEX.indexOf('async function renderCart', start));
   assert.ok(body.length > 200, 'the renderCartGoal slice is non-empty');
-  assert.match(body, /if \(!cartGoalBytes\) \{ host\.hidden = true; return; \}/);
+  // The beams round added the one-shot's seed reset to this exact path: a
+  // hidden meter must also forget its crossing state, or re-adding a target
+  // could pulse off a stale edge.
+  assert.match(body, /if \(!cartGoalBytes\) \{ host\.hidden = true; fxGoalPulseSync\(null\); return; \}/);
 });
 
 /* ══════════════════════ §4.2 where a cart button may appear ══════════════════════ */
