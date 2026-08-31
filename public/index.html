@@ -15963,7 +15963,16 @@ function tourRender() {
         ${skipBtn}
       </div>`;
     if (home) host.querySelector('[data-tour-home]').addEventListener('click', () => { startScan(home); });
-    host.querySelector('[data-tour-pick]').addEventListener('click', () => { $('pathInput').focus(); $('pathInput').select(); });
+    host.querySelector('[data-tour-pick]').addEventListener('click', () => {
+      // Before any scan the top path box is not on screen, and focusing a
+      // hidden input does nothing at all, silently (summonGlobalSearch
+      // documents the same trap). The zero-state's own affordance is the
+      // folder browser — hand the user exactly the control they can see.
+      const pi = $('pathInput');
+      if (pi.offsetParent === null) { openBrowse(null); return; }
+      pi.focus();
+      pi.select();
+    });
   } else if (tour.step === 'map') {
     host.innerHTML = `
       <div class="tour-step">The map · step 2 of 4</div>

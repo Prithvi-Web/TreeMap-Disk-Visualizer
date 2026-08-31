@@ -83,3 +83,15 @@ test('the tour only appears for a first run, and rides the boot settings read', 
   const boot = INDEX.slice(INDEX.indexOf('async function loadCartGoal'), INDEX.indexOf('async function loadCartGoal') + 900);
   assert.match(boot, /tourMaybeStart\(s\.tourDone/, 'the boot settings fetch decides — no second request');
 });
+
+test('the welcome card never focuses a hidden input — found by driving the zero-state', () => {
+  // Before any scan the top path box is offscreen; focus() on it is a silent
+  // no-op and the tour's "pick my own" button would do nothing. The handler
+  // must fall back to the zero-state's own folder browser.
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const pick = html.indexOf("querySelector('[data-tour-pick]')");
+  assert.notEqual(pick, -1, 'the pick-my-own handler exists');
+  const handler = html.slice(pick, pick + 700);
+  assert.match(handler, /offsetParent === null/, 'visibility is checked, not assumed');
+  assert.match(handler, /openBrowse\(null\)/, 'the hidden case opens the folder browser instead');
+});
