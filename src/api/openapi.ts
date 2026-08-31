@@ -285,6 +285,15 @@ const schemas: Json = {
     { path: str(), name: str(), maxBytes: int(), actualBytes: int(), overBy: int('Positive means over budget') },
     ['path', 'name', 'maxBytes', 'actualBytes', 'overBy'],
   ),
+  CalendarDay: obj(
+    {
+      date: str("Local calendar day, 'YYYY-MM-DD', bucketed in the server's timezone (DST-correct)"),
+      bytes: int('Total bytes of the files bucketed to this day'),
+      count: int('Files bucketed to this day — always at least 1: days nothing landed on are absent, never zero'),
+    },
+    ['date', 'bytes', 'count'],
+    'One day of the activity calendar',
+  ),
   OffloadEntry: obj(
     {
       id: str(),
@@ -873,6 +882,39 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         ),
       ),
       '202': running202,
+    },
+  },
+  {
+    method: 'get',
+    path: '/api/scan/{scanId}/calendar',
+    summary: 'Per-local-day file activity for a contributions-style calendar; ?channel=created adds creation dates behind a capped stat pass',
+    tag: 'scan',
+    destructive: false,
+    parameters: [
+      pathParam('scanId', 'Scan id'),
+      queryParam('channel', "'modified' (default; that channel is always returned) or 'created' — adds a second channel from per-file birthtime reads, capped and reported in degraded"),
+    ],
+    responses: {
+      '200': jsonResponse(
+        'Day aggregates, ascending by date; only days at least one counted file landed on appear',
+        obj(
+          {
+            scanId: str(),
+            rootPath: str(),
+            modified: arr(ref('CalendarDay'), 'Every file in the scan, bucketed by mtime — read from the tree, exact'),
+            created: arr(ref('CalendarDay'), 'channel=created only. Files past the stat cap, unreadable, or with no recorded creation time are excluded and reported in degraded — never bucketed to 1970 or a zero day'),
+            degraded: arr(
+              obj({ provider: str(), reason: str('Plain-prose reason') }, ['provider', 'reason']),
+              'What the created channel could not read; empty when nothing was withheld',
+            ),
+          },
+          ['scanId', 'rootPath', 'modified', 'degraded'],
+        ),
+      ),
+      '202': running202,
+      '400': errorResponse('BAD_CHANNEL — channel must be "modified" or "created"'),
+      '404': errorResponse('Unknown scanId'),
+      '500': errorResponse('Scan failed'),
     },
   },
   {

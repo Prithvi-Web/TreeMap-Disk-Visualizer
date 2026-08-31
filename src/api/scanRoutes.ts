@@ -5,6 +5,7 @@ import { pruneTree, PruneResult } from '../utils/pruneTree';
 import { isInside } from '../utils/pathSanitizer';
 import { guardBodyPath, guardBodyPaths, guardQueryPath } from '../middleware/pathGuard';
 import { lookupNodes, lookupNodesInStore } from '../services/scanQueries';
+import { aggregateCalendar } from '../services/calendarAggregate';
 import { storeOf } from '../services/scanStore';
 import { AppError } from '../middleware/errorHandler';
 import { getSettings } from '../services/settings';
@@ -457,6 +458,34 @@ scanRouter.get('/scan/:scanId/treemap', guardQueryPath('root'), (req: Request, r
     minSize,
     nodes,
   });
+});
+
+/**
+ * GET /api/scan/:scanId/calendar?channel=created
+ *
+ * Per-local-day aggregates for the contributions-style calendar. The modified
+ * channel is always returned (read from the tree, exact); ?channel=created
+ * adds birthtimes behind a capped per-file stat pass, with everything the cap
+ * or the filesystem withheld reported in `degraded` prose. The heavy honesty
+ * rules live in the service (src/services/calendarAggregate.ts).
+ */
+scanRouter.get('/scan/:scanId/calendar', (req: Request, res: Response) => {
+  const scan = requireScan(req, req.params.scanId);
+  if (scan.status === 'running') {
+    res.status(202).json({ status: 'running', scanned: scan.scanned });
+    return;
+  }
+  if (scan.status === 'error' || (!scan.store && !scan.root)) {
+    throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  }
+
+  const channel = String(req.query.channel ?? 'modified');
+  if (channel !== 'modified' && channel !== 'created') {
+    throw new AppError(400, 'BAD_CHANNEL', 'channel must be "modified" or "created"');
+  }
+
+  const result = aggregateCalendar(storeOf(scan), { includeCreated: channel === 'created' });
+  res.json({ scanId: scan.scanId, rootPath: scan.rootPath, ...result });
 });
 
 /** GET /api/large-files?scanId=x&limit=50&minSize=1048576 */
