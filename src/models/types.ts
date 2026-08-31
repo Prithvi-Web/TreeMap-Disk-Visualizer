@@ -1073,3 +1073,23 @@ export interface AuditEntry {
   /** Error/refusal code when outcome is not 'ok'. */
   code?: string;
 }
+
+/**
+ * One line of the rolling disk journal (journal.jsonl in the app-data dir,
+ * capped and rotated). The sentence is display text; the structured fields
+ * beside it are what lets the UI open the treemap at that path and date.
+ */
+export interface JournalEntry {
+  /** Unix epoch ms — when the change was noticed. */
+  at: number;
+  /** Root of the scheduled scan that noticed the change. */
+  rootPath: string;
+  /** The changed path, as deep as the change can honestly be pinned. */
+  path: string;
+  /** Signed bytes: positive = grew, negative = shrank. */
+  delta: number;
+  /** App display name, "you" (a deletion made through TreeMap), or exactly "an unidentified process". */
+  attribution: string;
+  /** e.g. "Docker added 14.2 GB (~/Library/Containers/com.docker.docker)". */
+  sentence: string;
+}

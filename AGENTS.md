@@ -302,6 +302,13 @@ read-what-you-saw) permission to act.
   appended to `audit.jsonl` (timestamp, action, source http/mcp, token id,
   paths, bytes, outcome). `GET /api/audit?limit=100` reads it back, newest
   first. The MCP tools write the same log.
+- **Journal.** Significant disk changes noticed by scheduled scans are
+  recorded to `journal.jsonl` (capped and rotated) as sentences with the
+  structured fields beside them — path, date, signed byte delta, and an
+  attribution that is an app name, `"you"` (a deletion made through TreeMap),
+  or exactly `"an unidentified process"`, never a guess.
+  `GET /api/journal?limit=100` reads it back, newest first; nothing writes it
+  over HTTP.
 - **Idempotency.** Destructive endpoints honor an `Idempotency-Key` header:
   repeating a successful request with the same key within ~10 minutes replays
   the stored response (`Idempotency-Replayed: true`) instead of executing

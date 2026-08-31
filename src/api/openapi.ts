@@ -458,6 +458,18 @@ const schemas: Json = {
     },
     ['at', 'action', 'source', 'tokenId', 'paths', 'bytes', 'dryRun', 'outcome'],
   ),
+  JournalEntry: obj(
+    {
+      at: int('Unix epoch ms — when the change was noticed'),
+      rootPath: str('Root of the scheduled scan that noticed the change'),
+      path: str('The changed path, as deep as the change could honestly be pinned'),
+      delta: int('Signed bytes: positive = grew, negative = shrank'),
+      attribution: str('App display name, "you" (a deletion made through TreeMap), or exactly "an unidentified process"'),
+      sentence: str('e.g. "Docker added 14.2 GB (~/Library/Containers/com.docker.docker)"'),
+    },
+    ['at', 'rootPath', 'path', 'delta', 'attribution', 'sentence'],
+    'One line of the rolling disk journal (journal.jsonl in the app-data dir, capped and rotated)',
+  ),
   TrashDryRunManifest: obj(
     {
       dryRun: bool('Always true'),
@@ -1426,6 +1438,15 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     destructive: false,
     parameters: [queryParam('path', 'Tracked root', { type: 'string' }, true)],
     responses: { '200': jsonResponse('Forecast', ref('ForecastResult')) },
+  },
+  {
+    method: 'get',
+    path: '/api/journal',
+    summary: 'The rolling journal of significant disk changes (journal.jsonl, capped and rotated), newest first — written by scheduled scans, read-only over HTTP',
+    tag: 'history',
+    destructive: false,
+    parameters: [queryParam('limit', '1–1000 (default 100)', int())],
+    responses: { '200': jsonResponse('Journal entries', obj({ entries: arr(ref('JournalEntry')) }, ['entries'])) },
   },
 
   /* ------------ cleanup ------------ */
