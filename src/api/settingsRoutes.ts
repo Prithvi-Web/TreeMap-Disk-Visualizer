@@ -50,6 +50,15 @@ settingsRouter.put('/settings', async (req: Request, res: Response) => {
       sched.path = sanitizePath(sched.path); // throws PathRejectedError -> errorHandler
     }
   }
+  // "Anything but explicit false means on" is a forgiveness rule for
+  // hand-edited FILES; API input is validated like every other field —
+  // a truthy string must not silently switch a setting on.
+  if (body.humanScaleUnits !== undefined && typeof body.humanScaleUnits !== 'boolean') {
+    throw new AppError(400, 'BAD_SETTING', '"humanScaleUnits" must be true or false');
+  }
+  if (body.tourDone !== undefined && typeof body.tourDone !== 'boolean') {
+    throw new AppError(400, 'BAD_SETTING', '"tourDone" must be true or false');
+  }
   if (body.budgets !== undefined) {
     if (!Array.isArray(body.budgets)) {
       throw new AppError(400, 'BAD_BUDGETS', '"budgets" must be an array');
@@ -82,7 +91,16 @@ settingsRouter.get('/cleanup/suggestions', async (req: Request, res: Response) =
   }
   const ignore = await getIgnoreMatchers('suggest');
   // v4 §9.5 — a folder with a suppressing note is left out, subtree and all.
-  const noted = await suppressedNoteRoots();
+  // A notes.json that cannot be read degrades this surface with the reason
+  // (same shape as a malformed rule pack) rather than serving a list the
+  // notes were supposed to be filtering — fail closed, stated.
+  let noted: string[];
+  try {
+    noted = await suppressedNoteRoots();
+  } catch (err) {
+    res.json({ scanId: scan.scanId, groups: [], available: false, reason: err instanceof Error ? err.message : String(err) });
+    return;
+  }
   res.json({
     scanId: scan.scanId,
     groups: collectCleanupSuggestions(storeOf(scan), ignore, catalog.catalog, undefined, noted),
@@ -129,6 +147,11 @@ settingsRouter.get('/cleanup/cloud-safe', (req: Request, res: Response) => {
  * in the scan", which is why it has to run here — the pruned tree the browser
  * holds would miss most of the duplicates.
  */
+// Note-suppression (v4 §9.5) is DELIBERATELY not applied to the custom-rules
+// matcher below (nor to browser-profiles / cloud-safe above): these lists are
+// the user's own explicit filters, typed in by hand for this one look — not
+// the engine volunteering deletions. The note pauses what the machine
+// suggests, never what the person asks to see.
 settingsRouter.get('/cleanup/rules', (req: Request, res: Response) => {
   const scan = requireScan(req, req.query.scanId);
   if (scan.status === 'running') {

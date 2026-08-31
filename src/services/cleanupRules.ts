@@ -3,7 +3,7 @@ import { CleanupSuggestionGroup, CleanupSuggestionItem } from '../models/types';
 import { TreeSource, asStore } from './scanStore';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { samePath } from '../utils/osPaths';
-import { isUnderAny } from './notes';
+import { prepareSuppressed, suppressedRootCovering, noteRootInside } from './notes';
 import {
   loadRuleCatalog,
   matchReasonFor,
@@ -83,6 +83,8 @@ export function collectCleanupSuggestions(
 ): CleanupSuggestionGroup[] {
   const store = asStore(source);
   const now = Date.now();
+  // Folded once per call, not once per node — see prepareSuppressed.
+  const suppressed = prepareSuppressed(suppressedRoots);
 
   const groups = new Map<string, CleanupSuggestionGroup>();
   const add = (rule: Rule, node: number, nodePath: string): void => {
@@ -127,16 +129,25 @@ export function collectCleanupSuggestions(
       const childPath = store.childPath(child, nodePath);
       if (matchesAny(ignore, childPath, name)) continue; // user said hands off
       // A note that suppresses covers its whole subtree — skip, never descend.
-      if (isUnderAny(childPath, suppressedRoots)) continue;
+      if (suppressedRootCovering(childPath, suppressed) !== null) continue;
 
       if (store.isDir(child)) {
         const lower = name.toLowerCase();
+
+        // The REVERSE containment check (review round 1, finding 1): a rule
+        // may claim this whole directory, but if a suppressing note sits
+        // anywhere INSIDE it, offering the ancestor offers to delete the
+        // very thing the note protects. The claim is withheld and the walk
+        // descends instead, so an independent match deeper down — one that
+        // does not contain the note — can still surface.
+        const containsNote = noteRootInside(childPath, suppressed) !== null;
 
         // 1. Project dirs (usually sibling-gated) — most specific, checked first.
         const project = catalog.projectDirectory.find(
           (r) => r.names.includes(lower) && (!r.requiresSibling || siblingPresent(siblings, r.requiresSibling)),
         );
         if (project && store.size(child) > 0) {
+          if (containsNote) { visit(child, childPath); continue; }
           add(project, child, childPath);
           continue; // claimed — don't descend
         }
@@ -144,6 +155,7 @@ export function collectCleanupSuggestions(
         // 2. Generic name rules (build leftovers without a manifest, tool caches).
         const named = catalog.directory.find((r) => r.names.includes(lower));
         if (named && store.size(child) > 0) {
+          if (containsNote) { visit(child, childPath); continue; }
           add(named, child, childPath);
           continue;
         }
@@ -151,6 +163,7 @@ export function collectCleanupSuggestions(
         // 3. Absolute OS cache locations.
         const located = catalog.location.find((r) => r.paths.some((p) => samePath(p, childPath)));
         if (located && store.size(child) > 0) {
+          if (containsNote) { visit(child, childPath); continue; }
           add(located, child, childPath);
           continue;
         }

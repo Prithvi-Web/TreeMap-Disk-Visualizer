@@ -583,8 +583,15 @@ export function buildMcpServer(): McpServer {
         }
         const ignore = await getIgnoreMatchers('suggest');
         // v4 §9.5 — noted folders are excluded for agents exactly as for the
-        // UI: same matcher, same suppression list, no second policy.
-        const noted = await suppressedNoteRoots();
+        // UI: same matcher, same suppression list, no second policy. A
+        // corrupt notes.json degrades with the reason (fail closed) rather
+        // than serving an unsuppressed list.
+        let noted: string[];
+        try {
+          noted = await suppressedNoteRoots();
+        } catch (err) {
+          return ok({ scanId, available: false, reason: err instanceof Error ? err.message : String(err), totalBytes: 0, groups: [] });
+        }
         const groups = collectCleanupSuggestions(storeOf(scan), ignore, catalog.catalog, undefined, noted);
         const totalBytes = groups.reduce((sum, g) => sum + g.totalSize, 0);
         return ok({

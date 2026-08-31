@@ -131,8 +131,11 @@ OpenAPI 3 spec).
      The facts live in a sidecar because the scan responses are held
      byte-identical to the pre-rewrite baseline by
      `tests/goldenResponses.test.ts` — no field may be added to them.
-     Providers: `size` (the scan's own byte count), `lastUsed`,
-     `recoverability` and `reclaimScore`.
+     Providers: `size` (the scan's own byte count), `subtreeCount`,
+     `lastUsed`, `recoverability`, `reclaimScore` and `humanScale`
+     (v4 §9.3 — "≈ N photos like the ones here", averaged from the folder's
+     own media, at least ten of a kind, directories only; a walk is capped
+     per path and per request, with `capped: true` stated on the value).
      **`lastUsed`** answers when a path was last *opened*, which mtime cannot
      express: `{ lastUsedMs, useCount, source: 'spotlight'|'atime'|'none',
      caveat? }`. `source` is part of the value because the sources answer
@@ -315,10 +318,14 @@ read-what-you-saw) permission to act.
   `403 { code: "POLICY_ROOT_NOT_ALLOWED" | "POLICY_PROTECTED_PATH" |
   "POLICY_BYTES_EXCEEDED" }`. An absent or empty file imposes nothing. The
   policy is deliberately not writable through the API.
-- **Audit.** Every destructive request — executed, dry-run, or refused — is
-  appended to `audit.jsonl` (timestamp, action, source http/mcp, token id,
-  paths, bytes, outcome). `GET /api/audit?limit=100` reads it back, newest
-  first. The MCP tools write the same log.
+- **Audit.** Every destructive request that touches **files** — executed,
+  dry-run, or refused — is appended to `audit.jsonl` (timestamp, action,
+  source http/mcp, token id, paths, bytes, outcome).
+  `GET /api/audit?limit=100` reads it back, newest first. The MCP tools
+  write the same log. The three config-writing endpoints flagged destructive
+  for their consequences rather than their mechanics — `PUT /api/settings`,
+  `PUT /api/notes`, `DELETE /api/notes` — do not audit; they move no bytes,
+  and their whole state is inspectable in the files they write.
 - **Journal.** Significant disk changes noticed by scheduled scans are
   recorded to `journal.jsonl` (capped and rotated) as sentences with the
   structured fields beside them — path, date, signed byte delta, and an

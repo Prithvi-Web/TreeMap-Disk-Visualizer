@@ -120,6 +120,12 @@ export async function computeRuleClaims(store: ScanStore): Promise<RuleClaims> {
   const ignore = await getIgnoreMatchers('suggest');
   const byPath = new Map<string, RuleClaim>();
 
+  // Note-suppression (v4 §9.5) is DELIBERATELY not applied here: this feeds
+  // the Reclaim Score's `regenerable` component, and the score explains and
+  // sorts — it never selects anything for deletion (§3.2). A noted folder
+  // still deserves a truthful "this rebuilds itself" in its breakdown; what
+  // the note pauses is the surfaces that SUGGEST — Smart Suggestions, the
+  // agent summary, MCP cleanup_suggestions and every Autopilot match.
   collectCleanupSuggestions(store, ignore, catalog.catalog, (rule: Rule, nodePath: string) => {
     if (rule.action === 'advice') return;
     byPath.set(nodePath, {

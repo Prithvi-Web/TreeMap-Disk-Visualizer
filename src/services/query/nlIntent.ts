@@ -92,7 +92,12 @@ function countOf(word: string): number {
   // The patterns only capture \d+ here, so this cannot be NaN; the guard keeps
   // the function total anyway, because a silent NaN would break the invariant.
   const digits = parseInt(word, 10);
-  return Number.isFinite(digits) ? digits : 1;
+  // Clamped (review round 1, finding 3): `${1e21}` renders in exponential
+  // notation, which the grammar rejects — so a 21-digit duration would break
+  // the module's own "every emitted query parses" invariant. A century of
+  // days is already past any honest question about a disk.
+  const n = Number.isFinite(digits) ? digits : 1;
+  return Math.max(1, Math.min(n, 36_500));
 }
 
 /**

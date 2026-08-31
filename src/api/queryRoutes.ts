@@ -92,6 +92,14 @@ queryRouter.post('/nl-query', async (req: Request, res: Response) => {
 
   const local = translateNlQuery(trimmed);
   if (local.ok) {
+    // Belt over the table's own invariant: nothing leaves this endpoint as a
+    // finished translation unless the real grammar accepts it. The clamp in
+    // nlIntent makes this unreachable today; the parse here keeps it
+    // unreachable when someone adds a phrase tomorrow.
+    if (!parse(local.q).ok) {
+      res.json({ ok: false, source: 'rules', reason: 'That phrasing produced a query the grammar refused — please rephrase (and report this; it should not happen).' });
+      return;
+    }
     res.json({ ok: true, source: 'rules', q: local.q, matched: local.matched, unmatched: local.unmatched });
     return;
   }

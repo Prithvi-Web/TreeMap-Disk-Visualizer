@@ -532,3 +532,19 @@ test('one request cannot walk forever: the batch budget skips the tail honestly'
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('the settings route refuses a non-boolean humanScaleUnits instead of coercing it on', async () => {
+  // Review finding 10: "anything but explicit false means on" is written for
+  // hand-edited FILES; API input is validated like every other field.
+  const { port, close } = await listen();
+  try {
+    const bad = await req(port, 'PUT', '/api/settings', { humanScaleUnits: 'off' });
+    assert.equal(bad.status, 400, JSON.stringify(bad.body));
+    const good = await req(port, 'PUT', '/api/settings', { humanScaleUnits: false });
+    assert.equal(good.status, 200);
+    assert.equal(good.body.humanScaleUnits, false);
+    await req(port, 'PUT', '/api/settings', { humanScaleUnits: true });
+  } finally {
+    await close();
+  }
+});

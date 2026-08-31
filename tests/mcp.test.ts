@@ -135,6 +135,26 @@ test('find_duplicates finds the identical pair and its reclaimable bytes', async
 
 test('cleanup_suggestions flags node_modules as regenerable', async () => {
   const r = await call('cleanup_suggestions', { scanId });
+
+test('cleanup_suggestions respects a suppressing folder note — teeth the review demanded', async () => {
+  // v4 §9.5 through the agent door: same matcher, same suppression list.
+  // The first review round proved by mutation that this wire had no test
+  // that could fail; now it does.
+  const { setNote, deleteNote } = await import('../src/services/notes');
+  await setNote(path.join(fixtureRoot, 'proj'), 'client project — keep');
+  try {
+    const r = await call('cleanup_suggestions', { scanId });
+    assert.ok(!r.isError);
+    const s = r.structuredContent!;
+    assert.ok(
+      !s.groups.some((g: { id: string }) => g.id === 'regen-node-modules'),
+      'a noted folder is not offered to agents either',
+    );
+  } finally {
+    await deleteNote(path.join(fixtureRoot, 'proj'));
+  }
+});
+
   assert.ok(!r.isError);
   const s = r.structuredContent!;
   const nm = s.groups.find((g: { id: string }) => g.id === 'regen-node-modules');

@@ -1247,7 +1247,9 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
   border: 1px solid var(--hairline-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); }
 #nlPop[hidden] { display: none; }
 /* ── v4 §9.1: the command palette ── */
-#cmdkModal { align-items: flex-start; }
+/* Above every other modal (they share z-index 100): ⌘K is a global key and
+   must never open an invisible input UNDER the settings scrim. */
+#cmdkModal { align-items: flex-start; z-index: 130; }
 #cmdkModal .cmdk-panel { margin-top: 12vh; padding: 10px; }
 #cmdkInput { width: 100%; font-size: 15px; padding: 11px 12px; }
 #cmdkList { max-height: 46vh; overflow: auto; margin-top: 8px; }
@@ -3831,6 +3833,11 @@ const VIEWS = [
       tmCancelQueries();
       tmCloseHints();
       tmClearHits();
+      // §9.6 — the plain-words popover is position:fixed and anchored to a
+      // button this view owns; left open it would resurface at stale
+      // coordinates over whatever view comes next (each view stops what it
+      // started — the registry's own rule).
+      nlClose({ focusButton: false });
       exitCartPreview(true); // §4.3 — never come back to a banner over a real map
       tmSetQueryMessage('', false);
       $('tmQueryBar').hidden = true;
@@ -11535,7 +11542,7 @@ function humanScaleTooltipLine(node) {
   const fact = hsFacts.get(node.path);
   if (!fact || !fact.equivalents || !fact.equivalents.length) return ''; // nothing comparable → nothing said
   const parts = fact.equivalents.slice(0, 2).map((e) =>
-    `≈ ${e.equivalentCount.toLocaleString()} ${escapeHtml(e.kind)}`).join(' or ');
+    `≈ ${(Number(e.equivalentCount) || 0).toLocaleString()} ${escapeHtml(e.kind)}`).join(' or ');
   const b = fact.equivalents[0];
   const basis = `based on the ${b.sampleCount.toLocaleString()} ${escapeHtml(b.kind)} in this folder, average ${formatBytes(b.avgBytes)}` +
     (fact.capped ? ' · sampled from the first 500k items' : '');
@@ -11611,7 +11618,7 @@ function showCtxMenu(x, y, node) {
     ${node.isTrash ? '' : `<button data-act="terminal">${icon('terminal', 15)}Open Terminal Here</button>`}
     <button data-act="budget">${icon('gauge', 15)}${hasBudget ? 'Edit budget…' : 'Set budget…'}</button>
     ${hasBudget ? `<button data-act="budget-remove">${icon('x', 15)}Remove budget</button>` : ''}
-    <button data-act="note">${icon('doc', 15)}${noteFor(node.path) ? 'Edit note…' : 'Add note…'}</button>` : ''}
+    ${node.isTrash ? '' : `<button data-act="note">${icon('doc', 15)}${noteFor(node.path) ? 'Edit note…' : 'Add note…'}</button>`}` : ''}
     <div class="div"></div>
     <button data-act="trash" class="danger">${icon('trash', 15)}Move to Trash</button>`;
   menu.style.display = 'block';
@@ -15436,6 +15443,7 @@ function rescan() {
 /* ───────────────────────────── Folder budgets (Feature 15) ───────────────────────────── */
 function budgetFor(path) { return state.budgets.list.find(b => b.path === path) || null; }
 
+let loadBudgetsSeq = 0;
 /** Fetch budgets for the current scan, update the dashboard widget + treemap overlay. */
 async function loadBudgets() {
   if (!state.scanId || !state.root) return;
@@ -15449,11 +15457,16 @@ async function loadBudgets() {
   state.budgets.overPaths = new Set(state.budgets.list.filter(b => b.overBy > 0).map(b => b.path));
   // v4 §9.4 — the breach projections ride a separate endpoint (the budgets
   // response is byte-locked). Failing to load them costs the projection line,
-  // never the meter: the widget renders from the list either way.
+  // never the meter: the widget renders from the list either way. The seq
+  // guard is the same one every type-ahead here carries: two overlapping
+  // loads (a rescan racing a budget save) must not let the older scan's
+  // projections land on the newer scan's list.
+  const seq = ++loadBudgetsSeq;
   state.budgets.gauges = new Map();
   renderBudgetWidget();
   try {
     const g = await api(`/api/scan/${state.scanId}/budget-gauges`);
+    if (seq !== loadBudgetsSeq) return;
     state.budgets.gauges = new Map((g.gauges || []).map((x) => [x.path, x]));
     renderBudgetWidget();
   } catch { /* the meter alone is still a true statement */ }
@@ -15480,7 +15493,7 @@ function budgetProjectionLine(b) {
     const when = new Date(p.breachAtMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     const approx = p.seriesSource === 'ancestor-trees'
       ? ` <span title="${escapeHtml(p.caveat || '')}">· from shallow history</span>` : '';
-    return `<div class="muted num" style="font-size:10.5px;" title="${escapeHtml(formatBytes(p.bytesPerDay))}/day over ${p.seriesPoints} scans">` +
+    return `<div class="muted num" style="font-size:10.5px;" title="${escapeHtml(formatBytes(p.bytesPerDay))}/day over ${Number(p.seriesPoints) || 0} scans">` +
       `at this pace, over in ~${days} day${days === 1 ? '' : 's'} (${escapeHtml(when)})${approx}</div>`;
   }
   return `<div class="muted" style="font-size:10.5px;" title="${escapeHtml(p.reason || '')}">${escapeHtml(shortProjectionReason(p))}</div>`;
@@ -15688,14 +15701,17 @@ function nlOpen() {
   btn.setAttribute('aria-expanded', 'true');
   $('nlInput').focus();
 }
-function nlClose() {
+function nlClose(opts = {}) {
   const pop = $('nlPop');
   if (pop.hidden) return;
   pop.hidden = true;
   $('nlOut').hidden = true;
   $('nlReason').hidden = true;
   $('tmNlBtn').setAttribute('aria-expanded', 'false');
-  $('tmNlBtn').focus();
+  // A close that hands off elsewhere (Run → the highlight box; a view
+  // unmount) skips the button focus, or the caret would bounce twice and a
+  // screen reader would announce a control the user is already past.
+  if (opts.focusButton !== false) $('tmNlBtn').focus();
 }
 async function nlTranslate() {
   const text = $('nlInput').value.trim();
@@ -15736,7 +15752,7 @@ function nlRunTranslated() {
   if (!q) return;
   $('tmSearch').value = q;
   $('tmSearch').dispatchEvent(new Event('input', { bubbles: true }));
-  nlClose();
+  nlClose({ focusButton: false });
   $('tmSearch').focus();
 }
 $('tmNlBtn').addEventListener('click', () => { $('nlPop').hidden ? nlOpen() : nlClose(); });
@@ -15791,12 +15807,23 @@ function cmdkScore(query, label) {
 
 /** Actions by name. `when` gates entries that would be dead where you are. */
 const CMDK_ACTIONS = [
-  { label: 'Scan a folder…', hint: 'puts the caret in the path box', run: () => { $('pathInput').focus(); $('pathInput').select(); } },
+  { label: 'Scan a folder…', hint: 'pick a folder to map', run: () => {
+    // The same zero-state trap the tour's pick button hit: before any scan
+    // the path box is offscreen and focus() is a silent no-op. The visible
+    // affordance there is the folder browser.
+    const pi = $('pathInput');
+    if (pi.offsetParent === null) { openBrowse(null); return; }
+    pi.focus();
+    pi.select();
+  } },
   { label: 'Rescan this folder', hint: 'fresh numbers for the same tree', when: () => !!state.root && !state.scanning, run: () => rescan() },
   { label: 'Empty the cleanup cart', hint: 'unstages everything, deletes nothing', when: () => state.cart.size > 0, run: () => cartClear() },
   { label: 'Export the map as PNG', hint: 'the current treemap, as pixels', when: () => state.view === 'treemap' && drawnCells().length > 0, run: () => exportTreemapPNG() },
   { label: 'Search all indexed files', hint: 'the sidebar search box', run: () => summonGlobalSearch() },
-  { label: 'Ask in plain words', hint: 'translated to a query you approve', run: () => { switchView('treemap'); requestAnimationFrame(() => nlOpen()); } },
+  // Gated on a scan: with none, switchView('treemap') shows the empty state
+  // and the ✨ button the popover anchors to is not on screen — the popover
+  // would arm at (8,8) and resurface stale over whatever came next.
+  { label: 'Ask in plain words', hint: 'translated to a query you approve', when: () => !!state.root, run: () => { switchView('treemap'); requestAnimationFrame(() => nlOpen()); } },
   { label: 'Open Settings', hint: 'schedules, weights, notes and more', run: () => $('settingsBtn').click() },
   { label: 'Keyboard shortcuts', hint: 'the ? panel', run: () => toggleShortcuts() },
   { label: 'Switch light / dark', hint: 'theme', run: () => $('themeToggle').click() },
@@ -15868,7 +15895,8 @@ function cmdkRender() {
   $('cmdkList').innerHTML = cmdkShown.map((item, i) =>
     `<button class="cmdk-row" role="option" id="cmdk-opt-${i}" aria-selected="${i === cmdkSel}" data-cmdk="${i}">` +
     `<span>${escapeHtml(item.label)}</span><span class="hint">${escapeHtml(item.hint || '')}</span></button>`).join('');
-  $('cmdkInput').setAttribute('aria-activedescendant', cmdkShown.length ? `cmdk-opt-${cmdkSel}` : '');
+  if (cmdkShown.length) $('cmdkInput').setAttribute('aria-activedescendant', `cmdk-opt-${cmdkSel}`);
+  else $('cmdkInput').removeAttribute('aria-activedescendant');
   $('cmdkList').querySelectorAll('[data-cmdk]').forEach((b) => b.addEventListener('click', () => cmdkRun(Number(b.dataset.cmdk))));
 }
 
@@ -15908,6 +15936,16 @@ $('cmdkInput').addEventListener('keydown', (e) => {
 });
 $('cmdkInput').addEventListener('input', () => { cmdkSel = 0; cmdkRender(); });
 $('cmdkModal').addEventListener('mousedown', (e) => { if (e.target === $('cmdkModal')) cmdkClose(); });
+// While the palette is up, its keys are its own: without this, typing into
+// the palette over the duplicate viewer fed dupeViewerKeys (Space staged a
+// file behind the scrim), and letters reached the treemap's shortcut map.
+// ⌘K and Escape are handled here so the toggle and the focus-restoring close
+// keep working from anywhere inside the panel.
+$('cmdkModal').addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); cmdkClose(); }
+  else if (e.key === 'Escape' && document.activeElement !== $('cmdkInput')) { e.preventDefault(); cmdkClose(); }
+  e.stopPropagation();
+});
 function cmdkScrollSel() {
   const el = document.getElementById(`cmdk-opt-${cmdkSel}`);
   if (el) el.scrollIntoView({ block: 'nearest' });
@@ -15927,7 +15965,7 @@ function cmdkScrollSel() {
  *  - Skippable at every step; completing OR skipping persists tourDone
  *    through settings, so a read-only portable session honestly forgets.
  */
-const tour = { active: false, step: 'welcome', wins: [], winIx: 0, staged: 0 };
+const tour = { active: false, step: 'welcome', wins: [], winIx: 0, staged: 0, unknownReason: '' };
 
 function tourMaybeStart(done) {
   if (done === true || tour.active) return;
@@ -15993,6 +16031,15 @@ function tourRender() {
       <p>TreeMap has nothing safe to suggest here — no caches, no rebuildable folders, no obvious junk. That is a good result, and the honest end of the tour.</p>
       <div class="tour-row"><button class="btn btn-primary" data-tour-done>Finish</button></div>`;
     host.querySelector('[data-tour-done]').addEventListener('click', () => { void tourFinish('Tour complete'); });
+  } else if (tour.step === 'unknown') {
+    // Not "clean" — "couldn't check". A blank good-news card over an error
+    // would be exactly the confident wrongness this app exists to avoid.
+    host.innerHTML = `
+      <div class="tour-step">One thing unchecked</div>
+      <h4>${icon('alert', 16)}Couldn&rsquo;t check for quick wins</h4>
+      <p>${escapeHtml(tour.unknownReason || 'Suggestions are not available right now.')} The Clean Up view will have more to say once it can look.</p>
+      <div class="tour-row"><button class="btn btn-primary" data-tour-done>Finish</button></div>`;
+    host.querySelector('[data-tour-done]').addEventListener('click', () => { void tourFinish('Tour complete'); });
   } else if (tour.step === 'win') {
     const g = tour.wins[tour.winIx];
     const already = g.items.every((it) => state.cart.has(it.path));
@@ -16043,11 +16090,26 @@ function tourAdvanceWin() {
 
 async function tourLoadWins() {
   if (!state.scanId) return;
+  // Three distinct non-answers must not read as "clean" (review round 1):
+  // a still-running scan (202 — poll it out), a broken rule catalog
+  // (available:false with its reason), and a transport error. Each gets the
+  // honest card; only a real, complete, empty answer earns "looks clean".
   let groups = [];
   try {
-    const res = await api(`/api/cleanup/suggestions?scanId=${state.scanId}`);
+    const res = await api(`/api/cleanup/suggestions?scanId=${state.scanId}`, undefined, { poll: true });
+    if (res && res.available === false) {
+      tour.step = 'unknown';
+      tour.unknownReason = res.reason || 'Suggestions are not available right now.';
+      tourRender();
+      return;
+    }
     groups = (res && res.groups) || [];
-  } catch { groups = []; }
+  } catch (e) {
+    tour.step = 'unknown';
+    tour.unknownReason = 'Could not check: ' + e.message;
+    tourRender();
+    return;
+  }
   // The normal engine's own output, minus what has no delete path: advisory
   // groups are information, not wins, and offering them would break the
   // app-wide rule that they carry no cart button.
@@ -16062,18 +16124,9 @@ async function tourLoadWins() {
 subscribe(TOPIC.scan, () => {
   if (tour.active && tour.step === 'welcome') { tour.step = 'map'; tourRender(); }
 });
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && tour.active && !$('tourOverlay').hidden) {
-    // Esc with a modal or popover up means "close that" — the global handler
-    // owns it, and one keypress must never both close a dialog AND throw the
-    // tour away. Only a bare Esc, with nothing else claiming it, skips.
-    if (document.querySelector('.modal-backdrop.open') || !$('nlPop').hidden
-        || $('ctxMenu').style.display === 'block') return;
-    // Esc dismisses the tour like Skip does — and persists that choice, so
-    // it cannot nag someone who already said no with their keyboard.
-    void tourFinish('Tour skipped — reset it any time in Settings');
-  }
-});
+// The tour's Escape lives at the END of the app-wide Escape chain above —
+// not on a listener of its own, where the first review round showed it
+// double-firing with every other meaning of the key.
 // Settings promises a way back, so here it is: clear the flag and start over.
 $('tourResetBtn').addEventListener('click', () => {
   void (async () => {
@@ -21053,7 +21106,13 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key === 'Escape') {
     const openModal = document.querySelector('.modal-backdrop.open');
-    if (openModal) { openModal.classList.remove('open'); return; }
+    if (openModal) {
+      // The palette promises to restore focus (§9.1); the generic class
+      // removal would close it without keeping that promise.
+      if (openModal.id === 'cmdkModal') { cmdkClose(); return; }
+      openModal.classList.remove('open');
+      return;
+    }
     if ($('ctxMenu').style.display === 'block') { hideCtxMenu(); return; }
     if (previewIsOpen()) { closePreview(); return; }
     if (typing && document.activeElement === $('gridSearch') && $('gridSearch').value) {
@@ -21094,8 +21153,18 @@ document.addEventListener('keydown', (e) => {
     // keys, which are canvas gestures; this key is not.
     if (state.view === 'city') { cityUp(); return; }
     if (state.view === 'grid') {
-      if (state.grid.selection.size) { state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true); }
-      else gridUp();
+      if (state.grid.selection.size) { state.grid.selection.clear(); updateSelectionBar(); renderGridWindow(true); return; }
+      gridUp();
+      return;
+    }
+    /* v4 §9.2 — LAST, after every other Escape meaning has had its chance.
+       The tour's first cut lived on its own document listener, and the same
+       press that climbed the map (or closed the preview, or cleared the
+       highlight box) ALSO threw the tour away — it died on its own "press
+       Esc to climb back out" instruction. One press, one meaning: only a
+       bare Esc that nothing above claimed skips the tour. */
+    if (tour.active && !$('tourOverlay').hidden && $('nlPop').hidden && !typing) {
+      void tourFinish('Tour skipped — reset it any time in Settings');
     }
   }
 });

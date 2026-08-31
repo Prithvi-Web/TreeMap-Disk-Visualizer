@@ -23,6 +23,14 @@ import { FIELD_NAMES } from './parse';
 const OLLAMA_TIMEOUT_MS = 12_000;
 /** A model that rambles past this is not answering the question. */
 const MAX_ANSWER_CHARS = 500;
+/**
+ * Hard cap on the bytes read off the wire (review round 1, finding 4).
+ * Anything can squat on an unprivileged loopback port, and `res.json()`
+ * would buffer whatever it streams — at loopback throughput the 12 s
+ * timeout alone admits gigabytes, enough to take the server down. 64 KB is
+ * generous for one line of query.
+ */
+const MAX_BODY_BYTES = 65_536;
 
 export interface OllamaAnswer {
   ok: boolean;
@@ -54,17 +62,44 @@ export async function translateViaOllama(text: string, cfg: NlOllamaConfig): Pro
     const res = await fetch(`${cfg.endpoint}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: cfg.model, prompt, stream: false, options: { temperature: 0 } }),
+      // num_predict bounds the model's own output too: a rambler should be
+      // cut off by Ollama after ~a line's worth of tokens, not by our body
+      // cap after the damage is streamed.
+      body: JSON.stringify({ model: cfg.model, prompt, stream: false, options: { temperature: 0, num_predict: 120 } }),
       signal: AbortSignal.timeout(OLLAMA_TIMEOUT_MS),
     });
     if (!res.ok) {
       return { ok: false, reason: `The local model at ${cfg.endpoint} answered ${res.status}. Is Ollama running, and is "${cfg.model}" pulled?` };
     }
-    const data = (await res.json()) as { response?: unknown };
+    // Read the body with a hard byte cap — never res.json(), which buffers
+    // whatever arrives.
+    let raw = '';
+    if (res.body) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let got = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        got += value.byteLength;
+        if (got > MAX_BODY_BYTES) {
+          void reader.cancel();
+          return { ok: false, reason: `The local model's answer was far larger than any query could be (over ${Math.round(MAX_BODY_BYTES / 1024)} KB) — refused.` };
+        }
+        raw += decoder.decode(value, { stream: true });
+      }
+      raw += decoder.decode();
+    }
+    let data: { response?: unknown };
+    try {
+      data = JSON.parse(raw) as { response?: unknown };
+    } catch {
+      return { ok: false, reason: 'The local model answered something that is not JSON.' };
+    }
     // First non-empty line only: models love to add prose, and everything
     // past the query line is prose by construction of the prompt.
-    const raw = typeof data.response === 'string' ? data.response : '';
-    const line = raw.split('\n').map((l) => l.trim()).find((l) => l.length > 0) ?? '';
+    const answer = typeof data.response === 'string' ? data.response : '';
+    const line = answer.split('\n').map((l) => l.trim()).find((l) => l.length > 0) ?? '';
     if (!line) {
       return { ok: false, reason: 'The local model answered nothing usable.' };
     }

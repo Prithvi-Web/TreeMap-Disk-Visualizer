@@ -19,7 +19,7 @@ import { protectAndTrash, listCapsuleEntriesForRun, startCapsuleRestore } from '
 import nodePath from 'path';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { getPolicy as getAgentPolicy, assertScanAllowed, assertPathsAllowed } from './policy';
-import { suppressedNoteRoots, isUnderAny } from './notes';
+import { suppressedNoteRoots, prepareSuppressed, suppressedRootCovering, noteRootInside } from './notes';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 
@@ -395,21 +395,33 @@ async function resolveCandidates(
   policy: AutopilotPolicy,
 ): Promise<{ candidates: Candidate[]; noteSkipped: { path: string; reason: string }[] }> {
   const matched = await matchCandidates(policy);
+  // FAILS CLOSED: suppressedNoteRoots throws NOTES_UNREADABLE on a corrupt
+  // notes.json, and the throw is deliberately not caught here — runPolicy
+  // records a failed run and simulate surfaces the error, so an unreadable
+  // pause list stops the deleter instead of silently unpausing it.
   const noted = await suppressedNoteRoots();
   if (noted.length === 0) return { candidates: matched, noteSkipped: [] };
+  const prepared = prepareSuppressed(noted);
   const candidates: Candidate[] = [];
-  const noteSkipped: { path: string; reason: string }[] = [];
+  // Collapsed to ONE entry per note root with a count (review round 1,
+  // finding 6): a 2,000-item match over a noted folder must not write 2,000
+  // skip rows into autopilot.json on every run, 200 runs deep.
+  const perRoot = new Map<string, number>();
   for (const c of matched) {
-    const root = noted.find((r) => isUnderAny(c.path, [r]));
-    if (root === undefined) {
+    // Both directions: a candidate under a note is paused, and a candidate
+    // that CONTAINS a note is refused too — deleting it would delete the
+    // very thing the note protects (finding 1).
+    const root = suppressedRootCovering(c.path, prepared) ?? noteRootInside(c.path, prepared);
+    if (root === null) {
       candidates.push(c);
     } else {
-      noteSkipped.push({
-        path: c.path,
-        reason: `Left alone — your note on ${root} pauses automatic cleanup there.`,
-      });
+      perRoot.set(root, (perRoot.get(root) ?? 0) + 1);
     }
   }
+  const noteSkipped = [...perRoot.entries()].map(([root, n]) => ({
+    path: root,
+    reason: `Left alone — your note on ${root} pauses automatic cleanup around it (${n} matched item${n === 1 ? '' : 's'}).`,
+  }));
   return { candidates, noteSkipped };
 }
 
@@ -660,9 +672,14 @@ export async function runPolicy(policy: AutopilotPolicy, opts: RunOptions = {}):
   run.items = selected.map(toRunItem);
 
   if (selected.length === 0) {
+    // "Nothing matched" would be false when things DID match and were paused
+    // by notes — the difference matters to someone wondering why their rule
+    // went quiet (review round 1, finding 6).
     run.blockedReason = candidates.length > 0
       ? 'Everything it matched is larger than the remaining allowance, so nothing was deleted.'
-      : 'Nothing matched this time.';
+      : run.skipped.some((s) => s.reason.includes('pauses automatic cleanup'))
+        ? 'Everything that matched is paused by your notes — nothing was deleted.'
+        : 'Nothing matched this time.';
     return record();
   }
 

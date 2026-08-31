@@ -452,3 +452,48 @@ test('the NL box shows the translation before anything runs — structurally', (
   const run = html.slice(html.indexOf('function nlRunTranslated'), html.indexOf('function nlRunTranslated') + 900);
   assert.match(run, /\$\('nlResult'\)\.value/, 'what runs is what the field holds — edits included');
 });
+
+/* ═══════════ The fleet's findings (backend review, round 1) ═══════════ */
+
+test('absurd durations still parse — the invariant holds at 1e21 years', () => {
+  // Review finding 3: `${1e21}` is "1e+21", which the grammar rejects. The
+  // count is clamped so every emitted term stays inside the language.
+  const r = translateNlQuery('files not opened in 1000000000000000000000 years');
+  assert.equal(r.ok, true, JSON.stringify(r));
+  if (r.ok) {
+    assert.equal(parse(r.q).ok, true, `emitted q must parse — got "${r.q}"`);
+  }
+  const weeks = translateNlQuery('not opened in 999999999999999999999 weeks');
+  if (weeks.ok) assert.equal(parse(weeks.q).ok, true, `weeks form too — got "${weeks.q}"`);
+});
+
+test('a hostile local "model" cannot balloon the server — the body read is capped', async () => {
+  // Review finding 4: anything can squat on an unprivileged loopback port.
+  // A gigabyte of garbage from it must cost a refusal, not the heap.
+  let sawNumPredict = false;
+  const fake = http.createServer((req2, res) => {
+    let buf = '';
+    req2.on('data', (c) => { buf += c; });
+    req2.on('end', () => {
+      try { sawNumPredict = typeof JSON.parse(buf).options?.num_predict === 'number'; } catch { /* ignore */ }
+      res.setHeader('Content-Type', 'application/json');
+      // 300 KB of padding around a valid shape — far past any honest answer.
+      res.end(JSON.stringify({ response: 'size>1gb', padding: 'x'.repeat(300_000) }));
+    });
+  });
+  await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
+  const fakePort = (fake.address() as { port: number }).port;
+  const { port, close } = await listenApp();
+  try {
+    await updateSettings({ nlOllama: { enabled: true, endpoint: `http://127.0.0.1:${fakePort}`, model: 'llama3.2' } });
+    const r = await reqHttp(port, 'POST', '/api/nl-query', { text: 'total gibberish zzz' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, false, 'an oversized answer is refused');
+    assert.match(String(r.body.reason), /answer|large|model/i);
+    assert.equal(sawNumPredict, true, 'the request bounds the model output too (num_predict)');
+  } finally {
+    await updateSettings({ nlOllama: { enabled: false, endpoint: 'http://127.0.0.1:11434', model: '' } });
+    await close();
+    await new Promise<void>((r) => fake.close(() => r()));
+  }
+});

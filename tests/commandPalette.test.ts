@@ -99,10 +99,12 @@ test('free text that matches nothing still offers a file search, so no dead ends
 /* ══════════════════════ Keys, focus, accessibility ══════════════════════ */
 
 test('⌘K opens the palette now — global search moved to its own key and a palette row', () => {
-  const at = INDEX.indexOf("e.key.toLowerCase() === 'k'");
-  assert.notEqual(at, -1);
-  const branch = INDEX.slice(at, at + 220);
-  assert.match(branch, /cmdkOpen\(\)/, '⌘K opens the palette (§9.1 assigns the key explicitly)');
+  // Anchored on the toggle pair, because the palette's modal-scoped key
+  // handler earlier in the file legitimately maps ⌘K to close-while-open.
+  const at = INDEX.indexOf('else cmdkOpen();');
+  assert.notEqual(at, -1, '⌘K opens the palette (§9.1 assigns the key explicitly)');
+  const branch = INDEX.slice(at - 300, at + 60);
+  assert.match(branch, /cmdkClose\(\);/, 'and pressing it again toggles closed');
   assert.ok(!branch.includes('summonGlobalSearch'), 'and no longer summons global search directly');
   // The rail button must not keep advertising the old binding.
   assert.ok(!INDEX.includes('title="Search (⌘K)"'), 'the search button stopped claiming ⌘K');

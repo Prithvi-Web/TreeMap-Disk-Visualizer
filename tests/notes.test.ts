@@ -312,10 +312,10 @@ test('Autopilot skips a noted folder and says why — for rule matches', async (
     await setNote(path.join(fx, 'project'), 'client project — keep');
     const after = await simulatePolicy(policy);
     assert.equal(after.items.length, 0, 'a noted folder is never matched');
-    assert.ok(
-      after.skipped.some((s) => s.path.includes('node_modules') && /note/i.test(s.reason)),
-      `the skip is stated, with the note as the reason — got ${JSON.stringify(after.skipped)}`,
-    );
+    const noteSkips = after.skipped.filter((s) => /note/i.test(s.reason));
+    assert.equal(noteSkips.length, 1, `one collapsed entry per note root — got ${JSON.stringify(after.skipped)}`);
+    assert.ok(noteSkips[0].path.endsWith('project'), 'anchored on the noted folder itself');
+    assert.match(noteSkips[0].reason, /1 matched item/, 'and it counts what it covered');
   } finally {
     await savePolicies([]);
     await clearNotes();
@@ -337,10 +337,10 @@ test('Autopilot skips a noted folder for custom matches too', async () => {
     await setNote(path.join(fx, 'archive'), 'do not touch');
     const run = await simulatePolicy(policy);
     assert.ok(!run.items.some((i) => i.path.includes('big.bin')), 'the noted file is not in the match');
-    assert.ok(
-      run.skipped.some((s) => s.path.includes('big.bin') && /note/i.test(s.reason)),
-      'and the skip is visible in the preview',
-    );
+    const noteSkips = run.skipped.filter((s) => /note/i.test(s.reason));
+    assert.equal(noteSkips.length, 1, 'one collapsed entry per note root');
+    assert.ok(noteSkips[0].path.endsWith('archive'), 'anchored on the noted folder');
+    assert.match(noteSkips[0].reason, /1 matched item/);
   } finally {
     await savePolicies([]);
     await clearNotes();
@@ -498,4 +498,131 @@ test('the tooltip truncates note text by code points, never through an emoji', (
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const fn = html.slice(html.indexOf('function noteTooltipLine'), html.indexOf('function noteTooltipLine') + 900);
   assert.match(fn, /\[\.\.\.n\.text\]/, 'truncation walks code points, so no lone surrogates render as �');
+});
+
+/* ═══════════ The fleet's findings (backend review, round 1) ═══════════ */
+
+test('a matched folder CONTAINING a noted keeper is never suggested — reverse containment', () => {
+  // Review finding 1: "is the candidate under a note?" is only half the
+  // promise. A node_modules holding a noted keep-me must not be offered
+  // whole — deleting it deletes the very thing the user said to keep.
+  const fixture = () => tree([dir('projects', [dir('site', [
+    dir('node_modules', [file('payload.bin', 9000), dir('keep-me', [file('patch.js', 500)])]),
+  ])])]);
+  const keeper = path.join(ROOT, 'projects', 'site', 'node_modules', 'keep-me');
+  const before = collectCleanupSuggestions(fixture(), NO_IGNORE, undefined, undefined, []);
+  assert.ok(before.some((g) => g.id === 'regen-node-modules'), 'the fixture fires without the note');
+  const after = collectCleanupSuggestions(fixture(), NO_IGNORE, undefined, undefined, [keeper]);
+  const nm = after.find((g) => g.id === 'regen-node-modules');
+  assert.ok(
+    !nm || !nm.items.some((i) => i.path.endsWith('node_modules')),
+    'the ancestor that contains the keeper is withheld',
+  );
+});
+
+test('Autopilot refuses a match that contains a noted keeper, and says so', async () => {
+  await clearNotes();
+  const fx = await mkTmp();
+  try {
+    await writeBin(path.join(fx, 'proj', 'node_modules', 'dep', 'a.bin'), 4096);
+    await writeBin(path.join(fx, 'proj', 'node_modules', 'keep-me', 'patch.js'), 512);
+    await setNote(path.join(fx, 'proj', 'node_modules', 'keep-me'), 'hand-patched — keep');
+    const [policy] = await savePolicies([{
+      id: 'note-reverse', name: 'p', path: fx,
+      match: { kind: 'suggestion', groupIds: ['regen-node-modules'] },
+      dryRunFirst: false, enabled: true,
+    }]);
+    const sim = await simulatePolicy(policy);
+    assert.ok(!sim.items.some((i) => i.path.endsWith('node_modules')), 'the containing folder is not deletable');
+    assert.ok(
+      sim.skipped.some((s) => /note/i.test(s.reason) && /keep-me|contains/i.test(s.reason + s.path)),
+      `the refusal is stated — got ${JSON.stringify(sim.skipped)}`,
+    );
+  } finally {
+    await savePolicies([]);
+    await clearNotes();
+    await fsp.rm(fx, { recursive: true, force: true });
+  }
+});
+
+test('a corrupt notes.json fails CLOSED — automation refuses rather than running unsuppressed', async () => {
+  // Review finding 2: a note that suppresses is a guard rail on unattended
+  // deletion. A file that cannot be read must pause automation, never
+  // silently switch every pause off.
+  await clearNotes();
+  const fx = await mkTmp();
+  const notesFile = path.join(process.env.TREEMAP_DATA_DIR!, 'notes.json');
+  try {
+    await writeBin(path.join(fx, 'proj', 'node_modules', 'dep', 'a.bin'), 4096);
+    fs.writeFileSync(notesFile, '{ not json');
+
+    await assert.rejects(suppressedNoteRoots(), (e: any) => e.code === 'NOTES_UNREADABLE');
+
+    const [policy] = await savePolicies([{
+      id: 'note-corrupt', name: 'p', path: fx,
+      match: { kind: 'suggestion', groupIds: ['regen-node-modules'] },
+      dryRunFirst: false, enabled: true,
+    }]);
+    await assert.rejects(simulatePolicy(policy), (e: any) => /note/i.test(String(e.message)));
+
+    // The suggestions surface degrades with the reason instead of serving an
+    // unsuppressed list.
+    const { port, close } = await listen();
+    try {
+      const scan = await req(port, 'POST', '/api/scan', { path: fx });
+      const scanId = scan.body.scanId;
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const r = await req(port, 'GET', `/api/scan/${scanId}/result`);
+        if (r.status === 200) break;
+        assert.ok(Date.now() < deadline, 'fixture scan never completed');
+        await new Promise((res) => setTimeout(res, 50));
+      }
+      const sug = await req(port, 'GET', `/api/cleanup/suggestions?scanId=${scanId}`);
+      assert.equal(sug.status, 200);
+      assert.equal(sug.body.available, false, 'degraded, not silently unsuppressed');
+      assert.match(String(sug.body.reason), /note/i);
+    } finally {
+      await close();
+    }
+  } finally {
+    await savePolicies([]);
+    fs.rmSync(notesFile, { force: true });
+    await fsp.rm(fx, { recursive: true, force: true });
+  }
+});
+
+test('cloud:// pseudo-paths are refused — a note there could never do its job', async () => {
+  await assert.rejects(setNote('cloud://gdrive/Photos', 'keep'), (e: any) => e.code === 'NOTE_INVALID');
+});
+
+test('the agent summary respects notes — teeth for a wire the review found untested', async () => {
+  await clearNotes();
+  const fx = await mkTmp();
+  const { port, close } = await listen();
+  try {
+    await writeBin(path.join(fx, 'work', 'node_modules', 'dep', 'a.bin'), 8192);
+    const scan = await req(port, 'POST', '/api/scan', { path: fx });
+    const scanId = scan.body.scanId;
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const r = await req(port, 'GET', `/api/scan/${scanId}/result`);
+      if (r.status === 200) break;
+      assert.ok(Date.now() < deadline, 'fixture scan never completed');
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    const before = await req(port, 'GET', `/api/agent/summary?scanId=${scanId}`);
+    assert.equal(before.status, 200);
+    const bytesBefore = before.body.cleanup?.reclaimableBytes ?? before.body.reclaimableBytes;
+    assert.ok(bytesBefore > 0, `the summary advertises the node_modules before any note — got ${JSON.stringify(before.body).slice(0, 200)}`);
+
+    await setNote(path.join(fx, 'work'), 'client work');
+    const after = await req(port, 'GET', `/api/agent/summary?scanId=${scanId}`);
+    const bytesAfter = after.body.cleanup?.reclaimableBytes ?? after.body.reclaimableBytes;
+    assert.equal(bytesAfter, 0, 'a noted folder is not advertised to agents either');
+  } finally {
+    await close();
+    await clearNotes();
+    await fsp.rm(fx, { recursive: true, force: true });
+  }
 });
