@@ -27,7 +27,7 @@
 <br><br>
 
 <kbd><a href="#-download-the-app-for-users">⬇ Download</a></kbd> &nbsp;
-<kbd><a href="#-the-nineteen-views">✨ Features</a></kbd> &nbsp;
+<kbd><a href="#-the-seventeen-views">✨ Features</a></kbd> &nbsp;
 <kbd><a href="#-run-from-source--web-mode-3-commands">🚀 Run it</a></kbd> &nbsp;
 <kbd><a href="#-use-it-with-ai-mcp">🤖 AI / MCP</a></kbd> &nbsp;
 <kbd><a href="#-api-overview">🔌 API</a></kbd> &nbsp;
@@ -56,12 +56,12 @@
 
 <br>
 
-## ✨ The nineteen views
+## ✨ The seventeen views
 
-TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Nineteen views, one zero-dependency frontend.
+TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Seventeen views, one zero-dependency frontend.
 
 <div align="center">
-  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Disk City, Grid, Apps, Games, Security, Fleet, Missing GB, Duplicates, Trends, Calendar, Journal, Compare, Offloaded, Time Capsule, Autopilot, Clean Up, Scheduled + Ignore">
+  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Disk City, Grid, Apps, Games, Security, Fleet, Missing GB, Duplicates, Trends, History, Offloaded, Time Capsule, Autopilot, Clean Up, Scheduled + Ignore">
 </div>
 
 <br>
@@ -169,22 +169,19 @@ Finds **true** duplicates (size + streamed SHA-256), grouped with reclaimable sp
 ### 📈 Trends
 Every scan saves a lightweight snapshot, charted over time per folder — with a clear **"what grew / what shrank since last scan"** breakdown.
 
-### 📅 Calendar
-A GitHub-style heatmap of **bytes written per day** — one cell per day, weeks as columns, years stacked. Toggle between **modified** (exact, from the scan itself) and **created** (per-file stats behind a cap, with any unread days reported honestly rather than drawn as empty). Hover for a day's total and file count; **click a day — or drag across a range — and the treemap filters to those files**, through the same query grammar as the search box, so the result is exactly what typing `modified:2026-03-14` would show.
+### 🕰 History — Calendar · Journal · Compare, one view
+The whole time dimension lives in **one History tab** with three panels.
 
-### 📓 Journal
-A rolling, human-readable narrative of significant changes — *"**Tuesday 18 March** — Docker added 14.2 GB (`~/Library/Containers/com.docker.docker`)"* — built by scheduled scans from snapshot deltas, capped and rotated in `journal.jsonl`. **Attribution never guesses**: an app is named only when the path provably belongs to it, "**you**" only when TreeMap's own audit log matches the deletion, and otherwise the entry says exactly *"an unidentified process."* Each entry links back into the treemap at that path and day. Portable sessions keep the journal in memory only and say so — nothing is written to the host.
+**📅 Calendar.** A GitHub-style heatmap of **bytes written per day** — one cell per day, weeks as columns, years stacked. Toggle between **modified** (exact, from the scan itself) and **created** (per-file stats behind a cap, with any unread days reported honestly rather than drawn as empty). Hover for a day's total and file count; **click a day — or drag across a range — and the treemap filters to those files**, through the same query grammar as the search box, so the result is exactly what typing `modified:2026-03-14` would show.
+
+**📓 Journal.** A rolling, human-readable narrative of significant changes — *"**Tuesday 18 March** — Docker added 14.2 GB (`~/Library/Containers/com.docker.docker`)"* — built by scheduled scans from snapshot deltas, capped and rotated in `journal.jsonl`. **Attribution never guesses**: an app is named only when the path provably belongs to it, "**you**" only when TreeMap's own audit log matches the deletion, and otherwise the entry says exactly *"an unidentified process."* Each entry links back into the treemap at that path and day. Portable sessions keep the journal in memory only and say so — nothing is written to the host.
+
+**🔀 Compare.** Pick any two scans of the same folder for a file-level diff: **added, removed, grew, shrank.** History pairs also get a **split-slider**: both snapshots rendered as treemaps in one canvas with a draggable divider revealing one over the other — photo-comparison style, fully keyboard-accessible (the divider is a native slider: arrows nudge it, Home/End snap, and its position is announced to screen readers). Subtrees collapse to one row instead of thousands. Every **removed** row also offers **"Check snapshots"** — your OS has probably been keeping filesystem snapshots (APFS local snapshots, Btrfs subvolumes, Volume Shadow Copies) the whole time, so a file deleted weeks ago and long gone from the Trash is often still recoverable. Looking costs nothing and asks for nothing; recovering asks for your administrator password once, at that moment, on macOS and Windows (Linux needs none). The recovered copy is written **beside** the original, never over whatever is there now — it came from an older snapshot, so overwriting by default would replace newer work with older.                  
 
 </td>
 </tr>
 <tr>
-<td width="50%" valign="top">
-
-### 🔀 Compare
-Pick any two scans of the same folder for a file-level diff: **added, removed, grew, shrank.** History pairs also get a **split-slider**: both snapshots rendered as treemaps in one canvas with a draggable divider revealing one over the other — photo-comparison style, fully keyboard-accessible (the divider is a native slider: arrows nudge it, Home/End snap, and its position is announced to screen readers). Subtrees collapse to one row instead of thousands. Every **removed** row also offers **"Check snapshots"** — your OS has probably been keeping filesystem snapshots (APFS local snapshots, Btrfs subvolumes, Volume Shadow Copies) the whole time, so a file deleted weeks ago and long gone from the Trash is often still recoverable. Looking costs nothing and asks for nothing; recovering asks for your administrator password once, at that moment, on macOS and Windows (Linux needs none). The recovered copy is written **beside** the original, never over whatever is there now — it came from an older snapshot, so overwriting by default would replace newer work with older.                  
-
-</td>
-<td width="50%" valign="top">
+<td colspan="2" valign="top">
 
 ### 🧹 Clean Up
 **Custom rules** (old / huge / by extension / duplicated), **Smart Suggestions** — sorted into **regenerable** (`node_modules`, Rust/Maven `target`, virtualenvs, build output — each shown with the command that restores it), **cache**, and **junk**, plus a per-profile **browser cache** breakdown (Chrome / Edge / Brave / Firefox / Safari) — and **Empty Folders**. Everything → Trash.

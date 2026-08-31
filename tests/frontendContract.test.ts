@@ -32,7 +32,7 @@ const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), '
  * view that appears without being added here is a view nobody decided to ship.
  */
 const TAB_VIEWS = [
-  'dashboard', 'treemap', 'grid', 'apps', 'duplicates', 'trends', 'compare', 'offloaded',
+  'dashboard', 'treemap', 'grid', 'apps', 'duplicates', 'trends', 'offloaded',
   'capsule', // B3 — Time Capsule
   'autopilot', // B1 — Autopilot
   'games', // C7 — game libraries
@@ -40,8 +40,7 @@ const TAB_VIEWS = [
   'fleet', // D1 — LAN fleet view
   'missing', // v4 §5 — The Missing Gigabytes
   'city', // v4 §6.1 — Disk City, the isometric view
-  'calendar', // v4 §7.2 — the calendar heatmap
-  'journal', // v4 §7.3 — the disk journal
+  'history', // v4 §7 — one tab for the time dimension: calendar · journal · compare
 ] as const;
 const MODAL_VIEWS = ['cleanModal', 'settingsModal'] as const;
 

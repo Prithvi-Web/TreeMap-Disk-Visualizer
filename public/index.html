@@ -1873,9 +1873,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
     <button role="tab" aria-selected="false" data-view="missing" title="Missing GB"><span data-icon="pie"></span><span class="side-label">Missing GB</span></button>
     <button role="tab" aria-selected="false" data-view="duplicates" title="Duplicates"><span data-icon="copy"></span><span class="side-label">Duplicates</span></button>
     <button role="tab" aria-selected="false" data-view="trends" title="Trends"><span data-icon="trendUp"></span><span class="side-label">Trends</span></button>
-    <button role="tab" aria-selected="false" data-view="calendar" title="Calendar"><span data-icon="calendar"></span><span class="side-label">Calendar</span></button>
-    <button role="tab" aria-selected="false" data-view="journal" title="Journal"><span data-icon="activity"></span><span class="side-label">Journal</span></button>
-    <button role="tab" aria-selected="false" data-view="compare" title="Compare"><span data-icon="diff"></span><span class="side-label">Compare</span></button>
+    <button role="tab" aria-selected="false" data-view="history" title="History"><span data-icon="calendar"></span><span class="side-label">History</span></button>
     <button role="tab" aria-selected="false" data-view="offloaded" title="Offloaded"><span data-icon="archive"></span><span class="side-label">Offloaded</span></button>
     <button role="tab" aria-selected="false" data-view="capsule" title="Time Capsule"><span data-icon="clock"></span><span class="side-label">Time Capsule</span></button>
     <button role="tab" aria-selected="false" data-view="autopilot" title="Autopilot"><span data-icon="sparkles"></span><span class="side-label">Autopilot</span></button>
@@ -2344,18 +2342,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   </section>
 
   <!-- ═══════════ Compare ═══════════ -->
-  <section class="view" id="view-compare" role="tabpanel" aria-label="Compare" hidden>
-    <div class="trends-toolbar">
-      <label for="cmpA">Before</label>
-      <select id="cmpA" aria-label="Older scan or snapshot"></select>
-      <span class="muted">→</span>
-      <label for="cmpB">After</label>
-      <select id="cmpB" aria-label="Newer scan or snapshot"></select>
-      <button class="btn btn-primary" id="cmpRunBtn"><span data-icon="diff"></span>Compare</button>
-      <span class="muted" id="cmpInfo"></span>
-    </div>
-    <div id="cmpBody"><div class="card glass"><div class="muted">Pick two scans of the same folder — scans from this session give a full file-level diff; history snapshots compare top-level folders.</div></div></div>
-  </section>
+  
 
   <!-- ═══════════ Offloaded ═══════════ -->
   <section class="view" id="view-offloaded" role="tabpanel" aria-label="Offloaded" hidden>
@@ -2372,8 +2359,18 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
     </div>
   </section>
 
-  <!-- ═══════════ Calendar (v4 §7.2) ═══════════ -->
-  <section class="view" id="view-calendar" role="tabpanel" aria-label="Calendar heatmap of bytes written per day" hidden>
+  
+
+  
+
+  <!-- ═══════════ History (v4 §7 — calendar · journal · compare in one view) ═══════════ -->
+  <section class="view" id="view-history" role="tabpanel" aria-label="History — calendar heatmap, disk journal, and scan compare" hidden>
+    <div class="seg" id="histSeg" role="tablist" aria-label="History panel" style="margin-bottom:12px;">
+      <button type="button" data-panel="calendar" aria-selected="true" title="Bytes written per day, one cell per day">Calendar</button>
+      <button type="button" data-panel="journal" aria-selected="false" title="What changed, day by day, honestly attributed">Journal</button>
+      <button type="button" data-panel="compare" aria-selected="false" title="Two scans of one folder, diffed — with the split-slider for history pairs">Compare</button>
+    </div>
+    <div id="histPanelCalendar">
     <div class="card glass">
       <h2><span data-icon="calendar"></span>Calendar</h2>
       <div class="rule-row" style="align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
@@ -2390,16 +2387,27 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
       </div>
       <div class="muted" id="calDegraded" role="status" style="margin-top:8px;" hidden></div>
     </div>
-  </section>
-
-  <!-- ═══════════ Journal (v4 §7.3) ═══════════ -->
-  <section class="view" id="view-journal" role="tabpanel" aria-label="Disk journal — what changed, day by day" hidden>
+  </div>
+    <div id="histPanelJournal" hidden>
     <div class="card glass">
       <h2><span data-icon="activity"></span>Journal</h2>
       <div class="muted" style="margin-bottom:10px;">A rolling narrative of significant changes, noticed by scheduled scans. Attribution is honest: an app named only when the path says so, <b>you</b> only when TreeMap's own audit log matches, and otherwise exactly “an unidentified process”.</div>
       <div class="muted" id="journalPortable" role="status" style="margin-bottom:8px;" hidden></div>
       <div id="journalBody"><div class="muted">Reading the journal…</div></div>
     </div>
+  </div>
+    <div id="histPanelCompare" hidden>
+    <div class="trends-toolbar">
+      <label for="cmpA">Before</label>
+      <select id="cmpA" aria-label="Older scan or snapshot"></select>
+      <span class="muted">→</span>
+      <label for="cmpB">After</label>
+      <select id="cmpB" aria-label="Newer scan or snapshot"></select>
+      <button class="btn btn-primary" id="cmpRunBtn"><span data-icon="diff"></span>Compare</button>
+      <span class="muted" id="cmpInfo"></span>
+    </div>
+    <div id="cmpBody"><div class="card glass"><div class="muted">Pick two scans of the same folder — scans from this session give a full file-level diff; history snapshots compare top-level folders.</div></div></div>
+  </div>
   </section>
 
   <!-- ═══════════ Time Capsule (B3) ═══════════ -->
@@ -3734,7 +3742,6 @@ const VIEWS = [
   // Trends, Compare and Offloaded read persisted history, so they work with no
   // scan loaded at all — which is why they never show the empty state.
   { id: 'trends', label: 'Trends', icon: 'trendUp', needsScan: false, mount() { loadTrends(); } },
-  { id: 'compare', label: 'Compare', icon: 'diff', needsScan: false, mount() { loadCompareOptions(); } },
   { id: 'offloaded', label: 'Offloaded', icon: 'archive', needsScan: false, mount() { loadOffloadIndex(); } },
 ];
 
@@ -11944,11 +11951,11 @@ async function loadCalendar() {
   try {
     const url = `/api/scan/${encodeURIComponent(state.scanId)}/calendar` + (calChannel === 'created' ? '?channel=created' : '');
     const data = await api(url);
-    if (seq !== calSeq || state.view !== 'calendar') return; // superseded
+    if (seq !== calSeq || state.view !== 'history') return; // superseded
     calData = data;
     renderCalendar();
   } catch (e) {
-    if (seq !== calSeq || state.view !== 'calendar') return;
+    if (seq !== calSeq || state.view !== 'history') return;
     calData = null;
     body.innerHTML = `<div class="muted">Could not build the calendar: ${escapeHtml(e.message)}</div>`;
     $('calDegraded').hidden = true; $('calLegend').hidden = true;
@@ -12075,13 +12082,40 @@ $('calBody').addEventListener('click', (e) => {
   if (c) calApplyRange(c.dataset.date, c.dataset.date);
 });
 
+/* ═══════════ History (v4 §7) — one tab, three panels ═══════════
+   Calendar, Journal and Compare share the time dimension, so they share one
+   view: an internal segmented control switches panels, each keeping its own
+   ids, loaders and stale-response guards. Loading happens on entry to a
+   panel, never for the two hidden ones. */
+let histPanel = 'calendar';
+
+function histShow(panel) {
+  histPanel = panel;
+  for (const b of $('histSeg').querySelectorAll('button'))
+    b.setAttribute('aria-selected', String(b.dataset.panel === panel));
+  $('histPanelCalendar').hidden = panel !== 'calendar';
+  $('histPanelJournal').hidden = panel !== 'journal';
+  $('histPanelCompare').hidden = panel !== 'compare';
+  if (state.view !== 'history') return; // reflect-only until the view mounts
+  if (panel === 'calendar') loadCalendar();
+  else if (panel === 'journal') loadJournal();
+  else loadCompareOptions();
+}
+
+$('histSeg').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-panel]');
+  if (btn) histShow(btn.dataset.panel);
+});
+
 registerView({
-  id: 'calendar',
-  label: 'Calendar',
+  id: 'history',
+  label: 'History',
   icon: 'calendar',
-  needsScan: true,
+  // Journal and Compare read persisted history and are useful with no scan
+  // loaded; the calendar panel states its own need for one.
+  needsScan: false,
   onScanChange() { calData = null; }, // the old scan's days belong to the old tree
-  mount() { loadCalendar(); },
+  mount() { histShow(histPanel); },
 });
 
 /* ═══════════ Disk journal (v4 §7.3) ═══════════
@@ -12102,13 +12136,13 @@ async function loadJournal() {
       api('/api/journal?limit=200'),
       api('/api/platform/portable').catch(() => null),
     ]);
-    if (seq !== journalSeq || state.view !== 'journal') return; // superseded
+    if (seq !== journalSeq || state.view !== 'history') return; // superseded
     const note = portable && portable.portable && (portable.degraded || []).find((d) => d.key === 'journal');
     $('journalPortable').hidden = !note;
     if (note) $('journalPortable').textContent = note.reason;
     renderJournal(data.entries || []);
   } catch (e) {
-    if (seq !== journalSeq || state.view !== 'journal') return;
+    if (seq !== journalSeq || state.view !== 'history') return;
     body.innerHTML = `<div class="muted">Could not read the journal: ${escapeHtml(e.message)}</div>`;
   }
 }
@@ -12163,15 +12197,6 @@ function journalOpen(entry) {
   tmApplyQuery(q);
 }
 
-registerView({
-  id: 'journal',
-  label: 'Journal',
-  icon: 'activity',
-  // Reads persisted history, exactly like Trends/Capsule, so it is useful
-  // with no scan loaded and never shows the empty-state screen.
-  needsScan: false,
-  mount() { loadJournal(); },
-});
 
 registerView({
   id: 'capsule',
@@ -17748,7 +17773,7 @@ function cmpSplitDraw() {
 }
 
 window.addEventListener('resize', () => {
-  if (state.view === 'compare' && $('cmpSplitCanvas')) cmpSplitDraw();
+  if (state.view === 'history' && $('cmpSplitCanvas')) cmpSplitDraw();
 });
 
 function renderCompare(r) {
