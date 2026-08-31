@@ -106,7 +106,9 @@ test('one Escape never closes a dialog AND skips the tour', () => {
   // tour branch is ever reached.
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const chain = html.slice(html.indexOf("const openModal = document.querySelector('.modal-backdrop.open')"));
-  const modalBranch = chain.indexOf("openModal.classList.remove('open')");
+  // closeModal(), not a bare class removal: the funnel carries per-modal
+  // teardown (the Settings sheet clears its cloud-connect poll + orb there).
+  const modalBranch = chain.indexOf('closeModal(openModal.id)');
   const tourBranch = chain.indexOf("tour.active && !$('tourOverlay').hidden");
   assert.ok(modalBranch !== -1 && tourBranch !== -1 && modalBranch < tourBranch,
     'closing a dialog returns before the tour branch is reached');

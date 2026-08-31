@@ -24,7 +24,8 @@ import path from 'node:path';
  *     and actually produce geometry, so a state wired up tomorrow cannot
  *     silently render nothing.
  *
- * Every test skips until the section is spliced into public/index.html.
+ * The section is permanently spliced, so a missing banner is a broken build:
+ * it fails loudly here instead of silently skipping the golden-parity suite.
  */
 
 const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -32,10 +33,11 @@ const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), '
 const BANNER = '/* ═══════════════ FX: Thinking Orbs ═══════════════ */';
 const END_BANNER = '/* ═══ end FX: Thinking Orbs ═══ */';
 const AT = INDEX.indexOf(BANNER);
-const AT_END = INDEX.indexOf(END_BANNER);
-const SPLICED = AT !== -1 && AT_END > AT;
-
-const SKIP = 'FX: Thinking Orbs is not spliced into public/index.html yet';
+assert.notEqual(AT, -1, 'FX: Thinking Orbs is spliced into index.html — a renamed banner must fail, never skip');
+// Search from the START banner: an END string that happened to sit earlier
+// in the file would otherwise slice garbage (or mask a truncated section).
+const AT_END = INDEX.indexOf(END_BANNER, AT);
+assert.notEqual(AT_END, -1, 'the section has its end banner');
 
 function section(): string {
   return INDEX.slice(AT, AT_END + END_BANNER.length);
@@ -96,8 +98,7 @@ const GOLDEN: GoldenCase[] = [
 ];
 
 for (const c of GOLDEN) {
-  test(`golden parity: ${c.key} reproduces the published frame exactly`, (t) => {
-    if (!SPLICED) return t.skip(SKIP);
+  test(`golden parity: ${c.key} reproduces the published frame exactly`, () => {
     const E = engine();
     const { mode, opts } = E.resolvePreset(c.state, c.size);
     assert.equal(mode, c.mode, `${c.state} resolves to mode ${c.mode}`);
@@ -131,8 +132,7 @@ for (const c of GOLDEN) {
 
 /* ══════════════════ Determinism ══════════════════ */
 
-test('same t → same frame: the engine is a pure function of its inputs', (t) => {
-  if (!SPLICED) return t.skip(SKIP);
+test('same t → same frame: the engine is a pure function of its inputs', () => {
   const E = engine();
   for (const state of STATES) {
     for (const size of SIZES) {
@@ -144,8 +144,7 @@ test('same t → same frame: the engine is a pure function of its inputs', (t) =
   }
 });
 
-test('resolvePreset is stable: resolving twice hands back the same options', (t) => {
-  if (!SPLICED) return t.skip(SKIP);
+test('resolvePreset is stable: resolving twice hands back the same options', () => {
   const E = engine();
   const a = E.resolvePreset('composing', 20);
   const b = E.resolvePreset('composing', 20);
@@ -154,8 +153,7 @@ test('resolvePreset is stable: resolving twice hands back the same options', (t)
 
 /* ══════════════════ Registry completeness ══════════════════ */
 
-test('all nine states × both sizes resolve and produce geometry', (t) => {
-  if (!SPLICED) return t.skip(SKIP);
+test('all nine states × both sizes resolve and produce geometry', () => {
   const E = engine();
   assert.equal(Object.keys(E.STATE_TO_MODE).length, 9, 'exactly nine states');
   for (const state of STATES) {
@@ -176,8 +174,7 @@ test('all nine states × both sizes resolve and produce geometry', (t) => {
   }
 });
 
-test('the two sizes are separate designs, not a scale factor', (t) => {
-  if (!SPLICED) return t.skip(SKIP);
+test('the two sizes are separate designs, not a scale factor', () => {
   const E = engine();
   for (const state of STATES) {
     const big = E.resolvePreset(state, 64);
@@ -192,8 +189,7 @@ test('the two sizes are separate designs, not a scale factor', (t) => {
 
 /* ══════════════════ Contract seams, structurally ══════════════════ */
 
-test('mount honors REDUCED, sets the dpr transform, and labels the canvas', (t) => {
-  if (!SPLICED) return t.skip(SKIP);
+test('mount honors REDUCED, sets the dpr transform, and labels the canvas', () => {
   const src = section();
   assert.match(src, /if \(REDUCED\)/, 'animation entry checks the REDUCED const');
   assert.match(src, /setTransform\(dpr, 0, 0, dpr, 0, 0\)/, 'the devicePixelRatio transform is set');

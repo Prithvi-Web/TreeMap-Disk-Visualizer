@@ -13,33 +13,27 @@ import path from 'node:path';
  * are exercised as functions — determinism, coverage and monotonicity are
  * behaviour, not structure.
  *
- * Skip-if-not-spliced: when the banner is absent from index.html the
- * suite is a no-op (skipped, not failed) so it can land ahead of the
- * splice. Until then, FXCHARTS_SRC=<path to section.js> validates the
- * standalone file the same way.
+ * The section is permanently spliced, so a missing banner is a broken
+ * build: it fails loudly here instead of silently turning the math suite
+ * into skips. FXCHARTS_SRC=<path to section.js> still validates a
+ * standalone file the same way, ahead of a merge.
  */
 
 const BANNER = '/* ═══════════════ FX: Charts ═══════════════ */';
 const END = '/* ═══ end FX: Charts ═══ */';
 
-function sectionSource(): string | null {
-  const idx = path.join(__dirname, '..', 'public', 'index.html');
-  if (existsSync(idx)) {
-    const html = readFileSync(idx, 'utf8');
-    const a = html.indexOf(BANNER);
-    if (a !== -1) {
-      const b = html.indexOf(END, a);
-      assert.notEqual(b, -1, 'FX: Charts banner opens but never closes');
-      return html.slice(a, b + END.length);
-    }
-  }
+function sectionSource(): string {
   const alt = process.env.FXCHARTS_SRC;
   if (alt && existsSync(alt)) return readFileSync(alt, 'utf8');
-  return null;
+  const html = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const a = html.indexOf(BANNER);
+  assert.notEqual(a, -1, 'FX: Charts is spliced into index.html — a renamed banner must fail, never skip');
+  const b = html.indexOf(END, a);
+  assert.notEqual(b, -1, 'FX: Charts banner opens but never closes');
+  return html.slice(a, b + END.length);
 }
 
 const SRC = sectionSource();
-const spliced = SRC !== null;
 
 /* App globals the section references lazily; math never touches them,
    but evaluating the section must not depend on a browser. */
@@ -61,7 +55,7 @@ function loadFxCharts(): any {
   return new Function(`${stubs}\n${SRC}\nreturn FxCharts;`)();
 }
 
-test('FX: Charts — section evaluates in Node and exposes the full API', { skip: !spliced }, () => {
+test('FX: Charts — section evaluates in Node and exposes the full API', () => {
   const fx = loadFxCharts();
   for (const k of ['area', 'rings', 'gauge', 'barList', 'liveLine', 'ramp', 'math']) {
     assert.ok(k in fx, `FxCharts.${k} exists`);
@@ -74,7 +68,7 @@ test('FX: Charts — section evaluates in Node and exposes the full API', { skip
 
 /* ══════════════════ nice ticks: niceness + coverage ══════════════════ */
 
-test('niceTicks covers the domain and steps stay 1/2/5 × 10^k', { skip: !spliced }, () => {
+test('niceTicks covers the domain and steps stay 1/2/5 × 10^k', () => {
   const { math } = loadFxCharts();
   for (const [min, max] of [[0, 987654321], [0, 1], [3, 7], [0, 0.042], [12, 12], [0, 1024 ** 4]]) {
     const ticks = math.niceTicks(min, max, 4) as number[];
@@ -91,7 +85,7 @@ test('niceTicks covers the domain and steps stay 1/2/5 × 10^k', { skip: !splice
   }
 });
 
-test('niceTicks is defensive: reversed, degenerate and non-finite inputs', { skip: !spliced }, () => {
+test('niceTicks is defensive: reversed, degenerate and non-finite inputs', () => {
   const { math } = loadFxCharts();
   const rev = math.niceTicks(10, 2, 4) as number[];
   assert.ok(rev[0] <= 2 && rev[rev.length - 1] >= 10, 'reversed domain is righted');
@@ -101,7 +95,7 @@ test('niceTicks is defensive: reversed, degenerate and non-finite inputs', { ski
 
 /* ══════════════ monotone smoothing preserves monotonicity ══════════════ */
 
-test('monotone cubic never inverts a monotone series', { skip: !spliced }, () => {
+test('monotone cubic never inverts a monotone series', () => {
   const { math } = loadFxCharts();
   const xs = [0, 10, 20, 30, 40, 55, 70];
   const ys = [0, 1, 1, 8, 8.5, 40, 41]; // flat spells + a spike: the overshoot trap
@@ -117,7 +111,7 @@ test('monotone cubic never inverts a monotone series', { skip: !spliced }, () =>
   }
 });
 
-test('monotone interpolates through every data point exactly', { skip: !spliced }, () => {
+test('monotone interpolates through every data point exactly', () => {
   const { math } = loadFxCharts();
   const xs = [0, 5, 9, 14];
   const ys = [3, 7, 7, 2];
@@ -131,7 +125,7 @@ test('monotone interpolates through every data point exactly', { skip: !spliced 
 
 /* ══════════════════ ramp: endpoints + count ══════════════════ */
 
-test('ramp returns exactly n colors anchored at the accent', { skip: !spliced }, () => {
+test('ramp returns exactly n colors anchored at the accent', () => {
   const fx = loadFxCharts();
   for (const n of [1, 2, 3, 4, 5, 8, 12]) {
     const colors = fx.ramp(n) as string[];
@@ -147,7 +141,7 @@ test('ramp returns exactly n colors anchored at the accent', { skip: !spliced },
 
 /* ══════════════════ arc layout sums to the whole ══════════════════ */
 
-test('arcLayout spans + gaps sum to exactly 2π and fractions to 1', { skip: !spliced }, () => {
+test('arcLayout spans + gaps sum to exactly 2π and fractions to 1', () => {
   const { math } = loadFxCharts();
   const values = [500, 300, 150, 50];
   const gap = 0.028;
@@ -161,7 +155,7 @@ test('arcLayout spans + gaps sum to exactly 2π and fractions to 1', { skip: !sp
   }
 });
 
-test('arcLayout survives zeros and a single segment', { skip: !spliced }, () => {
+test('arcLayout survives zeros and a single segment', () => {
   const { math } = loadFxCharts();
   const withZero = math.arcLayout([10, 0, 5]);
   assert.equal(withZero[1].start, withZero[1].end, 'a zero value spans nothing');
@@ -173,7 +167,7 @@ test('arcLayout survives zeros and a single segment', { skip: !spliced }, () => 
 
 /* ══════════════════ scales round-trip ══════════════════ */
 
-test('scaleLinear round-trips to→from within float noise', { skip: !spliced }, () => {
+test('scaleLinear round-trips to→from within float noise', () => {
   const { math } = loadFxCharts();
   const sc = math.scaleLinear(0, 1024 ** 3, 62, 900);
   for (const v of [0, 1, 12345678, 1024 ** 3, 1024 ** 3 / 3]) {
@@ -185,7 +179,7 @@ test('scaleLinear round-trips to→from within float noise', { skip: !spliced },
   assert.ok(Number.isFinite(degenerate.to(5)), 'a zero-width domain never divides by zero');
 });
 
-test('linreg projects the exact line through linear data', { skip: !spliced }, () => {
+test('linreg projects the exact line through linear data', () => {
   const { math } = loadFxCharts();
   const pts = [0, 1, 2, 3, 4].map((x) => ({ x, y: 3 + 2 * x }));
   const { slope, intercept, project } = math.linreg(pts);

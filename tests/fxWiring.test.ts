@@ -375,6 +375,18 @@ test('the donut ring handle: empty state destroys it, the theme toggle refreshes
     'the theme toggle re-reads tokens through the same handle');
 });
 
+test('the theme toggle refreshes EVERY live chart handle — canvases hold rasterized ink', () => {
+  // QA F3: FxCharts resolves tokens at render time and has no theme observer
+  // of its own, so a handle the toggle forgets keeps the previous theme's
+  // grid/label ink until an unrelated redraw. All four live-handle kinds must
+  // be refreshed here; deleting any one line fails this test.
+  const toggle = slice("$('themeToggle').addEventListener", 'function applySideNav(');
+  assert.match(toggle, /if \(donutHandle\) donutHandle\.update\(\{\}\);/, 'the dashboard ring retints');
+  assert.match(toggle, /if \(trendHandle\) trendHandle\.update\(\{\}\);/, 'the Trends area chart retints');
+  assert.match(toggle, /for \(const g of budgetGauges\) g\.update\(\{\}\);/, 'every budget gauge retints');
+  assert.match(toggle, /if \(liveLineHandle\) liveLineHandle\.update\(\{\}\);/, 'the live spark retints');
+});
+
 test('the dashboard list bars ride the FxCharts ramp and honour REDUCED', () => {
   const files = slice('function renderBigFiles(', 'function refreshBigFiles(');
   const folders = slice('function renderBigFolders(', 'Dashboard: donut chart');

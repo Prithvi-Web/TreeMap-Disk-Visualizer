@@ -16,8 +16,9 @@ import path from 'node:path';
  *  - the CSS generator: balanced, clean output for all 5 types × 2 themes,
  *    and genuinely animation-free under reduced motion.
  *
- * The whole file SKIPS (rather than fails) while the section is not yet
- * spliced, so it can land in tests/ ahead of the splice itself.
+ * The section is permanently spliced, so a missing banner is a broken build:
+ * it fails loudly here instead of silently disarming the whole file (the
+ * skip-if-not-spliced affordance outlived the splice it waited for).
  */
 
 const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -25,11 +26,11 @@ const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), '
 const START_BANNER = '/* ═══════════════ FX: Border Beam ═══════════════';
 const END_BANNER = '/* ═══ end FX: Border Beam ═══ */';
 
-function extractSection(): string | null {
+function extractSection(): string {
   const start = INDEX.indexOf(START_BANNER);
-  if (start === -1) return null;
+  assert.notEqual(start, -1, 'FX: Border Beam is spliced into index.html — a renamed banner must fail, never skip');
   const end = INDEX.indexOf(END_BANNER, start);
-  if (end === -1) return null;
+  assert.notEqual(end, -1, 'the section has its end banner');
   return INDEX.slice(start, end + END_BANNER.length);
 }
 
@@ -61,22 +62,19 @@ interface Internals {
 }
 
 const section = extractSection();
-const SKIP = section === null
-  ? 'FX: Border Beam is not yet spliced into public/index.html (banner comments not found)'
-  : false;
 
 /** The section is a plain `const FxBeam = (() => {...})()` block: everything
  *  DOM-touching is lazy (first attach), so pure internals need no stubs. */
 function instantiate(): Internals {
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const factory = new Function('REDUCED', `'use strict';\n${section as string}\nreturn FxBeam;`);
+  const factory = new Function('REDUCED', `'use strict';\n${section}\nreturn FxBeam;`);
   const beam = factory(false) as { _internals: Internals };
   return beam._internals;
 }
 
 /* ══════════════════ Oscillator math, as behaviour ══════════════════ */
 
-test('pulse oscillator: pingPong is a cosine ease with exact endpoints', { skip: SKIP }, () => {
+test('pulse oscillator: pingPong is a cosine ease with exact endpoints', () => {
   const I = instantiate();
   assert.ok(Math.abs(I.pingPong(0)) < 1e-12, 'phase 0 → 0');
   assert.ok(Math.abs(I.pingPong(1)) < 1e-12, 'phase 1 → 0');
@@ -84,7 +82,7 @@ test('pulse oscillator: pingPong is a cosine ease with exact endpoints', { skip:
   assert.ok(Math.abs(I.pingPong(0.25) - 0.5) < 1e-12, 'phase 0.25 → exactly half');
 });
 
-test('pulse oscillator: oscValue is deterministic, delay-shifted and period-cyclic', { skip: SKIP }, () => {
+test('pulse oscillator: oscValue is deterministic, delay-shifted and period-cyclic', () => {
   const I = instantiate();
   const osc: Osc = { prop: '--x', a: 2, b: 6, period: 4, delay: 1, unit: '' };
   assert.equal(I.oscValue(osc, 3.7), I.oscValue(osc, 3.7), 'same input, same value — twice');
@@ -93,7 +91,7 @@ test('pulse oscillator: oscValue is deterministic, delay-shifted and period-cycl
   assert.ok(Math.abs(I.oscValue(osc, 10.3) - I.oscValue(osc, 14.3)) < 1e-9, 'one full period returns the same value');
 });
 
-test('hue drift ping-pongs inside ±range — never the original 360° rainbow', { skip: SKIP }, () => {
+test('hue drift ping-pongs inside ±range — never the original 360° rainbow', () => {
   const I = instantiate();
   for (let t = 0; t < 40; t += 0.37) {
     const v = I.hueValue(14, 16, t);
@@ -103,7 +101,7 @@ test('hue drift ping-pongs inside ±range — never the original 360° rainbow',
   assert.ok(Math.abs(I.hueValue(14, 16, 8) - 14) < 1e-9, 'peaks at +range mid-period');
 });
 
-test('pulseParams scale linearly with duration and stay theme-tuned', { skip: SKIP }, () => {
+test('pulseParams scale linearly with duration and stay theme-tuned', () => {
   const I = instantiate();
   const p1 = I.pulseParams('pulse-inner', 'dark', 2.3);
   const p2 = I.pulseParams('pulse-inner', 'dark', 4.6);
@@ -113,7 +111,7 @@ test('pulseParams scale linearly with duration and stay theme-tuned', { skip: SK
   assert.equal(I.pulseParams('pulse-outside', 'light', 2.3).op, 0, 'the ported light pulse-outside quadrant amplitude');
 });
 
-test('an instance gets 17 desynced oscillators with px units only on drift', { skip: SKIP }, () => {
+test('an instance gets 17 desynced oscillators with px units only on drift', () => {
   const I = instantiate();
   const defs = I.oscillatorDefs('t1', I.pulseParams('pulse-inner', 'dark', 2.3));
   assert.equal(defs.length, 17, 'the original table: 3 size regions × 4 + gh + 4 quadrants');
@@ -128,7 +126,7 @@ test('an instance gets 17 desynced oscillators with px units only on drift', { s
 
 /* ══════════════════ Palette tables, structurally ══════════════════ */
 
-test('palette tables keep the original shapes (9/8/9/9/5 and pulse geometry)', { skip: SKIP }, () => {
+test('palette tables keep the original shapes (9/8/9/9/5 and pulse geometry)', () => {
   const I = instantiate();
   assert.equal(I.PALETTE.border.length, 9, 'md ring: 9 blobs');
   assert.equal(I.PALETTE.small.length, 8, 'sm ring: 8 blobs');
@@ -145,7 +143,7 @@ test('palette tables keep the original shapes (9/8/9/9/5 and pulse geometry)', {
   assert.equal(I.PULSE_OUTER_BLOOM.length, 7, 'outer bloom: 7 halo blobs');
 });
 
-test('every palette stop is in the blue family — colorful/sunset stayed behind', { skip: SKIP }, () => {
+test('every palette stop is in the blue family — colorful/sunset stayed behind', () => {
   const I = instantiate();
   const rgbs: string[] = [
     ...I.PALETTE.border.map((c) => c.rgb),
@@ -169,7 +167,7 @@ test('every palette stop is in the blue family — colorful/sunset stayed behind
 
 /* ══════════════════ Opts validation ══════════════════ */
 
-test('normalizeOpts: documented defaults, per-type durations', { skip: SKIP }, () => {
+test('normalizeOpts: documented defaults, per-type durations', () => {
   const I = instantiate();
   assert.deepEqual(I.normalizeOpts(), { type: 'md', active: true, duration: 1.96, strength: 1 });
   assert.equal(I.normalizeOpts({ type: 'sm' }).duration, 1.96, 'rotate family default');
@@ -178,7 +176,7 @@ test('normalizeOpts: documented defaults, per-type durations', { skip: SKIP }, (
   assert.equal(I.normalizeOpts({ type: 'pulse-outside' }).duration, 2.3, 'pulse default');
 });
 
-test('normalizeOpts: clamps strength, repairs duration, rejects unknown types loudly', { skip: SKIP }, () => {
+test('normalizeOpts: clamps strength, repairs duration, rejects unknown types loudly', () => {
   const I = instantiate();
   assert.equal(I.normalizeOpts({ strength: 7 }).strength, 1, 'strength caps at 1');
   assert.equal(I.normalizeOpts({ strength: -2 }).strength, 0, 'and floors at 0');
@@ -192,7 +190,7 @@ test('normalizeOpts: clamps strength, repairs duration, rejects unknown types lo
 
 /* ══════════════════ The CSS generator, as a pure function ══════════════════ */
 
-test('buildCSS emits balanced, clean CSS for all 5 types × 2 themes', { skip: SKIP }, () => {
+test('buildCSS emits balanced, clean CSS for all 5 types × 2 themes', () => {
   const I = instantiate();
   for (const type of I.TYPES) {
     for (const theme of ['dark', 'light']) {
@@ -210,7 +208,7 @@ test('buildCSS emits balanced, clean CSS for all 5 types × 2 themes', { skip: S
   }
 });
 
-test('under reduced motion the generator emits NO animations or keyframes at all', { skip: SKIP }, () => {
+test('under reduced motion the generator emits NO animations or keyframes at all', () => {
   const I = instantiate();
   for (const type of I.TYPES) {
     const css = I.buildCSS('t9', type, 'dark', 2.5, 13, true);
@@ -220,7 +218,7 @@ test('under reduced motion the generator emits NO animations or keyframes at all
   }
 });
 
-test('rotate types are theme-agnostic (tokens flip the theme); line and pulse regenerate', { skip: SKIP }, () => {
+test('rotate types are theme-agnostic (tokens flip the theme); line and pulse regenerate', () => {
   const I = instantiate();
   assert.equal(
     I.buildCSS('t2', 'md', 'dark', 1.96, 13, false),
@@ -241,16 +239,16 @@ test('rotate types are theme-agnostic (tokens flip the theme); line and pulse re
 
 /* ══════════════════ Contract seams, structurally ══════════════════ */
 
-test('the section honors the app REDUCED const at its animation entry point', { skip: SKIP }, () => {
-  const src = section as string;
+test('the section honors the app REDUCED const at its animation entry point', () => {
+  const src = section;
   const at = src.indexOf('function activate(');
   assert.notEqual(at, -1, 'the activate entry point exists');
   const body = src.slice(at, at + 900);
   assert.match(body, /\bREDUCED\b/, 'activate asks REDUCED before anything moves');
 });
 
-test('the pulse loop is shared, ~30fps-capped, and stops when idle', { skip: SKIP }, () => {
-  const src = section as string;
+test('the pulse loop is shared, ~30fps-capped, and stops when idle', () => {
+  const src = section;
   assert.match(src, /1000 \/ 30/, 'the frame interval is the original ~30fps cap');
   assert.match(src, /driven\.size === 0[\s\S]{0,80}cancelAnimationFrame/, 'no instances → no rAF loop');
   assert.match(src, /document\.hidden/, 'the loop and lifecycle know about hidden documents');
