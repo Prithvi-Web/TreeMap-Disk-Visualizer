@@ -166,3 +166,31 @@ test('a verify failure rolls back completely — destination cleaned, originals 
   fs.rmSync(src, { recursive: true, force: true });
   fs.rmSync(dest, { recursive: true, force: true });
 });
+
+/* ── the review's RD-3: the dock's facts on the other platforms ── */
+import { listExternalVolumes } from '../src/services/portableMode';
+import { volumesUnavailableReason } from '../src/services/volumes';
+
+test('Linux volumes under /run/media/<user> are flattened to the volumes, never the user dir', () => {
+  // udisks mounts per-user: /run/media/alice/USBSTICK. Reporting "alice" at
+  // /run/media/alice would put a fabricated tmpfs capacity on the dock and
+  // hide the actual stick — the comment promising this flatten predates the
+  // implementation.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-volumes-'));
+  fs.mkdirSync(path.join(root, 'run', 'media', 'alice', 'USBSTICK'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'run', 'media', 'alice', 'BACKUP'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'mnt', 'nas'), { recursive: true });
+  const vols = listExternalVolumes('linux', [path.join(root, 'run', 'media'), path.join(root, 'mnt')]);
+  const names = vols.map((v) => v.name).sort();
+  assert.deepEqual(names, ['BACKUP', 'USBSTICK', 'nas'], 'volumes, not user directories');
+  assert.ok(vols.every((v) => v.name !== 'alice'), 'the per-user directory itself is never a volume');
+  const stick = vols.find((v) => v.name === 'USBSTICK')!;
+  assert.equal(stick.path, path.join(root, 'run', 'media', 'alice', 'USBSTICK'));
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a platform with no drive discovery says so — an empty dock is never a silent lie', () => {
+  assert.match(volumesUnavailableReason('win32') ?? '', /Windows/i, 'win32 names the gap');
+  assert.equal(volumesUnavailableReason('darwin'), null);
+  assert.equal(volumesUnavailableReason('linux'), null);
+});

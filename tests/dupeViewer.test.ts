@@ -53,7 +53,7 @@ test('recommendKeep keeps the newest when the older file is larger by 10% or les
   ]);
   assert.equal(r.index, 1);
   assert.match(r.reason, /newest/i);
-  assert.match(r.reason, /under the 10% margin/);
+  assert.match(r.reason, /not by more than the 10% margin/, "the boundary prose must be true AT the boundary: 10% larger is not \"under 10%\"");
 });
 
 test('recommendKeep sits exactly on the 10% boundary honestly: 10% is not "meaningfully" larger', () => {

@@ -11,9 +11,19 @@
       "category": "regenerable",
       "confidence": "high",
       "ecosystem": "npm",
-      "names": ["node_modules"],
-      "ownerManifest": ["package.json"],
-      "evidence": [".package-lock.json", ".bin", ".modules.yaml", ".yarn-integrity", ".pnpm"],
+      "names": [
+        "node_modules"
+      ],
+      "ownerManifest": [
+        "package.json"
+      ],
+      "evidence": [
+        ".package-lock.json",
+        ".bin",
+        ".modules.yaml",
+        ".yarn-integrity",
+        ".pnpm"
+      ],
       "restoreCommand": "npm install"
     },
     {
@@ -24,9 +34,22 @@
       "category": "regenerable",
       "confidence": "high",
       "ecosystem": "python",
-      "names": [".venv", "venv", "env"],
-      "requiresSibling": ["requirements.txt", "pyproject.toml", "pipfile", "setup.py", "setup.cfg", ".python-version"],
-      "evidence": ["pyvenv.cfg"],
+      "names": [
+        ".venv",
+        "venv",
+        "env"
+      ],
+      "requiresSibling": [
+        "requirements.txt",
+        "pyproject.toml",
+        "pipfile",
+        "setup.py",
+        "setup.cfg",
+        ".python-version"
+      ],
+      "evidence": [
+        "pyvenv.cfg"
+      ],
       "restoreCommand": "pip install -r requirements.txt"
     },
     {
@@ -36,7 +59,9 @@
       "description": "__pycache__ — Python regenerates it automatically",
       "category": "regenerable",
       "confidence": "high",
-      "names": ["__pycache__"],
+      "names": [
+        "__pycache__"
+      ],
       "restoreCommand": "automatic on next run"
     },
     {
@@ -47,9 +72,17 @@
       "category": "regenerable",
       "confidence": "high",
       "ecosystem": "cargo",
-      "names": ["target"],
-      "requiresSibling": ["cargo.toml"],
-      "evidence": ["cachedir.tag", ".rustc_info.json", ".rustdoc_fingerprint.json"],
+      "names": [
+        "target"
+      ],
+      "requiresSibling": [
+        "cargo.toml"
+      ],
+      "evidence": [
+        "cachedir.tag",
+        ".rustc_info.json",
+        ".rustdoc_fingerprint.json"
+      ],
       "restoreCommand": "cargo build"
     },
     {
@@ -60,9 +93,17 @@
       "category": "regenerable",
       "confidence": "high",
       "ecosystem": "maven",
-      "names": ["target"],
-      "requiresSibling": ["pom.xml"],
-      "evidence": ["maven-status", "maven-archiver", "surefire-reports"],
+      "names": [
+        "target"
+      ],
+      "requiresSibling": [
+        "pom.xml"
+      ],
+      "evidence": [
+        "maven-status",
+        "maven-archiver",
+        "surefire-reports"
+      ],
       "restoreCommand": "mvn package"
     },
     {
@@ -73,9 +114,21 @@
       "category": "regenerable",
       "confidence": "high",
       "ecosystem": "gradle",
-      "names": ["build"],
-      "requiresSibling": ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"],
-      "evidence": ["tmp", "libs", "intermediates", "classes"],
+      "names": [
+        "build"
+      ],
+      "requiresSibling": [
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        "settings.gradle.kts"
+      ],
+      "evidence": [
+        "tmp",
+        "libs",
+        "intermediates",
+        "classes"
+      ],
       "restoreCommand": "gradle build"
     },
     {
@@ -86,9 +139,17 @@
       "category": "regenerable",
       "confidence": "high",
       "ecosystem": "cocoapods",
-      "names": ["pods"],
-      "requiresSibling": ["podfile"],
-      "evidence": ["manifest.lock", "pods.xcodeproj", "target support files"],
+      "names": [
+        "pods"
+      ],
+      "requiresSibling": [
+        "podfile"
+      ],
+      "evidence": [
+        "manifest.lock",
+        "pods.xcodeproj",
+        "target support files"
+      ],
       "restoreCommand": "pod install"
     },
     {
@@ -99,9 +160,23 @@
       "category": "regenerable",
       "confidence": "high",
       "ecosystem": "npm",
-      "names": [".next", ".nuxt", ".output", ".svelte-kit", ".angular"],
-      "ownerManifest": ["package.json"],
-      "evidence": ["static", "server", "cache", "build-manifest.json", "prerender-manifest.json"],
+      "names": [
+        ".next",
+        ".nuxt",
+        ".output",
+        ".svelte-kit",
+        ".angular"
+      ],
+      "ownerManifest": [
+        "package.json"
+      ],
+      "evidence": [
+        "static",
+        "server",
+        "cache",
+        "build-manifest.json",
+        "prerender-manifest.json"
+      ],
       "restoreCommand": "npm run build"
     },
     {
@@ -112,13 +187,29 @@
       "category": "regenerable",
       "confidence": "high",
       "ecosystem": "npm",
-      "names": ["dist"],
-      "requiresSibling": ["package.json", "next.config.*", "nuxt.config.*", "vite.config.*", "svelte.config.*", "angular.json"],
-      "ownerManifest": ["package.json"],
-      "evidence": ["static", "server", "cache", "build-manifest.json", "prerender-manifest.json"],
+      "names": [
+        "dist"
+      ],
+      "requiresSibling": [
+        "package.json",
+        "next.config.*",
+        "nuxt.config.*",
+        "vite.config.*",
+        "svelte.config.*",
+        "angular.json"
+      ],
+      "ownerManifest": [
+        "package.json"
+      ],
+      "evidence": [
+        "static",
+        "server",
+        "cache",
+        "build-manifest.json",
+        "prerender-manifest.json"
+      ],
       "restoreCommand": "npm run build"
     },
-
     {
       "id": "build-output",
       "kind": "directory",
@@ -126,7 +217,11 @@
       "description": "Compiled output folders — regenerated by the next build",
       "category": "regenerable",
       "confidence": "medium",
-      "names": ["dist", "target", "build"]
+      "names": [
+        "dist",
+        "target",
+        "build"
+      ]
     },
     {
       "id": "tool-caches",
@@ -136,11 +231,18 @@
       "category": "cache",
       "confidence": "high",
       "names": [
-        ".pytest_cache", ".mypy_cache", ".ruff_cache", ".gradle", ".turbo",
-        ".parcel-cache", ".eslintcache", "coverage", ".venv", ".tox"
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".gradle",
+        ".turbo",
+        ".parcel-cache",
+        ".eslintcache",
+        "coverage",
+        ".venv",
+        ".tox"
       ]
     },
-
     {
       "id": "os-junk",
       "kind": "file",
@@ -148,9 +250,12 @@
       "description": "Hidden metadata files the OS recreates on demand",
       "category": "junk",
       "confidence": "high",
-      "names": [".ds_store", "thumbs.db", "desktop.ini"]
+      "names": [
+        ".ds_store",
+        "thumbs.db",
+        "desktop.ini"
+      ]
     },
-
     {
       "id": "old-downloads",
       "kind": "stale-files",
@@ -166,45 +271,62 @@
       "id": "media-lightroom-previews",
       "kind": "directory",
       "title": "Lightroom previews",
-      "description": "Rendered previews beside a Lightroom Classic catalog — never your photos, which live outside the catalog. Lightroom re-renders previews as you browse; the first scroll through each folder is slower. Only the default catalog names are matched here — renamed catalogs are found by the media-library scan.",
+      "description": "Rendered previews beside a Lightroom Classic catalog — never your photos, which live outside the catalog. Lightroom re-renders previews as you browse; the first scroll through each folder is slower. Only the default catalog names are matched here — renamed catalogs are found by the media-library scan. Not offered for deletion from here: the Media Libraries view (GET /api/media) makes the gated offer after checking the owning app is not holding the library.",
       "category": "regenerable",
       "confidence": "high",
       "action": "advice",
       "adviceCommand": "Lightroom Classic ▸ Edit ▸ Catalog Settings ▸ File Handling ▸ Automatically Discard 1:1 Previews",
-      "os": ["darwin", "win32"],
+      "os": [
+        "darwin",
+        "win32"
+      ],
       "names": [
         "lightroom catalog previews.lrdata",
+        "lightroom catalog-v10 previews.lrdata",
+        "lightroom catalog-v11 previews.lrdata",
         "lightroom catalog-v12 previews.lrdata",
-        "lightroom catalog-v13 previews.lrdata"
+        "lightroom catalog-v13 previews.lrdata",
+        "lightroom catalog-v14 previews.lrdata"
       ]
     },
     {
       "id": "media-lightroom-smart-previews",
       "kind": "directory",
       "title": "Lightroom smart previews",
-      "description": "Compressed stand-ins that let Lightroom Classic edit with the originals offline. Rebuilt on demand, but until then offline editing is unavailable — never your photos, which live outside the catalog.",
+      "description": "Compressed stand-ins that let Lightroom Classic edit with the originals offline. Rebuilt on demand, but until then offline editing is unavailable — never your photos, which live outside the catalog. Not offered for deletion from here: the Media Libraries view (GET /api/media) makes the gated offer after checking the owning app is not holding the library.",
       "category": "regenerable",
       "confidence": "high",
       "action": "advice",
       "adviceCommand": "Lightroom Classic ▸ Library ▸ Previews ▸ Build Smart Previews",
-      "os": ["darwin", "win32"],
+      "os": [
+        "darwin",
+        "win32"
+      ],
       "names": [
         "lightroom catalog smart previews.lrdata",
+        "lightroom catalog-v10 smart previews.lrdata",
+        "lightroom catalog-v11 smart previews.lrdata",
         "lightroom catalog-v12 smart previews.lrdata",
-        "lightroom catalog-v13 smart previews.lrdata"
+        "lightroom catalog-v13 smart previews.lrdata",
+        "lightroom catalog-v14 smart previews.lrdata"
       ]
     },
     {
       "id": "media-captureone-cache",
       "kind": "location",
       "title": "Capture One catalog cache",
-      "description": "Thumbnails and proxies inside the default Capture One catalog. Re-created as images are browsed — the first pass through each folder is slower. Originals and the catalog database are never touched.",
+      "description": "Thumbnails and proxies inside the default Capture One catalog. Re-created as images are browsed — the first pass through each folder is slower. Originals and the catalog database are never touched. Not offered for deletion from here: the Media Libraries view (GET /api/media) makes the gated offer after checking the owning app is not holding the library.",
       "category": "regenerable",
       "confidence": "high",
       "action": "advice",
       "adviceCommand": "Capture One ▸ Image ▸ Regenerate Previews",
-      "os": ["darwin", "win32"],
-      "paths": ["{home}/Pictures/Capture One Catalog.cocatalog/Cache"]
+      "os": [
+        "darwin",
+        "win32"
+      ],
+      "paths": [
+        "{home}/Pictures/Capture One Catalog.cocatalog/Cache"
+      ]
     }
   ]
 }

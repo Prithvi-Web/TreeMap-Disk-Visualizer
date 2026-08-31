@@ -274,17 +274,20 @@ export interface ExternalVolume {
  * it is filtered out by resolving it, or the picker would offer the very disk
  * the user is standing on as an "external drive".
  */
-export function listExternalVolumes(platform: NodeJS.Platform = process.platform): ExternalVolume[] {
+export function listExternalVolumes(
+  platform: NodeJS.Platform = process.platform,
+  parents: string[] = externalMountParents(platform),
+): ExternalVolume[] {
   const out: ExternalVolume[] = [];
   const rootReal = (() => {
     try { return fs.realpathSync('/'); } catch { return '/'; }
   })();
-  for (const parent of externalMountParents(platform)) {
+  const collect = (parent: string, flattenUsers: boolean): void => {
     let entries: string[];
     try {
       entries = fs.readdirSync(parent);
     } catch {
-      continue;
+      return;
     }
     for (const name of entries) {
       const full = path.join(parent, name);
@@ -292,13 +295,23 @@ export function listExternalVolumes(platform: NodeJS.Platform = process.platform
         const st = fs.statSync(full);
         if (!st.isDirectory()) continue;
         if (fs.realpathSync(full) === rootReal) continue; // the boot volume
-        out.push({ path: full, name });
+        if (flattenUsers) {
+          // udisks mounts per-user: /run/media/<user>/<volume>. The user
+          // directory is not a drive — reporting it would put the tmpfs's
+          // fabricated capacity on the dock — so it is flattened one level
+          // and each of ITS children is the volume.
+          collect(full, false);
+        } else {
+          out.push({ path: full, name });
+        }
       } catch {
         // A volume that vanished mid-listing is simply not offered.
       }
     }
+  };
+  for (const parent of parents) {
+    const isRunMedia = path.basename(parent) === 'media' && path.basename(path.dirname(parent)) === 'run';
+    collect(parent, isRunMedia);
   }
-  // Linux mounts per-user under /run/media/<user>; flatten one level when the
-  // entry is the current user's own directory rather than a volume.
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }

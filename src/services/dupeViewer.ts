@@ -75,7 +75,7 @@ export function recommendKeep(files: { size: number; modifiedAt: number }[]): Ke
     const pct = Math.round((l.size / n.size - 1) * 100);
     return {
       index: newest,
-      reason: `Keep the newest copy — an older file is ${pct}% larger, but that is under the 10% margin that would suggest a larger original.`,
+      reason: `Keep the newest copy — an older file is ${pct}% larger, but not by more than the 10% margin that would suggest a larger original.`,
     };
   }
   return { index: newest, reason: 'Keep the newest copy — it is also the largest.' };
@@ -201,6 +201,7 @@ export interface DupeDetailResponse {
 
 const REASON_NOT_IMAGE = 'not an image';
 const REASON_NO_DECODER = 'image decoding unavailable';
+const REASON_NEEDS_SHARP = 'dimensions and EXIF need the sharp decoder, which is unavailable';
 const REASON_UNDECODABLE = 'image could not be decoded';
 const REASON_NO_EXIF = 'no capture date recorded';
 const REASON_IS_REFERENCE = 'this file is the comparison reference';
@@ -248,6 +249,13 @@ export async function buildDuplicateDetail(scanId: string, store: ScanStore, ids
       if (!isImage) return none(REASON_NOT_IMAGE);
 
       const out = none(REASON_NO_DECODER);
+      if (!sharp && decoder === 'ffmpeg') {
+        // ffmpeg can fingerprint the pixels (visualDiff will be present), but
+        // dimensions and EXIF need sharp — the reason must not claim decoding
+        // is unavailable for a file the diff visibly decoded.
+        out.dimensionsReason = REASON_NEEDS_SHARP;
+        out.captureDateReason = REASON_NEEDS_SHARP;
+      }
       if (sharp) {
         try {
           // metadata() reads the header only — cheap even for huge files.

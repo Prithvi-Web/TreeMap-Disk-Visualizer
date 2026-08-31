@@ -375,3 +375,89 @@ test('a probe that cannot check reports that honestly, never as "not running"', 
   // be worse, and the delete path re-checks at delete time anyway.
   assert.ok(photos.components.some((c) => c.removable === true));
 });
+
+/* ── the review's RD-1: a bundle the scan could not read INTO ── */
+
+test('a bundle whose contents could not be listed is unrecognised, never invisible', () => {
+  // On macOS without Full Disk Access, TCC denies readdir inside
+  // ~/Pictures/Photos Library.photoslibrary — the walker returns the bundle
+  // as a childless dir (diskScanner counts it in deniedDirs). That is the
+  // most common consumer setup, and the report must show the library at its
+  // size and offer nothing — not pretend no library exists.
+  const root = tmp();
+  const denied: import('../src/models/types').FileNode = {
+    name: 'Photos Library.photoslibrary',
+    path: path.join(root, 'Photos Library.photoslibrary'),
+    type: 'dir', modifiedAt: Date.now(), isHidden: false,
+    size: 123_456_789, // the walker still knows the size from the parent stat pass
+    children: [],
+  };
+  const tree: import('../src/models/types').FileNode = {
+    name: path.basename(root), path: root, type: 'dir', modifiedAt: Date.now(), isHidden: false,
+    size: denied.size, children: [denied],
+  };
+  const report = scanMediaLibraries(tree);
+  assert.equal(report.libraries.length, 1, 'the unreadable library is reported, not omitted');
+  const lib = report.libraries[0];
+  assert.equal(lib.recognised, false);
+  assert.equal(lib.totalBytes, 123_456_789, 'shown at its size');
+  assert.deepEqual(lib.components, [], 'nothing is offered');
+  assert.match(lib.reason ?? '', /could not be read|read into/i, 'and the reason says why');
+});
+
+test('the media rulepack entries defer to this surface — the two must tell one story', () => {
+  // The review's RD-2: an agent reading /api/cleanup/suggestions (advisory:
+  // never trash from there) and /api/media (derivatives removable) must not
+  // hear a contradiction. The advisory entries exist to point at the gated
+  // offer, and their prose says so.
+  const packs = ['common.json', 'macos.json'].flatMap((f) => {
+    const raw = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'rulepacks', f), 'utf8'));
+    return (raw.rules ?? []).filter((r: { id?: string }) => (r.id ?? '').startsWith('media-'));
+  });
+  assert.ok(packs.length >= 4, 'the media entries exist');
+  for (const r of packs) {
+    assert.match(r.description, /Media Libraries view/, `${r.id} points at the gated offer`);
+    assert.equal(r.action, 'advice', `${r.id} never lets Clean Up trash into a live bundle`);
+  }
+});
+
+/* ── the review's H-1: the route itself, not just the service ── */
+import http from 'node:http';
+import { createApp } from '../src/server';
+import { resetRateLimiter } from '../src/middleware/rateLimiter';
+import { createScanRecord } from '../src/services/diskScanner';
+
+test('GET /api/media serves the report over a real scan — route wiring, not just the service', async () => {
+  resetRateLimiter();
+  const root = tmp();
+  photosFixture(root);
+  const scan = createScanRecord(root);
+  scan.status = 'complete';
+  scan.root = treeOf(root);
+  const app = createApp(path.join(__dirname, '..', 'public'));
+  const server = http.createServer(app);
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  const get = (url: string) => new Promise<{ status: number; body: any }>((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: url }, (res) => {
+      let buf = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { buf += c; });
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: JSON.parse(buf) }));
+    }).on('error', reject);
+  });
+  try {
+    const r = await get(`/api/media?scanId=${scan.scanId}`);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.scanId, scan.scanId);
+    assert.equal(r.body.libraries.length, 1);
+    assert.equal(r.body.libraries[0].app, 'photos');
+    assert.ok(r.body.libraries[0].inUse, 'the open-handle guard ran at the route level');
+    assert.equal(typeof r.body.totalBytes, 'number');
+    const bad = await get('/api/media?scanId=nope');
+    assert.equal(bad.status, 404);
+    assert.equal(bad.body.code, 'SCAN_NOT_FOUND');
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});

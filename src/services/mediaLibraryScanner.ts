@@ -347,16 +347,32 @@ export function scanMediaLibraries(source: TreeSource): MediaReport {
 
   const visit = (id: number, nodePath: string): void => {
     const kids = store.childIds(id);
-    if (!kids.length) return;
     const lower = store.name(id).toLowerCase();
 
     // Bundles are matched on their own extension — the one thing that IS the
-    // bundle, wherever the user keeps it. A matched bundle is not searched for
+    // bundle, wherever the user keeps it — and matched BEFORE the empty-dir
+    // shortcut below: a bundle the walker could not read into (TCC denying
+    // readdir inside ~/Pictures is the default macOS state without Full Disk
+    // Access) arrives as a childless dir, and it must be reported at its size
+    // rather than silently not exist. A matched bundle is not searched for
     // more libraries: nothing nests one inside another.
-    if (lower.endsWith('.photoslibrary')) { libraries.push(readPhotosLibrary(store, id, nodePath)); return; }
-    if (lower.endsWith('.fcpbundle')) { libraries.push(readFcpFamily(store, id, nodePath, 'finalcut')); return; }
-    if (lower.endsWith('.imovielibrary')) { libraries.push(readFcpFamily(store, id, nodePath, 'imovie')); return; }
-    if (lower.endsWith('.cocatalog')) { libraries.push(readCaptureOneCatalog(store, id, nodePath)); return; }
+    const bundleApp = lower.endsWith('.photoslibrary') ? 'photos' as const
+      : lower.endsWith('.fcpbundle') ? 'finalcut' as const
+      : lower.endsWith('.imovielibrary') ? 'imovie' as const
+      : lower.endsWith('.cocatalog') ? 'captureone' as const
+      : null;
+    if (bundleApp && !kids.length) {
+      libraries.push(finishLibrary(bundleApp, store.name(id), nodePath, store.size(id), [], {
+        recognised: false,
+        reason: `This ${APP_NAMES[bundleApp]} library could not be read into — the scan saw the bundle but not its contents (on macOS this usually means TreeMap lacks Full Disk Access) — so only its total size is reported and nothing is offered.`,
+      }));
+      return;
+    }
+    if (!kids.length) return;
+    if (bundleApp === 'photos') { libraries.push(readPhotosLibrary(store, id, nodePath)); return; }
+    if (bundleApp === 'finalcut') { libraries.push(readFcpFamily(store, id, nodePath, 'finalcut')); return; }
+    if (bundleApp === 'imovie') { libraries.push(readFcpFamily(store, id, nodePath, 'imovie')); return; }
+    if (bundleApp === 'captureone') { libraries.push(readCaptureOneCatalog(store, id, nodePath)); return; }
 
     // Lightroom: any .lrcat file makes this directory host a catalog. The
     // catalog claims only its own .lrdata siblings; everything else in the

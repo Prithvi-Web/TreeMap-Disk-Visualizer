@@ -47,7 +47,9 @@
       "confidence": "high",
       "action": "advice",
       "adviceCommand": "Xcode ▸ Window ▸ Organizer ▸ Archives",
-      "paths": ["{home}/Library/Developer/Xcode/Archives"]
+      "paths": [
+        "{home}/Library/Developer/Xcode/Archives"
+      ]
     },
     {
       "id": "docker-vm-image",
@@ -71,7 +73,10 @@
       "category": "cache",
       "confidence": "high",
       "ecosystem": "npm",
-      "paths": ["{home}/.npm/_cacache", "{home}/.npm/_npx"],
+      "paths": [
+        "{home}/.npm/_cacache",
+        "{home}/.npm/_npx"
+      ],
       "clearCommand": "npm cache clean --force"
     },
     {
@@ -82,7 +87,11 @@
       "category": "cache",
       "confidence": "high",
       "ecosystem": "yarn",
-      "paths": ["{home}/Library/Caches/Yarn", "{home}/.cache/yarn", "{home}/.yarn/berry/cache"],
+      "paths": [
+        "{home}/Library/Caches/Yarn",
+        "{home}/.cache/yarn",
+        "{home}/.yarn/berry/cache"
+      ],
       "clearCommand": "yarn cache clean"
     },
     {
@@ -93,7 +102,11 @@
       "category": "cache",
       "confidence": "high",
       "ecosystem": "pnpm",
-      "paths": ["{home}/Library/pnpm/store", "{home}/.pnpm-store", "{home}/.local/share/pnpm/store"],
+      "paths": [
+        "{home}/Library/pnpm/store",
+        "{home}/.pnpm-store",
+        "{home}/.local/share/pnpm/store"
+      ],
       "clearCommand": "pnpm store prune"
     },
     {
@@ -104,7 +117,10 @@
       "category": "cache",
       "confidence": "high",
       "ecosystem": "python",
-      "paths": ["{home}/Library/Caches/pip", "{home}/.cache/pip"],
+      "paths": [
+        "{home}/Library/Caches/pip",
+        "{home}/.cache/pip"
+      ],
       "clearCommand": "pip cache purge"
     },
     {
@@ -115,7 +131,9 @@
       "category": "cache",
       "confidence": "high",
       "ecosystem": "cargo",
-      "paths": ["{home}/.cargo/registry"],
+      "paths": [
+        "{home}/.cargo/registry"
+      ],
       "clearCommand": "cargo cache -a  (or delete ~/.cargo/registry)"
     },
     {
@@ -126,7 +144,9 @@
       "category": "cache",
       "confidence": "high",
       "ecosystem": "maven",
-      "paths": ["{home}/.m2/repository"],
+      "paths": [
+        "{home}/.m2/repository"
+      ],
       "clearCommand": "mvn dependency:purge-local-repository"
     },
     {
@@ -137,7 +157,9 @@
       "category": "cache",
       "confidence": "high",
       "ecosystem": "gradle",
-      "paths": ["{home}/.gradle/caches"],
+      "paths": [
+        "{home}/.gradle/caches"
+      ],
       "clearCommand": "gradle --stop, then delete ~/.gradle/caches"
     },
     {
@@ -148,31 +170,41 @@
       "category": "cache",
       "confidence": "high",
       "ecosystem": "homebrew",
-      "paths": ["{home}/Library/Caches/Homebrew"],
+      "paths": [
+        "{home}/Library/Caches/Homebrew"
+      ],
       "clearCommand": "brew cleanup -s"
     },
     {
       "id": "media-photos-derivatives",
       "kind": "location",
       "title": "Photos thumbnails & previews",
-      "description": "Regenerated thumbnails and preview renders inside the system Photos library — never your photos. Photos rebuilds them on next open; expect a slow first launch while it does. Quit Photos before touching anything inside its library.",
+      "description": "Regenerated thumbnails and preview renders inside the system Photos library — never your photos. Photos rebuilds them on next open; expect a slow first launch while it does. Quit Photos before touching anything inside its library. Not offered for deletion from here: the Media Libraries view (GET /api/media) makes the gated offer after checking the owning app is not holding the library.",
       "category": "regenerable",
       "confidence": "high",
       "action": "advice",
       "adviceCommand": "Quit Photos first — it rebuilds these automatically the next time it opens",
-      "paths": ["{home}/Pictures/Photos Library.photoslibrary/resources/derivatives"]
+      "paths": [
+        "{home}/Pictures/Photos Library.photoslibrary/resources/derivatives"
+      ]
     },
     {
       "id": "media-fcp-render-files",
       "kind": "project-directory",
       "title": "Final Cut / iMovie render files",
-      "description": "Rendered and transcoded media inside a Final Cut Pro or iMovie library event. Re-created on demand — playback stutters until each clip re-renders. Original media is never touched.",
+      "description": "Rendered and transcoded media inside a Final Cut Pro or iMovie library event. Re-created on demand — playback stutters until each clip re-renders. Original media is never touched. Not offered for deletion from here: the Media Libraries view (GET /api/media) makes the gated offer after checking the owning app is not holding the library.",
       "category": "regenerable",
       "confidence": "high",
       "action": "advice",
       "adviceCommand": "Final Cut Pro ▸ File ▸ Delete Generated Library Files",
-      "names": ["render files", "transcoded media"],
-      "requiresSibling": ["original media", "currentversion.fcpevent"],
+      "names": [
+        "render files",
+        "transcoded media"
+      ],
+      "requiresSibling": [
+        "original media",
+        "currentversion.fcpevent"
+      ],
       "restoreCommand": "Re-rendered automatically when the project is next played or exported"
     },
     {
@@ -183,7 +215,9 @@
       "category": "cache",
       "confidence": "high",
       "ecosystem": "cocoapods",
-      "paths": ["{home}/Library/Caches/CocoaPods"],
+      "paths": [
+        "{home}/Library/Caches/CocoaPods"
+      ],
       "clearCommand": "pod cache clean --all"
     }
   ]

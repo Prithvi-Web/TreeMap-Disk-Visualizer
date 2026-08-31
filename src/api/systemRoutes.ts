@@ -8,7 +8,7 @@ import { idempotency } from '../middleware/idempotency';
 import { findDeleted, restoreFromSnapshot } from '../services/snapshotRecovery';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { diskUsage } from '../services/diskUsage';
-import { listVolumes } from '../services/volumes';
+import { listVolumes, volumesUnavailableReason } from '../services/volumes';
 import { getTrashInfo, emptyTrash } from '../services/trash';
 import { getSnapshotAccounting, purgeSnapshots } from '../services/snapshotAccounting';
 import { SystemInfo } from '../models/types';
@@ -59,7 +59,8 @@ systemRouter.get('/system', async (_req: Request, res: Response) => {
  * so the dock shows the drive honestly rather than hiding it.
  */
 systemRouter.get('/volumes', async (_req: Request, res: Response) => {
-  res.json({ volumes: await listVolumes() });
+  const reason = volumesUnavailableReason();
+  res.json({ volumes: await listVolumes(), ...(reason ? { reason } : {}) });
 });
 
 /** GET /api/trash/size -> { totalBytes, itemCount, paths, items } across all trash locations. */
