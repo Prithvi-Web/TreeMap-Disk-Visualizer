@@ -1,5 +1,220 @@
 # TreeMap — session handoff
 
+## v4 — Phase 9 complete: shell, discoverability and polish (31 August 2026)
+
+The ask was: complete the final phase flawlessly, agents allowed, keep going
+until done. Mid-session the owner made one scope call, confirmed explicitly:
+**remove the Ollama integration entirely, keep the rest of Phase 9** — so
+the plain-words box is deterministic-only, and that is recorded where a
+future reader would wonder (queryRoutes, nlIntent header, AGENTS.md).
+
+### What shipped
+
+**9.1 — the command palette.** ⌘K/Ctrl+K (the key moved here from global
+search because §9.1 assigns it explicitly; "/" keeps summoning search, the
+shortcuts panel and PLATFORM_NOTES say so). One box over four sources: the
+VIEW REGISTRY itself — every view reachable by construction, a
+capability-blocked one shown with its own reason — a small action registry
+(scan/rescan/empty cart/export PNG/global search/plain words/Settings/
+shortcuts/theme), saved views, and recent scan roots. Free text always
+offers "Search files for …", which is where the old ⌘K muscle memory lands.
+An empty box BROWSES everything (QA caught the 12-row cap hiding three
+views from the arrow keys); typed queries trim to the best dozen. Paints
+above every other modal (z 130), scopes its keys to itself, restores focus
+on every close path. The fuzzy scorer is pure and
+tests/commandPalette.test.ts extracts it into Node: determinism, case
+rules, word-start/consecutive bonuses and null-for-no-match are behaviour,
+not structure.
+
+**9.2 — the guided first run.** A coach card, deliberately NOT a modal: the
+user drives the real UI while it narrates. Welcome (one-click "scan my home
+folder" once /api/system answers; "pick my own" opens the folder browser —
+the zero state hides the path box, and focusing a hidden input is a silent
+no-op, found by driving) → the map → up to three quick wins, each a REAL
+group from /api/cleanup/suggestions with size, description and why, never
+an advisory group, staged only inside the user's click through the new
+`cartAddMany` (one bulk door on the ONE cart, same pipeline as cartToggle,
+run once) → the cart, staged and uncommitted. Non-answers never read as
+"clean": a running scan is polled out, a broken catalog and transport
+errors get a "couldn't check — <reason>" card. Skippable everywhere; skip
+and finish both persist `tourDone` (only boolean true counts) so a
+read-only portable session honestly forgets; Settings has the promised
+"show it again", which now puts the map on screen first (QA). The Esc that
+skips it is the LAST branch of the app-wide Escape chain — the first cut
+was a separate listener and died on its own "press Esc to climb back out"
+instruction (review round 1's sharpest frontend catch).
+
+**9.3 — human-scale units.** The `humanScale` fact provider (built by a
+worktree agent, test-first) averages a folder's OWN photos/videos/music —
+ten of a kind minimum, never a constant — and the shared tooltip renders
+"≈ 16 photos or ≈ 48 videos like the ones here · based on the 12 photos in
+this folder, average 114.4 MB" on directories over ~1 GB. Nothing
+comparable → nothing said. Deliberate deviation from the spec's "6 hours of
+4K video": hours would need a bitrate constant, which the same sentence
+forbids — recorded in the provider header. Settings toggle
+(`humanScaleUnits`, default on) rides the cart-goal boot read. Walks are
+capped per path (500k) AND per request (2M, review finding: 2,000 deep
+dirs × per-path cap = a billion synchronous node visits) with the tail
+skipped and counted, `capped: true` stated on truncated samples.
+
+**9.4 — budget gauges.** `GET /api/scan/:id/budget-gauges` — a NEW endpoint
+because /budgets is under byte-identity lock — pairs each in-scan budget
+with a projection from src/services/budgetGauges.ts: `computeForecast`
+reused VERBATIM with the budget's headroom standing in for free space, so
+'insufficient'/'erratic'/'stable'/'shrinking' refuse with the disk-full
+forecast's own sentences. One honesty policy, not two. The Dashboard rows
+gain one line: the date when confident, the refusal in muted text when
+not, "· from shallow history" (caveat on hover) when the series came from
+ancestor snapshot trees. Already-over rows get no projection — the red
+label is the fact. Series prefer the folder's own scan history outright;
+gauge fetches carry a stale-response guard.
+
+**9.5 — notes pinned to folders.** Verbatim text (XSS corpus round-trips
+byte-exact; rendered via textContent/escapeHtml only), notes.json through
+the storage layer so portable read-only sessions keep them in memory only.
+The consequential half: a suppressing note (default, per-note toggleable)
+excludes its subtree from Smart Suggestions, the agent summary, MCP
+cleanup_suggestions and EVERY Autopilot match kind — in BOTH directions of
+containment (review round 1: a suggested node_modules CONTAINING a noted
+keep-me was deletable; now the claim is withheld and the walk descends
+past it) — and Autopilot reports what it left alone, collapsed to one
+entry per note root with a count. Suppression FAILS CLOSED: a corrupt
+notes.json pauses automation with the reason instead of silently unpausing
+everything (the agent-policy rule from storage.ts, applied). The
+suggestions surface names what a pausing note hides instead of a silent
+"nothing matches" (QA). Surfaces: right-click Add/Edit note, the `n` key,
+a sticky-note glyph on tiles, a tooltip line with "suggestions paused
+here". Both mutating routes sit in the pinned destructive list with their
+rationale.
+
+**9.6 — ask in plain words.** The ✨ button opens a popover: plain words →
+the deterministic table (33 phrasings, from a worktree agent, mutation-
+tested) → the translation in an EDITABLE field with understood/ignored
+words listed → Run as its own act through the highlight box's own flow.
+POST /api/nl-query translates and NOTHING else — no hits, ever — and
+re-parses even its own output as a belt (durations clamp at a century of
+days; `${1e21}` would otherwise emit exponent notation the grammar
+rejects). The Ollama passthrough was built, hardened against a hostile
+loopback squatter, and then REMOVED end-to-end at the owner's request; a
+static test now asserts the query services contain zero network code —
+"not present", which is stronger than "off by default".
+
+### The fleet's score
+
+Three build agents (worktrees; `cp -cR` the node_modules — the harness's
+own worktree isolation cannot start at this workspace root, so create them
+with `git worktree add` by hand), then two adversarial reviewers and one
+app-driving QA agent on a green 1,6xx suite: **4 real backend defects**
+(reverse containment; fail-open corrupt notes; the 1e21 invariant break;
+unbounded Ollama body buffering) with mutation evidence that two
+suppression wires had no test that could fail, **6 real frontend defects**
+(the tour dying on its own Esc instruction; three paths reading a
+non-answer as "clean"; the palette opening invisibly UNDER the Settings
+scrim with keystrokes landing in it; the zero-state Scan action focusing a
+hidden input; a stale plain-words popover surviving view switches; Esc
+closing the palette without its focus-restore), and **5 QA finds** ("Scan
+again: [object Object]" from reading r.path where the API serves rootPath;
+the 12-row browse cap; a stale tooltip floating above the palette; the
+tour restart narrating a map that wasn't on screen; note suppression
+silent on the suggestions surface). Every fix landed behind a test that
+failed first.
+
+A FINAL four-auditor pass then signed the phase off: safety-locks CLEAN
+(golden byte-identity intact, the budget-gauges diff purely additive, every
+new route path-sanitized or path-free, zero new network code, fail-closed
+notes proven end-to-end), clean-room CLEAN (pristine detached worktree at
+HEAD: build, typecheck and 1,648/0 reproduced from scratch), and
+spec-compliance + docs-truth reporting only precision items — a
+mis-nested MCP test, the palette lacking §9.1's "deep settings" (both
+fixed: eleven Settings sections and Clean Up are now palette rows, the
+static zero-network test widened to sweep the whole query directory so
+AGENTS.md's sentence is exactly as wide as its proof), and three doc
+sentences tightened.
+
+### Verified
+
+```
+npm run build            clean
+npm run typecheck        clean
+npm test                 1,648 tests · 1,646 pass · 0 fail · 2 skip   (was 1,538)
+npm run bench:v4         6/7 measurable PASS + scan throughput: four session
+                         runs 1391 / 1468 / 1548 / 1395 ms vs baseline 1497.9
+                         — the single +3.3% row ran at load 4.6 and re-passed
+                         at −6.8% under load 10.3; Phase 9 touches nothing in
+                         the scan path. 3 rows are browser-measured by design;
+                         no new rAF loops or per-node render work were added
+                         (the note-glyph pass is O(drawn rects) with an early
+                         continue), so Phase 6's measured numbers stand.
+capabilities             12/16 available on this Mac (smartctl, ffmpeg-family,
+                         snapshotRestore, backupMembership honestly absent)
+app driven               every view mounted (zero new console errors; the 429
+                         boot noise is the documented pre-existing item), plus
+                         each 9.x feature end-to-end on the isolated dev
+                         server: the full tour into a staged cart, notes with
+                         suppression verified over live HTTP both ways, the
+                         palette above open modals with one-Esc-one-layer,
+                         plain words translate→edit→run and honest refusals,
+                         budget meter + 'no projection yet' refusal,
+                         human-scale line with exact arithmetic, dark/light,
+                         500px narrow, sparse-file tooltips.
+```
+
+### What I could NOT verify on this machine, and why
+
+- Windows and Linux behaviour of the new code — no such machines here. The
+  new tests are platform-branched where case rules differ and avoid the
+  documented Windows fixture-rewrite trap; CI's matrix is the proof, and
+  the owner had not yet pushed when this entry was written.
+- A REAL first launch (fresh machine, no dev-server data dir) — the
+  isolated TREEMAP_DEV_DATA server approximates it and the tour fired
+  correctly there; the Electron packaging path was not rebuilt this
+  session.
+- tests/autopilot.test.ts's "live run routes through the open-file guard"
+  failed ONCE for a reviewer running three suites in parallel, passed
+  isolated and in every quiet full run since — same family as the
+  documented A1/B5 load flakes. The next failure there on a QUIET machine
+  is real; treat it that way.
+
+### Honest limitations now stated in the UI
+
+- Human-scale equivalents: the basis sentence names the sample and average;
+  truncated walks say "sampled"; no comparable files → no line at all.
+- Budget projections: every refusal states the forecast's own reason;
+  shallow-history series carry their caveat on hover.
+- The tour: "couldn't check" card with the reason when suggestions cannot
+  answer; "this folder looks clean" only on a real empty answer.
+- Suggestions: "N folders are excluded by a note that pauses suggestions."
+- Plain words: ignored words are listed; refusals name working phrasings.
+
+### Known, deliberately left
+
+- The media-note tooltip is unreachable by hover at scan root when a
+  single-child chain elides the label strip (child rect == frame rect, and
+  deepest-hit wins) — QA finding 7. The glyph still shows; the note is
+  reachable via Sunburst, Grid, breadcrumbs and the context menu. Fixing it
+  means changing v3 hit-test/elision geometry, out of Phase 9's blast
+  radius.
+- QA's unreproduced observation 9 (a boot-time stale highlight query + a
+  possibly-stolen view during live-index rescan) — logged, not chased; a
+  clean retry behaved. QA 10 (global-search jump copying the text into the
+  view filter) is pre-existing A4 behaviour.
+- reclaimInputs deliberately ignores notes (the score explains, never
+  selects) — commented at the site; same for the custom Clean Up rules and
+  browser/cloud lists (the user's own explicit filters).
+- The palette does not trap Tab (no modal in the app does); Esc and
+  aria-activedescendant are correct.
+
+### Files changed
+
+Backend: notes.ts + noteRoutes.ts (new), budgetGauges.ts (new),
+facts/humanScaleProvider.ts (new), query/nlIntent.ts (new), cleanupRules /
+autopilot / settings / settingsRoutes / metaRoutes / mcp/server /
+scanRoutes / queryRoutes / openapi / models/types touched; nlOllama.ts
+created then deleted. Frontend: one file, as ever. Tests: commandPalette,
+firstRun, notes, nlQuery, budgetGauges, humanScale (new files) + surgical
+updates to frontendContract, discoverability, mcp. Docs: README, AGENTS,
+PLATFORM_NOTES, this file.
+
 ## v4 — Phase 8 complete: domain depth, adversarially reviewed (30 August 2026, night)
 
 The ask was: run Phase 8 the same way as Phase 7 — parallel build agents,

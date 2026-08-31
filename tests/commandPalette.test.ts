@@ -111,7 +111,7 @@ test('⌘K opens the palette now — global search moved to its own key and a pa
 });
 
 test('the palette restores focus to where it was — §9.1 says so explicitly', () => {
-  const open = INDEX.slice(INDEX.indexOf('function cmdkOpen'), INDEX.indexOf('function cmdkOpen') + 800);
+  const open = INDEX.slice(INDEX.indexOf('function cmdkOpen()'), INDEX.indexOf('function cmdkOpen()') + 800);
   assert.match(open, /cmdkPrevFocus = document\.activeElement/, 'focus is remembered on open');
   const close = INDEX.slice(INDEX.indexOf('function cmdkClose'), INDEX.indexOf('function cmdkClose') + 800);
   assert.match(close, /cmdkPrevFocus[\s\S]{0,120}\.focus\(\)/, 'and restored on close');
@@ -154,6 +154,45 @@ test('an empty palette browses everything; only typed queries trim to twelve', (
 });
 
 test('opening the palette clears any hovering tooltip first', () => {
-  const fn = INDEX.slice(INDEX.indexOf('function cmdkOpen'), INDEX.indexOf('function cmdkOpen') + 400);
+  const fn = INDEX.slice(INDEX.indexOf('function cmdkOpen()'), INDEX.indexOf('function cmdkOpen()') + 400);
   assert.match(fn, /hideTooltip\(\)/, 'a stale hover card must not float above the palette');
+});
+
+/* ═══════════ Final-audit findings ═══════════ */
+
+test('deep settings are searchable, and every listed section is a real heading', () => {
+  // §9.1's stated why includes "deep settings": typing "weights" must land
+  // on the Reclaim sliders. The list is held to the ACTUAL headings so a
+  // renamed section cannot leave a palette row scrolling to nothing.
+  const at = INDEX.indexOf('const CMDK_SETTINGS_SECTIONS');
+  assert.notEqual(at, -1, 'the settings sections are indexed');
+  const src = INDEX.slice(at, INDEX.indexOf('];', at));
+  const names = [...src.matchAll(/name: '([^']+)'/g)].map((m) => m[1]);
+  assert.ok(names.length >= 10, `a real list, not a token one (${names.length})`);
+  for (const name of names) {
+    const re = new RegExp(`class="set-h"[^>]*>(?:<span[^>]*></span>)?${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
+    assert.ok(re.test(INDEX), `"${name}" is a real Settings heading`);
+  }
+  const items = INDEX.slice(INDEX.indexOf('function cmdkItems'), INDEX.indexOf('function cmdkItems') + 4000);
+  assert.match(items, /CMDK_SETTINGS_SECTIONS/, 'and they join the palette');
+  const opener = INDEX.slice(INDEX.indexOf('function cmdkOpenSettingsSection'), INDEX.indexOf('function cmdkOpenSettingsSection') + 700);
+  assert.match(opener, /scrollIntoView/, 'landing scrolls the section into view');
+});
+
+test('Clean Up is reachable from the palette — it is a surface, not a view, and was invisible', () => {
+  const reg = INDEX.slice(INDEX.indexOf('const CMDK_ACTIONS'), INDEX.indexOf('function cmdkOpenSettingsSection'));
+  assert.ok(reg.includes('Open Clean Up'), 'the Clean Up surface has a palette door');
+  assert.ok(reg.includes("$('cleanupBtn').click()"), 'through its own real button');
+});
+
+test('typing a setting WORD finds its section — hints are a scoring fallback', () => {
+  // Driven proof turned structural: "weights" has no subsequence in
+  // "Settings: Reclaim Score", so labels alone left the audit's example
+  // dead. Hints join the match at a discount.
+  const render = INDEX.slice(INDEX.indexOf('function cmdkRender'), INDEX.indexOf('function cmdkRender') + 1800);
+  assert.match(render, /cmdkScore\(q, item\.hint\)/, 'hints are scored when the label misses');
+  assert.match(render, /hs - 8/, 'at a discount, so label matches always outrank them');
+  const sections = INDEX.slice(INDEX.indexOf('const CMDK_SETTINGS_SECTIONS'), INDEX.indexOf('];', INDEX.indexOf('const CMDK_SETTINGS_SECTIONS')));
+  assert.match(sections, /weights/, 'the Reclaim section is findable by its famous word');
+  assert.match(sections, /schedule/, 'and schedules by theirs');
 });

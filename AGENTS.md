@@ -322,10 +322,12 @@ read-what-you-saw) permission to act.
   dry-run, or refused — is appended to `audit.jsonl` (timestamp, action,
   source http/mcp, token id, paths, bytes, outcome).
   `GET /api/audit?limit=100` reads it back, newest first. The MCP tools
-  write the same log. The three config-writing endpoints flagged destructive
-  for their consequences rather than their mechanics — `PUT /api/settings`,
-  `PUT /api/notes`, `DELETE /api/notes` — do not audit; they move no bytes,
-  and their whole state is inspectable in the files they write.
+  write the same log. Config writes differ by consequence: Autopilot policy
+  saves and approvals DO audit (a standing instruction to delete is worth a
+  log line), while `PUT /api/settings`, `PUT /api/notes` and
+  `DELETE /api/notes` — destructive-flagged for their consequences, not
+  their mechanics — do not; they move no bytes, and their whole state is
+  inspectable in the files they write.
 - **Journal.** Significant disk changes noticed by scheduled scans are
   recorded to `journal.jsonl` (capped and rotated) as sentences with the
   structured fields beside them — path, date, signed byte delta, and an
@@ -358,7 +360,8 @@ read-what-you-saw) permission to act.
   — no hits, no totals; run the returned `q` through `POST /api/query`
   yourself, after showing it. The deterministic phrase table is the whole
   feature and it is entirely offline — tests/nlQuery.test.ts statically
-  asserts the query services contain zero network code. (An optional local
+  scans every file under src/services/query/ plus the route itself and
+  asserts none contains network code. (An optional local
   Ollama passthrough shipped briefly and was removed at the owner's
   request.)
 - **Idempotency.** Destructive endpoints honor an `Idempotency-Key` header:

@@ -403,10 +403,15 @@ test('the plain-words feature contains zero network code — statically, not as 
   // The Ollama passthrough was removed at the owner's request. This holds the
   // stronger property that replaced it: nothing under the query services or
   // their route can so much as spell a network call.
-  const files = [
-    path.join(__dirname, '..', 'src', 'services', 'query', 'nlIntent.ts'),
-    path.join(__dirname, '..', 'src', 'api', 'queryRoutes.ts'),
-  ];
+  // EVERY file under the query services, plus their route — so the claim in
+  // AGENTS.md ("the query services contain zero network code") is exactly as
+  // wide as the scan that proves it.
+  const queryDir = path.join(__dirname, '..', 'src', 'services', 'query');
+  const files = fs.readdirSync(queryDir)
+    .filter((n) => n.endsWith('.ts'))
+    .map((n) => path.join(queryDir, n));
+  files.push(path.join(__dirname, '..', 'src', 'api', 'queryRoutes.ts'));
+  assert.ok(files.length >= 6, `the sweep saw the whole directory (${files.length} files)`);
   assert.ok(!fs.existsSync(path.join(__dirname, '..', 'src', 'services', 'query', 'nlOllama.ts')),
     'the passthrough module is gone');
   for (const f of files) {

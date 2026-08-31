@@ -15815,9 +15815,41 @@ const CMDK_ACTIONS = [
   // would arm at (8,8) and resurface stale over whatever came next.
   { label: 'Ask in plain words', hint: 'translated to a query you approve', when: () => !!state.root, run: () => { switchView('treemap'); requestAnimationFrame(() => nlOpen()); } },
   { label: 'Open Settings', hint: 'schedules, weights, notes and more', run: () => $('settingsBtn').click() },
+  { label: 'Open Clean Up', hint: 'smart suggestions, custom rules, empty folders', run: () => $('cleanupBtn').click() },
   { label: 'Keyboard shortcuts', hint: 'the ? panel', run: () => toggleShortcuts() },
   { label: 'Switch light / dark', hint: 'theme', run: () => $('themeToggle').click() },
 ];
+
+/**
+ * Deep settings, searchable by section name — §9.1 names settings among the
+ * palette's sources, and "deep settings" is part of its stated why: typing
+ * "weights" must land on the Reclaim sliders, not on nothing. Each entry
+ * opens the modal and scrolls its own heading into view. The final audit
+ * held this list to the real headings (tests/commandPalette.test.ts).
+ */
+const CMDK_SETTINGS_SECTIONS = [
+  { name: 'Scheduled scans', hint: 'schedule, recurring, automatic' },
+  { name: 'Disk-full forecast', hint: 'warning, days, projection' },
+  { name: 'Live activity', hint: 'watch, auto-pause' },
+  { name: 'Time Capsule', hint: 'retention, undo copies' },
+  { name: 'Reclaim Score', hint: 'weights, sliders, signals' },
+  { name: 'Cleanup target', hint: 'goal, free up, meter' },
+  { name: 'Human-scale sizes', hint: 'photo equivalents, tooltips' },
+  { name: 'Ask in plain words', hint: 'natural language, translate' },
+  { name: 'Welcome tour', hint: 'first run, onboarding' },
+  { name: 'Cloud accounts', hint: 'drive, dropbox, onedrive' },
+  { name: 'Ignore list', hint: 'exclude, patterns, globs' },
+];
+function cmdkOpenSettingsSection(name) {
+  $('settingsBtn').click();
+  // The headings are static markup; only the values load async — so the
+  // scroll is safe one frame after the modal opens.
+  requestAnimationFrame(() => {
+    const head = [...document.querySelectorAll('#settingsModal .set-h')]
+      .find((h) => h.textContent.trim().includes(name));
+    if (head) head.scrollIntoView({ block: 'start' });
+  });
+}
 
 /** Recent scan roots, fetched once per palette opening; empty is fine. */
 let cmdkRoots = [];
@@ -15847,6 +15879,9 @@ function cmdkItems() {
     if (a.when && !a.when()) continue;
     items.push({ label: a.label, hint: a.hint, run: a.run });
   }
+  for (const sec of CMDK_SETTINGS_SECTIONS) {
+    items.push({ label: `Settings: ${sec.name}`, hint: sec.hint, run: () => cmdkOpenSettingsSection(sec.name) });
+  }
   for (const sv of (state.savedViews || [])) {
     items.push({ label: `Saved view: ${sv.name}`, hint: sv.q, run: () => {
       switchView('treemap');
@@ -15869,7 +15904,14 @@ function cmdkRender() {
   const q = $('cmdkInput').value.trim();
   const scored = [];
   for (const item of cmdkItems()) {
-    const s = cmdkScore(q, item.label);
+    // Labels first; hints as a discounted fallback — "weights" must land on
+    // "Settings: Reclaim Score" even though the label lacks a w (the final
+    // audit's point: deep settings are only searchable if their WORDS are).
+    let s = cmdkScore(q, item.label);
+    if (s === null && item.hint) {
+      const hs = cmdkScore(q, item.hint);
+      if (hs !== null) s = hs - 8;
+    }
     if (s === null) continue;
     scored.push({ item, s });
   }
