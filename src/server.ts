@@ -14,6 +14,7 @@ import { watchRouter, drainWatchClients } from './api/watchRoutes';
 import { offloadRouter, drainOffloadClients } from './api/offloadRoutes';
 import { cloudRouter } from './api/cloudRoutes';
 import { metaRouter } from './api/metaRoutes';
+import { journalRouter } from './api/journalRoutes';
 import { platformRouter } from './api/platformRoutes';
 import { indexRouter, drainIndexClients, cancelAllIndexJobs } from './api/indexRoutes';
 import { timeCapsuleRouter, drainCapsuleClients } from './api/timeCapsuleRoutes';
@@ -68,6 +69,7 @@ export function createApp(publicDir: string): express.Express {
   app.use('/api', offloadRouter);
   app.use('/api', cloudRouter);
   app.use('/api', metaRouter);
+  app.use('/api', journalRouter);
   app.use('/api', platformRouter);
   app.use('/api', indexRouter);
   app.use('/api', timeCapsuleRouter);

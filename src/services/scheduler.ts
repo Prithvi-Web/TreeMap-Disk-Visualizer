@@ -5,6 +5,7 @@ import { getSettings, patchSchedule } from './settings';
 import { runDuePolicies } from './autopilot';
 import { listSnapshots } from './snapshots';
 import { getForecast } from './forecast';
+import { recordScanJournal } from './journal';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { formatBytes } from '../utils/formatBytes';
 
@@ -137,6 +138,13 @@ async function runScheduled(sched: ScheduleConfig): Promise<void> {
 
   await maybeForecastAlert(target);
   if (!prev) return; // first record of this folder — nothing to compare against
+
+  // The disk journal (§7.3) is fed HERE, from the scan this tick already ran,
+  // and nowhere else — deliberately not from the live watcher: a permanent
+  // watcher subscription would keep every watched root's OS watchers alive
+  // forever (watcher.ts subscribe() only lets a session go idle when its last
+  // listener leaves). §B1: the journal rides the one existing timer.
+  await recordScanJournal(done, prev).catch((err: unknown) => console.error('[treemap] journal record failed:', err));
 
   const newSize = done.store.size(done.store.rootId);
   const delta = newSize - prev.totalSize;

@@ -143,6 +143,10 @@ export function degradedCapabilities(platform: NodeJS.Platform = process.platfor
       key: 'scanHistory',
       reason: 'Scan history and trends are not kept, because nothing is saved in this session.',
     });
+    out.push({
+      key: 'journal',
+      reason: 'The disk journal is not kept between sessions, because nothing is saved; changes noticed while TreeMap runs are still shown.',
+    });
   }
   if (platform === 'win32') {
     out.push({

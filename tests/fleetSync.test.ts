@@ -349,3 +349,27 @@ test('a reclaim score smuggled onto a summary is dropped by the allow-list', () 
   assert.ok(!JSON.stringify(wire).includes('2027'), 'and no note text reaches the wire');
   assert.ok(!JSON.stringify(wire).includes('Bob'), 'and no volume name reaches it either');
 });
+
+test('journal entries smuggled onto a summary are dropped by the allow-list', () => {
+  // §7.3 — every journal line narrates what is on this machine's disks and
+  // who put it there, which is the category §D1 bans from the wire outright.
+  const hostile = {
+    ...summary(),
+    journalEntries: [{
+      path: '/Users/x/Library/Containers/com.docker.docker',
+      delta: 14_200_000_000,
+      sentence: 'Docker added 14.2 GB (~/Library/Containers/com.docker.docker)',
+    }],
+    journal: 'you removed 4.1 GB from Downloads',
+  } as unknown as FleetSummary;
+  const wire = serialiseSummary(hostile) as Record<string, unknown>;
+  assert.equal(Object.keys(wire).length, SUMMARY_FIELDS.length);
+  assert.equal(wire.journalEntries, undefined);
+  assert.equal(wire.journal, undefined);
+  assert.ok(!JSON.stringify(wire).includes('docker'), 'no journal text reaches the wire');
+  assert.ok(!JSON.stringify(wire).includes('Downloads'), 'not a sentence of it');
+  // And the second check would refuse the fields by name even if a future
+  // change added them to the allow-list itself.
+  assert.ok(isForbiddenSummaryField('journalEntries'));
+  assert.ok(isForbiddenSummaryField('journal'));
+});
