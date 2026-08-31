@@ -3331,7 +3331,7 @@ const state = {
   bigFolders: [],
   savedViews: [],
   savedViewsLoaded: false,
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, altZoom: null, altRaf: 0, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null }, lapse: { playing: false, raf: 0, pos: 0, speed: 1, loop: false, seq: 0 } },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, altZoom: null, altRaf: 0, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null }, lapse: { playing: false, raf: 0, pos: 0, speed: 1, loop: false, seq: 0, onDone: null } },
   // v4 §6.1 — Disk City. Deliberately holds NO tree of its own: the root and
   // the nodes are the Treemap's, so the two are the same arrangement rather
   // than two arrangements that resemble each other.
@@ -6922,6 +6922,24 @@ function lapseOrderedSnaps(snaps) {
   return (snaps || []).filter((s) => s && s.hasTree).sort((x, y) => x.takenAt - y.takenAt);
 }
 
+/* §7.1c — where the GIF export samples playback time. Uncapped, one frame
+   every 1/fps of a segment plus the final frame; past the cap the samples
+   thin out evenly but the span never shrinks — the last snapshot is always
+   the last frame, and `capped` is returned so the UI can say what was cut. */
+function lapseSampleTimes(snapCount, fps, cap) {
+  if (snapCount < 2) return { times: [], capped: false };
+  const segs = snapCount - 1;
+  const natural = segs * fps + 1;
+  if (natural <= cap) {
+    const times = [];
+    for (let i = 0; i < natural; i++) times.push(Math.min(i / fps, segs));
+    return { times, capped: false };
+  }
+  const times = [];
+  for (let i = 0; i < cap; i++) times.push((segs * i) / (cap - 1));
+  return { times, capped: true };
+}
+
 /* ── v4 §7.1 — transport: play/pause, speed, loop ──
    One rAF loop advances a fractional position over segments (one segment =
    snapshot k → k+1, LAPSE_SEG_MS at 1×). The rectangle renderer draws
@@ -6953,6 +6971,11 @@ function lapseStop() {
   L.raf = 0;
   L.playing = false;
   lapseReflect();
+  // §7.1c — whoever is waiting on this run (the WebM recorder) hears about
+  // every ending, including an interrupted one; what was captured is honest.
+  const cb = L.onDone;
+  L.onDone = null;
+  if (cb) cb();
 }
 
 /** Warm the cache for the segments about to play; a miss never stalls a fetch already running. */
@@ -7034,7 +7057,11 @@ function lapseStart() {
     if (L.pos >= end) {
       if (!discrete) { state.treemap.nodes = b.nodes; drawTreemap(); }
       if (L.loop) { L.pos = 0; crossed = -1; lapsePrefetch(0); }
-      else { L.raf = 0; L.playing = false; lapseReflect(); return; }
+      else {
+        L.raf = 0; L.playing = false; lapseReflect();
+        const cb = L.onDone; L.onDone = null; if (cb) cb();
+        return;
+      }
     }
     L.raf = requestAnimationFrame(tick);
   };
@@ -10430,10 +10457,19 @@ $('tmExportBtn').addEventListener('click', (e) => {
   if (!drawnCells().length) { toast('Render something first', 'error'); return; }
   const menu = $('ctxMenu');
   const canReport = !!(state.scanId && state.root);
+  // §7.1c — the time-lapse exports need two snapshots to animate between and
+  // the rectangle renderer (the only one whose motion is honest to tween).
+  const canLapse = state.treemap.history.snaps.length >= 2 && isRectMap();
+  const canWebm = canLapse && 'captureStream' in HTMLCanvasElement.prototype && !!window.MediaRecorder;
   menu.innerHTML = `
     <button data-exp="png">${icon('image', 15)}PNG image</button>` +
     (isRectMap() ? `
     <button data-exp="svg">${icon('code', 15)}SVG vector</button>` : '') +
+    (canLapse ? `
+    <div class="div"></div>
+    <button data-exp="gif">${icon('play', 15)}Animated GIF — history</button>` : '') +
+    (canWebm ? `
+    <button data-exp="webm">${icon('video', 15)}WebM video — history</button>` : '') +
     (canReport ? `
     <div class="div"></div>
     <button data-exp="csv-files">${icon('file', 15)}CSV — all files</button>
@@ -10450,6 +10486,8 @@ $('tmExportBtn').addEventListener('click', (e) => {
     const exp = b.dataset.exp;
     if (exp === 'png') exportTreemapPNG();
     else if (exp === 'svg') exportTreemapSVG();
+    else if (exp === 'gif') exportTimelapseGif();
+    else if (exp === 'webm') exportTimelapseWebm();
     else if (exp === 'csv-files') downloadReport('csv', 'files');
     else if (exp === 'csv-folders') downloadReport('csv', 'folders');
     else if (exp === 'xlsx-files') downloadReport('xlsx', 'files');
@@ -10486,6 +10524,148 @@ function downloadBlob(blob, filename) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+/* ── §7.1c — time-lapse export: GIF in a worker, WebM off the live canvas ── */
+
+const LAPSE_GIF_FPS = 10;
+const LAPSE_GIF_CAP = 150; // frames — stated to the user when it bites
+const LAPSE_GIF_MAX_W = 480;
+
+/**
+ * One implementation serves both threads: the four shipped GIF functions are
+ * serialised into a worker via their own source (Function.prototype.toString
+ * → Blob), exactly so no second copy exists to drift (liftFrontend.ts's
+ * argument, applied to the worker boundary). Inside the worker,
+ * gifLzwEncode is wrapped to report per-frame progress — encodeGif calls it
+ * once per frame, so the count is honest without touching the encoder.
+ */
+function lapseGifWorkerUrl() {
+  const src = [gifBuildPalette, gifIndexFrame, gifLzwEncode, encodeGif]
+    .map((f) => f.toString())
+    .join('\n') + `
+const __lzw = gifLzwEncode;
+let __done = 0;
+gifLzwEncode = function (...args) {
+  const r = __lzw(...args);
+  self.postMessage({ progress: ++__done });
+  return r;
+};
+self.onmessage = (e) => {
+  try {
+    const bytes = encodeGif(e.data.frames, e.data.opts);
+    self.postMessage({ ok: true, bytes }, [bytes.buffer]);
+  } catch (err) {
+    self.postMessage({ ok: false, error: String((err && err.message) || err) });
+  }
+};`;
+  return URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+}
+
+let lapseExporting = false;
+async function exportTimelapseGif() {
+  const h = state.treemap.history;
+  if (lapseExporting) { toast('An export is already running', 'error'); return; }
+  if (h.snaps.length < 2 || !isRectMap()) { toast('History export needs two snapshots and the rectangle map', 'error'); return; }
+  lapseExporting = true;
+  lapseStop();
+  const status = $('tmStatus');
+  try {
+    const { times, capped } = lapseSampleTimes(h.snaps.length, LAPSE_GIF_FPS, LAPSE_GIF_CAP);
+    if (capped) toast(`Long history — sampling ${LAPSE_GIF_CAP} frames across all ${h.snaps.length} snapshots`);
+    const layouts = [];
+    for (let i = 0; i < h.snaps.length; i++) {
+      status.textContent = `Fetching snapshot ${i + 1}/${h.snaps.length}…`;
+      layouts.push(await historyLayoutFor(h.snaps[i]));
+    }
+    // Downscale through an offscreen canvas; the frames drawn are the real
+    // drawTreemap's, via tmBuffer — the export shows what the app shows.
+    const scale = Math.min(1, LAPSE_GIF_MAX_W / tmBuffer.width);
+    const w = Math.max(1, Math.round(tmBuffer.width * scale));
+    const hh = Math.max(1, Math.round(tmBuffer.height * scale));
+    const off = document.createElement('canvas');
+    off.width = w; off.height = hh;
+    const offCtx = off.getContext('2d', { willReadFrequently: true });
+    const bg = cssVar('--bg-1') || '#0e0e13';
+    const savedNodes = state.treemap.nodes;
+    const frames = [];
+    for (let i = 0; i < times.length; i++) {
+      const t = times[i];
+      const k = Math.min(Math.floor(t), h.snaps.length - 2);
+      state.treemap.nodes = lapseLerpNodes(layouts[k].nodes, layouts[k + 1].nodes, t - k);
+      drawTreemap();
+      offCtx.fillStyle = bg;
+      offCtx.fillRect(0, 0, w, hh);
+      offCtx.drawImage(tmBuffer, 0, 0, w, hh);
+      frames.push(new Uint8Array(offCtx.getImageData(0, 0, w, hh).data.buffer.slice(0)));
+      status.textContent = `Sampling frame ${i + 1}/${times.length}…`;
+    }
+    state.treemap.nodes = savedNodes;
+    drawTreemap();
+    const url = lapseGifWorkerUrl();
+    const worker = new Worker(url);
+    const bytes = await new Promise((resolve, reject) => {
+      worker.onmessage = (ev) => {
+        if (ev.data.progress) { status.textContent = `Encoding GIF — frame ${ev.data.progress}/${frames.length}…`; return; }
+        ev.data.ok ? resolve(ev.data.bytes) : reject(new Error(ev.data.error));
+      };
+      worker.onerror = (ev) => reject(new Error(ev.message || 'GIF worker failed'));
+      worker.postMessage(
+        { frames, opts: { width: w, height: hh, delayMs: 1000 / LAPSE_GIF_FPS, loop: 0 } },
+        frames.map((f) => f.buffer),
+      );
+    }).finally(() => { worker.terminate(); URL.revokeObjectURL(url); });
+    downloadBlob(new Blob([bytes], { type: 'image/gif' }), exportFileName('gif'));
+    toast(`GIF saved — ${frames.length} frames at ${LAPSE_GIF_FPS} fps${capped ? ' (capped)' : ''}`);
+  } catch (e) {
+    toast('Could not export the GIF: ' + e.message, 'error');
+  } finally {
+    lapseExporting = false;
+    drawTreemap(); // whatever happened, the status line goes back to the truth
+  }
+}
+
+async function exportTimelapseWebm() {
+  const h = state.treemap.history;
+  if (lapseExporting) { toast('An export is already running', 'error'); return; }
+  if (h.snaps.length < 2 || !isRectMap()) { toast('History export needs two snapshots and the rectangle map', 'error'); return; }
+  // Feature-detected, never assumed — and the user is told which format runs.
+  if (!('captureStream' in HTMLCanvasElement.prototype) || !window.MediaRecorder) {
+    toast('This runtime cannot record video — use the GIF export instead', 'error');
+    return;
+  }
+  lapseExporting = true;
+  lapseStop();
+  const L = state.treemap.lapse;
+  const prevLoop = L.loop;
+  try {
+    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+    const stream = $('treemapCanvas').captureStream(30);
+    const rec = new MediaRecorder(stream, { mimeType: mime });
+    const chunks = [];
+    rec.ondataavailable = (ev) => { if (ev.data.size) chunks.push(ev.data); };
+    const stopped = new Promise((resolve) => { rec.onstop = resolve; });
+    toast('Recording one playback run as WebM (' + mime + ')');
+    $('tmTimeSlider').value = String(h.snaps.length); // from the top
+    L.loop = false; // one run is what was promised
+    rec.start(200);
+    const runEnded = new Promise((resolve) => { L.onDone = resolve; });
+    lapseStart();
+    if (!L.playing) { rec.stop(); await stopped; throw new Error('playback did not start'); }
+    await runEnded; // natural end or the user stopping it — either ends the take
+    rec.stop();
+    await stopped;
+    stream.getTracks().forEach((t) => t.stop());
+    if (!chunks.length) throw new Error('the recorder produced no data');
+    downloadBlob(new Blob(chunks, { type: mime }), exportFileName('webm'));
+    toast('WebM saved — one full playback run');
+  } catch (e) {
+    toast('Could not export the WebM: ' + e.message, 'error');
+  } finally {
+    L.loop = prevLoop;
+    L.onDone = null;
+    lapseExporting = false;
+  }
 }
 
 function exportTreemapPNG() {

@@ -136,6 +136,38 @@ test('lapseOrderedSnaps sorts by takenAt and never mutates its input', () => {
   assert.deepEqual(snaps, copy, 'the caller\'s array is untouched');
 });
 
+/* ── §7.1c — the export sampler ── */
+
+const lapseSampleTimes = lift<(snapCount: number, fps: number, cap: number) => { times: number[]; capped: boolean }>(
+  ['lapseSampleTimes'],
+  'lapseSampleTimes',
+);
+
+test('the sampler covers every segment at the asked rate, ends exactly on the last snapshot', () => {
+  const { times, capped } = lapseSampleTimes(3, 10, 150);
+  assert.equal(capped, false);
+  assert.equal(times.length, 21); // 2 segments × 10 fps + the final frame
+  assert.equal(times[0], 0);
+  assert.equal(times[times.length - 1], 2);
+  for (let i = 1; i < times.length; i++) {
+    assert.ok(Math.abs(times[i] - times[i - 1] - 0.1) < 1e-9, 'uniform 1/fps steps');
+  }
+});
+
+test('the cap thins the samples but never the span — and says so', () => {
+  const { times, capped } = lapseSampleTimes(31, 10, 150); // natural 301 frames
+  assert.equal(capped, true);
+  assert.equal(times.length, 150);
+  assert.equal(times[0], 0);
+  assert.equal(times[times.length - 1], 30, 'the last snapshot is still the last frame');
+  for (let i = 1; i < times.length; i++) assert.ok(times[i] > times[i - 1], 'strictly increasing');
+});
+
+test('fewer than two snapshots yields no samples', () => {
+  assert.deepEqual(lapseSampleTimes(1, 10, 150), { times: [], capped: false });
+  assert.deepEqual(lapseSampleTimes(0, 10, 150), { times: [], capped: false });
+});
+
 test('a treeless snapshot is a gap, never a guess', () => {
   const snaps: Snap[] = [
     { id: 'a', takenAt: 100, hasTree: true },
