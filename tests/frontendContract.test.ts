@@ -2320,7 +2320,10 @@ test('the weights are editable, resettable, and the reset comes from the server'
 
 test('changing the weights invalidates the cached scores', () => {
   const code = appCode();
-  const save = code.slice(code.indexOf("$('settingsSaveBtn')"), code.indexOf("$('settingsSaveBtn')") + 1800);
+  // The window covers the whole save handler; Phase 9 grew it (human-scale
+  // toggle + the plain-words model config ride the same PUT), so the slice is
+  // sized for the handler it guards, not the one it was written against.
+  const save = code.slice(code.indexOf("$('settingsSaveBtn')"), code.indexOf("$('settingsSaveBtn')") + 3000);
   assert.match(save, /reclaimWeights/, 'the weights are saved');
   assert.match(save, /reclaimReset\(\)/, 'and the cache is dropped, or old numbers sit beside new sliders');
 });

@@ -663,8 +663,17 @@ const schemas: Json = {
         'Show "≈ 3,100 photos like the ones here" beside sizes over ~1 GB (v4 §9.3), '
           + 'computed from each folder’s own file mix. Default true; cosmetic only.',
       ),
+      nlOllama: obj(
+        {
+          enabled: bool('Strictly opt-in, default false. With it off, zero network code runs.'),
+          endpoint: str('http(s) origin of the user’s own Ollama; defaults to http://127.0.0.1:11434'),
+          model: str('Model name to ask for, e.g. "llama3.2"; empty = not chosen'),
+        },
+        ['enabled', 'endpoint', 'model'],
+        'Optional local-model passthrough for the plain-words box (v4 §9.6). The translated query is always shown for approval before anything executes.',
+      ),
     },
-    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights', 'cleanupGoalBytes', 'humanScaleUnits'],
+    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights', 'cleanupGoalBytes', 'humanScaleUnits', 'nlOllama'],
   ),
 };
 
@@ -2624,6 +2633,32 @@ export const ENDPOINTS: EndpointDescriptor[] = [
       '400': errorResponse('QUERY_PARSE_ERROR (with offset, length and expected), QUERY_REQUIRED or SCAN_REQUIRED'),
       '404': errorResponse('SCAN_NOT_FOUND'),
       '409': errorResponse('SCAN_RUNNING or SCAN_FAILED'),
+    },
+  },
+  {
+    method: 'post',
+    path: '/api/nl-query',
+    summary: 'Translate plain words into the query grammar (v4 §9.6) — translation only, NEVER execution; the result is shown for approval and can be edited before it runs through POST /api/query',
+    tag: 'query',
+    destructive: false,
+    requestBody: jsonBody(obj({ text: str('e.g. "big videos I have not opened in a year"') }, ['text'])),
+    responses: {
+      '200': jsonResponse(
+        'ok:true carries the translated q (source "rules" from the deterministic phrase table, or "ollama" from the user’s own opt-in local model, validated through the real parser first). ok:false carries the honest refusal. Never any hits.',
+        obj(
+          {
+            ok: bool(),
+            source: str("'rules' | 'ollama'"),
+            q: str('The translated query — present when ok'),
+            matched: arr(obj({ phrase: str(), term: str(), note: str() }, ['phrase', 'term'])),
+            unmatched: arr(str('Words the table could not place — shown, not swallowed')),
+            note: str('Present for ollama translations: which model answered, and a reminder to check it'),
+            reason: str('Present when ok:false'),
+          },
+          ['ok', 'source'],
+        ),
+      ),
+      '400': errorResponse('NL_TEXT_REQUIRED'),
     },
   },
   {

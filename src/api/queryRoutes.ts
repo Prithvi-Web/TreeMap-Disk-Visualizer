@@ -5,6 +5,9 @@ import { parse, factsNeeded, FIELD_NAMES, FIELDS } from '../services/query/parse
 import { toSql } from '../services/query/toSql';
 import { executeAgainstScan, type SortKey } from '../services/query/execute';
 import { deleteSavedQuery, listSavedQueries, saveQuery } from '../services/query/savedQueries';
+import { translateNlQuery } from '../services/query/nlIntent';
+import { translateViaOllama } from '../services/query/nlOllama';
+import { getSettings } from '../services/settings';
 
 /**
  * queryRoutes — the query grammar's HTTP surface (v4 §2.2, §2.3).
@@ -63,6 +66,67 @@ queryRouter.post('/query/validate', (req: Request, res: Response) => {
     // would let a caller attribute one path's cost to the other.
     indexPostFiltered: plan.postFiltered,
     fields: FIELD_NAMES,
+  });
+});
+
+/**
+ * POST /api/nl-query { text } — plain words in, a grammar query out
+ * (v4 §9.6). This endpoint TRANSLATES AND NOTHING ELSE: no hits, no totals,
+ * no tree walk. Execution stays a separate, human-initiated POST /api/query
+ * after the translation has been shown and possibly edited — a
+ * natural-language box that hides what it actually searched is a black box,
+ * and this one is a query builder with a friendlier front door.
+ *
+ * The deterministic phrase table answers first. Only when it cannot, AND the
+ * user has explicitly enabled their own local Ollama in Settings, is the
+ * model consulted — and its answer is only trusted after the real grammar's
+ * parse() accepts it. With the model off, zero network code runs; a recorder
+ * server in tests/nlQuery.test.ts holds that as a fact, not a claim.
+ */
+queryRouter.post('/nl-query', async (req: Request, res: Response) => {
+  const { text } = req.body as { text?: unknown };
+  if (typeof text !== 'string' || !text.trim()) {
+    throw new AppError(400, 'NL_TEXT_REQUIRED', 'Request body must include a non-empty "text" string');
+  }
+  const trimmed = text.slice(0, 500);
+
+  const local = translateNlQuery(trimmed);
+  if (local.ok) {
+    res.json({ ok: true, source: 'rules', q: local.q, matched: local.matched, unmatched: local.unmatched });
+    return;
+  }
+
+  const { nlOllama } = await getSettings();
+  if (!nlOllama.enabled) {
+    // The deterministic reason, with the model deliberately unmentioned when
+    // it is off — advertising a network feature from a refusal would nudge
+    // people toward switching it on, and off is the shipped default.
+    res.json({ ok: false, source: 'rules', reason: local.reason });
+    return;
+  }
+
+  const viaModel = await translateViaOllama(trimmed, nlOllama);
+  if (!viaModel.ok || !viaModel.q) {
+    res.json({ ok: false, source: 'ollama', reason: viaModel.reason ?? local.reason });
+    return;
+  }
+  // The model's words become a query ONLY if the real grammar accepts them.
+  const parsed = parse(viaModel.q);
+  if (!parsed.ok) {
+    res.json({
+      ok: false,
+      source: 'ollama',
+      reason: `The local model answered something that is not a valid query (${parsed.error}). Try rephrasing, or type the query directly.`,
+    });
+    return;
+  }
+  res.json({
+    ok: true,
+    source: 'ollama',
+    q: viaModel.q,
+    matched: [],
+    unmatched: [],
+    note: `Translated by ${nlOllama.model} on your machine — check it before running.`,
   });
 });
 

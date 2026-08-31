@@ -299,3 +299,156 @@ test('a sweep of natural sentences: every translation and every shown term parse
     }
   }
 });
+
+/* ═══════════ Route + Ollama opt-in (parent session, v4 §9.6) ═══════════ */
+
+import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createApp } from '../src/server';
+import { resetRateLimiter } from '../src/middleware/rateLimiter';
+import { updateSettings, getSettings } from '../src/services/settings';
+
+process.env.TREEMAP_DATA_DIR = process.env.TREEMAP_DATA_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-nl-route-'));
+
+function reqHttp(port: number, method: string, url: string, body?: unknown): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const payload = body === undefined ? undefined : JSON.stringify(body);
+    const r = http.request(
+      { host: '127.0.0.1', port, path: url, method, headers: payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {} },
+      (res) => {
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => { buf += c; });
+        res.on('end', () => {
+          let parsed: unknown = buf;
+          try { parsed = JSON.parse(buf); } catch { /* non-JSON */ }
+          resolve({ status: res.statusCode ?? 0, body: parsed });
+        });
+      },
+    );
+    r.on('error', reject);
+    if (payload) r.write(payload);
+    r.end();
+  });
+}
+
+async function listenApp() {
+  resetRateLimiter();
+  const app = createApp(path.join(__dirname, '..', 'public'));
+  const server = http.createServer(app);
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  return { port: (server.address() as { port: number }).port, close: () => new Promise<void>((r) => server.close(() => r())) };
+}
+
+test('POST /api/nl-query translates deterministically and NEVER executes', async () => {
+  const { port, close } = await listenApp();
+  try {
+    const r = await reqHttp(port, 'POST', '/api/nl-query', { text: 'big videos I have not opened in a year' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.ok, true);
+    assert.equal(r.body.source, 'rules');
+    assert.ok(r.body.q.includes('size>1gb') && r.body.q.includes('used>1y'), r.body.q);
+    assert.ok(Array.isArray(r.body.matched) && r.body.matched.length >= 3);
+    // The whole point of §9.6: translation is shown, execution is a separate,
+    // human-initiated step through POST /api/query. No results ride back here.
+    assert.ok(!('hits' in r.body), 'the translation endpoint returns no hits');
+    assert.ok(!('total' in r.body), 'and no result count');
+
+    const bad = await reqHttp(port, 'POST', '/api/nl-query', {});
+    assert.equal(bad.status, 400);
+  } finally {
+    await close();
+  }
+});
+
+test('with the local model OFF, zero network runs — proven with a recorder, not a claim', async () => {
+  // A recorder standing where Ollama would be: if the route so much as
+  // connects while disabled, this test sees it.
+  let hits = 0;
+  const recorder = http.createServer((_req, res) => { hits++; res.end('{}'); });
+  await new Promise<void>((r) => recorder.listen(0, '127.0.0.1', r));
+  const recorderPort = (recorder.address() as { port: number }).port;
+
+  const { port, close } = await listenApp();
+  try {
+    await updateSettings({ nlOllama: { enabled: false, endpoint: `http://127.0.0.1:${recorderPort}`, model: 'llama3.2' } });
+    const r = await reqHttp(port, 'POST', '/api/nl-query', { text: 'qwerty asdf zxcv' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.ok, false, 'nothing translatable and no model = an honest refusal');
+    assert.ok(String(r.body.reason).length > 10, 'with a reason');
+    assert.equal(hits, 0, 'the disabled model was never contacted — not once');
+  } finally {
+    await updateSettings({ nlOllama: { enabled: false, endpoint: 'http://127.0.0.1:11434', model: '' } });
+    await close();
+    await new Promise<void>((r) => recorder.close(() => r()));
+  }
+});
+
+test('with the model ON, its output is only trusted after the real grammar accepts it', async () => {
+  let asked = 0;
+  let answer = 'size>1gb ext:mp4,mov';
+  const fake = http.createServer((req, res) => {
+    asked++;
+    let buf = '';
+    req.on('data', (c) => { buf += c; });
+    req.on('end', () => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ response: answer }));
+    });
+  });
+  await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
+  const fakePort = (fake.address() as { port: number }).port;
+
+  const { port, close } = await listenApp();
+  try {
+    await updateSettings({ nlOllama: { enabled: true, endpoint: `http://127.0.0.1:${fakePort}`, model: 'llama3.2' } });
+
+    const good = await reqHttp(port, 'POST', '/api/nl-query', { text: 'qwerty asdf zxcv' });
+    assert.equal(good.body.ok, true, JSON.stringify(good.body));
+    assert.equal(good.body.source, 'ollama');
+    assert.equal(good.body.q, 'size>1gb ext:mp4,mov');
+    assert.ok(asked >= 1, 'the enabled model was consulted');
+    assert.ok(!('hits' in good.body), 'still never executes');
+
+    // A model that answers garbage must be refused — its words never become a
+    // query the user is invited to run. (Note: bare words like "DROP TABLE"
+    // are VALID grammar — basename substrings — and injection is already
+    // impossible at the SQL layer; what must be refused is output the real
+    // parser rejects, like an unknown field or broken grouping.)
+    answer = 'wibble:nonsense (((';
+    const bad = await reqHttp(port, 'POST', '/api/nl-query', { text: 'more gibberish here' });
+    assert.equal(bad.body.ok, false);
+    assert.match(String(bad.body.reason), /could not|not a valid|understand/i);
+  } finally {
+    await updateSettings({ nlOllama: { enabled: false, endpoint: 'http://127.0.0.1:11434', model: '' } });
+    await close();
+    await new Promise<void>((r) => fake.close(() => r()));
+  }
+});
+
+test('nlOllama settings normalize hard: off by default, loopback default endpoint', async () => {
+  const fresh = await getSettings();
+  assert.equal(fresh.nlOllama.enabled, false, 'off is the only shippable default');
+  assert.equal(fresh.nlOllama.endpoint, 'http://127.0.0.1:11434');
+  const junk = await updateSettings({ nlOllama: { enabled: 'yes', endpoint: 'not a url', model: 42 } });
+  assert.equal(junk.nlOllama.enabled, false, 'only boolean true enables');
+  assert.equal(junk.nlOllama.endpoint, 'http://127.0.0.1:11434', 'a broken endpoint falls back to loopback');
+  assert.equal(junk.nlOllama.model, '', 'a non-string model is dropped');
+  await updateSettings({ nlOllama: { enabled: false, endpoint: 'http://127.0.0.1:11434', model: '' } });
+});
+
+test('the NL box shows the translation before anything runs — structurally', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  assert.ok(html.includes('id="nlInput"'), 'the plain-words input exists');
+  assert.ok(html.includes('id="nlResult"'), 'the translated query is shown in an editable field');
+  assert.ok(html.includes('id="nlRun"'), 'running is its own, separate act');
+  const start = html.indexOf('async function nlTranslate');
+  assert.notEqual(start, -1, 'nlTranslate exists');
+  const translate = html.slice(start, html.indexOf('function nlRunTranslated'));
+  assert.ok(!translate.includes("api('/api/query'"), 'translation NEVER executes the query');
+  assert.match(translate, /nlResult/, 'it fills the visible, editable field instead');
+  const run = html.slice(html.indexOf('function nlRunTranslated'), html.indexOf('function nlRunTranslated') + 900);
+  assert.match(run, /\$\('nlResult'\)\.value/, 'what runs is what the field holds — edits included');
+});
