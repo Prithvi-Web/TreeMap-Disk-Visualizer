@@ -1246,6 +1246,19 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
   --lg-blur: 26px;
   border: 1px solid var(--hairline-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); }
 #nlPop[hidden] { display: none; }
+/* ── v4 §9.1: the command palette ── */
+#cmdkModal { align-items: flex-start; }
+#cmdkModal .cmdk-panel { margin-top: 12vh; padding: 10px; }
+#cmdkInput { width: 100%; font-size: 15px; padding: 11px 12px; }
+#cmdkList { max-height: 46vh; overflow: auto; margin-top: 8px; }
+#cmdkList .cmdk-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 8px 10px; border: 0; background: transparent; border-radius: var(--r-sm);
+  color: var(--text-1); font-size: 13.5px; cursor: pointer; }
+#cmdkList .cmdk-row .hint { margin-left: auto; color: var(--text-3); font-size: 11px;
+  max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#cmdkList .cmdk-row[aria-selected="true"] { background: var(--accent); color: #fff; }
+#cmdkList .cmdk-row[aria-selected="true"] .hint { color: rgba(255,255,255,0.75); }
+.cmdk-foot { font-size: 11px; margin: 8px 4px 2px; }
 #rcPopover .rc-pop-head { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; font-size: 13px; }
 #rcPopover .rc-pop-head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #rcPopover .rc-why { margin: 0; background: transparent; border: 0; padding: 0; }
@@ -1869,7 +1882,8 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 
   <!-- A4: global search. Lives at the top of the sidebar, not in a view,
        because it searches everything TreeMap has indexed rather than
-       whatever happens to be on screen. "/" or ⌘K focuses it from anywhere;
+       whatever happens to be on screen. "/" focuses it from anywhere (⌘K is
+       the command palette, which carries a search row);
        on the collapsed rail those shortcuts (or the icon) open the sidebar
        first, so the input genuinely exists to be focused. -->
   <div class="gsearch" id="gsearchWrap">
@@ -1881,7 +1895,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
            aria-label="Search all indexed files" aria-expanded="false"
            aria-controls="gsearchResults" role="combobox" aria-autocomplete="list"
            autocomplete="off" spellcheck="false">
-    <button class="gsearch-rail-btn" id="gsearchRailBtn" aria-label="Search all indexed files" title="Search (⌘K)" tabindex="-1">
+    <button class="gsearch-rail-btn" id="gsearchRailBtn" aria-label="Search all indexed files" title="Search (/)" tabindex="-1">
       <span data-icon="search" data-size="15"></span>
     </button>
     <div class="gsearch-panel" id="gsearchResults" role="listbox" aria-label="Search results" hidden></div>
@@ -2822,6 +2836,19 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   </div>
 </div>
 
+<!-- ═══════════ Command palette (v4 §9.1) ═══════════
+     ⌘K / Ctrl+K. One box over everything: views, actions, saved views and
+     recent scan roots, fuzzy-matched. Focus returns to where it was. -->
+<div class="modal-backdrop" id="cmdkModal" role="dialog" aria-modal="true" aria-label="Command palette">
+  <div class="modal cmdk-panel" style="width:560px;max-width:92vw;">
+    <input type="text" id="cmdkInput" role="combobox" aria-expanded="true" aria-controls="cmdkList"
+           aria-autocomplete="list" aria-label="Search views, actions, saved views and recent folders"
+           placeholder="Jump to a view, run an action, rescan a folder…" autocomplete="off" spellcheck="false">
+    <div id="cmdkList" role="listbox" aria-label="Palette results"></div>
+    <div class="muted cmdk-foot">↑↓ choose · ↵ run · esc close</div>
+  </div>
+</div>
+
 <!-- ═══════════ Settings modal ═══════════ -->
 <div class="modal-backdrop" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
   <div class="modal" style="width:740px;">
@@ -2996,7 +3023,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
       </div>
       <div class="kbd-sec">Anywhere</div>
       <div class="kbd-grid">
-        <div><kbd>⌘</kbd><kbd>K</kbd></div><div>Search everything indexed</div>
+        <div><kbd>⌘</kbd><kbd>K</kbd></div><div>Command palette — views, actions, saved views, recent folders</div>
         <div><kbd>⌘</kbd><kbd>B</kbd></div><div>Collapse or expand the navigation</div>
         <div><kbd>/</kbd></div><div>Search everything indexed (in Treemap and Grid, <kbd>/</kbd> focuses that view's own filter instead)</div>
         <div><kbd>⌘</kbd><kbd>R</kbd></div><div>Rescan the current folder</div>
@@ -3379,7 +3406,7 @@ function scheduleSideNavReflow() {
   sideNavReflowTimer = setTimeout(() => window.dispatchEvent(new Event('resize')), 480);
 }
 // The rail's search icon is the search box in collapsed form: it opens the
-// sidebar and puts the caret in the input, exactly like ⌘K.
+// sidebar and puts the caret in the input, exactly like "/".
 $('gsearchRailBtn').addEventListener('click', () => summonGlobalSearch());
 // On narrow windows the expanded panel floats over a scrim; clicking the
 // scrim puts the panel away, the way every sheet in the app already closes.
@@ -10656,7 +10683,7 @@ $('tmSearch').addEventListener('keydown', (e) => {
     tmApplyQuery(e.target.value);
   }
 });
-// Focus can leave without a click — ⌘K jumps to global search — and an
+// Focus can leave without a click — "/" jumps to global search — and an
 // orphaned panel then floats over the toolbar until the next click anywhere.
 $('tmSearch').addEventListener('blur', () => { setTimeout(tmCloseHints, 120); });
 document.addEventListener('click', (e) => {
@@ -15689,6 +15716,169 @@ document.addEventListener('mousedown', (e) => {
   const pop = $('nlPop');
   if (!pop.hidden && !pop.contains(e.target) && e.target !== $('tmNlBtn') && !$('tmNlBtn').contains(e.target)) nlClose();
 });
+
+/* ───────────────────── v4 §9.1 — the command palette ─────────────────────
+ *
+ * Fifteen views heading toward twenty, deep settings, and until now no
+ * palette: discoverability was a real cost, and this is the cheapest fix in
+ * the phase. One box, fuzzy-matched, over four sources — the VIEW REGISTRY
+ * itself (so every view is reachable by construction, not by a list that can
+ * drift), a small action registry, the saved views, and recent scan roots.
+ * Focus returns to wherever it was, which §9.1 asks for by name.
+ */
+
+/**
+ * The fuzzy scorer. Pure and deterministic — tests/commandPalette.test.ts
+ * extracts this function and runs it in Node, so it must not read anything
+ * outside its arguments. Subsequence match; consecutive letters and
+ * word-start hits score up, gaps score down; null means "not a match" and is
+ * never conflated with a low score.
+ */
+function cmdkScore(query, label) {
+  const q = String(query).toLowerCase();
+  const l = String(label).toLowerCase();
+  if (!q) return 0; // an empty box lists everything, in registry order
+  if (q.length > l.length) return null;
+  let score = 0;
+  let li = 0;
+  let prev = -1;
+  for (let qi = 0; qi < q.length; qi++) {
+    const found = l.indexOf(q[qi], li);
+    if (found === -1) return null;
+    score += 1;
+    if (prev !== -1 && found === prev + 1) score += 3;
+    if (found === 0 || ' -_/.:('.includes(l[found - 1])) score += 6;
+    const gap = prev === -1 ? Math.min(3, found) : found - prev - 1;
+    score -= Math.min(6, gap);
+    prev = found;
+    li = found + 1;
+  }
+  return score;
+}
+
+/** Actions by name. `when` gates entries that would be dead where you are. */
+const CMDK_ACTIONS = [
+  { label: 'Scan a folder…', hint: 'puts the caret in the path box', run: () => { $('pathInput').focus(); $('pathInput').select(); } },
+  { label: 'Rescan this folder', hint: 'fresh numbers for the same tree', when: () => !!state.root && !state.scanning, run: () => rescan() },
+  { label: 'Empty the cleanup cart', hint: 'unstages everything, deletes nothing', when: () => state.cart.size > 0, run: () => cartClear() },
+  { label: 'Export the map as PNG', hint: 'the current treemap, as pixels', when: () => state.view === 'treemap' && drawnCells().length > 0, run: () => exportTreemapPNG() },
+  { label: 'Search all indexed files', hint: 'the sidebar search box', run: () => summonGlobalSearch() },
+  { label: 'Ask in plain words', hint: 'translated to a query you approve', run: () => { switchView('treemap'); requestAnimationFrame(() => nlOpen()); } },
+  { label: 'Open Settings', hint: 'schedules, weights, notes and more', run: () => $('settingsBtn').click() },
+  { label: 'Keyboard shortcuts', hint: 'the ? panel', run: () => toggleShortcuts() },
+  { label: 'Switch light / dark', hint: 'theme', run: () => $('themeToggle').click() },
+];
+
+/** Recent scan roots, fetched once per palette opening; empty is fine. */
+let cmdkRoots = [];
+async function cmdkLoadRoots() {
+  try {
+    const { roots } = await api('/api/snapshots');
+    cmdkRoots = (roots || []).map((r) => (r && r.path) ? r.path : String(r)).slice(0, 8);
+  } catch { cmdkRoots = []; }
+}
+
+function cmdkItems() {
+  const items = [];
+  for (const v of VIEWS) {
+    // A capability-blocked view still appears — with the capability's own
+    // reason as its hint. Landing on it shows the full notice; hiding it
+    // would make the palette lie about what this app has.
+    const blocked = viewBlockedReason(v);
+    items.push({ label: v.label, hint: blocked || 'view', run: () => switchView(v.id) });
+  }
+  for (const a of CMDK_ACTIONS) {
+    if (a.when && !a.when()) continue;
+    items.push({ label: a.label, hint: a.hint, run: a.run });
+  }
+  for (const sv of (state.savedViews || [])) {
+    items.push({ label: `Saved view: ${sv.name}`, hint: sv.q, run: () => {
+      switchView('treemap');
+      $('tmSearch').value = sv.q;
+      $('tmSearch').dispatchEvent(new Event('input', { bubbles: true }));
+    } });
+  }
+  for (const rootPath of cmdkRoots) {
+    if (state.root && rootPath === state.root.path) continue; // already open
+    items.push({ label: `Scan again: ${rootPath}`, hint: 'recent folder', run: () => startScan(rootPath) });
+  }
+  return items;
+}
+
+let cmdkPrevFocus = null;
+let cmdkSel = 0;
+let cmdkShown = [];
+
+function cmdkRender() {
+  const q = $('cmdkInput').value.trim();
+  const scored = [];
+  for (const item of cmdkItems()) {
+    const s = cmdkScore(q, item.label);
+    if (s === null) continue;
+    scored.push({ item, s });
+  }
+  // Stable order: score first, then registry order (Array.prototype.sort is
+  // stable), so equal scores never jitter between keystrokes.
+  scored.sort((a, b) => b.s - a.s);
+  cmdkShown = scored.slice(0, 12).map((x) => x.item);
+  // Free text is never a dead end: whatever was typed can always become a
+  // file search, which is where the old ⌘K muscle memory still lands.
+  if (q) {
+    cmdkShown.push({ label: `Search files for “${q}”`, hint: 'global search', run: () => {
+      summonGlobalSearch();
+      const g = $('gsearch');
+      g.value = q;
+      g.dispatchEvent(new Event('input', { bubbles: true }));
+    } });
+  }
+  cmdkSel = Math.min(cmdkSel, Math.max(0, cmdkShown.length - 1));
+  $('cmdkList').innerHTML = cmdkShown.map((item, i) =>
+    `<button class="cmdk-row" role="option" id="cmdk-opt-${i}" aria-selected="${i === cmdkSel}" data-cmdk="${i}">` +
+    `<span>${escapeHtml(item.label)}</span><span class="hint">${escapeHtml(item.hint || '')}</span></button>`).join('');
+  $('cmdkInput').setAttribute('aria-activedescendant', cmdkShown.length ? `cmdk-opt-${cmdkSel}` : '');
+  $('cmdkList').querySelectorAll('[data-cmdk]').forEach((b) => b.addEventListener('click', () => cmdkRun(Number(b.dataset.cmdk))));
+}
+
+function cmdkRun(i) {
+  const item = cmdkShown[i];
+  if (!item) return;
+  cmdkClose({ restoreFocus: false }); // the action decides where focus goes next
+  item.run();
+}
+
+function cmdkOpen() {
+  cmdkPrevFocus = document.activeElement;
+  cmdkSel = 0;
+  $('cmdkInput').value = '';
+  $('cmdkModal').classList.add('open');
+  cmdkRender();
+  $('cmdkInput').focus();
+  // Saved views and roots load in the background and refresh the open list;
+  // the palette never waits on the network to appear.
+  void loadSavedViews().then(() => { if ($('cmdkModal').classList.contains('open')) cmdkRender(); });
+  void cmdkLoadRoots().then(() => { if ($('cmdkModal').classList.contains('open')) cmdkRender(); });
+}
+
+function cmdkClose(opts = {}) {
+  if (!$('cmdkModal').classList.contains('open')) return;
+  $('cmdkModal').classList.remove('open');
+  // §9.1: "focus returns to where it was."
+  if (opts.restoreFocus !== false && cmdkPrevFocus && cmdkPrevFocus.focus) cmdkPrevFocus.focus();
+  cmdkPrevFocus = null;
+}
+
+$('cmdkInput').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown') { e.preventDefault(); cmdkSel = (cmdkSel + 1) % Math.max(1, cmdkShown.length); cmdkRender(); cmdkScrollSel(); return; }
+  if (e.key === 'ArrowUp') { e.preventDefault(); cmdkSel = (cmdkSel - 1 + Math.max(1, cmdkShown.length)) % Math.max(1, cmdkShown.length); cmdkRender(); cmdkScrollSel(); return; }
+  if (e.key === 'Enter') { e.preventDefault(); cmdkRun(cmdkSel); return; }
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cmdkClose(); return; }
+});
+$('cmdkInput').addEventListener('input', () => { cmdkSel = 0; cmdkRender(); });
+$('cmdkModal').addEventListener('mousedown', (e) => { if (e.target === $('cmdkModal')) cmdkClose(); });
+function cmdkScrollSel() {
+  const el = document.getElementById(`cmdk-opt-${cmdkSel}`);
+  if (el) el.scrollIntoView({ block: 'nearest' });
+}
 $('budgetValue').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commitBudget(); } });
 
 /* ───────────────────────────── Cleanup cart (Feature 2) ───────────────────────────── */
@@ -20573,20 +20763,19 @@ document.addEventListener('keydown', (e) => {
     if (!typing && state.grid.selection.size) { e.preventDefault(); confirmTrash([...state.grid.selection]); }
     return;
   }
-  /* A4 — global search.
-     Cmd/Ctrl+K opens it from anywhere, the near-universal convention.
+  /* v4 §9.1 — ⌘K/Ctrl+K is the COMMAND PALETTE now; the spec assigns the key
+     explicitly. Global search keeps "/" (below) and its sidebar box, and the
+     palette carries a "Search files for …" row on any free text, so the old
+     ⌘K muscle memory still lands one keystroke from where it used to.
 
-     "/" is more delicate: §A4 asks for it "from anywhere", but Grid and Treemap
-     have bound it to their own highlight boxes since they shipped, and those
-     are documented in the shortcuts panel. Those boxes *filter what is on
-     screen*; this one *finds things anywhere on disk* — different tools, and
-     taking the key away would regress muscle memory for the two views where
-     people filter most. So "/" opens global search on the eight views that
-     never claimed it, and the two that did keep theirs. Recorded as a
-     deliberate deviation in docs/PLATFORM_NOTES.md. */
+     "/" stays as before: §A4 asks for search "from anywhere", but Grid and
+     Treemap have bound it to their own highlight boxes since they shipped —
+     those filter what is on screen, global search finds things anywhere on
+     disk. Recorded in docs/PLATFORM_NOTES.md. */
   if (mod && e.key.toLowerCase() === 'k') {
     e.preventDefault();
-    summonGlobalSearch();
+    if ($('cmdkModal').classList.contains('open')) cmdkClose();
+    else cmdkOpen();
     return;
   }
   if (mod && e.key.toLowerCase() === 'b') {
