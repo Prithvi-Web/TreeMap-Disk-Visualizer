@@ -167,6 +167,17 @@ const schemas: Json = {
     },
     ['platform', 'hostname', 'totalDisk', 'freeDisk', 'homeDir', 'commonDirs'],
   ),
+  VolumeInfo: obj(
+    {
+      name: str('The volume name as mounted'),
+      path: str('Mount point, e.g. /Volumes/Backup'),
+      freeBytes: nullable(int('null when the stats could not be read — see reason')),
+      totalBytes: nullable(int()),
+      reason: str('Present only when freeBytes/totalBytes are null: why the stats could not be read'),
+    },
+    ['name', 'path', 'freeBytes', 'totalBytes'],
+    'An attached external drive; an unreadable one is still listed, with nulls and a reason, never hidden',
+  ),
   LargeFile: obj(
     { name: str(), path: str(), size: int(), extension: str(), modifiedAt: int() },
     ['name', 'path', 'size', 'modifiedAt'],
@@ -185,6 +196,35 @@ const schemas: Json = {
       files: arr(obj({ name: str(), path: str(), modifiedAt: int() }, ['name', 'path', 'modifiedAt']), 'Newest first'),
     },
     ['hash', 'size', 'count', 'reclaimable', 'files'],
+  ),
+  DupeDetailFile: obj(
+    {
+      name: str('Basename'),
+      path: str('Absolute path'),
+      size: int('Bytes, from the scanned tree'),
+      modifiedAt: int('Unix epoch ms, from the scanned tree'),
+      newest: bool('Newest of this group (ties can mark more than one)'),
+      largest: bool('Largest of this group (ties can mark more than one)'),
+      isImage: bool(),
+      width: nullable(int('Pixels; null with dimensionsReason when unreadable')),
+      height: nullable(int()),
+      dimensionsReason: nullable(str("Why width/height are null, e.g. 'not an image', 'image decoding unavailable'")),
+      captureDate: nullable(str('EXIF DateTimeOriginal as YYYY-MM-DDTHH:MM:SS (local wall-clock, no timezone)')),
+      captureDateReason: nullable(str("Why captureDate is null, e.g. 'no capture date recorded'")),
+      visualDiff: nullable(
+        obj(
+          {
+            hammingDistance: int('Differing dHash bits vs the reference file, 0–64'),
+            differingBlocks: arr(int(), 'Differing bit indices 0–63; bit i = row ⌊i/8⌋, col i%8 of the 8×8 grid'),
+            summary: str("The distance in plain terms, e.g. 'differs in 4 of 64 blocks — likely a re-encode of the same image'"),
+          },
+          ['hammingDistance', 'differingBlocks', 'summary'],
+        ),
+      ),
+      visualDiffReason: nullable(str('Why visualDiff is null (the reference file itself, a non-image, or an undecodable one)')),
+    },
+    ['name', 'path', 'size', 'modifiedAt', 'newest', 'largest', 'isImage', 'width', 'height', 'dimensionsReason', 'captureDate', 'captureDateReason', 'visualDiff', 'visualDiffReason'],
+    'One file of a duplicate group in the side-by-side viewer; every absent fact is null with its reason stated',
   ),
   EmptyFoldersResult: obj(
     {
@@ -1023,6 +1063,37 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   },
   {
     method: 'get',
+    path: '/api/duplicates/detail',
+    summary:
+      'Side-by-side facts for one duplicate pair/group: scanned-tree metadata, image dimensions and EXIF capture date where readable, the dHash diff against the recommended keep, and which file to keep with the rule that picked it stated',
+    tag: 'insights',
+    destructive: false,
+    parameters: [
+      scanIdQuery,
+      queryParam('paths', '2–8 file paths, each individually URL-encoded, joined by commas; every path must be a file in this scan', str(), true),
+    ],
+    responses: {
+      '200': jsonResponse(
+        'The group; every absent fact is null with its reason',
+        obj(
+          {
+            scanId: str(),
+            files: arr(ref('DupeDetailFile'), 'In request order'),
+            recommendedKeep: obj(
+              { index: int('Index into files'), reason: str('Which rule fired, in plain terms') },
+              ['index', 'reason'],
+            ),
+            diffReference: nullable(int('Index of the file the dHash diffs are measured against; null when nothing could be fingerprinted')),
+          },
+          ['scanId', 'files', 'recommendedKeep', 'diffReference'],
+        ),
+      ),
+      '400': errorResponse('Fewer than 2 or more than 8 paths, or a folder among them'),
+      '404': errorResponse('Unknown scanId, or a path not in this scan'),
+    },
+  },
+  {
+    method: 'get',
     path: '/api/apps',
     summary: 'Per-application storage attribution',
     tag: 'insights',
@@ -1610,6 +1681,15 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   },
 
   /* ------------ offload ------------ */
+  {
+    method: 'get',
+    path: '/api/volumes',
+    summary:
+      'Attached external drives with free/total bytes — destinations for the offload dock, sorted by name; a drive whose stats cannot be read is listed with nulls and a reason, never hidden',
+    tag: 'offload',
+    destructive: false,
+    responses: { '200': jsonResponse('Volumes, sorted by name', obj({ volumes: arr(ref('VolumeInfo')) }, ['volumes'])) },
+  },
   {
     method: 'post',
     path: '/api/offload',

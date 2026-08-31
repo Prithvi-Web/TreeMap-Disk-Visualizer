@@ -29,8 +29,9 @@ import { getScan } from './diskScanner';
  * polled exactly like the exact-duplicate finder.
  */
 
-/** Image types we fingerprint. */
-const IMAGE_EXT = new Set([
+/** Image types we fingerprint. Exported so the duplicate viewer (§8.2) asks
+ * "is this an image?" with the SAME answer this pass would give. */
+export const IMAGE_EXT = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif', 'heic', 'heif', 'avif',
 ]);
 /** Skip favicon-sized junk so tiny sprites don't drown out real photos. */
@@ -38,8 +39,10 @@ const MIN_IMAGE_BYTES = 4 * 1024;
 /** Bound the O(n²) clustering; largest images are kept when over the cap. */
 const MAX_IMAGES = 8000;
 
-/** dHash stored as two 32-bit halves so Hamming distance avoids slow BigInt. */
-type DHash = [hi: number, lo: number];
+/** dHash stored as two 32-bit halves so Hamming distance avoids slow BigInt.
+ * Bit i of the 64 (0–63) lives in `lo` for i<32, else in `hi` at i−32, and
+ * corresponds to row ⌊i/8⌋, col i%8 of the 8×8 comparison grid. */
+export type DHash = [hi: number, lo: number];
 
 const jobs = new Map<string, NearDupeJob>();
 
@@ -239,7 +242,7 @@ function popcount32(n: number): number {
   return (n * 0x01010101) >>> 24;
 }
 
-function hamming(a: DHash, b: DHash): number {
+export function hamming(a: DHash, b: DHash): number {
   return popcount32((a[0] ^ b[0]) >>> 0) + popcount32((a[1] ^ b[1]) >>> 0);
 }
 
@@ -250,7 +253,7 @@ function hamming(a: DHash, b: DHash): number {
 type SharpNamespace = typeof import('sharp');
 type SharpFactory = SharpNamespace extends { default: infer F } ? F : SharpNamespace;
 let sharpCache: SharpFactory | null | undefined;
-function loadSharp(): SharpFactory | null {
+export function loadSharp(): SharpFactory | null {
   if (sharpCache !== undefined) return sharpCache;
   try {
     sharpCache = require('sharp') as unknown as SharpFactory;
@@ -274,7 +277,7 @@ async function hasFfmpeg(): Promise<boolean> {
 }
 
 let decoderCache: NearDupeJob['decoder'] | undefined;
-async function detectDecoder(): Promise<NearDupeJob['decoder']> {
+export async function detectDecoder(): Promise<NearDupeJob['decoder']> {
   if (decoderCache !== undefined) return decoderCache;
   if (loadSharp()) decoderCache = 'sharp';
   else if (await hasFfmpeg()) decoderCache = 'ffmpeg';
@@ -301,8 +304,10 @@ export async function makeThumbnail(filePath: string, size = 256): Promise<Buffe
   }
 }
 
-/** Decode one image to a dHash, or null if it can't be read/decoded. */
-async function hashImage(filePath: string, decoder: NearDupeJob['decoder']): Promise<DHash | null> {
+/** Decode one image to a dHash, or null if it can't be read/decoded.
+ * Exported for the duplicate viewer (§8.2): one fingerprint implementation,
+ * never a second one drifting beside it. */
+export async function hashImage(filePath: string, decoder: NearDupeJob['decoder']): Promise<DHash | null> {
   try {
     let gray: Buffer;
     if (decoder === 'sharp') {

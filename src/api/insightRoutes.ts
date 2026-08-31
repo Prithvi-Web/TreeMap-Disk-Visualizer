@@ -8,6 +8,7 @@ import {
 } from '../services/diskScanner';
 import { getDuplicateJob } from '../services/duplicateFinder';
 import { getNearDupeJob } from '../services/perceptualDupes';
+import { buildDuplicateDetail } from '../services/dupeViewer';
 import {
   listSnapshots,
   listSnapshotRoots,
@@ -126,6 +127,52 @@ insightRouter.get('/near-duplicates', (req: Request, res: Response) => {
     truncated: job.truncated ?? false,
     tookMs: (job.finishedAt ?? job.startedAt) - job.startedAt,
   });
+});
+
+/**
+ * GET /api/duplicates/detail?scanId=&paths=<comma-separated, URL-encoded>
+ * The side-by-side facts for one duplicate pair/group (§8.2): tree metadata,
+ * image dimensions and EXIF capture date where readable, the dHash diff
+ * against the recommended keep, and which file to keep with the rule stated.
+ *
+ * `paths` carries 2–8 paths, each individually URL-encoded and joined by
+ * commas. The split happens on the RAW query value — before any decoding —
+ * so a comma inside a filename (%2C) never splits a path in two; the query
+ * parser's own decode would erase that distinction. Every path must resolve
+ * to a FILE in this scan's tree: not-in-scan is a 404, exactly like an
+ * expired scanId, because the answer comes from the scanned tree and a path
+ * outside it has no honest answer here.
+ */
+insightRouter.get('/duplicates/detail', async (req: Request, res: Response) => {
+  const scan = requireCompleteScan(req, req.query.scanId);
+  if (Array.isArray(req.query.paths)) {
+    throw new AppError(400, 'PATHS_INVALID', 'Pass "paths" once, as a comma-separated list');
+  }
+  const rawList = /[?&]paths=([^&]*)/.exec(req.url)?.[1] ?? '';
+  let paths: string[];
+  try {
+    paths = rawList.split(',').filter((p) => p.length > 0).map((p) => sanitizePath(decodeURIComponent(p)));
+  } catch (err) {
+    if (err instanceof URIError) {
+      throw new AppError(400, 'PATHS_INVALID', 'Every path in "paths" must be URL-encoded');
+    }
+    throw err; // PathRejectedError → the error handler's 400
+  }
+  if (paths.length < 2 || paths.length > 8) {
+    throw new AppError(400, 'PATHS_RANGE', 'The duplicate viewer compares between 2 and 8 files');
+  }
+  const store = storeOf(scan);
+  const ids = paths.map((p) => {
+    const id = store.findByPath(p);
+    if (id < 0) {
+      throw new AppError(404, 'PATH_NOT_IN_SCAN', `Not in this scan: ${p}`);
+    }
+    if (store.nodeType(id) !== 'file') {
+      throw new AppError(400, 'NOT_A_FILE', `The duplicate viewer compares files, and this is a folder: ${p}`);
+    }
+    return id;
+  });
+  res.json(await buildDuplicateDetail(scan.scanId, store, ids));
 });
 
 /**
