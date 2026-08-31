@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "pack": "macos",
-  "updated": "2026-07-28",
+  "updated": "2026-08-30",
   "rules": [
     {
       "id": "browser-caches",
@@ -150,6 +150,30 @@
       "ecosystem": "homebrew",
       "paths": ["{home}/Library/Caches/Homebrew"],
       "clearCommand": "brew cleanup -s"
+    },
+    {
+      "id": "media-photos-derivatives",
+      "kind": "location",
+      "title": "Photos thumbnails & previews",
+      "description": "Regenerated thumbnails and preview renders inside the system Photos library — never your photos. Photos rebuilds them on next open; expect a slow first launch while it does. Quit Photos before touching anything inside its library.",
+      "category": "regenerable",
+      "confidence": "high",
+      "action": "advice",
+      "adviceCommand": "Quit Photos first — it rebuilds these automatically the next time it opens",
+      "paths": ["{home}/Pictures/Photos Library.photoslibrary/resources/derivatives"]
+    },
+    {
+      "id": "media-fcp-render-files",
+      "kind": "project-directory",
+      "title": "Final Cut / iMovie render files",
+      "description": "Rendered and transcoded media inside a Final Cut Pro or iMovie library event. Re-created on demand — playback stutters until each clip re-renders. Original media is never touched.",
+      "category": "regenerable",
+      "confidence": "high",
+      "action": "advice",
+      "adviceCommand": "Final Cut Pro ▸ File ▸ Delete Generated Library Files",
+      "names": ["render files", "transcoded media"],
+      "requiresSibling": ["original media", "currentversion.fcpevent"],
+      "restoreCommand": "Re-rendered automatically when the project is next played or exported"
     },
     {
       "id": "pkgcache-cocoapods",

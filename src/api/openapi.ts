@@ -1352,6 +1352,35 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   },
   {
     method: 'get',
+    path: '/api/media',
+    summary:
+      'Media libraries (Photos, Final Cut Pro, iMovie, Lightroom, Capture One) split into originals, derivatives and database — only derivatives are ever removable, and a library held open by its app offers nothing',
+    tag: 'insights',
+    destructive: false,
+    parameters: [scanIdQuery],
+    responses: {
+      '200': jsonResponse(
+        'Libraries, largest first',
+        obj(
+          {
+            scanId: str(),
+            libraries: arr(
+              opaque(
+                'app, appName, name, path, totalBytes, recognised (false ⇒ size-only with a reason), components[] (kind: originals|derivatives|database, label, path, bytes, removable? on derivatives only, regenerationCost prose), originalsBytes, derivativesBytes, databaseBytes, originalsOutside? (Lightroom), inUse (checked/complete/held?/processNames/reason)',
+              ),
+            ),
+            totalBytes: int(),
+            derivativesBytes: int('Regenerable derivatives across recognised libraries — all that is ever offered'),
+            libraryCount: int(),
+            recognisedCount: int('Libraries whose layout was recognised; the rest report total size only'),
+          },
+          ['scanId', 'libraries', 'totalBytes', 'derivativesBytes', 'libraryCount', 'recognisedCount'],
+        ),
+      ),
+    },
+  },
+  {
+    method: 'get',
     path: '/api/packages/orphans',
     summary: 'Package-manager artifacts classified as orphaned (owning project gone), active, or shared cache',
     tag: 'cleanup',
