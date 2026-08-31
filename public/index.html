@@ -621,7 +621,8 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
    below it instead of being squeezed into an unreadable sliver. */
 .donut-row { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
 #donutCanvas { flex: none; }
-.donut-legend { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; flex: 1; min-width: 190px; }
+.donut-legend { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; flex: 1; min-width: 190px;
+  container-type: inline-size; }
 .donut-legend .li { display: flex; align-items: center; gap: 9px; padding: 5px 8px; border-radius: 7px;
   transition: background var(--dur-1) var(--ease); cursor: default; }
 .donut-legend .li.hl { background: var(--surface-2); }
@@ -646,30 +647,50 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
   background: var(--surface-2); white-space: nowrap; }
 
 /* ── Treemap view ── */
-/* The toolbar is logical GROUPS, not a flat flex soup: nav | view | find |
-   appearance | modes | actions, hairline separators between the right-hand
-   clusters. A group never tears apart — when the window narrows, whole
-   groups wrap together onto a right-aligned second row, so no control ever
-   orphans alone on a ragged line. */
-.tm-toolbar { display: flex; align-items: center; justify-content: flex-end;
-  gap: 8px 12px; margin-bottom: 12px; min-height: 30px; flex-wrap: wrap; }
+/* The toolbar is TWO deliberate rows, the way a macOS app draws one — never
+   one line that wraps wherever it happens to run out of room.
+   Row one is PLACES: the breadcrumb trail on the left, the view switcher
+   held in the true centre by equal flexible flanks, search on the right.
+   Row two is SETTINGS: colour mode and depth anchored left, mode pills and
+   actions packed right. Each row owns its alignment, so no control ever
+   hangs alone on an accidental third line. The toolbar measures ITSELF
+   (container queries), so the same rules hold in any window and beside any
+   sidebar state — not just fullscreen. */
+.tm-toolbar { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;
+  container-type: inline-size; }
+.tb-row { min-height: 30px; }
+.tb-row-nav { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 12px; align-items: center; }
+.tb-row-nav .tb-nav { justify-self: start; }
+.tb-row-nav .tb-view { justify-self: center; }
+.tb-row-nav .tb-find { justify-self: end; }
+.tb-row-controls { display: flex; align-items: center; justify-content: flex-end;
+  gap: 8px 12px; flex-wrap: wrap; }
 .tb-group { display: flex; align-items: center; gap: 6px; flex: none; min-width: 0; }
-/* basis 0 keeps the spring symmetry below, but the crumbs are navigation,
-   not decoration: without a floor, a full toolbar leaves ~0 free space and
-   both flex-1 items resolve to nothing — the trail simply vanished at
-   1440px. The floor caps at 40% so narrow windows still share the row. */
-.tb-nav { flex: 1 1 0; min-width: min(260px, 40%); justify-content: flex-start; }
-/* The nav group and this shim grow at the same rate, so the hero view
-   switcher reads centered while space allows — but only the shim may
-   collapse to zero, so it donates its room first and the crumbs keep
-   their floor above. */
+.tb-nav { min-width: 0; }
+/* The spring holds the left cluster left and the right clusters right;
+   it alone may collapse to nothing when the row tightens. */
 .tb-spring { flex: 1 1 0; min-width: 0; }
 /* Dividers are drawn BY the group that follows a cluster, never by loose
    1px divs: when groups wrap, a divider can only travel WITH its group,
    so no hairline ever orphans alone at a row boundary. */
-.tb-find + .tb-appearance::before, .tb-appearance + .tb-modes::before,
+.tb-spring + .tb-modes::before,
 .tb-modes + .tb-actions::before { content: ""; width: 1px; height: 16px;
   background: var(--hairline-2); flex: none; margin-right: 6px; }
+/* A narrow toolbar: the centre column would crush the crumbs first and the
+   search second, so the switcher takes its own centred line instead and
+   the settings row leans left with the content above it. */
+@container (max-width: 700px) {
+  .tb-row-nav { grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "nav find" "view view"; row-gap: 8px; }
+  .tb-row-nav .tb-nav { grid-area: nav; }
+  .tb-row-nav .tb-find { grid-area: find; }
+  .tb-row-nav .tb-view { grid-area: view; justify-self: center;
+    max-width: 100%; min-width: 0; }
+  .tb-row-nav .tb-view .seg { max-width: 100%; }
+  .tb-row-nav .tb-view .seg button { padding: 0 9px; }
+  .tb-row-controls { justify-content: flex-start; }
+}
 /* nowrap + overflow clips a deep trail; packing it to the flex END makes
    the clip eat the ROOT crumbs, so the folder actually on screen — the
    one crumb that must stay visible — is the last thing to go. */
@@ -686,7 +707,9 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .tm-toolbar label { font-size: 12px; color: var(--text-2); white-space: nowrap; }
 .tm-toolbar .field { position: relative; }
 .tm-toolbar .field .ic { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
-#tmSearch { width: 200px; padding-left: 32px; }
+/* cqw, not px: inside a tight toolbar the field gives up width smoothly
+   instead of forcing the find group to wrap or crush its neighbours. */
+#tmSearch { width: clamp(140px, 26cqw, 200px); padding-left: 32px; }
 #treemapWrap { position: relative; overflow: hidden; padding: 10px; }
 #treemapZoom { transition: transform var(--dur-2) var(--ease), opacity var(--dur-2) var(--ease); transform-origin: center; }
 #treemapZoom.zooming { transform: scale(1.05); opacity: 0; }
@@ -2159,7 +2182,11 @@ input.fxgoo-range { position: relative; z-index: 1; }
 .fx-dot { width: 8px; height: 8px; border-radius: 3px; flex: none; }
 
 /* ── bklit legend rows: dot · name · mini bar · value · percent ── */
-.fx-legend { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 190px; }
+/* container-type: the legend measures ITSELF, so a narrow card in a wide
+   window collapses exactly like a narrow window — see the @container rules
+   below that shed columns instead of letting values wrap to two lines. */
+.fx-legend { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 190px;
+  container-type: inline-size; }
 .fx-li {
   display: grid;
   grid-template-columns: auto minmax(52px, 1fr) minmax(40px, 64px) auto auto;
@@ -2179,8 +2206,20 @@ input.fxgoo-range { position: relative; z-index: 1; }
 .fx-li-track { height: 3px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
 .fx-li.hl .fx-li-track { background: var(--surface-3); }
 .fx-li-bar { display: block; height: 100%; border-radius: 2px; width: 0; transition: width var(--dur-3) var(--ease); }
-.fx-li-val { color: var(--text-1); font-weight: 500; text-align: right; }
-.fx-li-pct { color: var(--text-3); font-size: 11px; min-width: 40px; text-align: right; }
+.fx-li-val { color: var(--text-1); font-weight: 500; text-align: right; white-space: nowrap; }
+.fx-li-pct { color: var(--text-3); font-size: 11px; min-width: 40px; text-align: right; white-space: nowrap; }
+/* Under pressure a row sheds decoration before it sheds facts: the mini bar
+   goes first, the file count second — name, value and percent hold ONE line
+   at every width. (This was the fullscreen-only bug: "16.6 GB" broke into
+   two lines the moment the card left fullscreen.) */
+@container (max-width: 360px) {
+  .fx-li, .fx-li.fx-li-counted { grid-template-columns: auto minmax(44px, 1fr) auto auto auto; }
+  .fx-li-track { display: none; }
+}
+@container (max-width: 260px) {
+  .fx-li, .fx-li.fx-li-counted { grid-template-columns: auto minmax(44px, 1fr) auto auto; }
+  .fx-li-cnt { display: none; }
+}
 
 /* ── bar list (Largest files / folders) ── */
 .fx-bar-row {
@@ -2515,6 +2554,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
   <!-- ═══════════ Treemap ═══════════ -->
   <section class="view" id="view-treemap" role="tabpanel" aria-label="Treemap" hidden>
     <div class="tm-toolbar">
+      <div class="tb-row tb-row-nav">
       <div class="tb-group tb-nav">
         <button class="btn" id="tmUpBtn" title="Zoom out one level (Escape)" aria-label="Zoom out one level"><span data-icon="arrowUp"></span></button>
         <div class="crumbs" id="tmCrumbs"></div>
@@ -2529,7 +2569,6 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           <button type="button" data-vm="voronoi" aria-selected="false" title="Voronoi treemap — cells whose areas are proportional to bytes, solved by Lloyd's algorithm">Voronoi</button>
         </div>
       </div>
-      <div class="tb-spring" aria-hidden="true"></div>
       <div class="tb-group tb-find">
         <div class="field" id="tmSearchWrap">
           <span data-icon="search"></span>
@@ -2562,6 +2601,8 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           <div id="nlReason" class="muted" role="status" aria-live="polite" style="font-size:11.5px;margin-top:7px;" hidden></div>
         </div>
       </div>
+      </div>
+      <div class="tb-row tb-row-controls">
       <div class="tb-group tb-appearance">
         <div class="seg" id="tmColorSeg" role="tablist" aria-label="Treemap color mode">
           <button type="button" data-mode="size" aria-selected="true" title="Color cells by file size">Size</button>
@@ -2574,6 +2615,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           <option value="4" selected>4</option><option value="5">5</option><option value="6">6</option>
         </select>
       </div>
+      <div class="tb-spring" aria-hidden="true"></div>
       <div class="tb-group tb-modes">
         <button class="pill" id="tmLiveToggle" aria-pressed="false" title="Watch this folder live — changes pulse on the map and a feed shows what's writing right now"><span class="dot"></span>Live</button>
         <button class="pill" id="tmCloudToggle" hidden aria-pressed="false" title="Hide cloud placeholder files — show only bytes that are really on disk">Hide cloud</button>
@@ -2583,6 +2625,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div class="tb-group tb-actions">
         <button class="icon-btn" id="tmRefresh" aria-label="Re-render treemap" title="Re-render"></button>
         <button class="btn" id="tmExportBtn" title="Download the treemap as an image"><span data-icon="download"></span>Export</button>
+      </div>
       </div>
     </div>
     <div class="tm-querybar glass" id="tmQueryBar" hidden>
@@ -2656,24 +2699,29 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
          the toolbar rewrite; this view rides the shared rules instead of
          keeping a private copy of them. -->
     <div class="tm-toolbar">
-      <div class="tb-group tb-nav">
-        <button class="btn" id="cityUpBtn" title="Zoom out one level (Escape)" aria-label="Zoom out one level"><span data-icon="arrowUp"></span></button>
-        <div class="crumbs" id="cityCrumbs"></div>
-      </div>
-      <div class="tb-group">
-        <div class="seg" id="cityHeightSeg" role="tablist" aria-label="What building height means">
-          <button type="button" data-h="staleness" aria-selected="true" title="Taller = longer since anything in it changed">Staleness</button>
-          <button type="button" data-h="files" aria-selected="false" title="Taller = more files inside">Files</button>
-          <button type="button" data-h="depth" aria-selected="false" title="Taller = more deeply nested">Depth</button>
-        </div>
-        <div class="seg" id="cityColorSeg" role="tablist" aria-label="What building colour means">
-          <button type="button" data-c="reclaim" aria-selected="true" title="Colour by how safe and worthwhile it is to reclaim">Reclaim</button>
-          <button type="button" data-c="type" aria-selected="false" title="Colour by file kind">Type</button>
-          <button type="button" data-c="age" aria-selected="false" title="Colour by how recently modified">Age</button>
+      <div class="tb-row tb-row-nav">
+        <div class="tb-group tb-nav">
+          <button class="btn" id="cityUpBtn" title="Zoom out one level (Escape)" aria-label="Zoom out one level"><span data-icon="arrowUp"></span></button>
+          <div class="crumbs" id="cityCrumbs"></div>
         </div>
       </div>
-      <div class="tb-group">
-        <button class="pill" id="cityReset" title="Recentre and reset the zoom">Recentre</button>
+      <div class="tb-row tb-row-controls">
+        <div class="tb-group tb-appearance">
+          <div class="seg" id="cityHeightSeg" role="tablist" aria-label="What building height means">
+            <button type="button" data-h="staleness" aria-selected="true" title="Taller = longer since anything in it changed">Staleness</button>
+            <button type="button" data-h="files" aria-selected="false" title="Taller = more files inside">Files</button>
+            <button type="button" data-h="depth" aria-selected="false" title="Taller = more deeply nested">Depth</button>
+          </div>
+          <div class="seg" id="cityColorSeg" role="tablist" aria-label="What building colour means">
+            <button type="button" data-c="reclaim" aria-selected="true" title="Colour by how safe and worthwhile it is to reclaim">Reclaim</button>
+            <button type="button" data-c="type" aria-selected="false" title="Colour by file kind">Type</button>
+            <button type="button" data-c="age" aria-selected="false" title="Colour by how recently modified">Age</button>
+          </div>
+        </div>
+        <div class="tb-spring" aria-hidden="true"></div>
+        <div class="tb-group tb-actions">
+          <button class="pill" id="cityReset" title="Recentre and reset the zoom">Recentre</button>
+        </div>
       </div>
     </div>
     <div class="glass" id="cityWrap">

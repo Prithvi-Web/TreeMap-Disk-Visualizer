@@ -13,3 +13,4 @@ release/
 # VS Code extension: compiled output and the packaged bundle — never committed
 /vscode-extension/out/
 /vscode-extension/*.vsix
+.gstack/
