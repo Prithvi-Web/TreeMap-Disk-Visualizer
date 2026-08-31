@@ -1870,6 +1870,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
     <button role="tab" aria-selected="false" data-view="duplicates" title="Duplicates"><span data-icon="copy"></span><span class="side-label">Duplicates</span></button>
     <button role="tab" aria-selected="false" data-view="trends" title="Trends"><span data-icon="trendUp"></span><span class="side-label">Trends</span></button>
     <button role="tab" aria-selected="false" data-view="calendar" title="Calendar"><span data-icon="calendar"></span><span class="side-label">Calendar</span></button>
+    <button role="tab" aria-selected="false" data-view="journal" title="Journal"><span data-icon="activity"></span><span class="side-label">Journal</span></button>
     <button role="tab" aria-selected="false" data-view="compare" title="Compare"><span data-icon="diff"></span><span class="side-label">Compare</span></button>
     <button role="tab" aria-selected="false" data-view="offloaded" title="Offloaded"><span data-icon="archive"></span><span class="side-label">Offloaded</span></button>
     <button role="tab" aria-selected="false" data-view="capsule" title="Time Capsule"><span data-icon="clock"></span><span class="side-label">Time Capsule</span></button>
@@ -2384,6 +2385,15 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
         <span id="calMax" style="margin-left:10px;"></span>
       </div>
       <div class="muted" id="calDegraded" role="status" style="margin-top:8px;" hidden></div>
+    </div>
+  </section>
+
+  <section class="view" id="view-journal" role="tabpanel" aria-label="Disk journal — what changed, day by day" hidden>
+    <div class="card glass">
+      <h2><span data-icon="activity"></span>Journal</h2>
+      <div class="muted" style="margin-bottom:10px;">A rolling narrative of significant changes, noticed by scheduled scans. Attribution is honest: an app named only when the path says so, <b>you</b> only when TreeMap's own audit log matches, and otherwise exactly “an unidentified process”.</div>
+      <div class="muted" id="journalPortable" role="status" style="margin-bottom:8px;" hidden></div>
+      <div id="journalBody"><div class="muted">Reading the journal…</div></div>
     </div>
   </section>
 
@@ -11956,6 +11966,94 @@ registerView({
   needsScan: true,
   onScanChange() { calData = null; }, // the old scan's days belong to the old tree
   mount() { loadCalendar(); },
+});
+
+/* ═══════════ Disk journal (v4 §7.3) ═══════════
+   Reads the journal the scheduler writes (never written over HTTP), grouped
+   by day, newest first. Portable sessions show the degraded reason instead
+   of pretending history exists. An entry links into the treemap at its path
+   and day: inside the loaded scan it drills and queries; outside it, the
+   path field is pre-filled and the user told why — the journal never starts
+   a scan behind their back. */
+let journalSeq = 0;
+
+async function loadJournal() {
+  const body = $('journalBody');
+  const seq = ++journalSeq;
+  body.innerHTML = '<div class="muted">Reading the journal…</div>';
+  try {
+    const [data, portable] = await Promise.all([
+      api('/api/journal?limit=200'),
+      api('/api/platform/portable').catch(() => null),
+    ]);
+    if (seq !== journalSeq || state.view !== 'journal') return; // superseded
+    const note = portable && portable.portable && (portable.degraded || []).find((d) => d.key === 'journal');
+    $('journalPortable').hidden = !note;
+    if (note) $('journalPortable').textContent = note.reason;
+    renderJournal(data.entries || []);
+  } catch (e) {
+    if (seq !== journalSeq) return;
+    body.innerHTML = `<div class="muted">Could not read the journal: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderJournal(entries) {
+  const body = $('journalBody');
+  if (!entries.length) {
+    body.innerHTML = '<div class="muted">Nothing significant yet. The journal fills in as scheduled scans notice changes of 100 MB or more — set one up under Scheduled scans in Settings.</div>';
+    return;
+  }
+  const parts = [];
+  let lastDay = '';
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    const day = new Date(e.at).toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    if (day !== lastDay) {
+      lastDay = day;
+      parts.push(`<div class="cal-year">${escapeHtml(day)}</div>`);
+    }
+    parts.push(
+      `<div class="rule-row" style="align-items:baseline;gap:8px;margin:2px 0;">
+        <span>${escapeHtml(e.sentence)}</span>
+        <button class="pill" data-journal-open="${i}" title="Show this path on the treemap, filtered to that day">Show on treemap</button>
+      </div>`,
+    );
+  }
+  body.innerHTML = parts.join('');
+  body.querySelectorAll('[data-journal-open]').forEach((b) =>
+    b.addEventListener('click', () => journalOpen(entries[Number(b.dataset.journalOpen)])));
+}
+
+function journalOpen(entry) {
+  const d = new Date(entry.at);
+  const pad = (n) => String(n).padStart(2, '0');
+  const iso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const q = `modified:${iso}`;
+  const root = state.root ? state.root.path : null;
+  const sep = entry.path.includes('\\') ? '\\' : '/';
+  const inScan = root && (entry.path === root || entry.path.startsWith(root + sep));
+  if (!inScan) {
+    $('pathInput').value = entry.rootPath;
+    switchView('dashboard');
+    toast(`Scan ${entry.rootPath} first — journal entries link into a scanned tree. The path is filled in.`);
+    return;
+  }
+  const node = state.pathIndex.get(entry.path);
+  state.treemap.rootPath = node && node.type === 'dir' ? entry.path : root;
+  switchView('treemap');
+  $('tmSearch').value = q;
+  clearTimeout(tmQueryDeb);
+  tmApplyQuery(q);
+}
+
+registerView({
+  id: 'journal',
+  label: 'Journal',
+  icon: 'activity',
+  // Reads persisted history, exactly like Trends/Capsule, so it is useful
+  // with no scan loaded and never shows the empty-state screen.
+  needsScan: false,
+  mount() { loadJournal(); },
 });
 
 registerView({

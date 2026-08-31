@@ -41,6 +41,7 @@ const TAB_VIEWS = [
   'missing', // v4 §5 — The Missing Gigabytes
   'city', // v4 §6.1 — Disk City, the isometric view
   'calendar', // v4 §7.2 — the calendar heatmap
+  'journal', // v4 §7.3 — the disk journal
 ] as const;
 const MODAL_VIEWS = ['cleanModal', 'settingsModal'] as const;
 
