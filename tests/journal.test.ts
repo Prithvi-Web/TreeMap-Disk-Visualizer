@@ -297,6 +297,14 @@ test('sentences read like the feature promises, from the entry fields alone', ()
     sentenceFor('Docker', '/Users/x/Library/Containers/com.docker.docker', 14.2 * GB, home),
     `Docker added ${formatBytes(14.2 * GB)} (~/Library/Containers/com.docker.docker)`,
   );
+  // A path's separator belongs to the PATH, never to the host platform: the
+  // POSIX case above must prettify on a Windows runner and this Windows case
+  // must prettify here — using path.sep for either direction fails the other
+  // (the exact mistake the Windows-CI entry in HANDOFF.md documents).
+  assert.equal(
+    sentenceFor('Docker', 'C:\\Users\\x\\Data\\docker', 14.2 * GB, 'C:\\Users\\x'),
+    `Docker added ${formatBytes(14.2 * GB)} (~\\Data\\docker)`,
+  );
   assert.equal(
     sentenceFor('you', '/Users/x/Downloads', -4.1 * GB, home),
     `you removed ${formatBytes(4.1 * GB)} from Downloads`,

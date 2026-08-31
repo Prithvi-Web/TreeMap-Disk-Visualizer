@@ -267,8 +267,12 @@ export function attributeChange(
 
 /** "Docker added 14.2 GB (~/Library/…)" / "you removed 4.1 GB from Downloads". */
 export function sentenceFor(who: string, changedPath: string, delta: number, homeDir = os.homedir()): string {
+  // Both separators, deliberately: a path's separator belongs to the path,
+  // not the host — path.sep here made the ~ substitution silently vanish on
+  // whichever platform the sentence was NOT written on (caught by Windows CI;
+  // the same lesson HANDOFF.md's statfs entry records).
   const pretty =
-    changedPath === homeDir || changedPath.startsWith(homeDir + path.sep)
+    changedPath === homeDir || changedPath.startsWith(homeDir + '/') || changedPath.startsWith(homeDir + '\\')
       ? '~' + changedPath.slice(homeDir.length)
       : changedPath;
   if (delta >= 0) return `${who} added ${formatBytes(delta)} (${pretty})`;
