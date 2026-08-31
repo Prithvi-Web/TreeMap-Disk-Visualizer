@@ -1,5 +1,186 @@
 # TreeMap — session handoff
 
+## v4 — Phase 6 closed for real, Phase 7 opened (30 August 2026)
+
+The ask was: confirm Phase 6 is complete, then run Phase 7 to done. Phase 6 is
+now genuinely closed — the alternate-renderer budget failure recorded below is
+fixed and re-measured — and Phase 7 shipped its first feature before the
+session was consolidated. Everything not started is specified at the end of
+this entry, precisely enough to pick up cold.
+
+### What shipped
+
+**6.13 — the coverage gate, and the clock at its real budget.** The trade the
+previous entry left open ("pick a threshold, or say to leave it") is taken, at
+0.9, plus one thing the prototype didn't have: an O(n) pre-filter above the
+threshold. The estimate `r ≈ R·0.955·√(byte share)` can only over-state a
+radius — a pack's hull is never denser than area-perfect — so a child
+estimated under `ALT_MIN_LEAF_R` is provably undrawable and is dropped before
+the pack instead of after it, bounding bead inflation at √(1/0.9) ≈ 5.4%.
+That kills both measured pathologies AND the one the prototype missed: one
+giant among 4,238 specks (coverage ~1.0, so no coverage threshold ever fires)
+was 80 ms warm in Node to draw a single circle; the gate hands the pack
+exactly one child. The R=63.8 / 0.842-coverage parent loses its 42 beads to a
+hatched leaf — `tests/circlePack.test.ts` holds that trade by name.
+`ALT_LAYOUT_BUDGET_MS` drops 150 → 45: the binding budget was §2.5's 50 ms
+block rule, not the 250 ms first paint the 150 was set against.
+
+**6.14 — the clock ends a slice, not the picture.** At 45 ms alone the
+Voronoi map stopped at a handful of cells, permanently. Both solvers are now
+resumable (peek-don't-shift, queue returned as `resume`), and `buildCells`
+hands the queue back one animation frame later, repainting as the picture
+fills in — every block under the clock, nothing lost, footnote saying "still
+laying out — N shapes so far" until it settles to the layout's own last word.
+Cancelled by the next `buildCells`, by `setTreemapView`, and by the view's
+unmount; a mode check orphans a stale queue so a circles resume can never
+feed the Voronoi solver.
+
+Measured on `~/Library/Application Support/Claude` (the folder from the
+28 Aug entry), via `window.TreeMap.state.treemap.altMs` in the browser pane:
+circles **1.8–5.9 ms** first slice (was 986 ms cold / 145–165 warm), cell
+count deterministic at 50 across three switches; Voronoi first slice
+**45 ms by construction**, complete picture ~2 frames later, final footnote
+carrying only the true omission counts. Screenshots of both renderers taken
+and eyeballed; hatching, labels, nesting and both footnotes correct.
+
+**7.1a — the GIF encoder.** Four pure functions in `public/index.html`
+(`gifBuildPalette`, `gifIndexFrame`, `gifLzwEncode`, `encodeGif`):
+GIF89a with hand-written variable-width LZW, exact global palette with
+honest nearest-entry quantisation past 256 colours, NETSCAPE looping only
+when asked. `tests/gifEncoder.test.ts` decodes the output with an
+independent reader written against the spec — shared helpers: none — and
+compares every pixel of every frame, including a 200×200 noise frame that
+fills the dictionary and forces a mid-frame clear/reset. Deliberate
+deviation from §7.1's suggested `src/utils/gifEncoder.ts`: the frontend has
+no build step to import through, CI runs the suite without `dist/`, and
+`liftFrontend.ts` documents why a second copy is a drift hazard. The worker
+(7.1c, not started) is planned as `Function.prototype.toString` into a Blob,
+so one implementation serves both threads.
+
+Also landed mid-session from a parallel session: `f1d8e54` derives
+`/api/capabilities`' advertised MCP tool list from `MCP_TOOL_NAMES` in
+`src/mcp/server.ts` (it had drifted to nine tools, omitting
+`missing_gigabytes`). If you add an MCP tool, update that constant or
+`buildMcpServer` throws.
+
+### Verified
+
+```
+npm run build            clean
+npm run typecheck        clean
+npm test                 1,432 tests · 1,430 pass · 0 fail · 2 skip   (was 1,411)
+CI                       green 3/3 through 94ce36f (6.13); f05077c (6.14) + docs awaiting push
+```
+
+Real-app pass for the Phase 6 changes: scan of the pathological folder,
+all four renderers driven, circle/Voronoi cold and warm timings above,
+three-switch determinism check, refinement completion confirmed by watching
+`state.treemap.altRaf` drain and the footnote settle.
+
+**One Windows CI note (from the parallel session):** the run at 94ce36f went
+red once because the `Get-CimInstance` subprocess in `tests/diskUsage.test.ts`
+died on the runner; the re-run passed. That failure was external. If that
+test fails on Windows CI again, treat it as real, not as a flake to re-run.
+
+### What I could NOT verify on this machine
+
+- Delivered frame rate (unchanged — the pane's rAF limitation from the
+  28 Aug entry still applies; per-slice work is what was measured).
+- The refinement loop under a genuinely slow machine: on this Mac the Voronoi
+  queue drains in ~2 frames, so the "still laying out" footnote is visible
+  only briefly. The cancellation paths are covered structurally by tests.
+
+### Phase 7 — NOT started, specified for pickup
+
+Read the four feature specs in `TREEMAP-V4-MASTER-PROMPT.md` §7 first. The
+code-level seams below were mapped this session and are current at f05077c.
+
+**7.1b transport + interpolation.** Pure fns `lapseLerpNodes(a, b, t)`
+(match by path; matched lerp x/y/w/h/size; arrivals bloom from own centre —
+same convention as `animateTreemapTo` ~6825; departures shrink into their
+centre, gone at t=1; clamp t) and `lapseOrderedSnaps(snaps)` (filter
+`hasTree`, sort by `takenAt` — a treeless snapshot is a gap, never a guess),
+both lifted for `tests/timelapse.test.ts`. Controls go in `#tmTimebar`
+(:2114): play/pause + speed 0.5/1/2/4 + loop pills, `aria-label`s, static
+top-level bindings like the slider's (:6843). Extract the cache block of
+`setHistoryIndex` (:6780-6786) into a shared `historyLayoutFor(snap)`.
+Playback: rAF advancing pos over segments (~1 s per segment at 1×, dt
+clamped ≤100 ms), rect mode draws `lapseLerpNodes` frames via
+`state.treemap.nodes = …; drawTreemap()`, sun/cells step discretely at
+crossings via the same dispatch `setHistoryIndex` uses; label/slider update
+per crossed snapshot (interpolated byte totals would be invented numbers —
+don't). Prefetch next 2 segments through the existing `h.cache`/`h.seq`.
+REDUCED → discrete stepping, and the starter's name must join the REDUCED
+list in `tests/frontendContract.test.ts` (~:307). Stop on scrub, Escape
+(`exitHistoryState` :6723), renderer switch, and treemap unmount (~:3580 —
+the same block that cancels altZoomRaf/altRefine).
+
+**7.1c export.** Extend the existing `#tmExportBtn` menu (:10060), not a new
+button: "GIF" + "WebM" entries gated on `h.snaps.length >= 2 && isRectMap()`.
+GIF: sample playback offscreen (reuse the real `drawTreemap` into `tmBuffer`,
+downscale to ≤480 px wide, cap frames ~150 at 10 fps, state the cap), encode
+in a Worker built from the four gif functions' own source (toString → Blob),
+frames transferred, per-frame progress; `downloadBlob` (:10112) delivers.
+WebM: feature-detect `canvas.captureStream` + `MediaRecorder`, record the
+visible canvas during one real playback run, say which format the user gets.
+
+**7.2 calendar.** Requires a NEW endpoint — the client tree is pruned and
+carries `modifiedAt` only, and the golden lock forbids adding per-node
+fields. `GET /api/scan/:scanId/calendar`: bytes/count modified per local day
+from `store.eachFile` + `store.modifiedAt` (free, exact); `created` as an
+opt-in second channel via per-file `statSync().birthtimeMs` behind a
+STAT_CAP with `degraded[]` prose exactly like `src/services/query/execute.ts`
+:231-244 (birthtime 0 ⇒ unknown, never day zero; an unread day is never a
+zero day). View id `calendar` (lowercase only — contract :82), tab button +
+section + `registerView` + `TAB_VIEWS` (tab count assert :135). Click a day →
+`switchView('treemap'); $('tmSearch').value = q; clearTimeout(tmQueryDeb);
+tmApplyQuery('created:2026-03-14')` — the grammar already parses that and
+`=` on a date means "that local day" (evaluate.ts :151-167). DST bucketing
+tests with TZ pinned (`tests/calendarAggregate.test.ts`).
+
+**7.3 journal.** `src/services/journal.ts` copying `audit.ts` whole
+(serialised queue, memory ring under `isEphemeral()`, appendFile) PLUS
+rotation, which audit lacks — cap by lines, rewrite tail via tmp+rename in
+the same queue. Two meta-tests in `tests/portableMode.test.ts` (:136-170,
+:245-267) will police it: appendFile + appDataDir ⇒ the literal string
+`isEphemeral` must appear. Feed it from the scheduler tick (scheduler.ts
+:130-154 already computes deltas and formats a sentence — §B1 says extend
+the scheduler, never add a second timer); a live-watcher subscriber would
+keep watch sessions alive forever (watcher.ts :349) — decide that
+explicitly or don't subscribe. Attribution: `getAppAttribution` containment,
+`openHandleGuard`-style sentences built in the service, literal
+"an unidentified process" when unknown; TreeMap's own deletions can be
+attributed to "you" via the audit log. Portable: add a `journal` entry to
+`degradedCapabilities` (portableMode.ts :135; reason >40 chars, no
+error/failed/broken/unsupported — test :185-214). Route file
+`journalRoutes.ts` mounted in server.ts; `ENDPOINTS` + a schema + possibly a
+new tag in openapi.ts (tags list :2566). Fleet: 'journal' is already in
+`FORBIDDEN_SUBSTRINGS` (:66) and named in fleetSync tests (:309) — add the
+`serialiseSummary(hostile)` style test for a smuggled `journalEntries`.
+View id `journal`, no capabilityKey (gate by portable degraded note, not a
+platform capability). MCP: if a journal read tool is added, update
+`MCP_TOOL_NAMES` + the mcp.test.ts handshake list.
+
+**7.4 split-slider Compare.** The compare view (:2313, registered in the
+`VIEWS` literal :3666) renders text delta rows only — zero canvases. For
+same-root snapshot pairs, render two percent-rect maps (layouts from
+`/api/snapshots/tree?path=&at=` — same `TreemapNode` shape as
+`/api/scan/:id/treemap`) into one canvas with a clip at the divider.
+Keyboard: follow the reclaim-weight slider pattern (:18058 — native range +
+live `aria-valuetext`); arrows move the handle, Home/End snap. The view has
+no `unmount` today; it will need one for its listeners (named-listener rule,
+contract :2355-2385).
+
+**Cross-cutting for every 7.x:** README views list + AGENTS.md endpoints +
+openapi in the same commit; PLATFORM_NOTES only if something goes per-OS;
+golden endpoints untouched (the harness's fixed capture list makes new
+endpoints safe); adversarial review before calling the phase done — the
+28 Aug sessions found 4 and 7 real defects in "finished" work by driving
+the app, and this session found the giant-among-specks case only by
+benchmarking shapes the spec never named.
+
+---
+
 ## v4 — CI green on all three OSes, and four Phase 6 defects (28 August 2026)
 
 The ask was two things: CI reading green everywhere, and Phase 6 finished with
