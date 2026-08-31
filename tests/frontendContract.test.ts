@@ -326,6 +326,27 @@ test('the offload dock never runs a bare move — re-verify, manifest, confirm, 
   const run = body.indexOf('runOffloadJob');
   assert.ok(reverify !== -1 && dry !== -1 && confirm !== -1 && run !== -1, 'all four steps are present');
   assert.ok(reverify < dry && dry < confirm && confirm < run, 'and in the only safe order');
+  // QA D1: the manifest is built from cart entries that exist in THIS scan —
+  // one stale path (already offloaded, or from an older scan) must not 404
+  // the dryRun and brick every later drop.
+  assert.match(body, /pathIndex/, 'stale cart entries are filtered against the scan before the plan');
+  // Review RD3: the shared confirm is repainted from a clean slate — a stale
+  // open-handle warning panel (and its "Delete anyway" button) must never
+  // bleed into the offload dialog.
+  assert.match(body, /resetOpenHandleWarning\(\)/, 'the confirm panel is reset before reuse');
+});
+
+test('a drop on a drive tile only accepts the cart payload — never a foreign drag', () => {
+  /* QA D2: dragover checked the payload type but drop did not, and the
+     window-level dragover preventDefault makes the whole page a drop target —
+     so a text selection or a Finder file released over a tile launched an
+     offload confirm for unrelated cart contents. Both delegates must check. */
+  const code = appCode();
+  const dockWiring = code.slice(code.indexOf("for (const dockId of ['tmDock', 'cityDock'])"));
+  const dropAt = dockWiring.indexOf("addEventListener('drop'");
+  assert.notEqual(dropAt, -1, 'the drop delegate exists');
+  const dropBody = dockWiring.slice(dropAt, dropAt + 600);
+  assert.match(dropBody, /application\/x-treemap-cart/, 'drop rejects payloads that are not the cart');
 });
 
 test('the duplicate viewer is keyboard-first, and its key listener is named and taken back', () => {

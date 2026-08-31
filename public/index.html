@@ -11573,11 +11573,18 @@ async function runOffloadJob(paths, dest) {
       // originals are in the Trash, which is exactly what the warning may be
       // denying — the two appeared together, the false one last.
       if (!ev || !ev.warning) toast('Offloaded and verified — originals are in the Trash');
+      // What just left the disk leaves the cart with it — a stale entry
+      // would brick the next dock drop with PATH_NOT_FOUND (QA D1).
+      let removedFromCart = 0;
+      for (const p of paths) if (state.cart.delete(p)) removedFromCart++;
+      if (removedFromCart) { saveCart(); void renderCart(); refreshCartButtons(); }
+      refreshDock(); // the destination's free space just changed (QA D6)
       loadOffloadIndex();
       rescan();
     });
   } catch (e) {
     toast(e.message, 'error');
+    refreshDock(); // a failed plan often means the drive itself went away (QA D6)
   }
 }
 
@@ -11591,6 +11598,7 @@ async function runOffloadJob(paths, dest) {
    hands the same paths to the same runOffloadJob every offload uses. */
 let dockVolumes = [];
 let dockSeq = 0;
+let dockDropSeq = 0;
 
 async function refreshDock() {
   const seq = ++dockSeq;
@@ -11599,6 +11607,7 @@ async function refreshDock() {
     if (seq !== dockSeq) return; // superseded
     dockVolumes = data.volumes || [];
   } catch {
+    if (seq !== dockSeq) return; // a stale failure must not clobber a fresh answer (review RD4)
     dockVolumes = []; // no endpoint answer = no dock, never a stale one
   }
   renderDock();
@@ -11629,12 +11638,32 @@ function renderDock() {
 }
 
 async function dockDrop(volPath) {
-  const paths = [...state.cart];
-  if (!paths.length) { toast('Your cart is empty — lasso a region or stage files first', 'error'); return; }
+  // The shared confirm is repainted from a clean slate — a stale open-handle
+  // warning panel (and its "Delete anyway" button) must never bleed into the
+  // offload dialog (review RD3).
+  resetOpenHandleWarning();
+  if (activeJob) { toast('An offload is already running — let it finish first', 'error'); return; }
+  const all = [...state.cart];
+  if (!all.length) { toast('Your cart is empty — lasso a region or stage files first', 'error'); return; }
   if (!state.scanId) { toast('Run a scan first', 'error'); return; }
+  if (all.some((p) => p.startsWith('cloud://'))) {
+    toast('Offload moves local files to another drive — remove the cloud items from the cart first', 'error');
+    return;
+  }
+  // Cart entries that are not in THIS scan (already offloaded, or staged from
+  // an older scan) would 404 the whole plan and brick the drop (QA D1). They
+  // are skipped, said out loud below, and everything else still moves.
+  const paths = all.filter((p) => state.pathIndex.has(p));
+  const staleCount = all.length - paths.length;
+  if (!paths.length) {
+    toast('Nothing in the cart is part of this scan — rescan the folder, or clear the stale entries in Review', 'error');
+    return;
+  }
+  const seq = ++dockDropSeq;
   try {
     // 1 — the drive must still be there: drives disappear mid-drag (§8.3).
     const fresh = await api('/api/volumes');
+    if (seq !== dockDropSeq) return; // a later drop owns the dialog now
     const vol = (fresh.volumes || []).find((v) => v.path === volPath);
     if (!vol) {
       toast('That drive is no longer connected — nothing was copied', 'error');
@@ -11647,12 +11676,14 @@ async function dockDrop(volPath) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ scanId: state.scanId, paths, dest: vol.path, dryRun: true }),
     });
+    if (seq !== dockDropSeq) return;
     // 3 — the manifest behind the shared confirm…
     $('confirmTitle').innerHTML = icon('archive', 18) + `Offload to ${escapeHtml(vol.name)}?`;
     $('confirmText').innerHTML =
       `<b>${plan.fileCount}</b> file${plan.fileCount === 1 ? '' : 's'} · <b>${formatBytes(plan.bytesTotal)}</b> will be copied to ` +
       `<b>${escapeHtml(vol.path)}</b>, verified by reading every byte back from the destination, and only then moved to the Trash here.` +
       (vol.freeBytes != null ? `<br><span style="color:var(--text-3)">${formatBytes(vol.freeBytes)} free on ${escapeHtml(vol.name)}.</span>` : '') +
+      (staleCount ? `<br><span style="color:var(--text-3)">${staleCount} cart entr${staleCount === 1 ? 'y is' : 'ies are'} not in this scan and will be skipped.</span>` : '') +
       `<br><span style="color:var(--text-3)">Any failure rolls back completely — nothing local is touched until every copy has verified.</span>`;
     $('confirmOk').innerHTML = icon('archive', 15) + 'Copy, verify, then trash';
     $('confirmModal').classList.add('open');
@@ -11685,7 +11716,10 @@ for (const dockId of ['tmDock', 'cityDock']) {
   });
   dockEl.addEventListener('drop', (e) => {
     const tile = e.target.closest('.drive-tile');
-    if (!tile) return;
+    // Only the cart's own payload: the window-level dragover preventDefault
+    // makes the whole page a drop target, so a text selection or a Finder
+    // file released here must not launch an offload confirm (QA D2).
+    if (!tile || ![...e.dataTransfer.types].includes('application/x-treemap-cart')) return;
     e.preventDefault();
     tile.classList.remove('drop-ok');
     dockDrop(tile.dataset.vol);
@@ -16810,7 +16844,9 @@ function renderMedia() {
     const heldBy = lib.inUse && lib.inUse.held ? ((lib.inUse.processNames || []).join(', ') || 'a running app') : null;
     const held = heldBy
       ? `<div class="muted" style="padding:4px 2px;">${icon('alert', 13)} ${escapeHtml(`${heldBy} is running and holding this library — nothing is offered while it is open.`)}</div>`
-      : '';
+      : lib.inUse && lib.inUse.checked === false
+        ? `<div class="muted" style="padding:4px 2px;">${icon('alert', 13)} ${escapeHtml(lib.inUse.reason || 'Whether the owning app is holding this library could not be checked — deleting re-checks before anything moves.')}</div>`
+        : '';
     const comps = lib.components || [];
     const parts = comps.reduce((m, c) => { m[c.kind] = (m[c.kind] || 0) + c.bytes; return m; }, {});
     const bar = Object.keys(MEDIA_PART).filter((k) => parts[k] > 0).map((k) =>
@@ -17103,7 +17139,7 @@ function renderDuplicates() {
     return;
   }
   $('dupSummary').innerHTML =
-    `<b>${formatCount(state.dup.groupCount)}</b> duplicate groups — up to <b>${formatBytes(state.dup.totalReclaimable)}</b> reclaimable` +
+    `<b>${formatCount(state.dup.groupCount)}</b> duplicate group${state.dup.groupCount === 1 ? '' : 's'} — up to <b>${formatBytes(state.dup.totalReclaimable)}</b> reclaimable` +
     (state.dup.groupCount > groups.length ? ` <span class="num">(top ${groups.length} shown)</span>` : '');
   const shown = Math.min(state.dup.shown, groups.length);
   body.innerHTML = '<div class="dup-list">' + groups.slice(0, shown).map((g, gi) => {
@@ -17435,7 +17471,7 @@ function ndClearBody() {
    could not read arrive as null WITH a reason and render as exactly that —
    an absent date is "no capture date recorded", never a guess. Keyboard
    first: ←/→ between groups, 1–9 choose the keeper, Space stages the rest. */
-const dupeViewer = { kind: null, at: 0, keeper: 0, data: null, seq: 0 };
+const dupeViewer = { kind: null, at: 0, keeper: 0, data: null, seq: 0, totalCopies: 0 };
 
 function dupeViewerList() {
   return dupeViewer.kind === 'near' ? state.near.clusters : state.dup.groups;
@@ -17450,11 +17486,16 @@ async function openDupeViewer(kind, idx) {
   dupeViewer.keeper = 0;
   dupeViewer.data = null;
   const seq = ++dupeViewer.seq;
-  const paths = list[idx].files.slice(0, 4).map((f) => f.path);
+  dupeViewer.totalCopies = list[idx].files.length;
+  const paths = list[idx].files.slice(0, 8).map((f) => f.path); // the detail endpoint's own cap
   $('dupeViewerSummary').textContent = 'Reading the copies…';
   $('dupeViewerPanes').innerHTML = '';
   $('dupeViewerModal').classList.add('open');
   if (!wasOpen) document.addEventListener('keydown', dupeViewerKeys);
+  // Focus moves INTO the dialog: left behind on the Compare button, Enter
+  // would re-open the group and Tab would reach controls beneath the backdrop.
+  const dlg = $('dupeViewerModal').querySelector('.modal');
+  if (dlg) { dlg.setAttribute('tabindex', '-1'); dlg.focus(); }
   try {
     const data = await api(`/api/duplicates/detail?scanId=${encodeURIComponent(state.scanId)}&paths=${paths.map(encodeURIComponent).join(',')}`);
     if (seq !== dupeViewer.seq) return; // superseded by another open or a close
@@ -17480,12 +17521,16 @@ function renderDupeViewer() {
   const rec = d.recommendedKeep ? d.recommendedKeep.index : 0;
   const ref = d.diffReference;
   const firstDiff = d.files.find((f) => f.visualDiff);
+  const noDiffWhy = d.files.find((f, i) => i !== ref && f.visualDiffReason)?.visualDiffReason
+    || (d.files[0] && d.files[0].visualDiffReason);
   $('dupeViewerSummary').innerHTML =
     `<span class="num">Group ${dupeViewer.at + 1} of ${formatCount(total)}</span>` +
     (firstDiff ? ` · ${escapeHtml(firstDiff.visualDiff.summary)}` : '') +
     (ref != null && firstDiff ? ` <span class="dv-absent">— differing regions highlighted against copy ${ref + 1}</span>` : '') +
-    (!firstDiff && d.files[0] && d.files[0].visualDiffReason
-      ? ` · <span class="dv-absent">${escapeHtml(d.files[0].visualDiffReason)} — metadata comparison only</span>` : '');
+    (!firstDiff && noDiffWhy
+      ? ` · <span class="dv-absent">${escapeHtml(noDiffWhy)} — metadata comparison only</span>` : '') +
+    (dupeViewer.totalCopies > d.files.length
+      ? ` · <span class="dv-absent">comparing the first ${d.files.length} of ${dupeViewer.totalCopies} copies — the rest are not staged from here</span>` : '');
   $('dupeViewerPanes').innerHTML = d.files.map((f, i) => {
     const dims = f.width != null ? `${f.width} × ${f.height}` : null;
     const blocks = f.visualDiff && i !== ref
@@ -17512,7 +17557,14 @@ function renderDupeViewer() {
         ${keep ? `<div class="dv-keepwhy">${escapeHtml(why)}</div>` : ''}
         <div class="num">${formatBytes(f.size)} · ${formatDate(f.modifiedAt)}</div>
         <div>${dims ? `<span class="num">${dims}</span>` : `<span class="dv-absent">${escapeHtml(f.dimensionsReason || 'not an image')}</span>`}</div>
-        <div>${f.captureDate ? `<span class="num">taken ${formatDate(f.captureDate)}</span>` : `<span class="dv-absent">${escapeHtml(f.captureDateReason || 'no capture date recorded')}</span>`}</div>
+        <div>${(() => {
+          if (!f.captureDate) return `<span class="dv-absent">${escapeHtml(f.captureDateReason || 'no capture date recorded')}</span>`;
+          // The server sends EXIF wall-clock time as a timezone-less string;
+          // Date.parse reads it as local time, which is what a camera's
+          // wall clock means. Fed raw to formatDate it threw (review RD1).
+          const ms = Date.parse(f.captureDate);
+          return `<span class="num">taken ${Number.isFinite(ms) ? formatDate(ms) : escapeHtml(f.captureDate)}</span>`;
+        })()}</div>
         ${f.visualDiff && i !== ref ? `<div class="dv-absent num">${f.visualDiff.hammingDistance} of 64 blocks differ</div>` : ''}
         <div class="dv-absent" title="${escapeHtml(f.path)}" style="word-break:break-all;">${escapeHtml(f.path)}</div>
         <button class="pill" data-dv-keep="${i}">Keep this one</button>
@@ -17530,19 +17582,30 @@ async function dupeViewerStageOthers() {
   saveCart();
   await renderCart();
   refreshCartButtons();
+  const beyond = dupeViewer.totalCopies - d.files.length;
   toast(added
-    ? `Staged ${added} cop${added === 1 ? 'y' : 'ies'} — the keeper stays put. Review the cart before anything moves.`
+    ? `Staged ${added} cop${added === 1 ? 'y' : 'ies'} — the keeper stays put.${beyond > 0 ? ` ${beyond} more cop${beyond === 1 ? 'y was' : 'ies were'} not compared here — use the group's checkboxes for those.` : ''} Review the cart before anything moves.`
     : 'Those copies are already in the cart.');
 }
 
 function dupeViewerKeys(e) {
   // Self-heal: if some other path closed the modal, take the listener back.
   if (!$('dupeViewerModal').classList.contains('open')) { closeDupeViewer(); return; }
+  // Browser and app chords (Cmd+1 switches tabs) pass through untouched, and
+  // so does typing — the same guards every other global handler here carries.
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
   if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
     e.preventDefault();
-    const next = dupeViewer.at + (e.key === 'ArrowLeft' ? -1 : 1);
     const list = dupeViewerList();
-    if (list && list[next]) openDupeViewer(dupeViewer.kind, next);
+    if (!list || !list.length) return;
+    // The list can shrink under an open viewer (threshold change, rescan) —
+    // clamp before stepping, or both arrows die out of range (QA D4).
+    const cur = Math.min(dupeViewer.at, list.length - 1);
+    const next = cur + (e.key === 'ArrowLeft' ? -1 : 1);
+    if (list[next]) openDupeViewer(dupeViewer.kind, next);
+    else if (cur !== dupeViewer.at) openDupeViewer(dupeViewer.kind, cur);
     return;
   }
   if (e.key >= '1' && e.key <= '9') { // the pair case is '1'/'2'; groups go further
@@ -17552,6 +17615,7 @@ function dupeViewerKeys(e) {
   }
   if (e.key === ' ') {
     e.preventDefault();
+    if (e.repeat) return; // a held Space must not machine-gun the cart
     dupeViewerStageOthers();
     return;
   }
