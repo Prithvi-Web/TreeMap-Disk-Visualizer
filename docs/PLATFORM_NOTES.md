@@ -746,3 +746,15 @@ batch to **75 ms**.
 Every invocation uses `execFile` with an argv array, `--porcelain`/`-z` forms
 only, and a timeout. Paths reach `check-ignore` on **stdin**, so a path
 beginning with `-` cannot become a flag.
+
+## Keyboard: ⌘K is the palette; "/" is search (v4 §9.1)
+
+Until Phase 9, Cmd/Ctrl+K summoned the global search box, the near-universal
+convention. §9.1 assigns that key to the **command palette** explicitly, so it
+moved — and search deliberately did not lose a door: "/" still summons global
+search on every view that hasn't claimed it (Treemap and Grid keep "/" for
+their own filter boxes, as they always have), the sidebar box is where it
+always was, and the palette itself renders a "Search files for …" row under
+any free text, which is one keystroke from the old muscle memory. The palette
+closes to exactly the element that had focus before it opened; §9.1 asks for
+that by name and tests/commandPalette.test.ts pins it.

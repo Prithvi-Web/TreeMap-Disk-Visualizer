@@ -326,6 +326,34 @@ read-what-you-saw) permission to act.
   or exactly `"an unidentified process"`, never a guess.
   `GET /api/journal?limit=100` reads it back, newest first; nothing writes it
   over HTTP.
+- **Folder notes (v4 §9.5).** `GET /api/notes` lists them; `PUT /api/notes`
+  with `{ path, text, suppress? }` creates or updates one;
+  `DELETE /api/notes?path=` removes one. Paths are sanitized but — like
+  budgets, and unlike file access — not held to the scanned-root rule: a note
+  is metadata about a path, touches nothing at it, and must outlive any scan.
+  Text is stored and returned **verbatim** (the UI renders it as plain text
+  only). The consequential half: a note with `suppress: true` (the default)
+  excludes its whole subtree from `GET /api/cleanup/suggestions`, from the
+  agent summary, from MCP `cleanup_suggestions`, and from **every Autopilot
+  match kind** — and Autopilot lists what it left alone in `skipped`, with
+  the note as the stated reason, in previews and run records alike. Both
+  mutating routes are in the pinned destructive list because writing or
+  deleting a note arms or disarms automation over real files.
+- **Budget gauges (v4 §9.4).** `GET /api/scan/{scanId}/budget-gauges` pairs
+  each in-scan folder budget with a projected breach date — a NEW endpoint
+  because `/budgets` is under byte-identity lock. The projection reuses
+  `computeForecast` verbatim with the budget's headroom standing in for free
+  space, so its refusals are the disk-full forecast's own: too little
+  history, erratic growth and shrinking usage return their reasons instead
+  of a date. A series read from shallow snapshot trees says so in `caveat`.
+- **Plain-words translation (v4 §9.6).** `POST /api/nl-query { text }`
+  translates natural phrasing into the query grammar and **never executes**
+  — no hits, no totals; run the returned `q` through `POST /api/query`
+  yourself, after showing it. `source` is `"rules"` (the deterministic
+  phrase table) or `"ollama"` (the user's own opt-in local model, whose
+  output is only returned if the real parser accepts it). With the model
+  off — the shipped default — zero network code runs; a recorder server in
+  tests/nlQuery.test.ts holds that as a fact.
 - **Idempotency.** Destructive endpoints honor an `Idempotency-Key` header:
   repeating a successful request with the same key within ~10 minutes replays
   the stored response (`Idempotency-Replayed: true`) instead of executing
