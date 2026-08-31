@@ -323,3 +323,67 @@ test('the beam strips and orb wells hold their contract seams', () => {
   assert.ok(!INDEX.includes("FxBeam.attach($('gsearch')"), 'never the input itself');
   assert.ok(!INDEX.includes("FxBeam.attach($('tmSearch')"), 'never the input itself');
 });
+
+/* ══════════════ FX: Charts — every handle dies with its view ══════════════ */
+
+test('dashboard: unmount destroys the ring and gauge handles, mount rebuilds them from held state', () => {
+  const entry = slice("id: 'dashboard'", "id: 'treemap'");
+  assert.match(entry, /donutHandle\.destroy\(\); donutHandle = null;/, 'the ring handle dies on unmount');
+  assert.match(entry, /fxBudgetGaugesDrop\(\)/, 'and every budget gauge with it');
+  assert.match(entry, /renderDonut\(\)/, 'mount repaints the donut from state.types');
+  assert.match(entry, /renderBudgetWidget\(\)/, 'and the gauges from state.budgets');
+  assert.match(entry, /if \(state\.scanning\)/, 'but never over mid-scan skeletons');
+});
+
+test('trends: the area-chart handle is destroyed on unmount and rebuilt by mount', () => {
+  const entry = slice("id: 'trends'", "id: 'offloaded'");
+  assert.match(entry, /trendHandle\.destroy\(\); trendHandle = null;/, 'unmount releases the handle');
+  assert.match(entry, /loadTrends\(\)/, 'mount reloads, which recreates it');
+  // And drawTrendChart is keep-or-create — never a second handle per view life.
+  const draw = slice('function drawTrendChart(', 'async function renderTrendDeltas(');
+  assert.match(draw, /if \(trendHandle\) trendHandle\.update\(spec\);\s*else trendHandle = FxCharts\.area\(/,
+    'one handle, updated in place');
+});
+
+test('live spark: created inside renderLiveFeed, destroyed by disableLive — the one exit every door uses', () => {
+  const feed = slice('function renderLiveFeed(', 'async function liveRelayout(');
+  assert.match(feed, /liveLineHandle = FxCharts\.liveLine\(/, 'the spark rides the existing feed tick');
+  assert.match(feed, /host\.appendChild\(liveLineWrap\)/, 'and is re-appended after every innerHTML rewrite');
+  assert.doesNotMatch(feed, /new EventSource/, 'it feeds off the existing stream — never a second one');
+  const off = slice('function disableLive(', "$('tmLiveToggle').addEventListener");
+  assert.match(off, /fxLiveLineDrop\(\)/, 'live-off destroys it (treemap unmount reaches here too)');
+  // The treemap unmount really does pass through that door.
+  assert.match(slice("id: 'treemap'", "id: 'duplicates'"), /disableLive\(\{ keepWanted: true \}\)/);
+});
+
+test('budget gauges: destroyed BEFORE the innerHTML rewrite that would strand them', () => {
+  const fn = slice('function renderBudgetWidget(', 'let budgetTarget');
+  const drop = fn.indexOf('fxBudgetGaugesDrop()');
+  const rewrite = fn.indexOf('list.innerHTML');
+  assert.ok(drop !== -1 && rewrite !== -1, 'both sides of the contract exist');
+  assert.ok(drop < rewrite, 'destroy first — a rebuilt list must never orphan a live handle');
+  assert.match(fn, /budgetGauges\.push\(FxCharts\.gauge\(/, 'then one gauge per row');
+});
+
+test('the donut ring handle: empty state destroys it, the theme toggle refreshes it in place', () => {
+  const fn = slice('function renderDonut(', 'const tmCanvas');
+  assert.match(fn, /if \(donutHandle\) \{ donutHandle\.destroy\(\); donutHandle = null; \}/,
+    'no data means no handle — and no leaked observer');
+  assert.match(fn, /if \(donutHandle\) donutHandle\.update\(spec\);\s*else donutHandle = FxCharts\.rings\(/,
+    'with data it is keep-or-create, never stacked');
+  assert.match(INDEX, /if \(donutHandle\) donutHandle\.update\(\{\}\);/,
+    'the theme toggle re-reads tokens through the same handle');
+});
+
+test('the dashboard list bars ride the FxCharts ramp and honour REDUCED', () => {
+  const files = slice('function renderBigFiles(', 'function refreshBigFiles(');
+  const folders = slice('function renderBigFolders(', 'Dashboard: donut chart');
+  for (const [name, src] of [['files', files], ['folders', folders]] as const) {
+    assert.match(src, /fx-bar-fill/, `${name} rows use the kit's gradient fill`);
+    assert.match(src, /fxBarsIn\(host\)/, `${name} rows animate in through the shared entry`);
+    assert.match(src, /fx-li-pct/, `${name} rows carry the percent-of-largest column`);
+  }
+  const barsIn = slice('function fxBarsIn(', 'function renderBigFiles(');
+  assert.match(barsIn, /if \(REDUCED\) \{ el\.style\.width = w; return; \}/,
+    'reduced motion renders final widths instantly');
+});
