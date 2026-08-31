@@ -203,16 +203,43 @@ fs.writeFileSync(COMMA_TXT, 'hello');
 fs.writeFileSync(BIG_TXT, 'x'.repeat(512 * 1024)); // dwarfs any 32×32 PNG, so the keeper rule picks it
 
 /** Same pixels twice + one EXIF-carrying JPEG, written by sharp itself. */
+/**
+ * The EXIF fixture ships as bytes rather than being written through sharp's
+ * `withExif` JPEG save — that save fails with EINVAL on the Windows CI
+ * runner's libvips build ("unable to open for write: Invalid argument"),
+ * which took this whole file's suite down. These 1,073 bytes were produced
+ * once by exactly that call on a machine where it works, round-tripped
+ * through sharp.metadata() + parseExifCaptureDate to prove they carry
+ * DateTimeOriginal 2020:01:02 03:04:05, and are decoded here on every
+ * platform identically. sharp is still needed to READ them — the tests
+ * stay skip-gated on sharpAvailable for that.
+ */
+const IMG_EXIF_BYTES = Buffer.from(
+  '/9j/4QDcRXhpZgAASUkqAAgAAAAGABIBAwABAAAAAQAAABoBBQABAAAAVgAAABsBBQABAAAAXgAAACgBAwABAAAAAgAAABMC' +
+  'AwABAAAAAQAAAGmHBAABAAAAZgAAAAAAAAA4YwAA6AMAADhjAADoAwAABwAAkAcABAAAADAyMTADkAIAFAAAAMAAAAABkQcA' +
+  'BAAAAAECAwAAoAcABAAAADAxMDABoAMAAQAAAP//AAACoAQAAQAAACAAAAADoAQAAQAAACAAAAAAAAAAMjAyMDowMTowMiAw' +
+  'MzowNDowNQD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0o' +
+  'MCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo' +
+  'KCj/wAARCAAgACADASIAAhEBAxEB/8QAFgABAQEAAAAAAAAAAAAAAAAAAgMB/8QAJBAAAgICAQQBBQAAAAAAAAAAAQIDBAUR' +
+  'ABIUISJBEzEyQlH/xAAWAQEBAQAAAAAAAAAAAAAAAAACAwH/xAAgEQAABQQDAQAAAAAAAAAAAAAAITFB8AECEXGBobHR/9oA' +
+  'DAMBAAIRAxEAPwDUxihUgo4sKvrPVggoj4HSRLaot9vyPSU/nj9uA2EyqEw2YsqI17iu3cV79ars+yJFOqTMeldeGJO18trX' +
+  'GmMUKkFHFhV9Z6sEFEfA6SJbVFvt+R6Sn88ftwGwmVQmGzFlRGvcV27ivfrVdn2RIp1SZj0rrwxJ2vlta5lFncZTCpTENPPr' +
+  '4GPO2NYyx2ZcT3BaxBI0tjHT2WA28UcMyvCo2wAAIA2vlRyzY97chk7KRzZc2YEhprNM8wX2+vapOGAZmJ9k+d6YrvkXnbGs' +
+  'ZY7MuJ7gtYgkaWxjp7LAbeKOGZXhUbYAAEAbXyo5Zse9uQydlI5subMCQ01mmeYL7fXtUnDAMzE+yfO9MV3x3Ee98RkE7mkm' +
+  'gUxihUgo4sKvrPVggoj4HSRLaot9vyPSU/nj9uA2EyqEw2YsqI17iu3cV79ars+yJFOqTMeldeGJO18trXGmMUKkFHFhV9Z6' +
+  'sEFEfA6SJbVFvt+R6Sn88ftwGwmVQmGzFlRGvcV27ivfrVdn2RIp1SZj0rrwxJ2vlta4KLO4ymKUpiGnn18DHnbGsZY7MuJ7' +
+  'gtYgkaWxjp7LAbeKOGZXhUbYAAEAbXyo5Zse9uQydlI5subMCQ01mmeYL7fXtUnDAMzE+yfO9MV3yLztjWMsdmXE9wWsQSNL' +
+  'Yx09lgNvFHDMrwqNsAACANr5Ucs2Pe3IZOykc2XNmBIaazTPMF9vr2qThgGZifZPnemK747iPe+IyCdzSTQ//9k=',
+  'base64',
+);
+
 async function writeImages(): Promise<void> {
   const sharp = require('sharp');
   const raw = Buffer.alloc(32 * 32 * 3);
   for (let i = 0; i < raw.length; i++) raw[i] = (i * 7) % 256;
   await sharp(raw, { raw: { width: 32, height: 32, channels: 3 } }).png().toFile(IMG_A);
   await sharp(raw, { raw: { width: 32, height: 32, channels: 3 } }).png().toFile(IMG_B);
-  await sharp(raw, { raw: { width: 32, height: 32, channels: 3 } })
-    .jpeg()
-    .withExif({ IFD2: { DateTimeOriginal: '2020:01:02 03:04:05' } })
-    .toFile(IMG_EXIF);
+  fs.writeFileSync(IMG_EXIF, IMG_EXIF_BYTES);
 }
 
 function fileNode(p: string, modifiedAt: number): FileNode {
