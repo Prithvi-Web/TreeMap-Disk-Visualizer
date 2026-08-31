@@ -13,6 +13,7 @@ import { storeOf } from '../services/scanStore';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { getCapabilities } from '../platform/capabilities';
+import { MCP_TOOL_NAMES } from '../mcp/server';
 import { capabilitySummary } from './platformRoutes';
 import { SuggestionCategory } from '../models/types';
 
@@ -194,17 +195,9 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
     mcp: {
       transport: 'stdio',
       start: 'npm run mcp',
-      tools: [
-        'scan_path',
-        'get_largest',
-        'reclaim_ranked',
-        'find_duplicates',
-        'cleanup_suggestions',
-        'forecast',
-        'compare_scans',
-        'offload',
-        'trash_paths',
-      ],
+      // The same constant buildMcpServer registers from and asserts against,
+      // so this list cannot drift from the tools the MCP server actually has.
+      tools: [...MCP_TOOL_NAMES],
     },
     endpoints: ENDPOINTS.map((e) => ({
       method: e.method.toUpperCase(),

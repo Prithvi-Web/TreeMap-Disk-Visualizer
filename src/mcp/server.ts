@@ -50,6 +50,25 @@ import { OffloadJob, ScanResult } from '../models/types';
 // runtime so the compiled dist/mcp build reads the same repo-root file.
 const { version: APP_VERSION } = require('../../package.json') as { version: string };
 
+/**
+ * The single source of truth for which tools this server exposes, in
+ * registration order. GET /api/capabilities republishes it verbatim, and
+ * buildMcpServer refuses to build if its registrations ever disagree with it —
+ * the same one-registry discipline openapi.ts's ENDPOINTS applies to routes.
+ */
+export const MCP_TOOL_NAMES = [
+  'scan_path',
+  'get_largest',
+  'reclaim_ranked',
+  'missing_gigabytes',
+  'find_duplicates',
+  'cleanup_suggestions',
+  'forecast',
+  'compare_scans',
+  'offload',
+  'trash_paths',
+] as const;
+
 const POLL_MS = 250;
 const DEFAULT_WAIT_MS = 55_000;
 const MAX_WAIT_MS = 600_000;
@@ -230,6 +249,16 @@ export function buildMcpServer(): McpServer {
         'Deletes always go to the OS Trash (recoverable); nothing outside a scanned root can be touched.',
     },
   );
+
+  // Track registrations so MCP_TOOL_NAMES provably matches what this server
+  // exposes: drift in either direction throws below, in every build — which
+  // includes every test run that touches the MCP server.
+  const registered = new Set<string>();
+  const sdkRegisterTool = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
+  server.registerTool = ((...args: [string, ...unknown[]]) => {
+    registered.add(args[0]);
+    return sdkRegisterTool(...args);
+  }) as typeof server.registerTool;
 
   server.registerTool(
     'scan_path',
@@ -796,6 +825,16 @@ export function buildMcpServer(): McpServer {
         });
       }),
   );
+
+  const advertised = new Set<string>(MCP_TOOL_NAMES);
+  const unlisted = [...registered].filter((name) => !advertised.has(name));
+  const unregistered = MCP_TOOL_NAMES.filter((name) => !registered.has(name));
+  if (unlisted.length > 0 || unregistered.length > 0) {
+    throw new Error(
+      'MCP_TOOL_NAMES drifted from the registered tools — ' +
+        `registered but unlisted: [${unlisted.join(', ')}]; listed but never registered: [${unregistered.join(', ')}]`,
+    );
+  }
 
   return server;
 }

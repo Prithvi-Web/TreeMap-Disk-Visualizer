@@ -11,6 +11,7 @@ process.env.TREEMAP_NO_GDU = '1';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { ENDPOINTS } from '../src/api/openapi';
+import { MCP_TOOL_NAMES } from '../src/mcp/server';
 
 /**
  * Discoverability contract: GET /api/openapi.json and GET /api/capabilities
@@ -146,12 +147,11 @@ test('capabilities and openapi are generated from the same endpoint registry', a
     // The workflow and safety model are present and non-trivial.
     assert.ok(Array.isArray(caps.workflow) && caps.workflow.length >= 4);
     assert.ok(caps.safety.trashOnlyDeletes && caps.safety.scannedRootRule);
-    assert.deepEqual(caps.mcp.tools.slice().sort(), [
-      'cleanup_suggestions', 'compare_scans', 'find_duplicates', 'forecast',
-      'get_largest', 'offload',
-      'reclaim_ranked', // v4 §3 — §6's MCP parity for the Reclaim Score
-      'scan_path', 'trash_paths',
-    ]);
+    // The advertised MCP tool list is the same constant buildMcpServer
+    // registers from (and asserts against at build time), so /api/capabilities
+    // cannot drift from the live server. The literal ten-name spec lives in
+    // tests/mcp.test.ts against an actual MCP handshake.
+    assert.deepEqual(caps.mcp.tools.slice().sort(), [...MCP_TOOL_NAMES].sort());
   } finally {
     await close();
   }
