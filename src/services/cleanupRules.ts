@@ -3,6 +3,7 @@ import { CleanupSuggestionGroup, CleanupSuggestionItem } from '../models/types';
 import { TreeSource, asStore } from './scanStore';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { samePath } from '../utils/osPaths';
+import { isUnderAny } from './notes';
 import {
   loadRuleCatalog,
   matchReasonFor,
@@ -71,6 +72,14 @@ export function collectCleanupSuggestions(
    * rule anyone adds.
    */
   observe?: (rule: Rule, nodePath: string) => void,
+  /**
+   * Folders whose notes pause suggestions (v4 §9.5). A matched node at or
+   * under any of these is skipped, subtree and all — "client archive, keep
+   * until 2027" covers the node_modules three levels down. Callers read the
+   * list from `suppressedNoteRoots()`; it is a parameter rather than a read
+   * here so this matcher stays pure and the tests can drive both directions.
+   */
+  suppressedRoots: string[] = [],
 ): CleanupSuggestionGroup[] {
   const store = asStore(source);
   const now = Date.now();
@@ -117,6 +126,8 @@ export function collectCleanupSuggestions(
       const name = store.name(child);
       const childPath = store.childPath(child, nodePath);
       if (matchesAny(ignore, childPath, name)) continue; // user said hands off
+      // A note that suppresses covers its whole subtree — skip, never descend.
+      if (isUnderAny(childPath, suppressedRoots)) continue;
 
       if (store.isDir(child)) {
         const lower = name.toLowerCase();

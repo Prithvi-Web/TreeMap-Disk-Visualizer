@@ -89,6 +89,17 @@ const schemas: Json = {
     ['error', 'code'],
     'Uniform error body returned by every endpoint',
   ),
+  FolderNote: obj(
+    {
+      path: str('Sanitized absolute path of the noted folder'),
+      text: str('The note text, stored and returned verbatim — the UI renders it as plain text only, never HTML'),
+      suppress: bool('When true (the default), Smart Suggestions and Autopilot skip this folder and everything under it'),
+      createdMs: int(),
+      updatedMs: int(),
+    },
+    ['path', 'text', 'suppress', 'createdMs', 'updatedMs'],
+    'A note pinned to a folder (v4 §9.5)',
+  ),
   FileNode: obj(
     {
       name: str('Basename'),
@@ -1549,6 +1560,41 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     responses: { '200': jsonResponse('Journal entries', obj({ entries: arr(ref('JournalEntry')) }, ['entries'])) },
   },
 
+  /* ------------ notes (v4 §9.5) ------------ */
+  {
+    method: 'get',
+    path: '/api/notes',
+    summary: 'Notes pinned to folders. A suppressing note excludes its whole subtree from Smart Suggestions and Autopilot matching',
+    tag: 'notes',
+    destructive: false,
+    responses: { '200': jsonResponse('Every folder note', obj({ notes: arr(ref('FolderNote')) }, ['notes'])) },
+  },
+  {
+    method: 'put',
+    path: '/api/notes',
+    summary: 'Create or update the note on one folder — text is stored verbatim; suppress defaults to true on create and is kept on update when omitted',
+    tag: 'notes',
+    destructive: true,
+    requestBody: jsonBody(obj(
+      {
+        path: str('The folder to note (sanitized, not required to be inside a scanned root — notes outlive scans, like budgets)'),
+        text: str('Up to 2000 characters, stored verbatim'),
+        suppress: bool('Pause Smart Suggestions and Autopilot for this subtree'),
+      },
+      ['path', 'text'],
+    )),
+    responses: { '200': jsonResponse('The stored note', obj({ note: ref('FolderNote') }, ['note'])) },
+  },
+  {
+    method: 'delete',
+    path: '/api/notes',
+    summary: 'Remove one folder note',
+    tag: 'notes',
+    destructive: true,
+    parameters: [queryParam('path', 'The noted folder', str())],
+    responses: { '200': jsonResponse('Whether a note existed there', obj({ ok: bool(), existed: bool() }, ['ok', 'existed'])) },
+  },
+
   /* ------------ cleanup ------------ */
   {
     method: 'get',
@@ -2750,6 +2796,7 @@ export function buildOpenApiDocument(): Json {
       { name: 'facts', description: 'Per-path derived facts, delivered as a sidecar to the scan tree' },
       { name: 'query', description: 'The query grammar, and the views saved from it' },
       { name: 'cart', description: 'Committing the cleanup cart through the Time Capsule, and undoing it' },
+      { name: 'notes', description: 'Notes pinned to folders — words for the human, and a matching pause for the machine (v4 §9.5)' },
     ],
     paths,
     components: {

@@ -2763,6 +2763,41 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   </div>
 </div>
 
+<!-- ═══════════ Folder note modal (v4 §9.5) ═══════════
+     The note is the user's own words, rendered as plain text everywhere. A
+     suppressing note also pauses Smart Suggestions and Autopilot for the
+     whole subtree — words for the human, a matching pause for the machine. -->
+<div class="modal-backdrop" id="noteModal" role="dialog" aria-modal="true" aria-labelledby="noteTitle">
+  <div class="modal" style="width:460px;">
+    <div class="modal-head">
+      <h3 id="noteTitle"><span data-icon="doc"></span>Folder note</h3>
+      <button class="close-x" data-close="noteModal" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="budget-folder">
+        <span data-icon="folder" data-size="16"></span>
+        <div class="meta">
+          <div class="nm" id="noteFolderName">–</div>
+          <div class="pth" id="noteFolderPath"></div>
+        </div>
+      </div>
+      <label for="noteText" class="muted" style="display:block;margin:12px 0 7px;font-size:12.5px;">A note to your future self — why this folder matters</label>
+      <textarea id="noteText" maxlength="2000" rows="4" style="width:100%;resize:vertical;" placeholder="e.g. client archive, keep until 2027" aria-label="Note text"></textarea>
+      <label class="rule-row" style="margin-top:12px;cursor:pointer;">
+        <input type="checkbox" id="noteSuppress" checked>
+        <span>Pause Smart Suggestions and Autopilot here</span>
+      </label>
+      <div class="muted" style="margin-top:6px;font-size:12px;">While this is on, nothing inside this folder is ever suggested for cleanup or matched by an Autopilot rule. You can still delete things here by hand.</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-danger" id="noteRemoveBtn" style="display:none;"><span data-icon="trash"></span>Remove note</button>
+      <div style="flex:1"></div>
+      <button class="btn" data-close="noteModal">Cancel</button>
+      <button class="btn btn-primary" id="noteSaveBtn"><span data-icon="check"></span>Save note</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════ Settings modal ═══════════ -->
 <div class="modal-backdrop" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
   <div class="modal" style="width:740px;">
@@ -2898,6 +2933,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
         <div><kbd>l</kbd><kbd>→</kbd><kbd>↵</kbd></div><div>Drill into folder / preview file</div>
         <div><kbd>c</kbd></div><div>Add selected to the cleanup cart</div>
         <div><kbd>p</kbd></div><div>Quick-look the selected file</div>
+        <div><kbd>n</kbd></div><div>Add or edit the selected folder&rsquo;s note</div>
         <div><kbd>Del</kbd></div><div>Move the selected cell to Trash</div>
         <div><kbd>/</kbd></div><div>Focus the search box</div>
         <div><kbd>Esc</kbd></div><div>Clear selection · close panel · zoom out</div>
@@ -3465,6 +3501,10 @@ const state = {
   // clusters are in the DOM, and how many images of each. Both reset per render.
   near: { loadedFor: null, status: 'idle', clusters: [], clusterCount: 0, totalReclaimable: 0, available: true, truncated: false, selection: new Set(), pollTimer: 0, renderedClusters: 0, shownPerCluster: {} },
   budgets: { list: [], overPaths: new Set() },
+  // v4 §9.5 — notes pinned to folders, path → { text, suppress, … }. Loaded
+  // once at boot and kept current by the editor; scan-independent by design
+  // (a note describes a folder, not a scan of it).
+  notes: new Map(),
   trends: { roots: [], path: null, snapshots: [], points: [], hover: -1 },
   compare: { options: [], result: null },
   whatsNew: { seq: 0, dismissed: false },
@@ -6190,6 +6230,28 @@ function presentTreemap() {
       }
     }
     tmCtx.setLineDash([]);
+  }
+  // v4 §9.5 — noted folders carry a small sticky-note glyph in the corner, so
+  // "why is nothing here ever suggested?" has a visible answer on the map.
+  // Skipped below 26×18 px: at that size the glyph would BE the tile.
+  if (state.notes.size) {
+    tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    for (const pr of state.treemap.pxRects) {
+      if (!state.notes.has(pr.n.path) || pr.w < 26 || pr.h < 18) continue;
+      const s = 9, x0 = pr.x + pr.w - s - 4, y0 = pr.y + 4;
+      tmCtx.beginPath();
+      tmCtx.moveTo(x0, y0);
+      tmCtx.lineTo(x0 + s, y0);
+      tmCtx.lineTo(x0 + s, y0 + s - 3);
+      tmCtx.lineTo(x0 + s - 3, y0 + s);
+      tmCtx.lineTo(x0, y0 + s);
+      tmCtx.closePath();
+      tmCtx.fillStyle = cssVar('--warn') || '#FFD60A';
+      tmCtx.fill();
+      tmCtx.strokeStyle = 'rgba(0,0,0,0.45)';
+      tmCtx.lineWidth = 1;
+      tmCtx.stroke();
+    }
   }
   const ks = state.treemap.kbSel;
   if (ks) {
@@ -11261,7 +11323,8 @@ function showTooltip(x, y, node, pctOfRoot = null) {
       ? ` · accessed ${node.accessedAt ? formatDate(node.accessedAt) : '—'}` : '') +
     `</div>` +
     allocationTooltipLine(node) +
-    reclaimTooltipLine(node);
+    reclaimTooltipLine(node) +
+    noteTooltipLine(node);
   tip.style.display = 'block';
   const pad = 14;
   const w = tip.offsetWidth, h = tip.offsetHeight;
@@ -11316,6 +11379,22 @@ function reclaimTooltipLine(node) {
     `${lead}${unknowns} · right-click for the breakdown</div>`;
 }
 
+/**
+ * The note line in a tooltip (v4 §9.5). The user's own words, escaped on the
+ * way into markup — never raw — and truncated for the hover; the full text
+ * lives in the editor one right-click away. When the note is also pausing
+ * suggestions, the line says so: an absence of suggestions with no stated
+ * cause reads as a bug.
+ */
+function noteTooltipLine(node) {
+  if (!node || !node.path) return '';
+  const n = noteFor(node.path);
+  if (!n) return '';
+  const brief = n.text.length > 140 ? n.text.slice(0, 140) + '…' : n.text;
+  return `<div class="t-line"><span class="t-strong">Note:</span> ${escapeHtml(brief)}` +
+    (n.suppress ? ' · suggestions paused here' : '') + '</div>';
+}
+
 function hideTooltip() { $('tooltip').style.display = 'none'; }
 
 /* ───────────────────────────── Context menu ───────────────────────────── */
@@ -11365,7 +11444,8 @@ function showCtxMenu(x, y, node) {
     ${node.type === 'dir' ? `<div class="div"></div>
     ${node.isTrash ? '' : `<button data-act="terminal">${icon('terminal', 15)}Open Terminal Here</button>`}
     <button data-act="budget">${icon('gauge', 15)}${hasBudget ? 'Edit budget…' : 'Set budget…'}</button>
-    ${hasBudget ? `<button data-act="budget-remove">${icon('x', 15)}Remove budget</button>` : ''}` : ''}
+    ${hasBudget ? `<button data-act="budget-remove">${icon('x', 15)}Remove budget</button>` : ''}
+    <button data-act="note">${icon('doc', 15)}${noteFor(node.path) ? 'Edit note…' : 'Add note…'}</button>` : ''}
     <div class="div"></div>
     <button data-act="trash" class="danger">${icon('trash', 15)}Move to Trash</button>`;
   menu.style.display = 'block';
@@ -11387,6 +11467,7 @@ function showCtxMenu(x, y, node) {
     if (act === 'offload') startOffloadFlow([ctxTarget.path]);
     if (act === 'budget') openBudgetDialog(ctxTarget);
     if (act === 'budget-remove') removeBudget(ctxTarget.path);
+    if (act === 'note') openNoteDialog(ctxTarget);
     if (act === 'trash') confirmTrash([ctxTarget.path]);
   }));
 }
@@ -15313,6 +15394,73 @@ async function removeBudget(path) {
 
 $('budgetSaveBtn').addEventListener('click', commitBudget);
 $('budgetRemoveBtn').addEventListener('click', () => { if (budgetTarget) removeBudget(budgetTarget.path); });
+
+/* ───────────────────── v4 §9.5 — Notes pinned to folders ─────────────────────
+ *
+ * state.notes maps path → note. The text is the user's own words and is only
+ * ever written into the page through textContent or escapeHtml — a folder
+ * note that could run script would hand every folder name on disk a second,
+ * worse superpower. tests/notes.test.ts pins that structurally.
+ */
+function noteFor(path) { return state.notes.get(path) || null; }
+
+async function loadNotes() {
+  try {
+    const data = await api('/api/notes');
+    state.notes = new Map((data.notes || []).map((n) => [n.path, n]));
+  } catch {
+    // No server-side notes is a fine state to boot in; the editor will say
+    // so the moment a save fails for a real reason.
+    state.notes = new Map();
+  }
+}
+
+let noteTarget = null;
+function openNoteDialog(node) {
+  if (!node) return;
+  noteTarget = node;
+  const existing = noteFor(node.path);
+  $('noteFolderName').textContent = node.name || node.path;
+  $('noteFolderPath').textContent = node.path;
+  // .value is an inert sink — the note text never becomes markup here.
+  $('noteText').value = existing ? existing.text : '';
+  $('noteSuppress').checked = existing ? !!existing.suppress : true;
+  $('noteRemoveBtn').style.display = existing ? '' : 'none';
+  $('noteModal').classList.add('open');
+  setTimeout(() => $('noteText').focus(), 30);
+}
+
+async function commitNote() {
+  if (!noteTarget) return;
+  const text = $('noteText').value;
+  if (!text.trim()) { toast('Write a note first — or Remove note to clear it', 'error'); return; }
+  const target = noteTarget;
+  try {
+    const data = await api('/api/notes', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: target.path, text, suppress: $('noteSuppress').checked }),
+    });
+    state.notes.set(data.note.path, data.note);
+    closeModal('noteModal');
+    toast(data.note.suppress
+      ? `Note saved — suggestions are paused for ${target.name || target.path}`
+      : 'Note saved');
+    presentView();
+  } catch (e) { toast('Could not save the note: ' + e.message, 'error'); }
+}
+
+async function removeNote(path) {
+  try {
+    await api('/api/notes?path=' + encodeURIComponent(path), { method: 'DELETE' });
+    for (const [k, n] of state.notes) { if (n.path === path || k === path) state.notes.delete(k); }
+    closeModal('noteModal');
+    toast('Note removed');
+    presentView();
+  } catch (e) { toast('Could not remove the note: ' + e.message, 'error'); }
+}
+
+$('noteSaveBtn').addEventListener('click', commitNote);
+$('noteRemoveBtn').addEventListener('click', () => { if (noteTarget) removeNote(noteTarget.path); });
 $('budgetValue').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commitBudget(); } });
 
 /* ───────────────────────────── Cleanup cart (Feature 2) ───────────────────────────── */
@@ -20236,6 +20384,7 @@ document.addEventListener('keydown', (e) => {
         return;
       case 'c': if (state.treemap.kbSel) { e.preventDefault(); cartToggle(state.treemap.kbSel.path); } return;
       case 'p': if (state.treemap.kbSel && state.treemap.kbSel.type === 'file') { e.preventDefault(); openPreview(state.treemap.kbSel); } return;
+      case 'n': if (state.treemap.kbSel && state.treemap.kbSel.type === 'dir' && !state.treemap.kbSel.isTrash && !state.treemap.kbSel.virtual) { e.preventDefault(); openNoteDialog(state.treemap.kbSel); } return;
     }
   }
   if (e.key === 'Escape') {
@@ -20320,6 +20469,9 @@ loadSystem();
 // Capabilities are fetched in the background: nothing blocks the first paint on
 // them, and until they arrive no view is disabled (unknown never means absent).
 loadCapabilities();
+// Folder notes too (v4 §9.5) — one small read; failing to load them costs
+// glyphs and tooltip lines, never the app.
+loadNotes();
 
 /* Session restore: the app opens where it left off. The newest completed scan
    comes back through the exact path the Scan button takes — painted instantly

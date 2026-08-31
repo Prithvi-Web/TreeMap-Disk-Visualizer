@@ -19,6 +19,7 @@ import { protectAndTrash, listCapsuleEntriesForRun, startCapsuleRestore } from '
 import nodePath from 'path';
 import { sanitizePath } from '../utils/pathSanitizer';
 import { getPolicy as getAgentPolicy, assertScanAllowed, assertPathsAllowed } from './policy';
+import { suppressedNoteRoots, isUnderAny } from './notes';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 
@@ -382,8 +383,38 @@ function waitForScan(scanId: string): Promise<void> {
   });
 }
 
-/** Scan the policy's folder and resolve its match into candidates. */
-async function resolveCandidates(policy: AutopilotPolicy): Promise<Candidate[]> {
+/**
+ * Scan the policy's folder and resolve its match into candidates, then apply
+ * the one filter that binds every match kind: a folder with a suppressing
+ * note (v4 §9.5) is excluded from Autopilot matching, and the exclusion is
+ * REPORTED, never silent — an unattended deleter must say what it
+ * deliberately left alone, or "your rule matched less today" is
+ * indistinguishable from a bug.
+ */
+async function resolveCandidates(
+  policy: AutopilotPolicy,
+): Promise<{ candidates: Candidate[]; noteSkipped: { path: string; reason: string }[] }> {
+  const matched = await matchCandidates(policy);
+  const noted = await suppressedNoteRoots();
+  if (noted.length === 0) return { candidates: matched, noteSkipped: [] };
+  const candidates: Candidate[] = [];
+  const noteSkipped: { path: string; reason: string }[] = [];
+  for (const c of matched) {
+    const root = noted.find((r) => isUnderAny(c.path, [r]));
+    if (root === undefined) {
+      candidates.push(c);
+    } else {
+      noteSkipped.push({
+        path: c.path,
+        reason: `Left alone — your note on ${root} pauses automatic cleanup there.`,
+      });
+    }
+  }
+  return { candidates, noteSkipped };
+}
+
+/** Scan the policy's folder and resolve its match into raw candidates. */
+async function matchCandidates(policy: AutopilotPolicy): Promise<Candidate[]> {
   const scan = await startScan(policy.path);
   await waitForScan(scan.scanId);
   const done = getScan(scan.scanId);
@@ -457,7 +488,7 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
   const agentPolicy = await getAgentPolicy();
   assertScanAllowed(agentPolicy, policy.path);
 
-  const resolved = await resolveCandidates(policy);
+  const { candidates: resolved, noteSkipped } = await resolveCandidates(policy);
   const skipped: { path: string; reason: string }[] = [];
   const permitted: Candidate[] = [];
   for (const candidate of resolved) {
@@ -490,7 +521,7 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
     items: capped.selected.map(toRunItem),
     bytesMatched,
     bytesWouldDelete: capped.selected.reduce((sum, c) => sum + c.bytes, 0),
-    skipped: [...skipped, ...capped.skipped],
+    skipped: [...noteSkipped, ...skipped, ...capped.skipped],
     capBytes: cap,
     ...(wouldBlockReason ? { wouldBlockReason } : {}),
   };
@@ -557,7 +588,11 @@ export async function runPolicy(policy: AutopilotPolicy, opts: RunOptions = {}):
     // those paths need protecting from, so it binds here too.
     const agentPolicy = await getAgentPolicy();
     assertScanAllowed(agentPolicy, policy.path);
-    candidates = await resolveCandidates(policy);
+    const resolvedRun = await resolveCandidates(policy);
+    candidates = resolvedRun.candidates;
+    // Noted-folder skips land in the run record for the same reason the
+    // agent-policy ones below do: visible, never quietly dropped.
+    run.skipped.push(...resolvedRun.noteSkipped);
 
     // Per candidate rather than all-or-nothing: one protected folder caught by
     // a broad rule should not cancel an otherwise legitimate cleanup, but it

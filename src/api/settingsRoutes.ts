@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { requireScan, clampInt } from './scanRoutes';
 import { getSettings, updateSettings, getIgnoreMatchers } from '../services/settings';
+import { suppressedNoteRoots } from '../services/notes';
 import { collectCleanupSuggestions } from '../services/cleanupRules';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { collectCloudPlaceholders, matchCustomRules, CustomRules } from '../services/scanQueries';
@@ -79,9 +80,11 @@ settingsRouter.get('/cleanup/suggestions', async (req: Request, res: Response) =
     return;
   }
   const ignore = await getIgnoreMatchers('suggest');
+  // v4 §9.5 — a folder with a suppressing note is left out, subtree and all.
+  const noted = await suppressedNoteRoots();
   res.json({
     scanId: scan.scanId,
-    groups: collectCleanupSuggestions(storeOf(scan), ignore, catalog.catalog),
+    groups: collectCleanupSuggestions(storeOf(scan), ignore, catalog.catalog, undefined, noted),
     available: true,
     catalog: { schemaVersion: catalog.catalog.schemaVersion, packs: catalog.catalog.packs },
   });

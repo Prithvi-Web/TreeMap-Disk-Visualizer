@@ -212,6 +212,10 @@ test('capabilities marks exactly the destructive endpoints as destructive', asyn
     // an agent is allowed to do, not something a new route may do in passing.
     assert.deepEqual(destructive, [
       'DELETE /api/files',
+      // Deleting a note also deletes the protection it carried: a suppressing
+      // note is what keeps Smart Suggestions and Autopilot out of that folder,
+      // so removing one re-arms automation the user had paused (v4 §9.5).
+      'DELETE /api/notes',
       // Forgetting a capsule entry destroys a backup copy, so it is declared
       // destructive even though no live user data is touched.
       'DELETE /api/timecapsule/{id}',
@@ -251,6 +255,10 @@ test('capabilities marks exactly the destructive endpoints as destructive', asyn
       'POST /api/zombie-handles/restart',
       // Saving a policy is saving a standing instruction to delete things.
       'PUT /api/autopilot/policies',
+      // Writing a note mutates persisted config, and flipping suppress:false
+      // re-opens the folder to automation — the same class of consequence as
+      // editing settings (v4 §9.5).
+      'PUT /api/notes',
       'PUT /api/settings',
     ]);
   } finally {

@@ -11,6 +11,7 @@ import { getDuplicateJob } from '../services/duplicateFinder';
 import { computeFacts } from '../services/facts';
 import type { ReclaimScoreFactValue } from '../services/facts';
 import { collectCleanupSuggestions } from '../services/cleanupRules';
+import { suppressedNoteRoots } from '../services/notes';
 import { ruleCatalogStatus } from '../services/rulePacks';
 import { getIgnoreMatchers } from '../services/settings';
 import { getForecast } from '../services/forecast';
@@ -581,7 +582,10 @@ export function buildMcpServer(): McpServer {
           return ok({ scanId, available: false, reason: catalog.reason, totalBytes: 0, groups: [] });
         }
         const ignore = await getIgnoreMatchers('suggest');
-        const groups = collectCleanupSuggestions(storeOf(scan), ignore, catalog.catalog);
+        // v4 §9.5 — noted folders are excluded for agents exactly as for the
+        // UI: same matcher, same suppression list, no second policy.
+        const noted = await suppressedNoteRoots();
+        const groups = collectCleanupSuggestions(storeOf(scan), ignore, catalog.catalog, undefined, noted);
         const totalBytes = groups.reduce((sum, g) => sum + g.totalSize, 0);
         return ok({
           scanId,

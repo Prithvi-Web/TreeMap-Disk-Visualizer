@@ -7,6 +7,7 @@ import { getPolicy, POLICY_FILE } from '../services/policy';
 import { appDataDir } from '../services/storage';
 import { collectLargestFiles, collectLargestFolders } from '../services/diskScanner';
 import { collectCleanupSuggestions } from '../services/cleanupRules';
+import { suppressedNoteRoots } from '../services/notes';
 import { getIgnoreMatchers } from '../services/settings';
 import { getForecast } from '../services/forecast';
 import { storeOf } from '../services/scanStore';
@@ -84,7 +85,10 @@ metaRouter.get('/agent/summary', async (req: Request, res: Response) => {
   const largestFolders = collectLargestFolders(store, 10, 0).map((f) => ({ ...f, sizeFormatted: formatBytes(f.size) }));
 
   const ignore = await getIgnoreMatchers('suggest');
-  const groups = collectCleanupSuggestions(store, ignore); // already sorted largest first
+  // v4 §9.5 — the agent summary must not advertise reclaimable bytes the
+  // suggestion surfaces themselves would refuse to show.
+  const noted = await suppressedNoteRoots();
+  const groups = collectCleanupSuggestions(store, ignore, undefined, undefined, noted); // already sorted largest first
   const reclaimableBytes = groups.reduce((sum, g) => sum + g.totalSize, 0);
   const byCategoryMap = new Map<SuggestionCategory, { bytes: number; groupCount: number }>();
   for (const g of groups) {
