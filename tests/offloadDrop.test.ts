@@ -115,3 +115,54 @@ test('volumes come back in deterministic name order regardless of mount enumerat
     await s.close();
   }
 });
+
+/* ── §8.3: the drop gesture's promise — any failure rolls back cleanly ──
+   The dock is a new gesture onto the proven pipeline, and the promise its
+   manifest makes ("nothing local is touched until every copy has verified")
+   rests on startOffload's rollback. No test anywhere forced a verify
+   mismatch end-to-end before this one: the verifier is wrapped through the
+   suite's ForTests seam idiom, the second file's read-back "fails", and the
+   job must clean the destination completely and leave every original alone. */
+import fs from 'node:fs';
+import os from 'node:os';
+import { createScanRecord } from '../src/services/diskScanner';
+import { prepareOffload, startOffload, getOffloadJob, setOffloadVerifyForTests } from '../src/services/offload';
+
+test('a verify failure rolls back completely — destination cleaned, originals untouched', async () => {
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-drop-src-'));
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-drop-dest-'));
+  fs.writeFileSync(path.join(src, 'keepme.bin'), Buffer.alloc(64 * 1024, 1));
+  fs.writeFileSync(path.join(src, 'other.bin'), Buffer.alloc(64 * 1024, 2));
+  const paths = [path.join(src, 'keepme.bin'), path.join(src, 'other.bin')];
+  const scan = createScanRecord(src);
+  scan.status = 'complete';
+  scan.root = {
+    name: path.basename(src), path: src, size: 128 * 1024, type: 'dir', modifiedAt: Date.now(), isHidden: false,
+    children: paths.map((p) => ({ name: path.basename(p), path: p, size: 64 * 1024, type: 'file' as const, modifiedAt: Date.now(), isHidden: false })),
+  };
+
+  const restore = setOffloadVerifyForTests((destPath, realHash) =>
+    destPath.endsWith('other.bin') ? realHash + '-corrupted' : realHash);
+  try {
+    const prepared = await prepareOffload(scan, paths, dest);
+    const job = await startOffload(scan, paths, dest, prepared);
+    for (let i = 0; i < 200 && getOffloadJob(job.jobId)!.status === 'running'; i++) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    const done = getOffloadJob(job.jobId)!;
+    assert.equal(done.status, 'error', 'a verify mismatch fails the job');
+    assert.match(done.error ?? '', /Verification failed/, 'and says why');
+    assert.match(done.error ?? '', /Nothing was deleted/, 'and says what that means');
+  } finally {
+    restore();
+  }
+
+  // Originals: byte-for-byte where they were.
+  assert.ok(fs.existsSync(paths[0]) && fs.existsSync(paths[1]), 'both originals still exist');
+  assert.equal(fs.statSync(paths[0]).size, 64 * 1024);
+  // Destination: every copy this job created is gone — the rollback promise.
+  const leftovers = fs.readdirSync(dest).filter((n) => n.endsWith('.bin'));
+  assert.deepEqual(leftovers, [], 'no partial copies survive at the destination');
+  fs.rmSync(src, { recursive: true, force: true });
+  fs.rmSync(dest, { recursive: true, force: true });
+});

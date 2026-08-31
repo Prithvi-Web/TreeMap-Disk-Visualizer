@@ -183,6 +183,18 @@ export function cancelAllOffloadJobs(): void {
 /* ---------------- copy + verify machinery ---------------- */
 
 /**
+ * Test-only: wrap the read-back verification so a mismatch can be forced
+ * deterministically (tests/offloadDrop.test.ts proves the rollback promise
+ * end-to-end). The suite's ForTests idiom — returns a restore function, and
+ * production never sets it.
+ */
+let verifyHashForTests: ((destPath: string, realHash: string) => string) | null = null;
+export function setOffloadVerifyForTests(fn: (destPath: string, realHash: string) => string): () => void {
+  verifyHashForTests = fn;
+  return () => { verifyHashForTests = null; };
+}
+
+/**
  * Bind a job to the shared copy/verify primitive (src/utils/copyVerify.ts),
  * which Time Capsule uses too. Byte progress and cancellation are the only
  * job-shaped parts; the copy semantics themselves live in one place.
@@ -354,7 +366,8 @@ async function runOffload(job: OffloadJob, plan: PlannedCopy[], topPaths: string
 
       job.phase = 'verifying';
       job.currentPath = item.dest;
-      const verify = await hashFile(item.dest, jobProgress(job, false));
+      const readBack = await hashFile(item.dest, jobProgress(job, false));
+      const verify = verifyHashForTests ? verifyHashForTests(item.dest, readBack) : readBack;
       if (verify !== hash) {
         throw new Error(`Verification failed for ${path.basename(item.dest)} — the destination copy doesn't match. Nothing was deleted.`);
       }

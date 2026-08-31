@@ -309,6 +309,41 @@ test('no id rides on a data-icon span — the injector replaces the element whol
   assert.deepEqual(offenders, [], 'ids on data-icon spans do not survive icon injection');
 });
 
+test('the offload dock never runs a bare move — re-verify, manifest, confirm, then the pipeline', () => {
+  /* v4 §8.3: the dock is a new gesture onto the PROVEN pipeline. Its drop
+     handler must, in order: re-check the drive still exists (mid-drag
+     removal aborts), dry-run for the exact manifest, put that manifest
+     behind the shared confirm, and only then hand the same paths to the
+     same runOffloadJob every other offload uses. This pins the order
+     structurally so a refactor cannot quietly skip a step. */
+  const code = appCode();
+  const start = code.indexOf('async function dockDrop');
+  assert.notEqual(start, -1, 'dockDrop exists in the script');
+  const body = code.slice(start, start + 4000);
+  const reverify = body.indexOf('/api/volumes');
+  const dry = body.indexOf('dryRun');
+  const confirm = body.indexOf('confirmModal');
+  const run = body.indexOf('runOffloadJob');
+  assert.ok(reverify !== -1 && dry !== -1 && confirm !== -1 && run !== -1, 'all four steps are present');
+  assert.ok(reverify < dry && dry < confirm && confirm < run, 'and in the only safe order');
+});
+
+test('the duplicate viewer is keyboard-first, and its key listener is named and taken back', () => {
+  /* v4 §8.2: ←/→ between groups, 1/2 to pick the keeper, Space to stage the
+     other — and the document-level keydown listener follows the named-
+     listener rule: added on open, removed by name on close, so closing the
+     viewer cannot leave the app's keys hijacked. */
+  const code = appCode();
+  assert.match(code, /function dupeViewerKeys\(/, 'the key handler is a named function');
+  assert.match(code, /addEventListener\('keydown', dupeViewerKeys\)/, 'added by name');
+  assert.match(code, /removeEventListener\('keydown', dupeViewerKeys\)/, 'removed by the same name');
+  const handler = code.slice(code.indexOf('function dupeViewerKeys('), code.indexOf('function dupeViewerKeys(') + 2500);
+  for (const key of ['ArrowLeft', 'ArrowRight', "' '"]) {
+    assert.ok(handler.includes(key), `the handler answers ${key}`);
+  }
+  assert.match(handler, /e\.key >= '1' && e\.key <= '9'/, 'digit keys pick the keeper — the spec\'s 1/2 pair case and beyond');
+});
+
 test('the compare split view exists and follows the reclaim slider keyboard pattern', () => {
   /* v4 §7.4: the divider must be a NATIVE range input — arrows, Home and End
      come from the platform, not from hand-rolled key handling — with a live

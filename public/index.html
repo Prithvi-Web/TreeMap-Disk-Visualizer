@@ -1496,6 +1496,25 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .cal-cell[data-lv="4"] { background: var(--ok); }
 .cal-cell.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cal-legend { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
+/* v4 §8.3 — the drive dock */
+.drive-dock { display: flex; gap: 10px; align-items: stretch; padding: 8px 2px 0; flex-wrap: wrap; }
+.drive-tile { display: flex; align-items: center; gap: 9px; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); min-width: 160px; cursor: default; }
+.drive-tile.drop-ok { outline: 2px solid var(--accent); outline-offset: 2px; }
+.drive-tile .drive-free { font-size: 11px; color: var(--text-3); }
+.drive-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--ok) 25%, transparent); position: relative; width: 96px; margin-top: 3px; }
+.drive-bar > i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 2px; background: var(--ok); }
+/* v4 §8.2 — the duplicate viewer */
+.dv-panes { display: flex; gap: 12px; overflow-x: auto; align-items: stretch; }
+.dv-pane { flex: 1 1 0; min-width: 200px; border: 1px solid var(--surface-2); border-radius: 12px; padding: 10px; }
+.dv-pane.keep { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok) inset; }
+.dv-thumbwrap { position: relative; height: 180px; display: flex; align-items: center; justify-content: center; background: var(--surface-2); border-radius: 8px; overflow: hidden; margin-bottom: 8px; }
+.dv-thumbwrap img { max-width: 100%; max-height: 100%; }
+.dv-diff { position: absolute; inset: 0; pointer-events: none; }
+.dv-diff i { position: absolute; width: 12.5%; height: 12.5%; background: color-mix(in srgb, #ff6b61 42%, transparent); outline: 1px solid #ff6b61; }
+.dv-facts { font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
+.dv-facts .nm { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dv-keepwhy { color: var(--ok); font-size: 11px; }
+.dv-absent { color: var(--text-3); font-style: italic; }
 /* v4 §7.4 — the compare split view */
 .cmp-split { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
 .cmp-split canvas { width: 100%; height: 300px; display: block; border-radius: 10px; }
@@ -1867,7 +1886,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
     <button role="tab" aria-selected="false" data-view="city" title="Disk City"><span data-icon="box"></span><span class="side-label">Disk City</span></button>
     <button role="tab" aria-selected="false" data-view="grid" title="Grid"><span data-icon="grid"></span><span class="side-label">Grid</span></button>
     <button role="tab" aria-selected="false" data-view="apps" title="Apps"><span data-icon="box"></span><span class="side-label">Apps</span></button>
-    <button role="tab" aria-selected="false" data-view="games" title="Games"><span data-icon="play"></span><span class="side-label">Games</span></button>
+    <button role="tab" aria-selected="false" data-view="games" title="Libraries"><span data-icon="play"></span><span class="side-label">Libraries</span></button>
     <button role="tab" aria-selected="false" data-view="security" title="Security"><span data-icon="shield"></span><span class="side-label">Security</span></button>
     <button role="tab" aria-selected="false" data-view="fleet" title="Fleet"><span data-icon="globe"></span><span class="side-label">Fleet</span></button>
     <button role="tab" aria-selected="false" data-view="missing" title="Missing GB"><span data-icon="pie"></span><span class="side-label">Missing GB</span></button>
@@ -2166,6 +2185,8 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
       <span class="num" id="tmStatus"></span>
       <span class="hint"><span data-icon="mouse"></span>click to drill in · drag to lasso (⌥ freehand, ⌘ to unstage) · hold Z to magnify · Esc to go up</span>
     </div>
+    <!-- v4 §8.3 — the drive dock: drop the cart on a drive to offload -->
+    <div class="drive-dock" id="tmDock" hidden aria-label="Connected drives — drop your cart on one to offload"></div>
     <!-- v4 §6.2 — where an alternate renderer had to approximate, it says so
          here, in the same place every time. Never hidden in a console log. -->
     <div class="tm-altnote" id="tmAltNote" role="status" aria-live="polite" hidden></div>
@@ -2203,6 +2224,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
       <span class="num" id="cityStatus"></span>
       <span class="hint"><span data-icon="mouse"></span>drag to pan · ⇧ or ⌥ drag to lasso · scroll to zoom · click to drill in · Esc to go up</span>
     </div>
+    <div class="drive-dock" id="cityDock" hidden aria-label="Connected drives — drop your cart on one to offload"></div>
     <!-- §6 cross-cutting: every canvas view needs a text-equivalent path to the
          same information. This is that path, not a second navigation mechanism —
          it lists what the canvas drew and drills through the same function. -->
@@ -2274,11 +2296,18 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   </section>
 
   <!-- ═══════════ Games (C7) ═══════════ -->
-  <section class="view" id="view-games" role="tabpanel" aria-label="Games" hidden>
+  <section class="view" id="view-games" role="tabpanel" aria-label="Libraries — games and media" hidden>
     <div class="card glass">
       <h2><span data-icon="play"></span>Game Libraries</h2>
       <div class="apps-info muted" id="gamesInfo"></div>
       <div id="gamesBody"><div class="muted">Run a scan to see what your game libraries hold.</div></div>
+    </div>
+    <!-- v4 §8.1 — media libraries: the same pattern, opaque bundles broken
+         into originals / derivatives / database, only derivatives removable -->
+    <div class="card glass">
+      <h2><span data-icon="image"></span>Media Libraries</h2>
+      <div class="apps-info muted" id="mediaInfo"></div>
+      <div id="mediaBody"><div class="muted">Run a scan to see what your photo and video libraries hold — Photos, Final Cut, iMovie, Lightroom, Capture One.</div></div>
     </div>
   </section>
 
@@ -2924,6 +2953,21 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   </div>
 </div>
 
+<!-- ═══════════ Duplicate viewer (v4 §8.2) ═══════════ -->
+<div class="modal-backdrop" id="dupeViewerModal" role="dialog" aria-modal="true" aria-labelledby="dupeViewerTitle">
+  <div class="modal" style="width:min(94vw,960px);">
+    <div class="modal-head">
+      <h3 id="dupeViewerTitle"><span data-icon="copy"></span>Compare copies</h3>
+      <button class="close-x" id="dupeViewerClose" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="muted" id="dupeViewerSummary" role="status" style="margin-bottom:10px;"></div>
+      <div class="dv-panes" id="dupeViewerPanes"></div>
+      <div class="muted num" id="dupeViewerHint" style="margin-top:10px;">← → between groups · 1–9 choose the keeper · Space stages the others · Esc closes</div>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════ Quick-look preview (Feature 4) ═══════════ -->
 <aside id="previewPane" aria-label="File preview" hidden>
   <div class="pv-head">
@@ -3405,7 +3449,7 @@ const state = {
   lens: { held: false, pinned: false, at: null },
   grid: { path: null, sort: 'size', query: '', layout: [], totalH: 0, selection: new Set(), anchor: null, rangeStart: 0, rangeEnd: -1 },
   apps: { loadedFor: null, list: [], otherBytes: 0, totalBytes: 0, appsFolderScanned: false },
-  games: { loadedFor: null, report: null },
+  games: { loadedFor: null, report: null }, media: { loadedFor: null, report: null },
   security: { loadedFor: null, report: null },
   cost: null,
   fleet: { data: null, timer: 0 },
@@ -3632,6 +3676,7 @@ const VIEWS = [
       if (!state.scanId || !state.root) return;
       if (!state.treemap.rootPath) state.treemap.rootPath = state.root.path;
       loadSavedViews(); // Phase 2 §2.4 — the chip strip, fetched lazily on entry
+      refreshDock(); // §8.3 — connected drives, fetched lazily on entry like the chips
       loadTreemap(state.treemap.rootPath);
     },
     unmount() {
@@ -3694,9 +3739,9 @@ const VIEWS = [
     mount() { if (state.scanId && state.root) loadApps(); },
   },
   {
-    id: 'games', label: 'Games', icon: 'play', needsScan: true,
-    mount() { if (state.scanId && state.root) loadGames(); },
-    onScanChange() { state.games.loadedFor = null; },
+    id: 'games', label: 'Libraries', icon: 'play', needsScan: true,
+    mount() { if (state.scanId && state.root) { loadGames(); loadMedia(); } },
+    onScanChange() { state.games.loadedFor = null; state.media.loadedFor = null; },
   },
   {
     id: 'security', label: 'Security', icon: 'shield', needsScan: true,
@@ -11536,6 +11581,117 @@ async function runOffloadJob(paths, dest) {
   }
 }
 
+/* ── v4 §8.3 — the drive dock: a new gesture onto the proven pipeline ──
+   Connected external drives sit under the Treemap and Disk City canvases,
+   each showing its free space. The cart chip is the drag source (a lasso
+   already stages into the cart, so "drag a selection" and "drag the cart"
+   are one gesture). A drop NEVER moves anything bare: the drive is
+   re-verified (drives disappear mid-drag), the exact manifest comes from the
+   pipeline's own dryRun, it sits behind the shared confirm, and Confirm
+   hands the same paths to the same runOffloadJob every offload uses. */
+let dockVolumes = [];
+let dockSeq = 0;
+
+async function refreshDock() {
+  const seq = ++dockSeq;
+  try {
+    const data = await api('/api/volumes');
+    if (seq !== dockSeq) return; // superseded
+    dockVolumes = data.volumes || [];
+  } catch {
+    dockVolumes = []; // no endpoint answer = no dock, never a stale one
+  }
+  renderDock();
+}
+
+function renderDock() {
+  const rows = dockVolumes.map((v) => {
+    const used = v.totalBytes != null && v.freeBytes != null && v.totalBytes > 0
+      ? Math.min(1, Math.max(0, 1 - v.freeBytes / v.totalBytes)) : null;
+    const free = v.freeBytes == null
+      ? (v.reason || 'free space unknown')
+      : `${formatBytes(v.freeBytes)} free of ${formatBytes(v.totalBytes)}`;
+    return `<div class="drive-tile" data-vol="${escapeHtml(v.path)}" aria-label="Drop the cart here to offload to ${escapeHtml(v.name)} — ${escapeHtml(free)}">
+      ${icon('disc', 16)}
+      <div>
+        <div>${escapeHtml(v.name)}</div>
+        <div class="drive-free num">${escapeHtml(free)}</div>
+        ${used == null ? '' : `<div class="drive-bar"><i style="width:${Math.round(used * 100)}%"></i></div>`}
+      </div>
+    </div>`;
+  }).join('');
+  for (const id of ['tmDock', 'cityDock']) {
+    const el = $(id);
+    if (!el) continue;
+    el.innerHTML = rows;
+    el.hidden = dockVolumes.length === 0;
+  }
+}
+
+async function dockDrop(volPath) {
+  const paths = [...state.cart];
+  if (!paths.length) { toast('Your cart is empty — lasso a region or stage files first', 'error'); return; }
+  if (!state.scanId) { toast('Run a scan first', 'error'); return; }
+  try {
+    // 1 — the drive must still be there: drives disappear mid-drag (§8.3).
+    const fresh = await api('/api/volumes');
+    const vol = (fresh.volumes || []).find((v) => v.path === volPath);
+    if (!vol) {
+      toast('That drive is no longer connected — nothing was copied', 'error');
+      refreshDock();
+      return;
+    }
+    // 2 — the exact manifest from the pipeline's own dryRun; nothing acted on.
+    const plan = await api('/api/offload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scanId: state.scanId, paths, dest: vol.path, dryRun: true }),
+    });
+    // 3 — the manifest behind the shared confirm…
+    $('confirmTitle').innerHTML = icon('archive', 18) + `Offload to ${escapeHtml(vol.name)}?`;
+    $('confirmText').innerHTML =
+      `<b>${plan.fileCount}</b> file${plan.fileCount === 1 ? '' : 's'} · <b>${formatBytes(plan.bytesTotal)}</b> will be copied to ` +
+      `<b>${escapeHtml(vol.path)}</b>, verified by reading every byte back from the destination, and only then moved to the Trash here.` +
+      (vol.freeBytes != null ? `<br><span style="color:var(--text-3)">${formatBytes(vol.freeBytes)} free on ${escapeHtml(vol.name)}.</span>` : '') +
+      `<br><span style="color:var(--text-3)">Any failure rolls back completely — nothing local is touched until every copy has verified.</span>`;
+    $('confirmOk').innerHTML = icon('archive', 15) + 'Copy, verify, then trash';
+    $('confirmModal').classList.add('open');
+    // 4 — …and only Confirm reaches the pipeline, through the same door as
+    // every other offload.
+    onConfirmTrash = async () => { await runOffloadJob(paths, vol.path); };
+  } catch (e) {
+    toast('Could not plan the offload: ' + e.message, 'error');
+  }
+}
+
+$('cartTab').setAttribute('draggable', 'true');
+$('cartTab').addEventListener('dragstart', (e) => {
+  if (!state.cart.size) { e.preventDefault(); return; }
+  e.dataTransfer.setData('application/x-treemap-cart', '1');
+  e.dataTransfer.effectAllowed = 'copy';
+});
+for (const dockId of ['tmDock', 'cityDock']) {
+  const dockEl = $(dockId);
+  dockEl.addEventListener('dragover', (e) => {
+    const tile = e.target.closest('.drive-tile');
+    if (!tile || ![...e.dataTransfer.types].includes('application/x-treemap-cart')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    tile.classList.add('drop-ok');
+  });
+  dockEl.addEventListener('dragleave', (e) => {
+    const tile = e.target.closest('.drive-tile');
+    if (tile) tile.classList.remove('drop-ok');
+  });
+  dockEl.addEventListener('drop', (e) => {
+    const tile = e.target.closest('.drive-tile');
+    if (!tile) return;
+    e.preventDefault();
+    tile.classList.remove('drop-ok');
+    dockDrop(tile.dataset.vol);
+  });
+}
+
 async function runRestoreJob(ids) {
   try {
     const resp = await api('/api/offload/restore', {
@@ -14266,6 +14422,7 @@ registerView({
     if (mountedView && mountedView.id === 'city') loadCity(state.root ? state.root.path : null);
   },
   mount() {
+    refreshDock(); // §8.3 — the dock sits under this canvas too
     const canvas = $('cityCanvas');
     canvas.addEventListener('pointerdown', cityOnPointerDown);
     canvas.addEventListener('pointermove', cityOnPointerMove);
@@ -16591,6 +16748,96 @@ function gameCartRows(t) {
         </div>`).join('') + `</div>`;
 }
 
+/* ═══════════ Media libraries (v4 §8.1) ═══════════
+   Photos, Final Cut, iMovie, Lightroom, Capture One — the largest single
+   objects on many disks, and opaque bundles. The same deal as games: split
+   into originals / derivatives / database from each library's OWN documented
+   layout, and only DERIVATIVES ever get a cart button, each stating what
+   regenerating it will cost. Originals never do — the file IS the data. A
+   bundle whose layout is unrecognised shows its total size and offers
+   nothing; a library its app is holding open says so and offers nothing. */
+const MEDIA_PART = {
+  originals: { label: 'Originals', hint: 'The photos and footage themselves. Never offered for removal — the file is the data.' },
+  derivatives: { label: 'Derivatives', hint: 'Renders, proxies, thumbnails, previews — the app rebuilds these.' },
+  database: { label: 'Database', hint: 'The library catalog. Removing it loses edits and organisation.' },
+};
+
+async function loadMedia(force = false) {
+  if (!state.scanId || !state.root) return;
+  if (!force && state.media.loadedFor === state.scanId) { renderMedia(); return; }
+  const host = $('mediaBody');
+  host.innerHTML = skeletonRows(4, 42);
+  $('mediaInfo').textContent = '';
+  try {
+    state.media.report = await api('/api/media?scanId=' + state.scanId);
+    state.media.loadedFor = state.scanId;
+    renderMedia();
+  } catch (e) {
+    state.media.report = null;
+    host.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderMedia() {
+  const host = $('mediaBody');
+  const report = state.media.report;
+  if (!report) return;
+  const libs = report.libraries || [];
+  if (!libs.length) {
+    $('mediaInfo').textContent = '';
+    host.innerHTML = `<div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('image', 15)}
+      No Photos, Final Cut, iMovie, Lightroom or Capture One library was found in this scan.</div>`;
+    return;
+  }
+  $('mediaInfo').innerHTML =
+    `<b>${formatCount(libs.length)}</b> ${libs.length === 1 ? 'library' : 'libraries'} — <b>${formatBytes(report.totalBytes || 0)}</b>` +
+    (report.derivativesBytes ? `, of which <b>${formatBytes(report.derivativesBytes)}</b> is regenerable derivatives` : '');
+  host.innerHTML = libs.map((lib) => {
+    const head = `
+      <div class="game-libhead">
+        <b>${escapeHtml(lib.appName || lib.kind)}</b>
+        <span class="pth" title="${escapeHtml(lib.path)}">${escapeHtml(lib.path)}</span>
+        <span class="size-badge num" style="color:${sizeColor(lib.totalBytes)}">${formatBytes(lib.totalBytes)}</span>
+      </div>`;
+    // An unrecognised layout gets its size and an explanation — never a guess
+    // at which parts are safe.
+    if (lib.recognised === false) {
+      return `<div class="game-lib">${head}
+        <div class="muted" style="padding:4px 2px;">${escapeHtml(lib.reason || 'This library version is not recognised — shown for its size only.')}</div>
+      </div>`;
+    }
+    // A library its app is holding open is looked at, not touched.
+    const heldBy = lib.inUse && lib.inUse.held ? ((lib.inUse.processNames || []).join(', ') || 'a running app') : null;
+    const held = heldBy
+      ? `<div class="muted" style="padding:4px 2px;">${icon('alert', 13)} ${escapeHtml(`${heldBy} is running and holding this library — nothing is offered while it is open.`)}</div>`
+      : '';
+    const comps = lib.components || [];
+    const parts = comps.reduce((m, c) => { m[c.kind] = (m[c.kind] || 0) + c.bytes; return m; }, {});
+    const bar = Object.keys(MEDIA_PART).filter((k) => parts[k] > 0).map((k) =>
+      `<span class="gp gp-${k === 'originals' ? 'base' : k === 'derivatives' ? 'shaderCache' : 'workshop'}" style="width:${((parts[k] / Math.max(1, lib.totalBytes)) * 100).toFixed(2)}%"
+        title="${escapeHtml(MEDIA_PART[k].label)} — ${escapeHtml(formatBytes(parts[k]))}. ${escapeHtml(MEDIA_PART[k].hint)}"></span>`).join('');
+    const legend = Object.keys(MEDIA_PART).filter((k) => parts[k] > 0)
+      .map((k) => `<span class="gl"><i class="gp-${k === 'originals' ? 'base' : k === 'derivatives' ? 'shaderCache' : 'workshop'}"></i>${escapeHtml(MEDIA_PART[k].label)} ${formatBytes(parts[k])}</span>`).join('');
+    const rows = heldBy ? '' : comps
+      .filter((c) => c.removable && c.bytes > 0)
+      .map((c) => `
+        <div class="game-shader">
+          <span class="gl"><i class="gp-shaderCache"></i>${escapeHtml(c.label || MEDIA_PART[c.kind].label)}</span>
+          <span class="pth" title="${escapeHtml(c.path)}">${escapeHtml(c.path)}</span>
+          <span class="muted">${escapeHtml(c.regenerationCost || '')}</span>
+          <span class="size-badge num">${formatBytes(c.bytes)}</span>
+          <button class="icon-btn" data-cart-add="${escapeHtml(c.path)}"
+            aria-label="Add ${escapeHtml(c.label || MEDIA_PART[c.kind].label)} of ${escapeHtml(lib.appName || lib.kind)} to cleanup cart">${icon('plus', 13)}</button>
+        </div>`).join('');
+    return `<div class="game-lib">${head}${held}
+      <div class="game-bar">${bar}</div>
+      <div class="game-legend">${legend}</div>
+      ${rows ? `<div class="game-shaders">${rows}</div>` : ''}
+    </div>`;
+  }).join('');
+  refreshCartButtons();
+}
+
 async function loadGames(force = false) {
   if (!state.scanId || !state.root) return;
   if (!force && state.games.loadedFor === state.scanId) { renderGames(); return; }
@@ -16871,6 +17118,7 @@ function renderDuplicates() {
           <div class="sub num">${g.count} copies × ${formatBytes(g.size)} · sha-256 ${g.hash.slice(0, 12)}…</div>
         </div>
         <span class="reclaim num">+${formatBytes(g.reclaimable)} reclaimable</span>
+        <button class="pill" data-dupe-view="${gi}" title="Side by side — thumbnails, dates, dimensions, and which copy to keep">Compare</button>
       </div>
       <div class="dup-files"></div>
     </div>`;
@@ -17108,6 +17356,7 @@ function ndClusterHtml(c, ci, shown) {
         <span class="nd-count">${formatCount(c.count)} similar images</span>
         ${c.count > shown ? `<span class="nd-shown num">showing ${formatCount(shown)}</span>` : ''}
         <span class="reclaim num">+${formatBytes(c.reclaimableBytes)} reclaimable</span>
+        <button class="pill" data-nd-view="${ci}" title="Side by side with the differing regions highlighted">Compare</button>
       </div>
       <div class="nd-strip">${files.map(ndItemHtml).join('')}${ndMoreItemHtml(ci, shown, c.count)}</div>
     </div>`;
@@ -17175,6 +17424,154 @@ function ndClearBody() {
   state.near.renderedClusters = 0;
   state.near.shownPerCluster = {};
 }
+
+/* ═══════════ Duplicate viewer (v4 §8.2) ═══════════
+   Bulk-deleting duplicates is the scariest action in the app; this makes it
+   verifiable. Copies sit next to each other — thumbnail, dimensions, EXIF
+   capture date, size, mtime, path — with the recommended keep marked and the
+   REASON stated (the server's rule, never a bare badge). Near-duplicate
+   images also show which of the 64 dHash blocks differ, painted over both
+   thumbnails, plus the Hamming distance in plain words. Facts the server
+   could not read arrive as null WITH a reason and render as exactly that —
+   an absent date is "no capture date recorded", never a guess. Keyboard
+   first: ←/→ between groups, 1–9 choose the keeper, Space stages the rest. */
+const dupeViewer = { kind: null, at: 0, keeper: 0, data: null, seq: 0 };
+
+function dupeViewerList() {
+  return dupeViewer.kind === 'near' ? state.near.clusters : state.dup.groups;
+}
+
+async function openDupeViewer(kind, idx) {
+  const list = kind === 'near' ? state.near.clusters : state.dup.groups;
+  if (!list || !list[idx] || !state.scanId) return;
+  const wasOpen = $('dupeViewerModal').classList.contains('open');
+  dupeViewer.kind = kind;
+  dupeViewer.at = idx;
+  dupeViewer.keeper = 0;
+  dupeViewer.data = null;
+  const seq = ++dupeViewer.seq;
+  const paths = list[idx].files.slice(0, 4).map((f) => f.path);
+  $('dupeViewerSummary').textContent = 'Reading the copies…';
+  $('dupeViewerPanes').innerHTML = '';
+  $('dupeViewerModal').classList.add('open');
+  if (!wasOpen) document.addEventListener('keydown', dupeViewerKeys);
+  try {
+    const data = await api(`/api/duplicates/detail?scanId=${encodeURIComponent(state.scanId)}&paths=${paths.map(encodeURIComponent).join(',')}`);
+    if (seq !== dupeViewer.seq) return; // superseded by another open or a close
+    dupeViewer.data = data;
+    dupeViewer.keeper = data.recommendedKeep ? data.recommendedKeep.index : 0;
+    renderDupeViewer();
+  } catch (e) {
+    if (seq !== dupeViewer.seq) return;
+    $('dupeViewerSummary').textContent = 'Could not read the copies: ' + e.message;
+  }
+}
+
+function closeDupeViewer() {
+  dupeViewer.seq++; // any in-flight detail fetch belongs to a viewer that is gone
+  closeModal('dupeViewerModal');
+  document.removeEventListener('keydown', dupeViewerKeys);
+}
+
+function renderDupeViewer() {
+  const d = dupeViewer.data;
+  const list = dupeViewerList();
+  const total = list ? list.length : 0;
+  const rec = d.recommendedKeep ? d.recommendedKeep.index : 0;
+  const ref = d.diffReference;
+  const firstDiff = d.files.find((f) => f.visualDiff);
+  $('dupeViewerSummary').innerHTML =
+    `<span class="num">Group ${dupeViewer.at + 1} of ${formatCount(total)}</span>` +
+    (firstDiff ? ` · ${escapeHtml(firstDiff.visualDiff.summary)}` : '') +
+    (ref != null && firstDiff ? ` <span class="dv-absent">— differing regions highlighted against copy ${ref + 1}</span>` : '') +
+    (!firstDiff && d.files[0] && d.files[0].visualDiffReason
+      ? ` · <span class="dv-absent">${escapeHtml(d.files[0].visualDiffReason)} — metadata comparison only</span>` : '');
+  $('dupeViewerPanes').innerHTML = d.files.map((f, i) => {
+    const dims = f.width != null ? `${f.width} × ${f.height}` : null;
+    const blocks = f.visualDiff && i !== ref
+      ? `<div class="dv-diff" aria-hidden="true">${f.visualDiff.differingBlocks.map((b) =>
+          `<i style="left:${(b % 8) * 12.5}%;top:${Math.floor(b / 8) * 12.5}%"></i>`).join('')}</div>`
+      : '';
+    const keep = i === dupeViewer.keeper;
+    const why = keep
+      ? (i === rec && d.recommendedKeep ? d.recommendedKeep.reason : 'your pick — 1–9 chooses')
+      : '';
+    return `
+    <div class="dv-pane${keep ? ' keep' : ''}">
+      <div class="dv-thumbwrap">
+        <img src="/api/files/preview?path=${encodeURIComponent(f.path)}&thumb=1" alt="" loading="lazy"
+             onerror="this.hidden = true; this.parentElement.classList.add('noimg');">
+        ${blocks}
+      </div>
+      <div class="dv-facts">
+        <div class="nm"><span class="num">${i + 1}.</span> ${escapeHtml(f.name)}
+          ${f.newest ? '<span class="tag">newest</span>' : ''}
+          ${f.largest ? '<span class="tag">largest</span>' : ''}
+          ${keep ? '<span class="tag" style="background:var(--ok);color:#fff;">keep</span>' : ''}
+        </div>
+        ${keep ? `<div class="dv-keepwhy">${escapeHtml(why)}</div>` : ''}
+        <div class="num">${formatBytes(f.size)} · ${formatDate(f.modifiedAt)}</div>
+        <div>${dims ? `<span class="num">${dims}</span>` : `<span class="dv-absent">${escapeHtml(f.dimensionsReason || 'not an image')}</span>`}</div>
+        <div>${f.captureDate ? `<span class="num">taken ${formatDate(f.captureDate)}</span>` : `<span class="dv-absent">${escapeHtml(f.captureDateReason || 'no capture date recorded')}</span>`}</div>
+        ${f.visualDiff && i !== ref ? `<div class="dv-absent num">${f.visualDiff.hammingDistance} of 64 blocks differ</div>` : ''}
+        <div class="dv-absent" title="${escapeHtml(f.path)}" style="word-break:break-all;">${escapeHtml(f.path)}</div>
+        <button class="pill" data-dv-keep="${i}">Keep this one</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function dupeViewerStageOthers() {
+  const d = dupeViewer.data;
+  if (!d) return;
+  const others = d.files.filter((_, i) => i !== dupeViewer.keeper).map((f) => f.path);
+  let added = 0;
+  for (const p of others) if (!state.cart.has(p)) { state.cart.add(p); added++; }
+  saveCart();
+  await renderCart();
+  refreshCartButtons();
+  toast(added
+    ? `Staged ${added} cop${added === 1 ? 'y' : 'ies'} — the keeper stays put. Review the cart before anything moves.`
+    : 'Those copies are already in the cart.');
+}
+
+function dupeViewerKeys(e) {
+  // Self-heal: if some other path closed the modal, take the listener back.
+  if (!$('dupeViewerModal').classList.contains('open')) { closeDupeViewer(); return; }
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    const next = dupeViewer.at + (e.key === 'ArrowLeft' ? -1 : 1);
+    const list = dupeViewerList();
+    if (list && list[next]) openDupeViewer(dupeViewer.kind, next);
+    return;
+  }
+  if (e.key >= '1' && e.key <= '9') { // the pair case is '1'/'2'; groups go further
+    const i = Number(e.key) - 1;
+    if (dupeViewer.data && dupeViewer.data.files[i]) { dupeViewer.keeper = i; renderDupeViewer(); }
+    return;
+  }
+  if (e.key === ' ') {
+    e.preventDefault();
+    dupeViewerStageOthers();
+    return;
+  }
+  if (e.key === 'Escape') closeDupeViewer();
+}
+
+$('dupeViewerClose').addEventListener('click', closeDupeViewer);
+$('dupeViewerPanes').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-dv-keep]');
+  if (b) { dupeViewer.keeper = Number(b.dataset.dvKeep); renderDupeViewer(); }
+});
+// Capture phase, so a Compare click never also toggles the group head open.
+$('dupBody').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-dupe-view]');
+  if (b) { e.stopPropagation(); openDupeViewer('exact', Number(b.dataset.dupeView)); }
+}, true);
+$('ndBody').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-nd-view]');
+  if (b) { e.stopPropagation(); openDupeViewer('near', Number(b.dataset.ndView)); }
+}, true);
 
 function renderNearDupes() {
   const body = $('ndBody');

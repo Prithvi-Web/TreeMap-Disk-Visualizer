@@ -33,6 +33,18 @@ OpenAPI 3 spec).
    deterministic order.
 2. **Inspect.** With the `scanId`:
    - `GET /api/large-files` / `GET /api/large-folders` — the big things.
+   - `GET /api/media?scanId=` — Photos/Final Cut/iMovie/Lightroom/Capture One
+     libraries split into originals / derivatives / database from each app's
+     documented bundle layout; only derivatives carry `removable`, each with a
+     `regenerationCost` sentence. Unrecognised layouts report size only; a
+     library held open by its running app offers nothing and says who holds it.
+   - `GET /api/duplicates/detail?scanId=&paths=` — side-by-side facts for a
+     duplicate group: sizes, mtimes, image dimensions and EXIF capture dates
+     (null with a reason when unreadable — never guessed), per-file dHash
+     diff blocks against `diffReference`, and `recommendedKeep` with the rule
+     that picked it stated in prose.
+   - `GET /api/volumes` — attached external drives with free/total bytes; a
+     drive whose stats cannot be read is listed with nulls and a reason.
    - `GET /api/scan/{scanId}/calendar` — bytes and file counts per local day
      (from the scan's own mtimes, exact). `?channel=created` adds a
      creation-day channel from per-file stats behind a cap; days past the cap
