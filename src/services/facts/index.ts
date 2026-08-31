@@ -4,6 +4,7 @@ import { lastUsedProvider } from './lastUsedProvider';
 import { recoverabilityProvider } from './recoverabilityProvider';
 import { reclaimScoreProvider } from './reclaimScoreProvider';
 import { subtreeCountProvider } from './subtreeCountProvider';
+import { humanScaleProvider } from './humanScaleProvider';
 
 /**
  * The fact layer's entry point (§4.1).
@@ -27,6 +28,7 @@ registerFactProvider(lastUsedProvider);
 registerFactProvider(recoverabilityProvider);
 registerFactProvider(reclaimScoreProvider);
 registerFactProvider(subtreeCountProvider);
+registerFactProvider(humanScaleProvider);
 
 // Facts describe one scan's tree, so they die with it. Without this the
 // registry's own comment ("called when a scan is replaced") was aspirational:
