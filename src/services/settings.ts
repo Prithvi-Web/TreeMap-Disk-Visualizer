@@ -188,13 +188,17 @@ export async function getSettings(): Promise<AppSettings> {
       cloud: normalizeCloud(raw.cloud),
       reclaimWeights: normalizeReclaimWeights(raw.reclaimWeights),
       cleanupGoalBytes: normalizeGoalBytes(raw.cleanupGoalBytes),
+      // v4 §9.3 — anything but an explicit false means on: the equivalents
+      // are cosmetic, and a malformed settings file should not silently
+      // remove a default-on feature.
+      humanScaleUnits: raw.humanScaleUnits !== false,
     };
   }
   return cache;
 }
 
 /** Replace ignore list and/or schedules (input is re-validated here). */
-export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown }): Promise<AppSettings> {
+export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown }): Promise<AppSettings> {
   const current = await getSettings();
   const next: AppSettings = {
     ignore: patch.ignore !== undefined ? normalizeIgnore(patch.ignore) : current.ignore,
@@ -225,6 +229,9 @@ export async function updateSettings(patch: { ignore?: unknown; schedules?: unkn
     cleanupGoalBytes: patch.cleanupGoalBytes !== undefined
       ? normalizeGoalBytes(patch.cleanupGoalBytes)
       : current.cleanupGoalBytes,
+    humanScaleUnits: patch.humanScaleUnits !== undefined
+      ? patch.humanScaleUnits !== false
+      : current.humanScaleUnits,
   };
   // Preserve lastRunAt across edits that didn't intend to reset it.
   if (patch.schedules !== undefined) {

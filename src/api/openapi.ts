@@ -659,8 +659,12 @@ const schemas: Json = {
           + 'null means no target is set, which is the default — the meter simply does not appear. '
           + 'Send null to clear one.',
       )),
+      humanScaleUnits: bool(
+        'Show "≈ 3,100 photos like the ones here" beside sizes over ~1 GB (v4 §9.3), '
+          + 'computed from each folder’s own file mix. Default true; cosmetic only.',
+      ),
     },
-    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights', 'cleanupGoalBytes'],
+    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights', 'cleanupGoalBytes', 'humanScaleUnits'],
   ),
 };
 

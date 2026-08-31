@@ -2866,6 +2866,15 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
         <button class="btn" id="cleanupGoalClear"><span data-icon="x"></span>Clear target</button>
       </div>
 
+      <!-- v4 §9.3 — human-scale units. Computed from each folder's own file
+           mix, never a constant, so the equivalence stays honest. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="image"></span>Human-scale sizes</div>
+      <div class="muted" style="margin-bottom:10px;">Next to sizes over about 1 GB, also say what that amounts to — "≈ 3,100 photos like the ones in this folder". The comparison always comes from the folder's <b>own</b> photos, videos or music (at least ten of a kind), never from a made-up average; folders with nothing comparable show nothing.</div>
+      <label class="rule-row" style="cursor:pointer;">
+        <input type="checkbox" id="humanScaleToggle" checked>
+        <span>Show human-scale equivalents in tooltips</span>
+      </label>
+
       <div class="set-h" style="margin-top:22px;"><span data-icon="cloud"></span>Cloud accounts</div>
       <div class="muted" style="margin-bottom:10px;">Scan your own Google Drive, Dropbox or OneDrive in the same treemap — <b>metadata only, no file contents are ever downloaded</b>, and sign-in tokens never leave this computer. Bring your own (free) API app: create one in the provider's developer console with redirect URI <code id="cloudRedirectUri">http://127.0.0.1:53682/oauth/callback</code>, then paste its client ID below.</div>
       <div id="cloudAccounts"></div>
@@ -3562,6 +3571,7 @@ function indexTree(root) {
   // what was in scope at the time, and a file that lost its twin since the last
   // scan would otherwise keep reporting "deleting this frees nothing".
   allocationCache.clear();
+  hsFacts.clear(); // §9.3 — equivalents describe a scan's tree, like allocation
   const stack = [root];
   while (stack.length) {
     const n = stack.pop();
@@ -11307,6 +11317,7 @@ function showTooltip(x, y, node, pctOfRoot = null) {
   if (pctOfRoot !== null) tip.dataset.pct = String(pctOfRoot); else delete tip.dataset.pct;
   resolveAllocation(node);
   resolveScore(node);
+  resolveHumanScale(node);
 
   const k = kindFor(node);
   tip.innerHTML = `
@@ -11324,6 +11335,7 @@ function showTooltip(x, y, node, pctOfRoot = null) {
     `</div>` +
     allocationTooltipLine(node) +
     reclaimTooltipLine(node) +
+    humanScaleTooltipLine(node) +
     noteTooltipLine(node);
   tip.style.display = 'block';
   const pad = 14;
@@ -11377,6 +11389,60 @@ function reclaimTooltipLine(node) {
     : '';
   return `<div class="t-line num"><span class="t-strong" style="color:${reclaimColor(fact.score)}">Reclaim ${fact.score}</span>` +
     `${lead}${unknowns} · right-click for the breakdown</div>`;
+}
+
+/* ── v4 §9.3 — human-scale equivalents in the tooltip ──
+ *
+ * "42 GB" is a number; "≈ 3,100 photos like the ones in this folder" is a
+ * feeling. The equivalence comes from the humanScale fact provider, which
+ * averages the folder's OWN media — never a constant — so the line can carry
+ * its basis. Folders with nothing comparable (fewer than ten of a kind) get
+ * no line at all, which is the honest form of "no comparison available".
+ */
+const HS_MIN_BYTES = 1e9; // ~1 GB — below this the raw number reads fine
+const hsFacts = new Map(); // path → equivalents value, or null = asked, none
+const hsPending = new Set();
+
+function resolveHumanScale(node) {
+  if (!humanScaleOn || !node || !node.path || node.type !== 'dir') return;
+  if (node.size < HS_MIN_BYTES || node.virtual || node.path.startsWith('cloud://')) return;
+  if (!state.scanId || hsFacts.has(node.path) || hsPending.has(node.path)) return;
+  hsPending.add(node.path);
+  const scanAtRequest = state.scanId;
+  void (async () => {
+    try {
+      const res = await api('/api/facts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scanId: scanAtRequest, paths: [node.path], providers: ['humanScale'] }),
+      });
+      if (state.scanId !== scanAtRequest) return; // a new tree answered an old question
+      const provider = (res.providers && res.providers.humanScale) || null;
+      const values = (provider && provider.available && provider.values) || {};
+      // Absent from values means the provider could not answer; null keeps us
+      // from asking in a loop and, crucially, from inventing an equivalence.
+      hsFacts.set(node.path, Object.prototype.hasOwnProperty.call(values, node.path) ? values[node.path] : null);
+      const tip = $('tooltip');
+      if (tip.style.display !== 'none' && tip.dataset.path === node.path) {
+        showTooltip(Number(tip.dataset.x), Number(tip.dataset.y), node, tip.dataset.pct ? Number(tip.dataset.pct) : null);
+      }
+    } catch {
+      hsFacts.delete(node.path); // transient — a later hover may retry
+    } finally {
+      hsPending.delete(node.path);
+    }
+  })();
+}
+
+function humanScaleTooltipLine(node) {
+  if (!humanScaleOn || !node || !node.path || node.type !== 'dir' || node.size < HS_MIN_BYTES) return '';
+  const fact = hsFacts.get(node.path);
+  if (!fact || !fact.equivalents || !fact.equivalents.length) return ''; // nothing comparable → nothing said
+  const parts = fact.equivalents.slice(0, 2).map((e) =>
+    `≈ ${e.equivalentCount.toLocaleString()} ${escapeHtml(e.kind)}`).join(' or ');
+  const b = fact.equivalents[0];
+  const basis = `based on the ${b.sampleCount.toLocaleString()} ${escapeHtml(b.kind)} in this folder, average ${formatBytes(b.avgBytes)}` +
+    (fact.capped ? ' · sampled from the first 500k items' : '');
+  return `<div class="t-line num">${parts} like the ones here <span class="muted">· ${basis}</span></div>`;
 }
 
 /**
@@ -15604,12 +15670,17 @@ function refreshCartButtons() {
    populated when the Settings modal is opened, and the meter has to be right
    on the first paint after a reload. */
 let cartGoalBytes = null;
+/* v4 §9.3 — whether tooltips carry human-scale equivalents. Default on;
+   loadCartGoal reads the truth at boot and the Settings save keeps it live. */
+let humanScaleOn = true;
 
 /** Fetch the target once at boot. A failure leaves the meter hidden, not zero. */
 async function loadCartGoal() {
   try {
     const s = await api('/api/settings');
     cartGoalBytes = typeof s.cleanupGoalBytes === 'number' && s.cleanupGoalBytes > 0 ? s.cleanupGoalBytes : null;
+    // §9.3 rides the same boot read: one settings fetch serves both.
+    humanScaleOn = s.humanScaleUnits !== false;
   } catch {
     cartGoalBytes = null;
   }
@@ -19957,6 +20028,7 @@ $('settingsBtn').addEventListener('click', async () => {
   $('capsuleMaxPercent').value = settingsData.timeCapsuleMaxPercent ?? 10;
   renderCleanupGoalFields();
   renderReclaimWeights();
+  $('humanScaleToggle').checked = settingsData.humanScaleUnits !== false;
 });
 
 /* ── Cleanup target (v4 §4.1) ──
@@ -20287,12 +20359,14 @@ $('settingsSaveBtn').addEventListener('click', async () => {
   const cloud = collectCloudCreds();
   const reclaimWeights = collectReclaimWeights();
   const cleanupGoalBytes = collectCleanupGoal(); // null clears the target (§4.1)
+  const humanScaleUnits = $('humanScaleToggle').checked; // §9.3
   try {
     settingsData = await api('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schedules, ignore, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes }),
+      body: JSON.stringify({ schedules, ignore, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes, humanScaleUnits }),
     });
+    humanScaleOn = settingsData.humanScaleUnits !== false;
     renderSchedules();
     renderIgnores();
     $('forecastDays').value = settingsData.forecastThresholdDays ?? 30;

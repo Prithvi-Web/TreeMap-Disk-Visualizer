@@ -508,6 +508,12 @@ export interface AppSettings {
    * manipulation.
    */
   cleanupGoalBytes: number | null;
+  /**
+   * Show "≈ 3,100 photos like the ones here" beside sizes over ~1 GB
+   * (v4 §9.3). Computed from each folder's own file mix, never a constant;
+   * default on, and purely cosmetic — turning it off changes no data.
+   */
+  humanScaleUnits: boolean;
 }
 
 /** A budget cross-referenced against a scan: how the folder measures up now. */

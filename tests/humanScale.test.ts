@@ -455,3 +455,35 @@ test('a walk that hits the node cap reports what it counted, marked capped', asy
     await close();
   }
 });
+
+/* ═══════════ The Settings toggle + tooltip wiring (parent session) ═══════════ */
+
+import { readFileSync } from 'node:fs';
+import { getSettings, updateSettings } from '../src/services/settings';
+
+test('humanScaleUnits defaults on, turns off explicitly, and survives a round trip', async () => {
+  const initial = await getSettings();
+  assert.equal(initial.humanScaleUnits, true, 'default on (§9.3)');
+  const off = await updateSettings({ humanScaleUnits: false });
+  assert.equal(off.humanScaleUnits, false);
+  const untouched = await updateSettings({ forecastThresholdDays: 30 });
+  assert.equal(untouched.humanScaleUnits, false, 'an unrelated save keeps the choice');
+  const on = await updateSettings({ humanScaleUnits: true });
+  assert.equal(on.humanScaleUnits, true);
+});
+
+test('the tooltip line shows nothing without comparables, and always carries its basis', () => {
+  const html = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const start = html.indexOf('function humanScaleTooltipLine');
+  assert.notEqual(start, -1, 'the tooltip line exists');
+  const fn = html.slice(start, html.indexOf('\n}', start));
+  assert.match(fn, /!fact\.equivalents\.length\) return ''/, 'no comparables → no line, never a generic average');
+  assert.match(fn, /based on the/, 'the basis is stated inline (§9.3: "shown with its basis")');
+  assert.match(fn, /humanScaleOn/, 'the Settings toggle gates it');
+  assert.ok(html.includes('id="humanScaleToggle"'), 'the toggle exists in Settings');
+  // The resolver must never fire for files, small folders, or foreign scans.
+  const resolver = html.slice(html.indexOf('function resolveHumanScale'), html.indexOf('function humanScaleTooltipLine'));
+  assert.match(resolver, /node\.type !== 'dir'/, 'directories only');
+  assert.match(resolver, /HS_MIN_BYTES/, 'only over the ~1 GB floor');
+  assert.match(resolver, /state\.scanId !== scanAtRequest\) return/, 'a stale answer cannot cross scans');
+});
