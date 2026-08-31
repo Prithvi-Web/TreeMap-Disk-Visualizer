@@ -1,5 +1,74 @@
 # TreeMap — session handoff
 
+## Premium UI round: Apple-grade controls, FX libraries, bklit charts (31 August 2026, second session)
+
+The ask was: polish the UI so it feels like Apple made it — fix the uneven
+view-switcher tabs, port three GitHub libraries (border-beam, liquid-gooey,
+thinking-orbs) into the app, and rebuild the graphs in bklit.com's visual
+language, blue/black. Agents allowed, no time constraint, flawless bar.
+
+### What shipped (4 commits, 838c04a → aac59e3, all local — NOT pushed)
+
+- **2b0a609 — segmented controls + toolbar.** Every `.seg` is now a
+  macOS-style segmented control: 30px recessed track, equal-width segments,
+  hairline divider ticks, and a spring-animated **liquid goo thumb** (the
+  liquid-gooey "Move" effect, ported to a vanilla `FxGoo` section — SVG
+  silhouette + droplet trail, crisp DOM above, plain-CSS fallback on any
+  throw). The `.tm-toolbar` became grouped rows (nav | view | find |
+  appearance | modes | actions) that wrap as whole groups; every control
+  normalized to 30px. Long-label segs opt out of equal width via `.seg-fit`.
+- **aff550d — living surfaces.** `FxBeam` (border-beam port, re-tuned to a
+  single blue palette) and `FxOrbs` (thinking-orbs port, all nine states,
+  golden-parity tested against the upstream spec) spliced and wired to REAL
+  states only: searching orb + traveling beam while scanning, solving on dup
+  hashing, working on Autopilot, connecting on cloud, composing on export,
+  shaping while Voronoi refines, weaving on plain-words; line beams on
+  focused search fields, one-shot cart pulse on staging, halo on the
+  first-run CTA. Every mount pairs with a destroy; structural tests pin it.
+- **4cb9ea7 — bklit charts, blue/black.** `FxCharts` kit (area / rings /
+  gauge / barList / liveLine + DOM-free math) on the Canvas2D toolkit:
+  File Types donut → animated gradient ring with center total and
+  [dot·type·count·bar·size·%] legend; Trends → dotted-grid area chart with
+  crosshair tooltip and dashed forecast projection (date only when
+  /api/forecast commits); budgets → 28-notch gauges; Largest lists → ramp
+  gradient bars + percent column; Live mode → throttled spark of write
+  activity; calendar heatmap recolored to the accent ramp.
+- **aac59e3 — review-fleet round.** 4 adversarial reviewers (FX correctness,
+  wiring/CSS fallout, test mutation-testing, idle-perf) produced 36 findings
+  → 20 deduped fixes, all test-first. The big ones: crumbs collapsed to 0
+  width in the new toolbar (`.tb-nav` needed a `min-width` floor; crumbs now
+  clip the ROOT end, keeping the current folder visible); Disk City's
+  toolbar silently lost its CSS (restructured to the tb-group system);
+  goo rect width could go −0.2 (clamped + zero-size treated as hidden);
+  theme toggle only repainted the donut (now refreshes every chart handle —
+  test-pinned); liveLine ran 60fps for 2s-interval data (15fps gate); the
+  fx tests' skip-if-banner-missing gates could silently disarm 46 tests
+  (hard asserts now); favicon 404 (inline data-URI icon); plus orbs
+  shared-observer/dpr/throw-isolation, beam attach memoization and
+  lit-state-scoped host overflow, legend counts restored, separator
+  ::before dividers, cloud orb killed on Settings close, 1-point series
+  draws a dot, forecast label sequence guard.
+
+**Final: suite 1,728 · 1,726 pass · 0 fail · 2 pre-existing skips;
+typecheck clean.** Verified live in the browser (dark + light, theme
+double-toggle, fresh-tab console clean, all fx states exercised).
+
+### Traps for the next session
+
+- The four FX sections live INSIDE the single app script between banner
+  comments (`FX: Liquid Goo`, `FX: Border Beam`, `FX: Thinking Orbs`,
+  `FX: Charts`) — the fx tests extract by those banners and now HARD-FAIL
+  if a banner is renamed. The CSS copies use shorter ═-runs on purpose.
+- FxCharts refuses to paint while `document.hidden` (repaints on
+  visibilitychange) — in the embedded preview pane the page reports hidden,
+  so charts look blank there until you spoof visibility; real windows fine.
+- The preview pane also accumulates console history across reloads — old
+  errors are NOT from the current page load; verify in a fresh tab.
+- `read_console_messages` 429 noise is the app's own poll backoff testing
+  the rate limiter; pre-existing, harmless.
+- PERF-7 accepted as-is: the md beam's blurred layers raster ~60fps while
+  a scan runs. If profiles ever complain, drop the bloom child during scans.
+
 ## v4 — Phase 9 complete: shell, discoverability and polish (31 August 2026)
 
 The ask was: complete the final phase flawlessly, agents allowed, keep going
