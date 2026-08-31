@@ -1,5 +1,103 @@
 # TreeMap — session handoff
 
+## v4 — Phase 8 complete: domain depth, adversarially reviewed (30 August 2026, night)
+
+The ask was: run Phase 8 the same way as Phase 7 — parallel build agents,
+inline frontend, drive everything, adversarial fleet before calling it done.
+All three features shipped; the fleet then found and killed nine more real
+defects a 1,532-test green suite had missed.
+
+### What shipped
+
+**8.1 — media libraries.** `src/services/mediaLibraryScanner.ts` mirrors the
+games pattern: Photos (modern and legacy layouts), Final Cut, iMovie,
+Lightroom (catalog + `.lrdata` siblings only — the photos live outside and
+are never claimed), Capture One — split into originals / derivatives /
+database from each app's documented bundle layout, sizes from the scanned
+tree, zero disk reads. Only derivatives carry `removable`, each with a
+regeneration-cost sentence; originals never do (asserted directly). A bundle
+the walker could not read INTO (TCC without Full Disk Access — the default
+consumer Mac) reports at its size, `recognised:false`, naming the cause —
+the review's RD-1; it was invisible before. `guardMediaReport` probes every
+component path in one `checkOpenHandles` batch; a held library names its
+holder and offers nothing; a probe that cannot check says so (three states,
+now also rendered). `GET /api/media` (route-tested), rulepack advisory
+entries whose prose defers to the gated Media view (pinned by a test after
+the review caught the two surfaces contradicting each other). The surface
+lives in the Games tab, relabelled **Libraries**.
+
+**8.2 — the duplicate compare viewer.** `GET /api/duplicates/detail`
+(src/services/dupeViewer.ts): sizes/mtimes from the scan, dimensions + EXIF
+capture date via sharp when present (a minimal, 200k-fuzz-clean TIFF/IFD
+parser for DateTimeOriginal; every absence is null WITH a reason),
+per-file dHash diff blocks against `diffReference` (bit order verified
+against the hashing code), `recommendedKeep` with the rule stated — newest
+unless a strictly >10% larger older file suggests the original. The viewer:
+copies side by side with thumbnails (`/api/files/preview?thumb=1`), diff
+blocks painted over near-duplicates, keyboard-first (←/→ groups, 1–9
+keeper, Space stages the rest), the document listener named and taken back.
+The fleet's RD1 mattered most: the EXIF date string crashed formatDate and
+killed the viewer for every camera photo — fixed and re-driven.
+
+**8.3 — the drive dock.** `GET /api/volumes` (external drives + free/total;
+a stats-refused drive listed with nulls and a reason; Linux flattens the
+udisks per-user directory; Windows states its discovery gap instead of
+lying with an empty list). The dock sits under the Treemap and Disk City
+canvases; the cart chip is the drag source (a lasso stages into the cart —
+verified, so one gesture serves both). A drop, in contract-pinned order:
+reset the shared confirm's panel, filter the cart to THIS scan's paths
+(stale entries bricked the next drop — QA D1), re-verify the drive,
+dryRun manifest, confirm, then the same runOffloadJob as every offload.
+Proven on a real mounted APFS volume end to end (copy → byte-back verify →
+trash → manifest on the drive), the detach-mid-drag abort, the
+detach-after-manifest gap (fails safe server-side: DEST_NOT_A_FOLDER), and
+the rollback promise now has its first end-to-end test — a forced verify
+mismatch through the new `setOffloadVerifyForTests` seam cleans the
+destination and leaves every original byte in place.
+
+### The fleet's score
+
+Two adversarial reviewers + one QA driver, on work with a fully green
+suite: **9 real defects** (backend: the invisible unreadable library, the
+rulepack/scanner contradiction, the Linux/Windows volumes dishonesty;
+frontend: the EXIF crash, silent 4-of-N truncation, the stale open-handle
+panel bleeding a "Delete anyway" button into the offload confirm, the
+stale-failure dock race, stale cart entries bricking drops, foreign drags
+triggering offload confirms) plus a dozen hardening items. Every fix
+landed test-first; the QA driver also confirmed eleven attack paths hold.
+
+### Verified
+
+```
+npm run build            clean
+npm run typecheck        clean
+npm test                 1,538 tests · 1,536 pass · 0 fail · 2 skip   (was 1,486)
+app driven               all three surfaces + a real offload onto real mounted hardware
+```
+
+### What I could NOT verify on this machine, and why
+
+- A genuinely held media library (Photos actually running against the
+  fixture) — the guard's three states are unit-tested and the could-not-
+  check state is rendered; a live hold needs a real Photos.app session.
+- Real 300 GB libraries produced by the apps themselves — layouts follow
+  each app's documentation and fixtures; CI's other platforms cover the
+  path math.
+- Windows drive discovery — deliberately absent and now SAYS so
+  (`volumesUnavailableReason`); implementing it is future work.
+
+### Known, deliberately left
+
+- Cart chip count vs bytes can disagree while stale entries exist (QA D5) —
+  pre-existing cart accounting, much rarer now that offloads clear their
+  paths; fix belongs to a cart-focused pass.
+- Backdrop-mousedown close leaks the viewer's keydown listener until the
+  next keypress, where the self-heal removes it with no side effects
+  (QA D9 verified benign); the generic modal closer doesn't know about
+  per-modal teardown — an app-wide refactor if it ever matters.
+- The dock's dragleave flickers between tile children; MEDIA_PART reuses
+  the games palette classes; dock aria-labels sit on non-focusable tiles.
+
 ## v4 — Phase 7 complete, and the time dimension became one view (30 August 2026, later)
 
 The ask was: pick up Phase 7 from the entry below and run it to done, with
