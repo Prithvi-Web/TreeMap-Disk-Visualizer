@@ -239,3 +239,98 @@ test('gauges wire history, actuals and projection together', async () => {
   assert.ok(Math.abs(g.projection.breachInDays! - 5) < 0.5);
   assert.ok(g.projection.breachAtMs! > 0);
 });
+
+/* ══════════════ The route (wired by the parent session) ══════════════ */
+
+import http from 'node:http';
+import { createApp } from '../src/server';
+import { resetRateLimiter } from '../src/middleware/rateLimiter';
+import { updateSettings } from '../src/services/settings';
+
+function reqHttp(port: number, method: string, url: string, body?: unknown): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const payload = body === undefined ? undefined : JSON.stringify(body);
+    const r = http.request(
+      { host: '127.0.0.1', port, path: url, method, headers: payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {} },
+      (res) => {
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => { buf += c; });
+        res.on('end', () => {
+          let parsed: unknown = buf;
+          try { parsed = JSON.parse(buf); } catch { /* non-JSON */ }
+          resolve({ status: res.statusCode ?? 0, body: parsed });
+        });
+      },
+    );
+    r.on('error', reject);
+    if (payload) r.write(payload);
+    r.end();
+  });
+}
+
+test('GET /api/scan/:id/budget-gauges reports each in-scan budget with an honest projection', async () => {
+  resetRateLimiter();
+  const app = createApp(path.join(__dirname, '..', 'public'));
+  const server = http.createServer(app);
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  const fx = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-gauge-route-'));
+  try {
+    fs.mkdirSync(path.join(fx, 'inside'));
+    fs.writeFileSync(path.join(fx, 'inside', 'a.bin'), Buffer.alloc(50_000, 1));
+
+    await updateSettings({ budgets: [
+      { path: path.join(fx, 'inside'), maxBytes: 1_000_000 },
+      { path: path.join(os.tmpdir(), 'tm-gauge-elsewhere-root'), maxBytes: 5 },
+    ] });
+
+    const scan = await reqHttp(port, 'POST', '/api/scan', { path: fx });
+    assert.ok(scan.status === 200 || scan.status === 202, JSON.stringify(scan.body));
+    const scanId = scan.body.scanId;
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const r = await reqHttp(port, 'GET', `/api/scan/${scanId}/result`);
+      if (r.status === 200) break;
+      assert.ok(Date.now() < deadline, 'fixture scan never completed');
+      await new Promise((res) => setTimeout(res, 50));
+    }
+
+    const g = await reqHttp(port, 'GET', `/api/scan/${scanId}/budget-gauges`);
+    assert.equal(g.status, 200, JSON.stringify(g.body));
+    const gauges = g.body.gauges as any[];
+    assert.equal(gauges.length, 1, 'the budget outside this scan root is filtered, like /budgets');
+    const gauge = gauges[0];
+    assert.equal(gauge.maxBytes, 1_000_000);
+    assert.equal(gauge.actualBytes, 50_000, 'the size comes from the scan itself');
+    // A folder scanned for the first time has no history: the projection must
+    // REFUSE with the forecast's own reason, never invent a breach date.
+    assert.equal(gauge.projection.status, 'insufficient');
+    assert.ok(gauge.projection.reason && gauge.projection.reason.length > 10, 'the refusal carries its reason');
+    assert.equal(gauge.projection.breachInDays, undefined, 'no invented date');
+
+    const missing = await reqHttp(port, 'GET', '/api/scan/does-not-exist/budget-gauges');
+    assert.equal(missing.status, 404);
+  } finally {
+    await updateSettings({ budgets: [] });
+    await new Promise<void>((r) => server.close(() => r()));
+    fs.rmSync(fx, { recursive: true, force: true });
+  }
+});
+
+test('the dashboard projection line shows dates only for ok — and refusals with their reasons', () => {
+  // Structural, in the frontendContract style: the widget must never print a
+  // breach date for a refused projection, and every server string it inlines
+  // goes through escapeHtml.
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const start = html.indexOf('function budgetProjectionLine');
+  assert.notEqual(start, -1, 'budgetProjectionLine exists');
+  const fn = html.slice(start, html.indexOf('function shortProjectionReason'));
+  assert.match(fn, /status === 'ok' && typeof p\.breachInDays === 'number'/, 'a date needs an ok status AND a number');
+  assert.match(fn, /escapeHtml\(p\.reason \|\| ''\)/, 'the refusal reason is escaped on the way into markup');
+  assert.match(fn, /escapeHtml\(p\.caveat \|\| ''\)/, 'the ancestor-series caveat is escaped too');
+  const reasons = html.slice(html.indexOf('function shortProjectionReason'), html.indexOf('function shortProjectionReason') + 700);
+  for (const status of ['insufficient', 'erratic', 'shrinking', 'stable']) {
+    assert.ok(reasons.includes(`'${status}'`), `the ${status} refusal has its own sentence`);
+  }
+});

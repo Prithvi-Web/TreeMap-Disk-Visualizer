@@ -9,6 +9,7 @@ import { aggregateCalendar } from '../services/calendarAggregate';
 import { storeOf } from '../services/scanStore';
 import { AppError } from '../middleware/errorHandler';
 import { getSettings } from '../services/settings';
+import { budgetGauges } from '../services/budgetGauges';
 import { getPolicy, assertScanAllowed } from '../services/policy';
 import { streamCsv, streamPdf, streamXlsx } from '../services/reportExport';
 import { sseSend as sseWrite } from '../utils/sse';
@@ -384,6 +385,42 @@ scanRouter.get('/scan/:scanId/budgets', async (req: Request, res: Response) => {
   }
   out.sort((a, b) => b.overBy - a.overBy);
   res.json({ scanId: scan.scanId, budgets: out });
+});
+
+/**
+ * GET /api/scan/:scanId/budget-gauges — the budgets endpoint above, plus a
+ * projected date of breach for each (v4 §9.4). A NEW endpoint rather than a
+ * field on /budgets because that response is under byte-identity lock
+ * (tests/goldenResponses.test.ts) — not one key may be added to it.
+ *
+ * The projection reuses computeForecast's own honesty gates verbatim
+ * (src/services/budgetGauges.ts): too little history, erratic growth and
+ * shrinking usage all refuse with their reasons instead of inventing a date.
+ * Budgets outside this scan's root, or pruned out of its tree, are filtered
+ * exactly as /budgets filters them, so the two lists always describe the same
+ * folders.
+ */
+scanRouter.get('/scan/:scanId/budget-gauges', async (req: Request, res: Response) => {
+  const scan = requireScan(req, req.params.scanId);
+  if (scan.status === 'running') {
+    res.status(202).json({ status: 'running' });
+    return;
+  }
+  if (scan.status === 'error' || (!scan.store && !scan.root)) {
+    throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
+  }
+  const store = storeOf(scan);
+  const { budgets } = await getSettings();
+  const inScan = budgets.filter((b) => {
+    if (b.path !== scan.rootPath && !isInside(scan.rootPath, b.path)) return false;
+    const node = store.findByPath(b.path);
+    return node !== -1 && store.isDir(node);
+  });
+  const gauges = await budgetGauges(inScan, (p) => {
+    const node = store.findByPath(p);
+    return node === -1 ? null : store.size(node);
+  });
+  res.json({ scanId: scan.scanId, gauges });
 });
 
 /**

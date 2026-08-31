@@ -89,6 +89,28 @@ const schemas: Json = {
     ['error', 'code'],
     'Uniform error body returned by every endpoint',
   ),
+  BudgetGauge: obj(
+    {
+      path: str(), name: str(), maxBytes: int(),
+      actualBytes: int('null when the folder is not in this scan — never zero'),
+      ratio: num('actualBytes / maxBytes, null when actualBytes is null'),
+      projection: obj(
+        {
+          status: str("'ok' | 'over' | 'insufficient' | 'erratic' | 'stable' | 'shrinking'"),
+          reason: str('Always present when status is not ok — the honest refusal, verbatim from the forecast'),
+          confidence: num(), bytesPerDay: int(),
+          breachInDays: num('Only when status is ok'),
+          breachAtMs: int('Only when status is ok'),
+          seriesSource: str("'own-scans' | 'ancestor-trees' | 'none'"),
+          seriesPoints: int(),
+          caveat: str('Present for ancestor-tree series — the approximation, stated'),
+        },
+        ['status', 'confidence', 'bytesPerDay', 'seriesSource', 'seriesPoints'],
+      ),
+    },
+    ['path', 'name', 'maxBytes', 'actualBytes', 'ratio', 'projection'],
+    'A folder budget with its projected breach (v4 §9.4) — the projection reuses the disk-full forecast’s own honesty gates',
+  ),
   FolderNote: obj(
     {
       path: str('Sanitized absolute path of the noted folder'),
@@ -901,6 +923,18 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     parameters: [pathParam('scanId', 'Scan id')],
     responses: {
       '200': jsonResponse('Budget statuses', obj({ scanId: str(), budgets: arr(ref('BudgetStatus')) }, ['scanId', 'budgets'])),
+      '202': running202,
+    },
+  },
+  {
+    method: 'get',
+    path: '/api/scan/{scanId}/budget-gauges',
+    summary: 'The budgets above plus a projected breach date each (v4 §9.4) — refusals (too little history, erratic, shrinking) carry the forecast’s own reasons instead of invented dates',
+    tag: 'scan',
+    destructive: false,
+    parameters: [pathParam('scanId', 'Scan id')],
+    responses: {
+      '200': jsonResponse('Budget gauges', obj({ scanId: str(), gauges: arr(ref('BudgetGauge')) }, ['scanId', 'gauges'])),
       '202': running202,
     },
   },

@@ -3500,7 +3500,7 @@ const state = {
   // renderedClusters / shownPerCluster drive the windowed render: how many
   // clusters are in the DOM, and how many images of each. Both reset per render.
   near: { loadedFor: null, status: 'idle', clusters: [], clusterCount: 0, totalReclaimable: 0, available: true, truncated: false, selection: new Set(), pollTimer: 0, renderedClusters: 0, shownPerCluster: {} },
-  budgets: { list: [], overPaths: new Set() },
+  budgets: { list: [], overPaths: new Set(), gauges: new Map() },
   // v4 §9.5 — notes pinned to folders, path → { text, suppress, … }. Loaded
   // once at boot and kept current by the editor; scan-independent by design
   // (a note describes a folder, not a scan of it).
@@ -15281,9 +15281,52 @@ async function loadBudgets() {
     seedNodes(state.budgets.list.map((b) => ({ path: b.path, name: b.name, size: b.actualBytes, type: 'dir' })));
   } catch { state.budgets.list = []; }
   state.budgets.overPaths = new Set(state.budgets.list.filter(b => b.overBy > 0).map(b => b.path));
+  // v4 §9.4 — the breach projections ride a separate endpoint (the budgets
+  // response is byte-locked). Failing to load them costs the projection line,
+  // never the meter: the widget renders from the list either way.
+  state.budgets.gauges = new Map();
   renderBudgetWidget();
+  try {
+    const g = await api(`/api/scan/${state.scanId}/budget-gauges`);
+    state.budgets.gauges = new Map((g.gauges || []).map((x) => [x.path, x]));
+    renderBudgetWidget();
+  } catch { /* the meter alone is still a true statement */ }
   // The sunburst has no budget-border pass; the other three do.
   if (state.view === 'treemap' && !isSun()) presentView();
+}
+
+/**
+ * One line of projection under a budget bar (v4 §9.4).
+ *
+ * 'ok' names the date; every other status is the forecast's own refusal,
+ * shown rather than swallowed — a thermometer with no projection and no
+ * stated reason would read as a broken feature, and a projection invented
+ * from thin history would be worse. Ancestor-tree series carry their caveat
+ * in a title so the approximation is one hover away.
+ */
+function budgetProjectionLine(b) {
+  const gauge = state.budgets.gauges && state.budgets.gauges.get(b.path);
+  if (!gauge || !gauge.projection) return '';
+  const p = gauge.projection;
+  if (p.status === 'over' || b.overBy > 0) return ''; // the red label above already says it
+  if (p.status === 'ok' && typeof p.breachInDays === 'number') {
+    const days = Math.round(p.breachInDays);
+    const when = new Date(p.breachAtMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const approx = p.seriesSource === 'ancestor-trees'
+      ? ` <span title="${escapeHtml(p.caveat || '')}">· from shallow history</span>` : '';
+    return `<div class="muted num" style="font-size:10.5px;" title="${escapeHtml(formatBytes(p.bytesPerDay))}/day over ${p.seriesPoints} scans">` +
+      `at this pace, over in ~${days} day${days === 1 ? '' : 's'} (${escapeHtml(when)})${approx}</div>`;
+  }
+  return `<div class="muted" style="font-size:10.5px;" title="${escapeHtml(p.reason || '')}">${escapeHtml(shortProjectionReason(p))}</div>`;
+}
+
+/** The refusal, compressed to fit a dashboard row; the full reason is the title. */
+function shortProjectionReason(p) {
+  if (p.status === 'insufficient') return 'no projection yet — needs more scan history';
+  if (p.status === 'erratic') return 'growth too erratic to project honestly';
+  if (p.status === 'shrinking') return 'shrinking — no breach in sight';
+  if (p.status === 'stable') return 'flat — no breach in sight';
+  return p.reason || '';
 }
 
 function renderBudgetWidget() {
@@ -15304,6 +15347,7 @@ function renderBudgetWidget() {
       <div class="meta">
         <div class="nm" title="${escapeHtml(b.path)}">${escapeHtml(b.name)}</div>
         <div class="bar-track"><div class="bar" style="width:${pct.toFixed(1)}%;background:${barColor};"></div></div>
+        ${budgetProjectionLine(b)}
       </div>
       <div style="text-align:right;">
         <div class="over">${over ? icon('alert', 12) + ' ' : ''}${label}</div>
