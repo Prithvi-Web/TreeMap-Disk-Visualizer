@@ -1,5 +1,74 @@
 # TreeMap — session handoff
 
+## Premium round 2: the two layout collapses, the full build-out, a review fleet, and the file split (31 August 2026, third session)
+
+**Read this first: `public/index.html` is now GENERATED.** The frontend is
+written as 110 files under `src/ui/` (shell · styles · markup · app) and
+`scripts/build-ui.js` concatenates them in `manifest.json` order. Edit the
+sources, run `npm run build:ui`. The build is a pure concatenation, so the
+artifact is byte-identical to its sources and `tests/buildUi.test.ts` fails the
+suite if anyone hand-edits the artifact or forgets to rebuild. `src/ui/README.md`
+is the orientation. Every other test still reads `public/index.html` — that is
+what ships, and the shipping constraint (no external resources) is unchanged.
+
+### The two bugs the owner reported
+
+- **File Types legend wrapped whenever the window left fullscreen.** Rows now
+  hold one line at every width: `.fx-li-val`/`.fx-li-pct` are nowrap and a
+  container query sheds the mini-bar at 360px and the file count at 260px —
+  decoration before facts, never the value.
+- **The treemap tabs sat unevenly.** The toolbar is two designed rows now
+  (places: crumbs | centred switcher | search — settings: colour+depth left,
+  modes and actions right), measured by container queries, with Disk City on
+  the same system.
+
+### What else shipped
+
+A seven-stage build-out (rolling numerals, bklit loading choreography, the
+remaining chart primitives — scatter/funnel/profitLine/barSquares/linear
+gauges/brush/reference bands — every dashboard card and view wired to them,
+liquid-goo round 2 incl. `FxGoo.detachPair` and bend, beams on every glass card
+plus real activity states, entrance choreography and an every-width pass).
+Then a four-lens adversarial review fleet (41 findings, 17 confirmed after
+independent refutation) and a three-stage fix round.
+
+### Traps for the next session
+
+1. **Edit `src/ui/`, never `public/index.html`.** The suite will catch you, but
+   you will have lost the edit.
+2. **FX banner comments are extraction anchors** for fxCharts/fxBeam/fxOrbs/
+   fxGoo/fxWiring, which HARD-FAIL if renamed. `buildUi.test.ts` also rejects a
+   part boundary that lands inside a block comment. CSS banner copies use
+   shorter `═` runs than the JS ones, on purpose.
+3. **A new source file must be added to `manifest.json`** or `build-ui` refuses
+   to build (an unlisted file would silently never ship).
+4. **`justify-self` on a grid item defeats a `minmax(0, 1fr)` track** — it sizes
+   the item to its content. That is how the breadcrumb came to paint over the
+   view switcher; every nav-row group is `justify-self: stretch` now and aligns
+   with `justify-content`.
+5. **Never beam a Liquid Glass host directly.** `.modal` and `#cartTab` get
+   their fill from `.lg::before`, and FxBeam writes the same pseudo-elements at
+   higher specificity — the panel goes see-through. Both now carry beam-only
+   `.fx-beam-strip` children, and a `[data-fxbeam].lg` guard catches the next one.
+6. **Rolling numerals**: the digit strip must stay `aria-hidden` AND
+   `user-select: none` AND `inline-block` — block boxes are paragraph breaks to
+   the selection serializer, so a copy came out as "3\n4". Verify copy with
+   `Selection.toString()`, never `innerText` (it ignores `user-select`).
+7. **The preview pane reports `document.hidden === true` forever**, so charts
+   refuse to paint, rAF is frozen and `element.focus()` fires no focus event.
+   Spoof visibility to inspect, and verify motion with the Node pumped-clock
+   tests. Console history also spans reloads — check in a fresh tab.
+8. **Two wall-clock perf tests are load-sensitive** (`indexEngine`
+   sub-quadratic — now CPU-time based — and `subtreeCount`'s 400 ms budget).
+   They fail under a loaded machine and pass isolated; investigate before
+   believing a failure, and do not "fix" them by loosening the budget.
+9. **Editing `public/index.html` while a suite run is in flight** makes
+   string-matching tests fail once and pass on retry. That is not a flake.
+
+**Final: suite 1,945 · 1,943 pass · 0 fail · 2 pre-existing skips; typecheck
+clean.** Commits `d1f892f`, `a738ff8`, `9179042`, `4697394` — all LOCAL, the
+owner pushes via GitHub Desktop.
+
 ## Premium UI round: Apple-grade controls, FX libraries, bklit charts (31 August 2026, second session)
 
 The ask was: polish the UI so it feels like Apple made it — fix the uneven
