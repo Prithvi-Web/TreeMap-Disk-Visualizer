@@ -231,7 +231,7 @@ test('the time-lapse bar wraps instead of crushing — the fullscreen-only trans
   const slider = rule('.tm-timebar input[type="range"]');
   assert.match(slider, /min-width:\s*140px/, 'the scrubber keeps a usable length');
   const label = rule('.tm-timebar .tm-timelabel');
-  assert.ok(!/min-width:\s*\d+px/.test(label), 'the tabular label sizes to content, no px reservation');
+  assert.ok(!/min-width:\s*\d+px/.test(label), 'no px reservation — the label’s floor is in ch, so it scales with its own font');
   assert.match(tagOf('tmLapseSpeed'), /seg-fit/, 'the speed seg is content-sized');
 });
 

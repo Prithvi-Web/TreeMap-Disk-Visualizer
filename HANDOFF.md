@@ -1,5 +1,128 @@
 # TreeMap — session handoff
 
+## Session 6 — the scrubber glitch and the hover cost (1 September 2026, later the same day)
+
+Owner's report, verbatim: "the slider is very glitchy and the ui breaks", and
+"the reaction/animations to my mouse hover is slow. I need the app to be
+blazing fast." Both were reproduced against the built page and **measured
+before anything was changed**; every number below is from the browser, not
+from reading code. Five source files, one new test file
+(`tests/scrubberAndHoverCost.test.ts`, four tests, each mutation-proven to
+bite). Suite **2,189 · 0 fail · 3 skips**; typecheck clean; `build-ui --check`
+matches.
+
+### The scrubber: one cause, three symptoms
+
+`#tmTimeLabel` reads "Live" until the first `input` event of a drag, when it
+becomes "Sep 30, 10:31 PM · 1023.9 GB". Measured: **23px → 174px**. The bar
+is a wrapping flex row and the range is `flex: 1 1 140px`, so on the first
+pixel of a drag the TRACK went **558px → 407px** at a 977px bar (−27%): the
+same pointer x mapped to a different value and the thumb jumped. At a 640px
+bar the row wrapped (**46px → 84px** tall) and shoved the map down mid-drag.
+The Liquid Goo trail's ResizeObserver saw the input resize and reset its
+simulation, so the trail teleported too. One cause, three symptoms.
+
+Fix: `.tm-timebar .tm-timelabel { min-width: 25ch; flex: 0 0 auto }`. Sized
+by measurement — the app font gives 7.6px per ch, so the label is 22.9ch;
+**23ch was still unstable at 640, 24ch and up held at every width tried**;
+25ch (189px) leaves two characters for a wider locale. Verified on the rebuilt
+page: track width and bar height are identical for "Live" and the longest
+label at 640, 760, 900, 977 and 1100px. The old comment said "no reservation
+is needed — a 170px reservation crushed the slider in narrow windows": true
+when the bar could not wrap, false now that it does; a floor costs a second
+row at narrow widths instead of a shorter scrubber. `motionWidth.test.ts`
+still forbids a **px** floor (ch scales with the font); the new test requires
+the ch floor to be at least ceil(28 × 0.85).
+
+Also on the scrubber: the `input` handler called `lapseStop()` unconditionally
+→ `lapseReflect()` → `fxTmPillBeamsSync()` = five `FxBeam.attach` calls (each
+a config normalise + sheet `rebuild`) and four `aria-selected` writes that
+wake the speed seg's goo observer — per input event, at pointer rate, when
+nothing was playing. Measured at **half the handler's cost** (0.128 of
+0.273ms). Now `if (L.playing || L.onDone) lapseStop()`; `onDone` keeps the
+export contract, so a scrub still ends a take honestly. Per event after:
+0.03–0.14ms.
+
+### Hover: the JavaScript was cheap; the compositor was the cost
+
+Measured on the built page: `showTooltip` **0.13–0.18ms**, `presentView`
+(the hover highlight, a buffer blit) **0.008ms**, a full `drawTreemap`
+0.75ms for 145 rects. Hover JS is not where the time goes — so do not
+optimise it further expecting a feel change.
+
+`#tooltip` was a full Liquid Glass lens: `position: fixed`, and its
+`::before` carried `backdrop-filter: url(#lg-f-N) blur(18px) …` — an SVG
+displacement-map **reference** filter — while following the pointer every
+frame; and each new 8px size bucket rebuilt the displacement map (**4.6ms**
+measured for 376×104, plus ~20 SVG primitives). A reference filter inside
+backdrop-filter is rasterised against the moving backdrop on every frame;
+plain `blur()` is the accelerated path. Fix: the engine's TARGETS entry for
+`#tooltip` now carries `plain: 1`. `attach` still adds `.lg` — **the
+`::before` is the tooltip's only fill; dropping it from TARGETS would leave a
+transparent text box** (an adversarial verifier reached the same conclusion
+independently) — but builds no filter, registers no ResizeObserver, pre-sets
+`key: 'plain'` so `scheduleUnbuilt` never queues it, and `refresh` returns
+early. Verified: `__lg.key === 'plain'`, `--lg-backdrop` unset, `::before`
+= `blur(18px) saturate(1.85)`; `#sideNav` still carries its `url(#lg-f-…)`
+lens as the control.
+
+**Honest limit:** the compositor saving is a code-verified mechanism, not a
+trace. The Claude pane is `document.hidden` (rAF never fires) and Electron's
+window cannot be profiled from here, so "feels fast" is the owner's call. The
+revert is one token: remove `plain: 1`.
+
+Same-node frames: the mousemove rAF callback rebuilt the card (`innerHTML`,
+then a forced layout to measure it) on every frame the pointer moved inside
+one tile. Now `moveTooltip(x, y)` (in `115-tooltip.js`) repositions only —
+0.011ms, `innerHTML` untouched, `dataset.x/y` updated so a resolver repaint
+that lands mid-glide draws at the current pointer — and `showTooltip` runs
+only when the node changed.
+
+### What was NOT the problem, so nobody chases it
+
+- 52 `requestAnimationFrame` call sites are not 52 loops. Border-beam, orbs,
+  charts and goo all gate on `document.hidden` / IntersectionObserver /
+  REDUCED and sleep when idle — verified in source.
+- `updateTimeLabel`'s Intl formatting: 0.003ms.
+- The goo silhouette is `position: absolute` (not a flex child). Its 300×150
+  box is the SVG intrinsic size with overflow visible — a cosmetic oddity.
+
+### Left open, with the evidence
+
+A narrow race: `refreshTimebar()` on the 1.5s post-scan timer
+(`045-persistent-live-index.js`, after `finishScan`) does
+`if (!h.active) slider.value = slider.max`, and `h.active` only becomes true
+after `setHistoryIndex`'s 120ms debounce AND its layout fetch. A scan
+completing inside that window — Live mode was on when the drag began;
+`setHistoryIndex` turns it off, but a scan already running still completes —
+yanks the thumb to Live under the hand and leaves slider, label and tree
+disagreeing. Not reproducible in the frozen pane. Fix sketch: guard that
+timer on `document.activeElement !== $('tmTimeSlider')`, or a
+`h.pendingIndex` flag set on input and cleared when the index lands.
+
+### Traps this session
+
+- **macOS TCC revoked Desktop, Documents and Downloads for the Claude process
+  mid-session** (Pictures, Library and `~` stayed readable — that trio is the
+  signature). Not Claude's sandbox: the denial persisted with it disabled.
+  The fix is the owner's: System Settings → Privacy & Security → Files and
+  Folders (or Full Disk Access), then relaunch. While blocked,
+  `/Applications/TreeMap.app/Contents/Resources/app.asar` still held the
+  whole built page — a 20-line asar-header parser extracts it — so diagnosis
+  continued off the bundle. Do not route around TCC with the firmlink alias.
+- **zsh does not word-split an unquoted variable.** `T="npx tsx --test"; $T
+  file` runs a command literally named `npx tsx --test`, prints nothing, and
+  an empty `grep` for failures then LOOKS like a clean run. A red run was
+  lost to this; mutation testing recovered the evidence.
+- The pane's clock is frozen (`document.hidden`; rAF never fires; setTimeout
+  is throttled to ~1/min): call the app's globals directly (`switchView`,
+  `loadTreemap`, `showTooltip`, `updateTimeLabel`, `lapseStop`) and wait with
+  MessageChannel hops. `window.innerWidth` is 0 there, so anything clamped to
+  it (the tooltip's left) goes negative — an artefact, not a bug.
+- `startScan` completes in the pane (SSE works) but the view stays on the
+  dashboard: `switchView('treemap')`, then `loadTreemap(state.root.path)`,
+  then wait for `!$('tmTimebar').hidden` — it needs ≥2 snapshots of the root.
+
 ## Session 5 — the journeys, 37 defects, two Windows lessons, and three audit rounds (1 September 2026)
 
 **Suite: 2,185 tests · 0 fail · 3–4 skips** (was 2,008). The skip count moves by

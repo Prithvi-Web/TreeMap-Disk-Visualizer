@@ -105,7 +105,12 @@
       ['#previewPane',  { scale: 40, ab: 2 }],
       ['#ctxMenu',      { scale: 26, ab: 1.5 }],
       ['#rcPopover',    { scale: 30, ab: 2 }],
-      ['#tooltip',      { scale: 20, ab: 1.5 }],
+      /* The tooltip follows the pointer every frame and re-sizes on every
+         node. A url(#…) reference filter in backdrop-filter is rasterised
+         against the moving backdrop each frame, and each new 8px size bucket
+         cost a 4.6ms displacement-map build (measured) — so it keeps the
+         frost and skips the lens. */
+      ['#tooltip',      { scale: 20, ab: 1.5, plain: 1 }],
       ['.toast',        { scale: 28, ab: 2 }],
       ['.tm-timebar',   { scale: 26, ab: 1.5 }],
       ['#liveFeed',     { scale: 24, ab: 1.5 }],
@@ -121,7 +126,7 @@
 
     function refresh(el) {
       const st = el.__lg;
-      if (!st) return;
+      if (!st || st.opts.plain) return;   /* frost only — nothing to build */
       const w0 = el.offsetWidth, h0 = el.offsetHeight;
       if (!w0 || !h0) return;                 /* hidden — observer refires on open */
       const w = bucket(w0), h = bucket(h0);
@@ -156,9 +161,13 @@
       if (el.__lg) return;
       const opts = optsFor(el);
       if (!opts) return;
-      el.__lg = { id: 'lg-f-' + (++uid), opts, key: '' };
+      /* plain: the frosted ::before is the whole surface. No filter is ever
+         built, so the key is pre-set to keep scheduleUnbuilt from queueing
+         it, and no observer is registered. */
+      el.__lg = { id: 'lg-f-' + (++uid), opts, key: opts.plain ? 'plain' : '' };
       if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
       el.classList.add('lg');
+      if (opts.plain) return;
       if (opts.track) {
         el.addEventListener('pointermove', ev => {
           const r = el.getBoundingClientRect();

@@ -263,6 +263,21 @@ function noteTooltipLine(node) {
 }
 
 function hideTooltip() { $('tooltip').style.display = 'none'; }
+/**
+ * Reposition the card that is already showing — the same-node frame of a
+ * hover. No content is touched, so layout is clean and the two size reads
+ * are plain reads, not a forced reflow. The remembered position moves with
+ * it, so a resolver repaint that lands mid-glide draws where the pointer is
+ * now rather than where it entered the tile.
+ */
+function moveTooltip(x, y) {
+  const tip = $('tooltip');
+  tip.dataset.x = String(x);
+  tip.dataset.y = String(y);
+  const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(x + pad, window.innerWidth - w - 10) + 'px';
+  tip.style.top = (y + pad + h > window.innerHeight - 10 ? y - h - 8 : y + pad) + 'px';
+}
 
 /* ───────────────────────────── Context menu ───────────────────────────── */
 let ctxTarget = null;

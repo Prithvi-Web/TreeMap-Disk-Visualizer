@@ -451,8 +451,18 @@ tmCanvas.addEventListener('mousemove', (e) => {
       // tooltip is a floating card that lands squarely on top of the glass.
       // Two labels for one thing, one of them covering the other.
       if (lensActive()) { hideTooltip(); return; }
-      const pct = state.treemap.rootSize > 0 ? (hit.n.size / state.treemap.rootSize) * 100 : 0;
-      showTooltip(e.clientX, e.clientY, hit.n, pct);
+      // Same node as last frame and the card is already up: reposition it.
+      // Rebuilding the card (innerHTML, then a forced layout to measure it)
+      // on every frame the pointer moved inside one tile was pure waste, and
+      // each rebuild nudged the card's size — which is what kept feeding the
+      // glass engine's ResizeObserver.
+      const tip = $('tooltip');
+      if (hit.n === prevNode && tip.style.display !== 'none' && tip.dataset.path === hit.n.path) {
+        moveTooltip(e.clientX, e.clientY);
+      } else {
+        const pct = state.treemap.rootSize > 0 ? (hit.n.size / state.treemap.rootSize) * 100 : 0;
+        showTooltip(e.clientX, e.clientY, hit.n, pct);
+      }
     } else { tmCanvas.style.cursor = 'default'; hideTooltip(); }
   });
 });
@@ -1026,7 +1036,13 @@ $('tmLapseLoop').addEventListener('click', () => {
 
 let tmTimeDebounce = 0;
 $('tmTimeSlider').addEventListener('input', () => {
-  lapseStop(); // §7.1 — the hand on the slider outranks the transport
+  // §7.1 — the hand on the slider outranks the transport. But only a running
+  // transport (or one an export is waiting on) has anything to stop:
+  // lapseStop() re-reflects the whole bar — five beam re-attaches and four
+  // aria-selected writes that wake the speed seg's goo — and doing that per
+  // input event, at pointer rate, was half of every scrub's cost.
+  const L = state.treemap.lapse;
+  if (L.playing || L.onDone) lapseStop();
   updateTimeLabel(); // label tracks the thumb instantly
   clearTimeout(tmTimeDebounce);
   tmTimeDebounce = setTimeout(() => setHistoryIndex(Number($('tmTimeSlider').value)), 120);

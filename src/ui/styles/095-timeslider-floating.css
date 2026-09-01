@@ -30,10 +30,21 @@
 /* 140px floor: below that a scrubber is decoration, so the bar wraps its
    trailing controls instead of shrinking the slider further. */
 .tm-timebar input[type="range"] { flex: 1 1 140px; min-width: 140px; accent-color: var(--accent); cursor: pointer; }
-/* Content-sized: the label is tabular (.num), so playback frames hold one
-   width and no 170px reservation is needed — that reservation is what
-   crushed the slider in narrow windows. */
-.tm-timebar .tm-timelabel { font-size: 12px; color: var(--text-2); white-space: nowrap; text-align: right; }
+/* A floor the width of the longest label, in ch so it scales with the
+   label's own (tabular) digits. Measured without it: "Live" is 23px and
+   "Sep 30, 10:31 PM · 1023.9 GB" is 174px, so the first input event of a
+   drag grew the label by 151px and shrank the range beside it by the same —
+   the track resized under the cursor, the thumb jumped, and at a 640px bar
+   the row wrapped mid-drag and shoved the map down. The old 170px reservation
+   crushed the slider because the bar could not wrap then; it wraps now, so a
+   floor costs a second row at narrow widths instead of a shorter scrubber.
+   Sized from measurement, not guessed: the app font gives 7.6px per ch, so
+   the 174px label is 22.9ch; 23ch was still unstable at a 640px bar, 24ch
+   and up held at every width tried, and 25ch (189px) leaves two characters
+   for a wider locale without pushing the trailing controls to a second row
+   at ordinary widths. flex-shrink 0, or a floor is not one. */
+.tm-timebar .tm-timelabel { font-size: 12px; color: var(--text-2); white-space: nowrap; text-align: right;
+  min-width: 25ch; flex: 0 0 auto; }
 
 /* ── Floating: tooltip / menu / toasts ── */
 #tooltip { position: fixed; z-index: 200; pointer-events: none; display: none;

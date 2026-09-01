@@ -2206,10 +2206,21 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 /* 140px floor: below that a scrubber is decoration, so the bar wraps its
    trailing controls instead of shrinking the slider further. */
 .tm-timebar input[type="range"] { flex: 1 1 140px; min-width: 140px; accent-color: var(--accent); cursor: pointer; }
-/* Content-sized: the label is tabular (.num), so playback frames hold one
-   width and no 170px reservation is needed — that reservation is what
-   crushed the slider in narrow windows. */
-.tm-timebar .tm-timelabel { font-size: 12px; color: var(--text-2); white-space: nowrap; text-align: right; }
+/* A floor the width of the longest label, in ch so it scales with the
+   label's own (tabular) digits. Measured without it: "Live" is 23px and
+   "Sep 30, 10:31 PM · 1023.9 GB" is 174px, so the first input event of a
+   drag grew the label by 151px and shrank the range beside it by the same —
+   the track resized under the cursor, the thumb jumped, and at a 640px bar
+   the row wrapped mid-drag and shoved the map down. The old 170px reservation
+   crushed the slider because the bar could not wrap then; it wraps now, so a
+   floor costs a second row at narrow widths instead of a shorter scrubber.
+   Sized from measurement, not guessed: the app font gives 7.6px per ch, so
+   the 174px label is 22.9ch; 23ch was still unstable at a 640px bar, 24ch
+   and up held at every width tried, and 25ch (189px) leaves two characters
+   for a wider locale without pushing the trailing controls to a second row
+   at ordinary widths. flex-shrink 0, or a floor is not one. */
+.tm-timebar .tm-timelabel { font-size: 12px; color: var(--text-2); white-space: nowrap; text-align: right;
+  min-width: 25ch; flex: 0 0 auto; }
 
 /* ── Floating: tooltip / menu / toasts ── */
 #tooltip { position: fixed; z-index: 200; pointer-events: none; display: none;
@@ -15059,8 +15070,18 @@ tmCanvas.addEventListener('mousemove', (e) => {
       // tooltip is a floating card that lands squarely on top of the glass.
       // Two labels for one thing, one of them covering the other.
       if (lensActive()) { hideTooltip(); return; }
-      const pct = state.treemap.rootSize > 0 ? (hit.n.size / state.treemap.rootSize) * 100 : 0;
-      showTooltip(e.clientX, e.clientY, hit.n, pct);
+      // Same node as last frame and the card is already up: reposition it.
+      // Rebuilding the card (innerHTML, then a forced layout to measure it)
+      // on every frame the pointer moved inside one tile was pure waste, and
+      // each rebuild nudged the card's size — which is what kept feeding the
+      // glass engine's ResizeObserver.
+      const tip = $('tooltip');
+      if (hit.n === prevNode && tip.style.display !== 'none' && tip.dataset.path === hit.n.path) {
+        moveTooltip(e.clientX, e.clientY);
+      } else {
+        const pct = state.treemap.rootSize > 0 ? (hit.n.size / state.treemap.rootSize) * 100 : 0;
+        showTooltip(e.clientX, e.clientY, hit.n, pct);
+      }
     } else { tmCanvas.style.cursor = 'default'; hideTooltip(); }
   });
 });
@@ -15634,7 +15655,13 @@ $('tmLapseLoop').addEventListener('click', () => {
 
 let tmTimeDebounce = 0;
 $('tmTimeSlider').addEventListener('input', () => {
-  lapseStop(); // §7.1 — the hand on the slider outranks the transport
+  // §7.1 — the hand on the slider outranks the transport. But only a running
+  // transport (or one an export is waiting on) has anything to stop:
+  // lapseStop() re-reflects the whole bar — five beam re-attaches and four
+  // aria-selected writes that wake the speed seg's goo — and doing that per
+  // input event, at pointer rate, was half of every scrub's cost.
+  const L = state.treemap.lapse;
+  if (L.playing || L.onDone) lapseStop();
   updateTimeLabel(); // label tracks the thumb instantly
   clearTimeout(tmTimeDebounce);
   tmTimeDebounce = setTimeout(() => setHistoryIndex(Number($('tmTimeSlider').value)), 120);
@@ -19969,6 +19996,21 @@ function noteTooltipLine(node) {
 }
 
 function hideTooltip() { $('tooltip').style.display = 'none'; }
+/**
+ * Reposition the card that is already showing — the same-node frame of a
+ * hover. No content is touched, so layout is clean and the two size reads
+ * are plain reads, not a forced reflow. The remembered position moves with
+ * it, so a resolver repaint that lands mid-glide draws where the pointer is
+ * now rather than where it entered the tile.
+ */
+function moveTooltip(x, y) {
+  const tip = $('tooltip');
+  tip.dataset.x = String(x);
+  tip.dataset.y = String(y);
+  const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(x + pad, window.innerWidth - w - 10) + 'px';
+  tip.style.top = (y + pad + h > window.innerHeight - 10 ? y - h - 8 : y + pad) + 'px';
+}
 
 /* ───────────────────────────── Context menu ───────────────────────────── */
 let ctxTarget = null;
@@ -30918,7 +30960,12 @@ window.TreeMap = {
       ['#previewPane',  { scale: 40, ab: 2 }],
       ['#ctxMenu',      { scale: 26, ab: 1.5 }],
       ['#rcPopover',    { scale: 30, ab: 2 }],
-      ['#tooltip',      { scale: 20, ab: 1.5 }],
+      /* The tooltip follows the pointer every frame and re-sizes on every
+         node. A url(#…) reference filter in backdrop-filter is rasterised
+         against the moving backdrop each frame, and each new 8px size bucket
+         cost a 4.6ms displacement-map build (measured) — so it keeps the
+         frost and skips the lens. */
+      ['#tooltip',      { scale: 20, ab: 1.5, plain: 1 }],
       ['.toast',        { scale: 28, ab: 2 }],
       ['.tm-timebar',   { scale: 26, ab: 1.5 }],
       ['#liveFeed',     { scale: 24, ab: 1.5 }],
@@ -30934,7 +30981,7 @@ window.TreeMap = {
 
     function refresh(el) {
       const st = el.__lg;
-      if (!st) return;
+      if (!st || st.opts.plain) return;   /* frost only — nothing to build */
       const w0 = el.offsetWidth, h0 = el.offsetHeight;
       if (!w0 || !h0) return;                 /* hidden — observer refires on open */
       const w = bucket(w0), h = bucket(h0);
@@ -30969,9 +31016,13 @@ window.TreeMap = {
       if (el.__lg) return;
       const opts = optsFor(el);
       if (!opts) return;
-      el.__lg = { id: 'lg-f-' + (++uid), opts, key: '' };
+      /* plain: the frosted ::before is the whole surface. No filter is ever
+         built, so the key is pre-set to keep scheduleUnbuilt from queueing
+         it, and no observer is registered. */
+      el.__lg = { id: 'lg-f-' + (++uid), opts, key: opts.plain ? 'plain' : '' };
       if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
       el.classList.add('lg');
+      if (opts.plain) return;
       if (opts.track) {
         el.addEventListener('pointermove', ev => {
           const r = el.getBoundingClientRect();
