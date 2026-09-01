@@ -176,6 +176,16 @@ Both are real costs and both are visible signatures; neither was changed.
 - `startScan` completes in the pane (SSE works) but the view stays on the
   dashboard: `switchView('treemap')`, then `loadTreemap(state.root.path)`,
   then wait for `!$('tmTimebar').hidden` — it needs ≥2 snapshots of the root.
+- **`node_modules/dmg-builder/templates/` was emptied by hand in Finder at
+  13:57** (a `.DS_Store` appeared, nothing else survived) — the same window
+  in which `demo/05-magnifier.jpg` vanished from the working tree. The next
+  `electron-builder --mac` then died with `ENOENT … templates/background.tiff`
+  AFTER writing the zip, so the zip and the unpacked app were fine and only
+  the dmg was missing. Restored surgically: `npm pack dmg-builder@24.13.3`
+  into scratch, `tar -xzf … package/templates`, copy the folder back. Do not
+  `npm install` to fix it — that can re-link native modules. A background
+  task's "exit code 0" was the trailing `grep | tail`, not electron-builder:
+  read the log for `⨯`.
 
 ## Session 5 — the journeys, 37 defects, two Windows lessons, and three audit rounds (1 September 2026)
 
