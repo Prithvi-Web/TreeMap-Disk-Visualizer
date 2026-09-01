@@ -59,6 +59,7 @@
     "markup/120-cart.html",
     "markup/125-dupe-viewer.html",
     "markup/130-preview-ctx.html",
+    "markup/135-nl-popover.html",
     "shell/000-script-open.html",
     "app/000-prelude.js",
     "app/005-fx-liquid-goo.js",

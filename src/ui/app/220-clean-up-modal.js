@@ -202,10 +202,21 @@ async function loadEmptyFolders() {
       updateCleanSummary();
       return;
     }
+    // The route caps `folders` at the topmost 1,000 and reports what it really
+    // found in `totalCount`, with `truncated` saying the cap was hit. Printing
+    // the list's length as the count states a cap as a fact, and Select all can
+    // only ever tick what was sent — so on a capped list the row says both
+    // numbers and which one the tick covers, the way the rules pane says
+    // "largest shown". Untruncated, the list IS the count and the row is
+    // unchanged.
+    const shown = emptyFolders.length;
+    const selectAllLabel = data.truncated
+      ? `Select all — the top ${formatCount(shown)} shown of ${formatCount(data.totalCount)} empty folders found, nested ones included. Select all reaches only these ${formatCount(shown)} — trash them and rescan for the rest.`
+      : `Select all — ${shown} top-level empty folder${shown > 1 ? 's' : ''}${data.totalCount > shown ? ` (${formatCount(data.totalCount)} counting nested ones)` : ''}`;
     host.innerHTML = `
       <div class="rule-row">
         <input type="checkbox" id="emptyAll" checked>
-        <label for="emptyAll" class="muted">Select all — ${emptyFolders.length} top-level empty folder${emptyFolders.length > 1 ? 's' : ''}${data.totalCount > emptyFolders.length ? ` (${formatCount(data.totalCount)} counting nested ones)` : ''}</label>
+        <label for="emptyAll" class="muted">${selectAllLabel}</label>
       </div>
       <div class="clean-list">` + emptyFolders.map((f, i) => `
         <div class="clean-item">
@@ -787,7 +798,15 @@ async function runCleanFind(fetcher) {
   try {
     data = await fetcher();
   } catch (e) {
-    toast(e.message, 'error');
+    // Through `reportError`, never a bare red toast. `GET /api/cleanup/rules`
+    // answers 202 {status:'running'} while a scan is still going, and `api()`
+    // turns exactly that into a throw carrying `stillWorking` — an ANSWER, not
+    // a failure. reportError is the one place that knows the difference (it
+    // gives that flag, and CAPABILITY_UNAVAILABLE, the plain treatment rather
+    // than red), so pressing Find during a rescan used to paint "Still working
+    // on that — it hasn't finished yet" as an error for a request that had not
+    // failed and would have succeeded a second later.
+    reportError(e);
     return;
   } finally {
     findBtn.disabled = false;
@@ -830,17 +849,30 @@ async function runCleanFind(fetcher) {
   updateCleanSummary();
 }
 
-/** Selected paths + recoverable bytes for whichever pane is showing. */
+/**
+ * Selected paths + recoverable bytes for whichever pane is showing.
+ *
+ * `sizes` is the same measurement as `bytes`, kept per path. A delete run can
+ * come back with only part of the selection actually gone — a chunk refused
+ * for an open handle is neither deleted nor failed — and a single pre-summed
+ * total cannot be un-summed afterwards. The completion report needs to add up
+ * exactly the paths the server confirmed, so it gets them one at a time.
+ */
 function activeCleanSelection() {
   if (cleanPane === 'rules') {
     const files = [...document.querySelectorAll('#cleanResults .clean-ck')]
       .filter(ck => ck.checked).map(ck => cleanMatches[+ck.dataset.i]);
-    return { paths: files.map(f => f.path), bytes: files.reduce((s, f) => s + f.size, 0), noun: 'file' };
+    return {
+      paths: files.map(f => f.path), bytes: files.reduce((s, f) => s + f.size, 0), noun: 'file',
+      sizes: new Map(files.map(f => [f.path, f.size])),
+    };
   }
   if (cleanPane === 'empty') {
     const sel = [...document.querySelectorAll('#emptyResults .empty-ck')]
       .filter(ck => ck.checked).map(ck => emptyFolders[+ck.dataset.i]);
-    return { paths: sel.map(f => f.path), bytes: 0, noun: 'empty folder' };
+    // An empty folder is worth ~0 bytes by definition, so there is nothing to
+    // size — an empty map, not a missing one, so callers need no special case.
+    return { paths: sel.map(f => f.path), bytes: 0, noun: 'empty folder', sizes: new Map() };
   }
   // The Smart pane has three sources that can name the SAME path — an orphaned
   // node_modules is both a package leftover (§C6) and a Smart Suggestion. Keyed
@@ -864,7 +896,7 @@ function activeCleanSelection() {
   });
   let bytes = 0;
   for (const size of chosen.values()) bytes += size;
-  return { paths: [...chosen.keys()], bytes, noun: 'item' };
+  return { paths: [...chosen.keys()], bytes, noun: 'item', sizes: chosen };
 }
 
 function updateCleanSummary() {
@@ -923,23 +955,45 @@ function renderCleanFunnel(freed) {
   else cleanFunnelHandle = FxCharts.funnel($('cleanFunnel'), spec);
 }
 
-$('cleanConfirmBtn').addEventListener('click', async () => {
-  const { paths, bytes } = activeCleanSelection();
+/**
+ * Move the current selection to the Trash, and report what actually happened.
+ *
+ * `trashPaths` answers in THREE buckets, not two: a chunk the server refuses
+ * because something still has a file open comes back in `blocked` — in neither
+ * `deleted` nor `failed`, because those files are untouched and retrying them
+ * is the right next step. Reading only two of the three buckets loses those
+ * files from the report, and stalls this progress bar short of 100% for the
+ * rest of the run.
+ *
+ * The recovered figure is summed from the paths the server confirmed, path by
+ * path, rather than quoting the selection's total: the total was computed
+ * before anything was deleted, so on any run that did not delete everything it
+ * credits the user with space still sitting on the disk.
+ */
+async function runCleanTrash() {
+  const { paths, sizes } = activeCleanSelection();
   if (!paths.length) return;
   const btn = $('cleanConfirmBtn');
   btn.disabled = true;
   $('cleanProgress').classList.add('on');
-  let done = 0, failed = 0;
+  let done = 0, failed = 0, blocked = 0, recovered = 0;
   for (let i = 0; i < paths.length; i += 20) {
     const chunk = paths.slice(i, i + 20);
     const result = await trashPaths(chunk, { silent: true });
     done += result.deleted.length;
+    for (const p of result.deleted) recovered += sizes.get(p) || 0;
     failed += result.failed.length;
-    $('cleanProgressFill').style.width = Math.round(((done + failed) / paths.length) * 100) + '%';
-    btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Deleting… ${done + failed}/${paths.length}`;
+    blocked += (result.blocked || []).length;
+    const settled = done + failed + blocked;
+    $('cleanProgressFill').style.width = Math.round((settled / paths.length) * 100) + '%';
+    btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Deleting… ${settled}/${paths.length}`;
   }
   closeModal('cleanModal');
-  if (done) toast(`Moved ${done} item${done > 1 ? 's' : ''} to Trash${bytes ? ` — ${formatBytes(bytes)} recovered` : ''}`);
+  if (done) toast(`Moved ${done} item${done > 1 ? 's' : ''} to Trash${recovered ? ` — ${formatBytes(recovered)} recovered` : ''}`);
   if (failed) toast(`${failed} could not be trashed`, 'error');
+  // Silent mode suppresses trashPaths' own re-ask dialog, so this is the only
+  // place these files get mentioned at all. They are still where they were.
+  if (blocked) toast(`${blocked} still in use — left where ${blocked > 1 ? 'they are' : 'it is'}. Close what is using ${blocked > 1 ? 'them' : 'it'} and try again.`, 'error', 9000);
   if (done) rescan();
-});
+}
+$('cleanConfirmBtn').addEventListener('click', runCleanTrash);

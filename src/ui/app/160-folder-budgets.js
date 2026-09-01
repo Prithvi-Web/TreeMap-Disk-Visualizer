@@ -275,6 +275,15 @@ $('noteRemoveBtn').addEventListener('click', () => { if (noteTarget) removeNote(
  */
 function nlOpen() {
   const btn = $('tmNlBtn'), pop = $('nlPop');
+  // getBoundingClientRect() is in VIEWPORT coordinates, and #nlPop is
+  // position:fixed, so this arithmetic is only right while the viewport is
+  // still the popover's containing block. That is why the popover's markup
+  // sits at the top level of the body (markup/135-nl-popover.html) and not
+  // beside this button: .tm-toolbar carries `container-type: inline-size`,
+  // whose layout containment would make the TOOLBAR the containing block and
+  // land the popover a toolbar's-worth low and left, clipped by its own
+  // stacking context. Never move #nlPop back next to what it points at —
+  // tests/nlPopContainment.test.ts fails if any ancestor takes the job.
   const r = btn.getBoundingClientRect();
   pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 396)) + 'px';
   pop.style.top = (r.bottom + 8) + 'px';

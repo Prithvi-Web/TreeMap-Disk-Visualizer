@@ -52,6 +52,22 @@
     rgba(255,255,255,0) 8%, var(--ring-b) 34%, var(--ring-a) 62%, rgba(255,255,255,0) 92%);
 }
 :root[data-theme="light"] {
+  /* The four accent/status hues this block re-tunes (--accent here, then
+     --warn/--ok/--danger below) are each measured against the light card
+     ground — --glass, white at 52%, over --bg-1, i.e. ~#FAFBFD — because
+     that is what status text actually sits on. The dark palette is tuned for
+     near-black glass, so untouched they land between 1.9:1 and 3.5:1 there:
+     legible on #05060a, washed out to nothing on a white card. Every ratio
+     quoted is against that ground, and the bar is WCAG AA for normal text
+     (4.5:1) because the smallest of these labels — the 11.5px budget
+     "over/under" figure, the 12.5px delta rows — is nowhere near large text.
+
+     --accent 3.5:1 → 5.1:1. #0069D6 is not a new blue: the charts kit already
+     re-tunes to it for light (--fx-live-up), so the theme now speaks one.
+     It also lifts white-on-accent fills (chips, the cmdk selection row,
+     #ctxMenu hover) from 3.7:1 to 5.3:1. */
+  --accent:        #0069D6;
+
   --bg-0:          #e9ecf2;
   --bg-1:          #f5f6fa;
   --surface-1:     rgba(10,15,30,0.045);
@@ -70,6 +86,18 @@
   /* The dark theme's #FFD60A yellow is near-invisible on light cards
      (~1.5:1). Text and badges using --warn need this darker amber here. */
   --warn:          #B36B00;
+  /* --ok was the hole in exactly that reasoning: #30D158 measures 1.95:1 on
+     the light card, so every green that states a good outcome — Folder
+     Budgets' under-budget figure, the duplicate "keep" tag, the down-delta
+     badge, the success toast — was a pale smudge. 4.8:1 here. Note this is
+     darker than the #1f9d45 that 105-trends.css used to patch the one badge
+     somebody noticed: that green is only 3.4:1 and never cleared AA. */
+  --ok:            #17803A;
+  /* Same case, other end of the ladder: #FF453A is 3.3:1 on the card, which
+     leaves the over-budget figure and the query-error line weaker than the
+     body text they are meant to shout over. 5.4:1 here, and white-on-danger
+     fills (the cart remove button, #cleanProgress) improve with it. */
+  --danger:        #C7261C;
   --tm-canvas-bg:  rgba(10,15,30,0.05);
   --scrim:         rgba(24,28,44,0.34);
   --skeleton-a:    rgba(10,15,30,0.05);

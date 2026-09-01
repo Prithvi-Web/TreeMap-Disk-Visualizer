@@ -70,10 +70,22 @@ async function openFromIndex(path, info) {
   // { when, durationMs }, and finishScan sets it a moment later — writing a
   // different shape from here left `when` undefined, which the "since your last
   // scan" banner reads directly.
+  // Whose counts are these? `GET /api/index/tree` answers with the subtree that
+  // was asked for, but its fileCount/dirCount/totalSize describe the whole
+  // IndexedRoot that CONTAINS it — `rootFor()` in indexRoutes matches any
+  // containing root by prefix. So after scanning `~` once, opening
+  // `~/Documents` reported the home folder's item count beside Documents' own
+  // byte total, at an items/sec rate neither of them supports. The counters
+  // describe this tree only when this tree IS the root; anything else — a
+  // subfolder, or a server that did not say which root answered — gets null,
+  // which every surface below is required to read as "show no number at all"
+  // rather than as a zero. root.size, computed over the tree itself, stays
+  // exact and is still shown.
+  const wholeRoot = !!data.rootPath && data.rootPath === data.path;
   state.scanStats = {
-    scanned: data.fileCount + data.dirCount,
-    fileCount: data.fileCount,
-    dirCount: data.dirCount,
+    scanned: wholeRoot ? data.fileCount + data.dirCount : null,
+    fileCount: wholeRoot ? data.fileCount : null,
+    dirCount: wholeRoot ? data.dirCount : null,
     engine: 'index',
     durationMs: Math.round(performance.now() - t0),
   };
@@ -381,8 +393,18 @@ async function finishScan(root, durationMs, stats) {
   $('scanStatus').innerHTML = icon('checkCircle', 14) +
     `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> files `}` +
     `in ${(durationMs / 1000).toFixed(1)}s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`;
-  if (files !== null) countUp($('statFiles'), files);
-  if (dirs !== null) countUp($('statDirs'), dirs);
+  // Blanked, not merely skipped. Skipping leaves the tiles holding the PREVIOUS
+  // scan's numbers, which is the same lie in slower motion: the headline and the
+  // engine row go quiet while Files and Folders keep stating another folder's
+  // counts as this one's. `data-v` goes with the text because countUp resumes
+  // its roll from that attribute, not from what the tile reads — a tile blanked
+  // by text alone would animate up from a number nobody can see.
+  const setStat = (el, n) => {
+    if (n === null) { el.dataset.v = 0; el.textContent = '–'; return; } // the dash the markup ships with
+    countUp(el, n);
+  };
+  setStat($('statFiles'), files);
+  setStat($('statDirs'), dirs);
   FxNum.rollText($('statLastScan'), new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }));
   renderDiskNotes();
   // finishScan runs twice per scan by design — the index-first instant paint
@@ -485,7 +507,13 @@ function renderDiskNotes() {
   // Feature 19 — which scan engine ran, and how fast.
   const en = $('engineRow');
   if (en) {
-    if (s.engine && s.durationMs > 0) {
+    // `scanned` is null whenever the counters that came back do not describe
+    // the tree on screen — the instant-open path sets it that way when it reads
+    // a subfolder of an indexed root. This row is nothing but that number and a
+    // rate derived from it, and `formatCount(null)` prints "0", so an ungated
+    // row states "scanned 0 items" and "0/s" as fact about a folder that plainly
+    // holds files. There is nothing honest left to say, so the row says nothing.
+    if (s.engine && s.durationMs > 0 && s.scanned != null) {
       const label = { 'gdu-turbo': 'Turbo engine (gdu)', 'turbo-walker': 'Turbo walker', 'ntfs-mft': 'NTFS MFT reader', walker: 'Standard walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
       const rate = s.durationMs > 0 ? Math.round(s.scanned / (s.durationMs / 1000)) : 0;
       $('engineText').textContent = `${label} — scanned ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s` +
@@ -516,8 +544,23 @@ async function renderCloudSafe() {
   let data;
   try {
     data = await api(`/api/cleanup/cloud-safe?scanId=${state.scanId}`);
-  } catch { hide(); return; }
-  if (!data.groups) { hide(); return; } // 202 while a scan is still running
+  } catch (e) {
+    // Two different answers arrive here and only one of them is a failure.
+    // While a scan runs the endpoint answers 202 { status: 'running' }, which
+    // api() turns into a thrown `stillWorking` error rather than a body — so
+    // the old `if (!data.groups)` guard that claimed to handle the 202 could
+    // never run, and the catch below it hid the whole tab. During any rescan
+    // the Cloud-safe tab therefore vanished out from under the user instead of
+    // saying it was working. "Not yet" keeps the tab and explains itself;
+    // "broken" is the only thing that still takes the tab away.
+    if (e && e.stillWorking) {
+      if (tab) tab.hidden = false;
+      host.innerHTML = '<div class="muted">Still counting online-only files — the scan is finishing. This list fills in on its own.</div>';
+      return;
+    }
+    hide();
+    return;
+  }
 
   if (tab) tab.hidden = data.totalCount === 0;
   if (!data.totalCount) { host.innerHTML = ''; return; }
@@ -585,7 +628,18 @@ $('scanBtn').addEventListener('click', () => {
 // Enter starts a scan and only ever starts one. It used to be free of this
 // check because the button was disabled mid-scan; now that the button is Stop,
 // an unguarded Enter in the path field would cancel the running scan instead.
-$('pathInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !state.scanning) $('scanBtn').click(); });
+//
+// Refusing is right. Refusing in SILENCE was not: the app auto-scans the last
+// path at boot, so the very first thing a returning user can do is type a
+// different folder and press Enter — and for those seconds Enter did nothing
+// at all, with no scan and no message. That reads as a broken input, and it
+// fooled two people testing this build before it was noticed. The house rule
+// is the one at tmRunGrammarQuery: say so rather than doing nothing. The
+// button's own behaviour is unchanged; only the refusal gained a voice.
+$('pathInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !state.scanning) { $('scanBtn').click(); return; }
+  if (e.key === 'Enter') toast('A scan is already running — press Stop to end it, then press Enter to scan this path.', 'error');
+});
 $('pathInput').addEventListener('input', maybeShowFastRescan);
 maybeShowFastRescan();
 window.addEventListener('beforeunload', closeEventSource);

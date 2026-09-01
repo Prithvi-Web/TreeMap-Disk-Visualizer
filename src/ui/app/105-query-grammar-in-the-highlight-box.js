@@ -104,6 +104,67 @@ function tmSyncQueryBar() {
   bar.hidden = !(hasViews || hasMessage || hasStage) || state.view !== 'treemap';
 }
 
+/**
+ * Split the matches the map did NOT draw into the three reasons it can have.
+ *
+ * Every drawn rectangle is inside the current view root, so the hits inside it
+ * minus the drawn count is exactly the number that lost to depth. The other
+ * two buckets are the ones the old message got wrong.
+ *
+ * `drawn` is `state.treemap.matches`, and `paths` is the complete hit list —
+ * only meaningful when the answer was not truncated, because a truncated list
+ * cannot account for hits the server never sent. The caller handles truncation
+ * before it reaches here.
+ */
+function tmUndrawnBreakdown(paths, viewRoot, drawn) {
+  let self = false;
+  let outside = 0;
+  let inside = 0;
+  for (const p of paths || []) {
+    if (viewRoot && p === viewRoot) self = true;
+    else if (viewRoot && !tmIsInside(p, viewRoot)) outside++;
+    else inside++;
+  }
+  // A path can be drawn more than once in principle; never report a negative.
+  return { self, outside, deeper: Math.max(0, inside - drawn) };
+}
+
+/**
+ * Why the map shows fewer matches than the query found — the true reason.
+ *
+ * The message used to read "The rest are deeper than this view draws; zoom in
+ * or raise Depth" whatever the reason was, and for the two commonest gaps that
+ * advice cannot work:
+ *
+ *   - **The view root itself matched.** Measured on the live app at the scan
+ *     root with `size>1gb`: the API returns 9, the map draws 8, and the ninth
+ *     is the folder being looked at. The map IS that folder, so it has no
+ *     rectangle of its own and no Depth setting will ever give it one.
+ *   - **The match is elsewhere in the scan.** `/api/query` searches the WHOLE
+ *     scan, not the drilled-in subtree. After a drill-in the missing hits are
+ *     usually outside the folder on screen, and raising Depth draws deeper,
+ *     never wider — only going back up can reach them.
+ *   - **The match really is below what this view draws.** The only case the
+ *     old sentence was right about, and the only one that still gets it.
+ *
+ * With no view root known, everything falls into the depth bucket, which is
+ * the same answer the old code gave and the only honest one left.
+ */
+function tmUndrawnMessage(found, drawn, paths, viewRoot) {
+  const b = tmUndrawnBreakdown(paths, viewRoot, drawn);
+  const head = `${found} match${found === 1 ? '' : 'es'} — ${drawn} shown here.`;
+  const why = [];
+  if (b.self) why.push('one is this folder itself, which has no rectangle of its own');
+  if (b.outside) why.push(`${b.outside} ${b.outside === 1 ? 'is' : 'are'} elsewhere in the scan, outside this folder`);
+  if (b.deeper) why.push(`${b.deeper} ${b.deeper === 1 ? 'is' : 'are'} deeper than this view draws`);
+  if (!why.length) return head; // nothing left to explain; do not invent a reason
+  const advice = b.deeper && b.outside ? ' Zoom in or raise Depth for those; go up for the rest.'
+    : b.deeper ? ' Zoom in or raise Depth.'
+    : b.outside ? ' Go up to see them.'
+    : '';
+  return `${head} ${why.join('; ').replace(/^./, (c) => c.toUpperCase())}.${advice}`;
+}
+
 /** Run a grammar query on the server and highlight what comes back. */
 async function tmRunGrammarQuery(q) {
   if (!state.scanId) {
@@ -147,7 +208,8 @@ async function tmRunGrammarQuery(q) {
     // while the map outlines three — and "3 matches" alone reads as "that is
     // all there is". §2.2 also requires that a signal this machine cannot
     // supply is visible, rather than an empty highlight that reads as
-    // "nothing matched".
+    // "nothing matched". Which of the three gaps it is, and whether the Depth
+    // advice can help at all, is tmUndrawnMessage's job.
     const degraded = out.degraded || [];
     const drawn = state.treemap.matches;
     const found = out.total;
@@ -156,10 +218,7 @@ async function tmRunGrammarQuery(q) {
     } else if (out.truncated) {
       tmSetQueryMessage(`Showing the ${state.treemap.matchedPaths.size} biggest of ${found} matches.`, false);
     } else if (found > drawn) {
-      tmSetQueryMessage(
-        `${found} match${found === 1 ? '' : 'es'} — ${drawn} shown here. The rest are deeper than this view draws; zoom in or raise Depth.`,
-        false,
-      );
+      tmSetQueryMessage(tmUndrawnMessage(found, drawn, tmLastHits.paths, state.treemap.rootPath), false);
     } else {
       tmSetQueryMessage('', false);
     }
@@ -487,7 +546,14 @@ $('tmExportBtn').addEventListener('click', (e) => {
   e.stopPropagation();
   if (!drawnCells().length) { toast('Render something first', 'error'); return; }
   const menu = $('ctxMenu');
-  const canReport = !!(state.scanId && state.root);
+  // A report can only be built from a FINISHED scan — the endpoint answers
+  // 202 {status:'running'} until then (src/api/scanRoutes.ts). An offered menu
+  // entry that cannot work is a promise the app breaks, and this one used to
+  // break it by navigating away from the app entirely; see downloadReport.
+  // The trap is that the menu looks perfectly ready mid-scan: an already
+  // indexed folder paints from the live index the instant it is opened, while
+  // the real scan is still walking the tree underneath.
+  const canReport = !!(state.scanId && state.root && !state.scanning);
   // §7.1c — the time-lapse exports need two snapshots to animate between and
   // the rectangle renderer (the only one whose motion is honest to tween).
   const canLapse = state.treemap.history.snaps.length >= 2 && isRectMap();
@@ -519,21 +585,83 @@ $('tmExportBtn').addEventListener('click', (e) => {
     else if (exp === 'svg') exportTreemapSVG();
     else if (exp === 'gif') exportTimelapseGif();
     else if (exp === 'webm') exportTimelapseWebm();
-    else if (exp === 'csv-files') downloadReport('csv', 'files');
-    else if (exp === 'csv-folders') downloadReport('csv', 'folders');
-    else if (exp === 'xlsx-files') downloadReport('xlsx', 'files');
-    else if (exp === 'xlsx-folders') downloadReport('xlsx', 'folders');
-    else if (exp === 'pdf') downloadReport('pdf');
+    else if (exp === 'csv-files') void downloadReport('csv', 'files');
+    else if (exp === 'csv-folders') void downloadReport('csv', 'folders');
+    else if (exp === 'xlsx-files') void downloadReport('xlsx', 'files');
+    else if (exp === 'xlsx-folders') void downloadReport('xlsx', 'folders');
+    else if (exp === 'pdf') void downloadReport('pdf');
   }));
 });
 
-/** Trigger a server-side report download (CSV / PDF) for the current scan. */
-function downloadReport(format, mode) {
+/**
+ * Trigger a server-side report download (CSV / XLSX / PDF) for the current scan.
+ *
+ * **This was the one network call in the UI that could unload the whole app.**
+ * It was a bare `<a href="/api/scan/…/export">` click, and a bare anchor
+ * NAVIGATES unless the answer carries `Content-Disposition: attachment`. That
+ * endpoint only sets the header once the scan has FINISHED: while it is still
+ * running it answers `202 {status:'running'}`, and 404/500 answer the flat
+ * `{error, code}` envelope — all JSON, none of them attachments. So Export
+ * mid-scan replaced the single-page app with a page of raw JSON, taking the
+ * cart, the drill-in, the query and every other unsaved thing with it. It is
+ * easy to hit precisely because the screen looks finished: an already-indexed
+ * folder paints instantly from the live index while a real scan runs under it.
+ *
+ * Both halves are closed, and neither one alone would be enough.
+ *
+ *  1. **The report is not offered, or run, unless the scan is done.** The menu
+ *     drops the entries while `state.scanning` (see `canReport` above); this
+ *     repeats the guard for any caller that arrives another way, and then asks
+ *     the server, because `state.scanning` describes THIS session — reopening
+ *     an indexed folder paints a map from a scan someone else is still running.
+ *     The ask goes through `api()`, so a 404 or a 500 arrives as the project's
+ *     error envelope and is spoken, exactly like every other call in the app.
+ *  2. **The anchor is given a `download` attribute.** That is the half that
+ *     makes the unload structurally impossible rather than merely unlikely: a
+ *     same-origin anchor with `download` saves the response, and the HTML spec
+ *     gives it no path back to navigating, whatever status or content type
+ *     comes back. Should the export somehow still answer JSON after a clean
+ *     preflight, the worst case is a small useless file — not a lost session.
+ *
+ * The bytes still stream from the server straight to disk, which is why this
+ * stayed an anchor rather than becoming a buffered blob: a full-tree CSV of a
+ * large scan has no business being held in the page's memory first.
+ */
+async function downloadReport(format, mode) {
   if (!state.scanId) { toast('Run a scan first', 'error'); return; }
+  if (state.scanning) {
+    toast('The scan is still running — a report can only be built from a finished scan. Try again when it lands.', 'error');
+    return;
+  }
+
+  // /stats is the cheap one: it answers 200 with the scan's status for any
+  // state the scan is in, so there is no 202 to interpret and no tree walk to
+  // pay for. A scan that has been evicted or has failed surfaces here, in
+  // words, instead of as a page of JSON where the app used to be.
+  let stats;
+  try {
+    stats = await api(`/api/scan/${encodeURIComponent(state.scanId)}/stats`);
+  } catch (e) {
+    toast(e.message || 'That report could not be built.', 'error');
+    return;
+  }
+  if (stats && stats.status === 'running') {
+    toast('The scan hasn’t finished on the server yet, so there is nothing to report on yet. Try again in a moment.', 'error');
+    return;
+  }
+  if (!stats || stats.status !== 'complete') {
+    toast('That scan didn’t finish, so there is nothing to report on. Rescan the folder and try again.', 'error');
+    return;
+  }
+
   let url = `/api/scan/${encodeURIComponent(state.scanId)}/export?format=${format}`;
   if (mode) url += `&mode=${mode}`;
   const a = document.createElement('a');
   a.href = url;
+  // Load-bearing, not cosmetic: `download` is what forbids navigation. Without
+  // it this anchor is the original defect. The name follows the same
+  // convention as every other export the app writes.
+  a.download = exportFileName(format === 'pdf' ? 'pdf' : format === 'xlsx' ? 'xlsx' : 'csv');
   a.rel = 'noopener';
   document.body.appendChild(a);
   a.click();

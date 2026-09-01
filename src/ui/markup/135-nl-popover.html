@@ -1,0 +1,40 @@
+<!-- ═══════════ Ask in plain words (v4 §9.6) ═══════════ -->
+<!-- Top level, beside #ctxMenu and #rcPopover, and for exactly their reason:
+     nlOpen() places this popover from `tmNlBtn.getBoundingClientRect()`, which
+     is in VIEWPORT coordinates, so the viewport has to remain its containing
+     block. It used to be a child of .tm-toolbar, and the day that toolbar
+     started measuring itself (`container-type: inline-size`, which computes to
+     `contain: layout style inline-size`) layout containment made the TOOLBAR
+     the containing block for its fixed descendants: the popover resolved the
+     button's window coordinates against the toolbar's box, opened low and to
+     the left of the sparkle, and was clipped by the toolbar's own stacking
+     context. Anchoring markup to the control it points at is the habit that
+     caused this; a fixed popover belongs at the top level instead.
+     #view-treemap is no refuge either — `.view` animates a transform on entry,
+     and a running transform is a containing block for the same reason.
+     tests/nlPopContainment.test.ts holds the invariant, derived from the
+     stylesheet, so the next self-measuring wrapper cannot re-break it.
+     The treemap view's unmount() closes this, so leaving the view can never
+     strand it over another screen. -->
+<div id="nlPop" class="glass" role="dialog" aria-modal="false" aria-labelledby="nlPopTitle" hidden>
+  <div class="set-h" id="nlPopTitle" style="margin:0 0 8px;">Ask in plain words</div>
+  <!-- FX wiring: the "listening" chip sits beside the field while it
+       is focused and awaiting typing; the well costs nothing empty. -->
+  <div class="nl-ask-row">
+    <input type="text" id="nlInput" placeholder="big videos I haven't opened in a year" aria-label="Describe what to find, in plain words" autocomplete="off" spellcheck="false">
+    <span class="fx-orb-well" id="nlListenWell"></span>
+  </div>
+  <!-- FX wiring: shown only while the /api/nl-query round-trip is in
+       flight — the "weaving" orb mounts into the well. -->
+  <div class="nl-pending" id="nlPending" role="status" hidden><span class="fx-orb-well"></span><span class="fx-shimmer-text">Translating…</span></div>
+  <div id="nlOut" hidden>
+    <div class="muted" style="font-size:11.5px;margin:9px 0 4px;">Translates to — check it, edit it, then run:</div>
+    <input type="text" id="nlResult" class="num" aria-label="The translated query — edit it before running" autocomplete="off" spellcheck="false" style="width:100%;">
+    <div id="nlDetail" class="muted" style="font-size:11px;margin-top:5px;"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button class="btn btn-primary" id="nlRun">Run this query</button>
+      <button class="btn" id="nlCancel">Cancel</button>
+    </div>
+  </div>
+  <div id="nlReason" class="muted" role="status" aria-live="polite" style="font-size:11.5px;margin-top:7px;" hidden></div>
+</div>

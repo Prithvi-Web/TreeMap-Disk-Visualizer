@@ -223,6 +223,33 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 /* Drive Health's linear wear gauge reads its width from this wrap — the
    card's CONTENT width, the same reason .trend-chart-wrap exists. */
 .dh-gauge-wrap { position: relative; width: 100%; margin: 2px 0 10px; }
+/* Every wrap above is `width: 100%` of its card, which reads as "the chart can
+   never be wider than the card". It could be, and was. `Canvas2D.setup` writes
+   an explicit INLINE pixel width onto the canvas each render, and an explicit
+   width counts towards min-content — so a canvas measured once at a wide window
+   became the floor for the wrap, the card and the grid track all at once. The
+   window then shrank and nothing above the canvas could follow it, so
+   `host.clientWidth` never changed, the kit's ResizeObserver never fired, and
+   the canvas was never re-measured. Measured on Trends: 1440px gives a 1091px
+   canvas in a 1137px card; drag the window to 900px and the view is 777px while
+   the card is still 1137px, with main's own overflow-x hidden cutting off the
+   right-hand third and no scrollbar to reach it. Permanent until a reload.
+   (No braces in this comment on purpose — the CSS slicers several tests use to
+   pull one rule out of the built page are brace-matched, and a brace inside a
+   comment desyncs them onto the wrong rule.)
+   `min-width: 0` on the card does not help — the canvas IS the floor.
+
+   It has to be max-width. The `width: 100%` the other sheets already give some
+   of these canvases reads like the same fix and is not: setup()'s inline style
+   outranks any stylesheet `width`, so those declarations never applied. This
+   block loads last, so it also lands on the ones declared elsewhere. */
+.trend-chart-wrap canvas,
+#liveFeed .lf-spark-wrap canvas,
+.dh-gauge-wrap canvas,
+.apps-scatter canvas,
+.cmp-split canvas,
+.capsule-gauge .cap-gauge-wrap canvas,
+#trendNet canvas { max-width: 100%; }
 /* ═══ end FX: chart wiring styles ═══ */
 
 /* ═══ end FX: living-surface wiring styles ═══ */

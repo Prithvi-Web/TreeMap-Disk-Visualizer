@@ -1,4 +1,10 @@
 /* ── Cleanup cart (Feature 2) ── */
+/* `max-width: 92vw` is a guard against the VIEWPORT only, and it is correct
+   here because the dock rests 22px from the right edge. Any state that pushes
+   the dock further in must cap the width again against the strip that is
+   actually left — 92vw cannot see an offset. `body.preview-open #cartDock`
+   in 060-preview-pane.css is that state, and the reason it carries its own
+   max-width; do not "tidy" the two into one rule. */
 #cartDock { position: fixed; right: 22px; bottom: 22px; z-index: 80; display: none;
   flex-direction: column; align-items: stretch; gap: 10px; width: 366px; max-width: 92vw; }
 #cartDock.show { display: flex; }

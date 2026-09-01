@@ -17,7 +17,10 @@
    48px bottom padding) and give the scroller whatever the toolbar leaves —
    which stays correct if the toolbar wraps to a second line.
    `.active` is what makes a view visible here, so keying off it leaves the
-   hidden-view rule (`.view { display: none }`) intact. */
+   hidden-view rule — `.view`, display none — intact. (Written without braces
+   deliberately: the CSS slicers several tests use to pull one rule out of the
+   built page are brace-matched, and a brace inside a comment hands the next
+   rule a selector made of comment text.) */
 #view-grid.active { display: flex; flex-direction: column; min-height: calc(100vh - 68px); }
 #gridScroll { position: relative; flex: 1; min-height: 420px; overflow-y: auto; padding: 10px; }
 #gridInner { position: relative; }

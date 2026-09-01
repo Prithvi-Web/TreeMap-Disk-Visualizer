@@ -101,12 +101,35 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-
    rail stays in flow (it costs 64px), and expanding overlays instead. The
    scrim is its own element — body::after is already the film-grain layer,
    and borrowing it here would silently delete the grain below 900px. */
+/* z-index 90, not 49: the scrim has to outrank EVERY root-level fixed
+   surface it covers, or it dims the page and leaves the app's own floating
+   chrome — the selection bar (60), the preview pane (72), the cart dock
+   (80) — lit and still clickable straight through it, which is the exact
+   opposite of "the sidebar is the live surface now; click anywhere else to
+   put it away". It deliberately stays UNDER #tourOverlay (96): that coach
+   card is aria-modal="false" and narrates while the user drives the real
+   UI, the sidebar included, so blacking out the instructions at the moment
+   the user follows them would be a worse bug than a card-sized hole in a
+   transient dim — and since the tour overlay is pointer-events:none
+   everywhere but the card, it costs the scrim almost no click area. Under
+   .modal-backdrop (100) for the same reason: a dialog owns the window.
+   The value is safe to state here, outside the media query, because the
+   scrim is invisible and inert at every width above the breakpoint. */
 #navScrim {
-  position: fixed; inset: 0; z-index: 49; background: rgba(0,0,0,0.35);
+  position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,0.35);
   opacity: 0; pointer-events: none; transition: opacity var(--dur-3) var(--ease);
 }
 @media (max-width: 900px) {
-  #sideNav:not(.collapsed) { position: fixed; left: 0; top: 0;
+  /* The raise is scoped to the overlay state on purpose. Lifting the base
+     #sideNav above the scrim would also lift .gsearch-panel, which is
+     z-index 60 inside #sideNav's stacking context and today paints UNDER an
+     open preview pane or cart dock at every width — a wide-viewport change
+     nobody asked for, smuggled in under a narrow-window scrim fix. Here the
+     sidebar genuinely IS a floating overlay, so its results panel riding
+     above the same surfaces the scrim just dimmed is the consistent
+     outcome, not a side effect. Below .modal-backdrop (100): a dialog
+     opened from the overlay sidebar still wins. */
+  #sideNav:not(.collapsed) { position: fixed; left: 0; top: 0; z-index: 91;
     height: calc(100dvh - 24px); box-shadow: 24px 0 64px rgba(0,0,0,0.35); }
   body { grid-template-columns: var(--side-w-rail) minmax(0, 1fr); }
   /* Going `position: fixed` takes the sidebar OUT of the grid, so main — now

@@ -39,6 +39,16 @@ function layoutGrid(items) {
   }
   state.grid.layout = layout;
   state.grid.totalH = layout.length ? y + rowH + GAP : 0;
+  // The shift-click anchor is a POSITIONAL index into the array we just threw
+  // away, and every caller of this function rebuilds that array from scratch:
+  // folder navigation, a sort change, each debounced search keystroke, a
+  // rescan, a window resize. Position 35 in the old list is a different file in
+  // the new one — or, once a query narrows 40 entries down to 3, no file at
+  // all, which is how a following shift-click ended up reading past the end of
+  // the layout. Clearing it here rather than at each call site is deliberate:
+  // this is the only place `state.grid.layout` is ever written, so no rebuild
+  // path can quietly skip the reset the way a per-call-site version would.
+  state.grid.anchor = null;
 }
 
 let gridSeq = 0;
@@ -146,8 +156,18 @@ gridScroll.addEventListener('scroll', () => {
 function onCellClick(e, i) {
   const { it } = state.grid.layout[i];
   const sel = state.grid.selection;
-  if (e.shiftKey && state.grid.anchor !== null) {
-    const a = Math.min(state.grid.anchor, i), b = Math.max(state.grid.anchor, i);
+  // Second line of defence for the same trap. layoutGrid() clears the anchor on
+  // every rebuild, but this handler is the point of USE and it must not depend
+  // on that promise being kept: a future rebuild path that writes the layout
+  // itself would otherwise turn one stale index into a TypeError thrown from
+  // inside a click, with the selection half applied. Clamping degrades that to
+  // a shorter range instead. `!== null` stays as the emptiness test because
+  // anchor 0 is a real anchor and every falsy check would drop it.
+  const anchor = state.grid.anchor === null
+    ? null
+    : Math.max(0, Math.min(state.grid.anchor, state.grid.layout.length - 1));
+  if (e.shiftKey && anchor !== null) {
+    const a = Math.min(anchor, i), b = Math.max(anchor, i);
     if (!(e.metaKey || e.ctrlKey)) sel.clear();
     for (let k = a; k <= b; k++) sel.add(state.grid.layout[k].it.path);
   } else if (e.metaKey || e.ctrlKey) {

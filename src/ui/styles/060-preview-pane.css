@@ -1,5 +1,10 @@
 /* ── Quick-look preview pane (Feature 4) ── */
-#previewPane { position: fixed; top: 58px; right: 0; bottom: 0; width: 330px; max-width: 88vw; z-index: 72;
+/* top: 0, not 58px. That offset was the height of the horizontal header the
+   sidebar replaced (see 000-sidebar.html and 020-sidebar.css, which both
+   record the removal); nothing is pinned to the top of the viewport any
+   more, so the offset only left a bare 330x58 notch of page background
+   above a sheet that is otherwise flush to three edges. */
+#previewPane { position: fixed; top: 0; right: 0; bottom: 0; width: 330px; max-width: 88vw; z-index: 72;
   display: flex; flex-direction: column;
   --lg-tint: var(--lg-tint-strong); --lg-blur: 26px;
   border-left: 1px solid var(--hairline-2); box-shadow: var(--shadow-3);
@@ -29,4 +34,13 @@
 :root[data-theme="light"] .pv-body .tk-kw { color: #9c27b0; }
 :root[data-theme="light"] .pv-body .tk-str { color: #2e7d32; }
 :root[data-theme="light"] .pv-body .tk-num { color: #d84315; }
-body.preview-open #cartDock { right: 348px; }
+/* The dock steps left of the open pane — and has to be re-capped while it is
+   there. Its own `max-width: 92vw` (045-cart.css) measures the VIEWPORT, not
+   the strip left of this offset, so at the app's documented 640px window
+   floor the guard passed a 366px dock 348px in from the right edge and its
+   left edge walked off screen. Cap it against what actually remains:
+   viewport, minus the offset, minus the 22px gutter the dock keeps on its
+   resting edge. max() holds the cap positive below 640px — where the page
+   already scrolls sideways by design — because a calc() that goes negative
+   is clamped to 0 and would collapse the dock to nothing instead. */
+body.preview-open #cartDock { right: 348px; max-width: max(240px, calc(100vw - 370px)); }

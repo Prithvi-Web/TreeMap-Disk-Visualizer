@@ -45,7 +45,22 @@
 /* Results fly out to the RIGHT of the sidebar, over the content — inside the
    column they would be clipped to 232px and unreadable. The offset is the
    box→panel gap PLUS the sidebar's 12px inner padding, so the panel clears
-   the sidebar's edge, not just the box's. */
+   the sidebar's edge, not just the box's.
+
+   ONE width serves every window and BOTH sidebar states, deliberately. On a
+   narrow window the min() collapses to 100vw - 272px, which is exactly the
+   room left beside an EXPANDED sidebar: 12px margin + 12px padding + 208px
+   box + 26px offset puts the panel's left edge at 258px, so it ends 14px
+   short of the right edge. The rail is 168px narrower, so the same number
+   always fits there too, with room to spare.
+
+   A `@media (max-width: 700px)` override sized for the rail used to live at
+   the foot of this file, and it was a trap: pressing `/` EXPANDS the sidebar
+   before focusing the box, so the rail-shaped width fired against a 232px
+   sidebar and threw ~170px of the panel off the right edge of a 660px
+   window — and it overshot by 4px even in the rail state it was written for.
+   Any narrow-window rule added back here must hold in both states;
+   tests/gsearchPanelWidth.test.ts asserts that at every width from 640px up. */
 .gsearch-panel {
   position: absolute; top: 0; left: calc(100% + 26px); width: min(460px, calc(100vw - var(--side-w) - 40px));
   max-height: min(72vh, 640px); overflow-y: auto; z-index: 60;
@@ -83,8 +98,3 @@
 .gsearch-hit .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gsearch-hit .sz { color: var(--text-2); font-variant-numeric: tabular-nums; font-size: 11.5px; }
 .gsearch-note { padding: 10px 12px; color: var(--text-2); font-size: 12px; line-height: 1.5; }
-/* On a narrow window the fly-out would leave the viewport; anchor it to the
-   rail edge and let it take what width there is. */
-@media (max-width: 700px) {
-  .gsearch-panel { width: calc(100vw - var(--side-w-rail) - 24px); }
-}

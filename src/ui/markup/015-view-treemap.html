@@ -28,30 +28,13 @@
           <div class="gsearch-panel tm-hints" id="tmQueryHints" role="listbox" aria-label="Query fields" hidden></div>
         </div>
         <!-- v4 §9.6 — plain words in, a checkable query out. The popover always
-             shows the translation in an editable field BEFORE anything runs. -->
+             shows the translation in an editable field BEFORE anything runs.
+             Only the BUTTON lives here: #nlPop itself is fixed-positioned from
+             this button's rect, so it sits at the top level of the body (see
+             markup/135-nl-popover.html) where the viewport is still its
+             containing block. This toolbar has `container-type`, and layout
+             containment would have made the toolbar that containing block. -->
         <button class="icon-btn" id="tmNlBtn" title="Ask in plain words" aria-label="Ask in plain words — translated into a query you approve first" aria-haspopup="dialog" aria-expanded="false"><span data-icon="sparkles" data-size="15"></span></button>
-        <div id="nlPop" class="glass" role="dialog" aria-modal="false" aria-labelledby="nlPopTitle" hidden>
-          <div class="set-h" id="nlPopTitle" style="margin:0 0 8px;">Ask in plain words</div>
-          <!-- FX wiring: the "listening" chip sits beside the field while it
-               is focused and awaiting typing; the well costs nothing empty. -->
-          <div class="nl-ask-row">
-            <input type="text" id="nlInput" placeholder="big videos I haven't opened in a year" aria-label="Describe what to find, in plain words" autocomplete="off" spellcheck="false">
-            <span class="fx-orb-well" id="nlListenWell"></span>
-          </div>
-          <!-- FX wiring: shown only while the /api/nl-query round-trip is in
-               flight — the "weaving" orb mounts into the well. -->
-          <div class="nl-pending" id="nlPending" role="status" hidden><span class="fx-orb-well"></span><span class="fx-shimmer-text">Translating…</span></div>
-          <div id="nlOut" hidden>
-            <div class="muted" style="font-size:11.5px;margin:9px 0 4px;">Translates to — check it, edit it, then run:</div>
-            <input type="text" id="nlResult" class="num" aria-label="The translated query — edit it before running" autocomplete="off" spellcheck="false" style="width:100%;">
-            <div id="nlDetail" class="muted" style="font-size:11px;margin-top:5px;"></div>
-            <div style="display:flex;gap:8px;margin-top:10px;">
-              <button class="btn btn-primary" id="nlRun">Run this query</button>
-              <button class="btn" id="nlCancel">Cancel</button>
-            </div>
-          </div>
-          <div id="nlReason" class="muted" role="status" aria-live="polite" style="font-size:11.5px;margin-top:7px;" hidden></div>
-        </div>
       </div>
       </div>
       <div class="tb-row tb-row-controls">

@@ -33,8 +33,12 @@
   background: var(--surface-2); }
 .delta-badge.up { color: #ff6b61; }
 .delta-badge.down { color: var(--ok); }
+/* Growth is a literal salmon rather than --danger (growth is not an error),
+   so it still needs its own light-theme value. Shrinkage has none: --ok is
+   theme-tuned in 000-tokens.css now, and the local #1f9d45 that used to
+   stand in for that only measured 3.4:1 — keeping it would have pinned this
+   one badge to a paler green than every other green in the light theme. */
 :root[data-theme="light"] .delta-badge.up { color: #d63a30; }
-:root[data-theme="light"] .delta-badge.down { color: #1f9d45; }
 
 /* "What's new since last scan" banner (Dashboard) */
 .whatsnew { display: flex; align-items: center; gap: 10px; padding: 13px 18px; margin-bottom: 18px; }

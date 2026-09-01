@@ -241,17 +241,29 @@ async function checkSnapshotsFor(targetPath, rowEl) {
     return;
   }
 
-  // Capability unavailable (§3.5 #5) — the specific reason, not a blank.
-  if (!result.candidates.length) {
-    host.innerHTML = `<div class="snap-msg">${icon('alert', 13)} ${escapeHtml(result.reason || 'No snapshots on this system contain that path.')}</div>`;
-    return;
-  }
   if (result.stillPresent) {
     host.innerHTML = `<div class="snap-msg">${icon('checkCircle', 13)} That path is still on this disk — nothing to recover.</div>`;
     return;
   }
 
   const usable = result.candidates.filter(c => c.state !== 'absent');
+
+  // Capability unavailable (§3.5 #5) — the specific reason, not a blank.
+  //
+  // The emptiness test is on `usable`, not on `candidates`, because those two
+  // are not the same question. A system that can read its own snapshots looks
+  // inside every one of them and reports each as 'present' or 'absent', so a
+  // file created and deleted between two snapshots comes back as a *full*
+  // candidate list in which nothing is recoverable — and `findDeleted` phrases
+  // that case for a reader ("Checked N snapshots — none of them contain that
+  // path."). Testing `candidates.length` here let that answer walk on into
+  // `usable[0].snapshot`, which is undefined: a legitimate reply reached the
+  // user as a TypeError and a blank panel.
+  if (!usable.length) {
+    host.innerHTML = `<div class="snap-msg">${icon('alert', 13)} ${escapeHtml(result.reason || 'No snapshots on this system contain that path.')}</div>`;
+    return;
+  }
+
   const newest = usable[0];
   const when = newest.snapshot.takenAt ? formatDate(newest.snapshot.takenAt) : 'an unknown date';
   // The distinction that keeps this honest: on Linux we looked inside and know;

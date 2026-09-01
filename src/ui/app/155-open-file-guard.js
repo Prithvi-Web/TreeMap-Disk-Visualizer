@@ -20,6 +20,48 @@ function resetOpenHandleWarning() {
   setConfirmButton('Move to Trash');
 }
 
+/**
+ * How many requests the preflight will spend before it stops and admits how far
+ * it got.
+ *
+ * The bound is deliberate, and it is a bound on REQUESTS, not on the selection.
+ * The API caps a *body* at 500 paths, so a big selection has to be asked about
+ * in chunks — but nothing stops the client asking repeatedly, and it used to
+ * ask exactly once and then describe the answer as if it covered everything.
+ * The reason not to ask forever: each request costs the server a full
+ * enumeration of every open handle on the machine (the check is flat in the
+ * number of paths — a chunk of 400 costs what a chunk of 1 costs), and this
+ * runs behind a dialog someone is already reading. Sixteen chunks covers 6,400
+ * items in a second or two of background work and stays inside the rate
+ * limiter's 20-request burst, so the delete that follows is not queued behind
+ * its own preflight. Past that, "checked 6,400 of 80,000" is worth more than a
+ * warning that arrives a minute after the user clicked.
+ */
+const OPEN_HANDLE_PREFLIGHT_CHUNKS = 16;
+
+/**
+ * Ask about the selection in chunks, merge the answers, and paint one report
+ * that is true about the WHOLE selection.
+ *
+ * The merge is the point of this function. A response's `complete` flag
+ * describes only the paths that request carried, so a report built from the
+ * first chunk and then rendered against `paths.length` claims a reach it never
+ * had: with the in-use files sitting past index 400 — the ordinary case for a
+ * 5,000-item cleanup — the dialog showed no warning at all, which reads as
+ * "nothing here is open", and people trashed files their editor was holding.
+ *
+ * Everything this did NOT look at therefore makes the report partial: chunks
+ * past the budget, and chunks whose request died on the way. The panel stays
+ * silent only when the answer covered the whole set.
+ *
+ * The loop is kept here rather than split into a helper so the "a failed
+ * preflight gets out of the way" path stays visible in one function: the catch
+ * below and the `host.hidden = true` that follows it are one decision.
+ *
+ * The panel keeps saying "Checking…" until every chunk is in, rather than
+ * growing a row at a time — a warning that rewrites itself while someone is
+ * reading it is worse than one that arrives once.
+ */
 async function checkOpenHandlesFor(paths) {
   const seq = ++openHandleSeq;
   const host = $('confirmOpenHandles');
@@ -27,21 +69,71 @@ async function checkOpenHandlesFor(paths) {
   host.className = 'checking';
   host.textContent = 'Checking whether anything has these files open…';
 
-  let report;
-  try {
-    report = await api('/api/files/open-handles', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths: paths.slice(0, TRASH_CHUNK) }),
-    });
-  } catch {
-    // The check is a courtesy; failing it must not stand between the user and
-    // a delete they asked for. The server still guards the delete itself.
-    if (seq === openHandleSeq) host.hidden = true;
+  const chunks = Math.min(Math.ceil(paths.length / TRASH_CHUNK), OPEN_HANDLE_PREFLIGHT_CHUNKS);
+  const conflicts = [];
+  let checkedCount = 0;
+  let complete = true;
+  let answered = false;
+  let serverReason = '';
+  let unavailable = null;
+
+  for (let i = 0; i < chunks; i++) {
+    const chunk = paths.slice(i * TRASH_CHUNK, (i + 1) * TRASH_CHUNK);
+    let part;
+    try {
+      part = await api('/api/files/open-handles', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: chunk }),
+      });
+    } catch {
+      // Asked and never answered. Skipping the chunk is right — one dropped
+      // request must not lose the answers that did arrive — but these paths
+      // were not checked, and the count below has to say so.
+      continue;
+    }
+    if (seq !== openHandleSeq) return; // a newer dialog owns the panel now
+    answered = true;
+    // `checked: false` is the machine saying it has no way to look. `lsof`
+    // missing is a property of the computer, not of this chunk, so asking
+    // sixteen times would collect sixteen identical noes: take the first.
+    if (part.checked === false) { unavailable = part; break; }
+    if (part.conflicts) conflicts.push(...part.conflicts);
+    checkedCount += chunk.length;
+    if (part.complete === false) {
+      // The server hit its own limit inside this chunk (Windows' Restart
+      // Manager truncates at RM_MAX_RESOURCES). Its wording is better than
+      // anything guessable from here, so carry it rather than restate it.
+      complete = false;
+      if (part.reason) serverReason = part.reason;
+    }
+  }
+
+  if (!answered) {
+    // Nothing answered at all. The check is a courtesy; failing it must not
+    // stand between the user and a delete they asked for. The server still
+    // guards the delete itself.
+    host.hidden = true;
     return;
   }
-  if (seq !== openHandleSeq) return; // a newer dialog owns the panel now
+  if (unavailable) { renderOpenHandleWarning(unavailable, paths.length); return; }
 
-  renderOpenHandleWarning(report, paths.length);
+  const reasons = [];
+  if (checkedCount < paths.length) {
+    // Paths nobody looked at — the budget ran out, or their request died. The
+    // flag matters as much as the sentence: `renderOpenHandleWarning` decides
+    // whether to speak at all from `complete`, so a report carrying the honest
+    // count without the flag would print it nowhere and still render a
+    // truncated check as a clean bill of health.
+    complete = false;
+    reasons.push(`TreeMap checked ${formatCount(checkedCount)} of ${formatCount(paths.length)} selected items, so anything open in the rest isn’t listed here.`);
+  }
+  if (serverReason) reasons.push(serverReason);
+  renderOpenHandleWarning({
+    conflicts,
+    checked: true,
+    complete,
+    ...(reasons.length ? { reason: reasons.join(' ') } : {}),
+  }, paths.length);
 }
 
 function renderOpenHandleWarning(report, pathCount) {

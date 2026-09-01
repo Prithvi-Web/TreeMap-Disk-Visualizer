@@ -75,6 +75,22 @@ document.documentElement.dataset.theme =
     rgba(255,255,255,0) 8%, var(--ring-b) 34%, var(--ring-a) 62%, rgba(255,255,255,0) 92%);
 }
 :root[data-theme="light"] {
+  /* The four accent/status hues this block re-tunes (--accent here, then
+     --warn/--ok/--danger below) are each measured against the light card
+     ground — --glass, white at 52%, over --bg-1, i.e. ~#FAFBFD — because
+     that is what status text actually sits on. The dark palette is tuned for
+     near-black glass, so untouched they land between 1.9:1 and 3.5:1 there:
+     legible on #05060a, washed out to nothing on a white card. Every ratio
+     quoted is against that ground, and the bar is WCAG AA for normal text
+     (4.5:1) because the smallest of these labels — the 11.5px budget
+     "over/under" figure, the 12.5px delta rows — is nowhere near large text.
+
+     --accent 3.5:1 → 5.1:1. #0069D6 is not a new blue: the charts kit already
+     re-tunes to it for light (--fx-live-up), so the theme now speaks one.
+     It also lifts white-on-accent fills (chips, the cmdk selection row,
+     #ctxMenu hover) from 3.7:1 to 5.3:1. */
+  --accent:        #0069D6;
+
   --bg-0:          #e9ecf2;
   --bg-1:          #f5f6fa;
   --surface-1:     rgba(10,15,30,0.045);
@@ -93,6 +109,18 @@ document.documentElement.dataset.theme =
   /* The dark theme's #FFD60A yellow is near-invisible on light cards
      (~1.5:1). Text and badges using --warn need this darker amber here. */
   --warn:          #B36B00;
+  /* --ok was the hole in exactly that reasoning: #30D158 measures 1.95:1 on
+     the light card, so every green that states a good outcome — Folder
+     Budgets' under-budget figure, the duplicate "keep" tag, the down-delta
+     badge, the success toast — was a pale smudge. 4.8:1 here. Note this is
+     darker than the #1f9d45 that 105-trends.css used to patch the one badge
+     somebody noticed: that green is only 3.4:1 and never cleared AA. */
+  --ok:            #17803A;
+  /* Same case, other end of the ladder: #FF453A is 3.3:1 on the card, which
+     leaves the over-budget figure and the query-error line weaker than the
+     body text they are meant to shout over. 5.4:1 here, and white-on-danger
+     fills (the cart remove button, #cleanProgress) improve with it. */
+  --danger:        #C7261C;
   --tm-canvas-bg:  rgba(10,15,30,0.05);
   --scrim:         rgba(24,28,44,0.34);
   --skeleton-a:    rgba(10,15,30,0.05);
@@ -569,12 +597,35 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-
    rail stays in flow (it costs 64px), and expanding overlays instead. The
    scrim is its own element — body::after is already the film-grain layer,
    and borrowing it here would silently delete the grain below 900px. */
+/* z-index 90, not 49: the scrim has to outrank EVERY root-level fixed
+   surface it covers, or it dims the page and leaves the app's own floating
+   chrome — the selection bar (60), the preview pane (72), the cart dock
+   (80) — lit and still clickable straight through it, which is the exact
+   opposite of "the sidebar is the live surface now; click anywhere else to
+   put it away". It deliberately stays UNDER #tourOverlay (96): that coach
+   card is aria-modal="false" and narrates while the user drives the real
+   UI, the sidebar included, so blacking out the instructions at the moment
+   the user follows them would be a worse bug than a card-sized hole in a
+   transient dim — and since the tour overlay is pointer-events:none
+   everywhere but the card, it costs the scrim almost no click area. Under
+   .modal-backdrop (100) for the same reason: a dialog owns the window.
+   The value is safe to state here, outside the media query, because the
+   scrim is invisible and inert at every width above the breakpoint. */
 #navScrim {
-  position: fixed; inset: 0; z-index: 49; background: rgba(0,0,0,0.35);
+  position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,0.35);
   opacity: 0; pointer-events: none; transition: opacity var(--dur-3) var(--ease);
 }
 @media (max-width: 900px) {
-  #sideNav:not(.collapsed) { position: fixed; left: 0; top: 0;
+  /* The raise is scoped to the overlay state on purpose. Lifting the base
+     #sideNav above the scrim would also lift .gsearch-panel, which is
+     z-index 60 inside #sideNav's stacking context and today paints UNDER an
+     open preview pane or cart dock at every width — a wide-viewport change
+     nobody asked for, smuggled in under a narrow-window scrim fix. Here the
+     sidebar genuinely IS a floating overlay, so its results panel riding
+     above the same surfaces the scrim just dimmed is the consistent
+     outcome, not a side effect. Below .modal-backdrop (100): a dialog
+     opened from the overlay sidebar still wins. */
+  #sideNav:not(.collapsed) { position: fixed; left: 0; top: 0; z-index: 91;
     height: calc(100dvh - 24px); box-shadow: 24px 0 64px rgba(0,0,0,0.35); }
   body { grid-template-columns: var(--side-w-rail) minmax(0, 1fr); }
   /* Going `position: fixed` takes the sidebar OUT of the grid, so main — now
@@ -671,7 +722,16 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .ring-label > span { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 1.2px; margin-top: 2px; }
 .sys-facts { display: flex; flex-direction: column; gap: 9px; font-size: 13px; min-width: 0; flex: 1 1 220px; }
 .sys-facts .fact { display: flex; justify-content: space-between; gap: 18px; }
-.sys-facts .fact span { color: var(--text-2); }
+/* A child selector, for the same reason `.ring-label > span` is one: this
+   rule dims the LABEL, and the label is the row's own span. The value beside
+   it is a <b>, and FxNum.roll() builds the rolled figure inside that <b> out
+   of nested spans (.fx-roll / .fx-roll-d / .fx-roll-sizer). As a descendant
+   rule this painted those digits too — Total disk, Free, Used and Trash all
+   rolled in the dimmed label grey instead of the value ink. The numerals
+   reset in 140-fx-numerals.css says `color: inherit`, but at (0,2,0) it
+   cannot outrank a `.host span` rule at (0,2,1); the host has to stop
+   reaching rather than the reset escalate. */
+.sys-facts .fact > span { color: var(--text-2); }
 /* min-width + ellipsis: a long hostname must clip, never push the card wide. */
 .sys-facts .fact b { font-weight: 600; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
@@ -681,7 +741,13 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .scan-row input { width: 100%; padding-left: 34px; }
 .scan-status { margin-top: 14px; font-size: 12.5px; color: var(--text-2); min-height: 18px;
   display: flex; align-items: center; gap: 7px; }
-.scan-status.error { color: #ff6b61; }
+/* --danger, not a literal: the salmon this used to carry is a hue picked for
+   near-black glass and measured ~2.7:1 on the light card — the one line a
+   failed scan most needs a user to read was the least readable text on the
+   page. The token is tuned for both grounds in 000-tokens.css and already
+   carries every other error text (.toast.error .ic, #apQueryStatus.bad), so
+   a second local light override here could only drift away from it. */
+.scan-status.error { color: var(--danger); }
 .scan-meta { margin-top: 5px; font-size: 11.5px; color: var(--text-3);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 15px; }
 .progress-track { margin-top: 12px; height: 5px; border-radius: 3px; background: var(--surface-2);
@@ -855,7 +921,10 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
    48px bottom padding) and give the scroller whatever the toolbar leaves —
    which stays correct if the toolbar wraps to a second line.
    `.active` is what makes a view visible here, so keying off it leaves the
-   hidden-view rule (`.view { display: none }`) intact. */
+   hidden-view rule — `.view`, display none — intact. (Written without braces
+   deliberately: the CSS slicers several tests use to pull one rule out of the
+   built page are brace-matched, and a brace inside a comment hands the next
+   rule a selector made of comment text.) */
 #view-grid.active { display: flex; flex-direction: column; min-height: calc(100vh - 68px); }
 #gridScroll { position: relative; flex: 1; min-height: 420px; overflow-y: auto; padding: 10px; }
 #gridInner { position: relative; }
@@ -888,6 +957,12 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 #selectionBar.visible { transform: translateX(-50%) translateY(0); }
 
 /* ── Cleanup cart (Feature 2) ── */
+/* `max-width: 92vw` is a guard against the VIEWPORT only, and it is correct
+   here because the dock rests 22px from the right edge. Any state that pushes
+   the dock further in must cap the width again against the strip that is
+   actually left — 92vw cannot see an offset. `body.preview-open #cartDock`
+   in 060-preview-pane.css is that state, and the reason it carries its own
+   max-width; do not "tidy" the two into one rule. */
 #cartDock { position: fixed; right: 22px; bottom: 22px; z-index: 80; display: none;
   flex-direction: column; align-items: stretch; gap: 10px; width: 366px; max-width: 92vw; }
 #cartDock.show { display: flex; }
@@ -1191,7 +1266,12 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 @media (prefers-reduced-motion: reduce) { .mg-seg { transition: none; } }
 
 /* ── Quick-look preview pane (Feature 4) ── */
-#previewPane { position: fixed; top: 58px; right: 0; bottom: 0; width: 330px; max-width: 88vw; z-index: 72;
+/* top: 0, not 58px. That offset was the height of the horizontal header the
+   sidebar replaced (see 000-sidebar.html and 020-sidebar.css, which both
+   record the removal); nothing is pinned to the top of the viewport any
+   more, so the offset only left a bare 330x58 notch of page background
+   above a sheet that is otherwise flush to three edges. */
+#previewPane { position: fixed; top: 0; right: 0; bottom: 0; width: 330px; max-width: 88vw; z-index: 72;
   display: flex; flex-direction: column;
   --lg-tint: var(--lg-tint-strong); --lg-blur: 26px;
   border-left: 1px solid var(--hairline-2); box-shadow: var(--shadow-3);
@@ -1221,7 +1301,16 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 :root[data-theme="light"] .pv-body .tk-kw { color: #9c27b0; }
 :root[data-theme="light"] .pv-body .tk-str { color: #2e7d32; }
 :root[data-theme="light"] .pv-body .tk-num { color: #d84315; }
-body.preview-open #cartDock { right: 348px; }
+/* The dock steps left of the open pane — and has to be re-capped while it is
+   there. Its own `max-width: 92vw` (045-cart.css) measures the VIEWPORT, not
+   the strip left of this offset, so at the app's documented 640px window
+   floor the guard passed a 366px dock 348px in from the right edge and its
+   left edge walked off screen. Cap it against what actually remains:
+   viewport, minus the offset, minus the 22px gutter the dock keeps on its
+   resting edge. max() holds the cap positive below 640px — where the page
+   already scrolls sideways by design — because a calc() that goes negative
+   is clamped to 0 and would collapse the dock to nothing instead. */
+body.preview-open #cartDock { right: 348px; max-width: max(240px, calc(100vw - 370px)); }
 
 /* ── Global search (A4) ── */
 /* Lives at the top of the sidebar with the full column width to itself —
@@ -1270,7 +1359,22 @@ body.preview-open #cartDock { right: 348px; }
 /* Results fly out to the RIGHT of the sidebar, over the content — inside the
    column they would be clipped to 232px and unreadable. The offset is the
    box→panel gap PLUS the sidebar's 12px inner padding, so the panel clears
-   the sidebar's edge, not just the box's. */
+   the sidebar's edge, not just the box's.
+
+   ONE width serves every window and BOTH sidebar states, deliberately. On a
+   narrow window the min() collapses to 100vw - 272px, which is exactly the
+   room left beside an EXPANDED sidebar: 12px margin + 12px padding + 208px
+   box + 26px offset puts the panel's left edge at 258px, so it ends 14px
+   short of the right edge. The rail is 168px narrower, so the same number
+   always fits there too, with room to spare.
+
+   A `@media (max-width: 700px)` override sized for the rail used to live at
+   the foot of this file, and it was a trap: pressing `/` EXPANDS the sidebar
+   before focusing the box, so the rail-shaped width fired against a 232px
+   sidebar and threw ~170px of the panel off the right edge of a 660px
+   window — and it overshot by 4px even in the rail state it was written for.
+   Any narrow-window rule added back here must hold in both states;
+   tests/gsearchPanelWidth.test.ts asserts that at every width from 640px up. */
 .gsearch-panel {
   position: absolute; top: 0; left: calc(100% + 26px); width: min(460px, calc(100vw - var(--side-w) - 40px));
   max-height: min(72vh, 640px); overflow-y: auto; z-index: 60;
@@ -1308,11 +1412,6 @@ body.preview-open #cartDock { right: 348px; }
 .gsearch-hit .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gsearch-hit .sz { color: var(--text-2); font-variant-numeric: tabular-nums; font-size: 11.5px; }
 .gsearch-note { padding: 10px 12px; color: var(--text-2); font-size: 12px; line-height: 1.5; }
-/* On a narrow window the fly-out would leave the viewport; anchor it to the
-   rail edge and let it take what width there is. */
-@media (max-width: 700px) {
-  .gsearch-panel { width: calc(100vw - var(--side-w-rail) - 24px); }
-}
 
 /* ── Allocation diagnostic (A2) ── */
 .alloc-diag { font-size: 13px; color: var(--text-2); }
@@ -2228,8 +2327,12 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   background: var(--surface-2); }
 .delta-badge.up { color: #ff6b61; }
 .delta-badge.down { color: var(--ok); }
+/* Growth is a literal salmon rather than --danger (growth is not an error),
+   so it still needs its own light-theme value. Shrinkage has none: --ok is
+   theme-tuned in 000-tokens.css now, and the local #1f9d45 that used to
+   stand in for that only measured 3.4:1 — keeping it would have pinned this
+   one badge to a paler green than every other green in the light theme. */
 :root[data-theme="light"] .delta-badge.up { color: #d63a30; }
-:root[data-theme="light"] .delta-badge.down { color: #1f9d45; }
 
 /* "What's new since last scan" banner (Dashboard) */
 .whatsnew { display: flex; align-items: center; gap: 10px; padding: 13px 18px; margin-bottom: 18px; }
@@ -2700,6 +2803,33 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 /* Drive Health's linear wear gauge reads its width from this wrap — the
    card's CONTENT width, the same reason .trend-chart-wrap exists. */
 .dh-gauge-wrap { position: relative; width: 100%; margin: 2px 0 10px; }
+/* Every wrap above is `width: 100%` of its card, which reads as "the chart can
+   never be wider than the card". It could be, and was. `Canvas2D.setup` writes
+   an explicit INLINE pixel width onto the canvas each render, and an explicit
+   width counts towards min-content — so a canvas measured once at a wide window
+   became the floor for the wrap, the card and the grid track all at once. The
+   window then shrank and nothing above the canvas could follow it, so
+   `host.clientWidth` never changed, the kit's ResizeObserver never fired, and
+   the canvas was never re-measured. Measured on Trends: 1440px gives a 1091px
+   canvas in a 1137px card; drag the window to 900px and the view is 777px while
+   the card is still 1137px, with main's own overflow-x hidden cutting off the
+   right-hand third and no scrollbar to reach it. Permanent until a reload.
+   (No braces in this comment on purpose — the CSS slicers several tests use to
+   pull one rule out of the built page are brace-matched, and a brace inside a
+   comment desyncs them onto the wrong rule.)
+   `min-width: 0` on the card does not help — the canvas IS the floor.
+
+   It has to be max-width. The `width: 100%` the other sheets already give some
+   of these canvases reads like the same fix and is not: setup()'s inline style
+   outranks any stylesheet `width`, so those declarations never applied. This
+   block loads last, so it also lands on the ones declared elsewhere. */
+.trend-chart-wrap canvas,
+#liveFeed .lf-spark-wrap canvas,
+.dh-gauge-wrap canvas,
+.apps-scatter canvas,
+.cmp-split canvas,
+.capsule-gauge .cap-gauge-wrap canvas,
+#trendNet canvas { max-width: 100%; }
 /* ═══ end FX: chart wiring styles ═══ */
 
 /* ═══ end FX: living-surface wiring styles ═══ */
@@ -3076,30 +3206,13 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           <div class="gsearch-panel tm-hints" id="tmQueryHints" role="listbox" aria-label="Query fields" hidden></div>
         </div>
         <!-- v4 §9.6 — plain words in, a checkable query out. The popover always
-             shows the translation in an editable field BEFORE anything runs. -->
+             shows the translation in an editable field BEFORE anything runs.
+             Only the BUTTON lives here: #nlPop itself is fixed-positioned from
+             this button's rect, so it sits at the top level of the body (see
+             markup/135-nl-popover.html) where the viewport is still its
+             containing block. This toolbar has `container-type`, and layout
+             containment would have made the toolbar that containing block. -->
         <button class="icon-btn" id="tmNlBtn" title="Ask in plain words" aria-label="Ask in plain words — translated into a query you approve first" aria-haspopup="dialog" aria-expanded="false"><span data-icon="sparkles" data-size="15"></span></button>
-        <div id="nlPop" class="glass" role="dialog" aria-modal="false" aria-labelledby="nlPopTitle" hidden>
-          <div class="set-h" id="nlPopTitle" style="margin:0 0 8px;">Ask in plain words</div>
-          <!-- FX wiring: the "listening" chip sits beside the field while it
-               is focused and awaiting typing; the well costs nothing empty. -->
-          <div class="nl-ask-row">
-            <input type="text" id="nlInput" placeholder="big videos I haven't opened in a year" aria-label="Describe what to find, in plain words" autocomplete="off" spellcheck="false">
-            <span class="fx-orb-well" id="nlListenWell"></span>
-          </div>
-          <!-- FX wiring: shown only while the /api/nl-query round-trip is in
-               flight — the "weaving" orb mounts into the well. -->
-          <div class="nl-pending" id="nlPending" role="status" hidden><span class="fx-orb-well"></span><span class="fx-shimmer-text">Translating…</span></div>
-          <div id="nlOut" hidden>
-            <div class="muted" style="font-size:11.5px;margin:9px 0 4px;">Translates to — check it, edit it, then run:</div>
-            <input type="text" id="nlResult" class="num" aria-label="The translated query — edit it before running" autocomplete="off" spellcheck="false" style="width:100%;">
-            <div id="nlDetail" class="muted" style="font-size:11px;margin-top:5px;"></div>
-            <div style="display:flex;gap:8px;margin-top:10px;">
-              <button class="btn btn-primary" id="nlRun">Run this query</button>
-              <button class="btn" id="nlCancel">Cancel</button>
-            </div>
-          </div>
-          <div id="nlReason" class="muted" role="status" aria-live="polite" style="font-size:11.5px;margin-top:7px;" hidden></div>
-        </div>
       </div>
       </div>
       <div class="tb-row tb-row-controls">
@@ -4120,6 +4233,47 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 </div>
 
 <div id="toasts" aria-live="polite"></div>
+
+<!-- ═══════════ Ask in plain words (v4 §9.6) ═══════════ -->
+<!-- Top level, beside #ctxMenu and #rcPopover, and for exactly their reason:
+     nlOpen() places this popover from `tmNlBtn.getBoundingClientRect()`, which
+     is in VIEWPORT coordinates, so the viewport has to remain its containing
+     block. It used to be a child of .tm-toolbar, and the day that toolbar
+     started measuring itself (`container-type: inline-size`, which computes to
+     `contain: layout style inline-size`) layout containment made the TOOLBAR
+     the containing block for its fixed descendants: the popover resolved the
+     button's window coordinates against the toolbar's box, opened low and to
+     the left of the sparkle, and was clipped by the toolbar's own stacking
+     context. Anchoring markup to the control it points at is the habit that
+     caused this; a fixed popover belongs at the top level instead.
+     #view-treemap is no refuge either — `.view` animates a transform on entry,
+     and a running transform is a containing block for the same reason.
+     tests/nlPopContainment.test.ts holds the invariant, derived from the
+     stylesheet, so the next self-measuring wrapper cannot re-break it.
+     The treemap view's unmount() closes this, so leaving the view can never
+     strand it over another screen. -->
+<div id="nlPop" class="glass" role="dialog" aria-modal="false" aria-labelledby="nlPopTitle" hidden>
+  <div class="set-h" id="nlPopTitle" style="margin:0 0 8px;">Ask in plain words</div>
+  <!-- FX wiring: the "listening" chip sits beside the field while it
+       is focused and awaiting typing; the well costs nothing empty. -->
+  <div class="nl-ask-row">
+    <input type="text" id="nlInput" placeholder="big videos I haven't opened in a year" aria-label="Describe what to find, in plain words" autocomplete="off" spellcheck="false">
+    <span class="fx-orb-well" id="nlListenWell"></span>
+  </div>
+  <!-- FX wiring: shown only while the /api/nl-query round-trip is in
+       flight — the "weaving" orb mounts into the well. -->
+  <div class="nl-pending" id="nlPending" role="status" hidden><span class="fx-orb-well"></span><span class="fx-shimmer-text">Translating…</span></div>
+  <div id="nlOut" hidden>
+    <div class="muted" style="font-size:11.5px;margin:9px 0 4px;">Translates to — check it, edit it, then run:</div>
+    <input type="text" id="nlResult" class="num" aria-label="The translated query — edit it before running" autocomplete="off" spellcheck="false" style="width:100%;">
+    <div id="nlDetail" class="muted" style="font-size:11px;margin-top:5px;"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button class="btn btn-primary" id="nlRun">Run this query</button>
+      <button class="btn" id="nlCancel">Cancel</button>
+    </div>
+  </div>
+  <div id="nlReason" class="muted" role="status" aria-live="polite" style="font-size:11.5px;margin-top:7px;" hidden></div>
+</div>
 
 <script>
 'use strict';
@@ -7246,10 +7400,22 @@ async function openFromIndex(path, info) {
   // { when, durationMs }, and finishScan sets it a moment later — writing a
   // different shape from here left `when` undefined, which the "since your last
   // scan" banner reads directly.
+  // Whose counts are these? `GET /api/index/tree` answers with the subtree that
+  // was asked for, but its fileCount/dirCount/totalSize describe the whole
+  // IndexedRoot that CONTAINS it — `rootFor()` in indexRoutes matches any
+  // containing root by prefix. So after scanning `~` once, opening
+  // `~/Documents` reported the home folder's item count beside Documents' own
+  // byte total, at an items/sec rate neither of them supports. The counters
+  // describe this tree only when this tree IS the root; anything else — a
+  // subfolder, or a server that did not say which root answered — gets null,
+  // which every surface below is required to read as "show no number at all"
+  // rather than as a zero. root.size, computed over the tree itself, stays
+  // exact and is still shown.
+  const wholeRoot = !!data.rootPath && data.rootPath === data.path;
   state.scanStats = {
-    scanned: data.fileCount + data.dirCount,
-    fileCount: data.fileCount,
-    dirCount: data.dirCount,
+    scanned: wholeRoot ? data.fileCount + data.dirCount : null,
+    fileCount: wholeRoot ? data.fileCount : null,
+    dirCount: wholeRoot ? data.dirCount : null,
     engine: 'index',
     durationMs: Math.round(performance.now() - t0),
   };
@@ -7557,8 +7723,18 @@ async function finishScan(root, durationMs, stats) {
   $('scanStatus').innerHTML = icon('checkCircle', 14) +
     `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> files `}` +
     `in ${(durationMs / 1000).toFixed(1)}s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`;
-  if (files !== null) countUp($('statFiles'), files);
-  if (dirs !== null) countUp($('statDirs'), dirs);
+  // Blanked, not merely skipped. Skipping leaves the tiles holding the PREVIOUS
+  // scan's numbers, which is the same lie in slower motion: the headline and the
+  // engine row go quiet while Files and Folders keep stating another folder's
+  // counts as this one's. `data-v` goes with the text because countUp resumes
+  // its roll from that attribute, not from what the tile reads — a tile blanked
+  // by text alone would animate up from a number nobody can see.
+  const setStat = (el, n) => {
+    if (n === null) { el.dataset.v = 0; el.textContent = '–'; return; } // the dash the markup ships with
+    countUp(el, n);
+  };
+  setStat($('statFiles'), files);
+  setStat($('statDirs'), dirs);
   FxNum.rollText($('statLastScan'), new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }));
   renderDiskNotes();
   // finishScan runs twice per scan by design — the index-first instant paint
@@ -7661,7 +7837,13 @@ function renderDiskNotes() {
   // Feature 19 — which scan engine ran, and how fast.
   const en = $('engineRow');
   if (en) {
-    if (s.engine && s.durationMs > 0) {
+    // `scanned` is null whenever the counters that came back do not describe
+    // the tree on screen — the instant-open path sets it that way when it reads
+    // a subfolder of an indexed root. This row is nothing but that number and a
+    // rate derived from it, and `formatCount(null)` prints "0", so an ungated
+    // row states "scanned 0 items" and "0/s" as fact about a folder that plainly
+    // holds files. There is nothing honest left to say, so the row says nothing.
+    if (s.engine && s.durationMs > 0 && s.scanned != null) {
       const label = { 'gdu-turbo': 'Turbo engine (gdu)', 'turbo-walker': 'Turbo walker', 'ntfs-mft': 'NTFS MFT reader', walker: 'Standard walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
       const rate = s.durationMs > 0 ? Math.round(s.scanned / (s.durationMs / 1000)) : 0;
       $('engineText').textContent = `${label} — scanned ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s` +
@@ -7692,8 +7874,23 @@ async function renderCloudSafe() {
   let data;
   try {
     data = await api(`/api/cleanup/cloud-safe?scanId=${state.scanId}`);
-  } catch { hide(); return; }
-  if (!data.groups) { hide(); return; } // 202 while a scan is still running
+  } catch (e) {
+    // Two different answers arrive here and only one of them is a failure.
+    // While a scan runs the endpoint answers 202 { status: 'running' }, which
+    // api() turns into a thrown `stillWorking` error rather than a body — so
+    // the old `if (!data.groups)` guard that claimed to handle the 202 could
+    // never run, and the catch below it hid the whole tab. During any rescan
+    // the Cloud-safe tab therefore vanished out from under the user instead of
+    // saying it was working. "Not yet" keeps the tab and explains itself;
+    // "broken" is the only thing that still takes the tab away.
+    if (e && e.stillWorking) {
+      if (tab) tab.hidden = false;
+      host.innerHTML = '<div class="muted">Still counting online-only files — the scan is finishing. This list fills in on its own.</div>';
+      return;
+    }
+    hide();
+    return;
+  }
 
   if (tab) tab.hidden = data.totalCount === 0;
   if (!data.totalCount) { host.innerHTML = ''; return; }
@@ -7761,7 +7958,18 @@ $('scanBtn').addEventListener('click', () => {
 // Enter starts a scan and only ever starts one. It used to be free of this
 // check because the button was disabled mid-scan; now that the button is Stop,
 // an unguarded Enter in the path field would cancel the running scan instead.
-$('pathInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !state.scanning) $('scanBtn').click(); });
+//
+// Refusing is right. Refusing in SILENCE was not: the app auto-scans the last
+// path at boot, so the very first thing a returning user can do is type a
+// different folder and press Enter — and for those seconds Enter did nothing
+// at all, with no scan and no message. That reads as a broken input, and it
+// fooled two people testing this build before it was noticed. The house rule
+// is the one at tmRunGrammarQuery: say so rather than doing nothing. The
+// button's own behaviour is unchanged; only the refusal gained a voice.
+$('pathInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !state.scanning) { $('scanBtn').click(); return; }
+  if (e.key === 'Enter') toast('A scan is already running — press Stop to end it, then press Enter to scan this path.', 'error');
+});
 $('pathInput').addEventListener('input', maybeShowFastRescan);
 maybeShowFastRescan();
 window.addEventListener('beforeunload', closeEventSource);
@@ -8499,8 +8707,13 @@ function updateTmStatus() {
     // total (`matchTotal` stays null): the local filter is the whole answer.
     const total = state.treemap.matchTotal;
     const drawn = state.treemap.matches;
+    // In the disclosure form the noun belongs to `total`, not to `drawn`, and
+    // a total of one is reachable: the single file the grammar matched can sit
+    // outside this folder or below the drawn depth, which printed
+    // "0 of 1 matches". Each branch therefore agrees with the number its own
+    // noun counts.
     const counted = Number.isFinite(total) && total > drawn
-      ? `${formatCount(drawn)} of ${formatCount(total)} matches`
+      ? `${formatCount(drawn)} of ${formatCount(total)} match${total === 1 ? '' : 'es'}`
       : `${formatCount(drawn)} match${drawn === 1 ? '' : 'es'}`;
     $('tmStatus').textContent = `${counted} for “${q}” · ${formatBytes(state.treemap.rootSize)} total`;
     return;
@@ -8509,8 +8722,18 @@ function updateTmStatus() {
   // means nothing about a sunburst's rings or §6.2's shapes, and writing it
   // anyway would overwrite a true line with a plausible one.
   if (isSun() || isCells()) return;
+  // The noun has to follow the number. Drilling into a folder holding exactly
+  // one file printed "1 nodes · 1 drawn · 394.0 KB total" — the app's most-read
+  // line disagreeing with itself — because this sentence was the one counted
+  // string that never picked up the house idiom the `match`/`matches` branch
+  // above and every other counted line in the app already use. Each count is
+  // pluralised on ITS OWN number: a big folder drawn down to a single visible
+  // cell must not borrow the node count's "s". "drawn" stays bare on purpose —
+  // its noun is elided, so it already agrees with whatever precedes it.
+  const nodeCount = state.treemap.nodes.length;
   $('tmStatus').textContent =
-    `${formatCount(state.treemap.nodes.length)} nodes · ${formatCount(state.treemap.pxRects.length)} drawn · ${formatBytes(state.treemap.rootSize)} total`;
+    `${formatCount(nodeCount)} node${nodeCount === 1 ? '' : 's'}`
+    + ` · ${formatCount(state.treemap.pxRects.length)} drawn · ${formatBytes(state.treemap.rootSize)} total`;
 }
 /* ───────────────────── Shared Canvas 2D toolkit (§3.4) ─────────────────────
    The primitives every canvas panel needs, in one place: DPR-correct sizing,
@@ -18399,6 +18622,67 @@ function tmSyncQueryBar() {
   bar.hidden = !(hasViews || hasMessage || hasStage) || state.view !== 'treemap';
 }
 
+/**
+ * Split the matches the map did NOT draw into the three reasons it can have.
+ *
+ * Every drawn rectangle is inside the current view root, so the hits inside it
+ * minus the drawn count is exactly the number that lost to depth. The other
+ * two buckets are the ones the old message got wrong.
+ *
+ * `drawn` is `state.treemap.matches`, and `paths` is the complete hit list —
+ * only meaningful when the answer was not truncated, because a truncated list
+ * cannot account for hits the server never sent. The caller handles truncation
+ * before it reaches here.
+ */
+function tmUndrawnBreakdown(paths, viewRoot, drawn) {
+  let self = false;
+  let outside = 0;
+  let inside = 0;
+  for (const p of paths || []) {
+    if (viewRoot && p === viewRoot) self = true;
+    else if (viewRoot && !tmIsInside(p, viewRoot)) outside++;
+    else inside++;
+  }
+  // A path can be drawn more than once in principle; never report a negative.
+  return { self, outside, deeper: Math.max(0, inside - drawn) };
+}
+
+/**
+ * Why the map shows fewer matches than the query found — the true reason.
+ *
+ * The message used to read "The rest are deeper than this view draws; zoom in
+ * or raise Depth" whatever the reason was, and for the two commonest gaps that
+ * advice cannot work:
+ *
+ *   - **The view root itself matched.** Measured on the live app at the scan
+ *     root with `size>1gb`: the API returns 9, the map draws 8, and the ninth
+ *     is the folder being looked at. The map IS that folder, so it has no
+ *     rectangle of its own and no Depth setting will ever give it one.
+ *   - **The match is elsewhere in the scan.** `/api/query` searches the WHOLE
+ *     scan, not the drilled-in subtree. After a drill-in the missing hits are
+ *     usually outside the folder on screen, and raising Depth draws deeper,
+ *     never wider — only going back up can reach them.
+ *   - **The match really is below what this view draws.** The only case the
+ *     old sentence was right about, and the only one that still gets it.
+ *
+ * With no view root known, everything falls into the depth bucket, which is
+ * the same answer the old code gave and the only honest one left.
+ */
+function tmUndrawnMessage(found, drawn, paths, viewRoot) {
+  const b = tmUndrawnBreakdown(paths, viewRoot, drawn);
+  const head = `${found} match${found === 1 ? '' : 'es'} — ${drawn} shown here.`;
+  const why = [];
+  if (b.self) why.push('one is this folder itself, which has no rectangle of its own');
+  if (b.outside) why.push(`${b.outside} ${b.outside === 1 ? 'is' : 'are'} elsewhere in the scan, outside this folder`);
+  if (b.deeper) why.push(`${b.deeper} ${b.deeper === 1 ? 'is' : 'are'} deeper than this view draws`);
+  if (!why.length) return head; // nothing left to explain; do not invent a reason
+  const advice = b.deeper && b.outside ? ' Zoom in or raise Depth for those; go up for the rest.'
+    : b.deeper ? ' Zoom in or raise Depth.'
+    : b.outside ? ' Go up to see them.'
+    : '';
+  return `${head} ${why.join('; ').replace(/^./, (c) => c.toUpperCase())}.${advice}`;
+}
+
 /** Run a grammar query on the server and highlight what comes back. */
 async function tmRunGrammarQuery(q) {
   if (!state.scanId) {
@@ -18442,7 +18726,8 @@ async function tmRunGrammarQuery(q) {
     // while the map outlines three — and "3 matches" alone reads as "that is
     // all there is". §2.2 also requires that a signal this machine cannot
     // supply is visible, rather than an empty highlight that reads as
-    // "nothing matched".
+    // "nothing matched". Which of the three gaps it is, and whether the Depth
+    // advice can help at all, is tmUndrawnMessage's job.
     const degraded = out.degraded || [];
     const drawn = state.treemap.matches;
     const found = out.total;
@@ -18451,10 +18736,7 @@ async function tmRunGrammarQuery(q) {
     } else if (out.truncated) {
       tmSetQueryMessage(`Showing the ${state.treemap.matchedPaths.size} biggest of ${found} matches.`, false);
     } else if (found > drawn) {
-      tmSetQueryMessage(
-        `${found} match${found === 1 ? '' : 'es'} — ${drawn} shown here. The rest are deeper than this view draws; zoom in or raise Depth.`,
-        false,
-      );
+      tmSetQueryMessage(tmUndrawnMessage(found, drawn, tmLastHits.paths, state.treemap.rootPath), false);
     } else {
       tmSetQueryMessage('', false);
     }
@@ -18782,7 +19064,14 @@ $('tmExportBtn').addEventListener('click', (e) => {
   e.stopPropagation();
   if (!drawnCells().length) { toast('Render something first', 'error'); return; }
   const menu = $('ctxMenu');
-  const canReport = !!(state.scanId && state.root);
+  // A report can only be built from a FINISHED scan — the endpoint answers
+  // 202 {status:'running'} until then (src/api/scanRoutes.ts). An offered menu
+  // entry that cannot work is a promise the app breaks, and this one used to
+  // break it by navigating away from the app entirely; see downloadReport.
+  // The trap is that the menu looks perfectly ready mid-scan: an already
+  // indexed folder paints from the live index the instant it is opened, while
+  // the real scan is still walking the tree underneath.
+  const canReport = !!(state.scanId && state.root && !state.scanning);
   // §7.1c — the time-lapse exports need two snapshots to animate between and
   // the rectangle renderer (the only one whose motion is honest to tween).
   const canLapse = state.treemap.history.snaps.length >= 2 && isRectMap();
@@ -18814,21 +19103,83 @@ $('tmExportBtn').addEventListener('click', (e) => {
     else if (exp === 'svg') exportTreemapSVG();
     else if (exp === 'gif') exportTimelapseGif();
     else if (exp === 'webm') exportTimelapseWebm();
-    else if (exp === 'csv-files') downloadReport('csv', 'files');
-    else if (exp === 'csv-folders') downloadReport('csv', 'folders');
-    else if (exp === 'xlsx-files') downloadReport('xlsx', 'files');
-    else if (exp === 'xlsx-folders') downloadReport('xlsx', 'folders');
-    else if (exp === 'pdf') downloadReport('pdf');
+    else if (exp === 'csv-files') void downloadReport('csv', 'files');
+    else if (exp === 'csv-folders') void downloadReport('csv', 'folders');
+    else if (exp === 'xlsx-files') void downloadReport('xlsx', 'files');
+    else if (exp === 'xlsx-folders') void downloadReport('xlsx', 'folders');
+    else if (exp === 'pdf') void downloadReport('pdf');
   }));
 });
 
-/** Trigger a server-side report download (CSV / PDF) for the current scan. */
-function downloadReport(format, mode) {
+/**
+ * Trigger a server-side report download (CSV / XLSX / PDF) for the current scan.
+ *
+ * **This was the one network call in the UI that could unload the whole app.**
+ * It was a bare `<a href="/api/scan/…/export">` click, and a bare anchor
+ * NAVIGATES unless the answer carries `Content-Disposition: attachment`. That
+ * endpoint only sets the header once the scan has FINISHED: while it is still
+ * running it answers `202 {status:'running'}`, and 404/500 answer the flat
+ * `{error, code}` envelope — all JSON, none of them attachments. So Export
+ * mid-scan replaced the single-page app with a page of raw JSON, taking the
+ * cart, the drill-in, the query and every other unsaved thing with it. It is
+ * easy to hit precisely because the screen looks finished: an already-indexed
+ * folder paints instantly from the live index while a real scan runs under it.
+ *
+ * Both halves are closed, and neither one alone would be enough.
+ *
+ *  1. **The report is not offered, or run, unless the scan is done.** The menu
+ *     drops the entries while `state.scanning` (see `canReport` above); this
+ *     repeats the guard for any caller that arrives another way, and then asks
+ *     the server, because `state.scanning` describes THIS session — reopening
+ *     an indexed folder paints a map from a scan someone else is still running.
+ *     The ask goes through `api()`, so a 404 or a 500 arrives as the project's
+ *     error envelope and is spoken, exactly like every other call in the app.
+ *  2. **The anchor is given a `download` attribute.** That is the half that
+ *     makes the unload structurally impossible rather than merely unlikely: a
+ *     same-origin anchor with `download` saves the response, and the HTML spec
+ *     gives it no path back to navigating, whatever status or content type
+ *     comes back. Should the export somehow still answer JSON after a clean
+ *     preflight, the worst case is a small useless file — not a lost session.
+ *
+ * The bytes still stream from the server straight to disk, which is why this
+ * stayed an anchor rather than becoming a buffered blob: a full-tree CSV of a
+ * large scan has no business being held in the page's memory first.
+ */
+async function downloadReport(format, mode) {
   if (!state.scanId) { toast('Run a scan first', 'error'); return; }
+  if (state.scanning) {
+    toast('The scan is still running — a report can only be built from a finished scan. Try again when it lands.', 'error');
+    return;
+  }
+
+  // /stats is the cheap one: it answers 200 with the scan's status for any
+  // state the scan is in, so there is no 202 to interpret and no tree walk to
+  // pay for. A scan that has been evicted or has failed surfaces here, in
+  // words, instead of as a page of JSON where the app used to be.
+  let stats;
+  try {
+    stats = await api(`/api/scan/${encodeURIComponent(state.scanId)}/stats`);
+  } catch (e) {
+    toast(e.message || 'That report could not be built.', 'error');
+    return;
+  }
+  if (stats && stats.status === 'running') {
+    toast('The scan hasn’t finished on the server yet, so there is nothing to report on yet. Try again in a moment.', 'error');
+    return;
+  }
+  if (!stats || stats.status !== 'complete') {
+    toast('That scan didn’t finish, so there is nothing to report on. Rescan the folder and try again.', 'error');
+    return;
+  }
+
   let url = `/api/scan/${encodeURIComponent(state.scanId)}/export?format=${format}`;
   if (mode) url += `&mode=${mode}`;
   const a = document.createElement('a');
   a.href = url;
+  // Load-bearing, not cosmetic: `download` is what forbids navigation. Without
+  // it this anchor is the original defect. The name follows the same
+  // convention as every other export the app writes.
+  a.download = exportFileName(format === 'pdf' ? 'pdf' : format === 'xlsx' ? 'xlsx' : 'csv');
   a.rel = 'noopener';
   document.body.appendChild(a);
   a.click();
@@ -23406,6 +23757,48 @@ function resetOpenHandleWarning() {
   setConfirmButton('Move to Trash');
 }
 
+/**
+ * How many requests the preflight will spend before it stops and admits how far
+ * it got.
+ *
+ * The bound is deliberate, and it is a bound on REQUESTS, not on the selection.
+ * The API caps a *body* at 500 paths, so a big selection has to be asked about
+ * in chunks — but nothing stops the client asking repeatedly, and it used to
+ * ask exactly once and then describe the answer as if it covered everything.
+ * The reason not to ask forever: each request costs the server a full
+ * enumeration of every open handle on the machine (the check is flat in the
+ * number of paths — a chunk of 400 costs what a chunk of 1 costs), and this
+ * runs behind a dialog someone is already reading. Sixteen chunks covers 6,400
+ * items in a second or two of background work and stays inside the rate
+ * limiter's 20-request burst, so the delete that follows is not queued behind
+ * its own preflight. Past that, "checked 6,400 of 80,000" is worth more than a
+ * warning that arrives a minute after the user clicked.
+ */
+const OPEN_HANDLE_PREFLIGHT_CHUNKS = 16;
+
+/**
+ * Ask about the selection in chunks, merge the answers, and paint one report
+ * that is true about the WHOLE selection.
+ *
+ * The merge is the point of this function. A response's `complete` flag
+ * describes only the paths that request carried, so a report built from the
+ * first chunk and then rendered against `paths.length` claims a reach it never
+ * had: with the in-use files sitting past index 400 — the ordinary case for a
+ * 5,000-item cleanup — the dialog showed no warning at all, which reads as
+ * "nothing here is open", and people trashed files their editor was holding.
+ *
+ * Everything this did NOT look at therefore makes the report partial: chunks
+ * past the budget, and chunks whose request died on the way. The panel stays
+ * silent only when the answer covered the whole set.
+ *
+ * The loop is kept here rather than split into a helper so the "a failed
+ * preflight gets out of the way" path stays visible in one function: the catch
+ * below and the `host.hidden = true` that follows it are one decision.
+ *
+ * The panel keeps saying "Checking…" until every chunk is in, rather than
+ * growing a row at a time — a warning that rewrites itself while someone is
+ * reading it is worse than one that arrives once.
+ */
 async function checkOpenHandlesFor(paths) {
   const seq = ++openHandleSeq;
   const host = $('confirmOpenHandles');
@@ -23413,21 +23806,71 @@ async function checkOpenHandlesFor(paths) {
   host.className = 'checking';
   host.textContent = 'Checking whether anything has these files open…';
 
-  let report;
-  try {
-    report = await api('/api/files/open-handles', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths: paths.slice(0, TRASH_CHUNK) }),
-    });
-  } catch {
-    // The check is a courtesy; failing it must not stand between the user and
-    // a delete they asked for. The server still guards the delete itself.
-    if (seq === openHandleSeq) host.hidden = true;
+  const chunks = Math.min(Math.ceil(paths.length / TRASH_CHUNK), OPEN_HANDLE_PREFLIGHT_CHUNKS);
+  const conflicts = [];
+  let checkedCount = 0;
+  let complete = true;
+  let answered = false;
+  let serverReason = '';
+  let unavailable = null;
+
+  for (let i = 0; i < chunks; i++) {
+    const chunk = paths.slice(i * TRASH_CHUNK, (i + 1) * TRASH_CHUNK);
+    let part;
+    try {
+      part = await api('/api/files/open-handles', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: chunk }),
+      });
+    } catch {
+      // Asked and never answered. Skipping the chunk is right — one dropped
+      // request must not lose the answers that did arrive — but these paths
+      // were not checked, and the count below has to say so.
+      continue;
+    }
+    if (seq !== openHandleSeq) return; // a newer dialog owns the panel now
+    answered = true;
+    // `checked: false` is the machine saying it has no way to look. `lsof`
+    // missing is a property of the computer, not of this chunk, so asking
+    // sixteen times would collect sixteen identical noes: take the first.
+    if (part.checked === false) { unavailable = part; break; }
+    if (part.conflicts) conflicts.push(...part.conflicts);
+    checkedCount += chunk.length;
+    if (part.complete === false) {
+      // The server hit its own limit inside this chunk (Windows' Restart
+      // Manager truncates at RM_MAX_RESOURCES). Its wording is better than
+      // anything guessable from here, so carry it rather than restate it.
+      complete = false;
+      if (part.reason) serverReason = part.reason;
+    }
+  }
+
+  if (!answered) {
+    // Nothing answered at all. The check is a courtesy; failing it must not
+    // stand between the user and a delete they asked for. The server still
+    // guards the delete itself.
+    host.hidden = true;
     return;
   }
-  if (seq !== openHandleSeq) return; // a newer dialog owns the panel now
+  if (unavailable) { renderOpenHandleWarning(unavailable, paths.length); return; }
 
-  renderOpenHandleWarning(report, paths.length);
+  const reasons = [];
+  if (checkedCount < paths.length) {
+    // Paths nobody looked at — the budget ran out, or their request died. The
+    // flag matters as much as the sentence: `renderOpenHandleWarning` decides
+    // whether to speak at all from `complete`, so a report carrying the honest
+    // count without the flag would print it nowhere and still render a
+    // truncated check as a clean bill of health.
+    complete = false;
+    reasons.push(`TreeMap checked ${formatCount(checkedCount)} of ${formatCount(paths.length)} selected items, so anything open in the rest isn’t listed here.`);
+  }
+  if (serverReason) reasons.push(serverReason);
+  renderOpenHandleWarning({
+    conflicts,
+    checked: true,
+    complete,
+    ...(reasons.length ? { reason: reasons.join(' ') } : {}),
+  }, paths.length);
 }
 
 function renderOpenHandleWarning(report, pathCount) {
@@ -23900,6 +24343,15 @@ $('noteRemoveBtn').addEventListener('click', () => { if (noteTarget) removeNote(
  */
 function nlOpen() {
   const btn = $('tmNlBtn'), pop = $('nlPop');
+  // getBoundingClientRect() is in VIEWPORT coordinates, and #nlPop is
+  // position:fixed, so this arithmetic is only right while the viewport is
+  // still the popover's containing block. That is why the popover's markup
+  // sits at the top level of the body (markup/135-nl-popover.html) and not
+  // beside this button: .tm-toolbar carries `container-type: inline-size`,
+  // whose layout containment would make the TOOLBAR the containing block and
+  // land the popover a toolbar's-worth low and left, clipped by its own
+  // stacking context. Never move #nlPop back next to what it points at —
+  // tests/nlPopContainment.test.ts fails if any ancestor takes the job.
   const r = btn.getBoundingClientRect();
   pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 396)) + 'px';
   pop.style.top = (r.bottom + 8) + 'px';
@@ -25594,6 +26046,16 @@ function layoutGrid(items) {
   }
   state.grid.layout = layout;
   state.grid.totalH = layout.length ? y + rowH + GAP : 0;
+  // The shift-click anchor is a POSITIONAL index into the array we just threw
+  // away, and every caller of this function rebuilds that array from scratch:
+  // folder navigation, a sort change, each debounced search keystroke, a
+  // rescan, a window resize. Position 35 in the old list is a different file in
+  // the new one — or, once a query narrows 40 entries down to 3, no file at
+  // all, which is how a following shift-click ended up reading past the end of
+  // the layout. Clearing it here rather than at each call site is deliberate:
+  // this is the only place `state.grid.layout` is ever written, so no rebuild
+  // path can quietly skip the reset the way a per-call-site version would.
+  state.grid.anchor = null;
 }
 
 let gridSeq = 0;
@@ -25701,8 +26163,18 @@ gridScroll.addEventListener('scroll', () => {
 function onCellClick(e, i) {
   const { it } = state.grid.layout[i];
   const sel = state.grid.selection;
-  if (e.shiftKey && state.grid.anchor !== null) {
-    const a = Math.min(state.grid.anchor, i), b = Math.max(state.grid.anchor, i);
+  // Second line of defence for the same trap. layoutGrid() clears the anchor on
+  // every rebuild, but this handler is the point of USE and it must not depend
+  // on that promise being kept: a future rebuild path that writes the layout
+  // itself would otherwise turn one stale index into a TypeError thrown from
+  // inside a click, with the selection half applied. Clamping degrades that to
+  // a shorter range instead. `!== null` stays as the emptiness test because
+  // anchor 0 is a real anchor and every falsy check would drop it.
+  const anchor = state.grid.anchor === null
+    ? null
+    : Math.max(0, Math.min(state.grid.anchor, state.grid.layout.length - 1));
+  if (e.shiftKey && anchor !== null) {
+    const a = Math.min(anchor, i), b = Math.max(anchor, i);
     if (!(e.metaKey || e.ctrlKey)) sel.clear();
     for (let k = a; k <= b; k++) sel.add(state.grid.layout[k].it.path);
   } else if (e.metaKey || e.ctrlKey) {
@@ -27507,17 +27979,29 @@ async function checkSnapshotsFor(targetPath, rowEl) {
     return;
   }
 
-  // Capability unavailable (§3.5 #5) — the specific reason, not a blank.
-  if (!result.candidates.length) {
-    host.innerHTML = `<div class="snap-msg">${icon('alert', 13)} ${escapeHtml(result.reason || 'No snapshots on this system contain that path.')}</div>`;
-    return;
-  }
   if (result.stillPresent) {
     host.innerHTML = `<div class="snap-msg">${icon('checkCircle', 13)} That path is still on this disk — nothing to recover.</div>`;
     return;
   }
 
   const usable = result.candidates.filter(c => c.state !== 'absent');
+
+  // Capability unavailable (§3.5 #5) — the specific reason, not a blank.
+  //
+  // The emptiness test is on `usable`, not on `candidates`, because those two
+  // are not the same question. A system that can read its own snapshots looks
+  // inside every one of them and reports each as 'present' or 'absent', so a
+  // file created and deleted between two snapshots comes back as a *full*
+  // candidate list in which nothing is recoverable — and `findDeleted` phrases
+  // that case for a reader ("Checked N snapshots — none of them contain that
+  // path."). Testing `candidates.length` here let that answer walk on into
+  // `usable[0].snapshot`, which is undefined: a legitimate reply reached the
+  // user as a TypeError and a blank panel.
+  if (!usable.length) {
+    host.innerHTML = `<div class="snap-msg">${icon('alert', 13)} ${escapeHtml(result.reason || 'No snapshots on this system contain that path.')}</div>`;
+    return;
+  }
+
   const newest = usable[0];
   const when = newest.snapshot.takenAt ? formatDate(newest.snapshot.takenAt) : 'an unknown date';
   // The distinction that keeps this honest: on Linux we looked inside and know;
@@ -28068,10 +28552,21 @@ async function loadEmptyFolders() {
       updateCleanSummary();
       return;
     }
+    // The route caps `folders` at the topmost 1,000 and reports what it really
+    // found in `totalCount`, with `truncated` saying the cap was hit. Printing
+    // the list's length as the count states a cap as a fact, and Select all can
+    // only ever tick what was sent — so on a capped list the row says both
+    // numbers and which one the tick covers, the way the rules pane says
+    // "largest shown". Untruncated, the list IS the count and the row is
+    // unchanged.
+    const shown = emptyFolders.length;
+    const selectAllLabel = data.truncated
+      ? `Select all — the top ${formatCount(shown)} shown of ${formatCount(data.totalCount)} empty folders found, nested ones included. Select all reaches only these ${formatCount(shown)} — trash them and rescan for the rest.`
+      : `Select all — ${shown} top-level empty folder${shown > 1 ? 's' : ''}${data.totalCount > shown ? ` (${formatCount(data.totalCount)} counting nested ones)` : ''}`;
     host.innerHTML = `
       <div class="rule-row">
         <input type="checkbox" id="emptyAll" checked>
-        <label for="emptyAll" class="muted">Select all — ${emptyFolders.length} top-level empty folder${emptyFolders.length > 1 ? 's' : ''}${data.totalCount > emptyFolders.length ? ` (${formatCount(data.totalCount)} counting nested ones)` : ''}</label>
+        <label for="emptyAll" class="muted">${selectAllLabel}</label>
       </div>
       <div class="clean-list">` + emptyFolders.map((f, i) => `
         <div class="clean-item">
@@ -28653,7 +29148,15 @@ async function runCleanFind(fetcher) {
   try {
     data = await fetcher();
   } catch (e) {
-    toast(e.message, 'error');
+    // Through `reportError`, never a bare red toast. `GET /api/cleanup/rules`
+    // answers 202 {status:'running'} while a scan is still going, and `api()`
+    // turns exactly that into a throw carrying `stillWorking` — an ANSWER, not
+    // a failure. reportError is the one place that knows the difference (it
+    // gives that flag, and CAPABILITY_UNAVAILABLE, the plain treatment rather
+    // than red), so pressing Find during a rescan used to paint "Still working
+    // on that — it hasn't finished yet" as an error for a request that had not
+    // failed and would have succeeded a second later.
+    reportError(e);
     return;
   } finally {
     findBtn.disabled = false;
@@ -28696,17 +29199,30 @@ async function runCleanFind(fetcher) {
   updateCleanSummary();
 }
 
-/** Selected paths + recoverable bytes for whichever pane is showing. */
+/**
+ * Selected paths + recoverable bytes for whichever pane is showing.
+ *
+ * `sizes` is the same measurement as `bytes`, kept per path. A delete run can
+ * come back with only part of the selection actually gone — a chunk refused
+ * for an open handle is neither deleted nor failed — and a single pre-summed
+ * total cannot be un-summed afterwards. The completion report needs to add up
+ * exactly the paths the server confirmed, so it gets them one at a time.
+ */
 function activeCleanSelection() {
   if (cleanPane === 'rules') {
     const files = [...document.querySelectorAll('#cleanResults .clean-ck')]
       .filter(ck => ck.checked).map(ck => cleanMatches[+ck.dataset.i]);
-    return { paths: files.map(f => f.path), bytes: files.reduce((s, f) => s + f.size, 0), noun: 'file' };
+    return {
+      paths: files.map(f => f.path), bytes: files.reduce((s, f) => s + f.size, 0), noun: 'file',
+      sizes: new Map(files.map(f => [f.path, f.size])),
+    };
   }
   if (cleanPane === 'empty') {
     const sel = [...document.querySelectorAll('#emptyResults .empty-ck')]
       .filter(ck => ck.checked).map(ck => emptyFolders[+ck.dataset.i]);
-    return { paths: sel.map(f => f.path), bytes: 0, noun: 'empty folder' };
+    // An empty folder is worth ~0 bytes by definition, so there is nothing to
+    // size — an empty map, not a missing one, so callers need no special case.
+    return { paths: sel.map(f => f.path), bytes: 0, noun: 'empty folder', sizes: new Map() };
   }
   // The Smart pane has three sources that can name the SAME path — an orphaned
   // node_modules is both a package leftover (§C6) and a Smart Suggestion. Keyed
@@ -28730,7 +29246,7 @@ function activeCleanSelection() {
   });
   let bytes = 0;
   for (const size of chosen.values()) bytes += size;
-  return { paths: [...chosen.keys()], bytes, noun: 'item' };
+  return { paths: [...chosen.keys()], bytes, noun: 'item', sizes: chosen };
 }
 
 function updateCleanSummary() {
@@ -28789,26 +29305,48 @@ function renderCleanFunnel(freed) {
   else cleanFunnelHandle = FxCharts.funnel($('cleanFunnel'), spec);
 }
 
-$('cleanConfirmBtn').addEventListener('click', async () => {
-  const { paths, bytes } = activeCleanSelection();
+/**
+ * Move the current selection to the Trash, and report what actually happened.
+ *
+ * `trashPaths` answers in THREE buckets, not two: a chunk the server refuses
+ * because something still has a file open comes back in `blocked` — in neither
+ * `deleted` nor `failed`, because those files are untouched and retrying them
+ * is the right next step. Reading only two of the three buckets loses those
+ * files from the report, and stalls this progress bar short of 100% for the
+ * rest of the run.
+ *
+ * The recovered figure is summed from the paths the server confirmed, path by
+ * path, rather than quoting the selection's total: the total was computed
+ * before anything was deleted, so on any run that did not delete everything it
+ * credits the user with space still sitting on the disk.
+ */
+async function runCleanTrash() {
+  const { paths, sizes } = activeCleanSelection();
   if (!paths.length) return;
   const btn = $('cleanConfirmBtn');
   btn.disabled = true;
   $('cleanProgress').classList.add('on');
-  let done = 0, failed = 0;
+  let done = 0, failed = 0, blocked = 0, recovered = 0;
   for (let i = 0; i < paths.length; i += 20) {
     const chunk = paths.slice(i, i + 20);
     const result = await trashPaths(chunk, { silent: true });
     done += result.deleted.length;
+    for (const p of result.deleted) recovered += sizes.get(p) || 0;
     failed += result.failed.length;
-    $('cleanProgressFill').style.width = Math.round(((done + failed) / paths.length) * 100) + '%';
-    btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Deleting… ${done + failed}/${paths.length}`;
+    blocked += (result.blocked || []).length;
+    const settled = done + failed + blocked;
+    $('cleanProgressFill').style.width = Math.round((settled / paths.length) * 100) + '%';
+    btn.innerHTML = icon('loader', 14, REDUCED ? '' : 'spin') + `Deleting… ${settled}/${paths.length}`;
   }
   closeModal('cleanModal');
-  if (done) toast(`Moved ${done} item${done > 1 ? 's' : ''} to Trash${bytes ? ` — ${formatBytes(bytes)} recovered` : ''}`);
+  if (done) toast(`Moved ${done} item${done > 1 ? 's' : ''} to Trash${recovered ? ` — ${formatBytes(recovered)} recovered` : ''}`);
   if (failed) toast(`${failed} could not be trashed`, 'error');
+  // Silent mode suppresses trashPaths' own re-ask dialog, so this is the only
+  // place these files get mentioned at all. They are still where they were.
+  if (blocked) toast(`${blocked} still in use — left where ${blocked > 1 ? 'they are' : 'it is'}. Close what is using ${blocked > 1 ? 'them' : 'it'} and try again.`, 'error', 9000);
   if (done) rescan();
-});
+}
+$('cleanConfirmBtn').addEventListener('click', runCleanTrash);
 
 /* ─────────────────────── Global search (A4) ───────────────────────
    Searches everything TreeMap has indexed, not just the current view — which

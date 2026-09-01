@@ -50,7 +50,16 @@
 .ring-label > span { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 1.2px; margin-top: 2px; }
 .sys-facts { display: flex; flex-direction: column; gap: 9px; font-size: 13px; min-width: 0; flex: 1 1 220px; }
 .sys-facts .fact { display: flex; justify-content: space-between; gap: 18px; }
-.sys-facts .fact span { color: var(--text-2); }
+/* A child selector, for the same reason `.ring-label > span` is one: this
+   rule dims the LABEL, and the label is the row's own span. The value beside
+   it is a <b>, and FxNum.roll() builds the rolled figure inside that <b> out
+   of nested spans (.fx-roll / .fx-roll-d / .fx-roll-sizer). As a descendant
+   rule this painted those digits too — Total disk, Free, Used and Trash all
+   rolled in the dimmed label grey instead of the value ink. The numerals
+   reset in 140-fx-numerals.css says `color: inherit`, but at (0,2,0) it
+   cannot outrank a `.host span` rule at (0,2,1); the host has to stop
+   reaching rather than the reset escalate. */
+.sys-facts .fact > span { color: var(--text-2); }
 /* min-width + ellipsis: a long hostname must clip, never push the card wide. */
 .sys-facts .fact b { font-weight: 600; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
@@ -60,7 +69,13 @@
 .scan-row input { width: 100%; padding-left: 34px; }
 .scan-status { margin-top: 14px; font-size: 12.5px; color: var(--text-2); min-height: 18px;
   display: flex; align-items: center; gap: 7px; }
-.scan-status.error { color: #ff6b61; }
+/* --danger, not a literal: the salmon this used to carry is a hue picked for
+   near-black glass and measured ~2.7:1 on the light card — the one line a
+   failed scan most needs a user to read was the least readable text on the
+   page. The token is tuned for both grounds in 000-tokens.css and already
+   carries every other error text (.toast.error .ic, #apQueryStatus.bad), so
+   a second local light override here could only drift away from it. */
+.scan-status.error { color: var(--danger); }
 .scan-meta { margin-top: 5px; font-size: 11.5px; color: var(--text-3);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 15px; }
 .progress-track { margin-top: 12px; height: 5px; border-radius: 3px; background: var(--surface-2);
