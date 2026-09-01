@@ -110,11 +110,45 @@ test('wait=true with waitMs=0 returns an honest 202 running you can poll', async
   }
 });
 
+/**
+ * Wait for the scan's snapshot to actually be on disk.
+ *
+ * `POST /api/scan?wait=true` resolves when the WALK finishes: diskScanner marks
+ * the scan complete and then fires the snapshot write off unawaited
+ * (`void saveSnapshot(scan)`), which is the right call for the product — a
+ * background durability step must not hold up the answer — but it means the
+ * snapshot store is still changing after the request returns.
+ *
+ * `/api/agent/summary` reads that store for its forecast, so `snapshotCount`
+ * and the `reason` sentence built from it are LIVE state, exactly like
+ * `forecast.freeBytes` a few lines below. Two reads taken either side of that
+ * write legitimately disagree: Windows CI caught it reporting
+ * "0 scans over less than an hour" and then "1 scan", and read them as a
+ * broken determinism guarantee.
+ *
+ * Settling the store before the first read keeps the equality assertion at full
+ * strength — every field compared, none excluded — instead of exempting two more
+ * fields and shrinking what the test actually checks.
+ */
+async function waitForSnapshot(port: number, rootPath: string): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const r = await req(port, 'GET', `/api/snapshots?path=${encodeURIComponent(rootPath)}`);
+    const snaps = (r.body as { snapshots?: unknown[] }).snapshots ?? [];
+    if (snaps.length > 0) return;
+    assert.ok(Date.now() < deadline, 'the scan\'s snapshot never reached the store');
+    await new Promise((r2) => setTimeout(r2, 25));
+  }
+}
+
 test('agent summary: raw+formatted bytes, stable ids, deterministic order, real forecast', async () => {
   const { port, close } = await listen();
   try {
     const scan = await req(port, 'POST', '/api/scan?wait=true&waitMs=30000', { path: fixture });
     const scanId = scan.body.scanId as string;
+
+    // Both reads must see a settled snapshot store — see waitForSnapshot above.
+    await waitForSnapshot(port, fixture);
 
     const r = await req(port, 'GET', `/api/agent/summary?scanId=${scanId}`);
     assert.equal(r.status, 200, JSON.stringify(r.body));
