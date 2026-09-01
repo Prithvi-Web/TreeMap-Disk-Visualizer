@@ -1,11 +1,37 @@
 # TreeMap — session handoff
 
-## Session 5 — the end-to-end journeys, 37 defects, and two Windows-only lessons (1 September 2026)
+## Session 5 — the journeys, 37 defects, two Windows lessons, and two audit rounds (1 September 2026)
 
-**Suite: 2,139 tests · 2,137 pass · 0 fail · 2 pre-existing skips** (was 2,008).
+**Suite: 2,185 tests · 2,182 pass · 0 fail · 3 skips** (was 2,008).
 `npm run typecheck` clean; `node scripts/build-ui.js --check` matches (111 parts).
-Nine commits on `main`, `32d7ee0..dd55084`, PUSHED. **CI run 33488537528 is
-green on macOS, Linux AND Windows** — verified through the API, not inferred.
+Twelve commits on `main`, `32d7ee0..HEAD`. The first ten are PUSHED and
+**CI run 33488537528 was green on macOS, Linux AND Windows** — verified through
+the API, not inferred. The last two are local at time of writing.
+
+### The most useful thing this session learned
+
+Green tests are not a reviewed diff. The 37 defects were adversarially verified
+as FINDINGS; nobody reviewed the FIXES. An audit of the session's own diff then
+found **9 regressions it had introduced itself**, none of which any of the 2,139
+passing tests noticed — a trailing-space folder made unreachable through every
+guarded route, a popover floating over modals, a drain that drained nothing, a
+preflight that discarded the conflicts it had found. A second audit, of those
+nine fixes, found **3 more**, two of them data-risk.
+
+So: after a large fix round, review the diff as if someone else wrote it. Budget
+for it. The rate here was roughly one regression per four fixes, and it did not
+reach zero until the second pass.
+
+A third, narrow pass over the blocklist alone — 78 adversarial spellings of a
+blocked path — then found something older and worse than anything the session
+had introduced: **`/System/Volumes/Data/private/var/db` was accepted.** A macOS
+firmlink is a mount feature, not a symlink, so `realpath` collapses neither
+spelling, and both the textual blocklist and the parent test miss it. Same
+device, same inode, 129 identical entries, `dslocal` inside. It was reachable at
+every commit this session started from, and an unprivileged user can also get
+there through a symlink they plant. Closed by stripping the Data-volume prefix
+from the canonical form, plus a device+inode backstop gated on a basename match
+so no syscall is added to the common path.
 
 ### Read this before writing a test: two things only Windows catches
 

@@ -151,6 +151,70 @@ function canonDirUncached(dir: string): string {
  *    that must never be answered from memory.
  */
 /**
+ * macOS firmlinks: the same directory under two names, and realpath collapses
+ * neither.
+ *
+ * Since Catalina the system volume is sealed and the writable Data volume is
+ * mounted at /System/Volumes/Data, firmlinked into the root — so /private/var
+ * and /System/Volumes/Data/private/var are one directory with one inode, and
+ * `realpath(3)` reports each spelling as itself because a firmlink is a mount
+ * feature, not a link. The blocklist was reachable by the alias: sanitizePath
+ * accepted /System/Volumes/Data/private/var/db, which is exactly the directory
+ * holding the local account database.
+ *
+ * The prefix is a documented, fixed part of the OS layout, so stripping it is
+ * complete for the whole tree beneath any aliased directory and costs nothing.
+ */
+const DATA_VOLUME = '/System/Volumes/Data';
+function stripDataVolume(p: string): string {
+  if (process.platform !== 'darwin') return p;
+  if (p === DATA_VOLUME) return '/';
+  return p.startsWith(DATA_VOLUME + '/') ? p.slice(DATA_VOLUME.length) : p;
+}
+
+/**
+ * Device+inode of every blocked directory that exists, computed once.
+ *
+ * The backstop behind the string rules. An alias nobody predicted — another
+ * mount of the same volume, a bind mount, a firmlink Apple adds next release —
+ * still lands on the same inode, and identity is the one test that cannot be
+ * spelled around. Gated on a basename match below so the stat is not paid on
+ * every path this app ever sees.
+ */
+let blockedIds: Set<string> | null = null;
+function blockedIdentities(): Set<string> {
+  if (blockedIds) return blockedIds;
+  blockedIds = new Set<string>();
+  const list = process.platform === 'win32' ? WINDOWS_BLOCKLIST : UNIX_BLOCKLIST;
+  for (const b of list) {
+    try {
+      const st = fs.statSync(b);
+      blockedIds.add(`${st.dev}:${st.ino}`);
+    } catch {
+      // Not present on this machine, so nothing can alias to it.
+    }
+  }
+  return blockedIds;
+}
+
+/** Is `p` the same directory as a blocked one, under any name? */
+function isBlockedByIdentity(p: string): boolean {
+  // Cheap pre-filter: only a path whose LAST component is named like a blocked
+  // directory can be one under a different prefix. Anything deeper inside an
+  // aliased tree is already handled by stripDataVolume, which rewrites the
+  // whole path rather than just its tail.
+  const base = path.basename(p).toLowerCase();
+  const list = process.platform === 'win32' ? WINDOWS_BLOCKLIST : UNIX_BLOCKLIST;
+  if (!list.some((b) => path.basename(b).toLowerCase() === base)) return false;
+  try {
+    const st = fs.statSync(p);
+    return blockedIdentities().has(`${st.dev}:${st.ino}`);
+  } catch {
+    return false; // it does not exist, so it is not a blocked directory
+  }
+}
+
+/**
  * Could some spelling of this path's last component land on the blocklist?
  *
  * True when the path's own parent directory is at or above a blocked entry —
@@ -171,7 +235,7 @@ function canonicalize(resolved: string): string {
   const parent = path.dirname(resolved);
   if (parent === resolved) return canonDir(resolved); // "/" or "C:\" itself
 
-  const candidate = path.join(canonDir(parent), path.basename(resolved));
+  const candidate = stripDataVolume(path.join(canonDir(parent), path.basename(resolved)));
 
   let leaf: fs.Stats | undefined;
   try {
@@ -205,7 +269,12 @@ function canonicalize(resolved: string): string {
   if (!mustCheckLeaf) return candidate;
 
   try {
-    return strip(fs.realpathSync.native(resolved));
+    const viaLink = stripDataVolume(strip(fs.realpathSync.native(resolved)));
+    // The more restrictive answer wins. Returning the link's target outright
+    // would let a symlink sitting INSIDE a blocked tree, but pointing out of
+    // it, carry its own path back out as unblocked — the candidate already
+    // says where the link lives, and that is the fact the blocklist is about.
+    return isBlocked(candidate) ? candidate : viaLink;
   } catch {
     // A dangling link or a symlink loop points at nothing, so it is not a
     // blocklist bypass; the canonical parent plus the link's own name is the
@@ -278,7 +347,7 @@ export function sanitizePath(input: unknown): string {
   // which matters because paths are sanitized twice on most requests (pathGuard
   // middleware, then again inside the service).
   const canonical = canonicalize(resolved);
-  if (isBlocked(resolved) || (canonical !== resolved && isBlocked(canonical))) {
+  if (isBlocked(resolved) || (canonical !== resolved && isBlocked(canonical)) || isBlockedByIdentity(resolved)) {
     throw new PathRejectedError(`Scanning "${resolved}" is not allowed`, 'PATH_BLOCKED');
   }
   return resolved;
