@@ -417,7 +417,13 @@ test('every malformed input reports a usable offset and span', () => {
     const err = bad(q);
     assert.match(err.error, pattern, q);
     assert.ok(err.offset >= 0 && err.offset <= q.length, `${q}: offset ${err.offset} is inside the query`);
-    assert.ok(err.length >= 0, `${q}: length is non-negative`);
+    // `>= 0` was a tautology: `length` is built from tokenizer spans that are
+    // non-negative by construction, so it could not fail for any input or any
+    // change. The claim worth pinning is the one the highlight box relies on —
+    // the span actually covers something, because a zero-width span underlines
+    // nothing and leaves the reader hunting for the character being complained
+    // about.
+    assert.ok(err.length > 0, `${q}: the span must cover at least one character, got ${err.length}`);
     assert.ok(err.offset + err.length <= q.length + 1, `${q}: the span does not run past the end`);
   }
 });

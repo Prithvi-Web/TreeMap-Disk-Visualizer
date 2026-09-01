@@ -369,7 +369,25 @@ test('mtime is never substituted for a missing last-used date', async () => {
   try {
     clearFactCache();
     const out = await computeFacts('scan-lu4', [fixture.file], ['lastUsed'], new AbortController().signal);
-    for (const value of Object.values(out.lastUsed.values)) {
+    // The loop below asserts nothing when the values map is empty, and an
+    // empty map is a REACHABLE state, not a hypothetical: an unavailable
+    // provider answers with `unavailableBatch()`, whose values map is empty by
+    // construction. Without this fork the whole test is a no-op on any machine
+    // that lacks the capability, which is exactly the shape of "green while
+    // testing nothing". So: either the provider said plainly that it cannot
+    // answer here, or it answered about the path we asked about — never
+    // silently neither.
+    const answered = Object.values(out.lastUsed.values);
+    if (!out.lastUsed.available) {
+      assert.ok(
+        typeof out.lastUsed.reason === 'string' && out.lastUsed.reason.trim().length > 0,
+        'an unavailable provider must name its reason in words',
+      );
+      assert.equal(answered.length, 0, 'an unavailable provider answers about nothing');
+      return;
+    }
+    assert.equal(answered.length, 1, 'an available provider answers about the one path it was given');
+    for (const value of answered) {
       const fact = value as { lastUsedMs: number | null; source: string };
       if (fact.source === 'none') assert.equal(fact.lastUsedMs, null, 'source "none" must carry a null date');
       if (fact.lastUsedMs !== null) assert.notEqual(fact.source, 'none', 'a date must always name its source');

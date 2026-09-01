@@ -186,9 +186,19 @@ test('CRLF input parses the same as LF', () => {
 });
 
 test('a truncated file yields what it has, without throwing', () => {
+  // `render` returns `{ annotations, summary }` on every path, so asserting
+  // that the result is an array only proves nothing threw — the test would
+  // have stayed green if truncation silently dropped every failure it had
+  // already read, which is the exact regression this is here to catch. A
+  // stream cut mid-YAML (the workflow pipes through `tee`, so a killed job
+  // leaves one) must still publish the failures that arrived intact.
   const cut = REAL.slice(0, REAL.indexOf('code:') + 4);
   const { annotations } = annotate.render(cut);
-  assert.ok(Array.isArray(annotations));
+  assert.equal(annotations.length, 1, 'the one complete failure in the surviving prefix is reported');
+  assert.ok(
+    annotations[0].includes('title=' + annotate.escapeProp('Failing test: long deep-equal that elides rows')),
+    `and it is that failure, not some other record: ${annotations[0].slice(0, 120)}`,
+  );
 });
 
 test('a failure with no YAML block at all is still named', () => {

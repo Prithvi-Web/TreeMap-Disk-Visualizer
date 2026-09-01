@@ -235,8 +235,13 @@ test('a scalar depth key would not have been good enough — which is why this i
   assert.equal(violations(isoDepthOrder(slivers).order), 0, 'the topological order does not');
   // minCornerSum happens to survive this particular scene; it does not survive
   // every one, which the previous test covers. Recorded so a future reader does
-  // not conclude from this scene alone that it is safe.
-  assert.ok(violations(byMinCorner) >= 0);
+  // not conclude from this scene alone that it is safe — and asserted rather
+  // than merely claimed, because `violations` counts up from zero and can never
+  // return a negative number: `>= 0` was a sentence about JavaScript, not about
+  // the scene, and it would have gone on passing if minCornerSum started
+  // failing here too, quietly turning the note above into a falsehood.
+  assert.equal(violations(byMinCorner), 0,
+    'minCornerSum draws this particular scene correctly — the note above says so, so it is checked');
 });
 
 test('degenerate input is ordered rather than dropped', () => {

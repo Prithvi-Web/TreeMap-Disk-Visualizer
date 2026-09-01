@@ -71,6 +71,169 @@ function appCode(): string {
     .replace(/(^|[^:'"\\])\/\/[^\n]*/g, '$1'); // line comments, sparing "http://"
 }
 
+/**
+ * One named region of the app script, sliced between two anchors — with the
+ * three guards that make the slice mean what it says it means.
+ *
+ * The trap this closes had silently disarmed seventeen assertions in this file.
+ * `appCode()` strips comments, so a slice that ended on a banner comment —
+ * `code.indexOf('/* ── Empty Folders pane ── *' + '/')` — was looking for text
+ * that no longer exists. `indexOf` returned -1, `slice(start, -1)` quietly
+ * means "to one character before the end of the string", and the region became
+ * the entire rest of the script instead of one function. Every assertion then
+ * matched *something*, just not in the function named: the re-encode test was
+ * passing on a `confirm: true` belonging to a /api/git/gc call 90,000
+ * characters further down, and stayed green with startEncode's own flag
+ * deleted. The resolveAllocation region was 389,303 characters instead of
+ * 1,153, and contained three copies of the guard it was checking for.
+ *
+ * So all three failure modes are now assertions rather than silence: the start
+ * must be found, the end must be found *after* the start (a plain
+ * `indexOf(end)` also happily returns a match that sits before it — one slice
+ * here named an end anchor 470 lines above its own start), and the result must
+ * be small enough to plausibly be the thing named. `max` defaults to 6,000
+ * characters: every real region in this file is under 3,300, and the smallest
+ * runaway region the old code produced was 37,025 — the gap is wide enough
+ * that the guard fires on the bug and never on ordinary growth.
+ *
+ * The corollary, and the reason this helper exists rather than a bare slice:
+ * an end anchor must be real CODE — the next declaration — never comment text.
+ */
+function region(startAnchor: string, endAnchor: string, max = 6000): string {
+  const code = appCode();
+  const start = code.indexOf(startAnchor);
+  assert.notEqual(start, -1, `region start anchor not found: ${JSON.stringify(startAnchor)}`);
+  const end = code.indexOf(endAnchor, start + startAnchor.length);
+  assert.notEqual(
+    end,
+    -1,
+    `region end anchor not found after ${JSON.stringify(startAnchor)}: ${JSON.stringify(endAnchor)}` +
+      ' — if that anchor is comment text, appCode() has already removed it; anchor on the next declaration instead',
+  );
+  const slice = code.slice(start, end);
+  assert.ok(
+    slice.length > 100,
+    `region ${JSON.stringify(startAnchor)} is only ${slice.length} chars — the anchors are adjacent, so nothing is being checked`,
+  );
+  assert.ok(
+    slice.length <= max,
+    `region ${JSON.stringify(startAnchor)} is ${slice.length} chars, over the ${max} ceiling — that is the rest of the file, not one function; tighten the end anchor`,
+  );
+  return slice;
+}
+
+/* ══════════════════ The region helper is itself under test ══════════════════ */
+
+test('region() refuses every shape of the anchor bug instead of returning the rest of the file', () => {
+  // Comment text as an end anchor. This is what seventeen slices in this file
+  // were doing, and it is silent without the guard: appCode() has removed the
+  // banner, so the anchor can never be found.
+  assert.throws(
+    () => region('async function startEncode', '/* ── Empty Folders pane ── */'),
+    /end anchor not found/,
+    'a stripped comment must be reported, not slid past',
+  );
+  // An end anchor that exists but sits BEFORE the start is the same bug in
+  // different clothes — `indexOf(end)` with no start offset finds it happily
+  // and `slice` then returns the empty string, so every assertion on the
+  // region becomes vacuous. timeAgo() is 470 lines above startScanRequest,
+  // which is exactly the pairing this file shipped.
+  assert.throws(
+    () => region('async function startScanRequest', 'function timeAgo(ms) {'),
+    /end anchor not found/,
+    'the end must be found after the start, not anywhere in the file',
+  );
+  // A real code anchor that is simply too far away: the ceiling is what stops
+  // a region from quietly becoming "everything after this function".
+  assert.throws(
+    () => region('async function startEncode', 'let settingsData = { ignore: [], schedules: [] };'),
+    /over the 6000 ceiling/,
+    'a region spanning the rest of the file is rejected on size alone',
+  );
+  // And the opposite end: adjacent anchors leave nothing to assert against.
+  assert.throws(
+    () => region('async function startEncode', 'let job;'),
+    /anchors are adjacent/,
+    'an empty region is a broken test, not a passing one',
+  );
+  assert.throws(
+    () => region('function noSuchFunctionExistsInThisApp', 'let job;'),
+    /start anchor not found/,
+    'a renamed function fails loudly',
+  );
+});
+
+test('the three repaired assertions bite: with the flag deleted, only the new ones fail', () => {
+  // Each case does the same thing: take the region as it really is, delete the
+  // one line that carries the guarantee, and show that the OLD assertion is
+  // still green while the new one is not. The old runaway region is
+  // reconstructed exactly — same start anchor, comment end anchor, -1, slice to
+  // the end of the file — because that is what was actually running.
+  const code = appCode();
+  const runaway = (startAnchor: string, deadEndAnchor: string) =>
+    code.slice(code.indexOf(startAnchor), code.indexOf(deadEndAnchor));
+
+  /* ── 1. startEncode's second gate (was passing on /api/git/gc's flag) ── */
+  const encodeRunaway = runaway('async function startEncode', '/* ── Empty Folders pane ── */');
+  assert.ok(encodeRunaway.length > 80_000, 'the old anchor really did hand back the rest of the file');
+  const encode = region('async function startEncode', 'async function loadEmptyFolders() {');
+  const encodeUngated = encode.replace(', confirm: true', '');
+  assert.notEqual(encodeUngated, encode, 'the mutation applied — startEncode still sends the flag as written');
+  // What the old test saw: a `confirm: true` from a call 90,000 chars later.
+  assert.match(
+    encodeUngated + encodeRunaway.slice(encode.length),
+    /confirm: true/,
+    'the old bare-token assertion stays green with the gate deleted — the defect',
+  );
+  assert.doesNotMatch(
+    encodeUngated,
+    /'\/api\/compression\/encode'[\s\S]{0,200}confirm: true/,
+    'the endpoint-and-flag pairing catches it',
+  );
+
+  /* ── 2. resolveAllocation's late-answer identity check ── */
+  const allocRunaway = runaway('function resolveAllocation', '/**\n * The A2 line');
+  assert.ok(allocRunaway.length > 300_000, 'the old region was the rest of the file, not one function');
+  const alloc = region('function resolveAllocation', 'function allocationTooltipLine(node) {');
+  const allocUnguarded = alloc.replace(' && tip.dataset.path === node.path', '');
+  assert.notEqual(allocUnguarded, alloc, 'the mutation applied');
+  assert.match(
+    allocUnguarded + allocRunaway.slice(alloc.length),
+    /tip\.dataset\.path === node\.path/,
+    'the old assertion stays green on the two other copies further down the file — the defect',
+  );
+  assert.equal(
+    (allocUnguarded.match(/tip\.dataset\.path === node\.path/g) || []).length,
+    0,
+    'the exactly-once count catches it',
+  );
+  assert.doesNotMatch(
+    allocUnguarded,
+    /tip\.style\.display !== 'none' && tip\.dataset\.path === node\.path[\s\S]{0,200}showTooltip\(/,
+    'and so does the gate-the-repaint pairing',
+  );
+
+  /* ── 3. startScanRequest's quiet short-circuit ── */
+  const scanRunaway = runaway('async function startScanRequest', '/* ─────────────── "What');
+  assert.ok(scanRunaway.length > 700_000, 'the old region was very nearly the whole script');
+  const scan = region('async function startScanRequest', 'function followScanProgress(scanId, path, fast, t0) {');
+  // The realistic regression here is not deleting the check, it is the check
+  // losing its `return` — quiet then logs and falls straight through to
+  // failScan, wiping the tree it was meant to protect.
+  const scanUnguarded = scan.replace(' return; }', ' }');
+  assert.notEqual(scanUnguarded, scan, 'the mutation applied');
+  assert.match(
+    scanUnguarded + scanRunaway.slice(scan.length),
+    /if \(quiet\)/,
+    'the old bare-token assertion stays green with the short-circuit gone — the defect',
+  );
+  assert.doesNotMatch(
+    scanUnguarded,
+    /catch \(e\) \{[\s\S]{0,120}if \(quiet\) \{[\s\S]{0,120}return; \}[\s\S]{0,40}failScan\(e\.message\)/,
+    'the return-before-failScan pairing catches it',
+  );
+});
+
 /* ══════════════════════ The ten views still exist ══════════════════════ */
 
 test('every tab button has a matching view section', () => {
@@ -717,9 +880,21 @@ test('a stale index is still shown, never blanked', () => {
 });
 
 test('the background refresh cannot wipe an already-painted tree', () => {
-  const code = appCode();
-  const fn = code.slice(code.indexOf('async function startScanRequest'), code.indexOf('/* ─────────────── "What'));
-  assert.match(fn, /if \(quiet\)/, 'a failed background rescan leaves the indexed view alone');
+  // This slice used to end on the "What's new since last scan" banner comment,
+  // which appCode() removes — and that banner sits 470 lines ABOVE
+  // startScanRequest anyway, so the end anchor could never have been right in
+  // either direction. The region was the whole rest of the script, and a bare
+  // `if (quiet)` matches in half a dozen other functions.
+  const fn = region('async function startScanRequest', 'function followScanProgress(scanId, path, fast, t0) {');
+  // Pinned as the pairing, not the token: `quiet` has to short-circuit inside
+  // the catch, BEFORE failScan gets to tear the chrome down. A `quiet` check
+  // anywhere else in the function would leave the indexed tree being wiped by
+  // a rescan the user never asked for.
+  assert.match(
+    fn,
+    /catch \(e\) \{[\s\S]{0,120}if \(quiet\) \{[\s\S]{0,120}return; \}[\s\S]{0,40}failScan\(e\.message\)/,
+    'a failed background rescan returns out of the catch instead of reaching failScan',
+  );
 });
 
 test('indexing is an optimisation: every failure path falls back to scanning', () => {
@@ -817,11 +992,23 @@ test('a shared file is shown as freeing nothing, not as owning its bytes', () =>
 test('allocation is resolved once per file and cached, never per hover', () => {
   // The treemap fires mousemove continuously; a fetch per event would flood
   // the rate limiter and make the tooltip flicker.
-  const code = appCode();
-  const fn = code.slice(code.indexOf('function resolveAllocation'), code.indexOf('/**\n * The A2 line'));
+  const fn = region('function resolveAllocation', 'function allocationTooltipLine(node) {');
   assert.match(fn, /allocationCache\.has\(node\.path\)/, 'a cached answer is not re-fetched');
   assert.match(fn, /allocationCache\.set\(node\.path, null\)/, 'the slot is claimed before the request');
-  assert.match(fn, /node\.type !== 'file'/, 'directories are never asked about');
+  // The guard is in the ONE early return, ahead of everything else — a
+  // directory reaching the fetch is a request per hover over a folder. The old
+  // 389,303-char region contained two other copies of this token, so deleting
+  // the real guard left the test green.
+  assert.equal(
+    (fn.match(/node\.type !== 'file'/g) || []).length,
+    1,
+    'the directory guard appears exactly once, in resolveAllocation itself',
+  );
+  assert.match(
+    fn,
+    /if \([\s\S]{0,40}node\.type !== 'file'[\s\S]{0,40}\) return;/,
+    'directories return before any request is made',
+  );
 });
 
 test('cached allocation is dropped when a new scan lands', () => {
@@ -833,24 +1020,33 @@ test('cached allocation is dropped when a new scan lands', () => {
 });
 
 test('the tooltip repaints only if it is still showing the same file', () => {
-  const code = appCode();
-  const fn = code.slice(code.indexOf('function resolveAllocation'), code.indexOf('/**\n * The A2 line'));
-  assert.match(fn, /tip\.dataset\.path === node\.path/, 'a late answer must not overwrite a different tooltip');
+  const fn = region('function resolveAllocation', 'function allocationTooltipLine(node) {');
+  // The pairing, not the token: the identity check has to GATE the repaint.
+  // The old runaway region held three copies of `tip.dataset.path ===
+  // node.path`, so this assertion survived the guard being deleted here.
+  assert.equal(
+    (fn.match(/tip\.dataset\.path === node\.path/g) || []).length,
+    1,
+    'the identity check appears exactly once, in the late-answer handler',
+  );
+  assert.match(
+    fn,
+    /tip\.style\.display !== 'none' && tip\.dataset\.path === node\.path[\s\S]{0,200}showTooltip\(/,
+    'a late answer repaints only the still-open tooltip for the same file',
+  );
 });
 
 test('the Settings diagnostic shows the measurement gap rather than hiding it', () => {
   // §A2 asks for the reconciliation delta to be visible. Quietly correcting for
   // it would hide precisely the uncertainty the user needs to know about.
-  const code = appCode();
-  const fn = code.slice(code.indexOf('async function renderAllocationDiagnostic'), code.indexOf('/* ─────────────────────────────  Settings modal'));
+  const fn = region('async function renderAllocationDiagnostic', 'async function loadFleet() {');
   assert.match(fn, /What other tools would report/, 'the naive figure is stated, not implied');
   assert.match(fn, /Space actually used/);
   assert.match(fn, /escapeHtml\(a\.reason\)/, 'the approximation caveat is always shown, escaped');
 });
 
 test('the diagnostic explains a missing reconciliation instead of showing nothing', () => {
-  const code = appCode();
-  const fn = code.slice(code.indexOf('async function renderAllocationDiagnostic'), code.indexOf('/* ─────────────────────────────  Settings modal'));
+  const fn = region('async function renderAllocationDiagnostic', 'async function loadFleet() {');
   assert.match(fn, /only works when you scan a whole disk/, 'a subfolder says why there is no comparison');
   assert.match(fn, /INDEX_NOT_BUILT/, 'a not-yet-indexed folder is a state, not an error');
 });
@@ -1683,9 +1879,7 @@ test('the Games view breaks each title into its parts', () => {
 });
 
 test('only the shader cache is ever offered for clearing, and the stutter is stated', () => {
-  const code = appCode();
-  const fn = code.slice(code.indexOf('function clearShaderCaches'), code.indexOf("/** Short per-category summary"));
-  assert.ok(fn.length > 0, 'clearShaderCaches must be findable');
+  const fn = region('function clearShaderCaches', 'function appCatSummary(app) {');
   // The one filter that keeps a redownload, a mod subscription or a Proton
   // prefix out of the delete list.
   assert.match(fn, /c\.kind === 'shaderCache'/, 'the delete list is filtered to shader caches alone');
@@ -1715,9 +1909,7 @@ test('the Security panel offers no delete, and says it never read anything', () 
 });
 
 test('moving a secret warns that references to the old path will break', () => {
-  const code = appCode();
-  const fn = code.slice(code.indexOf('function confirmRelocateSecret'), code.indexOf("/* ───────────────────────────── Games view"));
-  assert.ok(fn.length > 0, 'confirmRelocateSecret must be findable');
+  const fn = region('function confirmRelocateSecret', 'const LAUNCHER_LABEL = {');
   assert.match(fn, /will need updating/, 'the real cost of moving a key is stated');
   assert.match(fn, /Nothing is deleted/, 'and that nothing is deleted');
   assert.match(fn, /confirm: true/, 'the endpoint is double-gated');
@@ -1749,9 +1941,7 @@ test('a file with no recorded origin is explained, not left blank', () => {
 /* ══════════════ Drive health reports, never editorialises (§C4) ══════════════ */
 
 test('the Drive Health card renders no verdict of its own', () => {
-  const code = appCode();
-  const fn = code.slice(code.indexOf('async function loadDriveHealth'), code.indexOf('/* ──────────────────────────── Security view'));
-  assert.ok(fn.length > 0, 'loadDriveHealth must be findable');
+  const fn = region('async function loadDriveHealth', 'const SEVERITY_LABEL = {');
   // The specific harm §C4 names: a false "your drive is dying".
   for (const word of ['failing', 'dying', 'imminent', 'replace your drive', 'healthy', 'Critical']) {
     assert.ok(!fn.includes(word), `the card must not say "${word}"`);
@@ -1762,8 +1952,7 @@ test('the Drive Health card renders no verdict of its own', () => {
 });
 
 test('an unreadable drive shows the reason and how to fix it', () => {
-  const code = appCode();
-  const fn = code.slice(code.indexOf('async function loadDriveHealth'), code.indexOf('/* ──────────────────────────── Security view'));
+  const fn = region('async function loadDriveHealth', 'const SEVERITY_LABEL = {');
   assert.match(fn, /!data\.available/, 'the unavailable state is handled');
   assert.match(fn, /dh-unknown/, 'and rendered as an explicit unknown');
   assert.match(fn, /escapeHtml\(data\.reason/, 'carrying the server’s reason, which names the install command');
@@ -1772,9 +1961,7 @@ test('an unreadable drive shows the reason and how to fix it', () => {
 /* ══════════════ Cost figures are dated, never fetched (§C1) ══════════════ */
 
 test('the cost card always shows the date its prices were recorded', () => {
-  const code = appCode();
-  const fn = code.slice(code.indexOf('async function loadCostEstimate'), code.indexOf('/* ───────────────────────────── Drive Health'));
-  assert.ok(fn.length > 0, 'loadCostEstimate must be findable');
+  const fn = region('async function loadCostEstimate', 'let dhGauge = null;');
   assert.match(fn, /Prices as of/, 'the "as of" date is on screen, not buried');
   assert.match(fn, /escapeHtml\(est\.asOf\)/);
   assert.match(fn, /never looks them up online/, 'and the reason it can go stale is stated');
@@ -1782,7 +1969,7 @@ test('the cost card always shows the date its prices were recorded', () => {
 
 test('a cleanup that does not change the plan is not sold as a saving', () => {
   const code = appCode();
-  const fn = code.slice(code.indexOf('async function loadCostEstimate'), code.indexOf('/* ───────────────────────────── Drive Health'));
+  const fn = region('async function loadCostEstimate', 'let dhGauge = null;');
   assert.match(fn, /p\.monthlySavingUsd > 0/, 'a saving is only shown when there is one');
   assert.match(fn, /keeps you on the same plan/, 'and the no-saving case says so plainly');
   // The ≈ marker lives in the shared formatter, above loadCostEstimate.
@@ -1811,17 +1998,24 @@ test('the confirmation repeats the cost before anything runs', () => {
   assert.match(fn, /before<\/b> the original is moved to the Trash/s, 'and states the ordering guarantee');
   assert.match(fn, /left exactly as it is/, 'and what happens when a check fails');
   // The confirm flag is sent by startEncode, which the dialog calls.
-  const start = code.slice(code.indexOf('async function startEncode'), code.indexOf('/* ── Empty Folders pane ── */'));
-  assert.ok(start.length > 0, 'startEncode must be findable');
-  assert.match(start, /confirm: true/, 'the endpoint is double-gated');
+  //
+  // This is the assertion the -1 slice bug hurt most: ending on the "Empty
+  // Folders pane" banner made the region 90,952 characters of the rest of the
+  // file, and the `confirm: true` it matched belonged to the later /api/git/gc
+  // call. Deleting startEncode's own flag kept the test green. So the endpoint
+  // and its flag are now pinned to each other, inside one bounded window.
+  const start = region('async function startEncode', 'async function loadEmptyFolders() {');
+  assert.match(
+    start,
+    /'\/api\/compression\/encode'[\s\S]{0,200}confirm: true/,
+    'the re-encode POST itself carries confirm: true — the second gate after the dialog',
+  );
 });
 
 /* ══════════════ Shell integration is reversible from one place (§D2) ══════════════ */
 
 test('the right-click entry is installed AND removed from the same control', () => {
-  const code = appCode();
-  const fn = code.slice(code.indexOf('async function renderShellIntegration'), code.indexOf('/* ───────────────────────────── Settings modal'));
-  assert.ok(fn.length > 0, 'renderShellIntegration must be findable');
+  const fn = region('async function renderShellIntegration', 'let settingsData = { ignore: [], schedules: [] };');
   // §D2: "an uninstall must not leave a dead context-menu entry behind".
   assert.match(fn, /Remove from right-click menu/, 'removal is offered');
   assert.match(fn, /Add to right-click menu/, 'and so is installation');
@@ -1829,8 +2023,7 @@ test('the right-click entry is installed AND removed from the same control', () 
 });
 
 test('the button reflects what the OS really has, not what we asked for', () => {
-  const code = appCode();
-  const fn = code.slice(code.indexOf('async function renderShellIntegration'), code.indexOf('/* ───────────────────────────── Settings modal'));
+  const fn = region('async function renderShellIntegration', 'let settingsData = { ignore: [], schedules: [] };');
   assert.match(fn, /await renderShellIntegration\(message\)/, 'the state is re-read after every action');
   assert.match(fn, /carryStatus/, 'and the confirmation survives that refresh');
   assert.match(fn, /!data\.supported/, 'a system with no file manager says so instead of offering a dead button');
@@ -1839,9 +2032,7 @@ test('the button reflects what the OS really has, not what we asked for', () => 
 /* ══════════════ A portable session says what it does (§D3) ══════════════ */
 
 test('the portable screen names where it writes and what it never touches', () => {
-  const code = appCode();
-  const fn = code.slice(code.indexOf('function renderPortableScreen'), code.indexOf("/* ── Right-click menu (§D2)"));
-  assert.ok(fn.length > 0, 'renderPortableScreen must be findable');
+  const fn = region('function renderPortableScreen', 'async function renderShellIntegration(');
   assert.match(fn, /nothing is written to this computer/, 'the promise is stated up front');
   assert.match(fn, /Never touched/, 'and the host location is named');
   assert.match(fn, /p\.hostDataDir/, 'with the real path, not a description of it');
@@ -1849,8 +2040,7 @@ test('the portable screen names where it writes and what it never touches', () =
 });
 
 test('a read-only portable drive is told plainly that nothing is saved', () => {
-  const code = appCode();
-  const fn = code.slice(code.indexOf('function renderPortableScreen'), code.indexOf("/* ── Right-click menu (§D2)"));
+  const fn = region('function renderPortableScreen', 'async function renderShellIntegration(');
   assert.match(fn, /Nothing is saved/, 'the read-only case is not glossed');
   assert.match(fn, /p\.writable/, 'and it is driven by the real writability probe');
   assert.match(fn, /degraded/, 'the capabilities it loses are listed');
@@ -2423,8 +2613,7 @@ test('a partly-scored map says how much of it is scored', () => {
 
 test('the score is reachable from the keyboard and returns focus', () => {
   const code = appCode();
-  const fn = code.slice(code.indexOf('function openReclaimWhy'), code.indexOf('// One delegated listener'));
-  assert.ok(fn.length > 400, 'the popover slice is non-empty');
+  const fn = region('function openReclaimWhy', "const badge = e.target.closest('[data-rc-why]')");
   assert.match(fn, /\$\('rcPopClose'\)\.focus\(\)/, 'opening moves focus into the panel');
   assert.match(fn, /opener\.focus\(\); return;/, 'and closing puts it back where it came from');
   // Every list carrying these badges is rebuilt by innerHTML when the scores
