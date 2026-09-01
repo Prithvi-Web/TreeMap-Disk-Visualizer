@@ -1,0 +1,82 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
+
+/**
+ * The single-file page is BUILT from src/ui/**.
+ *
+ * The app ships as one file because frontendContract forbids external scripts,
+ * styles and fonts — it has to run from file://, from a portable zip and inside
+ * Electron with nothing to resolve. Editing 29k lines as one file is the price,
+ * and scripts/build-ui.js is how that price is refunded: the sources are ~110
+ * small files and the build concatenates them.
+ *
+ * The build is a concatenation and nothing else, so these tests can hold the
+ * strongest possible contract — the shipped artifact is BYTE-IDENTICAL to what
+ * the sources produce. Every other test in this suite reads public/index.html,
+ * so if that ever stopped being true they would all be testing a stale file.
+ */
+
+const repoRoot = path.join(__dirname, '..');
+const uiDir = path.join(repoRoot, 'src', 'ui');
+const manifest = JSON.parse(readFileSync(path.join(uiDir, 'manifest.json'), 'utf8')) as {
+  output: string;
+  parts: string[];
+};
+
+test('the shipped page is exactly what src/ui builds — byte for byte', () => {
+  const built = manifest.parts
+    .map((rel) => readFileSync(path.join(uiDir, rel), 'utf8'))
+    .join('\n');
+  const shipped = readFileSync(path.join(repoRoot, manifest.output), 'utf8');
+  assert.equal(
+    built.length,
+    shipped.length,
+    `${manifest.output} is ${shipped.length} bytes but its sources build ${built.length} — ` +
+      'it was edited directly, or a source changed without `npm run build:ui`',
+  );
+  assert.equal(built, shipped, `${manifest.output} has drifted from src/ui`);
+});
+
+test('every source file ships, and no file ships twice', () => {
+  const listed = manifest.parts;
+  assert.equal(new Set(listed).size, listed.length, 'a part is listed twice');
+
+  const onDisk: string[] = [];
+  for (const dir of readdirSync(uiDir)) {
+    const sub = path.join(uiDir, dir);
+    if (!statSync(sub).isDirectory()) continue;
+    for (const name of readdirSync(sub)) onDisk.push(`${dir}/${name}`);
+  }
+  const missing = onDisk.filter((f) => !listed.includes(f));
+  assert.deepEqual(missing, [], 'these source files are not in the manifest, so they would never ship');
+});
+
+/**
+ * The FX sections are extracted by their banner comments — fxCharts, fxBeam,
+ * fxOrbs, fxGoo and fxWiring all slice the built file between exact strings and
+ * HARD-FAIL if one is renamed. A split that cut through a banner, or a part
+ * boundary that landed mid-comment, would break them in a way that reads as an
+ * unrelated failure, so the boundaries are held here too.
+ */
+test('no part boundary cuts through an FX banner', () => {
+  for (const rel of manifest.parts) {
+    const body = readFileSync(path.join(uiDir, rel), 'utf8');
+    const opens = (body.match(/\/\*/g) || []).length;
+    const closes = (body.match(/\*\//g) || []).length;
+    assert.equal(opens, closes, `${rel} ends inside a block comment — the cut landed mid-banner`);
+  }
+});
+
+/* The guard a person actually relies on: running the real script must AGREE
+   that the tree is consistent. Asserting on the script's source text instead
+   would pass on a comment and fail on a reworded one. */
+test('build-ui --check agrees the committed artifact matches its sources', () => {
+  const out = execFileSync(process.execPath, [path.join(repoRoot, 'scripts', 'build-ui.js'), '--check'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+  assert.match(out, /matches its sources/);
+});

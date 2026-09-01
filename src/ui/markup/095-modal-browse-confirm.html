@@ -1,0 +1,40 @@
+<!-- ═══════════ Browse modal ═══════════ -->
+<div class="modal-backdrop" id="browseModal" role="dialog" aria-modal="true" aria-labelledby="browseTitle">
+  <div class="modal" style="width:560px;">
+    <div class="modal-head">
+      <h3 id="browseTitle"><span data-icon="folder"></span>Choose a folder</h3>
+      <button class="close-x" data-close="browseModal" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="muted" id="browseCurrent" style="word-break:break-all;"></div>
+      <div class="chips" id="browseChips"></div>
+      <div class="browse-list" id="browseList"></div>
+    </div>
+    <div class="modal-foot">
+      <div style="flex:1"></div>
+      <button class="btn btn-primary" id="browseUseBtn"><span data-icon="check"></span>Scan this folder</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ Confirm modal ═══════════ -->
+<div class="modal-backdrop" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+  <div class="modal" style="width:430px;">
+    <div class="modal-head">
+      <h3 id="confirmTitle"><span data-icon="trash"></span>Move to Trash?</h3>
+      <button class="close-x" data-close="confirmModal" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="muted" id="confirmText" style="font-size:13.5px;line-height:1.55;"></div>
+      <!-- B2: filled in when a program holds one of these files open. Lives
+           inside the one confirmation dialog every view shares, so no view can
+           delete without it. -->
+      <div id="confirmOpenHandles" hidden role="status"></div>
+    </div>
+    <div class="modal-foot">
+      <div style="flex:1"></div>
+      <button class="btn" data-close="confirmModal">Cancel</button>
+      <button class="btn btn-danger" id="confirmOk"><span data-icon="trash"></span>Move to Trash</button>
+    </div>
+  </div>
+</div>

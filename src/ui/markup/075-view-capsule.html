@@ -1,0 +1,19 @@
+  <!-- ═══════════ Time Capsule (B3) ═══════════ -->
+  <section class="view" id="view-capsule" role="tabpanel" aria-label="Time Capsule" hidden>
+    <div class="card glass">
+      <h2><span data-icon="clock"></span>Time Capsule</h2>
+      <div class="apps-info muted" id="capsuleInfo"></div>
+      <div class="capsule-gauge" id="capsuleGauge" hidden>
+        <div class="cap-gauge-wrap"><canvas id="capsuleGaugeCanvas" aria-label="Time Capsule space used against its cap" role="img"></canvas></div>
+        <div class="muted num" id="capsuleGaugeText"></div>
+      </div>
+      <div class="rule-row" style="margin-bottom:10px;">
+        <div class="field" style="flex:1;max-width:420px;">
+          <span data-icon="search"></span>
+          <input type="text" id="capsuleSearch" placeholder="Search by name or original path…" aria-label="Search protected items" autocomplete="off">
+        </div>
+      </div>
+      <div id="capsuleBody"></div>
+      <div id="capsuleEvents"></div>
+    </div>
+  </section>

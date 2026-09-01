@@ -1,0 +1,266 @@
+/* ── Browser profile drill-down (Feature 16) ── */
+#browserProfiles { margin-bottom: 16px; }
+.bp-section-h { display: flex; align-items: center; gap: 7px; padding: 6px 0; font-size: 12.5px; }
+.bp-section-h b { display: inline-flex; align-items: center; gap: 7px; }
+.bp-acc { border: 1px solid var(--hairline); border-radius: var(--r-md); margin-bottom: 8px; overflow: hidden; background: var(--surface-1); }
+.bp-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer; user-select: none;
+  transition: background var(--dur-1) var(--ease); }
+.bp-head:hover { background: var(--surface-2); }
+.bp-fav { width: 18px; height: 18px; flex: none; display: inline-flex; }
+.bp-fav svg { width: 18px; height: 18px; display: block; }
+.bp-title { font-weight: 600; font-size: 13px; }
+.bp-title .prof { color: var(--text-3); font-weight: 400; margin-left: 6px; font-size: 12px; }
+.bp-head .spacer { flex: 1; }
+.bp-head .size-badge { flex: none; }
+.bp-head .chev { color: var(--text-3); display: inline-flex; transition: transform var(--dur-2) var(--ease); }
+.bp-acc.open .bp-head .chev { transform: rotate(90deg); }
+.bp-head input[type="checkbox"] { flex: none; }
+.bp-items { display: none; border-top: 1px solid var(--hairline); }
+.bp-acc.open .bp-items { display: block; }
+.bp-item { display: flex; align-items: center; gap: 10px; padding: 7px 12px 7px 14px; font-size: 12.5px;
+  border-bottom: 1px solid var(--hairline); }
+.bp-item:last-child { border-bottom: none; }
+.bp-item .lbl { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bp-item .pth { font-size: 10.5px; color: var(--text-3); }
+
+/* ── Apps tab (Feature 18 — per-app storage attribution) ── */
+.apps-info { font-size: 12.5px; margin: -6px 0 12px; }
+#appsBody .bar-track { width: 84px; height: 4px; border-radius: 2px; background: var(--surface-2); flex: none; }
+#appsBody .bar-track .fx-bar-fill { display: block; }
+/* The size-vs-file-count scatter above the list — hidden until five apps
+   with countable files exist, so it never renders a two-dot "chart". */
+.apps-scatter { margin: 4px 0 16px; }
+.apps-scatter .as-wrap { border-radius: 8px; }
+.apps-scatter canvas { display: block; width: 100%; }
+.apps-scatter .as-h { font-size: 10.5px; font-weight: 600; letter-spacing: 0.6px;
+  text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }
+#appsBody .bar { height: 100%; border-radius: 2px; }
+#appsBody .bp-item .cat { flex: none; width: 96px; font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
+#appsBody .bp-item[data-jump] { cursor: pointer; }
+#appsBody .bp-item[data-jump]:hover { background: var(--surface-2); }
+#appsBody .other-row .bp-head { cursor: default; }
+#appsBody .other-row .bp-head:hover { background: none; }
+
+/* ── Live activity mode (Feature 22) ── */
+#tmLiveToggle .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 6px; opacity: 0.45; }
+#tmLiveToggle.active .dot { background: var(--danger); opacity: 1; animation: livePulse 1.2s ease-in-out infinite; }
+@keyframes livePulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.4); opacity: 0.5; } }
+@media (prefers-reduced-motion: reduce) { #tmLiveToggle.active .dot { animation: none; } }
+/* Fixed 252px is safe: the panel overlays the treemap canvas, which is never
+   narrower than ~480px at the 640px window floor with the sidebar expanded. */
+#liveFeed { position: absolute; top: 14px; right: 14px; z-index: 6; width: 252px; padding: 9px 11px;
+  --lg-blur: 18px;
+  border: 1px solid var(--hairline); border-radius: var(--r-md);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35); font-size: 12px; }
+#liveFeed .lf-h { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 11.5px;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-2); margin-bottom: 6px; }
+#liveFeed .lf-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+#liveFeed .lf-row .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-1); }
+#liveFeed .lf-row .up { color: #30D158; flex: none; }
+#liveFeed .lf-row .down { color: #FF453A; flex: none; }
+
+/* ── All storage + cloud accounts (Feature 25) ── */
+/* The list is its own container so the squares shed on a narrow CARD, not
+   only a narrow window — the .fx-legend precedent. */
+#allStorageList { container-type: inline-size; }
+.storage-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: var(--r-sm); }
+.storage-row .meta { flex: 1; min-width: 0; }
+.storage-row .nm { font-weight: 600; font-size: 13px; }
+.storage-row .pth { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.storage-row .bar-track { width: 84px; height: 4px; border-radius: 2px; background: var(--surface-2); flex: none; }
+.storage-row .bar { height: 100%; border-radius: 2px; }
+/* barSquares laid flat: used bytes light discrete squares left→right, free
+   capacity stays visible as ghosts. The spans reuse the kit's .fx-bsq-sq
+   machinery, so the cascade entrance and its reduced-motion kill ride along.
+   Decoration sheds before facts on a narrow card — the text already states
+   used-of-total. */
+.storage-row .asq { display: flex; gap: 3px; flex: none; }
+.storage-row .asq .fx-bsq-sq { width: 10px; height: 10px; border-radius: 3px; }
+@container (max-width: 380px) { .storage-row .asq { display: none; } }
+/* ── Open-file warning in the delete dialog (B2) ── */
+#confirmOpenHandles { margin-top: 13px; padding: 10px 12px; border-radius: var(--r-sm);
+  background: rgba(255,214,10,0.08); border: 1px solid rgba(255,214,10,0.25); font-size: 12.5px; line-height: 1.5; }
+#confirmOpenHandles.checking { background: var(--surface-2); border-color: var(--hairline); color: var(--text-3); }
+#confirmOpenHandles .oh-head { display: flex; gap: 8px; align-items: flex-start; color: var(--text-1); }
+#confirmOpenHandles .oh-head .ic { color: var(--warn); flex: none; margin-top: 1px; }
+#confirmOpenHandles ul { margin: 7px 0 0; padding-left: 26px; color: var(--text-2); }
+#confirmOpenHandles li { margin-top: 2px; }
+#confirmOpenHandles .oh-file { color: var(--text-3); }
+
+/* ── Time Capsule (B3) ── */
+/* v4 §7.2 — the calendar heatmap. Levels are opacity steps of one hue so the
+   scale reads in both themes; an absent day keeps the bare surface colour —
+   visually distinct from level 1, because "nothing counted" is not "a little". */
+.cal-year { margin: 12px 0 6px; font-weight: 600; }
+.cal-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 12px); gap: 3px; width: max-content; max-width: 100%; overflow-x: auto; padding-bottom: 4px; }
+.cal-cell { width: 12px; height: 12px; border-radius: 3px; border: none; padding: 0; background: var(--surface-2); cursor: default;
+  transition: opacity 160ms var(--ease); }
+.cal-cell[data-date] { cursor: pointer; }
+/* bklit quarter separators: a full-height hairline that fades 0→1→0, with a
+   sideways quarter label riding beside it. A grid item spanning all seven
+   rows, so it reads as a thin column between week columns. */
+.cal-qsep { grid-row: 1 / -1; width: 16px; position: relative; pointer-events: none; }
+.cal-qsep::before { content: ""; position: absolute; left: 4px; top: 0; bottom: 0; width: 1px;
+  background: linear-gradient(180deg, transparent,
+    color-mix(in srgb, var(--text-3) 55%, transparent) 50%, transparent); }
+.cal-qsep::after { content: attr(data-q); position: absolute; left: 6px; top: 50%;
+  transform: translateY(-50%); writing-mode: vertical-rl;
+  font-size: 8.5px; font-weight: 600; letter-spacing: 1.5px; color: var(--text-3); }
+/* Legend hover-sync: holding a legend level dims every cell that is not that
+   level to 0.3 in 160ms — the empty cells dim with them, so the level under
+   the pointer is the only thing left at full strength. */
+#calBody[data-cal-dim="1"] .cal-cell:not([data-lv="1"]),
+#calBody[data-cal-dim="2"] .cal-cell:not([data-lv="2"]),
+#calBody[data-cal-dim="3"] .cal-cell:not([data-lv="3"]),
+#calBody[data-cal-dim="4"] .cal-cell:not([data-lv="4"]) { opacity: 0.3; }
+.cal-legend .cal-cell[data-lv] { cursor: pointer; }
+.cal-cell[data-lv="1"] { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+.cal-cell[data-lv="2"] { background: color-mix(in srgb, var(--accent) 52%, transparent); }
+.cal-cell[data-lv="3"] { background: color-mix(in srgb, var(--accent) 76%, transparent); }
+.cal-cell[data-lv="4"] { background: var(--accent); }
+/* Selection can no longer outline in accent — a selected hot day would
+   vanish into its own fill now that the heat scale IS the accent. */
+.cal-cell.sel { outline: 2px solid var(--text-1); outline-offset: 1px; }
+.cal-legend { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
+/* v4 §8.3 — the drive dock */
+.drive-dock { display: flex; gap: 10px; align-items: stretch; padding: 8px 2px 0; flex-wrap: wrap; }
+.drive-tile { display: flex; align-items: center; gap: 9px; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); min-width: 160px; cursor: default; }
+.drive-tile.drop-ok { outline: 2px solid var(--accent); outline-offset: 2px; }
+.drive-tile .drive-free { font-size: 11px; color: var(--text-3); }
+.drive-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--ok) 25%, transparent); position: relative; width: 96px; margin-top: 3px; }
+.drive-bar > i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 2px; background: var(--ok); }
+/* v4 §8.2 — the duplicate viewer */
+.dv-panes { display: flex; gap: 12px; overflow-x: auto; align-items: stretch; }
+.dv-pane { flex: 1 1 0; min-width: 200px; border: 1px solid var(--surface-2); border-radius: 12px; padding: 10px; }
+.dv-pane.keep { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok) inset; }
+.dv-thumbwrap { position: relative; height: 180px; display: flex; align-items: center; justify-content: center; background: var(--surface-2); border-radius: 8px; overflow: hidden; margin-bottom: 8px; }
+.dv-thumbwrap img { max-width: 100%; max-height: 100%; }
+.dv-diff { position: absolute; inset: 0; pointer-events: none; }
+.dv-diff i { position: absolute; width: 12.5%; height: 12.5%; background: color-mix(in srgb, #ff6b61 42%, transparent); outline: 1px solid #ff6b61; }
+.dv-facts { font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
+.dv-facts .nm { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dv-keepwhy { color: var(--ok); font-size: 11px; }
+.dv-absent { color: var(--text-3); font-style: italic; }
+/* v4 §7.4 — the compare split view */
+/* Compare's added/removed/grew/shrank counts as discrete square stacks —
+   counts are whole things, so they get whole squares. */
+#cmpCounts { margin: 2px 0 14px; }
+.cmp-split { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
+.cmp-split canvas { width: 100%; height: 300px; display: block; border-radius: 10px; }
+.cmp-split input[type="range"] { width: 100%; }
+/* The cap meter is the FxCharts linear gauge now — capsule-rounded notches
+   on a canvas — with the caption beside it. The wrap owns the flexible
+   width; the veil class sweeps it during a refresh. */
+.capsule-gauge { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin: 2px 0 14px; }
+.capsule-gauge .cap-gauge-wrap { flex: 1; min-width: 200px; border-radius: var(--r-sm); }
+.capsule-gauge .cap-gauge-wrap canvas { display: block; width: 100%; }
+.capsule-gauge .muted { flex: none; font-size: 11.5px; }
+#capsuleBody .cap-item .why { font-size: 11px; color: var(--text-3); font-style: italic; }
+#capsuleBody .cap-gone { opacity: 0.55; }
+#capsuleEvents { margin-top: 14px; border-top: 1px solid var(--hairline); padding-top: 10px; }
+/* The couldn't-keep list is FxCharts.barList now — its own row classes. */
+#capsuleEvents h3 { font-size: 11px; font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase;
+  color: var(--text-3); margin: 0 0 4px; }
+
+/* ── Snapshot recovery from Compare (B4) ── */
+.snap-find { margin: -2px 0 8px 34px; padding: 8px 10px; border-left: 2px solid var(--accent);
+  background: var(--surface-2); border-radius: 0 var(--r-sm) var(--r-sm) 0; }
+.snap-find .snap-msg { font-size: 12px; color: var(--text-2); line-height: 1.5;
+  display: flex; gap: 7px; align-items: flex-start; }
+.snap-find .snap-msg .pth { color: var(--text-3); word-break: break-all; }
+.snap-find .snap-actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.snap-find .snap-actions .muted { font-size: 11px; }
+.delta-row .pill { flex: none; margin-left: 8px; }
+
+/* ── Autopilot (B1) ── */
+/* v4 §4.5 — parse feedback on a policy's query. */
+#apQueryStatus { font-size: 11.5px; }
+#apQueryStatus.bad { color: var(--danger); }
+#apPolicies .ap-policy .why { font-size: 11px; color: var(--text-3); }
+#apPolicies .ap-off { opacity: 0.55; }
+#apRuns .ap-reason { font-size: 12px; color: var(--text-2); line-height: 1.5; padding: 6px 10px 8px;
+  border-left: 2px solid var(--accent); margin: 2px 0 8px 10px; }
+#apRuns .ap-run-item, #apPreview .ap-run-item { display: flex; align-items: center; gap: 10px; padding: 3px 10px; font-size: 12px; }
+#apRuns .ap-run-item .nm, #apPreview .ap-run-item .nm { flex: none; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#apRuns .ap-run-item .why, #apPreview .ap-run-item .why { flex: 1; min-width: 0; color: var(--text-3); font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#apRuns .ap-run-item b, #apPreview .ap-run-item b { flex: none; font-size: 11.5px; color: var(--text-2); }
+#apRuns .ap-skipped, #apPreview .ap-skipped { display: flex; gap: 7px; align-items: flex-start; font-size: 11px;
+  color: var(--text-3); padding: 6px 10px 2px; line-height: 1.45; }
+#apRuns .ap-run-actions { display: flex; gap: 8px; padding: 10px 10px 4px; }
+#apRuns .ap-run-actions:empty { display: none; }
+#apPreview .ap-preview-head { font-size: 13px; font-weight: 600; padding: 2px 0 6px; }
+#apPreview .ap-reason { font-size: 12px; color: var(--text-2); line-height: 1.5; padding: 6px 0 8px; }
+
+/* ── Disk topology (A5) ── */
+#topologyBody .topo-disk { padding: 8px 10px 6px; border-radius: var(--r-sm); }
+#topologyBody .topo-disk + .topo-disk { margin-top: 8px; border-top: 1px solid var(--hairline); }
+#topologyBody .topo-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+#topologyBody .topo-head .nm { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#topologyBody .topo-head .sub { font-size: 11px; color: var(--text-3); margin-left: auto; white-space: nowrap; }
+#topologyBody .topo-tag { font-size: 9.5px; font-weight: 700; letter-spacing: 0.5px; color: var(--text-3);
+  border: 1px solid var(--hairline); border-radius: 4px; padding: 0.5px 4px; flex: none; transform: translateY(-1px); }
+#topologyBody .topo-track { margin: 7px 0 4px; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+#topologyBody .topo-track .bar { height: 100%; border-radius: 3px; }
+#topologyBody .topo-note { font-size: 11px; color: var(--text-3); margin-bottom: 2px; }
+#topologyBody .topo-vol { display: flex; align-items: center; gap: 10px; padding: 3.5px 0 3.5px 10px; font-size: 12px; }
+#topologyBody .topo-vol[hidden] { display: none; }
+#topologyBody .topo-vol .nm { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#topologyBody .topo-vol .pth { flex: 1; min-width: 0; color: var(--text-3); font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#topologyBody .topo-vol .sz { flex: none; font-size: 11.5px; color: var(--text-2); }
+/* Free space is a fact, not decoration — it holds one line beside the used
+   figure, muted, and only appears when the platform really reported both. */
+#topologyBody .topo-vol .free { flex: none; font-size: 11px; color: var(--text-3); white-space: nowrap; }
+#topologyBody .topo-more { margin: 4px 0 2px 10px; }
+
+/* ── Held-up space (B5) ── */
+#zombieBody .zh-total { font-size: 13px; font-weight: 600; margin: 2px 0 4px; }
+#zombieBody .zh-row { display: flex; align-items: center; gap: 10px; padding: 5.5px 0; border-top: 1px solid var(--hairline); font-size: 12.5px; }
+#zombieBody .zh-row[hidden] { display: none; }
+#zombieBody .zh-row .nm { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#zombieBody .zh-row .pid { flex: none; color: var(--text-3); font-size: 11px; }
+/* The kit's bar recipe, held to a fixed strip so the columns align: bytes
+   held, scaled to the biggest holder. The list is its own container — on a
+   narrow card the bar sheds first, the numbers never wrap. */
+#zombieBody { container-type: inline-size; }
+#zombieBody .fx-bar-track { width: 64px; flex: none; margin: 0 0 0 auto; }
+#zombieBody .fx-bar-fill { display: block; } /* the fill is a span here */
+#zombieBody .zh-row .sz { margin-left: auto; flex: none; font-size: 11.5px; color: var(--text-2); }
+/* When a bar owns the auto margin the size hugs it; an unknown-size row has
+   no bar, so the size keeps the auto margin and the columns still align.
+   (Source order matters here: this override must follow the .sz rule.) */
+#zombieBody .fx-bar-track + .sz { margin-left: 0; }
+@container (max-width: 340px) {
+  #zombieBody .fx-bar-track { display: none; }
+  #zombieBody .fx-bar-track + .sz { margin-left: auto; }
+}
+#zombieBody .zh-note { font-size: 11px; color: var(--text-3); margin-top: 6px; }
+
+.cloud-row { border: 1px solid var(--hairline); border-radius: var(--r-md); padding: 8px 10px; margin-bottom: 8px; }
+#cloudRedirectUri { font-size: 11px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
+/* ── Offloaded tab (Feature 24) ── */
+.offl-unmounted .bp-head { opacity: 0.55; }
+.offl-unmounted .bp-items { opacity: 0.55; }
+.offl-restored { opacity: 0.55; }
+#offloadBody .bp-item .pth { flex: none; }
+#offloadBody .bp-item .dt { flex: none; font-size: 11px; color: var(--text-3); }
+
+/* ── Phase 4 (v4 §4.3) — the simulated "after" ── */
+/* Left-anchored and narrowed while the dock is open: the dock is a fixed
+   366px layer over the right of the map, and a centred banner disappeared
+   under it at 860px — the one width where the message matters most, because
+   there is least room to work out what happened. */
+body.cart-open .tm-preview-banner { left: 14px; transform: none;
+  max-width: calc(100% - 402px); }
+.tm-preview-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  z-index: 6; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  border-radius: var(--r-md); background: var(--bg-1); border: 1px solid var(--warn);
+  box-shadow: 0 6px 22px rgba(0,0,0,0.32); font-size: 12.5px; color: var(--text-1);
+  max-width: calc(100% - 28px); }
+.tm-preview-banner[hidden] { display: none; }
+.tm-preview-banner .ic { color: var(--warn); flex: none; }
+.tm-preview-banner #tmPreviewText { min-width: 0; line-height: 1.4; }
+.tm-preview-banner b { font-weight: 700; }
+#treemapWrap.previewing { outline: 2px dashed var(--warn); outline-offset: -2px; }

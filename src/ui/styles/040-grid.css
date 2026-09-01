@@ -1,0 +1,50 @@
+/* ── Grid view ── */
+/* container-type: the toolbar measures itself (the .tm-toolbar precedent),
+   so the search field gives up width beside any sidebar state — not just
+   in a narrow window. */
+.grid-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap;
+  container-type: inline-size; }
+.grid-toolbar .field { position: relative; }
+.grid-toolbar .field .ic { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
+/* cqw, not a fixed 210px: in a tight toolbar the field shrinks smoothly
+   instead of shoving the sort select onto its own line. */
+#gridSearch { width: clamp(140px, 26cqw, 210px); padding-left: 32px; }
+.grid-toolbar .spacer { flex: 1; }
+.grid-toolbar label { font-size: 12px; color: var(--text-2); }
+/* The scroller used a fixed `100vh - 256px`, a reserve far larger than the
+   toolbar above it, so the grid scrolled internally while ~140 px of window sat
+   empty underneath. Let the view own the viewport (68px = main's 20px top +
+   48px bottom padding) and give the scroller whatever the toolbar leaves —
+   which stays correct if the toolbar wraps to a second line.
+   `.active` is what makes a view visible here, so keying off it leaves the
+   hidden-view rule (`.view { display: none }`) intact. */
+#view-grid.active { display: flex; flex-direction: column; min-height: calc(100vh - 68px); }
+#gridScroll { position: relative; flex: 1; min-height: 420px; overflow-y: auto; padding: 10px; }
+#gridInner { position: relative; }
+.gcell { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 5px; padding: 8px; cursor: pointer; user-select: none;
+  background: var(--surface-1); border: 1px solid var(--hairline); border-radius: var(--r-md);
+  box-shadow: inset 0 1px 0 var(--shine);
+  transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease),
+              transform var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease); }
+.gcell:hover { transform: translateY(-2px); border-color: var(--hairline-2); background: var(--surface-2);
+  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-2); z-index: 2; }
+.gcell:active { transform: translateY(0); }
+.gcell.selected { border-color: var(--accent); background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent), inset 0 1px 0 var(--shine); }
+.gcell .sel-mark { position: absolute; top: 7px; left: 7px; width: 17px; height: 17px; border-radius: 50%;
+  background: var(--accent); color: #fff; display: none; align-items: center; justify-content: center; }
+.gcell.selected .sel-mark { display: inline-flex; }
+.gcell .nm { font-size: 11px; font-weight: 500; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gcell .sz { font-size: 10px; color: var(--text-2); }
+.gcell .badge { position: absolute; top: 7px; right: 7px; font-size: 9.5px; font-weight: 600; color: var(--text-2);
+  background: var(--surface-2); border-radius: 99px; padding: 2px 7px; }
+.grid-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; color: var(--text-2); font-size: 13px; }
+.grid-empty .ic { color: var(--text-3); }
+
+#selectionBar { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(96px);
+  display: flex; align-items: center; gap: 14px; padding: 11px 18px; z-index: 60;
+  --lg-tint: var(--lg-tint-strong);
+  transition: transform var(--dur-3) var(--ease); font-size: 13px; }
+#selectionBar.visible { transform: translateX(-50%) translateY(0); }

@@ -1,0 +1,22 @@
+  <!-- ═══════════ Grid ═══════════ -->
+  <section class="view" id="view-grid" role="tabpanel" aria-label="Grid" hidden>
+    <div class="grid-toolbar">
+      <button class="btn" id="gridUpBtn" title="Go up one folder (Escape)" aria-label="Go up one folder"><span data-icon="arrowUp"></span></button>
+      <div class="crumbs" id="gridCrumbs"></div>
+      <div class="spacer"></div>
+      <div class="field">
+        <span data-icon="search"></span>
+        <input type="text" id="gridSearch" placeholder="Filter files…  ( / )" aria-label="Filter files by name" autocomplete="off">
+      </div>
+      <label for="gridSort">Sort</label>
+      <select id="gridSort" aria-label="Sort grid by">
+        <option value="size">Size</option>
+        <option value="name">Name</option>
+        <option value="date">Date modified</option>
+        <option value="accessed">Last accessed</option>
+        <option value="reclaim">Reclaim score</option>
+        <option value="type">Type</option>
+      </select>
+    </div>
+    <div class="glass" id="gridScroll"><div id="gridInner"></div></div>
+  </section>

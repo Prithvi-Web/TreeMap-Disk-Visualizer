@@ -1,0 +1,13 @@
+  <!-- ═══════════ Apps ═══════════ -->
+  <section class="view" id="view-apps" role="tabpanel" aria-label="Apps" hidden>
+    <div class="card glass">
+      <h2><span data-icon="box"></span>Storage by Application</h2>
+      <div class="apps-info muted" id="appsInfo"></div>
+      <div class="apps-scatter" id="appsScatter" hidden>
+        <div class="as-h">Size against file count — each dot an application</div>
+        <!-- Own wrapper: the chart kit anchors tooltips to the canvas parent. -->
+        <div class="as-wrap"><canvas id="appsScatterChart" height="200" aria-label="Scatter of application size against how many files each keeps" role="img"></canvas></div>
+      </div>
+      <div id="appsBody"><div class="muted">Run a scan to see how much disk each application owns.</div></div>
+    </div>
+  </section>

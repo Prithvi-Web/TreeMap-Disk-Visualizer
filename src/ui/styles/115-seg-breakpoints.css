@@ -1,0 +1,58 @@
+/* ── Segmented control (macOS metrics, used app-wide) ── */
+/* inline-grid + auto-columns 1fr: every segment the width of the widest
+   label, so the tabs sit evenly instead of ragged content-sized cells. The
+   selected fill lives on the FxGoo thumb (spliced below), not on the button —
+   the CSS here only recesses the track and colors the text. */
+.seg { position: relative; display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  align-items: stretch; height: 30px; padding: 2px; border: 1px solid var(--hairline);
+  background: linear-gradient(180deg, rgba(0,0,0,0.10), rgba(0,0,0,0.02)), var(--surface-1);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.16);
+  border-radius: 9px; }
+:root[data-theme="light"] .seg {
+  background: linear-gradient(180deg, rgba(10,15,30,0.05), rgba(10,15,30,0.01)), var(--surface-1);
+  box-shadow: inset 0 1px 3px rgba(20,24,40,0.08); }
+/* Opt-out for segs whose labels differ wildly in length ("Exact" beside
+   "Near-Duplicate Images"): equal-width there blows one tab up to the
+   longest label's width instead of reading as rhythm. Content-sized cells;
+   the goo thumb follows offsetLeft/offsetWidth so it needs no change. */
+.seg.seg-fit { grid-auto-columns: auto; }
+.seg button { position: relative; z-index: 1; border: none; background: transparent; color: var(--text-2);
+  font-size: 12.5px; font-weight: 540; white-space: nowrap;
+  padding: 0 12px; border-radius: 7px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  transition: color var(--dur-1) var(--ease), transform var(--dur-2) var(--ease-spring); }
+.seg button:hover { color: var(--text-1); }
+.seg button:active { transform: scale(0.97); }
+/* The macOS divider detail: hairline ticks between unselected neighbours,
+   fading out where the thumb parks — sibling selectors, no JS. */
+.seg button + button::before { content: ""; position: absolute; left: -0.5px; top: 6px; bottom: 6px;
+  width: 1px; background: var(--hairline-2); transition: opacity var(--dur-2) var(--ease); }
+.seg button[aria-selected="true"] + button::before,
+.seg button[aria-selected="true"]::before { opacity: 0; }
+
+/* Sidebar-era breakpoints: the column costs the content 232px, so the
+   dashboard steps down earlier than it used to (its two-column form starts
+   scrolling sideways otherwise), and gains a true single-column form that
+   the old header layout never had. */
+@media (max-width: 1500px) {
+  .dash-grid { grid-template-columns: 1fr 1fr; }
+  .quick-stats { grid-template-columns: 1fr; }
+  .trends-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 1120px) {
+  .dash-grid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+/* ── List performance ─────────────────────────────────────────────────────
+   Long lists skip layout and paint for offscreen rows; the intrinsic-size
+   hints keep the scrollbar honest before a row is first rendered. `auto`
+   remembers each row's real size once seen, so expanded groups stay right. */
+.dup-group   { content-visibility: auto; contain-intrinsic-size: auto 64px; }
+.clean-item  { content-visibility: auto; contain-intrinsic-size: auto 52px; }
+.nd-item     { content-visibility: auto; contain-intrinsic-size: auto 170px; }
+.sec-item    { content-visibility: auto; contain-intrinsic-size: auto 64px; }
+.bp-item     { content-visibility: auto; contain-intrinsic-size: auto 40px; }
+.smart-group { content-visibility: auto; contain-intrinsic-size: auto 56px; }

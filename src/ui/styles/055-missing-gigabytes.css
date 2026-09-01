@@ -1,0 +1,136 @@
+/* ═══════════ Phase 5 (v4 §5.3) — The Missing Gigabytes ═══════════
+   A receipt, and it is meant to look like one: a bar over the volume's whole
+   capacity, then the arithmetic printed as lines with a rule above the total.
+   §5.3 asks for the receipt metaphor by name, and the reason is that a receipt
+   is a thing that is *supposed* to add up — which is exactly the claim the page
+   is making.
+
+   The segment colours are one system, not a rainbow: blue is what TreeMap can
+   see, the warm hues are space something else is holding, and the residual is
+   hatched rather than coloured because it is the one segment that is not a
+   measurement of anything. Both themes get their own values — the dark set is
+   too light to read on white, and Apple's own light variants are darker for
+   exactly that reason. */
+:root {
+  --mg-scanned:      #0A84FF;
+  --mg-snapshots:    #BF5AF2;
+  --mg-handles:      #FF9F0A;
+  --mg-volumes:      #64D2FF;
+  --mg-residual:     rgba(255,255,255,0.26);
+  --mg-residual-bg:  rgba(255,255,255,0.07);
+  --mg-free:         rgba(255,255,255,0.055);
+}
+:root[data-theme="light"] {
+  --mg-scanned:      #007AFF;
+  --mg-snapshots:    #AF52DE;
+  --mg-handles:      #FF9500;
+  --mg-volumes:      #32ADE6;
+  --mg-residual:     rgba(10,15,30,0.30);
+  --mg-residual-bg:  rgba(10,15,30,0.06);
+  --mg-free:         rgba(10,15,30,0.05);
+}
+
+.mg-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 3px; }
+.mg-head .mg-vol { font-size: 15px; font-weight: 600; color: var(--text-1); }
+.mg-head .mg-mp { font-size: 12px; color: var(--text-3); }
+.mg-head .mg-cap { margin-left: auto; font-size: 12.5px; color: var(--text-2); }
+.mg-head .mg-cap b { color: var(--text-1); font-weight: 600; }
+
+/* The bar spans the volume's TOTAL capacity, so "used" is a position on it
+   rather than the whole of it — which is the only way free space can be seen
+   in the same picture as what is filling it. */
+.mg-bar { position: relative; height: 34px; border-radius: var(--r-sm); overflow: hidden;
+  background: var(--mg-free); border: 1px solid var(--hairline); display: flex; margin-top: 14px; }
+.mg-seg { border: none; padding: 0; height: 100%; min-width: 2px; cursor: pointer; position: relative;
+  transition: filter var(--dur-1) var(--ease), transform var(--dur-1) var(--ease),
+    opacity 160ms var(--ease);
+  border-right: 1px solid var(--bg-1); }
+.mg-seg:last-child { border-right: none; }
+.mg-seg:hover, .mg-seg:focus-visible { filter: brightness(1.22); z-index: 2; }
+.mg-seg:focus-visible { outline: 2px solid var(--text-1); outline-offset: -3px; }
+/* Each measured segment is a vertical ramp of its own token — lit at the top,
+   settling toward its base tone — so the receipt bar reads like the chart
+   kit's gradient fills. Same hue per segment, no new tones. */
+.mg-seg.is-scanned   { background: linear-gradient(180deg,
+    color-mix(in srgb, var(--mg-scanned) 78%, #fff), var(--mg-scanned) 46%,
+    color-mix(in srgb, var(--mg-scanned) 84%, #000)); }
+.mg-seg.is-snapshots { background: linear-gradient(180deg,
+    color-mix(in srgb, var(--mg-snapshots) 78%, #fff), var(--mg-snapshots) 46%,
+    color-mix(in srgb, var(--mg-snapshots) 84%, #000)); }
+.mg-seg.is-handles   { background: linear-gradient(180deg,
+    color-mix(in srgb, var(--mg-handles) 78%, #fff), var(--mg-handles) 46%,
+    color-mix(in srgb, var(--mg-handles) 84%, #000)); }
+.mg-seg.is-volumes   { background: linear-gradient(180deg,
+    color-mix(in srgb, var(--mg-volumes) 78%, #fff), var(--mg-volumes) 46%,
+    color-mix(in srgb, var(--mg-volumes) 84%, #000)); }
+/* bklit hover language: the segment under the pointer keeps its brightness
+   lift, everything else falls to 0.3 — the same 160ms dim the legends use.
+   Keyboard focus gets the identical treatment. */
+.mg-bar:hover .mg-seg:not(:hover) { opacity: 0.3; }
+.mg-bar:focus-within .mg-seg:not(:focus-visible) { opacity: 0.3; }
+/* Hatched, deliberately: the residual is the one segment that is not a
+   measurement, and it should not look like the others. */
+.mg-seg.is-residual  { background: repeating-linear-gradient(45deg,
+    var(--mg-residual) 0 5px, var(--mg-residual-bg) 5px 10px); }
+
+/* Where the volume's used space actually ends.
+
+   It sits in the WRAPPER, not in the bar: the bar clips its own overflow so the
+   segments keep their rounded corners, which silently ate this label the first
+   time it was written — the mark drew, the caption did not, and nothing said so.
+
+   When the statement balances, this lands exactly at the end of the last
+   segment, which is the point. It earns its place in the case where it does
+   not: over-counted clones push the segments PAST the volume's real used
+   space, and this is what makes that visible instead of impossible. */
+.mg-usedmark { position: absolute; top: 0; height: 34px; width: 2px; background: var(--text-1);
+  opacity: 0.55; pointer-events: none; }
+.mg-usedmark::after { content: attr(data-label); position: absolute; top: 100%; left: 0;
+  transform: translateX(-50%); margin-top: 6px; font-size: 10.5px; color: var(--text-3);
+  white-space: nowrap; }
+/* Close to the right-hand end, a centred caption would run out of the card. */
+.mg-usedmark.at-end::after { transform: translateX(-100%); }
+.mg-usedmark.at-start::after { transform: none; }
+.mg-barwrap { position: relative; margin-bottom: 26px; }
+
+.mg-legend { display: flex; flex-wrap: wrap; gap: 6px 15px; margin-top: 30px; font-size: 11.5px; color: var(--text-2); }
+.mg-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.mg-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+/* ── the statement itself ── */
+.mg-receipt { margin-top: 20px; }
+.mg-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 18px; padding: 11px 0;
+  border-bottom: 1px solid var(--hairline); align-items: baseline; }
+.mg-row:last-child { border-bottom: none; }
+.mg-row .mg-l { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.mg-row .mg-sw { width: 9px; height: 9px; border-radius: 2px; flex: none; transform: translateY(-1px); }
+.mg-row .mg-name { font-weight: 600; color: var(--text-1); font-size: 13px; }
+.mg-row .mg-count { font-size: 11.5px; color: var(--text-3); }
+.mg-row .mg-v { font-size: 13.5px; font-weight: 600; color: var(--text-1);
+  font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.mg-row .mg-v.mg-unknown { color: var(--text-3); font-weight: 500; font-style: italic; }
+.mg-row .mg-v.mg-minus { color: var(--text-2); }
+.mg-row .mg-detail { grid-column: 1 / -1; font-size: 12px; color: var(--text-2); line-height: 1.55; max-width: 74ch; }
+.mg-row .mg-reason { grid-column: 1 / -1; font-size: 12px; color: var(--warn); line-height: 1.55; max-width: 74ch; }
+:root[data-theme="light"] .mg-row .mg-reason { color: #9a6b00; }
+.mg-row .mg-notes { grid-column: 1 / -1; margin: 2px 0 0; padding-left: 15px; }
+.mg-row .mg-notes li { font-size: 11.5px; color: var(--text-3); line-height: 1.55; max-width: 74ch; }
+.mg-row .mg-remedy { grid-column: 1 / -1; margin-top: 8px; display: flex; align-items: center;
+  gap: 10px; flex-wrap: wrap; }
+.mg-row .mg-remedy .muted { font-size: 11px; max-width: 60ch; line-height: 1.5; }
+.mg-row.mg-focus { background: var(--surface-1); border-radius: var(--r-sm);
+  box-shadow: 0 0 0 1px var(--hairline-2); }
+.mg-row.is-residual .mg-name { color: var(--text-1); }
+
+/* The rule above the total — the visual claim that everything above it sums
+   to what is below it. */
+.mg-total { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: baseline;
+  margin-top: 4px; padding-top: 14px; border-top: 2px solid var(--text-1); }
+.mg-total .mg-name { font-size: 14px; font-weight: 700; color: var(--text-1); }
+.mg-total .mg-v { font-size: 16px; font-weight: 700; color: var(--text-1);
+  font-variant-numeric: tabular-nums; }
+.mg-total .mg-sub { grid-column: 1 / -1; font-size: 11.5px; color: var(--text-3); margin-top: 5px; }
+.mg-caveat { margin-top: 16px; padding: 11px 13px; border-radius: var(--r-sm);
+  background: var(--surface-1); border: 1px solid var(--hairline);
+  font-size: 12px; color: var(--text-2); line-height: 1.55; }
+@media (prefers-reduced-motion: reduce) { .mg-seg { transition: none; } }

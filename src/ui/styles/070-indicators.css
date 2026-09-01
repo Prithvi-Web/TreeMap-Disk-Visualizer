@@ -1,0 +1,95 @@
+/* ── Allocation diagnostic (A2) ── */
+.alloc-diag { font-size: 13px; color: var(--text-2); }
+.alloc-diag .row {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 7px 0; border-bottom: 1px solid var(--hairline);
+}
+.alloc-diag .row:last-child { border-bottom: 0; }
+.alloc-diag .row b { color: var(--text-1); font-variant-numeric: tabular-nums; }
+.alloc-diag .note {
+  margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+  background: var(--surface-2); line-height: 1.5;
+}
+
+/* ── Live index indicator (A1) ── */
+.index-badge {
+  display: flex; align-items: center; gap: 7px;
+  margin-top: 8px; font-size: 12px; color: var(--text-2);
+}
+.index-badge .dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--ok);
+}
+.index-badge.stale .dot { background: var(--warn, #FF9F0A); }
+/* The pulse is a liveness cue, so it is exactly the kind of decoration
+   prefers-reduced-motion exists to switch off (§6). */
+@media (prefers-reduced-motion: no-preference) {
+  .index-badge:not(.stale) .dot { animation: indexPulse 2.4s ease-in-out infinite; }
+}
+@keyframes indexPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* ── Fast (incremental) rescan toggle (Feature 5) ── */
+.fast-rescan { display: inline-flex; align-items: center; gap: 7px; margin-top: 11px; font-size: 12.5px; color: var(--text-2); cursor: pointer; user-select: none; }
+.fast-rescan[hidden] { display: none; }
+.fast-rescan input { accent-color: var(--accent); margin: 0; }
+.fast-rescan .ic { color: var(--accent); }
+
+/* ── Keyboard shortcuts overlay (Feature 6) ── */
+.kbd-sec { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-3); margin: 2px 0 11px; }
+.kbd-sec + .kbd-grid + .kbd-sec { margin-top: 18px; }
+.kbd-grid { display: grid; grid-template-columns: 132px 1fr; gap: 9px 16px; align-items: center; font-size: 13px; }
+.kbd-grid > div:nth-child(odd) { display: flex; gap: 5px; }
+.kbd-grid > div:nth-child(even) { color: var(--text-2); }
+kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 23px; padding: 0 7px;
+  font: 11.5px ui-monospace, 'SF Mono', Menlo, monospace; color: var(--text-1); background: var(--surface-2);
+  border: 1px solid var(--hairline-2); border-radius: 6px; box-shadow: inset 0 -1.5px 0 var(--hairline); }
+
+/* ── Growth-rate projection (Feature 7) ── */
+.growth-proj { display: flex; align-items: center; gap: 9px; margin-top: 14px; padding: 11px 13px; border-radius: var(--r-md); font-size: 12.5px; font-weight: 500; border: 1px solid var(--hairline); }
+.growth-proj[hidden] { display: none; }
+.growth-proj .ic { flex: none; }
+.growth-proj.warn { color: var(--warn); background: rgba(255,214,10,0.08); border-color: rgba(255,214,10,0.25); }
+.growth-proj.danger { color: var(--danger); background: rgba(255,69,58,0.09); border-color: rgba(255,69,58,0.28); }
+
+/* ── Folder budgets (Feature 15) ── */
+.budget-folder { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--hairline);
+  border-radius: var(--r-md); background: var(--surface-1); }
+.budget-folder .ic { color: var(--accent); flex: none; }
+.budget-folder .meta { min-width: 0; }
+.budget-folder .nm { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.budget-folder .pth { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; text-align: left; }
+.budget-input { display: flex; gap: 8px; }
+.budget-input input { flex: 1; }
+.budget-input select { flex: none; width: 92px; }
+#budgetCard .budget-row { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-bottom: 1px solid var(--hairline); }
+#budgetCard .budget-row:last-child { border-bottom: none; }
+#budgetCard .budget-row .meta { flex: 1; min-width: 0; }
+#budgetCard .budget-row .nm { font-weight: 500; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#budgetCard .budget-row .bar-track { height: 5px; border-radius: 3px; background: var(--surface-2); margin-top: 5px; overflow: hidden; }
+#budgetCard .budget-row .bar { height: 100%; border-radius: 3px; }
+#budgetCard .budget-row .over { font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+#budgetCard .budget-row.is-over .over { color: var(--danger); }
+#budgetCard .budget-row.is-ok .over { color: var(--ok); }
+#budgetCard .budget-row .b-edit { flex: none; }
+
+/* ── Trash awareness (Feature 8) ── */
+.fact-trash { cursor: pointer; }
+.fact-trash:hover b { color: var(--accent); }
+#trashModalMeta { color: var(--text-2); font-weight: 500; font-size: 13px; }
+.trash-list { max-height: 56vh; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--r-md); }
+.trash-item { display: flex; align-items: center; gap: 10px; padding: 9px 13px; font-size: 12.5px; border-bottom: 1px solid var(--hairline); }
+.trash-item:last-child { border-bottom: none; }
+.trash-item .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trash-item .sz { color: var(--text-2); white-space: nowrap; }
+
+/* ── OS snapshot accounting (Feature 9) ── */
+.snap-row { display: flex; align-items: center; gap: 11px; margin-top: 12px; padding: 10px 13px; border-radius: var(--r-md); border: 1px solid var(--hairline); background: var(--surface-1); font-size: 12.5px; }
+.snap-row[hidden] { display: none; }
+.snap-row .ic { color: var(--text-2); flex: none; }
+.snap-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.snap-meta b { font-weight: 600; }
+.snap-meta .muted { font-size: 10.5px; line-height: 1.35; }
+.snap-row .pill { flex: none; }
+.pill.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.git-bd { font-size: 11px; color: var(--text-2); white-space: nowrap; }

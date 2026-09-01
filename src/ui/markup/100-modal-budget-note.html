@@ -1,0 +1,70 @@
+<!-- ═══════════ Budget modal (Feature 15) ═══════════ -->
+<div class="modal-backdrop" id="budgetModal" role="dialog" aria-modal="true" aria-labelledby="budgetTitle">
+  <div class="modal" style="width:440px;">
+    <div class="modal-head">
+      <h3 id="budgetTitle"><span data-icon="gauge"></span>Set folder budget</h3>
+      <button class="close-x" data-close="budgetModal" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="budget-folder">
+        <span data-icon="folder" data-size="16"></span>
+        <div class="meta">
+          <div class="nm" id="budgetFolderName">–</div>
+          <div class="pth" id="budgetFolderPath"></div>
+        </div>
+      </div>
+      <div class="muted" id="budgetCurrent" style="margin:11px 0 13px;font-size:12.5px;"></div>
+      <label for="budgetValue" class="muted" style="display:block;margin-bottom:7px;font-size:12.5px;">Warn me when this folder grows past</label>
+      <div class="budget-input">
+        <input type="number" id="budgetValue" min="0" step="any" placeholder="5" aria-label="Budget amount">
+        <select id="budgetUnit" aria-label="Budget unit">
+          <option value="1073741824" selected>GB</option>
+          <option value="1048576">MB</option>
+          <option value="1024">KB</option>
+          <option value="1">bytes</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-danger" id="budgetRemoveBtn" style="display:none;"><span data-icon="trash"></span>Remove</button>
+      <div style="flex:1"></div>
+      <button class="btn" data-close="budgetModal">Cancel</button>
+      <button class="btn btn-primary" id="budgetSaveBtn"><span data-icon="check"></span>Save budget</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ Folder note modal (v4 §9.5) ═══════════
+     The note is the user's own words, rendered as plain text everywhere. A
+     suppressing note also pauses Smart Suggestions and Autopilot for the
+     whole subtree — words for the human, a matching pause for the machine. -->
+<div class="modal-backdrop" id="noteModal" role="dialog" aria-modal="true" aria-labelledby="noteTitle">
+  <div class="modal" style="width:460px;">
+    <div class="modal-head">
+      <h3 id="noteTitle"><span data-icon="doc"></span>Folder note</h3>
+      <button class="close-x" data-close="noteModal" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="budget-folder">
+        <span data-icon="folder" data-size="16"></span>
+        <div class="meta">
+          <div class="nm" id="noteFolderName">–</div>
+          <div class="pth" id="noteFolderPath"></div>
+        </div>
+      </div>
+      <label for="noteText" class="muted" style="display:block;margin:12px 0 7px;font-size:12.5px;">A note to your future self — why this folder matters</label>
+      <textarea id="noteText" maxlength="2000" rows="4" style="width:100%;resize:vertical;" placeholder="e.g. client archive, keep until 2027" aria-label="Note text"></textarea>
+      <label class="rule-row" style="margin-top:12px;cursor:pointer;">
+        <input type="checkbox" id="noteSuppress" checked>
+        <span>Pause Smart Suggestions and Autopilot here</span>
+      </label>
+      <div class="muted" style="margin-top:6px;font-size:12px;">While this is on, nothing inside this folder is ever suggested for cleanup or matched by an Autopilot rule. You can still delete things here by hand.</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-danger" id="noteRemoveBtn" style="display:none;"><span data-icon="trash"></span>Remove note</button>
+      <div style="flex:1"></div>
+      <button class="btn" data-close="noteModal">Cancel</button>
+      <button class="btn btn-primary" id="noteSaveBtn"><span data-icon="check"></span>Save note</button>
+    </div>
+  </div>
+</div>

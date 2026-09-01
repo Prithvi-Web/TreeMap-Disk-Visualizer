@@ -1,0 +1,68 @@
+/* ── Time-slider treemap (Feature 20) ── */
+/* flex-wrap: at narrow widths the speed seg and pills flow to a second line
+   while the transport (play + scrubber + label) keeps the first — nothing
+   ever crushes the slider to a blob. */
+.tm-timebar { display: flex; align-items: center; gap: 8px 10px; padding: 7px 12px; margin-bottom: 10px;
+  min-height: 44px; border-radius: var(--r-md); flex-wrap: wrap; }
+/* Phase 2 (§2.4) — saved views and live query feedback. A sibling row of
+   .tm-timebar rather than more controls in .tm-toolbar, which already wraps
+   below 900px with nine of them. */
+.tm-querybar { display: flex; align-items: center; gap: 10px; padding: 7px 12px; margin-bottom: 10px;
+  min-height: 44px; border-radius: var(--r-md); flex-wrap: wrap; }
+.tm-saved { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.saved-chip { display: inline-flex; align-items: center; gap: 2px; }
+.saved-chip .pill { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.saved-chip .pill-x { border-top-left-radius: 0; border-bottom-left-radius: 0;
+  padding: 6px 9px; opacity: 0.6; font-size: 13px; line-height: 1; }
+.saved-chip .pill-x:hover { opacity: 1; color: var(--danger, #ff453a); border-color: var(--danger, #ff453a); }
+.tm-saved .pill .sw { width: 8px; height: 8px; border-radius: 99px; background: var(--accent); flex: none; }
+.tm-queryerr { font-size: 11.5px; color: var(--danger, #ff453a); margin-left: auto; max-width: 60%;
+  text-align: right; line-height: 1.45; }
+.tm-queryerr.okmsg { color: var(--text-3); }
+#tmSearch.badq { border-color: var(--danger, #ff453a); }
+.tm-hints { top: calc(100% + 6px); left: auto; right: 0; min-width: 280px;
+  max-width: min(420px, 88vw); max-height: 280px; overflow-y: auto; }
+.tm-hint { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; padding: 6px 10px;
+  border: 0; background: none; border-radius: 8px; cursor: pointer; color: var(--text-1); font-size: 12px; }
+.tm-hint:hover, .tm-hint[aria-selected="true"] { background: var(--accent-soft); }
+.tm-hint .k { font-weight: 600; color: var(--accent); font-family: var(--mono, ui-monospace, monospace); }
+.tm-hint .h { color: var(--text-3); font-size: 11px; }
+/* 140px floor: below that a scrubber is decoration, so the bar wraps its
+   trailing controls instead of shrinking the slider further. */
+.tm-timebar input[type="range"] { flex: 1 1 140px; min-width: 140px; accent-color: var(--accent); cursor: pointer; }
+/* Content-sized: the label is tabular (.num), so playback frames hold one
+   width and no 170px reservation is needed — that reservation is what
+   crushed the slider in narrow windows. */
+.tm-timebar .tm-timelabel { font-size: 12px; color: var(--text-2); white-space: nowrap; text-align: right; }
+
+/* ── Floating: tooltip / menu / toasts ── */
+#tooltip { position: fixed; z-index: 200; pointer-events: none; display: none;
+  padding: 11px 13px; font-size: 12px; max-width: 380px;
+  --lg-tint: var(--lg-tint-strong); --lg-blur: 18px;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-md);
+  box-shadow: var(--shadow-2); }
+#tooltip .t-head { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; margin-bottom: 5px; }
+#tooltip .t-line { color: var(--text-2); margin-top: 3px; word-break: break-all; line-height: 1.45; }
+#tooltip .t-strong { color: var(--text-1); font-weight: 600; }
+#ctxMenu { position: fixed; z-index: 210; min-width: 210px; padding: 5px; display: none;
+  --lg-tint: var(--lg-tint-strong); --lg-blur: 24px;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-md);
+  box-shadow: var(--shadow-3); }
+#ctxMenu button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: none;
+  background: transparent; color: var(--text-1); font-size: 13px; padding: 8px 11px;
+  border-radius: 8px; cursor: pointer; transition: background var(--dur-1) var(--ease); }
+#ctxMenu button .ic { color: var(--text-2); }
+#ctxMenu button:hover { background: var(--accent); color: #fff; }
+#ctxMenu button:hover .ic { color: #fff; }
+#ctxMenu button.danger:hover { background: var(--danger); }
+#ctxMenu .div { height: 1px; background: var(--hairline); margin: 4px 8px; }
+#toasts { position: fixed; top: 68px; right: 22px; z-index: 300; display: flex; flex-direction: column; gap: 10px; }
+.toast { display: flex; gap: 10px; align-items: flex-start; padding: 12px 16px; font-size: 13px; max-width: 380px;
+  --lg-tint: var(--lg-tint-strong); --lg-blur: 22px;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-md);
+  box-shadow: var(--shadow-2); animation: toastIn var(--dur-3) var(--ease-spring); line-height: 1.45; }
+.toast .ic { margin-top: 1px; }
+.toast.success .ic { color: var(--ok); }
+.toast.error .ic { color: var(--danger); }
+.toast.out { opacity: 0; transform: translateX(16px); transition: all var(--dur-2) var(--ease); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }

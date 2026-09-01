@@ -1,0 +1,55 @@
+  <!-- ═══════════ Disk City (v4 §6.1) ═══════════
+       The Treemap's own tiling, seen from a corner. Same root, same nodes,
+       three variables instead of one. -->
+  <section class="view" id="view-city" role="tabpanel" aria-label="Disk City" hidden>
+    <!-- Same toolbar design system as the Treemap view — grouped, never a
+         flat flex soup: the nav group grows with a floor, control groups
+         stay whole when the row wraps. The old .tm-controls form died with
+         the toolbar rewrite; this view rides the shared rules instead of
+         keeping a private copy of them. -->
+    <div class="tm-toolbar">
+      <div class="tb-row tb-row-nav">
+        <div class="tb-group tb-nav">
+          <button class="btn" id="cityUpBtn" title="Zoom out one level (Escape)" aria-label="Zoom out one level"><span data-icon="arrowUp"></span></button>
+          <div class="crumbs" id="cityCrumbs"></div>
+        </div>
+      </div>
+      <div class="tb-row tb-row-controls">
+        <div class="tb-group tb-appearance">
+          <div class="seg" id="cityHeightSeg" role="tablist" aria-label="What building height means">
+            <button type="button" data-h="staleness" aria-selected="true" title="Taller = longer since anything in it changed">Staleness</button>
+            <button type="button" data-h="files" aria-selected="false" title="Taller = more files inside">Files</button>
+            <button type="button" data-h="depth" aria-selected="false" title="Taller = more deeply nested">Depth</button>
+          </div>
+          <div class="seg" id="cityColorSeg" role="tablist" aria-label="What building colour means">
+            <button type="button" data-c="reclaim" aria-selected="true" title="Colour by how safe and worthwhile it is to reclaim">Reclaim</button>
+            <button type="button" data-c="type" aria-selected="false" title="Colour by file kind">Type</button>
+            <button type="button" data-c="age" aria-selected="false" title="Colour by how recently modified">Age</button>
+          </div>
+        </div>
+        <div class="tb-spring" aria-hidden="true"></div>
+        <div class="tb-group tb-actions">
+          <button class="pill" id="cityReset" title="Recentre and reset the zoom">Recentre</button>
+        </div>
+      </div>
+    </div>
+    <div class="glass" id="cityWrap">
+      <canvas id="cityCanvas" tabindex="0"
+              aria-label="Disk usage as an isometric city. Drag to pan, scroll to zoom, click a building to drill in, Escape to go up. A text equivalent of every building is listed below the map."></canvas>
+      <div class="city-card" id="cityCard" role="status" aria-live="polite" hidden></div>
+      <div class="city-lod" id="cityLod" role="status" aria-live="polite" hidden></div>
+    </div>
+    <div class="tm-foot">
+      <div id="cityLegend" class="tm-legend"></div>
+      <span class="num" id="cityStatus"></span>
+      <span class="hint"><span data-icon="mouse"></span>drag to pan · ⇧ or ⌥ drag to lasso · scroll to zoom · click to drill in · Esc to go up</span>
+    </div>
+    <div class="drive-dock" id="cityDock" hidden aria-label="Connected drives — drop your cart on one to offload"></div>
+    <!-- §6 cross-cutting: every canvas view needs a text-equivalent path to the
+         same information. This is that path, not a second navigation mechanism —
+         it lists what the canvas drew and drills through the same function. -->
+    <details class="city-table" id="cityTableWrap">
+      <summary>List the buildings (text equivalent of the map)</summary>
+      <div id="cityTable"></div>
+    </details>
+  </section>

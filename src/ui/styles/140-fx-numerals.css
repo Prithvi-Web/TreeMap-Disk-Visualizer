@@ -1,0 +1,21 @@
+/* ══════════ FX: Rolling Numerals — styles ══════════
+   NumberFlow-style digit slots for countUp/FxNum. The slot clips with
+   overflow: clip, not hidden — a scroll container would baseline-align to
+   its bottom edge and knock every rolled digit off the text baseline. The
+   in-flow sizer carries the real target digit (width, copy and screen
+   readers read the truth); the absolutely positioned column is pure
+   presentation. Reduced motion never builds these — FxNum snaps to plain
+   text before any slot exists. */
+.fx-roll { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+.fx-roll-d { display: inline-block; position: relative; overflow: clip;
+  height: 1em; line-height: 1em; }
+.fx-roll-sizer { opacity: 0; }
+.fx-roll-col { position: absolute; left: 0; top: 0; width: 100%;
+  user-select: none; -webkit-user-select: none;
+  transition: transform 560ms var(--ease); will-change: transform; }
+/* inline-block, not block: a block box inside the slot is a paragraph
+   boundary to the selection serializer, so copying a rolled number came out
+   as "3\n4" even with the strip itself unselectable. width:100% + a 1em line
+   stacks them exactly as block did — same pitch, same slot height. */
+.fx-roll-col > span { display: inline-block; width: 100%; height: 1em; line-height: 1em; }
+/* ══ end FX: Rolling Numerals styles ══ */

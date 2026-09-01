@@ -1,0 +1,142 @@
+  <!-- ═══════════ Treemap ═══════════ -->
+  <section class="view" id="view-treemap" role="tabpanel" aria-label="Treemap" hidden>
+    <div class="tm-toolbar">
+      <div class="tb-row tb-row-nav">
+      <div class="tb-group tb-nav">
+        <button class="btn" id="tmUpBtn" title="Zoom out one level (Escape)" aria-label="Zoom out one level"><span data-icon="arrowUp"></span></button>
+        <div class="crumbs" id="tmCrumbs"></div>
+      </div>
+      <div class="tb-group tb-view">
+        <!-- v4 §6.2 — four lenses on one tree. Not four views: same root, same
+             breadcrumbs, same depth, same colour mode, same highlight box. -->
+        <div class="seg" id="tmViewSeg" role="tablist" aria-label="Map layout">
+          <button type="button" data-vm="treemap" aria-selected="true" title="Squarified treemap">Treemap</button>
+          <button type="button" data-vm="sunburst" aria-selected="false" title="Radial sunburst">Sunburst</button>
+          <button type="button" data-vm="circles" aria-selected="false" title="Nested circle packing — every folder is a circle holding its children">Circles</button>
+          <button type="button" data-vm="voronoi" aria-selected="false" title="Voronoi treemap — cells whose areas are proportional to bytes, solved by Lloyd's algorithm">Voronoi</button>
+        </div>
+      </div>
+      <div class="tb-group tb-find">
+        <div class="field" id="tmSearchWrap">
+          <span data-icon="search"></span>
+          <input type="text" id="tmSearch" placeholder="Highlight… (try size&gt;1gb)" aria-label="Highlight matching files in the treemap"
+                 role="combobox" aria-expanded="false" aria-controls="tmQueryHints" aria-autocomplete="list"
+                 autocomplete="off" spellcheck="false">
+          <!-- FX wiring: same overlay-strip trick as #gsearch — the field
+               anchors the hints panel, so the beam cannot own the field. -->
+          <span class="fx-beam-strip" id="tmSearchBeamStrip" aria-hidden="true"></span>
+          <div class="gsearch-panel tm-hints" id="tmQueryHints" role="listbox" aria-label="Query fields" hidden></div>
+        </div>
+        <!-- v4 §9.6 — plain words in, a checkable query out. The popover always
+             shows the translation in an editable field BEFORE anything runs. -->
+        <button class="icon-btn" id="tmNlBtn" title="Ask in plain words" aria-label="Ask in plain words — translated into a query you approve first" aria-haspopup="dialog" aria-expanded="false"><span data-icon="sparkles" data-size="15"></span></button>
+        <div id="nlPop" class="glass" role="dialog" aria-modal="false" aria-labelledby="nlPopTitle" hidden>
+          <div class="set-h" id="nlPopTitle" style="margin:0 0 8px;">Ask in plain words</div>
+          <!-- FX wiring: the "listening" chip sits beside the field while it
+               is focused and awaiting typing; the well costs nothing empty. -->
+          <div class="nl-ask-row">
+            <input type="text" id="nlInput" placeholder="big videos I haven't opened in a year" aria-label="Describe what to find, in plain words" autocomplete="off" spellcheck="false">
+            <span class="fx-orb-well" id="nlListenWell"></span>
+          </div>
+          <!-- FX wiring: shown only while the /api/nl-query round-trip is in
+               flight — the "weaving" orb mounts into the well. -->
+          <div class="nl-pending" id="nlPending" role="status" hidden><span class="fx-orb-well"></span><span class="fx-shimmer-text">Translating…</span></div>
+          <div id="nlOut" hidden>
+            <div class="muted" style="font-size:11.5px;margin:9px 0 4px;">Translates to — check it, edit it, then run:</div>
+            <input type="text" id="nlResult" class="num" aria-label="The translated query — edit it before running" autocomplete="off" spellcheck="false" style="width:100%;">
+            <div id="nlDetail" class="muted" style="font-size:11px;margin-top:5px;"></div>
+            <div style="display:flex;gap:8px;margin-top:10px;">
+              <button class="btn btn-primary" id="nlRun">Run this query</button>
+              <button class="btn" id="nlCancel">Cancel</button>
+            </div>
+          </div>
+          <div id="nlReason" class="muted" role="status" aria-live="polite" style="font-size:11.5px;margin-top:7px;" hidden></div>
+        </div>
+      </div>
+      </div>
+      <div class="tb-row tb-row-controls">
+      <div class="tb-group tb-appearance">
+        <div class="seg" id="tmColorSeg" role="tablist" aria-label="Treemap color mode">
+          <button type="button" data-mode="size" aria-selected="true" title="Color cells by file size">Size</button>
+          <button type="button" data-mode="age" aria-selected="false" title="Color cells by how recently modified">Age</button>
+          <button type="button" data-mode="reclaim" aria-selected="false" title="Color cells by how safe and worthwhile they are to reclaim">Reclaim</button>
+        </div>
+        <label for="tmDepth">Depth</label>
+        <select id="tmDepth" aria-label="Treemap depth">
+          <option value="2">2</option><option value="3">3</option>
+          <option value="4" selected>4</option><option value="5">5</option><option value="6">6</option>
+        </select>
+      </div>
+      <div class="tb-spring" aria-hidden="true"></div>
+      <div class="tb-group tb-modes">
+        <button class="pill" id="tmLiveToggle" aria-pressed="false" title="Watch this folder live — changes pulse on the map and a feed shows what's writing right now"><span class="dot"></span>Live</button>
+        <button class="pill" id="tmCloudToggle" hidden aria-pressed="false" title="Hide cloud placeholder files — show only bytes that are really on disk">Hide cloud</button>
+        <!-- v4 §6.4 — the magnifier. Hold Z for the same thing without pinning it. -->
+        <button class="pill" id="tmLensToggle" aria-pressed="false" title="Magnifier — hold Z, or pin it here, to read the tiles that are only a couple of pixels wide">Lens</button>
+      </div>
+      <div class="tb-group tb-actions">
+        <button class="icon-btn" id="tmRefresh" aria-label="Re-render treemap" title="Re-render"></button>
+        <button class="btn" id="tmExportBtn" title="Download the treemap as an image"><span data-icon="download"></span>Export</button>
+      </div>
+      </div>
+    </div>
+    <div class="tm-querybar glass" id="tmQueryBar" hidden>
+      <div class="tm-saved" id="tmSavedViews"></div>
+      <button class="pill" id="tmSaveView" title="Save this query as a view you can click again">Save view</button>
+      <!-- v4 §4.2 — query results are a list of reclaimable paths like any
+           other, so they get a way into the cart. Staging only: nothing is
+           deleted here, and the count is stated before anything moves. -->
+      <button class="pill" id="tmStageMatches" hidden title="Add every file this query matched to the cleanup cart">Stage matches</button>
+      <div class="tm-queryerr" id="tmQueryErr" role="status" aria-live="polite" hidden></div>
+    </div>
+    <div class="tm-timebar glass" id="tmTimebar" hidden>
+      <span data-icon="clock" data-size="14"></span>
+      <!-- v4 §7.1 — transport. Bindings are static top-level like the
+           slider's, so the named-listener rule for mount() does not apply. -->
+      <button class="icon-btn" id="tmLapsePlay" aria-label="Play time-lapse" title="Play through this folder's history — rectangles morph between snapshots">
+        <!-- ids live on wrappers: the injector replaces the [data-icon] span
+             wholesale, so an id put there would not survive boot. -->
+        <span id="tmLapseIconPlay"><span data-icon="play" data-size="14"></span></span>
+        <span id="tmLapseIconPause" hidden><span data-icon="pause" data-size="14"></span></span>
+      </button>
+      <input type="range" id="tmTimeSlider" min="0" max="0" step="1" value="0" aria-label="Scrub through this folder's scan history">
+      <span class="tm-timelabel num" id="tmTimeLabel">Live</span>
+      <div class="seg seg-fit" id="tmLapseSpeed" role="tablist" aria-label="Time-lapse playback speed">
+        <button type="button" data-speed="0.5" aria-selected="false" title="Half speed">½×</button>
+        <button type="button" data-speed="1" aria-selected="true" title="Normal speed — about a second per snapshot">1×</button>
+        <button type="button" data-speed="2" aria-selected="false" title="Double speed">2×</button>
+        <button type="button" data-speed="4" aria-selected="false" title="Quadruple speed">4×</button>
+      </div>
+      <button class="pill" id="tmLapseLoop" aria-pressed="false" title="Start again from the oldest snapshot when playback reaches the end">Loop</button>
+      <button class="pill" id="tmDiffToggle" aria-pressed="false" title="Tint what grew green and what shrank red, compared with the previous snapshot">Diff</button>
+    </div>
+    <div class="glass" id="treemapWrap">
+      <!-- v4 §4.3 — the simulated "after". The banner is not decoration: a map
+           that shows space you do not have yet has to say so, all the time it
+           is on screen. -->
+      <div class="tm-preview-banner" id="tmPreviewBanner" role="status" aria-live="polite" hidden>
+        <span data-icon="eye" data-size="14"></span>
+        <span id="tmPreviewText"></span>
+        <button class="pill" id="tmPreviewExit">Exit preview</button>
+      </div>
+      <div id="treemapZoom"><canvas id="treemapCanvas" tabindex="0" aria-label="Disk usage treemap. Click a directory to drill in, Escape to go up."></canvas></div>
+      <!-- FX wiring: two orb wells over the canvas. The centred one holds the
+           64px "searching" hero while a first scan runs against an empty map;
+           the corner chip holds the 20px "shaping" orb while §2.5's refinement
+           loop is still subdividing across frames. Both are display:none while
+           empty, so they cost nothing when idle. -->
+      <div class="fx-orb-well fx-canvas-orb" id="tmScanOrb"></div>
+      <div class="fx-orb-well fx-canvas-orb" id="tmShapeOrb"></div>
+      <div id="liveFeed" hidden aria-label="Live disk activity — top writers"></div>
+    </div>
+    <div class="tm-foot">
+      <div id="tmLegend" class="tm-legend"></div>
+      <span class="num" id="tmStatus"></span>
+      <span class="hint"><span data-icon="mouse"></span>click to drill in · drag to lasso (⌥ freehand, ⌘ to unstage) · hold Z to magnify · Esc to go up</span>
+    </div>
+    <!-- v4 §8.3 — the drive dock: drop the cart on a drive to offload -->
+    <div class="drive-dock" id="tmDock" hidden aria-label="Connected drives — drop your cart on one to offload"></div>
+    <!-- v4 §6.2 — where an alternate renderer had to approximate, it says so
+         here, in the same place every time. Never hidden in a console log. -->
+    <div class="tm-altnote" id="tmAltNote" role="status" aria-live="polite" hidden></div>
+  </section>

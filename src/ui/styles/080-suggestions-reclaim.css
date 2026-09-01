@@ -1,0 +1,123 @@
+/* ── Smart Suggestions: category cards + regenerable badge (Feature 14) ── */
+.smart-filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 14px; }
+/* The Smart pane's funnel: suggested → staged → projected free. Lives above
+   the results and disappears with them. */
+.clean-funnel { margin: 2px 0 16px; }
+.smart-group { margin-bottom: 12px; padding: 11px 13px 12px; border: 1px solid var(--hairline);
+  border-radius: var(--r-md); background: var(--surface-1); }
+.smart-group .rule-row { padding: 4px 0 2px; }
+.smart-group .clean-list { background: var(--surface-1); }
+.smart-group.cat-regenerable { border-color: rgba(191,90,242,0.38); background: rgba(191,90,242,0.07); }
+.smart-group.cat-regenerable .clean-list { background: transparent; }
+.smart-desc { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--text-2); font-size: 12.5px; }
+.regen-cmd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; flex: none;
+  color: #d6a8ff; background: rgba(191,90,242,0.16); border: 1px solid rgba(191,90,242,0.36);
+  border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+.rc-lbl { color: var(--text-3); font-size: 11px; flex: none; margin-left: 1px; }
+/* ── C8: "why is this suggested", and advisory groups ── */
+.why-btn { flex: none; color: var(--text-3); }
+.why-btn:hover, .why-btn.on { color: var(--accent); }
+.smart-why { margin: 2px 0 8px 26px; padding: 9px 11px; border-radius: 8px; background: var(--surface-2);
+  border: 1px solid var(--hairline); font-size: 12px; line-height: 1.55; color: var(--text-2); }
+.smart-why-line + .smart-why-line { margin-top: 3px; }
+.smart-why code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  padding: 1px 5px; border-radius: 4px; background: var(--surface-3); }
+.smart-catalog { color: var(--text-3); font-size: 11.5px; margin-left: 6px; }
+/* Advisory: shown for its size, never offered for deletion. */
+.smart-group.advisory { border-color: rgba(255,159,10,0.42); background: rgba(255,159,10,0.07); }
+.smart-group.advisory .adv-mark { flex: none; display: inline-flex; color: var(--warn); }
+.adv-spacer { flex: none; width: 17px; }
+/* ══ Phase 3 (v4 §3.3) — the Reclaim Score badge, breakdown and legend ══
+   The breakdown deliberately reuses .smart-why's markup and styling: §3.2
+   requires every score to be one click from its components, and Smart
+   Suggestions already answers "why is this suggested" in exactly that shape.
+   A second panel that said the same thing differently would be worse than
+   reuse even if it looked better. */
+.rc-badge { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
+  font-weight: 600; font-variant-numeric: tabular-nums; padding: 2px 8px; border-radius: 99px;
+  border: 1px solid currentColor; background: transparent; cursor: pointer; line-height: 1.5; }
+.rc-badge:hover, .rc-badge:focus-visible { background: color-mix(in srgb, currentColor 14%, transparent); }
+/* A score built on two of six signals must not look like one built on all
+   six. Low confidence is dashed — visible before the number is read. */
+.rc-badge.conf-low { border-style: dashed; }
+.rc-badge.conf-medium { border-style: solid; opacity: 0.88; }
+.rc-none { flex: none; font-size: 11px; color: var(--text-3); font-style: italic; }
+.rc-why { margin: 2px 0 8px; padding: 9px 11px; border-radius: 8px; background: var(--surface-2);
+  border: 1px solid var(--hairline); font-size: 12px; line-height: 1.55; color: var(--text-2); }
+.rc-why-row { display: flex; align-items: baseline; gap: 8px; }
+.rc-why-row + .rc-why-row { margin-top: 4px; }
+.rc-why-row .rc-k { flex: none; min-width: 152px; color: var(--text-1); font-weight: 500; }
+.rc-why-row .rc-v { flex: 1; min-width: 0; }
+.rc-why-row .rc-n { flex: none; font-variant-numeric: tabular-nums; color: var(--text-3); font-size: 11px; }
+.rc-why .rc-missing .rc-k { color: var(--warn); }
+.rc-why hr { border: 0; border-top: 1px solid var(--hairline); margin: 8px 0; }
+.rc-why code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  padding: 1px 5px; border-radius: 4px; background: var(--surface-3); }
+.rc-why .rc-foot { margin-top: 8px; font-size: 11.5px; color: var(--text-3); }
+/* The popover form, for surfaces with no room for an inline panel. */
+/* Joins the liquid-glass layer rather than inventing a background: --surface-1
+   is a near-transparent tint meant to sit ON something opaque, and using it
+   here let the donut legend behind the panel show straight through the
+   breakdown. Same treatment as #ctxMenu and #tooltip, which are the two
+   floating surfaces this one behaves like. */
+#rcPopover { position: fixed; z-index: 211; width: min(460px, calc(100vw - 24px)); max-height: 70vh;
+  overflow: auto; padding: 12px 14px;
+  /* The shared strong tint is ~68% opaque, which is right for #ctxMenu (small)
+     and for .modal (which sits on a dimmed backdrop). This panel is ~460x600
+     and sits straight on the content, with no scrim — at 68% the rows behind
+     it read straight through the breakdown, in dark mode especially. So it
+     keeps the glass sheen and the blur, over an OPAQUE base. */
+  --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02) 42%, rgba(255,255,255,0) 68%), var(--bg-1);
+  --lg-blur: 26px;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-md);
+  box-shadow: var(--shadow-3); }
+#rcPopover[hidden] { display: none; }
+/* ── v4 §9.6: the plain-words popover — rcPopover's opaque-glass recipe, for
+   the same reason: it sits straight on the map with no scrim. ── */
+#nlPop { position: fixed; z-index: 211; width: min(380px, calc(100vw - 24px)); padding: 12px 14px;
+  --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02) 42%, rgba(255,255,255,0) 68%), var(--bg-1);
+  --lg-blur: 26px;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); }
+#nlPop[hidden] { display: none; }
+/* ── v4 §9.1: the command palette ── */
+/* Above every other modal (they share z-index 100): ⌘K is a global key and
+   must never open an invisible input UNDER the settings scrim. */
+#cmdkModal { align-items: flex-start; z-index: 130; }
+#cmdkModal .cmdk-panel { margin-top: 12vh; padding: 10px; }
+#cmdkInput { width: 100%; font-size: 15px; padding: 11px 12px; }
+#cmdkList { max-height: 46vh; overflow: auto; margin-top: 8px; }
+#cmdkList .cmdk-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 8px 10px; border: 0; background: transparent; border-radius: var(--r-sm);
+  color: var(--text-1); font-size: 13.5px; cursor: pointer; }
+#cmdkList .cmdk-row .hint { margin-left: auto; color: var(--text-3); font-size: 11px;
+  max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#cmdkList .cmdk-row[aria-selected="true"] { background: var(--accent); color: #fff; }
+#cmdkList .cmdk-row[aria-selected="true"] .hint { color: rgba(255,255,255,0.75); }
+.cmdk-foot { font-size: 11px; margin: 8px 4px 2px; }
+/* ── v4 §9.2: the first-run coach card ── */
+#tourOverlay { position: fixed; inset: 0; z-index: 96; pointer-events: none; }
+#tourOverlay[hidden] { display: none; }
+.tour-card { pointer-events: auto; position: absolute; right: 18px; bottom: 86px;
+  width: min(360px, calc(100vw - 32px)); padding: 15px 16px;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); }
+.tour-card h4 { margin: 0 0 7px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.tour-card p { margin: 0 0 10px; font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
+.tour-card .tour-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.tour-card .tour-step { color: var(--text-3); font-size: 10.5px; margin-bottom: 5px;
+  text-transform: uppercase; letter-spacing: 0.4px; }
+#rcPopover .rc-pop-head { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; font-size: 13px; }
+#rcPopover .rc-pop-head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#rcPopover .rc-why { margin: 0; background: transparent; border: 0; padding: 0; }
+.rc-legend-note { color: var(--text-3); font-size: 11px; margin-left: 8px; }
+/* The weight sliders. `.rule-row` is a non-wrapping flex row, so the help
+   line under each label needs the row to wrap — without it the text was
+   squeezed into a ~90px column beside the slider and read as a footnote
+   nobody would finish. */
+.rw-row { flex-wrap: wrap; align-items: center; }
+.rw-row > label { min-width: 190px; flex: none; }
+.rw-row > input[type="range"] { flex: 1 1 160px; min-width: 120px; }
+.rw-row > .rw-val { flex: none; min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; }
+.rw-row > .rw-help { flex-basis: 100%; margin-left: 190px; font-size: 11.5px; color: var(--text-3);
+  margin-top: 2px; line-height: 1.45; }
+@media (max-width: 620px) { .rw-row > .rw-help { margin-left: 0; } }

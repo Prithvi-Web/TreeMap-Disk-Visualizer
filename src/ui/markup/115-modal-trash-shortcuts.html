@@ -1,0 +1,56 @@
+<div id="tooltip" role="tooltip"></div>
+<!-- ═══════════ Trash contents (Feature 8) ═══════════ -->
+<div class="modal-backdrop" id="trashModal" role="dialog" aria-modal="true" aria-label="Trash contents">
+  <div class="modal" style="width:560px;max-width:92vw;">
+    <div class="modal-head">
+      <h3><span data-icon="trash" data-size="17"></span>Trash <span class="num" id="trashModalMeta"></span></h3>
+      <button class="close-x" data-close="trashModal" aria-label="Close"><span data-icon="x" data-size="14"></span></button>
+    </div>
+    <div class="modal-body" id="trashModalBody"></div>
+    <div class="modal-foot">
+      <span class="muted" style="flex:1;">Items restore from here until the Trash is emptied.</span>
+      <button class="btn btn-danger" id="emptyTrashBtn"><span data-icon="trash" data-size="14"></span>Empty Trash…</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ Keyboard shortcuts (Feature 6) ═══════════ -->
+<div class="modal-backdrop" id="shortcutsModal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+  <div class="modal" style="width:540px;max-width:92vw;">
+    <div class="modal-head">
+      <h3><span data-icon="keyboard" data-size="18"></span>Keyboard shortcuts</h3>
+      <button class="close-x" data-close="shortcutsModal" aria-label="Close"><span data-icon="x" data-size="14"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="kbd-sec">Treemap &amp; Sunburst</div>
+      <div class="kbd-grid">
+        <div><kbd>h</kbd><kbd>←</kbd><kbd>⌫</kbd></div><div>Zoom out one level</div>
+        <div><kbd>j</kbd><kbd>↓</kbd></div><div>Select next cell</div>
+        <div><kbd>k</kbd><kbd>↑</kbd></div><div>Select previous cell</div>
+        <div><kbd>l</kbd><kbd>→</kbd><kbd>↵</kbd></div><div>Drill into folder / preview file</div>
+        <div><kbd>c</kbd></div><div>Add selected to the cleanup cart</div>
+        <div><kbd>p</kbd></div><div>Quick-look the selected file</div>
+        <div><kbd>n</kbd></div><div>Add or edit the selected folder&rsquo;s note</div>
+        <div><kbd>Del</kbd></div><div>Move the selected cell to Trash</div>
+        <div><kbd>/</kbd></div><div>Focus the search box</div>
+        <div><kbd>Esc</kbd></div><div>Clear selection · close panel · zoom out</div>
+      </div>
+      <div class="kbd-sec">Grid</div>
+      <div class="kbd-grid">
+        <div><kbd>⌫</kbd></div><div>Up one folder</div>
+        <div><kbd>Del</kbd></div><div>Move the selection to Trash</div>
+        <div><kbd>/</kbd></div><div>Focus the filter box</div>
+        <div><kbd>Esc</kbd></div><div>Clear selection · up one folder</div>
+      </div>
+      <div class="kbd-sec">Anywhere</div>
+      <div class="kbd-grid">
+        <div><kbd>⌘</kbd><kbd>K</kbd></div><div>Command palette — views, actions, saved views, recent folders</div>
+        <div><kbd>⌘</kbd><kbd>B</kbd></div><div>Collapse or expand the navigation</div>
+        <div><kbd>/</kbd></div><div>Search everything indexed (in Treemap and Grid, <kbd>/</kbd> focuses that view's own filter instead)</div>
+        <div><kbd>⌘</kbd><kbd>R</kbd></div><div>Rescan the current folder</div>
+        <div><kbd>⌘</kbd><kbd>⌫</kbd></div><div>Move the selection to Trash</div>
+        <div><kbd>?</kbd></div><div>Show this help</div>
+      </div>
+    </div>
+  </div>
+</div>

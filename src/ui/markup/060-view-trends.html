@@ -1,0 +1,28 @@
+  <!-- ═══════════ Trends ═══════════ -->
+  <section class="view" id="view-trends" role="tabpanel" aria-label="Trends" hidden>
+    <div class="trends-toolbar">
+      <label for="trendRoot">Folder</label>
+      <select id="trendRoot" aria-label="Folder to show history for"></select>
+      <span class="muted" id="trendInfo"></span>
+    </div>
+    <div class="trends-grid">
+      <div class="card glass">
+        <h2><span data-icon="trendUp"></span>Total Size Over Time</h2>
+        <div class="trend-chart-wrap"><canvas id="trendChart" height="300" aria-label="Folder size history chart" role="img"></canvas></div>
+      </div>
+      <div class="card glass">
+        <h2><span data-icon="activity"></span>Since Previous Scan</h2>
+        <div id="trendNet" hidden>
+          <div class="tn-h">Net change per scan</div>
+          <!-- The canvas keeps a wrapper of its own: the chart kit anchors its
+               tooltip to the canvas's parent, and a heading inside that parent
+               would shift every tooltip by its height. -->
+          <div class="tn-wrap"><canvas id="trendNetChart" height="120" aria-label="Net size change between consecutive scans" role="img"></canvas></div>
+        </div>
+        <div id="trendDeltas"><div class="muted">Scan the same folder twice to see what grew or shrank.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ Compare ═══════════ -->
+  

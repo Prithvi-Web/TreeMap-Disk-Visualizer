@@ -1,0 +1,183 @@
+  <!-- ═══════════ Dashboard ═══════════ -->
+  <section class="view" id="view-dashboard" role="tabpanel" aria-label="Dashboard" hidden>
+    <!-- "What's new since last scan" — rendered only when this root has a prior snapshot -->
+    <div class="card glass whatsnew" id="whatsNewCard" hidden>
+      <div class="wn-body" id="whatsNewBody" role="button" tabindex="0" title="Open Trends for the full history"></div>
+      <button class="close-x" id="whatsNewClose" aria-label="Dismiss until the next scan"><span data-icon="x" data-size="14"></span></button>
+    </div>
+    <div class="dash-grid">
+      <div class="dash-col">
+        <div class="card glass">
+          <h2><span data-icon="hardDrive"></span>System</h2>
+          <div class="sys-row">
+            <div class="ring-wrap">
+              <svg width="132" height="132" viewBox="0 0 132 132">
+                <defs>
+                  <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#0A84FF"/><stop offset="100%" stop-color="#5E5CE6"/>
+                  </linearGradient>
+                </defs>
+                <circle class="ring-bg" cx="66" cy="66" r="55"/>
+                <circle class="ring-fg" id="ringFg" cx="66" cy="66" r="55" stroke-dasharray="345.6" stroke-dashoffset="345.6"/>
+              </svg>
+              <div class="ring-label"><b id="ringPct" class="num">–</b><span>used</span></div>
+            </div>
+            <div class="sys-facts">
+              <div class="fact"><span>Host</span><b id="sysHost">–</b></div>
+              <div class="fact"><span>Platform</span><b id="sysPlatform">–</b></div>
+              <div class="fact"><span>Total disk</span><b id="sysTotal" class="num">–</b></div>
+              <div class="fact"><span>Free</span><b id="sysFree" class="num">–</b></div>
+              <div class="fact"><span>Used</span><b id="sysUsed" class="num">–</b></div>
+              <div class="fact fact-trash" id="trashFact" hidden role="button" tabindex="0" title="View Trash contents"><span>Trash</span><b id="sysTrash" class="num">–</b></div>
+            </div>
+          </div>
+          <div class="growth-proj" id="growthProj" hidden></div>
+          <div class="snap-row" id="snapRow" hidden>
+            <span class="ic" data-icon="clock" data-size="16"></span>
+            <div class="snap-meta"><b id="snapCount">–</b><span id="snapHint" class="muted"></span></div>
+            <button class="pill" id="snapPurgeBtn">Purge</button>
+          </div>
+          <div class="snap-row" id="hardlinkRow" hidden>
+            <span class="ic" data-icon="copy" data-size="16"></span>
+            <div class="snap-meta"><b id="hardlinkText"></b><span class="muted">Counted once, so totals match what the OS reports.</span></div>
+          </div>
+          <div class="snap-row" id="cloudRow" hidden>
+            <span class="ic" data-icon="cloud" data-size="16"></span>
+            <div class="snap-meta"><b id="cloudText"></b><span class="muted">Stored in the cloud — local copies are safe to remove.</span></div>
+          </div>
+          <div class="snap-row" id="engineRow" hidden>
+            <span class="ic" data-icon="zap" data-size="16"></span>
+            <div class="snap-meta"><b id="engineText"></b><span class="muted" id="engineHint"></span></div>
+          </div>
+        </div>
+
+        <div class="card glass">
+          <h2><span data-icon="play"></span>Scan a Folder</h2>
+          <div class="scan-row">
+            <div class="field">
+              <span data-icon="folder"></span>
+              <input type="text" id="pathInput" placeholder="/Users/you/Documents" aria-label="Folder to scan" autocomplete="off" spellcheck="false">
+            </div>
+            <button class="btn" id="browseBtn">Browse…</button>
+            <button class="btn btn-primary" id="scanBtn"><span data-icon="play"></span>Scan</button>
+          </div>
+          <label class="fast-rescan" id="fastRescanWrap" hidden>
+            <input type="checkbox" id="fastRescan"><span data-icon="zap" data-size="13"></span>Fast rescan — reuse cache for unchanged folders
+          </label>
+          <!-- FX wiring: the well is where the "searching" orb lives while a
+               scan runs. It must sit OUTSIDE #scanStatus — followScanProgress
+               rewrites that innerHTML on every progress frame, which would
+               strand a mounted orb's observers. -->
+          <div class="scan-status-row">
+            <span class="fx-orb-well" id="scanOrbWell"></span>
+            <div class="scan-status" id="scanStatus">No scan yet — pick a folder above.</div>
+          </div>
+          <!-- A1: the index indicator. Green "always current" when a live
+               watcher is attached; amber when the index exists but missed
+               events and is being rechecked. Hidden when there is no index. -->
+          <div class="index-badge" id="indexBadge" hidden role="status"></div>
+          <div class="scan-meta num" id="scanMeta"></div>
+          <div class="progress-track" id="progressTrack"><div class="progress-fill"></div></div>
+        </div>
+
+        <div class="card glass">
+          <h2><span data-icon="activity"></span>Quick Stats</h2>
+          <div class="quick-stats">
+            <div class="stat-tile tile"><span class="chip" style="--tint:#0A84FF"><span data-icon="file"></span></span>
+              <div><div class="v num" id="statFiles">–</div><div class="k">Files</div></div></div>
+            <div class="stat-tile tile"><span class="chip" style="--tint:#30D158"><span data-icon="folder"></span></span>
+              <div><div class="v num" id="statDirs">–</div><div class="k">Folders</div></div></div>
+            <div class="stat-tile tile"><span class="chip" style="--tint:#FF9F0A"><span data-icon="trendUp"></span></span>
+              <div><div class="v small" id="statLargest">–</div><div class="k">Largest file</div></div></div>
+            <div class="stat-tile tile"><span class="chip" style="--tint:#BF5AF2"><span data-icon="clock"></span></span>
+              <div><div class="v small num" id="statLastScan">–</div><div class="k">Last scan</div></div></div>
+          </div>
+        </div>
+
+        <!-- A5: physical disks and the volumes on each, so "which physical
+             drive is actually filling up" has a direct answer. -->
+        <div class="card glass" id="topologyCard">
+          <h2><span data-icon="hardDrive"></span>Disk Topology
+            <button class="pill" id="topologyRefresh" style="margin-left:auto;"
+                    title="Re-read the disk layout — after plugging in a drive, for example">Refresh</button>
+          </h2>
+          <div id="topologyBody"><div class="muted">Reading disk layout…</div></div>
+        </div>
+
+        <!-- B5: space still occupied by files that were deleted while a
+             program kept them open. The one action that frees it is aimed at
+             a process, not a file — so each row offers a restart, behind the
+             shared confirmation with an explicit unsaved-work warning. -->
+        <div class="card glass" id="zombieCard">
+          <h2><span data-icon="activity"></span>Held-Up Space
+            <button class="pill" id="zombieRefresh" style="margin-left:auto;"
+                    title="Look again for space held by programs that won’t let go">Refresh</button>
+          </h2>
+          <div id="zombieBody"><div class="muted">Checking for held-up space…</div></div>
+        </div>
+
+        <!-- C4 · Drive Health. Reports the drive's own numbers and its own
+             self-assessment verbatim, next to the growth forecast, so the user
+             can see which limit arrives first — space or write endurance.
+             It never renders a verdict of its own. -->
+        <div class="card glass" id="driveHealthCard">
+          <h2><span data-icon="gauge"></span>Drive Health</h2>
+          <div id="driveHealthBody"><div class="muted">Run a scan to check this drive.</div></div>
+        </div>
+
+        <!-- C1 · What this data would cost to keep in the cloud, against a
+             pricing table that ships with the app. The "as of" date is always
+             visible: a stale price shown as stale is honest, shown as current
+             is not. -->
+        <div class="card glass" id="costCard">
+          <h2><span data-icon="cloud"></span>Cost to Keep
+            <select id="costCurrency" aria-label="Currency" style="margin-left:auto;">
+              <option value="USD">USD $</option><option value="EUR">EUR €</option>
+              <option value="GBP">GBP £</option><option value="INR">INR ₹</option>
+              <option value="AUD">AUD A$</option><option value="CAD">CAD C$</option>
+            </select>
+          </h2>
+          <div id="costBody"><div class="muted">Run a scan to see what this data would cost to keep online.</div></div>
+        </div>
+      </div>
+
+      <div class="dash-col">
+        <div class="card glass">
+          <h2><span data-icon="pie"></span>File Types by Size</h2>
+          <div class="donut-row">
+            <!-- FX wiring: the wrap anchors the 64px "searching" hero to the
+                 donut's own centre — the dashboard's empty-while-scanning
+                 surface — wherever the flex row happens to wrap. -->
+            <div class="donut-canvas-wrap">
+              <canvas id="donutCanvas" width="230" height="230" aria-label="File type breakdown donut chart" role="img"></canvas>
+              <div class="fx-orb-well fx-canvas-orb" id="dashScanOrb"></div>
+            </div>
+            <div class="donut-legend" id="donutLegend"><div class="muted">Run a scan to see the breakdown.</div></div>
+          </div>
+        </div>
+        <div class="card glass">
+          <h2><span data-icon="trendUp"></span>Largest Files
+            <!-- v4 §3.3 — the same ten files, ordered by the question people
+                 actually have. Sorting, not filtering: nothing leaves the list. -->
+            <div class="seg" id="bigFilesSort" role="tablist" aria-label="Sort largest files by" style="margin-left:auto;">
+              <button type="button" data-sort="size" aria-selected="true" title="Biggest first">Size</button>
+              <button type="button" data-sort="reclaim" aria-selected="false" title="Safest and most worthwhile to delete first">Reclaim</button>
+            </div>
+          </h2>
+          <div id="bigFiles"><div class="muted">Run a scan to find your biggest files.</div></div>
+        </div>
+        <div class="card glass">
+          <h2><span data-icon="folder"></span>Largest Folders</h2>
+          <div id="bigFolders"><div class="muted">Run a scan to find your biggest folders.</div></div>
+        </div>
+        <div class="card glass" id="allStorageCard">
+          <h2><span data-icon="hardDrive"></span>All Storage</h2>
+          <div id="allStorageList"><div class="muted">Local disk and any connected cloud accounts appear here.</div></div>
+        </div>
+        <div class="card glass" id="budgetCard" hidden>
+          <h2><span data-icon="gauge"></span>Folder Budgets</h2>
+          <div id="budgetList"></div>
+        </div>
+      </div>
+    </div>
+  </section>

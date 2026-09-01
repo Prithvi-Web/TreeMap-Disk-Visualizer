@@ -1,0 +1,89 @@
+<!-- ═══════════ Clean Up modal ═══════════ -->
+<div class="modal-backdrop" id="cleanModal" role="dialog" aria-modal="true" aria-labelledby="cleanTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="cleanTitle"><span data-icon="sparkles"></span>Clean Up</h3>
+      <button class="close-x" data-close="cleanModal" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="seg seg-fit" id="cleanSeg" role="tablist" aria-label="Clean Up modes" style="margin-bottom:12px;">
+        <button role="tab" aria-selected="true" data-pane="rules"><span data-icon="search"></span>Custom Rules</button>
+        <button role="tab" aria-selected="false" data-pane="smart"><span data-icon="sparkles"></span>Smart Suggestions</button>
+        <button role="tab" aria-selected="false" data-pane="empty"><span data-icon="folder"></span>Empty Folders</button>
+        <button role="tab" aria-selected="false" data-pane="video"><span data-icon="video"></span>Shrink Video</button>
+        <button role="tab" aria-selected="false" data-pane="cloud" id="cleanTabCloud" hidden><span data-icon="cloud"></span>Cloud-safe</button>
+      </div>
+      <div class="muted" style="margin-bottom:6px;">Nothing is removed until you confirm — and everything goes to the system Trash, recoverable any time.</div>
+      <div id="cleanPaneRules" class="pane-fade">
+        <!-- v4 §4.5 — the ladder: a saved view is a Clean Up rule, and a Clean
+             Up rule is an Autopilot policy. One matching engine throughout. -->
+        <div class="seg seg-fit" id="cleanRuleSeg" role="tablist" aria-label="Rule source" style="margin-bottom:10px;">
+          <button role="tab" aria-selected="true" data-rulesrc="simple">Simple rules</button>
+          <button role="tab" aria-selected="false" data-rulesrc="query">A saved view</button>
+        </div>
+        <div id="cleanRuleQuery" style="display:none;">
+          <div class="rule-row">
+            <span data-icon="search"></span><label for="cleanSavedView">Saved view</label>
+            <select id="cleanSavedView" aria-label="Saved view to use as a rule" style="flex:1;min-width:0;"></select>
+          </div>
+          <div class="muted" id="cleanSavedViewQ" style="margin:2px 0 6px;"></div>
+        </div>
+        <div id="cleanRuleSimple">
+        <div class="rule-row">
+          <input type="checkbox" id="ruleAgeOn" checked> <span data-icon="clock"></span><label for="ruleAgeOn">Older than</label>
+          <input type="number" id="ruleAgeDays" value="180" min="0" aria-label="Days"> <span class="muted">days</span>
+        </div>
+        <div class="rule-row">
+          <input type="checkbox" id="ruleSizeOn" checked> <span data-icon="trendUp"></span><label for="ruleSizeOn">Larger than</label>
+          <input type="number" id="ruleSizeMb" value="100" min="0" aria-label="Megabytes"> <span class="muted">MB</span>
+        </div>
+        <div class="rule-row">
+          <input type="checkbox" id="ruleExtOn"> <span data-icon="file"></span><label for="ruleExtOn">Extensions</label>
+          <input type="text" id="ruleExts" placeholder="log, tmp, dmg, zip" aria-label="Extensions, comma separated">
+        </div>
+        <div class="rule-row">
+          <input type="checkbox" id="ruleDupOn"> <span data-icon="copy"></span><label for="ruleDupOn">Duplicates only <span class="muted">(same name + size elsewhere)</span></label>
+        </div>
+        </div>
+        <div class="rule-row" style="margin-top:4px;">
+          <button class="btn" id="cleanFindBtn"><span data-icon="search"></span>Find matching files</button>
+          <!-- v4 §4.5 — promotion. Opens the existing editor, pre-filled; every
+               rail it has stays exactly as it is, including the mandatory
+               first-run preview. -->
+          <button class="btn" id="cleanPromoteBtn" title="Turn this rule into a scheduled Autopilot policy — you approve its first run before it deletes anything"><span data-icon="sparkles"></span>Make this an Autopilot policy</button>
+        </div>
+        <div id="cleanResults"></div>
+      </div>
+      <div id="cleanPaneSmart" class="pane-fade" style="display:none;">
+        <div class="clean-funnel" id="cleanFunnel" hidden></div>
+        <div id="gitRepos"></div>
+        <div id="packageOrphans"></div>
+        <div id="browserProfiles"></div>
+        <div id="smartResults"></div>
+      </div>
+      <!-- C2 · Shrink Video. The only feature that rewrites a file rather than
+           moving it, so the copy is blunt about what it does: it is lossy, and
+           the original goes to the Trash only once the new file has verified. -->
+      <div id="cleanPaneVideo" class="pane-fade" style="display:none;">
+        <div id="videoBody"><div class="muted">Run a scan to look for video worth re-encoding.</div></div>
+      </div>
+
+      <div id="cleanPaneEmpty" class="pane-fade" style="display:none;">
+        <div class="rule-row">
+          <input type="checkbox" id="emptyIgnoreJunk" checked>
+          <label for="emptyIgnoreJunk">Treat folders holding only junk files (.DS_Store, Thumbs.db) as empty</label>
+        </div>
+        <div id="emptyResults"></div>
+      </div>
+      <div id="cleanPaneCloud" class="pane-fade" style="display:none;">
+        <div id="cloudResults"></div>
+      </div>
+      <div id="cleanProgress"><div class="track"><div class="fill" id="cleanProgressFill"></div></div></div>
+    </div>
+    <div class="modal-foot">
+      <span class="muted num" id="cleanSummary"></span>
+      <div style="flex:1"></div>
+      <button class="btn btn-danger" id="cleanConfirmBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
+    </div>
+  </div>
+</div>

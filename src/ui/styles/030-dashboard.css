@@ -1,0 +1,112 @@
+/* ── Dashboard ── */
+.dash-grid { display: grid; grid-template-columns: 5fr 7fr; gap: 18px; align-items: start; }
+/* min-width: 0 — a grid item defaults to min-width: auto, so one long unbroken
+   file path inside a card makes the whole track refuse to shrink and the page
+   scrolls sideways. The cards already ellipsize; they just need permission to. */
+.dash-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.card { padding: 22px; }
+/* flex-wrap: several card headings carry a trailing control (the Largest
+   Files sort seg rides margin-left: auto); in a narrow card it drops to its
+   own line instead of poking through the card edge. */
+.card h2 { display: flex; align-items: center; gap: 8px 8px; row-gap: 10px; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1px; color: var(--text-2); margin-bottom: 18px; flex-wrap: wrap; }
+.card h2 .ic { color: var(--text-3); }
+/* Quiet hover lift: 1px of travel and one shadow step (--shadow-2 rests,
+   --shadow-3 on hover). Ambience only — full brightness stays the property
+   of real states via FxBeam's md ring, which rides the same host without
+   conflict. Transform is safe on cards: no fixed-position element lives
+   inside one, so no containing-block surprises. The reduced-motion rule
+   collapses the transition; the resting insets are repeated on :hover
+   because box-shadow replaces wholesale, never merges. */
+.card.glass, .stat-tile {
+  transition: transform var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
+}
+.card.glass:hover {
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 var(--shine), inset 0 0 24px rgba(255,255,255,0.02), var(--shadow-3);
+}
+:root[data-theme="light"] .card.glass:hover {
+  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-3);
+}
+.stat-tile:hover {
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-1);
+}
+/* Wraps so the facts column can stack under the ring in a narrow two-column
+   dashboard; the 220px basis is the floor below which it drops. */
+.sys-row { display: flex; gap: 26px; align-items: center; flex-wrap: wrap; }
+.ring-wrap { position: relative; width: 132px; height: 132px; flex: none; }
+.ring-wrap svg { transform: rotate(-90deg); }
+.ring-bg { fill: none; stroke: var(--surface-2); stroke-width: 10; }
+.ring-fg { fill: none; stroke: url(#ringGrad); stroke-width: 10; stroke-linecap: round;
+  transition: stroke-dashoffset 1.3s var(--ease); }
+.ring-label { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.ring-label b { font-size: 24px; font-weight: 700; letter-spacing: -0.6px; }
+.ring-label span { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 1.2px; margin-top: 2px; }
+.sys-facts { display: flex; flex-direction: column; gap: 9px; font-size: 13px; min-width: 0; flex: 1 1 220px; }
+.sys-facts .fact { display: flex; justify-content: space-between; gap: 18px; }
+.sys-facts .fact span { color: var(--text-2); }
+/* min-width + ellipsis: a long hostname must clip, never push the card wide. */
+.sys-facts .fact b { font-weight: 600; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+.scan-row { display: flex; gap: 8px; }
+.scan-row .field { position: relative; flex: 1; min-width: 0; }
+.scan-row .field .ic { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
+.scan-row input { width: 100%; padding-left: 34px; }
+.scan-status { margin-top: 14px; font-size: 12.5px; color: var(--text-2); min-height: 18px;
+  display: flex; align-items: center; gap: 7px; }
+.scan-status.error { color: #ff6b61; }
+.scan-meta { margin-top: 5px; font-size: 11.5px; color: var(--text-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 15px; }
+.progress-track { margin-top: 12px; height: 5px; border-radius: 3px; background: var(--surface-2);
+  overflow: hidden; display: none; }
+.progress-track.active { display: block; }
+.progress-fill { height: 100%; width: 40%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), #5e9dff);
+  box-shadow: 0 0 12px var(--accent-glow);
+  animation: indeterminate 1.3s var(--ease) infinite; }
+@keyframes indeterminate { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+
+.quick-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stat-tile { padding: 14px 16px; display: flex; align-items: center; gap: 13px; }
+.stat-tile .chip { width: 36px; height: 36px; border-radius: 10px; }
+.stat-tile .v { font-size: 19px; font-weight: 700; letter-spacing: -0.4px; }
+.stat-tile .v.small { font-size: 13px; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat-tile .k { font-size: 11px; color: var(--text-2); margin-top: 2px; }
+
+/* The canvas is a fixed width, so at narrow card widths the legend wraps
+   below it instead of being squeezed into an unreadable sliver. */
+.donut-row { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+#donutCanvas { flex: none; }
+.donut-legend { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; flex: 1; min-width: 190px;
+  container-type: inline-size; }
+.donut-legend .li { display: flex; align-items: center; gap: 9px; padding: 5px 8px; border-radius: 7px;
+  transition: background var(--dur-1) var(--ease); cursor: default; }
+.donut-legend .li.hl { background: var(--surface-2); }
+.donut-legend .dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.donut-legend .ext { font-weight: 600; min-width: 52px; }
+.donut-legend .cnt { color: var(--text-3); font-size: 11.5px;
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.donut-legend .sz { color: var(--text-2); white-space: nowrap; }
+
+.bigfile { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: var(--r-sm);
+  position: relative; transition: background var(--dur-1) var(--ease); }
+.bigfile:hover { background: var(--surface-1); }
+/* bklit's custom indicator, as a row affordance: a 2px accent line springs
+   from the row's bottom to its top on hover — --ease-spring is the CSS twin
+   of the stiffness-300/damping-30 spring, one slight overshoot and settle.
+   Keyboard focus rides the same rail; the global reduced-motion kill snaps it. */
+.bigfile::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px;
+  border-radius: 1px; background: var(--accent); pointer-events: none;
+  transform: scaleY(0); transform-origin: bottom; transition: transform 340ms var(--ease-spring); }
+.bigfile:hover::before, .bigfile:focus-within::before { transform: scaleY(1); }
+.bigfile .meta { flex: 1; min-width: 0; }
+.bigfile .nm { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bigfile .pth { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; text-align: left; }
+.bigfile .bar-track { width: 84px; height: 4px; border-radius: 2px; background: var(--surface-2); flex: none; }
+.bigfile .bar { height: 100%; border-radius: 2px; }
+.bigfile .actions { display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-1) var(--ease); }
+.bigfile:hover .actions, .bigfile:focus-within .actions { opacity: 1; }
+.size-badge { font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 7px; flex: none;
+  background: var(--surface-2); white-space: nowrap; }

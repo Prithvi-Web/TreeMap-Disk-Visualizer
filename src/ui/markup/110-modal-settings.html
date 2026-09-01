@@ -1,0 +1,122 @@
+<!-- ═══════════ Settings modal ═══════════ -->
+<div class="modal-backdrop" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <div class="modal" style="width:740px;">
+    <div class="modal-head">
+      <h3 id="settingsTitle"><span data-icon="settings"></span>Settings</h3>
+      <button class="close-x" data-close="settingsModal" aria-label="Close"><span data-icon="x"></span></button>
+    </div>
+    <div class="modal-body">
+      <div class="set-h"><span data-icon="calendar"></span>Scheduled scans</div>
+      <div class="muted" style="margin-bottom:10px;">TreeMap re-scans these folders on a schedule while the app is running, and alerts you when a folder grows past your threshold since the previous scan. Every run is also saved to Trends.</div>
+      <div id="schedList"></div>
+      <button class="btn" id="schedAddBtn"><span data-icon="plus"></span>Add scheduled scan</button>
+
+      <div class="set-h" style="margin-top:22px;"><span data-icon="trendUp"></span>Disk-full forecast</div>
+      <div class="muted" style="margin-bottom:10px;">Scheduled scans also project when the disk will fill up (needs 5+ scans across 2+ days). You'll get a notification when the forecast drops below:</div>
+      <div class="rule-row">
+        <span data-icon="clock"></span><label for="forecastDays">Warn within</label>
+        <input type="number" id="forecastDays" min="1" max="365" value="30" aria-label="Forecast warning threshold in days">
+        <span class="muted">days of the disk filling up</span>
+      </div>
+
+      <div class="set-h" style="margin-top:22px;"><span data-icon="activity"></span>Live activity</div>
+      <div class="muted" style="margin-bottom:10px;">The treemap's Live mode watches the scanned folder in real time and pauses itself when nothing is happening.</div>
+      <div class="rule-row">
+        <span data-icon="clock"></span><label for="watchIdleMin">Auto-pause after</label>
+        <input type="number" id="watchIdleMin" min="1" max="120" value="10" aria-label="Live mode idle auto-pause in minutes">
+        <span class="muted">minutes without disk activity</span>
+      </div>
+
+      <div class="set-h" style="margin-top:22px;"><span data-icon="clock"></span>Time Capsule</div>
+      <div class="muted" style="margin-bottom:10px;">Before TreeMap deletes anything <b>automatically</b>, it keeps a verified copy here — so you can get it back even after emptying the Trash. Files you delete yourself aren't copied.</div>
+      <div class="rule-row">
+        <span data-icon="clock"></span><label for="capsuleRetentionDays">Keep copies for</label>
+        <input type="number" id="capsuleRetentionDays" min="1" max="365" value="30" aria-label="How many days to keep Time Capsule copies">
+        <span class="muted">days</span>
+      </div>
+      <div class="rule-row" style="margin-top:8px;">
+        <span data-icon="gauge"></span><label for="capsuleMaxPercent">Never use more than</label>
+        <input type="number" id="capsuleMaxPercent" min="1" max="90" value="10" aria-label="Time Capsule size cap as a percentage of disk space">
+        <span class="muted">% of this disk — oldest copies go first, and anything too big to fit is left undeleted rather than deleted unprotected</span>
+      </div>
+
+      <!-- v4 §3.2: "a score the user cannot inspect or adjust is an oracle, and
+           this app does not ship oracles." These are the weights every reclaim
+           score in the app is computed from. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="gauge"></span>Reclaim Score</div>
+      <div class="muted" style="margin-bottom:10px;">TreeMap ranks files by how safe and worthwhile they are to delete, out of 100. These sliders decide how much each signal counts. Set one to zero to leave it out of the score entirely — that is different from it scoring zero, and a signal TreeMap simply <b>could not read</b> is left out too rather than counted against the file.</div>
+      <div id="reclaimWeights"></div>
+      <div class="rule-row" style="margin-top:8px;">
+        <button class="btn" id="reclaimResetBtn"><span data-icon="refresh"></span>Reset to defaults</button>
+        <span class="muted" id="reclaimWeightsNote"></span>
+      </div>
+
+      <!-- v4 §4.1 — a target for the cleanup cart. Optional, off by default,
+           and deliberately just a meter: no streaks, no badges, no confetti. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="cart"></span>Cleanup target</div>
+      <div class="muted" style="margin-bottom:10px;">Set how much you are trying to free and the cleanup cart shows a meter filling toward it. Leave it empty for no target — the meter then doesn't appear at all. It only measures what you have staged; nothing is ever deleted to reach it.</div>
+      <div class="rule-row">
+        <span data-icon="gauge"></span><label for="cleanupGoalValue">Free up</label>
+        <input type="number" id="cleanupGoalValue" min="0" step="any" placeholder="no target" aria-label="Cleanup target amount">
+        <select id="cleanupGoalUnit" aria-label="Cleanup target unit">
+          <option value="1073741824">GB</option>
+          <option value="1099511627776">TB</option>
+          <option value="1048576">MB</option>
+        </select>
+        <button class="btn" id="cleanupGoalClear"><span data-icon="x"></span>Clear target</button>
+      </div>
+
+      <!-- v4 §9.3 — human-scale units. Computed from each folder's own file
+           mix, never a constant, so the equivalence stays honest. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="image"></span>Human-scale sizes</div>
+      <div class="muted" style="margin-bottom:10px;">Next to sizes over about 1 GB, also say what that amounts to — "≈ 3,100 photos like the ones in this folder". The comparison always comes from the folder's <b>own</b> photos, videos or music (at least ten of a kind), never from a made-up average; folders with nothing comparable show nothing.</div>
+      <label class="rule-row" style="cursor:pointer;">
+        <input type="checkbox" id="humanScaleToggle" checked>
+        <span>Show human-scale equivalents in tooltips</span>
+      </label>
+
+      <!-- v4 §9.6 — the plain-words box: the offline phrase table only. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="sparkles"></span>Ask in plain words</div>
+      <div class="muted" style="margin-bottom:10px;">The ✨ button beside the treemap's highlight box turns plain words into a search — "big videos I haven't opened in a year" becomes <b class="num">size&gt;1gb ext:mp4,… used&gt;1y</b>. The translation is <b>always shown for you to check and edit before it runs</b>, and the built-in phrase table works entirely offline — nothing here ever touches the network.</div>
+
+      <!-- v4 §9.2 — the tour's way back, since Skip promises one. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="help"></span>Welcome tour</div>
+      <div class="rule-row">
+        <button class="btn" id="tourResetBtn"><span data-icon="refresh"></span>Show the welcome tour again</button>
+        <span class="muted" style="font-size:12px;">Three quick wins, staged only when you click, nothing deleted.</span>
+      </div>
+
+      <div class="set-h" style="margin-top:22px;"><span data-icon="cloud"></span>Cloud accounts</div>
+      <div class="muted" style="margin-bottom:10px;">Scan your own Google Drive, Dropbox or OneDrive in the same treemap — <b>metadata only, no file contents are ever downloaded</b>, and sign-in tokens never leave this computer. Bring your own (free) API app: create one in the provider's developer console with redirect URI <code id="cloudRedirectUri">http://127.0.0.1:53682/oauth/callback</code>, then paste its client ID below.</div>
+      <div id="cloudAccounts"></div>
+
+      <div class="set-h" style="margin-top:22px;"><span data-icon="ban"></span>Ignore list</div>
+      <div class="muted" style="margin-bottom:10px;">Folders, files or patterns to leave alone. <b>Don't scan</b> skips them entirely (faster scans); <b>Don't suggest</b> keeps them out of Smart Suggestions only. Patterns: a full path, a name like <b>node_modules</b>, or globs like <b>*.iso</b> and <b>~/projects/**/dist</b>.</div>
+      <div id="ignoreList"></div>
+      <button class="btn" id="ignoreAddBtn"><span data-icon="plus"></span>Add pattern</button>
+
+      <!-- A2: the reconciliation diagnostic. Shows what TreeMap measured
+           against what the disk itself reports, so the gap caused by files
+           that share storage is visible rather than hidden inside a total. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="gauge"></span>How TreeMap measures space</div>
+      <div class="muted" style="margin-bottom:10px;">TreeMap measures the space files actually occupy, not just the size they report. This panel shows the difference for the folder you last scanned.</div>
+      <div id="allocationDiag" class="alloc-diag">Scan a folder to see this.</div>
+
+      <!-- D2 · The right-click entry. Installed and removed from the same
+           place, because an uninstall that leaves a dead menu item behind is
+           the specific failure §D2 calls out. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="mouse"></span>Right-click menu</div>
+      <div class="muted" style="margin-bottom:10px;" id="shellIntegrationBlurb">Checking…</div>
+      <div class="rule-row">
+        <button class="btn" id="shellIntegrationBtn" disabled>Checking…</button>
+        <span class="muted" id="shellIntegrationStatus"></span>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="muted" id="settingsStatus"></span>
+      <div style="flex:1"></div>
+      <button class="btn" data-close="settingsModal">Cancel</button>
+      <button class="btn btn-primary" id="settingsSaveBtn"><span data-icon="check"></span>Save</button>
+    </div>
+  </div>
+</div>

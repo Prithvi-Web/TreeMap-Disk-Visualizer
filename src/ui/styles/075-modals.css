@@ -1,0 +1,59 @@
+/* ── Modals ── */
+.modal-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 100;
+  display: none; align-items: center; justify-content: center;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  animation: fadeIn var(--dur-2) var(--ease); }
+.modal-backdrop.open { display: flex; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.modal { width: 660px; max-width: 92vw; max-height: 84vh; display: flex; flex-direction: column;
+  animation: sheetIn var(--dur-3) var(--ease);
+  --lg-tint: var(--lg-tint-strong); --lg-blur: 30px;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-3), 0 0 90px rgba(10,132,255,0.05); }
+@keyframes sheetIn { from { transform: translateY(30px) scale(0.96); opacity: 0; } to { transform: none; opacity: 1; } }
+.modal-head { display: flex; align-items: center; gap: 10px; padding: 20px 22px 0; }
+.modal-head h3 { display: flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
+.modal-head .close-x { margin-left: auto; }
+.modal-body { padding: 16px 22px; overflow-y: auto; flex: 1; }
+.modal-foot { padding: 14px 22px 20px; display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--hairline); }
+.close-x { border: none; background: var(--surface-2); width: 28px; height: 28px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--text-2); transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
+.close-x:hover { background: var(--surface-3); color: var(--text-1); }
+.rule-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; font-size: 13.5px; }
+.rule-row .ic { color: var(--text-3); }
+.rule-row input[type="number"] { width: 88px; }
+.rule-row input[type="text"] { flex: 1; }
+.clean-list { margin-top: 8px; max-height: 270px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--r-md); }
+.clean-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 12.5px;
+  border-bottom: 1px solid var(--hairline); }
+.clean-item:last-child { border-bottom: none; }
+.clean-item .meta { flex: 1; min-width: 0; }
+.clean-item .nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clean-item .pth { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; text-align: left; }
+.clean-item .dt { color: var(--text-3); font-size: 11px; white-space: nowrap; }
+.muted { color: var(--text-2); font-size: 12.5px; }
+#cleanProgress { display: none; margin-top: 12px; }
+#cleanProgress.on { display: block; }
+#cleanProgress .track { height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+#cleanProgress .fill { height: 100%; width: 0%; border-radius: 3px; background: var(--danger);
+  transition: width var(--dur-2) var(--ease); }
+
+/* Browse picker */
+.browse-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--r-md); margin-top: 12px; }
+.browse-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: none;
+  background: transparent; padding: 9px 14px; font-size: 13px; cursor: pointer; color: var(--text-1);
+  border-bottom: 1px solid var(--hairline); transition: background var(--dur-1) var(--ease); }
+.browse-item:hover { background: var(--accent-soft); }
+.browse-item .ic { color: var(--accent); }
+.browse-item .hid { color: var(--text-3); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 0 12px;
+  min-height: 30px; border-radius: 99px; border: 1px solid var(--hairline);
+  background: linear-gradient(170deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 60%), var(--surface-1);
+  cursor: pointer; box-shadow: inset 0 1px 0 var(--shine);
+  color: var(--text-2); transition: color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
+  box-shadow var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-spring); }
+.pill:hover { color: var(--text-1); border-color: var(--accent); box-shadow: inset 0 1px 0 var(--shine), 0 0 14px var(--accent-soft); }
+.pill:active { transform: scale(0.95); }

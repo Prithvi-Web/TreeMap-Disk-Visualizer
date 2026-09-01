@@ -1,0 +1,85 @@
+/* ── Cleanup cart (Feature 2) ── */
+#cartDock { position: fixed; right: 22px; bottom: 22px; z-index: 80; display: none;
+  flex-direction: column; align-items: stretch; gap: 10px; width: 366px; max-width: 92vw; }
+#cartDock.show { display: flex; }
+#cartPanel { display: none; flex-direction: column; max-height: 54vh; overflow: hidden;
+  border: 1px solid var(--hairline-2); border-radius: var(--r-lg); box-shadow: var(--shadow-3);
+  --lg-tint: var(--lg-tint-strong);
+  animation: sheetIn var(--dur-3) var(--ease); }
+#cartDock.open #cartPanel { display: flex; }
+.cart-head { display: flex; align-items: center; gap: 9px; padding: 13px 15px; border-bottom: 1px solid var(--hairline); }
+.cart-head .ttl { font-size: 13.5px; font-weight: 700; letter-spacing: -0.2px; }
+.cart-head .num { color: var(--text-2); font-size: 12px; }
+.cart-head .close-x { margin-left: auto; }
+.cart-list { overflow-y: auto; flex: 1 1 auto; }
+.cart-empty { padding: 26px 16px; text-align: center; color: var(--text-3); font-size: 12.5px; line-height: 1.5; }
+.cart-item { display: flex; align-items: center; gap: 10px; padding: 8px 14px; font-size: 12.5px;
+  border-bottom: 1px solid var(--hairline); }
+.cart-item:last-child { border-bottom: none; }
+.cart-item .meta { flex: 1; min-width: 0; }
+.cart-item .nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cart-item .pth { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; direction: rtl; text-align: left; }
+.cart-item .sz { color: var(--text-2); white-space: nowrap; font-size: 11.5px; }
+.cart-item.missing { opacity: 0.5; }
+.cart-item .rm { border: none; background: var(--surface-2); color: var(--text-2); width: 22px; height: 22px;
+  border-radius: 50%; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex: none;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
+.cart-item .rm:hover { background: var(--danger); color: #fff; }
+/* v4 §4 — the "not everything is listed" row. Stated, never silent. */
+.cart-more { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; font-size: 11.5px; color: var(--text-3);
+  border-top: 1px solid var(--hairline); }
+/* Wraps because v4 §4.3 added a fourth control: at 340px the row is full, and
+   a Move-to-Trash button pushed off the edge is worse than a second line. */
+.cart-foot { display: flex; align-items: center; gap: 8px; padding: 12px 15px; border-top: 1px solid var(--hairline); flex-wrap: wrap; }
+.cart-foot .total { flex-basis: 100%; }
+.cart-foot .total { font-size: 12.5px; color: var(--text-2); }
+.cart-foot .total b { color: var(--text-1); }
+.cart-foot .btn-danger { margin-left: auto; }
+/* ── Phase 4 (v4 §4.1) — the goal meter ──
+   A progress meter and nothing else. §4.1 rules out streaks, badges and
+   confetti by name: a reward loop pointed at deleting your own files would be
+   manipulation, and this product does not do that. The bar fills, it says how
+   far along it is, and when the target is met it says so once, plainly. */
+.cart-goal { padding: 10px 15px 11px; border-top: 1px solid var(--hairline); }
+.cart-goal .g-line { display: flex; align-items: baseline; gap: 8px; font-size: 11.5px; color: var(--text-2); margin-bottom: 6px; }
+.cart-goal .g-line b { color: var(--text-1); font-weight: 600; }
+.cart-goal .g-line .g-pct { margin-left: auto; color: var(--text-3); }
+.cart-goal .g-track { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.cart-goal .g-fill { height: 100%; border-radius: 3px; background: var(--accent);
+  transition: width 220ms ease; }
+.cart-goal.met .g-fill { background: var(--ok); }
+.cart-goal.met .g-line b { color: var(--ok); }
+@media (prefers-reduced-motion: reduce) { .cart-goal .g-fill { transition: none; } }
+
+/* ── Phase 4 (v4 §4.4) — the commit manifest and its result summary ── */
+.cart-mf-note { margin-top: 9px; font-size: 12px; color: var(--text-2); line-height: 1.5; }
+.cart-mf-left { margin-top: 12px; font-size: 12.5px; color: var(--text-1); }
+.cart-mf-list { margin-top: 5px; max-height: 168px; overflow-y: auto; border: 1px solid var(--hairline);
+  border-radius: var(--r-sm); }
+.cart-mf-row { display: flex; align-items: baseline; gap: 10px; padding: 5px 9px; font-size: 11.5px;
+  border-bottom: 1px solid var(--hairline); }
+.cart-mf-row:last-child { border-bottom: none; }
+.cart-mf-row .nm { font-weight: 600; flex: none; max-width: 42%; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.cart-mf-row .why { color: var(--text-3); line-height: 1.4; }
+.cart-mf-undo { margin-top: 13px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cart-mf-undo .muted { font-size: 11.5px; }
+
+#cartTab { display: flex; align-items: center; gap: 9px; padding: 11px 16px; cursor: pointer;
+  border: 1px solid var(--hairline-2); border-radius: 999px; box-shadow: var(--shadow-2);
+  --lg-tint: var(--lg-tint-strong);
+  font-size: 13px; color: var(--text-1); user-select: none;
+  transition: border-color var(--dur-1) var(--ease), transform var(--dur-2) var(--ease-spring),
+              box-shadow var(--dur-2) var(--ease); }
+#cartTab:hover { border-color: var(--accent); transform: translateY(-2px);
+  box-shadow: var(--shadow-2), 0 0 24px var(--accent-soft); }
+#cartTab:active { transform: translateY(0) scale(0.97); }
+#cartTab .ic { color: var(--accent); }
+#cartTab .c-count { font-weight: 700; }
+#cartTab .c-sep { color: var(--text-3); }
+#cartTab .c-total { color: var(--text-2); }
+#cartTab .c-cta { margin-left: auto; color: var(--accent); font-weight: 600; }
+#cartDock.open #cartTab .c-cta { color: var(--text-3); }
+.icon-btn.cartin { color: var(--accent); }

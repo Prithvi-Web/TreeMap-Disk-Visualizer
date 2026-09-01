@@ -1,0 +1,40 @@
+  <!-- ═══════════ Duplicates ═══════════ -->
+  <section class="view" id="view-duplicates" role="tabpanel" aria-label="Duplicates" hidden>
+    <div class="seg seg-fit" id="dupModeSeg" role="tablist" aria-label="Duplicate detection mode" style="margin-bottom:13px;">
+      <button role="tab" aria-selected="true" data-dupmode="exact"><span data-icon="copy"></span>Exact</button>
+      <button role="tab" aria-selected="false" data-dupmode="near"><span data-icon="image"></span>Near-Duplicate Images</button>
+    </div>
+    <div id="dupPaneExact" class="pane-fade">
+      <div class="dup-toolbar">
+        <span class="dup-summary" id="dupSummary">Scanning for duplicates…</span>
+        <div class="spacer"></div>
+        <label for="dupMinSize">Ignore files under</label>
+        <select id="dupMinSize" aria-label="Minimum file size for duplicate detection">
+          <option value="1024">1 KB</option>
+          <option value="102400" selected>100 KB</option>
+          <option value="1048576">1 MB</option>
+          <option value="10485760">10 MB</option>
+        </select>
+        <button class="btn" id="dupAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
+        <button class="btn" id="dupOffloadBtn" disabled title="Copy the selected duplicates to another drive, verify, then trash them locally"><span data-icon="archive"></span>Offload…</button>
+        <button class="btn btn-danger" id="dupTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
+      </div>
+      <div class="dup-funnel" id="dupFunnel" hidden></div>
+      <div id="dupBody"></div>
+    </div>
+    <div id="dupPaneNear" class="pane-fade" hidden>
+      <div class="dup-toolbar">
+        <span class="dup-summary" id="ndSummary">Looking for similar images…</span>
+        <div class="spacer"></div>
+        <label for="ndThreshold">Match</label>
+        <select id="ndThreshold" aria-label="How similar images must be to be grouped">
+          <option value="6">Very similar</option>
+          <option value="10" selected>Similar</option>
+          <option value="14">Loosely similar</option>
+        </select>
+        <button class="btn" id="ndAutoBtn" title="In every group, select all copies except the newest one"><span data-icon="sparkles"></span>Auto-select (keep newest)</button>
+        <button class="btn btn-danger" id="ndTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
+      </div>
+      <div id="ndBody"></div>
+    </div>
+  </section>

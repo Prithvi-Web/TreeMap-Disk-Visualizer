@@ -1,0 +1,79 @@
+/* ═══════════ Disk City (v4 §6.1) ═══════════
+   The canvas fills the panel and the chrome floats over it, so the picture is
+   the page rather than a picture on a page. Everything here is a token from
+   the existing palette: a third view inventing its own greys would show up
+   immediately beside the Treemap it is meant to be the same map as. */
+/* A studio backdrop, not a panel. The city is lit from the upper right, so the
+   light in the room comes from there too — a flat fill behind a lit object is
+   the single thing that most makes 3D read as a sticker. */
+#cityWrap { position: relative; border-radius: var(--r-lg); overflow: hidden;
+  border: 1px solid var(--hairline); height: clamp(360px, calc(100vh - 250px), 1100px);
+  background:
+    radial-gradient(120% 90% at 68% 8%, rgba(120,150,210,0.16), transparent 58%),
+    radial-gradient(90% 70% at 22% 100%, rgba(10,132,255,0.10), transparent 62%),
+    linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), inset 0 -40px 80px -40px rgba(0,0,0,0.55); }
+:root[data-theme="light"] #cityWrap {
+  background:
+    radial-gradient(120% 90% at 68% 8%, rgba(150,175,225,0.30), transparent 58%),
+    radial-gradient(90% 70% at 22% 100%, rgba(0,122,255,0.10), transparent 62%),
+    linear-gradient(180deg, #f7f8fc, #e9ecf3);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), inset 0 -40px 80px -40px rgba(20,30,60,0.16); }
+#cityCanvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+#cityCanvas:active { cursor: grabbing; }
+#cityCanvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* The hover card follows the cursor, so it is deliberately small and never
+   grabs the pointer — a card that can be hovered flickers against the map. */
+.city-card { position: absolute; pointer-events: none; z-index: 3; max-width: 300px;
+  padding: 9px 11px; border-radius: var(--r-sm); border: 1px solid var(--hairline-2);
+  background: var(--glass-strong); backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-sat));
+  -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-sat));
+  box-shadow: var(--shadow-2); font-size: 12px; color: var(--text-2); line-height: 1.5; }
+.city-card { transition: opacity 120ms var(--ease); }
+.city-card .cc-head { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
+.city-card .cc-dot { width: 9px; height: 9px; border-radius: 3px; flex: none;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.18); }
+.city-card .cc-name { font-weight: 650; color: var(--text-1); font-size: 12.5px;
+  letter-spacing: -0.01em; word-break: break-all; line-height: 1.3; }
+.city-card .cc-row { display: flex; gap: 14px; justify-content: space-between;
+  padding: 2px 0; font-size: 11.5px; }
+.city-card .cc-row span { color: var(--text-3); }
+.city-card .cc-row b { color: var(--text-1); font-weight: 600; font-variant-numeric: tabular-nums; }
+.city-card .cc-hint { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--hairline);
+  font-size: 10.5px; color: var(--text-3); }
+@media (prefers-reduced-motion: reduce) { .city-card { transition: none; } }
+
+/* The level-of-detail notice. §6.1 requires the threshold to be stated, never
+   silent — a map that quietly drew 4,000 of 251,000 things and said nothing
+   would be lying by omission about what the user is looking at. */
+.city-lod { position: absolute; left: 14px; bottom: 14px; z-index: 3; padding: 7px 13px;
+  border-radius: 999px; border: 1px solid var(--hairline); background: var(--glass);
+  backdrop-filter: blur(18px) saturate(160%); -webkit-backdrop-filter: blur(18px) saturate(160%);
+  box-shadow: var(--shadow-1);
+  font-size: 11px; letter-spacing: 0.01em; color: var(--text-2); }
+/* The legend's swatches carry the same ramp the map does, so the key is the
+   thing itself rather than a description of it. */
+.tm-legend .city-ramp { display: inline-flex; align-items: center; gap: 7px; }
+.tm-legend .city-ramp i { width: 54px; height: 7px; border-radius: 999px; display: inline-block; }
+/* The legend is a row of instruments, so it stays a row: wrapping mid-phrase
+   ("Colour" on one line, "= what kind of files it holds" on the next) reads as
+   a layout failure rather than as a key. */
+#cityLegend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; }
+#cityLegend .tml-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+@media (max-width: 1100px) { #cityLegend .tml-item { white-space: normal; } }
+
+.city-table { margin-top: 12px; }
+.city-table > summary { cursor: pointer; font-size: 12px; color: var(--text-2); padding: 6px 2px;
+  border-radius: var(--r-sm); }
+.city-table > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The wrapper scrolls sideways so a deep path column can never widen the
+   page — wide tables scroll inside their own container, the page does not. */
+#cityTable { overflow-x: auto; }
+.city-table table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+.city-table th, .city-table td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--hairline); }
+.city-table th { color: var(--text-3); font-weight: 600; }
+.city-table td.num, .city-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.city-table button { background: none; border: none; padding: 0; color: var(--accent);
+  cursor: pointer; font: inherit; text-align: left; }
+.city-table button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

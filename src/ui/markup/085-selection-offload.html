@@ -1,0 +1,33 @@
+<!-- ═══════════ Selection toolbar ═══════════ -->
+<div class="glass" id="selectionBar">
+  <span id="selInfo" class="num">0 items selected</span>
+  <button class="btn" id="selOffloadBtn" title="Copy to another drive, verify, then move the originals to the Trash"><span data-icon="archive"></span>Offload…</button>
+  <button class="btn btn-danger" id="selTrashBtn"><span data-icon="trash"></span>Move to Trash</button>
+  <button class="btn" id="selClearBtn">Clear</button>
+</div>
+
+<!-- ═══════════ Offload progress (Feature 24) ═══════════ -->
+<div class="modal-backdrop" id="offloadModal" role="dialog" aria-modal="true" aria-labelledby="offloadTitle">
+  <div class="modal" style="width:520px;">
+    <div class="modal-head">
+      <h3 id="offloadTitle"><span data-icon="archive"></span>Offloading…</h3>
+    </div>
+    <div class="modal-body">
+      <div class="muted" id="offloadPhase" style="margin-bottom:8px;">Checking…</div>
+      <div class="progress-track active" style="position:static;height:6px;border-radius:3px;overflow:hidden;background:var(--surface-2);">
+        <div id="offloadBar" style="height:100%;width:0%;background:var(--accent);transition:width .3s ease;"></div>
+      </div>
+      <div class="muted num" id="offloadStats" style="margin-top:8px;"></div>
+      <div class="muted" id="offloadCurrent" style="margin-top:4px;word-break:break-all;font-size:11.5px;"></div>
+    </div>
+    <div class="modal-foot">
+      <span class="muted" id="offloadFoot" style="font-size:11.5px;">Nothing is removed until every copy is verified.</span>
+      <div style="flex:1"></div>
+      <button class="btn" id="offloadCancelBtn"><span data-icon="x"></span>Cancel</button>
+    </div>
+    <!-- FX wiring: the job ring rides this overlay strip, never .modal — a
+         .modal is a Liquid Glass host whose fill IS .lg::before, and the beam
+         writes that same pseudo-element. Same trick as #gsearch. -->
+    <span class="fx-beam-strip" id="offloadBeamStrip" aria-hidden="true"></span>
+  </div>
+</div>

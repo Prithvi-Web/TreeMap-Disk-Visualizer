@@ -1,0 +1,228 @@
+/* ═══════════════ FX: Charts — styles ═══════════════
+   Tooltip, bklit legend rows, bar-list rows. Every color is a theme
+   token, so light mode ships for free; motion honors reduced-motion. */
+
+.fx-num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+
+/* ── floating tooltip (positioned by JS inside the chart container) ── */
+.fx-tip {
+  position: absolute; top: 0; left: 0; z-index: 8;
+  pointer-events: none;
+  min-width: 120px; max-width: 240px;
+  padding: 7px 9px;
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3); backdrop-filter: blur(14px) saturate(1.3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-2);
+  font-size: 11px; line-height: 1.45;
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease);
+  will-change: transform, opacity;
+}
+.fx-tip.on { opacity: 1; }
+.fx-tip-title { font-weight: 600; color: var(--text-2); margin-bottom: 3px; font-size: 10.5px; }
+.fx-tip-row { display: flex; align-items: center; gap: 6px; padding: 1.5px 0; }
+.fx-tip-name { color: var(--text-3); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx-tip-val { color: var(--text-1); font-weight: 600; flex: none; }
+
+/* shared color dot */
+.fx-dot { width: 8px; height: 8px; border-radius: 3px; flex: none; }
+
+/* ── bklit legend rows: dot · name · mini bar · value · percent ── */
+/* container-type: the legend measures ITSELF, so a narrow card in a wide
+   window collapses exactly like a narrow window — see the @container rules
+   below that shed columns instead of letting values wrap to two lines. */
+.fx-legend { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 190px;
+  container-type: inline-size; }
+.fx-li {
+  display: grid;
+  grid-template-columns: auto minmax(52px, 1fr) minmax(40px, 64px) auto auto;
+  align-items: center; gap: 9px;
+  padding: 5px 8px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  cursor: default;
+  transition: background var(--dur-1) var(--ease);
+}
+.fx-li.hl { background: var(--surface-2); }
+/* A row whose item carries count? grows a sixth column for it — only the
+   donut legend passes counts, so the base grid stays five for everyone else. */
+.fx-li.fx-li-counted { grid-template-columns: auto minmax(52px, 1fr) auto minmax(40px, 64px) auto auto; }
+.fx-li-cnt { color: var(--text-3); font-size: 11px; white-space: nowrap; }
+.fx-li-name { font-weight: 600; color: var(--text-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx-li-track { height: 3px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+.fx-li.hl .fx-li-track { background: var(--surface-3); }
+.fx-li-bar { display: block; height: 100%; border-radius: 2px; width: 0; transition: width var(--dur-3) var(--ease); }
+.fx-li-val { color: var(--text-1); font-weight: 500; text-align: right; white-space: nowrap; }
+.fx-li-pct { color: var(--text-3); font-size: 11px; min-width: 40px; text-align: right; white-space: nowrap; }
+/* Under pressure a row sheds decoration before it sheds facts: the mini bar
+   goes first, the file count second — name, value and percent hold ONE line
+   at every width. (This was the fullscreen-only bug: "16.6 GB" broke into
+   two lines the moment the card left fullscreen.) */
+@container (max-width: 360px) {
+  .fx-li, .fx-li.fx-li-counted { grid-template-columns: auto minmax(44px, 1fr) auto auto auto; }
+  .fx-li-track { display: none; }
+}
+@container (max-width: 260px) {
+  .fx-li, .fx-li.fx-li-counted { grid-template-columns: auto minmax(44px, 1fr) auto auto; }
+  .fx-li-cnt { display: none; }
+}
+
+/* ── bar list (Largest files / folders) ── */
+.fx-bar-row {
+  display: block; width: 100%; text-align: left;
+  padding: 7px 8px; margin: 0;
+  border: none; background: none; color: inherit; font: inherit;
+  border-radius: var(--r-sm);
+  transition: background var(--dur-1) var(--ease);
+}
+button.fx-bar-row { cursor: pointer; }
+button.fx-bar-row:hover, button.fx-bar-row:focus-visible { background: var(--surface-2); }
+button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.fx-bar-top { display: flex; align-items: baseline; gap: 10px; }
+.fx-bar-name { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 500; color: var(--text-1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fx-bar-val { flex: none; font-size: 12px; font-weight: 600; color: var(--text-1); }
+.fx-bar-track { height: 4px; border-radius: 2px; background: var(--surface-2); margin-top: 5px; overflow: hidden; }
+.fx-bar-fill { height: 100%; border-radius: 2px; width: 0; transition: width var(--dur-3) var(--ease); }
+.fx-bar-detail { font-size: 10.5px; color: var(--text-3); margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── the crosshair date pill (bklit): pinned to the crosshair on the axis
+   line; its digits roll via FxNum, so scrubbing across days reads like a
+   slot machine. Shown only when the chart's formatTime yields a date. ── */
+.fx-tip-pill {
+  position: absolute; top: 0; left: 0; z-index: 8; pointer-events: none;
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3); backdrop-filter: blur(14px) saturate(1.3);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-1);
+  font-size: 10px; font-weight: 600; color: var(--text-2);
+  white-space: nowrap;
+  opacity: 0; transition: opacity var(--dur-1) var(--ease);
+  will-change: transform, opacity;
+}
+.fx-tip-pill.on { opacity: 1; }
+
+/* ── chart-card loading: skeleton pulse + diagonal shimmer sweep (bklit's
+   Grid shimmer rhythm — ~2.2s of travel, then a 280ms rest → one 2480ms
+   cycle). A translucent veil, so a reload dims the stale chart instead of
+   blanking it; over an empty canvas it reads as the classic skeleton
+   block. The hero orb sits at z-index 5, above both layers on purpose. ── */
+.fx-chart-loading { position: relative; }
+.fx-chart-loading::before, .fx-chart-loading::after {
+  content: ""; position: absolute; inset: 0; border-radius: var(--r-md);
+  pointer-events: none;
+}
+.fx-chart-loading::before { z-index: 1; background: var(--skeleton-a);
+  animation: fx-skel-pulse 2480ms var(--ease) infinite; }
+.fx-chart-loading::after { z-index: 2;
+  background-image: linear-gradient(105deg, transparent 42%, var(--skeleton-b) 50%, transparent 58%);
+  background-size: 300% 100%; background-position: 100% 0;
+  animation: fx-skel-sweep 2480ms linear infinite;
+}
+@keyframes fx-skel-pulse { 0%, 100% { opacity: 0.6; } 44% { opacity: 1; } }
+@keyframes fx-skel-sweep {
+  0% { background-position: 100% 0; }
+  88.7% { background-position: 0% 0; } /* 2200ms of travel… */
+  100% { background-position: 0% 0; }  /* …then the 280ms rest */
+}
+
+/* ── sign / momentum tones: the blue family split for the profit-loss
+   line and the live spark. All chart canvases read these through tone(),
+   so the light overrides below re-tune them for white without touching
+   any call site. No new hues — accent, slates and ice only. ── */
+:root {
+  --fx-neg: #5E7FA6;
+  --fx-live-up: #4DA3FF;
+  --fx-live-down: #5E7FA6;
+}
+
+/* ── shared honest empty state for the DOM primitives ── */
+.fx-empty { color: var(--text-3); font-size: 11.5px; padding: 14px 4px; }
+
+/* ── funnel: rounded stages, 3 concentric halo rings (box-shadow spread,
+   painted inline with the stage's own ramp color), 4px gaps. The stage
+   dim on hover lives on the STAGE while the entrance transition lives on
+   the SEG, so the stagger delay never leaks into the hover response. ── */
+.fx-funnel { display: flex; gap: 4px; align-items: stretch; }
+.fx-funnel .fx-fun-stage { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px;
+  transition: opacity var(--dur-2) var(--ease); }
+.fx-funnel:hover .fx-fun-stage:not(:hover) { opacity: 0.5; }
+.fx-fun-track { height: 120px; display: flex; align-items: center; }
+.fx-fun-seg { width: 100%; border-radius: 7px;
+  transition: transform 600ms var(--ease), opacity 600ms var(--ease); }
+.fx-fun-pre { transform: scaleY(0); opacity: 0; }
+.fx-fun-zero { height: 2px; background: var(--hairline); }
+.fx-fun-meta { display: flex; align-items: baseline; gap: 6px; min-width: 0; flex-wrap: wrap; }
+.fx-fun-name { color: var(--text-3); font-size: 10.5px; font-weight: 500; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-fun-val { color: var(--text-1); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.fx-fun-pct { color: var(--accent); background: var(--accent-soft);
+  font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 999px; white-space: nowrap; }
+
+/* vertical funnel: stages stack, widths carry the value */
+.fx-funnel-v { flex-direction: column; }
+.fx-funnel-v .fx-fun-stage { flex: none; gap: 5px; }
+.fx-funnel-v .fx-fun-track { height: 26px; justify-content: center; }
+.fx-funnel-v .fx-fun-seg { height: 100%; }
+.fx-funnel-v .fx-fun-pre { transform: scaleX(0); }
+.fx-funnel-v .fx-fun-zero { height: 2px; width: 100%; align-self: center; }
+
+/* ── bar squares: discrete stacks + ghost-square capacity track. The
+   strip scrolls sideways instead of crushing its columns (the nd-strip
+   pattern), so narrow cards stay honest. ── */
+/* Two boxes on purpose: the outer one is what the tooltip is positioned
+   against and never scrolls, the inner one carries the columns and does. */
+.fx-bsq { position: relative; }
+.fx-bsq-track { display: flex; gap: 14px; align-items: flex-end; overflow-x: auto; padding: 2px; }
+.fx-bsq-col { flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  transition: opacity var(--dur-2) var(--ease); }
+.fx-bsq:hover .fx-bsq-col:not(:hover) { opacity: 0.45; }
+.fx-bsq-stack { display: flex; flex-direction: column; justify-content: flex-end; }
+.fx-bsq-sq { display: block; flex: none;
+  transition: transform 420ms var(--ease-spring), opacity 420ms var(--ease); }
+.fx-bsq-ghost { background: var(--surface-2); }
+.fx-bsq-pre { transform: scale(0.3); opacity: 0; }
+.fx-bsq-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-3); font-size: 9.5px; font-weight: 500; }
+
+/* light theme: glass tooltip needs a touch more contrast on white */
+:root[data-theme="light"] .fx-tip { box-shadow: var(--shadow-1); }
+:root[data-theme="light"] .fx-li-track,
+:root[data-theme="light"] .fx-bar-track { background: var(--surface-3); }
+:root[data-theme="light"] {
+  --fx-neg: #46617F;
+  --fx-live-up: #0069D6;
+  --fx-live-down: #46617F;
+}
+:root[data-theme="light"] .fx-bsq-ghost { background: var(--surface-3); }
+
+@media (prefers-reduced-motion: reduce) {
+  .fx-tip, .fx-li, .fx-li-bar, .fx-bar-row, .fx-bar-fill, .fx-tip-pill,
+  .fx-fun-stage, .fx-fun-seg, .fx-bsq-col, .fx-bsq-sq { transition: none; }
+  .fx-chart-loading::before, .fx-chart-loading::after { animation: none; }
+}
+/* ═══ end FX: Charts — styles ═══ */
+
+/* ═══ FX: chart wiring — where the kit meets existing surfaces ═══
+   The dashboard's list rows and budget rows keep their own markup (they
+   carry cart/trash/reveal controls and reclaim badges the plain kit rows
+   cannot host); only the kit's bar recipe and the gauge canvas move in. */
+.budget-gauge { flex: none; }
+/* The area chart reads its width from its parent; the wrap gives it the
+   card's CONTENT width, not the padding box, so it cannot overflow the
+   rounded corner. anchor() also hangs the tooltip off this element. */
+.trend-chart-wrap { position: relative; width: 100%; }
+/* The live write-rate spark below the top-writers rows. The wrap survives
+   renderLiveFeed's innerHTML rewrites by being re-appended each tick. */
+#liveFeed .lf-spark-wrap { position: relative; width: 100%; margin-top: 7px;
+  padding-top: 6px; border-top: 1px solid var(--hairline); }
+/* Drive Health's linear wear gauge reads its width from this wrap — the
+   card's CONTENT width, the same reason .trend-chart-wrap exists. */
+.dh-gauge-wrap { position: relative; width: 100%; margin: 2px 0 10px; }
+/* ═══ end FX: chart wiring styles ═══ */
+
+/* ═══ end FX: living-surface wiring styles ═══ */

@@ -1,0 +1,34 @@
+/* ════════════════════════════ Layout ════════════════════════════ */
+/* width: 100% is load-bearing: as a grid item with auto margins, main
+   otherwise SHRINK-WRAPS to its content instead of filling its column —
+   the Grid view (whose content is all shrinkable) collapsed to ~580px in a
+   1768px column. 100% + max-width + auto margins = fill the column, cap at
+   1680, center only the overflow on very wide windows. */
+main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: relative; min-width: 0;
+  /* The app's single scroller (the window never scrolls) — see body. */
+  overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.view { display: none; animation: viewIn var(--dur-3) var(--ease); }
+.view.active { display: block; }
+@keyframes viewIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+/* Pane flips (history panels, duplicate modes, Clean Up tabs) arrive as a
+   150ms fade instead of a snap. Opacity only, so nothing reflows; the
+   animation restarts when [hidden] or display:none lifts, and re-showing an
+   already-visible pane restarts nothing — a data refresh rewrites the pane's
+   CHILDREN, never the pane element itself. The global reduced-motion rule
+   collapses this with every other animation. */
+.pane-fade { animation: paneFade var(--dur-1) var(--ease); }
+@keyframes paneFade { from { opacity: 0; } }
+
+/* ── Empty state ── */
+#emptyState { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 66vh; text-align: center; gap: 14px; }
+#emptyState .mark { filter: drop-shadow(0 16px 50px var(--accent-glow)); animation: float 6s ease-in-out infinite; }
+@keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+#emptyState h1 { font-size: 30px; font-weight: 700; letter-spacing: -0.6px; margin-top: 8px; }
+#emptyState p { color: var(--text-2); font-size: 14px; max-width: 460px; line-height: 1.6; }
+/* Wraps: three pills side by side need ~560px, and the welcome screen must
+   hold together at the 640px window floor with the sidebar expanded. */
+.feature-row { display: flex; gap: 14px; margin: 14px 0 6px; flex-wrap: wrap; justify-content: center; }
+.feature { display: flex; align-items: center; gap: 9px; padding: 10px 16px; font-size: 12.5px; color: var(--text-2);
+  background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 99px; }
+.feature .ic { color: var(--accent); }

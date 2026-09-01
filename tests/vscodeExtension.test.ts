@@ -240,9 +240,11 @@ test('progress weights always total exactly 100', () => {
 });
 
 test('the install step keeps the dev dependencies the build needs', () => {
-  // `npm run build` is `tsc && node scripts/copy-assets.js`, and typescript is
-  // a devDependency — omitting dev dependencies would install a tree that
-  // cannot build itself, which fails later and confusingly.
+  // `npm run build` runs tsc, and typescript is a devDependency — omitting dev
+  // dependencies would install a tree that cannot build itself, which fails
+  // later and confusingly. The step list is asserted by what it must CONTAIN,
+  // not as one exact string: the build gained the src/ui stitch step, and a
+  // pin that breaks on every pipeline change stops describing the invariant.
   const [install] = commandsFor('install', { repositoryUrl: 'x', gitRef: 'main', dir: '/d' });
   assert.equal(install.command, 'npm');
   assert.ok(!install.args.includes('--omit=dev'), 'tsc is a devDependency');
@@ -251,7 +253,8 @@ test('the install step keeps the dev dependencies the build needs', () => {
 
   const root = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
   assert.ok(root.devDependencies.typescript, 'typescript really is a devDependency');
-  assert.equal(root.scripts.build, 'tsc && node scripts/copy-assets.js', 'and build really is tsc');
+  assert.match(root.scripts.build, /(^|&&\s*)tsc\b/, 'and build really does run tsc');
+  assert.match(root.scripts.build, /copy-assets\.js/, 'and still copies the runtime rule packs');
 });
 
 test('the clone command cannot be talked into running an option', () => {

@@ -1,0 +1,34 @@
+<!-- ═══════════ Cleanup cart (Feature 2) ═══════════ -->
+<div id="cartDock">
+  <div id="cartPanel" class="glass">
+    <div class="cart-head">
+      <span class="ttl">Cleanup cart</span>
+      <span class="num" id="cartHeadCount"></span>
+      <button class="close-x" id="cartCollapse" aria-label="Collapse cart"><span data-icon="x" data-size="14"></span></button>
+    </div>
+    <div class="cart-list" id="cartList"></div>
+    <!-- v4 §4.1 — hidden entirely until a target is set in Settings. -->
+    <div class="cart-goal" id="cartGoal" role="group" aria-label="Cleanup target" hidden>
+      <div class="g-line" id="cartGoalLine"></div>
+      <div class="g-track"><div class="g-fill" id="cartGoalFill" style="width:0%"></div></div>
+    </div>
+    <div class="cart-foot">
+      <span class="total" id="cartFootTotal"></span>
+      <!-- v4 §4.3 — client-side only; this never touches the server or the disk. -->
+      <button class="btn" id="cartPreview" aria-pressed="false" title="Re-lay the treemap out with these items removed. Nothing is deleted."><span data-icon="eye" data-size="14"></span>Preview after</button>
+      <button class="btn" id="cartClear">Clear</button>
+      <button class="btn btn-danger" id="cartTrash"><span data-icon="trash" data-size="14"></span>Move all to Trash</button>
+    </div>
+  </div>
+  <div id="cartTab" role="button" tabindex="0" aria-label="Open cleanup cart">
+    <span data-icon="cart" data-size="17"></span>
+    <span class="c-count" id="cartTabCount">0</span>
+    <span class="c-sep">·</span>
+    <span class="c-total num" id="cartTabTotal">0 B</span>
+    <span class="c-cta" id="cartTabCta">Review</span>
+    <!-- FX wiring: the staged-count pulse rides this overlay strip. #cartTab
+         is a Liquid Glass host, so beaming it directly would replace the
+         lens layers that ARE its glass for the pulse's whole life. -->
+    <span class="fx-beam-strip" id="cartTabBeamStrip" aria-hidden="true"></span>
+  </div>
+</div>

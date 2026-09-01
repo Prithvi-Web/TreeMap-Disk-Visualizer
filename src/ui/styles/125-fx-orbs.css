@@ -1,0 +1,12 @@
+/* ═══════════════ FX: Thinking Orbs (styles) ═══════════════ */
+/* The orb paints its own monochrome ink per theme (light dots on dark,
+   dark dots on light — resolved live from data-theme / prefers-color-
+   scheme by the engine), and the canvas stays transparent, so it sits
+   correctly on any surface in BOTH themes with zero color rules here.
+   The CSS box is set inline by mount() (20px or 64px — tuned designs,
+   not a scale factor); this only settles layout behaviour. */
+.fx-orb { display: block; flex: none; pointer-events: none; user-select: none; }
+/* Inline placement beside 11–13px text: the 20px preset hangs on the
+   text box's vertical centre instead of the baseline. */
+.fx-orb-inline { display: inline-block; vertical-align: middle; }
+/* ═══ end FX: Thinking Orbs (styles) ═══ */

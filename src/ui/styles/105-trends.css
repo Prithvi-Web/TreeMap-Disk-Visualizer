@@ -1,0 +1,47 @@
+/* ── Trends view ── */
+.trends-grid { display: grid; grid-template-columns: 7fr 5fr; gap: 18px; align-items: start; }
+.trends-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.trends-toolbar label { font-size: 12px; color: var(--text-2); }
+.trends-toolbar select { max-width: 430px; }
+#trendChart { display: block; width: 100%; border-radius: 10px; }
+.delta-row { display: flex; align-items: center; gap: 11px; padding: 8px 10px; border-radius: var(--r-sm);
+  font-size: 12.5px; transition: background var(--dur-1) var(--ease); }
+.delta-row:hover { background: var(--surface-1); }
+.delta-row .meta { flex: 1; min-width: 0; }
+.delta-row .nm { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.delta-row .bar-track { width: 74px; height: 4px; border-radius: 2px; background: var(--surface-2); flex: none; }
+.delta-row .bar { height: 100%; border-radius: 2px; }
+/* Diverging delta bars: growth reaches right from a centre axis in accent,
+   shrinkage reaches left in the slate counterpart — the profit-line pair,
+   so both surfaces state gain/release in one language. Fills reuse the kit
+   bar's width-in transition; the tips fade like every kit gradient. */
+.delta-row .bar-track.dv { position: relative; overflow: visible; }
+.delta-row .bar-track.dv::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px;
+  width: 1px; background: var(--hairline); }
+.delta-row .dv .fx-bar-fill { position: absolute; top: 0; }
+.delta-row .dv .fx-bar-fill.up { left: 50%; border-radius: 0 2px 2px 0;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 35%, transparent)); }
+.delta-row .dv .fx-bar-fill.down { right: 50%; border-radius: 2px 0 0 2px;
+  background: linear-gradient(270deg, var(--fx-neg), color-mix(in srgb, var(--fx-neg) 35%, transparent)); }
+/* The net-change strip above the deltas — the profit line's canvas. */
+#trendNet { margin: 2px 0 14px; }
+#trendNet .tn-wrap { border-radius: 8px; }
+#trendNet canvas { display: block; width: 100%; border-radius: 8px; }
+#trendNet .tn-h { font-size: 10.5px; font-weight: 600; letter-spacing: 0.6px;
+  text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }
+.delta-badge { font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 7px; white-space: nowrap;
+  background: var(--surface-2); }
+.delta-badge.up { color: #ff6b61; }
+.delta-badge.down { color: var(--ok); }
+:root[data-theme="light"] .delta-badge.up { color: #d63a30; }
+:root[data-theme="light"] .delta-badge.down { color: #1f9d45; }
+
+/* "What's new since last scan" banner (Dashboard) */
+.whatsnew { display: flex; align-items: center; gap: 10px; padding: 13px 18px; margin-bottom: 18px; }
+.whatsnew .wn-body { display: flex; align-items: center; gap: 12px 14px; flex-wrap: wrap; flex: 1; min-width: 0; cursor: pointer; border-radius: var(--r-sm); }
+.whatsnew .wn-body:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.whatsnew .wn-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; }
+.whatsnew .wn-title .ic { color: var(--accent); }
+.whatsnew .wn-ago { color: var(--text-3); font-weight: 400; }
+.whatsnew .wn-mover { color: var(--text-2); font-size: 12.5px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.whatsnew .delta-badge { background: var(--surface-1); }

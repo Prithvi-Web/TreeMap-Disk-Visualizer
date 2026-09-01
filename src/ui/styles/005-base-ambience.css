@@ -1,0 +1,52 @@
+/* The hidden attribute must always win, even over class display rules. */
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  font-size: 14px;
+  color: var(--text-1);
+  background:
+    radial-gradient(120% 90% at 18% -10%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 55%),
+    radial-gradient(110% 100% at 100% 110%, rgba(94,92,230,0.06), transparent 55%),
+    linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 100%);
+  background-attachment: fixed;
+  /* 640, not the old 1024: that floor dated from the horizontal header, which
+     genuinely could not get narrower. The sidebar can — it collapses to a
+     64px rail and every view stacks — so half-screen windows now reflow
+     instead of scrolling sideways. Below 640 the page scrolls, because the
+     fixed-width dialogs stop fitting there. */
+  min-width: 640px;
+  /* The window itself never scrolls vertically — main is the app's one
+     scroller. This is what keeps the sidebar pinned and modals aligned no
+     matter how tall a view grows. Horizontal stays auto for sub-640px. */
+  overflow: auto hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+/* Film grain + vignette, sandwiched above the page background and below all content */
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-image:
+    radial-gradient(130% 100% at 50% 0%, transparent 62%, rgba(0,0,0,0.16) 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  background-size: cover, 140px 140px;
+  opacity: 0.5;
+}
+:root[data-theme="light"] body::after { opacity: 0.3; }
+button { font-family: inherit; color: inherit; }
+::selection { background: var(--accent-soft); }
+.num { font-variant-numeric: tabular-nums; }
+
+/* Ambient background field */
+.blob { position: fixed; border-radius: 50%; filter: blur(95px); pointer-events: none; z-index: -1; opacity: var(--blob-opacity); }
+/* Static ambience on purpose: these used to drift on infinite animations,
+   which kept the GPU re-compositing four giant blurred layers forever —
+   battery and frame-time spent on a 30-second drift nobody watches. */
+.blob.b1 { width: 620px; height: 620px; top: -200px; left: -140px;
+  background: radial-gradient(circle, rgba(10,132,255,0.22), transparent 65%); }
+.blob.b2 { width: 700px; height: 700px; top: 28%; right: -240px;
+  background: radial-gradient(circle, rgba(94,92,230,0.17), transparent 65%); }
+.blob.b3 { width: 520px; height: 520px; bottom: -220px; left: 28%;
+  background: radial-gradient(circle, rgba(48,209,88,0.11), transparent 65%); }
+.blob.b4 { width: 380px; height: 380px; top: 12%; left: 42%;
+  background: radial-gradient(circle, rgba(100,210,255,0.10), transparent 65%); }

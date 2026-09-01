@@ -1,0 +1,183 @@
+/* ════════════════════════════ Primitives ════════════════════════════ */
+/* Liquid Glass lens — technique ported from rdev/liquid-glass-react (MIT).
+   The LG engine (bottom of file) generates a per-size displacement-map SVG filter
+   and sets --lg-backdrop to `url(#lg-f-N) blur() saturate()`. Until then (or if JS
+   is unavailable) the ::before falls back to plain frost, so nothing ever breaks. */
+.lg { isolation: isolate; }
+.lg::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit;
+  background: var(--lg-tint);
+  backdrop-filter: var(--lg-backdrop, blur(var(--lg-blur)) saturate(var(--lg-sat)));
+  -webkit-backdrop-filter: var(--lg-backdrop, blur(var(--lg-blur)) saturate(var(--lg-sat)));
+}
+.lg::after {
+  content: ""; position: absolute; inset: 0; z-index: 3;
+  border-radius: inherit; pointer-events: none;
+  padding: 1.2px;
+  background: var(--lg-ring);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  mix-blend-mode: screen;
+  opacity: var(--ring-opacity);
+  transition: opacity var(--dur-2) var(--ease);
+}
+:root[data-theme="light"] .lg::after { mix-blend-mode: normal; }
+/* A lensed element declares NO background of its own — .lg::before IS its
+   fill and .lg::after IS its ring. FxBeam writes those same two pseudo-
+   elements from a sheet appended after this one, at equal specificity, so a
+   beam attached straight to a lens host wins both and the panel goes
+   see-through for as long as the beam is lit. Beams belong on a beam-only
+   child (.fx-beam-strip); this holds the lens if one ever lands on a lensed
+   host anyway, because losing a decoration beats losing the glass. */
+[data-fxbeam].lg::before {
+  background: var(--lg-tint) !important;
+  border-radius: inherit !important;
+  padding: 0 !important;
+  clip-path: none !important;
+  -webkit-mask: none !important; mask: none !important;
+  box-shadow: none !important;
+  z-index: -1 !important;
+  opacity: 1 !important;
+  animation: none !important;
+  filter: none !important;
+}
+[data-fxbeam].lg::after {
+  background: var(--lg-ring) !important;
+  border-radius: inherit !important;
+  padding: 1.2px !important;
+  clip-path: none !important;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0) !important;
+  -webkit-mask-composite: xor !important; mask-composite: exclude !important;
+  box-shadow: none !important;
+  z-index: 3 !important;
+  opacity: var(--ring-opacity) !important;
+  animation: none !important;
+  filter: none !important;
+}
+
+/* In-flow cards carry the glass LOOK without live backdrop blur: every list
+   row and panel used to be a real-time blur surface (800+ of them on a big
+   scan), which is what made long views feel sluggish. Over the page's static
+   backdrop the stronger tint is visually equivalent, and the few surfaces
+   that float over MOVING content (sidebar, modals, search dropdown, treemap
+   timebar) keep true blur below. */
+.glass {
+  background:
+    linear-gradient(150deg, rgba(255,255,255,0.055), rgba(255,255,255,0.014) 40%, rgba(255,255,255,0) 65%),
+    var(--glass-strong);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  box-shadow: inset 0 1px 0 var(--shine), inset 0 0 24px rgba(255,255,255,0.02), var(--shadow-2);
+}
+:root[data-theme="light"] .glass {
+  background:
+    linear-gradient(150deg, rgba(255,255,255,0.7), rgba(255,255,255,0.3) 40%, rgba(255,255,255,0.1) 65%),
+    var(--glass-strong);
+  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-2);
+}
+/* The one in-flow surface floating over changing pixels (the treemap canvas)
+   keeps a real blur. */
+.tm-timebar {
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+}
+.tile {
+  background:
+    linear-gradient(160deg, rgba(255,255,255,0.045), rgba(255,255,255,0) 55%),
+    var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  box-shadow: inset 0 1px 0 var(--shine);
+}
+:root[data-theme="light"] .tile {
+  background:
+    linear-gradient(160deg, rgba(255,255,255,0.55), rgba(255,255,255,0.08) 55%),
+    var(--surface-1);
+}
+/* When the LG engine lenses an element that also carries .glass, the lens ::before
+   takes over tint + backdrop so the element itself must not double-filter.
+   The light-theme selector is repeated to outweigh :root[data-theme] .glass rules. */
+.lg.glass, :root[data-theme="light"] .lg.glass {
+  background: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* Glassy scrollbars */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 99px;
+  border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); background-clip: content-box; }
+:root[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(10,15,30,0.28); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+.btn {
+  display: inline-flex; align-items: center; gap: 7px; justify-content: center;
+  min-height: 30px; padding: 0 13px; border-radius: var(--r-sm);
+  border: 1px solid var(--hairline);
+  background: linear-gradient(170deg, rgba(255,255,255,0.07), rgba(255,255,255,0) 55%), var(--surface-2);
+  color: var(--text-1); font-size: 13px; font-weight: 500; cursor: pointer;
+  box-shadow: inset 0 1px 0 var(--shine), 0 1px 2px rgba(0,0,0,0.18);
+  transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
+              opacity var(--dur-1) var(--ease), box-shadow var(--dur-2) var(--ease),
+              transform var(--dur-2) var(--ease-spring);
+}
+.btn:hover { background: linear-gradient(170deg, rgba(255,255,255,0.09), rgba(255,255,255,0) 55%), var(--surface-3);
+  border-color: var(--hairline-2); box-shadow: inset 0 1px 0 var(--shine), 0 4px 14px rgba(0,0,0,0.22); }
+.btn:active { transform: scale(0.96); box-shadow: inset 0 1px 0 var(--shine), 0 1px 2px rgba(0,0,0,0.18); }
+.btn-primary {
+  background: linear-gradient(170deg, rgba(255,255,255,0.28), rgba(255,255,255,0.04) 52%), var(--accent);
+  border-color: rgba(255,255,255,0.22); color: #fff;
+  box-shadow: 0 4px 18px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -6px 14px rgba(0,40,110,0.22);
+}
+.btn-primary:hover { background: linear-gradient(170deg, rgba(255,255,255,0.34), rgba(255,255,255,0.06) 52%), #2492ff;
+  box-shadow: 0 7px 28px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,0.4); }
+.btn-danger { background: linear-gradient(170deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 55%), var(--danger-soft);
+  border-color: rgba(255,69,58,0.38); color: #ff6b61; }
+:root[data-theme="light"] .btn-danger { color: #d63a30; }
+.btn-danger:hover { background: rgba(255,69,58,0.24); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 9px; border: 1px solid transparent;
+  background: transparent; color: var(--text-2); cursor: pointer;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease),
+              border-color var(--dur-1) var(--ease), transform var(--dur-2) var(--ease-spring);
+  flex: none;
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--text-1); border-color: var(--hairline);
+  box-shadow: inset 0 1px 0 var(--shine); }
+.icon-btn:active { transform: scale(0.9); }
+.icon-btn.danger:hover { background: var(--danger-soft); color: #ff6b61; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+input[type="text"], input[type="number"], select {
+  background: linear-gradient(180deg, rgba(0,0,0,0.10), rgba(0,0,0,0) 40%), var(--surface-1);
+  border: 1px solid var(--hairline); border-radius: var(--r-sm);
+  color: var(--text-1); font-size: 13px; padding: 4px 12px; font-family: inherit;
+  box-shadow: inset 0 1.5px 3px rgba(0,0,0,0.14);
+  transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease),
+              box-shadow var(--dur-2) var(--ease);
+  min-height: 30px;
+}
+:root[data-theme="light"] input[type="text"], :root[data-theme="light"] input[type="number"], :root[data-theme="light"] select {
+  background: linear-gradient(180deg, rgba(10,15,30,0.04), rgba(10,15,30,0) 40%), rgba(255,255,255,0.6);
+}
+input:hover, select:hover { border-color: var(--hairline-2); }
+input:focus, select:focus { border-color: var(--accent); outline: none; background: var(--surface-2);
+  box-shadow: inset 0 1.5px 3px rgba(0,0,0,0.1), 0 0 0 3.5px var(--accent-soft), 0 0 18px var(--accent-soft); }
+input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+select { cursor: pointer; appearance: none; -webkit-appearance: none; padding-right: 28px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-2) 50%), linear-gradient(135deg, var(--text-2) 50%, transparent 50%);
+  background-position: calc(100% - 16px) 55%, calc(100% - 11px) 55%;
+  background-size: 5px 5px; background-repeat: no-repeat; }
+select option { background: var(--glass-strong); color: var(--text-1); }
+.ic { display: inline-block; vertical-align: -3px; flex: none; }
+.chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 8px; flex: none;
+  background: color-mix(in srgb, var(--tint) 15%, transparent);
+  color: var(--tint);
+}
+.skeleton { position: relative; overflow: hidden; background: var(--skeleton-a); border-radius: 8px; }
+.skeleton::after { content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, var(--skeleton-b), transparent);
+  animation: shimmer 1.4s ease infinite; }
+@keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }

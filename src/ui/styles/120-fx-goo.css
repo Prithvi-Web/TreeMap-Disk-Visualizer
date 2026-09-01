@@ -1,0 +1,89 @@
+/* ═══════════════ FX: Liquid Goo — styles ═══════════════ */
+/* Two layers per segmented control: .fxgoo-sil is the SVG silhouette (goo
+   filter + droplet tail; the outer --shadow-1 rides here as a GPU
+   drop-shadow, so ONE consistent shadow hugs the merged liquid through the
+   whole travel), and .fxgoo-thumb is the crisp surface above it. Buttons sit
+   above both. The selected-button fill moves ONTO the thumb — see the
+   replacement rules at the bottom. */
+
+.seg { position: relative; }
+.seg > button { position: relative; z-index: 1; }
+
+/* Silhouette inks. The goo threshold (alpha slope 18/22, intercept ≈ −7)
+   ERASES translucent fills outright — a rgba(...,0.13) surface never
+   crosses it, so the silhouette must paint with OPAQUE equivalents of the
+   surface tokens as they composite over the app's chrome. The translucent
+   originals stay on the crisp layers above, exactly as before. */
+:root { --goo-ink: #323440; --goo-ink-2: #282a33; }
+:root[data-theme="light"] { --goo-ink: #d7dadf; --goo-ink-2: #e1e3e8; }
+
+.fxgoo-sil { position: absolute; inset: 0; overflow: visible; pointer-events: none; z-index: 0;
+  /* --shadow-1 is single-layer, spread-free box-shadow syntax, which is also
+     valid drop-shadow() syntax — themes switch the shadow for free. */
+  filter: drop-shadow(var(--shadow-1));
+  /* Promote the filtered layer: WebKit otherwise repaints the goo a frame
+     behind the crisp thumb. */
+  will-change: filter, transform; }
+
+/* The crisp thumb: --surface-3 fill, faint top shine, inset hairline ring.
+   While the goo silhouette is live it carries the outer shadow, so the thumb
+   itself stays shadowless (two identical stacked shadows read darker). */
+.fxgoo-thumb { position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none;
+  border-radius: 8px;
+  background: linear-gradient(170deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02) 60%), var(--surface-3);
+  box-shadow: inset 0 1px 0 var(--shine), inset 0 0 0 0.5px rgba(255,255,255,0.06), var(--shadow-1);
+  will-change: transform, width; }
+:root[data-theme="light"] .fxgoo-thumb {
+  background: linear-gradient(170deg, rgba(255,255,255,0.95), rgba(255,255,255,0.65));
+  box-shadow: inset 0 1px 0 var(--shine), inset 0 0 0 0.5px rgba(10,15,30,0.06), var(--shadow-1); }
+.seg.fxgoo-live .fxgoo-thumb {
+  box-shadow: inset 0 1px 0 var(--shine), inset 0 0 0 0.5px rgba(255,255,255,0.06); }
+:root[data-theme="light"] .seg.fxgoo-live .fxgoo-thumb {
+  box-shadow: inset 0 1px 0 var(--shine), inset 0 0 0 0.5px rgba(10,15,30,0.06); }
+
+/* Fallback (anything threw): a plain CSS transition carries the thumb; the
+   timing function is the compiled spring where linear() is supported, set
+   inline by FxGoo.degrade. The global prefers-reduced-motion rule already
+   collapses this transition to 0.01ms. */
+.fxgoo-thumb.fxgoo-fallback {
+  transition: transform var(--dur-2) var(--ease-spring), width var(--dur-2) var(--ease); }
+
+/* ── Range-slider trail (time-lapse scrubber) ── */
+/* The host only becomes a containing block when it was static; the overlay
+   silhouette carries no shadow — the trail is bare liquid behind the native
+   accent thumb. */
+.fxgoo-host { position: relative; }
+.fxgoo-sil-slider { filter: none; z-index: 0; }
+input.fxgoo-range { position: relative; z-index: 1; }
+
+/* ── Detach pair (search field + plain-words button) ── */
+/* The crisp mover rides a custom property, not a raw transform, so the
+   engine's per-frame writes COMPOSE with the control's own :active spring
+   instead of clobbering it. Only elements the engine actually moves get
+   this class: a transform is a stacking context, and the search field
+   anchors a z-indexed dropdown that must keep escaping to the view layer —
+   so by default the FIELD never transforms, only its satellite. */
+.fxgoo-pair-item { transform: translateX(var(--fxgoo-dx, 0px)); position: relative; }
+.icon-btn.fxgoo-pair-item:active { transform: translateX(var(--fxgoo-dx, 0px)) scale(0.9); }
+/* Fallback (anything threw): the same property, eased by a plain CSS
+   transition on the demo's curve. The global prefers-reduced-motion rule
+   collapses this transition like every other. */
+.fxgoo-pair-item.fxgoo-fallback { transition: transform 600ms cubic-bezier(0.22, 1.3, 0.71, 1); }
+
+/* ── Bend (drive tiles under a hovering cart drag) ── */
+/* Negative z-index: above the tile's own background, below its content —
+   and no drop shadow, because the tile never cast one and a bulge that
+   suddenly casts light reads as a different object. */
+.fxgoo-sil-bend { filter: none; z-index: -1; }
+/* Content leans along the liquid via the published bend vars — scoped to a
+   live bend so idle tiles carry no transform at all. */
+.fxgoo-bending > :not(.fxgoo-sil-bend) {
+  transform: translate(calc(var(--lg-bend-x, 0px) * 0.35), calc(var(--lg-bend-y, 0px) * 0.35)); }
+
+/* ═══ REPLACEMENT for the old selected-button fill (index.html ~line 1837).
+   The thumb carries the fill now; a selected button is only a text-color
+   change. These rules assume the two old .seg button[aria-selected="true"]
+   blocks (dark + light) were DELETED at splice time — see INTEGRATION.md. ═══ */
+.seg button[aria-selected="true"] { background: transparent; color: var(--text-1); box-shadow: none; }
+:root[data-theme="light"] .seg button[aria-selected="true"] { background: transparent; }
+/* ═══ end FX: Liquid Goo styles ═══ */

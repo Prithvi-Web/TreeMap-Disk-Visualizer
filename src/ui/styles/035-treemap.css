@@ -1,0 +1,98 @@
+/* ── Treemap view ── */
+/* The toolbar is TWO deliberate rows, the way a macOS app draws one — never
+   one line that wraps wherever it happens to run out of room.
+   Row one is PLACES: the breadcrumb trail on the left, the view switcher
+   held in the true centre by equal flexible flanks, search on the right.
+   Row two is SETTINGS: colour mode and depth anchored left, mode pills and
+   actions packed right. Each row owns its alignment, so no control ever
+   hangs alone on an accidental third line. The toolbar measures ITSELF
+   (container queries), so the same rules hold in any window and beside any
+   sidebar state — not just fullscreen. */
+.tm-toolbar { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;
+  container-type: inline-size; }
+.tb-row { min-height: 30px; }
+.tb-row-nav { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 12px; align-items: center; }
+/* stretch, always: any other justify-self sizes a grid item to its own
+   content instead of its track, so a `minmax(0, 1fr)` flank stops
+   constraining it and the group grows straight over its neighbours. The
+   groups are flex containers, so alignment is justify-content's job. */
+.tb-row-nav .tb-nav { justify-self: stretch; justify-content: flex-start; }
+.tb-row-nav .tb-view { justify-self: stretch; justify-content: center; }
+.tb-row-nav .tb-find { justify-self: stretch; justify-content: flex-end; }
+.tb-row-controls { display: flex; align-items: center; justify-content: flex-end;
+  gap: 8px 12px; flex-wrap: wrap; }
+.tb-group { display: flex; align-items: center; gap: 6px; flex: none; min-width: 0; }
+.tb-nav { min-width: 0; }
+/* The spring holds the left cluster left and the right clusters right;
+   it alone may collapse to nothing when the row tightens. */
+.tb-spring { flex: 1 1 0; min-width: 0; }
+/* Dividers are drawn BY the group that follows a cluster, never by loose
+   1px divs: when groups wrap, a divider can only travel WITH its group,
+   so no hairline ever orphans alone at a row boundary. */
+.tb-spring + .tb-modes::before,
+.tb-modes + .tb-actions::before { content: ""; width: 1px; height: 16px;
+  background: var(--hairline-2); flex: none; margin-right: 6px; }
+/* A narrow toolbar: the centre column would crush the crumbs first and the
+   search second, so the switcher takes its own centred line instead and
+   the settings row leans left with the content above it. */
+@container (max-width: 700px) {
+  .tb-row-nav { grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "nav find" "view view"; row-gap: 8px; }
+  .tb-row-nav .tb-nav { grid-area: nav; }
+  .tb-row-nav .tb-find { grid-area: find; }
+  .tb-row-nav .tb-view { grid-area: view; justify-self: stretch;
+    justify-content: center; max-width: 100%; min-width: 0; }
+  .tb-row-nav .tb-view .seg { max-width: 100%; }
+  .tb-row-nav .tb-view .seg button { padding: 0 9px; }
+  .tb-row-controls { justify-content: flex-start; }
+  /* The spring exists to hold left and right clusters apart; once the row
+     flows left it would strand the mode pills on the far right of line one
+     while the actions wrap left onto line two. Collapsing it lets every
+     group flow left in markup order — tidy rows, no right-hung orphan. */
+  .tb-spring { display: none; }
+}
+/* nowrap + overflow clips a deep trail; packing it to the flex END makes
+   the clip eat the ROOT crumbs, so the folder actually on screen — the
+   one crumb that must stay visible — is the last thing to go.
+   The mask turns that clip into a fade, so the oldest crumb dissolves at
+   the start edge instead of being sliced through a letter. Its stop sits
+   at 34px — wide enough to read as a fade, short enough that a crumb one
+   step from the edge is still fully legible. */
+.crumbs { display: flex; align-items: center; gap: 3px; flex-wrap: nowrap; overflow: hidden;
+  justify-content: flex-end; font-size: 13px; flex: 1 1 auto; min-width: 0;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 34px);
+  mask-image: linear-gradient(to right, transparent 0, #000 34px); }
+.crumbs button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid transparent;
+  background: transparent; color: var(--accent); cursor: pointer; font-size: 12.5px; font-weight: 500;
+  height: 30px; padding: 0 10px; border-radius: 7px; transition: background var(--dur-1) var(--ease);
+  max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
+.crumbs button:hover { background: var(--accent-soft); }
+.crumbs button[aria-current="true"] { color: var(--text-1); background: var(--surface-2);
+  border-color: var(--hairline); pointer-events: none; }
+.crumbs .sep { color: var(--text-3); display: inline-flex; flex: none; }
+.tm-toolbar label { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.tm-toolbar .field { position: relative; }
+.tm-toolbar .field .ic { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
+/* cqw, not px: inside a tight toolbar the field gives up width smoothly
+   instead of forcing the find group to wrap or crush its neighbours. */
+#tmSearch { width: clamp(140px, 26cqw, 200px); padding-left: 32px; }
+#treemapWrap { position: relative; overflow: hidden; padding: 10px; }
+#treemapZoom { transition: transform var(--dur-2) var(--ease), opacity var(--dur-2) var(--ease); transform-origin: center; }
+#treemapZoom.zooming { transform: scale(1.05); opacity: 0; }
+#treemapCanvas { display: block; width: 100%; border-radius: 10px; cursor: default; }
+/* Wraps: legend + status + hint need ~700px on one line, and the footer has
+   to survive the 640px floor beside an expanded sidebar. */
+.tm-foot { display: flex; align-items: center; gap: 8px 16px; margin-top: 12px; font-size: 11.5px; color: var(--text-2); padding: 0 4px; flex-wrap: wrap; }
+.legend-grad { width: 220px; height: 7px; border-radius: 4px;
+  background: linear-gradient(90deg, var(--ok), var(--warn), var(--danger)); }
+.tm-legend { display: flex; align-items: center; gap: 9px; }
+.tm-legend .legend-grad { width: 170px; }
+.tm-legend-bands { display: flex; align-items: center; gap: 13px; }
+.tm-legend-bands .ab { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.tm-legend .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.22); }
+.tm-foot .hint { margin-left: auto; color: var(--text-3); display: flex; align-items: center; gap: 6px; }
+/* §6.2's footnote. Deliberately not a toast: a caveat about what the map is
+   showing has to stay on screen for as long as the map does. */
+.tm-altnote { margin: 6px 4px 0; font-size: 11.5px; color: var(--text-3); line-height: 1.5; }

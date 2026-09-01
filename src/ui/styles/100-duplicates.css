@@ -1,0 +1,80 @@
+/* ── Duplicates view ── */
+.dup-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.dup-toolbar .spacer { flex: 1; }
+.dup-toolbar label { font-size: 12px; color: var(--text-2); }
+.dup-summary { font-size: 13px; color: var(--text-2); }
+.dup-summary b { color: var(--text-1); }
+/* The reclaim funnel between toolbar and list: found → selected → staged.
+   Compact tracks; the factory's own stage markup carries names and values. */
+.dup-funnel { margin: 2px 0 14px; }
+.dup-list { display: flex; flex-direction: column; gap: 12px; container-type: inline-size; }
+/* Per-group reclaimable mini-bar, the kit recipe at list-row scale. It is
+   the least essential column in the head, so it is the one that leaves
+   when the card runs out of room. */
+.dup-head .bar-track.dup-mini { width: 74px; height: 4px; border-radius: 2px;
+  background: var(--surface-2); flex: none; }
+.dup-head .bar-track.dup-mini .fx-bar-fill { display: block; }
+@container (max-width: 620px) { .dup-head .bar-track.dup-mini { display: none; } }
+/* Rows are quieter than cards: the full card shadow repeated hundreds of
+   times read as noise, so rows carry a hairline lift instead, and a calmer
+   radius keeps the list's rhythm tight. */
+.dup-group { padding: 0; overflow: hidden; border-radius: 14px;
+  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-1); }
+.dup-group:hover { border-color: var(--hairline-2); }
+.dup-head { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: pointer; user-select: none;
+  transition: background var(--dur-1) var(--ease); }
+.dup-head:hover { background: var(--surface-1); }
+.dup-head .meta { flex: 1; min-width: 0; }
+.dup-head .nm { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dup-head .sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+.dup-head .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap;
+  background: color-mix(in srgb, var(--warn) 12%, transparent); padding: 3px 10px; border-radius: 99px; }
+.dup-head .chev { transition: transform var(--dur-2) var(--ease); color: var(--text-3); display: inline-flex; }
+.dup-group.open .dup-head .chev { transform: rotate(90deg); }
+.dup-files { display: none; border-top: 1px solid var(--hairline); }
+.dup-group.open .dup-files { display: block; }
+.dup-file { display: flex; align-items: center; gap: 10px; padding: 8px 16px; font-size: 12.5px;
+  border-bottom: 1px solid var(--hairline); }
+.dup-file:last-child { border-bottom: none; }
+.dup-file .pth { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  direction: rtl; text-align: left; color: var(--text-2); }
+.dup-file .tag { font-size: 10px; font-weight: 600; color: var(--ok); border: 1px solid rgba(48,209,88,0.4);
+  padding: 1px 7px; border-radius: 99px; white-space: nowrap; }
+.dup-file .dt { color: var(--text-3); font-size: 11px; white-space: nowrap; }
+.dup-progress { display: flex; flex-direction: column; gap: 12px; align-items: center; padding: 60px 0; color: var(--text-2); }
+/* min(): 320px where the card affords it, the card's own width where not. */
+.dup-progress .track { width: min(320px, 86%); height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.dup-progress .fill { height: 100%; width: 0%; border-radius: 3px; background: var(--accent); transition: width 300ms var(--ease); }
+
+/* ── Near-duplicate images ── */
+.nd-list { display: flex; flex-direction: column; gap: 12px; }
+.nd-cluster { padding: 13px 16px 16px; }
+.nd-chead { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.nd-chead .nd-count { font-size: 13px; font-weight: 600; }
+.nd-chead .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap; margin-left: auto;
+  background: color-mix(in srgb, var(--warn) 12%, transparent); padding: 3px 10px; border-radius: 99px; }
+.nd-strip { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.nd-item { flex: 0 0 132px; width: 132px; }
+.nd-thumbwrap { position: relative; display: block; width: 132px; height: 100px; border-radius: 9px; overflow: hidden;
+  background: var(--surface-2); border: 1px solid var(--hairline); cursor: pointer; }
+.nd-thumbwrap.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.nd-thumb { width: 100%; height: 100%; object-fit: cover; display: block; background: var(--surface-2); }
+.nd-thumb.broken { display: flex; align-items: center; justify-content: center; color: var(--text-3); }
+.nd-ck { position: absolute; top: 7px; left: 7px; z-index: 2; width: 17px; height: 17px; cursor: pointer; accent-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.35); border-radius: 4px; }
+.nd-badge { position: absolute; bottom: 6px; right: 6px; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 99px;
+  background: rgba(0,0,0,0.72); color: #fff; }
+.nd-badge.new { background: rgba(48,209,88,0.85); }
+.nd-info { margin-top: 7px; }
+.nd-info .nm { font-size: 11.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nd-info .sub { font-size: 10.5px; color: var(--text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nd-info .acts { display: flex; gap: 4px; margin-top: 5px; }
+.nd-note { font-size: 12px; color: var(--text-3); margin-bottom: 10px; display: flex; align-items: center; gap: 7px; }
+.nd-chead .nd-shown { font-size: 11.5px; color: var(--text-3); }
+/* "+N more" sits in the strip at thumbnail size so the row stays aligned. */
+.nd-morebtn { width: 132px; height: 100px; border-radius: 9px; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--text-2); cursor: pointer;
+  background: var(--surface-2); border: 1px dashed var(--hairline); }
+.nd-morebtn:hover { color: var(--accent); border-color: var(--accent); }
+.nd-loadmore { display: flex; justify-content: center; padding: 4px 0 2px; }
+.nd-loadmore .btn { display: inline-flex; align-items: center; gap: 7px; }

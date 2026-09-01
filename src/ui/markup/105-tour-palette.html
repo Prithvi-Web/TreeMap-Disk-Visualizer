@@ -1,0 +1,21 @@
+<!-- ═══════════ Guided first run (v4 §9.2) ═══════════
+     A floating coach card, NOT a modal: the whole point is that the user
+     drives the real UI — picks the folder, clicks the real Add buttons —
+     while the card narrates. pointer-events pass through everywhere except
+     the card itself. -->
+<div id="tourOverlay" role="dialog" aria-modal="false" aria-label="Welcome tour" hidden>
+  <div class="tour-card glass" id="tourCard"></div>
+</div>
+
+<!-- ═══════════ Command palette (v4 §9.1) ═══════════
+     ⌘K / Ctrl+K. One box over everything: views, actions, saved views and
+     recent scan roots, fuzzy-matched. Focus returns to where it was. -->
+<div class="modal-backdrop" id="cmdkModal" role="dialog" aria-modal="true" aria-label="Command palette">
+  <div class="modal cmdk-panel" style="width:560px;max-width:92vw;">
+    <input type="text" id="cmdkInput" role="combobox" aria-expanded="true" aria-controls="cmdkList"
+           aria-autocomplete="list" aria-label="Search views, actions, saved views and recent folders"
+           placeholder="Jump to a view, run an action, rescan a folder…" autocomplete="off" spellcheck="false">
+    <div id="cmdkList" role="listbox" aria-label="Palette results"></div>
+    <div class="muted cmdk-foot">↑↓ choose · ↵ run · esc close</div>
+  </div>
+</div>

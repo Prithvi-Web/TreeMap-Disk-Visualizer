@@ -1,0 +1,77 @@
+<div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="blob b4"></div>
+
+<!-- The one navigation surface: a collapsible liquid-glass sidebar. It
+     replaced the horizontal header when the header ran out of width — at
+     mild page zoom the search box clipped and overlapped its neighbours,
+     because ten tabs, a search box and three actions were competing for one
+     row. A column never has that fight: every item owns its own line, and
+     collapsing to an icon rail returns the space when the user wants it. -->
+<aside id="sideNav" aria-label="Navigation">
+  <div class="side-top">
+    <div class="logo">
+      <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
+        <rect x="1" y="1" width="14" height="24" rx="4" fill="#30D158"/>
+        <rect x="17" y="1" width="8" height="14" rx="3.5" fill="#FFD60A"/>
+        <rect x="17" y="17" width="8" height="8" rx="3.5" fill="#FF453A"/>
+      </svg>
+      <span class="side-label">TreeMap<span class="sub">Disk Space Visualizer</span></span>
+    </div>
+    <span id="headerSpin" aria-hidden="true"></span>
+    <button class="icon-btn" id="sideToggle" aria-label="Collapse the navigation" aria-expanded="true"
+            title="Collapse navigation (⌘B)"></button>
+  </div>
+
+  <!-- A4: global search. Lives at the top of the sidebar, not in a view,
+       because it searches everything TreeMap has indexed rather than
+       whatever happens to be on screen. "/" focuses it from anywhere (⌘K is
+       the command palette, which carries a search row);
+       on the collapsed rail those shortcuts (or the icon) open the sidebar
+       first, so the input genuinely exists to be focused. -->
+  <div class="gsearch" id="gsearchWrap">
+    <!-- No decorative magnifier inside the box: the placeholder already says
+         what this is, and the injector-replaces-the-element behaviour made a
+         separately-positioned icon a recurring alignment bug. The rail form
+         below keeps its icon — there, the icon IS the control. -->
+    <input type="text" id="gsearch" placeholder="Search all indexed files…"
+           aria-label="Search all indexed files" aria-expanded="false"
+           aria-controls="gsearchResults" role="combobox" aria-autocomplete="list"
+           autocomplete="off" spellcheck="false">
+    <!-- FX wiring: the "line" beam lives on this overlay strip, not on the
+         wrap — the beam sets overflow:hidden on its host, and the wrap anchors
+         the results panel, which must overflow. -->
+    <span class="fx-beam-strip" id="gsearchBeamStrip" aria-hidden="true"></span>
+    <button class="gsearch-rail-btn" id="gsearchRailBtn" aria-label="Search all indexed files" title="Search (/)" tabindex="-1">
+      <span data-icon="search" data-size="15"></span>
+    </button>
+    <div class="gsearch-panel" id="gsearchResults" role="listbox" aria-label="Search results" hidden></div>
+  </div>
+
+  <nav class="tabbar" role="tablist" aria-label="Views" aria-orientation="vertical">
+    <button role="tab" aria-selected="true" data-view="dashboard" title="Dashboard"><span data-icon="dashboard"></span><span class="side-label">Dashboard</span></button>
+    <button role="tab" aria-selected="false" data-view="treemap" title="Treemap"><span data-icon="treemap"></span><span class="side-label">Treemap</span></button>
+    <button role="tab" aria-selected="false" data-view="city" title="Disk City"><span data-icon="box"></span><span class="side-label">Disk City</span></button>
+    <button role="tab" aria-selected="false" data-view="grid" title="Grid"><span data-icon="grid"></span><span class="side-label">Grid</span></button>
+    <button role="tab" aria-selected="false" data-view="apps" title="Apps"><span data-icon="box"></span><span class="side-label">Apps</span></button>
+    <button role="tab" aria-selected="false" data-view="games" title="Libraries"><span data-icon="play"></span><span class="side-label">Libraries</span></button>
+    <button role="tab" aria-selected="false" data-view="security" title="Security"><span data-icon="shield"></span><span class="side-label">Security</span></button>
+    <button role="tab" aria-selected="false" data-view="fleet" title="Fleet"><span data-icon="globe"></span><span class="side-label">Fleet</span></button>
+    <button role="tab" aria-selected="false" data-view="missing" title="Missing GB"><span data-icon="pie"></span><span class="side-label">Missing GB</span></button>
+    <button role="tab" aria-selected="false" data-view="duplicates" title="Duplicates"><span data-icon="copy"></span><span class="side-label">Duplicates</span></button>
+    <button role="tab" aria-selected="false" data-view="trends" title="Trends"><span data-icon="trendUp"></span><span class="side-label">Trends</span></button>
+    <button role="tab" aria-selected="false" data-view="history" title="History"><span data-icon="calendar"></span><span class="side-label">History</span></button>
+    <button role="tab" aria-selected="false" data-view="offloaded" title="Offloaded"><span data-icon="archive"></span><span class="side-label">Offloaded</span></button>
+    <button role="tab" aria-selected="false" data-view="capsule" title="Time Capsule"><span data-icon="clock"></span><span class="side-label">Time Capsule</span></button>
+    <button role="tab" aria-selected="false" data-view="autopilot" title="Autopilot"><span data-icon="sparkles"></span><span class="side-label">Autopilot</span></button>
+  </nav>
+
+  <div class="side-foot">
+    <button class="btn" id="cleanupBtn" title="Find and trash old or large files"><span data-icon="sparkles"></span><span class="side-label">Clean Up</span></button>
+    <div class="side-foot-row">
+      <button class="icon-btn" id="settingsBtn" aria-label="Settings" title="Settings — schedules & ignore list"></button>
+      <button class="icon-btn" id="themeToggle" aria-label="Toggle light or dark theme" title="Toggle theme"></button>
+    </div>
+  </div>
+</aside>
+<div id="navScrim" aria-hidden="true"></div>
+
+<main>

@@ -1,0 +1,110 @@
+  <!-- ═══════════ Autopilot (B1) ═══════════ -->
+  <section class="view" id="view-autopilot" role="tabpanel" aria-label="Autopilot" hidden>
+    <div class="card glass">
+      <h2><span data-icon="sparkles"></span>Autopilot
+        <!-- FX wiring: the "breathing" heartbeat, mounted only while at
+             least one policy is armed to act on its own (see fxApBreatheSync). -->
+        <span class="fx-orb-well" id="apBreatheWell" title="Autopilot is armed and watching"></span>
+        <button class="pill" id="apAddBtn" style="margin-left:auto;">Add a policy</button>
+      </h2>
+      <div class="apps-info muted" id="apInfo"></div>
+      <div id="apPolicies"></div>
+    </div>
+
+    <div class="card glass" style="margin-top:18px;">
+      <h2><span data-icon="clock"></span>What Autopilot has done</h2>
+      <div id="apRuns"></div>
+    </div>
+  </section>
+
+  <!-- Policy editor: the Clean Up custom-rules controls, reused verbatim in
+       shape so a person who has used Clean Up already knows this dialog. -->
+  <div class="modal-backdrop" id="apModal" role="dialog" aria-modal="true" aria-labelledby="apModalTitle">
+    <div class="modal" style="width:620px;">
+      <div class="modal-head">
+        <h3 id="apModalTitle"><span data-icon="sparkles"></span>Cleanup policy</h3>
+        <button class="close-x" data-close="apModal" aria-label="Close"><span data-icon="x"></span></button>
+      </div>
+      <div class="modal-body">
+        <div class="rule-row">
+          <span data-icon="type"></span><label for="apName">Name</label>
+          <input type="text" id="apName" placeholder="Old build folders" aria-label="Policy name" style="flex:1;">
+        </div>
+        <div class="rule-row" style="margin-top:8px;">
+          <span data-icon="folder"></span><label for="apPath">In folder</label>
+          <input type="text" id="apPath" placeholder="/Users/you/Projects" aria-label="Folder this policy cleans" style="flex:1;">
+          <button class="btn" id="apBrowseBtn">Browse…</button>
+        </div>
+
+        <div class="set-h" style="margin-top:18px;"><span data-icon="search"></span>What it cleans up</div>
+        <div class="seg" id="apMatchSeg" role="tablist" aria-label="Match kind" style="margin-bottom:10px;">
+          <button role="tab" aria-selected="true" data-apmatch="suggestion">Known reclaimable</button>
+          <button role="tab" aria-selected="false" data-apmatch="custom">My own rules</button>
+          <button role="tab" aria-selected="false" data-apmatch="query">A query</button>
+        </div>
+        <div id="apMatchSuggestion">
+          <div class="muted" style="margin-bottom:8px;">The same things Clean Up's Smart Suggestions find — each one safe to delete and rebuildable.</div>
+          <div id="apGroupList"></div>
+        </div>
+        <!-- v4 §4.5 — the same grammar the treemap box and saved views use.
+             Checked by the one parser before the policy can be saved. -->
+        <div id="apMatchQuery" style="display:none;">
+          <div class="muted" style="margin-bottom:8px;">The same search language as the treemap box, e.g. <code>ext:log modified&gt;90d -in:node_modules</code>. It is checked before the policy can be saved, and a query with no conditions is refused — it would match every file in the folder.</div>
+          <div class="field" style="max-width:none;">
+            <span data-icon="search"></span>
+            <input type="text" id="apRuleQuery" placeholder="ext:log modified&gt;90d" aria-label="The query this policy matches on" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="muted" id="apQueryStatus" role="status" aria-live="polite" style="margin-top:6px;"></div>
+        </div>
+        <div id="apMatchCustom" style="display:none;">
+          <div class="rule-row">
+            <input type="checkbox" id="apRuleAgeOn" checked> <span data-icon="clock"></span><label for="apRuleAgeOn">Older than</label>
+            <input type="number" id="apRuleAgeDays" value="180" min="1" aria-label="Days"> <span class="muted">days</span>
+          </div>
+          <div class="rule-row">
+            <input type="checkbox" id="apRuleSizeOn" checked> <span data-icon="trendUp"></span><label for="apRuleSizeOn">Larger than</label>
+            <input type="number" id="apRuleSizeMb" value="100" min="1" aria-label="Megabytes"> <span class="muted">MB</span>
+          </div>
+          <div class="rule-row">
+            <input type="checkbox" id="apRuleExtOn"> <span data-icon="file"></span><label for="apRuleExtOn">Extensions</label>
+            <input type="text" id="apRuleExts" placeholder="log, tmp, dmg" aria-label="Extensions, comma separated">
+          </div>
+        </div>
+
+        <div class="set-h" style="margin-top:18px;"><span data-icon="shield"></span>Limits</div>
+        <div class="rule-row">
+          <span data-icon="gauge"></span><label for="apMaxRun">Delete at most</label>
+          <input type="number" id="apMaxRun" min="0" placeholder="no limit" aria-label="Maximum gigabytes per run"> <span class="muted">GB per run</span>
+        </div>
+        <div class="rule-row" style="margin-top:6px;">
+          <span data-icon="gauge"></span><label for="apMaxWeek">and at most</label>
+          <input type="number" id="apMaxWeek" min="0" placeholder="no limit" aria-label="Maximum gigabytes per week"> <span class="muted">GB per week</span>
+        </div>
+        <div class="rule-row" style="margin-top:6px;">
+          <span data-icon="alert"></span><label for="apConfirmAbove">Ask me first above</label>
+          <input type="number" id="apConfirmAbove" min="0" placeholder="never ask" aria-label="Ask for confirmation above this many gigabytes"> <span class="muted">GB in one run</span>
+        </div>
+        <div class="rule-row" style="margin-top:6px;">
+          <span data-icon="clock"></span><label for="apCooldown">Run at most once every</label>
+          <input type="number" id="apCooldown" value="7" min="1" max="365" aria-label="Cooldown in days"> <span class="muted">days</span>
+        </div>
+        <div class="rule-row" style="margin-top:10px;">
+          <input type="checkbox" id="apDryRunFirst" checked>
+          <label for="apDryRunFirst">Only ever preview — never actually delete</label>
+        </div>
+        <div class="rule-row">
+          <input type="checkbox" id="apEnabled">
+          <label for="apEnabled">Enabled</label>
+        </div>
+
+        <div id="apPreview"></div>
+      </div>
+      <div class="modal-foot">
+        <span class="muted" style="font-size:11.5px;">Anything deleted is copied to the Time Capsule first, and can be undone.</span>
+        <div style="flex:1"></div>
+        <button class="btn" id="apPreviewBtn"><span data-icon="search"></span>Preview</button>
+        <button class="btn btn-primary" id="apSaveBtn">Save policy</button>
+      </div>
+    </div>
+  </div>
+</main>

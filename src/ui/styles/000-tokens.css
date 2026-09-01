@@ -1,0 +1,90 @@
+/* ════════════════════════════ Design tokens ════════════════════════════ */
+:root {
+  --accent:        #0A84FF;
+  --accent-soft:   rgba(10,132,255,0.16);
+  --accent-glow:   rgba(10,132,255,0.35);
+  --ok:            #30D158;
+  --warn:          #FFD60A;
+  --danger:        #FF453A;
+  --danger-soft:   rgba(255,69,58,0.14);
+
+  --bg-0:          #05060a;
+  --bg-1:          #0c0d14;
+  --surface-1:     rgba(255,255,255,0.05);
+  --surface-2:     rgba(255,255,255,0.085);
+  --surface-3:     rgba(255,255,255,0.13);
+  --glass:         rgba(19,21,30,0.52);
+  --glass-strong:  rgba(17,19,28,0.72);
+  --hairline:      rgba(255,255,255,0.10);
+  --hairline-2:    rgba(255,255,255,0.18);
+  --shine:         rgba(255,255,255,0.11);
+
+  --text-1:        rgba(255,255,255,0.94);
+  --text-2:        rgba(255,255,255,0.63);
+  --text-3:        rgba(255,255,255,0.42);
+
+  --tm-canvas-bg:  rgba(0,0,0,0.30);
+  --scrim:         rgba(2,4,10,0.52);
+  --skeleton-a:    rgba(255,255,255,0.05);
+  --skeleton-b:    rgba(255,255,255,0.10);
+
+  --r-lg: 20px; --r-md: 13px; --r-sm: 10px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-1: 150ms; --dur-2: 240ms; --dur-3: 380ms;
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.32);
+  --shadow-2: 0 10px 34px rgba(0,0,0,0.42);
+  --shadow-3: 0 28px 80px rgba(0,0,0,0.55);
+  --blob-opacity: 0.6;
+
+  /* Liquid Glass */
+  --lg-blur: 22px;
+  --lg-sat: 185%;
+  --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.055), rgba(255,255,255,0.012) 42%, rgba(255,255,255,0) 68%), rgba(17,19,28,0.55);
+  --lg-tint-strong: linear-gradient(155deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015) 42%, rgba(255,255,255,0) 68%), rgba(15,17,25,0.68);
+  --ring-a: rgba(255,255,255,0.50);
+  --ring-b: rgba(255,255,255,0.10);
+  --ring-opacity: 0.75;
+  /* One definition, two readers: .lg::after paints it, and the
+     [data-fxbeam].lg guard restores it. Built from --ring-a/--ring-b and
+     --lg-angle, so it stays theme- and pointer-reactive wherever it lands. */
+  --lg-ring: linear-gradient(var(--lg-angle, 135deg),
+    rgba(255,255,255,0) 8%, var(--ring-b) 34%, var(--ring-a) 62%, rgba(255,255,255,0) 92%);
+}
+:root[data-theme="light"] {
+  --bg-0:          #e9ecf2;
+  --bg-1:          #f5f6fa;
+  --surface-1:     rgba(10,15,30,0.045);
+  --surface-2:     rgba(10,15,30,0.075);
+  --surface-3:     rgba(10,15,30,0.115);
+  --glass:         rgba(255,255,255,0.52);
+  --glass-strong:  rgba(253,253,255,0.72);
+  --hairline:      rgba(10,15,30,0.10);
+  --hairline-2:    rgba(10,15,30,0.18);
+  --shine:         rgba(255,255,255,0.75);
+
+  --text-1:        rgba(10,12,20,0.92);
+  --text-2:        rgba(10,12,20,0.60);
+  --text-3:        rgba(10,12,20,0.42);
+
+  /* The dark theme's #FFD60A yellow is near-invisible on light cards
+     (~1.5:1). Text and badges using --warn need this darker amber here. */
+  --warn:          #B36B00;
+  --tm-canvas-bg:  rgba(10,15,30,0.05);
+  --scrim:         rgba(24,28,44,0.34);
+  --skeleton-a:    rgba(10,15,30,0.05);
+  --skeleton-b:    rgba(10,15,30,0.10);
+
+  --shadow-1: 0 1px 2px rgba(20,24,40,0.09);
+  --shadow-2: 0 10px 34px rgba(20,24,40,0.14);
+  --shadow-3: 0 28px 80px rgba(20,24,40,0.22);
+  --blob-opacity: 0.45;
+
+  --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.65), rgba(255,255,255,0.28) 42%, rgba(255,255,255,0.12) 68%), rgba(252,253,255,0.42);
+  --lg-tint-strong: linear-gradient(155deg, rgba(255,255,255,0.75), rgba(255,255,255,0.34) 42%, rgba(255,255,255,0.16) 68%), rgba(252,253,255,0.55);
+  --ring-a: rgba(255,255,255,0.95);
+  --ring-b: rgba(255,255,255,0.35);
+  --ring-opacity: 0.9;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }

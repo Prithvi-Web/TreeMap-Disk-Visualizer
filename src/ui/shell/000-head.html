@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<!-- GENERATED FILE — do not edit. The app ships as one file (no external
+     resources, so it runs from file:// and out of a portable zip), but it is
+     written as ~110 small files in src/ui/. Edit those and run
+     `npm run build:ui`; `node scripts/build-ui.js --check` proves this file
+     is exactly what they produce, and the suite runs that check. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TreeMap — Disk Space Visualizer</title>
+<!-- Inline data: URI, per the single-file/no-external-resources contract.
+     Without any icon link the browser requests /favicon.ico on every boot
+     and the static server 404s it — the one red row in a clean network log.
+     The mark is the app's own treemap: three tiles in the size-scale hues. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect x='1' y='1' width='14' height='24' rx='4' fill='%2330D158'/%3E%3Crect x='17' y='1' width='8' height='14' rx='3.5' fill='%23FFD60A'/%3E%3Crect x='17' y='17' width='8' height='8' rx='3.5' fill='%230A84FF'/%3E%3C/svg%3E">
+<script>
+/* Apply saved theme before first paint to avoid a flash. */
+document.documentElement.dataset.theme =
+  localStorage.getItem('tm-theme') ||
+  (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+</script>
+<style>

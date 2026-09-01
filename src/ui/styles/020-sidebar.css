@@ -1,0 +1,117 @@
+/* ════════════════════════ Sidebar navigation ════════════════════════ */
+/* One column, two states. Expanded (--side-w) it is a liquid-glass panel:
+   search on top, the ten views, utilities at the foot. Collapsed
+   (--side-w-rail) it is an icon rail — labels vanish, every control keeps
+   its position and its tooltip. The column layout is the fix for the old
+   header's zoom bug: items never compete for one row, so nothing can clip
+   the search box at any zoom level. */
+:root { --side-w: 232px; --side-w-rail: 64px; }
+
+body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+
+#sideNav {
+  width: var(--side-w);
+  /* A floating glass card: inset from the window edges with the app's large
+     radius. position: relative anchors the .lg pseudo-layers; the grid row
+     (100% of the window) minus these margins sets its height. */
+  position: relative; z-index: 50;
+  margin: 12px 0 12px 12px; border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2);
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 14px 12px 12px;
+  transition: width var(--dur-3) var(--ease);
+  --lg-tint: linear-gradient(165deg, rgba(255,255,255,0.045), rgba(255,255,255,0) 60%),
+             color-mix(in srgb, var(--bg-1) 55%, transparent);
+  --lg-blur: 26px;
+}
+:root[data-theme="light"] #sideNav {
+  --lg-tint: linear-gradient(165deg, rgba(255,255,255,0.6), rgba(255,255,255,0.15) 60%),
+             color-mix(in srgb, var(--bg-1) 45%, transparent);
+}
+/* As a floating card the sidebar keeps the default .lg rounded shine ring —
+   it inherits the card's border-radius. */
+
+.side-top { display: flex; align-items: center; gap: 8px; min-height: 34px; }
+.logo { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 700; letter-spacing: -0.2px; min-width: 0; flex: 1; }
+.logo svg { flex: none; }
+.logo .side-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.logo .sub { display: block; font-weight: 400; color: var(--text-3); font-size: 10.5px; margin-top: 1px; }
+#sideToggle { flex: none; }
+
+.tabbar {
+  display: flex; flex-direction: column; gap: 2px;
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  margin: 0 -4px; padding: 0 4px; /* room for focus rings inside the scroller */
+}
+.tabbar button {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  border: none; background: transparent; color: var(--text-2);
+  font-size: 13px; font-weight: 500; padding: 8.5px 11px; border-radius: 10px; cursor: pointer;
+  white-space: nowrap; text-align: left;
+  transition: color var(--dur-1) var(--ease), background var(--dur-2) var(--ease),
+              box-shadow var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-spring);
+}
+/* .ic, not [data-icon]: the injector swaps data-icon spans for svg.ic
+   elements at boot, so an attribute selector here matches nothing. */
+.tabbar button .ic { flex: none; }
+.tabbar button .side-label { overflow: hidden; text-overflow: ellipsis; }
+.tabbar button:hover { color: var(--text-1); background: var(--surface-2); }
+.tabbar button:active { transform: scale(0.97); }
+/* A view whose capability is unavailable stays visible and focusable — it is
+   dimmed and explains itself when opened, rather than vanishing. A tab that
+   disappears reads as a bug; a tab that says why reads as an answer (§2.2). */
+.tabbar button.tab-unavailable { opacity: 0.45; }
+.tabbar button.tab-unavailable::after {
+  content: ''; width: 5px; height: 5px; border-radius: 50%; flex: none;
+  background: var(--warn, #FF9F0A); margin-left: auto; display: inline-block;
+}
+.tabbar button[aria-selected="true"] {
+  background: linear-gradient(170deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02) 60%), var(--surface-3);
+  color: var(--text-1);
+  box-shadow: inset 0 1px 0 var(--shine), inset 0 0 0 0.5px rgba(255,255,255,0.06), var(--shadow-1);
+}
+:root[data-theme="light"] .tabbar button[aria-selected="true"] {
+  background: linear-gradient(170deg, rgba(255,255,255,0.95), rgba(255,255,255,0.65));
+}
+
+.side-foot { display: flex; flex-direction: column; gap: 8px; }
+.side-foot .btn { justify-content: flex-start; }
+.side-foot-row { display: flex; gap: 8px; }
+
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#headerSpin { display: none; color: var(--accent); flex: none; }
+#headerSpin.on { display: inline-flex; }
+
+/* ── Collapsed: the icon rail ── */
+#sideNav.collapsed { width: var(--side-w-rail); padding-left: 10px; padding-right: 10px; }
+#sideNav.collapsed .side-label { display: none; }
+#sideNav.collapsed .side-top { flex-direction: column; gap: 10px; }
+#sideNav.collapsed .logo { flex: none; }
+#sideNav.collapsed #headerSpin.on { position: absolute; top: 12px; right: 8px; }
+#sideNav.collapsed .tabbar button { justify-content: center; padding: 9.5px 0; }
+#sideNav.collapsed .tabbar button.tab-unavailable::after { position: absolute; margin: 0; transform: translate(11px, -8px); }
+#sideNav.collapsed .tabbar button { position: relative; }
+#sideNav.collapsed .side-foot .btn { justify-content: center; padding: 0 8px; }
+#sideNav.collapsed .side-foot .btn .ic { margin: 0; }
+#sideNav.collapsed .side-foot-row { flex-direction: column; align-items: center; }
+
+/* ── Narrow windows: the expanded panel floats over the content ──
+   In-flow, an expanded sidebar would leave a phone-width column of app; the
+   rail stays in flow (it costs 64px), and expanding overlays instead. The
+   scrim is its own element — body::after is already the film-grain layer,
+   and borrowing it here would silently delete the grain below 900px. */
+#navScrim {
+  position: fixed; inset: 0; z-index: 49; background: rgba(0,0,0,0.35);
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-3) var(--ease);
+}
+@media (max-width: 900px) {
+  #sideNav:not(.collapsed) { position: fixed; left: 0; top: 0;
+    height: calc(100dvh - 24px); box-shadow: 24px 0 64px rgba(0,0,0,0.35); }
+  body { grid-template-columns: var(--side-w-rail) minmax(0, 1fr); }
+  /* Going `position: fixed` takes the sidebar OUT of the grid, so main — now
+     the only in-flow item — auto-placed into track 1 and rendered 64px wide
+     underneath the floating panel. Pin it to the content column. */
+  body:has(#sideNav:not(.collapsed)) main { grid-column: 2; }
+  body:has(#sideNav:not(.collapsed)) #navScrim { opacity: 1; pointer-events: auto; }
+}

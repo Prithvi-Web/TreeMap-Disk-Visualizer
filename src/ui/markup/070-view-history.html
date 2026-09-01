@@ -1,0 +1,46 @@
+  <!-- ═══════════ History (v4 §7 — calendar · journal · compare in one view) ═══════════ -->
+  <section class="view" id="view-history" role="tabpanel" aria-label="History — calendar heatmap, disk journal, and scan compare" hidden>
+    <div class="seg" id="histSeg" role="tablist" aria-label="History panel" style="margin-bottom:12px;">
+      <button type="button" data-panel="calendar" aria-selected="true" title="Bytes written per day, one cell per day">Calendar</button>
+      <button type="button" data-panel="journal" aria-selected="false" title="What changed, day by day, honestly attributed">Journal</button>
+      <button type="button" data-panel="compare" aria-selected="false" title="Two scans of one folder, diffed — with the split-slider for history pairs">Compare</button>
+    </div>
+    <div id="histPanelCalendar" class="pane-fade">
+    <div class="card glass">
+      <h2><span data-icon="calendar"></span>Calendar</h2>
+      <div class="rule-row" style="align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
+        <div class="seg" id="calChannelSeg" role="tablist" aria-label="Calendar channel">
+          <button type="button" data-ch="modified" aria-selected="true" title="Bytes modified per day — read from the scan itself, exact">Modified</button>
+          <button type="button" data-ch="created" aria-selected="false" title="Bytes created per day — needs per-file stats, capped and reported honestly">Created</button>
+        </div>
+        <span class="muted" id="calHint">Click a day to see those files on the treemap · drag across days for a range</span>
+      </div>
+      <div id="calBody"><div class="muted">Run a scan first.</div></div>
+      <div class="cal-legend muted num" id="calLegend" hidden>
+        <span>less</span><span class="cal-cell" data-lv="1"></span><span class="cal-cell" data-lv="2"></span><span class="cal-cell" data-lv="3"></span><span class="cal-cell" data-lv="4"></span><span>more</span>
+        <span id="calMax" style="margin-left:10px;"></span>
+      </div>
+      <div class="muted" id="calDegraded" role="status" style="margin-top:8px;" hidden></div>
+    </div>
+  </div>
+    <div id="histPanelJournal" class="pane-fade" hidden>
+    <div class="card glass">
+      <h2><span data-icon="activity"></span>Journal</h2>
+      <div class="muted" style="margin-bottom:10px;">A rolling narrative of significant changes, noticed by scheduled scans. Attribution is honest: an app named only when the path says so, <b>you</b> only when TreeMap's own audit log matches, and otherwise exactly “an unidentified process”.</div>
+      <div class="muted" id="journalPortable" role="status" style="margin-bottom:8px;" hidden></div>
+      <div id="journalBody"><div class="muted">Reading the journal…</div></div>
+    </div>
+  </div>
+    <div id="histPanelCompare" class="pane-fade" hidden>
+    <div class="trends-toolbar">
+      <label for="cmpA">Before</label>
+      <select id="cmpA" aria-label="Older scan or snapshot"></select>
+      <span class="muted">→</span>
+      <label for="cmpB">After</label>
+      <select id="cmpB" aria-label="Newer scan or snapshot"></select>
+      <button class="btn btn-primary" id="cmpRunBtn"><span data-icon="diff"></span>Compare</button>
+      <span class="muted" id="cmpInfo"></span>
+    </div>
+    <div id="cmpBody"><div class="card glass"><div class="muted">Pick two scans of the same folder — scans from this session give a full file-level diff; history snapshots compare top-level folders.</div></div></div>
+  </div>
+  </section>

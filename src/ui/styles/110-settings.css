@@ -1,0 +1,16 @@
+/* ── Settings modal ── */
+.set-h { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1px; color: var(--text-2); margin-bottom: 8px; }
+.set-h .ic { color: var(--text-3); }
+/* minmax, not fixed tracks: the modal is 92vw in a narrow window, and fixed
+   field columns (96+92+76+30+30 plus gaps) crushed the folder column there.
+   Each field keeps a floor it stays usable at and gives back the rest. */
+.sched-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(64px, 96px) minmax(60px, 92px) minmax(52px, 76px) 30px 30px; gap: 8px;
+  align-items: center; margin-bottom: 8px; }
+.sched-row.sched-head { font-size: 11px; margin-bottom: 4px; }
+.sched-row input[type="checkbox"] { justify-self: center; }
+/* Form controls carry intrinsic minimums wider than a squeezed track;
+   min-width: 0 lets the track's floor win. */
+.sched-row input:not([type="checkbox"]), .sched-row select,
+.ign-row input, .ign-row select { min-width: 0; width: 100%; }
+.ign-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(110px, 200px) 30px; gap: 8px; align-items: center; margin-bottom: 8px; }

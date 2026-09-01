@@ -1,0 +1,117 @@
+/* ══════════ FX: Border Beam — styles ══════════
+   Static half of the FxBeam splice (the per-instance gradients, masks and
+   keyframes are generated at runtime by the FX: Border Beam script block).
+   Everything scalar lives here as --fxb-* tokens so the whole effect can be
+   re-tuned — and re-themed — without touching the generator: dark values on
+   :root (the app default), light overrides under :root[data-theme="light"].
+   Color: the beam palette is the app's blue/black family built from
+   --accent #0A84FF (the original "ocean" variant re-tuned); the tokens below
+   carry only the achromatic shine/shadow parts and the per-type ladder of
+   opacity / saturation / brightness from the original theme presets. */
+
+/* ── Tuning tokens (dark defaults) ── */
+:root {
+  /* The traveling highlight + conic bloom: white on dark, black on light.
+     --fxb-shine-a scales the stop alphas (the original's light ladder is
+     ≈ 0.73 × the dark one). */
+  --fxb-shine: 255, 255, 255;
+  --fxb-shine-a: 1;
+
+  /* md — full ring on cards */
+  --fxb-md-stroke: 0.26;
+  --fxb-md-inner: 0.42;
+  --fxb-md-bloom: 0.24;
+  --fxb-md-sat: 1.2;
+  --fxb-md-bright: 1.3;
+  --fxb-md-shadow: rgba(255, 255, 255, 0.27);
+
+  /* sm — compact ring on pills and small buttons */
+  --fxb-sm-stroke: 0.46;
+  --fxb-sm-inner: 0.24;
+  --fxb-sm-bloom: 0.38;
+  --fxb-sm-sat: 1.2;
+  --fxb-sm-bright: 1.3;
+  --fxb-sm-shadow: rgba(255, 255, 255, 0.3);
+
+  /* line — bottom traveling glow on bars and inputs */
+  --fxb-line-stroke: 1;      /* CSS clamps opacity; original 1.14 is a clamp-to-1 */
+  --fxb-line-inner: 0.7;
+  --fxb-line-bloom: 0.8;
+  --fxb-line-sat: 1.2;
+  --fxb-line-bright: 1.3;
+  --fxb-line-shadow: rgba(255, 255, 255, 0.1);
+
+  /* pulse-inner — contained breathe */
+  --fxb-pi-stroke: 1;        /* original 1.54, clamped by CSS anyway */
+  --fxb-pi-inner: 0.44;
+  --fxb-pi-bloom: 0.66;
+  --fxb-pi-sat: 1.2;
+  --fxb-pi-bright: 0.75;
+
+  /* pulse-outside — outward halo */
+  --fxb-po-stroke: 0.94;
+  --fxb-po-inner: 0.34;
+  --fxb-po-bloom: 0.3;
+  --fxb-po-sat: 1.2;
+  --fxb-po-bright: 1.9;
+  --fxb-po-core-blur: 3px;
+  --fxb-po-bloom-blur: 22.5px;
+}
+
+/* ── Light theme overrides (original light presets, ocean-family tuned) ── */
+:root[data-theme="light"] {
+  --fxb-shine: 0, 0, 0;
+  --fxb-shine-a: 0.73;
+
+  --fxb-md-stroke: 0.12;
+  --fxb-md-inner: 0.26;
+  --fxb-md-bloom: 0.34;
+  --fxb-md-sat: 1.5;
+  --fxb-md-shadow: rgba(0, 0, 0, 0.14);
+
+  --fxb-sm-stroke: 0.12;
+  --fxb-sm-inner: 0.3;
+  --fxb-sm-bloom: 0.16;
+  --fxb-sm-sat: 1.8;
+  --fxb-sm-shadow: rgba(0, 0, 0, 0.14);
+
+  --fxb-line-stroke: 0.16;
+  --fxb-line-inner: 0.32;
+  --fxb-line-bloom: 0.3;
+  --fxb-line-sat: 1.95;
+  --fxb-line-shadow: rgba(0, 0, 0, 0.14);
+
+  --fxb-pi-stroke: 0.32;
+  --fxb-pi-inner: 0.4;
+  --fxb-pi-bloom: 0.8;
+  --fxb-pi-sat: 0.75;
+  --fxb-pi-bright: 1.3;
+
+  --fxb-po-stroke: 1;        /* original 1.96, clamped by CSS anyway */
+  --fxb-po-inner: 1;         /* original 1.04, clamped */
+  --fxb-po-bloom: 0.42;
+  --fxb-po-sat: 0.6;
+  --fxb-po-bright: 1.7;
+  --fxb-po-core-blur: 6px;
+  --fxb-po-bloom-blur: 15px;
+}
+
+/* ── Shared base (per-instance rules only add what differs) ── */
+[data-fxbeam] { position: relative; }
+[data-fxbeam] > [data-fxbeam-bloom] {
+  display: none;
+  position: absolute;
+  pointer-events: none;
+}
+
+/* Belt and braces on top of the REDUCED-aware generator: even if a beam was
+   generated before the preference flipped, no beam layer may animate. */
+@media (prefers-reduced-motion: reduce) {
+  [data-fxbeam],
+  [data-fxbeam]::before,
+  [data-fxbeam]::after,
+  [data-fxbeam] > [data-fxbeam-bloom] {
+    animation: none !important;
+  }
+}
+/* ══ end FX: Border Beam styles ══ */

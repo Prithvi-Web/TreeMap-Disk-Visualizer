@@ -1,0 +1,90 @@
+/* ── Global search (A4) ── */
+/* Lives at the top of the sidebar with the full column width to itself —
+   the fix for the old header, where at mild page zoom this box clipped and
+   overlapped its neighbours because a single row could not fit everything. */
+.gsearch { position: relative; flex: none; }
+/* Glassmorphism, matching the .glass frost recipe: a translucent tint the
+   backdrop shows through, frosted by blur, ringed by an inset shine. It sits
+   on the sidebar's own lens, so what shimmers through is the page itself. */
+#gsearch {
+  width: 100%;
+  padding: 9px 12px; font-size: 12.5px;
+  background: linear-gradient(170deg, rgba(255,255,255,0.07), rgba(255,255,255,0.015) 65%),
+              color-mix(in srgb, var(--surface-2) 55%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  border: 1px solid rgba(255,255,255,0.09);
+  box-shadow: inset 0 1px 0 var(--shine), 0 4px 14px rgba(0,0,0,0.10);
+  border-radius: 11px; color: var(--text-1); outline: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+:root[data-theme="light"] #gsearch {
+  background: linear-gradient(170deg, rgba(255,255,255,0.75), rgba(255,255,255,0.35) 65%),
+              color-mix(in srgb, var(--surface-2) 40%, transparent);
+  border-color: rgba(20,24,40,0.10);
+}
+#gsearch:focus { border-color: var(--accent); box-shadow: inset 0 1px 0 var(--shine), 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+#gsearch::placeholder { color: var(--text-3); }
+/* The rail form of the search: same target, shown only when collapsed. */
+.gsearch-rail-btn { display: none; }
+#sideNav.collapsed #gsearch { display: none; }
+#sideNav.collapsed .gsearch-rail-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; min-height: 36px; border-radius: 11px; cursor: pointer;
+  color: var(--text-2); border: 1px solid rgba(255,255,255,0.09);
+  background: linear-gradient(170deg, rgba(255,255,255,0.07), rgba(255,255,255,0.015) 65%),
+              color-mix(in srgb, var(--surface-2) 55%, transparent);
+  box-shadow: inset 0 1px 0 var(--shine);
+}
+#sideNav.collapsed .gsearch-rail-btn:hover { color: var(--text-1); }
+:root[data-theme="light"] #sideNav.collapsed .gsearch-rail-btn {
+  background: linear-gradient(170deg, rgba(255,255,255,0.75), rgba(255,255,255,0.35) 65%),
+              color-mix(in srgb, var(--surface-2) 40%, transparent);
+  border-color: rgba(20,24,40,0.10);
+}
+/* Results fly out to the RIGHT of the sidebar, over the content — inside the
+   column they would be clipped to 232px and unreadable. The offset is the
+   box→panel gap PLUS the sidebar's 12px inner padding, so the panel clears
+   the sidebar's edge, not just the box's. */
+.gsearch-panel {
+  position: absolute; top: 0; left: calc(100% + 26px); width: min(460px, calc(100vw - var(--side-w) - 40px));
+  max-height: min(72vh, 640px); overflow-y: auto; z-index: 60;
+  /* Near-opaque on purpose. The panel floats over whatever the page happens
+     to show — often the dense Dashboard — and its old var(--surface-1)
+     background was translucent enough that the content underneath bled
+     straight through the result rows and made them unreadable. 94% of the
+     page background plus a strong backdrop blur keeps the glass language
+     while guaranteeing the text wins; if backdrop-filter is ever
+     unavailable, the 94% tint alone still carries legibility. */
+  background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01) 45%),
+              color-mix(in srgb, var(--bg-1) 94%, transparent);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  box-shadow: inset 0 1px 0 var(--shine), 0 18px 48px rgba(0,0,0,0.5);
+  padding: 6px;
+}
+:root[data-theme="light"] .gsearch-panel {
+  background: linear-gradient(180deg, rgba(255,255,255,0.7), rgba(255,255,255,0.3) 45%),
+              color-mix(in srgb, var(--bg-1) 94%, transparent);
+  box-shadow: inset 0 1px 0 var(--shine), 0 18px 48px rgba(20,24,40,0.22);
+}
+.gsearch-group {
+  font-size: 11px; color: var(--text-3); padding: 8px 10px 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left;
+}
+.gsearch-hit {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 7px 10px; border-radius: 8px; border: 0; background: none;
+  color: var(--text-1); font-size: 12.5px; text-align: left; cursor: pointer;
+}
+.gsearch-hit:hover, .gsearch-hit[aria-selected="true"] { background: var(--surface-2); }
+.gsearch-hit .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gsearch-hit .sz { color: var(--text-2); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+.gsearch-note { padding: 10px 12px; color: var(--text-2); font-size: 12px; line-height: 1.5; }
+/* On a narrow window the fly-out would leave the viewport; anchor it to the
+   rail edge and let it take what width there is. */
+@media (max-width: 700px) {
+  .gsearch-panel { width: calc(100vw - var(--side-w-rail) - 24px); }
+}

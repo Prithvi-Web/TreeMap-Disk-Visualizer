@@ -1,0 +1,36 @@
+<!-- ═══════════ Quick-look preview (Feature 4) ═══════════ -->
+<aside id="previewPane" aria-label="File preview" hidden>
+  <div class="pv-head">
+    <span class="pv-ic" id="pvIcon"></span>
+    <div class="pv-meta"><div class="pv-name" id="pvName"></div><div class="pv-sub num" id="pvSub"></div></div>
+    <button class="close-x" id="pvClose" aria-label="Close preview"><span data-icon="x" data-size="14"></span></button>
+  </div>
+  <div class="pv-body" id="pvBody"></div>
+  <div class="pv-origin" id="pvOrigin" hidden></div>
+  <div class="pv-foot"><span class="pth" id="pvFoot"></span></div>
+</aside>
+
+<div id="ctxMenu" role="menu"></div>
+
+<!-- v4 §3.2: a reclaim score is never a bare number — every one of them is a
+     click from the components that produced it. This is the popover form, for
+     the surfaces (treemap, dashboard rows, grid) that have no room to expand
+     a panel inline. -->
+<div id="rcPopover" role="dialog" aria-modal="false" aria-labelledby="rcPopTitle" hidden></div>
+<!-- D3 · Portable first-run screen. Shown once per session, before anything is
+     scanned, because "this leaves no trace" is a promise the user has to be
+     told about to rely on. -->
+<div class="modal-backdrop" id="portableModal" role="dialog" aria-modal="true" aria-labelledby="portableTitle">
+  <div class="modal" style="width:560px;">
+    <div class="modal-head">
+      <h3 id="portableTitle"><span data-icon="disc"></span>Portable session</h3>
+    </div>
+    <div class="modal-body" id="portableBody"></div>
+    <div class="modal-foot">
+      <div style="flex:1"></div>
+      <button class="btn btn-primary" id="portableStartBtn"><span data-icon="check"></span>Start</button>
+    </div>
+  </div>
+</div>
+
+<div id="toasts" aria-live="polite"></div>

@@ -1,0 +1,56 @@
+/* ═══ FX: living-surface wiring — wells and strips ═══
+   A well is a stable container an orb mounts into; :empty makes an idle well
+   cost nothing, so wiring never toggles `hidden` by hand. A strip is a
+   pointer-transparent overlay the "line" beam attaches to instead of the
+   search wrap itself — the beam sets overflow:hidden on its host, and both
+   wraps anchor dropdown panels that must overflow. */
+.fx-orb-well { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.fx-orb-well:empty { display: none; }
+.fx-canvas-orb { position: absolute; z-index: 5; pointer-events: none; }
+#tmScanOrb { left: 50%; top: 50%; transform: translate(-50%, -50%); }
+/* The wrap pins the hero to the donut canvas itself, so a wrapped flex row
+   cannot drift it off-centre. */
+.donut-canvas-wrap { position: relative; flex: none; display: flex; }
+#dashScanOrb { left: 50%; top: 50%; transform: translate(-50%, -50%); }
+/* A glass chip under the shaping orb: the monochrome ink needs a quiet
+   surface to read against, and the treemap beneath it is anything but. */
+#tmShapeOrb { left: 14px; bottom: 14px; padding: 5px; border-radius: 999px;
+  background: var(--glass-strong); border: 1px solid var(--hairline); box-shadow: var(--shadow-1); }
+.donut-row { position: relative; }
+.scan-status-row { display: flex; align-items: center; gap: 8px; }
+.scan-status-row .scan-status { flex: 1 1 auto; min-width: 0; }
+/* The status keeps its own 14px top margin; the well matches it so the pair
+   stays on one baseline. */
+.scan-status-row .fx-orb-well { margin-top: 14px; }
+.nl-pending { display: flex; align-items: center; gap: 8px; margin-top: 9px;
+  font-size: 11.5px; color: var(--text-2); }
+/* The ask row: the field takes the width, the listening well sits beside it
+   and collapses to nothing while empty (the :empty rule above). */
+.nl-ask-row { display: flex; align-items: center; gap: 8px; }
+.nl-ask-row input { flex: 1; min-width: 0; }
+.fx-beam-strip { position: absolute; inset: 0; pointer-events: none; z-index: 1;
+  border-radius: var(--r-sm); }
+/* A strip is measured for its own radius, so each one states its host's. */
+#gsearchBeamStrip { border-radius: 11px; }              /* matches #gsearch */
+#offloadBeamStrip { border-radius: var(--r-lg); }       /* matches .modal */
+#cartTabBeamStrip { border-radius: 999px; }             /* matches #cartTab */
+/* Loading-label shimmer (the border-beam demo's t-shimmer language): a
+   masked highlight band sweeping a pending label — the scan status while a
+   scan runs, the "Translating…" chip, the duplicate hunt's progress line.
+   Only -webkit-text-fill-color goes transparent; `color` stays intact, so
+   currentColor icon strokes inside the label keep painting. The band token
+   is quieter in light theme, where the same mix would read as a spotlight. */
+:root { --fx-shimmer-hi: color-mix(in srgb, var(--accent) 45%, var(--text-1)); }
+:root[data-theme="light"] { --fx-shimmer-hi: color-mix(in srgb, var(--accent) 26%, var(--text-2)); }
+.fx-shimmer-text {
+  background-image: linear-gradient(100deg, var(--text-2) 42%, var(--fx-shimmer-hi) 50%, var(--text-2) 58%);
+  background-size: 400% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: fx-shimmer-sweep 2000ms linear infinite;
+}
+@keyframes fx-shimmer-sweep { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .fx-shimmer-text { animation: none; background-image: none; -webkit-text-fill-color: currentColor; }
+}
