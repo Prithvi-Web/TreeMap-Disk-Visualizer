@@ -37,6 +37,9 @@ async function loadTreemap(rootPath, animate = false) {
       // ring, or an empty circle, for a folder full of files.
       const node = (await ensureSubtree(rootPath)) || state.root;
       if (seq !== tmLoadSeq) return; // superseded while fetching
+      // A scrub is in flight: its landing draws. A live layout must not land
+      // under the hand — it would exit history and park the thumb at Live.
+      if (state.treemap.history.scrubbing) return;
       if (!node) return;
       state.treemap.rootPath = node.path;
       state.treemap.rootName = node.name;
@@ -58,6 +61,7 @@ async function loadTreemap(rootPath, animate = false) {
     } else {
       const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(rootPath)}`);
       if (seq !== tmLoadSeq) return; // a newer view/root load has superseded this fetch
+      if (state.treemap.history.scrubbing) return; // same rule as above: a scrub in flight owns the map
       state.treemap.rootPath = data.root.path;
       state.treemap.rootName = data.root.name;
       state.treemap.rootSize = data.root.size;

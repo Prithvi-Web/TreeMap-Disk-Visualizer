@@ -211,3 +211,64 @@ test('the tooltip is frosted glass, not a lens: no reference filter, no size obs
   assert.equal(tip.props['--lg-backdrop'], undefined,
     'and never receives a url(#…) reference filter to rasterise against a backdrop that moves every frame');
 });
+
+/* ═══════════════════════ the return-to-Live race ═══════════════════════ */
+
+test('a scrub in flight owns the thumb: no landing live layout may park it at Live', () => {
+  // Scrub to the end (setHistoryIndex → loadTreemap, a fetch), then drag
+  // straight back into history. The stale live fetch lands a moment later:
+  // exitHistoryState() parked the thumb at Live under the hand, bumped h.seq
+  // so the NEWER scrub's fetch was discarded, and the map reverted. Worse, it
+  // could land inside the 120ms input debounce — before that scrub had even
+  // started — so a sequence-number guard alone would not see it. The flag is
+  // raised the moment a hand touches the slider and lowered only when the
+  // index it asked for has landed.
+  assert.match(INDEX, /history:\s*\{[^}]*scrubbing:\s*false/, 'the flag is part of the history state');
+  const input = braced("$('tmTimeSlider').addEventListener('input'");
+  assert.match(input, /history\.scrubbing\s*=\s*true/, 'a touch raises it');
+  const load = braced('async function loadTreemap(');
+  const guards = load.match(/history\.scrubbing\)\s*return/g) || [];
+  const exits = load.match(/exitHistoryState\(\)/g) || [];
+  assert.ok(exits.length >= 2, `loadTreemap still has its two history exits, found ${exits.length}`);
+  assert.equal(guards.length, exits.length, 'every landing that could exit history first asks whether a hand is on the slider');
+  assert.ok(load.indexOf('history.scrubbing) return') < load.indexOf('exitHistoryState()'), 'and asks before it acts');
+  const refresh = braced('async function refreshTimebar(');
+  assert.match(refresh, /!h\.active\s*&&\s*!h\.scrubbing/, 'the timebar refresh parks the thumb at Live only when no hand is on it');
+  const set = braced('async function setHistoryIndex(');
+  assert.ok((set.match(/h\.scrubbing\s*=\s*false/g) || []).length >= 2, 'the flag is lowered on the Live branch and when a history layout lands');
+  assert.match(set, /finally\s*\{[^}]*seq\s*===\s*h\.seq[^}]*scrubbing\s*=\s*false/, 'only the newest scrub may declare the hand lifted, and it does so even if its fetch failed');
+  assert.match(braced('function exitHistoryState('), /h\.scrubbing\s*=\s*false/, 'a live layout that genuinely lands ends the scrub');
+});
+
+/* ═══════════════════════ the goo trail's parked simulation ═══════════════════════ */
+
+test('the goo trail re-seeds at the thumb when a hand arrives, so a stale rest position never launches a blob across the track', () => {
+  // Playback crossings, a seek and Escape-to-Live all write slider.value
+  // with no event; the trail's simulation stayed parked where it last
+  // rested, and the next touch sprang the accent blob from there across
+  // the whole track. pointerdown fires before a click moves the value and
+  // focus before the first arrow key, so both re-seed at the CURRENT thumb;
+  // input still wakes the chase, so the first move still trails.
+  const slider = braced('function slider(inputEl, opts)');
+  assert.match(slider, /const reseed = \(\) => \{[^}]*st\.sim = \{ cx: c\.cx/, 'a re-seed parks the simulation at the measured thumb centre');
+  assert.match(slider, /\['pointerdown',\s*arrive\]/, 'a pointer arriving re-seeds and then wakes');
+  assert.match(slider, /\['focus',\s*reseed\]/, 'a keyboard arriving re-seeds');
+  assert.match(slider, /\['input',\s*wake\]/, 'and a value change still only wakes — that is the trail');
+  assert.doesNotMatch(slider, /\['pointerdown',\s*wake\]/, 'pointerdown must not wake from the stale position');
+});
+
+/* ═══════════════════════ Disk City hover ═══════════════════════ */
+
+test('Disk City moves its card on a same-block frame and rebuilds it only when the block changes', () => {
+  // The same defect as the treemap tooltip, one view over: cityShowCard ran
+  // on every pointer frame, serialising rows, assigning innerHTML and then
+  // forcing a layout to measure the card, whether or not the hovered block
+  // had changed.
+  const move = braced('function cityMoveCard(');
+  assert.doesNotMatch(move, /innerHTML/, 'moving is positioning, never a rebuild');
+  const handler = braced('function cityOnPointerMove(');
+  assert.match(handler, /cityMoveCard\(local\.x,\s*local\.y\)/, 'the same-block branch repositions');
+  const rebuildAt = handler.indexOf('cityShowCard(hit');
+  assert.notEqual(rebuildAt, -1, 'a block change still rebuilds the card');
+  assert.match(handler.slice(0, rebuildAt), /hit\s*!==\s*c\.hover|card\.hidden/, 'and the branch is chosen by whether the block changed or the card was hidden');
+});

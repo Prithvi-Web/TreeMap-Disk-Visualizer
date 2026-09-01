@@ -639,6 +639,7 @@ function exitHistoryState() {
   const h = state.treemap.history;
   lapseStop(); // §7.1 — leaving history always ends playback (Escape, live layout landing)
   h.active = false;
+  h.scrubbing = false; // a live layout that genuinely landed ends the scrub
   h.tree = null;
   h.seq++; // invalidate any in-flight history fetch
   const slider = $('tmTimeSlider');
@@ -672,7 +673,7 @@ async function refreshTimebar() {
   bar.hidden = false;
   const slider = $('tmTimeSlider');
   slider.max = String(h.snaps.length);
-  if (!h.active) slider.value = slider.max;
+  if (!h.active && !h.scrubbing) slider.value = slider.max; // a scrub in flight owns the thumb
   updateTimeLabel();
 }
 
@@ -707,6 +708,7 @@ async function setHistoryIndex(i) {
   const h = state.treemap.history;
   h.index = i;
   if (i >= h.snaps.length) {
+    h.scrubbing = false; // the hand asked for Live: this load may land
     if (h.active && state.root) loadTreemap(state.root.path); // back to the live tree
     return;
   }
@@ -732,6 +734,10 @@ async function setHistoryIndex(i) {
     updateTimeLabel();
   } catch (e) {
     toast('Could not load that point in time: ' + e.message, 'error');
+  } finally {
+    // Only the newest scrub may declare the hand lifted — a superseded one
+    // leaves that to its successor — and it does so even if its fetch failed.
+    if (seq === h.seq) h.scrubbing = false;
   }
 }
 
@@ -1043,6 +1049,11 @@ $('tmTimeSlider').addEventListener('input', () => {
   // input event, at pointer rate, was half of every scrub's cost.
   const L = state.treemap.lapse;
   if (L.playing || L.onDone) lapseStop();
+  // The hand is on the slider until the index it asked for has landed. A
+  // live layout arriving inside that window — the return-to-Live fetch from
+  // a moment ago, the post-scan timebar refresh — must not park the thumb at
+  // Live under it: that discarded the newer scrub and yanked the thumb.
+  state.treemap.history.scrubbing = true;
   updateTimeLabel(); // label tracks the thumb instantly
   clearTimeout(tmTimeDebounce);
   tmTimeDebounce = setTimeout(() => setHistoryIndex(Number($('tmTimeSlider').value)), 120);

@@ -560,9 +560,23 @@ const FxGoo = (() => {
         return !settled;
       };
       const wake = () => { if (!st.dead) wakeLoop(st); };
-      for (const type of ['input', 'change', 'pointerdown']) {
-        inputEl.addEventListener(type, wake);
-        st.listeners.push([inputEl, type, wake]);
+      /* Programmatic value writes (playback crossings, a seek, Escape to
+         Live) move the native thumb with no event, so the parked simulation
+         goes stale and the next touch would launch the blob from wherever it
+         last rested, clear across the track. Re-seed at the thumb the moment
+         a hand arrives — pointerdown fires before a click moves the value,
+         focus before the first arrow key — so the first move still trails,
+         from where the thumb actually is. */
+      const reseed = () => {
+        if (st.dead) return;
+        const c = center();
+        st.sim = { cx: c.cx, vcx: 0 };
+        st.tailX = c.cx; st.tailVx = 0; st.tailR = 0;
+      };
+      const arrive = () => { reseed(); wake(); };
+      for (const [type, fn] of [['input', wake], ['change', wake], ['pointerdown', arrive], ['focus', reseed]]) {
+        inputEl.addEventListener(type, fn);
+        st.listeners.push([inputEl, type, fn]);
       }
       st.ro = new ResizeObserver(() => { st.sim = null; wake(); });
       st.ro.observe(inputEl);

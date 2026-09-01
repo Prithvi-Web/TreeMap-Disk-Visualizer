@@ -1578,6 +1578,8 @@ function cityShowCard(b, px, py) {
     `<span class="cc-name">${escapeHtml(b.n.name)}</span></div>` +
     rows.map(([k, v]) => `<div class="cc-row"><span>${escapeHtml(k)}</span><b>${escapeHtml(v)}</b></div>`).join('') +
     (b.n.type === 'dir' ? `<div class="cc-hint">Click to go inside · Esc to come back out</div>` : '');
+  card.dataset.path = b.n.path;
+  card.dataset.k = cityCardKey(b); // what this card was built from — a later fact invalidates it
   card.hidden = false;
 
   // Kept inside the panel and away from the cursor, flipping side rather than
@@ -1642,7 +1644,36 @@ function cityOnPointerMove(e) {
   }
   const hit = cityHit(local.x, local.y);
   if (hit !== c.hover) { c.hover = hit; cityInvalidate(); }
-  cityShowCard(hit, local.x, local.y);
+  // Same block as last frame and the card already says everything it can
+  // (a count or score that landed since changes the key): reposition it.
+  // Rebuilding — rows serialised, innerHTML assigned, then a forced layout to
+  // measure the card — on every frame inside one block was the treemap
+  // tooltip's defect, one view over.
+  const card = $('cityCard');
+  const fresh = !!hit && !!card && !card.hidden && card.dataset.path === hit.n.path && card.dataset.k === cityCardKey(hit);
+  if (!fresh) cityShowCard(hit, local.x, local.y);
+  else cityMoveCard(local.x, local.y);
+}
+
+/** What the card's content depends on beyond the block itself: facts that arrive later. */
+function cityCardKey(b) {
+  return (state.city.counts.has(b.n.path) ? 'c' : '-') + (reclaim.scores.has(b.n.path) ? 's' : '-') + state.city.height + state.city.colour;
+}
+
+/**
+ * Reposition the card that is already showing. No content is touched, so
+ * layout is clean and the two size reads are plain reads, not a forced
+ * reflow. Same flip-not-clamp placement as cityShowCard.
+ */
+function cityMoveCard(px, py) {
+  const card = $('cityCard');
+  if (!card || card.hidden) return;
+  const wrap = $('cityWrap');
+  const cw = card.offsetWidth || 230, ch = card.offsetHeight || 90;
+  const left = px + 18 + cw > wrap.clientWidth ? px - 18 - cw : px + 18;
+  const top = py + 18 + ch > wrap.clientHeight ? py - 18 - ch : py + 18;
+  card.style.left = Math.max(8, Math.min(left, wrap.clientWidth - cw - 8)) + 'px';
+  card.style.top = Math.max(8, Math.min(top, wrap.clientHeight - ch - 8)) + 'px';
 }
 
 function cityOnPointerUp(e) {

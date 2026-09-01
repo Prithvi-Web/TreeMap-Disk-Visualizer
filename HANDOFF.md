@@ -6,10 +6,11 @@ Owner's report, verbatim: "the slider is very glitchy and the ui breaks", and
 "the reaction/animations to my mouse hover is slow. I need the app to be
 blazing fast." Both were reproduced against the built page and **measured
 before anything was changed**; every number below is from the browser, not
-from reading code. Five source files, one new test file
-(`tests/scrubberAndHoverCost.test.ts`, four tests, each mutation-proven to
-bite). Suite **2,189 · 0 fail · 3 skips**; typecheck clean; `build-ui --check`
-matches.
+from reading code. Two commits, eight source files, one new test file
+(`tests/scrubberAndHoverCost.test.ts`, seven tests, each red first and
+mutation-proven to bite — fifteen mutants, fifteen caught). Suite
+**2,192 · 0 fail · 3 skips**; typecheck clean; `build-ui --check` matches.
+Shipped as **v4.1.1** to `/Applications/TreeMap.app`.
 
 ### The scrubber: one cause, three symptoms
 
@@ -87,18 +88,71 @@ only when the node changed.
 - The goo silhouette is `position: absolute` (not a flex child). Its 300×150
   box is the SVG intrinsic size with overflow visible — a cosmetic oddity.
 
-### Left open, with the evidence
+### Second pass: what the adversarial audit added
 
-A narrow race: `refreshTimebar()` on the 1.5s post-scan timer
-(`045-persistent-live-index.js`, after `finishScan`) does
-`if (!h.active) slider.value = slider.max`, and `h.active` only becomes true
-after `setHistoryIndex`'s 120ms debounce AND its layout fetch. A scan
-completing inside that window — Live mode was on when the drag began;
-`setHistoryIndex` turns it off, but a scan already running still completes —
-yanks the thumb to Live under the hand and leaves slider, label and tree
-disagreeing. Not reproducible in the frozen pane. Fix sketch: guard that
-timer on `document.activeElement !== $('tmTimeSlider')`, or a
-`h.pendingIndex` flag set on input and cleared when the index lands.
+A 42-agent workflow (five analysis lenses over the built page, every finding
+attacked by a verifier whose default is "refuted") raised 36 findings; 26
+survived, and they collapse into the causes above plus three more, all fixed
+in the second commit with tests that were red first and mutation-proven
+(seven mutants, seven caught):
+
+- **The return-to-Live race** (the audit found a far commoner trigger than
+  the one I had left open). Scrub to the end → `setHistoryIndex(max)` →
+  `loadTreemap` (a fetch). Drag straight back. When that stale live fetch
+  landed, `exitHistoryState()` parked the thumb at Live under the hand,
+  bumped `h.seq` — discarding the NEWER scrub's fetch — and the map reverted.
+  The plan's own `histSeqAtStart` guard has a hole: the stale load can land
+  inside the 120ms input debounce, before the newer scrub has bumped
+  anything. So the rule is a flag: `history.scrubbing` is raised on `input`,
+  `loadTreemap` returns after its awaits while it is up (a scrub in flight
+  owns the map), `refreshTimebar` parks the thumb only when it is down, and
+  only the newest `setHistoryIndex` lowers it (in `finally`, so a failed
+  fetch cannot leave it stuck); `exitHistoryState` lowers it too. Verified in
+  the pane by running the race for real: live fetch started, `input`
+  dispatched, fetch landed — `h.active` stayed true, the thumb stayed at 1,
+  the label stayed dated. This also closes the 1.5s post-scan timer case.
+- **The goo trail launched from a stale rest position.** Playback
+  crossings, seeks and Escape write `slider.value` with no event, so the
+  trail's parked simulation went stale and the next touch sprang the accent
+  blob across the whole track. `FxGoo.slider` now re-seeds at the measured
+  thumb on `pointerdown` (fires before a click moves the value) and `focus`
+  (before the first arrow key); `input` still only wakes, so the first move
+  still trails — from where the thumb actually is.
+- **Disk City had the tooltip's defect one view over:** `cityShowCard` on
+  every pointer frame. Now `cityMoveCard` on a same-block frame; the card is
+  stamped with `dataset.k` (count/score known, height and colour modes) so a
+  fact landing later still rebuilds it once.
+
+### Left for the owner — two design decisions with the audit's evidence
+
+Both are real costs and both are visible signatures; neither was changed.
+
+- **Card hover ignites a spinning border beam** (`fxHoverSync` →
+  `FxBeam.attach(card, { type: 'md' })`): a CSS animation on a registered
+  custom property drives two masked conic gradients with filters, recomputing
+  style every frame for the whole hover plus a 0.5s fade. Bounded to one card
+  at a time (the verifier corrected the analyst's "42 cards"). Option: a
+  static ring, or the `.card.glass:hover` lift alone.
+- **`#sideNav` carries the full displacement lens** over a 232×window-height
+  surface plus a `mix-blend-mode: screen` ring. Its backdrop is static above
+  900px (the page ambience is deliberately un-animated, `005-base-ambience`),
+  so it re-filters only when damage overlaps it — tab hover, search typing,
+  the collapse transition (which crosses ~21 size buckets, each a `makeMap`
+  + `buildFilter` on the main thread). Makes the *sidebar* feel heavy; it
+  does not slow treemap hover. Option: `plain: 1` like the tooltip (keeps the
+  frost, drops the lens), keeping a real blur below 900px where it floats
+  over the map.
+
+### Left open, small, with evidence
+
+- `cssVar('--accent'|'--danger'|'--warn')` → `getComputedStyle` per
+  hover-change frame in `presentTreemap`; verifier: style-only recalc, LOW.
+- Live mode's `livePulseLoop` repaints the whole canvas for 1.2s after each
+  filesystem event (Live only).
+- Playback's `lapseLerpNodes` allocates every node per frame (playback only).
+- The welcome screen's CTA beam keeps a 30fps driver alive while shown.
+- `FxGoo.slider` has no `onFail`, so a throw inside a frame would half-tear
+  the trail down; nothing in the shipped frame throws.
 
 ### Traps this session
 
@@ -171,6 +225,9 @@ own machine, which is the one holding the files.
 `/Applications/TreeMap.app`. The previous installed bundle was 4.0.0 built
 31 Aug 00:34 — it predated both the premium-UI round and the whole of session 5,
 so it was missing 37 defect fixes, twelve audit fixes and the firmlink fix.
+
+Then **v4.1.1** the same evening — session 6's scrubber and hover fixes, same
+recipe, previous bundle parked the same way.
 
 Minor, not patch: since 4.0.0 the app gained the premium-UI round (user-visible)
 on top of the fixes. The version lives in **`package.json` only** —
