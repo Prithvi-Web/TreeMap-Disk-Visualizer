@@ -1,5 +1,120 @@
 # TreeMap — session handoff
 
+## Session 5 — the end-to-end journeys, and 37 defects closed (1 September 2026)
+
+**Suite: 2,128 tests · 2,126 pass · 0 fail · 2 pre-existing skips** (was 2,008).
+`npm run typecheck` clean; `node scripts/build-ui.js --check` matches (111 parts).
+Four commits on `main`, LOCAL and unpushed — the owner pushes via GitHub Desktop.
+(`origin/main` was level with `c8959e3` when these were made.)
+
+### The three things session 4 left open are closed
+
+1. **Stage 3, the end-to-end journeys, ran in full** against the real UI and the
+   real server, on a disposable sandbox tree (185 files, 12.5 GB) under
+   `TREEMAP_DATA_DIR`. Everything below was checked against the API payload, not
+   just eyeballed: dashboard file-types (bytes AND percentages) · largest files ·
+   largest folders · quick stats · treemap drill three levels deep (UI nodes ==
+   API nodes, zero missing, zero size mismatches, breadcrumbs correct at every
+   level) · `size>1gb` (UI 9 == API total 9, same paths) · staging 4 files to the
+   cart · the commit's **dry run only** (`bytesWouldFree` 8,493,465,600 == the
+   four files' sum; the sorted file list's md5 was byte-identical afterwards and
+   nothing reached the Trash) · duplicates (8 groups, every group's `reclaimable`
+   == `size*(count-1)`, their sum == `totalReclaimable`, and the funnel's three
+   numbers reconcile) · a folder budget · a suppressing folder note (which did
+   remove that subtree from Smart Suggestions) · settings persistence across a
+   reload · snapshot compare against a REAL change (+254,803,968 B attributed
+   entirely to `Downloads`) · Trends with the forecast gate closed (no
+   projection). **The console is clean in all 15 views, in both themes, at
+   640/660/800/900/1440 px.**
+2. **The boot-burst 429s are gone, measured.** The real 26-request boot +
+   scan-completion burst, captured from the browser's own timeline and replayed
+   at a fresh server all at once: **0 × 429**, lane split 14 meta / 12 api
+   against a 20-token api burst. Re-measured after the whole fix round: still 0.
+3. **The known-open items are settled.** `GET /api/cleanup/rules` never reached
+   `data.files` as undefined — `api()` throws PENDING first — but it DID paint
+   "still working" as a red error; that is fixed. The 12 caller-less routes are
+   all on the published agent surface (`src/api/openapi.ts`, pinned by
+   discoverability/safety-rails tests): **delete none**. The two wall-clock perf
+   tests were re-measured and both claims refuted — `subtreeCount` runs 17–23 ms
+   idle, not 40–80 ms, and `indexEngine`'s ratio metric was already written under
+   16 spinners. Nothing was loosened.
+
+### What was fixed (29 confirmed by the review fleet + 8 found driving the app, every one test-first)
+
+Backend: express-5's re-parsing `req.query` getter silently discarded
+`guardQueryPath`'s sanitisation (one trailing slash 404'd a subtree that existed)
+· the path blocklist was textual, so `/var/db` was allowed while
+`/private/var/db` — the same directory — was blocked · `?maxAgeMs=abc` and
+`minBytes=0` matched every file on the disk instead of 400 NO_RULES ·
+`?currency=constructor` passed the `in`-based currency guard · body-parser 2
+leaves `req.body` undefined, so a POST with no Content-Type answered 500 instead
+of its documented 400 · shutdown cancelled every job except compression · the
+image preview leaked a file descriptor on an aborted download.
+
+Frontend: instant-open painted the whole indexed root's file/dir counts against a
+subfolder's tree · Empty Folders printed its 1,000-item cap as the real count ·
+the open-file preflight checked 400 of N paths and reported it as all of them ·
+Grid shift-click threw on a stale anchor after the list shortened · "Check
+snapshots" threw when every candidate was absent · the Clean Up modal dropped the
+`blocked` bucket and over-reported bytes recovered · the report export was a raw
+`<a>` that unloaded the whole app on a 202 · the Cloud-safe tab hid itself on a
+202 · Enter in the path box was silently ignored during the boot auto-scan · the
+treemap footer read "1 nodes" · the query box blamed Depth for a match that is
+the view root.
+
+CSS: `--ok` had no light-theme value · `.sys-facts .fact span` dimmed the rolling
+numerals · `.scan-status.error` was dark-only · `#navScrim` sat under the cart,
+preview and selection bar · `#previewPane` still offset 58 px for a header the
+sidebar replaced in a previous round · the cart dock slid off-screen at 640 px
+with a preview open · the global-search fly-out ran off-screen at 660 px · the
+plain-words popover was trapped by `container-type` on the toolbar · **the Trends
+charts could never shrink** (see trap 1).
+
+Tests: 17 slices in `frontendContract.test.ts` used comment text as their end
+anchor, and `appCode()` strips comments — so each ran to end-of-file and matched
+text from anywhere later (two of them provably passed with the behaviour deleted).
+Six more tests across five files asserted nothing.
+
+### Traps this session bought
+
+1. **A canvas with an explicit inline width is its card's min-content floor.**
+   `Canvas2D.setup` writes `canvas.style.width` every render, so a chart measured
+   once at 1440 px pinned its wrap, its card and its grid track; the window then
+   shrank, `host.clientWidth` never changed, the kit's ResizeObserver never fired
+   and the chart was clipped for good. `min-width: 0` does not help. The cap is
+   `max-width: 100%`, and it must be max-width — an inline style outranks any
+   `width` in the sheet, which is why the `width: 100%` several of these canvases
+   already carried had never once applied.
+2. **A brace inside a CSS comment desyncs every brace-matched slicer.** Quoting
+   `main { overflow-x: hidden }` in a comment moved the following rule's selector
+   into the comment text and turned a green test red for a rule that was
+   perfectly correct. `tests/chartWrapNoOverflow.test.ts` now fails on any braced
+   CSS comment; one already existed in `040-grid.css`.
+3. **`req.query` is a getter in express 5.** Assigning to it mutates a throwaway.
+   The same is NOT true of `req.body`, which is a plain own property.
+4. **The Claude Code browser pane freezes more than rAF.** `ResizeObserver` never
+   fires at all — not even its initial callback — `setTimeout` is throttled to
+   about one tick a minute, and `document.hidden` is permanently true. A
+   `MessageChannel` is NOT throttled, so it can back both an rAF pump and a
+   working `sleep()`; anything ResizeObserver-driven simply cannot be judged in
+   the pane, and layout claims have to be proven with a pure-layout probe.
+5. **`computer` click coordinates are in the last screenshot's frame**, not CSS
+   pixels — multiply by `800 / innerWidth`. Take a screenshot first or the call
+   is refused, and re-measure the target immediately before clicking: a view
+   switch or a breadcrumb change moves the canvas by tens of pixels.
+6. The treemap's parent folder frames are deliberately not click targets — the
+   children fill them exactly and the deepest rect wins. The folder tag is "an
+   overlay, not a reserved header row". Only the deepest drawn folders drill.
+
+### Known and deliberately not changed
+
+`svg.fxgoo-sil` (the liquid-goo silhouette) is 300 px wide and absolutely
+positioned, so it extends past its `.seg` and adds ~105 px to `main`'s
+scrollWidth on the dashboard. It is `pointer-events: none`, paints nothing
+outside its defs, and `main` clips it, so nothing is visible or reachable — but
+inside a container with `overflow-x: auto` it would raise a phantom scrollbar.
+
+
 ## Session 4 — integration hardening, the reclaim radar, and the numeral bug (31 August 2026)
 
 **Commits `a825e80`, `b001b69` (plus session 3's `d1f892f`, `a738ff8`, `9179042`,
