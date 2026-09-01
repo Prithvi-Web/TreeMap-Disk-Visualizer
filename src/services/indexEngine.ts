@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { promises as fsp, mkdirSync, unlinkSync } from 'fs';
 import { appDataDir } from './storage';
+import { trackWrite } from '../utils/backgroundWrites';
 import { isEphemeral } from './portableMode';
 import { platform } from '../platform';
 import { neverDescend } from '../utils/mountBoundaries';
@@ -845,7 +846,7 @@ function scheduleFlush(rootPath: string, attempts = 0): void {
       // under `npm start` or the MCP server that would take the process down.
       // The burst is lost, which the staleness guard already covers; the
       // process is not.
-      void applyPendingChanges(rootPath).catch((err: unknown) => {
+      trackWrite('applyPendingChanges', applyPendingChanges(rootPath).catch((err: unknown) => {
         // The queue is taken and deleted before any work, so a throw from
         // inside the burst loses every remaining change. The comment here
         // used to say "the staleness guard already covers it" — nothing did:
@@ -856,7 +857,7 @@ function scheduleFlush(rootPath: string, attempts = 0): void {
         const root = getRoot(rootPath);
         if (root) markRootStale(rootPath, root.id, root.builtAt);
         console.error(`[treemap] index flush failed for ${rootPath}, root marked stale:`, err);
-      });
+      }));
     }, delay),
   );
 }

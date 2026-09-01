@@ -11,6 +11,7 @@ process.env.TREEMAP_NO_GDU = '1';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { formatBytes } from '../src/utils/formatBytes';
+import { pending, settled } from '../src/utils/backgroundWrites';
 
 /**
  * Agent ergonomics: the blocking scan path (?wait=true) and the one-call
@@ -111,33 +112,35 @@ test('wait=true with waitMs=0 returns an honest 202 running you can poll', async
 });
 
 /**
- * Wait for the scan's snapshot to actually be on disk.
+ * Wait for the scan's background writes to land.
  *
  * `POST /api/scan?wait=true` resolves when the WALK finishes: diskScanner marks
- * the scan complete and then fires the snapshot write off unawaited
- * (`void saveSnapshot(scan)`), which is the right call for the product — a
- * background durability step must not hold up the answer — but it means the
- * snapshot store is still changing after the request returns.
+ * the scan complete and then fires the snapshot write off unawaited, which is
+ * the right call for the product — a durability step must not hold up an answer
+ * that is already correct. But /api/agent/summary reads that store for its
+ * forecast, so `snapshotCount` and the sentence built from it are LIVE state,
+ * exactly like `forecast.freeBytes` further down. Two reads taken either side
+ * of the write legitimately disagree: Windows CI caught 0 then 1.
  *
- * `/api/agent/summary` reads that store for its forecast, so `snapshotCount`
- * and the `reason` sentence built from it are LIVE state, exactly like
- * `forecast.freeBytes` a few lines below. Two reads taken either side of that
- * write legitimately disagree: Windows CI caught it reporting
- * "0 scans over less than an hour" and then "1 scan", and read them as a
- * broken determinism guarantee.
+ * `settled()` is the ledger those writes register with, so this is an answer
+ * rather than a guess — no polling, no timeout, and if it ever hangs `pending()`
+ * names the write still running instead of leaving a bare timeout to debug.
  *
- * Settling the store before the first read keeps the equality assertion at full
- * strength — every field compared, none excluded — instead of exempting two more
- * fields and shrinking what the test actually checks.
+ * Settling BEFORE the first read is what keeps the equality assertion at full
+ * strength: every field compared, nothing exempted to buy a green.
  */
-async function waitForSnapshot(port: number, rootPath: string): Promise<void> {
-  const deadline = Date.now() + 20_000;
-  for (;;) {
-    const r = await req(port, 'GET', `/api/snapshots?path=${encodeURIComponent(rootPath)}`);
-    const snaps = (r.body as { snapshots?: unknown[] }).snapshots ?? [];
-    if (snaps.length > 0) return;
-    assert.ok(Date.now() < deadline, 'the scan\'s snapshot never reached the store');
-    await new Promise((r2) => setTimeout(r2, 25));
+async function settleBackgroundWrites(): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const giveUp = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`background writes never settled; still running: ${pending().join(', ') || '(none)'}`)),
+      20_000,
+    );
+  });
+  try {
+    await Promise.race([settled(), giveUp]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -147,8 +150,8 @@ test('agent summary: raw+formatted bytes, stable ids, deterministic order, real 
     const scan = await req(port, 'POST', '/api/scan?wait=true&waitMs=30000', { path: fixture });
     const scanId = scan.body.scanId as string;
 
-    // Both reads must see a settled snapshot store — see waitForSnapshot above.
-    await waitForSnapshot(port, fixture);
+    // Both reads must see a settled store — see settleBackgroundWrites above.
+    await settleBackgroundWrites();
 
     const r = await req(port, 'GET', `/api/agent/summary?scanId=${scanId}`);
     assert.equal(r.status, 200, JSON.stringify(r.body));

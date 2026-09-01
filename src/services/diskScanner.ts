@@ -3,6 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { FileNode, ScanResult, LargeFolder, EmptyFoldersResult, CompareEntry } from '../models/types';
 import { saveSnapshot } from './snapshots';
+import { trackWrite } from '../utils/backgroundWrites';
 import { getIgnoreMatchers } from './settings';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { readJsonFile, appDataDir } from './storage';
@@ -352,10 +353,16 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
           scan.status = 'complete';
           scan.finishedAt = Date.now();
           scan.currentPath = scan.rootPath;
-          void saveMtimeCache(scan);
-          void saveSnapshot(scan).catch((err: unknown) => {
+          trackWrite('saveMtimeCache', saveMtimeCache(scan).catch((err: unknown) => {
+            // Was unawaited AND uncaught: a rejection here reached Node's
+            // unhandledRejection, which is fatal by default — a cache write
+            // failing would have taken the whole app down. Same treatment as
+            // its sibling below, for the same reason.
+            console.error('[treemap] mtime cache save failed:', err);
+          }));
+          trackWrite('saveSnapshot', saveSnapshot(scan).catch((err: unknown) => {
             console.error('[treemap] snapshot save failed:', err);
-          });
+          }));
           return;
         }
       } catch (err) {
@@ -543,10 +550,12 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
 
   // Persist the tree for future fast rescans, then snapshot for Trends.
   // Failures here must never fail the scan itself.
-  void saveMtimeCache(scan);
-  void saveSnapshot(scan).catch((err: unknown) => {
+  trackWrite('saveMtimeCache', saveMtimeCache(scan).catch((err: unknown) => {
+    console.error('[treemap] mtime cache save failed:', err);
+  }));
+  trackWrite('saveSnapshot', saveSnapshot(scan).catch((err: unknown) => {
     console.error('[treemap] snapshot save failed:', err);
-  });
+  }));
 }
 
 /**

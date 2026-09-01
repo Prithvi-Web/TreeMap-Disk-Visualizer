@@ -1,4 +1,5 @@
 import { FileNode, ScanResult } from '../../models/types';
+import { trackWrite } from '../../utils/backgroundWrites';
 import { createScanRecord } from '../diskScanner';
 import { saveSnapshot } from '../snapshots';
 import { providerById, tokenFor, cloudRootPath } from './providers';
@@ -43,9 +44,9 @@ export async function startCloudScan(providerId: string): Promise<ScanResult> {
       scan.status = 'complete';
       scan.finishedAt = Date.now();
       scan.currentPath = scan.rootPath;
-      void saveSnapshot(scan).catch((err: unknown) => {
+      trackWrite('saveSnapshot(cloud)', saveSnapshot(scan).catch((err: unknown) => {
         console.error('[treemap] cloud snapshot save failed:', err);
-      });
+      }));
     } catch (err) {
       scan.status = 'error';
       scan.error = err instanceof Error ? err.message : String(err);
