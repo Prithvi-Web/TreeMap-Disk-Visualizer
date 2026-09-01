@@ -1,12 +1,102 @@
 # TreeMap — session handoff
 
-## Session 5 — the journeys, 37 defects, two Windows lessons, and two audit rounds (1 September 2026)
+## Session 5 — the journeys, 37 defects, two Windows lessons, and three audit rounds (1 September 2026)
 
-**Suite: 2,185 tests · 2,182 pass · 0 fail · 3 skips** (was 2,008).
-`npm run typecheck` clean; `node scripts/build-ui.js --check` matches (111 parts).
-Twelve commits on `main`, `32d7ee0..HEAD`. The first ten are PUSHED and
-**CI run 33488537528 was green on macOS, Linux AND Windows** — verified through
-the API, not inferred. The last two are local at time of writing.
+**Suite: 2,185 tests · 0 fail · 3–4 skips** (was 2,008). The skip count moves by
+one because a `fs.watch` test skips itself when the platform does not deliver an
+event inside its window; 3 is the steady state, 4 is documented and expected,
+and neither is a failure. `npm run typecheck` clean;
+`node scripts/build-ui.js --check` matches (111 parts).
+
+**CLOSED. Twelve commits, `32d7ee0..196a369`, ALL PUSHED to `origin/main`, and
+[CI run 33537258196](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/actions/runs/33537258196)
+is green on macOS, Linux AND Windows** — verified job-by-job through the API,
+not inferred. Packaged and installed as **v4.1.0** (see *The build that ships*).
+
+### Checking CI from this laptop
+
+`gh` is **not installed** here, and `GET /actions/runs/<id>/logs` answers **403
+Must have admin rights** for this repo, so per-test counts are not readable from
+a run. What does work, unauthenticated, is the jobs endpoint — use it, because
+a run's top-level `conclusion` hides which OS actually did what:
+
+```bash
+curl -s "https://api.github.com/repos/Prithvi-Web/TreeMap-Disk-Visualizer/actions/runs/<id>/jobs" \
+  | python3 -c "import json,sys; [print(j['name'], j['conclusion'], [s['name'] for s in j['steps'] if s['conclusion']=='failure']) for j in json.load(sys.stdin)['jobs']]"
+```
+
+Two things that follow from reading it rather than trusting the badge:
+
+- The workflow has **no `build-ui --check` step**, which looks like a hole and is
+  not one: the check runs inside the suite
+  (`tests/buildUi.test.ts` shells out to `--check`, and a sibling test rebuilds
+  from `src/ui` and compares byte-for-byte). All three of the required gates are
+  therefore enforced on all three OSes.
+- `skip: !isWin && '<reason>'` evaluates to `false` on Windows, so **Windows
+  green is proof those tests executed**, not that they were skipped. That is the
+  whole reason the repo uses that idiom instead of a bare early `return`, which
+  reports as a PASS.
+
+Honest limit: the macOS runner may or may not present the firmlink layout, so
+`tests/pathSanitizerFirmlink.test.ts` can pass trivially there via its
+`aliasIsReal()` guard. It was proven against the real filesystem on the owner's
+own machine, which is the one holding the files.
+
+### The build that ships
+
+**v4.1.0**, packaged 1 September 2026 from `196a369` and installed to
+`/Applications/TreeMap.app`. The previous installed bundle was 4.0.0 built
+31 Aug 00:34 — it predated both the premium-UI round and the whole of session 5,
+so it was missing 37 defect fixes, twelve audit fixes and the firmlink fix.
+
+Minor, not patch: since 4.0.0 the app gained the premium-UI round (user-visible)
+on top of the fixes. The version lives in **`package.json` only** —
+`src/api/openapi.ts:14` reads it at runtime and the capabilities report derives
+from it, so bumping one line moves the OpenAPI doc, `/api/capabilities` and the
+bundle together. Two tests in `tests/discoverability.test.ts` assert exactly that
+coupling, so a hard-coded version anywhere fails the suite.
+
+To rebuild and reinstall:
+
+```bash
+npm run build && node scripts/fetchGdu.js && npx electron-builder --mac --publish never
+```
+
+`--publish never` is not optional politeness: `build.publish` in `package.json`
+points at this repo's GitHub releases, and electron-builder will push a release
+on its own if a token happens to be in the environment. The gdu binaries are
+cached under `build/gdu` (104 MB, all five platforms) and `fetchGdu.js` skips
+what is already there, so the build needs no network.
+
+**Packaging rebuilds native modules against Electron's ABI, and that breaks
+`npm test` until you undo it.** electron-builder recompiles `better-sqlite3`
+for Electron 31 (`NODE_MODULE_VERSION 125`); the local Node here is v24
+(`137`), so the next `npm test` dies with `ERR_DLOPEN_FAILED` in every
+`indexEngine` test and looks like a catastrophic regression. It is not. Fix:
+
+```bash
+npm rebuild better-sqlite3
+```
+
+Either package last, or rebuild straight afterwards. The packaged app keeps the
+Electron-ABI copy it needs, so rebuilding for Node does not touch the installed
+bundle.
+
+**Do not "fix" the packed `better_sqlite3.node`.** `asarUnpack` names only
+sharp/@img/@foliojs-fork, so `better_sqlite3.node` (1.9 MB) sits *inside*
+`app.asar`, which normally means a native module cannot be `dlopen`ed. Electron
+patches `process.dlopen` to extract it to a temp file first, so it works — and
+this was verified against the shipped 4.1.0 bundle, not assumed: a scan plus
+`POST /api/index/build` on a throwaway folder reached `state: "ready"`, which
+is only reachable through SQLite.
+
+Reminder from the Gatekeeper note: this app ships **un-notarized by choice**.
+Do not document a right-click→Open workaround — Apple removed that path in
+Sequoia. The route is System Settings → Privacy & Security → *Open Anyway*, and
+that button expires about an hour after the blocked launch. Note this does NOT
+apply to the copy installed here: a locally built bundle carries no
+`com.apple.quarantine` attribute (checked), so it launches with no prompt at
+all. Gatekeeper only meets someone who *downloads* the dmg or zip.
 
 ### The most useful thing this session learned
 
