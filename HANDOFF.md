@@ -1,5 +1,72 @@
 # TreeMap — session handoff
 
+## Session 4 — integration hardening, the reclaim radar, and the numeral bug (31 August 2026)
+
+**Commits `a825e80`, `b001b69` (plus session 3's `d1f892f`, `a738ff8`, `9179042`,
+`4697394`, `12ca306`). All LOCAL — the owner pushes via GitHub Desktop.**
+Suite at hand-off: **2008 tests · 2006 pass · 0 fail · 2 pre-existing skips**;
+typecheck clean; `node scripts/build-ui.js --check` matches.
+
+### THE ONE THING TO READ FIRST
+
+`public/index.html` is **GENERATED**. Edit `src/ui/**` (110 files) and run
+`npm run build:ui`. `tests/buildUi.test.ts` fails the suite if the artifact is
+hand-edited or a source changed without a rebuild. `src/ui/README.md` orients.
+
+### Unfinished — pick this up
+
+1. **The integration round's third stage never ran.** Stages 1 (contract sweep)
+   and 2 (headroom + error paths) landed and are in `b001b69`. Stage 3 — the
+   end-to-end journeys — stalled after 44 minutes of silence and was stopped.
+   Nothing from it is committed. It was to drive the REAL UI against the real
+   server: scan → drill → search → stage to cart → **dry-run** commit (then
+   verify the files still exist) → duplicates → budgets → notes → settings
+   persistence → snapshot compare, checking at each step that the screen agrees
+   with the API payload, and that the console is clean in every view in both
+   themes. **This is the main outstanding work.**
+2. **Backend fixes are not live on the dev server.** `scripts/dev-isolated.js`
+   requires `dist/`, so the rate-limiter lanes and route changes need
+   `npm run build` and a server restart before any console check means anything.
+   The boot-burst 429 fix has NOT been verified in a browser yet.
+3. **Known-open, deliberately not fixed** (from stage 1/2 reports):
+   - `GET /api/cleanup/rules` can answer 202 `{status:'running'}`; `runCleanFind`
+     would read `data.files` as undefined.
+   - 12 routes have no frontend caller (agent/MCP surface — verify before deleting).
+   - Two wall-clock perf tests are load-sensitive: `indexEngine` "sub-quadratic"
+     (now CPU-time based) and `subtreeCount`'s 400ms budget. They fail on a busy
+     machine and pass isolated. **Investigate before believing a failure; never
+     "fix" them by loosening the budget.**
+
+### Traps this session bought the hard way
+
+1. **`justify-self` on a grid item defeats a `minmax(0,1fr)` track** — it sizes
+   the item to its content. That is how the breadcrumb came to paint over the
+   view switcher.
+2. **Never beam a Liquid Glass host directly.** `.modal` and `#cartTab` get their
+   fill from `.lg::before`, and FxBeam writes the same pseudo-elements at higher
+   specificity — the panel goes see-through. Both carry beam-only
+   `.fx-beam-strip` children, and a `[data-fxbeam].lg` guard catches the next one.
+3. **The rolling numerals inherit their host's neighbourhood.** A `.host span`
+   rule written for a caption will style digit strips too, and `white-space:
+   nowrap` on a host lays all ten digits on one line and blanks the slot. The
+   reset in `140-fx-numerals.css` uses **longhands, never `font:`** — the
+   shorthand also resets line-height and outranks the layout rules.
+4. **Synthetic `.click()` does not reach many handlers in this app.** Use real
+   input when verifying, or you will report working features as broken (I did).
+5. **The preview pane reports `document.hidden === true` forever**: charts refuse
+   to paint, rAF is frozen, `element.focus()` fires no focus event, and numerals
+   take the plain-text path. Spoof visibility to inspect; verify motion with the
+   Node pumped-clock tests. Console history also spans reloads — use a fresh tab.
+6. **Editing `public/index.html` (or a source) while a suite run is in flight**
+   makes string-matching tests fail once and pass on retry. That is not a flake.
+7. **`FACTORIES` in `fxChartsPrimitives.test.ts` is derived**: adding a canvas
+   primitive updates the count and requires the exact guard
+   `if (life.dead || document.hidden) return;`. That test caught the radar.
+8. **A test pinned to an exact line of code fails for changes that cannot affect
+   it.** Two such pins were rewritten this session to assert their invariant
+   instead. Prefer brace-matched blocks (`braced()` helpers exist in
+   `premiumPolish.test.ts` and `motionWidth.test.ts`).
+
 ## Premium round 2: the two layout collapses, the full build-out, a review fleet, and the file split (31 August 2026, third session)
 
 **Read this first: `public/index.html` is now GENERATED.** The frontend is
