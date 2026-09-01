@@ -120,4 +120,9 @@
 .rw-row > .rw-val { flex: none; min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; }
 .rw-row > .rw-help { flex-basis: 100%; margin-left: 190px; font-size: 11.5px; color: var(--text-3);
   margin-top: 2px; line-height: 1.45; }
-@media (max-width: 620px) { .rw-row > .rw-help { margin-left: 0; } }
+@media (max-width: 620px) { .rw-row > .rw-help { margin-left: 0; } }/* The six signals as one shape, above the rows that spell them out.
+   Centred and flush: the canvas is square and sized by the kit, so the wrap
+   only has to give it a line of its own and a hairline off the rows below. */
+.rc-radar-wrap { position: relative; display: flex; justify-content: center;
+  padding: 2px 0 10px; margin-bottom: 8px; border-bottom: 1px solid var(--hairline); }
+.rc-radar-wrap canvas { display: block; }

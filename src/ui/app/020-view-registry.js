@@ -159,7 +159,12 @@ const VIEWS = [
   {
     id: 'duplicates', label: 'Duplicates', icon: 'copy', needsScan: true,
     mount() {
-      if (!state.scanId || !state.root) return;
+      if (!state.root) return; // nothing scanned at all — the welcome screen is up
+      // A tree with no scan behind it (index-painted, or a rescan the user
+      // stopped) is not a reason to leave the markup's "Scanning for
+      // duplicates…" standing over an empty card. Both panes, because the
+      // segmented control switches between them without remounting.
+      if (!state.scanId) { dupNeedsScan(); ndNeedsScan(); return; }
       if (isCloudScan()) {
         // Duplicate detection reads file contents, and a cloud scan never
         // downloads any — so this is genuinely unavailable rather than empty,

@@ -258,6 +258,13 @@ async function loadCostEstimate() {
   }
   state.cost = est;
 
+  // The bytes these prices were worked out from ride in the answer itself —
+  // every provider carries the figure the server priced. The client tree's own
+  // root size is a second, independent measurement of the same thing, and a
+  // headline taken from it would disagree with the prices beneath it the day
+  // the two ever differ.
+  const pricedBytes = est.providers.length ? est.providers[0].bytes : null;
+
   // Bars are normalized to the priciest plan actually shown — a provider
   // with no plan this big has no honest bar, so it gets none.
   const maxMonthly = est.providers.reduce((m, p) => Math.max(m, p.current.tier ? p.current.monthly : 0), 0);
@@ -287,7 +294,9 @@ async function loadCostEstimate() {
   // the freeable bytes, say); a currency or scan change is a new entity and
   // snaps through the key.
   FxNum.rollHtml(host,
-    `<div class="cost-lead">Keeping <b>${formatBytes(state.root ? state.root.size : 0)}</b> online would cost:</div>` +
+    (pricedBytes === null
+      ? `<div class="cost-lead">No cloud plans ship with this version, so there is nothing to price this against.</div>`
+      : `<div class="cost-lead">Keeping <b>${formatBytes(pricedBytes)}</b> online would cost:</div>`) +
     rows +
     `<div class="cost-foot">Prices as of <b>${escapeHtml(est.asOf)}</b>, shipped with this version — TreeMap never looks them up online, so check the provider before you buy.` +
     (est.approximate ? ` Figures marked ≈ are converted from US dollars at an approximate rate.` : '') + `</div>`,
@@ -308,6 +317,44 @@ function fxDriveGaugeDrop() {
   if (dhGauge) { dhGauge.destroy(); dhGauge = null; }
 }
 
+/**
+ * Which drive the scanned folder actually sits on, from the topology answer.
+ *
+ * `/api/platform/topology` answers `physicalDisks[]` and `logicalVolumes[]` —
+ * that is what `VolumeTopology` is and what openapi.json publishes. It has
+ * never carried `volumes`, `disks` or a `devicePath`, so reading those names
+ * named no drive on any machine and this card could only ever repeat the
+ * server's "no drive was named", even where smartctl was installed.
+ *
+ * Longest mount point wins: `/` backs every path, so a first match would beat
+ * the volume the folder is really on. A physical-disk id is already a device
+ * node on Linux and a bare `diskN` on macOS; anything else — Windows names its
+ * disks `PhysicalDiskN`, which smartctl does not take — names nothing, because
+ * "no drive was named" is true while "that drive returned no SMART data" is
+ * the false sentence a guess would produce.
+ */
+function smartDeviceFor(topo, rootPath) {
+  if (!topo || typeof rootPath !== 'string' || !rootPath) return null;
+  // A mount point is a folder boundary, never a string prefix: /Volumes/Database
+  // is not inside /Volumes/Data.
+  const under = (p, mount) => {
+    if (p === mount) return true;
+    const sep = mount.includes('\\') ? '\\' : '/';
+    return p.startsWith(mount.endsWith(sep) ? mount : mount + sep);
+  };
+  const vol = (topo.logicalVolumes || [])
+    .filter((v) => v && typeof v.mountPoint === 'string' && v.mountPoint && under(rootPath, v.mountPoint))
+    .sort((a, b) => b.mountPoint.length - a.mountPoint.length)[0] || null;
+  const disks = topo.physicalDisks || [];
+  const id = ((vol && vol.physicalDiskIds) || [])[0] ||
+    // One physical disk means there is nowhere else the folder could be. More
+    // than one, with no volume matched, is a guess this card must not make.
+    (disks.length === 1 && disks[0] ? disks[0].id : null);
+  if (typeof id !== 'string' || !id) return null;
+  if (id.startsWith('/dev/')) return id;
+  return /^disk\d+$/.test(id) ? '/dev/' + id : null;
+}
+
 async function loadDriveHealth() {
   const host = $('driveHealthBody');
   if (!host || !state.scanId) return;
@@ -318,9 +365,7 @@ async function loadDriveHealth() {
   let device = null;
   try {
     // The topology map (A5) already knows which physical drive holds this root.
-    const topo = await api('/api/platform/topology');
-    const vol = (topo.volumes || []).find(v => state.root && state.root.path.startsWith(v.mountPoint || ' '));
-    device = (vol && vol.devicePath) || (topo.disks && topo.disks[0] && topo.disks[0].devicePath) || null;
+    device = smartDeviceFor(await topologyAnswer(), state.root && state.root.path);
   } catch { /* topology is optional; the forecast half still answers */ }
 
   let data;

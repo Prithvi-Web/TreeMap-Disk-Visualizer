@@ -382,9 +382,20 @@ function cartManifestHtml(plan, missingFromScan) {
     // longer a caveat about accuracy.
     html += `<div class="cart-mf-note">Checked in ${formatCount(plan.batches)} batches, each counting the Time Capsule room the one before it would have used.</div>`;
   }
-  const conflicts = (plan.openHandles && plan.openHandles.conflicts) || [];
+  const oh = plan.openHandles;
+  const conflicts = (oh && oh.conflicts) || [];
   if (conflicts.length) {
     html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(conflicts.length)} of these ${conflicts.length === 1 ? 'is' : 'are'} open in another program right now, which will stop the whole batch.</div>`;
+  }
+  // openHandleGuard's rule: a guard that cannot check must never answer
+  // "nothing is open". The server reports three states and the conflicts list
+  // is empty in two of them, so reading only that list turned "could not
+  // check" into a dialog with no caveat at all. `reason` is the server's own
+  // sentence — the probe knows why it could not answer and this does not.
+  if (oh && oh.checked === false) {
+    html += `<div class="cart-mf-note">${icon('alert', 13)} ${escapeHtml(oh.reason || 'TreeMap couldn’t check whether these files are in use.')}</div>`;
+  } else if (oh && oh.complete === false) {
+    html += `<div class="cart-mf-note">${icon('alert', 13)} ${escapeHtml(oh.reason || 'TreeMap could not check every file in this set, so some open files may not be listed.')}</div>`;
   }
   if (missingFromScan) {
     html += `<div class="cart-mf-note">${formatCount(missingFromScan)} item${missingFromScan === 1 ? '' : 's'} not in the current scan will stay in the cart.</div>`;

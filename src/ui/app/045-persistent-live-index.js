@@ -189,7 +189,7 @@ function followScanProgress(scanId, path, fast, t0) {
         closeEventSource();
         if (!isCloud) rememberScannedRoot(path);
         if (fast) showFastRescanStat(scanId);
-        finishScan(r.root, performance.now() - t0, statsFromResult(r));
+        finishScan(r.root, performance.now() - t0, await scanStatsFor(scanId, r));
       }
     } catch (e) {
       // 500: the scan itself failed server-side. 404: the scan record is
@@ -230,7 +230,7 @@ function followScanProgress(scanId, path, fast, t0) {
       if (!root) {
         const r = await api(`/api/scan/${scanId}/result`);
         root = r.root;
-        stats = statsFromResult(r);
+        stats = await scanStatsFor(scanId, r);
       }
       if (!isCloud) rememberScannedRoot(path);
       if (fast) showFastRescanStat(scanId);
@@ -321,9 +321,37 @@ function statsFromResult(r) {
   };
 }
 
+/**
+ * The scan's counters, from the response that actually carries them.
+ *
+ * `buildScanStats` on the server is the single place these are shaped, and
+ * `GET /api/scan/:scanId/stats` is the only response that publishes all of
+ * them. `/result` carries the tree and the file/dir counts but no `scanned`,
+ * `engine`, `ioThreads`, `cachedDirs` or `walkedDirs` — so deriving the
+ * counters from it produced `undefined`s, and the dashboard's engine row,
+ * which is gated on `engine`, silently vanished on exactly the two paths that
+ * had already gone wrong: a stalled stream recovered by the watchdog, and a
+ * `complete` frame that arrived with no tree.
+ *
+ * A stats request that fails is not worth failing a completed scan over, so
+ * the result-derived shape stays as the fallback.
+ */
+async function scanStatsFor(scanId, result) {
+  try {
+    return statsFromResult({ ...result, ...await api(`/api/scan/${scanId}/stats`) });
+  } catch {
+    return statsFromResult(result);
+  }
+}
+
 async function finishScan(root, durationMs, stats) {
   endScanChrome();
   state.root = root;
+  // The id that answers questions about the tree we just put on screen — set
+  // in the same breath as the tree so the two can never disagree. Null on the
+  // index-first paint, which has a tree and deliberately no scan yet. Stop
+  // reads it to put the previous results back when a rescan is abandoned.
+  state.settledScanId = state.scanId;
   indexTree(root);
   state.lastScan = { when: Date.now(), durationMs };
   state.treemap.rootPath = root.path;
@@ -383,10 +411,17 @@ async function finishScan(root, durationMs, stats) {
     return;
   }
   try {
+    /* All three poll. finishScan normally runs against a scan that just
+       finished, but not always: the index paints a tree before any scan has an
+       id, a rescan can be in flight against this one, and all three endpoints
+       answer a running scan with 202. Without poll the 202 body has no `files`
+       / `types` / `folders` field, so the row either read undefined or — once
+       api() started throwing on an unrequested 202 — told the user "could not
+       load stats" about a scan that was merely still running. */
     const [lf, ft, lfo] = await Promise.all([
-      api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`),
-      api(`/api/file-types?scanId=${state.scanId}`),
-      api(`/api/large-folders?scanId=${state.scanId}&limit=10`),
+      api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`, undefined, { poll: true }),
+      api(`/api/file-types?scanId=${state.scanId}`, undefined, { poll: true }),
+      api(`/api/large-folders?scanId=${state.scanId}&limit=10`, undefined, { poll: true }),
     ]);
     state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders;
     seedNodes(lf.files); // right-click/cart on a big file must resolve even if pruned away
@@ -693,7 +728,17 @@ let donutHandle = null;
 function renderDonut() {
   fxDonutLoadingSync(false); // every paint of the card settles the veil
   const legend = $('donutLegend');
-  const top = state.types.slice(0, 8);
+  // The kit draws at most 8 slices and computes every percentage against the
+  // items it is handed, so handing it only the 8 biggest made each legend
+  // percentage a share of those 8 rather than of the scan — ".zip 30.1%" for
+  // an extension that is 28.2% of what was scanned. Seven named types plus
+  // one tail slice keeps the ring a real part-to-whole, and names how many
+  // extensions the tail stands for rather than leaving them unaccounted.
+  const RING_SLICES = 8;
+  const all = state.types;
+  const named = all.length > RING_SLICES ? all.slice(0, RING_SLICES - 1) : all;
+  const rest = all.slice(named.length);
+  const top = named;
   if (!top.length) {
     if (donutHandle) { donutHandle.destroy(); donutHandle = null; }
     const { ctx } = Canvas2D.setup($('donutCanvas'), 230, 230);
@@ -706,8 +751,15 @@ function renderDonut() {
   const spec = {
     // count rides along: the baseline legend answered "how many files is
     // that?" per type, and the rings kit renders it when it is provided.
-    items: top.map(t => ({ name: t.ext === '(none)' ? 'no ext' : '.' + t.ext, value: t.totalSize, count: t.count })),
-    centerLabel: 'Top types',
+    items: [
+      ...top.map(t => ({ name: t.ext === '(none)' ? 'no ext' : '.' + t.ext, value: t.totalSize, count: t.count })),
+      ...(rest.length ? [{
+        name: `${formatCount(rest.length)} more`,
+        value: rest.reduce((a, t) => a + t.totalSize, 0),
+        count: rest.reduce((a, t) => a + t.count, 0),
+      }] : []),
+    ],
+    centerLabel: 'All types',
   };
   if (donutHandle) donutHandle.update(spec);
   else donutHandle = FxCharts.rings($('donutCanvas'), legend, spec);

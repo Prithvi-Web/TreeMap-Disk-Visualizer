@@ -10,6 +10,27 @@
 
 let topologyLoading = false;
 
+/* Two cards want the same disk layout on one dashboard paint: this one draws
+   it, and Drive Health reads a device name out of it. Reading it spawns
+   diskutil/lsblk — measured at ~90ms, and the boot timeline showed the two
+   cards asking 160ms apart — so the second read spent a child process and a
+   token of the strict rate limit on an answer already in hand.
+
+   This shares an answer; it does not cache one. The window is one paint, the
+   re-check and refresh controls pass `force` because looking again is the
+   whole point of them, and a failure is dropped so the next caller retries for
+   real rather than inheriting someone else's error. */
+const TOPOLOGY_SHARE_MS = 3000;
+let topologyShared = null;
+function topologyAnswer(force) {
+  const now = Date.now();
+  if (!force && topologyShared && now - topologyShared.at < TOPOLOGY_SHARE_MS) return topologyShared.promise;
+  const shared = { at: now, promise: api('/api/platform/topology') };
+  topologyShared = shared;
+  shared.promise.catch(() => { if (topologyShared === shared) topologyShared = null; });
+  return shared.promise;
+}
+
 async function loadTopology() {
   const body = $('topologyBody');
   if (!body || topologyLoading) return;
@@ -30,7 +51,9 @@ async function loadTopology() {
     body.classList.add('fx-chart-loading');
   }
   try {
-    const topo = await api('/api/platform/topology');
+    // Always a fresh read: every control that reaches this function — refresh,
+    // retry, a capability re-probe — means "look again".
+    const topo = await topologyAnswer(true);
     renderTopology(topo);
   } catch (err) {
     if (err.capabilityUnavailable) renderTopologyBlocked(err.message);

@@ -874,35 +874,63 @@ const FxGoo = (() => {
  * The one fetch wrapper (§3.4). Every network call in this file goes through
  * it — there are no other `fetch()` call sites, and a test pins that.
  *
- * It owns four things so no caller has to:
+ * It owns six things so no caller has to:
  *
  *  - **The error envelope.** The backend answers failures as flat
  *    `{ error, code }` (src/middleware/errorHandler.ts). That is NOT the nested
  *    `{ error: { code, message } }` shape the spec sketches; §3.2 says to follow
  *    the existing convention, so this reads the flat one and every caller
  *    switches on `err.code`, never on message text.
- *  - **Rate limiting.** The server allows 10 req/s with a burst of 20. Quick
- *    navigation and bulk chunking genuinely outrun that, and a surfaced 429 used
- *    to read as "your delete failed" or, worse, made a folder render as empty.
- *    Retried with backoff instead.
+ *  - **Rate limiting.** Retried with backoff. A surfaced 429 used to read as
+ *    "your delete failed" or, worse, made a folder render as empty.
  *  - **202 pending.** Long work answers `202 { status: 'running' }` until it is
  *    done. With `poll: true` the wrapper waits it out rather than making each
- *    panel write its own polling loop.
+ *    panel write its own polling loop. Reaching a caller that did NOT ask to
+ *    wait, that body is not a result: handing it back is how a card reads
+ *    `.suggestions` off it and paints an empty list, which is the silent blank
+ *    §3.5 forbids. So it throws, marked `stillWorking` and carrying whatever
+ *    progress the body had. `pending: 'return'` opts out, for the two finders
+ *    that run their own loop in order to paint a progress bar from it.
  *  - **Capability failures.** `409 CAPABILITY_UNAVAILABLE` carries a
  *    human-readable reason; it is marked so panels can render the *unavailable*
  *    state (§3.5 #5) instead of an error.
+ *  - **A body that is not JSON.** A truncated or intercepted 2xx used to parse
+ *    to `null` and be returned as if it were the answer, so the caller either
+ *    threw a `TypeError` at the user or painted an empty card. It is an error
+ *    now, in words, and the raw parser message never reaches a reader.
+ *  - **A dropped connection.** `fetch` rejects with the browser's own sentence
+ *    — "Failed to fetch", "Load failed", "NetworkError…" — which names neither
+ *    what was unreachable nor what to do. Replaced with one that does. A
+ *    request the app itself aborted passes through untouched, because that is
+ *    not a failure at all.
  *
  * Throws on failure. Callers catch and pass the error to `reportError`, which
  * is the single place an error becomes something the user sees.
  */
 async function api(url, options, opts = {}) {
-  const { retries = 8, poll = false, pollMs = 700, pollTimeoutMs = 120000 } = opts;
+  const { retries = 8, poll = false, pollMs = 700, pollTimeoutMs = 120000, pending = 'throw' } = opts;
   const deadline = Date.now() + pollTimeoutMs;
 
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, options);
+    let res;
+    try {
+      res = await fetch(url, options);
+    } catch (netErr) {
+      if (netErr && netErr.name === 'AbortError') throw netErr; // the app cancelled it; not a failure
+      const err = new Error('Couldn’t reach TreeMap — its own server stopped answering. Check the app is still running, then try again.');
+      err.code = 'OFFLINE';
+      err.status = 0;
+      throw err;
+    }
+
+    // Read the body ONCE, as text, so "carried nothing" can be told apart from
+    // "carried something that is not JSON". `res.json()` collapses both to a
+    // throw, which is what let an unreadable answer pass as an empty one.
+    let raw = '';
+    try { raw = await res.text(); } catch { /* body already gone */ }
     let body = null;
-    try { body = await res.json(); } catch { /* no body */ }
+    let unreadable = false;
+    if (raw) { try { body = JSON.parse(raw); } catch { unreadable = true; } }
 
     if (res.status === 429 && attempt < retries) {
       await new Promise((r) => setTimeout(r, 250 * (attempt + 1))); // refill is 10/s
@@ -912,7 +940,7 @@ async function api(url, options, opts = {}) {
     // 202 means "still working" — the shape every long-running endpoint uses.
     if (res.status === 202 && poll) {
       if (Date.now() > deadline) {
-        const err = new Error('This is taking longer than expected.');
+        const err = new Error('This is still running after a long wait. It may still finish — reopen this in a moment to check.');
         err.code = 'PENDING_TIMEOUT';
         err.status = 202;
         err.pending = body;
@@ -922,8 +950,25 @@ async function api(url, options, opts = {}) {
       continue;
     }
 
+    // The same 202, reaching a caller that did not ask to wait. A job HANDLE is
+    // a real payload and still returns: POST /api/scan and POST /api/index/build
+    // both answer 202 with the id the caller needs, and the id is what tells
+    // the two apart from "no answer yet".
+    if (res.status === 202 && pending === 'throw' && body &&
+        body.status === 'running' && !body.jobId && !body.scanId) {
+      const err = new Error('Still working on that — it hasn’t finished yet. Try again in a moment.');
+      err.code = 'PENDING';
+      err.status = 202;
+      err.pending = body;
+      err.stillWorking = true;
+      throw err;
+    }
+
     if (!res.ok) {
-      const err = new Error((body && body.error) || ('HTTP ' + res.status));
+      // An error whose body is not JSON (a proxy's HTML page, a truncated
+      // stream) still has its status to report, and that is more use to a
+      // reader than a parser's complaint about an unexpected token.
+      const err = new Error((body && body.error) || ('The server answered ' + res.status + ' with nothing TreeMap could read.'));
       err.code = (body && body.code) || 'HTTP_' + res.status;
       err.status = res.status;
       // Some errors carry machine-readable specifics alongside the prose —
@@ -935,6 +980,13 @@ async function api(url, options, opts = {}) {
       err.capabilityUnavailable = err.code === 'CAPABILITY_UNAVAILABLE';
       throw err;
     }
+
+    if (unreadable) {
+      const err = new Error('TreeMap couldn’t read the answer its own server sent. Try again.');
+      err.code = 'BAD_RESPONSE';
+      err.status = res.status;
+      throw err;
+    }
     return body;
   }
 }
@@ -943,13 +995,14 @@ async function api(url, options, opts = {}) {
  * The single place an error becomes something the user sees (§3.4).
  *
  * `message` from the envelope is written for a non-technical reader, so it goes
- * on screen as-is. A capability failure is not an error — it is an answer — so
- * it is shown neutrally rather than in red, and a cancelled request says
- * nothing at all.
+ * on screen as-is. Two things that arrive here are not errors and must not be
+ * dressed as one: a capability this machine does not have, and work that has
+ * not finished. Both are answers, so both are shown plainly rather than in red.
+ * A cancelled request says nothing at all.
  */
 function reportError(err, context) {
   if (!err || err.name === 'AbortError') return;
   const detail = err.message || 'Something went wrong.';
-  if (err.capabilityUnavailable) { toast(detail, 'success', 6000); return; }
+  if (err.capabilityUnavailable || err.stillWorking) { toast(detail, 'success', 6000); return; }
   toast(context ? context + ': ' + detail : detail, 'error');
 }

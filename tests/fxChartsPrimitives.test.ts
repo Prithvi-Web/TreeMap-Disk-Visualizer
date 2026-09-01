@@ -341,11 +341,11 @@ test('every canvas primitive refuses to paint while the document is hidden', () 
   const fx = loadFxCharts();
   // Guard the derivation itself: a rename that emptied this list would make
   // the loop below pass by having nothing to check.
-  for (const known of ['area', 'rings', 'gauge', 'liveLine', 'scatter', 'profitLine']) {
+  for (const known of ['area', 'rings', 'gauge', 'liveLine', 'scatter', 'profitLine', 'radar']) {
     assert.ok(CANVAS_PRIMITIVES.includes(known), `${known} is one of the canvas primitives`);
   }
-  assert.equal(CANVAS_PRIMITIVES.length, 6,
-    `six canvas primitives (saw: ${CANVAS_PRIMITIVES.join(', ')}) — a new one must carry the guard too`);
+  assert.equal(CANVAS_PRIMITIVES.length, 7,
+    `seven canvas primitives (saw: ${CANVAS_PRIMITIVES.join(', ')}) — a new one must carry the guard too`);
   for (const name of CANVAS_PRIMITIVES) {
     assert.equal(typeof fx[name], 'function', `${name} is exported`);
     const src = factoryBody(name);
@@ -569,4 +569,46 @@ test('the momentum tokens exist in both themes, inside the charts style banner',
     'light re-tunes the same tokens');
   assert.match(styles, /\.fx-fun-stage,\s*\.fx-fun-seg,\s*\.fx-bsq-col,\s*\.fx-bsq-sq \{ transition: none; \}/,
     'reduced motion silences the new transitions too');
+});
+
+/* ══════════════ radar: the reclaim score's six signals ══════════════ */
+
+/**
+ * The score's promise, kept in geometry.
+ *
+ * The breakdown already says in words that a signal which could not answer is
+ * "not counted" — never a zero. The radar is the one place that promise is
+ * easy to break silently, because a null plotted at the centre looks exactly
+ * like a measured 0.0. These pin the wiring that keeps them different.
+ */
+test('the reclaim radar is fed a fixed axis order, so two files are comparable', () => {
+  const order = INDEX.match(/const RC_AXIS_ORDER = \[([^\]]*)\]/);
+  assert.ok(order, 'the axis order is a constant');
+  const ids = order![1].split(',').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean);
+  assert.deepEqual(ids, ['size', 'staleness', 'regenerable', 'redundant', 'redownloadable', 'elsewhere'],
+    'all six signals, in one fixed order — never the order the server answered in');
+});
+
+test('a signal that did not answer reaches the radar as null, carrying its reason', () => {
+  const fn = INDEX.slice(INDEX.indexOf('function reclaimRadarAxes'), INDEX.indexOf('/* ── the popover ── */'));
+  assert.match(fn, /value:\s*c\s*\?\s*c\.value\s*:\s*null/,
+    'an unanswered signal is null — never 0, which the radar would draw at the centre');
+  assert.match(fn, /\.reason/, 'and the tooltip can say why it could not be measured');
+});
+
+test('the reclaim radar mounts and is destroyed with its panel', () => {
+  assert.match(INDEX, /rcRadarHandle = FxCharts\.radar\(/, 'the panel mounts the radar');
+  const close = INDEX.slice(INDEX.indexOf('function closeReclaimWhy'), INDEX.indexOf('function closeReclaimWhy') + 700);
+  assert.match(close, /rcRadarDrop\(\)/, 'and closing the panel drops it');
+  // The mount site must drop any previous handle first: the panel is opened
+  // straight from another row without closing, and a stranded handle keeps a
+  // ResizeObserver on a canvas that innerHTML already replaced.
+  const open = INDEX.slice(INDEX.indexOf('function openReclaimWhy'), INDEX.indexOf('rcRadarHandle = FxCharts.radar('));
+  assert.match(open, /rcRadarDrop\(\)/, 're-opening drops the previous radar before mounting the next');
+});
+
+test('the radar states its numbers for a screen reader, not just its shape', () => {
+  const mount = INDEX.slice(INDEX.indexOf('rcRadarHandle = FxCharts.radar('), INDEX.indexOf('rcRadarHandle = FxCharts.radar(') + 800);
+  assert.match(mount, /ariaLabel:/, 'the canvas carries a text equivalent');
+  assert.match(mount, /not measured/, 'which distinguishes an unmeasured signal from a zero');
 });

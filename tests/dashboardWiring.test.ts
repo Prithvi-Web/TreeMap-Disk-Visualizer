@@ -251,3 +251,59 @@ test('the new bars and strips are container-scoped and shed before the numbers w
   assert.match(INDEX, /@container \(max-width: 340px\) \{ #costBody \.fx-bar-track \{ display: none; \} \}/);
   assert.match(INDEX, /@container \(max-width: 380px\) \{ \.storage-row \.asq \{ display: none; \} \}/);
 });
+
+/* ══════════════ the File Types ring is a share of the scan ══════════════ */
+
+/** `renderDonut` executed, so what is asserted is the spec the ring gets. */
+function donutSpec(types: Array<{ ext: string; count: number; totalSize: number }>): any {
+  const src = slice('let donutHandle = null;', 'const tmCanvas');
+  let captured: any = null;
+  const legend = { classList: { add() {}, remove() {} }, set innerHTML(_v: string) {} };
+  const FxCharts = { rings: (_c: unknown, _l: unknown, spec: any) => { captured = spec; return { update() {}, destroy() {} }; } };
+  const make = new Function(
+    '$', 'state', 'FxCharts', 'Canvas2D', 'fxDonutLoadingSync', 'formatCount',
+    `${src}; return renderDonut;`,
+  );
+  make(
+    (id: string) => (id === 'donutLegend' ? legend : { getContext: () => ({ clearRect() {} }) }),
+    { types },
+    FxCharts,
+    { setup: () => ({ ctx: { clearRect() {} } }) },
+    () => {},
+    (n: number) => String(n),
+  )();
+  return captured;
+}
+
+/**
+ * The ring showed the eight biggest extensions and nothing else, and the kit
+ * computes each slice's percentage against the items it was handed. On a scan
+ * with 88 extensions that made ".zip 645.3 MB — 30.1%" when zip is 28.2% of
+ * what was scanned: a number that reconciles with nothing the API returns,
+ * beside a card headed "File types by size".
+ *
+ * Folding the remainder into one "Other" slice makes the ring a real
+ * part-to-whole again: every percentage is a share of the scan, and the count
+ * of extensions the tail stands for is on screen instead of implied.
+ */
+test('the file-types ring accounts for the whole scan, not just its eight biggest slices', () => {
+  const many = Array.from({ length: 20 }, (_, i) => ({ ext: `e${i}`, count: i + 1, totalSize: 1000 - i * 10 }));
+  const spec = donutSpec(many);
+  const total = many.reduce((a, t) => a + t.totalSize, 0);
+  const shown = spec.items.reduce((a: number, it: any) => a + it.value, 0);
+  assert.equal(shown, total, 'the slices add up to every byte the scan attributed to a type');
+  assert.equal(spec.items.length, 8, 'still eight slices — seven named types and the tail');
+
+  const tail = spec.items[spec.items.length - 1];
+  assert.match(tail.name, /13 more/, 'the tail says how many extensions it stands for');
+  assert.equal(tail.value, many.slice(7).reduce((a, t) => a + t.totalSize, 0), 'and carries their bytes');
+  assert.equal(tail.count, many.slice(7).reduce((a, t) => a + t.count, 0), 'and their file count');
+
+  const few = [
+    { ext: 'a', count: 1, totalSize: 10 },
+    { ext: 'b', count: 2, totalSize: 20 },
+  ];
+  const small = donutSpec(few);
+  assert.equal(small.items.length, 2, 'nothing is folded when every type already fits');
+  assert.ok(!small.items.some((it: any) => /more/.test(it.name)), 'and no empty "Other" slice is invented');
+});

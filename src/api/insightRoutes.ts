@@ -184,8 +184,29 @@ insightRouter.get('/apps', async (req: Request, res: Response) => {
   res.json(await getAppAttribution(scan));
 });
 
-/** GET /api/large-folders?scanId=&limit=20&minSize=1048576 */
+/**
+ * GET /api/large-folders?scanId=&limit=20&minSize=1048576
+ *
+ * 202 while the scan runs, NOT 409.
+ *
+ * This is one of three endpoints the dashboard fetches together in a single
+ * Promise.all — beside /api/large-files and /api/file-types, which have always
+ * answered 202. Three answers to one question meant the row could take an
+ * error from this sibling while the other two were merely saying "not yet",
+ * and "Could not load stats" is the wrong sentence for a scan that is simply
+ * still running. 202 is also the shape the client's api() already knows how to
+ * poll, so waiting became possible rather than just quieter.
+ *
+ * The 409 SCAN_RUNNING convention still holds everywhere it means "this cannot
+ * be answered from a partial scan, and polling would be wrong" — offload,
+ * watch, cloud and the rest of this file.
+ */
 insightRouter.get('/large-folders', (req: Request, res: Response) => {
+  const running = requireScan(req, req.query.scanId);
+  if (running.status === 'running') {
+    res.status(202).json({ status: 'running' });
+    return;
+  }
   const scan = requireCompleteScan(req, req.query.scanId);
   const limit = clampInt(req.query.limit, 20, 1, 500);
   const minSize = clampInt(req.query.minSize, 1_048_576, 0, Number.MAX_SAFE_INTEGER);

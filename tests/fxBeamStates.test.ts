@@ -426,7 +426,14 @@ test('the offload/restore job ring: on with the modal, off in closeModal — the
   assert.match(INDEX, /<span class="fx-beam-strip" id="offloadBeamStrip" aria-hidden="true"><\/span>/,
     'the beam-only child exists inside the sheet');
   const cm = slice('function closeModal(', 'document.querySelectorAll(\'[data-close]\')');
-  assert.match(cm, /if \(id === 'offloadModal'\) FxBeam\.attach\(\$\('offloadBeamStrip'\), \{ type: 'md', active: false \}\)/,
+  // The branch, not one exact line: what matters is that the off-switch lives
+  // inside closeModal's offloadModal arm, which done(), the scrim and Esc all
+  // reach. The arm grew a second statement (a dismissal mid-job now says the
+  // job is still running) and a pin on the character sequence failed for a
+  // change that cannot affect the beam at all.
+  const arm = cm.slice(cm.indexOf("if (id === 'offloadModal')"));
+  assert.ok(arm, 'closeModal has an offloadModal arm');
+  assert.match(arm, /FxBeam\.attach\(\$\('offloadBeamStrip'\), \{ type: 'md', active: false \}\)/,
     'done(), the scrim and Esc all pass through here');
   assert.match(job, /const done = \(\) => \{ es\.close\(\); activeJob = null; closeModal\('offloadModal'\); \}/,
     'done() still funnels through closeModal — the off door is not bypassed');

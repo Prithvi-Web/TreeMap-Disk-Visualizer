@@ -2513,3 +2513,61 @@ test('a view that adds a listener on mount takes it off on unmount', () => {
     }
   }
 });
+
+/* ══════════════ the treemap status line counts honestly ══════════════ */
+
+/**
+ * `updateTmStatus` really evaluated, so what is asserted is the sentence the
+ * user reads. Its collaborators are stubbed to the smallest things that behave
+ * like the originals.
+ */
+function runTmStatus(treemap: Record<string, unknown>): string {
+  const code = appScript();
+  const start = code.indexOf('function updateTmStatus()');
+  assert.notEqual(start, -1, 'updateTmStatus exists');
+  const end = code.indexOf('\n}', code.indexOf('nodes ·', start)) + 2;
+  assert.ok(end > start, 'updateTmStatus closes');
+  const src = code.slice(start, end);
+  let written = '';
+  const $ = (id: string) => (id === 'tmStatus'
+    ? { set textContent(v: string) { written = v; } }
+    : { textContent: '' });
+  const make = new Function(
+    '$', 'state', 'formatCount', 'formatBytes', 'tmPreview', 'isSun', 'isCells',
+    `${src}; return updateTmStatus;`,
+  );
+  make(
+    $,
+    { treemap: { query: '', matches: 0, matchTotal: null, queryMode: 'bare', rootSize: 0, nodes: [], pxRects: [], history: { active: false }, ...treemap } },
+    (n: number) => String(n),
+    (n: number) => `${n} B`,
+    { on: false },
+    () => false,
+    () => false,
+  )();
+  return written;
+}
+
+/**
+ * The map draws what fits at the current folder and depth; the grammar query
+ * is answered over the whole scan. So "1 match for “size>1gb”" stood above a
+ * message reading "2 matches — 1 shown here": two numbers for one query, and
+ * the prominent one was the wrong one. The status line owes the same
+ * arithmetic the message beside it already tells the truth about.
+ *
+ * A bare word has no server total to compare against — the local filter IS
+ * the answer there — so that sentence must stay exactly as it was.
+ */
+test('a grammar query whose matches outrun the map says so in the status line', () => {
+  const partial = runTmStatus({ query: 'size>1gb', queryMode: 'grammar', matches: 1, matchTotal: 2, rootSize: 5 });
+  assert.match(partial, /1 of 2 matches for “size>1gb”/,
+    'the drawn count is named as a share of what the query actually matched');
+
+  const all = runTmStatus({ query: 'size>1gb', queryMode: 'grammar', matches: 2, matchTotal: 2, rootSize: 5 });
+  assert.match(all, /^2 matches for “size>1gb”/,
+    'nothing to disclose when the map drew them all — no "2 of 2"');
+
+  const bare = runTmStatus({ query: 'openapi', queryMode: 'bare', matches: 3, matchTotal: null, rootSize: 5 });
+  assert.match(bare, /^3 matches for “openapi”/,
+    'the local filter is the whole answer for a bare word');
+});

@@ -428,6 +428,64 @@ const FxCharts = (() => {
      * stream and a quiet one share one yardstick. Fewer than 4 samples is
      * an honest 'flat' — two points are not a trend.
      */
+    /* ── radar geometry ──────────────────────────────────────────────────
+       Axis 0 points straight up and the rest run clockwise, so the same
+       inputs always draw the same shape and two files can be compared by
+       silhouette alone. */
+    radarAngle(i, n) { return -Math.PI / 2 + (i / Math.max(1, n)) * Math.PI * 2; },
+
+    /**
+     * The vertex for axis `i` at value `v` (0–1), or NULL when that signal
+     * did not answer.
+     *
+     * The reclaim score's promise is that a missing signal is left out, never
+     * counted as zero — and on a radar those two look identical if a null is
+     * allowed to land at the centre. So only a real number gets a vertex; a
+     * measured 0 still gets one, at the centre, because that is a fact.
+     */
+    radarPoint(cx, cy, R, i, n, v) {
+      if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+      const a = this.radarAngle(i, n);
+      const r = R * Math.max(0, Math.min(1, v));
+      return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r };
+    },
+
+    /**
+     * The outline as RUNS of consecutive answered axes.
+     *
+     * A gap must stay a gap: joining the neighbours either side of a missing
+     * axis draws a chord straight past it, which reads as a measured value
+     * halfway between them. Runs wrap around the end, so a single gap yields
+     * one open run rather than two touching ones; all-answered yields one
+     * closed polygon.
+     */
+    radarRuns(values) {
+      const n = values.length;
+      const ok = values.map((v) => typeof v === 'number' && Number.isFinite(v));
+      const count = ok.filter(Boolean).length;
+      if (count === 0) return [];
+      if (count === n) return [{ start: 0, len: n, closed: true }];
+      const runs = [];
+      for (let i = 0; i < n; i++) {
+        // a run starts where an answered axis follows an unanswered one
+        if (!ok[i] || ok[(i - 1 + n) % n]) continue;
+        let len = 0;
+        while (len < n && ok[(i + len) % n]) len++;
+        runs.push({ start: i, len, closed: false });
+      }
+      return runs;
+    },
+
+    /** The axis a pointer is nearest, or -1 outside the grid or at the centre. */
+    radarHit(cx, cy, R, n, x, y) {
+      const dx = x - cx, dy = y - cy;
+      const dist = Math.hypot(dx, dy);
+      if (dist > R * 1.28 || dist < R * 0.06) return -1;
+      let a = Math.atan2(dy, dx) + Math.PI / 2;          // 0 at twelve o'clock
+      a = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+      return Math.round(a / ((Math.PI * 2) / n)) % n;
+    },
+
     momentum(values, threshold = 0.12) {
       const vs = (values || []).filter((v) => Number.isFinite(v));
       if (vs.length < 4) return 'flat';
@@ -493,8 +551,11 @@ const FxCharts = (() => {
        would dirty the tree every frame and force a layout to re-measure a
        box that cannot have changed. */
     let sig = null, tw = 0, th = 0;
+    /* Escapes, not raw bytes: the page ships as HTML, and the parser replaces
+       a literal U+0000 in script data with U+FFFD — the running string would
+       not be the declared one. It also makes the artifact binary to grep. */
     const signature = (title, rows) =>
-      title + ' ' + rows.map((r) => (r.color || '') + '' + r.name + '' + r.value).join('');
+      title + '\u0000' + rows.map((r) => (r.color || '') + '\u0001' + r.name + '\u0001' + r.value).join('\u0002');
     return {
       el: tip,
       /** rows: [{color?, name, value}], title: string */
@@ -2466,6 +2527,182 @@ const FxCharts = (() => {
     };
   }
 
-  return { area, rings, gauge, barList, liveLine, scatter, funnel, profitLine, barSquares, ramp: math.ramp, math };
+  /* ═════════════════════ radar(canvas, spec) ═════════════════════
+     spec: {
+       axes: [{ label, short?, value, detail? }],   // value: 0–1, or null
+       size?: 200, rings?: 5,
+       formatValue?: (v) => string,                 // default: percent
+       ariaLabel?: string
+     }
+
+     Built for the reclaim score's six signals, and it inherits that score's
+     one rule: a signal that could not answer is LEFT OUT, never drawn as a
+     zero. Such an axis keeps its spoke — dashed and muted, so you can see
+     what was not measured — but gets no vertex, and the outline breaks
+     around it rather than chording past.
+
+     The mount is bklit's four-phase choreography: rings scale in, spokes
+     grow outward, labels fade, then the shape expands from the centre. */
+  function radar(canvas, spec) {
+    const host = anchor(canvas);
+    const tip = makeTip(host);
+    let s = spec, hover = -1;
+    let p = REDUCED ? 1 : 0;                 // one clock, four phases
+    const life = makeLife(host, () => render());
+
+    const axes = () => (s.axes || []);
+    const vals = () => axes().map((a) => (typeof a.value === 'number' && Number.isFinite(a.value) ? a.value : null));
+    const fmt = (v) => (s.formatValue ? s.formatValue(v) : Math.round(v * 100) + '%');
+
+    function frame() {
+      /* Wider than tall on purpose. The labels sit OUTSIDE the rim, and the
+         four diagonal ones run horizontally away from it — on a square canvas
+         "Backed up" lost its first four characters to the edge. Height bounds
+         the rim; width has to carry the rim plus the longest label. */
+      const h = s.size || 200;
+      const w = s.width || Math.round(h * 1.4);
+      const f = Canvas2D.setup(canvas, w, h);
+      return { ...f, cx: w / 2, cy: h / 2, R: Math.min(h / 2 - 22, w / 2 - 62) };
+    }
+
+    /** Phase p0..p1 of the shared clock, eased into its own 0..1. */
+    const phase = (a, b) => Math.max(0, Math.min(1, (p - a) / (b - a)));
+
+    function render() {
+      if (life.dead || document.hidden) return;
+      const f = frame();
+      const { ctx, cx, cy, R } = f;
+      const n = axes().length;
+      ctx.clearRect(0, 0, f.width, f.height);
+      if (!n) return;
+
+      const grid = tone('--hairline-2', 'rgba(255,255,255,0.10)');
+      const accent = tone('--accent', '#0A84FF');
+      const muted = tone('--text-3', '#8a8a93');
+      const rings = s.rings || 5;
+
+      // ── phase 1: the rings scale in ──
+      const pRings = phase(0, 0.35);
+      ctx.strokeStyle = grid;
+      ctx.lineWidth = 1;
+      for (let r = 1; r <= rings; r++) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, R * (r / rings) * pRings, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // ── phase 2: the spokes grow outward ──
+      const pSpokes = phase(0.2, 0.55);
+      for (let i = 0; i < n; i++) {
+        const answered = vals()[i] !== null;
+        const end = math.radarPoint(cx, cy, R * pSpokes, i, n, 1);
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(end.x, end.y);
+        // an unmeasured signal says so on its own spoke
+        if (!answered) ctx.setLineDash([2, 4]);
+        ctx.strokeStyle = grid;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // ── phase 4: the shape expands from the centre ──
+      const pShape = phase(0.45, 1);
+      const v = vals();
+      const pts = v.map((val, i) => math.radarPoint(cx, cy, R * pShape, i, n, val));
+      const runs = math.radarRuns(v);
+      const complete = runs.length === 1 && runs[0].closed;
+
+      for (const run of runs) {
+        ctx.beginPath();
+        for (let k = 0; k < run.len; k++) {
+          const pt = pts[(run.start + k) % n];
+          if (k === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
+        }
+        if (run.closed) {
+          ctx.closePath();
+          /* Only a complete shape is filled: a partial fill would give the
+             missing axes an area they never earned. */
+          const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+          g.addColorStop(0, math.alpha(accent, 0.30));
+          g.addColorStop(1, math.alpha(accent, 0.10));
+          ctx.fillStyle = g;
+          ctx.fill();
+        }
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+      }
+
+      // vertices, the hovered one grown
+      for (let i = 0; i < n; i++) {
+        const pt = pts[i];
+        if (!pt) continue;
+        const on = i === hover;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, on ? 5 : 3.2, 0, Math.PI * 2);
+        ctx.fillStyle = accent;
+        ctx.fill();
+        if (on) {
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 8, 0, Math.PI * 2);
+          ctx.strokeStyle = math.alpha(accent, 0.45);
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+
+      // ── phase 3: the labels fade in ──
+      const pLabels = phase(0.5, 0.9);
+      if (pLabels > 0) {
+        ctx.save();
+        ctx.globalAlpha = pLabels;
+        ctx.font = '500 10px -apple-system, "SF Pro Text", sans-serif';
+        for (let i = 0; i < n; i++) {
+          const a = axes()[i];
+          const answered = v[i] !== null;
+          const at = math.radarPoint(cx, cy, R + 15, i, n, 1);
+          const ang = math.radarAngle(i, n);
+          ctx.textAlign = Math.abs(Math.cos(ang)) < 0.3 ? 'center' : (Math.cos(ang) > 0 ? 'left' : 'right');
+          ctx.textBaseline = Math.sin(ang) > 0.6 ? 'top' : (Math.sin(ang) < -0.6 ? 'bottom' : 'middle');
+          ctx.fillStyle = i === hover ? tone('--text-1', '#f2f2f5') : (answered ? tone('--text-2', '#c7c7cc') : muted);
+          ctx.fillText(a.short || a.label, at.x, at.y);
+        }
+        ctx.restore();
+      }
+      if (complete) { /* the shape speaks for itself */ }
+    }
+
+    function onMove(e) {
+      const f = frame();
+      const { x, y } = Canvas2D.toLocal(canvas, e.clientX, e.clientY);
+      const n = axes().length;
+      const hit = math.radarHit(f.cx, f.cy, f.R, n, x, y);
+      if (hit !== hover) { hover = hit; render(); }
+      const a = hit === -1 ? null : axes()[hit];
+      if (!a) { tip.hide(); return; }
+      const answered = typeof a.value === 'number' && Number.isFinite(a.value);
+      tip.show(a.label, [{ name: answered ? fmt(a.value) : 'not measured', value: '' },
+                          ...(a.detail ? [{ name: a.detail, value: '' }] : [])], x, y);
+    }
+    function onLeave() { if (hover !== -1) { hover = -1; render(); } tip.hide(); }
+
+    life.on(canvas, 'mousemove', onMove);
+    life.on(canvas, 'mouseleave', onLeave);
+    if (s.ariaLabel) canvas.setAttribute('aria-label', s.ariaLabel);
+
+    render();
+    animate(life, 900, (t) => { p = t; render(); });
+
+    return {
+      update(next) { s = { ...s, ...next }; hover = -1; p = 1; render(); },
+      destroy() { tip.destroy(); life.destroy(); },
+    };
+  }
+
+  return { area, rings, gauge, barList, liveLine, scatter, funnel, profitLine, barSquares, radar, ramp: math.ramp, math };
 })();
 /* ═══ end FX: Charts ═══ */

@@ -663,7 +663,12 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
   transition: stroke-dashoffset 1.3s var(--ease); }
 .ring-label { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .ring-label b { font-size: 24px; font-weight: 700; letter-spacing: -0.6px; }
-.ring-label span { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 1.2px; margin-top: 2px; }
+/* A child selector: the caption is `.ring-label`'s own span, while the rolled
+   percentage inside the <b> is built out of spans too. As a descendant rule
+   this gave every digit the caption's 10px font and its margin-top, and the
+   margin widened the digit pitch past the 1em the roll travels — the ring
+   read "2⁰%" while the value was 38%. */
+.ring-label > span { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 1.2px; margin-top: 2px; }
 .sys-facts { display: flex; flex-direction: column; gap: 9px; font-size: 13px; min-width: 0; flex: 1 1 220px; }
 .sys-facts .fact { display: flex; justify-content: space-between; gap: 18px; }
 .sys-facts .fact span { color: var(--text-2); }
@@ -1587,7 +1592,13 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .rw-row > .rw-val { flex: none; min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; }
 .rw-row > .rw-help { flex-basis: 100%; margin-left: 190px; font-size: 11.5px; color: var(--text-3);
   margin-top: 2px; line-height: 1.45; }
-@media (max-width: 620px) { .rw-row > .rw-help { margin-left: 0; } }
+@media (max-width: 620px) { .rw-row > .rw-help { margin-left: 0; } }/* The six signals as one shape, above the rows that spell them out.
+   Centred and flush: the canvas is square and sized by the kit, so the wrap
+   only has to give it a line of its own and a hairline off the rows below. */
+.rc-radar-wrap { position: relative; display: flex; justify-content: center;
+  padding: 2px 0 10px; margin-bottom: 8px; border-bottom: 1px solid var(--hairline); }
+.rc-radar-wrap canvas { display: block; }
+
 /* ── C6: package-manager leftovers, grouped by ecosystem ── */
 .pkg-eco { margin-bottom: 10px; }
 .pkg-echead { display: flex; align-items: baseline; gap: 10px; padding: 4px 2px 5px; font-size: 12.5px; }
@@ -2702,17 +2713,54 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
    presentation. Reduced motion never builds these — FxNum snaps to plain
    text before any slot exists. */
 .fx-roll { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+/* The roll injects spans into whatever element holds a number, so it inherits
+   whatever that element's neighbours were styled with. `.ring-label span` was
+   written for the "USED" caption beside the disk ring — `font-size: 10px;
+   text-transform: uppercase; letter-spacing: 1.2px; margin-top: 2px` — and a
+   descendant selector cannot tell a caption from a digit strip: the ring read
+   "2°%" because its digits were rendering at 10px, letter-spaced, and pushed
+   2px apart so the pitch no longer matched the 1em the roll travels.
+   Every property here is one that would move a digit or resize its slot, and
+   the doubled class outranks a `.host span` rule (0,2,0 beats 0,1,1). Layout
+   belongs to the rules below, so this sets no display, width or height —
+   and longhands, never the `font` shorthand, because `font` also resets
+   line-height: this rule outranks the layout rules below, so the shorthand
+   quietly undid the `line-height: 0` the strip's pitch depends on. */
+.fx-roll.fx-roll,
+.fx-roll .fx-roll-d,
+.fx-roll .fx-roll-sizer,
+.fx-roll .fx-roll-col,
+.fx-roll .fx-roll-col > span {
+  font-family: inherit; font-size: inherit; font-weight: inherit;
+  font-style: inherit; font-variant: inherit;
+  letter-spacing: inherit; word-spacing: inherit;
+  text-transform: none; text-indent: 0; text-shadow: none; color: inherit;
+  margin: 0; padding: 0; border: 0;
+}
 .fx-roll-d { display: inline-block; position: relative; overflow: clip;
   height: 1em; line-height: 1em; }
 .fx-roll-sizer { opacity: 0; }
+/* white-space and line-height are declared here, not assumed from the host.
+   Both inherit, and both silently break the strip: an ancestor's
+   `white-space: nowrap` (`.sys-facts .fact b` has one, to keep "460.4 GB"
+   on one line) lays all ten digits on ONE line, so the column is 1em tall
+   instead of 10em and every translateY(-Nem) lands outside the clip; and a
+   line box that has to fit the strut is 1em + the strut's descent, which
+   makes the pitch wider than the 1em the roll travels. */
 .fx-roll-col { position: absolute; left: 0; top: 0; width: 100%;
+  white-space: normal; line-height: 0;
   user-select: none; -webkit-user-select: none;
   transition: transform 560ms var(--ease); will-change: transform; }
 /* inline-block, not block: a block box inside the slot is a paragraph
    boundary to the selection serializer, so copying a rolled number came out
    as "3\n4" even with the strip itself unselectable. width:100% + a 1em line
    stacks them exactly as block did — same pitch, same slot height. */
-.fx-roll-col > span { display: inline-block; width: 100%; height: 1em; line-height: 1em; }
+/* vertical-align: top, because an inline-block sits on the baseline by
+   default and the line box then has to hold its descent as well — 1em of
+   digit in a 1.08em line. Two pixels per digit at 24px, and the strip walks
+   further out of the slot with every digit it climbs. */
+.fx-roll-col > span { display: inline-block; width: 100%; height: 1em;
+  line-height: 1em; vertical-align: top; }
 /* ══ end FX: Rolling Numerals styles ══ */
 
 </style>
@@ -4986,35 +5034,63 @@ const FxGoo = (() => {
  * The one fetch wrapper (§3.4). Every network call in this file goes through
  * it — there are no other `fetch()` call sites, and a test pins that.
  *
- * It owns four things so no caller has to:
+ * It owns six things so no caller has to:
  *
  *  - **The error envelope.** The backend answers failures as flat
  *    `{ error, code }` (src/middleware/errorHandler.ts). That is NOT the nested
  *    `{ error: { code, message } }` shape the spec sketches; §3.2 says to follow
  *    the existing convention, so this reads the flat one and every caller
  *    switches on `err.code`, never on message text.
- *  - **Rate limiting.** The server allows 10 req/s with a burst of 20. Quick
- *    navigation and bulk chunking genuinely outrun that, and a surfaced 429 used
- *    to read as "your delete failed" or, worse, made a folder render as empty.
- *    Retried with backoff instead.
+ *  - **Rate limiting.** Retried with backoff. A surfaced 429 used to read as
+ *    "your delete failed" or, worse, made a folder render as empty.
  *  - **202 pending.** Long work answers `202 { status: 'running' }` until it is
  *    done. With `poll: true` the wrapper waits it out rather than making each
- *    panel write its own polling loop.
+ *    panel write its own polling loop. Reaching a caller that did NOT ask to
+ *    wait, that body is not a result: handing it back is how a card reads
+ *    `.suggestions` off it and paints an empty list, which is the silent blank
+ *    §3.5 forbids. So it throws, marked `stillWorking` and carrying whatever
+ *    progress the body had. `pending: 'return'` opts out, for the two finders
+ *    that run their own loop in order to paint a progress bar from it.
  *  - **Capability failures.** `409 CAPABILITY_UNAVAILABLE` carries a
  *    human-readable reason; it is marked so panels can render the *unavailable*
  *    state (§3.5 #5) instead of an error.
+ *  - **A body that is not JSON.** A truncated or intercepted 2xx used to parse
+ *    to `null` and be returned as if it were the answer, so the caller either
+ *    threw a `TypeError` at the user or painted an empty card. It is an error
+ *    now, in words, and the raw parser message never reaches a reader.
+ *  - **A dropped connection.** `fetch` rejects with the browser's own sentence
+ *    — "Failed to fetch", "Load failed", "NetworkError…" — which names neither
+ *    what was unreachable nor what to do. Replaced with one that does. A
+ *    request the app itself aborted passes through untouched, because that is
+ *    not a failure at all.
  *
  * Throws on failure. Callers catch and pass the error to `reportError`, which
  * is the single place an error becomes something the user sees.
  */
 async function api(url, options, opts = {}) {
-  const { retries = 8, poll = false, pollMs = 700, pollTimeoutMs = 120000 } = opts;
+  const { retries = 8, poll = false, pollMs = 700, pollTimeoutMs = 120000, pending = 'throw' } = opts;
   const deadline = Date.now() + pollTimeoutMs;
 
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, options);
+    let res;
+    try {
+      res = await fetch(url, options);
+    } catch (netErr) {
+      if (netErr && netErr.name === 'AbortError') throw netErr; // the app cancelled it; not a failure
+      const err = new Error('Couldn’t reach TreeMap — its own server stopped answering. Check the app is still running, then try again.');
+      err.code = 'OFFLINE';
+      err.status = 0;
+      throw err;
+    }
+
+    // Read the body ONCE, as text, so "carried nothing" can be told apart from
+    // "carried something that is not JSON". `res.json()` collapses both to a
+    // throw, which is what let an unreadable answer pass as an empty one.
+    let raw = '';
+    try { raw = await res.text(); } catch { /* body already gone */ }
     let body = null;
-    try { body = await res.json(); } catch { /* no body */ }
+    let unreadable = false;
+    if (raw) { try { body = JSON.parse(raw); } catch { unreadable = true; } }
 
     if (res.status === 429 && attempt < retries) {
       await new Promise((r) => setTimeout(r, 250 * (attempt + 1))); // refill is 10/s
@@ -5024,7 +5100,7 @@ async function api(url, options, opts = {}) {
     // 202 means "still working" — the shape every long-running endpoint uses.
     if (res.status === 202 && poll) {
       if (Date.now() > deadline) {
-        const err = new Error('This is taking longer than expected.');
+        const err = new Error('This is still running after a long wait. It may still finish — reopen this in a moment to check.');
         err.code = 'PENDING_TIMEOUT';
         err.status = 202;
         err.pending = body;
@@ -5034,8 +5110,25 @@ async function api(url, options, opts = {}) {
       continue;
     }
 
+    // The same 202, reaching a caller that did not ask to wait. A job HANDLE is
+    // a real payload and still returns: POST /api/scan and POST /api/index/build
+    // both answer 202 with the id the caller needs, and the id is what tells
+    // the two apart from "no answer yet".
+    if (res.status === 202 && pending === 'throw' && body &&
+        body.status === 'running' && !body.jobId && !body.scanId) {
+      const err = new Error('Still working on that — it hasn’t finished yet. Try again in a moment.');
+      err.code = 'PENDING';
+      err.status = 202;
+      err.pending = body;
+      err.stillWorking = true;
+      throw err;
+    }
+
     if (!res.ok) {
-      const err = new Error((body && body.error) || ('HTTP ' + res.status));
+      // An error whose body is not JSON (a proxy's HTML page, a truncated
+      // stream) still has its status to report, and that is more use to a
+      // reader than a parser's complaint about an unexpected token.
+      const err = new Error((body && body.error) || ('The server answered ' + res.status + ' with nothing TreeMap could read.'));
       err.code = (body && body.code) || 'HTTP_' + res.status;
       err.status = res.status;
       // Some errors carry machine-readable specifics alongside the prose —
@@ -5047,6 +5140,13 @@ async function api(url, options, opts = {}) {
       err.capabilityUnavailable = err.code === 'CAPABILITY_UNAVAILABLE';
       throw err;
     }
+
+    if (unreadable) {
+      const err = new Error('TreeMap couldn’t read the answer its own server sent. Try again.');
+      err.code = 'BAD_RESPONSE';
+      err.status = res.status;
+      throw err;
+    }
     return body;
   }
 }
@@ -5055,14 +5155,15 @@ async function api(url, options, opts = {}) {
  * The single place an error becomes something the user sees (§3.4).
  *
  * `message` from the envelope is written for a non-technical reader, so it goes
- * on screen as-is. A capability failure is not an error — it is an answer — so
- * it is shown neutrally rather than in red, and a cancelled request says
- * nothing at all.
+ * on screen as-is. Two things that arrive here are not errors and must not be
+ * dressed as one: a capability this machine does not have, and work that has
+ * not finished. Both are answers, so both are shown plainly rather than in red.
+ * A cancelled request says nothing at all.
  */
 function reportError(err, context) {
   if (!err || err.name === 'AbortError') return;
   const detail = err.message || 'Something went wrong.';
-  if (err.capabilityUnavailable) { toast(detail, 'success', 6000); return; }
+  if (err.capabilityUnavailable || err.stillWorking) { toast(detail, 'success', 6000); return; }
   toast(context ? context + ': ' + detail : detail, 'error');
 }
 /* ═══════════════ FX: Rolling Numerals ═══════════════ */
@@ -5548,6 +5649,10 @@ const state = {
   snapshots: null,
   scanStats: null,
   scanId: null,
+  // The id of the scan `root` came from, written beside it in finishScan. It
+  // differs from scanId for exactly as long as a rescan is in flight, which is
+  // the window in which Stop needs to know what to put back.
+  settledScanId: null,
   scanning: false,
   es: null,
   // Settles the running scan's stream and watchdog together. followScanProgress
@@ -5572,7 +5677,7 @@ const state = {
   bigFolders: [],
   savedViews: [],
   savedViewsLoaded: false,
-  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, altZoom: null, altRaf: 0, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null }, lapse: { playing: false, raf: 0, pos: 0, speed: 1, loop: false, seq: 0, onDone: null, completed: false } },
+  treemap: { rootPath: null, rootName: '', rootSize: 0, nodes: [], pxRects: [], hover: null, maxDepth: 4, query: '', matches: 0, matchTotal: null, queryMode: 'bare', matchedPaths: null, colorMode: localStorage.getItem('tm-colormode') === 'age' ? 'age' : 'size', mode: localStorage.getItem('tm-viewmode') || 'treemap', arcs: [], sun: null, cells: [], altNote: '', altMs: 0, altZoom: null, altRaf: 0, kbSel: null, hideCloud: false, history: { active: false, snaps: [], index: 0, diff: false, cache: new Map(), seq: 0, viewingAt: 0, tree: null }, lapse: { playing: false, raf: 0, pos: 0, speed: 1, loop: false, seq: 0, onDone: null, completed: false } },
   // v4 §6.1 — Disk City. Deliberately holds NO tree of its own: the root and
   // the nodes are the Treemap's, so the two are the same arrangement rather
   // than two arrangements that resemble each other.
@@ -5942,7 +6047,12 @@ const VIEWS = [
   {
     id: 'duplicates', label: 'Duplicates', icon: 'copy', needsScan: true,
     mount() {
-      if (!state.scanId || !state.root) return;
+      if (!state.root) return; // nothing scanned at all — the welcome screen is up
+      // A tree with no scan behind it (index-painted, or a rescan the user
+      // stopped) is not a reason to leave the markup's "Scanning for
+      // duplicates…" standing over an empty card. Both panes, because the
+      // segmented control switches between them without remounting.
+      if (!state.scanId) { dupNeedsScan(); ndNeedsScan(); return; }
       if (isCloudScan()) {
         // Duplicate detection reads file contents, and a cloud scan never
         // downloads any — so this is genuinely unavailable rather than empty,
@@ -6178,6 +6288,27 @@ async function loadCapabilities() {
 
 let topologyLoading = false;
 
+/* Two cards want the same disk layout on one dashboard paint: this one draws
+   it, and Drive Health reads a device name out of it. Reading it spawns
+   diskutil/lsblk — measured at ~90ms, and the boot timeline showed the two
+   cards asking 160ms apart — so the second read spent a child process and a
+   token of the strict rate limit on an answer already in hand.
+
+   This shares an answer; it does not cache one. The window is one paint, the
+   re-check and refresh controls pass `force` because looking again is the
+   whole point of them, and a failure is dropped so the next caller retries for
+   real rather than inheriting someone else's error. */
+const TOPOLOGY_SHARE_MS = 3000;
+let topologyShared = null;
+function topologyAnswer(force) {
+  const now = Date.now();
+  if (!force && topologyShared && now - topologyShared.at < TOPOLOGY_SHARE_MS) return topologyShared.promise;
+  const shared = { at: now, promise: api('/api/platform/topology') };
+  topologyShared = shared;
+  shared.promise.catch(() => { if (topologyShared === shared) topologyShared = null; });
+  return shared.promise;
+}
+
 async function loadTopology() {
   const body = $('topologyBody');
   if (!body || topologyLoading) return;
@@ -6198,7 +6329,9 @@ async function loadTopology() {
     body.classList.add('fx-chart-loading');
   }
   try {
-    const topo = await api('/api/platform/topology');
+    // Always a fresh read: every control that reaches this function — refresh,
+    // retry, a capability re-probe — means "look again".
+    const topo = await topologyAnswer(true);
     renderTopology(topo);
   } catch (err) {
     if (err.capabilityUnavailable) renderTopologyBlocked(err.message);
@@ -6913,6 +7046,17 @@ async function stopScan() {
   if (state.abortScan) state.abortScan();
   closeEventSource();
   endScanChrome();
+  // Every scanId-keyed endpoint answers a cancelled scan with
+  // 500 SCAN_FAILED "Scan stopped by user". Leaving the id in state and then
+  // remounting the views below turns one deliberate Stop into a wall of red
+  // toasts reporting the user's own choice back to them as a failure.
+  //
+  // What replaces it is the id of the scan the tree on screen actually came
+  // from: stopping a rescan should leave the previous results working, not
+  // strand a real tree with no scan behind it. Null when there is no such
+  // scan — a first run, or a tree the index painted — and then the views take
+  // their existing "no scan yet" branch, which openFromIndex relies on too.
+  state.scanId = state.settledScanId || null;
 
   const status = $('scanStatus');
   status.classList.remove('error'); // stopping is a choice, not a failure
@@ -7221,7 +7365,7 @@ function followScanProgress(scanId, path, fast, t0) {
         closeEventSource();
         if (!isCloud) rememberScannedRoot(path);
         if (fast) showFastRescanStat(scanId);
-        finishScan(r.root, performance.now() - t0, statsFromResult(r));
+        finishScan(r.root, performance.now() - t0, await scanStatsFor(scanId, r));
       }
     } catch (e) {
       // 500: the scan itself failed server-side. 404: the scan record is
@@ -7262,7 +7406,7 @@ function followScanProgress(scanId, path, fast, t0) {
       if (!root) {
         const r = await api(`/api/scan/${scanId}/result`);
         root = r.root;
-        stats = statsFromResult(r);
+        stats = await scanStatsFor(scanId, r);
       }
       if (!isCloud) rememberScannedRoot(path);
       if (fast) showFastRescanStat(scanId);
@@ -7353,9 +7497,37 @@ function statsFromResult(r) {
   };
 }
 
+/**
+ * The scan's counters, from the response that actually carries them.
+ *
+ * `buildScanStats` on the server is the single place these are shaped, and
+ * `GET /api/scan/:scanId/stats` is the only response that publishes all of
+ * them. `/result` carries the tree and the file/dir counts but no `scanned`,
+ * `engine`, `ioThreads`, `cachedDirs` or `walkedDirs` — so deriving the
+ * counters from it produced `undefined`s, and the dashboard's engine row,
+ * which is gated on `engine`, silently vanished on exactly the two paths that
+ * had already gone wrong: a stalled stream recovered by the watchdog, and a
+ * `complete` frame that arrived with no tree.
+ *
+ * A stats request that fails is not worth failing a completed scan over, so
+ * the result-derived shape stays as the fallback.
+ */
+async function scanStatsFor(scanId, result) {
+  try {
+    return statsFromResult({ ...result, ...await api(`/api/scan/${scanId}/stats`) });
+  } catch {
+    return statsFromResult(result);
+  }
+}
+
 async function finishScan(root, durationMs, stats) {
   endScanChrome();
   state.root = root;
+  // The id that answers questions about the tree we just put on screen — set
+  // in the same breath as the tree so the two can never disagree. Null on the
+  // index-first paint, which has a tree and deliberately no scan yet. Stop
+  // reads it to put the previous results back when a rescan is abandoned.
+  state.settledScanId = state.scanId;
   indexTree(root);
   state.lastScan = { when: Date.now(), durationMs };
   state.treemap.rootPath = root.path;
@@ -7415,10 +7587,17 @@ async function finishScan(root, durationMs, stats) {
     return;
   }
   try {
+    /* All three poll. finishScan normally runs against a scan that just
+       finished, but not always: the index paints a tree before any scan has an
+       id, a rescan can be in flight against this one, and all three endpoints
+       answer a running scan with 202. Without poll the 202 body has no `files`
+       / `types` / `folders` field, so the row either read undefined or — once
+       api() started throwing on an unrequested 202 — told the user "could not
+       load stats" about a scan that was merely still running. */
     const [lf, ft, lfo] = await Promise.all([
-      api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`),
-      api(`/api/file-types?scanId=${state.scanId}`),
-      api(`/api/large-folders?scanId=${state.scanId}&limit=10`),
+      api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`, undefined, { poll: true }),
+      api(`/api/file-types?scanId=${state.scanId}`, undefined, { poll: true }),
+      api(`/api/large-folders?scanId=${state.scanId}&limit=10`, undefined, { poll: true }),
     ]);
     state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders;
     seedNodes(lf.files); // right-click/cart on a big file must resolve even if pruned away
@@ -7725,7 +7904,17 @@ let donutHandle = null;
 function renderDonut() {
   fxDonutLoadingSync(false); // every paint of the card settles the veil
   const legend = $('donutLegend');
-  const top = state.types.slice(0, 8);
+  // The kit draws at most 8 slices and computes every percentage against the
+  // items it is handed, so handing it only the 8 biggest made each legend
+  // percentage a share of those 8 rather than of the scan — ".zip 30.1%" for
+  // an extension that is 28.2% of what was scanned. Seven named types plus
+  // one tail slice keeps the ring a real part-to-whole, and names how many
+  // extensions the tail stands for rather than leaving them unaccounted.
+  const RING_SLICES = 8;
+  const all = state.types;
+  const named = all.length > RING_SLICES ? all.slice(0, RING_SLICES - 1) : all;
+  const rest = all.slice(named.length);
+  const top = named;
   if (!top.length) {
     if (donutHandle) { donutHandle.destroy(); donutHandle = null; }
     const { ctx } = Canvas2D.setup($('donutCanvas'), 230, 230);
@@ -7738,8 +7927,15 @@ function renderDonut() {
   const spec = {
     // count rides along: the baseline legend answered "how many files is
     // that?" per type, and the rings kit renders it when it is provided.
-    items: top.map(t => ({ name: t.ext === '(none)' ? 'no ext' : '.' + t.ext, value: t.totalSize, count: t.count })),
-    centerLabel: 'Top types',
+    items: [
+      ...top.map(t => ({ name: t.ext === '(none)' ? 'no ext' : '.' + t.ext, value: t.totalSize, count: t.count })),
+      ...(rest.length ? [{
+        name: `${formatCount(rest.length)} more`,
+        value: rest.reduce((a, t) => a + t.totalSize, 0),
+        count: rest.reduce((a, t) => a + t.count, 0),
+      }] : []),
+    ],
+    centerLabel: 'All types',
   };
   if (donutHandle) donutHandle.update(spec);
   else donutHandle = FxCharts.rings($('donutCanvas'), legend, spec);
@@ -8296,8 +8492,17 @@ function updateTmStatus() {
     return;
   }
   if (q) {
-    $('tmStatus').textContent =
-      `${formatCount(state.treemap.matches)} match${state.treemap.matches === 1 ? '' : 'es'} for “${q}” · ${formatBytes(state.treemap.rootSize)} total`;
+    // The map draws what fits at this folder and depth; a grammar query is
+    // answered over the whole scan. Naming only the drawn count made "1 match
+    // for size>1gb" the headline above a message saying two matched — the
+    // prominent number contradicting the honest one. A bare word has no server
+    // total (`matchTotal` stays null): the local filter is the whole answer.
+    const total = state.treemap.matchTotal;
+    const drawn = state.treemap.matches;
+    const counted = Number.isFinite(total) && total > drawn
+      ? `${formatCount(drawn)} of ${formatCount(total)} matches`
+      : `${formatCount(drawn)} match${drawn === 1 ? '' : 'es'}`;
+    $('tmStatus').textContent = `${counted} for “${q}” · ${formatBytes(state.treemap.rootSize)} total`;
     return;
   }
   // With no query the count belongs to whichever renderer drew: "nodes drawn"
@@ -8843,6 +9048,64 @@ const FxCharts = (() => {
      * stream and a quiet one share one yardstick. Fewer than 4 samples is
      * an honest 'flat' — two points are not a trend.
      */
+    /* ── radar geometry ──────────────────────────────────────────────────
+       Axis 0 points straight up and the rest run clockwise, so the same
+       inputs always draw the same shape and two files can be compared by
+       silhouette alone. */
+    radarAngle(i, n) { return -Math.PI / 2 + (i / Math.max(1, n)) * Math.PI * 2; },
+
+    /**
+     * The vertex for axis `i` at value `v` (0–1), or NULL when that signal
+     * did not answer.
+     *
+     * The reclaim score's promise is that a missing signal is left out, never
+     * counted as zero — and on a radar those two look identical if a null is
+     * allowed to land at the centre. So only a real number gets a vertex; a
+     * measured 0 still gets one, at the centre, because that is a fact.
+     */
+    radarPoint(cx, cy, R, i, n, v) {
+      if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+      const a = this.radarAngle(i, n);
+      const r = R * Math.max(0, Math.min(1, v));
+      return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r };
+    },
+
+    /**
+     * The outline as RUNS of consecutive answered axes.
+     *
+     * A gap must stay a gap: joining the neighbours either side of a missing
+     * axis draws a chord straight past it, which reads as a measured value
+     * halfway between them. Runs wrap around the end, so a single gap yields
+     * one open run rather than two touching ones; all-answered yields one
+     * closed polygon.
+     */
+    radarRuns(values) {
+      const n = values.length;
+      const ok = values.map((v) => typeof v === 'number' && Number.isFinite(v));
+      const count = ok.filter(Boolean).length;
+      if (count === 0) return [];
+      if (count === n) return [{ start: 0, len: n, closed: true }];
+      const runs = [];
+      for (let i = 0; i < n; i++) {
+        // a run starts where an answered axis follows an unanswered one
+        if (!ok[i] || ok[(i - 1 + n) % n]) continue;
+        let len = 0;
+        while (len < n && ok[(i + len) % n]) len++;
+        runs.push({ start: i, len, closed: false });
+      }
+      return runs;
+    },
+
+    /** The axis a pointer is nearest, or -1 outside the grid or at the centre. */
+    radarHit(cx, cy, R, n, x, y) {
+      const dx = x - cx, dy = y - cy;
+      const dist = Math.hypot(dx, dy);
+      if (dist > R * 1.28 || dist < R * 0.06) return -1;
+      let a = Math.atan2(dy, dx) + Math.PI / 2;          // 0 at twelve o'clock
+      a = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+      return Math.round(a / ((Math.PI * 2) / n)) % n;
+    },
+
     momentum(values, threshold = 0.12) {
       const vs = (values || []).filter((v) => Number.isFinite(v));
       if (vs.length < 4) return 'flat';
@@ -8908,8 +9171,11 @@ const FxCharts = (() => {
        would dirty the tree every frame and force a layout to re-measure a
        box that cannot have changed. */
     let sig = null, tw = 0, th = 0;
+    /* Escapes, not raw bytes: the page ships as HTML, and the parser replaces
+       a literal U+0000 in script data with U+FFFD — the running string would
+       not be the declared one. It also makes the artifact binary to grep. */
     const signature = (title, rows) =>
-      title + ' ' + rows.map((r) => (r.color || '') + '' + r.name + '' + r.value).join('');
+      title + '\u0000' + rows.map((r) => (r.color || '') + '\u0001' + r.name + '\u0001' + r.value).join('\u0002');
     return {
       el: tip,
       /** rows: [{color?, name, value}], title: string */
@@ -10881,7 +11147,183 @@ const FxCharts = (() => {
     };
   }
 
-  return { area, rings, gauge, barList, liveLine, scatter, funnel, profitLine, barSquares, ramp: math.ramp, math };
+  /* ═════════════════════ radar(canvas, spec) ═════════════════════
+     spec: {
+       axes: [{ label, short?, value, detail? }],   // value: 0–1, or null
+       size?: 200, rings?: 5,
+       formatValue?: (v) => string,                 // default: percent
+       ariaLabel?: string
+     }
+
+     Built for the reclaim score's six signals, and it inherits that score's
+     one rule: a signal that could not answer is LEFT OUT, never drawn as a
+     zero. Such an axis keeps its spoke — dashed and muted, so you can see
+     what was not measured — but gets no vertex, and the outline breaks
+     around it rather than chording past.
+
+     The mount is bklit's four-phase choreography: rings scale in, spokes
+     grow outward, labels fade, then the shape expands from the centre. */
+  function radar(canvas, spec) {
+    const host = anchor(canvas);
+    const tip = makeTip(host);
+    let s = spec, hover = -1;
+    let p = REDUCED ? 1 : 0;                 // one clock, four phases
+    const life = makeLife(host, () => render());
+
+    const axes = () => (s.axes || []);
+    const vals = () => axes().map((a) => (typeof a.value === 'number' && Number.isFinite(a.value) ? a.value : null));
+    const fmt = (v) => (s.formatValue ? s.formatValue(v) : Math.round(v * 100) + '%');
+
+    function frame() {
+      /* Wider than tall on purpose. The labels sit OUTSIDE the rim, and the
+         four diagonal ones run horizontally away from it — on a square canvas
+         "Backed up" lost its first four characters to the edge. Height bounds
+         the rim; width has to carry the rim plus the longest label. */
+      const h = s.size || 200;
+      const w = s.width || Math.round(h * 1.4);
+      const f = Canvas2D.setup(canvas, w, h);
+      return { ...f, cx: w / 2, cy: h / 2, R: Math.min(h / 2 - 22, w / 2 - 62) };
+    }
+
+    /** Phase p0..p1 of the shared clock, eased into its own 0..1. */
+    const phase = (a, b) => Math.max(0, Math.min(1, (p - a) / (b - a)));
+
+    function render() {
+      if (life.dead || document.hidden) return;
+      const f = frame();
+      const { ctx, cx, cy, R } = f;
+      const n = axes().length;
+      ctx.clearRect(0, 0, f.width, f.height);
+      if (!n) return;
+
+      const grid = tone('--hairline-2', 'rgba(255,255,255,0.10)');
+      const accent = tone('--accent', '#0A84FF');
+      const muted = tone('--text-3', '#8a8a93');
+      const rings = s.rings || 5;
+
+      // ── phase 1: the rings scale in ──
+      const pRings = phase(0, 0.35);
+      ctx.strokeStyle = grid;
+      ctx.lineWidth = 1;
+      for (let r = 1; r <= rings; r++) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, R * (r / rings) * pRings, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // ── phase 2: the spokes grow outward ──
+      const pSpokes = phase(0.2, 0.55);
+      for (let i = 0; i < n; i++) {
+        const answered = vals()[i] !== null;
+        const end = math.radarPoint(cx, cy, R * pSpokes, i, n, 1);
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(end.x, end.y);
+        // an unmeasured signal says so on its own spoke
+        if (!answered) ctx.setLineDash([2, 4]);
+        ctx.strokeStyle = grid;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // ── phase 4: the shape expands from the centre ──
+      const pShape = phase(0.45, 1);
+      const v = vals();
+      const pts = v.map((val, i) => math.radarPoint(cx, cy, R * pShape, i, n, val));
+      const runs = math.radarRuns(v);
+      const complete = runs.length === 1 && runs[0].closed;
+
+      for (const run of runs) {
+        ctx.beginPath();
+        for (let k = 0; k < run.len; k++) {
+          const pt = pts[(run.start + k) % n];
+          if (k === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
+        }
+        if (run.closed) {
+          ctx.closePath();
+          /* Only a complete shape is filled: a partial fill would give the
+             missing axes an area they never earned. */
+          const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+          g.addColorStop(0, math.alpha(accent, 0.30));
+          g.addColorStop(1, math.alpha(accent, 0.10));
+          ctx.fillStyle = g;
+          ctx.fill();
+        }
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+      }
+
+      // vertices, the hovered one grown
+      for (let i = 0; i < n; i++) {
+        const pt = pts[i];
+        if (!pt) continue;
+        const on = i === hover;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, on ? 5 : 3.2, 0, Math.PI * 2);
+        ctx.fillStyle = accent;
+        ctx.fill();
+        if (on) {
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 8, 0, Math.PI * 2);
+          ctx.strokeStyle = math.alpha(accent, 0.45);
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+
+      // ── phase 3: the labels fade in ──
+      const pLabels = phase(0.5, 0.9);
+      if (pLabels > 0) {
+        ctx.save();
+        ctx.globalAlpha = pLabels;
+        ctx.font = '500 10px -apple-system, "SF Pro Text", sans-serif';
+        for (let i = 0; i < n; i++) {
+          const a = axes()[i];
+          const answered = v[i] !== null;
+          const at = math.radarPoint(cx, cy, R + 15, i, n, 1);
+          const ang = math.radarAngle(i, n);
+          ctx.textAlign = Math.abs(Math.cos(ang)) < 0.3 ? 'center' : (Math.cos(ang) > 0 ? 'left' : 'right');
+          ctx.textBaseline = Math.sin(ang) > 0.6 ? 'top' : (Math.sin(ang) < -0.6 ? 'bottom' : 'middle');
+          ctx.fillStyle = i === hover ? tone('--text-1', '#f2f2f5') : (answered ? tone('--text-2', '#c7c7cc') : muted);
+          ctx.fillText(a.short || a.label, at.x, at.y);
+        }
+        ctx.restore();
+      }
+      if (complete) { /* the shape speaks for itself */ }
+    }
+
+    function onMove(e) {
+      const f = frame();
+      const { x, y } = Canvas2D.toLocal(canvas, e.clientX, e.clientY);
+      const n = axes().length;
+      const hit = math.radarHit(f.cx, f.cy, f.R, n, x, y);
+      if (hit !== hover) { hover = hit; render(); }
+      const a = hit === -1 ? null : axes()[hit];
+      if (!a) { tip.hide(); return; }
+      const answered = typeof a.value === 'number' && Number.isFinite(a.value);
+      tip.show(a.label, [{ name: answered ? fmt(a.value) : 'not measured', value: '' },
+                          ...(a.detail ? [{ name: a.detail, value: '' }] : [])], x, y);
+    }
+    function onLeave() { if (hover !== -1) { hover = -1; render(); } tip.hide(); }
+
+    life.on(canvas, 'mousemove', onMove);
+    life.on(canvas, 'mouseleave', onLeave);
+    if (s.ariaLabel) canvas.setAttribute('aria-label', s.ariaLabel);
+
+    render();
+    animate(life, 900, (t) => { p = t; render(); });
+
+    return {
+      update(next) { s = { ...s, ...next }; hover = -1; p = 1; render(); },
+      destroy() { tip.destroy(); life.destroy(); },
+    };
+  }
+
+  return { area, rings, gauge, barList, liveLine, scatter, funnel, profitLine, barSquares, radar, ramp: math.ramp, math };
 })();
 /* ═══ end FX: Charts ═══ */
 
@@ -17921,6 +18363,9 @@ function tmSyncStageButton() {
 /** Clear the staged-matches offer. Called wherever a query stops being current. */
 function tmClearHits() {
   tmLastHits = { q: '', paths: [], total: 0, truncated: false };
+  // The status line's "N of M" reads this; a failed or cleared query has no M,
+  // and keeping the previous one would caption the map with a stale total.
+  state.treemap.matchTotal = null;
   tmSyncStageButton();
 }
 
@@ -17971,6 +18416,9 @@ async function tmRunGrammarQuery(q) {
     if (seq !== tmQuerySeq) return; // a newer keystroke, a clear, or an unmount won
     state.treemap.matchedPaths = new Set((out.hits || []).map((h) => h.path));
     state.treemap.queryMode = 'grammar';
+    // What the query matched across the whole scan, so the status line can say
+    // "1 of 2" rather than a drawn count that reads as the total.
+    state.treemap.matchTotal = out.total;
     // §4.2 — keep the hits themselves so they can be staged. Directories are
     // included exactly as the query returned them: `type:dir` is a legitimate
     // thing to ask for, and dropping them here would silently narrow what the
@@ -18086,6 +18534,7 @@ function tmApplyQuery(raw) {
     tmCancelQueries();
     state.treemap.queryMode = 'bare';
     state.treemap.matchedPaths = null;
+    state.treemap.matchTotal = null; // no server answer to compare the map against
     tmClearHits();
     tmSetQueryMessage('', false);
     if (isSun()) { presentSunburst(); return; }
@@ -24362,9 +24811,20 @@ function cartManifestHtml(plan, missingFromScan) {
     // longer a caveat about accuracy.
     html += `<div class="cart-mf-note">Checked in ${formatCount(plan.batches)} batches, each counting the Time Capsule room the one before it would have used.</div>`;
   }
-  const conflicts = (plan.openHandles && plan.openHandles.conflicts) || [];
+  const oh = plan.openHandles;
+  const conflicts = (oh && oh.conflicts) || [];
   if (conflicts.length) {
     html += `<div class="cart-mf-note">${icon('alert', 13)} ${formatCount(conflicts.length)} of these ${conflicts.length === 1 ? 'is' : 'are'} open in another program right now, which will stop the whole batch.</div>`;
+  }
+  // openHandleGuard's rule: a guard that cannot check must never answer
+  // "nothing is open". The server reports three states and the conflicts list
+  // is empty in two of them, so reading only that list turned "could not
+  // check" into a dialog with no caveat at all. `reason` is the server's own
+  // sentence — the probe knows why it could not answer and this does not.
+  if (oh && oh.checked === false) {
+    html += `<div class="cart-mf-note">${icon('alert', 13)} ${escapeHtml(oh.reason || 'TreeMap couldn’t check whether these files are in use.')}</div>`;
+  } else if (oh && oh.complete === false) {
+    html += `<div class="cart-mf-note">${icon('alert', 13)} ${escapeHtml(oh.reason || 'TreeMap could not check every file in this set, so some open files may not be listed.')}</div>`;
   }
   if (missingFromScan) {
     html += `<div class="cart-mf-note">${formatCount(missingFromScan)} item${missingFromScan === 1 ? '' : 's'} not in the current scan will stay in the cart.</div>`;
@@ -24920,10 +25380,52 @@ const RC_LABELS = {
 };
 function labelForComponent(id) { return RC_LABELS[id] || id; }
 
+/** Short names for the radar's rim, where a full label would not fit. */
+const RC_SHORT = {
+  size: 'Size',
+  staleness: 'Unused',
+  regenerable: 'Rebuilds',
+  redundant: 'Duplicate',
+  redownloadable: 'Re-gettable',
+  elsewhere: 'Backed up',
+};
+
+/**
+ * The six signals as radar axes, in one fixed order.
+ *
+ * Order is a constant, not the order the server happened to answer in: the
+ * shape is only comparable between two files if the axes never move. A signal
+ * that could not answer carries `value: null` — the radar draws its spoke and
+ * leaves it un-plotted, which is the same promise the rows below make in
+ * words ("not counted"), kept in geometry.
+ */
+const RC_AXIS_ORDER = ['size', 'staleness', 'regenerable', 'redundant', 'redownloadable', 'elsewhere'];
+
+function reclaimRadarAxes(fact) {
+  const answered = new Map((fact.components || []).map((c) => [c.id, c]));
+  const missing = new Map((fact.missing || []).map((m) => [m.id, m]));
+  return RC_AXIS_ORDER.map((id) => {
+    const c = answered.get(id);
+    return {
+      label: labelForComponent(id),
+      short: RC_SHORT[id] || id,
+      value: c ? c.value : null,
+      detail: c ? c.why : (missing.get(id) || {}).reason || 'not measured',
+    };
+  });
+}
+
 /* ── the popover ── */
 
 let rcPopoverPath = null;
 let rcPopoverOpener = null;
+/** The radar's handle. One panel, one chart — every open pairs with a drop. */
+let rcRadarHandle = null;
+function rcRadarDrop() {
+  if (!rcRadarHandle) return;
+  try { rcRadarHandle.destroy(); } catch { /* already gone */ }
+  rcRadarHandle = null;
+}
 
 /**
  * Open the breakdown for one path.
@@ -24951,8 +25453,23 @@ function openReclaimWhy(path, anchorEl, point) {
       <div style="flex:1"></div>
       <button class="icon-btn" id="rcPopClose" aria-label="Close the score breakdown">${icon('x', 14)}</button>
     </div>
+    <div class="rc-radar-wrap"><canvas id="rcRadar" width="280" height="200" role="img"></canvas></div>
     ${reclaimWhyHtml(fact)}`;
   pop.hidden = false;
+
+  /* The same six signals the rows spell out, read as one shape. Mounted after
+     the panel is in the DOM (the kit measures its host) and torn down with it. */
+  rcRadarDrop();
+  try {
+    const measured = (fact.components || []).length;
+    rcRadarHandle = FxCharts.radar($('rcRadar'), {
+      axes: reclaimRadarAxes(fact),
+      size: 200,
+      ariaLabel: `Reclaim score ${fact.score} of 100 — ${measured} of ${RC_AXIS_ORDER.length} signals measured. `
+        + reclaimRadarAxes(fact).map((a) => a.label + ': '
+          + (a.value === null ? 'not measured' : Math.round(a.value * 100) + '%')).join('. '),
+    });
+  } catch { /* the rows below are the score; the shape is the read on it */ }
 
   // Positioned after it is measurable: flipped above the anchor when it will
   // not fit below, and then CLAMPED into the viewport on both axes.
@@ -24980,6 +25497,7 @@ function closeReclaimWhy() {
   if (pop.hidden) return;
   const path = rcPopoverPath;
   const opener = rcPopoverOpener;
+  rcRadarDrop(); // before the innerHTML wipe takes its canvas out from under it
   pop.hidden = true;
   pop.innerHTML = '';
   rcPopoverPath = null;
@@ -25295,6 +25813,13 @@ async function loadCostEstimate() {
   }
   state.cost = est;
 
+  // The bytes these prices were worked out from ride in the answer itself —
+  // every provider carries the figure the server priced. The client tree's own
+  // root size is a second, independent measurement of the same thing, and a
+  // headline taken from it would disagree with the prices beneath it the day
+  // the two ever differ.
+  const pricedBytes = est.providers.length ? est.providers[0].bytes : null;
+
   // Bars are normalized to the priciest plan actually shown — a provider
   // with no plan this big has no honest bar, so it gets none.
   const maxMonthly = est.providers.reduce((m, p) => Math.max(m, p.current.tier ? p.current.monthly : 0), 0);
@@ -25324,7 +25849,9 @@ async function loadCostEstimate() {
   // the freeable bytes, say); a currency or scan change is a new entity and
   // snaps through the key.
   FxNum.rollHtml(host,
-    `<div class="cost-lead">Keeping <b>${formatBytes(state.root ? state.root.size : 0)}</b> online would cost:</div>` +
+    (pricedBytes === null
+      ? `<div class="cost-lead">No cloud plans ship with this version, so there is nothing to price this against.</div>`
+      : `<div class="cost-lead">Keeping <b>${formatBytes(pricedBytes)}</b> online would cost:</div>`) +
     rows +
     `<div class="cost-foot">Prices as of <b>${escapeHtml(est.asOf)}</b>, shipped with this version — TreeMap never looks them up online, so check the provider before you buy.` +
     (est.approximate ? ` Figures marked ≈ are converted from US dollars at an approximate rate.` : '') + `</div>`,
@@ -25345,6 +25872,44 @@ function fxDriveGaugeDrop() {
   if (dhGauge) { dhGauge.destroy(); dhGauge = null; }
 }
 
+/**
+ * Which drive the scanned folder actually sits on, from the topology answer.
+ *
+ * `/api/platform/topology` answers `physicalDisks[]` and `logicalVolumes[]` —
+ * that is what `VolumeTopology` is and what openapi.json publishes. It has
+ * never carried `volumes`, `disks` or a `devicePath`, so reading those names
+ * named no drive on any machine and this card could only ever repeat the
+ * server's "no drive was named", even where smartctl was installed.
+ *
+ * Longest mount point wins: `/` backs every path, so a first match would beat
+ * the volume the folder is really on. A physical-disk id is already a device
+ * node on Linux and a bare `diskN` on macOS; anything else — Windows names its
+ * disks `PhysicalDiskN`, which smartctl does not take — names nothing, because
+ * "no drive was named" is true while "that drive returned no SMART data" is
+ * the false sentence a guess would produce.
+ */
+function smartDeviceFor(topo, rootPath) {
+  if (!topo || typeof rootPath !== 'string' || !rootPath) return null;
+  // A mount point is a folder boundary, never a string prefix: /Volumes/Database
+  // is not inside /Volumes/Data.
+  const under = (p, mount) => {
+    if (p === mount) return true;
+    const sep = mount.includes('\\') ? '\\' : '/';
+    return p.startsWith(mount.endsWith(sep) ? mount : mount + sep);
+  };
+  const vol = (topo.logicalVolumes || [])
+    .filter((v) => v && typeof v.mountPoint === 'string' && v.mountPoint && under(rootPath, v.mountPoint))
+    .sort((a, b) => b.mountPoint.length - a.mountPoint.length)[0] || null;
+  const disks = topo.physicalDisks || [];
+  const id = ((vol && vol.physicalDiskIds) || [])[0] ||
+    // One physical disk means there is nowhere else the folder could be. More
+    // than one, with no volume matched, is a guess this card must not make.
+    (disks.length === 1 && disks[0] ? disks[0].id : null);
+  if (typeof id !== 'string' || !id) return null;
+  if (id.startsWith('/dev/')) return id;
+  return /^disk\d+$/.test(id) ? '/dev/' + id : null;
+}
+
 async function loadDriveHealth() {
   const host = $('driveHealthBody');
   if (!host || !state.scanId) return;
@@ -25355,9 +25920,7 @@ async function loadDriveHealth() {
   let device = null;
   try {
     // The topology map (A5) already knows which physical drive holds this root.
-    const topo = await api('/api/platform/topology');
-    const vol = (topo.volumes || []).find(v => state.root && state.root.path.startsWith(v.mountPoint || ' '));
-    device = (vol && vol.devicePath) || (topo.disks && topo.disks[0] && topo.disks[0].devicePath) || null;
+    device = smartDeviceFor(await topologyAnswer(), state.root && state.root.path);
   } catch { /* topology is optional; the forecast half still answers */ }
 
   let data;
@@ -25927,8 +26490,32 @@ async function loadAppsScatter() {
 }
 
 /* ───────────────────────────── Duplicates view ───────────────────────────── */
+
+/**
+ * A tree can be on screen with no scan behind it.
+ *
+ * Two ways in: the index paints a folder before the background scan has an id,
+ * and Stop leaves the previous tree up when a rescan is abandoned with nothing
+ * settled behind it. Both used to mount this view and return in silence, which
+ * left the markup's own "Scanning for duplicates…" standing over an empty card
+ * — a sentence that would never come true (§3.5). Both panes say what is
+ * actually missing instead, because both are one tab click apart.
+ */
+function dupNeedsScan() {
+  $('dupSummary').textContent = 'Needs a completed scan.';
+  $('dupBody').innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('alert', 15)} Finding duplicates compares file contents, so it needs a finished scan of this folder. Press Scan to run one.</div></div>`;
+  updateDupToolbar();
+}
+
+function ndNeedsScan() {
+  $('ndSummary').textContent = 'Needs a completed scan.';
+  $('ndBody').innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;padding:10px 2px;">${icon('alert', 15)} Finding similar images reads the pictures themselves, so it needs a finished scan of this folder. Press Scan to run one.</div></div>`;
+  updateNdToolbar();
+}
+
 async function loadDuplicates(force = false) {
-  if (!state.scanId || !state.root) return;
+  if (!state.root) return;                          // the welcome screen is up
+  if (!state.scanId) { dupNeedsScan(); return; }
   const key = state.scanId + ':' + $('dupMinSize').value;
   if (!force && state.dup.loadedFor === key && state.dup.status === 'complete') { renderDuplicates(); return; }
   state.dup.loadedFor = key;
@@ -25950,7 +26537,10 @@ async function loadDuplicates(force = false) {
   const poll = async () => {
     if (state.dup.loadedFor !== key) return; // a newer request superseded this one
     try {
-      const data = await api(`/api/duplicates?scanId=${state.scanId}&minSize=${$('dupMinSize').value}`);
+      // `pending: 'return'` because this loop exists to PAINT the 202 body:
+      // the wrapper's own poll can wait, but it cannot draw a progress bar.
+      const data = await api(`/api/duplicates?scanId=${state.scanId}&minSize=${$('dupMinSize').value}`,
+        undefined, { pending: 'return' });
       if (data.status === 'running') {
         const t = $('dupProgText'), f = $('dupProgFill');
         if (t) t.textContent = data.toHash
@@ -26166,7 +26756,9 @@ function setDupMode(mode) {
   $('dupModeSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.dupmode === mode)));
   $('dupPaneExact').hidden = mode !== 'exact';
   $('dupPaneNear').hidden = mode !== 'near';
-  if (!state.scanId || !state.root) return;
+  // The loaders own the "no scan behind this tree" answer; switching panes must
+  // reach it, or the pane the user just revealed is the silent blank again.
+  if (!state.root) return;
   if (mode === 'near') loadNearDupes(); else loadDuplicates();
 }
 $('dupModeSeg').addEventListener('click', (e) => {
@@ -26175,7 +26767,8 @@ $('dupModeSeg').addEventListener('click', (e) => {
 });
 
 async function loadNearDupes(force = false) {
-  if (!state.scanId || !state.root) return;
+  if (!state.root) return;                          // the welcome screen is up
+  if (!state.scanId) { ndNeedsScan(); return; }
   const key = state.scanId + ':' + $('ndThreshold').value;
   if (!force && state.near.loadedFor === key && state.near.status === 'complete') { renderNearDupes(); return; }
   state.near.loadedFor = key;
@@ -26191,7 +26784,9 @@ async function loadNearDupes(force = false) {
   const poll = async () => {
     if (state.near.loadedFor !== key) return; // a newer request superseded this one
     try {
-      const data = await api(`/api/near-duplicates?scanId=${state.scanId}&threshold=${$('ndThreshold').value}`);
+      // Same reason as the exact finder: the 202 body IS this loop's progress.
+      const data = await api(`/api/near-duplicates?scanId=${state.scanId}&threshold=${$('ndThreshold').value}`,
+        undefined, { pending: 'return' });
       if (data.status === 'running') {
         const t = $('ndProgText'), f = $('ndProgFill');
         if (t) t.textContent = data.toHash
@@ -28969,6 +29564,25 @@ function collectCloudCreds() {
 }
 
 let cloudConnectPoll = 0;
+
+/**
+ * Five minutes with no consent, and the poll stops.
+ *
+ * Stopping is right — the loopback listener is gone by then and polling on
+ * forever would be a lie about a handshake nobody is completing. Stopping in
+ * SILENCE was not: the provider's row simply ceased moving, which tells a
+ * person who started something in another tab exactly nothing (§3.5). So the
+ * paste-the-code row is left open, because pasting the code is the way out of
+ * this state, and the toast says both what happened and what to do.
+ */
+function cloudConnectGaveUp(providerId) {
+  clearInterval(cloudConnectPoll);
+  fxOrbHide('cloud');
+  const pasteRow = document.querySelector(`.cloud-paste[data-paste="${providerId}"]`);
+  if (pasteRow) pasteRow.hidden = false;
+  toast('TreeMap stopped listening for approval after five minutes. Paste the code from the browser tab below, or press Connect to start again.', 'error', 12000);
+}
+
 async function connectCloud(providerId) {
   try {
     // Save the credentials first so the server can build the consent URL.
@@ -28993,7 +29607,7 @@ async function connectCloud(providerId) {
     fxOrbShow('cloud', document.querySelector(`.cloud-row[data-provider="${providerId}"] .rule-row`), 'connecting');
     const t0 = Date.now();
     cloudConnectPoll = setInterval(async () => {
-      if (Date.now() - t0 > 5 * 60_000) { clearInterval(cloudConnectPoll); fxOrbHide('cloud'); return; }
+      if (Date.now() - t0 > 5 * 60_000) { cloudConnectGaveUp(providerId); return; }
       await loadCloudStatus();
       if (state.cloud.providers.find(p => p.id === providerId)?.connected) {
         clearInterval(cloudConnectPoll);
@@ -29164,10 +29778,21 @@ function closeModal(id) {
   // The Smart pane's funnel is a live handle inside this sheet; every way of
   // closing the sheet funnels through here, so this is its one exit door.
   if (id === 'cleanModal') cleanFunnelDrop();
-  // FX: the job ring dies with the sheet, whichever surface closed it — a
-  // scrim dismissal mid-job leaves the job running headless, and a beam on
-  // a hidden modal would be a claim nobody can see.
-  if (id === 'offloadModal') FxBeam.attach($('offloadBeamStrip'), { type: 'md', active: false });
+  // FX: the job ring dies with the sheet, whichever surface closed it — a beam
+  // on a hidden modal would be a claim nobody can see.
+  if (id === 'offloadModal') {
+    FxBeam.attach($('offloadBeamStrip'), { type: 'md', active: false });
+    /* A dismissal is not a cancel. done() clears activeJob before it closes
+       the dialog, so a job still standing here means the scrim or Escape took
+       the dialog away while the copy was mid-flight. The job keeps running and
+       its stream keeps reporting — the completion toast still lands — but an
+       empty screen reads as "stopped", and that is the one wrong conclusion
+       that could cost someone track of where their files went. Say it instead.
+       Cancelling stays where it was: the Cancel button inside the dialog. */
+    if (typeof activeJob !== 'undefined' && activeJob) {
+      toast('That job is still running — you\'ll be told when it finishes. Reopen it to cancel.', 'success', 7000);
+    }
+  }
   // FX: a keyboard close moves no pointer — the hover ring must not outlive
   // the card it sat on.
   fxHoverSync(null);

@@ -42,7 +42,12 @@
   transition: stroke-dashoffset 1.3s var(--ease); }
 .ring-label { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .ring-label b { font-size: 24px; font-weight: 700; letter-spacing: -0.6px; }
-.ring-label span { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 1.2px; margin-top: 2px; }
+/* A child selector: the caption is `.ring-label`'s own span, while the rolled
+   percentage inside the <b> is built out of spans too. As a descendant rule
+   this gave every digit the caption's 10px font and its margin-top, and the
+   margin widened the digit pitch past the 1em the roll travels — the ring
+   read "2⁰%" while the value was 38%. */
+.ring-label > span { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 1.2px; margin-top: 2px; }
 .sys-facts { display: flex; flex-direction: column; gap: 9px; font-size: 13px; min-width: 0; flex: 1 1 220px; }
 .sys-facts .fact { display: flex; justify-content: space-between; gap: 18px; }
 .sys-facts .fact span { color: var(--text-2); }

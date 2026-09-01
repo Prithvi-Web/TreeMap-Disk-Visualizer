@@ -284,3 +284,85 @@ test('densityScale shrinks dots under crowding — monotone, floored at 0.6', ()
     prev = d;
   }
 });
+
+/* ══════════════════ radar (the reclaim score's six signals) ══════════════════ */
+
+/**
+ * The reclaim score is six weighted signals, and any of them can decline to
+ * answer. The score's own promise — stated in the breakdown's footer — is
+ * that a missing signal is LEFT OUT, never counted as zero. A radar makes
+ * that promise easy to break: a null plotted at the centre is visually
+ * indistinguishable from a measured 0.0. So the geometry refuses.
+ */
+test('radarPoint refuses to place a vertex for a signal that did not answer', () => {
+  const { math } = loadFxCharts();
+  for (const v of [null, undefined, NaN, 'x']) {
+    assert.equal(math.radarPoint(100, 100, 80, 0, 6, v as never), null,
+      `${String(v)} has no vertex — it is not a zero`);
+  }
+  const zero = math.radarPoint(100, 100, 80, 0, 6, 0);
+  assert.ok(zero, 'a measured zero DOES have a vertex — at the centre');
+  assert.ok(Math.hypot(zero.x - 100, zero.y - 100) < 1e-9);
+});
+
+test('radar axes start at twelve o clock and run clockwise, evenly', () => {
+  const { math } = loadFxCharts();
+  const n = 6;
+  const top = math.radarPoint(0, 0, 10, 0, n, 1);
+  assert.ok(Math.abs(top.x) < 1e-9 && Math.abs(top.y + 10) < 1e-9,
+    'the first axis points straight up, so the same file always draws the same shape');
+  // clockwise: the next axis is to the RIGHT of the first in screen space
+  const next = math.radarPoint(0, 0, 10, 1, n, 1);
+  assert.ok(next.x > 0, 'clockwise');
+  // evenly spaced
+  for (let i = 0; i < n; i++) {
+    const a = math.radarAngle(i, n), b = math.radarAngle((i + 1) % n, n);
+    let d = b - a; if (d < 0) d += Math.PI * 2;
+    assert.ok(Math.abs(d - (Math.PI * 2) / n) < 1e-9, 'equal wedges');
+  }
+});
+
+test('radar value is clamped to the rings, never outside the grid', () => {
+  const { math } = loadFxCharts();
+  const R = 50;
+  for (const v of [-1, 0, 0.5, 1, 2]) {
+    const p = math.radarPoint(0, 0, R, 0, 6, v);
+    const r = Math.hypot(p.x, p.y);
+    assert.ok(r <= R + 1e-9 && r >= -1e-9, `${v} lands on or inside the rim`);
+  }
+});
+
+/**
+ * The shape is drawn as RUNS of consecutive answered axes, so a gap is a gap:
+ * the outline never chords across a signal that could not answer, which would
+ * read as a measured value halfway between its neighbours.
+ */
+test('radarRuns breaks the outline at every unanswered axis', () => {
+  const { math } = loadFxCharts();
+  const all = math.radarRuns([0.2, 0.4, 0.6, 0.8, 1, 0.5]);
+  assert.deepEqual(all, [{ start: 0, len: 6, closed: true }],
+    'six answers is one closed polygon');
+
+  const oneGap = math.radarRuns([0.2, null, 0.6, 0.8, 1, 0.5]);
+  assert.deepEqual(oneGap, [{ start: 2, len: 5, closed: false }],
+    'a single gap leaves one open run that wraps past the end');
+
+  const twoGaps = math.radarRuns([0.2, null, 0.6, null, 1, 0.5]);
+  assert.deepEqual(twoGaps, [{ start: 2, len: 1, closed: false }, { start: 4, len: 3, closed: false }],
+    'two gaps leave two runs, and neither chords across a missing axis');
+
+  assert.deepEqual(math.radarRuns([null, null, null, null, null, null]), [],
+    'nothing answered draws no shape at all');
+  assert.deepEqual(math.radarRuns([null, 0.5, null, null, null, null]), [{ start: 1, len: 1, closed: false }],
+    'a lone answer is a run of one — a dot, not a polygon');
+});
+
+test('radarHit names the axis a pointer is nearest, and nothing beyond the rim', () => {
+  const { math } = loadFxCharts();
+  const R = 80;
+  const up = math.radarPoint(0, 0, R, 0, 6, 1);
+  assert.equal(math.radarHit(0, 0, R, 6, up.x, up.y), 0, 'on an axis, that axis');
+  const far = math.radarHit(0, 0, R, 6, 0, -(R * 2));
+  assert.equal(far, -1, 'well outside the grid is no axis at all');
+  assert.equal(math.radarHit(0, 0, R, 6, 0, 0), -1, 'the exact centre favours no axis');
+});

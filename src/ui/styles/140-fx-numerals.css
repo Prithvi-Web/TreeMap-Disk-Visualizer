@@ -7,15 +7,52 @@
    presentation. Reduced motion never builds these — FxNum snaps to plain
    text before any slot exists. */
 .fx-roll { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+/* The roll injects spans into whatever element holds a number, so it inherits
+   whatever that element's neighbours were styled with. `.ring-label span` was
+   written for the "USED" caption beside the disk ring — `font-size: 10px;
+   text-transform: uppercase; letter-spacing: 1.2px; margin-top: 2px` — and a
+   descendant selector cannot tell a caption from a digit strip: the ring read
+   "2°%" because its digits were rendering at 10px, letter-spaced, and pushed
+   2px apart so the pitch no longer matched the 1em the roll travels.
+   Every property here is one that would move a digit or resize its slot, and
+   the doubled class outranks a `.host span` rule (0,2,0 beats 0,1,1). Layout
+   belongs to the rules below, so this sets no display, width or height —
+   and longhands, never the `font` shorthand, because `font` also resets
+   line-height: this rule outranks the layout rules below, so the shorthand
+   quietly undid the `line-height: 0` the strip's pitch depends on. */
+.fx-roll.fx-roll,
+.fx-roll .fx-roll-d,
+.fx-roll .fx-roll-sizer,
+.fx-roll .fx-roll-col,
+.fx-roll .fx-roll-col > span {
+  font-family: inherit; font-size: inherit; font-weight: inherit;
+  font-style: inherit; font-variant: inherit;
+  letter-spacing: inherit; word-spacing: inherit;
+  text-transform: none; text-indent: 0; text-shadow: none; color: inherit;
+  margin: 0; padding: 0; border: 0;
+}
 .fx-roll-d { display: inline-block; position: relative; overflow: clip;
   height: 1em; line-height: 1em; }
 .fx-roll-sizer { opacity: 0; }
+/* white-space and line-height are declared here, not assumed from the host.
+   Both inherit, and both silently break the strip: an ancestor's
+   `white-space: nowrap` (`.sys-facts .fact b` has one, to keep "460.4 GB"
+   on one line) lays all ten digits on ONE line, so the column is 1em tall
+   instead of 10em and every translateY(-Nem) lands outside the clip; and a
+   line box that has to fit the strut is 1em + the strut's descent, which
+   makes the pitch wider than the 1em the roll travels. */
 .fx-roll-col { position: absolute; left: 0; top: 0; width: 100%;
+  white-space: normal; line-height: 0;
   user-select: none; -webkit-user-select: none;
   transition: transform 560ms var(--ease); will-change: transform; }
 /* inline-block, not block: a block box inside the slot is a paragraph
    boundary to the selection serializer, so copying a rolled number came out
    as "3\n4" even with the strip itself unselectable. width:100% + a 1em line
    stacks them exactly as block did — same pitch, same slot height. */
-.fx-roll-col > span { display: inline-block; width: 100%; height: 1em; line-height: 1em; }
+/* vertical-align: top, because an inline-block sits on the baseline by
+   default and the line box then has to hold its descent as well — 1em of
+   digit in a 1.08em line. Two pixels per digit at 24px, and the strip walks
+   further out of the slot with every digit it climbs. */
+.fx-roll-col > span { display: inline-block; width: 100%; height: 1em;
+  line-height: 1em; vertical-align: top; }
 /* ══ end FX: Rolling Numerals styles ══ */

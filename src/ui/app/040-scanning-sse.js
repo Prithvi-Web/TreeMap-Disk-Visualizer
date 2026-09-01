@@ -109,6 +109,17 @@ async function stopScan() {
   if (state.abortScan) state.abortScan();
   closeEventSource();
   endScanChrome();
+  // Every scanId-keyed endpoint answers a cancelled scan with
+  // 500 SCAN_FAILED "Scan stopped by user". Leaving the id in state and then
+  // remounting the views below turns one deliberate Stop into a wall of red
+  // toasts reporting the user's own choice back to them as a failure.
+  //
+  // What replaces it is the id of the scan the tree on screen actually came
+  // from: stopping a rescan should leave the previous results working, not
+  // strand a real tree with no scan behind it. Null when there is no such
+  // scan — a first run, or a tree the index painted — and then the views take
+  // their existing "no scan yet" branch, which openFromIndex relies on too.
+  state.scanId = state.settledScanId || null;
 
   const status = $('scanStatus');
   status.classList.remove('error'); // stopping is a choice, not a failure

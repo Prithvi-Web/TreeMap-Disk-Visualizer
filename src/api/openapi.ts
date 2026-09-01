@@ -1061,7 +1061,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'insights',
     destructive: false,
     parameters: [scanIdQuery, queryParam('limit', '1–500 (default 20)', int()), queryParam('minSize', 'Bytes (default 1048576)', int())],
-    responses: { '200': jsonResponse('Largest folders', obj({ folders: arr(ref('LargeFolder')) }, ['folders'])) },
+    responses: { '200': jsonResponse('Largest folders', obj({ folders: arr(ref('LargeFolder')) }, ['folders'])), '202': running202 },
   },
   {
     method: 'get',

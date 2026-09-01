@@ -539,6 +539,64 @@ test('the manifest is shown before the confirm, including what would be left beh
   assert.match(body, /reason/, 'and shows the reason a file is being left alone');
 });
 
+/**
+ * `cartManifestHtml` really evaluated, so the assertions below are about what
+ * the dialog SAYS rather than about which identifiers appear near each other.
+ * It is a pure string function; these are its only collaborators.
+ */
+function runManifest(plan: any, missing = 0): string {
+  const src = slice('function cartManifestHtml', 'async function cartExecuteCommit');
+  const make = new Function(
+    'formatCount', 'formatBytes', 'escapeHtml', 'icon', 'baseName',
+    `${src}; return cartManifestHtml;`,
+  );
+  return make(
+    (n: number) => String(n),
+    (n: number) => `${n} B`,
+    (s: string) => String(s),
+    () => '',
+    (p: string) => String(p).split('/').pop(),
+  )(plan, missing);
+}
+
+/**
+ * §2.2 and openHandleGuard's own header: "a guard that cannot check must never
+ * answer 'nothing is open'." The server already answers in three states —
+ * checked, checked-but-partial, and could-not-check-with-a-reason — and the
+ * cart dialog read only `conflicts`, so on a machine where the probe times out
+ * the manifest showed the reassuring capsule sentence and nothing else. The
+ * user saw a dialog that had silently skipped a safety check.
+ *
+ * (This is not hypothetical: `lsof -F pcnfsi -w` takes >30 s on the Mac this
+ * was found on, so the guard's timeout fires and `checked: false` is the
+ * everyday answer there, not an edge case.)
+ */
+test('the manifest says so when the in-use check could not run, or could not finish', () => {
+  const items = [{ path: '/tmp/a.bin', bytes: 10, willDelete: true }];
+  const base = { items, bytesWouldFree: 10, bytesSkipped: 0, evicts: [], batches: 1, capsule: { available: true } };
+
+  const failed = runManifest({
+    ...base,
+    openHandles: { conflicts: [], checked: false, complete: false, reason: 'lsof is not installed here.' },
+  });
+  assert.match(failed, /lsof is not installed here\./,
+    'the reason the check could not run reaches the dialog verbatim');
+
+  const partial = runManifest({
+    ...base,
+    openHandles: { conflicts: [], checked: true, complete: false, reason: 'Only part of this set could be checked.' },
+  });
+  assert.match(partial, /Only part of this set could be checked\./,
+    'and so does "it ran but could not cover everything"');
+
+  const clean = runManifest({
+    ...base,
+    openHandles: { conflicts: [], checked: true, complete: true },
+  });
+  assert.doesNotMatch(clean, /could not|couldn’t|part of this set/i,
+    'a genuinely clean check adds no caveat — the caveat has to mean something');
+});
+
 /* ══════════════════ settings the commit depends on ══════════════════ */
 
 test('the capsule percentage still bounds the plan after a settings change', async () => {

@@ -195,10 +195,52 @@ const RC_LABELS = {
 };
 function labelForComponent(id) { return RC_LABELS[id] || id; }
 
+/** Short names for the radar's rim, where a full label would not fit. */
+const RC_SHORT = {
+  size: 'Size',
+  staleness: 'Unused',
+  regenerable: 'Rebuilds',
+  redundant: 'Duplicate',
+  redownloadable: 'Re-gettable',
+  elsewhere: 'Backed up',
+};
+
+/**
+ * The six signals as radar axes, in one fixed order.
+ *
+ * Order is a constant, not the order the server happened to answer in: the
+ * shape is only comparable between two files if the axes never move. A signal
+ * that could not answer carries `value: null` — the radar draws its spoke and
+ * leaves it un-plotted, which is the same promise the rows below make in
+ * words ("not counted"), kept in geometry.
+ */
+const RC_AXIS_ORDER = ['size', 'staleness', 'regenerable', 'redundant', 'redownloadable', 'elsewhere'];
+
+function reclaimRadarAxes(fact) {
+  const answered = new Map((fact.components || []).map((c) => [c.id, c]));
+  const missing = new Map((fact.missing || []).map((m) => [m.id, m]));
+  return RC_AXIS_ORDER.map((id) => {
+    const c = answered.get(id);
+    return {
+      label: labelForComponent(id),
+      short: RC_SHORT[id] || id,
+      value: c ? c.value : null,
+      detail: c ? c.why : (missing.get(id) || {}).reason || 'not measured',
+    };
+  });
+}
+
 /* ── the popover ── */
 
 let rcPopoverPath = null;
 let rcPopoverOpener = null;
+/** The radar's handle. One panel, one chart — every open pairs with a drop. */
+let rcRadarHandle = null;
+function rcRadarDrop() {
+  if (!rcRadarHandle) return;
+  try { rcRadarHandle.destroy(); } catch { /* already gone */ }
+  rcRadarHandle = null;
+}
 
 /**
  * Open the breakdown for one path.
@@ -226,8 +268,23 @@ function openReclaimWhy(path, anchorEl, point) {
       <div style="flex:1"></div>
       <button class="icon-btn" id="rcPopClose" aria-label="Close the score breakdown">${icon('x', 14)}</button>
     </div>
+    <div class="rc-radar-wrap"><canvas id="rcRadar" width="280" height="200" role="img"></canvas></div>
     ${reclaimWhyHtml(fact)}`;
   pop.hidden = false;
+
+  /* The same six signals the rows spell out, read as one shape. Mounted after
+     the panel is in the DOM (the kit measures its host) and torn down with it. */
+  rcRadarDrop();
+  try {
+    const measured = (fact.components || []).length;
+    rcRadarHandle = FxCharts.radar($('rcRadar'), {
+      axes: reclaimRadarAxes(fact),
+      size: 200,
+      ariaLabel: `Reclaim score ${fact.score} of 100 — ${measured} of ${RC_AXIS_ORDER.length} signals measured. `
+        + reclaimRadarAxes(fact).map((a) => a.label + ': '
+          + (a.value === null ? 'not measured' : Math.round(a.value * 100) + '%')).join('. '),
+    });
+  } catch { /* the rows below are the score; the shape is the read on it */ }
 
   // Positioned after it is measurable: flipped above the anchor when it will
   // not fit below, and then CLAMPED into the viewport on both axes.
@@ -255,6 +312,7 @@ function closeReclaimWhy() {
   if (pop.hidden) return;
   const path = rcPopoverPath;
   const opener = rcPopoverOpener;
+  rcRadarDrop(); // before the innerHTML wipe takes its canvas out from under it
   pop.hidden = true;
   pop.innerHTML = '';
   rcPopoverPath = null;

@@ -549,8 +549,17 @@ function updateTmStatus() {
     return;
   }
   if (q) {
-    $('tmStatus').textContent =
-      `${formatCount(state.treemap.matches)} match${state.treemap.matches === 1 ? '' : 'es'} for “${q}” · ${formatBytes(state.treemap.rootSize)} total`;
+    // The map draws what fits at this folder and depth; a grammar query is
+    // answered over the whole scan. Naming only the drawn count made "1 match
+    // for size>1gb" the headline above a message saying two matched — the
+    // prominent number contradicting the honest one. A bare word has no server
+    // total (`matchTotal` stays null): the local filter is the whole answer.
+    const total = state.treemap.matchTotal;
+    const drawn = state.treemap.matches;
+    const counted = Number.isFinite(total) && total > drawn
+      ? `${formatCount(drawn)} of ${formatCount(total)} matches`
+      : `${formatCount(drawn)} match${drawn === 1 ? '' : 'es'}`;
+    $('tmStatus').textContent = `${counted} for “${q}” · ${formatBytes(state.treemap.rootSize)} total`;
     return;
   }
   // With no query the count belongs to whichever renderer drew: "nodes drawn"

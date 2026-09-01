@@ -213,6 +213,25 @@ function collectCloudCreds() {
 }
 
 let cloudConnectPoll = 0;
+
+/**
+ * Five minutes with no consent, and the poll stops.
+ *
+ * Stopping is right — the loopback listener is gone by then and polling on
+ * forever would be a lie about a handshake nobody is completing. Stopping in
+ * SILENCE was not: the provider's row simply ceased moving, which tells a
+ * person who started something in another tab exactly nothing (§3.5). So the
+ * paste-the-code row is left open, because pasting the code is the way out of
+ * this state, and the toast says both what happened and what to do.
+ */
+function cloudConnectGaveUp(providerId) {
+  clearInterval(cloudConnectPoll);
+  fxOrbHide('cloud');
+  const pasteRow = document.querySelector(`.cloud-paste[data-paste="${providerId}"]`);
+  if (pasteRow) pasteRow.hidden = false;
+  toast('TreeMap stopped listening for approval after five minutes. Paste the code from the browser tab below, or press Connect to start again.', 'error', 12000);
+}
+
 async function connectCloud(providerId) {
   try {
     // Save the credentials first so the server can build the consent URL.
@@ -237,7 +256,7 @@ async function connectCloud(providerId) {
     fxOrbShow('cloud', document.querySelector(`.cloud-row[data-provider="${providerId}"] .rule-row`), 'connecting');
     const t0 = Date.now();
     cloudConnectPoll = setInterval(async () => {
-      if (Date.now() - t0 > 5 * 60_000) { clearInterval(cloudConnectPoll); fxOrbHide('cloud'); return; }
+      if (Date.now() - t0 > 5 * 60_000) { cloudConnectGaveUp(providerId); return; }
       await loadCloudStatus();
       if (state.cloud.providers.find(p => p.id === providerId)?.connected) {
         clearInterval(cloudConnectPoll);
@@ -408,10 +427,21 @@ function closeModal(id) {
   // The Smart pane's funnel is a live handle inside this sheet; every way of
   // closing the sheet funnels through here, so this is its one exit door.
   if (id === 'cleanModal') cleanFunnelDrop();
-  // FX: the job ring dies with the sheet, whichever surface closed it — a
-  // scrim dismissal mid-job leaves the job running headless, and a beam on
-  // a hidden modal would be a claim nobody can see.
-  if (id === 'offloadModal') FxBeam.attach($('offloadBeamStrip'), { type: 'md', active: false });
+  // FX: the job ring dies with the sheet, whichever surface closed it — a beam
+  // on a hidden modal would be a claim nobody can see.
+  if (id === 'offloadModal') {
+    FxBeam.attach($('offloadBeamStrip'), { type: 'md', active: false });
+    /* A dismissal is not a cancel. done() clears activeJob before it closes
+       the dialog, so a job still standing here means the scrim or Escape took
+       the dialog away while the copy was mid-flight. The job keeps running and
+       its stream keeps reporting — the completion toast still lands — but an
+       empty screen reads as "stopped", and that is the one wrong conclusion
+       that could cost someone track of where their files went. Say it instead.
+       Cancelling stays where it was: the Cancel button inside the dialog. */
+    if (typeof activeJob !== 'undefined' && activeJob) {
+      toast('That job is still running — you\'ll be told when it finishes. Reopen it to cancel.', 'success', 7000);
+    }
+  }
   // FX: a keyboard close moves no pointer — the hover ring must not outlive
   // the card it sat on.
   fxHoverSync(null);

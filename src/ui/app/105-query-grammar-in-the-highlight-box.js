@@ -68,6 +68,9 @@ function tmSyncStageButton() {
 /** Clear the staged-matches offer. Called wherever a query stops being current. */
 function tmClearHits() {
   tmLastHits = { q: '', paths: [], total: 0, truncated: false };
+  // The status line's "N of M" reads this; a failed or cleared query has no M,
+  // and keeping the previous one would caption the map with a stale total.
+  state.treemap.matchTotal = null;
   tmSyncStageButton();
 }
 
@@ -118,6 +121,9 @@ async function tmRunGrammarQuery(q) {
     if (seq !== tmQuerySeq) return; // a newer keystroke, a clear, or an unmount won
     state.treemap.matchedPaths = new Set((out.hits || []).map((h) => h.path));
     state.treemap.queryMode = 'grammar';
+    // What the query matched across the whole scan, so the status line can say
+    // "1 of 2" rather than a drawn count that reads as the total.
+    state.treemap.matchTotal = out.total;
     // §4.2 — keep the hits themselves so they can be staged. Directories are
     // included exactly as the query returned them: `type:dir` is a legitimate
     // thing to ask for, and dropping them here would silently narrow what the
@@ -233,6 +239,7 @@ function tmApplyQuery(raw) {
     tmCancelQueries();
     state.treemap.queryMode = 'bare';
     state.treemap.matchedPaths = null;
+    state.treemap.matchTotal = null; // no server answer to compare the map against
     tmClearHits();
     tmSetQueryMessage('', false);
     if (isSun()) { presentSunburst(); return; }

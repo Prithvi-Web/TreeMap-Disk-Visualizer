@@ -118,3 +118,29 @@ test('build-ui --check agrees the committed artifact matches its sources', () =>
   });
   assert.match(out, /matches its sources/);
 });
+
+/**
+ * A NUL in an HTML document is a parse error, and the parser does not keep it:
+ * in script data U+0000 is replaced with U+FFFD, so the string the browser
+ * runs is not the string the source declares. The tooltip cache key used raw
+ * C0 bytes as field separators — they worked, but only because the accident
+ * (NUL becoming U+FFFD) still separated fields, and the artifact was "binary"
+ * to grep, diff and every other line-oriented tool in the repo.
+ *
+ * Separators are still legitimate; they belong in the source as escapes.
+ */
+test('the shipped page carries no control characters the HTML parser would rewrite', () => {
+  const shipped = readFileSync(path.join(repoRoot, manifest.output));
+  const offenders: string[] = [];
+  for (let i = 0; i < shipped.length; i++) {
+    const b = shipped[i];
+    if (b === 9 || b === 10 || b === 13) continue; // tab, LF, CR are ordinary text
+    if (b < 0x20 || b === 0x7f) {
+      const line = shipped.subarray(0, i).toString('utf8').split('\n').length;
+      offenders.push(`0x${b.toString(16).padStart(2, '0')} at byte ${i} (line ${line})`);
+      if (offenders.length >= 5) break;
+    }
+  }
+  assert.deepEqual(offenders, [],
+    'write a separator as an escape (\\u0000) so the byte never reaches the parser');
+});

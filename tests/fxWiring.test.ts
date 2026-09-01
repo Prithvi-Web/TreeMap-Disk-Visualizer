@@ -274,10 +274,15 @@ test('autopilot preview: the working orb lives exactly as long as the simulate r
 });
 
 test('cloud connect: every way the handshake poll can end drops the connecting orb', () => {
-  const fn = slice('async function connectCloud(', 'const SCHED_HOURS');
+  // The give-up exit now has a name of its own (it has to say something, not
+  // just stop), so the slice starts one function earlier — same three exits,
+  // same count, plus proof the timeout still reaches one of them.
+  const fn = slice('function cloudConnectGaveUp(', 'const SCHED_HOURS');
   assert.match(fn, /fxOrbShow\('cloud', document\.querySelector\([\s\S]+?\), 'connecting'\)/);
   const hides = (fn.match(/fxOrbHide\('cloud'\)/g) || []).length;
   assert.ok(hides >= 3, `timeout, success and failure all drop it (found ${hides})`);
+  assert.match(slice('cloudConnectPoll = setInterval(', '}, 2500);'), /cloudConnectGaveUp\(providerId\)/,
+    'the five-minute exit goes through the one that also tells the user');
 });
 
 test('exports: both timelapse exporters pair composing with their lapseExporting finally', () => {

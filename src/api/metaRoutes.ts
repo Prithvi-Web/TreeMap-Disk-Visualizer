@@ -13,6 +13,7 @@ import { getForecast } from '../services/forecast';
 import { storeOf } from '../services/scanStore';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
+import { rateLimitLanes } from '../middleware/rateLimiter';
 import { getCapabilities } from '../platform/capabilities';
 import { MCP_TOOL_NAMES } from '../mcp/server';
 import { capabilitySummary } from './platformRoutes';
@@ -148,6 +149,7 @@ metaRouter.get('/agent/summary', async (req: Request, res: Response) => {
  */
 metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
   const platformCapabilities = await getCapabilities().catch(() => null);
+  const strictLane = rateLimitLanes.describe().find((l) => l.name === 'api')!;
   res.json({
     name: 'treemap',
     version: APP_VERSION,
@@ -171,7 +173,17 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
       enabled: !!process.env.TREEMAP_ALLOWED_ORIGINS,
       env: 'TREEMAP_ALLOWED_ORIGINS — comma-separated origins; unset (the default) emits no CORS headers',
     },
-    rateLimit: { sustainedPerSecond: 10, burst: 20, status: 429, code: 'RATE_LIMITED' },
+    // The headline pair keeps its original meaning — the strict lane, which is
+    // what everything an agent does expensively falls in. `lanes` is additive
+    // (§4) and generated from the limiter itself, so the published numbers
+    // cannot drift from the ones actually enforced.
+    rateLimit: {
+      sustainedPerSecond: strictLane.sustainedPerSecond,
+      burst: strictLane.burst,
+      status: 429,
+      code: 'RATE_LIMITED',
+      lanes: rateLimitLanes.describe(),
+    },
     safety: {
       trashOnlyDeletes: 'Deletes move files to the OS Trash (recoverable); nothing is hard-deleted',
       scannedRootRule:
