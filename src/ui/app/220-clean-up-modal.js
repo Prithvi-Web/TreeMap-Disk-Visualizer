@@ -764,21 +764,61 @@ $('cleanFindBtn').addEventListener('click', async () => {
   if (cleanRuleSource === 'query') { void runCleanFind(findBySavedView); return; }
   const ageOn = $('ruleAgeOn').checked, sizeOn = $('ruleSizeOn').checked;
   const extOn = $('ruleExtOn').checked, dupOn = $('ruleDupOn').checked;
-  const maxAgeMs = Number($('ruleAgeDays').value || 0) * 86400_000;
-  const minBytes = Number($('ruleSizeMb').value || 0) * 1048576;
+  // The client half of the server's `positiveRule`. Both numbers are FLOORS —
+  // "at least this old", "at least this big" — so 0, blank, junk and Infinity
+  // rule nothing out, and `GET /api/cleanup/rules` drops them rather than
+  // matching the whole disk on a typo. Sending one anyway is how a ticked box
+  // holding 0 came back as 400 "Enable at least one rule": the server discarded
+  // the only threshold we sent, its NO_RULES guard fired, and the user read
+  // that sentence while looking at an enabled rule. Decide it here, the same
+  // way, so what goes on the wire is only ever what will survive the trip.
+  const threshold = (raw, unit) => {
+    const n = Number(raw) * unit;
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  };
+  const maxAgeMs = ageOn ? threshold($('ruleAgeDays').value, 86400_000) : undefined;
+  const minBytes = sizeOn ? threshold($('ruleSizeMb').value, 1048576) : undefined;
   const exts = $('ruleExts').value.split(',').map(s => s.trim().toLowerCase().replace(/^\./, '')).filter(Boolean);
   if (!ageOn && !sizeOn && !extOn && !dupOn) { toast('Enable at least one rule', 'error'); return; }
   if (extOn && !exts.length && !ageOn && !sizeOn && !dupOn) { toast('Add at least one extension', 'error'); return; }
   if (!state.scanId) { toast('Run a scan first', 'error'); return; }
 
+  // Every row that is ticked but carries nothing to match on. `exts` is parsed
+  // whether or not its row is ticked, so both halves are tested here: a full
+  // box on an unticked row is not a rule, and treating it as one would let a
+  // rule-less request — which matches everything — reach the server.
+  const blank = [];
+  if (ageOn && maxAgeMs === undefined) blank.push('Older than');
+  if (sizeOn && minBytes === undefined) blank.push('Larger than');
+  if (extOn && !exts.length) blank.push('Extensions');
+  if (maxAgeMs === undefined && minBytes === undefined && !(extOn && exts.length) && !dupOn) {
+    // Naming the box is the whole point. "Enable at least one rule" is only
+    // true when nothing is ticked (the guard above), and saying it here sends
+    // someone hunting for a checkbox instead of to the empty field beside it.
+    toast(`${blank.join(' and ')} ${blank.length > 1 ? 'need values' : 'needs a value'} — a ticked rule left blank, or set to 0, is not a limit, so there is nothing to search for.`, 'error', 8000);
+    return;
+  }
+
   // Matched server-side: the client tree is pruned, and the duplicate rule in
   // particular asks whether a name+size repeats across the WHOLE scan — a
   // question the part of the tree we hold cannot answer.
   const q = new URLSearchParams({ scanId: state.scanId, limit: '500' });
-  if (ageOn) q.set('maxAgeMs', String(maxAgeMs));
-  if (sizeOn) q.set('minBytes', String(minBytes));
+  if (maxAgeMs !== undefined) q.set('maxAgeMs', String(maxAgeMs));
+  if (minBytes !== undefined) q.set('minBytes', String(minBytes));
   if (extOn && exts.length) q.set('exts', exts.join(','));
   if (dupOn) q.set('dup', '1');
+
+  // A live rule remains, so the search runs — but on fewer rules than the panel
+  // looks like it describes, and results the user reads as filtered by age
+  // would not be. 'success' is the plain channel: only .toast.success and
+  // .toast.error are styled, and `reportError` already uses 'success' for
+  // answers that are not failures, so an invented kind would ship unstyled.
+  if (blank.length) {
+    // "has no value" was not true of every case that reaches here: the box can
+    // visibly contain 0, which the server discards as a threshold but which the
+    // user can plainly see is a value. Name what is actually required instead.
+    toast(`${blank.join(' and ')} ${blank.length > 1 ? 'need' : 'needs'} a number above zero, so nothing is being filtered on ${blank.length > 1 ? 'them' : 'it'} — searching on the other rules.`, 'success', 7000);
+  }
 
   await runCleanFind(async () => api('/api/cleanup/rules?' + q.toString()));
 });

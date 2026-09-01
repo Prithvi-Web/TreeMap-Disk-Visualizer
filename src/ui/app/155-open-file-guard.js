@@ -51,8 +51,10 @@ const OPEN_HANDLE_PREFLIGHT_CHUNKS = 16;
  * "nothing here is open", and people trashed files their editor was holding.
  *
  * Everything this did NOT look at therefore makes the report partial: chunks
- * past the budget, and chunks whose request died on the way. The panel stays
- * silent only when the answer covered the whole set.
+ * past the budget, chunks whose request died on the way, and — once some chunk
+ * has answered — the chunk that came back "no way to check" together with every
+ * chunk after it, since the loop stops there. The panel stays silent only when
+ * the answer covered the whole set.
  *
  * The loop is kept here rather than split into a helper so the "a failed
  * preflight gets out of the way" path stays visible in one function: the catch
@@ -108,6 +110,19 @@ async function checkOpenHandlesFor(paths) {
     }
   }
 
+  // One check for every exit below, and it must stay the FIRST statement here.
+  //
+  // The in-loop `seq !== openHandleSeq` runs only after a chunk SUCCEEDS, and
+  // the catch above does `continue` — so a run whose first chunk landed and
+  // whose later chunk died skips it entirely and falls out of the loop still
+  // believing the panel is its own. #confirmOpenHandles is one element shared
+  // by every confirm dialog, and this is worse than a stray repaint:
+  // `renderOpenHandleWarning` also arms `confirmIgnoreOpenHandles` and relabels
+  // the button "Delete anyway", so a loser can hand a NEWER dialog an override
+  // for a warning its user never saw, and that dialog's next confirm sends
+  // `ignoreOpenHandles: true` for an unrelated selection.
+  if (seq !== openHandleSeq) return; // a newer dialog owns the panel now
+
   if (!answered) {
     // Nothing answered at all. The check is a courtesy; failing it must not
     // stand between the user and a delete they asked for. The server still
@@ -115,7 +130,21 @@ async function checkOpenHandlesFor(paths) {
     host.hidden = true;
     return;
   }
-  if (unavailable) { renderOpenHandleWarning(unavailable, paths.length); return; }
+  if (unavailable) {
+    // `checked: false` carries `conflicts: []` — it is the machine saying it
+    // cannot look, not a finding. Painting it on its own therefore throws away
+    // every conflict the chunks before it already found, and prints a panel
+    // that names nothing in use: the exact "nothing here is open" that chunking
+    // exists to prevent, re-entered through the back door. So only a run that
+    // reached nothing reports itself as unchecked; once some chunk has answered,
+    // what it found stays, and the part nobody could look at is admitted below
+    // as the reason the answer is partial.
+    if (!checkedCount) { renderOpenHandleWarning(unavailable, paths.length); return; }
+    complete = false;
+    if (unavailable.reason && unavailable.reason !== serverReason) {
+      serverReason = serverReason ? `${serverReason} ${unavailable.reason}` : unavailable.reason;
+    }
+  }
 
   const reasons = [];
   if (checkedCount < paths.length) {

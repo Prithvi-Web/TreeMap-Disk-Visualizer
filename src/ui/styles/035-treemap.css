@@ -84,8 +84,14 @@
 /* Wraps: legend + status + hint need ~700px on one line, and the footer has
    to survive the 640px floor beside an expanded sidebar. */
 .tm-foot { display: flex; align-items: center; gap: 8px 16px; margin-top: 12px; font-size: 11.5px; color: var(--text-2); padding: 0 4px; flex-wrap: wrap; }
-.legend-grad { width: 220px; height: 7px; border-radius: 4px;
-  background: linear-gradient(90deg, var(--ok), var(--warn), var(--danger)); }
+/* Geometry only. The paint arrives inline from renderTmLegend, sampled out of
+   the same sizeRgb ramp the canvas cells use. It was a gradient over
+   --ok/--warn/--danger here, which agreed with the canvas by coincidence and
+   stopped agreeing the moment those three were re-tuned for light-theme TEXT
+   contrast: the key then described the map in colours the map never used.
+   A background here would be a second source of truth waiting for the inline
+   one to be dropped again, so there is deliberately none. */
+.legend-grad { width: 220px; height: 7px; border-radius: 4px; }
 .tm-legend { display: flex; align-items: center; gap: 9px; }
 .tm-legend .legend-grad { width: 170px; }
 .tm-legend-bands { display: flex; align-items: center; gap: 13px; }

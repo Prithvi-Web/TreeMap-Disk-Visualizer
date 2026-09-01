@@ -376,3 +376,52 @@ document.addEventListener('mousedown', (e) => {
   const pop = $('nlPop');
   if (!pop.hidden && !pop.contains(e.target) && e.target !== $('tmNlBtn') && !$('tmNlBtn').contains(e.target)) nlClose();
 });
+
+/* ── §9.6 — the popover does not outlive a layer that owns the window ──────
+ *
+ * #nlPop sits at the top level of the body, `position: fixed`, because that is
+ * the only place its viewport arithmetic is right (see nlOpen above). The move
+ * out of .tm-toolbar also took it out of the toolbar's stacking context, so it
+ * now paints at the root beside #ctxMenu and #rcPopover — which means ABOVE
+ * every modal backdrop, above the command palette's scrim and above the tour
+ * card. Open the popover, press ⌘K without clicking anything, and the palette
+ * came up with this popover sitting lit and still clickable on top of it.
+ *
+ * Lowering the z-index is the wrong repair: the popover has to keep clearing
+ * the fixed siblings it was raised past. What is really wrong is LIFETIME — a
+ * popover anchored to a button inside the view has no business surviving the
+ * arrival of a surface that covers the whole window, exactly as the treemap
+ * view's unmount() already decided for a view switch.
+ *
+ * A MutationObserver, and not an nlClose() beside each of the fourteen
+ * `.add('open')` sites: those live in a dozen files this one does not own, and
+ * the fifteenth modal — written next month, in a file nobody has created yet —
+ * has to be covered by construction rather than by remembering.
+ * tests/nlPopDismissal.test.ts derives both the layers and the reveals from
+ * the shipped page and fails if one of them escapes this net.
+ */
+function nlOverlayGuard() {
+  const obs = new MutationObserver((records) => {
+    const pop = $('nlPop');
+    if (pop.hidden) return; // the common case reads no layout at all
+    for (const r of records) {
+      // A mutation that CLOSED a layer must not count. Asking the box whether
+      // it renders is the one shown-test that needs no per-overlay knowledge:
+      // `.open` on a backdrop, `[hidden]` on the tour card and a display style
+      // all reduce to "does this paint", so the next overlay is covered
+      // however it chooses to reveal itself.
+      if (!r.target.getClientRects().length) continue;
+      // Focus follows the popover only when the popover HELD it. The layer
+      // that just opened is the live surface now; pulling the caret back to a
+      // sparkle button underneath its scrim would be worse than the bug.
+      nlClose({ focusButton: pop.contains(document.activeElement) });
+      return;
+    }
+  });
+  // Attributes on the layer elements themselves — no subtree, so a modal
+  // re-rendering its contents costs nothing. The selector is the definition of
+  // "owns the window" in DOM terms; the test holds it to the stylesheet's.
+  document.querySelectorAll('.modal-backdrop, #tourOverlay').forEach((el) =>
+    obs.observe(el, { attributes: true, attributeFilter: ['class', 'hidden', 'style'] }));
+}
+nlOverlayGuard();

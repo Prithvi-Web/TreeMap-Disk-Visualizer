@@ -115,6 +115,32 @@ function breadcrumbsFor(path) {
   return crumbs;
 }
 
+/**
+ * The size key's gradient, sampled from the ramp the CELLS are painted from.
+ *
+ * This used to be a CSS gradient over --ok/--warn/--danger, and it matched the
+ * canvas only by coincidence: those tokens happened to hold the same three
+ * hexes sizeRgb() interpolates. The day --ok and --danger were re-tuned for
+ * the light theme — correct, since #30D158 measures ~1.95:1 on a white card
+ * and the status TEXT using them was unreadable — the key started explaining
+ * the map in colours the map never uses. Cells are painted from JS literals,
+ * so they do not move with the theme and the key must not either. Sampling
+ * the painter is the only arrangement where the two cannot drift apart.
+ *
+ * Samples rather than restates the ramp's shape: the anchors and the log
+ * domain stay sizeRgb()'s business, and the amber knee lands exactly on the
+ * middle stop, so a re-tune of either is followed here for free.
+ */
+function sizeRampCss(stops = 5) {
+  const parts = [];
+  for (let i = 0; i < stops; i++) {
+    const t = i / (stops - 1);
+    const c = sizeRgb(10 ** (TIER_LO + t * (TIER_HI - TIER_LO)));
+    parts.push(`rgb(${c[0]},${c[1]},${c[2]}) ${Math.round(t * 100)}%`);
+  }
+  return `linear-gradient(90deg, ${parts.join(', ')})`;
+}
+
 /** Render the treemap footer legend for the active color mode. */
 function renderTmLegend() {
   const host = $('tmLegend');
@@ -149,7 +175,7 @@ function renderTmLegend() {
     ).join('') + '</div>' +
       `<span class="rc-legend-note">Greener means safer and more worthwhile to delete — right-click a cell for the reasoning.${reclaimCoverageNote()}</span>`;
   } else {
-    host.innerHTML = '<span>1 MB</span><div class="legend-grad"></div><span>10 GB+</span>';
+    host.innerHTML = `<span>1 MB</span><div class="legend-grad" style="background:${sizeRampCss()}"></div><span>10 GB+</span>`;
   }
 }
 

@@ -192,6 +192,12 @@ function cmdkRun(i) {
 
 function cmdkOpen() {
   hideTooltip(); // a stale hover card must not float above the palette
+  // §9.6's popover outranks this palette's own scrim (nlOverlayGuard explains
+  // why), and it must go BEFORE the snapshot below: dismissed after it, the
+  // palette dutifully restores focus to #nlInput inside a dialog it has just
+  // hidden, which lands the caret on <body>. Closed here, nlClose hands focus
+  // back to the ✨ button — which is what this line should be remembering.
+  nlClose();
   cmdkPrevFocus = document.activeElement;
   cmdkSel = 0;
   $('cmdkInput').value = '';

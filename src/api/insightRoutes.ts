@@ -36,7 +36,7 @@ import { getDriveHealth } from '../services/driveHealthMonitor';
 import { estimateCost, isCurrency, PROVIDER_PRICING, PRICING_AS_OF } from '../services/costIntelligence';
 import {
   cancelEncodeJob, estimateFor, getEncodeJob, isWorthEncoding, mediaTools,
-  shortlistFromScan, startEncodeJob, CompressionCandidate,
+  registerEncodeClient, shortlistFromScan, startEncodeJob, CompressionCandidate,
 } from '../services/compressionAdvisor';
 import { sseSend } from '../utils/sse';
 import { randomUUID } from 'crypto';
@@ -488,7 +488,7 @@ insightRouter.get('/compression/:jobId/progress', (req: Request, res: Response) 
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
   const tick = setInterval(() => {
     const current = getEncodeJob(jobId);
-    if (!current) { clearInterval(tick); res.end(); return; }
+    if (!current) { release(); return; }
     sseSend(res, {
       type: 'progress',
       status: current.status, done: current.done, total: current.total,
@@ -497,11 +497,19 @@ insightRouter.get('/compression/:jobId/progress', (req: Request, res: Response) 
     });
     if (current.status !== 'running') {
       sseSend(res, { type: 'complete', results: current.results, savedBytes: current.savedBytes, error: current.error });
-      clearInterval(tick);
-      res.end();
+      release();
     }
   }, 500);
-  req.on('close', () => clearInterval(tick));
+  // The route must put ITSELF in the shutdown registry, the same way the scan,
+  // watch, offload, index and capsule streams do. Every other exit here —
+  // job gone, job finished, client hung up — goes through the returned release
+  // instead of a bare clearInterval, so shutdown never finds a stale entry and,
+  // more importantly, never MISSES a live one: an unregistered stream's 500 ms
+  // interval survives server.close() and keeps the process alive on SIGTERM.
+  // `release` is used above before its declaration on purpose — the interval
+  // cannot fire until long after this handler has returned.
+  const release = registerEncodeClient(res, tick);
+  req.on('close', release);
 });
 
 /** GET /api/compression/:jobId/result — the same answer, for pollers. */

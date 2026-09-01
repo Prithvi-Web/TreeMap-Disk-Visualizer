@@ -27,12 +27,88 @@ const WINDOWS_BLOCKLIST = [
   'c:\\system volume information',
 ];
 
+/**
+ * Win32 strips trailing spaces and dots from every path component inside the
+ * OS, so `C:\\Windows\\System32 ` and `C:\\Windows\\System32` are one directory to
+ * every file API. This file deliberately stopped trimming the tail — a trailing
+ * space is legal filename DATA on POSIX — so the blocklist has to do the
+ * normalisation Windows itself would do, or the space walks a blocked path
+ * straight past a string comparison.
+ */
+function win32Normalize(p: string): string {
+  return p
+    .toLowerCase()
+    .split(path.sep)
+    .map((seg) => seg.replace(/[ .]+$/, ''))
+    .join(path.sep);
+}
+
 function isBlocked(resolved: string): boolean {
   if (process.platform === 'win32') {
-    const lower = resolved.toLowerCase();
+    const lower = win32Normalize(resolved);
     return WINDOWS_BLOCKLIST.some((b) => lower === b || lower.startsWith(b + path.sep));
   }
   return UNIX_BLOCKLIST.some((b) => resolved === b || resolved.startsWith(b + '/'));
+}
+
+/** Node's realpath.native can hand back a Windows extended-length prefix; the
+ *  blocklist is written in ordinary drive-letter form. */
+function strip(p: string): string {
+  return process.platform === 'win32' && p.startsWith('\\\\?\\') ? p.slice(4) : p;
+}
+
+/**
+ * Bounded, short-lived memo of directory -> canonical directory.
+ *
+ * Sizing: entries are two strings, so 512 is a few tens of kB and covers any
+ * realistic mix of open scan roots; eviction is oldest-inserted-first (a Map
+ * iterates in insertion order), which is enough — the memo exists to collapse
+ * ONE batch, not to be a long-lived index.
+ *
+ * Freshness beats hit rate here, hence the TTL as well as the cap. A cached
+ * entry is a claim about the shape of the filesystem, and the filesystem can
+ * change underneath it: if /tmp/work is memoised as an ordinary directory and
+ * is then replaced by a symlink to /dev, a hit inside the window answers with
+ * the stale, unblocked location. Five seconds keeps that window shorter than
+ * any human-driven swap while still collapsing a batch, which is processed in
+ * a single synchronous tick. Note also which half of the check is cached: the
+ * DIRECTORY chain, whose entries are long-lived and mostly OS-owned. A symlink
+ * planted as the LEAF — the cheap, obvious attack — is re-lstat'd every time
+ * and cannot be hidden by this cache at all.
+ */
+const CANON_CACHE_MAX = 512;
+const CANON_CACHE_TTL_MS = 5_000;
+const canonCache = new Map<string, { value: string; at: number }>();
+
+/** Canonical form of a DIRECTORY path, memoised. */
+function canonDir(dir: string): string {
+  const now = Date.now();
+  const hit = canonCache.get(dir);
+  if (hit !== undefined && now - hit.at < CANON_CACHE_TTL_MS) return hit.value;
+
+  const value = canonDirUncached(dir);
+  canonCache.delete(dir); // re-insert so this entry counts as the newest
+  canonCache.set(dir, { value, at: now });
+  if (canonCache.size > CANON_CACHE_MAX) {
+    const oldest = canonCache.keys().next().value;
+    if (oldest !== undefined) canonCache.delete(oldest);
+  }
+  return value;
+}
+
+function canonDirUncached(dir: string): string {
+  try {
+    return strip(fs.realpathSync.native(dir));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return dir;
+  }
+  // ENOENT: climb toward the root looking for a real ancestor to canonicalise,
+  // because "/var/db/not-yet.sqlite" must stay blocked even though nothing at
+  // that path exists yet. Recursing through canonDir memoises every level of
+  // the climb, so a second missing sibling costs nothing.
+  const parent = path.dirname(dir);
+  if (parent === dir) return dir; // a root that will not resolve: nothing above it
+  return path.join(canonDir(parent), path.basename(dir));
 }
 
 /**
@@ -44,8 +120,8 @@ function isBlocked(resolved: string): boolean {
  * and /tmp are symlinks into /private, so "/private/var/db" was rejected while
  * "/var/db" — byte-for-byte the same directory — was allowed. The same hole
  * opens anywhere a symlink inside a permitted tree points at a blocked one,
- * which is why this canonicalises the WHOLE path (realpath resolves
- * intermediate components too) rather than just its last segment.
+ * which is why this canonicalises the WHOLE path — every intermediate
+ * component as well as the last segment.
  *
  * Failure is never an error here. A path the caller is about to create, a
  * directory this process cannot stat, a symlink loop — none of those is a
@@ -59,42 +135,89 @@ function isBlocked(resolved: string): boolean {
  *    which is exactly the pre-existing behaviour: no worse than before, and
  *    the textual blocklist test still runs against it.
  *
- * Cost is one realpath syscall per sanitize call in the normal case (the path
- * exists), and at most one per path segment in the ENOENT case. This runs once
- * per scan REQUEST, not once per file, so it is invisible next to the walk it
- * guards — and nothing here is quadratic.
+ * COST — this is not once per request. `guardBodyPathsMax` sanitizes a body
+ * with `paths.map(sanitizePath)` over batches capped at 2,000, so "one realpath
+ * per sanitize call" means up to 2,000 synchronous syscalls parked on the event
+ * loop for a single facts request, where this file used to do pure string work.
+ * What the blocklist actually asks about is DIRECTORIES — 2,000 files in one
+ * folder share one answer — so the work is split in two:
+ *
+ *  - the directory part of the path goes through the memo above, which turns a
+ *    whole batch in one folder into one realpath;
+ *  - the leaf gets an `lstat`, and only a leaf that really is a symlink costs a
+ *    realpath of its own. `lstat` is one syscall against realpath's walk of
+ *    every component, and — the reason it is not cached — it is always FRESH.
+ *    The leaf is where a bypass would be planted, so it is the one question
+ *    that must never be answered from memory.
  */
+/**
+ * Could some spelling of this path's last component land on the blocklist?
+ *
+ * True when the path's own parent directory is at or above a blocked entry —
+ * `/` is above `/dev`, `/private/var` is above `/private/var/db`. Anywhere
+ * else, renaming the leaf cannot produce a blocked path, so its on-disk
+ * spelling does not matter and the syscall is skipped.
+ */
+function parentMayHostBlocked(candidate: string): boolean {
+  const parent = path.dirname(candidate);
+  const list = process.platform === 'win32' ? WINDOWS_BLOCKLIST : UNIX_BLOCKLIST;
+  const sep = process.platform === 'win32' ? path.sep : '/';
+  const norm = process.platform === 'win32' ? win32Normalize(parent) : parent;
+  const prefix = norm.endsWith(sep) ? norm : norm + sep;
+  return list.some((b) => b === norm || b.startsWith(prefix));
+}
+
 function canonicalize(resolved: string): string {
-  const strip = (p: string): string =>
-    // Node's realpath.native can hand back an extended-length prefix on
-    // Windows; the blocklist is written in ordinary drive-letter form.
-    process.platform === 'win32' && p.startsWith('\\\\?\\') ? p.slice(4) : p;
+  const parent = path.dirname(resolved);
+  if (parent === resolved) return canonDir(resolved); // "/" or "C:\" itself
+
+  const candidate = path.join(canonDir(parent), path.basename(resolved));
+
+  let leaf: fs.Stats | undefined;
+  try {
+    // lstat, not stat: the question is whether this last component is itself a
+    // link, and stat would follow it and answer about the target. A missing
+    // leaf is not an error (throwIfNoEntry) — its canonical location is still
+    // the canonical parent, which is what keeps /var/db/not-yet.sqlite blocked.
+    leaf = fs.lstatSync(resolved, { throwIfNoEntry: false });
+  } catch {
+    // EACCES / ENOTDIR / anything else: fall back to the textual answer, which
+    // is what this function did before it could see the filesystem at all.
+    return candidate;
+  }
+  // A symlink is not the only way the caller's spelling of the leaf differs
+  // from the kernel's. macOS mounts its boot volume case-insensitive and
+  // case-preserving, so `/DEV` is an ordinary directory to `lstat` and `/dev`
+  // to everything else; Windows discards a trailing space or dot before any
+  // file API sees it. Either way a blocked directory arrives under a name the
+  // string comparison does not recognise, which the whole-path realpath this
+  // replaced could not miss.
+  //
+  // Realpathing every leaf would give back the cost the memo exists to save.
+  // But the only leaf whose SPELLING can change the verdict is one that could
+  // land on the blocklist, and the parent already tells us that: unless the
+  // canonical parent sits at or above a blocked directory, no spelling of the
+  // last component reaches one. That is a string test, so the extra syscall is
+  // paid on `/`, `/private/var` and `C:\\Windows`, and never on the 2,000 files
+  // in someone's Downloads folder. A child of a case-variant directory needs
+  // nothing here: its own parent goes through canonDir, which realpaths it.
+  const mustCheckLeaf = leaf !== undefined && (leaf.isSymbolicLink() || parentMayHostBlocked(candidate));
+  if (!mustCheckLeaf) return candidate;
 
   try {
     return strip(fs.realpathSync.native(resolved));
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return resolved;
-  }
-
-  // ENOENT: climb toward the root looking for a real ancestor to canonicalise.
-  const tail: string[] = [];
-  let dir = resolved;
-  for (;;) {
-    const parent = path.dirname(dir);
-    if (parent === dir) return resolved; // reached the root without a hit
-    tail.unshift(path.basename(dir));
-    dir = parent;
-    try {
-      return path.join(strip(fs.realpathSync.native(dir)), ...tail);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return resolved;
-    }
+  } catch {
+    // A dangling link or a symlink loop points at nothing, so it is not a
+    // blocklist bypass; the canonical parent plus the link's own name is the
+    // most that can honestly be said about it.
+    return candidate;
   }
 }
 
 /**
  * Validate and normalize a user-supplied path.
  * - rejects non-strings, empty strings and null bytes
+ * - strips LEADING whitespace only (see below)
  * - expands a leading "~" to the home directory
  * - resolves to an absolute path (eliminating ../ traversal segments)
  * - rejects blocked system directories, judged on the CANONICAL path (symlinks
@@ -108,16 +231,38 @@ export function sanitizePath(input: unknown): string {
     throw new PathRejectedError('Path contains a null byte', 'PATH_INVALID');
   }
 
+  // Leading whitespace is noise; TRAILING whitespace is part of the name.
+  //
+  // Nothing can precede an absolute path or a "~", so a leading run is always
+  // copy-paste debris and comes off. At the other end a space is a legal
+  // filename byte on macOS and Linux, `path.resolve` preserves it deliberately,
+  // and every lookup in this app is exact string equality — so trimming
+  // "~/Downloads/Screenshots " does not find a folder that is close enough, it
+  // finds nothing, and the route 404s on a directory the treemap is drawing.
+  // (This used to be harmless only by accident: the trimmed value was assigned
+  // to req.query[name], which express 5 discards. Making the guard rewrite the
+  // URL made the trim real.) Emptiness is still judged with a full trim, so a
+  // whitespace-only value never reaches path.resolve — which would answer with
+  // the process's cwd. Note that both operations cover the same character set:
+  // JavaScript's \s and String.prototype.trim agree, U+00A0 and U+FEFF
+  // included, and those two arrive routinely in names pasted from a web page.
+  const trimmed = input.replace(/^\s+/, '');
+
   // Cloud-scan paths (cloud://provider/...) are pure identifiers: they never
-  // reach the filesystem, so they skip resolution — but not validation.
-  if (input.startsWith('cloud://')) {
-    if (!/^cloud:\/\/[a-z]+(\/[^\0]*)?$/.test(input) || input.includes('..')) {
+  // reach the filesystem, so they skip resolution — but not validation. They
+  // are matched on the leading-trimmed string for the same reason as above:
+  // otherwise " cloud://gdrive/x" misses this branch and gets resolved into a
+  // nonsense path under the cwd. The trailing end is left alone here too — a
+  // cloud identifier ends in a remote file's name, which is no more ours to
+  // rewrite than a local one.
+  if (trimmed.startsWith('cloud://')) {
+    if (!/^cloud:\/\/[a-z]+(\/[^\0]*)?$/.test(trimmed) || trimmed.includes('..')) {
       throw new PathRejectedError('Malformed cloud path', 'PATH_INVALID');
     }
-    return input;
+    return trimmed;
   }
 
-  let p = input.trim();
+  let p = trimmed;
   if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
     p = path.join(os.homedir(), p.slice(1));
   }

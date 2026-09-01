@@ -113,11 +113,14 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-
    transient dim — and since the tour overlay is pointer-events:none
    everywhere but the card, it costs the scrim almost no click area. Under
    .modal-backdrop (100) for the same reason: a dialog owns the window.
-   The value is safe to state here, outside the media query, because the
-   scrim is invisible and inert at every width above the breakpoint. */
+   90 is the rank the scrim holds while it is ARMED, and only then: every
+   other state demotes it again at the foot of the narrow block, because a
+   scrim that outranks the app's chrome while it is FADING AWAY from the
+   sidebar outranks the sidebar too. The fade, not the number, is where the
+   bug lives — see that block. */
 #navScrim {
   position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,0.35);
-  opacity: 0; pointer-events: none; transition: opacity var(--dur-3) var(--ease);
+  opacity: 0; pointer-events: none;
 }
 @media (max-width: 900px) {
   /* The raise is scoped to the overlay state on purpose. Lifting the base
@@ -137,4 +140,27 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-
      underneath the floating panel. Pin it to the content column. */
   body:has(#sideNav:not(.collapsed)) main { grid-column: 2; }
   body:has(#sideNav:not(.collapsed)) #navScrim { opacity: 1; pointer-events: auto; }
+  /* Closing the panel, and the trap inside it. Adding .collapsed drops
+     #sideNav back to its in-flow rank in ONE frame — the raise above is
+     scoped to the overlay state on purpose, so the rail never outranks the
+     preview pane or the cart dock — while the scrim it was under keeps
+     painting for another --dur-3 as its opacity animates out. Leave the
+     scrim at 90 and those 380ms dim the very panel the close just
+     uncovered, which is the one surface the user is watching.
+     .collapsed is the state that SPANS the fade: set the instant the close
+     starts, still set when the fade ends. Demoting the scrim on it pairs
+     the drop with the sidebar's own, frame for frame. 49 is the rank the
+     scrim held before it was raised — under the sidebar, over the page —
+     and the price is those same 380ms, during which the cart dock and the
+     preview pane brighten a beat early. Dimming the panel the user just
+     opened a hole for is the louder of the two bugs, and the layering fix
+     above is about what the scrim covers while it is ARMED.
+     The opacity transition lives in here for the same invariant. Above the
+     breakpoint #sideNav is in flow at rank 50 and is never raised over a 90
+     scrim, so no fade may start at those widths either: widening past 900px
+     with the panel open drops the opacity rule and the transition
+     declaration in the same recalculation, so the scrim snaps out instead
+     of dimming the whole app — sidebar included — on the way through. */
+  #navScrim { transition: opacity var(--dur-3) var(--ease); }
+  body:has(#sideNav.collapsed) #navScrim { z-index: 49; }
 }
