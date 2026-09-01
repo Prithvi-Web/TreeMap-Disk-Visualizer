@@ -1,11 +1,39 @@
 # TreeMap — session handoff
 
-## Session 5 — the end-to-end journeys, and 37 defects closed (1 September 2026)
+## Session 5 — the end-to-end journeys, 37 defects, and two Windows-only lessons (1 September 2026)
 
-**Suite: 2,128 tests · 2,126 pass · 0 fail · 2 pre-existing skips** (was 2,008).
+**Suite: 2,139 tests · 2,137 pass · 0 fail · 2 pre-existing skips** (was 2,008).
 `npm run typecheck` clean; `node scripts/build-ui.js --check` matches (111 parts).
-Four commits on `main`, LOCAL and unpushed — the owner pushes via GitHub Desktop.
-(`origin/main` was level with `c8959e3` when these were made.)
+Nine commits on `main`, `32d7ee0..dd55084`, PUSHED. **CI run 33488537528 is
+green on macOS, Linux AND Windows** — verified through the API, not inferred.
+
+### Read this before writing a test: two things only Windows catches
+
+The first push went red twice, both Windows-only, both invisible on a Mac. They
+are different bugs with the same root: something that is true on the developer's
+machine and not on the runner. Each now has a guard that fails on the laptop.
+
+1. **A POSIX path literal sent to a guarded route.** `guardQueryPath` resolves
+   `?path=`, and `/root` is not absolute on Windows — it becomes `D:\root`, so a
+   fixture keyed on the POSIX spelling is unreachable and the route answers 404.
+   It had been matching by accident for as long as express 5 was discarding the
+   guard's output; fixing that made the sanitisation real.
+   Guard: `tests/windowsPathFixtures.test.ts`. Derive the path
+   (`path.resolve('/root')` + an `R()` join, as `apiHardening.test.ts` does), or
+   mark a deliberately-foreign path `windows-ok: <reason>`.
+
+2. **A test racing a fire-and-forget write.** `POST /api/scan?wait=true` answers
+   when the WALK ends; the snapshot write is fired unawaited afterwards, and
+   `/api/agent/summary` reads that store — so two reads either side of it
+   disagree (`snapshotCount` 0 then 1). Correct product behaviour, untestable
+   without knowing when the writing stopped.
+   Guard: `tests/backgroundWrites.test.ts` + `src/utils/backgroundWrites.ts`.
+   `await settled()` instead of polling. Every `void call()` in `src/` must be
+   tracked or listed in `NOT_A_RACE` with a reason, so the next one cannot be
+   added silently.
+
+Neither guard replaces the Windows runner. They move the two known shapes eight
+minutes earlier, and CI stays the authority.
 
 ### The three things session 4 left open are closed
 
