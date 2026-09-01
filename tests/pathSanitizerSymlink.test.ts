@@ -39,8 +39,9 @@ function rejection(fn: () => unknown): PathRejectedError {
   assert.fail('expected sanitizePath to throw, it returned normally');
 }
 
-test('macOS /var symlink cannot smuggle a blocked directory past the blocklist', () => {
-  if (process.platform !== 'darwin') return; // /var -> private/var is a macOS layout
+test('macOS /var symlink cannot smuggle a blocked directory past the blocklist', {
+  skip: process.platform !== 'darwin' && '/var -> private/var is a macOS layout',
+}, () => {
   // /private/var/db is blocked textually today; /var/db is the same inode.
   const viaPrivate = rejection(() => sanitizePath('/private/var/db'));
   assert.equal(viaPrivate.code, 'PATH_BLOCKED');
@@ -48,8 +49,9 @@ test('macOS /var symlink cannot smuggle a blocked directory past the blocklist',
   assert.equal(viaVar.code, 'PATH_BLOCKED');
 });
 
-test('a symlink in an allowed tree pointing at a blocked tree is rejected', async () => {
-  if (process.platform === 'win32') return; // symlink creation needs privilege on Windows
+test('a symlink in an allowed tree pointing at a blocked tree is rejected', {
+  skip: process.platform === 'win32' && 'creating a symlink needs privilege on Windows',
+}, async () => {
   const dir = await mkTmp();
   try {
     const link = path.join(dir, 'innocent-looking');

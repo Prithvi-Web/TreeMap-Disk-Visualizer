@@ -6,6 +6,40 @@ import { createApp } from '../src/server';
 import { PRUNE_MAX_NODES } from '../src/api/scanRoutes';
 import { createScanRecord } from '../src/services/diskScanner';
 import { FileNode } from '../src/models/types';
+import { sanitizePath } from '../src/utils/pathSanitizer';
+
+/**
+ * The fixture root, in the platform's OWN spelling.
+ *
+ * `/root` is not an absolute path on Windows — `path.resolve` turns it into
+ * `D:\\root` — and `GET /api/scan/:id/subtree` runs its `?path=` through
+ * `guardQueryPath`, which resolves exactly that way before the handler ever
+ * sees it. A fixture keyed on the POSIX spelling therefore describes a tree the
+ * handler can never find, and answers 404 to a request that is perfectly valid.
+ *
+ * That went unnoticed for as long as it did because express 5's `req.query`
+ * getter was quietly discarding the guard's work, so the handler used to be
+ * handed the raw string and matched the fixture by accident. Fixing the guard
+ * made the sanitisation real and the accident stopped happening — on Windows
+ * only, which is where these two tests then failed.
+ *
+ * So the fixture speaks the platform's language, and `ROOT_IS_NATIVE` below
+ * asserts that it does: if this ever drifts again the suite says why, instead
+ * of leaving someone to work backwards from a 404.
+ */
+const ROOT = path.resolve('/root');
+const R = (...parts: string[]): string => path.join(ROOT, ...parts);
+
+test('the fixture root is spelled the way this platform spells it', () => {
+  // The invariant the two drill-in tests depend on, stated once and out loud:
+  // whatever a client sends for this path, guardQueryPath hands the handler
+  // `sanitizePath(it)` — so a fixture the handler can find is one that already
+  // equals its own sanitised form. On POSIX that is `/root`; on Windows it is
+  // `D:\root`, and a fixture keyed on `/root` there is unreachable.
+  assert.equal(sanitizePath(ROOT), ROOT, 'the fixture root must survive sanitisation unchanged');
+  assert.equal(sanitizePath(R('d0')), R('d0'), 'and so must a child of it');
+  assert.ok(path.isAbsolute(ROOT), 'and it must be absolute on this platform');
+});
 
 /**
  * The tree that crosses to the UI, end to end through the real routes.
@@ -21,18 +55,18 @@ function wideTree(dirs: number, filesPer: number): FileNode {
     const kids: FileNode[] = [];
     for (let f = 0; f < filesPer; f++) {
       kids.push({
-        name: `f${f}.bin`, path: `/root/d${d}/f${f}.bin`,
+        name: `f${f}.bin`, path: R(`d${d}`, `f${f}.bin`),
         size: d + 1, type: 'file', modifiedAt: 0, isHidden: false,
       });
     }
     children.push({
-      name: `d${d}`, path: `/root/d${d}`, type: 'dir', modifiedAt: 0, isHidden: false,
+      name: `d${d}`, path: R(`d${d}`), type: 'dir', modifiedAt: 0, isHidden: false,
       size: kids.reduce((s, k) => s + k.size, 0),
       children: kids,
     });
   }
   return {
-    name: 'root', path: '/root', type: 'dir', modifiedAt: 0, isHidden: false,
+    name: 'root', path: ROOT, type: 'dir', modifiedAt: 0, isHidden: false,
     size: children.reduce((s, c) => s + c.size, 0),
     children,
   };
@@ -102,7 +136,7 @@ test('a scan far over the node budget completes with a bounded tree, not an erro
   const trueNodes = countNodes(big);
   assert.ok(trueNodes > PRUNE_MAX_NODES, `fixture must exceed the budget (${trueNodes})`);
 
-  const scan = createScanRecord('/root');
+  const scan = createScanRecord(ROOT);
   const { port, close } = await listen();
   try {
     const last = await finalEvent(port, scan.scanId, (e) => {
@@ -124,7 +158,7 @@ test('pruned directories keep exact sizes and are marked, never half-filled', as
   const big = wideTree(OVERSIZED_DIRS, OVERSIZED_FILES);
   const truth = new Map(big.children!.map((c) => [c.path, c]));
 
-  const scan = createScanRecord('/root');
+  const scan = createScanRecord(ROOT);
   const { port, close } = await listen();
   try {
     const last = await finalEvent(port, scan.scanId, (e) => {
@@ -151,16 +185,16 @@ test('pruned directories keep exact sizes and are marked, never half-filled', as
 
 test('the subtree endpoint returns the detail that pruning withheld', async () => {
   const big = wideTree(OVERSIZED_DIRS, OVERSIZED_FILES);
-  const scan = createScanRecord('/root');
+  const scan = createScanRecord(ROOT);
   scan.status = 'complete';
   scan.root = big;
 
   const { port, close } = await listen();
   try {
     // d0 holds the smallest files, so it is the first thing pruning drops.
-    const r = await get(port, `/api/scan/${scan.scanId}/subtree?path=${encodeURIComponent('/root/d0')}`);
+    const r = await get(port, `/api/scan/${scan.scanId}/subtree?path=${encodeURIComponent(R('d0'))}`);
     assert.equal(r.status, 200);
-    assert.equal(r.body.root.path, '/root/d0');
+    assert.equal(r.body.root.path, R('d0'));
     assert.equal(r.body.root.children.length, OVERSIZED_FILES, 'drill-in must return the whole folder');
     assert.equal(r.body.root.pruned, undefined);
     assert.equal(r.body.root.size, big.children![0].size, 'size must match the scan');
@@ -170,13 +204,13 @@ test('the subtree endpoint returns the detail that pruning withheld', async () =
 });
 
 test('the subtree endpoint honours its own node budget', async () => {
-  const scan = createScanRecord('/root');
+  const scan = createScanRecord(ROOT);
   scan.status = 'complete';
   scan.root = wideTree(10, 100);
 
   const { port, close } = await listen();
   try {
-    const r = await get(port, `/api/scan/${scan.scanId}/subtree?path=${encodeURIComponent('/root')}&maxNodes=1`);
+    const r = await get(port, `/api/scan/${scan.scanId}/subtree?path=${encodeURIComponent(ROOT)}&maxNodes=1`);
     assert.equal(r.status, 200);
     assert.equal(r.body.root.pruned, true, 'a budget of 1 must withhold everything below root');
     assert.equal(r.body.root.children, undefined);
@@ -187,13 +221,13 @@ test('the subtree endpoint honours its own node budget', async () => {
 });
 
 test('the subtree endpoint rejects unknown and out-of-scope paths', async () => {
-  const scan = createScanRecord('/root');
+  const scan = createScanRecord(ROOT);
   scan.status = 'complete';
   scan.root = wideTree(2, 2);
 
   const { port, close } = await listen();
   try {
-    const missing = await get(port, `/api/scan/${scan.scanId}/subtree?path=${encodeURIComponent('/root/nope')}`);
+    const missing = await get(port, `/api/scan/${scan.scanId}/subtree?path=${encodeURIComponent(R('nope'))}`);
     assert.equal(missing.status, 404);
 
     const outside = await get(port, `/api/scan/${scan.scanId}/subtree?path=${encodeURIComponent('/etc')}`);
@@ -205,7 +239,7 @@ test('the subtree endpoint rejects unknown and out-of-scope paths', async () => 
 
 test('the /result fallback is pruned to the same budget as the stream', async () => {
   const big = wideTree(OVERSIZED_DIRS, OVERSIZED_FILES);
-  const scan = createScanRecord('/root');
+  const scan = createScanRecord(ROOT);
   scan.status = 'complete';
   scan.root = big;
   scan.fileCount = OVERSIZED_DIRS * OVERSIZED_FILES;
