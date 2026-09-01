@@ -214,6 +214,31 @@ test('buildCSS emits balanced, clean CSS for all 5 types × 2 themes', () => {
   }
 });
 
+/**
+ * `position` belongs to the ONE shared base rule `[data-fxbeam] { position:
+ * relative }`, at class specificity, so a host that is deliberately laid out
+ * some other way can say so and win. Re-declaring it per instance raises it to
+ * (0,2,0) from a sheet appended after the app's — which silently yanked every
+ * `.fx-beam-strip { position: absolute }` overlay back into flow, collapsing it
+ * to a 0×0 box the moment its beam lit.
+ */
+test('the generator never re-declares position on the host — the base rule owns it', () => {
+  const I = instantiate();
+  for (const type of I.TYPES) {
+    for (const theme of ['dark', 'light']) {
+      const css = I.buildCSS('t9', type, theme, 2.5, 13, false);
+      for (const [, sel, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        const s = sel.trim();
+        // The beam's own layers (::before / ::after / the bloom child) are
+        // absolutely positioned by design; only the HOST is off limits.
+        if (!s.startsWith('[data-fxbeam="t9"]') || s.includes('::') || s.includes('>')) continue;
+        assert.ok(!/(^|[;\s])position:/.test(body),
+          `${type}/${theme} must not out-specify a strip's own position — "${s}" sets it`);
+      }
+    }
+  }
+});
+
 test('under reduced motion the generator emits NO animations or keyframes at all', () => {
   const I = instantiate();
   for (const type of I.TYPES) {
@@ -368,4 +393,130 @@ test('the lifecycle honors the knobs: radius override skips measuring, detach cl
   assert.match(src, /const opacity = inst\.cfg\.opacity === undefined \? 1 : inst\.cfg\.opacity;/,
     'opacity folds into the strength var as a second master fader');
   assert.match(src, /hue: staticColors \? null :/, 'staticColors withholds the pulse driver hue config');
+});
+
+/* ══════════════════ The lifecycle, RUN against a fake DOM ══════════════════
+   The generated sheet is multi-KB, so how many of them a hover sweep parses
+   is a real cost — and it is behaviour, not structure: only running attach
+   and detach can show that two hosts share one tag and that an instance
+   moving to another build key takes its inline state with it. */
+
+type FakeStyle = {
+  props: Record<string, string>;
+  setProperty(k: string, v: string): void;
+  removeProperty(k: string): void;
+};
+
+type BeamEl = {
+  nodeType: number;
+  tag: string;
+  attrs: Record<string, string>;
+  children: BeamEl[];
+  parentNode: BeamEl | null;
+  textContent: string;
+  style: FakeStyle;
+  setAttribute(k: string, v: string): void;
+  removeAttribute(k: string): void;
+  hasAttribute(k: string): boolean;
+  getAttribute(k: string): string | null;
+  appendChild(c: BeamEl): BeamEl;
+  removeChild(c: BeamEl): BeamEl;
+  addEventListener(): void;
+  removeEventListener(): void;
+};
+
+function beamEl(tag = 'div'): BeamEl {
+  const style: FakeStyle = {
+    props: {},
+    setProperty(k, v) { style.props[k] = String(v); },
+    removeProperty(k) { delete style.props[k]; },
+  };
+  const el: BeamEl = {
+    nodeType: 1, tag, attrs: {}, children: [], parentNode: null, textContent: '', style,
+    setAttribute(k, v) { el.attrs[k] = String(v); },
+    removeAttribute(k) { delete el.attrs[k]; },
+    hasAttribute(k) { return k in el.attrs; },
+    getAttribute(k) { return k in el.attrs ? el.attrs[k] : null; },
+    appendChild(c) { c.parentNode = el; el.children.push(c); return c; },
+    removeChild(c) { el.children = el.children.filter((x) => x !== c); c.parentNode = null; return c; },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  return el;
+}
+
+type Beam = {
+  attach(el: BeamEl, opts: Record<string, unknown>): BeamEl;
+  detach(el: BeamEl): void;
+};
+
+function lifecycle(reduced = false): { beam: Beam; head: BeamEl; sheets(): BeamEl[] } {
+  const head = beamEl('head');
+  const documentElement = beamEl('html');
+  const doc = {
+    head, documentElement, hidden: false,
+    createElement: (tag: string) => beamEl(tag),
+    addEventListener() {},
+  };
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const beam = new Function(
+    'REDUCED', 'document', 'MutationObserver', 'getComputedStyle', 'setTimeout', 'clearTimeout',
+    `'use strict';\n${section}\nreturn FxBeam;`,
+  )(
+    reduced, doc,
+    class { observe() {} },
+    () => ({ borderTopLeftRadius: '13px' }),
+    () => 0, () => {},
+  ) as Beam;
+  return { beam, head, sheets: () => head.children.filter((c) => 'data-fxbeam-style' in c.attrs) };
+}
+
+test('two hosts on the same build key share ONE stylesheet — a hover sweep parses one, not one per card', () => {
+  const { beam, sheets } = lifecycle();
+  const a = beamEl(), b = beamEl();
+  beam.attach(a, { type: 'md', active: true, borderRadius: 13 });
+  assert.equal(sheets().length, 1, 'the first host builds the sheet');
+  assert.ok(sheets()[0].textContent.length > 1000, 'and it really is the multi-KB build');
+  beam.attach(b, { type: 'md', active: true, borderRadius: 13 });
+  assert.equal(sheets().length, 1, 'the second host rides it');
+  assert.equal(a.attrs['data-fxbeam'], b.attrs['data-fxbeam'], 'sharing the rules means sharing the id');
+  // Per-host state stays per host: the shared sheet carries no instance state.
+  assert.ok(a.children.some((c) => 'data-fxbeam-bloom' in c.attrs), 'each host keeps its own bloom layer');
+  assert.ok(b.children.some((c) => 'data-fxbeam-bloom' in c.attrs));
+  beam.detach(a);
+  assert.equal(sheets().length, 1, 'a sheet another host is still using is never pulled');
+  assert.equal(b.attrs['data-fxbeam'], sheets()[0].attrs['data-fxbeam-style'], 'and the survivor keeps it');
+  beam.detach(b);
+  beam.attach(a, { type: 'md', active: true, borderRadius: 13 });
+  assert.equal(sheets().length, 1, 're-entry re-parses nothing — the freed sheet was cached');
+});
+
+test('a host that moves to another build key takes its inline per-id state with it', () => {
+  const { beam, sheets } = lifecycle(true); // REDUCED: activate writes the per-id vars outright
+  const el = beamEl();
+  beam.attach(el, { type: 'line', active: true, borderRadius: 4 });
+  const lineId = el.attrs['data-fxbeam'];
+  const parked = Object.keys(el.style.props).filter((p) => p.endsWith(lineId));
+  assert.ok(parked.length >= 2, 'the REDUCED line beam parks its travel through per-id props');
+  beam.attach(el, { type: 'md', active: true, borderRadius: 13 });
+  assert.notEqual(el.attrs['data-fxbeam'], lineId, 'a different build key is a different sheet');
+  assert.equal(sheets().length, 2, 'and the line sheet stays for the next line beam');
+  for (const p of parked) assert.ok(!(p in el.style.props), `${p} does not outlive the id that named it`);
+  beam.detach(el);
+  assert.deepEqual(
+    Object.keys(el.style.props).filter((p) => p.startsWith('--fxb-')), [],
+    'detach leaves no --fxb-* property behind at all',
+  );
+});
+
+test('bloom:false drops the blurred layer entirely — ambience weight is a missing node, not a faded one', () => {
+  const { beam, sheets } = lifecycle();
+  const el = beamEl();
+  beam.attach(el, { type: 'md', active: true, borderRadius: 13, bloom: false });
+  assert.equal(el.children.filter((c) => 'data-fxbeam-bloom' in c.attrs).length, 0,
+    'nothing to raster: the layer is not in the DOM');
+  const sheetCount = sheets().length;
+  beam.attach(el, { type: 'md', active: true, borderRadius: 13 });
+  assert.equal(el.children.filter((c) => 'data-fxbeam-bloom' in c.attrs).length, 1, 'and it comes back');
+  assert.equal(sheets().length, sheetCount, 'the bloom is DOM, not CSS — it never forks the shared sheet');
 });

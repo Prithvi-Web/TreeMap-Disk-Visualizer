@@ -903,6 +903,45 @@ test('the sidebar collapses to a rail, remembers the choice, and announces its s
   assert.match(INDEX, /aria-orientation="vertical"/, 'the tablist declares its new axis');
 });
 
+test('a pinned-open sidebar demotes to the rail below the breakpoint — the pin survives', () => {
+  // QA item 8: with tm-sidenav=open persisted, a viewport below 900px left
+  // the expanded panel permanently OVER the dimmed content. The pin is a
+  // wide-viewport concept: narrow renders it as the rail, narrow toggles are
+  // transient overlays, and widening restores what the user actually chose.
+  const code = appCode();
+  const side = code.slice(code.indexOf('const sideNavNarrow'), code.indexOf('function toast'));
+  assert.ok(side.length > 400, 'the sidebar wiring slice is non-empty');
+  // One number, TWO readers — so read it once and hold both to it. Asserting
+  // only the JS side let the CSS overlay query drift to 760px with the suite
+  // green: between 760 and 900 the JS believes it is narrow (demoting a
+  // pinned sidebar, refusing to persist toggles) while the CSS still lays the
+  // sidebar out as an in-flow column. That disagreement IS the QA-8 bug.
+  const bp = /matchMedia\('\(max-width: (\d+)px\)'\)/.exec(side);
+  assert.ok(bp, 'the JS names one breakpoint');
+  const overlay = `@media (max-width: ${bp![1]}px) {`;
+  const at = INDEX.indexOf(overlay);
+  assert.notEqual(at, -1, `the stylesheet carries the same ${overlay} — one number, two readers`);
+  let depth = 0, end = -1;
+  for (let i = INDEX.indexOf('{', at); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) { end = i; break; }
+  }
+  const overlayBlock = INDEX.slice(at, end + 1);
+  assert.match(overlayBlock, /#sideNav:not\(\.collapsed\) \{[^}]*position: fixed/,
+    'and it is the rule that floats the expanded sidebar over the content');
+  assert.match(overlayBlock, /#navScrim \{ opacity: 1/, 'with the scrim that dims what it covers');
+  assert.match(side, /if \(!sideNavNarrow\.matches\) \{\s*try \{ localStorage\.setItem\('tm-sidenav'/,
+    'only a wide-viewport choice persists — a narrow toggle or scrim tap never clobbers the pin');
+  assert.match(side, /sideNavNarrow\.addEventListener\('change'/,
+    'crossing the breakpoint re-applies the right state');
+  assert.match(side, /if \(!\$\('sideNav'\)\.classList\.contains\('collapsed'\)\) applySideNav\(true\)/,
+    'entering narrow demotes an open column to the rail');
+  assert.match(side, /applySideNav\(sideNavPref\(\) === 'rail'\)/,
+    'leaving narrow restores the pinned preference');
+  assert.match(side, /applySideNav\(sideNavPref\(\) === 'rail' \|\| sideNavNarrow\.matches\)/,
+    'boot honors the pin only at widths where the real column fits');
+});
+
 test('search uses the shared query language, never a second one', () => {
   // §A4 forbids inventing a second query language. The backend parses it in
   // src/utils/searchQuery.ts; the frontend must not re-implement matching at

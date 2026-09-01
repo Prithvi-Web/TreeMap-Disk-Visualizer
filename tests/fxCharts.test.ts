@@ -74,9 +74,17 @@ test('alpha re-alphas theme tokens without shifting hue — and never guesses', 
   assert.equal(math.alpha('rgba(255,255,255,0.42)', 0), 'rgba(255,255,255,0)');
   assert.equal(math.alpha('rgb(10, 12, 20)', 0.5), 'rgba(10,12,20,0.5)');
   // Anything else falls back to fully transparent rather than fading
-  // through a wrong color.
-  assert.equal(math.alpha('var(--text-3)', 0), 'rgba(0,0,0,0)');
-  assert.equal(math.alpha('', 0), 'rgba(0,0,0,0)');
+  // through a wrong color. Asserted at a NONZERO alpha as well: at a = 0 a
+  // wrong guess of `rgba(0,0,0,${a})` prints the same string, and alpha is
+  // called with a > 0 in ~15 places (grid fades, band fills, the 0.35 zero
+  // row, the 0.07 brush window, liveLine's gradient stops) — a guess there
+  // paints solid black, invisible in dark theme and a smear in light.
+  for (const unresolved of ['var(--text-3)', '', 'currentColor', 'oklch(0.7 0.1 250)']) {
+    assert.equal(math.alpha(unresolved, 0), 'rgba(0,0,0,0)', `${unresolved || '(empty)'} at 0`);
+    assert.equal(math.alpha(unresolved, 0.5), 'rgba(0,0,0,0)',
+      `${unresolved || '(empty)'} at 0.5 — an unreadable token vanishes, it never guesses black`);
+    assert.equal(math.alpha(unresolved, 1), 'rgba(0,0,0,0)', `${unresolved || '(empty)'} at 1`);
+  }
 });
 
 /* ══════════════════ nice ticks: niceness + coverage ══════════════════ */
@@ -199,4 +207,80 @@ test('linreg projects the exact line through linear data', () => {
   assert.ok(Math.abs(slope - 2) < 1e-9 && Math.abs(intercept - 3) < 1e-9, 'recovers y = 2x + 3');
   assert.ok(Math.abs(project(10) - 23) < 1e-9, 'projection extends the line');
   assert.equal(math.linreg([]).slope, 0, 'no data projects flat, not NaN');
+});
+
+/* ══════════════════ log axes: the apps-scatter mapping ══════════════════ */
+
+test('scaleLog places log10(value+1) decades evenly and round-trips', () => {
+  const { math } = loadFxCharts();
+  const sc = math.scaleLog(999, 0, 300); // log10(999 + 1) = exactly 3 decades
+  assert.equal(sc.to(0), 0, 'zero sits exactly at the origin');
+  assert.ok(Math.abs(sc.to(9) - 100) < 1e-9, 'the first decade costs one third of the range');
+  assert.ok(Math.abs(sc.to(99) - 200) < 1e-9, 'the second costs the same third');
+  assert.ok(Math.abs(sc.to(999) - 300) < 1e-9, 'the cap lands on the range end');
+  for (const v of [0, 3, 42, 500, 999]) {
+    assert.ok(Math.abs(sc.from(sc.to(v)) - v) < 1e-6, `round-trip preserves ${v}`);
+  }
+  assert.ok(Number.isFinite(math.scaleLog(0, 0, 100).to(0)), 'an empty domain never divides by zero');
+});
+
+/**
+ * The axis caps at the DATA, never at the next full power. Rounding up cost a
+ * base-1024 byte axis a whole decade: a 17 GB largest app produced a "1.0 TB"
+ * ceiling and left a third of the plot permanently empty, and the label at the
+ * top was a number no app in the list had. The top tick is now the real
+ * maximum; the decades that fall inside it are the gridlines.
+ */
+test('logTicks: decades INSIDE the data, and the real max as the top label', () => {
+  const { math } = loadFxCharts();
+  // The regression, exactly: 17 GB of app on a byte axis.
+  const bytes = math.logTicks(17 * 1024 ** 3, 1024, 4) as number[];
+  assert.equal(bytes[bytes.length - 1], 17 * 1024 ** 3, 'the top of the axis is the largest app, not 1 TB');
+  assert.ok(bytes.every((v) => v <= 17 * 1024 ** 3), 'no tick sits outside the data');
+  assert.deepEqual(bytes, [0, 1024, 1024 ** 2, 1024 ** 3, 17 * 1024 ** 3]);
+  // Base 10 rounds up the same way, and is fixed the same way.
+  assert.deepEqual(math.logTicks(300000, 10, 5), [0, 10, 1000, 100000, 300000]);
+  assert.deepEqual(math.logTicks(1000, 10, 5), [0, 10, 100, 1000],
+    'an exact power is its own top — no duplicate label a quarter-decade apart');
+  assert.deepEqual(math.logTicks(0, 10, 5), [0, 1], 'no data still yields an axis');
+  assert.deepEqual(math.logTicks(7, 10, 5), [0, 7], 'below the first decade the max is the only label');
+  for (const [max, base] of [[7, 10], [3e9, 10], [5e12, 1024], [1, 10], [1024 ** 4 + 1, 1024]] as const) {
+    const ticks = math.logTicks(max, base, 5) as number[];
+    assert.equal(ticks[0], 0, 'the origin is a tick');
+    assert.equal(ticks[ticks.length - 1], max, `the axis tops at the data (${max}), never above it`);
+    assert.ok(ticks.length <= 7, 'a tick count a human can read');
+    for (let i = 1; i < ticks.length; i++) {
+      assert.ok(ticks[i] > ticks[i - 1], 'strictly ascending');
+      if (i === ticks.length - 1) continue; // the top tick is the data, not a decade
+      const exp = Math.log(ticks[i]) / Math.log(base);
+      assert.ok(Math.abs(exp - Math.round(exp)) < 1e-9, `${ticks[i]} is a power of ${base}`);
+      assert.ok(ticks[i] < max, 'every decade drawn actually falls inside the plot');
+    }
+  }
+});
+
+test('compactCount speaks 10/100/1k/10k, never scientific notation', () => {
+  const { math } = loadFxCharts();
+  assert.equal(math.compactCount(10), '10');
+  assert.equal(math.compactCount(100), '100');
+  assert.equal(math.compactCount(1000), '1k');
+  assert.equal(math.compactCount(10000), '10k');
+  assert.equal(math.compactCount(1000000), '1M');
+  assert.equal(math.compactCount(1200000), '1.2M');
+  assert.equal(math.compactCount(0), '0');
+  assert.equal(math.compactCount(NaN), '0', 'nonsense reads as the origin, not "NaN"');
+});
+
+test('densityScale shrinks dots under crowding — monotone, floored at 0.6', () => {
+  const { math } = loadFxCharts();
+  assert.equal(math.densityScale(5), 1, 'a sparse scatter keeps full-size dots');
+  assert.equal(math.densityScale(40), 1, 'the shrink starts only past 40 points');
+  assert.ok(math.densityScale(300) <= 0.6 + 1e-9, 'a ~300-app scatter reads as points, not a blob');
+  let prev = Infinity;
+  for (let n = 0; n <= 500; n += 10) {
+    const d = math.densityScale(n) as number;
+    assert.ok(d <= prev + 1e-12, 'never grows with more points');
+    assert.ok(d >= 0.6 - 1e-9 && d <= 1, 'clamped to [0.6, 1]');
+    prev = d;
+  }
 });

@@ -33,15 +33,16 @@ function slice(startAnchor: string, endAnchor: string): string {
   return INDEX.slice(start, end);
 }
 
-/** Evaluate one small standalone app function in Node. */
-function appFn(name: string): (...args: any[]) => any {
+/** Evaluate one small standalone app function in Node, with stubbed globals. */
+function appFn(name: string, deps: Record<string, unknown> = {}): (...args: any[]) => any {
   const start = INDEX.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `function ${name} exists`);
   const end = INDEX.indexOf('\n}', start);
   assert.notEqual(end, -1, `function ${name} closes`);
   const src = INDEX.slice(start, end + 2);
+  const keys = Object.keys(deps);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  return new Function(`${src}; return ${name};`)();
+  return new Function(...keys, `${src}; return ${name};`)(...keys.map((k) => deps[k]));
 }
 
 /* ══════════════════ the dead-code pin ══════════════════ */
@@ -104,8 +105,83 @@ test('the trends area mounts the full bklit surface: fades, dots, brush, budget 
   assert.match(draw, /pattern: 'dots'/, 'the dotted backdrop is on');
   assert.match(draw, /brush: pts\.length > 1 \? \{\} : null/, 'the brush strip needs something to zoom');
   assert.match(draw, /budgetFor\(state\.trends\.path\)/, 'the band reads the budget the app already fetched');
-  assert.match(draw, /from: budget\.maxBytes, to: Infinity/, 'over-budget territory is the ceiling upward');
-  assert.match(draw, /: null,\s*\};/, 'no budget means no band — never a fabricated ceiling');
+  // The BRANCH, not a trailing token: `/: null,\s*\};/` was satisfied by any
+  // property that happened to end the spec with a null, so the else-branch was
+  // free to become a fabricated `{ from: 0, to: Infinity }` ceiling on every
+  // root with no budget at all.
+  const band = /referenceBand:\s*(budget && budget\.maxBytes > 0)\s*\?\s*\{([\s\S]{0,240}?)\}\s*:\s*([A-Za-z0-9_.{[]+),/.exec(draw);
+  assert.ok(band, 'the band is a ternary on a real, positive budget');
+  assert.match(band![2], /from: budget\.maxBytes, to: Infinity/, 'over-budget territory is the ceiling upward');
+  assert.equal(band![3], 'null', 'no budget means no band — never a fabricated ceiling');
+});
+
+/**
+ * The projection used to run a flat 30 days past the last snapshot whatever
+ * the history was. With 18 snapshots spanning an hour that left the real
+ * series inside 0.05% of the plot — an empty-looking chart — and it drew a
+ * month-long forecast the app's OWN honesty gate was refusing at the same
+ * moment on the dashboard ("needs at least 5 scans spanning 2+ days").
+ */
+const DAY = 864e5;
+const linregStub = {
+  math: {
+    linreg(pts: Array<{ x: number; y: number }>) {
+      const n = pts.length;
+      const mx = pts.reduce((s, p) => s + p.x, 0) / n;
+      const my = pts.reduce((s, p) => s + p.y, 0) / n;
+      let num = 0, den = 0;
+      for (const p of pts) { num += (p.x - mx) * (p.y - my); den += (p.x - mx) ** 2; }
+      const slope = den ? num / den : 0;
+      return { slope, project: (x: number) => my + slope * (x - mx) };
+    },
+  },
+};
+
+test('the trends projection never draws what the app’s own forecast gate refuses', () => {
+  const trendProjection = appFn('trendProjection', { FxCharts: linregStub });
+  const t0 = Date.UTC(2026, 7, 1);
+  const hour = Array.from({ length: 18 }, (_, i) => ({ t: t0 + i * (3.6e6 / 17), v: 1e9 + i * 1e6 }));
+  assert.equal(trendProjection(hour, false), null,
+    'the gate said no — Trends must not project where the dashboard refuses to');
+  assert.equal(trendProjection(hour.slice(0, 2), true), null, 'two points are not a fit');
+  assert.equal(trendProjection([], true), null, 'and no points are nothing at all');
+  const same = Array.from({ length: 5 }, () => ({ t: t0, v: 1e9 }));
+  assert.equal(trendProjection(same, true), null, 'a zero-length history has no rate to extend');
+});
+
+test('the projection horizon is bounded by the history, so real data always dominates the plot', () => {
+  const trendProjection = appFn('trendProjection', { FxCharts: linregStub });
+  const t0 = Date.UTC(2026, 7, 1);
+  const series = (n: number, span: number) =>
+    Array.from({ length: n }, (_, i) => ({ t: t0 + (i * span) / (n - 1), v: 1e9 + i * 1e6 }));
+
+  for (const span of [3.6e6, 2 * DAY, 9 * DAY, 60 * DAY, 400 * DAY]) {
+    const pts = series(18, span);
+    const p = trendProjection(pts, true)!;
+    assert.ok(p, `a span of ${span / DAY} days still projects`);
+    const tail = p.points[1].t - pts[pts.length - 1].t;
+    assert.ok(tail > 0, 'the forecast reaches forward');
+    assert.ok(tail <= 30 * DAY + 1, 'never more than 30 days out — the old flat horizon is the ceiling now');
+    const domain = p.points[1].t - pts[0].t;
+    assert.ok(span / domain >= 2 / 3 - 1e-9,
+      `real data holds ${(span / domain * 100).toFixed(1)}% of the domain — it must hold at least two thirds`);
+  }
+  // The hour-long history that started this: the tail is half an hour, not a month.
+  const hour = series(18, 3.6e6);
+  assert.equal(trendProjection(hour, true)!.points[1].t - hour[17].t, 1.8e6);
+});
+
+test('one honesty policy: the gate is the server forecast, re-read on every load', () => {
+  const draw = slice('function drawTrendChart(', 'function trendNetPoints(');
+  assert.match(draw, /trendProjection\(pts, state\.trends\.forecastOk === true\)/,
+    'the chart asks the same gate the dashboard banner obeys');
+  const load = slice('async function loadTrendData(', 'async function labelTrendForecast(');
+  assert.match(load, /state\.trends\.forecastOk = false/,
+    'a new root starts with the answer unknown — unknown never projects');
+  const label = slice('async function labelTrendForecast(', "$('trendRoot').addEventListener");
+  assert.match(label, /const ok = f\.status === 'ok'/, 'the gate is the server’s own status, not a local re-derivation');
+  assert.match(label, /state\.trends\.forecastOk = ok;[\s\S]{0,80}?drawTrendChart\(\)/,
+    'and the answer repaints the chart — the projection appears only once it is vouched for');
 });
 
 test('the reference band pulls the y-domain up to any finite bound', () => {
@@ -144,7 +220,7 @@ test('delta rows diverge from a centre axis in the two tokenized blue-family ton
   assert.match(css, /var\(--fx-neg\)/, 'shrinkage is the slate counterpart — the profit-line pair');
   // Both callers release the width-in.
   assert.match(slice('async function renderTrendDeltas', 'function deltaRow'), /fxBarsIn\(host\)/);
-  assert.match(slice('function renderCompare(', 'Browse modal'), /fxBarsIn\(\$\('cmpBody'\)\)/);
+  assert.match(slice('function renderCompare(', 'let browsePath = null;'), /fxBarsIn\(\$\('cmpBody'\)\)/);
 });
 
 /* ══════════════════ History: calendar + compare ══════════════════ */
@@ -171,7 +247,7 @@ test('legend hover-sync dims the other levels to 0.3 in 160ms, CSS-owned', () =>
 });
 
 test('compare: counts animate from the real totals and the squares chart dies on every door', () => {
-  const fn = slice('function renderCompare(', 'Browse modal');
+  const fn = slice('function renderCompare(', 'let browsePath = null;');
   const drop = fn.indexOf('cmpCountsDrop()');
   const rewrite = fn.indexOf(".innerHTML = splitCard");
   assert.ok(drop !== -1 && rewrite !== -1 && drop < rewrite,
@@ -201,7 +277,7 @@ test('apps rows ride the kit bar recipe and release the width-in', () => {
 });
 
 test('the apps scatter: five-app floor, unknown-is-not-zero, and every exit door', () => {
-  const fn = slice('async function loadAppsScatter(', '/* ───────────────────────────── Duplicates view');
+  const fn = slice('async function loadAppsScatter(', 'async function loadDuplicates(');
   assert.match(fn, /apps\.length < 5\) \{ appsScatterDrop\(\); return; \}/, 'fewer than five apps make a legend, not a scatter');
   assert.match(fn, /else \{ known = false; break; \}/, 'a location the provider could not count voids the dot');
   assert.match(fn, /points\.length < 5\) \{ appsScatterDrop\(\); return; \}/, 'and so does a starved point set');
@@ -211,8 +287,8 @@ test('the apps scatter: five-app floor, unknown-is-not-zero, and every exit door
   assert.match(drop, /appsScatterSeq\+\+/, 'dropping invalidates any fetch still in flight');
   assert.match(drop, /appsScatterHandle\.destroy\(\); appsScatterHandle = null;/, 'and releases the handle');
   assert.match(slice("id: 'apps'", "id: 'games'"), /unmount\(\) \{[\s\S]*?appsScatterDrop\(\);/, 'the view unmount drops it');
-  assert.match(slice('async function loadApps(', '/* ─────────────────────────── Cost to Keep'),
-    /appsScatterDrop\(\); \/\/ the standing dots belong to the previous scan/, 'a reload drops the previous scan’s dots');
+  assert.match(slice('async function loadApps(', 'function costMoney('),
+    /appsScatterDrop\(\);/, 'a reload drops the previous scan’s dots');
 });
 
 /* ══════════════════ Capsule ══════════════════ */
@@ -221,8 +297,10 @@ test('the capsule cap meter is the linear gauge, and hiding it always releases i
   const fn = slice('function renderCapsule(', 'let capsuleEventsHandle');
   assert.match(fn, /orientation: 'linear', linearHeight: 14/, 'laid flat at caption height');
   assert.match(fn, /notchCornerRadius: 99/, 'clamped to a true capsule');
-  assert.match(fn, /activeGradient: pct > 85 \? \['#FF9F0A', '#FF9F0A'\] : \['#0A84FF', '#86C1FF'\]/,
-    'past 85% the track turns the warn tone the plain bar used');
+  // The tone is named, not spelled: a raw hex here painted the same amber in
+  // both themes (~1.9:1 on a light card). --warn carries the light override.
+  assert.match(fn, /warn: pct > 85/, 'past 85% the track turns the warn tone the plain bar used');
+  assert.match(fn, /activeGradient: \['#0A84FF', '#86C1FF'\]/, 'the normal ramp is unchanged');
   assert.match(fn, /FxNum\.rollText\(\$\('capsuleGaugeText'\)/, 'the caption rolls');
   assert.match(fn, /FxNum\.rollHtml\(\$\('capsuleInfo'\)[\s\S]{0,400}?'capsule'\)/, 'the info line rolls under the constant key');
   // The ONLY place the gauge hides is the helper that also destroys — a bare

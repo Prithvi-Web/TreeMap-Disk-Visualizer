@@ -122,6 +122,46 @@ test('the meter is hidden outright when no target is set, rather than showing ze
   assert.match(body, /if \(!cartGoalBytes\) \{ host\.hidden = true; fxGoalPulseSync\(null\); return; \}/);
 });
 
+/**
+ * The "target met" pulse must mark a crossing the USER caused, never a boot.
+ *
+ * Boot order defeated the one-shot's null seed: `loadCartGoal` resolves before
+ * any scan does, so `adoptCartGoal` painted the meter with a staged total of
+ * ZERO — zero only because `cartNode()` cannot resolve a size yet — and that
+ * seeded the crossing state to "below target". When the scan landed and the
+ * restored cart's real total turned out to be over the target, the one-shot
+ * read false → true and fired. The user staged nothing; they reopened the app.
+ */
+function loadRenderCartGoal(scanId: string | null, goalBytes: number | null) {
+  const start = INDEX.indexOf('function renderCartGoal');
+  const end = INDEX.indexOf('\n}', start);
+  const src = INDEX.slice(start, end + 2);
+  const seen: Array<boolean | null> = [];
+  const el = () => ({ hidden: false, classList: { toggle() {} }, style: {}, innerHTML: '', setAttribute() {} });
+  const els: Record<string, ReturnType<typeof el>> = {};
+  const fn = new Function('$', 'fxGoalPulseSync', 'escapeHtml', 'formatBytes', 'state', 'cartGoalBytes',
+    `${src}; return renderCartGoal;`)(
+    (id: string) => (els[id] ??= el()),
+    (met: boolean | null) => { seen.push(met); },
+    (s: string) => s, (n: number) => `${n} B`,
+    { scanId }, goalBytes) as (staged: number) => void;
+  return { render: fn, seen };
+}
+
+test('the target-met pulse is told "unknown", not "below", while no scan can size the cart', () => {
+  // Boot: the goal arrives before the scan does. The zero it renders is an
+  // artefact of unresolved nodes, so it must not become the baseline.
+  const boot = loadRenderCartGoal(null, 5e9);
+  boot.render(0);
+  assert.deepEqual(boot.seen, [null], 'no scan means the staged total is unknown, not below target');
+
+  // With a scan loaded the meter reports the truth in both directions.
+  const live = loadRenderCartGoal('scan-1', 5e9);
+  live.render(1e9);
+  live.render(6e9);
+  assert.deepEqual(live.seen, [false, true], 'a real below → met crossing is still reported');
+});
+
 /* ══════════════════════ §4.2 where a cart button may appear ══════════════════════ */
 
 /**
@@ -207,4 +247,69 @@ test('a commit or a clear resets the page, because it is a different list now', 
   assert.match(clear, /cartShown = CART_PAGE/);
   const commit = slice(INDEX, 'async function cartExecuteCommit', 'function cartCommitSummary');
   assert.match(commit, /cartShown = CART_PAGE/);
+});
+
+/* ══════════════════════ §4.1 the LIVE target: one honesty policy ══════════════════════ */
+
+/**
+ * QA item 5: saving a new cleanup target in Settings left the in-memory
+ * `cartGoalBytes` stale, so the dock meter showed the old target until a
+ * reload. The fix is one function — `adoptCartGoal` — that boot, every
+ * Settings paint (open AND save) and the clear button all ride, so the
+ * server-side normalization tested above meets exactly one client policy.
+ */
+function loadAdoptCartGoal() {
+  const start = INDEX.indexOf('function adoptCartGoal(');
+  assert.notEqual(start, -1, 'adoptCartGoal exists');
+  const end = INDEX.indexOf('\n}', start);
+  assert.notEqual(end, -1, 'adoptCartGoal closes');
+  const src = INDEX.slice(start, end + 2);
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function(`
+    let cartGoalBytes = 'never-adopted';
+    const rendered = [];
+    function renderCartGoal(staged) { rendered.push(staged); }
+    function cartTotalBytes() { return 4096; }
+    ${src}
+    return { adopt: adoptCartGoal, goal: () => cartGoalBytes, rendered };
+  `)() as { adopt: (v: unknown) => number | null; goal: () => unknown; rendered: number[] };
+}
+
+test('adoptCartGoal takes the saved target live and repaints the meter — no reload', () => {
+  const h = loadAdoptCartGoal();
+  assert.equal(h.adopt(20 * 1024 ** 3), 20 * 1024 ** 3);
+  assert.equal(h.goal(), 20 * 1024 ** 3, 'the in-memory target follows the save');
+  assert.deepEqual(h.rendered, [4096], 'the goal meter repaints against the staged total');
+});
+
+test('adoptCartGoal keeps the boot path honesty policy: nonsense is no target', () => {
+  const h = loadAdoptCartGoal();
+  for (const bad of [null, undefined, 0, -1, NaN, '50', {}]) {
+    assert.equal(h.adopt(bad), null, `${JSON.stringify(bad)} is no target`);
+    assert.equal(h.goal(), null);
+  }
+  assert.equal(h.rendered.length, 7, 'every adoption repaints, even to hide');
+});
+
+test('boot, the Settings paints and the clear button all ride adoptCartGoal', () => {
+  const load = CODE.slice(CODE.indexOf('async function loadCartGoal'), CODE.indexOf('function renderCartGoal'));
+  assert.ok(load.length > 100, 'the loadCartGoal slice is non-empty');
+  assert.match(load, /adoptCartGoal\(s\.cleanupGoalBytes\)/, 'boot adopts the fetched answer');
+  assert.match(load, /adoptCartGoal\(null\)/, 'a failed fetch hides the meter, never a stale number');
+  const fields = CODE.slice(CODE.indexOf('function renderCleanupGoalFields'), CODE.indexOf('function collectCleanupGoal'));
+  assert.ok(fields.length > 100, 'the renderCleanupGoalFields slice is non-empty');
+  assert.match(fields, /adoptCartGoal\(settingsData\.cleanupGoalBytes\)/,
+    'every Settings paint — open AND save — adopts the server answer');
+  const clear = CODE.slice(CODE.indexOf("$('cleanupGoalClear')"), CODE.indexOf('function renderReclaimWeights'));
+  assert.match(clear, /adoptCartGoal\(null\)/, 'clearing the box hides the meter immediately');
+});
+
+test('the save path repaints the target from the PUT response, not the form', () => {
+  const save = CODE.slice(CODE.indexOf("$('settingsSaveBtn')"), CODE.indexOf('let lastNotifPoll'));
+  assert.ok(save.length > 200, 'the save handler slice is non-empty');
+  const put = save.indexOf("await api('/api/settings'");
+  const repaint = save.indexOf('renderCleanupGoalFields()');
+  assert.ok(put !== -1, 'the save PUTs to /api/settings');
+  assert.ok(repaint !== -1, 'the save repaints the goal fields');
+  assert.ok(put < repaint, 'after the server answered — the response is the truth, the form is a request');
 });

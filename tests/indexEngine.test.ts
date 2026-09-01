@@ -626,9 +626,21 @@ test('reading a tree stays sub-quadratic as directory count grows', async (t) =>
    *
    * Asserting "under N milliseconds" would measure the CI runner, not the
    * code (the lesson A4's benchmark taught). So this asserts the *shape* of
-   * the curve instead: quadruple the directories and quadratic behaviour costs
-   * ~16x, while the heap costs ~4x. The 9x ceiling sits far enough above the
-   * linear case to be quiet, and far enough below quadratic to catch it.
+   * the curve instead: grow the directory count and see what the cost does.
+   *
+   * The growth factor is 16x, and it has to be. At the 4x this used to test,
+   * restoring the sort-and-shift frontier measured 5.7x against the heap's
+   * 4.0x — under the old 9x ceiling, so the pin did not bite on the very bug
+   * it was written for. Per-row SQLite work dominates at that size and
+   * buries the quadratic term. Measured here, 400 → 6400 directories, the
+   * two curves separate by better than 2x with room to spare:
+   *
+   *                     idle              8 cores under 16 spinners
+   *     heap:           11.9 – 17.4x      12.8 – 20.8x
+   *     sort + shift:   44.3 – 50.9x      46.7 – 55.0x
+   *
+   * A 30x ceiling therefore sits ~1.5x above the worst linear reading and
+   * ~0.65x of the best quadratic one, in both conditions.
    */
   const build = async (dirs: number): Promise<string> => {
     const root = await mkTmp();
@@ -647,38 +659,66 @@ test('reading a tree stays sub-quadratic as directory count grows', async (t) =>
   };
 
   /**
-   * The FASTEST of several reads, not one read.
+   * CPU time, not wall time — and a batch, not a single read.
    *
-   * This test divides one measurement by another, so a single scheduler stall
-   * in `tLarge` moves the ratio by far more than the algorithmic difference
-   * it is looking for. Reproduced on this Mac under load: **25.6x**, on code
-   * whose curve is linear — a false failure of the most confusing kind,
+   * This test divides one measurement by another, so noise in the numerator
+   * moves the ratio by far more than the algorithmic difference it is looking
+   * for. On wall time that is fatal: the same 16-spinner load that leaves the
+   * CPU-time ratio at 12.8–20.8x drives the wall-time ratio to 18.6–27.2x on
+   * code whose curve is linear — a false failure of the most confusing kind,
    * because the number it prints is exactly what a real regression prints.
+   * (CI has already produced one: 13.4x where an idle machine measures 3.9x.)
+   * `process.cpuUsage()` counts only time this process spent ON a core, so a
+   * busy neighbour costs it almost nothing.
    *
-   * The minimum is the sample least contaminated by everything that is not
-   * the code, and quadratic work cannot hide inside it: an O(n^2) walk does
-   * not get cheaper because the machine went quiet. The first iteration also
-   * warms the page cache, and taking the minimum discards it for free.
+   * Batched because the clock is coarse: Windows updates process CPU time in
+   * ~15ms steps, and a single 400-directory read is ~4ms — it would quantize
+   * to 0 or to 15ms and the ratio would be fiction. Both batches below span
+   * ≳50ms of CPU on every platform, so the quantum is noise, not the signal.
    */
-  const timeRead = (root: string): number => {
-    let best = Infinity;
-    for (let i = 0; i < 5; i++) {
-      const t0 = performance.now();
-      readTree(root);
-      best = Math.min(best, performance.now() - t0);
-    }
-    return best;
+  const cpuPerRead = (root: string, reads: number): number => {
+    const before = process.cpuUsage();
+    for (let i = 0; i < reads; i++) readTree(root);
+    const spent = process.cpuUsage(before);
+    return (spent.user + spent.system) / 1000 / reads;
   };
 
   const small = await build(400);
-  const large = await build(1600);        // 4x the directories
+  const large = await build(6400);        // 16x the directories
 
-  const tSmall = Math.max(timeRead(small), 0.5); // floor: a sub-ms baseline makes the ratio meaningless
-  const tLarge = timeRead(large);
-  const ratio = tLarge / tSmall;
-  t.diagnostic(`400 dirs: ${tSmall.toFixed(1)}ms · 1600 dirs: ${tLarge.toFixed(1)}ms · ratio ${ratio.toFixed(1)}x (quadratic would be ~16x)`);
+  // One discarded pass per side: it warms the page cache and the statement
+  // cache, which would otherwise land entirely on round 0's numerator.
+  cpuPerRead(small, 2);
+  cpuPerRead(large, 1);
 
-  assert.ok(ratio < 9, `4x the directories cost ${ratio.toFixed(1)}x the time — that curve is quadratic again`);
+  /**
+   * The best of several PAIRED rounds, not the best of two independent runs.
+   *
+   * Taking the minimum of each size separately still divides two different
+   * moments: a machine that was quiet during the small reads and busy during
+   * the large ones produces a ratio neither sample supports. Worse, a minimum
+   * taken per side systematically favours the SHORT measurement — a 4ms read
+   * finds a quiet slot far more often than a 67ms one — which inflates the
+   * ratio precisely when the machine is loaded.
+   *
+   * So each round measures BOTH sizes back to back and forms its own ratio,
+   * and the verdict is the smallest of those: the round least contaminated by
+   * anything that is not the code. A quadratic frontier costs ≥44x in every
+   * round measured, loaded or idle, so the minimum cannot launder it — there
+   * is no quiet moment in which an O(n^2) walk becomes linear.
+   */
+  const ratios: number[] = [];
+  for (let round = 0; round < 3; round++) {
+    const perLarge = cpuPerRead(large, 2);
+    const perSmall = cpuPerRead(small, 12);
+    assert.ok(perSmall > 0, 'the small batch registered real CPU time — otherwise the ratio means nothing');
+    ratios.push(perLarge / perSmall);
+  }
+  const ratio = Math.min(...ratios);
+  t.diagnostic(`400 → 6400 dirs, 3 paired CPU-time rounds: ${ratios.map((r) => r.toFixed(1) + 'x').join(' · ')}`
+    + ` → best ${ratio.toFixed(1)}x (a heap measures ~12–21x, a sorted frontier ~44–55x)`);
+
+  assert.ok(ratio < 30, `16x the directories cost ${ratio.toFixed(1)}x the CPU — that curve is quadratic again`);
 
   // And the ordering the heap exists to provide is still biggest-first.
   const tree = readTree(large);

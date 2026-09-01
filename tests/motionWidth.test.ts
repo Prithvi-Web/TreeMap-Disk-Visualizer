@@ -54,6 +54,26 @@ function slice(startAnchor: string, endAnchor: string): string {
   return INDEX.slice(start, end);
 }
 
+/**
+ * A braced block — an at-rule, a keyframes set — from its opening anchor to
+ * its MATCHING brace.
+ *
+ * `slice()` stops at the first `}`, which for a nested at-rule is the first
+ * inner rule's brace, and a `[\s\S]{0,N}` window treats `}` as any other
+ * character. Both read straight past a closing brace, so neither can say
+ * whether a rule is INSIDE the block — the one thing these pins are for.
+ */
+function braced(openAnchor: string): string {
+  const start = INDEX.indexOf(openAnchor);
+  assert.notEqual(start, -1, `block "${openAnchor}" exists in index.html`);
+  let depth = 0;
+  for (let i = INDEX.indexOf('{', start); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1);
+  }
+  return assert.fail(`block "${openAnchor}" never closes`);
+}
+
 /* ══════════════ Entrance choreography, as behaviour ══════════════ */
 
 type FakeCard = {
@@ -112,6 +132,25 @@ test('entrance staggers the first six visible cards; the rest arrive instantly',
   for (let i = 6; i < 9; i++) assert.equal(cards[i].animations.length, 0, `card ${i} arrives instantly`);
 });
 
+test('the entrance reads every offsetParent before it writes a single animation', () => {
+  const enter = loadFxViewEnter(false);
+  const order: string[] = [];
+  const cards = Array.from({ length: 9 }, () => {
+    const card = fakeCard();
+    Object.defineProperty(card, 'offsetParent', { get() { order.push('read'); return {}; }, configurable: true });
+    const write = card.animate.bind(card);
+    card.animate = (frames, opts) => { order.push('write'); write(frames, opts); };
+    return card;
+  });
+  enter({ querySelectorAll: () => cards });
+  assert.ok(order.includes('read') && order.includes('write'), 'the pass really ran');
+  // animate() with fill:'backwards' applies its first keyframe immediately, so
+  // it invalidates style; an offsetParent read after it forces a fresh style +
+  // layout pass. Interleaved, that is six flushes stacked behind view.mount().
+  assert.ok(order.lastIndexOf('read') < order.indexOf('write'),
+    'reads and writes are batched — one forced layout on the view-switch hot path, not six');
+});
+
 test('cards in hidden panes are skipped without consuming a stagger slot', () => {
   const enter = loadFxViewEnter(false);
   const hidden = fakeCard(false);
@@ -159,9 +198,13 @@ test('every flip pane carries the crossfade class', () => {
 test('the pane fade is 150ms of opacity and nothing that could move layout', () => {
   const fade = rule('.pane-fade {');
   assert.match(fade, /animation:[^;]*var\(--dur-1\)/, 'one --dur-1 (150ms) pass');
-  const kf = slice('@keyframes paneFade', '}');
+  // The WHOLE keyframes set: sliced to the first `}` this saw only the `from`
+  // stop, so a `to` stop translating the pane and adding a margin — layout
+  // movement on every one of the ten pane flips — was invisible to it.
+  const kf = braced('@keyframes paneFade');
   assert.match(kf, /opacity:\s*0/, 'it fades from transparent');
-  assert.ok(!/transform|height|margin|padding/.test(kf), 'opacity only — a crossfade must not reflow');
+  assert.ok(!/transform|height|margin|padding|top|left|inset/.test(kf),
+    'opacity only — a crossfade must not reflow');
 });
 
 /* ══════════════ Hover lift ══════════════ */
@@ -225,6 +268,12 @@ test('the remaining fixed-width crushes are gone', () => {
 });
 
 test('a narrow toolbar packs its control groups left — no stranded right-hung cluster', () => {
-  assert.match(INDEX, /@container \(max-width: 700px\) \{[\s\S]{0,2400}?\.tb-spring \{ display: none; \}/,
+  // Containment, not proximity: moved one line past the query's closing
+  // brace the same rule hides the spring at EVERY width, permanently
+  // collapsing the toolbar's left/right cluster separation.
+  const narrow = braced('@container (max-width: 700px) {');
+  assert.match(narrow, /\.tb-spring \{ display: none; \}/,
     'the spring collapses when the container query flips the row to left-flow');
+  assert.match(rule('.tb-spring {'), /flex:\s*1 1 0/,
+    'and everywhere else it is the growing gap that holds the two clusters apart');
 });

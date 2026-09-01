@@ -159,8 +159,9 @@ test('hover: a quiet md ring, one card at a time, detached after the leave-fade'
   const b = fakeEl('card glass');
   h.fx.fxHoverSync(a);
   assert.equal(attaches(h, a).length, 1, 'enter lights the card');
-  assert.deepEqual(attaches(h, a)[0].opts, { type: 'md', active: true, strength: 0.5, brightness: 0.9 },
-    'quiet: half strength, dimmed — full brightness stays reserved for real states');
+  assert.deepEqual(attaches(h, a)[0].opts,
+    { type: 'md', active: true, strength: 0.5, brightness: 0.9, staticColors: true, bloom: false },
+    'quiet: half strength, dimmed, and neither of the two per-frame layers — full brightness and the bloom stay reserved for real states');
   h.fx.fxHoverSync(a);
   assert.equal(h.beamCalls.length, 1, 'staying on the card re-attaches nothing');
   h.fx.fxHoverSync(b);
@@ -205,6 +206,34 @@ test('hover defers to state: a stamped card is skipped, and a state igniting mid
   assert.equal(detaches(h, card).length, 0, 'and no stale hover timer detaches the state’s instance');
 });
 
+test('the one-beam envelope: ambience never blooms, and stands down the moment ANY state beam lights', () => {
+  const h = makeHarness();
+  const parked = fakeEl('card glass');
+  const scanCard = fakeEl('card glass');
+  const other = fakeEl('card glass');
+  h.fx.fxHoverSync(parked);
+  const amb = attaches(h, parked)[0].opts!;
+  assert.equal(amb.bloom, false, 'the ambience ring carries no blurred conic layer');
+  assert.equal(amb.staticColors, true, 'and no per-frame hue drift — nothing rasters while it rests');
+  // A scan lights the scan card. The ring parked under the pointer is a
+  // DIFFERENT card, so nothing in the per-card arbitration would touch it.
+  h.fx.fxStateBeam(scanCard, { type: 'md', active: true });
+  assert.equal(detaches(h, parked).length, 1,
+    'the parked ring goes out at once — not a 500ms fade rastering beside the state beam');
+  const during = h.beamCalls.length;
+  h.fx.fxHoverSync(other);
+  h.fx.fxHoverSync(parked);
+  h.fx.fxHoverSync(other);
+  assert.equal(h.beamCalls.length, during,
+    'and a pointer sweeping the dashboard mid-scan lights nothing at all');
+  h.fireTimers();
+  assert.equal(detaches(h, scanCard).length, 0, 'no stray hover timer touches the state ring');
+  // The state ends: ambience is available again.
+  h.fx.fxStateBeam(scanCard, { type: 'md', active: false });
+  h.fx.fxHoverSync(other);
+  assert.equal(attaches(h, other).length, 1, 'with nothing lit, the pointer gets its quiet ring back');
+});
+
 test('hover: a state igniting during the leave-fade disarms the pending detach', () => {
   const h = makeHarness();
   const card = fakeEl('card glass');
@@ -213,6 +242,27 @@ test('hover: a state igniting during the leave-fade disarms the pending detach',
   h.fx.fxStateBeam(card, { type: 'md', active: true }); // the scan starts inside the 900ms window
   h.fireTimers();
   assert.equal(detaches(h, card).length, 0, 'the armed detach never kills the state’s ring');
+});
+
+/**
+ * The same hazard, defended twice: fxStateBeam clears the pending timer, and
+ * the timer itself re-checks the stamp before detaching. The test above only
+ * ever exercises the FIRST — the timer is cleared, so its body is dead code
+ * there, and deleting the in-timer check kept the suite green. This reaches
+ * the timer with the stamp already set, which is what happens whenever a
+ * state lands on the card through a path that did not go via fxStateBeam.
+ */
+test('hover: the leave-fade timer itself refuses to detach a card a state now owns', () => {
+  const h = makeHarness();
+  const card = fakeEl('card glass');
+  h.fx.fxHoverSync(card);
+  h.fx.fxHoverSync(null);
+  assert.equal(h.timers.filter((t) => !t.cleared).length, 1, 'the leave armed a detach');
+  card.setAttribute('data-fxbeam-state', ''); // ownership taken without touching the hover bookkeeping
+  h.fireTimers();
+  assert.ok(h.timers.every((t) => t.fired || t.cleared), 'the timer really ran');
+  assert.equal(detaches(h, card).length, 0,
+    'a fired timer must still check ownership — detaching here would strip a live state ring');
 });
 
 test('fxStateBeamDrop detaches and clears the stamp — the transient-card off door', () => {
@@ -293,6 +343,28 @@ test('the goal pulse fires once per crossing, never on a restore, and resets wit
   assert.equal(h.beamCalls.filter((c) => c.opts?.active === true).length, 2, 'a genuine re-crossing pulses again');
 });
 
+/**
+ * What the `met === null` reset is actually FOR. The sequence above walks
+ * null → false → true, where the false re-seeds the memory either way — so
+ * deleting the reset changed nothing and the suite stayed green. The real
+ * hazard is below → target cleared → a NEW target that is already met: with
+ * the reset the memory is unknown and nothing pulses, without it the stale
+ * `false` reads the new target as a crossing the user just caused.
+ */
+test('clearing the target forgets the old one — a fresh already-met target is not a crossing', () => {
+  const h = makeHarness();
+  h.fx.fxGoalPulseSync(false); // a target is set and the cart is under it
+  h.fx.fxGoalPulseSync(null);  // the user clears the target; the meter hides
+  h.fx.fxGoalPulseSync(true);  // a new, smaller target that the cart already exceeds
+  assert.equal(h.beamCalls.length, 0,
+    'the cart did not move — nothing was crossed, so nothing pulses');
+  // And the memory really is unknown, not stuck: crossing from below still works.
+  h.fx.fxGoalPulseSync(false);
+  h.fx.fxGoalPulseSync(true);
+  assert.equal(h.beamCalls.filter((c) => c.opts?.active === true).length, 1,
+    'a real below→met edge after the reset still pulses');
+});
+
 test('the scan-done pulse is one timed pulse that defers to a scan already running again', () => {
   const h = makeHarness();
   const card = fakeEl('card glass');
@@ -330,9 +402,9 @@ test('every pill funnel re-syncs the rings, and the treemap mount/unmount are th
   assert.match(slice('function disableLive(', "$('tmLiveToggle').addEventListener"), /fxTmPillBeamsSync\(\)/, 'Live off — every live exit funnels here');
   assert.match(slice('function lensSetPinned(', 'function setTreemapView('), /fxTmPillBeamsSync\(\)/, 'Lens pin/unpin');
   assert.match(slice('function lapseReflect(', 'function lapseStop('), /fxTmPillBeamsSync\(\)/, 'Loop, via the transport’s one reflect');
-  assert.match(slice("$('tmDiffToggle').addEventListener", 'Feature 22'), /fxTmPillBeamsSync\(\)/, 'Diff toggle');
-  assert.match(slice("$('tmCloudToggle').addEventListener", 'Feature 1 —'), /fxTmPillBeamsSync\(\)/, 'Hide-cloud toggle');
-  assert.match(slice("const ct = $('tmCloudToggle');", 'Feature 19'), /fxTmPillBeamsSync\(\)/,
+  assert.match(slice("$('tmDiffToggle').addEventListener", 'const LIVE_PULSE_MS'), /fxTmPillBeamsSync\(\)/, 'Diff toggle');
+  assert.match(slice("$('tmCloudToggle').addEventListener", 'const TM_COLOR_MODES'), /fxTmPillBeamsSync\(\)/, 'Hide-cloud toggle');
+  assert.match(slice("const ct = $('tmCloudToggle');", "const en = $('engineRow');"), /fxTmPillBeamsSync\(\)/,
     'the no-cloud-files reset flips hideCloud outside its toggle and must re-sync');
   const tmView = slice("id: 'treemap'", "id: 'grid'");
   assert.match(tmView, /fxTmPillBeamsSync\(true\)/, 'mount re-lights persisted modes');
@@ -347,10 +419,14 @@ test('the WebM export restores Loop through lapseReflect, so pill class and ring
 
 test('the offload/restore job ring: on with the modal, off in closeModal — the funnel every close reaches', () => {
   const job = slice('function watchJob(', 'function watchOffloadJob(');
-  assert.match(job, /\$\('offloadModal'\)\.classList\.add\('open'\);[\s\S]{0,600}FxBeam\.attach\(\$\('offloadModal'\)\.querySelector\('\.modal'\), \{ type: 'md', active: true \}\)/,
+  // The strip, not the .modal: a .modal is a Liquid Glass host whose entire
+  // fill is .lg::before, and the beam writes that pseudo-element itself.
+  assert.match(job, /\$\('offloadModal'\)\.classList\.add\('open'\);[\s\S]{0,600}FxBeam\.attach\(\$\('offloadBeamStrip'\), \{ type: 'md', active: true \}\)/,
     'the ring lights with the sheet');
+  assert.match(INDEX, /<span class="fx-beam-strip" id="offloadBeamStrip" aria-hidden="true"><\/span>/,
+    'the beam-only child exists inside the sheet');
   const cm = slice('function closeModal(', 'document.querySelectorAll(\'[data-close]\')');
-  assert.match(cm, /if \(id === 'offloadModal'\) FxBeam\.attach\(\$\('offloadModal'\)\.querySelector\('\.modal'\), \{ type: 'md', active: false \}\)/,
+  assert.match(cm, /if \(id === 'offloadModal'\) FxBeam\.attach\(\$\('offloadBeamStrip'\), \{ type: 'md', active: false \}\)/,
     'done(), the scrim and Esc all pass through here');
   assert.match(job, /const done = \(\) => \{ es\.close\(\); activeJob = null; closeModal\('offloadModal'\); \}/,
     'done() still funnels through closeModal — the off door is not bypassed');
@@ -386,7 +462,7 @@ test('the export button’s sm ring rides the exact lapseExporting pair in both 
 });
 
 test('the completion pulse rides finishScan’s scanId gate — never the instant paint, never a failure', () => {
-  const finish = slice('async function finishScan(', 'Painted. Now the expensive');
+  const finish = slice('async function finishScan(', 'void loadWhatsNew();');
   assert.match(finish, /if \(state\.scanId\) \{\s*toast\(`Scan complete[\s\S]{0,200}fxScanDonePulse\(\);/,
     'one crossing, one pulse — the same gate as the one completion toast');
   const fail = slice('function failScan(', 'function statsFromResult(');
@@ -395,7 +471,10 @@ test('the completion pulse rides finishScan’s scanId gate — never the instan
 
 test('renderCartGoal owns the goal pulse: met feeds it, and a hidden meter resets the seed', () => {
   const fn = slice('function renderCartGoal(', 'async function renderCart(');
-  assert.match(fn, /fxGoalPulseSync\(met\)/, 'the crossing is read where met is computed');
+  // …and it is read as UNKNOWN until a scan can resolve the cart's sizes: a
+  // staged total of 0 before any scan is an artefact, not "below target", and
+  // seeding the one-shot off it made a plain boot restore look like a crossing.
+  assert.match(fn, /fxGoalPulseSync\(state\.scanId \? met : null\)/, 'the crossing is read where met is computed');
   assert.match(fn, /host\.hidden = true; fxGoalPulseSync\(null\);/, 'no target → no meter → no seed');
   assert.equal((INDEX.match(/fxGoalPulseSync\(/g) || []).length, 3,
     'the definition and exactly the two render-funnel call sites — no other caller may seed it');

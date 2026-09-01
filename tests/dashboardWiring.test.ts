@@ -94,7 +94,7 @@ test('the cascade is armed once, never under REDUCED, never while hidden', () =>
 });
 
 test('renderAllStorage rolls its numerals, releases the pre-squares, and keeps the honesty rows', () => {
-  const fn = slice('function renderAllStorage(', 'Provider-trash for cloud scans');
+  const fn = slice('function renderAllStorage(', 'async function cloudTrashPaths(');
   assert.match(fn, /FxNum\.rollHtml\(host, rows\.join\(''\), 'storage'\)/, 'numerals roll under a same-entity key');
   assert.match(fn, /querySelectorAll\('\.fx-bsq-pre'\)/, 'the armed squares are actually released');
   assert.match(fn, /allStorageEntered = true/, 'and the one-shot flag latches');
@@ -138,7 +138,7 @@ test('zombie rows carry the kit bar only when the bytes are real', () => {
 /* ══════════════ Cost to Keep ══════════════ */
 
 test('cost bars normalize to the priciest plan shown; a provider with no plan gets none', () => {
-  const fn = slice('async function loadCostEstimate(', 'Drive Health (§C4)');
+  const fn = slice('async function loadCostEstimate(', 'let dhGauge = null;');
   assert.match(fn, /p\.current\.tier \? p\.current\.monthly : 0/, 'the max ignores providers with nothing to sell');
   assert.match(fn, /tier && maxMonthly > 0/, 'no tier, no bar');
   assert.match(fn, /fxBarStyle\(i\)/, 'the shared ramp');
@@ -146,7 +146,7 @@ test('cost bars normalize to the priciest plan shown; a provider with no plan ge
 });
 
 test('cost prices roll under a scan+currency key, and the honesty copy survives', () => {
-  const fn = slice('async function loadCostEstimate(', 'Drive Health (§C4)');
+  const fn = slice('async function loadCostEstimate(', 'let dhGauge = null;');
   assert.match(fn, /FxNum\.rollHtml\(host,[\s\S]+?`\$\{state\.scanId\}:\$\{\$\('costCurrency'\)\.value\}`\)/,
     'a currency or scan change is a new entity and snaps');
   assert.match(fn, /cost-save/, 'the green saving state stays');
@@ -154,7 +154,7 @@ test('cost prices roll under a scan+currency key, and the honesty copy survives'
 });
 
 test('the cost veil covers exactly the reload and settles on every exit', () => {
-  const fn = slice('async function loadCostEstimate(', 'Drive Health (§C4)');
+  const fn = slice('async function loadCostEstimate(', 'let dhGauge = null;');
   assert.match(fn, /if \(host\.querySelector\('\.cost-row'\)\) host\.classList\.add\('fx-chart-loading'\)/,
     'only a populated card is veiled — the first paint is a labelled skeleton');
   const removes = (fn.match(/classList\.remove\('fx-chart-loading'\)/g) || []).length;
@@ -164,7 +164,7 @@ test('the cost veil covers exactly the reload and settles on every exit', () => 
 /* ══════════════ Drive Health ══════════════ */
 
 test('the wear gauge only renders a genuine 0..100 reading — past 100 stays a text row', () => {
-  const fn = slice('function renderDriveHealth(', 'Security view (§C5)');
+  const fn = slice('function renderDriveHealth(', 'const SEVERITY_LABEL =');
   assert.match(fn, /s\.percentageUsed >= 0 && s\.percentageUsed <= 100/, 'the bounds gate');
   assert.match(fn, /wear === null && s\.percentageUsed !== null/, 'an out-of-range figure keeps its kv row');
   assert.match(fn, /orientation: 'linear'/, 'the stage-2 linear orientation');
@@ -175,7 +175,7 @@ test('the wear gauge only renders a genuine 0..100 reading — past 100 stays a 
 test('the wear gauge dies on every exit door: rewrite, fetch error, dashboard unmount', () => {
   const drop = slice('function fxDriveGaugeDrop(', 'async function loadDriveHealth(');
   assert.match(drop, /dhGauge\.destroy\(\); dhGauge = null;/, 'the drop really drops');
-  const render = slice('function renderDriveHealth(', 'Security view (§C5)');
+  const render = slice('function renderDriveHealth(', 'const SEVERITY_LABEL =');
   const dropAt = render.indexOf('fxDriveGaugeDrop()');
   const rewriteAt = render.indexOf('host.innerHTML');
   assert.ok(dropAt !== -1 && rewriteAt !== -1 && dropAt < rewriteAt,
@@ -198,7 +198,7 @@ test('drive health loads under the stage-1 choreography and every painter settle
   assert.match(load, /skeletonRows\(\d+, \d+, 'Reading the drive’s own report…'\)/,
     'the first paint keeps the §3.5 copy for screen readers');
   assert.match(load, /classList\.remove\('fx-chart-loading'\)/, 'the error paint settles it');
-  assert.match(slice('function renderDriveHealth(', 'Security view (§C5)'),
+  assert.match(slice('function renderDriveHealth(', 'const SEVERITY_LABEL ='),
     /classList\.remove\('fx-chart-loading'\)/, 'the success paint settles it');
 });
 

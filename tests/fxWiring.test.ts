@@ -194,7 +194,9 @@ test('the cart pulse fires only on an increase, once, and switches itself off', 
   assert.equal(h.beamCalls.length, 0, 'removals never glow');
   h.fx.fxCartPulseSync(6);
   assert.equal(h.beamCalls.length, 1, 'an increase pulses');
-  assert.equal(h.beamCalls[0][0], h.els.cartTab);
+  // The strip, never #cartTab itself: the tab is a Liquid Glass host and the
+  // pulse would take the pseudo-element that holds its whole fill.
+  assert.equal(h.beamCalls[0][0], h.els.cartTabBeamStrip);
   assert.deepEqual(h.beamCalls[0][1], { type: 'pulse-inner', active: true });
   assert.equal(h.timers.length, 1, 'and arms its own off-switch');
   h.timers[0]();
@@ -395,6 +397,47 @@ test('the beam strips and orb wells hold their contract seams', () => {
   assert.ok(!INDEX.includes("FxBeam.attach($('tmSearch')"), 'never the input itself');
 });
 
+/**
+ * A Liquid Glass host declares NO background of its own: `.lg::before` IS its
+ * fill and `.lg::after` IS its ring. FxBeam writes those same two pseudo-
+ * elements, at (0,2,1) specificity from a sheet appended after the main one —
+ * so a beam attached straight to a lensed element wins both and the panel goes
+ * see-through for as long as the beam is lit. Every lensed host that wants a
+ * beam gets a beam-only child instead, the way the search fields already do.
+ */
+test('no beam is ever attached to a Liquid Glass lens host', () => {
+  const targets = slice('/* Which elements get the lens, and how strong. */', 'const SELECTOR =');
+  const lensed = [...targets.matchAll(/\['([^']+)',/g)].map((m) => m[1]);
+  assert.ok(lensed.includes('.modal') && lensed.includes('#cartTab'),
+    'the two hosts this fix moved off the lens are still lensed — if they stop being, this test stops meaning anything');
+  const attached = [...INDEX.matchAll(/FxBeam\.attach\(([^,]+),/g)].map((m) => m[1].trim());
+  for (const sel of lensed) {
+    const id = /^#([\w-]+)$/.exec(sel);
+    if (id) {
+      assert.ok(!attached.includes(`$('${id[1]}')`),
+        `${sel} is a lens host — beam its .fx-beam-strip child, never the host`);
+    } else {
+      assert.ok(!attached.some((a) => a.includes(`querySelector('${sel}')`)),
+        `${sel} is a lens host — beam a beam-only child, never the host`);
+    }
+  }
+});
+
+test('and a static guard holds the lens if a beam ever lands on one anyway', () => {
+  const before = INDEX.match(/\[data-fxbeam\]\.lg::before \{[^}]*\}/);
+  const after = INDEX.match(/\[data-fxbeam\]\.lg::after \{[^}]*\}/);
+  assert.ok(before && after, 'both lens pseudo-elements are defended');
+  assert.match(before![0], /background:\s*var\(--lg-tint\) !important/, 'the fill survives');
+  assert.match(before![0], /z-index:\s*-1 !important/, 'and stays behind the content instead of over it');
+  assert.match(after![0], /background:\s*var\(--lg-ring\) !important/, 'the glass ring survives');
+  assert.match(INDEX, /--lg-ring:/, 'the ring gradient is one token, read by both the lens and its guard');
+  assert.match(INDEX, /\.lg::after \{[^}]*background:\s*var\(--lg-ring\)/,
+    'the lens itself reads that token, so the guard can never drift from it');
+  for (const rule of [before![0], after![0]]) {
+    assert.match(rule, /animation:\s*none !important/, 'a beam keyframe must not drive a lens layer');
+  }
+});
+
 /* ══════════════ FX: Charts — every handle dies with its view ══════════════ */
 
 test('dashboard: unmount destroys the ring and gauge handles, mount rebuilds them from held state', () => {
@@ -469,4 +512,130 @@ test('the dashboard list bars ride the FxCharts ramp and honour REDUCED', () => 
   const barsIn = slice('function fxBarsIn(', 'function renderBigFiles(');
   assert.match(barsIn, /if \(REDUCED\) \{ el\.style\.width = w; return; \}/,
     'reduced motion renders final widths instantly');
+});
+
+/* ══════════════ The dock's drag edges, RUN ══════════════
+   "Every activation has its deactivation" is structural above; whether those
+   edges are the RIGHT ones is behaviour. A drive tile has five descendants,
+   and a dragleave into a tile's own child looks exactly like an exit unless
+   the handler checks — so this block is executed against fake events. */
+
+type DockEl = {
+  nodeType: number;
+  className: string;
+  children: DockEl[];
+  parentNode: DockEl | null;
+  dataset: Record<string, string>;
+  classes: Set<string>;
+  classList: { add(c: string): void; remove(c: string): void; contains(c: string): boolean };
+  listeners: Record<string, Array<(e: unknown) => void>>;
+  rect: { left: number; top: number; right: number; bottom: number; width: number; height: number };
+  addEventListener(t: string, fn: (e: unknown) => void): void;
+  getBoundingClientRect(): DockEl['rect'];
+  contains(n: DockEl | null): boolean;
+  closest(sel: string): DockEl | null;
+  appendChild(c: DockEl): DockEl;
+};
+
+function dockEl(className = ''): DockEl {
+  const classes = new Set(className.split(/\s+/).filter(Boolean));
+  const el: DockEl = {
+    nodeType: 1, className, children: [], parentNode: null, dataset: {}, classes,
+    classList: {
+      add: (c) => { classes.add(c); },
+      remove: (c) => { classes.delete(c); },
+      contains: (c) => classes.has(c),
+    },
+    listeners: {},
+    rect: { left: 0, top: 0, right: 160, bottom: 40, width: 160, height: 40 },
+    addEventListener(t, fn) { (el.listeners[t] ??= []).push(fn); },
+    getBoundingClientRect() { return el.rect; },
+    contains(n) { for (let c: DockEl | null = n; c; c = c.parentNode) if (c === el) return true; return false; },
+    closest(sel) {
+      const want = sel.replace(/^\./, '');
+      for (let c: DockEl | null = el; c; c = c.parentNode) if (c.classes.has(want)) return c;
+      return null;
+    },
+    appendChild(c) { c.parentNode = el; el.children.push(c); return c; },
+  };
+  return el;
+}
+
+function dockHarness() {
+  const els: Record<string, DockEl> = {};
+  const $ = (id: string) => (els[id] ??= dockEl());
+  const beam: Array<{ kind: string; el: DockEl; active?: boolean }> = [];
+  const goo: Array<{ kind: string; el: DockEl }> = [];
+  const src = slice("for (const dockId of ['tmDock', 'cityDock'])", 'async function runRestoreJob(');
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function('$', 'FxBeam', 'FxGoo', 'dockDrop', `'use strict';\n${src}`)(
+    $,
+    {
+      attach: (el: DockEl, o: { active: boolean }) => { beam.push({ kind: 'attach', el, active: o.active }); },
+      detach: (el: DockEl) => { beam.push({ kind: 'detach', el }); },
+    },
+    {
+      bendAttach: (el: DockEl) => { goo.push({ kind: 'attach', el }); },
+      bendPull: (el: DockEl) => { goo.push({ kind: 'pull', el }); },
+      bendRelease: (el: DockEl) => { goo.push({ kind: 'release', el }); },
+    },
+    () => {},
+  );
+  const dock = els.tmDock;
+  const tile = dock.appendChild(dockEl('drive-tile'));
+  tile.dataset.vol = '/';
+  const bar = tile.appendChild(dockEl('drive-bar'));
+  const dt = { types: ['application/x-treemap-cart'], dropEffect: '' };
+  const send = (type: string, target: DockEl, at: { x: number; y: number }, relatedTarget: DockEl | null = null) => {
+    for (const fn of [...(dock.listeners[type] || [])]) {
+      fn({ target, relatedTarget, dataTransfer: dt, clientX: at.x, clientY: at.y, preventDefault() {} });
+    }
+  };
+  return { tile, bar, beam, goo, send };
+}
+
+test('drive tiles: crossing into a tile’s own child is not an exit — the beam and the bend hold steady', () => {
+  const h = dockHarness();
+  const inside = { x: 80, y: 20 };
+  h.send('dragover', h.tile, inside);
+  assert.deepEqual(h.beam, [{ kind: 'attach', el: h.tile, active: true }], 'the enter edge lights the ring');
+  assert.ok(h.tile.classes.has('drop-ok'), 'and marks the tile');
+  // the pointer moves onto the tile's progress bar: dragleave fires with the
+  // tile still in the event path, and dragover follows immediately
+  h.send('dragleave', h.bar, inside);
+  h.send('dragover', h.bar, inside);
+  assert.equal(h.beam.length, 1, 'no off/on churn — the ring never restarted its fade-in');
+  assert.equal(h.goo.filter((g) => g.kind === 'release').length, 0, 'and the bend was never released mid-drag');
+  assert.ok(h.tile.classes.has('drop-ok'), 'the tile stays marked across its own children');
+  // a real exit: the pointer is outside the tile's box
+  h.send('dragleave', h.tile, { x: 400, y: 20 });
+  assert.deepEqual(h.beam.at(-1), { kind: 'attach', el: h.tile, active: false }, 'leaving for real switches it off');
+  assert.equal(h.goo.filter((g) => g.kind === 'release').length, 1, 'and releases the bend exactly once');
+  assert.ok(!h.tile.classes.has('drop-ok'));
+});
+
+test('drive tiles: a dragleave whose relatedTarget is outside the tile is a real exit', () => {
+  const h = dockHarness();
+  h.send('dragover', h.tile, { x: 80, y: 20 });
+  const elsewhere = dockEl('drive-tile');
+  h.send('dragleave', h.tile, { x: 400, y: 20 }, elsewhere);
+  assert.deepEqual(h.beam.at(-1), { kind: 'attach', el: h.tile, active: false });
+  assert.equal(h.goo.filter((g) => g.kind === 'release').length, 1);
+});
+
+test('drive tiles: relatedTarget wins where the drag event reports no usable coordinates', () => {
+  /* The two exit guards cover different engines, so each has to be reached on
+     its own or one of them is dead code. Chromium leaves relatedTarget null
+     and the pointer position is what saves the ring (the child-crossing test
+     above); Firefox populates relatedTarget but reports the dragleave at
+     0,0 — coordinates that sit outside any tile not at the viewport origin,
+     so the rect test alone would call an entry into a child a real exit. */
+  const h = dockHarness();
+  h.tile.rect = { left: 40, top: 40, right: 200, bottom: 80, width: 160, height: 40 };
+  h.send('dragover', h.tile, { x: 80, y: 60 });
+  assert.deepEqual(h.beam, [{ kind: 'attach', el: h.tile, active: true }], 'the enter edge lit the ring');
+  h.send('dragleave', h.bar, { x: 0, y: 0 }, h.bar);
+  assert.equal(h.beam.length, 1, 'a child named as relatedTarget is not an exit, whatever the coordinates say');
+  assert.equal(h.goo.filter((g) => g.kind === 'release').length, 0, 'and the bend holds');
+  assert.ok(h.tile.classes.has('drop-ok'));
 });

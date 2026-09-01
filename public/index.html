@@ -63,6 +63,11 @@ document.documentElement.dataset.theme =
   --ring-a: rgba(255,255,255,0.50);
   --ring-b: rgba(255,255,255,0.10);
   --ring-opacity: 0.75;
+  /* One definition, two readers: .lg::after paints it, and the
+     [data-fxbeam].lg guard restores it. Built from --ring-a/--ring-b and
+     --lg-angle, so it stays theme- and pointer-reactive wherever it lands. */
+  --lg-ring: linear-gradient(var(--lg-angle, 135deg),
+    rgba(255,255,255,0) 8%, var(--ring-b) 34%, var(--ring-a) 62%, rgba(255,255,255,0) 92%);
 }
 :root[data-theme="light"] {
   --bg-0:          #e9ecf2;
@@ -289,8 +294,7 @@ button { font-family: inherit; color: inherit; }
   content: ""; position: absolute; inset: 0; z-index: 3;
   border-radius: inherit; pointer-events: none;
   padding: 1.2px;
-  background: linear-gradient(var(--lg-angle, 135deg),
-    rgba(255,255,255,0) 8%, var(--ring-b) 34%, var(--ring-a) 62%, rgba(255,255,255,0) 92%);
+  background: var(--lg-ring);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor; mask-composite: exclude;
   mix-blend-mode: screen;
@@ -298,6 +302,38 @@ button { font-family: inherit; color: inherit; }
   transition: opacity var(--dur-2) var(--ease);
 }
 :root[data-theme="light"] .lg::after { mix-blend-mode: normal; }
+/* A lensed element declares NO background of its own — .lg::before IS its
+   fill and .lg::after IS its ring. FxBeam writes those same two pseudo-
+   elements from a sheet appended after this one, at equal specificity, so a
+   beam attached straight to a lens host wins both and the panel goes
+   see-through for as long as the beam is lit. Beams belong on a beam-only
+   child (.fx-beam-strip); this holds the lens if one ever lands on a lensed
+   host anyway, because losing a decoration beats losing the glass. */
+[data-fxbeam].lg::before {
+  background: var(--lg-tint) !important;
+  border-radius: inherit !important;
+  padding: 0 !important;
+  clip-path: none !important;
+  -webkit-mask: none !important; mask: none !important;
+  box-shadow: none !important;
+  z-index: -1 !important;
+  opacity: 1 !important;
+  animation: none !important;
+  filter: none !important;
+}
+[data-fxbeam].lg::after {
+  background: var(--lg-ring) !important;
+  border-radius: inherit !important;
+  padding: 1.2px !important;
+  clip-path: none !important;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0) !important;
+  -webkit-mask-composite: xor !important; mask-composite: exclude !important;
+  box-shadow: none !important;
+  z-index: 3 !important;
+  opacity: var(--ring-opacity) !important;
+  animation: none !important;
+  filter: none !important;
+}
 
 /* In-flow cards carry the glass LOOK without live backdrop blur: every list
    row and panel used to be a real-time blur surface (800+ of them on a big
@@ -706,9 +742,13 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .tb-row { min-height: 30px; }
 .tb-row-nav { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 12px; align-items: center; }
-.tb-row-nav .tb-nav { justify-self: start; }
-.tb-row-nav .tb-view { justify-self: center; }
-.tb-row-nav .tb-find { justify-self: end; }
+/* stretch, always: any other justify-self sizes a grid item to its own
+   content instead of its track, so a `minmax(0, 1fr)` flank stops
+   constraining it and the group grows straight over its neighbours. The
+   groups are flex containers, so alignment is justify-content's job. */
+.tb-row-nav .tb-nav { justify-self: stretch; justify-content: flex-start; }
+.tb-row-nav .tb-view { justify-self: stretch; justify-content: center; }
+.tb-row-nav .tb-find { justify-self: stretch; justify-content: flex-end; }
 .tb-row-controls { display: flex; align-items: center; justify-content: flex-end;
   gap: 8px 12px; flex-wrap: wrap; }
 .tb-group { display: flex; align-items: center; gap: 6px; flex: none; min-width: 0; }
@@ -730,8 +770,8 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
     grid-template-areas: "nav find" "view view"; row-gap: 8px; }
   .tb-row-nav .tb-nav { grid-area: nav; }
   .tb-row-nav .tb-find { grid-area: find; }
-  .tb-row-nav .tb-view { grid-area: view; justify-self: center;
-    max-width: 100%; min-width: 0; }
+  .tb-row-nav .tb-view { grid-area: view; justify-self: stretch;
+    justify-content: center; max-width: 100%; min-width: 0; }
   .tb-row-nav .tb-view .seg { max-width: 100%; }
   .tb-row-nav .tb-view .seg button { padding: 0 9px; }
   .tb-row-controls { justify-content: flex-start; }
@@ -743,13 +783,19 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 }
 /* nowrap + overflow clips a deep trail; packing it to the flex END makes
    the clip eat the ROOT crumbs, so the folder actually on screen — the
-   one crumb that must stay visible — is the last thing to go. */
+   one crumb that must stay visible — is the last thing to go.
+   The mask turns that clip into a fade, so the oldest crumb dissolves at
+   the start edge instead of being sliced through a letter. Its stop sits
+   at 34px — wide enough to read as a fade, short enough that a crumb one
+   step from the edge is still fully legible. */
 .crumbs { display: flex; align-items: center; gap: 3px; flex-wrap: nowrap; overflow: hidden;
-  justify-content: flex-end; font-size: 13px; min-width: 0; }
+  justify-content: flex-end; font-size: 13px; flex: 1 1 auto; min-width: 0;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 34px);
+  mask-image: linear-gradient(to right, transparent 0, #000 34px); }
 .crumbs button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid transparent;
   background: transparent; color: var(--accent); cursor: pointer; font-size: 12.5px; font-weight: 500;
   height: 30px; padding: 0 10px; border-radius: 7px; transition: background var(--dur-1) var(--ease);
-  max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+  max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
 .crumbs button:hover { background: var(--accent-soft); }
 .crumbs button[aria-current="true"] { color: var(--text-1); background: var(--surface-2);
   border-color: var(--hairline); pointer-events: none; }
@@ -1668,9 +1714,15 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .sec-item.sev-high { border-color: rgba(255,69,58,0.42); background: rgba(255,69,58,0.06); }
 .sec-item.sev-medium { border-color: rgba(255,159,10,0.38); background: rgba(255,159,10,0.05); }
 .sec-item .meta { flex: 1; min-width: 0; }
-.sec-item .nm { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Two parts, not one string: the filename ellipsizes and the kind label
+   holds. Run together in a single overflow:hidden line, a long name pushed
+   "Private key or certificate" outside the box and it disappeared — losing
+   the one phrase that says what the row MEANS. */
+.sec-item .nm { display: flex; align-items: baseline; gap: 6px; min-width: 0;
+  font-size: 13px; font-weight: 600; }
+.sec-name { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sec-item .pth { font-size: 10.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sec-kind { font-size: 11px; font-weight: 500; color: var(--text-3); margin-left: 6px; }
+.sec-kind { flex: none; font-size: 11px; font-weight: 500; color: var(--text-3); }
 .sec-why { font-size: 11px; color: var(--text-2); margin-top: 3px; }
 .sec-sev { flex: none; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em;
   padding: 3px 8px; border-radius: 99px; background: var(--surface-3); color: var(--text-3); }
@@ -2383,7 +2435,10 @@ input.fxgoo-range { position: relative; z-index: 1; }
 .nl-ask-row input { flex: 1; min-width: 0; }
 .fx-beam-strip { position: absolute; inset: 0; pointer-events: none; z-index: 1;
   border-radius: var(--r-sm); }
-#gsearchBeamStrip { border-radius: 11px; } /* matches #gsearch */
+/* A strip is measured for its own radius, so each one states its host's. */
+#gsearchBeamStrip { border-radius: 11px; }              /* matches #gsearch */
+#offloadBeamStrip { border-radius: var(--r-lg); }       /* matches .modal */
+#cartTabBeamStrip { border-radius: 999px; }             /* matches #cartTab */
 /* Loading-label shimmer (the border-beam demo's t-shimmer language): a
    masked highlight band sweeping a pending label — the scan status while a
    scan runs, the "Translating…" chip, the duplicate hunt's progress line.
@@ -2580,7 +2635,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 /* ── bar squares: discrete stacks + ghost-square capacity track. The
    strip scrolls sideways instead of crushing its columns (the nd-strip
    pattern), so narrow cards stay honest. ── */
-.fx-bsq { display: flex; gap: 14px; align-items: flex-end; overflow-x: auto; padding: 2px; }
+/* Two boxes on purpose: the outer one is what the tooltip is positioned
+   against and never scrolls, the inner one carries the columns and does. */
+.fx-bsq { position: relative; }
+.fx-bsq-track { display: flex; gap: 14px; align-items: flex-end; overflow-x: auto; padding: 2px; }
 .fx-bsq-col { flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px;
   transition: opacity var(--dur-2) var(--ease); }
 .fx-bsq:hover .fx-bsq-col:not(:hover) { opacity: 0.45; }
@@ -2645,7 +2703,11 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 .fx-roll-col { position: absolute; left: 0; top: 0; width: 100%;
   user-select: none; -webkit-user-select: none;
   transition: transform 560ms var(--ease); will-change: transform; }
-.fx-roll-col > span { display: block; height: 1em; line-height: 1em; }
+/* inline-block, not block: a block box inside the slot is a paragraph
+   boundary to the selection serializer, so copying a rolled number came out
+   as "3\n4" even with the strip itself unselectable. width:100% + a 1em line
+   stacks them exactly as block did — same pitch, same slot height. */
+.fx-roll-col > span { display: inline-block; width: 100%; height: 1em; line-height: 1em; }
 /* ══ end FX: Rolling Numerals styles ══ */
 
 </style>
@@ -3508,6 +3570,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div style="flex:1"></div>
       <button class="btn" id="offloadCancelBtn"><span data-icon="x"></span>Cancel</button>
     </div>
+    <!-- FX wiring: the job ring rides this overlay strip, never .modal — a
+         .modal is a Liquid Glass host whose fill IS .lg::before, and the beam
+         writes that same pseudo-element. Same trick as #gsearch. -->
+    <span class="fx-beam-strip" id="offloadBeamStrip" aria-hidden="true"></span>
   </div>
 </div>
 
@@ -3943,6 +4009,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
     <span class="c-sep">·</span>
     <span class="c-total num" id="cartTabTotal">0 B</span>
     <span class="c-cta" id="cartTabCta">Review</span>
+    <!-- FX wiring: the staged-count pulse rides this overlay strip. #cartTab
+         is a Liquid Glass host, so beaming it directly would replace the
+         lens layers that ARE its glass for the pulse's whole life. -->
+    <span class="fx-beam-strip" id="cartTabBeamStrip" aria-hidden="true"></span>
   </div>
 </div>
 
@@ -5091,6 +5161,11 @@ const FxNum = (() => {
   function rollText(el, str) {
     if (!el) return;
     const prev = el.dataset.fxv;
+    // Nothing to say: repainting the same string would replace the element's
+    // children with plain text — a childList mutation that dirties style and
+    // layout, and wipes a mid-roll column — for no visible change at all.
+    // Callers repaint on every pointer frame; most frames say the same thing.
+    if (prev === str) return;
     el.dataset.fxv = str;
     if (prev == null) { el.textContent = str; return; }
     roll(el, prev, str);
@@ -5145,6 +5220,10 @@ const FxNum = (() => {
     The historical contract stands — data-v is the resume point, REDUCED
     snaps — so existing call sites need no changes. */
 function countUp(el, target, fmt = formatCount) {
+  // data-v, not textContent: after a roll the element holds ten presentation
+  // digits per column, so the DOM cannot say what was last shown. Without the
+  // resume point every repaint replays the whole 0→N spin — including the
+  // repaints that change nothing (renderCart runs on ~12 paths).
   const from = Number(el.dataset.v || 0);
   el.dataset.v = target;
   if (REDUCED || document.hidden || !Number.isFinite(target) || target === from) { el.textContent = fmt(target); return; }
@@ -5290,7 +5369,18 @@ applyThemeButton();
 /* ───────────────────────────── Sidebar ─────────────────────────────
    Expanded glass panel ⇄ icon rail. The preference persists, aria-expanded
    mirrors the state for assistive tech, and the chevron always points where
-   the sidebar will go next. */
+   the sidebar will go next.
+
+   Below 900px the expanded panel can only OVERLAY the content (see the
+   navScrim CSS), so the persisted pin applies only at widths where the real
+   column fits: a narrow viewport renders the pin as the rail, narrow-width
+   toggles are transient overlays (never persisted — a scrim tap must not
+   clobber the pin), and widening past the breakpoint restores whatever the
+   user actually pinned. */
+const sideNavNarrow = window.matchMedia('(max-width: 900px)');
+function sideNavPref() {
+  try { return localStorage.getItem('tm-sidenav'); } catch { return null; /* private mode */ }
+}
 function applySideNav(collapsed) {
   $('sideNav').classList.toggle('collapsed', collapsed);
   const btn = $('sideToggle');
@@ -5298,7 +5388,10 @@ function applySideNav(collapsed) {
   btn.setAttribute('aria-label', collapsed ? 'Expand the navigation' : 'Collapse the navigation');
   btn.title = (collapsed ? 'Expand navigation' : 'Collapse navigation') + ' (⌘B)';
   btn.innerHTML = icon(collapsed ? 'chevronRight' : 'chevronLeft', 16);
-  try { localStorage.setItem('tm-sidenav', collapsed ? 'rail' : 'open'); } catch { /* private mode */ }
+  // Only a wide-viewport choice is the pin; narrow states are transient.
+  if (!sideNavNarrow.matches) {
+    try { localStorage.setItem('tm-sidenav', collapsed ? 'rail' : 'open'); } catch { /* private mode */ }
+  }
   scheduleSideNavReflow(); // every entry point — toggle, scrim, search summon
 }
 function toggleSideNav() {
@@ -5327,12 +5420,20 @@ $('gsearchRailBtn').addEventListener('click', () => summonGlobalSearch());
 // On narrow windows the expanded panel floats over a scrim; clicking the
 // scrim puts the panel away, the way every sheet in the app already closes.
 $('navScrim').addEventListener('click', () => applySideNav(true));
-let savedSideNav = null;
-try { savedSideNav = localStorage.getItem('tm-sidenav'); } catch { /* private mode */ }
+// Crossing the breakpoint re-decides what the pin means: entering narrow
+// demotes an open COLUMN to the rail (the pin itself survives untouched);
+// leaving narrow puts the pinned state back.
+sideNavNarrow.addEventListener('change', (e) => {
+  if (e.matches) {
+    if (!$('sideNav').classList.contains('collapsed')) applySideNav(true);
+  } else {
+    applySideNav(sideNavPref() === 'rail');
+  }
+});
 // A narrow window always boots on the rail: below 900px the expanded panel
 // floats OVER the content, which is a fine state to toggle into but a rude
 // one to wake up in.
-applySideNav(savedSideNav === 'rail' || window.innerWidth <= 900);
+applySideNav(sideNavPref() === 'rail' || sideNavNarrow.matches);
 
 /* ───────────────────────────── Toasts ───────────────────────────── */
 function toast(msg, kind = 'success', ms = 4200) {
@@ -5503,7 +5604,7 @@ const state = {
   // once at boot and kept current by the editor; scan-independent by design
   // (a note describes a folder, not a scan of it).
   notes: new Map(),
-  trends: { roots: [], path: null, snapshots: [] },
+  trends: { roots: [], path: null, snapshots: [], forecastOk: false },
   compare: { options: [], result: null },
   whatsNew: { seq: 0, dismissed: false },
   /** Platform capabilities from /api/platform/capabilities; null until loaded. */
@@ -8340,6 +8441,69 @@ const FxCharts = (() => {
     /** Time scale is a linear scale over epoch ms — named for intent. */
     scaleTime(t0, t1, r0, r1) { return math.scaleLinear(t0, t1, r0, r1); },
 
+    /**
+     * Log-compressed scale for count/byte scatters: position is
+     * log10(value + 1), so zero sits exactly at the origin and every
+     * decade costs the same distance. Domain is [0, max]; from() inverts
+     * the mapping for hit-testing.
+     */
+    scaleLog(max, r0, r1) {
+      const L = (v) => Math.log10(Math.max(0, v) + 1);
+      const top = L(max) || 1;
+      return {
+        to: (v) => r0 + (L(v) / top) * (r1 - r0),
+        from: (px) => Math.pow(10, ((px - r0) / ((r1 - r0) || 1)) * top) - 1,
+      };
+    },
+
+    /**
+     * Ticks for that log axis over [0, max]: 0, the powers of `base` that
+     * fall INSIDE the data, then max itself as the top label. Decades are
+     * skipped evenly when they outnumber `count`.
+     *
+     * The axis never rounds up to the next full power. It used to, and on a
+     * base-1024 byte axis that costs a whole decade: a 17 GB largest app
+     * produced a "1.0 TB" ceiling with a third of the plot permanently empty,
+     * and the number at the top belonged to nothing in the data. The top of
+     * an axis is a claim about the data, so it states the data.
+     */
+    logTicks(max, base = 10, count = 5) {
+      if (!(max > 0) || !(base > 1)) return [0, 1];
+      // the 1e-9 keeps an exact power from flooring into the decade below it
+      const topExp = Math.floor(Math.log(max) / Math.log(base) + 1e-9);
+      // one slot of the budget belongs to the max label
+      const step = Math.max(1, Math.ceil(topExp / Math.max(1, count - 1)));
+      const out = [];
+      for (let e = topExp; e > 0; e -= step) out.push(Math.pow(base, e));
+      out.reverse();
+      // Distance is measured in the scale's own log10(v+1) space, so "far
+      // enough apart to read" means the same fraction of the plot at any
+      // base: a decade closer than 8% of the axis to max gives up its place
+      // rather than printing its label on top of the max's.
+      const L = (v) => Math.log10(v + 1);
+      const span = L(max) || 1;
+      if (!out.length || L(max) - L(out[out.length - 1]) > span * 0.08) out.push(max);
+      else out[out.length - 1] = max;
+      return [0, ...out];
+    },
+
+    /** 999 → '999', 10000 → '10k', 1200000 → '1.2M' — log-axis count labels. */
+    compactCount(v) {
+      if (!Number.isFinite(v) || v <= 0) return '0';
+      const t = (n) => String(Math.round(n * 10) / 10);
+      return v >= 1e6 ? t(v / 1e6) + 'M' : v >= 1000 ? t(v / 1000) + 'k' : t(v);
+    },
+
+    /**
+     * Dot shrink under crowding: full size through 40 points, then a
+     * linear ease down to a 0.6× floor at 300 — a ~300-app scatter reads
+     * as points, not one blob. Monotone; never below the floor.
+     */
+    densityScale(n) {
+      if (!(n > 40)) return 1;
+      return 1 - 0.4 * Math.min(1, (n - 40) / 260);
+    },
+
     /** 1/2/5 × 10^k step rounding (the classic nice-number algorithm). */
     niceNum(range, round) {
       if (!(range > 0)) return 1;
@@ -8642,6 +8806,32 @@ const FxCharts = (() => {
       return [Math.max(lo, x0), Math.min(hi, x1)];
     },
 
+    /** A brush window may never shrink below this share of the domain. */
+    BRUSH_MIN_FRAC: 0.02,
+
+    /**
+     * The zoom window a pointer at canvas x produces, in TIME.
+     *
+     * Pixels invert through the FULL domain (XFull), never the zoomed one:
+     * once a window is set, X maps only the visible slice, so inverting a
+     * strip pixel through it runs the handle away from the pointer.
+     *
+     * 'mid' TRANSLATES the grabbed window by the pointer's travel and keeps
+     * its span (dragging the middle must not stretch an edge); any other
+     * mode drags one edge away from the anchor, and a press that never
+     * moves still yields BRUSH_MIN_FRAC of the domain rather than
+     * collapsing the window to nothing.
+     */
+    brushDrag(drag, x, f, m) {
+      const t = m.XFull.from(Math.max(f.padL, Math.min(f.width - f.padR, x)));
+      if (drag.mode === 'mid') {
+        const d = t - drag.grabT;
+        const span = drag.cur[1] - drag.cur[0];
+        return math.clampBrush(drag.cur[0] + d, drag.cur[1] + d, m.t0, m.t1, span);
+      }
+      return math.clampBrush(drag.anchor, t, m.t0, m.t1, (m.t1 - m.t0) * math.BRUSH_MIN_FRAC);
+    },
+
     /**
      * up | down | flat for a live series: the newest third against the
      * oldest third, read relative to the series' own level so a busy
@@ -8708,37 +8898,51 @@ const FxCharts = (() => {
       if (REDUCED || !cur) { cur = { x, y }; apply(); return; }
       if (!followRaf) { lastTs = 0; followRaf = requestAnimationFrame(settle); }
     }
+    /* The panel's content, as one string. A hover coalesced at 60fps lands
+       on the same sample for most frames; rebuilding an identical panel
+       would dirty the tree every frame and force a layout to re-measure a
+       box that cannot have changed. */
+    let sig = null, tw = 0, th = 0;
+    const signature = (title, rows) =>
+      title + ' ' + rows.map((r) => (r.color || '') + '' + r.name + '' + r.value).join('');
     return {
       el: tip,
       /** rows: [{color?, name, value}], title: string */
       show(title, rows, x, y) {
-        tip.textContent = '';
-        if (title) {
-          const t = document.createElement('div');
-          t.className = 'fx-tip-title fx-num';
-          t.textContent = title;
-          tip.appendChild(t);
-        }
-        for (const r of rows) {
-          const row = document.createElement('div');
-          row.className = 'fx-tip-row';
-          if (r.color) {
-            const dot = document.createElement('span');
-            dot.className = 'fx-dot';
-            dot.style.background = r.color;
-            row.appendChild(dot);
+        const next = signature(title, rows);
+        if (next !== sig) {
+          sig = next;
+          tip.textContent = '';
+          if (title) {
+            const t = document.createElement('div');
+            t.className = 'fx-tip-title fx-num';
+            t.textContent = title;
+            tip.appendChild(t);
           }
-          const nm = document.createElement('span');
-          nm.className = 'fx-tip-name';
-          nm.textContent = r.name;
-          const val = document.createElement('span');
-          val.className = 'fx-tip-val fx-num';
-          val.textContent = r.value;
-          row.appendChild(nm); row.appendChild(val);
-          tip.appendChild(row);
+          for (const r of rows) {
+            const row = document.createElement('div');
+            row.className = 'fx-tip-row';
+            if (r.color) {
+              const dot = document.createElement('span');
+              dot.className = 'fx-dot';
+              dot.style.background = r.color;
+              row.appendChild(dot);
+            }
+            const nm = document.createElement('span');
+            nm.className = 'fx-tip-name';
+            nm.textContent = r.name;
+            const val = document.createElement('span');
+            val.className = 'fx-tip-val fx-num';
+            val.textContent = r.value;
+            row.appendChild(nm); row.appendChild(val);
+            tip.appendChild(row);
+          }
+          tip.classList.add('on');
+          tw = tip.offsetWidth; th = tip.offsetHeight;
+        } else {
+          tip.classList.add('on');
         }
-        tip.classList.add('on');
-        const hw = host.clientWidth, tw = tip.offsetWidth, th = tip.offsetHeight;
+        const hw = host.clientWidth;
         let lx = x + 14, ly = y - th - 12;
         if (lx + tw > hw - 6) lx = x - tw - 14;
         if (lx < 6) lx = 6;
@@ -8850,6 +9054,7 @@ const FxCharts = (() => {
     const pill = document.createElement('div');
     pill.className = 'fx-tip-pill fx-num';
     host.appendChild(pill);
+    let pillTxt = null, pillW = 0; // measured once per text, not per frame
     let s = spec, progress = REDUCED ? 1 : 0, hoverT = null;
     let patternAlpha = REDUCED ? 1 : 0; // the backdrop lands after the series reveal
     let yShown = null;    // the tweened y-domain top — updates morph it, never re-sweep
@@ -8883,7 +9088,7 @@ const FxCharts = (() => {
       // the view domain: the brush window when one is set, everything otherwise
       let v0 = t0, v1 = t1;
       if (win && t1 > t0) {
-        const c = math.clampBrush(win[0], win[1], t0, t1, (t1 - t0) * 0.02);
+        const c = math.clampBrush(win[0], win[1], t0, t1, (t1 - t0) * math.BRUSH_MIN_FRAC);
         v0 = c[0]; v1 = c[1];
       }
       // y fits what the window shows — that is what the zoom means
@@ -8904,9 +9109,13 @@ const FxCharts = (() => {
       if (yShown == null) yShown = targetTop;
       const X = math.scaleTime(v0, v1, f.padL, f.width - f.padR);
       const XFull = math.scaleTime(t0, t1, f.padL, f.width - f.padR);
-      const Y = math.scaleLinear(0, yShown, f.plotH - f.padB, f.padT);
-      return { series, proj, ticks, targetTop, X, XFull, Y, t0, t1, v0, v1, fullMax, fmtV, fmtT };
+      return { series, proj, ticks, targetTop, X, XFull, Y: yScale(f), t0, t1, v0, v1, fullMax, fmtV, fmtT };
     }
+
+    /* The y scale is the one part of the model that reads the tweened top,
+       so a caller that nudges yShown can re-derive it instead of rebuilding
+       the whole model — one definition, both readers. */
+    function yScale(f) { return math.scaleLinear(0, yShown, f.plotH - f.padB, f.padT); }
 
     /* The backdrop pattern paints FIRST, alone on the cleared canvas, so
        its 10% edge fades can erase (destination-out) without touching the
@@ -9105,19 +9314,24 @@ const FxCharts = (() => {
       }
     }
 
-    /* The brush strip: the whole domain in miniature — blurred + dimmed
-       outside the window, sharp inside, hairline handles at the edges. */
+    /* The brush strip: the whole domain in miniature. Idle — no window, or
+       a window spanning everything — reads as "everything selected": the
+       series (and the dashed forecast) sharp behind the hairline frame,
+       quiet handles resting at both ends, nothing dimmed because nothing
+       is excluded. Only a real sub-range dims + blurs the regions outside
+       it and raises the accent window. */
     function drawBrush(ctx, f, m) {
       const x0 = f.padL, x1 = f.width - f.padR;
       const top = f.brushTop, bh = f.brushH;
       const grid = tone('--hairline', 'rgba(255,255,255,0.12)');
       const accent = tone('--accent', '#0A84FF');
+      const wt0 = win ? win[0] : m.t0, wt1 = win ? win[1] : m.t1;
+      const idle = !win || (wt0 <= m.t0 && wt1 >= m.t1);
+      const wx0 = m.XFull.to(wt0), wx1 = m.XFull.to(wt1);
       ctx.save();
       ctx.strokeStyle = grid;
       ctx.lineWidth = 1;
       ctx.strokeRect(x0 + 0.5, top + 0.5, x1 - x0 - 1, bh - 1);
-      const wt0 = win ? win[0] : m.t0, wt1 = win ? win[1] : m.t1;
-      const wx0 = m.XFull.to(wt0), wx1 = m.XFull.to(wt1);
       const mTop = top + 5, mBot = top + bh - 5;
       const Ym = math.scaleLinear(0, m.fullMax || 1, mBot, mTop);
       const colors = math.ramp(Math.max(2, m.series.length));
@@ -9141,27 +9355,46 @@ const FxCharts = (() => {
           c.lineWidth = 1;
           c.stroke();
         });
+        // The forecast belongs in the miniature: it is part of the domain
+        // the strip claims to show, and a projection reaching weeks past
+        // minutes of history would otherwise leave the strip almost empty.
+        if (m.proj) {
+          const px = m.proj.points.map((p) => m.XFull.to(p.t));
+          const py = m.proj.points.map((p) => Ym.to(p.v));
+          c.save();
+          c.setLineDash([4, 4]);
+          c.strokeStyle = math.alpha(accent, 0.55);
+          c.lineWidth = 1;
+          c.beginPath();
+          px.forEach((x, i) => { if (i) c.lineTo(x, py[i]); else c.moveTo(x, py[i]); });
+          c.stroke();
+          c.restore();
+        }
       };
       ctx.beginPath();
       ctx.rect(x0, top, x1 - x0, bh);
       ctx.clip();
-      ctx.save();
-      if ('filter' in ctx) ctx.filter = 'blur(1.5px)'; // dimmed regions soften
-      ctx.globalAlpha = 0.45;
-      mini(ctx);
-      ctx.restore();
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(wx0, top, Math.max(1, wx1 - wx0), bh);
-      ctx.clip();
-      mini(ctx);
-      ctx.restore();
-      ctx.fillStyle = math.alpha(accent, 0.07);
-      ctx.fillRect(wx0, top, Math.max(1, wx1 - wx0), bh);
-      ctx.strokeStyle = math.alpha(accent, 0.55);
-      ctx.lineWidth = 1;
-      ctx.strokeRect(Math.round(wx0) + 0.5, top + 0.5, Math.max(1, Math.round(wx1 - wx0)) - 1, bh - 1);
-      ctx.fillStyle = accent;
+      if (idle) {
+        mini(ctx); // sharp everywhere: everything is selected
+      } else {
+        ctx.save();
+        if ('filter' in ctx) ctx.filter = 'blur(1.5px)'; // dimmed regions soften
+        ctx.globalAlpha = 0.45;
+        mini(ctx);
+        ctx.restore();
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(wx0, top, Math.max(1, wx1 - wx0), bh);
+        ctx.clip();
+        mini(ctx);
+        ctx.restore();
+        ctx.fillStyle = math.alpha(accent, 0.07);
+        ctx.fillRect(wx0, top, Math.max(1, wx1 - wx0), bh);
+        ctx.strokeStyle = math.alpha(accent, 0.55);
+        ctx.lineWidth = 1;
+        ctx.strokeRect(Math.round(wx0) + 0.5, top + 0.5, Math.max(1, Math.round(wx1 - wx0)) - 1, bh - 1);
+      }
+      ctx.fillStyle = idle ? math.alpha(accent, 0.35) : accent;
       for (const hx of [wx0, wx1]) {
         Canvas2D.roundRect(ctx, hx - 2, top + bh / 2 - 8, 4, 16, 2);
         ctx.fill();
@@ -9336,18 +9569,15 @@ const FxCharts = (() => {
       let m = model(f);
       if (!(m.t1 > m.t0)) return;
       const { x } = Canvas2D.toLocal(canvas, mv.x, mv.y);
-      const t = m.XFull.from(Math.max(f.padL, Math.min(f.width - f.padR, x)));
-      if (drag.mode === 'mid') {
-        const d = t - drag.grabT;
-        const span = drag.cur[1] - drag.cur[0];
-        win = math.clampBrush(drag.cur[0] + d, drag.cur[1] + d, m.t0, m.t1, span);
-      } else {
-        win = math.clampBrush(drag.anchor, t, m.t0, m.t1, (m.t1 - m.t0) * 0.02);
-      }
-      // x zooms instantly; y chases per event — event-driven, no idle loop
+      win = math.brushDrag(drag, x, f, m);
+      // x zooms instantly; y chases per event — event-driven, no idle loop.
+      // The window moved, so the model is rebuilt once for the new domain;
+      // the y nudge then re-derives only the scale it invalidated, which is
+      // what keeps a drag frame at two model builds instead of three.
       m = model(f);
       yShown += (m.targetTop - yShown) * 0.3;
-      render(f, model(f));
+      m.Y = yScale(f);
+      render(f, m);
     }
 
     /* Hover is coalesced to one rAF: raw mousemove outruns the display, and
@@ -9389,16 +9619,27 @@ const FxCharts = (() => {
         });
         const when = m.fmtT(hoverT);
         if (when) {
-          FxNum.rollText(pill, String(when));
-          const pw = pill.offsetWidth;
+          /* The pill's width is a function of its text, and scrubbing lands
+             on the same day for most frames — so the write and the forced
+             layout the measurement costs happen only when the date changes. */
+          const txt = String(when);
+          if (txt !== pillTxt) {
+            FxNum.rollText(pill, txt);
+            pillTxt = txt;
+            pillW = pill.offsetWidth;
+          }
+          const pw = pillW;
           const px = Math.round(Math.min(Math.max(m.X.to(hoverT) - pw / 2, 4), Math.max(4, host.clientWidth - pw - 4)));
           pill.style.transform = `translate(${px}px, ${f.plotH - f.padB + 5}px)`;
           pill.classList.add('on');
         } else {
           pill.classList.remove('on');
         }
-        // the pill states the date once; the panel keeps only the values
-        tip.show(when ? '' : when, rows, m.X.to(hoverT), y);
+        // The pill states the date once, so the panel keeps only the values.
+        // When the caller's formatTime yields nothing there IS no pill (the
+        // branch above hides it), and the panel says the time instead — the
+        // timestamp must never vanish from the hover altogether.
+        tip.show(when ? '' : fxDate(hoverT), rows, m.X.to(hoverT), y);
       }
     }
     function onMove(e) {
@@ -9469,7 +9710,7 @@ const FxCharts = (() => {
      } */
   function rings(canvas, legendEl, spec) {
     const host = anchor(canvas);
-    let s = spec, hover = -1, progress = REDUCED ? 1 : 0, hoverAnim = 0;
+    let s = spec, hover = -1, progress = REDUCED ? 1 : 0, hoverAnim = 0, entered = false;
     let centerShown = null; // the morphing center numeral — hover re-counts, update snaps
     const life = makeLife(host, () => render());
 
@@ -9558,7 +9799,11 @@ const FxCharts = (() => {
         bar.className = 'fx-li-bar';
         bar.style.background = it.color || m.colors[i];
         const widthPct = ((it.value / m.max) * 100).toFixed(1) + '%';
-        if (REDUCED) bar.style.width = widthPct;
+        // The grow is an ENTRANCE, so it happens once. update() rebuilds these
+        // rows for a live rescan and for the theme handler's identical-data
+        // retint; replaying the slide there animates a change that did not
+        // happen, while the ring beside it correctly holds still.
+        if (REDUCED || entered) bar.style.width = widthPct;
         else requestAnimationFrame(() => { if (!life.dead) bar.style.width = widthPct; });
         track.appendChild(bar);
         const val = document.createElement('span');
@@ -9574,6 +9819,7 @@ const FxCharts = (() => {
         if (s.onClick) row.addEventListener('click', () => s.onClick(i));
         legendEl.appendChild(row);
       });
+      entered = true; // updates re-render without replaying the entrance
     }
 
     function setHover(i) {
@@ -9625,8 +9871,13 @@ const FxCharts = (() => {
 
     return {
       update(next) {
+        // A hover animation in flight writes centerShown every frame from the
+        // OLD slice's captured target, so it would overwrite the reseed below
+        // and leave the centre showing a slice's bytes under "Top types".
+        // area.tweenY() and gauge.ease() stop the raf for the same reason.
+        life.stopRaf();
         s = { ...s, ...next };
-        hover = -1; progress = 1;
+        hover = -1; progress = 1; hoverAnim = 0;
         centerShown = null; // new data is a new entity — snap, never roll across it
         renderLegend();
         render();
@@ -9638,7 +9889,7 @@ const FxCharts = (() => {
   /* ═════════════════════ gauge(canvas, spec) ═════════════════════
      spec: {
        value: 0..1, label, sublabel?,
-       size?: 120, notches?: 40, danger?: false,
+       size?: 120, notches?: 40, danger?: false, warn?: false,
        formatValue?: (v) => string,       // value text; default percent
        orientation?: 'arc' | 'linear',    // linear = flat notch track
        linearHeight?: 24,                 // linear track height (px)
@@ -9670,7 +9921,10 @@ const FxCharts = (() => {
       const trackW = Math.max(40, w - Math.ceil(ctx.measureText(valTxt).width) - 12);
       const lit = Math.round(clamp01(shown) * notches);
       const track = tone('--hairline-2', 'rgba(255,255,255,0.08)');
-      const hot = s.danger ? tone('--danger', '#FF453A') : null;
+      // Every colour the kit paints comes through tone(), so a theme flip
+      // re-reads it. A raw hex passed in from a call site cannot do that:
+      // the capsule's over-85% amber painted ~1.9:1 on light cards.
+      const hot = s.danger ? tone('--danger', '#FF453A') : s.warn ? tone('--warn', '#FFD60A') : null;
       const [gFrom, gTo] = s.activeGradient || ['#0A84FF', '#86C1FF'];
       const slot = trackW / notches;
       const nw = Math.max(2, Math.min(6, slot - 2));
@@ -9710,7 +9964,10 @@ const FxCharts = (() => {
       const rOut = size * 0.44, rIn = size * 0.36;
       const lit = Math.round(clamp01(shown) * notches);
       const track = tone('--hairline-2', 'rgba(255,255,255,0.08)');
-      const hot = s.danger ? tone('--danger', '#FF453A') : null;
+      // Every colour the kit paints comes through tone(), so a theme flip
+      // re-reads it. A raw hex passed in from a call site cannot do that:
+      // the capsule's over-85% amber painted ~1.9:1 on light cards.
+      const hot = s.danger ? tone('--danger', '#FF453A') : s.warn ? tone('--warn', '#FFD60A') : null;
 
       for (let i = 0; i < notches; i++) {
         const a = a0 + ((a1 - a0) * i) / (notches - 1);
@@ -9754,7 +10011,10 @@ const FxCharts = (() => {
     function ease(toV) {
       life.stopRaf();
       const from = shown, target = clamp01(toV);
-      if (REDUCED) { shown = target; render(); return; }
+      // A repaint whose value did not move needs ONE frame, not 600ms of
+      // byte-identical ones: the theme handler calls update({}) on every live
+      // gauge, so a flip would otherwise start N parallel no-op loops.
+      if (REDUCED || target === from) { shown = target; render(); return; }
       animate(life, 600, (p) => { shown = from + (target - from) * p; render(); });
     }
 
@@ -9997,11 +10257,16 @@ const FxCharts = (() => {
        points: [{ x, y, label? }],     // x = ms by default, y = bytes
        height?: 240, yGradient?: false | [stops], color?,
        formatX?: fxDate, formatY?: fmtBytes,
+       logX?: true | tickBase,         // log10(v+1) axes for skewed domains;
+       logY?: true | tickBase,         // a number is the tick base (1024 = byte decades)
+       formatXTick?: math.compactCount, // log-x decade labels (10 / 100 / 1k)
      } */
   function scatter(canvas, spec) {
     const host = anchor(canvas);
     const tip = makeTip(host);
     let s = spec, progress = REDUCED ? 1 : 0, hover = -1;
+    let dimLayer = null;  // the dimmed crowd, rendered once per hover session
+    let dimKey = null;    // what that layer was rendered for
     const life = makeLife(host, () => render());
     const R_CORE = 5, RING_GAP = 2, RING_W = 2; // bklit's offset-ring geometry
     const R_RING = R_CORE + RING_GAP + RING_W / 2;
@@ -10018,17 +10283,32 @@ const FxCharts = (() => {
       const fmtY = s.formatY || fmtBytes;
       const [x0, x1] = math.extent(pts.map((p) => p.x));
       const [, yMax] = math.extent(pts.map((p) => p.y));
-      const ticks = math.niceTicks(0, yMax * 1.05 || 1, 4);
+      const yLog = !!s.logY;
+      const yBase = typeof s.logY === 'number' && s.logY > 1 ? s.logY : 10;
+      const ticks = yLog ? math.logTicks(yMax, yBase, 4) : math.niceTicks(0, yMax * 1.05 || 1, 4);
       const top = ticks[ticks.length - 1];
-      const padX = (x1 - x0 || 1) * 0.05; // dots have radius; give them air
-      const X = math.scaleLinear(x0 - padX, x1 + padX, f.padL, f.width - f.padR);
-      const Y = math.scaleLinear(0, top, f.height - f.padB, f.padT);
-      return { pts, ticks, top, X, Y, fmtX, fmtY, x0, x1 };
+      let X, xTicks = null;
+      if (s.logX) {
+        const xBase = typeof s.logX === 'number' && s.logX > 1 ? s.logX : 10;
+        xTicks = math.logTicks(x1, xBase, 5);
+        X = math.scaleLog(xTicks[xTicks.length - 1], f.padL, f.width - f.padR);
+      } else {
+        const padX = (x1 - x0 || 1) * 0.05; // dots have radius; give them air
+        X = math.scaleLinear(x0 - padX, x1 + padX, f.padL, f.width - f.padR);
+      }
+      const Y = yLog ? math.scaleLog(top, f.height - f.padB, f.padT)
+                     : math.scaleLinear(0, top, f.height - f.padB, f.padT);
+      return { pts, ticks, top, X, Y, fmtX, fmtY, x0, x1, xTicks, yLog };
     }
 
     function dotColor(m, p) {
       if (s.yGradient) {
-        return math.sampleRamp(m.top > 0 ? p.y / m.top : 0, Array.isArray(s.yGradient) ? s.yGradient : undefined);
+        // A log y-axis samples the ramp in log space too, or every mid-size
+        // dot would crush into the bottom stop while the axis spreads them.
+        const t = m.yLog
+          ? Math.log10(Math.max(0, p.y) + 1) / (Math.log10(m.top + 1) || 1)
+          : (m.top > 0 ? p.y / m.top : 0);
+        return math.sampleRamp(t, Array.isArray(s.yGradient) ? s.yGradient : undefined);
       }
       return s.color || tone('--accent', '#0A84FF');
     }
@@ -10043,6 +10323,20 @@ const FxCharts = (() => {
       ctx.strokeStyle = col;
       ctx.lineWidth = RING_W;
       ctx.stroke();
+    }
+
+    /** Every dot but `skip`, at `alphaMul` × its own slice of the reveal. */
+    function drawCrowd(ctx, m, dScale, alphaMul, skip) {
+      const n = m.pts.length;
+      m.pts.forEach((p, i) => {
+        if (i === skip) return;
+        // staggered reveal: each dot rides its own slice of the sweep
+        const tI = n > 1 ? Math.min(1, Math.max(0, (progress - (i / n) * 0.55) / 0.45)) : progress;
+        if (tI <= 0) return;
+        ctx.globalAlpha = alphaMul * tI;
+        drawDot(ctx, m.X.to(p.x), m.Y.to(p.y), dotColor(m, p), (0.6 + 0.4 * tI) * dScale);
+      });
+      ctx.globalAlpha = 1;
     }
 
     function render(f, m) {
@@ -10067,23 +10361,49 @@ const FxCharts = (() => {
         return;
       }
       ctx.textAlign = 'center';
-      ctx.fillText(m.fmtX(m.x0), f.padL + 24, f.height - 8);
-      if (m.x1 > m.x0) ctx.fillText(m.fmtX(m.x1), f.width - f.padR - 24, f.height - 8);
+      if (m.xTicks) {
+        // decade labels along the log x-axis (10 / 100 / 1k / 10k) with the
+        // real maximum as the last one; the origin stays unlabeled — it would
+        // collide with the y-axis "0 B"
+        const fmtT = s.formatXTick || math.compactCount;
+        for (const v of m.xTicks) {
+          if (v > 0) ctx.fillText(fmtT(v), m.X.to(v), f.height - 8);
+        }
+      } else {
+        ctx.fillText(m.fmtX(m.x0), f.padL + 24, f.height - 8);
+        if (m.x1 > m.x0) ctx.fillText(m.fmtX(m.x1), f.width - f.padR - 24, f.height - 8);
+      }
 
       const n = m.pts.length;
+      const dScale = math.densityScale(n); // a crowded scatter shrinks its dots
       const dimmed = hover !== -1;
+      const blurred = dimmed && 'filter' in ctx;
       // one pass for the crowd (dim + blur while a point is active) …
-      ctx.save();
-      if (dimmed && 'filter' in ctx) ctx.filter = 'blur(2px)';
-      m.pts.forEach((p, i) => {
-        if (i === hover) return;
-        // staggered reveal: each dot rides its own slice of the sweep
-        const tI = n > 1 ? Math.min(1, Math.max(0, (progress - (i / n) * 0.55) / 0.45)) : progress;
-        if (tI <= 0) return;
-        ctx.globalAlpha = (dimmed ? 0.5 : 1) * tI;
-        drawDot(ctx, m.X.to(p.x), m.Y.to(p.y), dotColor(m, p), 0.6 + 0.4 * tI);
-      });
-      ctx.restore();
+      if (blurred) {
+        /* The blur is applied ONCE, to a cached blit of the whole crowd —
+           never per dot. A canvas filter rasterizes every drawing operation
+           under it into its own layer, and the apps scatter carries a point
+           per app (~300 = ~600 arcs), while `hit` changes on nearly every
+           frame of a sweep through a dense cluster. The layer includes the
+           active dot, which is what makes it constant for the whole hover
+           session: the sharp scaled copy below covers it. */
+        const key = f.width + '|' + f.height + '|' + n + '|' + progress + '|' + dScale;
+        if (!dimLayer) dimLayer = document.createElement('canvas');
+        if (dimKey !== key) {
+          dimKey = key;
+          const lf = Canvas2D.setup(dimLayer, f.width, f.height);
+          lf.ctx.clearRect(0, 0, f.width, f.height);
+          drawCrowd(lf.ctx, m, dScale, 0.5, -1);
+        }
+        ctx.save();
+        ctx.filter = 'blur(2px)';
+        ctx.drawImage(dimLayer, 0, 0, f.width, f.height);
+        ctx.restore();
+      } else {
+        ctx.save();
+        drawCrowd(ctx, m, dScale, dimmed ? 0.5 : 1, hover);
+        ctx.restore();
+      }
       // … and the active point sharp, scaled and glowing on top
       if (hover !== -1 && m.pts[hover]) {
         const p = m.pts[hover];
@@ -10091,7 +10411,7 @@ const FxCharts = (() => {
         ctx.save();
         ctx.shadowColor = col;
         ctx.shadowBlur = 10;
-        drawDot(ctx, m.X.to(p.x), m.Y.to(p.y), col, 1.25);
+        drawDot(ctx, m.X.to(p.x), m.Y.to(p.y), col, 1.25 * dScale);
         ctx.restore();
       }
     }
@@ -10116,6 +10436,10 @@ const FxCharts = (() => {
           if (d < bd) { bd = d; hit = i; }
         });
         if (hit !== hover) {
+          // rings.setHover's precedent: without the stop, the entrance's next
+          // frame writes its eased progress back over the 1 and both loops
+          // render the dim pass in the same frame.
+          life.stopRaf();
           hover = hit;
           progress = 1; // a hover during the reveal completes it
           render(f, m);
@@ -10141,9 +10465,15 @@ const FxCharts = (() => {
     animate(life, 1100, (p) => { progress = p; render(); }, math.easeMaster);
 
     return {
-      update(next) { s = { ...s, ...next }; hover = -1; progress = 1; render(); },
+      update(next) {
+        s = { ...s, ...next };
+        hover = -1; progress = 1;
+        dimKey = null; // new data (or a retint) is a new crowd
+        render();
+      },
       destroy() {
         if (moveRaf) { cancelAnimationFrame(moveRaf); moveRaf = 0; }
+        dimLayer = null;
         tip.destroy();
         life.destroy();
       },
@@ -10456,19 +10786,28 @@ const FxCharts = (() => {
     let s = spec, entered = false;
     el.style.position = 'relative'; // the tooltip anchors to the container itself
     const tip = makeTip(el);
+    /* The columns scroll; the tooltip must not. `.fx-tip` is absolutely
+       positioned against whatever makeTip was handed, so hosting it inside the
+       scroller would lay it out in CONTENT coordinates — it would drift by
+       scrollLeft — and makeTip's edge flip, which measures the VISIBLE
+       clientWidth, would flip against the wrong box. One inner track keeps the
+       anchor, the flip and the rects the hover reads in the same space. */
+    const track = document.createElement('div');
+    track.className = 'fx-bsq-track';
+    el.appendChild(track);
     const life = makeLife(el, () => { /* pure DOM — flex owns the geometry */ });
     const GAP = 3, CORNER = 0.25; // bklit's square geometry
 
     function render() {
       const fmtV = s.formatValue || fmtBytes;
       const items = s.items || [];
-      for (const n of el.querySelectorAll('.fx-bsq-col, .fx-empty')) n.remove(); // the tooltip node stays
+      track.textContent = '';
       el.classList.add('fx-bsq');
       if (!items.length) {
         const empty = document.createElement('div');
         empty.className = 'fx-empty';
         empty.textContent = 'No data yet.';
-        el.appendChild(empty);
+        track.appendChild(empty);
         return;
       }
       const size = s.squareSize || 16;
@@ -10514,7 +10853,7 @@ const FxCharts = (() => {
           tip.show(it.name, [{ name: s.valueName || 'Size', value: fmtV(it.value) }], r1.left - r0.left + r1.width / 2, 16);
         });
         col.addEventListener('mouseleave', () => tip.hide());
-        el.appendChild(col);
+        track.appendChild(col);
       });
       if (doEnter) {
         requestAnimationFrame(() => {
@@ -11833,16 +12172,18 @@ const FxOrbs = (() => {
 
    API:  FxBeam.attach(el, { type, active, duration?, strength?, opacity?,
                              brightness?, saturation?, hueRange?, staticColors?,
-                             borderRadius?, onActivate?, onDeactivate? })
+                             bloom?, borderRadius?, onActivate?, onDeactivate? })
          FxBeam.detach(el)
    attach is idempotent — attaching to an already-attached element
-   reconfigures it in place (same id, same injected style tag).
+   reconfigures it in place (same instance, and the same shared stylesheet
+   whenever the build key is unchanged).
    The per-attach knobs are the upstream types.ts per-instance props:
    opacity multiplies strength (PORT_PLAN: both clamp to [0,1] — four
    upstream presets exceed 1); brightness/saturation override this
    instance's --fxb-*-bright/-sat tokens; hueRange caps the drift at ±deg
    (clamped to the upstream 30° maximum — the palette itself stays blue);
-   staticColors kills the hue drift while motion continues; borderRadius
+   staticColors kills the hue drift while motion continues; bloom:false
+   drops the blurred conic layer (ambience weight); borderRadius
    skips the computed-style read; onActivate/onDeactivate fire on the
    lit/unlit edges (detach of a lit beam counts as a deactivation). Every
    knob is optional and normalizeOpts leaves unspecified ones out entirely,
@@ -12104,6 +12445,10 @@ const FxBeam = (() => {
       if (Number.isFinite(v)) out.hueRange = Math.max(0, Math.min(30, v));
     }
     if (o.staticColors !== undefined) out.staticColors = !!o.staticColors;
+    /* Not an upstream prop: the app's own ambience weight. `bloom: false`
+       drops the blurred conic layer entirely (the layer is a child div, so
+       this is DOM, not CSS — the shared sheet is unaffected). */
+    if (o.bloom !== undefined) out.bloom = !!o.bloom;
     if (o.borderRadius !== undefined) {
       const v = Number(o.borderRadius);
       if (Number.isFinite(v) && v >= 0) out.borderRadius = v;
@@ -12216,10 +12561,11 @@ const FxBeam = (() => {
     const beforeComposite = sm ? 'add' : 'intersect, add';
     const beforeWebkitComposite = sm ? 'source-over' : 'source-in, source-over';
     const shadowSpread = sm ? '5px 1px' : '9px 1px';
+    /* No per-instance `position`: the shared `[data-fxbeam]` base rule owns it
+       at class specificity, so a host laid out deliberately (an absolutely
+       positioned .fx-beam-strip overlay) still wins. Repeating it here would
+       outrank that from a later sheet and pull the overlay back into flow. */
     return `${baseRegs(id)}
-[data-fxbeam="${id}"] {
-  position: relative;
-}
 [data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
   border-radius: ${radius}px;
   overflow: hidden;
@@ -12365,9 +12711,6 @@ ${pausedRule(id)}`}`;
       .join('\n');
     return `${regs}
 @property --fxb-o-${id} { syntax: "<number>"; initial-value: 0; inherits: true; }
-[data-fxbeam="${id}"] {
-  position: relative;
-}
 [data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
   border-radius: ${radius}px;
   overflow: hidden;
@@ -12556,7 +12899,6 @@ ${pausedRule(id)}`}`;
     if (outside) {
       return `${pulseRegs(id)}
 [data-fxbeam="${id}"] {
-  position: relative;
   border-radius: ${radius}px;
   overflow: visible;
   isolation: isolate;
@@ -12618,7 +12960,6 @@ ${pausedRule(id)}`}`;
     }
     return `${pulseRegs(id)}
 [data-fxbeam="${id}"] {
-  position: relative;
   isolation: isolate;
 }
 [data-fxbeam="${id}"][data-fxbeam-on] {${wrapperAnim('fade-in') || ' /* reduced: static */'}
@@ -12695,9 +13036,12 @@ ${pausedRule(id)}`}`;
       live on the LIT selectors only: an attached-but-dark beam must leave
       its host exactly as found — an idle base rule that clips children or
       rewrites corner radii is a latent bug for every future tooltip or
-      badge on that host. Only position:relative (layout-safe) and the
-      pulse types' isolation stay unconditional. pulse-outside keeps its
-      overflow:visible base — it never clipped anything to begin with. */
+      badge on that host. Only the pulse types' isolation stays
+      unconditional. pulse-outside keeps its overflow:visible base — it
+      never clipped anything to begin with. `position` is NOT emitted here
+      at all: the shared `[data-fxbeam]` base rule sets it at class
+      specificity so a host with a deliberate layout (an absolutely
+      positioned .fx-beam-strip overlay) can still override it. */
   function buildCSS(id, type, theme, duration, radius, reduced, knobs) {
     /* `knobs` is the optional per-attach bag — {hueRange, staticColors}.
        Omitting it (every pre-knob caller, the extraction tests' 6-arg calls)
@@ -12817,19 +13161,96 @@ ${pausedRule(id)}`}`;
     else if (!wants && driven.has(inst)) { driven.delete(inst); driverStopIfIdle(); }
   }
 
+  /* ── Shared instance stylesheets ────────────────────────────────────────
+     The generated CSS is multi-KB and depends on nothing but the build key,
+     so every host that resolves to the same key rides ONE <style> tag and
+     ONE instance id: a pointer crossing a grid of glass cards costs a single
+     sheet parse instead of one per card. Everything an instance keeps for
+     itself lives in attributes and inline --fxb-*-<id> properties, so
+     sharing the rules never shares state. A key whose last instance leaves
+     is kept unreferenced (re-entry then re-parses nothing) until the cache
+     outgrows SHEET_CACHE; a referenced sheet is never evicted. */
+  const SHEET_CACHE = 16;
+  const sheets = new Map(); // buildKey -> { id, styleEl, refs }
+
+  function acquireSheet(buildKey, build) {
+    let entry = sheets.get(buildKey);
+    if (entry) {
+      sheets.delete(buildKey); // re-insert: Map iterates in insertion order, so this is the LRU touch
+    } else {
+      const id = 'fxb' + (++seq);
+      const styleEl = document.createElement('style');
+      styleEl.setAttribute('data-fxbeam-style', id);
+      styleEl.textContent = build(id);
+      document.head.appendChild(styleEl);
+      entry = { id, styleEl, refs: 0 };
+    }
+    sheets.set(buildKey, entry);
+    entry.refs++;
+    return entry;
+  }
+
+  function evictSheets() {
+    for (const [k, e] of sheets) {
+      if (sheets.size <= SHEET_CACHE) return;
+      if (e.refs > 0) continue; // in use — never pulled from under a lit beam
+      if (e.styleEl.parentNode) e.styleEl.parentNode.removeChild(e.styleEl);
+      sheets.delete(k);
+    }
+  }
+
+  function releaseSheet(inst) {
+    const entry = inst.sheet;
+    if (!entry) return;
+    inst.sheet = null;
+    inst.sheetKey = null;
+    if (--entry.refs <= 0) evictSheets();
+  }
+
+  /** Every inline custom property keyed to this instance's CURRENT id — the
+      state that must not be left behind when the id changes or the instance
+      goes away. */
+  function clearIdVars(inst) {
+    const el = inst.el, id = inst.id;
+    if (!id) return;
+    el.style.removeProperty(`--fxb-o-${id}`);
+    // the REDUCED line-beam park position writes these two per-id props
+    el.style.removeProperty(`--fxb-x-${id}`);
+    el.style.removeProperty(`--fxb-w-${id}`);
+    if (inst.driverCfg) {
+      for (const osc of inst.driverCfg.oscillators) el.style.removeProperty(osc.prop);
+      if (inst.driverCfg.hue) el.style.removeProperty(inst.driverCfg.hue.prop);
+    }
+  }
+
   function rebuild(inst) {
     const { type, duration, hueRange, staticColors } = inst.cfg;
     const theme = resolveTheme();
-    /* Focus/blur and cart pulses re-attach with identical options, and the
-       generated stylesheet is multi-KB: regenerating + re-parsing a
-       byte-identical build on every attach is pure churn, so an unchanged
-       (type, theme, duration, radius, REDUCED, hueRange, staticColors)
-       tuple keeps the sheet and driver config it already has. */
-    const buildKey = type + '|' + theme + '|' + duration + '|' + inst.radius + '|' + REDUCED
+    /* md/sm output is theme-agnostic (its scalars are tokens that flip on
+       their own), so the theme is not part of THEIR key — otherwise a flip
+       would fork a byte-identical second sheet for every rotate instance. */
+    const themeKey = type === 'md' || type === 'sm' ? '' : theme;
+    /* Focus/blur and cart pulses re-attach with identical options: an
+       unchanged (type, theme, duration, radius, REDUCED, hueRange,
+       staticColors) tuple keeps the sheet and driver config it already has.
+       `bloom` is deliberately absent — it is a DOM layer, not a rule. */
+    const buildKey = type + '|' + themeKey + '|' + duration + '|' + inst.radius + '|' + REDUCED
       + '|' + (hueRange === undefined ? '' : hueRange) + '|' + !!staticColors;
-    if (inst.buildKey !== buildKey) {
-      inst.buildKey = buildKey;
-      inst.styleEl.textContent = buildCSS(inst.id, type, theme, duration, inst.radius, REDUCED, { hueRange, staticColors });
+    if (inst.sheetKey !== buildKey) {
+      // acquired before the old one is released, so a same-key re-attach can
+      // never drop a sheet's last reference and re-parse it
+      const entry = acquireSheet(buildKey, (id) =>
+        buildCSS(id, type, theme, duration, inst.radius, REDUCED, { hueRange, staticColors }));
+      const moved = entry.id !== inst.id;
+      if (moved) clearIdVars(inst); // reads the OLD id and the OLD driver config
+      const old = inst.sheet;
+      inst.sheet = entry;
+      inst.sheetKey = buildKey;
+      if (old && --old.refs <= 0) evictSheets();
+      if (moved) {
+        inst.id = entry.id;
+        inst.el.setAttribute('data-fxbeam', entry.id);
+      }
       if (isPulseType(type) && !REDUCED) {
         const p = pulseParams(type, theme, duration);
         inst.driverCfg = {
@@ -12841,6 +13262,15 @@ ${pausedRule(id)}`}`;
       } else {
         inst.driverCfg = null;
       }
+    }
+    /* The bloom is a blurred conic layer that rasters every frame the beam
+       animates. Ambience-weight callers drop it outright (`bloom: false`)
+       rather than fading it out, so a parked pointer costs a ring and
+       nothing else — and so at most ONE bloomed beam is ever animating. */
+    if (inst.cfg.bloom === false) {
+      if (inst.bloom.parentNode) inst.bloom.parentNode.removeChild(inst.bloom);
+    } else if (!inst.bloom.parentNode) {
+      inst.el.appendChild(inst.bloom);
     }
     if (ro) {
       if (type === 'pulse-outside') { ro.observe(inst.el); measureGlowScale(inst); }
@@ -12900,26 +13330,23 @@ ${pausedRule(id)}`}`;
 
   function createInstance(el) {
     ensureWiring();
-    const id = 'fxb' + (++seq);
-    const styleEl = document.createElement('style');
-    styleEl.setAttribute('data-fxbeam-style', id);
-    document.head.appendChild(styleEl);
     const bloom = document.createElement('div');
     bloom.setAttribute('data-fxbeam-bloom', '');
     bloom.setAttribute('aria-hidden', 'true');
     el.appendChild(bloom);
     const inst = {
-      id, el, styleEl, bloom,
-      cfg: null, radius: 13, driverCfg: null, buildKey: null,
+      /* id and sheet are claimed by the first rebuild — which sheet an
+         instance shares depends on options it does not have yet. */
+      id: null, el, sheet: null, bloom,
+      cfg: null, radius: 13, driverCfg: null, sheetKey: null,
       on: false, fading: false, visible: true, fadeTimer: null,
       onAnimEnd: null,
     };
     inst.onAnimEnd = (e) => {
       if (e.target !== el) return;
-      if (e.animationName === `fxb-fade-out-${id}` && inst.fading) finishOff(inst);
+      if (e.animationName === `fxb-fade-out-${inst.id}` && inst.fading) finishOff(inst);
     };
     el.addEventListener('animationend', inst.onAnimEnd);
-    el.setAttribute('data-fxbeam', id);
     if (io) io.observe(el);
     return inst;
   }
@@ -12985,15 +13412,12 @@ ${pausedRule(id)}`}`;
     if (ro) ro.unobserve(el);
     el.removeEventListener('animationend', inst.onAnimEnd);
     if (inst.bloom.parentNode) inst.bloom.parentNode.removeChild(inst.bloom);
-    if (inst.styleEl.parentNode) inst.styleEl.parentNode.removeChild(inst.styleEl);
+    clearIdVars(inst);
+    releaseSheet(inst);
     el.removeAttribute('data-fxbeam');
     el.style.removeProperty('--fxb-strength');
     el.style.removeProperty('--fxb-sx');
     el.style.removeProperty('--fxb-sy');
-    el.style.removeProperty(`--fxb-o-${inst.id}`);
-    // the REDUCED line-beam park position writes these two per-id props
-    el.style.removeProperty(`--fxb-x-${inst.id}`);
-    el.style.removeProperty(`--fxb-w-${inst.id}`);
     // the per-attach brightness/saturation overrides go with the instance
     for (const t of Object.values(KNOB_TOK)) {
       el.style.removeProperty(`--fxb-${t}-bright`);
@@ -13126,9 +13550,9 @@ let fxCartSeen = -1;
 let fxCartPulseTimer = 0;
 function fxCartPulseSync(count) {
   if (fxCartSeen >= 0 && count > fxCartSeen) {
-    FxBeam.attach($('cartTab'), { type: 'pulse-inner', active: true });
+    FxBeam.attach($('cartTabBeamStrip'), { type: 'pulse-inner', active: true });
     clearTimeout(fxCartPulseTimer);
-    fxCartPulseTimer = setTimeout(() => FxBeam.attach($('cartTab'), { type: 'pulse-inner', active: false }), 2000);
+    fxCartPulseTimer = setTimeout(() => FxBeam.attach($('cartTabBeamStrip'), { type: 'pulse-inner', active: false }), 2000);
   }
   fxCartSeen = count;
 }
@@ -13154,11 +13578,27 @@ $('nlInput').addEventListener('blur', () => fxOrbHide('nlListen'));
    switch off a running scan's ring. The contract: a state beam goes through
    fxStateBeam, which stamps data-fxbeam-state while active; hover skips a
    stamped card on enter, and a state igniting mid-hover takes the host over
-   (the hover bookkeeping forgets it, so the later hover-leave is a no-op). */
+   (the hover bookkeeping forgets it, so the later hover-leave is a no-op).
+
+   The envelope PERF-7 was accepted against is ONE md beam's blurred layers
+   rastering while a scan runs, so a state beam holds it exclusively: the
+   set below is every host currently lit by a state, and while it is
+   non-empty hover ambience stands down everywhere — a scan lights the scan
+   card, and a ring on whichever sibling card the pointer happens to rest on
+   would be a second one. */
+const fxStateBeamLit = new Set();
+
 function fxStateBeam(el, opts) {
   if (!el) return;
-  if (opts.active) { fxHoverForget(el); el.setAttribute('data-fxbeam-state', ''); }
-  else el.removeAttribute('data-fxbeam-state');
+  if (opts.active) {
+    fxHoverForget(el);
+    el.setAttribute('data-fxbeam-state', '');
+    fxStateBeamLit.add(el);
+    fxHoverStandDown();
+  } else {
+    el.removeAttribute('data-fxbeam-state');
+    fxStateBeamLit.delete(el);
+  }
   FxBeam.attach(el, opts);
 }
 
@@ -13169,6 +13609,7 @@ function fxStateBeamDrop(el) {
   if (!el) return;
   fxHoverForget(el);
   el.removeAttribute('data-fxbeam-state');
+  fxStateBeamLit.delete(el);
   FxBeam.detach(el);
 }
 
@@ -13192,8 +13633,20 @@ function fxHoverForget(el) {
   if (fxHoverEl === el) fxHoverEl = null;
 }
 
+/** Drop a lit ambience ring AT ONCE — no leave-fade. A state that just
+    ignited elsewhere owns the envelope now, and a 0.5s fade-out is 0.5s of
+    a second ring animating at full cost. */
+function fxHoverStandDown() {
+  const el = fxHoverEl;
+  if (!el) return;
+  fxHoverEl = null;
+  fxHoverForget(el);
+  if (!el.hasAttribute('data-fxbeam-state')) FxBeam.detach(el);
+}
+
 function fxHoverSync(card) {
-  if (card && card.hasAttribute('data-fxbeam-state')) card = null; // a real state owns it
+  // a real state owns this card — or owns the envelope from another one
+  if (card && (fxStateBeamLit.size > 0 || card.hasAttribute('data-fxbeam-state'))) card = null;
   if (card === fxHoverEl) return;
   const prev = fxHoverEl;
   if (prev) {
@@ -13208,7 +13661,11 @@ function fxHoverSync(card) {
   if (card) {
     fxHoverForget(card); // cancel a pending detach on re-entry…
     fxHoverEl = card;    // …which cleared the claim this re-stakes
-    FxBeam.attach(card, { type: 'md', active: true, strength: 0.5, brightness: 0.9 });
+    /* Ambience weight, and cheap at rest: no bloom child and no hue drift,
+       so a pointer parked on a card while someone reads costs a composited
+       ring instead of a blurred layer repainting at ~60fps — and the one
+       bloomed md beam stays reserved for whatever state owns it. */
+    FxBeam.attach(card, { type: 'md', active: true, strength: 0.5, brightness: 0.9, staticColors: true, bloom: false });
   }
 }
 
@@ -13314,16 +13771,23 @@ const FX_ENTER_STAGGERED = 6;
 const FX_ENTER_STEP_MS = 36;
 function fxViewEnter(viewEl) {
   if (REDUCED || !viewEl || !viewEl.querySelectorAll) return;
-  let slot = 0;
+  /* Read pass, then write pass. offsetParent forces style+layout, and a
+     fill:'backwards' animation applies its first keyframe the moment it is
+     created — so interleaving them made every card after the first pay a
+     fresh flush over a tree view.mount() had just rewritten. */
+  const staged = [];
   for (const card of viewEl.querySelectorAll('.card.glass')) {
-    if (slot >= FX_ENTER_STAGGERED) break;
     if (!card.offsetParent) continue; // display:none subtree — not on screen
+    staged.push(card);
+    if (staged.length >= FX_ENTER_STAGGERED) break;
+  }
+  for (let slot = 0; slot < staged.length; slot++) {
+    const card = staged[slot];
     if (typeof card.animate !== 'function') return;
     card.animate(
       [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }],
       { duration: 380, delay: slot * FX_ENTER_STEP_MS, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'backwards' },
     );
-    slot++;
   }
 }
 /* ═══ end FX: living-surface wiring ═══ */
@@ -19090,7 +19554,21 @@ for (const dockId of ['tmDock', 'cityDock']) {
   });
   dockEl.addEventListener('dragleave', (e) => {
     const tile = e.target.closest('.drive-tile');
-    if (tile) { tile.classList.remove('drop-ok'); FxBeam.attach(tile, { type: 'md', active: false }); FxGoo.bendRelease(tile); }
+    if (!tile) return;
+    // dragleave also fires when the pointer crosses into one of the tile's
+    // OWN five children, and the dragover that follows switched the ring
+    // straight back on — off/on churn several times a second, each cycle
+    // restarting the 0.6s fade-in and leaving a full-cost fading instance
+    // behind. Neither test covers both engines: Chromium never populates
+    // relatedTarget on drag events, and Firefox populates it but reports the
+    // dragleave at 0,0 — so the coordinates decide where relatedTarget is
+    // null, and relatedTarget decides where it is not.
+    if (e.relatedTarget && tile.contains(e.relatedTarget)) return;
+    const r = tile.getBoundingClientRect();
+    if (e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom) return;
+    tile.classList.remove('drop-ok');
+    FxBeam.attach(tile, { type: 'md', active: false });
+    FxGoo.bendRelease(tile);
   });
   dockEl.addEventListener('drop', (e) => {
     const tile = e.target.closest('.drive-tile');
@@ -19145,7 +19623,9 @@ function watchJob(opts) {
   // (each terminal SSE event and a dropped stream) closes the modal there,
   // and so do the scrim and Esc. The modal is static DOM, so the off side
   // deactivates rather than detaches: the next job re-lights the instance.
-  FxBeam.attach($('offloadModal').querySelector('.modal'), { type: 'md', active: true });
+  // The host is the overlay strip: .modal is lensed, and the beam and the
+  // lens cannot both own ::before/::after.
+  FxBeam.attach($('offloadBeamStrip'), { type: 'md', active: true });
   const es = new EventSource(opts.progressUrl);
   const done = () => { es.close(); activeJob = null; closeModal('offloadModal'); };
   es.onmessage = (m) => {
@@ -19364,7 +19844,8 @@ function renderCapsule() {
       value: idx.status.capBytes > 0 ? idx.status.usedBytes / idx.status.capBytes : 1,
       orientation: 'linear', linearHeight: 14, notches: 36,
       notchCornerRadius: 99, // clamped to half the notch width — a true capsule
-      activeGradient: pct > 85 ? ['#FF9F0A', '#FF9F0A'] : ['#0A84FF', '#86C1FF'],
+      warn: pct > 85,        // the kit reads --warn, which has a light override
+      activeGradient: ['#0A84FF', '#86C1FF'],
     };
     if (capsuleGaugeHandle) capsuleGaugeHandle.update(spec);
     else capsuleGaugeHandle = FxCharts.gauge($('capsuleGaugeCanvas'), spec);
@@ -19577,7 +20058,9 @@ async function loadCalendar() {
     return;
   }
   const seq = ++calSeq;
-  body.innerHTML = '<div class="muted">Counting bytes per day…</div>';
+  // Counting can run seconds on a big root — the §3.5 skeleton treatment,
+  // with the sentence kept as the status label for screen readers.
+  body.innerHTML = skeletonRows(4, 30, 'Counting bytes per day…');
   try {
     const url = `/api/scan/${encodeURIComponent(state.scanId)}/calendar` + (calChannel === 'created' ? '?channel=created' : '');
     const data = await api(url);
@@ -19905,19 +20388,25 @@ async function loadMissing() {
   const body = $('missingBody');
   if (!state.scanId) {
     missingData = null;
+    body.classList.remove('fx-chart-loading');
     body.innerHTML = '<div class="muted">Run a scan to reconcile this disk.</div>';
     $('missingInfo').textContent = '';
     return;
   }
   if (missingLoading) return;
   missingLoading = true;
-  body.innerHTML = '<div class="muted">Reconciling…</div>';
+  // The same pending language as every other card: skeleton rows on a first
+  // load, the loading veil over a standing receipt on a refresh. Blanking a
+  // receipt the user is reading to say "wait" loses more than it says.
+  if (body.querySelector('.mg-receipt')) body.classList.add('fx-chart-loading');
+  else body.innerHTML = skeletonRows(3, 30, 'Reconciling this disk…');
   try {
     missingData = await api(`/api/missing-gigabytes?scanId=${encodeURIComponent(state.scanId)}`);
     renderMissing();
   } catch (e) {
     missingData = null;
     $('missingInfo').textContent = '';
+    body.classList.remove('fx-chart-loading');
     body.innerHTML = `<div class="muted">${escapeHtml(e.message)}</div>`;
   } finally {
     missingLoading = false;
@@ -19943,6 +20432,7 @@ function renderMissing() {
   const d = missingData;
   if (!d) return;
   const body = $('missingBody');
+  body.classList.remove('fx-chart-loading'); // every paint settles the veil
   const total = d.volume.totalBytes;
 
   $('missingInfo').textContent =
@@ -20114,6 +20604,7 @@ registerView({
     // it paints is not, and the registry exists to stop exactly that
     // accumulating across view switches.
     missingData = null;
+    $('missingBody').classList.remove('fx-chart-loading');
     $('missingBody').innerHTML = '<div class="muted">Run a scan to reconcile this disk.</div>';
     $('missingInfo').textContent = '';
   },
@@ -23604,20 +24095,29 @@ let cartGoalBytes = null;
    loadCartGoal reads the truth at boot and the Settings save keeps it live. */
 let humanScaleOn = true;
 
+/** ONE honesty policy for the live target: boot, every Settings paint (open
+    AND save) and the clear button all funnel the server's answer through
+    here, so the dock meter can never disagree with the dialog — a freshly
+    saved target must never leave the meter on the stale value (QA item 5). */
+function adoptCartGoal(bytes) {
+  cartGoalBytes = typeof bytes === 'number' && bytes > 0 ? bytes : null;
+  renderCartGoal(cartTotalBytes());
+  return cartGoalBytes;
+}
+
 /** Fetch the target once at boot. A failure leaves the meter hidden, not zero. */
 async function loadCartGoal() {
   try {
     const s = await api('/api/settings');
-    cartGoalBytes = typeof s.cleanupGoalBytes === 'number' && s.cleanupGoalBytes > 0 ? s.cleanupGoalBytes : null;
+    adoptCartGoal(s.cleanupGoalBytes);
     // §9.3 and §9.2 ride the same boot read: one settings fetch serves all
     // three, and a server that cannot answer starts no tour (better silent
     // than nagging over an error).
     humanScaleOn = s.humanScaleUnits !== false;
     tourMaybeStart(s.tourDone === true);
   } catch {
-    cartGoalBytes = null;
+    adoptCartGoal(null);
   }
-  renderCartGoal(cartTotalBytes());
 }
 
 /**
@@ -23636,7 +24136,11 @@ function renderCartGoal(staged) {
   const pct = Math.min(100, (staged / cartGoalBytes) * 100);
   const met = staged >= cartGoalBytes;
   host.classList.toggle('met', met);
-  fxGoalPulseSync(met); // FX: one pulse on the crossing — this render funnel owns `met`
+  // FX: one pulse on the crossing — this render funnel owns `met`. Without a
+  // scan the staged total is 0 only because cartNode() cannot resolve a size
+  // yet, so it says "unknown" rather than seeding the one-shot at "below": a
+  // boot restore of an already-met cart is not a crossing the user caused.
+  fxGoalPulseSync(state.scanId ? met : null);
   $('cartGoalFill').style.width = pct.toFixed(1) + '%';
   $('cartGoalLine').innerHTML = met
     // Plainly, once. The extra is stated rather than celebrated — it is a fact
@@ -24972,7 +25476,7 @@ function renderSecurity() {
     <div class="sec-item sev-${escapeHtml(f.severity)}">
       <span class="sec-sev">${escapeHtml(SEVERITY_LABEL[f.severity] || f.severity)}</span>
       <div class="meta">
-        <div class="nm">${escapeHtml(f.name)} <span class="sec-kind">${escapeHtml(f.label)}</span></div>
+        <div class="nm"><span class="sec-name">${escapeHtml(f.name)}</span><span class="sec-kind">${escapeHtml(f.label)}</span></div>
         <div class="pth">${escapeHtml(f.path)}</div>
         <div class="sec-why">${escapeHtml(f.reason)} ${escapeHtml(f.why)}</div>
       </div>
@@ -25406,6 +25910,10 @@ async function loadAppsScatter() {
   $('appsScatter').hidden = false;
   const spec = {
     points, height: 200, yGradient: true,
+    // ~300 apps span five decades in both size and count; linear axes pile
+    // them into one blob at the origin. Ticks: count decades and byte
+    // decades (base 1024, so every label formats exactly: KB → MB → GB).
+    logX: 10, logY: 1024,
     formatX: (v) => `${formatCount(Math.round(v))} files`,
     formatY: formatBytes,
   };
@@ -26201,6 +26709,9 @@ async function loadTrendData() {
     chartWrap.classList.remove('fx-chart-loading');
   }
   state.trends.snapshots = snapshots;
+  // A new root's forecast is unknown until the server answers, and unknown
+  // never projects — the dashed tail is a claim, not a default.
+  state.trends.forecastOk = false;
   drawTrendNet();
   $('trendInfo').textContent = snapshots.length
     ? `latest: ${formatBytes(snapshots[snapshots.length - 1].totalSize)} · ${formatCount(snapshots[snapshots.length - 1].fileCount)} files`
@@ -26217,7 +26728,12 @@ async function labelTrendForecast(path, seq) {
   let f;
   try { f = await api('/api/forecast?path=' + encodeURIComponent(path)); }
   catch { return; }
-  if (seq !== trendInfoSeq || state.trends.path !== path || f.status !== 'ok' || !f.fullInDays) return;
+  if (seq !== trendInfoSeq || state.trends.path !== path) return; // a newer load owns the view
+  // The gate for the chart's dashed tail is this same status — one policy,
+  // one reader — so the answer repaints the chart before anything else.
+  const ok = f.status === 'ok';
+  if (state.trends.forecastOk !== ok) { state.trends.forecastOk = ok; drawTrendChart(); }
+  if (!ok || !f.fullInDays) return;
   const days = Math.max(1, Math.round(f.fullInDays));
   if (days >= 365) return; // a year+ out is noise, same bar as the dashboard banner
   $('trendInfo').textContent +=
@@ -26228,34 +26744,54 @@ $('trendRoot').addEventListener('change', (e) => {
   loadTrendData().catch(err => toast(err.message, 'error'));
 });
 
+/**
+ * The dashed forecast tail, or null.
+ *
+ * `allowed` is the app's ONE honesty gate — the server's own forecast status.
+ * The dashboard refuses to name a disk-full date until that gate says 'ok',
+ * and this chart obeys the same answer rather than quietly drawing a fit the
+ * rest of the app is declining to stand behind.
+ *
+ * The horizon is bounded by what was actually observed as well as by an
+ * absolute month. A flat 30-day tail off an hour of history put the real
+ * series inside 0.05% of the plot and read as an empty chart; half the
+ * observed span keeps real data on at least two thirds of the domain at
+ * every history length.
+ */
+function trendProjection(pts, allowed) {
+  const MAX_MS = 30 * 864e5;      // a month is as far as this fit is worth reading
+  const SPAN_FRACTION = 0.5;      // → real data holds ≥ 2/3 of the x-domain
+  if (!allowed || pts.length < 3) return null;
+  const last = pts[pts.length - 1];
+  const span = last.t - pts[0].t;
+  if (!(span > 0)) return null;   // no elapsed time, no rate to extend
+  const horizon = last.t + Math.min(MAX_MS, span * SPAN_FRACTION);
+  const fit = FxCharts.math.linreg(pts.map(p => ({ x: p.t, y: p.v })));
+  return { name: 'Forecast', points: [
+    { t: last.t, v: last.v },
+    { t: horizon, v: Math.max(0, fit.project(horizon)) },
+  ] };
+}
+
 /* FxCharts.area owns the surface: dotted grid, formatBytes ticks, gradient
    fill, monotone stroke, crosshair+tooltip, resize (its own observer — no
    window resize listener needed) and the REDUCED-checked draw-in. This
-   function only shapes the spec: the snapshot series, plus a dashed 30-day
-   projection once three points make a fit worth drawing at all. */
+   function only shapes the spec: the snapshot series, plus the gated,
+   history-bounded projection above. */
 let trendHandle = null;
 function drawTrendChart() {
   const snaps = state.trends.snapshots;
   const pts = snaps.map(s => ({ t: s.takenAt, v: s.totalSize }));
-  let projection = null;
-  if (pts.length >= 3) {
-    const fit = FxCharts.math.linreg(pts.map(p => ({ x: p.t, y: p.v })));
-    const horizon = pts[pts.length - 1].t + 30 * 864e5;
-    projection = { name: 'Forecast', points: [
-      { t: pts[pts.length - 1].t, v: pts[pts.length - 1].v },
-      { t: horizon, v: Math.max(0, fit.project(horizon)) },
-    ] };
-  }
+  const projection = trendProjection(pts, state.trends.forecastOk === true);
   // The budget the dashboard already fetched for this root, as the bklit
   // reference band: over-budget territory is tinted from the ceiling up, so
   // a line entering the band is a line crossing its budget. No budget (or
   // no scan yet) means no band — never a fabricated ceiling.
   const budget = budgetFor(state.trends.path);
   // The edge dissolve suits a series whose ink spans the plot. A young
-  // history squeezed against the 30-day projection tail would dissolve
-  // entirely inside the left fade zone — real data must never lose to a
-  // decoration — so the fade waits until the history holds its own fifth
-  // of the domain.
+  // history squeezed against the projection tail would dissolve entirely
+  // inside the left fade zone — real data must never lose to a decoration —
+  // so the fade waits until the history holds its own fifth of the domain.
   const span = pts.length > 1 ? pts[pts.length - 1].t - pts[0].t : 0;
   const domain = projection ? projection.points[1].t - pts[0].t : span;
   const spec = {
@@ -28246,14 +28782,13 @@ $('settingsBtn').addEventListener('click', async () => {
    no-target state and is written back as `null`. */
 const CLEANUP_GOAL_UNITS = [1099511627776, 1073741824, 1048576];
 function renderCleanupGoalFields() {
-  const bytes = typeof settingsData.cleanupGoalBytes === 'number' && settingsData.cleanupGoalBytes > 0
-    ? settingsData.cleanupGoalBytes : null;
-  cartGoalBytes = bytes; // the dock and the dialog must never disagree
-  if (bytes === null) { $('cleanupGoalValue').value = ''; $('cleanupGoalUnit').value = '1073741824'; renderCartGoal(cartTotalBytes()); return; }
+  // adoptCartGoal is boot's own policy: the dock and the dialog can never
+  // disagree, whether this paint follows an open or a save.
+  const bytes = adoptCartGoal(settingsData.cleanupGoalBytes);
+  if (bytes === null) { $('cleanupGoalValue').value = ''; $('cleanupGoalUnit').value = '1073741824'; return; }
   const unit = CLEANUP_GOAL_UNITS.find((u) => bytes % u === 0) ?? 1073741824;
   $('cleanupGoalUnit').value = String(unit);
   $('cleanupGoalValue').value = String(Math.round((bytes / unit) * 100) / 100);
-  renderCartGoal(cartTotalBytes());
 }
 
 /** The target as bytes, or null when the box is empty or nonsense. */
@@ -28265,8 +28800,7 @@ function collectCleanupGoal() {
 
 $('cleanupGoalClear').addEventListener('click', () => {
   $('cleanupGoalValue').value = '';
-  cartGoalBytes = null;
-  renderCartGoal(cartTotalBytes());
+  adoptCartGoal(null);
   $('settingsStatus').textContent = 'Target cleared — press Save to keep it';
 });
 
@@ -28628,7 +29162,7 @@ function closeModal(id) {
   // FX: the job ring dies with the sheet, whichever surface closed it — a
   // scrim dismissal mid-job leaves the job running headless, and a beam on
   // a hidden modal would be a claim nobody can see.
-  if (id === 'offloadModal') FxBeam.attach($('offloadModal').querySelector('.modal'), { type: 'md', active: false });
+  if (id === 'offloadModal') FxBeam.attach($('offloadBeamStrip'), { type: 'md', active: false });
   // FX: a keyboard close moves no pointer — the hover ring must not outlive
   // the card it sat on.
   fxHoverSync(null);
@@ -29118,8 +29652,26 @@ window.TreeMap = {
     }
     document.querySelectorAll(SELECTOR).forEach(attach);
     new MutationObserver(muts => {
+      /* Attribute records are the hot path: this observer watches `style` on
+         the whole body subtree, and the app writes inline styles per frame
+         (the beam pulse driver alone emits 17 records per driven instance
+         per frame, each landing here). Two things keep that cheap. An
+         element with no children that holds no lens can schedule nothing —
+         scheduleUnbuilt would look at __lg and then search an empty subtree
+         — so it is skipped outright. And one batch is one task's worth of
+         records, so a target already looked at in this batch says nothing
+         new. */
+      let seen = null;
       for (const m of muts) {
-        if (m.type === 'attributes') { scheduleUnbuilt(m.target); continue; }
+        if (m.type === 'attributes') {
+          const t = m.target;
+          if (!t.__lg && !t.firstElementChild) continue;
+          if (!seen) seen = new Set();
+          if (seen.has(t)) continue;
+          seen.add(t);
+          scheduleUnbuilt(t);
+          continue;
+        }
         for (const n of m.addedNodes) {
           if (n.nodeType !== 1) continue;
           if (n.matches && n.matches(SELECTOR)) attach(n);
@@ -29137,6 +29689,7 @@ window.TreeMap = {
     console.warn('Liquid Glass engine disabled:', err);
   }
 })();
+/* ═══ end Liquid Glass engine ═══ */
 /* FX: Liquid Goo — liquid thumb on every segmented control, trail on the scrubber. */
 for (const seg of document.querySelectorAll('.seg[role="tablist"]')) FxGoo.segThumb(seg);
 /* The time-lapse scrubber runs a slightly bouncier MoveTuning profile than
