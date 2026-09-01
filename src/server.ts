@@ -37,6 +37,7 @@ import { stopAllWatchers } from './services/watcher';
 import { cancelAllOffloadJobs } from './services/offload';
 import { cancelAllCapsuleJobs, startCapsuleMaintenance, stopCapsuleMaintenance } from './services/timeCapsule';
 import { startScheduler, stopScheduler } from './services/scheduler';
+import { cancelAllEncodeJobs, drainEncodeClients } from './services/compressionAdvisor';
 
 /**
  * Builds the Express app. Kept separate from the listen() call so the same
@@ -54,6 +55,29 @@ export function createApp(publicDir: string): express.Express {
   app.disable('x-powered-by');
 
   app.use(express.json({ limit: '1mb' }));
+  // Restore the express-4 body invariant: `req.body` is always an object.
+  //
+  // express@5 ships body-parser@2, which changed this. Where express 4 left
+  // `req.body = {}` for a request the parser skipped, body-parser 2 leaves it
+  // `undefined` — and it skips every request whose Content-Type isn't JSON:
+  // no header at all (`curl -X POST /api/trash/empty`), text/plain, a form
+  // post, a bare probe. Every handler here was written against the old
+  // invariant and destructures the body on its first line
+  // (`const { confirm } = req.body as ...`), so `undefined` throws a
+  // TypeError the error handler can't recognise and the caller gets a 500
+  // INTERNAL where the API documents a 400 with a specific code.
+  //
+  // This is NOT dead code and must not be deleted: without it the validation
+  // branch in every body-taking route is unreachable for exactly the clients
+  // most likely to get the request wrong. It only ever fills in a body the
+  // parser declined to produce — a parsed body is left untouched — and it
+  // allocates a fresh object per request so nothing a handler writes back
+  // into `req.body` (pathGuard rewrites `body.path` in place) can leak into
+  // the next caller's request.
+  app.use((req, _res, next) => {
+    if (req.body === undefined) req.body = {};
+    next();
+  });
   // Both are no-ops until their env vars are set (TREEMAP_ALLOWED_ORIGINS /
   // TREEMAP_TOKEN) — with them unset the app behaves exactly as before.
   app.use('/api', corsMiddleware);
@@ -125,6 +149,7 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
     cancelAllOffloadJobs(); // in-flight copies roll back cooperatively
     cancelAllIndexJobs(); // half-built indexes roll back; startup discards them
     cancelAllCapsuleJobs(); // in-flight restores roll back what they wrote
+    cancelAllEncodeJobs(); // stop ffmpeg re-encodes; a half-written output is discarded
     stopCapsuleMaintenance(); // stop the retention sweep
     stopOAuth(); // close any pending sign-in listener
     void fleetRuntime().stop(); // close the LAN listener and stop advertising
@@ -133,6 +158,7 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
     drainOffloadClients(); // end offload progress streams
     drainIndexClients(); // end index-build progress streams
     drainCapsuleClients(); // end Time Capsule restore streams
+    drainEncodeClients(); // end compression progress streams
     // Closes the index database and detaches its live watchers. Roots left
     // 'ready' are marked stale on next open, since nothing was watching them
     // while the app was down.

@@ -75,6 +75,17 @@ export async function findDeleted(targetPath: string): Promise<SnapshotSearchRes
   const provider = platform();
 
   const volume = volumeFor(original);
+
+  // Present on disk right now? Then this is not a recovery case, and saying so
+  // is more useful than anything else this function can answer — so it is
+  // answered BEFORE the snapshot list rather than after it. Computing it inside
+  // the "we found snapshots" path left `stillPresent` undefined on every
+  // machine with snapshots turned off, and the panel then answered someone
+  // looking at a file that is right there with "there is nothing older to
+  // recover from": a confusing non-answer, produced by an unrelated fact about
+  // their backups, in place of the one sentence that settles the question.
+  const live = await fsp.lstat(original).then(() => true).catch(() => false);
+
   let listFailed: string | null = null;
   const snapshots = await provider.listSnapshots(volume).catch((err: unknown) => {
     listFailed = err instanceof Error ? err.message : String(err);
@@ -92,15 +103,12 @@ export async function findDeleted(targetPath: string): Promise<SnapshotSearchRes
       // it must not be printed on the strength of a `tmutil` timeout.
       confirmed: listFailed === null && provider.canInspectSnapshotsUnprivileged(),
       capability,
+      stillPresent: live,
       reason: listFailed !== null
         ? `The snapshots on ${volume} could not be listed (${String(listFailed)}). This does not mean there is nothing to recover — try again.`
         : capability.reason ?? `No filesystem snapshots were found on ${volume}, so there is nothing older to recover from.`,
     };
   }
-
-  // Present on disk right now? Then this is not a recovery case, and saying so
-  // is more useful than listing snapshots the user does not need.
-  const live = await fsp.lstat(original).then(() => true).catch(() => false);
 
   const canInspect = provider.canInspectSnapshotsUnprivileged();
   const candidates: SnapshotCandidate[] = [];

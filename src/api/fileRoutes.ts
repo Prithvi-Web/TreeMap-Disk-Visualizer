@@ -234,6 +234,26 @@ fileRouter.get('/files/preview', guardQueryPath('path'), async (req: Request, re
     res.setHeader('X-Content-Type-Options', 'nosniff');
     const stream = fs.createReadStream(target);
     stream.on('error', () => { if (!res.headersSent) res.status(500).end(); else res.end(); });
+    // Destroy the source when the response is over, whichever way it ended.
+    //
+    // `Readable.pipe` unpipes on the destination's 'close'/'error' but never
+    // destroys the source, so an aborted preview leaves this ReadStream paused
+    // mid-file with its descriptor still open — and nothing ever collects it.
+    // That is the common case, not the rare one: the near-duplicate strip asks
+    // for one image per visible row (which is why the preview lane allows a 300
+    // burst / 150 per second at all), and scrolling cancels nearly every one of
+    // those requests as its row leaves the viewport. Hundreds of stranded
+    // descriptors later the process hits EMFILE and the whole server dies, not
+    // just previews.
+    //
+    // `res` always emits 'close', on a clean finish as well as on an abort. On
+    // a clean finish the stream has already ended and closed itself, so this is
+    // a no-op there; it changes nothing about the bytes, headers or status of a
+    // completed response. Destroying rather than piping through
+    // `stream.pipeline` is deliberate: pipeline destroys `res` on a source
+    // error, which would replace the 500 the handler above sends with a bare
+    // socket hang-up.
+    res.on('close', () => { stream.destroy(); });
     stream.pipe(res);
     return;
   }

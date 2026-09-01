@@ -222,9 +222,16 @@ test('a file that is still on disk is reported as such, not as recoverable', asy
     const live = path.join(dir, 'here.txt');
     await fsp.writeFile(live, 'still here\n');
     const result = await findDeleted(live);
-    if (result.candidates.length > 0) {
-      assert.equal(result.stillPresent, true, 'the panel must not offer to recover a file that exists');
-    }
+    // Unconditional on purpose. `stillPresent` is an `lstat` on the path the
+    // caller asked about; whether this machine happens to keep snapshots has
+    // nothing to do with whether the file is there. Gating the assertion on
+    // `candidates.length > 0` meant the test asserted NOTHING on any machine
+    // with snapshots turned off — including this one — and it hid a real
+    // defect while it did: the no-snapshots early return in `findDeleted`
+    // omitted the field entirely, so the panel answered "there is nothing to
+    // recover from" about a file sitting right there on disk instead of
+    // "still on this disk — nothing to recover".
+    assert.equal(result.stillPresent, true, 'the panel must not offer to recover a file that exists');
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
   }

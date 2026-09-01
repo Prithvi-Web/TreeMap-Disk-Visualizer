@@ -147,8 +147,19 @@ export interface CostEstimate {
   providers: ProviderEstimate[];
 }
 
+/**
+ * True only for a currency the shipped rate table actually owns.
+ *
+ * This must be an OWN-property test, never `in`. `in` walks the prototype
+ * chain, so 'constructor', 'toString', 'valueOf', 'hasOwnProperty' and
+ * '__proto__' all answer true for a plain object literal — and this guard is
+ * the only thing between `?currency=` on /api/cost/estimate and the two tables
+ * below. With `in`, `?currency=constructor` was approved, indexed RATE_FROM_USD
+ * to the Object constructor *function*, and served 200 with a currency whose
+ * symbol and rate vanished from the JSON entirely (stringify drops functions).
+ */
 export function isCurrency(value: unknown): value is CostCurrency {
-  return typeof value === 'string' && value in RATE_FROM_USD;
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(RATE_FROM_USD, value);
 }
 
 /**
@@ -160,6 +171,14 @@ export function isCurrency(value: unknown): value is CostCurrency {
  * 340 GB" is not.
  */
 export function estimateCost(bytes: number, freeableBytes: number, currency: CostCurrency = 'USD'): CostEstimate {
+  // Defence in depth behind `isCurrency`. The parameter is typed, but the value
+  // arrives from a query string, and a type is not a runtime check: any caller
+  // that forgets the guard would otherwise index the two tables below with an
+  // arbitrary string and hand back a function (from Object.prototype) or
+  // undefined as this answer's symbol and rate. Falling back to the documented
+  // USD default keeps the answer internally consistent — the currency named in
+  // the response is always the one its symbol and rate belong to.
+  const safe: CostCurrency = isCurrency(currency) ? currency : 'USD';
   const after = Math.max(0, bytes - Math.max(0, freeableBytes));
   const providers: ProviderEstimate[] = PROVIDER_PRICING.map((provider) => {
     const current = fitTier(provider, bytes);
@@ -182,10 +201,10 @@ export function estimateCost(bytes: number, freeableBytes: number, currency: Cos
 
   return {
     asOf: PRICING_AS_OF,
-    currency,
-    symbol: SYMBOL[currency],
-    approximate: currency !== 'USD',
-    rateFromUsd: RATE_FROM_USD[currency],
+    currency: safe,
+    symbol: SYMBOL[safe],
+    approximate: safe !== 'USD',
+    rateFromUsd: RATE_FROM_USD[safe],
     providers,
   };
 }

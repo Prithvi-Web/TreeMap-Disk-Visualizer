@@ -1,12 +1,14 @@
-import { execFile, spawn } from 'child_process';
+import { ChildProcess, execFile, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
+import type { Response } from 'express';
 import { ScanStore, TreeSource, asStore } from './scanStore';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { capabilityState } from '../platform/capabilities';
 import { getCapabilities } from '../platform/capabilities';
 import { moveToTrash } from './cleaner';
+import { sseSend } from '../utils/sse';
 
 const exec = promisify(execFile);
 
@@ -86,6 +88,15 @@ export interface MediaTools {
     encoder: string,
     durationSeconds: number | null,
     onProgress: (fraction: number) => void,
+    /**
+     * Hands the caller the live encoder process the moment it exists, so it can
+     * be killed early — the same seam `gduScanner.runGdu` uses for its shards.
+     * Without it an encode is only interruptible BETWEEN files, and a quit
+     * mid-file would orphan an ffmpeg that keeps rewriting the user's video
+     * with nothing left to reap it. Optional, because a fake in a test has no
+     * process to hand over.
+     */
+    onSpawn?: (child: ChildProcess) => void,
   ): Promise<void>;
 }
 
@@ -285,7 +296,7 @@ const realTools: MediaTools = {
     }
   },
 
-  encode(input, output, encoder, durationSeconds, onProgress): Promise<void> {
+  encode(input, output, encoder, durationSeconds, onProgress, onSpawn): Promise<void> {
     return new Promise((resolve, reject) => {
       // `-map_metadata 0` carries creation dates and EXIF-equivalent tags over;
       // the file's own mtime is restored separately by the caller.
@@ -298,6 +309,7 @@ const realTools: MediaTools = {
         output,
       ];
       const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      onSpawn?.(child);
       let stderr = '';
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk: string) => {
@@ -359,6 +371,8 @@ export async function encodeOne(
   encoder: string,
   seq: number,
   onProgress: (fraction: number) => void,
+  /** Passed straight through to the encoder seam so a caller can kill it. */
+  onSpawn?: (child: ChildProcess) => void,
 ): Promise<EncodeOutcome> {
   const media = mediaTools();
   const original = await fs.promises.stat(file);
@@ -374,7 +388,7 @@ export async function encodeOne(
   };
 
   try {
-    await media.encode(file, temp, encoder, before?.durationSeconds ?? null, onProgress);
+    await media.encode(file, temp, encoder, before?.durationSeconds ?? null, onProgress, onSpawn);
   } catch (err) {
     await discard();
     return { ...base, error: err instanceof Error ? err.message : String(err) };
@@ -441,6 +455,13 @@ export interface EncodeJob {
 }
 
 const jobs = new Map<string, EncodeJob>();
+/**
+ * The ffmpeg a running job currently owns, by jobId — kept beside the job
+ * rather than on it, because `GET /api/compression/:jobId/result` serializes
+ * the job straight to the client and a live subprocess is not job state a
+ * browser should ever be handed.
+ */
+const activeChildren = new Map<string, ChildProcess>();
 /** Jobs older than this are forgotten, like scans. */
 const JOB_TTL_MS = 60 * 60_000;
 
@@ -458,9 +479,55 @@ export function cancelEncodeJob(jobId: string): boolean {
   return true;
 }
 
+/**
+ * Kill the ffmpeg a job has in flight, if it has one.
+ *
+ * The kill surfaces as a rejected `media.encode`, which `encodeOne` already
+ * treats as a failed encode: it discards the temp file it was writing and
+ * leaves the original exactly where it was. So this adds no new failure path
+ * — it just stops the wait. Returns false when there was nothing to kill,
+ * which is the ordinary case (a job between files, or an already-finished one).
+ */
+export function abortEncodeChild(jobId: string): boolean {
+  const child = activeChildren.get(jobId);
+  if (!child) return false;
+  activeChildren.delete(jobId);
+  // SIGKILL, like the gdu shards: SIGTERM asks ffmpeg to finish and flush a
+  // trailer, and shutdown has no time left to wait for that.
+  child.kill('SIGKILL');
+  return true;
+}
+
+/**
+ * Cancel every running encode. Called on SIGTERM/SIGINT and on Electron quit,
+ * alongside cancelAllScans and the rest.
+ *
+ * Shutdown differs from the user pressing Cancel, which is why the kill lives
+ * here and not in `cancelEncodeJob`: a user who cancels is still sitting in
+ * front of a running app, so the file already encoding is allowed to finish
+ * its verify/promote cycle and actually save them the bytes. On shutdown there
+ * is nobody left to finish it for — the process is going away, and an ffmpeg
+ * that outlives it would keep rewriting the user's video unsupervised while
+ * the event loop refuses to drain.
+ *
+ * Returns how many jobs were running, for the shutdown log.
+ */
+export function cancelAllEncodeJobs(): number {
+  let cancelled = 0;
+  for (const jobId of [...jobs.keys()]) {
+    // One cancellation path, not two: cancelEncodeJob owns what "cancelled"
+    // means and skips anything that is not running.
+    if (!cancelEncodeJob(jobId)) continue;
+    cancelled++;
+    abortEncodeChild(jobId);
+  }
+  return cancelled;
+}
+
 /** Test-only: suites share a process and a leaked job would outlive its files. */
 export function resetEncodeJobs(): void {
   jobs.clear();
+  activeChildren.clear();
 }
 
 function sweepJobs(): void {
@@ -485,7 +552,18 @@ export function startEncodeJob(jobId: string, paths: string[], encoder: string):
         if (job.cancelled) break;
         job.currentPath = file;
         job.currentFraction = 0;
-        const outcome = await encodeOne(file, encoder, seq++, (f) => { job.currentFraction = f; });
+        let outcome: EncodeOutcome;
+        try {
+          outcome = await encodeOne(
+            file, encoder, seq++,
+            (f) => { job.currentFraction = f; },
+            // Registered for exactly as long as the process exists, so a
+            // shutdown between files never signals a stale pid.
+            (child) => { activeChildren.set(jobId, child); },
+          );
+        } finally {
+          activeChildren.delete(jobId);
+        }
         job.results.push(outcome);
         if (outcome.ok) job.savedBytes += outcome.savedBytes;
         job.done++;
@@ -502,4 +580,64 @@ export function startEncodeJob(jobId: string, paths: string[], encoder: string):
   })();
 
   return job;
+}
+
+/* ────────────────────────── progress SSE clients ────────────────────────── */
+
+/**
+ * The live `/api/compression/:jobId/progress` streams, so shutdown can drain
+ * them the way it already drains scan, watch, offload, index and capsule
+ * streams. The registry lives here rather than in insightRoutes because that
+ * router also serves a dozen unrelated endpoints, and because the encode job
+ * it reports on lives here.
+ *
+ * The poll timer is held with the response deliberately: an SSE endpoint whose
+ * interval is never cleared keeps the event loop alive after `server.close()`,
+ * which is the difference between a process that exits on SIGTERM and one the
+ * user has to kill.
+ */
+interface EncodeSseClient {
+  res: Response;
+  timer: NodeJS.Timeout;
+}
+const sseClients = new Set<EncodeSseClient>();
+
+function closeEncodeClient(client: EncodeSseClient): void {
+  // Idempotent: the route hands its release to `req.on('close')`, which fires
+  // the moment a drain ends the response — so the second call is the norm,
+  // not an error, and must not end an already-ended stream again.
+  if (!sseClients.delete(client)) return;
+  clearInterval(client.timer);
+  try {
+    client.res.end();
+  } catch {
+    /* already gone */
+  }
+}
+
+/**
+ * Register one progress stream and its poll timer. Returns the release to call
+ * when the stream ends on its own — the client disconnecting, or the job
+ * finishing — so shutdown never finds a stale entry.
+ */
+export function registerEncodeClient(res: Response, timer: NodeJS.Timeout): () => void {
+  const client: EncodeSseClient = { res, timer };
+  sseClients.add(client);
+  return () => closeEncodeClient(client);
+}
+
+/** Called on SIGTERM by the graceful-shutdown path, like every other stream. */
+export function drainEncodeClients(): void {
+  for (const client of [...sseClients]) {
+    try {
+      sseSend(client.res, { type: 'shutdown' });
+    } catch {
+      /* socket already dead — the rest still have to be released */
+    }
+    closeEncodeClient(client);
+  }
+}
+
+export function activeEncodeSseCount(): number {
+  return sseClients.size;
 }

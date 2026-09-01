@@ -152,6 +152,29 @@ settingsRouter.get('/cleanup/cloud-safe', (req: Request, res: Response) => {
 // the user's own explicit filters, typed in by hand for this one look — not
 // the engine volunteering deletions. The note pauses what the machine
 // suggests, never what the person asks to see.
+
+/**
+ * A threshold rule's value, or undefined when the parameter is not a threshold.
+ *
+ * `Math.max(0, Number(x) || 0)` could not express "this is not a rule": junk, an
+ * empty string, a negative and an explicit 0 all collapsed to 0 — a number, so
+ * the rule was installed, so the NO_RULES guard below saw an enabled rule and
+ * waved the request through. One typo in the age box therefore offered up every
+ * file in the scan for deletion, which is precisely the outcome that guard
+ * exists to prevent.
+ *
+ * Both parameters are floors — "at least this old", "at least this big" — so a
+ * zero or negative floor excludes nothing and is indistinguishable from omitting
+ * the rule; Infinity (`1e999`) is not a threshold either. Only a finite positive
+ * number is a rule. A repeated parameter arrives as an array and is likewise not
+ * a threshold, so it is rejected by type rather than coerced through NaN.
+ */
+function positiveRule(raw: unknown): number | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 settingsRouter.get('/cleanup/rules', (req: Request, res: Response) => {
   const scan = requireScan(req, req.query.scanId);
   if (scan.status === 'running') {
@@ -161,8 +184,14 @@ settingsRouter.get('/cleanup/rules', (req: Request, res: Response) => {
   if (!scan.store && !scan.root) throw new AppError(500, 'SCAN_FAILED', scan.error ?? 'Scan failed');
 
   const rules: CustomRules = {};
-  if (req.query.maxAgeMs !== undefined) rules.maxAgeMs = Math.max(0, Number(req.query.maxAgeMs) || 0);
-  if (req.query.minBytes !== undefined) rules.minBytes = Math.max(0, Number(req.query.minBytes) || 0);
+  // Only a value that is genuinely a threshold becomes a rule — see positiveRule.
+  const maxAgeMs = positiveRule(req.query.maxAgeMs);
+  if (maxAgeMs !== undefined) rules.maxAgeMs = maxAgeMs;
+  const minBytes = positiveRule(req.query.minBytes);
+  if (minBytes !== undefined) rules.minBytes = minBytes;
+  // `exts` needs no equivalent guard: the empty entries are filtered out here and
+  // the NO_RULES check below tests `.length`, so "exts=,,," already arrives as no
+  // rule rather than as a rule matching nothing.
   if (typeof req.query.exts === 'string' && req.query.exts.trim()) {
     rules.exts = req.query.exts
       .split(',')
@@ -176,12 +205,18 @@ settingsRouter.get('/cleanup/rules', (req: Request, res: Response) => {
     throw new AppError(400, 'NO_RULES', 'Enable at least one rule');
   }
 
+  // `limit` has no equivalent hole: clampInt answers unparseable input with the
+  // default and pins the result into [1, 2000], so it can never arrive as 0.
   const limit = clampInt(req.query.limit, 500, 1, 2000);
   res.json({ scanId: scan.scanId, ...matchCustomRules(storeOf(scan), rules, limit, Date.now()) });
 });
 
 /** GET /api/notifications?since=<epoch ms> — scheduler growth alerts. */
 settingsRouter.get('/notifications', (req: Request, res: Response) => {
+  // `|| 0` is honest here, unlike the rule thresholds above: 0 is this
+  // parameter's own default ("everything the scheduler has recorded"), so junk
+  // degrades to exactly the answer an absent `since` gives, and there is no
+  // guard behind it for a bogus value to slip past.
   const since = Number(req.query.since) || 0;
   res.json({ now: Date.now(), notifications: listNotifications(since) });
 });
