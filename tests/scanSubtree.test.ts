@@ -230,6 +230,8 @@ test('the subtree endpoint rejects unknown and out-of-scope paths', async () => 
     const missing = await get(port, `/api/scan/${scan.scanId}/subtree?path=${encodeURIComponent(R('nope'))}`);
     assert.equal(missing.status, 404);
 
+    // windows-ok: a path the route must REFUSE, so it is meant to be foreign to
+    // the scan root. On Windows it resolves to D:\etc, which is equally outside.
     const outside = await get(port, `/api/scan/${scan.scanId}/subtree?path=${encodeURIComponent('/etc')}`);
     assert.equal(outside.status, 403, 'a path outside the scan root must be refused');
   } finally {
