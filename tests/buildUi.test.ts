@@ -70,6 +70,44 @@ test('no part boundary cuts through an FX banner', () => {
   }
 });
 
+/**
+ * The image has to be able to run the build it invokes.
+ *
+ * The Docker build stage compiles from a partial checkout, and it copied only
+ * package.json, tsconfig.json and src/ — so `RUN npm run build` died on a
+ * missing module, and had done since before the stitch step existed
+ * (`copy-assets.js` was already unreachable). Derived from the build script
+ * rather than written down, so a fourth step cannot be added without either
+ * copying what it needs or failing here.
+ */
+test('the Docker build stage copies everything npm run build reaches for', () => {
+  const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+  const dockerfile = readFileSync(path.join(repoRoot, 'Dockerfile'), 'utf8');
+  const buildStage = dockerfile.slice(0, dockerfile.indexOf('# ---- runtime'));
+
+  const needed = new Set<string>();
+  for (const m of String(pkg.scripts.build).matchAll(/node\s+([\w.-]+)\//g)) needed.add(m[1]);
+  assert.ok(needed.size > 0, 'the build script runs at least one local script');
+
+  for (const dir of needed) {
+    assert.match(
+      buildStage,
+      new RegExp(`^COPY ${dir}\\b`, 'm'),
+      `npm run build runs a script from ${dir}/, so the build stage must COPY it`,
+    );
+  }
+});
+
+test('the image takes the generated page from the stage that built it', () => {
+  const dockerfile = readFileSync(path.join(repoRoot, 'Dockerfile'), 'utf8');
+  const runtime = dockerfile.slice(dockerfile.indexOf('# ---- runtime'));
+  assert.match(
+    runtime,
+    /^COPY --from=build \/app\/public \.\/public$/m,
+    'public/index.html is generated — copying it from the host could ship a stale page',
+  );
+});
+
 /* The guard a person actually relies on: running the real script must AGREE
    that the tree is consistent. Asserting on the script's source text instead
    would pass on a comment and fail on a reworded one. */

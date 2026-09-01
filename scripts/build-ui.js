@@ -75,5 +75,9 @@ if (process.argv.includes('--check')) {
   process.exit(1);
 }
 
+/* The Docker build stage compiles from a bare checkout of src/ + scripts/,
+   where public/ does not exist yet — the page it is about to write IS that
+   directory's only content. */
+fs.mkdirSync(path.dirname(outPath), { recursive: true });
 fs.writeFileSync(outPath, built);
 console.log(`build-ui: ${manifest.parts.length} parts -> ${manifest.output}`);

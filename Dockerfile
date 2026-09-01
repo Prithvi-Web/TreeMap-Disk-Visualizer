@@ -17,6 +17,10 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json ./
+# `npm run build` is three steps and every one of them lives here: build-ui
+# stitches src/ui into public/index.html, tsc compiles, copy-assets mirrors the
+# runtime rule packs. Without this the image build dies on a missing module.
+COPY scripts ./scripts
 COPY src ./src
 RUN npm run build
 
@@ -31,7 +35,10 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
-COPY public ./public
+# From the build stage, not the host: public/index.html is generated from
+# src/ui, so taking it from the stage that just built it is what keeps the
+# image honest — a stale artifact on the host can never ship.
+COPY --from=build /app/public ./public
 RUN mkdir -p /data && chown node:node /data
 USER node
 VOLUME /data
