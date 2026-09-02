@@ -717,6 +717,32 @@ const watchers = new Map<string, Unsubscribe>();
 /** Changes are applied in bursts: a build writes thousands of events at once. */
 const FLUSH_MS = 400;
 
+/**
+ * Is `p` the app's own state — the index database and its write-ahead log,
+ * settings, snapshots, thumbnails?
+ *
+ * On macOS the app-data directory lives under the user's home, and the home
+ * folder is the root most people scan. Without this the live index reacted
+ * to itself: every flush wrote the WAL, the watcher reported the WAL, the
+ * next flush applied that "change" and wrote the WAL again — for ever, at
+ * the flush cadence, each turn re-rolling the root. Measured on the owner's
+ * machine as 20–60% CPU in the main process with the window closed,
+ * eighteen minutes after the last scan. The files stay in the index at
+ * their build-time sizes; they are the one thing the index is allowed to be
+ * stale about, because it is the thing changing them.
+ *
+ * Case-folded off Linux: the directory on disk may be `treemap` (Electron's
+ * userData, created first) while `appDataDir()` says `TreeMap`, and on a
+ * case-insensitive volume those are one directory.
+ */
+function isOwnState(p: string): boolean {
+  const own = appDataDir();
+  const fold = (s: string): string => (process.platform === 'linux' ? s : s.toLowerCase());
+  const prefix = fold(own.endsWith(path.sep) ? own : own + path.sep);
+  const target = fold(p);
+  return target === fold(own) || target.startsWith(prefix);
+}
+
 interface PendingChange {
   path: string;
   kind: ChangeEvent['kind'];
@@ -893,6 +919,7 @@ export function startWatcher(rootPath: string): boolean {
   if (watchers.has(rootPath)) return true;
   try {
     const unsubscribe = platform().subscribeToChanges(rootPath, (event) => {
+      if (isOwnState(event.path)) return; // the index must never chase its own writes
       enqueueChange(rootPath, { path: event.path, kind: event.kind, attempts: 0 });
     });
     // Set only once the watch is established. Setting it before
@@ -1004,18 +1031,30 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
 
   const touchedParents = new Set<string>();
   let applied = 0;
+  /* How many file and directory rows this burst adds or removes. The root's
+     counts are kept by delta, not by re-counting: a `SUM(is_dir)` over the
+     whole root ran once per flush, and on a million-row index that was the
+     idle CPU the owner measured — O(table) for a single log file growing. */
+  const delta = { files: 0, dirs: 0 };
 
   // Deleting a directory takes its whole subtree with it. v3 stores no
   // paths, so "the subtree" is the id closure of the node — which also makes
-  // the old LIKE-wildcard escaping hazard structurally impossible.
+  // the old LIKE-wildcard escaping hazard structurally impossible. RETURNING
+  // hands back what went, so the counts can move by exactly that much.
   const deleteSubtree = handle.prepare(
     `WITH RECURSIVE sub(id) AS (
        SELECT ?
        UNION ALL
        SELECT n.id FROM nodes n JOIN sub ON n.parent_id = sub.id
      )
-     DELETE FROM nodes WHERE id IN (SELECT id FROM sub)`,
+     DELETE FROM nodes WHERE id IN (SELECT id FROM sub) RETURNING is_dir`,
   );
+  const removeSubtree = (nodeId: number): void => {
+    for (const row of deleteSubtree.all(nodeId) as { is_dir: number }[]) {
+      if (row.is_dir) delta.dirs--;
+      else delta.files--;
+    }
+  };
   const insertNode = handle.prepare(
     `INSERT INTO nodes (root_id, parent_id, name, ext, is_dir, size, allocated, mtime, flags, ino, nlink)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1059,7 +1098,7 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
     if (stat === null) {
       const nodeId = findNodeIdByPath(root.id, rootPath, change.path);
       if (nodeId !== null) {
-        deleteSubtree.run(nodeId);
+        removeSubtree(nodeId);
         applied++;
       }
     } else {
@@ -1081,7 +1120,7 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
           // reverse) between events. Refreshing the row in place would leave
           // a file with children or a directory without them, so the old
           // subtree goes and a fresh row takes its place.
-          deleteSubtree.run(nodeId);
+          removeSubtree(nodeId);
           nodeId = null;
         }
       }
@@ -1102,7 +1141,7 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
       } else {
         let parentId: number | null = null;
         try {
-          parentId = await ensureParents(handle, root.id, rootPath, path.dirname(change.path));
+          parentId = await ensureParents(handle, root.id, rootPath, path.dirname(change.path), delta);
         } catch (err) {
           // Only the tagged case is retried. `ensureParents` also runs SQL and
           // recurses, so a database fault reaches here too and must propagate
@@ -1127,6 +1166,8 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
             stat.ino,
             stat.nlink,
           );
+          if (isDir) delta.dirs++;
+          else delta.files++;
           applied++;
         }
       }
@@ -1134,7 +1175,7 @@ export async function applyPendingChanges(rootPath: string): Promise<number> {
     touchedParents.add(path.dirname(change.path));
   }
 
-  if (applied > 0 && stillOpen()) resumAncestors(handle, root.id, rootPath, touchedParents);
+  if (applied > 0 && stillOpen()) resumAncestors(handle, root.id, rootPath, touchedParents, delta);
   return applied;
 }
 
@@ -1151,6 +1192,7 @@ async function ensureParents(
   rootId: number,
   rootPath: string,
   dirPath: string,
+  made: { dirs: number },
 ): Promise<number | null> {
   const known = findNodeIdByPath(rootId, rootPath, dirPath);
   if (known !== null) return known;
@@ -1159,7 +1201,7 @@ async function ensureParents(
   const prefix = rootPath.endsWith(path.sep) ? rootPath : rootPath + path.sep;
   if (!dirPath.startsWith(prefix)) return null;
 
-  const parentId = await ensureParents(handle, rootId, rootPath, path.dirname(dirPath));
+  const parentId = await ensureParents(handle, rootId, rootPath, path.dirname(dirPath), made);
   if (parentId === null) return null;
 
   let stat: Awaited<ReturnType<typeof fsp.lstat>>;
@@ -1192,6 +1234,7 @@ async function ensureParents(
       stat.ino,
       stat.nlink,
     );
+  made.dirs++;
   return Number(info.lastInsertRowid);
 }
 
@@ -1201,13 +1244,16 @@ async function ensureParents(
  *
  * The alternative — re-running the whole roll-up — is O(tree) per change burst,
  * which on a multi-million-file root turns a single file write into seconds of
- * work.
+ * work. The root's file and directory counts move by the burst's `delta` for
+ * the same reason: a fresh `SUM(is_dir)` over the root is a full table walk,
+ * and this runs up to twice a second while anything under the root changes.
  */
 function resumAncestors(
   handle: Database.Database,
   rootId: number,
   rootPath: string,
   touched: Set<string>,
+  delta: { files: number; dirs: number },
 ): void {
   const chain = new Set<string>();
   for (const start of touched) {
@@ -1236,12 +1282,9 @@ function resumAncestors(
     const rootSize = handle.prepare('SELECT size FROM nodes WHERE root_id = ? AND parent_id IS NULL').get(rootId) as
       | { size: number }
       | undefined;
-    const counts = handle
-      .prepare('SELECT SUM(is_dir = 0) files, SUM(is_dir = 1) dirs FROM nodes WHERE root_id = ?')
-      .get(rootId) as { files: number | null; dirs: number | null };
     handle
-      .prepare('UPDATE roots SET total_size = ?, file_count = ?, dir_count = ? WHERE id = ?')
-      .run(rootSize?.size ?? 0, counts.files ?? 0, counts.dirs ?? 0, rootId);
+      .prepare('UPDATE roots SET total_size = ?, file_count = file_count + ?, dir_count = dir_count + ? WHERE id = ?')
+      .run(rootSize?.size ?? 0, delta.files, delta.dirs, rootId);
   });
   apply();
 }
