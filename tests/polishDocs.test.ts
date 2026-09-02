@@ -23,6 +23,7 @@ const root = path.join(__dirname, '..');
 const read = (...p: string[]) => readFileSync(path.join(root, ...p), 'utf8').replace(/\r\n/g, '\n');
 
 const README = read('README.md');
+const CHANGELOG = read('CHANGELOG.md');
 const SECURITY = read('SECURITY.md');
 const COC = read('CODE_OF_CONDUCT.md');
 const PKG = JSON.parse(read('package.json')) as {
@@ -345,4 +346,37 @@ test('every image the README embeds exists, and every screenshot in demo/ is use
   const demo = readdirSync(path.join(root, 'demo')).filter((f) => /\.(jpe?g|png|webp|gif)$/i.test(f));
   assert.ok(demo.length > 0, 'demo/ holds screenshots');
   for (const f of demo) assert.ok(refs.includes(`demo/${f}`), `demo/${f} is shown somewhere in the README`);
+});
+
+
+/* ══════════════ The changelog ══════════════ */
+
+test('the CHANGELOG names this build, and 5.0.0 is in it', () => {
+  // The first three-dotted-number heading, so a `## [Unreleased]` block above
+  // it is skipped rather than being mistaken for the release.
+  const first = CHANGELOG.match(/^## \[(\d+\.\d+\.\d+)\]/m);
+  assert.ok(first, 'the CHANGELOG has at least one released version heading');
+  assert.equal(first[1], PKG.version, 'the newest CHANGELOG entry is the version package.json ships');
+  assert.match(CHANGELOG, /^## \[5\.0\.0\]/m, 'the 5.0.0 entry exists');
+});
+
+test('the CHANGELOG states the limitations a downloader will hit', () => {
+  // Pinned by fact, not by phrasing — the prose may be rewritten freely, but a
+  // release note that omits these is the reason people report the download as
+  // broken. Every one of them is a decision, not a defect.
+  const entry = section(CHANGELOG, '## [5.0.0]', '## [3.2.1]');
+  assert.match(entry, /notariz/i, 'the mac build is not notarized and says so');
+  assert.match(entry, /Open Anyway/, 'and gives the only route that still works');
+  assert.match(entry, /about an hour/, 'including the clock on that button');
+  assert.match(entry, /Apple Silicon/, 'an Intel Mac cannot run it at all');
+  assert.match(entry, /SmartScreen/, 'the Windows installer is unsigned');
+  // Not /Linux/: the Fixed section mentions Linux for an unrelated reason, so
+  // the loose form stayed green with the limitation itself deleted.
+  assert.match(entry, /no Linux desktop download/i, 'there is no Linux desktop download');
+  assert.match(entry, /1024s/, 'and sizes are binary steps under decimal labels');
+  // Apple removed right-click → Open in Sequoia. Documenting it sends people
+  // down a route that does nothing on any currently supported macOS. Matched
+  // narrowly: "right-click a folder to pin a note to it" is a real feature and
+  // must not trip this — only right-click paired with Open is the dead bypass.
+  assert.doesNotMatch(entry, /right[- ]click[^.]{0,40}\bOpen\b/i, 'never the bypass Apple removed');
 });

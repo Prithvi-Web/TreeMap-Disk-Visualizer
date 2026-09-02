@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-TreeMap supports **the latest 4.x release only**. A fix ships as a new release; older releases receive no fixes, so if you are on anything else, update first.
+TreeMap supports **the latest 5.x release only**. A fix ships as a new release; older releases receive no fixes, so if you are on anything else, update first.
 
 To find your version: on macOS, **TreeMap → About TreeMap**. Anywhere TreeMap is running — desktop or web mode — open <http://127.0.0.1:4280/api/capabilities> and read `version`.
 
