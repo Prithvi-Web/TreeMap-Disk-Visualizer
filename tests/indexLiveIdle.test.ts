@@ -30,6 +30,20 @@ const DATA_DIR = path.join(ROOT, 'Library', 'Application Support', 'TreeMap');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 process.env.TREEMAP_DATA_DIR = DATA_DIR;
 
+/*
+ * Every directory these tests write into exists BEFORE the index is built,
+ * and that is a portability requirement, not tidiness. macOS gets a kernel
+ * recursive watch (FSEvents); Linux has none, so the provider walks the tree
+ * and adds an inotify watch per directory, attaching a watch to a NEW
+ * directory only after an lstat resolves — which a file written into that
+ * directory immediately afterwards can beat. Creating the skeleton up front
+ * removes the race instead of testing around it: what these tests are about
+ * is the flush's arithmetic, never how fast a platform notices a mkdir.
+ */
+for (const d of [['deep', 'er'], ['grove', 'a', 'b'], ['chain', 'b', 'c']]) {
+  fs.mkdirSync(path.join(ROOT, ...d), { recursive: true });
+}
+
 import {
   buildIndex,
   getRoot,
@@ -145,7 +159,6 @@ test('a watcher flush re-sums the touched ancestors only, never the whole root',
   const before = getRoot(ROOT)!.totalSize;
 
   const sql = await statementsDuring(async () => {
-    await fsp.mkdir(path.join(ROOT, 'deep', 'er'), { recursive: true });
     await fsp.writeFile(path.join(ROOT, 'deep', 'er', 'leaf.bin'), Buffer.alloc(7000));
     if (!landed(await waitFor(() => getRoot(ROOT)!.totalSize === before + 7000), 'a deep external create', t)) return;
   });
@@ -163,7 +176,6 @@ test('the root counts stay exact through creates, subtree deletes and a kind cha
   const rootId = getRoot(ROOT)!.id;
   const check = (what: string): void => assert.deepEqual(reported(), truth(rootId), `after ${what}: reported counts must equal a fresh count of the rows`);
 
-  await fsp.mkdir(path.join(ROOT, 'grove', 'a', 'b'), { recursive: true });
   await fsp.writeFile(path.join(ROOT, 'grove', 'a', 'b', 'one.bin'), Buffer.alloc(100));
   await fsp.writeFile(path.join(ROOT, 'grove', 'two.bin'), Buffer.alloc(200));
   if (!landed(await waitFor(() => findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'grove', 'a', 'b', 'one.bin')) !== null && findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'grove', 'two.bin')) !== null), 'a nested create', t)) return;
@@ -175,12 +187,21 @@ test('the root counts stay exact through creates, subtree deletes and a kind cha
   await sleep(600);
   check('a subtree delete');
 
-  // A file replaced by a directory of the same name: the old row goes, a
-  // directory row (and its child) arrive.
+  // A file replaced by a directory of the same name. The row cannot be
+  // refreshed in place — a file with children, or a directory without them —
+  // so the old one goes and a fresh one takes its place, moving the counts by
+  // one in each direction. Asserted on the ROW's kind rather than on a child
+  // inside the new directory: that child is the one thing an emulated
+  // recursive watch is entitled to miss.
+  const kindOf = (p: string): number | null => {
+    const id = findNodeIdByPath(rootId, ROOT, p);
+    if (id === null) return null;
+    return (openIndex().prepare('SELECT is_dir FROM nodes WHERE id = ?').get(id) as { is_dir: number }).is_dir;
+  };
+  assert.equal(kindOf(path.join(ROOT, 'grove', 'two.bin')), 0, 'it starts life as a file');
   await fsp.rm(path.join(ROOT, 'grove', 'two.bin'));
   await fsp.mkdir(path.join(ROOT, 'grove', 'two.bin'));
-  await fsp.writeFile(path.join(ROOT, 'grove', 'two.bin', 'inner.bin'), Buffer.alloc(300));
-  if (!landed(await waitFor(() => findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'grove', 'two.bin', 'inner.bin')) !== null), 'a kind change', t)) return;
+  if (!landed(await waitFor(() => kindOf(path.join(ROOT, 'grove', 'two.bin')) === 1), 'a kind change', t)) return;
   await sleep(600);
   check('a kind change');
 
@@ -190,9 +211,7 @@ test('the root counts stay exact through creates, subtree deletes and a kind cha
   // must move the count too. The chain is indexed normally first, then
   // forgotten — rows and counts alike — so the index is exactly as it would
   // be had the folders' own events never arrived.
-  await fsp.mkdir(path.join(ROOT, 'chain', 'b', 'c'), { recursive: true });
-  if (!landed(await waitFor(() => findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'chain', 'b', 'c')) !== null), 'a folder chain', t)) return;
-  await sleep(600);
+  assert.notEqual(findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'chain', 'b', 'c')), null, 'the chain was indexed at build time');
   const db = openIndex();
   const chainId = findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'chain'));
   assert.ok(chainId !== null);
