@@ -218,7 +218,9 @@ test('glass cards and stat tiles get the quiet hover lift — 1px, one shadow st
   // The 150ms travel both ways lives on the resting rule, not only on :hover.
   const rest = rule('.card.glass, .stat-tile {');
   assert.match(rest, /transition:[^;]*transform var\(--dur-1\)/);
-  assert.match(rest, /box-shadow var\(--dur-1\)/);
+  // The shadow STEPS: transitioning an 80px box-shadow repainted the whole
+  // card for ~9 frames on every enter and every leave (owner: "blazing fast").
+  assert.doesNotMatch(rest, /box-shadow var\(--dur-1\)/, 'the shadow is not transitioned');
   // Light theme re-declares the hover shadow (its resting stack differs).
   assert.match(INDEX, /:root\[data-theme="light"\] \.card\.glass:hover/);
 });

@@ -87,8 +87,8 @@ function cartPreviewInvalidated() {
  * click once a large near-duplicate result had put ~1,500 of them in the DOM —
  * a stutter in every view, from a list the user wasn't even looking at.
  */
-function refreshCartButtons() {
-  document.querySelectorAll('[data-cart-add]').forEach((b) => {
+function refreshCartButtons(roots = [document]) {
+  for (const root of (Array.isArray(roots) ? roots : [roots])) root.querySelectorAll('[data-cart-add]').forEach((b) => {
     const inIt = state.cart.has(b.getAttribute('data-cart-add'));
     const want = inIt ? '1' : '0';
     if (b.dataset.cartin === want) return;

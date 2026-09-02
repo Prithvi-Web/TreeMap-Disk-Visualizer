@@ -140,7 +140,7 @@ type Fake = {
  * whether its size is observed, and what --lg-backdrop it ended up with once
  * every scheduled frame has flushed.
  */
-function boot(selectors: string[]): Record<string, Fake> {
+function boot(selectors: string[], optIn?: string): Record<string, Fake> {
   const stubEl = () => ({
     style: { cssText: '', setProperty() {}, removeProperty() {} },
     setAttribute() {}, appendChild(c: unknown) { return c; }, remove() {},
@@ -177,11 +177,20 @@ function boot(selectors: string[]): Record<string, Fake> {
   };
   const frames: Array<() => void> = [];
   let observer: unknown = null;
+  // `optIn` names one TARGETS entry whose `plain: 1` is stripped before the
+  // engine runs: every shipped surface is frost-only now, so the control that
+  // proves the lens path still works has to be a surface that opts back in.
+  let src = engineSource();
+  if (optIn) {
+    const re = new RegExp(`(\\['${optIn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}',\\s*\\{[^}]*?),\\s*plain:\\s*1(\\s*\\})`);
+    assert.match(src, re, `${optIn} is a plain target the control can opt back in`);
+    src = src.replace(re, '$1$2');
+  }
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(
     'document', 'MutationObserver', 'ResizeObserver', 'getComputedStyle',
     'requestAnimationFrame', 'cancelAnimationFrame', 'setTimeout', 'clearTimeout', 'console',
-    engineSource(),
+    src,
   )(
     doc,
     class { constructor(cb: unknown) { observer = cb; } observe() {} },
@@ -203,11 +212,12 @@ test('the tooltip, the sidebar and modals are frosted glass, not lenses: no refe
   // in the file (scale 44) over up to 660×84vh, re-composited on every
   // scroll frame inside it. All three keep the class — .lg::before IS their
   // fill and their frost, they have no other background — and nothing else.
-  const t = boot(['#tooltip', '#sideNav', '.modal', '#cartPanel']);
-  // The control: an ordinary target still gets the full treatment, so a
-  // failure below is an exemption and not a broken harness.
+  const t = boot(['#tooltip', '#sideNav', '.modal', '#cartPanel'], '#cartPanel');
+  // The control: a surface that opts back in (its `plain` stripped before
+  // the engine ran) still gets the full treatment, so a failure below is an
+  // exemption and not a broken harness — and the lens path is not dead code.
   const ctl = t['#cartPanel'];
-  assert.ok(ctl.classes.includes('lg') && ctl.observed, 'the cart panel is a lens host whose size is observed');
+  assert.ok(ctl.classes.includes('lg') && ctl.observed, 'an opted-in surface is a lens host whose size is observed');
   assert.match(ctl.props['--lg-backdrop'] || '', /^url\(#lg-f-\d+\) blur\(/, 'and it carries the displacement filter');
   for (const sel of ['#tooltip', '#sideNav', '.modal']) {
     const el = t[sel];

@@ -340,8 +340,8 @@ async function loadNearDupes(force = false) {
  * images with an explicit "show more", every handler is delegated from #ndBody
  * (four listeners total, not four per image), and unmount empties the body.
  */
-const ND_CLUSTER_BATCH = 12;   // clusters appended per step
-const ND_ITEMS_PER_STEP = 24;  // images revealed per cluster per step
+const ND_CLUSTER_BATCH = 4;    // clusters appended per step — a quarter the mid-scroll parse it used to be
+const ND_ITEMS_PER_STEP = 12;  // images revealed per cluster per step — a wrapped cluster shows two rows, not a 3.4k px strip
 /** Retries a thumbnail gets before it is called broken (covers a transient 429). */
 const ND_THUMB_RETRIES = 2;
 
@@ -360,7 +360,7 @@ function ndItemHtml(f, fi) {
           <div class="nm" title="${escapeHtml(f.path)}">${escapeHtml(f.name)}</div>
           <div class="sub num">${formatBytes(f.size)} · ${formatDate(f.modifiedAt)}</div>
           <div class="acts">
-            <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
+            <button class="icon-btn${cartHas(f.path) ? ' cartin' : ''}" data-cart-add="${escapeHtml(f.path)}" data-cartin="${cartHas(f.path) ? '1' : '0'}" title="${cartHas(f.path) ? 'Remove from cleanup cart' : 'Add to cleanup cart'}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon(cartHas(f.path) ? 'check' : 'plus', 14)}</button>
             <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
           </div>
         </div>
@@ -411,19 +411,23 @@ function ndAppendClusters() {
     html += `<div class="nd-loadmore"><button class="btn" data-nd-loadmore="1">Show more groups
       <span class="num">(${formatCount(n.clusters.length - to)} left)</span></button></div>`;
   }
+  // Sync only what this append inserted: walking every cluster already on
+  // the page made each later append cost more than the one before it.
+  const firstNew = list.children.length;
   list.insertAdjacentHTML('beforeend', html);
-  ndSyncNewNodes(list);
+  ndSyncNewNodes([...list.children].slice(firstNew));
 }
 
 /** Reflect selection state on freshly inserted rows and prime their cart buttons. */
 function ndSyncNewNodes(scope) {
-  scope.querySelectorAll('.nd-ck').forEach(ck => {
+  const roots = Array.isArray(scope) ? scope : [scope];
+  for (const root of roots) root.querySelectorAll('.nd-ck').forEach(ck => {
     const on = state.near.selection.has(ck.dataset.p);
     if (ck.checked !== on) ck.checked = on;
     const w = ck.closest('.nd-thumbwrap');
     if (w) w.classList.toggle('sel', on);
   });
-  refreshCartButtons();
+  refreshCartButtons(roots);
   // The pane can be occluded (rAF and IntersectionObserver suspend), so the
   // sentinel is a real button first and observed second — it always works.
   ndObserveSentinel();
@@ -440,7 +444,7 @@ function ndObserveSentinel() {
     // walk the whole result and undo the window. The button still works.
     if (document.hidden) return;
     if (entries.some(e => e.isIntersecting)) ndAppendClusters();
-  }, { rootMargin: '600px' });
+  }, { rootMargin: '1000px' });
   ndSentinelObserver.observe(sentinel);
 }
 

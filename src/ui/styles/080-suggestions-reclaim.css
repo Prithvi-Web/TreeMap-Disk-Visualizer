@@ -69,7 +69,9 @@
      it read straight through the breakdown, in dark mode especially. So it
      keeps the glass sheen and the blur, over an OPAQUE base. */
   --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02) 42%, rgba(255,255,255,0) 68%), var(--bg-1);
-  --lg-blur: 26px;
+  /* The base is opaque, so a backdrop-filter here filtered pixels nobody
+     could see — pure cost, re-run on every frame the radar inside animated. */
+  --lg-backdrop: none;
   border: 1px solid var(--hairline-2); border-radius: var(--r-md);
   box-shadow: var(--shadow-3); }
 #rcPopover[hidden] { display: none; }

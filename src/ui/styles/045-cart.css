@@ -77,9 +77,10 @@
   border: 1px solid var(--hairline-2); border-radius: 999px; box-shadow: var(--shadow-2);
   --lg-tint: var(--lg-tint-strong);
   font-size: 13px; color: var(--text-1); user-select: none;
-  transition: border-color var(--dur-1) var(--ease), transform var(--dur-2) var(--ease-spring),
-              box-shadow var(--dur-2) var(--ease); }
-#cartTab:hover { border-color: var(--accent); transform: translateY(-2px);
+  transition: border-color var(--dur-1) var(--ease), box-shadow var(--dur-2) var(--ease); }
+/* No lift: the tab is a frosted surface, and moving a backdrop-filtered
+   element re-runs its blur on every frame of the travel. */
+#cartTab:hover { border-color: var(--accent);
   box-shadow: var(--shadow-2), 0 0 24px var(--accent-soft); }
 #cartTab:active { transform: translateY(0) scale(0.97); }
 #cartTab .ic { color: var(--accent); }

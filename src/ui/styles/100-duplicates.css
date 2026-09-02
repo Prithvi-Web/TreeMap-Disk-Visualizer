@@ -53,7 +53,12 @@
 .nd-chead .nd-count { font-size: 13px; font-weight: 600; }
 .nd-chead .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap; margin-left: auto;
   background: color-mix(in srgb, var(--warn) 12%, transparent); padding: 3px 10px; border-radius: 99px; }
-.nd-strip { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+/* A wrapping row, not a carousel: a horizontal scroller nested in the page's
+   vertical one latched two-finger gestures that drifted sideways (the page
+   stuck, then jumped) and gave every overflowing cluster its own composited
+   scroll layer. Wrapping also lifts the tile's paint clip, so a selected
+   tile's accent ring is no longer cut at the tile edge. */
+.nd-strip { display: flex; flex-wrap: wrap; gap: 12px; overflow: visible; }
 .nd-item { flex: 0 0 132px; width: 132px; }
 .nd-thumbwrap { position: relative; display: block; width: 132px; height: 100px; border-radius: 9px; overflow: hidden;
   background: var(--surface-2); border: 1px solid var(--hairline); cursor: pointer; }

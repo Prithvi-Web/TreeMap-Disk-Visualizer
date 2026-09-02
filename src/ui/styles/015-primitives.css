@@ -18,11 +18,14 @@
   background: var(--lg-ring);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor; mask-composite: exclude;
-  mix-blend-mode: screen;
+  /* No blend mode. A screen blend made the nearest stacking context — the
+     whole host: sidebar, sheet, panel — an isolated offscreen group redrawn
+     on every damaged frame, and the frost then read its backdrop from that
+     group's own empty framebuffer. The ring is a touch brighter (--ring-a)
+     to read the same without it. */
   opacity: var(--ring-opacity);
   transition: opacity var(--dur-2) var(--ease);
 }
-:root[data-theme="light"] .lg::after { mix-blend-mode: normal; }
 /* A lensed element declares NO background of its own — .lg::before IS its
    fill and .lg::after IS its ring. FxBeam writes those same two pseudo-
    elements from a sheet appended after this one, at equal specificity, so a

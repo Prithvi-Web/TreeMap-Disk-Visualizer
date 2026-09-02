@@ -18,8 +18,10 @@
    inside one, so no containing-block surprises. The reduced-motion rule
    collapses the transition; the resting insets are repeated on :hover
    because box-shadow replaces wholesale, never merges. */
+/* The shadow steps; only the lift travels. Transitioning an 80px shadow
+   repainted the whole card for ~9 frames on every enter and every leave. */
 .card.glass, .stat-tile {
-  transition: transform var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
+  transition: transform var(--dur-1) var(--ease);
 }
 .card.glass:hover {
   transform: translateY(-1px);

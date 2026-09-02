@@ -42,7 +42,7 @@
   --lg-sat: 185%;
   --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.055), rgba(255,255,255,0.012) 42%, rgba(255,255,255,0) 68%), rgba(17,19,28,0.55);
   --lg-tint-strong: linear-gradient(155deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015) 42%, rgba(255,255,255,0) 68%), rgba(15,17,25,0.68);
-  --ring-a: rgba(255,255,255,0.50);
+  --ring-a: rgba(255,255,255,0.58);
   --ring-b: rgba(255,255,255,0.10);
   --ring-opacity: 0.75;
   /* One definition, two readers: .lg::after paints it, and the

@@ -29,10 +29,12 @@
   background: var(--surface-1); border: 1px solid var(--hairline); border-radius: var(--r-md);
   box-shadow: inset 0 1px 0 var(--shine);
   transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease),
-              transform var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease); }
-.gcell:hover { transform: translateY(-2px); border-color: var(--hairline-2); background: var(--surface-2);
+              box-shadow var(--dur-2) var(--ease); }
+/* No lift: a lifted cell stays promoted through its leave transition while
+   z-index has already snapped back, so every overlapping later sibling in
+   a packed grid is squashed into a new layer, rastered, and torn down. */
+.gcell:hover { border-color: var(--hairline-2); background: var(--surface-2);
   box-shadow: inset 0 1px 0 var(--shine), var(--shadow-2); z-index: 2; }
-.gcell:active { transform: translateY(0); }
 .gcell.selected { border-color: var(--accent); background: var(--accent-soft);
   box-shadow: 0 0 0 1px var(--accent), inset 0 1px 0 var(--shine); }
 .gcell .sel-mark { position: absolute; top: 7px; left: 7px; width: 17px; height: 17px; border-radius: 50%;

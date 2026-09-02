@@ -52,7 +52,7 @@
    remembers each row's real size once seen, so expanded groups stay right. */
 .dup-group   { content-visibility: auto; contain-intrinsic-size: auto 64px; }
 .clean-item  { content-visibility: auto; contain-intrinsic-size: auto 52px; }
-.nd-item     { content-visibility: auto; contain-intrinsic-size: auto 170px; }
+.nd-cluster  { content-visibility: auto; contain-intrinsic-size: auto 245px; }
 .sec-item    { content-visibility: auto; contain-intrinsic-size: auto 64px; }
 .bp-item     { content-visibility: auto; contain-intrinsic-size: auto 40px; }
 .smart-group { content-visibility: auto; contain-intrinsic-size: auto 56px; }

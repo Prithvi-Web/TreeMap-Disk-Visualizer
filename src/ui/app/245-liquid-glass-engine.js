@@ -105,21 +105,28 @@
          re-composited on every scroll frame inside it. */
       ['#sideNav',      { scale: 22, ab: 1.5, plain: 1 }],
       ['.modal',        { scale: 44, ab: 2, plain: 1 }],
-      ['#cartTab',      { scale: 34, ab: 2, track: 1 }],
-      ['#cartPanel',    { scale: 40, ab: 2 }],
-      ['#selectionBar', { scale: 34, ab: 2 }],
-      ['#previewPane',  { scale: 40, ab: 2 }],
-      ['#ctxMenu',      { scale: 26, ab: 1.5 }],
-      ['#rcPopover',    { scale: 30, ab: 2 }],
+      /* Every remaining surface is frost only. The preview pane and the
+         cart panel sit fixed over the map and were re-filtered on every
+         frame damage touched them — every hover change; the live feed's
+         spark canvas repaints every rAF inside its own lens; toasts paid a
+         displacement-map build per width bucket mid-fade; the reclaim
+         popover blurred under an opaque base. The lens machinery stays for
+         a surface that opts back in by dropping `plain`. */
+      ['#cartTab',      { scale: 34, ab: 2, track: 1, plain: 1 }],
+      ['#cartPanel',    { scale: 40, ab: 2, plain: 1 }],
+      ['#selectionBar', { scale: 34, ab: 2, plain: 1 }],
+      ['#previewPane',  { scale: 40, ab: 2, plain: 1 }],
+      ['#ctxMenu',      { scale: 26, ab: 1.5, plain: 1 }],
+      ['#rcPopover',    { scale: 30, ab: 2, plain: 1 }],
       /* The tooltip follows the pointer every frame and re-sizes on every
          node. A url(#…) reference filter in backdrop-filter is rasterised
          against the moving backdrop each frame, and each new 8px size bucket
          cost a 4.6ms displacement-map build (measured) — so it keeps the
          frost and skips the lens. */
       ['#tooltip',      { scale: 20, ab: 1.5, plain: 1 }],
-      ['.toast',        { scale: 28, ab: 2 }],
-      ['.tm-timebar',   { scale: 26, ab: 1.5 }],
-      ['#liveFeed',     { scale: 24, ab: 1.5 }],
+      ['.toast',        { scale: 28, ab: 2, plain: 1 }],
+      ['.tm-timebar',   { scale: 26, ab: 1.5, plain: 1 }],
+      ['#liveFeed',     { scale: 24, ab: 1.5, plain: 1 }],
     ];
     const SELECTOR = TARGETS.map(t => t[0]).join(',');
     const optsFor = el => { for (const [sel, o] of TARGETS) if (el.matches(sel)) return o; return null; };

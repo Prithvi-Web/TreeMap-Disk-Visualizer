@@ -9,10 +9,26 @@
   display: none; align-items: center; justify-content: center;
   animation: fadeIn var(--dur-2) var(--ease); }
 .modal-backdrop.open { display: flex; }
+/* Living-surface effects behind an open sheet — beams, the pulse driver,
+   the shimmer — keep animating under the scrim where nobody can see them.
+   Pause them, scoped to hosts OUTSIDE the open dialog: the offload modal and
+   Settings host their own strip and orb. Same body the beam engine writes
+   for its own paused state. */
+body:has(.modal-backdrop.open) [data-fxbeam-on]:not(.modal-backdrop.open *),
+body:has(.modal-backdrop.open) [data-fxbeam-on]:not(.modal-backdrop.open *)::before,
+body:has(.modal-backdrop.open) [data-fxbeam-on]:not(.modal-backdrop.open *)::after,
+body:has(.modal-backdrop.open) [data-fxbeam-on]:not(.modal-backdrop.open *) > [data-fxbeam-bloom],
+body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { animation-play-state: paused; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .modal { width: 660px; max-width: 92vw; max-height: 84vh; display: flex; flex-direction: column;
   animation: sheetIn var(--dur-3) var(--ease);
-  --lg-tint: var(--lg-tint-strong); --lg-blur: 30px;
+  /* No live backdrop. The sheet's own scroller lived inside its backdrop-
+     filter surface, and Chromium expands damage to the whole of such a
+     surface, so every scroll frame re-blurred ~2M device pixels of sheet.
+     The page behind is tinted by the scrim, not blurred, and the sheet is a
+     near-opaque pane: the global-search recipe, 94% of the page background. */
+  --lg-backdrop: none;
+  --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015) 42%, rgba(255,255,255,0) 68%), color-mix(in srgb, var(--bg-1) 94%, transparent);
   border: 1px solid var(--hairline-2); border-radius: var(--r-lg);
   box-shadow: var(--shadow-3), 0 0 90px rgba(10,132,255,0.05); }
 @keyframes sheetIn { from { transform: translateY(30px) scale(0.96); opacity: 0; } to { transform: none; opacity: 1; } }

@@ -20,10 +20,7 @@
 .fxgoo-sil { position: absolute; inset: 0; overflow: visible; pointer-events: none; z-index: 0;
   /* --shadow-1 is single-layer, spread-free box-shadow syntax, which is also
      valid drop-shadow() syntax — themes switch the shadow for free. */
-  filter: drop-shadow(var(--shadow-1));
-  /* Promote the filtered layer: WebKit otherwise repaints the goo a frame
-     behind the crisp thumb. */
-  will-change: filter, transform; }
+  filter: drop-shadow(var(--shadow-1)); }
 
 /* The crisp thumb: --surface-3 fill, faint top shine, inset hairline ring.
    While the goo silhouette is live it carries the outer shadow, so the thumb
@@ -31,8 +28,7 @@
 .fxgoo-thumb { position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none;
   border-radius: 8px;
   background: linear-gradient(170deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02) 60%), var(--surface-3);
-  box-shadow: inset 0 1px 0 var(--shine), inset 0 0 0 0.5px rgba(255,255,255,0.06), var(--shadow-1);
-  will-change: transform, width; }
+  box-shadow: inset 0 1px 0 var(--shine), inset 0 0 0 0.5px rgba(255,255,255,0.06), var(--shadow-1); }
 :root[data-theme="light"] .fxgoo-thumb {
   background: linear-gradient(170deg, rgba(255,255,255,0.95), rgba(255,255,255,0.65));
   box-shadow: inset 0 1px 0 var(--shine), inset 0 0 0 0.5px rgba(10,15,30,0.06), var(--shadow-1); }

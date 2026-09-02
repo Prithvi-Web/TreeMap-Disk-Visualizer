@@ -65,7 +65,7 @@ document.documentElement.dataset.theme =
   --lg-sat: 185%;
   --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.055), rgba(255,255,255,0.012) 42%, rgba(255,255,255,0) 68%), rgba(17,19,28,0.55);
   --lg-tint-strong: linear-gradient(155deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015) 42%, rgba(255,255,255,0) 68%), rgba(15,17,25,0.68);
-  --ring-a: rgba(255,255,255,0.50);
+  --ring-a: rgba(255,255,255,0.58);
   --ring-b: rgba(255,255,255,0.10);
   --ring-opacity: 0.75;
   /* One definition, two readers: .lg::after paints it, and the
@@ -330,11 +330,14 @@ button { font-family: inherit; color: inherit; }
   background: var(--lg-ring);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor; mask-composite: exclude;
-  mix-blend-mode: screen;
+  /* No blend mode. A screen blend made the nearest stacking context — the
+     whole host: sidebar, sheet, panel — an isolated offscreen group redrawn
+     on every damaged frame, and the frost then read its backdrop from that
+     group's own empty framebuffer. The ring is a touch brighter (--ring-a)
+     to read the same without it. */
   opacity: var(--ring-opacity);
   transition: opacity var(--dur-2) var(--ease);
 }
-:root[data-theme="light"] .lg::after { mix-blend-mode: normal; }
 /* A lensed element declares NO background of its own — .lg::before IS its
    fill and .lg::after IS its ring. FxBeam writes those same two pseudo-
    elements from a sheet appended after this one, at equal specificity, so a
@@ -716,8 +719,10 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
    inside one, so no containing-block surprises. The reduced-motion rule
    collapses the transition; the resting insets are repeated on :hover
    because box-shadow replaces wholesale, never merges. */
+/* The shadow steps; only the lift travels. Transitioning an 80px shadow
+   repainted the whole card for ~9 frames on every enter and every leave. */
 .card.glass, .stat-tile {
-  transition: transform var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
+  transition: transform var(--dur-1) var(--ease);
 }
 .card.glass:hover {
   transform: translateY(-1px);
@@ -965,10 +970,12 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
   background: var(--surface-1); border: 1px solid var(--hairline); border-radius: var(--r-md);
   box-shadow: inset 0 1px 0 var(--shine);
   transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease),
-              transform var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease); }
-.gcell:hover { transform: translateY(-2px); border-color: var(--hairline-2); background: var(--surface-2);
+              box-shadow var(--dur-2) var(--ease); }
+/* No lift: a lifted cell stays promoted through its leave transition while
+   z-index has already snapped back, so every overlapping later sibling in
+   a packed grid is squashed into a new layer, rastered, and torn down. */
+.gcell:hover { border-color: var(--hairline-2); background: var(--surface-2);
   box-shadow: inset 0 1px 0 var(--shine), var(--shadow-2); z-index: 2; }
-.gcell:active { transform: translateY(0); }
 .gcell.selected { border-color: var(--accent); background: var(--accent-soft);
   box-shadow: 0 0 0 1px var(--accent), inset 0 1px 0 var(--shine); }
 .gcell .sel-mark { position: absolute; top: 7px; left: 7px; width: 17px; height: 17px; border-radius: 50%;
@@ -1067,9 +1074,10 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
   border: 1px solid var(--hairline-2); border-radius: 999px; box-shadow: var(--shadow-2);
   --lg-tint: var(--lg-tint-strong);
   font-size: 13px; color: var(--text-1); user-select: none;
-  transition: border-color var(--dur-1) var(--ease), transform var(--dur-2) var(--ease-spring),
-              box-shadow var(--dur-2) var(--ease); }
-#cartTab:hover { border-color: var(--accent); transform: translateY(-2px);
+  transition: border-color var(--dur-1) var(--ease), box-shadow var(--dur-2) var(--ease); }
+/* No lift: the tab is a frosted surface, and moving a backdrop-filtered
+   element re-runs its blur on every frame of the travel. */
+#cartTab:hover { border-color: var(--accent);
   box-shadow: var(--shadow-2), 0 0 24px var(--accent-soft); }
 #cartTab:active { transform: translateY(0) scale(0.97); }
 #cartTab .ic { color: var(--accent); }
@@ -1552,10 +1560,26 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
   display: none; align-items: center; justify-content: center;
   animation: fadeIn var(--dur-2) var(--ease); }
 .modal-backdrop.open { display: flex; }
+/* Living-surface effects behind an open sheet — beams, the pulse driver,
+   the shimmer — keep animating under the scrim where nobody can see them.
+   Pause them, scoped to hosts OUTSIDE the open dialog: the offload modal and
+   Settings host their own strip and orb. Same body the beam engine writes
+   for its own paused state. */
+body:has(.modal-backdrop.open) [data-fxbeam-on]:not(.modal-backdrop.open *),
+body:has(.modal-backdrop.open) [data-fxbeam-on]:not(.modal-backdrop.open *)::before,
+body:has(.modal-backdrop.open) [data-fxbeam-on]:not(.modal-backdrop.open *)::after,
+body:has(.modal-backdrop.open) [data-fxbeam-on]:not(.modal-backdrop.open *) > [data-fxbeam-bloom],
+body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { animation-play-state: paused; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .modal { width: 660px; max-width: 92vw; max-height: 84vh; display: flex; flex-direction: column;
   animation: sheetIn var(--dur-3) var(--ease);
-  --lg-tint: var(--lg-tint-strong); --lg-blur: 30px;
+  /* No live backdrop. The sheet's own scroller lived inside its backdrop-
+     filter surface, and Chromium expands damage to the whole of such a
+     surface, so every scroll frame re-blurred ~2M device pixels of sheet.
+     The page behind is tinted by the scrim, not blurred, and the sheet is a
+     near-opaque pane: the global-search recipe, 94% of the page background. */
+  --lg-backdrop: none;
+  --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015) 42%, rgba(255,255,255,0) 68%), color-mix(in srgb, var(--bg-1) 94%, transparent);
   border: 1px solid var(--hairline-2); border-radius: var(--r-lg);
   box-shadow: var(--shadow-3), 0 0 90px rgba(10,132,255,0.05); }
 @keyframes sheetIn { from { transform: translateY(30px) scale(0.96); opacity: 0; } to { transform: none; opacity: 1; } }
@@ -1677,7 +1701,9 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
      it read straight through the breakdown, in dark mode especially. So it
      keeps the glass sheen and the blur, over an OPAQUE base. */
   --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02) 42%, rgba(255,255,255,0) 68%), var(--bg-1);
-  --lg-blur: 26px;
+  /* The base is opaque, so a backdrop-filter here filtered pixels nobody
+     could see — pure cost, re-run on every frame the radar inside animated. */
+  --lg-backdrop: none;
   border: 1px solid var(--hairline-2); border-radius: var(--r-md);
   box-shadow: var(--shadow-3); }
 #rcPopover[hidden] { display: none; }
@@ -2314,7 +2340,12 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .nd-chead .nd-count { font-size: 13px; font-weight: 600; }
 .nd-chead .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap; margin-left: auto;
   background: color-mix(in srgb, var(--warn) 12%, transparent); padding: 3px 10px; border-radius: 99px; }
-.nd-strip { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+/* A wrapping row, not a carousel: a horizontal scroller nested in the page's
+   vertical one latched two-finger gestures that drifted sideways (the page
+   stuck, then jumped) and gave every overflowing cluster its own composited
+   scroll layer. Wrapping also lifts the tile's paint clip, so a selected
+   tile's accent ring is no longer cut at the tile edge. */
+.nd-strip { display: flex; flex-wrap: wrap; gap: 12px; overflow: visible; }
 .nd-item { flex: 0 0 132px; width: 132px; }
 .nd-thumbwrap { position: relative; display: block; width: 132px; height: 100px; border-radius: 9px; overflow: hidden;
   background: var(--surface-2); border: 1px solid var(--hairline); cursor: pointer; }
@@ -2463,7 +2494,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
    remembers each row's real size once seen, so expanded groups stay right. */
 .dup-group   { content-visibility: auto; contain-intrinsic-size: auto 64px; }
 .clean-item  { content-visibility: auto; contain-intrinsic-size: auto 52px; }
-.nd-item     { content-visibility: auto; contain-intrinsic-size: auto 170px; }
+.nd-cluster  { content-visibility: auto; contain-intrinsic-size: auto 245px; }
 .sec-item    { content-visibility: auto; contain-intrinsic-size: auto 64px; }
 .bp-item     { content-visibility: auto; contain-intrinsic-size: auto 40px; }
 .smart-group { content-visibility: auto; contain-intrinsic-size: auto 56px; }
@@ -2490,10 +2521,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .fxgoo-sil { position: absolute; inset: 0; overflow: visible; pointer-events: none; z-index: 0;
   /* --shadow-1 is single-layer, spread-free box-shadow syntax, which is also
      valid drop-shadow() syntax — themes switch the shadow for free. */
-  filter: drop-shadow(var(--shadow-1));
-  /* Promote the filtered layer: WebKit otherwise repaints the goo a frame
-     behind the crisp thumb. */
-  will-change: filter, transform; }
+  filter: drop-shadow(var(--shadow-1)); }
 
 /* The crisp thumb: --surface-3 fill, faint top shine, inset hairline ring.
    While the goo silhouette is live it carries the outer shadow, so the thumb
@@ -2501,8 +2529,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .fxgoo-thumb { position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none;
   border-radius: 8px;
   background: linear-gradient(170deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02) 60%), var(--surface-3);
-  box-shadow: inset 0 1px 0 var(--shine), inset 0 0 0 0.5px rgba(255,255,255,0.06), var(--shadow-1);
-  will-change: transform, width; }
+  box-shadow: inset 0 1px 0 var(--shine), inset 0 0 0 0.5px rgba(255,255,255,0.06), var(--shadow-1); }
 :root[data-theme="light"] .fxgoo-thumb {
   background: linear-gradient(170deg, rgba(255,255,255,0.95), rgba(255,255,255,0.65));
   box-shadow: inset 0 1px 0 var(--shine), inset 0 0 0 0.5px rgba(10,15,30,0.06), var(--shadow-1); }
@@ -2928,7 +2955,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 .fx-roll-col { position: absolute; left: 0; top: 0; width: 100%;
   white-space: normal; line-height: 0;
   user-select: none; -webkit-user-select: none;
-  transition: transform 560ms var(--ease); will-change: transform; }
+  transition: transform 560ms var(--ease); }
 /* inline-block, not block: a block box inside the slot is a paragraph
    boundary to the selection serializer, so copying a rolled number came out
    as "3\n4" even with the strip itself unselectable. width:100% + a 1em line
@@ -14481,13 +14508,37 @@ function roundRect(ctx, x, y, w, h, r) {
   Canvas2D.roundRect(ctx, x, y, w, h, r);
 }
 
-/** Blit the buffers (base + search overlay), then the hover highlight. */
-function presentTreemap() {
+/**
+ * Blit the buffers (base + search overlay), then the hover highlight.
+ *
+ * `clip` (CSS px, optional) restricts the whole present to one rectangle:
+ * the hover path passes the union of the old and new hover rects, so a
+ * hover change repaints two tiles instead of the full canvas. That matters
+ * beyond the blit — compositor damage is what makes every frosted panel
+ * overlapping the map (preview pane, cart, selection bar, live feed) re-run
+ * its backdrop blur, and a full-canvas blit damaged all of them on every
+ * hover change. Everything below stays correct under the clip: the overlays
+ * iterate every rect and paint nothing outside it, and what is outside was
+ * already on screen from the last full present.
+ */
+function presentTreemap(clip) {
   const dpr = window.devicePixelRatio || 1;
-  tmCtx.setTransform(1, 0, 0, 1, 0, 0);
-  tmCtx.clearRect(0, 0, tmCanvas.width, tmCanvas.height);
-  tmCtx.drawImage(tmBuffer, 0, 0);
-  if (state.treemap.query.trim()) tmCtx.drawImage(tmSearchBuffer, 0, 0);
+  tmCtx.save();
+  if (clip) {
+    tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    tmCtx.beginPath();
+    tmCtx.rect(clip.x, clip.y, clip.w, clip.h);
+    tmCtx.clip();
+    tmCtx.clearRect(clip.x, clip.y, clip.w, clip.h);
+    const sx = clip.x * dpr, sy = clip.y * dpr, sw = clip.w * dpr, sh = clip.h * dpr;
+    tmCtx.drawImage(tmBuffer, sx, sy, sw, sh, clip.x, clip.y, clip.w, clip.h);
+    if (state.treemap.query.trim()) tmCtx.drawImage(tmSearchBuffer, sx, sy, sw, sh, clip.x, clip.y, clip.w, clip.h);
+  } else {
+    tmCtx.setTransform(1, 0, 0, 1, 0, 0);
+    tmCtx.clearRect(0, 0, tmCanvas.width, tmCanvas.height);
+    tmCtx.drawImage(tmBuffer, 0, 0);
+    if (state.treemap.query.trim()) tmCtx.drawImage(tmSearchBuffer, 0, 0);
+  }
   const h = state.treemap.hover;
   if (h) {
     tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -14560,6 +14611,7 @@ function presentTreemap() {
   tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
   lensPaint(tmCtx, tmCanvas.width / dpr, tmCanvas.height / dpr);
   lassoPaint(tmCtx);
+  tmCtx.restore();
 }
 
 /* ═══════════ Phase 4 (v4 §4.3) — the simulated "after" ═══════════
@@ -14987,6 +15039,18 @@ tmCanvas.addEventListener('pointerup', (e) => {
 tmCanvas.addEventListener('pointercancel', () => lassoCancel());
 let tmSuppressClick = false;
 
+/** The union of two hover rects in CSS px, padded for the 2px ring; null when neither exists. */
+function tmHoverUnion(a, b) {
+  const rs = [a, b].filter(Boolean);
+  if (!rs.length) return null;
+  const pad = 3;
+  const x0 = Math.max(0, Math.min(...rs.map((r) => r.x)) - pad);
+  const y0 = Math.max(0, Math.min(...rs.map((r) => r.y)) - pad);
+  const x1 = Math.max(...rs.map((r) => r.x + r.w)) + pad;
+  const y1 = Math.max(...rs.map((r) => r.y + r.h)) + pad;
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
 let tmRaf = 0;
 tmCanvas.addEventListener('mousemove', (e) => {
   // §6.4 — the lens follows the pointer whether or not it is up, so pressing
@@ -15002,8 +15066,14 @@ tmCanvas.addEventListener('mousemove', (e) => {
     const hit = viewHit(e.clientX, e.clientY, true);
     const prevNode = state.treemap.hover && state.treemap.hover.n;
     if ((hit && hit.n) !== prevNode) {
+      const prev = state.treemap.hover;
       state.treemap.hover = hit;
-      presentView();
+      // Only two tiles changed: present that union, not the whole map. The
+      // lens paints a circle that is not a tile, and the sunburst and the
+      // solved renderers hover shapes that are not rectangles — those keep
+      // the full present.
+      const clip = !lensActive() && isRectMap() ? tmHoverUnion(prev, hit) : null;
+      presentView(clip ? { clip } : undefined);
     }
     if (hit) {
       // §4.3 — a freed block is a hypothetical, not a file: no drill-in cursor,
@@ -15875,10 +15945,10 @@ function drawView() {
   // already known, so the repeat calls after the first cost nothing.
   if (state.treemap.colorMode === 'reclaim') fetchScoresForTreemap();
 }
-function presentView() {
+function presentView(opts) {
   if (isSun()) presentSunburst();
   else if (isCells()) presentCells();
-  else presentTreemap();
+  else presentTreemap(opts && opts.clip);
 }
 function viewHit(cx, cy, leavesOnly) {
   if (isSun()) return sunburstHit(cx, cy);
@@ -25139,8 +25209,8 @@ function cartPreviewInvalidated() {
  * click once a large near-duplicate result had put ~1,500 of them in the DOM —
  * a stutter in every view, from a list the user wasn't even looking at.
  */
-function refreshCartButtons() {
-  document.querySelectorAll('[data-cart-add]').forEach((b) => {
+function refreshCartButtons(roots = [document]) {
+  for (const root of (Array.isArray(roots) ? roots : [roots])) root.querySelectorAll('[data-cart-add]').forEach((b) => {
     const inIt = state.cart.has(b.getAttribute('data-cart-add'));
     const want = inIt ? '1' : '0';
     if (b.dataset.cartin === want) return;
@@ -27474,8 +27544,8 @@ async function loadNearDupes(force = false) {
  * images with an explicit "show more", every handler is delegated from #ndBody
  * (four listeners total, not four per image), and unmount empties the body.
  */
-const ND_CLUSTER_BATCH = 12;   // clusters appended per step
-const ND_ITEMS_PER_STEP = 24;  // images revealed per cluster per step
+const ND_CLUSTER_BATCH = 4;    // clusters appended per step — a quarter the mid-scroll parse it used to be
+const ND_ITEMS_PER_STEP = 12;  // images revealed per cluster per step — a wrapped cluster shows two rows, not a 3.4k px strip
 /** Retries a thumbnail gets before it is called broken (covers a transient 429). */
 const ND_THUMB_RETRIES = 2;
 
@@ -27494,7 +27564,7 @@ function ndItemHtml(f, fi) {
           <div class="nm" title="${escapeHtml(f.path)}">${escapeHtml(f.name)}</div>
           <div class="sub num">${formatBytes(f.size)} · ${formatDate(f.modifiedAt)}</div>
           <div class="acts">
-            <button class="icon-btn" data-cart-add="${escapeHtml(f.path)}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon('plus', 13)}</button>
+            <button class="icon-btn${cartHas(f.path) ? ' cartin' : ''}" data-cart-add="${escapeHtml(f.path)}" data-cartin="${cartHas(f.path) ? '1' : '0'}" title="${cartHas(f.path) ? 'Remove from cleanup cart' : 'Add to cleanup cart'}" aria-label="Add ${escapeHtml(f.name)} to cleanup cart">${icon(cartHas(f.path) ? 'check' : 'plus', 14)}</button>
             <button class="icon-btn" data-reveal="${escapeHtml(f.path)}" title="Reveal in file manager" aria-label="Reveal ${escapeHtml(f.name)}">${icon('external', 13)}</button>
           </div>
         </div>
@@ -27545,19 +27615,23 @@ function ndAppendClusters() {
     html += `<div class="nd-loadmore"><button class="btn" data-nd-loadmore="1">Show more groups
       <span class="num">(${formatCount(n.clusters.length - to)} left)</span></button></div>`;
   }
+  // Sync only what this append inserted: walking every cluster already on
+  // the page made each later append cost more than the one before it.
+  const firstNew = list.children.length;
   list.insertAdjacentHTML('beforeend', html);
-  ndSyncNewNodes(list);
+  ndSyncNewNodes([...list.children].slice(firstNew));
 }
 
 /** Reflect selection state on freshly inserted rows and prime their cart buttons. */
 function ndSyncNewNodes(scope) {
-  scope.querySelectorAll('.nd-ck').forEach(ck => {
+  const roots = Array.isArray(scope) ? scope : [scope];
+  for (const root of roots) root.querySelectorAll('.nd-ck').forEach(ck => {
     const on = state.near.selection.has(ck.dataset.p);
     if (ck.checked !== on) ck.checked = on;
     const w = ck.closest('.nd-thumbwrap');
     if (w) w.classList.toggle('sel', on);
   });
-  refreshCartButtons();
+  refreshCartButtons(roots);
   // The pane can be occluded (rAF and IntersectionObserver suspend), so the
   // sentinel is a real button first and observed second — it always works.
   ndObserveSentinel();
@@ -27574,7 +27648,7 @@ function ndObserveSentinel() {
     // walk the whole result and undo the window. The button still works.
     if (document.hidden) return;
     if (entries.some(e => e.isIntersecting)) ndAppendClusters();
-  }, { rootMargin: '600px' });
+  }, { rootMargin: '1000px' });
   ndSentinelObserver.observe(sentinel);
 }
 
@@ -30946,21 +31020,28 @@ window.TreeMap = {
          re-composited on every scroll frame inside it. */
       ['#sideNav',      { scale: 22, ab: 1.5, plain: 1 }],
       ['.modal',        { scale: 44, ab: 2, plain: 1 }],
-      ['#cartTab',      { scale: 34, ab: 2, track: 1 }],
-      ['#cartPanel',    { scale: 40, ab: 2 }],
-      ['#selectionBar', { scale: 34, ab: 2 }],
-      ['#previewPane',  { scale: 40, ab: 2 }],
-      ['#ctxMenu',      { scale: 26, ab: 1.5 }],
-      ['#rcPopover',    { scale: 30, ab: 2 }],
+      /* Every remaining surface is frost only. The preview pane and the
+         cart panel sit fixed over the map and were re-filtered on every
+         frame damage touched them — every hover change; the live feed's
+         spark canvas repaints every rAF inside its own lens; toasts paid a
+         displacement-map build per width bucket mid-fade; the reclaim
+         popover blurred under an opaque base. The lens machinery stays for
+         a surface that opts back in by dropping `plain`. */
+      ['#cartTab',      { scale: 34, ab: 2, track: 1, plain: 1 }],
+      ['#cartPanel',    { scale: 40, ab: 2, plain: 1 }],
+      ['#selectionBar', { scale: 34, ab: 2, plain: 1 }],
+      ['#previewPane',  { scale: 40, ab: 2, plain: 1 }],
+      ['#ctxMenu',      { scale: 26, ab: 1.5, plain: 1 }],
+      ['#rcPopover',    { scale: 30, ab: 2, plain: 1 }],
       /* The tooltip follows the pointer every frame and re-sizes on every
          node. A url(#…) reference filter in backdrop-filter is rasterised
          against the moving backdrop each frame, and each new 8px size bucket
          cost a 4.6ms displacement-map build (measured) — so it keeps the
          frost and skips the lens. */
       ['#tooltip',      { scale: 20, ab: 1.5, plain: 1 }],
-      ['.toast',        { scale: 28, ab: 2 }],
-      ['.tm-timebar',   { scale: 26, ab: 1.5 }],
-      ['#liveFeed',     { scale: 24, ab: 1.5 }],
+      ['.toast',        { scale: 28, ab: 2, plain: 1 }],
+      ['.tm-timebar',   { scale: 26, ab: 1.5, plain: 1 }],
+      ['#liveFeed',     { scale: 24, ab: 1.5, plain: 1 }],
     ];
     const SELECTOR = TARGETS.map(t => t[0]).join(',');
     const optsFor = el => { for (const [sel, o] of TARGETS) if (el.matches(sel)) return o; return null; };

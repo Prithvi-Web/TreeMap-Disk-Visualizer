@@ -44,7 +44,7 @@
 .fx-roll-col { position: absolute; left: 0; top: 0; width: 100%;
   white-space: normal; line-height: 0;
   user-select: none; -webkit-user-select: none;
-  transition: transform 560ms var(--ease); will-change: transform; }
+  transition: transform 560ms var(--ease); }
 /* inline-block, not block: a block box inside the slot is a paragraph
    boundary to the selection serializer, so copying a rolled number came out
    as "3\n4" even with the strip itself unselectable. width:100% + a 1em line

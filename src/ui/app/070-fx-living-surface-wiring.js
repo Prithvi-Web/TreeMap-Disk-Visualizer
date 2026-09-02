@@ -276,13 +276,37 @@ function roundRect(ctx, x, y, w, h, r) {
   Canvas2D.roundRect(ctx, x, y, w, h, r);
 }
 
-/** Blit the buffers (base + search overlay), then the hover highlight. */
-function presentTreemap() {
+/**
+ * Blit the buffers (base + search overlay), then the hover highlight.
+ *
+ * `clip` (CSS px, optional) restricts the whole present to one rectangle:
+ * the hover path passes the union of the old and new hover rects, so a
+ * hover change repaints two tiles instead of the full canvas. That matters
+ * beyond the blit — compositor damage is what makes every frosted panel
+ * overlapping the map (preview pane, cart, selection bar, live feed) re-run
+ * its backdrop blur, and a full-canvas blit damaged all of them on every
+ * hover change. Everything below stays correct under the clip: the overlays
+ * iterate every rect and paint nothing outside it, and what is outside was
+ * already on screen from the last full present.
+ */
+function presentTreemap(clip) {
   const dpr = window.devicePixelRatio || 1;
-  tmCtx.setTransform(1, 0, 0, 1, 0, 0);
-  tmCtx.clearRect(0, 0, tmCanvas.width, tmCanvas.height);
-  tmCtx.drawImage(tmBuffer, 0, 0);
-  if (state.treemap.query.trim()) tmCtx.drawImage(tmSearchBuffer, 0, 0);
+  tmCtx.save();
+  if (clip) {
+    tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    tmCtx.beginPath();
+    tmCtx.rect(clip.x, clip.y, clip.w, clip.h);
+    tmCtx.clip();
+    tmCtx.clearRect(clip.x, clip.y, clip.w, clip.h);
+    const sx = clip.x * dpr, sy = clip.y * dpr, sw = clip.w * dpr, sh = clip.h * dpr;
+    tmCtx.drawImage(tmBuffer, sx, sy, sw, sh, clip.x, clip.y, clip.w, clip.h);
+    if (state.treemap.query.trim()) tmCtx.drawImage(tmSearchBuffer, sx, sy, sw, sh, clip.x, clip.y, clip.w, clip.h);
+  } else {
+    tmCtx.setTransform(1, 0, 0, 1, 0, 0);
+    tmCtx.clearRect(0, 0, tmCanvas.width, tmCanvas.height);
+    tmCtx.drawImage(tmBuffer, 0, 0);
+    if (state.treemap.query.trim()) tmCtx.drawImage(tmSearchBuffer, 0, 0);
+  }
   const h = state.treemap.hover;
   if (h) {
     tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -355,4 +379,5 @@ function presentTreemap() {
   tmCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
   lensPaint(tmCtx, tmCanvas.width / dpr, tmCanvas.height / dpr);
   lassoPaint(tmCtx);
+  tmCtx.restore();
 }

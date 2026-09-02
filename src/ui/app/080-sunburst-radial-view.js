@@ -10,10 +10,10 @@ function drawView() {
   // already known, so the repeat calls after the first cost nothing.
   if (state.treemap.colorMode === 'reclaim') fetchScoresForTreemap();
 }
-function presentView() {
+function presentView(opts) {
   if (isSun()) presentSunburst();
   else if (isCells()) presentCells();
-  else presentTreemap();
+  else presentTreemap(opts && opts.clip);
 }
 function viewHit(cx, cy, leavesOnly) {
   if (isSun()) return sunburstHit(cx, cy);

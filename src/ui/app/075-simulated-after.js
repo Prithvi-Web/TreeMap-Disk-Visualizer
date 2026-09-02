@@ -423,6 +423,18 @@ tmCanvas.addEventListener('pointerup', (e) => {
 tmCanvas.addEventListener('pointercancel', () => lassoCancel());
 let tmSuppressClick = false;
 
+/** The union of two hover rects in CSS px, padded for the 2px ring; null when neither exists. */
+function tmHoverUnion(a, b) {
+  const rs = [a, b].filter(Boolean);
+  if (!rs.length) return null;
+  const pad = 3;
+  const x0 = Math.max(0, Math.min(...rs.map((r) => r.x)) - pad);
+  const y0 = Math.max(0, Math.min(...rs.map((r) => r.y)) - pad);
+  const x1 = Math.max(...rs.map((r) => r.x + r.w)) + pad;
+  const y1 = Math.max(...rs.map((r) => r.y + r.h)) + pad;
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
 let tmRaf = 0;
 tmCanvas.addEventListener('mousemove', (e) => {
   // §6.4 — the lens follows the pointer whether or not it is up, so pressing
@@ -438,8 +450,14 @@ tmCanvas.addEventListener('mousemove', (e) => {
     const hit = viewHit(e.clientX, e.clientY, true);
     const prevNode = state.treemap.hover && state.treemap.hover.n;
     if ((hit && hit.n) !== prevNode) {
+      const prev = state.treemap.hover;
       state.treemap.hover = hit;
-      presentView();
+      // Only two tiles changed: present that union, not the whole map. The
+      // lens paints a circle that is not a tile, and the sunburst and the
+      // solved renderers hover shapes that are not rectangles — those keep
+      // the full present.
+      const clip = !lensActive() && isRectMap() ? tmHoverUnion(prev, hit) : null;
+      presentView(clip ? { clip } : undefined);
     }
     if (hit) {
       // §4.3 — a freed block is a hypothetical, not a file: no drill-in cursor,

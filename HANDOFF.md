@@ -78,13 +78,79 @@ DOM and server costs above are measured; the paint side is code-verified.
 - `api()` in the page throws on a 202 ("Still working on that") — poll with
   a try/catch, not a status check.
 
-### Still open (the audit's remaining items, if any, are recorded below when it lands)
+### Second pass: what the 37-agent audit added (same day)
+
+31 findings raised, 28 survived their verifiers, and they reduce to one
+structural fact plus a damage story. Everything below is red-first and
+mutation-proven (eleven mutants, eleven caught), verified on the rebuilt
+page in the pane, and shipped as **v4.1.3**.
+
+**The structural fact.** Every Liquid Glass host was `isolation: isolate`
+with a `mix-blend-mode: screen` ring on `::after`. In the dark theme that
+made the WHOLE host — sidebar, sheet, panel, toast — an isolated offscreen
+compositor group redrawn on every damaged frame, and the frost then read
+its backdrop from that group's own empty framebuffer, so the glass was very
+likely blurring nothing. One line: the blend is gone, `--ring-a` 0.50→0.58
+so the ring reads the same. (The light theme had already opted out.)
+
+**The lens is now opt-in nowhere.** Every TARGETS entry is `plain: 1`; the
+engine's displacement-filter machinery stays for a surface that drops the
+flag. The preview pane and cart panel sat fixed over the map and were
+re-filtered on every frame damage touched them; the live feed's spark
+canvas repaints every rAF inside its own lens; toasts paid a map build per
+width bucket mid-fade; the reclaim popover ran a blur under an OPAQUE base
+(`--lg-backdrop: none` there too). Verified: `svg filter[id^=lg-f-]` count
+in the DOM is **0**.
+
+**Hover: damage, not JavaScript.** A hover change blitted the whole treemap
+canvas, so compositor damage spanned the map and every frosted overlay on it
+re-blurred. `presentTreemap(clip)` now takes the union of the old and new
+hover rects (padded 3px) from `tmHoverUnion`, clips, and blits only that
+region from the buffers; the lens and the non-rectangle renderers keep the
+full present. Every overlay below the blit iterates all rects and paints
+nothing outside the clip; what is outside was on screen from the last full
+present. Also: `#cartTab:hover` no longer lifts (a moving frosted surface
+re-blurs per frame); `.gcell:hover` no longer lifts (a lifted cell stays
+promoted through its leave transition after z-index snapped back, squashing
+every overlapping sibling into new layers); `.card.glass` transitions only
+`transform` — the 80px shadow steps instead of repainting the card for ~9
+frames each way.
+
+**Modals.** `.modal` is a near-opaque pane (`--lg-backdrop: none`, the
+global-search 94% recipe): its scroller lived inside its own backdrop
+surface and every scroll frame re-blurred ~2M device pixels. Effects behind
+an open sheet are paused, scoped with `:not(.modal-backdrop.open *)` so the
+offload strip and the Settings orb inside a dialog keep running.
+
+**Near-duplicates.** Clusters wrap (`flex-wrap`, `overflow: visible`)
+instead of scrolling sideways: a horizontal scroller nested in the vertical
+one latched two-finger gestures that drifted sideways (the page stuck, then
+jumped) and gave each overflowing cluster its own composited scroll layer.
+The render lock moved from tile to cluster. A mid-scroll append inserts 4
+clusters × 12 images (was 12 × 24) 1000px ahead, stamps cart state at build
+time so `refreshCartButtons` has nothing to rewrite, and syncs only the
+nodes it inserted (`refreshCartButtons(roots = [document])`). Verified in
+the pane: 0 strips with horizontal overflow, 0 unstamped cart buttons.
+
+**Permanent layers.** `will-change` removed from `.fx-roll-col` (~40
+compositor layers on the dashboard at rest), `.fxgoo-sil` and `.fxgoo-thumb`.
+
+### Deferred from the audit, with reasons
+
+- **Static pill beams** (Live / Lens / Loop / Diff / Hide-cloud spin a
+  registered custom property at 60fps while a mode is on, plus a bloom
+  child): needs a `spin: false` knob threaded through `normalizeOpts`, the
+  sheet cache key and `buildRotateCSS` in the beam engine, and a rewrite of
+  the pill tests. Engine surgery; a round of its own.
+- **Sidebar frost static above 900px**, the shimmer's `steps(16)`, collapsing
+  rolled digit strips back to text after the glide: low, polish.
+
+### Still open, small
+
 
 - The `viewIn` entrance animation (`transform: translateY(8px)` + opacity,
   350 ms) makes the whole view a moving layer while it plays; a scroll
   started inside that window is not composited. Cosmetic; untested.
-- Modal frost is still `blur(30px)`; a 20px radius would look the same and
-  cost ~half. Not changed — no measurement to justify it from here.
 
 ## Session 6 — the scrubber glitch and the hover cost (1 September 2026, later the same day)
 
