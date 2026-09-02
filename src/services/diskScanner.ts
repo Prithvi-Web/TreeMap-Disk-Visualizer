@@ -17,6 +17,7 @@ import { cloudProviderFor } from './cloudFolders';
 import { noteRefused } from './scanRefusals';
 import { permissionDeniedMessage } from '../middleware/errorHandler';
 import { PackedScanStore, ScanStore, Flag, NodeInput, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
+import { platform } from '../platform';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -40,6 +41,13 @@ const CONCURRENCY = Math.min(32, Math.max(8, IO_THREADS));
 const STAT_BATCH = IO_THREADS > 4 ? 64 : 32;
 /** Yield to the event loop after this many entries so SSE stays responsive. */
 const YIELD_EVERY = 2000;
+
+/**
+ * Does `stat.blocks` mean anything here? Asked once, not per file: on Windows
+ * libuv leaves it at zero for every file, and believing that zero would make
+ * the whole drive look like it claims space it does not occupy.
+ */
+const BLOCKS_ARE_MEANINGFUL = platform().blocksAreMeaningful;
 
 /**
  * A directory that can't answer a listing (dead network mount, wedged
@@ -397,6 +405,8 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     walkedDirs: 0,
     hardlinkedFiles: 0,
     hardlinkedBytes: 0,
+    sparseFiles: 0,
+    sparseBytes: 0,
     cloudFiles: 0,
     cloudBytes: 0,
   };
@@ -464,6 +474,8 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         scan.scanned = 0;
         scan.hardlinkedFiles = 0;
         scan.hardlinkedBytes = 0;
+        scan.sparseFiles = 0;
+        scan.sparseBytes = 0;
         scan.cloudFiles = 0;
         scan.cloudBytes = 0;
         scan.deniedDirs = 0;
@@ -762,7 +774,7 @@ async function processDirectory(
 
         if (ent.isDirectory() && !ent.isSymbolicLink()) {
           const stat = await fsp.lstat(fullPath);
-          return { input: statToInput(ent.name, true, 0, stat.mtimeMs, stat.atimeMs), fullPath, isDir: true };
+          return { input: statToInput(ent.name, true, 0, stat.mtimeMs, stat.atimeMs), fullPath, isDir: true, shortfall: 0 };
         }
         // Files, symlinks (not followed — lstat reports the link itself),
         // sockets, fifos: record as a leaf with whatever size lstat reports.
@@ -770,7 +782,10 @@ async function processDirectory(
         const input = statToInput(ent.name, false, stat.size, stat.mtimeMs, stat.atimeMs);
         if (ent.isSymbolicLink()) {
           input.isSymlink = true;
-          return { input, fullPath, isDir: false };
+          // Returns BEFORE the shortfall below: a symlink reports a non-zero
+          // size against zero blocks, indistinguishable from a fully sparse
+          // file, and a home folder holds tens of thousands of them.
+          return { input, fullPath, isDir: false, shortfall: 0 };
         }
         // A cloud placeholder reports a logical size but occupies ~no disk blocks
         // AND lives under a known cloud-sync folder — so plain sparse files
@@ -782,8 +797,17 @@ async function processDirectory(
             input.cloudProvider = provider;
           }
         }
+        // What this file claims, minus what it occupies. Sparse files (a VM
+        // disk, Docker.raw) and, on macOS, compressed files land here. It is
+        // carried out rather than tallied here because a hard-link duplicate's
+        // size is zeroed below — tallying it now would take the same bytes off
+        // twice.
+        const shortfall =
+          BLOCKS_ARE_MEANINGFUL && input.size > 0 && stat.blocks * 512 < input.size
+            ? input.size - stat.blocks * 512
+            : 0;
         // Hard-link key only when the link count says the inode is shared.
-        return { input, fullPath, isDir: false, inoKey: stat.nlink > 1 ? `${stat.dev}:${stat.ino}` : undefined };
+        return { input, fullPath, isDir: false, shortfall, inoKey: stat.nlink > 1 ? `${stat.dev}:${stat.ino}` : undefined };
       })
     );
 
@@ -796,7 +820,7 @@ async function processDirectory(
         else if (why !== 'vanished') scan.unreadableEntries = (scan.unreadableEntries ?? 0) + 1;
         continue;
       }
-      const { input, fullPath, isDir, inoKey } = result.value;
+      const { input, fullPath, isDir, inoKey, shortfall } = result.value;
       // Dedup hard links sequentially so concurrent workers can't race the set.
       if (inoKey) {
         if (seen.has(inoKey)) {
@@ -811,6 +835,15 @@ async function processDirectory(
       if (input.cloudPlaceholder) {
         scan.cloudFiles = (scan.cloudFiles ?? 0) + 1;
         scan.cloudBytes = (scan.cloudBytes ?? 0) + input.size;
+      }
+      // Space claimed but not occupied. Two exclusions, both arithmetic rather
+      // than cosmetic: a hard-link duplicate's bytes were zeroed just above and
+      // were never added to the tree total, and a cloud placeholder's bytes are
+      // already taken off in full by the cloud line — either one would subtract
+      // the same space twice.
+      if (shortfall > 0 && !input.hardlinkDuplicate && !input.cloudPlaceholder) {
+        scan.sparseFiles = (scan.sparseFiles ?? 0) + 1;
+        scan.sparseBytes = (scan.sparseBytes ?? 0) + shortfall;
       }
       if (isDir && input.name === '.git') store.setFlag(dirId, Flag.GitRepo, true);
       const childId = store.addNode(dirId, input);

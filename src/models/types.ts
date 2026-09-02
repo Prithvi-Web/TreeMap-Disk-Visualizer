@@ -130,6 +130,16 @@ export interface ScanResult {
   hardlinkedFiles?: number;
   /** Bytes those hard-link duplicates would have double-counted. */
   hardlinkedBytes?: number;
+  /**
+   * Files that claim more room than they occupy: sparse files (virtual-machine
+   * disks, Docker.raw, database files) and, on macOS, files the filesystem
+   * stores compressed. Cloud placeholders and hard-link duplicates are excluded
+   * — they already have their own accounting and counting them here would
+   * subtract the same bytes twice.
+   */
+  sparseFiles?: number;
+  /** The SHORTFALL those files carry: what they claim minus what they occupy. */
+  sparseBytes?: number;
   /** Cloud placeholder files detected (size > 0 but ~0 disk blocks). */
   cloudFiles?: number;
   /** Logical bytes those cloud placeholders report but don't occupy on disk. */
@@ -215,6 +225,10 @@ export interface ScanStats {
   walkedDirs: number;
   hardlinkedFiles: number;
   hardlinkedBytes: number;
+  /** Files claiming more room than they occupy (sparse or compressed). */
+  sparseFiles: number;
+  /** What those files claim, minus what they occupy. */
+  sparseBytes: number;
   cloudFiles: number;
   cloudBytes: number;
   /**

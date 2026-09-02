@@ -149,6 +149,8 @@ const RESULT_PAYLOAD = {
   dirCount: 22,
   hardlinkedFiles: 0,
   hardlinkedBytes: 0,
+  sparseFiles: 0,
+  sparseBytes: 0,
   cloudFiles: 0,
   cloudBytes: 0,
   startedAt: 1_000,

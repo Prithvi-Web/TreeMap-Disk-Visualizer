@@ -117,6 +117,21 @@ test('the Dashboard and All Storage read the disk’s used figure instead of der
   assert.doesNotMatch(all, /state\.system\.totalDisk\s*-\s*state\.system\.freeDisk/, 'the same derivation, gone');
 });
 
+test('the dashboard names the room reserved but not filled, and hides the row when there is none', () => {
+  // Docker.raw claims 64 GB and may hold 12. The tile, the total and the
+  // receipt all counted the claim; this row is where the difference is said.
+  const els = renderDiskNotesWith({ sparseFiles: 3, sparseBytes: 52 });
+  assert.equal(els.sparseRow.hidden, false);
+  assert.match(els.sparseText.textContent, /^3 files claim 52 B more than they take$/,
+    'the count, the shortfall, and what it means — in that order');
+  const one = renderDiskNotesWith({ sparseFiles: 1, sparseBytes: 9 });
+  assert.match(one.sparseText.textContent, /^1 file claims 9 B more than it takes$/, 'the singular agrees');
+  // Windows always reports 0 here, and the index-first paint publishes no
+  // sparse keys at all — neither may show an empty row.
+  assert.equal(renderDiskNotesWith({ sparseFiles: 0 }).sparseRow.hidden, true);
+  assert.equal(renderDiskNotesWith({}).sparseRow.hidden, true, 'undefined is not a number of files');
+});
+
 /* ══════════════ Hard links: two counters, two labels ══════════════ */
 
 /**

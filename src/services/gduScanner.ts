@@ -9,6 +9,7 @@ import { keepSmallest } from './scanRefusals';
 import { detectContainerKind } from '../utils/containerKind';
 import { neverDescend } from '../utils/mountBoundaries';
 import { PackedScanStore, ScanStore, NodeInput } from './scanStore';
+import { platform } from '../platform';
 
 /**
  * The gdu turbo engine.
@@ -47,6 +48,9 @@ const MAX_SHARD_BYTES = 450 * 1024 * 1024;
  * timeout falls back to the walker like every other gdu failure.
  */
 const SHARD_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Whether `stat.blocks` is a real allocation figure here. False on Windows. */
+const BLOCKS_ARE_MEANINGFUL = platform().blocksAreMeaningful;
 
 export interface FindOptions {
   bundledPath?: string;
@@ -197,7 +201,7 @@ async function statLeaf(
   isSymlink: boolean,
   seenInodes: Set<number>,
   cloudProviderFor: (p: string) => 'icloud' | 'onedrive' | 'dropbox' | undefined,
-): Promise<{ input: NodeInput; hardlinkedBytes: number } | null> {
+): Promise<{ input: NodeInput; hardlinkedBytes: number; sparseShortfall: number } | null> {
   const p = parent === '/' ? '/' + name : parent + '/' + name;
   try {
     const st = await fsp.lstat(p);
@@ -216,7 +220,9 @@ async function statLeaf(
 
     if (isSymlink) {
       input.isSymlink = true;
-      return { input, hardlinkedBytes: 0 };
+      // A symlink reports a non-zero size against zero blocks, which is what a
+      // fully sparse file looks like — so it returns before that check.
+      return { input, hardlinkedBytes: 0, sparseShortfall: 0 };
     }
 
     // Same rule as the mapper: only files whose link count exceeds 1 can be
@@ -226,7 +232,7 @@ async function statLeaf(
         input.hardlinkDuplicate = true;
         const bytes = input.size;
         input.size = 0;
-        return { input, hardlinkedBytes: bytes };
+        return { input, hardlinkedBytes: bytes, sparseShortfall: 0 };
       }
       seenInodes.add(st.ino);
     }
@@ -239,7 +245,12 @@ async function statLeaf(
       }
     }
 
-    return { input, hardlinkedBytes: 0 };
+    // What it claims minus what it occupies. The cloud line already takes a
+    // placeholder's bytes off in full, so it is excluded here.
+    const alloc = BLOCKS_ARE_MEANINGFUL ? st.blocks * 512 : input.size;
+    const sparseShortfall =
+      !input.cloudPlaceholder && input.size > 0 && alloc < input.size ? input.size - alloc : 0;
+    return { input, hardlinkedBytes: 0, sparseShortfall };
   } catch {
     return null; // vanished mid-scan
   }
@@ -313,6 +324,10 @@ export async function gduScanIntoStore(
         scan.cloudFiles = (scan.cloudFiles ?? 0) + 1;
         scan.cloudBytes = (scan.cloudBytes ?? 0) + leaf.input.size;
       }
+      if (leaf.sparseShortfall > 0) {
+        scan.sparseFiles = (scan.sparseFiles ?? 0) + 1;
+        scan.sparseBytes = (scan.sparseBytes ?? 0) + leaf.sparseShortfall;
+      }
     }
     scan.scanned = scan.fileCount;
 
@@ -339,7 +354,7 @@ export async function gduScanIntoStore(
       }
 
       const parsed = JSON.parse(await fsp.readFile(outFile, 'utf8'));
-      const { stats } = mapGduTreeIntoStore(parsed, dirPath, store, store.rootId, { seenInodes, cloudProviderFor });
+      const { stats } = mapGduTreeIntoStore(parsed, dirPath, store, store.rootId, { seenInodes, cloudProviderFor, blocksAreMeaningful: BLOCKS_ARE_MEANINGFUL });
       // Release the shard's JSON before the next one is read.
       await fsp.unlink(outFile).catch(() => {});
 
@@ -347,6 +362,8 @@ export async function gduScanIntoStore(
       scan.dirCount += stats.dirCount;
       scan.hardlinkedFiles = (scan.hardlinkedFiles ?? 0) + stats.hardlinkedFiles;
       scan.hardlinkedBytes = (scan.hardlinkedBytes ?? 0) + stats.hardlinkedBytes;
+      scan.sparseFiles = (scan.sparseFiles ?? 0) + stats.sparseFiles;
+      scan.sparseBytes = (scan.sparseBytes ?? 0) + stats.sparseBytes;
       scan.cloudFiles = (scan.cloudFiles ?? 0) + stats.cloudFiles;
       scan.cloudBytes = (scan.cloudBytes ?? 0) + stats.cloudBytes;
       // Folders gdu flagged read_error — the same shape the walker publishes.

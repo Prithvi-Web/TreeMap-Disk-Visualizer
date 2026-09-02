@@ -136,7 +136,7 @@ export abstract class BaseProvider implements PlatformProvider {
    * provider overrides this to false and supplies the real figure through
    * `GetCompressedFileSize` instead.
    */
-  protected get blocksAreMeaningful(): boolean {
+  get blocksAreMeaningful(): boolean {
     return true;
   }
 

@@ -7,6 +7,8 @@
     "dirCount": 16,
     "hardlinkedFiles": 1,
     "hardlinkedBytes": 9999,
+    "sparseFiles": 0,
+    "sparseBytes": 0,
     "cloudFiles": 0,
     "cloudBytes": 0,
     "startedAt": 0,
@@ -3418,6 +3420,8 @@
       "walkedDirs": 16,
       "hardlinkedFiles": 1,
       "hardlinkedBytes": 9999,
+      "sparseFiles": 0,
+      "sparseBytes": 0,
       "cloudFiles": 0,
       "cloudBytes": 0,
       "refused": {

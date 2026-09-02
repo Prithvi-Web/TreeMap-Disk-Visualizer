@@ -382,6 +382,14 @@ test('the smart-pane funnel states suggested → staged → projected free, and 
 
 /* ══════════════════ Missing GB ══════════════════ */
 
+test('a correction shortens the segment it corrects — the bar never draws what the statement takes back', () => {
+  const fn = slice('function mgSegmentBytes(', 'function renderMissing()');
+  assert.match(fn, /id === 'scanned'/, 'both corrections belong to the scanned line');
+  assert.match(fn, /cloudPlaceholders'\)\?\.bytes/, 'online-only files are netted off it');
+  assert.match(fn, /sparseFiles'\)\?\.bytes/,
+    'and so is the space files claim but do not occupy — otherwise the scanned segment draws 52 GB too wide while the statement below prints the correction in full');
+});
+
 test('the receipt says whose free space it is, and shows what is kept back', () => {
   const fn = slice('function renderMissing()', '/* Segment → its row.');
   assert.match(fn, /Free to you — /, 'bavail is what a normal program may write, and the legend now says so');

@@ -161,6 +161,8 @@ const schemas: Json = {
       walkedDirs: int(),
       hardlinkedFiles: int(),
       hardlinkedBytes: int(),
+      sparseFiles: int('Files claiming more room than they occupy: sparse files and, on macOS, compressed ones'),
+      sparseBytes: int('What those files claim, minus what they occupy. Zero on Windows, where allocation is not reported during a walk'),
       cloudFiles: int(),
       cloudBytes: int(),
       refused: obj(
@@ -173,7 +175,7 @@ const schemas: Json = {
       vanishedDirs: int('Folders that disappeared mid-scan; the results are partial when > 0'),
       expiresAt: int('Epoch ms when the results leave memory; null while running. Every read of the scan pushes it out by 30 minutes'),
     },
-    ['scanned', 'fileCount', 'dirCount', 'engine', 'ioThreads', 'durationMs', 'incremental', 'cachedDirs', 'walkedDirs', 'hardlinkedFiles', 'hardlinkedBytes', 'cloudFiles', 'cloudBytes', 'refused', 'vanishedDirs', 'expiresAt'],
+    ['scanned', 'fileCount', 'dirCount', 'engine', 'ioThreads', 'durationMs', 'incremental', 'cachedDirs', 'walkedDirs', 'hardlinkedFiles', 'hardlinkedBytes', 'sparseFiles', 'sparseBytes', 'cloudFiles', 'cloudBytes', 'refused', 'vanishedDirs', 'expiresAt'],
   ),
   TreemapNode: obj(
     {
@@ -851,6 +853,8 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             dirCount: int(),
             hardlinkedFiles: int(),
             hardlinkedBytes: int(),
+            sparseFiles: int(),
+            sparseBytes: int(),
             cloudFiles: int(),
             cloudBytes: int(),
             startedAt: int(),
@@ -1224,7 +1228,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             lines: arr(
               obj(
                 {
-                  id: str("One of: scanned, cloudPlaceholders, snapshots, purgeable, openHandles, otherVolumes, unscannable, unaccounted"),
+                  id: str("One of: scanned, cloudPlaceholders, sparseFiles, snapshots, purgeable, openHandles, otherVolumes, unscannable, unaccounted"),
                   label: str(),
                   bytes: nullable(
                     num(

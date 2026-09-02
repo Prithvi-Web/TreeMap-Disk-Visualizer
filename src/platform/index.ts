@@ -41,6 +41,16 @@ import {
  */
 export interface PlatformProvider {
   readonly platform: PlatformName;
+  /**
+   * Whether `Stats.blocks` says anything real on this platform.
+   *
+   * True on macOS and Linux, where it is the POSIX count of 512-byte blocks
+   * actually allocated and zero is a real answer. False on Windows, where
+   * libuv leaves it at zero for every file and the same zero means nothing —
+   * believing it there would report every file on the drive as claiming space
+   * it does not occupy.
+   */
+  readonly blocksAreMeaningful: boolean;
 
   /* Enumeration and live changes */
   fastEnumerate(root: string, opts?: EnumerateOptions): AsyncIterable<RawEntry>;

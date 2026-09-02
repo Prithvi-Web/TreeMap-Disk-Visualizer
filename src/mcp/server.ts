@@ -464,7 +464,8 @@ export function buildMcpServer(): McpServer {
         "to the volume's used space EXACTLY, and whatever is left over is its own `unaccounted` line rather " +
         'than being folded into the others — a statement that always balances because it was forced to is not ' +
         'evidence of anything. Lines cover: files the scan walked, online-only files counted but not resident, ' +
-        'filesystem snapshots, purgeable space, space held by programs with deleted files still open, other ' +
+        'space files claim but do not occupy (virtual-machine disks and compressed files), filesystem '
+        + 'snapshots, purgeable space, space held by programs with deleted files still open, other ' +
         'volumes sharing the same storage pool, and what the scan was refused. ' +
         'CRITICAL for interpreting the result: `bytes: null` means UNKNOWN and comes with a `reason`; it is ' +
         'never the same as `bytes: 0`, which is a measurement. The `unaccounted` line names every unknown line ' +

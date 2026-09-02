@@ -75,7 +75,7 @@ export class WindowsProvider extends BaseProvider {
    * figure comes from `GetCompressedFileSize` (see ./attributes.ts), which is
    * batched rather than paid per file during a walk.
    */
-  protected override get blocksAreMeaningful(): boolean {
+  override get blocksAreMeaningful(): boolean {
     return false;
   }
 

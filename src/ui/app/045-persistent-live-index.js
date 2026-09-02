@@ -402,6 +402,7 @@ function statsFromResult(r) {
     durationMs: r.finishedAt && r.startedAt ? r.finishedAt - r.startedAt : 0,
     incremental: !!r.incremental, cachedDirs: r.cachedDirs || 0, walkedDirs: r.walkedDirs || 0,
     hardlinkedFiles: r.hardlinkedFiles || 0, hardlinkedBytes: r.hardlinkedBytes || 0,
+    sparseFiles: r.sparseFiles || 0, sparseBytes: r.sparseBytes || 0,
     cloudFiles: r.cloudFiles || 0, cloudBytes: r.cloudBytes || 0,
   };
 }
@@ -600,6 +601,13 @@ function renderDiskNotes() {
       $('hardlinkText').textContent = `${formatCount(s.hardlinkedFiles)} extra file name${s.hardlinkedFiles === 1 ? '' : 's'} (${formatBytes(s.hardlinkedBytes)})`;
       hl.hidden = false;
     } else hl.hidden = true;
+  }
+  const sp = $('sparseRow');
+  if (sp) {
+    if (s.sparseFiles > 0) {
+      $('sparseText').textContent = `${formatCount(s.sparseFiles)} file${s.sparseFiles === 1 ? ' claims' : 's claim'} ${formatBytes(s.sparseBytes)} more than ${s.sparseFiles === 1 ? 'it takes' : 'they take'}`;
+      sp.hidden = false;
+    } else sp.hidden = true;
   }
   const cl = $('cloudRow');
   if (cl) {

@@ -3307,6 +3307,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
             <span class="ic" data-icon="copy" data-size="16"></span>
             <div class="snap-meta"><b id="hardlinkText"></b><span class="muted">Each is another name for data already counted, so totals match what the OS reports.</span></div>
           </div>
+          <div class="snap-row" id="sparseRow" hidden>
+            <span class="ic" data-icon="disc" data-size="16"></span>
+            <div class="snap-meta"><b id="sparseText"></b><span class="muted">Room reserved but not filled — a virtual machine disk, or a file stored compressed.</span></div>
+          </div>
           <div class="snap-row" id="cloudRow" hidden>
             <span class="ic" data-icon="cloud" data-size="16"></span>
             <div class="snap-meta"><b id="cloudText"></b><span class="muted">Stored in the cloud — local copies are safe to remove.</span></div>
@@ -8137,6 +8141,7 @@ function statsFromResult(r) {
     durationMs: r.finishedAt && r.startedAt ? r.finishedAt - r.startedAt : 0,
     incremental: !!r.incremental, cachedDirs: r.cachedDirs || 0, walkedDirs: r.walkedDirs || 0,
     hardlinkedFiles: r.hardlinkedFiles || 0, hardlinkedBytes: r.hardlinkedBytes || 0,
+    sparseFiles: r.sparseFiles || 0, sparseBytes: r.sparseBytes || 0,
     cloudFiles: r.cloudFiles || 0, cloudBytes: r.cloudBytes || 0,
   };
 }
@@ -8335,6 +8340,13 @@ function renderDiskNotes() {
       $('hardlinkText').textContent = `${formatCount(s.hardlinkedFiles)} extra file name${s.hardlinkedFiles === 1 ? '' : 's'} (${formatBytes(s.hardlinkedBytes)})`;
       hl.hidden = false;
     } else hl.hidden = true;
+  }
+  const sp = $('sparseRow');
+  if (sp) {
+    if (s.sparseFiles > 0) {
+      $('sparseText').textContent = `${formatCount(s.sparseFiles)} file${s.sparseFiles === 1 ? ' claims' : 's claim'} ${formatBytes(s.sparseBytes)} more than ${s.sparseFiles === 1 ? 'it takes' : 'they take'}`;
+      sp.hidden = false;
+    } else sp.hidden = true;
   }
   const cl = $('cloudRow');
   if (cl) {
@@ -22079,7 +22091,14 @@ async function loadMissing() {
  */
 function mgSegmentBytes(lines, id) {
   let total = lines.find(l => l.id === id)?.bytes ?? 0;
-  if (id === 'scanned') total += lines.find(l => l.id === 'cloudPlaceholders')?.bytes ?? 0;
+  // Both corrections belong to the scanned line: online-only files and files
+  // that claim more than they occupy were counted there and are taken back off.
+  // A stacked bar cannot draw a negative width, so they shorten the segment
+  // instead of getting one of their own — and both still print in full below.
+  if (id === 'scanned') {
+    total += lines.find(l => l.id === 'cloudPlaceholders')?.bytes ?? 0;
+    total += lines.find(l => l.id === 'sparseFiles')?.bytes ?? 0;
+  }
   return total;
 }
 

@@ -35,6 +35,10 @@ export interface GduMapStats {
   dirCount: number;
   hardlinkedFiles: number;
   hardlinkedBytes: number;
+  /** Files whose dsize is under their asize: sparse, or stored compressed. */
+  sparseFiles: number;
+  /** asize minus dsize, summed over those files. */
+  sparseBytes: number;
   cloudFiles: number;
   cloudBytes: number;
   /** Directories gdu flagged `read_error` (ncdu export format): refused, or unreadable. */
@@ -76,6 +80,12 @@ export interface GduMapOptions {
   seenInodes?: Set<number>;
   /** Injected to keep this module pure and testable without touching disk. */
   cloudProviderFor?: (p: string) => 'icloud' | 'onedrive' | 'dropbox' | undefined;
+  /**
+   * Whether gdu's `dsize` is a real allocation figure on this platform. False
+   * by default so no existing caller changes behaviour by omission; the scanner
+   * passes the platform's own answer.
+   */
+  blocksAreMeaningful?: boolean;
 }
 
 /** A directory gdu could not read: counted, and named while there is room. */
@@ -98,6 +108,8 @@ export function mapGduTree(
     dirCount: 0,
     hardlinkedFiles: 0,
     hardlinkedBytes: 0,
+    sparseFiles: 0,
+    sparseBytes: 0,
     cloudFiles: 0,
     cloudBytes: 0,
     deniedDirs: 0,
@@ -105,6 +117,7 @@ export function mapGduTree(
   };
   const seen = opts.seenInodes ?? new Set<number>();
   const cloudFor = opts.cloudProviderFor;
+  const allocReal = opts.blocksAreMeaningful === true;
 
   // Accept either the full document or a bare directory node.
   const arr = doc as unknown[];
@@ -163,6 +176,18 @@ export function mapGduTree(
         node.cloudProvider = provider;
         stats.cloudFiles++;
         stats.cloudBytes += size;
+      }
+    }
+
+    // Space claimed but not occupied. `dsize` is what gdu measured on disk and
+    // is omitted when zero. A cloud placeholder is excluded because the cloud
+    // line already takes its bytes off in full; a hard-link duplicate returned
+    // above with its size zeroed, and so did a symlink.
+    if (allocReal && size > 0 && !node.cloudPlaceholder) {
+      const allocated = o.dsize || 0;
+      if (allocated < size) {
+        stats.sparseFiles++;
+        stats.sparseBytes += size - allocated;
       }
     }
 
@@ -235,6 +260,8 @@ export function mapGduTreeIntoStore(
     dirCount: 0,
     hardlinkedFiles: 0,
     hardlinkedBytes: 0,
+    sparseFiles: 0,
+    sparseBytes: 0,
     cloudFiles: 0,
     cloudBytes: 0,
     deniedDirs: 0,
@@ -242,6 +269,7 @@ export function mapGduTreeIntoStore(
   };
   const seen = opts.seenInodes ?? new Set<number>();
   const cloudFor = opts.cloudProviderFor;
+  const allocReal = opts.blocksAreMeaningful === true;
 
   const arr = doc as unknown[];
   const dirNode = (Array.isArray(arr) && typeof arr[0] === 'number' ? arr[3] : arr) as GduDir;
@@ -294,6 +322,18 @@ export function mapGduTreeIntoStore(
         input.cloudProvider = provider;
         stats.cloudFiles++;
         stats.cloudBytes += size;
+      }
+    }
+
+    // Space claimed but not occupied. `dsize` is what gdu measured on disk and
+    // is omitted when zero. A cloud placeholder is excluded because the cloud
+    // line already takes its bytes off in full; a hard-link duplicate returned
+    // above with its size zeroed, and so did a symlink.
+    if (allocReal && size > 0 && !input.cloudPlaceholder) {
+      const allocated = o.dsize || 0;
+      if (allocated < size) {
+        stats.sparseFiles++;
+        stats.sparseBytes += size - allocated;
       }
     }
 

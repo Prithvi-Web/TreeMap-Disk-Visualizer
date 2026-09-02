@@ -71,6 +71,7 @@ import type { ZombieReport } from './zombieHandles';
 export type StatementLineId =
   | 'scanned'
   | 'cloudPlaceholders'
+  | 'sparseFiles'
   | 'snapshots'
   | 'purgeable'
   | 'openHandles'
@@ -436,6 +437,10 @@ export async function buildStatement(
     remedy: null,
   });
 
+  /* ── Space claimed but not occupied ────────────────────────────────────── */
+
+  lines.push(sparseLine(scan, plat));
+
   /* ── Filesystem snapshots ──────────────────────────────────────────────── */
 
   lines.push(await snapshotLine(sources));
@@ -754,6 +759,70 @@ function otherVolumesLine(
  * confidently-wrong answer this whole view exists to eliminate.
  */
 const ENGINES_THAT_COUNT_REFUSALS: ReadonlySet<string> = new Set(['walker', 'turbo-walker']);
+
+/**
+ * Engines that can measure how much room a file really takes.
+ *
+ * The walker reads `stat.blocks` and gdu reports `dsize`, so both can say what
+ * a file occupies as well as what it claims. A cloud listing has no such
+ * figure — it knows only the size a provider reports — so on a cloud scan the
+ * answer is unknown, not zero.
+ */
+const ENGINES_THAT_MEASURE_ALLOCATION: ReadonlySet<string> = new Set(['walker', 'turbo-walker', 'gdu-turbo']);
+
+/**
+ * Space the scanned files claim but do not occupy.
+ *
+ * The single most common reason the numbers do not add up on a Mac. A virtual
+ * machine's disk — Docker.raw is the usual one — reserves the whole size it was
+ * created with and fills only part of it, and macOS also stores many files
+ * compressed. The line above counted what they claim, so this takes back the
+ * part that is not on the disk. Cloud placeholders and hard-linked duplicates
+ * are deliberately not in this figure: the first is taken off in full by the
+ * line above, and the second was never added.
+ *
+ * Exported for its own test: the arithmetic here decides whether the receipt
+ * balances, and driving it through a whole live scan would prove far less.
+ */
+export function sparseLine(scan: ScanResult, plat: NodeJS.Platform): StatementLine {
+  const label = 'Space these files claim but do not occupy';
+  const detail =
+    'Some files reserve room they have not filled — a virtual machine disk such as Docker.raw is the usual one — and macOS stores many files compressed. The line above counted what they claim; this takes back the part that is not on the disk.';
+  const engine = scan.engine ?? 'walker';
+  if (plat === 'win32') {
+    return {
+      id: 'sparseFiles', label, bytes: null, available: false,
+      reason:
+        'Windows does not tell a folder walk how much room each file really takes, so how much of what these files claim is not on the disk cannot be known from this scan.',
+      detail, count: null, notes: [], remedy: null,
+    };
+  }
+  if (!ENGINES_THAT_MEASURE_ALLOCATION.has(engine)) {
+    return {
+      id: 'sparseFiles', label, bytes: null, available: false,
+      reason: `This scan was produced by the ${engine} engine, which reports only the size each file claims — so how much of that is not on the disk cannot be known from it.`,
+      detail, count: null, notes: [], remedy: null,
+    };
+  }
+  const bytes = scan.sparseBytes ?? 0;
+  const count = scan.sparseFiles ?? 0;
+  const notes: string[] = [];
+  if (scan.incremental === true && (scan.cachedDirs ?? 0) > 0) {
+    notes.push(
+      'This was a fast rescan: folders that had not changed were read from the last scan and not measured again, so this figure is a floor rather than a total. The rest is in Unaccounted.',
+    );
+  }
+  return {
+    id: 'sparseFiles',
+    label,
+    bytes: -bytes,
+    available: true,
+    detail: count > 0 ? detail : 'Every file this scan walked occupies what it claims, so nothing is taken back off.',
+    count,
+    notes,
+    remedy: null,
+  };
+}
 
 /**
  * What the scan was refused.

@@ -65,7 +65,14 @@ async function loadMissing() {
  */
 function mgSegmentBytes(lines, id) {
   let total = lines.find(l => l.id === id)?.bytes ?? 0;
-  if (id === 'scanned') total += lines.find(l => l.id === 'cloudPlaceholders')?.bytes ?? 0;
+  // Both corrections belong to the scanned line: online-only files and files
+  // that claim more than they occupy were counted there and are taken back off.
+  // A stacked bar cannot draw a negative width, so they shorten the segment
+  // instead of getting one of their own — and both still print in full below.
+  if (id === 'scanned') {
+    total += lines.find(l => l.id === 'cloudPlaceholders')?.bytes ?? 0;
+    total += lines.find(l => l.id === 'sparseFiles')?.bytes ?? 0;
+  }
   return total;
 }
 
