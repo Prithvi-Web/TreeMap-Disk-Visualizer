@@ -992,6 +992,12 @@ async function api(url, options, opts = {}) {
       if (body) for (const k of Object.keys(body)) if (k !== 'error' && k !== 'code') err[k] = body[k];
       // Not a failure so much as an answer: this machine cannot do that.
       err.capabilityUnavailable = err.code === 'CAPABILITY_UNAVAILABLE';
+      // Results that aged out are not a broken app. Rewritten into a sentence
+      // with a way forward (a Scan again offer) before any caller prints it.
+      // `typeof` because api() is the page's floor: it is lifted on its own by
+      // several test harnesses, and a missing optional collaborator must not
+      // turn a 404 into a ReferenceError that swallows the real error.
+      if (err.code === 'SCAN_NOT_FOUND' && typeof scanResultsExpired === 'function') scanResultsExpired(err, url);
       throw err;
     }
 

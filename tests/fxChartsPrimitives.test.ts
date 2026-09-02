@@ -505,7 +505,15 @@ test('gauge reads its warn tone from the token system, like danger', () => {
   const capsule = INDEX.slice(INDEX.indexOf("$('capsuleGauge').hidden = false"), INDEX.indexOf('capsuleGaugeHandle.update(spec)'));
   assert.match(capsule, /warn: pct > 85/, 'the capsule call site names the intent, not a hue');
   assert.ok(!/#FF9F0A/.test(capsule), 'and no raw hex survives the call site');
-  assert.match(INDEX, /--warn:\s*#B36B00/, 'the light override that makes this legible still exists');
+  // That the override EXISTS is this test's business; that it is dark enough
+  // is measured, not spelled, by tests/polishVisualTheme.test.ts (a WCAG
+  // computation over the resolved light palette). Pinning the hex here made a
+  // legitimate re-tuning — #B36B00 measured 4.03:1 on the card, under the bar
+  // it was chosen for — fail as though it were a regression.
+  const light = INDEX.slice(INDEX.indexOf(':root[data-theme="light"] {'));
+  const lightWarn = /--warn:\s*(#[0-9a-fA-F]{6})/.exec(light.slice(0, light.indexOf('}')));
+  assert.ok(lightWarn, 'the light theme still overrides --warn — the dark #FFD60A is ~1.5:1 on a light card');
+  assert.notEqual(lightWarn![1].toUpperCase(), '#FFD60A', 'and the override is a real one');
 });
 
 test('gauge grows a linear orientation without moving the arc call sites', () => {

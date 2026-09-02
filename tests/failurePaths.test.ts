@@ -264,6 +264,7 @@ function stopHarness(cancel: () => Promise<unknown>, settledScanId: string | nul
   };
   /** What state.scanId was at the moment the views were remounted. */
   const seen: { scanIdAtSwitch?: unknown } = {};
+  const cleared: { queue?: boolean } = {};
   const env = {
     state,
     $: () => el,
@@ -274,11 +275,16 @@ function stopHarness(cancel: () => Promise<unknown>, settledScanId: string | nul
     restoreDashboardPanels: () => {},
     switchView: () => { seen.scanIdAtSwitch = state.scanId; },
     cancelScanById: cancel,
+    // Stop means stop: folders dropped behind this one are waiting in the scan
+    // queue, and starting the next of them would be the opposite of what the
+    // button says. Recorded rather than ignored so the assertion below is
+    // about behaviour, not about the stub existing.
+    clearScanQueue: () => { cleared.queue = true; },
   };
   const names = Object.keys(env);
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const factory = new Function(...names, `'use strict'; ${src} return stopScan;`) as (...a: unknown[]) => () => Promise<void>;
-  return { stop: factory(...names.map((n) => (env as Record<string, unknown>)[n])), state, el, seen, classes };
+  return { stop: factory(...names.map((n) => (env as Record<string, unknown>)[n])), state, el, seen, classes, cleared };
 }
 
 test('stopping a scan stops pointing at it, so no view fetches a scan that will answer 500 forever', async () => {
@@ -292,6 +298,7 @@ test('stopping a scan stops pointing at it, so no view fetches a scan that will 
   assert.equal(h.seen.scanIdAtSwitch, null, 'the id is gone BEFORE the views remount, not after');
   assert.equal(h.state.scanId, null);
   assert.equal(h.state.scanning, false);
+  assert.equal(h.cleared.queue, true, 'and folders queued behind this scan are dropped — Stop means stop');
 });
 
 test('stopping a rescan puts the previous scan back, tree and id together', async () => {

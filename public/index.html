@@ -26,10 +26,26 @@ document.documentElement.dataset.theme =
   --accent:        #0A84FF;
   --accent-soft:   rgba(10,132,255,0.16);
   --accent-glow:   rgba(10,132,255,0.35);
+  /* The primary button under the pointer. Dark controls brighten, light
+     controls deepen — the light block re-tunes this, it never inherits. */
+  --accent-hover:  #2492ff;
+  /* Accent as small TEXT on an accent chip (the "cache" tag): the accent
+     itself is a fill colour and measures 4.2:1 on its own 16% chip in the
+     dark theme, so text gets a lighter cousin here and the real accent in
+     light, where the fill is dark enough to be ink. */
+  --accent-ink:    #4aa3ff;
   --ok:            #30D158;
   --warn:          #FFD60A;
   --danger:        #FF453A;
   --danger-soft:   rgba(255,69,58,0.14);
+  /* One warning recipe for every advisory surface (growth projection, open
+     files, advisory groups, portable-session rows, the shrink-video notice,
+     medium security findings). Built from --warn, so the light theme's amber
+     flows through: the old literal yellow border measured 1.09:1 on a white
+     card, i.e. invisible. --danger-line is the same edge for red panels. */
+  --warn-soft:     color-mix(in srgb, var(--warn) 9%, transparent);
+  --warn-line:     color-mix(in srgb, var(--warn) 45%, transparent);
+  --danger-line:   color-mix(in srgb, var(--danger) 45%, transparent);
 
   --bg-0:          #05060a;
   --bg-1:          #0c0d14;
@@ -44,7 +60,11 @@ document.documentElement.dataset.theme =
 
   --text-1:        rgba(255,255,255,0.94);
   --text-2:        rgba(255,255,255,0.63);
-  --text-3:        rgba(255,255,255,0.42);
+  /* 0.47, not 0.42: the tertiary ink carries every file path, date and
+     "you can restore it from the Trash" line, at 10.5–12.5px. 0.42 measured
+     4.09:1 on the page — under AA for text that small. 4.8:1 now, and still
+     clearly quieter than --text-2 (7.9:1). The light block does the same. */
+  --text-3:        rgba(255,255,255,0.47);
 
   --tm-canvas-bg:  rgba(0,0,0,0.30);
   --scrim:         rgba(2,4,10,0.60);
@@ -58,6 +78,11 @@ document.documentElement.dataset.theme =
   --shadow-1: 0 1px 2px rgba(0,0,0,0.32);
   --shadow-2: 0 10px 34px rgba(0,0,0,0.42);
   --shadow-3: 0 28px 80px rgba(0,0,0,0.55);
+  /* Buttons: a resting lift and a hover lift, re-tuned for the light theme
+     like every other shadow — a literal black under a light toolbar was
+     2.5× darker than the cards and segmented controls beside it. */
+  --shadow-btn: 0 1px 2px rgba(0,0,0,0.18);
+  --shadow-btn-hover: 0 4px 14px rgba(0,0,0,0.22);
   --blob-opacity: 0.6;
 
   /* Liquid Glass */
@@ -90,6 +115,16 @@ document.documentElement.dataset.theme =
      It also lifts white-on-accent fills (chips, the cmdk selection row,
      #ctxMenu hover) from 3.7:1 to 5.3:1. */
   --accent:        #0069D6;
+  /* Deeper on hover (6.05:1 under a white label), where the dark theme's
+     #2492ff brightens — the macOS light convention, and the opposite of what
+     inheriting the dark value did: the button got PALER and its 13px label
+     fell to 3.2:1 for as long as the pointer rested on it. */
+  --accent-hover:  #0060C4;
+  /* The accent as chip TEXT needs one more step of depth than the accent
+     as a fill: #0069D6 measures 4.4:1 on its own 8% chip, the deeper blue
+     5.5:1 (it happens to be the hover hue, which is fine — it is the same
+     "deeper accent" in both roles). */
+  --accent-ink:    #0060C4;
 
   --bg-0:          #e9ecf2;
   --bg-1:          #f5f6fa;
@@ -104,11 +139,17 @@ document.documentElement.dataset.theme =
 
   --text-1:        rgba(10,12,20,0.92);
   --text-2:        rgba(10,12,20,0.60);
-  --text-3:        rgba(10,12,20,0.42);
+  /* 0.42 measured 2.81:1 on the page — the paths, dates and the Trash
+     reassurance line were a grey smudge on a white card. 4.7:1 now. */
+  --text-3:        rgba(10,12,20,0.58);
 
   /* The dark theme's #FFD60A yellow is near-invisible on light cards
-     (~1.5:1). Text and badges using --warn need this darker amber here. */
-  --warn:          #B36B00;
+     (~1.5:1). Text and badges using --warn need this darker amber here.
+     #985B00, not the earlier #B36B00: that one measured 4.03:1 on the card,
+     under the 4.5:1 this block promises; this is 5.3:1 on the card and
+     still 4.7:1 on the 9% --warn-soft tint the warning panels sit on. */
+  --warn:          #985B00;
+  --danger-soft:   rgba(199,38,28,0.10);
   /* --ok was the hole in exactly that reasoning: #30D158 measures 1.95:1 on
      the light card, so every green that states a good outcome — Folder
      Budgets' under-budget figure, the duplicate "keep" tag, the down-delta
@@ -129,6 +170,8 @@ document.documentElement.dataset.theme =
   --shadow-1: 0 1px 2px rgba(20,24,40,0.09);
   --shadow-2: 0 10px 34px rgba(20,24,40,0.14);
   --shadow-3: 0 28px 80px rgba(20,24,40,0.22);
+  --shadow-btn: 0 1px 2px rgba(20,24,40,0.08);
+  --shadow-btn-hover: 0 4px 14px rgba(20,24,40,0.12);
   --blob-opacity: 0.45;
 
   --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.65), rgba(255,255,255,0.28) 42%, rgba(255,255,255,0.12) 68%), rgba(252,253,255,0.42);
@@ -179,18 +222,24 @@ button { font-family: inherit; color: inherit; }
 .num { font-variant-numeric: tabular-nums; }
 
 /* Ambient background field */
-.blob { position: fixed; border-radius: 50%; filter: blur(95px); pointer-events: none; z-index: -1; opacity: var(--blob-opacity); }
+.blob { position: fixed; border-radius: 50%; pointer-events: none; z-index: -1; opacity: var(--blob-opacity); }
 /* Static ambience on purpose: these used to drift on infinite animations,
    which kept the GPU re-compositing four giant blurred layers forever —
-   battery and frame-time spent on a 30-second drift nobody watches. */
-.blob.b1 { width: 620px; height: 620px; top: -200px; left: -140px;
-  background: radial-gradient(circle, rgba(10,132,255,0.22), transparent 65%); }
-.blob.b2 { width: 700px; height: 700px; top: 28%; right: -240px;
-  background: radial-gradient(circle, rgba(94,92,230,0.17), transparent 65%); }
-.blob.b3 { width: 520px; height: 520px; bottom: -220px; left: 28%;
-  background: radial-gradient(circle, rgba(48,209,88,0.11), transparent 65%); }
-.blob.b4 { width: 380px; height: 380px; top: 12%; left: 42%;
-  background: radial-gradient(circle, rgba(100,210,255,0.10), transparent 65%); }
+   battery and frame-time spent on a 30-second drift nobody watches.
+   No filter either, for the same reason: `filter: blur(95px)` made each
+   blob its own render surface, re-blurred on every frame whose damage
+   touched it — and something always did (a pulsing dot, a beam, a hover).
+   A blurred radial gradient is just another radial gradient, so the
+   softness is baked in: each blob grew by 280px (140px a side, the offsets
+   pulled back to match) and falls off over two shoulders instead of one. */
+.blob.b1 { width: 900px; height: 900px; top: -340px; left: -280px;
+  background: radial-gradient(circle, rgba(10,132,255,0.22) 0%, rgba(10,132,255,0.10) 34%, transparent 68%); }
+.blob.b2 { width: 980px; height: 980px; top: calc(28% - 140px); right: -380px;
+  background: radial-gradient(circle, rgba(94,92,230,0.17) 0%, rgba(94,92,230,0.08) 34%, transparent 68%); }
+.blob.b3 { width: 800px; height: 800px; bottom: -360px; left: calc(28% - 140px);
+  background: radial-gradient(circle, rgba(48,209,88,0.11) 0%, rgba(48,209,88,0.05) 34%, transparent 68%); }
+.blob.b4 { width: 660px; height: 660px; top: calc(12% - 140px); left: calc(42% - 140px);
+  background: radial-gradient(circle, rgba(100,210,255,0.10) 0%, rgba(100,210,255,0.045) 34%, transparent 68%); }
 
 /* ══════════ FX: Border Beam — styles ══════════
    Static half of the FxBeam splice (the per-instance gradients, masks and
@@ -311,6 +360,15 @@ button { font-family: inherit; color: inherit; }
 /* ══ end FX: Border Beam styles ══ */
 
 /* ════════════════════════════ Primitives ════════════════════════════ */
+/* Said to a screen reader, not shown. `clip-path: inset(50%)` over
+   `display: none` because a hidden element is not announced at all, and over
+   the old `clip` because that property is deprecated. width/height 1px with
+   overflow hidden keeps it out of the layout; white-space: nowrap stops a
+   long sentence wrapping into a tall invisible column that still scrolls. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 /* Liquid Glass lens — technique ported from rdev/liquid-glass-react (MIT).
    The LG engine (bottom of file) generates a per-size displacement-map SVG filter
    and sets --lg-backdrop to `url(#lg-f-N) blur() saturate()`. Until then (or if JS
@@ -430,20 +488,22 @@ button { font-family: inherit; color: inherit; }
   border: 1px solid var(--hairline);
   background: linear-gradient(170deg, rgba(255,255,255,0.07), rgba(255,255,255,0) 55%), var(--surface-2);
   color: var(--text-1); font-size: 13px; font-weight: 500; cursor: pointer;
-  box-shadow: inset 0 1px 0 var(--shine), 0 1px 2px rgba(0,0,0,0.18);
+  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-btn);
   transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
               opacity var(--dur-1) var(--ease), box-shadow var(--dur-2) var(--ease),
               transform var(--dur-2) var(--ease-spring);
 }
 .btn:hover { background: linear-gradient(170deg, rgba(255,255,255,0.09), rgba(255,255,255,0) 55%), var(--surface-3);
-  border-color: var(--hairline-2); box-shadow: inset 0 1px 0 var(--shine), 0 4px 14px rgba(0,0,0,0.22); }
-.btn:active { transform: scale(0.96); box-shadow: inset 0 1px 0 var(--shine), 0 1px 2px rgba(0,0,0,0.18); }
+  border-color: var(--hairline-2); box-shadow: inset 0 1px 0 var(--shine), var(--shadow-btn-hover); }
+.btn:active { transform: scale(0.96); box-shadow: inset 0 1px 0 var(--shine), var(--shadow-btn); }
 .btn-primary {
   background: linear-gradient(170deg, rgba(255,255,255,0.28), rgba(255,255,255,0.04) 52%), var(--accent);
   border-color: rgba(255,255,255,0.22); color: #fff;
   box-shadow: 0 4px 18px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -6px 14px rgba(0,40,110,0.22);
 }
-.btn-primary:hover { background: linear-gradient(170deg, rgba(255,255,255,0.34), rgba(255,255,255,0.06) 52%), #2492ff;
+/* --accent-hover, not a hex: the token brightens in dark and deepens in
+   light, so the white label stays legible under the pointer in both. */
+.btn-primary:hover { background: linear-gradient(170deg, rgba(255,255,255,0.34), rgba(255,255,255,0.06) 52%), var(--accent-hover);
   box-shadow: 0 7px 28px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,0.4); }
 .btn-danger { background: linear-gradient(170deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 55%), var(--danger-soft);
   border-color: rgba(255,69,58,0.38); color: #ff6b61; }
@@ -461,8 +521,14 @@ button { font-family: inherit; color: inherit; }
 .icon-btn:hover { background: var(--surface-2); color: var(--text-1); border-color: var(--hairline);
   box-shadow: inset 0 1px 0 var(--shine); }
 .icon-btn:active { transform: scale(0.9); }
-.icon-btn.danger:hover { background: var(--danger-soft); color: #ff6b61; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.icon-btn.danger:hover { background: var(--danger-soft); color: var(--danger); }
+/* No border-radius here. Chromium draws the outline along the element's own
+   corners, and a radius on this rule outranked every .btn (10px) and
+   .icon-btn (9px) at equal specificity — each control's corners visibly
+   tightened the instant focus landed and relaxed when it left. Only the
+   radius-less natives get a small radius of their own. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type="checkbox"]:focus-visible, input[type="range"]:focus-visible { border-radius: 4px; }
 input[type="text"], input[type="number"], select {
   background: linear-gradient(180deg, rgba(0,0,0,0.10), rgba(0,0,0,0) 40%), var(--surface-1);
   border: 1px solid var(--hairline); border-radius: var(--r-sm);
@@ -519,13 +585,23 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-
   display: flex; flex-direction: column; gap: 12px;
   padding: 14px 12px 12px;
   transition: width var(--dur-3) var(--ease);
+  /* In flow, nothing ever moves beneath the sidebar except the static page
+     gradient, the blobs and the grain — the exact situation the in-flow
+     cards give for dropping live blur. Yet Chromium expands damage inside a
+     backdrop-filtered surface to the whole surface, so the scan spinner and
+     the focused search field's line beam re-blurred ~1 Mpx of panel 60×/s.
+     A tinted fill reads the same over a static backdrop; the frost comes
+     back only in the narrow-window overlay state, where the panel really
+     floats over content (see the media block below). --lg-blur stays
+     declared because that state reads it. */
+  --lg-backdrop: none;
   --lg-tint: linear-gradient(165deg, rgba(255,255,255,0.045), rgba(255,255,255,0) 60%),
-             color-mix(in srgb, var(--bg-1) 55%, transparent);
+             color-mix(in srgb, var(--bg-1) 78%, transparent);
   --lg-blur: 26px;
 }
 :root[data-theme="light"] #sideNav {
   --lg-tint: linear-gradient(165deg, rgba(255,255,255,0.6), rgba(255,255,255,0.15) 60%),
-             color-mix(in srgb, var(--bg-1) 45%, transparent);
+             color-mix(in srgb, var(--bg-1) 70%, transparent);
 }
 /* As a floating card the sidebar keeps the default .lg rounded shine ring —
    it inherits the card's border-radius. */
@@ -588,9 +664,12 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-
 #sideNav.collapsed .side-top { flex-direction: column; gap: 10px; }
 #sideNav.collapsed .logo { flex: none; }
 #sideNav.collapsed #headerSpin.on { position: absolute; top: 12px; right: 8px; }
-#sideNav.collapsed .tabbar button { justify-content: center; padding: 9.5px 0; }
+/* Only the horizontal padding changes. The vertical padding is inherited
+   from the expanded rule so both states share one row height — a rail row
+   2px taller dropped every tab by 2px × its index (the 15th by 28px) the
+   instant the fold began, a stagger that read as the list re-flowing. */
+#sideNav.collapsed .tabbar button { justify-content: center; padding-left: 0; padding-right: 0; position: relative; }
 #sideNav.collapsed .tabbar button.tab-unavailable::after { position: absolute; margin: 0; transform: translate(11px, -8px); }
-#sideNav.collapsed .tabbar button { position: relative; }
 #sideNav.collapsed .side-foot .btn { justify-content: center; padding: 0 8px; }
 #sideNav.collapsed .side-foot .btn .ic { margin: 0; }
 #sideNav.collapsed .side-foot-row { flex-direction: column; align-items: center; }
@@ -632,7 +711,15 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-
      outcome, not a side effect. Below .modal-backdrop (100): a dialog
      opened from the overlay sidebar still wins. */
   #sideNav:not(.collapsed) { position: fixed; left: 0; top: 0; z-index: 91;
-    height: calc(100dvh - 24px); box-shadow: 24px 0 64px rgba(0,0,0,0.35); }
+    height: calc(100dvh - 24px); box-shadow: var(--shadow-3);
+    /* Floating over live content is the one state that earns a real blur:
+       the frost returns here with the translucent overlay tint. */
+    --lg-backdrop: blur(var(--lg-blur)) saturate(var(--lg-sat));
+    --lg-tint: linear-gradient(165deg, rgba(255,255,255,0.045), rgba(255,255,255,0) 60%),
+               color-mix(in srgb, var(--bg-1) 55%, transparent); }
+  :root[data-theme="light"] #sideNav:not(.collapsed) {
+    --lg-tint: linear-gradient(165deg, rgba(255,255,255,0.6), rgba(255,255,255,0.15) 60%),
+               color-mix(in srgb, var(--bg-1) 45%, transparent); }
   body { grid-template-columns: var(--side-w-rail) minmax(0, 1fr); }
   /* Going `position: fixed` takes the sidebar OUT of the grid, so main — now
      the only in-flow item — auto-placed into track 1 and rendered 64px wide
@@ -673,9 +760,19 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-
 main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: relative; min-width: 0;
   /* The app's single scroller (the window never scrolls) — see body. */
   overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; }
-.view { display: none; animation: viewIn var(--dur-3) var(--ease); }
+/* container-type: the dashboard, trends and city breakpoints measure the
+   VIEW, so collapsing the sidebar rail buys the layout real room — a
+   viewport query could not see the 168px the rail gives back. Every
+   fixed-position overlay sits after </main>, so the view becoming a
+   containing block traps nothing (tests/nlPopContainment pins that).
+   The entrance is opacity only, and brief: the cards' own 12px stagger
+   (fxViewEnter) is the designed arrival. A translateY on the whole view
+   stacked a second 8px of travel on top of it and, worse, moved the entire
+   view — treemap canvas, grid tiles, a timebar with a live backdrop blur —
+   as one composited layer for 380ms on every switch. */
+.view { display: none; animation: viewIn var(--dur-2) var(--ease); container-type: inline-size; }
 .view.active { display: block; }
-@keyframes viewIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes viewIn { from { opacity: 0; } to { opacity: 1; } }
 /* Pane flips (history panels, duplicate modes, Clean Up tabs) arrive as a
    150ms fade instead of a snap. Opacity only, so nothing reflows; the
    animation restarts when [hidden] or display:none lifts, and re-showing an
@@ -685,10 +782,35 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .pane-fade { animation: paneFade var(--dur-1) var(--ease); }
 @keyframes paneFade { from { opacity: 0; } }
 
+/* ── Drop hint ──
+   Shown while a drag carrying files is over the window, so the app looks
+   willing before the folder is released. Deliberately cheap: an inset border
+   and a tint, no backdrop-filter (a full-window filtered surface re-runs on
+   every frame of the drag, which is the one moment the pointer must stay
+   smooth) and no will-change (it exists for a second at a time). */
+#dropHint {
+  position: fixed; inset: 0; z-index: 120; pointer-events: none; opacity: 0;
+  transition: opacity var(--dur-1) var(--ease);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 0 0 0 3px var(--accent);
+  display: flex; align-items: center; justify-content: center;
+}
+:root.drop-hint #dropHint { opacity: 1; }
+#dropHint span {
+  font-size: 15px; font-weight: 600; color: var(--text-1);
+  background: var(--bg-1); border: 1px solid var(--hairline-2); border-radius: 99px;
+  padding: 12px 22px; box-shadow: var(--shadow-2);
+}
+
 /* ── Empty state ── */
 #emptyState { display: flex; flex-direction: column; align-items: center; justify-content: center;
   min-height: 66vh; text-align: center; gap: 14px; }
-#emptyState .mark { filter: drop-shadow(0 16px 50px var(--accent-glow)); animation: float 6s ease-in-out infinite; }
+/* A box-shadow, not a drop-shadow filter: the filter made the mark a render
+   surface whose 50px shadow was re-applied on every frame of the float. The
+   shadow below is rasterised once into the mark's own layer and rides the
+   composited transform; at a 50px blur a rounded-square silhouette and the
+   mark's own are indistinguishable. */
+#emptyState .mark { border-radius: 26px; box-shadow: 0 16px 50px var(--accent-glow); animation: float 6s ease-in-out infinite; }
 @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
 #emptyState h1 { font-size: 30px; font-weight: 700; letter-spacing: -0.6px; margin-top: 8px; }
 #emptyState p { color: var(--text-2); font-size: 14px; max-width: 460px; line-height: 1.6; }
@@ -788,7 +910,11 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
   background: linear-gradient(90deg, var(--accent), #5e9dff);
   box-shadow: 0 0 12px var(--accent-glow);
   animation: indeterminate 1.3s var(--ease) infinite; }
-@keyframes indeterminate { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+/* A transform, not margin-left: the margin dirtied layout and repainted the
+   track on every one of ~78 frames per cycle, on the main thread, for the
+   whole scan. The fill is 40% of the track, so 250% of its own width is the
+   same travel as -40% → 100% of the track. */
+@keyframes indeterminate { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
 
 .quick-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .stat-tile { padding: 14px 16px; display: flex; align-items: center; gap: 13px; }
@@ -1151,7 +1277,9 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
    a layout failure rather than as a key. */
 #cityLegend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; }
 #cityLegend .tml-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-@media (max-width: 1100px) { #cityLegend .tml-item { white-space: normal; } }
+/* A container query on the view (025-layout.css): the legend wraps when the
+   VIEW is narrow, which a collapsed sidebar rail can prevent. */
+@container (max-width: 800px) { #cityLegend .tml-item { white-space: normal; } }
 
 .city-table { margin-top: 12px; }
 .city-table > summary { cursor: pointer; font-size: 12px; color: var(--text-2); padding: 6px 2px;
@@ -1462,7 +1590,7 @@ body.preview-open #cartDock { right: 348px; max-width: max(240px, calc(100vw - 3
 .alloc-diag .row:last-child { border-bottom: 0; }
 .alloc-diag .row b { color: var(--text-1); font-variant-numeric: tabular-nums; }
 .alloc-diag .note {
-  margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+  margin-top: 10px; padding: 10px 12px; border-radius: var(--r-sm);
   background: var(--surface-2); line-height: 1.5;
 }
 
@@ -1477,9 +1605,13 @@ body.preview-open #cartDock { right: 348px; max-width: max(240px, calc(100vw - 3
 }
 .index-badge.stale .dot { background: var(--warn, #FF9F0A); }
 /* The pulse is a liveness cue, so it is exactly the kind of decoration
-   prefers-reduced-motion exists to switch off (§6). */
+   prefers-reduced-motion exists to switch off (§6). Three breaths, then a
+   steady dot: renderIndexBadge rewrites the badge's innerHTML on every
+   status change, which recreates the dot and replays them, so freshness
+   re-confirmed is still announced — while an untouched dashboard reaches an
+   idle frame instead of compositing a 7px dot forever. */
 @media (prefers-reduced-motion: no-preference) {
-  .index-badge:not(.stale) .dot { animation: indexPulse 2.4s ease-in-out infinite; }
+  .index-badge:not(.stale) .dot { animation: indexPulse 2.4s ease-in-out 3; }
 }
 @keyframes indexPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
@@ -1503,8 +1635,8 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .growth-proj { display: flex; align-items: center; gap: 9px; margin-top: 14px; padding: 11px 13px; border-radius: var(--r-md); font-size: 12.5px; font-weight: 500; border: 1px solid var(--hairline); }
 .growth-proj[hidden] { display: none; }
 .growth-proj .ic { flex: none; }
-.growth-proj.warn { color: var(--warn); background: rgba(255,214,10,0.08); border-color: rgba(255,214,10,0.25); }
-.growth-proj.danger { color: var(--danger); background: rgba(255,69,58,0.09); border-color: rgba(255,69,58,0.28); }
+.growth-proj.warn { color: var(--warn); background: var(--warn-soft); border-color: var(--warn-line); }
+.growth-proj.danger { color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, transparent); border-color: var(--danger-line); }
 
 /* ── Folder budgets (Feature 15) ── */
 .budget-folder { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--hairline);
@@ -1650,14 +1782,15 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 /* ── C8: "why is this suggested", and advisory groups ── */
 .why-btn { flex: none; color: var(--text-3); }
 .why-btn:hover, .why-btn.on { color: var(--accent); }
-.smart-why { margin: 2px 0 8px 26px; padding: 9px 11px; border-radius: 8px; background: var(--surface-2);
+/* --r-sm: a note nested inside a --r-md group takes the next radius down. */
+.smart-why { margin: 2px 0 8px 26px; padding: 9px 11px; border-radius: var(--r-sm); background: var(--surface-2);
   border: 1px solid var(--hairline); font-size: 12px; line-height: 1.55; color: var(--text-2); }
 .smart-why-line + .smart-why-line { margin-top: 3px; }
 .smart-why code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
   padding: 1px 5px; border-radius: 4px; background: var(--surface-3); }
 .smart-catalog { color: var(--text-3); font-size: 11.5px; margin-left: 6px; }
 /* Advisory: shown for its size, never offered for deletion. */
-.smart-group.advisory { border-color: rgba(255,159,10,0.42); background: rgba(255,159,10,0.07); }
+.smart-group.advisory { border-color: var(--warn-line); background: var(--warn-soft); }
 .smart-group.advisory .adv-mark { flex: none; display: inline-flex; color: var(--warn); }
 .adv-spacer { flex: none; width: 17px; }
 /* ══ Phase 3 (v4 §3.3) — the Reclaim Score badge, breakdown and legend ══
@@ -1675,7 +1808,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .rc-badge.conf-low { border-style: dashed; }
 .rc-badge.conf-medium { border-style: solid; opacity: 0.88; }
 .rc-none { flex: none; font-size: 11px; color: var(--text-3); font-style: italic; }
-.rc-why { margin: 2px 0 8px; padding: 9px 11px; border-radius: 8px; background: var(--surface-2);
+.rc-why { margin: 2px 0 8px; padding: 9px 11px; border-radius: var(--r-sm); background: var(--surface-2);
   border: 1px solid var(--hairline); font-size: 12px; line-height: 1.55; color: var(--text-2); }
 .rc-why-row { display: flex; align-items: baseline; gap: 8px; }
 .rc-why-row + .rc-why-row { margin-top: 4px; }
@@ -1767,8 +1900,12 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .pkg-echead .muted { font-size: 11.5px; }
 .pkg-tag { flex: none; font-size: 10px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase;
   padding: 2px 7px; border-radius: 99px; background: var(--surface-3); color: var(--text-3); }
-.pkg-tag.orphan { background: rgba(255,69,58,0.16); color: #ff6b60; }
-.pkg-tag.cache { background: rgba(10,132,255,0.16); color: #4aa3ff; }
+/* Chips mix their hue into --bg-1 (an opaque ground) rather than tinting
+   whatever card they land on: 10px bold text needs 4.5:1, and a tint over a
+   tint does not add up to a ground anyone measured. 8% is the strongest
+   chip the light inks clear AA on (tests/polishVisualTheme measures it). */
+.pkg-tag.orphan { background: color-mix(in srgb, var(--danger) 8%, var(--bg-1)); color: var(--danger); }
+.pkg-tag.cache { background: color-mix(in srgb, var(--accent) 8%, var(--bg-1)); color: var(--accent-ink); }
 .pkg-item.kind-active { opacity: 0.62; }
 .pkg-proj { font-size: 11px; font-weight: 500; color: var(--text-3); margin-left: 6px; }
 .pkg-proj.none { font-style: italic; }
@@ -1777,23 +1914,27 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
   padding: 1px 4px; border-radius: 4px; background: var(--surface-3); }
 /* ── D1: fleet ── */
 .fleet-disclosure { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
-.fleet-disclosure .fl-col { flex: 1 1 260px; padding: 10px 12px; border-radius: 10px;
+/* Inset panels inside a card share --r-md (the .smart-group / .budget-folder
+   radius); the Fleet card alone used to show 9, 10 and 11px corners within
+   30px of each other. */
+.fleet-disclosure .fl-col { flex: 1 1 260px; padding: 10px 12px; border-radius: var(--r-md);
   background: var(--surface-2); border: 1px solid var(--hairline); font-size: 11.5px; }
-.fleet-disclosure .fl-col.never { background: rgba(255,69,58,0.06); border-color: rgba(255,69,58,0.3); }
+.fleet-disclosure .fl-col.never { background: color-mix(in srgb, var(--danger) 6%, transparent); border-color: var(--danger-line); }
 .fleet-disclosure b { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; }
 .fleet-disclosure ul { margin: 0; padding-left: 17px; color: var(--text-2); line-height: 1.55; }
 .fleet-off { padding: 14px 2px; font-size: 12.5px; line-height: 1.6; }
 .fleet-controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
 .fl-switch { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; }
 .fl-addr { font-size: 11px; margin-bottom: 12px; }
-.fleet-code { padding: 9px 12px; margin-bottom: 12px; border-radius: 9px; font-size: 13px;
-  background: rgba(10,132,255,0.1); border: 1px solid rgba(10,132,255,0.4); display: flex; align-items: center; gap: 10px; }
+.fleet-code { padding: 9px 12px; margin-bottom: 12px; border-radius: var(--r-md); font-size: 13px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  display: flex; align-items: center; gap: 10px; }
 .fleet-code b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 17px; letter-spacing: 3px; }
 .fleet-sub { font-size: 11.5px; color: var(--text-3); margin: 14px 0 7px; }
 /* ── How-to-pair help ──
    The panel showed a six-digit code and no way to learn what to do with it.
    Open by default until a machine is actually paired, then it folds away. */
-.fleet-help { margin-bottom: 12px; border-radius: 11px; border: 1px solid var(--hairline);
+.fleet-help { margin-bottom: 12px; border-radius: var(--r-md); border: 1px solid var(--hairline);
   background: var(--surface-1); padding: 0 12px; }
 .fleet-help > summary { cursor: pointer; padding: 10px 0; font-size: 12.5px; font-weight: 500;
   display: flex; align-items: center; gap: 7px; list-style: none; }
@@ -1805,13 +1946,13 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .fleet-help li + li { margin-top: 3px; }
 .fleet-help .fh-note { padding: 0 0 11px; font-size: 11.5px; color: var(--text-3); line-height: 1.6; }
 .fleet-help kbd { font: inherit; font-weight: 600; color: var(--text-1); }
-.fleet-peer { padding: 10px 12px; margin-bottom: 8px; border-radius: 11px;
+.fleet-peer { padding: 10px 12px; margin-bottom: 8px; border-radius: var(--r-md);
   border: 1px solid var(--hairline); background: var(--surface-1); }
 .fleet-peer.offline { opacity: 0.65; }
 .fleet-peer.available { border-style: dashed; }
 .fl-head { display: flex; align-items: center; gap: 9px; font-size: 12.5px; }
 .fl-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-.fl-dot.on { background: #30d158; } .fl-dot.off { background: var(--text-3); }
+.fl-dot.on { background: var(--ok); } .fl-dot.off { background: var(--text-3); }
 .fl-tag { font-size: 10.5px; color: var(--text-3); font-style: italic; }
 .fl-bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin-top: 9px; }
 /* The kit bar gradient, width set directly: this panel repaints every five
@@ -1824,10 +1965,10 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .pm-lead { font-size: 13px; line-height: 1.6; margin-bottom: 14px; }
 .pm-rows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
 .pm-row { display: flex; gap: 12px; align-items: baseline; font-size: 12px; padding: 8px 11px;
-  border-radius: 9px; background: var(--surface-2); border: 1px solid var(--hairline); }
+  border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline); }
 .pm-row b { flex: none; width: 118px; color: var(--text-3); font-weight: 600; }
 .pm-row .pth { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; word-break: break-all; }
-.pm-row.warn { background: rgba(255,159,10,0.08); border-color: rgba(255,159,10,0.42); }
+.pm-row.warn { background: var(--warn-soft); border-color: var(--warn-line); }
 .pm-degraded { font-size: 12px; line-height: 1.55; margin-bottom: 12px; }
 .pm-degraded b { display: block; margin-bottom: 5px; color: var(--text-3); }
 .pm-degraded ul { margin: 0; padding-left: 18px; color: var(--text-2); }
@@ -1835,8 +1976,8 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .pm-foot { font-size: 11.5px; color: var(--text-3); }
 /* ── C2: shrink video ── */
 .vid-warn { display: flex; align-items: flex-start; gap: 9px; padding: 10px 12px; margin-bottom: 11px;
-  border-radius: 10px; font-size: 12px; line-height: 1.55; color: var(--text-2);
-  background: rgba(255,159,10,0.08); border: 1px solid rgba(255,159,10,0.4); }
+  border-radius: var(--r-md); font-size: 12px; line-height: 1.55; color: var(--text-2);
+  background: var(--warn-soft); border: 1px solid var(--warn-line); }
 .vid-list { max-height: 320px; overflow-y: auto; }
 .vid-why { font-size: 11px; color: var(--text-3); margin-top: 2px; }
 .vid-ba { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
@@ -1863,7 +2004,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .cost-row .sub { font-size: 11px; color: var(--text-3); margin-top: 1px; }
 .cost-price { font-size: 13px; font-weight: 700; white-space: nowrap; }
 .cost-price .per { font-size: 10px; font-weight: 500; color: var(--text-3); }
-.cost-save { color: #30d158; font-weight: 600; margin-left: 6px; }
+.cost-save { color: var(--ok); font-weight: 600; margin-left: 6px; }
 .cost-nosave { margin-left: 6px; }
 .cost-foot { margin-top: 10px; font-size: 10.5px; color: var(--text-3); line-height: 1.5; }
 #costCurrency { font-size: 11px; padding: 3px 6px; }
@@ -1872,7 +2013,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .dh-kv { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; font-size: 12px; align-items: baseline; }
 .dh-kv .k { color: var(--text-3); }
 .dh-unknown { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--text-3);
-  padding: 9px 11px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--hairline); }
+  padding: 9px 11px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--hairline); }
 .dh-foot { margin-top: 9px; font-size: 10.5px; color: var(--text-3); }
 /* ── C3: download provenance, in the preview pane ── */
 .pv-origin { flex: none; padding: 9px 13px; border-top: 1px solid var(--hairline); font-size: 11.5px; line-height: 1.5; }
@@ -1887,10 +2028,10 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 /* ── C5: secrets hygiene ── */
 .sec-note { color: var(--text-3); font-size: 11.5px; }
 .sec-list { display: flex; flex-direction: column; gap: 8px; }
-.sec-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 11px;
+.sec-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--r-md);
   border: 1px solid var(--hairline); background: var(--surface-1); }
-.sec-item.sev-high { border-color: rgba(255,69,58,0.42); background: rgba(255,69,58,0.06); }
-.sec-item.sev-medium { border-color: rgba(255,159,10,0.38); background: rgba(255,159,10,0.05); }
+.sec-item.sev-high { border-color: var(--danger-line); background: color-mix(in srgb, var(--danger) 6%, transparent); }
+.sec-item.sev-medium { border-color: var(--warn-line); background: color-mix(in srgb, var(--warn) 6%, transparent); }
 .sec-item .meta { flex: 1; min-width: 0; }
 /* Two parts, not one string: the filename ellipsizes and the kind label
    holds. Run together in a single overflow:hidden line, a long name pushed
@@ -1904,8 +2045,9 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .sec-why { font-size: 11px; color: var(--text-2); margin-top: 3px; }
 .sec-sev { flex: none; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em;
   padding: 3px 8px; border-radius: 99px; background: var(--surface-3); color: var(--text-3); }
-.sev-high .sec-sev { background: rgba(255,69,58,0.18); color: #ff6b60; }
-.sev-medium .sec-sev { background: rgba(255,159,10,0.18); color: var(--warn); }
+/* The .pkg-tag chip recipe: an opaque 8% mix over --bg-1, measured for AA. */
+.sev-high .sec-sev { background: color-mix(in srgb, var(--danger) 8%, var(--bg-1)); color: var(--danger); }
+.sev-medium .sec-sev { background: color-mix(in srgb, var(--warn) 8%, var(--bg-1)); color: var(--warn); }
 /* ── C7: game libraries ── */
 .game-lib { margin-bottom: 18px; }
 .game-libhead { display: flex; align-items: baseline; gap: 10px; padding: 4px 2px 8px; font-size: 13.5px; }
@@ -1914,7 +2056,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .game-libhead .pth { flex: 1; min-width: 0; font-size: 11px; color: var(--text-3);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .game-title { padding: 10px 12px 11px; margin-bottom: 8px; border: 1px solid var(--hairline);
-  border-radius: 11px; background: var(--surface-1); }
+  border-radius: var(--r-md); background: var(--surface-1); }
 .game-head { display: flex; align-items: center; gap: 10px; }
 .game-head .meta { flex: 1; min-width: 0; }
 .game-head .nm { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1930,7 +2072,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .game-shader { display: flex; align-items: center; gap: 10px; padding: 4px 0; font-size: 12px; }
 .game-shader .pth { flex: 1; min-width: 0; color: var(--text-3); font-size: 10.5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gp-workshop { background: #30d158; }
+.gp-workshop { background: var(--ok); }
 .gp-compatPrefix { background: #64d2ff; }
 .game-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 7px; font-size: 11px; color: var(--text-3); }
 .game-legend .gl { display: inline-flex; align-items: center; gap: 5px; }
@@ -1991,13 +2133,13 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 #liveFeed { position: absolute; top: 14px; right: 14px; z-index: 6; width: 252px; padding: 9px 11px;
   --lg-blur: 18px;
   border: 1px solid var(--hairline); border-radius: var(--r-md);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.35); font-size: 12px; }
+  box-shadow: var(--shadow-2); font-size: 12px; }
 #liveFeed .lf-h { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 11.5px;
   text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-2); margin-bottom: 6px; }
 #liveFeed .lf-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
 #liveFeed .lf-row .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-1); }
-#liveFeed .lf-row .up { color: #30D158; flex: none; }
-#liveFeed .lf-row .down { color: #FF453A; flex: none; }
+#liveFeed .lf-row .up { color: var(--ok); flex: none; }
+#liveFeed .lf-row .down { color: var(--danger); flex: none; }
 
 /* ── All storage + cloud accounts (Feature 25) ── */
 /* The list is its own container so the squares shed on a narrow CARD, not
@@ -2019,7 +2161,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 @container (max-width: 380px) { .storage-row .asq { display: none; } }
 /* ── Open-file warning in the delete dialog (B2) ── */
 #confirmOpenHandles { margin-top: 13px; padding: 10px 12px; border-radius: var(--r-sm);
-  background: rgba(255,214,10,0.08); border: 1px solid rgba(255,214,10,0.25); font-size: 12.5px; line-height: 1.5; }
+  background: var(--warn-soft); border: 1px solid var(--warn-line); font-size: 12.5px; line-height: 1.5; }
 #confirmOpenHandles.checking { background: var(--surface-2); border-color: var(--hairline); color: var(--text-3); }
 #confirmOpenHandles .oh-head { display: flex; gap: 8px; align-items: flex-start; color: var(--text-1); }
 #confirmOpenHandles .oh-head .ic { color: var(--warn); flex: none; margin-top: 1px; }
@@ -2064,7 +2206,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .cal-legend { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
 /* v4 §8.3 — the drive dock */
 .drive-dock { display: flex; gap: 10px; align-items: stretch; padding: 8px 2px 0; flex-wrap: wrap; }
-.drive-tile { display: flex; align-items: center; gap: 9px; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); min-width: 160px; cursor: default; }
+.drive-tile { display: flex; align-items: center; gap: 9px; padding: 8px 12px; border-radius: var(--r-md); background: var(--surface-2); min-width: 160px; cursor: default; }
 .drive-tile.drop-ok { outline: 2px solid var(--accent); outline-offset: 2px; }
 .drive-tile .drive-free { font-size: 11px; color: var(--text-3); }
 .drive-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--ok) 25%, transparent); position: relative; width: 96px; margin-top: 3px; }
@@ -2197,7 +2339,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .tm-preview-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
   z-index: 6; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
   border-radius: var(--r-md); background: var(--bg-1); border: 1px solid var(--warn);
-  box-shadow: 0 6px 22px rgba(0,0,0,0.32); font-size: 12.5px; color: var(--text-1);
+  box-shadow: var(--shadow-2); font-size: 12.5px; color: var(--text-1);
   max-width: calc(100% - 28px); }
 .tm-preview-banner[hidden] { display: none; }
 .tm-preview-banner .ic { color: var(--warn); flex: none; }
@@ -2304,9 +2446,15 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 @container (max-width: 620px) { .dup-head .bar-track.dup-mini { display: none; } }
 /* Rows are quieter than cards: the full card shadow repeated hundreds of
    times read as noise, so rows carry a hairline lift instead, and a calmer
-   radius keeps the list's rhythm tight. */
-.dup-group { padding: 0; overflow: hidden; border-radius: 14px;
-  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-1); }
+   radius keeps the list's rhythm tight. One rule for BOTH list cards — the
+   exact groups and the near-duplicate clusters — so flipping the mode seg
+   never reshapes the list; and the light selectors are repeated because
+   `:root[data-theme="light"] .glass` outranks a bare class and would hand
+   the light theme the full card shadow back. */
+.dup-group, .nd-cluster,
+:root[data-theme="light"] .dup-group, :root[data-theme="light"] .nd-cluster {
+  border-radius: var(--r-md); box-shadow: inset 0 1px 0 var(--shine), var(--shadow-1); }
+.dup-group { padding: 0; overflow: hidden; }
 .dup-group:hover { border-color: var(--hairline-2); }
 .dup-head { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: pointer; user-select: none;
   transition: background var(--dur-1) var(--ease); }
@@ -2315,7 +2463,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .dup-head .nm { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dup-head .sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
 .dup-head .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap;
-  background: color-mix(in srgb, var(--warn) 12%, transparent); padding: 3px 10px; border-radius: 99px; }
+  background: var(--warn-soft); padding: 3px 10px; border-radius: 99px; }
 .dup-head .chev { transition: transform var(--dur-2) var(--ease); color: var(--text-3); display: inline-flex; }
 .dup-group.open .dup-head .chev { transform: rotate(90deg); }
 .dup-files { display: none; border-top: 1px solid var(--hairline); }
@@ -2325,7 +2473,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .dup-file:last-child { border-bottom: none; }
 .dup-file .pth { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   direction: rtl; text-align: left; color: var(--text-2); }
-.dup-file .tag { font-size: 10px; font-weight: 600; color: var(--ok); border: 1px solid rgba(48,209,88,0.4);
+.dup-file .tag { font-size: 10px; font-weight: 600; color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 40%, transparent);
   padding: 1px 7px; border-radius: 99px; white-space: nowrap; }
 .dup-file .dt { color: var(--text-3); font-size: 11px; white-space: nowrap; }
 .dup-progress { display: flex; flex-direction: column; gap: 12px; align-items: center; padding: 60px 0; color: var(--text-2); }
@@ -2339,7 +2487,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .nd-chead { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .nd-chead .nd-count { font-size: 13px; font-weight: 600; }
 .nd-chead .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap; margin-left: auto;
-  background: color-mix(in srgb, var(--warn) 12%, transparent); padding: 3px 10px; border-radius: 99px; }
+  background: var(--warn-soft); padding: 3px 10px; border-radius: 99px; }
 /* A wrapping row, not a carousel: a horizontal scroller nested in the page's
    vertical one latched two-finger gestures that drifted sideways (the page
    stuck, then jumped) and gave every overflowing cluster its own composited
@@ -2472,16 +2620,20 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .seg button[aria-selected="true"] + button::before,
 .seg button[aria-selected="true"]::before { opacity: 0; }
 
-/* Sidebar-era breakpoints: the column costs the content 232px, so the
-   dashboard steps down earlier than it used to (its two-column form starts
-   scrolling sideways otherwise), and gains a true single-column form that
-   the old header layout never had. */
-@media (max-width: 1500px) {
+/* View-width breakpoints. These are container queries on .view (see
+   025-layout.css), not viewport queries: the sidebar costs the content
+   244px expanded and 76px as a rail, so one window width gives the view
+   168px more or less room that a media query cannot see — collapsing the
+   rail "to make room" did nothing to the dashboard. The thresholds are the
+   old viewport ones (1500 / 1120) minus what an expanded sidebar, the main
+   padding and the scrollbar gutter cost (~300px), so the expanded case is
+   unchanged and the rail case gains the room. */
+@container (max-width: 1200px) {
   .dash-grid { grid-template-columns: 1fr 1fr; }
   .quick-stats { grid-template-columns: 1fr; }
   .trends-grid { grid-template-columns: 1fr; }
 }
-@media (max-width: 1120px) {
+@container (max-width: 820px) {
   .dash-grid { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -3146,7 +3298,14 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
                events and is being rechecked. Hidden when there is no index. -->
           <div class="index-badge" id="indexBadge" hidden role="status"></div>
           <div class="scan-meta num" id="scanMeta"></div>
-          <div class="progress-track" id="progressTrack"><div class="progress-fill"></div></div>
+          <div class="progress-track" id="progressTrack" role="progressbar" aria-label="Scan progress"><div class="progress-fill"></div></div>
+          <!-- a11y: a scan is a minutes-long process whose only report was a
+               visual counter. This is the one polite live region that speaks
+               it — start, a sentence every ten seconds, the finish and any
+               failure. Visually hidden: sighted users have the counter and
+               the bar, and a second copy of the same words on screen would
+               be noise. -->
+          <div id="scanAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
         </div>
 
         <div class="card glass">
@@ -4350,6 +4509,13 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
   <div id="nlReason" class="muted" role="status" aria-live="polite" style="font-size:11.5px;margin-top:7px;" hidden></div>
 </div>
 
+<!-- ═══════════ Drop a folder to scan it ═══════════ -->
+<!-- Top level, like #ctxMenu and #rcPopover: it covers the whole window, so
+     it must not be inside .view, which is a container (and so a containing
+     block for fixed children). aria-hidden: it says nothing a screen-reader
+     user has not already been told by the drag itself. -->
+<div id="dropHint" aria-hidden="true"><span>Drop to scan this folder</span></div>
+
 <script>
 'use strict';
 /* ═══════════════════════════════════════════════════════════════════════
@@ -4363,10 +4529,14 @@ const REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce
 const UNITS = ['B','KB','MB','GB','TB','PB'];
 function formatBytes(n, d = 1) {
   if (!Number.isFinite(n) || n < 0) return '0 B';
-  if (n < 1024) return Math.round(n) + ' B';
   let v = n, u = 0;
   while (v >= 1024 && u < UNITS.length - 1) { v /= 1024; u++; }
-  return v.toFixed(d) + ' ' + UNITS[u];
+  // Rounding can carry a value up to exactly 1024 of its unit — "1024.0 KB",
+  // "1024 B" — a figure no unit system prints. Roll it into the next unit,
+  // which is what the rounded number means. Mirrors src/utils/formatBytes.ts.
+  const shown = u === 0 ? Math.round(v) : Number(v.toFixed(d));
+  if (shown >= 1024 && u < UNITS.length - 1) { v /= 1024; u++; }
+  return u === 0 ? Math.round(v) + ' B' : v.toFixed(d) + ' ' + UNITS[u];
 }
 function formatCount(n) { return (n ?? 0).toLocaleString(); }
 function escapeHtml(s) {
@@ -4383,6 +4553,22 @@ function formatDate(ms) {
     s = DATE_FMT.format(ms);
     if (dateMemo.size > 20000) dateMemo.clear();
     dateMemo.set(ms, s);
+  }
+  return s;
+}
+/* The one short date-and-time dialect ("Sep 1, 10:31 PM") for every surface
+   that names a moment: the time slider, the history captions, the compare
+   pickers. Memoised like formatDate — the compare view builds hundreds of
+   option labels from it. */
+const WHEN_FMT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const whenMemo = new Map();
+function formatWhen(ms) {
+  if (!ms) return '–';
+  let s = whenMemo.get(ms);
+  if (s === undefined) {
+    s = WHEN_FMT.format(ms);
+    if (whenMemo.size > 5000) whenMemo.clear();
+    whenMemo.set(ms, s);
   }
   return s;
 }
@@ -5381,6 +5567,12 @@ async function api(url, options, opts = {}) {
       if (body) for (const k of Object.keys(body)) if (k !== 'error' && k !== 'code') err[k] = body[k];
       // Not a failure so much as an answer: this machine cannot do that.
       err.capabilityUnavailable = err.code === 'CAPABILITY_UNAVAILABLE';
+      // Results that aged out are not a broken app. Rewritten into a sentence
+      // with a way forward (a Scan again offer) before any caller prints it.
+      // `typeof` because api() is the page's floor: it is lifted on its own by
+      // several test harnesses, and a missing optional collaborator must not
+      // turn a 404 into a ReferenceError that swallows the real error.
+      if (err.code === 'SCAN_NOT_FOUND' && typeof scanResultsExpired === 'function') scanResultsExpired(err, url);
       throw err;
     }
 
@@ -5420,8 +5612,19 @@ function reportError(err, context) {
      start, which rolls every column up from 0.
    - The DOM carries the real target: the in-flow sizer per slot is the
      final digit; the animated column is aria-hidden presentation.
+   - A finished glide collapses back to the plain target string. The strips
+     say nothing the string does not once they have stopped, and at rest
+     the dashboard and cart carried several hundred leftover slot boxes
+     through every later style recalc and layout. data-v / data-fxv are
+     the resume points, so nothing is lost with them.
    FxNum.math is DOM-free so the suite exercises it in Node. */
 const FxNum = (() => {
+  /* The column transition is 560ms (140-fx-numerals.css); the settle waits
+     past it. One timer per element: a newer roll re-arms it, and the
+     `firstChild === root` guard makes a stale settle a no-op when a newer
+     roll or a snap has already replaced the structure. A transitionend
+     listener is not used because every column fires its own. */
+  const ROLL_SETTLE_MS = 650;
   const math = {
     /** Maximal digit runs and the statics between them, in order. */
     tokenize(str) {
@@ -5499,6 +5702,8 @@ const FxNum = (() => {
     el.appendChild(root);
     // One kicked frame, not a loop: the glide itself is a CSS transition.
     requestAnimationFrame(() => { for (const c of cols) c.col.style.transform = `translateY(${-c.to}em)`; });
+    clearTimeout(el._fxSettle);
+    el._fxSettle = setTimeout(() => { if (el.firstChild === root) el.textContent = toStr; }, ROLL_SETTLE_MS);
   }
 
   /**
@@ -6127,6 +6332,23 @@ async function ensureNodes(paths) {
       if (r.nodes) for (const p of chunk) state.nodeCache.set(p, r.nodes[p] || null);
     } catch { /* unresolved: callers fall back to what they already hold */ }
   }
+}
+
+/**
+ * A toast with one button — for the cases where the right next step is a
+ * single click away (scan again, try again). `fn` runs once and the toast
+ * goes with it. Same surface and lifetime as toast(), so it reads as one
+ * family; longer by default because it is asking for a decision.
+ */
+function toastAction(msg, label, fn, kind = 'success', ms = 12000) {
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  el.innerHTML = icon(kind === 'error' ? 'alert' : 'checkCircle', 16) + '<span>' + escapeHtml(msg) + '</span>' +
+    '<button class="pill" type="button" style="margin-left:10px;flex:none;">' + escapeHtml(label) + '</button>';
+  const gone = () => { el.classList.add('out'); setTimeout(() => el.remove(), 320); };
+  el.querySelector('button').addEventListener('click', () => { gone(); fn(); });
+  $('toasts').appendChild(el);
+  setTimeout(gone, ms);
 }
 
 /* ───────────────────────────── View registry (§3.4) ─────────────────────────────
@@ -6852,9 +7074,11 @@ function renderZombies(report) {
     const bar = p.bytes > 0 && maxHeld > 0
       ? `<span class="fx-bar-track"><span class="fx-bar-fill" data-w="${Math.max(3, (p.bytes / maxHeld) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></span></span>`
       : '';
-    return `<div class="zh-row"${i >= ZH_VISIBLE_ROWS ? ' hidden' : ''}>` +
-      `<span class="nm" title="Holding: ${escapeHtml(files)}">${escapeHtml(p.processName)}</span>` +
-      `<span class="pid num">pid ${p.pid}</span>` +
+    // The process id is a fact nobody needs to decide anything — the Restart
+    // button already targets the process — so it lives in the row's title
+    // for the curious, not beside the name.
+    return `<div class="zh-row" title="Process ${p.pid} — holding: ${escapeHtml(files)}"${i >= ZH_VISIBLE_ROWS ? ' hidden' : ''}>` +
+      `<span class="nm">${escapeHtml(p.processName)}</span>` +
       bar +
       `<b class="sz num">${held}</b>` +
       `<button class="pill" data-zh-restart="${i}" title="Ask it to quit so the space frees${p.appBundle ? ', then reopen it' : ''}">Restart</button>` +
@@ -7288,6 +7512,7 @@ async function stopScan() {
   if (state.abortScan) state.abortScan();
   closeEventSource();
   endScanChrome();
+  clearScanQueue(); // a Stop means stop — folders waiting behind this one are not started
   // Every scanId-keyed endpoint answers a cancelled scan with
   // 500 SCAN_FAILED "Scan stopped by user". Leaving the id in state and then
   // remounting the views below turns one deliberate Stop into a wall of red
@@ -7394,6 +7619,12 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   // FX: the status label shimmers for exactly as long as the scan is
   // genuinely pending — endScanChrome, the single exit funnel, removes it.
   $('scanStatus').classList.add('fx-shimmer-text');
+  // Assistive tech hears the scan start here; followScanProgress speaks again
+  // every ten seconds, and finishScan / failScan say how it ended. The bar
+  // states what it is until the first frame gives it a count.
+  $('scanAnnounce').textContent = message || 'Scanning…';
+  $('progressTrack').setAttribute('aria-valuetext', 'Scanning');
+  tourScanStarted(); // v4 §9.2 — the welcome card follows the user into the scan
   if (quiet) {
     // `message` lets the caller say what is actually happening. A first scan
     // enters here too — startScan shows the chrome before it knows whether the
@@ -7590,7 +7821,7 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
   } catch (e) {
     // A background refresh that fails must not blow away the tree already on
     // screen — the indexed view is still perfectly usable.
-    if (quiet) { console.warn('[treemap] background rescan failed:', e); return; }
+    if (quiet) { quietRescanFailed(e); return; }
     failScan(e.message);
   }
 }
@@ -7608,11 +7839,18 @@ function followScanProgress(scanId, path, fast, t0) {
   // frames). If the stream goes quiet mid-scan, poll the result directly.
   let lastSseAt = performance.now();
   let finished = false;
+  let lastAnnounced = 0; // seconds — the live region speaks once every ten
+  // Consecutive polls nobody answered. A refused connection (status 0), an
+  // unreadable body or a proxy's 502–504 all mean the server is not there to
+  // finish this scan; five in a row — fifteen seconds of silence — ends the
+  // wait, because chrome that spins forever over a dead server is a lie.
+  let dead = 0;
   const watchdog = setInterval(async () => {
     if (!state.scanning || finished) { clearInterval(watchdog); return; }
     if (performance.now() - lastSseAt < 6000) return;
     try {
       const r = await api(`/api/scan/${scanId}/result`);
+      dead = 0;
       if (r.status === 'complete' && !finished) {
         finished = true;
         clearInterval(watchdog);
@@ -7630,8 +7868,19 @@ function followScanProgress(scanId, path, fast, t0) {
         clearInterval(watchdog);
         closeEventSource();
         failScan(e.status === 404 ? 'The scan expired — please run it again.' : e.message);
+        return;
       }
-      /* otherwise: still running or transient — keep waiting */
+      if (e.status === 0 || e.code === 'BAD_RESPONSE' || (e.status >= 502 && e.status <= 504)) {
+        if (++dead >= 5 && !finished) {
+          finished = true;
+          clearInterval(watchdog);
+          closeEventSource();
+          failScan(e.message); // api()'s own sentence: check the app is still running
+        }
+        return;
+      }
+      dead = 0;
+      /* otherwise: still running or transient (a 429, a 202) — keep waiting */
     }
   }, 3000);
   // Hand Stop the two things only this closure can settle. `finished` also
@@ -7651,6 +7900,13 @@ function followScanProgress(scanId, path, fast, t0) {
         `<span class="num">${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`;
       $('scanMeta').textContent = msg.currentPath;
+      // A live region fed every frame would never stop talking; one sentence
+      // every ten seconds says the scan is alive and how far it has got.
+      if (secs - lastAnnounced >= 10) {
+        lastAnnounced = secs;
+        $('scanAnnounce').textContent = `${formatCount(msg.scanned)} items scanned so far`;
+      }
+      $('progressTrack').setAttribute('aria-valuetext', `${formatCount(msg.scanned)} items scanned`);
     } else if (msg.type === 'complete') {
       finished = true;
       clearInterval(watchdog);
@@ -7730,9 +7986,35 @@ function failScan(message) {
   const status = $('scanStatus');
   status.classList.add('error');
   status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(message) + '</span>';
+  $('scanAnnounce').textContent = 'Scan failed — ' + message;
   restoreDashboardPanels();
   toast(message, 'error');
+  tourScanFailed(); // v4 §9.2 — the welcome card comes back, with its buttons
   switchView(state.view);
+  drainScanQueue(); // a folder waiting behind this one still gets its turn
+}
+
+/**
+ * A quiet (behind-the-index) rescan that failed.
+ *
+ * The tree on screen is still perfectly usable, so it must not be wiped —
+ * but the chrome the request put up (spinner, Stop, skeletons, "Checking for
+ * changes…") was promising a scan that will never land. Leaving it up was
+ * the bug: unplug the drive a folder lived on, reopen it from Recent, and the
+ * app spun forever with the lists as grey skeletons and "Index live — always
+ * current" underneath. End the chrome, say what the screen is showing, and
+ * stop claiming the index is live.
+ */
+function quietRescanFailed(e) {
+  endScanChrome();
+  restoreDashboardPanels();
+  const status = $('scanStatus');
+  status.classList.add('error');
+  status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml('Showing the saved index — couldn’t rescan: ' + e.message) + '</span>';
+  $('scanAnnounce').textContent = 'Couldn’t rescan this folder: ' + e.message;
+  $('indexBadge').classList.add('stale');
+  toast('Couldn’t rescan this folder: ' + e.message, 'error');
+  drainScanQueue();
 }
 
 /**
@@ -7811,6 +8093,8 @@ async function finishScan(root, durationMs, stats) {
   $('scanStatus').innerHTML = icon('checkCircle', 14) +
     `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> files `}` +
     `in ${(durationMs / 1000).toFixed(1)}s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`;
+  $('scanAnnounce').textContent = (state.scanId ? 'Scan finished — ' : 'Folder opened from the saved index — ') +
+    (files === null ? '' : `${formatCount(files)} files, `) + formatBytes(root.size);
   // Blanked, not merely skipped. Skipping leaves the tiles holding the PREVIOUS
   // scan's numbers, which is the same lie in slower motion: the headline and the
   // engine row go quiet while Files and Folders keep stating another folder's
@@ -7830,7 +8114,16 @@ async function finishScan(root, durationMs, stats) {
   // scan gets ONE completion toast, on the pass that actually completed (QA D3).
   // FX: the completion pulse rides the same gate — one crossing, one pulse.
   if (state.scanId) {
-    toast(`Scan complete — ${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} files`}`);
+    // Nothing to celebrate about 0 B in 0 files: on a Mac that is what a
+    // folder macOS refused to open looks like, and the refused-folder check
+    // (renderRefusedFolders, on TOPIC.scan) speaks for it once it has looked.
+    // A partial scan says so in the same breath as its total.
+    const refusedDirs = stats && stats.refused && stats.refused.dirs > 0 ? stats.refused.dirs : 0;
+    const empty = root.size === 0 && !files;
+    if (!empty) {
+      toast(`Scan complete — ${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} files`}` +
+        (refusedDirs ? ` — ${formatCount(refusedDirs)} folder${refusedDirs === 1 ? '' : 's'} could not be read` : ''));
+    }
     fxScanDonePulse();
   }
 
@@ -7850,29 +8143,7 @@ async function finishScan(root, durationMs, stats) {
     switchView(state.view);
     return;
   }
-  try {
-    /* All three poll. finishScan normally runs against a scan that just
-       finished, but not always: the index paints a tree before any scan has an
-       id, a rescan can be in flight against this one, and all three endpoints
-       answer a running scan with 202. Without poll the 202 body has no `files`
-       / `types` / `folders` field, so the row either read undefined or — once
-       api() started throwing on an unrequested 202 — told the user "could not
-       load stats" about a scan that was merely still running. */
-    const [lf, ft, lfo] = await Promise.all([
-      api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`, undefined, { poll: true }),
-      api(`/api/file-types?scanId=${state.scanId}`, undefined, { poll: true }),
-      api(`/api/large-folders?scanId=${state.scanId}&limit=10`, undefined, { poll: true }),
-    ]);
-    state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders;
-    seedNodes(lf.files); // right-click/cart on a big file must resolve even if pruned away
-    const largest = state.largest[0] || null;
-    $('statLargest').textContent = largest ? `${largest.name} · ${formatBytes(largest.size)}` : '–';
-  } catch (e) { toast('Could not load stats: ' + e.message, 'error'); }
-
-  refreshBigFiles();
-  renderBigFolders();
-  state.donut.animated = false;
-  renderDonut();
+  await loadDashboardLists();
   // Tell every view a new scan landed, then re-enter the current one. Views
   // repoint themselves at the new root in onScanChange, so switchView's mount
   // is the single load path — previously this called loadTreemap()/renderGrid()
@@ -7891,6 +8162,60 @@ async function finishScan(root, durationMs, stats) {
   // scan completes — pick it up once it lands.
   setTimeout(() => { if (state.view === 'treemap') refreshTimebar(); }, 1500);
   if (state.live.wanted) enableLive(); // Live survives rescans
+}
+
+/**
+ * The three dashboard lists — largest files, type breakdown, largest folders.
+ *
+ * Split out of finishScan so a failed fetch has a retry that re-runs only
+ * this, not the whole scan. When one of the three fails, the cards say so
+ * with a Try again: the old fall-through painted "No files found." and "No
+ * folders above 1 MB found." under a headline that had just said 812,441
+ * files — a 5xx, an unreadable body or an exhausted 429 backoff became a
+ * confident statement that the folder is empty, and the toast that
+ * contradicted it faded in seconds.
+ *
+ * All three poll. finishScan normally runs against a scan that just
+ * finished, but not always: a rescan can be in flight against this one, and
+ * all three endpoints answer a running scan with 202. Without poll the 202
+ * body has no `files` / `types` / `folders` field, so the row either read
+ * undefined or — once api() started throwing on an unrequested 202 — told
+ * the user "could not load stats" about a scan that was merely still running.
+ *
+ * Returns true when the lists were painted from data.
+ */
+async function loadDashboardLists() {
+  const scanId = state.scanId;
+  if (!scanId) return false;
+  try {
+    const [lf, ft, lfo] = await Promise.all([
+      api(`/api/large-files?scanId=${scanId}&limit=10&minSize=1`, undefined, { poll: true }),
+      api(`/api/file-types?scanId=${scanId}`, undefined, { poll: true }),
+      api(`/api/large-folders?scanId=${scanId}&limit=10`, undefined, { poll: true }),
+    ]);
+    if (scanId !== state.scanId) return false; // a newer scan owns the cards now
+    state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders;
+    seedNodes(lf.files); // right-click/cart on a big file must resolve even if pruned away
+    const largest = state.largest[0] || null;
+    $('statLargest').textContent = largest ? `${largest.name} · ${formatBytes(largest.size)}` : '–';
+  } catch (e) {
+    if (scanId !== state.scanId) return false;
+    const retry = (host) => {
+      host.innerHTML = '<div class="muted">Couldn’t load this list — ' + escapeHtml(e.message) +
+        ' <button class="pill" type="button" data-retry-lists>Try again</button></div>';
+      host.querySelector('[data-retry-lists]').addEventListener('click', () => { void loadDashboardLists(); });
+    };
+    retry($('bigFiles'));
+    retry($('bigFolders'));
+    retry($('donutLegend'));
+    fxDonutLoadingSync(false);
+    return false;
+  }
+  refreshBigFiles();
+  renderBigFolders();
+  state.donut.animated = false;
+  renderDonut();
+  return true;
 }
 
 /* Features 11 + 10 — hard-link / cloud-placeholder dashboard notes. */
@@ -8015,10 +8340,21 @@ async function renderGrowthProjection() {
     if (d >= 365) return; // a year+ out isn't worth a warning banner
     const culprits = (f.topGrowers || []).slice(0, 3)
       .map(g => `${g.name} +${formatBytes(g.bytesPerDay)}/day`).join(' · ');
+    // The slope was fitted to THIS scan's history. When the scan is a folder
+    // — the tour's home folder, a Projects tree — that is the folder's growth
+    // measured against the whole volume's free space, and growth anywhere
+    // else on the volume is invisible to it. The sentence says which. A
+    // server that does not say (`basis`) is read as a folder scan, the
+    // honest default: most scans are.
+    const wholeVolume = f.basis === 'volume';
+    const days = `<b>~${formatCount(d)} day${d === 1 ? '' : 's'}</b>`;
+    const name = escapeHtml(state.root.name || state.root.path);
     el.className = 'growth-proj ' + (d < 30 ? 'danger' : 'warn');
-    el.innerHTML = icon('trendUp', 15) +
-      `<span>At current growth (+${formatBytes(f.bytesPerDay)}/day), this disk is full in <b>~${formatCount(d)} day${d === 1 ? '' : 's'}</b>` +
-      (culprits ? ` — top culprits: ${escapeHtml(culprits)}` : '') + `</span>`;
+    el.innerHTML = icon('trendUp', 15) + '<span>' + (wholeVolume
+      ? `At current growth (+${formatBytes(f.bytesPerDay)}/day), this disk is full in ${days}`
+      : `At ${name}’s growth (+${formatBytes(f.bytesPerDay)}/day), the disk it lives on is full in ${days}`) +
+      (culprits ? ` — top culprits: ${escapeHtml(culprits)}` : '') +
+      (wholeVolume ? '' : ' <span class="muted">Growth elsewhere on the disk is not counted.</span>') + '</span>';
     el.hidden = false;
     return;
   }
@@ -8036,6 +8372,179 @@ async function renderGrowthProjection() {
     el.hidden = false;
   }
 }
+
+/* ── Refused folders ──
+   A folder the OS would not let TreeMap open comes back from every engine as
+   an ordinary empty folder, and on a Mac that is the everyday state of a
+   fresh install: Desktop, Documents and Downloads are refused until the app
+   has Full Disk Access. Congratulating the user on a clean, empty folder is
+   the confident wrongness this app exists to avoid — so the count is named
+   on the dashboard, in the completion toast, and to the tour.
+
+   Two sources, in order of trust: the server's own `stats.refused` (the
+   engine counted its refusals), and — for a server without that field — a
+   probe of the folders that matter through the picker's listing endpoint,
+   which answers 403 for exactly the folders a scan silently skipped. */
+const REFUSED_PROBE_NAMES = ['Desktop', 'Documents', 'Downloads'];
+
+function refusedCopy(platform, n) {
+  const them = n === 1 ? 'it' : 'them';
+  return platform === 'darwin'
+    ? `macOS is protecting ${them}. Give TreeMap Full Disk Access in System Settings › Privacy & Security, then scan again.`
+    : `TreeMap does not have permission to read ${them}. Check the folder permissions, then scan again.`;
+}
+
+/** Paint the dashboard row from what the server counted. Tolerates a server that did not count. */
+function renderRefusedFolders() {
+  const row = $('accessRow');
+  const s = state.scanStats || {};
+  const r = s.refused;
+  if (!r || !(r.dirs > 0)) {
+    state.scanRefused = null;
+    if (row) row.hidden = true;
+    return;
+  }
+  const examples = Array.isArray(r.examples) ? r.examples : [];
+  state.scanRefused = { dirs: r.dirs, examples, root: !!state.root && examples.includes(state.root.path) };
+  paintRefusedRow(state.system && state.system.platform);
+}
+
+function paintRefusedRow(platform) {
+  const row = $('accessRow');
+  const r = state.scanRefused;
+  if (!row || !r) return;
+  const names = r.examples.map((p) => p.split(/[\\/]/).filter(Boolean).pop() || p).slice(0, 3);
+  $('accessText').textContent =
+    `${formatCount(r.dirs)} folder${r.dirs === 1 ? '' : 's'} could not be read` +
+    (names.length ? `: ${names.join(', ')}${r.dirs > names.length ? '…' : ''}` : '');
+  $('accessHint').textContent = refusedCopy(platform, r.dirs);
+  $('accessOpenBtn').hidden = platform !== 'darwin';
+  row.title = r.examples.join('\n');
+  row.hidden = false;
+}
+
+/**
+ * Older servers ship no `refused` field. For those, ask the picker's listing
+ * endpoint about the folders a refusal would have hidden: the scanned root
+ * itself when it came back empty, and — on a Mac — the three protected
+ * folders under it when they came back empty or not at all. A 403 is a
+ * refusal; a 404 is a folder that simply is not there, and is not counted.
+ */
+async function probeRefusedFolders() {
+  const root = state.root;
+  const scanId = state.scanId;
+  if (!root || !scanId || root.path.startsWith('cloud://')) return;
+  if ((state.scanStats || {}).refused) return; // the server counted — nothing to guess
+  const platform = state.system && state.system.platform;
+  const emptyNode = (n) => !!n && n.size === 0 && (!n.children || n.children.length === 0);
+  const candidates = [];
+  if (emptyNode(root)) candidates.push(root.path);
+  if (platform === 'darwin') {
+    const sep = root.path.includes('\\') ? '\\' : '/';
+    for (const name of REFUSED_PROBE_NAMES) {
+      const p = root.path.endsWith(sep) ? root.path + name : root.path + sep + name;
+      const node = state.pathIndex.get(p);
+      if (!node || emptyNode(node)) candidates.push(p);
+    }
+  }
+  if (!candidates.length) return;
+  const refused = [];
+  for (const p of candidates) {
+    try { await api('/api/fs/list?path=' + encodeURIComponent(p)); }
+    catch (e) { if (e && e.status === 403) refused.push(p); }
+  }
+  if (scanId !== state.scanId) return; // a newer scan owns the dashboard
+  if (!refused.length) return;
+  state.scanRefused = { dirs: refused.length, examples: refused, root: refused.includes(root.path) };
+  paintRefusedRow(platform);
+  const n = refused.length;
+  if (state.scanRefused.root) {
+    // "Scanned 0 files — 0 B" was a lie about this folder: replace it.
+    const status = $('scanStatus');
+    status.classList.add('error');
+    status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(
+      (platform === 'darwin' ? 'macOS would not let TreeMap look inside this folder. ' : 'TreeMap is not allowed to read this folder. ') +
+      refusedCopy(platform, 1)) + '</span>';
+  }
+  toast(`${formatCount(n)} folder${n === 1 ? '' : 's'} could not be read — ` + refusedCopy(platform, n), 'error', 9000);
+}
+/* ── end refused folders ── */
+subscribe(TOPIC.scan, (scanId) => {
+  renderRefusedFolders();
+  if (scanId) void probeRefusedFolders();
+});
+$('accessOpenBtn').addEventListener('click', () => {
+  // Electron routes any non-local URL through shell.openExternal, which is
+  // how a settings deep link reaches System Settings. In a browser tab there
+  // is no such door, so the path is said in words instead.
+  if (window.treemapDesktop) window.open('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');
+  else toast('Open System Settings › Privacy & Security › Full Disk Access, switch TreeMap on, then scan again.', 'success', 9000);
+});
+
+/* ── Scan queue ── */
+/* Several folders can arrive at once — a stack dropped from Finder, or the
+   dock and the CLI handing paths over while a scan runs. One scan at a time
+   is the rule (the chrome, the stream and the watchdog are singular), so the
+   rest wait their turn in order and are told so; the old drop handler read
+   the first file and silently ignored the others. Draining waits a tick so
+   the finishing scan's own repaint completes before the next one begins. */
+const scanQueue = [];
+function queueScan(p) {
+  if (!p) return;
+  if (!state.scanning) { void startScan(p); return; }
+  if (scanQueue.includes(p)) return;
+  scanQueue.push(p);
+  const n = scanQueue.length;
+  toast(`Queued ${p} — it scans next${n > 1 ? ` (${n} waiting)` : ''}`, 'success', 5000);
+}
+function drainScanQueue() {
+  if (state.scanning || !scanQueue.length) return;
+  const next = scanQueue.shift();
+  $('pathInput').value = next;
+  void startScan(next);
+}
+function clearScanQueue() { scanQueue.length = 0; }
+subscribe(TOPIC.scan, (scanId) => { if (scanId) setTimeout(drainScanQueue, 0); });
+/* ── end scan queue ── */
+
+/* ── Results expire ──
+   Scan results are kept for a limited time after they settle; the server
+   says how long in `stats.expiresAt`. Every later action would fail with an
+   "unknown or expired scanId" — an error about an identifier the user never
+   saw, under a map that still looks perfectly alive. Two answers: a warning
+   two minutes before, and, once it has happened, a sentence that says what
+   it means with a Scan again beside it. Older servers send no expiresAt and
+   get the second answer only. */
+/* The timer handle and the "already offered" mark live on `state`, not in
+   module scope: they are per-scan facts, they are reset by the same thing
+   that resets the rest of the scan, and it keeps each function readable on
+   its own — which is also how the tests exercise them. */
+function armScanExpiry() {
+  clearTimeout(state.scanExpiryTimer);
+  state.scanExpiryTimer = 0;
+  const at = Number((state.scanStats || {}).expiresAt);
+  if (!state.scanId || !Number.isFinite(at) || at <= 0) return;
+  const warnIn = Math.max(0, at - Date.now() - 2 * 60_000);
+  const scanId = state.scanId;
+  state.scanExpiryTimer = setTimeout(() => {
+    if (scanId !== state.scanId || state.scanning) return;
+    const mins = Math.max(1, Math.round((at - Date.now()) / 60_000));
+    toastAction(`These results expire in about ${mins} minute${mins === 1 ? '' : 's'} — scan again to keep them fresh.`,
+      'Scan again', () => rescan(), 'success', 20000);
+  }, warnIn);
+}
+subscribe(TOPIC.scan, (scanId) => { if (scanId) armScanExpiry(); });
+
+function scanResultsExpired(err, url) {
+  if (!state.root || state.scanning || !state.scanId || !String(url).includes(state.scanId)) return;
+  err.message = 'These results have expired — scan the folder again to refresh them.';
+  // one toast per expired scan, however many calls fail under it
+  if (state.expiredOffered === state.scanId) return;
+  state.expiredOffered = state.scanId;
+  const p = state.root.path;
+  toastAction(err.message, 'Scan again', () => { void startScan(p); }, 'error', 15000);
+}
+/* ── end results expire ── */
 
 $('scanBtn').addEventListener('click', () => {
   if (state.scanning) { void stopScan(); return; } // the same button is Stop mid-scan
@@ -8289,6 +8798,7 @@ async function loadTreemap(rootPath, animate = false) {
       $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
       exitHistoryState();
       refreshTimebar();
+      tmSetEmpty(''); // the rectangle map's note does not describe these renderers
       if (isSun()) { drawSunburst(); }
       else {
         drawCells();
@@ -8298,8 +8808,16 @@ async function loadTreemap(rootPath, animate = false) {
         if (state.treemap.mode === 'circles' && wasAt) altBeginZoom(shared, wasAt);
       }
     } else {
-      const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(rootPath)}`);
+      let data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(rootPath)}`);
       if (seq !== tmLoadSeq) return; // a newer view/root load has superseded this fetch
+      // The 4 KB floor keeps a big folder's map legible; in a folder of
+      // dotfiles, scripts or one small file it hides everything, and a blank
+      // panel reads as a broken app. When it drew nothing and there are bytes
+      // to draw, ask again without the floor.
+      if (!data.nodes.length && data.root.size > 0) {
+        data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(rootPath)}`);
+        if (seq !== tmLoadSeq) return;
+      }
       if (state.treemap.history.scrubbing) return; // same rule as above: a scrub in flight owns the map
       state.treemap.rootPath = data.root.path;
       state.treemap.rootName = data.root.name;
@@ -8483,6 +9001,14 @@ function treemapCanvasHeight(wrap) {
   return Math.max(360, Math.floor(window.innerHeight - top - padY - below - mainPadB));
 }
 
+/** The note over an empty map. Empty text hides it; the note is a live region, so it is also read out. */
+function tmSetEmpty(text) {
+  const el = $('tmEmpty');
+  if (!el) return;
+  el.textContent = text;
+  el.hidden = !text;
+}
+
 function drawTreemap() {
   const wrap = $('treemapWrap');
   const cssW = wrap.clientWidth - 20;
@@ -8512,6 +9038,21 @@ function drawTreemap() {
     px.push({ n, x, y, w, h, frame: n.expanded });
   }
   state.treemap.pxRects = px;
+
+  // A map with nothing to draw must say so — a blank panel reads as a broken
+  // app, not as a small folder. loadTreemap already dropped the 4 KB floor
+  // when it would have hidden everything, so this is a genuinely empty
+  // folder, or a panel too small for the files it holds.
+  if (!px.length) {
+    tmSetEmpty(state.treemap.rootSize > 0
+      ? `Nothing here is big enough to draw — ${formatBytes(state.treemap.rootSize)} in files too small for a rectangle at this size. Open the Grid view to list them.`
+      : 'This folder is empty.');
+    renderSearchOverlay();
+    presentTreemap();
+    renderTmLegend();
+    return;
+  }
+  tmSetEmpty('');
 
   // Pass 1: cushion-shaded leaf fills.
   for (const r of px) {
@@ -12960,7 +13501,7 @@ const FxOrbs = (() => {
 
    API:  FxBeam.attach(el, { type, active, duration?, strength?, opacity?,
                              brightness?, saturation?, hueRange?, staticColors?,
-                             bloom?, borderRadius?, onActivate?, onDeactivate? })
+                             spin?, bloom?, borderRadius?, onActivate?, onDeactivate? })
          FxBeam.detach(el)
    attach is idempotent — attaching to an already-attached element
    reconfigures it in place (same instance, and the same shared stylesheet
@@ -12970,7 +13511,10 @@ const FxOrbs = (() => {
    upstream presets exceed 1); brightness/saturation override this
    instance's --fxb-*-bright/-sat tokens; hueRange caps the drift at ±deg
    (clamped to the upstream 30° maximum — the palette itself stays blue);
-   staticColors kills the hue drift while motion continues; bloom:false
+   staticColors kills the hue drift while motion continues; spin:false
+   (rotate family only) parks the ring — no angle animation, no rotating
+   window mask, a steady complete ring that still fades in and out, so a
+   persistent state costs zero frames; bloom:false
    drops the blurred conic layer (ambience weight); borderRadius
    skips the computed-style read; onActivate/onDeactivate fire on the
    lit/unlit edges (detach of a lit beam counts as a deactivation). Every
@@ -13233,6 +13777,10 @@ const FxBeam = (() => {
       if (Number.isFinite(v)) out.hueRange = Math.max(0, Math.min(30, v));
     }
     if (o.staticColors !== undefined) out.staticColors = !!o.staticColors;
+    /* Not an upstream prop either: a mode pill that stays on is a state,
+       not an activity, and a 60fps angle animation through three masked
+       gradient layers is the wrong price for a state. */
+    if (o.spin !== undefined) out.spin = !!o.spin;
     /* Not an upstream prop: the app's own ambience weight. `bloom: false`
        drops the blurred conic layer entirely (the layer is a child div, so
        this is DOM, not CSS — the shared sheet is unaffected). */
@@ -13326,11 +13874,17 @@ const FxBeam = (() => {
 
   /* md — full ring: rotating shine + colored ring (::after), masked inner
      wash (::before), blurred conic bloom (child div). */
-  function buildRotateCSS(id, type, duration, radius, reduced, hueRange, staticColors) {
+  function buildRotateCSS(id, type, duration, radius, reduced, hueRange, staticColors, spin) {
     const sm = type === 'sm';
     const tok = sm ? 'sm' : 'md';
     const innerR = Math.max(0, radius - 1);
     const hr = hueRange === undefined ? HUE_RANGE : hueRange;
+    /* still: the ring does not rotate. The fades keep their keyframes; the
+       spin keyframes are not emitted at all, and neither pseudo-element
+       carries the angle-driven window mask — the ring is complete. The
+       shine conic still reads the angle, parked at 103deg so its highlight
+       window sits at the upper-left edge: light from above, once. */
+    const still = spin === false;
     /* staticColors pins the hue but must keep the brightness/saturation the
        drifting filter otherwise carried — a bare "no animation" would also
        silently drop both tokens. reduced keeps its established no-filter
@@ -13338,16 +13892,25 @@ const FxBeam = (() => {
     const anim = reduced ? ''
       : staticColors ? `\n  filter: brightness(var(--fxb-${tok}-bright, 1.3)) saturate(var(--fxb-${tok}-sat, 1.2));`
       : `\n  animation: fxb-hue-${id} 12s ease-in-out infinite;`;
-    const wrapperAnim = (fade) => reduced ? '' :
-      `\n  animation: fxb-spin-${id} ${duration}s linear infinite, fxb-${fade}-${id} ${fade === 'fade-in' ? '0.6' : '0.5'}s ease forwards;`;
+    const fadeAnim = (fade) => `fxb-${fade}-${id} ${fade === 'fade-in' ? '0.6' : '0.5'}s ease forwards`;
+    const wrapperAnim = (fade) => reduced ? ''
+      : still ? `\n  animation: ${fadeAnim(fade)};\n  --fxb-a-${id}: 103deg;`
+      : `\n  animation: fxb-spin-${id} ${duration}s linear infinite, ${fadeAnim(fade)};`;
     const colorG = sm ? smallGradients() : borderGradients();
     const innerG = sm ? smallInnerGradients() : borderInnerGradients();
-    const afterMask = `${windowMask(id)}, ${RING_MASK}`;
-    const beforeMask = sm
-      ? smallWindowMask(id)
-      : `${windowMask(id)}, ${EDGE_FRAME_MASK}`;
-    const beforeComposite = sm ? 'add' : 'intersect, add';
-    const beforeWebkitComposite = sm ? 'source-over' : 'source-in, source-over';
+    const afterMask = still ? RING_MASK : `${windowMask(id)}, ${RING_MASK}`;
+    const afterComposite = still ? 'exclude' : 'intersect, exclude';
+    const afterWebkitComposite = still ? 'xor' : 'source-in, xor';
+    /* sm's wash is masked by its window alone, so a still sm wash needs no
+       mask at all; md's keeps the edge frame that shapes it. */
+    const beforeMask = still
+      ? (sm ? '' : EDGE_FRAME_MASK)
+      : sm ? smallWindowMask(id) : `${windowMask(id)}, ${EDGE_FRAME_MASK}`;
+    const beforeComposite = still ? 'add' : sm ? 'add' : 'intersect, add';
+    const beforeWebkitComposite = still ? 'source-over' : sm ? 'source-over' : 'source-in, source-over';
+    const beforeMaskDecl = beforeMask
+      ? `\n  -webkit-mask-image: ${beforeMask};\n  -webkit-mask-composite: ${beforeWebkitComposite};\n  mask-image: ${beforeMask};\n  mask-composite: ${beforeComposite};`
+      : '';
     const shadowSpread = sm ? '5px 1px' : '9px 1px';
     /* No per-instance `position`: the shared `[data-fxbeam]` base rule owns it
        at class specificity, so a host laid out deliberately (an absolutely
@@ -13372,9 +13935,9 @@ const FxBeam = (() => {
   clip-path: inset(0 round ${radius}px);
   background: ${shineConic(id)}, ${colorG};
   -webkit-mask: ${afterMask};
-  -webkit-mask-composite: source-in, xor;
+  -webkit-mask-composite: ${afterWebkitComposite};
   mask: ${afterMask};
-  mask-composite: intersect, exclude;
+  mask-composite: ${afterComposite};
   pointer-events: none;
   z-index: 2;
   opacity: ${opacityCalc(id, tok, 'stroke')};${anim}
@@ -13387,11 +13950,7 @@ const FxBeam = (() => {
   border-radius: ${radius}px;
   clip-path: inset(0 round ${radius}px);
   background: ${innerG};
-  box-shadow: inset 0 0 ${shadowSpread} var(--fxb-${tok}-shadow, rgba(255, 255, 255, 0.27));
-  -webkit-mask-image: ${beforeMask};
-  -webkit-mask-composite: ${beforeWebkitComposite};
-  mask-image: ${beforeMask};
-  mask-composite: ${beforeComposite};
+  box-shadow: inset 0 0 ${shadowSpread} var(--fxb-${tok}-shadow, rgba(255, 255, 255, 0.27));${beforeMaskDecl}
   pointer-events: none;
   z-index: 1;
   opacity: ${opacityCalc(id, tok, 'inner')};${anim}
@@ -13415,8 +13974,7 @@ const FxBeam = (() => {
   display: block;
   opacity: ${opacityCalc(id, tok, 'bloom')};
 }
-${reduced ? '' : `@keyframes fxb-spin-${id} { to { --fxb-a-${id}: 360deg; } }
-${fadeKeyframes(id)}
+${reduced ? '' : `${still ? '' : `@keyframes fxb-spin-${id} { to { --fxb-a-${id}: 360deg; } }\n`}${fadeKeyframes(id)}
 ${staticColors ? '' : hueKeyframes(id, hr, tok)}
 ${pausedRule(id)}`}`;
   }
@@ -13831,13 +14389,14 @@ ${pausedRule(id)}`}`;
       specificity so a host with a deliberate layout (an absolutely
       positioned .fx-beam-strip overlay) can still override it. */
   function buildCSS(id, type, theme, duration, radius, reduced, knobs) {
-    /* `knobs` is the optional per-attach bag — {hueRange, staticColors}.
-       Omitting it (every pre-knob caller, the extraction tests' 6-arg calls)
-       must produce byte-identical CSS to passing both as undefined. */
+    /* `knobs` is the optional per-attach bag — {hueRange, staticColors,
+       spin}. Omitting it (every pre-knob caller, the extraction tests'
+       6-arg calls) must produce byte-identical CSS to passing all three as
+       undefined. spin is a rotate-family knob; line and pulse ignore it. */
     const k = knobs || {};
     if (type === 'line') return buildLineCSS(id, theme, duration, radius, reduced, k.hueRange, k.staticColors);
     if (type === 'pulse-inner' || type === 'pulse-outside') return buildPulseCSS(id, type, theme, duration, radius, reduced, k.staticColors);
-    return buildRotateCSS(id, type, duration, radius, reduced, k.hueRange, k.staticColors);
+    return buildRotateCSS(id, type, duration, radius, reduced, k.hueRange, k.staticColors, k.spin);
   }
 
   /* ── Shared ~30fps pulse driver (port of pulseDriver.ts) ── */
@@ -14012,7 +14571,7 @@ ${pausedRule(id)}`}`;
   }
 
   function rebuild(inst) {
-    const { type, duration, hueRange, staticColors } = inst.cfg;
+    const { type, duration, hueRange, staticColors, spin } = inst.cfg;
     const theme = resolveTheme();
     /* md/sm output is theme-agnostic (its scalars are tokens that flip on
        their own), so the theme is not part of THEIR key — otherwise a flip
@@ -14020,15 +14579,17 @@ ${pausedRule(id)}`}`;
     const themeKey = type === 'md' || type === 'sm' ? '' : theme;
     /* Focus/blur and cart pulses re-attach with identical options: an
        unchanged (type, theme, duration, radius, REDUCED, hueRange,
-       staticColors) tuple keeps the sheet and driver config it already has.
-       `bloom` is deliberately absent — it is a DOM layer, not a rule. */
+       staticColors, spin) tuple keeps the sheet and driver config it
+       already has. `bloom` is deliberately absent — it is a DOM layer, not
+       a rule. */
     const buildKey = type + '|' + themeKey + '|' + duration + '|' + inst.radius + '|' + REDUCED
-      + '|' + (hueRange === undefined ? '' : hueRange) + '|' + !!staticColors;
+      + '|' + (hueRange === undefined ? '' : hueRange) + '|' + !!staticColors
+      + '|' + (spin === false ? 'still' : 'spin');
     if (inst.sheetKey !== buildKey) {
       // acquired before the old one is released, so a same-key re-attach can
       // never drop a sheet's last reference and re-parse it
       const entry = acquireSheet(buildKey, (id) =>
-        buildCSS(id, type, theme, duration, inst.radius, REDUCED, { hueRange, staticColors }));
+        buildCSS(id, type, theme, duration, inst.radius, REDUCED, { hueRange, staticColors, spin }));
       const moved = entry.id !== inst.id;
       if (moved) clearIdVars(inst); // reads the OLD id and the OLD driver config
       const old = inst.sheet;
@@ -14403,9 +14964,15 @@ function fxStateBeamDrop(el) {
    and Hide-cloud toggles, the no-cloud-files reset) calls it; the treemap's
    mount re-lights and its unmount (visible=false — state.view still says
    'treemap' during unmount, so the caller must say so) is the shared off
-   door. attach is idempotent and keyed, so re-syncing is cheap. */
+   door. attach is idempotent and keyed, so re-syncing is cheap.
+   spin:false + staticColors: a mode that stays on is a state, not an
+   activity. A spinning ring animated a registered <angle> at 60fps through
+   three masked gradient layers and a blurred bloom, plus a 12s hue-rotate
+   filter, per lit pill, for as long as Live (or Lens, Loop, Diff,
+   Hide-cloud) was on — the treemap page never idled. Still, the ring is a
+   steady complete band that fades in and out and then costs nothing. */
 function fxTmPillBeamsSync(visible = state.view === 'treemap') {
-  const pill = (id, on) => { const el = $(id); if (el) FxBeam.attach(el, { type: 'sm', active: !!on && visible, strength: 0.7 }); };
+  const pill = (id, on) => { const el = $(id); if (el) FxBeam.attach(el, { type: 'sm', active: !!on && visible, strength: 0.7, spin: false, staticColors: true }); };
   pill('tmLiveToggle', state.live.on);
   pill('tmLensToggle', state.lens.pinned);
   pill('tmLapseLoop', state.treemap.lapse.loop);
@@ -15318,7 +15885,7 @@ function updateTimeLabel() {
   const i = Number($('tmTimeSlider').value);
   if (i >= h.snaps.length || !h.snaps[i]) { label.textContent = 'Live'; return; }
   const s = h.snaps[i];
-  label.textContent = `${new Date(s.takenAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${formatBytes(s.totalSize)}`;
+  label.textContent = `${formatWhen(s.takenAt)} · ${formatBytes(s.totalSize)}`;
 }
 
 /**
@@ -16070,7 +16637,7 @@ function renderSunburstFrame(root, arcs, geo) {
   const st = $('tmStatus');
   if (st) {
     st.textContent = state.treemap.history.active
-      ? `Viewing ${new Date(state.treemap.history.viewingAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${formatBytes(root.size)} — drag the slider to Live to interact`
+      ? `Viewing ${formatWhen(state.treemap.history.viewingAt)} · ${formatBytes(root.size)} — drag the slider to Live to interact`
       : `${formatCount(arcs.length)} segments · ${geo.rings} rings · ${formatBytes(root.size)} total`;
   }
 
@@ -18589,6 +19156,21 @@ function kbSelect(node) {
   state.treemap.kbSel = node || null;
   presentView();
   if (node) kbShowTip(node); else hideTooltip();
+  // The highlight moves silently for a screen reader: the tooltip is
+  // role=tooltip, not a live region. Say what is selected — name, kind, size
+  // and share of this view — so Enter and Delete act on something the user
+  // has been told about.
+  const live = $('tmKbAnnounce');
+  if (!live) return;
+  if (!node) { live.textContent = ''; return; }
+  const pct = state.treemap.rootSize > 0 ? (node.size / state.treemap.rootSize) * 100 : 0;
+  live.textContent = `${node.name}, ${node.type === 'dir' ? 'folder' : 'file'}, ${formatBytes(node.size)}, ` +
+    `${pct.toFixed(1)} percent of this view${cartHas(node.path) ? ', in cart' : ''}`;
+}
+/** After a drill or a climb: say where we are, ahead of what is selected there. */
+function kbAnnounceRoot() {
+  const live = $('tmKbAnnounce');
+  if (live) live.textContent = `Now in ${state.treemap.rootName || state.treemap.rootPath}. ${live.textContent}`;
 }
 function kbMove(delta) {
   const sibs = kbSiblings();
@@ -18603,6 +19185,7 @@ async function kbDrill() {
   if (sel.type === 'dir') {
     await loadTreemap(sel.path, true);
     kbSelect(kbSiblings()[0] || null);
+    kbAnnounceRoot();
   } else {
     openPreview(sel);
   }
@@ -18616,8 +19199,15 @@ async function kbUp() {
   await loadTreemap(parent, true);
   const sibs = kbSiblings();
   kbSelect(sibs.find((s) => s.path === oldRoot) || sibs[0] || null);
+  kbAnnounceRoot();
 }
-function toggleShortcuts() { $('shortcutsModal').classList.toggle('open'); }
+function toggleShortcuts() {
+  const m = $('shortcutsModal');
+  // Never a second sheet on top of a first: with Settings open, "?" stacked
+  // this on top, and Escape then closed Settings underneath it.
+  if (!m.classList.contains('open') && topModal()) return;
+  m.classList.toggle('open');
+}
 
 /* ── Zoom out (button, breadcrumbs already handle jumps) ── */
 function treemapUp() {
@@ -20083,7 +20673,7 @@ function showCtxMenu(x, y, node) {
     <button data-act="score">${icon('help', 15)}Why this reclaim score?</button>
     ${node.isTrash ? '' : `<button data-act="offload">${icon('archive', 15)}Offload…</button>`}
     ${node.type === 'dir' ? `<div class="div"></div>
-    ${node.isTrash ? '' : `<button data-act="terminal">${icon('terminal', 15)}Open Terminal Here</button>`}
+    ${node.isTrash ? '' : `<button data-act="terminal">${icon('terminal', 15)}Open in Terminal</button>`}
     <button data-act="budget">${icon('gauge', 15)}${hasBudget ? 'Edit budget…' : 'Set budget…'}</button>
     ${hasBudget ? `<button data-act="budget-remove">${icon('x', 15)}Remove budget</button>` : ''}
     ${node.isTrash ? '' : `<button data-act="note">${icon('doc', 15)}${noteFor(node.path) ? 'Edit note…' : 'Add note…'}</button>`}` : ''}
@@ -22966,7 +23556,7 @@ function renderCityChrome() {
     legend.innerHTML =
       `<span class="tml-item"><b>Footprint</b> = size on disk</span>` +
       `<span class="tml-item"><b>Height</b> = ${escapeHtml(heightLabel)}</span>` +
-      `<span class="tml-item city-ramp"><b>Colour</b> = ${escapeHtml(colourLabel)}` +
+      `<span class="tml-item city-ramp"><b>Color</b> = ${escapeHtml(colourLabel)}` +
       (ramp ? `<i style="background:${ramp}"></i>` : '') + `</span>`;
   }
 
@@ -24986,6 +25576,16 @@ function tourRender() {
       pi.focus();
       pi.select();
     });
+  } else if (tour.step === 'scanning') {
+    // The click registered — say so. The old card kept offering "Scan my
+    // home folder" for the whole scan, and a second press earned a red
+    // "already running" toast within the first ten seconds.
+    const name = state.root ? state.root.name : ($('pathInput').value.trim() || 'this folder');
+    host.innerHTML = `
+      <div class="tour-step">Welcome · step 1 of 4</div>
+      <h4>${icon('loader', 16)}Reading your files…</h4>
+      <p>TreeMap is measuring every file and folder in ${escapeHtml(name)}. The map appears the moment it finishes — a big folder can take a minute.</p>
+      <div class="tour-row">${skipBtn}</div>`;
   } else if (tour.step === 'map') {
     host.innerHTML = `
       <div class="tour-step">The map · step 2 of 4</div>
@@ -25087,14 +25687,46 @@ async function tourLoadWins() {
   // app-wide rule that they carry no cart button.
   tour.wins = groups.filter((g) => !g.advisory && g.totalSize > 0 && g.items.length > 0).slice(0, 3);
   tour.winIx = 0;
+  // A folder the OS refused to open came back empty, and "clean" would be
+  // the false all-clear this card exists to avoid (renderRefusedFolders).
+  if (!tour.wins.length && state.scanRefused && state.scanRefused.dirs > 0) {
+    const r = state.scanRefused;
+    const mac = state.system && state.system.platform === 'darwin';
+    tour.step = 'unknown';
+    tour.unknownReason = r.root
+      ? (mac ? 'macOS would not let TreeMap look inside this folder' : 'TreeMap was not allowed to read this folder') + ', so nothing here has been checked.'
+      : `${r.dirs} folder${r.dirs === 1 ? '' : 's'} could not be read, so part of this folder has not been checked.`;
+    tourRender();
+    return;
+  }
   tour.step = tour.wins.length ? 'win' : 'clean';
   tourRender();
+}
+
+/** A scan started while the welcome card is up: the card follows. Called from
+ *  beginScanChrome, so Browse, ⌘K, a drop and the card's own button all count. */
+function tourScanStarted() {
+  if (tour.active && tour.step === 'welcome') { tour.step = 'scanning'; tourRender(); }
+}
+/** The scan failed before it landed: the welcome card and its buttons come back. */
+function tourScanFailed() {
+  if (tour.active && tour.step === 'scanning') { tour.step = 'welcome'; tourRender(); }
 }
 
 // A scan landing while the welcome card is up means the user took the step —
 // move with them. Any later scans leave the tour where it is.
 subscribe(TOPIC.scan, () => {
-  if (tour.active && tour.step === 'welcome') { tour.step = 'map'; tourRender(); }
+  if (!tour.active) return;
+  if (!(tour.step === 'welcome' || tour.step === 'scanning')) return;
+  tour.step = 'map';
+  // After finishScan's own synchronous switchView(state.view): the first scan
+  // lands on the dashboard, and the card would narrate a map the user is not
+  // looking at (the restart path below fixed this for Settings › Show the
+  // tour again; the first run it was written for still had it).
+  queueMicrotask(() => {
+    if (tour.active && tour.step === 'map' && state.root && state.view !== 'treemap') switchView('treemap');
+    tourRender();
+  });
 });
 // The tour's Escape lives at the END of the app-wide Escape chain above —
 // not on a listener of its own, where the first review round showed it
@@ -25692,14 +26324,24 @@ async function cartUndoRun(runId) {
  * dock is there. One toggle function rather than three inline handlers, so the
  * class and the drawer cannot drift apart.
  */
-function cartDockToggle(open) {
+function cartDockToggle(open, { focus = false } = {}) {
   const dock = $('cartDock');
   const next = open === undefined ? !dock.classList.contains('open') : open;
+  const hadFocus = dock.contains(document.activeElement);
   dock.classList.toggle('open', next);
   document.body.classList.toggle('cart-open', next);
+  // Keyboard users must land where they can act. A drawer opened from the
+  // tab left focus on the tab, with Escape climbing the map instead of
+  // closing the drawer; closing from inside it left focus on a hidden button.
+  // Pointer users are where their pointer is — a click moves no focus.
+  if (next) {
+    if (focus) requestAnimationFrame(() => { const c = $('cartCollapse'); if (c && dock.classList.contains('open')) c.focus({ preventScroll: true }); });
+  } else if (hadFocus) {
+    $('cartTab').focus({ preventScroll: true });
+  }
 }
 $('cartTab').addEventListener('click', () => cartDockToggle());
-$('cartTab').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cartDockToggle(); } });
+$('cartTab').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cartDockToggle(undefined, { focus: true }); } });
 $('cartCollapse').addEventListener('click', () => cartDockToggle(false));
 $('cartClear').addEventListener('click', cartClear);
 $('cartTrash').addEventListener('click', cartTrashAll);
@@ -25762,13 +26404,20 @@ function highlightCode(src, ext) {
 }
 
 let pvReqId = 0;
+let pvPrevFocus = null; // where focus was before the pane took it
 function openPreview(node) {
   if (!node || node.type !== 'file') return;
   if (node.path.startsWith('cloud://')) { toast('Quick Look needs file contents — cloud scans never download any'); return; }
   const pane = $('previewPane');
+  const wasOpen = previewIsOpen();
   pane.hidden = false;
   document.body.classList.add('preview-open');
   requestAnimationFrame(() => pane.classList.add('open'));
+  // Focus moves into the pane — it is the last block of markup, so its Close
+  // button is otherwise dozens of Tab stops away — and returns on close.
+  // A second file opened into an already-open pane keeps the first origin.
+  if (!wasOpen) pvPrevFocus = document.activeElement;
+  $('pvClose').focus({ preventScroll: true });
   const ext = previewExt(node);
   $('pvIcon').innerHTML = chipFor({ type: 'file', extension: ext }, 16);
   $('pvName').textContent = node.name; $('pvName').title = node.name;
@@ -25872,6 +26521,10 @@ function closePreview() {
   document.body.classList.remove('preview-open');
   pvReqId++; // cancel any in-flight render
   setTimeout(() => { if (!pane.classList.contains('open')) pane.hidden = true; }, 260);
+  // Only when the pane still holds focus: a close that came from elsewhere
+  // (a scan landing, a view switch) must not yank the caret across the app.
+  if (pvPrevFocus && document.contains(pvPrevFocus) && pane.contains(document.activeElement)) pvPrevFocus.focus({ preventScroll: true });
+  pvPrevFocus = null;
 }
 function previewIsOpen() { const p = $('previewPane'); return p && !p.hidden && p.classList.contains('open'); }
 $('pvClose').addEventListener('click', closePreview);
@@ -27313,7 +27966,7 @@ function renderDuplicates() {
         ${chipFor({ type: 'file', extension: ext })}
         <div class="meta">
           <div class="nm">${escapeHtml(g.files[0].name)}</div>
-          <div class="sub num">${g.count} copies × ${formatBytes(g.size)} · sha-256 ${g.hash.slice(0, 12)}…</div>
+          <div class="sub num" title="Content fingerprint ${escapeHtml(g.hash.slice(0, 12))}…">${g.count} identical copies × ${formatBytes(g.size)}</div>
         </div>
         <div class="bar-track dup-mini"><div class="fx-bar-fill" data-w="${Math.max(4, (g.reclaimable / maxRec) * 100).toFixed(1)}" style="${fxBarStyle(gi)}"></div></div>
         <span class="reclaim num">+${formatBytes(g.reclaimable)} reclaimable</span>
@@ -27708,6 +28361,12 @@ async function openDupeViewer(kind, idx) {
   }
 }
 
+/** The dHash distance between two images, in the Match dropdown's own vocabulary rather than block counts. */
+function dupeSimilarity(d) {
+  if (!(d > 0)) return 'looks identical';
+  return `${Math.round(100 - (d / 64) * 100)}% similar to the keeper`;
+}
+
 function closeDupeViewer() {
   dupeViewer.seq++; // any in-flight detail fetch belongs to a viewer that is gone
   closeModal('dupeViewerModal');
@@ -27765,7 +28424,7 @@ function renderDupeViewer() {
           const ms = Date.parse(f.captureDate);
           return `<span class="num">taken ${Number.isFinite(ms) ? formatDate(ms) : escapeHtml(f.captureDate)}</span>`;
         })()}</div>
-        ${f.visualDiff && i !== ref ? `<div class="dv-absent num">${f.visualDiff.hammingDistance} of 64 blocks differ</div>` : ''}
+        ${f.visualDiff && i !== ref ? `<div class="dv-absent num">${dupeSimilarity(f.visualDiff.hammingDistance)}</div>` : ''}
         <div class="dv-absent" title="${escapeHtml(f.path)}" style="word-break:break-all;">${escapeHtml(f.path)}</div>
         <button class="pill" data-dv-keep="${i}">Keep this one</button>
       </div>
@@ -28053,8 +28712,13 @@ async function labelTrendForecast(path, seq) {
   if (!ok || !f.fullInDays) return;
   const days = Math.max(1, Math.round(f.fullInDays));
   if (days >= 365) return; // a year+ out is noise, same bar as the dashboard banner
-  $('trendInfo').textContent +=
-    ` · at current growth, disk full ~${formatDate(Date.now() + days * 864e5)}`;
+  // Same basis rule as the dashboard banner: a folder's slope names the
+  // folder, because growth elsewhere on the disk was not measured.
+  const when = formatDate(Date.now() + days * 864e5);
+  const name = path.split(/[\\/]/).filter(Boolean).pop() || path;
+  $('trendInfo').textContent += f.basis === 'volume'
+    ? ` · at current growth, disk full ~${when}`
+    : ` · at ${name}’s growth, the disk it lives on is full ~${when}`;
 }
 $('trendRoot').addEventListener('change', (e) => {
   state.trends.path = e.target.value;
@@ -28328,7 +28992,7 @@ async function loadCompareOptions() {
       if (!byRoot.has(o.rootPath)) byRoot.set(o.rootPath, []);
       byRoot.get(o.rootPath).push(o);
     }
-    const label = (o) => `${o.kind === 'scan' ? 'Scan (full diff)' : 'History'} · ${new Date(o.when).toLocaleString()} · ${formatBytes(o.size)}`;
+    const label = (o) => `${o.kind === 'scan' ? 'Scan (full diff)' : 'History'} · ${formatWhen(o.when)} · ${formatBytes(o.size)}`;
     const html = [...byRoot.entries()].map(([root, list]) =>
       `<optgroup label="${escapeHtml(root)}">` +
       list.sort((x, y) => y.when - x.when).map(o =>
@@ -28430,7 +29094,7 @@ async function initCmpSplit(rootPath, whenA, whenB) {
     // STORED trees, which can differ from the picked times (review H11).
     const foot = $('cmpSplitFoot');
     if (foot) foot.innerHTML =
-      `<span>◀ ${new Date(cmpSplit.whenA).toLocaleString()}</span><span>${new Date(cmpSplit.whenB).toLocaleString()} ▶</span>`;
+      `<span>◀ ${formatWhen(cmpSplit.whenA)}</span><span>${formatWhen(cmpSplit.whenB)} ▶</span>`;
     const range = $('cmpSplitRange');
     range.addEventListener('input', () => cmpSplitDraw());
     cmpSplitDraw();
@@ -28447,7 +29111,7 @@ function cmpSplitDraw() {
   const range = $('cmpSplitRange');
   const pct = Number(range.value);
   range.setAttribute('aria-valuetext',
-    `${pct} percent — left of the divider: ${new Date(cmpSplit.whenA).toLocaleString()}, right: ${new Date(cmpSplit.whenB).toLocaleString()}`);
+    `${pct} percent — left of the divider: ${formatWhen(cmpSplit.whenA)}, right: ${formatWhen(cmpSplit.whenB)}`);
   const cw = canvas.clientWidth, ch = canvas.clientHeight;
   const dpr = window.devicePixelRatio || 1;
   if (canvas.width !== Math.round(cw * dpr)) canvas.width = Math.round(cw * dpr);
@@ -28521,7 +29185,7 @@ function renderCompare(r) {
     </div>` : '';
   $('cmpBody').innerHTML = splitCard + `
     <div class="card glass">
-      <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>${new Date(r.whenA).toLocaleString()} → ${new Date(r.whenB).toLocaleString()}${r.deep ? '' : ' · top-level folders only'}</h2>
+      <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>${formatWhen(r.whenA)} → ${formatWhen(r.whenB)}${r.deep ? '' : ' · top-level folders only'}</h2>
       <div class="muted num" style="margin-bottom:12px;">Total ${up ? 'grew' : 'shrank'} by
         <b class="cmp-total" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(r.totalDelta))}</b>
         &nbsp;·&nbsp; <span class="cmp-ct" data-n="${counts.added}">${counts.added}</span> added · <span class="cmp-ct" data-n="${counts.removed}">${counts.removed}</span> removed · <span class="cmp-ct" data-n="${counts.grew}">${counts.grew}</span> grew · <span class="cmp-ct" data-n="${counts.shrank}">${counts.shrank}</span> shrank${r.truncated ? ' · biggest 1,000 shown' : ''}</div>
@@ -29084,9 +29748,9 @@ function renderSmartGroups(catalog) {
   const catLabel = { regenerable: 'Regenerables', cache: 'Caches', junk: 'Junk' };
   const present = ['regenerable', 'cache', 'junk'].filter(c => smartGroups.some(g => g.category === c));
   const filterPills = present.length > 1
-    ? `<div class="smart-filters" role="tablist" aria-label="Filter suggestions by type">
-        <button class="pill active" data-cat="all">All</button>` +
-        present.map(c => `<button class="pill" data-cat="${c}">${catLabel[c]}</button>`).join('') + `</div>`
+    ? `<div class="smart-filters" role="group" aria-label="Filter suggestions by type">
+        <button class="pill active" data-cat="all" aria-pressed="true">All</button>` +
+        present.map(c => `<button class="pill" data-cat="${c}" aria-pressed="false">${catLabel[c]}</button>`).join('') + `</div>`
     : '';
   // v4 §3.3 — every rule here already says a thing is safe to remove. The
   // score answers the next question: which of them is most worth removing.
@@ -29169,7 +29833,10 @@ function renderSmartGroups(catalog) {
     // Scoped to [data-cat]: the Reclaim ordering lives in a second
     // .smart-filters row, and an unscoped selector cleared its active state
     // every time someone picked a category.
-    host.querySelectorAll('.smart-filters .pill[data-cat]').forEach(x => x.classList.toggle('active', x === p));
+    host.querySelectorAll('.smart-filters .pill[data-cat]').forEach(x => {
+      x.classList.toggle('active', x === p);
+      x.setAttribute('aria-pressed', String(x === p)); // toggle pills, like the ordering row beside them
+    });
     host.querySelectorAll('.smart-group').forEach(g => {
       g.style.display = (cat === 'all' || g.dataset.cat === cat) ? '' : 'none';
     });
@@ -30626,6 +31293,111 @@ document.querySelectorAll('[data-close]').forEach(b =>
 document.querySelectorAll('.modal-backdrop').forEach(bd =>
   bd.addEventListener('mousedown', (e) => { if (e.target === bd) closeModal(bd.id); }));
 
+/* ── Focus discipline for every dialog ──
+   Thirty-two call sites open a sheet by adding `.open` to its backdrop, and
+   until now only the palette, the duplicate viewer and the two small forms
+   moved focus with it: everywhere else Enter could not confirm, Tab walked
+   the page under the scrim, and a screen reader was never told a dialog had
+   opened. Rather than a fourth pattern at every site, one net watches the
+   class flip on every backdrop and applies the same rules to all of them:
+
+   - the page (everything at body level that is not a backdrop or the toasts)
+     goes `inert` while any sheet is up, and so does every open sheet except
+     the topmost — Tab, clicks and assistive tech cannot reach underneath;
+   - focus moves INTO the top sheet: an [autofocus] field, else the primary or
+     danger button in its footer (so Enter confirms a Trash sheet), else the
+     sheet itself; a sheet that already placed focus (the palette, the viewer)
+     is left alone;
+   - Tab and Shift+Tab cycle inside the top sheet (modalTrapTab, called from
+     the app-wide keydown handler);
+   - closing restores focus to where it was before the sheet opened, unless
+     the close already put it somewhere (the palette hands off to its action).
+   `inert` is native in Electron's Chromium — no dependency. */
+let lastFocus = null;             // the most recently focused element, anywhere
+const modalPrevFocus = new Map(); // backdrop id → the element to return focus to
+
+function noteFocus(el) { lastFocus = el; }
+document.addEventListener('focusin', (e) => {
+  noteFocus(e.target);
+  // Belt and braces over inert: focus that lands outside the top sheet (a
+  // programmatic .focus() somewhere in the page) is pulled back in.
+  const top = topModal();
+  if (top && !top.contains(e.target)) modalFocusInto(top);
+});
+
+/** Open backdrops, bottom to top. Backdrops share one z-index, so DOM order is paint order — except the palette, which paints above every other sheet. */
+function openModals() {
+  const open = [...document.querySelectorAll('.modal-backdrop.open')];
+  const k = open.findIndex((el) => el.id === 'cmdkModal');
+  if (k !== -1 && k !== open.length - 1) open.push(...open.splice(k, 1));
+  return open;
+}
+function topModal() { const open = openModals(); return open.length ? open[open.length - 1] : null; }
+
+function modalFocusables(root) {
+  return [...root.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')]
+    .filter((el) => !el.disabled && el.tabIndex >= 0 && el.getAttribute('aria-hidden') !== 'true' && el.getClientRects().length);
+}
+function modalFocusTarget(backdrop) {
+  const dlg = backdrop.querySelector('.modal') || backdrop;
+  const pick = (sel) => [...dlg.querySelectorAll(sel)].find((el) => !el.disabled && el.getClientRects().length);
+  const target = pick('[autofocus]') || pick('.modal-foot .btn-primary, .modal-foot .btn-danger');
+  if (target) return target;
+  if (!dlg.hasAttribute('tabindex')) dlg.setAttribute('tabindex', '-1');
+  return dlg;
+}
+function modalFocusInto(backdrop) {
+  const t = modalFocusTarget(backdrop);
+  if (t && t.focus) t.focus({ preventScroll: true });
+}
+function modalTrapTab(e, top) {
+  const f = modalFocusables(top);
+  if (!f.length) { e.preventDefault(); return; }
+  const i = f.indexOf(document.activeElement);
+  if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+  else if (!e.shiftKey && (i === -1 || i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
+}
+function modalOpened(el) {
+  const prev = lastFocus && lastFocus.isConnected !== false && !el.contains(lastFocus) ? lastFocus : null;
+  modalPrevFocus.set(el.id, prev);
+}
+function modalClosed(el) {
+  syncModalLayers(false); // lift inert first, or the restored focus is refused
+  const prev = modalPrevFocus.get(el.id) || null;
+  modalPrevFocus.delete(el.id);
+  // A sheet opened from inside this one would return focus into a sheet that
+  // is gone: re-point it at where this one came from.
+  for (const [id, p] of modalPrevFocus) if (p && el.contains(p)) modalPrevFocus.set(id, prev);
+  const active = document.activeElement;
+  // The close already placed focus (the palette restores its own, an action
+  // opened a search box): leave it. Otherwise focus fell to <body> when the
+  // sheet stopped painting, or is still nominally inside it.
+  const drifted = !active || active === document.body || el.contains(active);
+  if (drifted && prev && prev.focus && prev.isConnected !== false) prev.focus({ preventScroll: true });
+}
+function syncModalLayers(moveFocus = true) {
+  const open = openModals();
+  const top = open.length ? open[open.length - 1] : null;
+  for (const el of document.body.children) {
+    if (el.classList.contains('modal-backdrop')) el.inert = el.classList.contains('open') && el !== top;
+    else if (el.id !== 'toasts' && el.id !== 'tooltip' && !el.classList.contains('blob')) el.inert = !!top;
+  }
+  if (moveFocus && top && !top.contains(document.activeElement)) modalFocusInto(top);
+}
+const modalNet = new MutationObserver((records) => {
+  for (const r of records) {
+    const el = r.target;
+    const isOpen = el.classList.contains('open');
+    const wasOpen = (r.oldValue || '').split(/\s+/).includes('open');
+    if (isOpen === wasOpen) continue;
+    if (isOpen) modalOpened(el); else modalClosed(el);
+  }
+  syncModalLayers();
+});
+document.querySelectorAll('.modal-backdrop').forEach((el) =>
+  modalNet.observe(el, { attributes: true, attributeFilter: ['class'], attributeOldValue: true }));
+/* ── end focus discipline ── */
+
 /* ───────────────────────────── Keyboard shortcuts ───────────────────────────── */
 /* ── v4 §6.4 — hold Z ──
    `keydown` repeats while a key is held, so the guard on `state.lens.held` is
@@ -30800,22 +31572,51 @@ if (window.treemapDesktop) {
     startScan(p);
   });
 }
+/* ── Drop a folder to scan it ── */
+/* Two things the old handler did not do. It gave no sign it was willing to
+   take the drop — the window looked inert until the folder was already
+   released — and it read `files[0]` and dropped the rest on the floor, so a
+   stack of four folders scanned one and silently forgot three.
+
+   The hint is counted, not toggled: `dragenter` and `dragleave` fire again
+   for every child element the pointer crosses, so a bare toggle flickers the
+   whole way across the window. Only a drag carrying FILES lights it — the
+   cart drags its own rows around, and those must leave the page alone. */
+let dragDepth = 0;
+const dragHasFiles = (e) => !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+function showDropHint(on) {
+  document.documentElement.classList[on ? 'add' : 'remove']('drop-hint');
+  if (!on) dragDepth = 0;
+}
+window.addEventListener('dragenter', (e) => {
+  if (!dragHasFiles(e)) return;
+  dragDepth++;
+  showDropHint(true);
+});
+window.addEventListener('dragleave', (e) => {
+  if (!dragHasFiles(e)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) showDropHint(false);
+});
 window.addEventListener('dragover', (e) => { e.preventDefault(); });
 window.addEventListener('drop', async (e) => {
   e.preventDefault();
-  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-  if (!file) return;
+  showDropHint(false);
+  const files = (e.dataTransfer && e.dataTransfer.files) || [];
+  if (!files.length) return;
   if (!window.treemapDesktop) {
     toast('Drag & drop scanning works in the desktop app — use Browse here', 'error');
     return;
   }
-  const raw = window.treemapDesktop.getPathForFile(file);
-  const dir = raw ? await window.treemapDesktop.resolveScanPath(raw) : null;
-  if (dir) {
-    $('pathInput').value = dir;
-    startScan(dir);
+  // Resolved in the order they were dropped, then queued in that order: the
+  // queue starts the first and tells the user about the rest.
+  for (const file of files) {
+    const raw = window.treemapDesktop.getPathForFile(file);
+    const dir = raw ? await window.treemapDesktop.resolveScanPath(raw) : null;
+    if (dir) queueScan(dir);
   }
 });
+/* ── end drop ── */
 
 /* ───────────────────────────── Boot ───────────────────────────── */
 switchView('dashboard');

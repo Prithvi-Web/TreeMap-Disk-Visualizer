@@ -135,7 +135,10 @@ function finalSseEvent(port: number, scanId: string): Promise<unknown> {
 
 /* ---------------------------- normalization ---------------------------- */
 
-const VOLATILE_NUMBERS = new Set(['startedAt', 'finishedAt', 'durationMs', 'tookMs']);
+// `expiresAt` is a wall clock like the rest of these — `lastActivity(scan) +
+// SCAN_TTL_MS` — so it differs on every run and would make byte-identity
+// unachievable rather than merely broken. Presence and shape still compare.
+const VOLATILE_NUMBERS = new Set(['startedAt', 'finishedAt', 'durationMs', 'tookMs', 'expiresAt']);
 
 /** Scrub machine/run-specific values; structure and content stay exact. */
 export function normalize(value: unknown, treeRoot: string): unknown {

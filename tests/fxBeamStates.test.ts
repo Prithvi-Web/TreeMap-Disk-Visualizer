@@ -205,6 +205,12 @@ test('the pill sync reads all five mode states and `visible:false` is the all-of
   for (const c of h.beamCalls) {
     assert.equal(c.opts?.type, 'sm', 'the never-used compact ring, at pill scale');
     assert.equal(c.opts?.strength, 0.7, 'a persistent mode is quieter than an activity');
+    // A mode that stays on is a state, not an activity: the ring is steady
+    // (no 60fps angle animation through three masked gradient layers) and
+    // its colours are pinned (no 12s hue-rotate filter animation). Both
+    // knobs are engine contracts pinned in tests/fxBeam.test.ts.
+    assert.equal(c.opts?.spin, false, 'a persistent mode never animates its ring');
+    assert.equal(c.opts?.staticColors, true, 'nor drifts its hue');
   }
   h.beamCalls.length = 0;
   h.fx.fxTmPillBeamsSync(false);
@@ -378,8 +384,24 @@ test('the export button’s sm ring rides the exact lapseExporting pair in both 
 
 test('the completion pulse rides finishScan’s scanId gate — never the instant paint, never a failure', () => {
   const finish = slice('async function finishScan(', 'void loadWhatsNew();');
-  assert.match(finish, /if \(state\.scanId\) \{\s*toast\(`Scan complete[\s\S]{0,200}fxScanDonePulse\(\);/,
-    'one crossing, one pulse — the same gate as the one completion toast');
+  // The invariant is WHICH GATE the pulse sits behind, not what it sits next
+  // to. The completion block grew a branch (a 0 B / 0 files result is what a
+  // folder macOS refused to open looks like, and must not be toasted as a
+  // clean success), so an adjacency regex failed on a change that never moved
+  // the pulse. Brace-match the gate instead and ask what is inside it.
+  const open = finish.indexOf('if (state.scanId) {');
+  assert.notEqual(open, -1, 'finishScan still gates its completion work on a real scanId');
+  let depth = 0, end = -1;
+  for (let i = finish.indexOf('{', open); i < finish.length; i++) {
+    if (finish[i] === '{') depth++;
+    else if (finish[i] === '}' && --depth === 0) { end = i; break; }
+  }
+  assert.notEqual(end, -1, 'the gate closes');
+  const gate = finish.slice(open, end);
+  assert.match(gate, /toast\(`Scan complete/, 'the one completion toast lives behind the gate');
+  assert.match(gate, /fxScanDonePulse\(\);/, 'and so does the pulse — one crossing, one pulse');
+  assert.equal(finish.split('fxScanDonePulse(').length - 1, 1,
+    'exactly once in finishScan: the instant index paint (scanId still null) celebrates nothing');
   const fail = slice('function failScan(', 'function statsFromResult(');
   assert.doesNotMatch(fail, /fxScanDonePulse/, 'a failed scan celebrates nothing');
 });
