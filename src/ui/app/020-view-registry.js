@@ -175,6 +175,12 @@ const VIEWS = [
         $('ndBody').innerHTML = msg;
         $('dupSummary').textContent = 'Not available for cloud scans.';
         $('ndSummary').textContent = 'Not available for cloud scans.';
+        // This branch paints nothing else and never reaches updateDupToolbar,
+        // and unmount() has not run — switchView only unmounts when the view
+        // actually changes. Without this the previous local scan's measured
+        // trash line stands under "Not available for cloud scans."
+        dupTrashOutcome = null;
+        renderDupNote();
         return;
       }
       if (state.dupMode === 'near') loadNearDupes(); else loadDuplicates();

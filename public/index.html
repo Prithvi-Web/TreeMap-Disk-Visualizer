@@ -6604,6 +6604,12 @@ const VIEWS = [
         $('ndBody').innerHTML = msg;
         $('dupSummary').textContent = 'Not available for cloud scans.';
         $('ndSummary').textContent = 'Not available for cloud scans.';
+        // This branch paints nothing else and never reaches updateDupToolbar,
+        // and unmount() has not run — switchView only unmounts when the view
+        // actually changes. Without this the previous local scan's measured
+        // trash line stands under "Not available for cloud scans."
+        dupTrashOutcome = null;
+        renderDupNote();
         return;
       }
       if (state.dupMode === 'near') loadNearDupes(); else loadDuplicates();
@@ -28355,7 +28361,12 @@ let dupNotePainted = '';
  */
 async function freeSpaceNow() {
   const home = (state.system || {}).homeDir;
-  if (!home || !state.root || !state.root.path.startsWith(home)) return null;
+  const root = state.root && state.root.path;
+  // Containment EITHER WAY. /api/system measures the home folder's volume, so
+  // the question is whether the scanned tree is on that volume — and a scan of
+  // /, /Users or C:\ is, while failing a one-directional startsWith(home).
+  // Those are among the commonest roots anyone scans.
+  if (!home || !root || !(root.startsWith(home) || home.startsWith(root))) return null;
   try { return (await api('/api/system')).freeDisk; } catch { return null; }
 }
 

@@ -123,3 +123,29 @@ test('the trash toast no longer claims bytes were recovered', () => {
     'the bytes are in the Trash until it is emptied');
   assert.match(INDEX, /to Trash — \$\{formatBytes\(recovered\)\}/, 'the size itself still gets said');
 });
+
+test('the free-space check covers a scan of a folder that CONTAINS home, not just one inside it', () => {
+  // /api/system measures the home folder's volume, so the question is "is the
+  // scanned tree on that volume?". Testing only `root.startsWith(home)` answers
+  // a narrower one and says no for /, /Users and C:\ — roots that are on the
+  // home volume and are among the commonest things anyone scans.
+  const start = INDEX.indexOf('async function freeSpaceNow()');
+  assert.notEqual(start, -1);
+  const fn = INDEX.slice(start, INDEX.indexOf('\n}', start));
+  assert.match(fn, /home\.startsWith\(/,
+    'a root that contains the home folder is on the home volume too');
+  assert.match(fn, /startsWith\(home\)/, 'and so is a root inside it');
+});
+
+test('a cloud scan does not inherit the previous local scan’s trash line', () => {
+  // The duplicates view is disabled for cloud scans and its mount() returns
+  // early — without unmount() running, because switchView only unmounts when
+  // the view actually changes. The note would otherwise stand under "Not
+  // available for cloud scans."
+  const start = INDEX.indexOf("id: 'duplicates'");
+  assert.notEqual(start, -1);
+  const mount = INDEX.slice(start, INDEX.indexOf("id: 'trends'", start));
+  const cloud = mount.slice(mount.indexOf('if (isCloudScan())'), mount.indexOf('state.dupMode'));
+  assert.match(cloud, /dupTrashOutcome = null/, 'the measured line belongs to the scan that produced it');
+  assert.match(cloud, /renderDupNote\(\)/, 'and the panel is repainted so it actually goes');
+});
