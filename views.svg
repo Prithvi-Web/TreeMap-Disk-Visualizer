@@ -6,78 +6,88 @@
     </linearGradient>
   </defs>
   <g font-size="15" font-weight="700">
-    <!-- row 1 -->
+    <!-- row 1: six chips of 200, 8px gaps, 20px margins = 1240 -->
     <g transform="translate(20,18)">
-      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
+      <rect width="200" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#2dd4bf"/>
       <text x="48" y="31" fill="#dbe4f3">📊 Dashboard</text>
     </g>
-    <g transform="translate(270,18)">
-      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+    <g transform="translate(228,18)">
+      <rect width="200" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#fbbf24"/>
       <text x="48" y="31" fill="#dbe4f3">🗺️ Treemap</text>
     </g>
-    <g transform="translate(520,18)">
-      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
+    <g transform="translate(436,18)">
+      <rect width="200" height="52" rx="12" fill="url(#chip)" stroke="#22d3ee" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#22d3ee"/>
+      <text x="48" y="31" fill="#dbe4f3">🏙️ Disk City</text>
+    </g>
+    <g transform="translate(644,18)">
+      <rect width="200" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#f43f5e"/>
       <text x="48" y="31" fill="#dbe4f3">🔲 Grid</text>
     </g>
-    <g transform="translate(770,18)">
-      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#a78bfa" stroke-opacity="0.5"/>
+    <g transform="translate(852,18)">
+      <rect width="200" height="52" rx="12" fill="url(#chip)" stroke="#a78bfa" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#a78bfa"/>
       <text x="48" y="31" fill="#dbe4f3">📦 Apps</text>
     </g>
-    <g transform="translate(1020,18)">
-      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#a78bfa" stroke-opacity="0.5"/>
+    <g transform="translate(1060,18)">
+      <rect width="200" height="52" rx="12" fill="url(#chip)" stroke="#a78bfa" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#c4b5fd"/>
-      <text x="48" y="31" fill="#dbe4f3">🎮 Games</text>
+      <text x="48" y="31" fill="#dbe4f3">🎮 Libraries</text>
     </g>
 
     <!-- row 2 -->
     <g transform="translate(20,80)">
-      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
+      <rect width="200" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#fb7185"/>
       <text x="48" y="31" fill="#dbe4f3">🛡️ Security</text>
     </g>
-    <g transform="translate(270,80)">
-      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#22d3ee" stroke-opacity="0.5"/>
+    <g transform="translate(228,80)">
+      <rect width="200" height="52" rx="12" fill="url(#chip)" stroke="#22d3ee" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#22d3ee"/>
       <text x="48" y="31" fill="#dbe4f3">🌐 Fleet</text>
     </g>
-    <g transform="translate(520,80)">
-      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
+    <g transform="translate(436,80)">
+      <rect width="200" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+      <circle cx="28" cy="26" r="6" fill="#facc15"/>
+      <text x="48" y="31" fill="#dbe4f3">🥧 Missing GB</text>
+    </g>
+    <g transform="translate(644,80)">
+      <rect width="200" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#34d399"/>
       <text x="48" y="31" fill="#dbe4f3">🧬 Duplicates</text>
     </g>
-    <g transform="translate(770,80)">
-      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+    <g transform="translate(852,80)">
+      <rect width="200" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#facc15"/>
       <text x="48" y="31" fill="#dbe4f3">📈 Trends</text>
     </g>
-    <g transform="translate(1020,80)">
-      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
+    <g transform="translate(1060,80)">
+      <rect width="200" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#22d3ee"/>
-      <text x="48" y="31" fill="#dbe4f3">🔀 Compare</text>
+      <text x="48" y="31" fill="#dbe4f3">🗓️ History</text>
     </g>
 
-    <!-- row 3 -->
+    <!-- row 3: four chips of 217 and one of 340, 8px gaps = 1240 -->
     <g transform="translate(20,142)">
-      <rect width="220" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
+      <rect width="217" height="52" rx="12" fill="url(#chip)" stroke="#2dd4bf" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#2dd4bf"/>
       <text x="48" y="31" fill="#dbe4f3">📤 Offloaded</text>
     </g>
     <g transform="translate(245,142)">
-      <rect width="240" height="52" rx="12" fill="url(#chip)" stroke="#a78bfa" stroke-opacity="0.5"/>
+      <rect width="217" height="52" rx="12" fill="url(#chip)" stroke="#a78bfa" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#a78bfa"/>
       <text x="48" y="31" fill="#dbe4f3">🕰️ Time&#160;Capsule</text>
     </g>
-    <g transform="translate(490,142)">
-      <rect width="220" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
+    <g transform="translate(470,142)">
+      <rect width="217" height="52" rx="12" fill="url(#chip)" stroke="#fbbf24" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#fbbf24"/>
       <text x="48" y="31" fill="#dbe4f3">✨ Autopilot</text>
     </g>
-    <g transform="translate(715,142)">
-      <rect width="200" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
+    <g transform="translate(695,142)">
+      <rect width="217" height="52" rx="12" fill="url(#chip)" stroke="#f43f5e" stroke-opacity="0.5"/>
       <circle cx="28" cy="26" r="6" fill="#fb7185"/>
       <text x="48" y="31" fill="#dbe4f3">🧹 Clean&#160;Up</text>
     </g>

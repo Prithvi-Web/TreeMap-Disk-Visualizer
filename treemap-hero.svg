@@ -51,7 +51,7 @@
 
       <text x="2" y="92" fill="#e2e8f0" font-size="27" font-weight="600">See exactly what's eating your disk.</text>
       <text x="2" y="128" fill="#8a99b5" font-size="17">Squarified treemaps · duplicate hunting · one-click cleanup —</text>
-      <text x="2" y="152" fill="#8a99b5" font-size="17">for macOS, Linux &amp; Windows. Nothing leaves your machine.</text>
+      <text x="2" y="152" fill="#8a99b5" font-size="17">for macOS &amp; Windows (web mode on Linux). Nothing leaves your machine.</text>
 
       <!-- pseudo buttons -->
       <g transform="translate(2,186)">

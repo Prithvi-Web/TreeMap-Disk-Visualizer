@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/blob/main/SECURITY.md
+    about: A path-traversal issue, a way to delete outside a scanned folder, anything that could lose data — please do not open a public issue. SECURITY.md has the private address.
+  - name: Installing on macOS ("Apple could not verify…")
+    url: https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer#-first-launch-on-macos--apple-could-not-verify
+    about: The first launch is blocked on every un-notarized app. The README shows the two ways past it.

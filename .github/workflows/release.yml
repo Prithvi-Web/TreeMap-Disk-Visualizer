@@ -3,6 +3,10 @@ name: Build & Release
 # Builds TreeMap installers for macOS and Windows, then attaches them to a
 # GitHub Release. Triggers when you push a version tag (e.g. v1.0.0) or when
 # you click "Run workflow" in the Actions tab.
+#
+# Linux is not released here: package.json carries an AppImage target and
+# `npm run dist:linux` builds one locally, but nothing in this matrix publishes
+# it. The README's Download section says so (web mode, or build your own).
 on:
   push:
     tags:

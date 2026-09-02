@@ -16,6 +16,7 @@
 <br><br>
 
 <!-- platform -->
+<img src="https://img.shields.io/github/package-json/v/Prithvi-Web/TreeMap-Disk-Visualizer?style=flat-square&label=version&labelColor=0b1220&color=2dd4bf" alt="Version">
 <img src="https://img.shields.io/badge/macOS-arm64-0b1220?style=flat-square&logo=apple&logoColor=white" alt="macOS">
 <img src="https://img.shields.io/badge/Windows-installer-0b1220?style=flat-square&logo=windows&logoColor=white" alt="Windows">
 <img src="https://img.shields.io/badge/Linux-web_mode-0b1220?style=flat-square&logo=linux&logoColor=white" alt="Linux">
@@ -63,7 +64,7 @@ TreeMap isn't just a treemap — it's a full disk-hygiene workbench. Seventeen v
 **Getting around:** **⌘K** (Ctrl+K) opens a command palette over everything — every view, the Clean Up surface, the deep settings sections (type "weights" and land on the Reclaim sliders), the common actions (scan, rescan, empty the cart, export), your saved views, and the folders you've scanned before; anything it doesn't recognise becomes a file search, and closing it puts focus back exactly where it was. First launch offers a **four-step tour**: pick a folder, learn the map, then up to three quick wins — each one a real Smart Suggestion with its size and its reason, staged **only when you click** and committed never; it ends at the cart with everything still undeleted. Skippable at every step, and it never returns once finished (Settings has a "show it again" button; a read-only portable session persists nothing, so it honestly forgets).
 
 <div align="center">
-  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Disk City, Grid, Apps, Games, Security, Fleet, Missing GB, Duplicates, Trends, History, Offloaded, Time Capsule, Autopilot, Clean Up, Scheduled + Ignore">
+  <img src="views.svg" width="100%" alt="The views: Dashboard, Treemap, Disk City, Grid, Apps, Libraries, Security, Fleet, Missing GB, Duplicates, Trends, History, Offloaded, Time Capsule, Autopilot, Clean Up, Scheduled + Ignore">
 </div>
 
 <br>
@@ -89,7 +90,12 @@ A squarified treemap of every file, sized by bytes and colored **teal → amber 
 
 **Four ways to draw the same tree.** A segmented control switches between the squarified **Treemap**, a radial **Sunburst**, nested **Circles** and a **Voronoi** map — same folder, same breadcrumbs, same depth, same colour mode, same highlight box. Circle packing sizes every circle so its *area* is its bytes, exactly as the rectangles do, and animates the zoom when you drill so you can see where you went; a folder's name sits on its own ring rather than through its contents. The Voronoi map solves for cells whose areas are proportional to bytes — a weighted centroidal diagram, iterated until no cell is more than 2% off its true share — and when a folder's sizes are too lopsided for that to be reachable in the time a frame allows, it **says so under the map**, with the worst cell's error, instead of presenting an approximation as exact. Anything too small to draw at the current size is counted and named there too. Both solvers lay out under the same wall clock, so a folder with thousands of near-identical children cannot hang a frame — when one runs out of time it stops subdividing and says that under the map, rather than quietly drawing less.
 
+<img src="demo/03-circles.jpg" width="100%" alt="Nested circles: every circle's area is its bytes, and a folder's name sits on its own ring">
+<img src="demo/04-voronoi.jpg" width="100%" alt="The Voronoi map of the same folder: cells whose areas are proportional to bytes">
+
 **Drag to lasso.** Rubber-band by default, freehand with ⌥, and everything whose centre falls inside is staged in the cleanup cart — with a running count and byte total while you drag, so you can see what you have caught before you let go. ⌘ (Ctrl) over a region takes those items back out. Nothing is deleted and no gesture ever empties the cart; the cart still runs its own dry run and confirmation. It works the same way in **Disk City**, where a modifier is needed because a plain drag pans.
+
+<img src="demo/06-lasso.jpg" width="100%" alt="A freehand lasso over the treemap, with the running count and byte total of what it has caught">
 
 **Hold `Z` to magnify.** A circular lens at 4× over the parts of the map where tiles are two pixels wide, redrawn from the layout rather than scaled up from the picture — so the edges stay crisp and the names are legible at a size they were never drawn at. There is a **Lens** button for pinning it.
 
@@ -106,6 +112,8 @@ A squarified treemap of every file, sized by bytes and colored **teal → amber 
 
 ### 🏙️ Disk City
 The Treemap's own tiling, seen from a corner — the *same* arrangement, not a similar one, so switching between them is legible rather than disorienting. A flat treemap encodes exactly one variable in area; this encodes three at once. **Footprint** is bytes, **height** is staleness (or file count, or nesting depth), **colour** is Reclaim score (or file kind, or age). *"The tall grey tower is a 40 GB thing you have not opened in two years"* reads instantly in a way a red rectangle never does.
+
+<img src="demo/01-city-hero.jpg" width="100%" alt="Disk City: the treemap's tiling seen from a corner — footprint is bytes, height is staleness, colour is Reclaim score">
 
 Pure Canvas 2D — an isometric projection is a 2D affine transform, and there is no WebGL, no 3D engine and no dependency anywhere in it. The draw order is a topological sort rather than a depth number, because **no per-box number can order a real treemap layout correctly** — that was measured against a ray-casting oracle, and four plausible scalar keys each got dozens of pairs wrong. Buildings are lit from one named direction, cast shadows onto the roofs behind them, and are finished with parapets, rooftop plant and the occasional mast; none of that carries data, which is why it is drawn at low contrast and never near a label.
 
@@ -181,7 +189,7 @@ Finds **true** duplicates (size + streamed SHA-256), grouped with reclaimable sp
 ### 📈 Trends
 Every scan saves a lightweight snapshot, charted over time per folder — with a clear **"what grew / what shrank since last scan"** breakdown.
 
-### 🕰 History — Calendar · Journal · Compare, one view
+### 🗓️ History — Calendar · Journal · Compare, one view
 The whole time dimension lives in **one History tab** with three panels.
 
 **📅 Calendar.** A GitHub-style heatmap of **bytes written per day** — one cell per day, weeks as columns, years stacked. Toggle between **modified** (exact, from the scan itself) and **created** (per-file stats behind a cap, with any unread days reported honestly rather than drawn as empty). Hover for a day's total and file count; **click a day — or drag across a range — and the treemap filters to those files**, through the same query grammar as the search box, so the result is exactly what typing `modified:2026-03-14` would show.
@@ -252,7 +260,7 @@ Re-scan folders on a schedule with **growth-threshold alerts** and **disk-full f
 </tr>
 </table>
 
-> **How it's built** — Node.js + **Express 5** + **TypeScript** on the backend. A single, **zero-dependency** `index.html` on the frontend: hand-coded **Canvas 2D**, no React, no D3, no Chart.js. Navigation is a **liquid-glass sidebar** that collapses to a 64-px icon rail with ⌘B (and floats over the content, with a scrim, on narrow windows). Ships as a **web app** _and_ a downloadable **Electron desktop app** for macOS and Windows.
+> **How it's built** — Node.js + **Express 5** + **TypeScript** on the backend. The frontend ships as a single, **zero-dependency** `index.html` — generated from `src/ui/` (small source files stitched by `scripts/build-ui.js`) — with hand-coded **Canvas 2D**, no React, no D3, no Chart.js. Navigation is a **liquid-glass sidebar** that collapses to a 64-px icon rail with ⌘B (and floats over the content, with a scrim, on narrow windows). Ships as a **web app** _and_ a downloadable **Electron desktop app** for macOS and Windows.
 
 <img src="divider.svg" width="100%" alt="">
 
@@ -279,6 +287,13 @@ Grab the latest installer from the [**Releases page**](https://github.com/Prithv
 > There is no Intel Mac build. On an Intel Mac, run TreeMap in web mode instead — see
 > **🚀 Run from source / web mode** further down; it is the same app in a browser tab.
 > Not sure which you have?  → **About This Mac**: it says either *Apple M…* or *Intel*.
+
+> [!NOTE]
+> **Linux** — no desktop download. Run TreeMap in web mode (three commands, further down) — it is the same app in a browser tab — or build your own AppImage with `npm run dist:linux`. The test suite runs on Linux in CI; only the packaging is not published.
+
+Every release also carries `TreeMap-x.y.z.exe` (Windows, **portable** — no installer, and it keeps its data beside itself), `TreeMap-x.y.z-arm64-mac.zip`, and the `latest*.yml` / `.blockmap` files the in-app updater reads. The version is in every file name.
+
+**Which version do I have?** On macOS, **TreeMap → About TreeMap**. Anywhere TreeMap is running — desktop or web mode — open <http://127.0.0.1:4280/api/capabilities> and read `version`; that is the number on the Releases page.
 
 ### 🍎 First launch on macOS — "Apple could not verify…"
 
@@ -375,9 +390,9 @@ SmartScreen shows a blue box once. Click **More info**, then **Run anyway**. Tha
 
 - 📌 **Menu bar / tray icon** with live free-disk stats and quick actions (open app, scan home folder, quit). Close the window and TreeMap stays in the tray so scheduled scans keep running — quit from the tray menu.
 - 🖱️ **Drag & drop** a folder onto the window or dock icon to scan it instantly.
-- 🔄 **Auto-updates** from GitHub Releases (Windows; asks before restarting). On macOS, auto-update needs a code-signed build, so unsigned builds skip it — grab new versions from Releases.
+- 🔄 **Auto-updates** from GitHub Releases, checked at launch and every 6 hours. Windows downloads the new version and asks before restarting. macOS cannot install an update into an un-notarized app, so there TreeMap only *checks* and shows a **Download Update** dialog that opens the Releases page — drag the new build into Applications yourself.
 - 🔔 **Growth alerts** from scheduled scans arrive as native notifications.
-- 🖱️ **"Scan with TreeMap" in the right-click menu** — a Finder Quick Action on macOS, a shell entry on Windows, a Nautilus script on Linux. Add or remove it from Settings; it applies to **your account only and needs no administrator rights**. TreeMap asks the OS whether it's installed every single time rather than remembering, so uninstalling TreeMap can never leave a dead menu entry behind claiming otherwise.
+- 🖱️ **"Scan with TreeMap" in the right-click menu** — a Finder Quick Action on macOS, a shell entry on Windows, and a Nautilus / Dolphin / Thunar entry on Linux (for a build you made yourself). Add or remove it from Settings; it applies to **your account only and needs no administrator rights**. TreeMap asks the OS whether it's installed every single time rather than remembering, so uninstalling TreeMap can never leave a dead menu entry behind claiming otherwise.
 - 🧳 **Portable, no-trace mode** — run TreeMap from a USB stick and it writes **nothing to the host machine**: settings, index and history all live beside the executable. If the medium is read-only it goes fully **ephemeral** — memory-backed storage, an in-memory database, an audit ring buffer, and the Time Capsule switched off *with the reason shown* rather than silently. Portable builds: `npm run dist:portable-mac` / `-win` / `-linux`.
 
 <img src="divider.svg" width="100%" alt="">
@@ -446,6 +461,8 @@ A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows in
 2. Create a matching **tag** prefixed with `v` (e.g. `v1.2.1`) and push it.
    In GitHub Desktop: **Repository → Push**, then on github.com: **Releases → Draft a new release → Choose a tag →** type `v1.2.1` → **Publish**.
 3. The workflow runs automatically, builds both installers, and uploads them. After a few minutes the download links appear on the Releases page.
+
+> **The tag is what ships.** The Releases page's *Latest* and the in-app updater both read the newest `v*` tag. A version bumped in `package.json` but never tagged and pushed is invisible to every user — they are told they are up to date.
 
 You can also trigger a test build anytime from **Actions → Build & Release → Run workflow** (installers are saved as downloadable artifacts instead of a Release).
 
@@ -668,33 +685,50 @@ Disk tools should never lose your data. TreeMap is built defensively:
 - 📤 Offload never bare-moves: copy first, verify every byte against a SHA-256 read back from the destination, and only then trash the originals — any failure rolls back with local data untouched.
 - ☁️ Cloud scanning is strictly opt-in and metadata-only: no file contents are ever downloaded, OAuth tokens live only in the local app-data folder (Disconnect wipes them), cloud deletes go to the provider's own trash, and with no account connected no cloud code path executes at all.
 - 🧬 The Duplicates view refuses to trash *every* copy in a group — at least one always stays.
-- 🚦 Token-bucket rate limiting (10 req/s per IP), plus graceful SIGTERM shutdown that drains live SSE streams and stops background hashing, scheduled scans & live-activity watchers.
-- ⏳ Scan results live in memory only and auto-expire after 30 minutes; history snapshots and settings are small JSON files in the platform app-data folder (`~/Library/Application Support/TreeMap`, `%APPDATA%\TreeMap`, or `~/.config/treemap`).
+- 🚦 Token-bucket rate limiting per client IP, in three lanes priced by what a request costs the server — 10 requests/s sustained (bursts of 20) for the API, 150/s (300) for thumbnails, 60/s (120) for cheap metadata — plus graceful SIGTERM shutdown that drains live SSE streams and stops background hashing, scheduled scans & live-activity watchers.
+- ⏳ Scan results live in memory only and auto-expire after 30 minutes. What does reach disk — history snapshots, settings, the SQLite live index, Time Capsule copies, the offload catalog, the journal and the audit log — sits in the platform app-data folder (`~/Library/Application Support/TreeMap`, `%APPDATA%\TreeMap`, or `~/.config/treemap`) and never leaves the machine. [SECURITY.md](SECURITY.md) lists every file, and every outbound connection the app can make.
 
 <img src="divider.svg" width="100%" alt="">
 
 ## 🗂️ Project layout
 
+Contributing? [CONTRIBUTING.md](CONTRIBUTING.md) has the three commands and the one rule.
+
 ```text
 src/
-  api/          Express routes (scan, files, system, insights, settings)
+  ui/           The frontend, as small editable parts — shell/ (the document's
+                head and tail), styles/, markup/ (one file per view and modal),
+                app/ (the behaviour). scripts/build-ui.js stitches them, in
+                manifest.json order, into public/index.html. Run `npm run build:ui`
+                after any edit; never edit the generated page (the suite fails
+                if it drifts from its sources). See src/ui/README.md.
+  api/          Express routes — scan, files, insights, facts, query, cart,
+                offload, cloud, fleet, autopilot, time capsule, notes, journal,
+                platform, settings, and meta (capabilities + OpenAPI)
   services/     ScanStore (packed Structure-of-Arrays scan memory),
-                DiskScanner (adaptive concurrent walker), Cleaner (trash/open),
+                DiskScanner (adaptive concurrent walker) and the gdu engine,
+                indexEngine (the SQLite live index behind global search),
                 DuplicateFinder (staged hashing), Snapshots (Trends history),
-                CleanupRules (smart suggestions), AppAttribution (per-app storage),
+                CleanupRules + rulepacks/ (smart suggestions), AppAttribution,
                 Forecast (disk-full projection), Watcher (live activity),
                 ContainerScanner (archive drill-down), Offload (copy-verify-trash),
-                cloud/ (Google Drive, Dropbox, OneDrive — OAuth + metadata scans),
-                Scheduler (recurring scans), Settings, Storage (app-data JSON), DiskUsage
+                TimeCapsule, Autopilot, facts/ (per-path providers incl. the
+                Reclaim score), query/ (the search grammar), cloud/ (Google Drive,
+                Dropbox, OneDrive), fleet/ (LAN summaries + mDNS), Scheduler,
+                Settings, Storage (app-data files), DiskUsage
+  platform/     OS-specific mechanisms — trash, shell integration, snapshots,
+                SMART, last-used, backups — under macos/, windows/, linux/
+  mcp/          The stdio MCP server (`npm run mcp`)
+  middleware/   errorHandler, rateLimiter, pathGuard, requireToken
   models/       Shared TypeScript interfaces
-  utils/        formatBytes, squarified treemap, path sanitizer, glob matcher
-  middleware/   errorHandler, rateLimiter, pathGuard
+  utils/        formatBytes, squarified treemap, path sanitizer, glob matcher,
+                copy-verify, SSE
   index.ts      App entrypoint + graceful shutdown
 electron/
   main.js       Desktop shell: window, tray, drag-drop, notifications, auto-update
   preload.js    Context-isolated bridge for drag-drop paths & scan pushes
 public/
-  index.html    The entire frontend (inline CSS + JS, zero dependencies)
+  index.html    GENERATED from src/ui/ — never edit it; run `npm run build:ui`
 vscode-extension/
   src/lib/      Pure decision-making (which source tree to run, what may be
                 cloned, what a webview may frame) — no `vscode` import, so the
@@ -702,7 +736,15 @@ vscode-extension/
   src/          The editor glue: progress notifications, the webview panel,
                 and the child process that runs TreeMap's own server
 scripts/
+  build-ui.js       Stitches src/ui/ into public/index.html (`--check` verifies)
+  dev-isolated.js   Runs the server against a throwaway data folder
+  fetchGdu.js       Downloads the gdu scan engine for packaging
+  afterPack.js      Ad-hoc-signs the macOS bundle so it is not "damaged"
+  mark-portable.js  Marks a mac zip or Linux AppImage build as portable
+  run-tests.js      Cross-shell test runner (`npm test`)
   gen-tray-icon.js  One-time generator for the tray template icons
+tests/          node:test suite — `npm test`, or one file with
+                `npx tsx --test tests/<name>.test.ts`
 ```
 
 ## 🧠 Design decisions worth knowing
