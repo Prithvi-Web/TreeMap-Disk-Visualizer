@@ -12,7 +12,12 @@ async function loadSystem() {
     // digits glide while "GB" and the labels hold still.
     countUp($('sysTotal'), sys.totalDisk, formatBytes);
     countUp($('sysFree'), sys.freeDisk, formatBytes);
-    const used = sys.totalDisk - sys.freeDisk;
+    // `usedDisk`, not `totalDisk - freeDisk`: `freeDisk` is what a normal
+    // program may write, which on ext4 excludes the 5% the system keeps for
+    // itself. Subtracting it would count that reserve as space something is
+    // using, and the Missing GB receipt — which reads the occupied blocks
+    // directly — would disagree with this tile by ~50 GB on a 1 TB disk.
+    const used = sys.usedDisk;
     countUp($('sysUsed'), used, formatBytes);
     const pct = sys.totalDisk > 0 ? used / sys.totalDisk : 0;
     countUp($('ringPct'), Math.round(pct * 100), (v) => v + '%');

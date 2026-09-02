@@ -203,9 +203,9 @@ function buildDoc(
   topFiles: ReturnType<typeof collectLargestFiles>,
   topFolders: ReturnType<typeof collectLargestFolders>,
   types: ReturnType<typeof collectFileTypes>,
-  disk: { total: number; free: number } | null,
+  disk: { total: number; free: number; used: number } | null,
 ): TDocumentDefinitions {
-  const used = disk ? disk.total - disk.free : 0;
+  const used = disk ? disk.used : 0;
   const summaryRows: TableCell[][] = [
     [{ text: 'Scanned folder', style: 'k' }, { text: scan.rootPath, style: 'v' }],
     [{ text: 'Generated', style: 'k' }, { text: new Date().toLocaleString(), style: 'v' }],
@@ -316,7 +316,7 @@ export async function streamPdf(scan: CompleteScan, res: Response): Promise<void
   const topFolders = collectLargestFolders(store, 20, 1);
   const types = collectFileTypes(store).slice(0, 15);
 
-  let disk: { total: number; free: number } | null = null;
+  let disk: { total: number; free: number; used: number } | null = null;
   try {
     disk = await diskUsage(scan.rootPath);
   } catch {

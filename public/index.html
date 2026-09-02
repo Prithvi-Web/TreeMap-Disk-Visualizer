@@ -1338,6 +1338,7 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
   --mg-residual:     rgba(255,255,255,0.26);
   --mg-residual-bg:  rgba(255,255,255,0.07);
   --mg-free:         rgba(255,255,255,0.055);
+  --mg-reserved:     rgba(255,255,255,0.14);
 }
 :root[data-theme="light"] {
   --mg-scanned:      #007AFF;
@@ -1347,6 +1348,7 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
   --mg-residual:     rgba(10,15,30,0.30);
   --mg-residual-bg:  rgba(10,15,30,0.06);
   --mg-free:         rgba(10,15,30,0.05);
+  --mg-reserved:     rgba(10,15,30,0.16);
 }
 
 .mg-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 3px; }
@@ -1410,6 +1412,15 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 /* Close to the right-hand end, a centred caption would run out of the card. */
 .mg-usedmark.at-end::after { transform: translateX(-100%); }
 .mg-usedmark.at-start::after { transform: none; }
+/* Blocks only the system may use. Hatched like the residual because it is not
+   a measurement of anything anyone put there, and dimmer, because it is not
+   part of the receipt — it sits inside the bar rather than the wrapper, so the
+   bar's own overflow clip keeps it inside the rounded corners. Zero on APFS
+   and Windows, where the element is never rendered at all. */
+.mg-reserved { position: absolute; top: 0; height: 100%; pointer-events: none;
+  background: repeating-linear-gradient(45deg,
+    var(--mg-reserved) 0 4px, transparent 4px 8px); }
+
 .mg-barwrap { position: relative; margin-bottom: 26px; }
 
 .mg-legend { display: flex; flex-wrap: wrap; gap: 6px 15px; margin-top: 30px; font-size: 11.5px; color: var(--text-2); }
@@ -7217,7 +7228,12 @@ async function loadSystem() {
     // digits glide while "GB" and the labels hold still.
     countUp($('sysTotal'), sys.totalDisk, formatBytes);
     countUp($('sysFree'), sys.freeDisk, formatBytes);
-    const used = sys.totalDisk - sys.freeDisk;
+    // `usedDisk`, not `totalDisk - freeDisk`: `freeDisk` is what a normal
+    // program may write, which on ext4 excludes the 5% the system keeps for
+    // itself. Subtracting it would count that reserve as space something is
+    // using, and the Missing GB receipt — which reads the occupied blocks
+    // directly — would disagree with this tile by ~50 GB on a 1 TB disk.
+    const used = sys.usedDisk;
     countUp($('sysUsed'), used, formatBytes);
     const pct = sys.totalDisk > 0 ? used / sys.totalDisk : 0;
     countUp($('ringPct'), Math.round(pct * 100), (v) => v + '%');
@@ -20873,7 +20889,8 @@ function renderAllStorage() {
   if (!host) return;
   const rows = [];
   if (state.system) {
-    const used = state.system.totalDisk - state.system.freeDisk;
+    // the same figure the Dashboard tile and the receipt use — see 035-system-info.js
+    const used = state.system.usedDisk;
     rows.push(`
       <div class="storage-row">
         <span class="chip" style="--tint:#0A84FF">${icon('hardDrive', 15)}</span>
@@ -22075,6 +22092,19 @@ function renderMissing() {
   const pct = b => (b / denom) * 100;
   const usedPct = pct(d.volume.usedBytes);
 
+  /* The blocks only the system may use — ext4's 5% by default, zero on APFS
+     and Windows. Anchored to the RIGHT of the free tail rather than laid out
+     after the segments: `freeBytes` is read straight off the volume, while the
+     segment run can fall short of used when a line is unknown or a correction
+     is negative, and the band should sit where free actually begins. Nothing
+     is drawn when there is no reserve, which is every Mac and every PC — a
+     zero-width band would be a claim about a disk that does not make it. */
+  const reserved = d.volume.reservedBytes || 0;
+  const reservedHtml = reserved > 0
+    ? `<div class="mg-reserved" aria-hidden="true" style="right:${pct(d.volume.freeBytes).toFixed(3)}%;width:${pct(reserved).toFixed(3)}%" ` +
+      `title="Kept back for the system — ${escapeHtml(formatBytes(reserved))}"></div>`
+    : '';
+
   const barHtml =
     `<div class="mg-barwrap"><div class="mg-bar" role="group" aria-label="How this volume's space is used">` +
     segs.map(sgroup =>
@@ -22083,6 +22113,7 @@ function renderMissing() {
       `aria-label="${escapeHtml(sgroup.line.label)}: ${escapeHtml(formatBytes(sgroup.bytes))}. Show details." ` +
       `title="${escapeHtml(sgroup.line.label)} — ${escapeHtml(formatBytes(sgroup.bytes))}"></button>`
     ).join('') +
+    reservedHtml +
     `</div>` +
     `<div class="mg-usedmark ${usedPct > 88 ? 'at-end' : usedPct < 6 ? 'at-start' : ''}" ` +
     `style="left:${usedPct.toFixed(3)}%" ` +
@@ -22091,7 +22122,10 @@ function renderMissing() {
     segs.map(sgroup =>
       `<span><i style="background:${MG_SEG[sgroup.id].colour}"></i>${escapeHtml(sgroup.line.label)}</span>`
     ).join('') +
-    `<span><i style="background:var(--mg-free)"></i>Free — ${escapeHtml(formatBytes(d.volume.freeBytes))}</span>` +
+    (reserved > 0
+      ? `<span><i style="background:var(--mg-reserved)"></i>Kept back for the system — ${escapeHtml(formatBytes(reserved))}</span>`
+      : '') +
+    `<span><i style="background:var(--mg-free)"></i>Free to you — ${escapeHtml(formatBytes(d.volume.freeBytes))}</span>` +
     `</div></div>`;
 
   /* ── the statement ── */
@@ -22129,7 +22163,10 @@ function renderMissing() {
       `<div class="mg-name">Used on ${escapeHtml(d.volume.mountPoint)}</div>` +
       `<div class="mg-v">${escapeHtml(formatBytes(d.volume.usedBytes))}</div>` +
       `<div class="mg-sub">Every line above, added together, is exactly this number. ` +
-      `${escapeHtml(formatBytes(d.volume.freeBytes))} of ${escapeHtml(formatBytes(total))} is still free.</div>` +
+      `${escapeHtml(formatBytes(d.volume.freeBytes))} of ${escapeHtml(formatBytes(total))} is still free to you` +
+      (reserved > 0
+        ? `, and ${escapeHtml(formatBytes(reserved))} is kept back for the system — neither in use nor available to anything you run.</div>`
+        : `.</div>`) +
     `</div>`;
 
   body.innerHTML =

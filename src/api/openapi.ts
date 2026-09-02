@@ -1216,8 +1216,10 @@ export const ENDPOINTS: EndpointDescriptor[] = [
                 usedBytes: num(),
                 freeBytes: num(),
                 mechanism: str('How the figure was obtained, for the footnote'),
+                mechanismLabel: str('The same fact in the user’s words, with no call name and no mount path'),
+                reservedBytes: num('Blocks only the system may use (ext4’s 5% reserve): total − used − free. Zero on APFS and Windows. used + free + reservedBytes === totalBytes.'),
               },
-              ['mountPoint', 'totalBytes', 'usedBytes', 'freeBytes', 'mechanism'],
+              ['mountPoint', 'totalBytes', 'usedBytes', 'freeBytes', 'mechanism', 'mechanismLabel', 'reservedBytes'],
             ),
             lines: arr(
               obj(

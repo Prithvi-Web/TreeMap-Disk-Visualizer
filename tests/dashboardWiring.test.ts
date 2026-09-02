@@ -103,6 +103,20 @@ test('renderAllStorage rolls its numerals, releases the pre-squares, and keeps t
   assert.match(fn, /Not on this computer/, 'the A3 gap row survives the redesign');
 });
 
+test('the Dashboard and All Storage read the disk’s used figure instead of deriving one', () => {
+  // freeDisk is statfs bavail, which excludes the blocks the system keeps for
+  // itself. Subtracting it counts that reserve as space something is using,
+  // and the Missing GB receipt — which reads occupied blocks — then disagrees
+  // with this tile by ~50 GB on a 1 TB ext4 volume.
+  const sys = slice('async function loadSystem', 'async function loadTrash');
+  assert.match(sys, /const used = sys\.usedDisk/, 'the tile reads the figure the server publishes');
+  assert.doesNotMatch(sys, /sys\.totalDisk\s*-\s*sys\.freeDisk/,
+    'total − free counts the root reserve as space something is using');
+  const all = slice('function renderAllStorage(', 'async function cloudTrashPaths(');
+  assert.match(all, /const used = state\.system\.usedDisk/, 'and so does the All Storage row');
+  assert.doesNotMatch(all, /state\.system\.totalDisk\s*-\s*state\.system\.freeDisk/, 'the same derivation, gone');
+});
+
 /* ══════════════ Hard links: two counters, two labels ══════════════ */
 
 /**

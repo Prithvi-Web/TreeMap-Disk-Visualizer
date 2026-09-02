@@ -19,6 +19,7 @@
   --mg-residual:     rgba(255,255,255,0.26);
   --mg-residual-bg:  rgba(255,255,255,0.07);
   --mg-free:         rgba(255,255,255,0.055);
+  --mg-reserved:     rgba(255,255,255,0.14);
 }
 :root[data-theme="light"] {
   --mg-scanned:      #007AFF;
@@ -28,6 +29,7 @@
   --mg-residual:     rgba(10,15,30,0.30);
   --mg-residual-bg:  rgba(10,15,30,0.06);
   --mg-free:         rgba(10,15,30,0.05);
+  --mg-reserved:     rgba(10,15,30,0.16);
 }
 
 .mg-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 3px; }
@@ -91,6 +93,15 @@
 /* Close to the right-hand end, a centred caption would run out of the card. */
 .mg-usedmark.at-end::after { transform: translateX(-100%); }
 .mg-usedmark.at-start::after { transform: none; }
+/* Blocks only the system may use. Hatched like the residual because it is not
+   a measurement of anything anyone put there, and dimmer, because it is not
+   part of the receipt — it sits inside the bar rather than the wrapper, so the
+   bar's own overflow clip keeps it inside the rounded corners. Zero on APFS
+   and Windows, where the element is never rendered at all. */
+.mg-reserved { position: absolute; top: 0; height: 100%; pointer-events: none;
+  background: repeating-linear-gradient(45deg,
+    var(--mg-reserved) 0 4px, transparent 4px 8px); }
+
 .mg-barwrap { position: relative; margin-bottom: 26px; }
 
 .mg-legend { display: flex; flex-wrap: wrap; gap: 6px 15px; margin-top: 30px; font-size: 11.5px; color: var(--text-2); }

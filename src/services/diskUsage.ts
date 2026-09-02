@@ -33,9 +33,16 @@ export interface DiskUsage {
   used: number;
 }
 
-/** Parse `df -k <path>`: 1024-byte blocks; columns 2, 3 and 4 are total/used/available. */
-async function unixDiskUsage(target: string): Promise<DiskUsage> {
-  const stdout = await exec('df', ['-k', target]);
+/**
+ * Parse `df -k` output: 1024-byte blocks; columns 2, 3 and 4 are
+ * total/used/available.
+ *
+ * Exported and platform-parameterised so the macOS branch below can be proven
+ * on a Linux runner and the Linux branch on a Mac. It is a fallback path — it
+ * runs only when the syscall has already failed or timed out — so nothing
+ * would otherwise exercise it on the machine where it is wrong.
+ */
+export function fromDf(stdout: string, platform: NodeJS.Platform): DiskUsage {
   const lines = stdout.trim().split('\n');
   if (lines.length < 2) throw new Error('Unexpected df output');
   // The data line can wrap when the device name is long — take the last line.
@@ -43,7 +50,24 @@ async function unixDiskUsage(target: string): Promise<DiskUsage> {
   // Filesystem 1024-blocks Used Available ... — find the first numeric run.
   const numbers = cols.filter((c) => /^\d+$/.test(c)).map(Number);
   if (numbers.length < 3) throw new Error('Unexpected df output');
-  return assertPlausible('df', numbers[0] * 1024, numbers[2] * 1024, numbers[1] * 1024);
+  const total = numbers[0] * 1024;
+  const free = numbers[2] * 1024;
+  // The `Used` column answers different questions on the two platforms this
+  // path serves. On Linux it is blocks − bfree, the same occupied-blocks
+  // figure the syscall reports. On macOS it is the VOLUME's own usage against
+  // a CONTAINER-wide `Available`, so the columns do not reconcile: measured on
+  // an APFS Mac, `df -k /System/Volumes/Data` reported 162,086,804 KB used
+  // while statfs on the same mount at the same moment reported 187,844,644 KB,
+  // and `df -k /` reported 12,342,900 KB against the same 187,844,640 KB.
+  // APFS reserves nothing, so total − free IS the occupied figure there and is
+  // the one that matches the syscall this is a fallback for. Taking df's column
+  // would make a statfs timeout quietly move the Used tile by 25 GB.
+  const used = platform === 'darwin' ? total - free : numbers[1] * 1024;
+  return assertPlausible('df', total, free, used);
+}
+
+async function unixDiskUsage(target: string): Promise<DiskUsage> {
+  return fromDf(await exec('df', ['-k', target]), process.platform);
 }
 
 async function windowsDiskUsage(target: string): Promise<DiskUsage> {
@@ -99,6 +123,22 @@ const STATFS_TIMEOUT_MS = 2_000;
  * way on Windows CI, in three separate runs, on a machine whose disk was
  * perfectly readable throughout.
  */
+/**
+ * The three numbers a statfs reading yields. Exported so the ext4 case can be
+ * proven on a Mac: no machine in CI has a root reserve, so the one line this
+ * module exists for would otherwise never be exercised by anything.
+ */
+export function fromStatfs(s: { bsize: number; blocks: number; bfree: number; bavail: number }): DiskUsage {
+  const total = Number(s.bsize) * Number(s.blocks);
+  // `bavail`, not `bfree`: the reserved blocks a non-root process cannot touch
+  // are not free space to anyone this app is speaking for. `df` agrees.
+  // (On Windows libuv sets the two equal, so the distinction is a no-op there.)
+  const free = Number(s.bsize) * Number(s.bavail);
+  // `bfree`, not `bavail`, for used: the reserve is not occupied either.
+  const used = Number(s.bsize) * (Number(s.blocks) - Number(s.bfree));
+  return assertPlausible('statfs', total, free, used);
+}
+
 async function statfsDiskUsage(target: string): Promise<DiskUsage> {
   let timer: NodeJS.Timeout | undefined;
   const s = await Promise.race([
@@ -110,14 +150,7 @@ async function statfsDiskUsage(target: string): Promise<DiskUsage> {
     if (timer) clearTimeout(timer);
   });
 
-  const total = Number(s.bsize) * Number(s.blocks);
-  // `bavail`, not `bfree`: the reserved blocks a non-root process cannot touch
-  // are not free space to anyone this app is speaking for. `df` agrees.
-  // (On Windows libuv sets the two equal, so the distinction is a no-op there.)
-  const free = Number(s.bsize) * Number(s.bavail);
-  // `bfree`, not `bavail`, for used: the reserve is not occupied either.
-  const used = Number(s.bsize) * (Number(s.blocks) - Number(s.bfree));
-  return assertPlausible('statfs', total, free, used);
+  return fromStatfs(s);
 }
 
 /**

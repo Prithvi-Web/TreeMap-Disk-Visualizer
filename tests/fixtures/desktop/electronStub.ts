@@ -279,7 +279,7 @@ export function makeStub(opts: StubOptions) {
       },
     },
     'dist/services/scheduler.js': { onGrowthAlert(fn: (alert: unknown) => void): void { backend.growthHandlers.push(fn); } },
-    'dist/services/diskUsage.js': { diskUsage: async () => ({ total: 1000e9, free: 400e9 }) },
+    'dist/services/diskUsage.js': { diskUsage: async () => ({ total: 1000e9, free: 400e9, used: 600e9 }) },
     'dist/utils/formatBytes.js': { formatBytes },
     'dist/services/storage.js': { appDataDir: () => opts.dataDir },
     'dist/services/portableMode.js': { isEphemeral: () => !!opts.ephemeral },

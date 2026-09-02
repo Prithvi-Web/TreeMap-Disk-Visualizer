@@ -43,7 +43,8 @@ function renderAllStorage() {
   if (!host) return;
   const rows = [];
   if (state.system) {
-    const used = state.system.totalDisk - state.system.freeDisk;
+    // the same figure the Dashboard tile and the receipt use — see 035-system-info.js
+    const used = state.system.usedDisk;
     rows.push(`
       <div class="storage-row">
         <span class="chip" style="--tint:#0A84FF">${icon('hardDrive', 15)}</span>

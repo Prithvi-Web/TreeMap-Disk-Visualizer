@@ -382,6 +382,30 @@ test('the smart-pane funnel states suggested → staged → projected free, and 
 
 /* ══════════════════ Missing GB ══════════════════ */
 
+test('the receipt says whose free space it is, and shows what is kept back', () => {
+  const fn = slice('function renderMissing()', '/* Segment → its row.');
+  assert.match(fn, /Free to you — /, 'bavail is what a normal program may write, and the legend now says so');
+  assert.doesNotMatch(fn, /<\/i>Free — /, 'plain "Free" is bavail wearing bfree’s name');
+  assert.match(fn, /d\.volume\.reservedBytes/, 'the reserve is read from the volume, never derived');
+  assert.match(fn, /Kept back for the system/, 'and named in plain English — no "root", no "bavail"');
+  // Pinned on the BAND's own gate, not merely on "reserved > 0 appears
+  // somewhere near mg-reserved" — the legend entry carries that same phrase,
+  // so the looser form stayed green when the band's gate was widened to >= 0.
+  assert.match(fn, /const reservedHtml = reserved > 0/,
+    'a zero reserve draws nothing — a zero-width band would be a claim about a disk that does not make it');
+  assert.match(fn, /is still free to you/, 'the footer sentence agrees with the legend');
+});
+
+test('the reserved band is themed in both ladders', () => {
+  // Not sliced between ':root {' and ':root[data-theme="light"]': the tokens
+  // sheet defines both of those FIRST, so that slice never reaches the
+  // receipt's own ladder and the assertion would pass on the wrong block.
+  const defs = [...INDEX.matchAll(/--mg-reserved:\s*([^;]+);/g)].map((m) => m[1].trim());
+  assert.equal(defs.length, 2, 'one definition per theme ladder — never a single value both themes inherit');
+  assert.notEqual(defs[0], defs[1],
+    'the light ladder re-tunes it: the dark set is too light to read on white');
+});
+
 test('the receipt segments ramp their own token and dim the others on hover', () => {
   const css = slice('.mg-seg {', '/* Where the volume');
   for (const seg of ['scanned', 'snapshots', 'handles', 'volumes']) {

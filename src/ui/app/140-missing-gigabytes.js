@@ -99,6 +99,19 @@ function renderMissing() {
   const pct = b => (b / denom) * 100;
   const usedPct = pct(d.volume.usedBytes);
 
+  /* The blocks only the system may use — ext4's 5% by default, zero on APFS
+     and Windows. Anchored to the RIGHT of the free tail rather than laid out
+     after the segments: `freeBytes` is read straight off the volume, while the
+     segment run can fall short of used when a line is unknown or a correction
+     is negative, and the band should sit where free actually begins. Nothing
+     is drawn when there is no reserve, which is every Mac and every PC — a
+     zero-width band would be a claim about a disk that does not make it. */
+  const reserved = d.volume.reservedBytes || 0;
+  const reservedHtml = reserved > 0
+    ? `<div class="mg-reserved" aria-hidden="true" style="right:${pct(d.volume.freeBytes).toFixed(3)}%;width:${pct(reserved).toFixed(3)}%" ` +
+      `title="Kept back for the system — ${escapeHtml(formatBytes(reserved))}"></div>`
+    : '';
+
   const barHtml =
     `<div class="mg-barwrap"><div class="mg-bar" role="group" aria-label="How this volume's space is used">` +
     segs.map(sgroup =>
@@ -107,6 +120,7 @@ function renderMissing() {
       `aria-label="${escapeHtml(sgroup.line.label)}: ${escapeHtml(formatBytes(sgroup.bytes))}. Show details." ` +
       `title="${escapeHtml(sgroup.line.label)} — ${escapeHtml(formatBytes(sgroup.bytes))}"></button>`
     ).join('') +
+    reservedHtml +
     `</div>` +
     `<div class="mg-usedmark ${usedPct > 88 ? 'at-end' : usedPct < 6 ? 'at-start' : ''}" ` +
     `style="left:${usedPct.toFixed(3)}%" ` +
@@ -115,7 +129,10 @@ function renderMissing() {
     segs.map(sgroup =>
       `<span><i style="background:${MG_SEG[sgroup.id].colour}"></i>${escapeHtml(sgroup.line.label)}</span>`
     ).join('') +
-    `<span><i style="background:var(--mg-free)"></i>Free — ${escapeHtml(formatBytes(d.volume.freeBytes))}</span>` +
+    (reserved > 0
+      ? `<span><i style="background:var(--mg-reserved)"></i>Kept back for the system — ${escapeHtml(formatBytes(reserved))}</span>`
+      : '') +
+    `<span><i style="background:var(--mg-free)"></i>Free to you — ${escapeHtml(formatBytes(d.volume.freeBytes))}</span>` +
     `</div></div>`;
 
   /* ── the statement ── */
@@ -153,7 +170,10 @@ function renderMissing() {
       `<div class="mg-name">Used on ${escapeHtml(d.volume.mountPoint)}</div>` +
       `<div class="mg-v">${escapeHtml(formatBytes(d.volume.usedBytes))}</div>` +
       `<div class="mg-sub">Every line above, added together, is exactly this number. ` +
-      `${escapeHtml(formatBytes(d.volume.freeBytes))} of ${escapeHtml(formatBytes(total))} is still free.</div>` +
+      `${escapeHtml(formatBytes(d.volume.freeBytes))} of ${escapeHtml(formatBytes(total))} is still free to you` +
+      (reserved > 0
+        ? `, and ${escapeHtml(formatBytes(reserved))} is kept back for the system — neither in use nor available to anything you run.</div>`
+        : `.</div>`) +
     `</div>`;
 
   body.innerHTML =

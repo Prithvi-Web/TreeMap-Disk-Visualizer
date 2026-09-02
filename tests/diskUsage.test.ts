@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { diskUsage } from '../src/services/diskUsage';
+import { diskUsage, fromStatfs, fromDf } from '../src/services/diskUsage';
 
 /**
  * Disk capacity, on whatever platform is running this.
@@ -134,4 +134,58 @@ test('two readings of the same volume report the same total', async () => {
   const a = await diskUsage(os.tmpdir());
   const b = await diskUsage(os.tmpdir());
   assert.equal(a.total, b.total, 'the size of a volume does not change between two calls');
+});
+
+/* ── used, free, and the blocks that are neither ── */
+
+test('the reserve is neither used nor free, and used never counts it', () => {
+  // Synthetic on purpose: no machine in CI has a root reserve, so the one
+  // branch this module exists for would otherwise never be executed. An
+  // ext4-shaped 1 TB volume with the default 5% reserve and 600 GB occupied.
+  const u = fromStatfs({ bsize: 4096, blocks: 262_144_000, bfree: 100_000_000, bavail: 87_891_200 });
+  assert.equal(u.used, 4096 * (262_144_000 - 100_000_000), 'used is the occupied blocks, not total − free');
+  assert.equal(u.free, 4096 * 87_891_200, 'free is what a normal program may write');
+  assert.ok(u.used + u.free < u.total, 'and the two do not add up to the disk');
+  assert.equal(u.total - u.used - u.free, 4096 * (100_000_000 - 87_891_200),
+    'the shortfall is exactly the reserve — never an overlap and never a rounding gap');
+});
+
+test('used and free are answers to two different questions, and they never overlap', async (t) => {
+  const { total, free, used } = await diskUsage(os.tmpdir());
+  assert.ok(Number.isFinite(used) && used > 0, `used should be a positive number, got ${String(used)}`);
+  assert.ok(used + free <= total, 'the shortfall is the root reserve, never an overlap');
+  t.diagnostic(`total ${String(total)} · used ${String(used)} · free ${String(free)} · reserve ${String(total - used - free)}`);
+  if (process.platform === 'darwin') {
+    // APFS reserves nothing (bfree === bavail on every mount), so this is the
+    // one platform where the two conventions must land on the same number —
+    // which makes it the cross-check that the fallback has not drifted.
+    assert.equal(used, total - free, 'APFS reserves nothing, so the two conventions must agree');
+  }
+});
+
+test('the df fallback does not quietly change what "used" means', () => {
+  // Real output from this Mac, captured at the same instant as a statfs that
+  // reported 187,844,644 KB used on the same mount. macOS df reports a
+  // per-VOLUME used against a container-wide Available, so its Used column is
+  // 25 GiB adrift; APFS reserves nothing, so total − free is the figure that
+  // matches the syscall this path is standing in for.
+  const mac = fromDf(
+    'Filesystem 1024-blocks       Used  Available Capacity  Mounted on\n' +
+    '/dev/disk3s5 482797652  162086804  294955848    36%    /System/Volumes/Data',
+    'darwin',
+  );
+  assert.equal(mac.used, mac.total - mac.free, 'on APFS the fallback agrees with the syscall it replaces');
+  assert.notEqual(mac.used, 162086804 * 1024, 'df’s own Used column is the number that would move the tile');
+
+  // Linux df IS blocks − bfree, and the shortfall is the root reserve, so its
+  // column is the right one and total − free would swallow the reserve.
+  const linux = fromDf(
+    'Filesystem     1K-blocks      Used Available Use% Mounted on\n' +
+    '/dev/sda1     1048576000 600000000 396288000  61% /',
+    'linux',
+  );
+  assert.equal(linux.used, 600000000 * 1024, 'the occupied blocks, as the column reports them');
+  assert.ok(linux.used + linux.free < linux.total, 'and the reserve is neither');
+  assert.equal(linux.total - linux.used - linux.free, (1048576000 - 600000000 - 396288000) * 1024,
+    'the shortfall is exactly the 5% ext4 keeps back');
 });

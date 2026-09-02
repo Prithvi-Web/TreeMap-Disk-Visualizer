@@ -377,8 +377,8 @@ async function refreshTray() {
   let statsLabel = 'Disk stats unavailable';
   let title = '';
   try {
-    const { total, free } = await diskUsage(os.homedir());
-    statsLabel = `${formatBytes(free)} free of ${formatBytes(total)} (${total > 0 ? Math.round(((total - free) / total) * 100) : 0}% used)`;
+    const { total, free, used } = await diskUsage(os.homedir());
+    statsLabel = `${formatBytes(free)} free of ${formatBytes(total)} (${total > 0 ? Math.round((used / total) * 100) : 0}% used)`;
     title = ` ${formatBytes(free, 0)} free`;
   } catch (err) {
     console.error('[treemap] tray disk stats failed:', err);

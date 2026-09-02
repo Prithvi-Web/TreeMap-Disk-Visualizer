@@ -63,7 +63,10 @@ class FleetRuntime {
     let usage: { total: number; used: number; free: number } | null = null;
     try {
       const u = await diskUsage(latest?.rootPath || process.cwd());
-      usage = { total: u.total, used: u.total - u.free, free: u.free };
+      // The peer publishes the same convention its own dashboard shows: a
+      // Linux machine broadcasting total − free would call its root reserve
+      // 'used' to every other machine while its own tile did not.
+      usage = { total: u.total, used: u.used, free: u.free };
     } catch {
       usage = null;
     }
