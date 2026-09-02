@@ -597,7 +597,7 @@ function renderDiskNotes() {
   const hl = $('hardlinkRow');
   if (hl) {
     if (s.hardlinkedFiles > 0) {
-      $('hardlinkText').textContent = `${formatCount(s.hardlinkedFiles)} hard-linked file${s.hardlinkedFiles === 1 ? '' : 's'} (${formatBytes(s.hardlinkedBytes)})`;
+      $('hardlinkText').textContent = `${formatCount(s.hardlinkedFiles)} extra file name${s.hardlinkedFiles === 1 ? '' : 's'} (${formatBytes(s.hardlinkedBytes)})`;
       hl.hidden = false;
     } else hl.hidden = true;
   }

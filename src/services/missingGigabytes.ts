@@ -394,7 +394,7 @@ export async function buildStatement(
   const scannedNotes: string[] = [];
   if (hardlinked > 0) {
     scannedNotes.push(
-      `${formatBytes(hardlinked)} of this is data with more than one name. The scan counts each one once, so it is already subtracted here — it is not a separate line.`,
+      `Files here have more than one name, and ${formatBytes(hardlinked)} would be counted twice by a tool that adds every name up. The scan counts each file once, so that is already left out here — it is not a separate line.`,
     );
   }
   scannedNotes.push(

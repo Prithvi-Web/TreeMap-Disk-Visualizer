@@ -3288,7 +3288,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
           </div>
           <div class="snap-row" id="hardlinkRow" hidden>
             <span class="ic" data-icon="copy" data-size="16"></span>
-            <div class="snap-meta"><b id="hardlinkText"></b><span class="muted">Counted once, so totals match what the OS reports.</span></div>
+            <div class="snap-meta"><b id="hardlinkText"></b><span class="muted">Each is another name for data already counted, so totals match what the OS reports.</span></div>
           </div>
           <div class="snap-row" id="cloudRow" hidden>
             <span class="ic" data-icon="cloud" data-size="16"></span>
@@ -8295,7 +8295,7 @@ function renderDiskNotes() {
   const hl = $('hardlinkRow');
   if (hl) {
     if (s.hardlinkedFiles > 0) {
-      $('hardlinkText').textContent = `${formatCount(s.hardlinkedFiles)} hard-linked file${s.hardlinkedFiles === 1 ? '' : 's'} (${formatBytes(s.hardlinkedBytes)})`;
+      $('hardlinkText').textContent = `${formatCount(s.hardlinkedFiles)} extra file name${s.hardlinkedFiles === 1 ? '' : 's'} (${formatBytes(s.hardlinkedBytes)})`;
       hl.hidden = false;
     } else hl.hidden = true;
   }
@@ -30650,9 +30650,13 @@ async function renderAllocationDiagnostic() {
   }
   if (a.hardlinkFamilies > 0) {
     html +=
-      `<div class="row"><span>Files with more than one name</span><b>${formatCount(a.hardlinkFamilies)}</b></div>`;
+      `<div class="row"><span>Hard-linked files <span class="muted">— each counted once, however many names it has</span></span><b>${formatCount(a.hardlinkFamilies)}</b></div>`;
   }
 
+  if (a.hardlinkedNames > 0) {
+    html +=
+      `<div class="row"><span>Extra names for those files <span class="muted">— names beyond the first, the figure the Dashboard shows</span></span><b>${formatCount(a.hardlinkedNames)}</b></div>`;
+  }
   if (a.reconciliation) {
     const r = a.reconciliation;
     html +=

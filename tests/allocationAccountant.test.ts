@@ -84,6 +84,28 @@ test('a hard-linked pair is counted once, and neither name owns the bytes', asyn
   }
 });
 
+test('three names for one file: the diagnostic counts one file, the dashboard counts two extra names', async () => {
+  // The two screens report the same tree with different units. A PAIR makes
+  // both figures 1, which is why nothing caught them drifting apart. Only a
+  // third name separates them.
+  const dir = await mkTmp();
+  try {
+    const original = path.join(dir, 'original.bin');
+    await fsp.writeFile(original, Buffer.alloc(4 * MB, 7));
+    await fsp.link(original, path.join(dir, 'second.bin'));
+    await fsp.link(original, path.join(dir, 'third.bin'));
+
+    await buildIndex(dir, { live: false });
+    const summary = (await accountFor(dir))!;
+
+    assert.equal(summary.hardlinkFamilies, 1, 'one inode, however many names — what Settings labels “Hard-linked files”');
+    assert.equal(summary.hardlinkedNames, 2, 'two names beyond the first — what the dashboard labels “extra file names”');
+  } finally {
+    deleteIndex(dir);
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('deleting one member of a family makes the survivor exclusive again', async () => {
   // §A2 acceptance: "Deleting one member of a clone family updates the
   // remaining members' exclusive bytes correctly."

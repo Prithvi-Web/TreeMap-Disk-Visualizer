@@ -41,9 +41,13 @@ async function renderAllocationDiagnostic() {
   }
   if (a.hardlinkFamilies > 0) {
     html +=
-      `<div class="row"><span>Files with more than one name</span><b>${formatCount(a.hardlinkFamilies)}</b></div>`;
+      `<div class="row"><span>Hard-linked files <span class="muted">— each counted once, however many names it has</span></span><b>${formatCount(a.hardlinkFamilies)}</b></div>`;
   }
 
+  if (a.hardlinkedNames > 0) {
+    html +=
+      `<div class="row"><span>Extra names for those files <span class="muted">— names beyond the first, the figure the Dashboard shows</span></span><b>${formatCount(a.hardlinkedNames)}</b></div>`;
+  }
   if (a.reconciliation) {
     const r = a.reconciliation;
     html +=

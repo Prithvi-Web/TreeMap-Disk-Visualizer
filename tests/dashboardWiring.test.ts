@@ -103,6 +103,67 @@ test('renderAllStorage rolls its numerals, releases the pre-squares, and keeps t
   assert.match(fn, /Not on this computer/, 'the A3 gap row survives the redesign');
 });
 
+/* ══════════════ Hard links: two counters, two labels ══════════════ */
+
+/**
+ * The dashboard counts NAMES AFTER THE FIRST; the Settings diagnostic counts
+ * INODES. An inode with three names makes the first say 2 and the second say
+ * 1. Both are true, and while both were labelled as a count of "files" the two
+ * screens simply disagreed. The labels are the fix, so the labels are what is
+ * pinned — and BOTH of them, because pinning half the pair lets it re-collide.
+ */
+
+type DiskNoteEl = { hidden: boolean; textContent: string; classList: { add: () => void; remove: () => void }; setAttribute: () => void };
+
+function renderDiskNotesWith(scanStats: Record<string, unknown>): Record<string, DiskNoteEl> {
+  const src = slice('function renderDiskNotes()', 'async function renderCloudSafe');
+  const els: Record<string, DiskNoteEl> = {};
+  const $ = (id: string) =>
+    (els[id] ??= { hidden: false, textContent: '', classList: { add: () => {}, remove: () => {} }, setAttribute: () => {} });
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const fn = new Function(
+    '$', 'state', 'formatCount', 'formatBytes', 'fxTmPillBeamsSync',
+    `'use strict'; ${src} return renderDiskNotes;`,
+  )(
+    $,
+    { scanStats, treemap: { hideCloud: false } },
+    (n: number | null) => (n ?? 0).toLocaleString(),
+    (n: number) => n + ' B',
+    () => {},
+  ) as () => void;
+  fn();
+  return els;
+}
+
+test('the dashboard row counts extra NAMES, and says so — three names for one file is two extra', () => {
+  const els = renderDiskNotesWith({ hardlinkedFiles: 2, hardlinkedBytes: 8 });
+  assert.equal(els.hardlinkRow.hidden, false, 'the row shows when there is something to say');
+  assert.match(els.hardlinkText.textContent, /^2 extra file names \(8 B\)$/,
+    'the noun names what the counter holds, so it cannot be read as a count of files');
+  assert.doesNotMatch(els.hardlinkText.textContent, /hard-linked file/,
+    'the old noun is what let this number be compared with the diagnostic’s');
+  const one = renderDiskNotesWith({ hardlinkedFiles: 1, hardlinkedBytes: 4 });
+  assert.match(one.hardlinkText.textContent, /^1 extra file name \(4 B\)$/, 'and the singular still reads');
+  const none = renderDiskNotesWith({ hardlinkedFiles: 0 });
+  assert.equal(none.hardlinkRow.hidden, true, 'nothing to say, nothing shown');
+});
+
+test('the row’s hint says the bytes beside it are not added twice', () => {
+  assert.match(INDEX, /Each is another name for data already counted, so totals match what the OS reports\./,
+    'the muted line under hardlinkText carries the reassurance');
+});
+
+test('the Settings diagnostic counts hard-linked FILES, each once — the other half of the pair', () => {
+  const fn = slice('async function renderAllocationDiagnostic(', 'async function loadFleet(');
+  assert.match(fn, /Hard-linked files/, 'the label names files');
+  assert.match(fn, /each counted once, however many names it has/,
+    'and the hint says which of the two quantities this is');
+  assert.doesNotMatch(fn, /<span>Files with more than one name<\/span>/,
+    'the old label read as the dashboard’s row and reported a different number');
+  assert.match(fn, /a\.hardlinkedNames > 0/, 'the reconciling row is gated on there being extra names');
+  assert.match(fn, /names beyond the first, the figure the Dashboard shows/, 'and it says which screen it matches');
+});
+
 /* ══════════════ Disk Topology ══════════════ */
 
 test('topology bars moved onto the kit recipe with the danger exception intact', () => {
