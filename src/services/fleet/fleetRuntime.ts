@@ -32,8 +32,28 @@ class FleetRuntime {
   private mdns: MdnsResponder | null = null;
   private seen = new Map<string, DiscoveredEntry>();
 
+  /** The last machine on this network refused for guessing pairing codes. */
+  private abuse: { address: string; at: number } | null = null;
+
   get running(): boolean {
     return this.server !== null;
+  }
+
+  /**
+   * What to tell the person at this machine about a withdrawn pairing offer.
+   *
+   * Held here and not in fleetSync because it is not part of the peer
+   * protocol: no peer is ever told this, and the local panel is its only
+   * reader. It survives `stop()` deliberately — turning the fleet off is a
+   * reasonable reaction to the warning, not a reason to lose it.
+   */
+  pairingAbuse(): { address: string; at: number } | null {
+    return this.abuse;
+  }
+
+  /** Cleared when a fresh code is offered; by then the warning is history. */
+  clearPairingAbuse(): void {
+    this.abuse = null;
   }
 
   /** Everything the network can see about this machine, rebuilt per request. */
@@ -87,6 +107,9 @@ class FleetRuntime {
 
     this.server = await startPeerServer(cfg, {
       summary: () => this.summary(cfg),
+      // The peer server refuses the guesser; saying so out loud is this
+      // machine's job, and the fleet panel is where the code was shown.
+      onPairingAbuse: (address: string) => { this.abuse = { address, at: Date.now() }; },
       startScan: async (path: string) => {
         // Routed through the ordinary scan path, which applies every existing
         // guard. Imported lazily to keep the fleet module out of the boot path.

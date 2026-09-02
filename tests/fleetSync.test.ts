@@ -47,14 +47,14 @@ async function call(
   cfg: FleetConfig,
   method: string,
   url: string,
-  opts: { body?: unknown; secret?: string } = {},
+  opts: { body?: unknown; secret?: string; from?: string; onPairingAbuse?: (address: string) => void } = {},
 ): Promise<{ status: number; body: any }> {
   const payload = opts.body === undefined ? undefined : JSON.stringify(opts.body);
   const req = new http.IncomingMessage(null as never);
   req.method = method;
   req.url = url;
   req.headers = opts.secret ? { authorization: `Bearer ${opts.secret}` } : {};
-  Object.defineProperty(req, 'socket', { value: { remoteAddress: '192.168.1.50' } });
+  Object.defineProperty(req, 'socket', { value: { remoteAddress: opts.from ?? '192.168.1.50' } });
 
   let status = 0;
   let text = '';
@@ -67,6 +67,7 @@ async function call(
   const done = handlePeerRequest(req, res, cfg, {
     async summary() { return summary({ acceptsRemoteScan: cfg.allowRemoteScan }); },
     async startScan() { return { scanId: 'scan-1' }; },
+    onPairingAbuse: opts.onPairingAbuse,
   });
   if (payload) { req.emit('data', Buffer.from(payload)); }
   req.emit('end');
@@ -172,6 +173,79 @@ test('a pairing code expires', () => {
   assert.ok(pairingOffer(now + PAIRING_WINDOW_MS - 1));
   assert.equal(pairingOffer(now + PAIRING_WINDOW_MS), null);
   assert.equal(verifyPairingCode(offer.code, now + PAIRING_WINDOW_MS), false, 'an expired code is no code');
+});
+
+test('a machine gets five guesses, and the sixth is refused even when it is right', async () => {
+  // A million possibilities is only a defence if guessing is bounded, and it
+  // was not: this listener is a bare http server, and the express limiter is
+  // mounted on the main API, which no peer ever reaches. An audit managed
+  // 33,966 attempts in three seconds.
+  const cfg = defaultConfig();
+  const offer = beginPairing();
+  const wrong = offer.code === '000000' ? '111111' : '000000';
+  const from = '192.168.1.77';
+  for (let i = 0; i < 5; i++) {
+    const res = await call(cfg, 'POST', '/fleet/pair', { from, body: { code: wrong } });
+    assert.equal(res.status, 401, `guess ${i + 1} is simply wrong`);
+  }
+  // The SIXTH carries the REAL code. It must still be refused, or five wrong
+  // guesses cost the guesser nothing at all.
+  const right = await call(cfg, 'POST', '/fleet/pair', { from, body: { code: offer.code, instanceId: 'peer-1' } });
+  assert.equal(right.status, 429);
+  assert.equal(cfg.peers.length, 0, 'and nothing is paired');
+  // One machine guessing must not lock the USER out of their own pairing.
+  assert.ok(pairingOffer(), 'the code on screen still works');
+  const elsewhere = await call(cfg, 'POST', '/fleet/pair', { from: '192.168.1.9', body: { code: offer.code, instanceId: 'peer-1' } });
+  assert.equal(elsewhere.status, 200, 'the limit is per machine, not a lockout');
+});
+
+test('fifty wrong codes from fifty machines withdraw the offer entirely', async () => {
+  // Five each is no defence against two hundred machines, or against one
+  // machine willing to lie about its address.
+  const cfg = defaultConfig();
+  const offer = beginPairing();
+  const wrong = offer.code === '000000' ? '111111' : '000000';
+  const abused: string[] = [];
+  for (let i = 0; i < 50; i++) {
+    await call(cfg, 'POST', '/fleet/pair', {
+      from: `192.168.1.${i}`,
+      body: { code: wrong },
+      onPairingAbuse: (address) => abused.push(address),
+    });
+  }
+  assert.equal(pairingOffer(), null, 'the offer is withdrawn, not merely slowed');
+  assert.deepEqual(abused, ['192.168.1.49'], 'and the person here is told once, with the address');
+  // The real code no longer pairs anything.
+  const late = await call(cfg, 'POST', '/fleet/pair', { from: '192.168.1.200', body: { code: offer.code, instanceId: 'x' } });
+  assert.equal(late.status, 401);
+  assert.equal(cfg.peers.length, 0);
+});
+
+test('asking for a new code restores a machine that had spent its guesses', async () => {
+  const cfg = defaultConfig();
+  const first = beginPairing();
+  const wrong = first.code === '000000' ? '111111' : '000000';
+  const from = '192.168.1.77';
+  for (let i = 0; i < 5; i++) await call(cfg, 'POST', '/fleet/pair', { from, body: { code: wrong } });
+  assert.equal((await call(cfg, 'POST', '/fleet/pair', { from, body: { code: first.code } })).status, 429);
+  // The refusal tells that machine to ask for a new code, so a new code must work.
+  const second = beginPairing();
+  const ok = await call(cfg, 'POST', '/fleet/pair', { from, body: { code: second.code, instanceId: 'peer-1' } });
+  assert.equal(ok.status, 200, 'a fresh offer is a fresh allowance');
+  assert.equal(cfg.peers.length, 1);
+});
+
+test('one machine is one machine whether it arrives as IPv4 or IPv4-in-IPv6', async () => {
+  // A dual-stack socket reports ::ffff:192.168.1.77 for the same peer that an
+  // IPv4 one reports as 192.168.1.77. Two buckets would be ten guesses.
+  const cfg = defaultConfig();
+  const offer = beginPairing();
+  const wrong = offer.code === '000000' ? '111111' : '000000';
+  for (let i = 0; i < 3; i++) await call(cfg, 'POST', '/fleet/pair', { from: '192.168.1.77', body: { code: wrong } });
+  for (let i = 0; i < 2; i++) await call(cfg, 'POST', '/fleet/pair', { from: '::ffff:192.168.1.77', body: { code: wrong } });
+  const right = await call(cfg, 'POST', '/fleet/pair', { from: '::ffff:192.168.1.77', body: { code: offer.code } });
+  assert.equal(right.status, 429, 'a dual-stack socket must not buy a second allowance');
+  assert.equal(cfg.peers.length, 0);
 });
 
 test('codes are six digits from a cryptographic source, and vary', () => {

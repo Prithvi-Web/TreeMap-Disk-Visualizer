@@ -2068,6 +2068,18 @@ test('an unpaired machine is shown as available to pair, never as connected', ()
   assert.match(fn, /!pairedIds\.has\(d\.instanceId\)/, 'paired machines are not listed twice');
 });
 
+test('a withdrawn pairing offer is explained, not silent', () => {
+  // The user pressed Pair a machine and is watching a code. If it stops
+  // working, "nothing happened" is the one thing the panel must not say.
+  const code = appCode();
+  const fn = code.slice(code.indexOf('function renderFleet'), code.indexOf('async function setFleet'));
+  assert.ok(fn.length > 0, 'renderFleet must be findable');
+  assert.match(fn, /f\.pairingStopped/, 'the withdrawal is read from the server, not guessed at');
+  assert.match(fn, /Pairing stopped/, 'and stated in words');
+  assert.match(fn, /tried too/, 'with the reason');
+  assert.match(fn, /Pair a machine/, 'and the way back');
+});
+
 test('the off state says plainly that nothing is being shared', () => {
   const code = appCode();
   const fn = code.slice(code.indexOf('function renderFleet'), code.indexOf('async function setFleet'));

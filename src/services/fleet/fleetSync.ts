@@ -117,20 +117,61 @@ export interface PairingOffer {
 let pairing: { code: string; expiresAt: number } | null = null;
 
 /**
+ * How many wrong codes one machine may offer before it is refused outright.
+ *
+ * Six digits is only safe against guessing if guessing is bounded, and until
+ * now it was not: this listener is a bare `http.createServer` and the express
+ * rate limiter is mounted on the main API, which no peer ever reaches. An
+ * audit managed 33,966 attempts in three seconds. A million possibilities is
+ * no defence at that rate.
+ *
+ * Five is far above what a person copying a code off another screen needs and
+ * far below what guessing needs, and the way back is one press of Pair a
+ * machine: a new offer clears every counter.
+ */
+const PAIR_ATTEMPT_LIMIT = 5;
+/** And across every machine at once, before the offer is withdrawn entirely. */
+const PAIR_TOTAL_LIMIT = 50;
+
+/** Wrong codes per address, and in total, for the offer being made right now. */
+const pairFailures = new Map<string, number>();
+let pairFailureTotal = 0;
+
+/**
+ * Both counters, emptied.
+ *
+ * Called wherever the offer changes, so a count only ever describes the code
+ * being offered at this moment. It also bounds the map: nothing is counted
+ * without adding to the total, and the total is capped, so at most
+ * PAIR_TOTAL_LIMIT addresses are ever held and no sweeper is needed.
+ */
+function resetPairFailures(): void {
+  pairFailures.clear();
+  pairFailureTotal = 0;
+}
+
+/**
  * A six-digit code, from a cryptographic source.
  *
- * Six digits is a million possibilities against a three-minute window and a
- * rate limiter — enough for a code a person reads aloud. It is not a password
- * and never becomes one: it buys a 256-bit secret and is then discarded.
+ * Six digits is a million possibilities against a three-minute window, five
+ * wrong guesses per machine and fifty in all — after which the offer is
+ * withdrawn and the person at this machine is told. That bound is what makes
+ * a code short enough to read aloud safe; the window alone never was. It is
+ * not a password and never becomes one: it buys a 256-bit secret and is then
+ * discarded.
  */
 export function beginPairing(now = Date.now()): PairingOffer {
   const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
   pairing = { code, expiresAt: now + PAIRING_WINDOW_MS };
+  // A fresh code is a fresh allowance — including for the machine whose owner
+  // mistyped the last one five times.
+  resetPairFailures();
   return { ...pairing };
 }
 
 export function cancelPairing(): void {
   pairing = null;
+  resetPairFailures();
 }
 
 export function pairingOffer(now = Date.now()): PairingOffer | null {
@@ -213,6 +254,13 @@ export interface PeerServerHooks {
   summary(): Promise<FleetSummary>;
   /** Start a scan on this machine. Only reached when allowRemoteScan is true. */
   startScan(path: string): Promise<{ scanId: string }>;
+  /**
+   * Optional. Something on this network has been guessing pairing codes, so
+   * the offer has just been withdrawn. Given the address it came from, because
+   * the one thing worse than a stopped pairing is a stopped pairing nobody
+   * explains.
+   */
+  onPairingAbuse?(address: string): void;
 }
 
 export interface RunningPeerServer {
@@ -252,6 +300,18 @@ function send(res: http.ServerResponse, status: number, body: unknown): void {
     'Cache-Control': 'no-store',
   });
   res.end(text);
+}
+
+/**
+ * One caller, named the same way twice.
+ *
+ * A dual-stack socket reports `::ffff:192.168.1.9` where an IPv4 one reports
+ * `192.168.1.9`. Counting those as two machines would silently double every
+ * allowance below.
+ */
+function peerAddress(req: http.IncomingMessage): string {
+  const raw = req.socket.remoteAddress || '';
+  return raw.replace(/^::ffff:/i, '') || 'unknown';
 }
 
 /**
@@ -302,6 +362,14 @@ export async function handlePeerRequest(
   /* Pairing — the one route reachable without a secret, and only while the
      user is actively looking at a code on this machine. */
   if (req.method === 'POST' && url === '/fleet/pair') {
+    const from = peerAddress(req);
+    // Guessing is the only attack a six-digit code has, so it is the one thing
+    // this route counts. Checked before anything else: if five wrong guesses
+    // still left a sixth free, they would have cost the guesser nothing.
+    if ((pairFailures.get(from) ?? 0) >= PAIR_ATTEMPT_LIMIT) {
+      send(res, 429, { error: 'Too many wrong codes from this machine. Ask for a new code and try again.' });
+      return;
+    }
     const offer = pairingOffer();
     if (!offer) {
       // Deliberately identical whether or not the code was right: a device that
@@ -317,9 +385,27 @@ export async function handlePeerRequest(
       return;
     }
     if (!verifyPairingCode(body.code)) {
+      pairFailures.set(from, (pairFailures.get(from) ?? 0) + 1);
+      pairFailureTotal += 1;
+      // Five each is no defence against two hundred machines, or against one
+      // machine willing to lie about its address, so the offer has a budget of
+      // its own. Spent, it is withdrawn — and the person at this machine finds
+      // out why here, rather than by wondering why their code stopped working.
+      if (pairFailureTotal >= PAIR_TOTAL_LIMIT) {
+        cancelPairing(); // which empties both counters
+        try {
+          hooks.onPairingAbuse?.(from);
+        } catch {
+          /* telling someone must never break the refusal */
+        }
+        send(res, 429, { error: 'Too many wrong codes. This machine has stopped offering a pairing code.' });
+        return;
+      }
       send(res, 401, { error: 'That code is not right' });
       return;
     }
+    // The offer is spent, so nothing the counters were describing is true now.
+    resetPairFailures();
     const secret = newPeerSecret();
     const peer: FleetPeer = {
       instanceId: String(body.instanceId || crypto.randomUUID()),

@@ -45,6 +45,9 @@ fleetRouter.get('/fleet', async (_req: Request, res: Response) => {
     running: runtime.running,
     addresses: cfg.enabled ? lanAddresses() : [],
     pairing: pairingOffer(),
+    /* A withdrawn offer is not silent: the panel polls this every five seconds
+       and says what happened and which machine did it. */
+    pairingStopped: runtime.pairingAbuse(),
     peers: (cfg.peers ?? []).map((p) => publicPeer(p)),
     discovered: runtime.discovered(),
     /**
@@ -91,6 +94,8 @@ fleetRouter.put('/fleet', async (req: Request, res: Response) => {
 fleetRouter.post('/fleet/pairing', async (_req: Request, res: Response) => {
   const cfg = await loadFleetConfig();
   if (!cfg.enabled) throw new AppError(409, 'FLEET_DISABLED', 'Turn the fleet view on before pairing');
+  // Asking for a new code is the answer to the warning, so it also clears it.
+  fleetRuntime().clearPairingAbuse();
   res.json(beginPairing());
 });
 
