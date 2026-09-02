@@ -6204,7 +6204,7 @@ const state = {
   // once at boot and kept current by the editor; scan-independent by design
   // (a note describes a folder, not a scan of it).
   notes: new Map(),
-  trends: { roots: [], path: null, snapshots: [], forecastOk: false },
+  trends: { roots: [], path: null, snapshots: [], forecastRate: null },
   compare: { options: [], result: null },
   whatsNew: { seq: 0, dismissed: false },
   /** Platform capabilities from /api/platform/capabilities; null until loaded. */
@@ -9850,7 +9850,9 @@ const FxCharts = (() => {
     /** Point on a circle. */
     polar(cx, cy, r, a) { return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r }; },
 
-    /** Least-squares line for the projection series. */
+    /** Least-squares line. NOT the Trends forecast tail: that rides the
+        server's recency-weighted rate so the line and the disk-full date
+        beside it stay one claim. A second fit here is how they came apart. */
     linreg(points) {
       const n = points.length;
       if (n < 2) {
@@ -28785,19 +28787,19 @@ async function loadTrendData() {
     chartWrap.classList.remove('fx-chart-loading');
   }
   state.trends.snapshots = snapshots;
-  // A new root's forecast is unknown until the server answers, and unknown
+  // A new root's growth rate is unknown until the server answers, and unknown
   // never projects — the dashed tail is a claim, not a default.
-  state.trends.forecastOk = false;
+  state.trends.forecastRate = null;
   drawTrendNet();
   $('trendInfo').textContent = snapshots.length
     ? `latest: ${formatBytes(snapshots[snapshots.length - 1].totalSize)} · ${formatCount(snapshots[snapshots.length - 1].fileCount)} files`
     : '';
   drawTrendChart();
   renderTrendDeltas();
-  // The chart's dashed line is a plain linear fit; the breach date beside it
-  // comes only from the server's gated forecast, which refuses to guess when
-  // the history is thin, erratic or shrinking — so the label never claims
-  // more than the fit stands behind. Fetched after the paint: it is garnish.
+  // The dashed line and the breach date beside it are now the same claim: both
+  // ride the server's own growth rate, which refuses to guess when the history
+  // is thin, erratic, flat or shrinking. Fetched after the paint, because the
+  // snapshots are the substance and this is the sentence about them.
   if (snapshots.length) void labelTrendForecast(state.trends.path, seq);
 }
 async function labelTrendForecast(path, seq) {
@@ -28805,10 +28807,12 @@ async function labelTrendForecast(path, seq) {
   try { f = await api('/api/forecast?path=' + encodeURIComponent(path)); }
   catch { return; }
   if (seq !== trendInfoSeq || state.trends.path !== path) return; // a newer load owns the view
-  // The gate for the chart's dashed tail is this same status — one policy,
-  // one reader — so the answer repaints the chart before anything else.
+  // The chart's dashed tail rides this same answer AND this same rate — one
+  // number, so the line and the date can never tell different stories — and a
+  // changed rate is a changed slope, so it repaints before anything else.
   const ok = f.status === 'ok';
-  if (state.trends.forecastOk !== ok) { state.trends.forecastOk = ok; drawTrendChart(); }
+  const rate = ok && Number.isFinite(f.bytesPerDay) ? f.bytesPerDay : null;
+  if (state.trends.forecastRate !== rate) { state.trends.forecastRate = rate; drawTrendChart(); }
   if (!ok || !f.fullInDays) return;
   const days = Math.max(1, Math.round(f.fullInDays));
   if (days >= 365) return; // a year+ out is noise, same bar as the dashboard banner
@@ -28828,10 +28832,17 @@ $('trendRoot').addEventListener('change', (e) => {
 /**
  * The dashed forecast tail, or null.
  *
- * `allowed` is the app's ONE honesty gate — the server's own forecast status.
- * The dashboard refuses to name a disk-full date until that gate says 'ok',
- * and this chart obeys the same answer rather than quietly drawing a fit the
- * rest of the app is declining to stand behind.
+ * `rate` is the server's own growth rate in bytes per day — the recency-
+ * weighted fit (7-day half-life) that the "disk full ~date" printed beside
+ * this chart and the dashboard's "+X/day" are both computed from. Drawing the
+ * tail from that one number is what stops the line and the date disagreeing;
+ * a second fit here, however reasonable, is a second answer to one question.
+ *
+ * null means the server declined to name a rate — too little history, too
+ * erratic, flat, or shrinking — and a claim the rest of the app is refusing is
+ * a claim this chart does not draw. Zero and negative are refused for the same
+ * reason: 'stable' and 'shrinking' are the server's words for them, and both
+ * come with "no fill-up in sight" beside a line that would say otherwise.
  *
  * The horizon is bounded by what was actually observed as well as by an
  * absolute month. A flat 30-day tail off an hour of history put the real
@@ -28839,18 +28850,18 @@ $('trendRoot').addEventListener('change', (e) => {
  * observed span keeps real data on at least two thirds of the domain at
  * every history length.
  */
-function trendProjection(pts, allowed) {
-  const MAX_MS = 30 * 864e5;      // a month is as far as this fit is worth reading
+function trendProjection(pts, rate) {
+  const MAX_MS = 30 * 864e5;      // a month is as far as this rate is worth reading
   const SPAN_FRACTION = 0.5;      // → real data holds ≥ 2/3 of the x-domain
-  if (!allowed || pts.length < 3) return null;
+  // Not-positive catches null, undefined, NaN, zero and shrinking in one test.
+  if (!(rate > 0) || pts.length < 3) return null;
   const last = pts[pts.length - 1];
   const span = last.t - pts[0].t;
-  if (!(span > 0)) return null;   // no elapsed time, no rate to extend
-  const horizon = last.t + Math.min(MAX_MS, span * SPAN_FRACTION);
-  const fit = FxCharts.math.linreg(pts.map(p => ({ x: p.t, y: p.v })));
+  if (!(span > 0)) return null;   // no elapsed time, no horizon to reach for
+  const reach = Math.min(MAX_MS, span * SPAN_FRACTION);
   return { name: 'Forecast', points: [
     { t: last.t, v: last.v },
-    { t: horizon, v: Math.max(0, fit.project(horizon)) },
+    { t: last.t + reach, v: last.v + rate * (reach / 864e5) },
   ] };
 }
 
@@ -28863,7 +28874,7 @@ let trendHandle = null;
 function drawTrendChart() {
   const snaps = state.trends.snapshots;
   const pts = snaps.map(s => ({ t: s.takenAt, v: s.totalSize }));
-  const projection = trendProjection(pts, state.trends.forecastOk === true);
+  const projection = trendProjection(pts, state.trends.forecastRate);
   // The budget the dashboard already fetched for this root, as the bklit
   // reference band: over-budget territory is tinted from the ceiling up, so
   // a line entering the band is a line crossing its budget. No budget (or

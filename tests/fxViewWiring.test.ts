@@ -123,41 +123,36 @@ test('the trends area mounts the full bklit surface: fades, dots, brush, budget 
  * moment on the dashboard ("needs at least 5 scans spanning 2+ days").
  */
 const DAY = 864e5;
-const linregStub = {
-  math: {
-    linreg(pts: Array<{ x: number; y: number }>) {
-      const n = pts.length;
-      const mx = pts.reduce((s, p) => s + p.x, 0) / n;
-      const my = pts.reduce((s, p) => s + p.y, 0) / n;
-      let num = 0, den = 0;
-      for (const p of pts) { num += (p.x - mx) * (p.y - my); den += (p.x - mx) ** 2; }
-      const slope = den ? num / den : 0;
-      return { slope, project: (x: number) => my + slope * (x - mx) };
-    },
-  },
-};
+/* The server's own recency-weighted rate, in bytes/day — the one number the
+   date beside the chart is computed from. 2 GiB/day is comfortably past the
+   forecast's stable floor, so it is a rate the gate would pass. */
+const RATE = 2 * 1024 ** 3;
 
 test('the trends projection never draws what the app’s own forecast gate refuses', () => {
-  const trendProjection = appFn('trendProjection', { FxCharts: linregStub });
+  const trendProjection = appFn('trendProjection');
   const t0 = Date.UTC(2026, 7, 1);
   const hour = Array.from({ length: 18 }, (_, i) => ({ t: t0 + i * (3.6e6 / 17), v: 1e9 + i * 1e6 }));
-  assert.equal(trendProjection(hour, false), null,
-    'the gate said no — Trends must not project where the dashboard refuses to');
-  assert.equal(trendProjection(hour.slice(0, 2), true), null, 'two points are not a fit');
-  assert.equal(trendProjection([], true), null, 'and no points are nothing at all');
+  assert.equal(trendProjection(hour, null), null,
+    'the server named no rate — Trends must not project where the dashboard refuses to');
+  assert.equal(trendProjection(hour, 0), null,
+    'a flat rate is the server calling this stable — flat is a claim too, and it is not ours to make');
+  assert.equal(trendProjection(hour, -RATE), null,
+    'a shrinking root is the same refusal — a declining tail beside "no fill-up in sight" is the disagreement this fixes');
+  assert.equal(trendProjection(hour.slice(0, 2), RATE), null, 'two points are not a history');
+  assert.equal(trendProjection([], RATE), null, 'and no points are nothing at all');
   const same = Array.from({ length: 5 }, () => ({ t: t0, v: 1e9 }));
-  assert.equal(trendProjection(same, true), null, 'a zero-length history has no rate to extend');
+  assert.equal(trendProjection(same, RATE), null, 'a zero-length history has no horizon to reach for');
 });
 
 test('the projection horizon is bounded by the history, so real data always dominates the plot', () => {
-  const trendProjection = appFn('trendProjection', { FxCharts: linregStub });
+  const trendProjection = appFn('trendProjection');
   const t0 = Date.UTC(2026, 7, 1);
   const series = (n: number, span: number) =>
     Array.from({ length: n }, (_, i) => ({ t: t0 + (i * span) / (n - 1), v: 1e9 + i * 1e6 }));
 
   for (const span of [3.6e6, 2 * DAY, 9 * DAY, 60 * DAY, 400 * DAY]) {
     const pts = series(18, span);
-    const p = trendProjection(pts, true)!;
+    const p = trendProjection(pts, RATE)!;
     assert.ok(p, `a span of ${span / DAY} days still projects`);
     const tail = p.points[1].t - pts[pts.length - 1].t;
     assert.ok(tail > 0, 'the forecast reaches forward');
@@ -165,23 +160,42 @@ test('the projection horizon is bounded by the history, so real data always domi
     const domain = p.points[1].t - pts[0].t;
     assert.ok(span / domain >= 2 / 3 - 1e-9,
       `real data holds ${(span / domain * 100).toFixed(1)}% of the domain — it must hold at least two thirds`);
+    // THE fix: the tail's height is the server's rate × the days it reaches,
+    // so the line and the "disk full ~date" printed beside it are one claim.
+    const last = pts[pts.length - 1];
+    assert.equal(p.points[0].v, last.v, 'the tail starts on the last real snapshot');
+    const days = (p.points[1].t - p.points[0].t) / DAY;
+    assert.ok(Math.abs(p.points[1].v - (last.v + RATE * days)) < 1e-3,
+      `the tail rises at exactly the server's rate — got ${p.points[1].v - last.v}, expected ${RATE * days}`);
   }
   // The hour-long history that started this: the tail is half an hour, not a month.
   const hour = series(18, 3.6e6);
-  assert.equal(trendProjection(hour, true)!.points[1].t - hour[17].t, 1.8e6);
+  assert.equal(trendProjection(hour, RATE)!.points[1].t - hour[17].t, 1.8e6);
 });
 
 test('one honesty policy: the gate is the server forecast, re-read on every load', () => {
   const draw = slice('function drawTrendChart(', 'function trendNetPoints(');
-  assert.match(draw, /trendProjection\(pts, state\.trends\.forecastOk === true\)/,
-    'the chart asks the same gate the dashboard banner obeys');
+  assert.match(draw, /trendProjection\(pts, state\.trends\.forecastRate\)/,
+    'the chart draws the server’s own rate — not a second fit that would disagree with the date beside it');
   const load = slice('async function loadTrendData(', 'async function labelTrendForecast(');
-  assert.match(load, /state\.trends\.forecastOk = false/,
-    'a new root starts with the answer unknown — unknown never projects');
+  assert.match(load, /state\.trends\.forecastRate = null/,
+    'a new root starts with the rate unknown — unknown never projects');
   const label = slice('async function labelTrendForecast(', "$('trendRoot').addEventListener");
   assert.match(label, /const ok = f\.status === 'ok'/, 'the gate is the server’s own status, not a local re-derivation');
-  assert.match(label, /state\.trends\.forecastOk = ok;[\s\S]{0,80}?drawTrendChart\(\)/,
-    'and the answer repaints the chart — the projection appears only once it is vouched for');
+  assert.match(label, /const rate = ok && Number\.isFinite\(f\.bytesPerDay\) \? f\.bytesPerDay : null/,
+    'the rate is the server’s bytesPerDay, gated by the server’s own status — never re-derived here');
+  assert.match(label, /state\.trends\.forecastRate = rate;[\s\S]{0,80}?drawTrendChart\(\)/,
+    'and the answer repaints the chart — the tail appears only once a rate is vouched for');
+});
+
+test('the trends tail runs no fit of its own — one rate, or none', () => {
+  const fn = slice('function trendProjection(', '/* FxCharts.area owns the surface');
+  assert.doesNotMatch(fn, /linreg/,
+    'a second least-squares fit here is what made the dashed line disagree with the date printed beside it');
+  assert.doesNotMatch(fn, /FxCharts/,
+    'the tail needs no chart maths at all now — just the server’s rate and the horizon');
+  assert.match(fn, /rate \* \(reach \/ 864e5\)/,
+    'the tail rises by the server’s bytes-per-day over the days it reaches');
 });
 
 test('the reference band pulls the y-domain up to any finite bound', () => {

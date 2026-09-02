@@ -261,7 +261,9 @@ const FxCharts = (() => {
     /** Point on a circle. */
     polar(cx, cy, r, a) { return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r }; },
 
-    /** Least-squares line for the projection series. */
+    /** Least-squares line. NOT the Trends forecast tail: that rides the
+        server's recency-weighted rate so the line and the disk-full date
+        beside it stay one claim. A second fit here is how they came apart. */
     linreg(points) {
       const n = points.length;
       if (n < 2) {

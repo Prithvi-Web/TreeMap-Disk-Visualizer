@@ -559,7 +559,7 @@ const state = {
   // once at boot and kept current by the editor; scan-independent by design
   // (a note describes a folder, not a scan of it).
   notes: new Map(),
-  trends: { roots: [], path: null, snapshots: [], forecastOk: false },
+  trends: { roots: [], path: null, snapshots: [], forecastRate: null },
   compare: { options: [], result: null },
   whatsNew: { seq: 0, dismissed: false },
   /** Platform capabilities from /api/platform/capabilities; null until loaded. */
