@@ -15,6 +15,7 @@ import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { diskUsage } from './diskUsage';
 import { isInside } from '../utils/pathSanitizer';
 import { copyWithHash, hashFile, CopyCancelled } from '../utils/copyVerify';
+import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 
 /**
@@ -230,6 +231,23 @@ async function rollback(created: string[], createdDirs: string[], job: OffloadJo
 
 /* ---------------- offload ---------------- */
 
+/**
+ * Test-only: read the destination's free space through a fake.
+ *
+ * The same ForTests idiom as `setOffloadVerifyForTests` above, and needed for
+ * the same reason: no test can arrange for a real volume to have exactly
+ * 20 MB free on macOS, Windows and Linux, and the sentence this drives is
+ * about small numbers. Patching the module's export is not an option — tsx
+ * compiles these modules to CommonJS with getter-only exports, so the
+ * assignment silently does nothing and the test would quietly read the
+ * runner's real disk instead.
+ */
+let diskUsageForTests: typeof diskUsage | null = null;
+export function setOffloadDiskUsageForTests(fn: typeof diskUsage): () => void {
+  diskUsageForTests = fn;
+  return () => { diskUsageForTests = null; };
+}
+
 /** The exact manifest an offload would execute — what dryRun reports. */
 export interface PreparedOffload {
   plan: PlannedCopy[];
@@ -289,7 +307,8 @@ export async function prepareOffload(
   // reason (see its comment, and the two Windows CI failures behind it);
   // re-inventing the zero at the call site puts the bug straight back.
   // `forecast.ts` handles the same call the honest way and is the model.
-  const usage = await diskUsage(destDir).catch(() => null);
+  const readUsage = diskUsageForTests ?? diskUsage;
+  const usage = await readUsage(destDir).catch(() => null);
   if (usage === null) {
     throw new AppError(
       400,
@@ -298,7 +317,21 @@ export async function prepareOffload(
     );
   }
   if (usage.free < bytesTotal * FREE_SPACE_MARGIN) {
-    throw new AppError(400, 'DEST_FULL', `Not enough space at the destination — need ${(bytesTotal / 1073741824).toFixed(1)} GB, only ${(usage.free / 1073741824).toFixed(1)} GB free`);
+    // Both figures through the shared formatter. Dividing by 1073741824 and
+    // printing one decimal turned every offload under about 50 MB into
+    // "need 0.0 GB, only 0.0 GB free" — two zeroes about numbers that are not
+    // zero, in the app whose whole promise is that its numbers are true.
+    //
+    // And the check refuses at bytesTotal × FREE_SPACE_MARGIN, not at
+    // bytesTotal, so a drive holding slightly MORE than the plan is still
+    // refused. Naming the raw total alone produced a sentence that contradicted
+    // itself — "need 30.0 MB, only 30.3 MB free" — so the headroom is said out
+    // loud rather than left for the user to disbelieve.
+    throw new AppError(
+      400,
+      'DEST_FULL',
+      `Not enough space at the destination — this needs ${formatBytes(bytesTotal)} plus a little room to spare, and only ${formatBytes(usage.free)} is free`,
+    );
   }
 
   // B2, up front. `moveToTrash` guards the originals at the end of the job

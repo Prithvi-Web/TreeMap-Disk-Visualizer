@@ -126,7 +126,8 @@ test('volumes come back in deterministic name order regardless of mount enumerat
 import fs from 'node:fs';
 import os from 'node:os';
 import { createScanRecord } from '../src/services/diskScanner';
-import { prepareOffload, startOffload, getOffloadJob, setOffloadVerifyForTests } from '../src/services/offload';
+import { prepareOffload, startOffload, getOffloadJob, setOffloadVerifyForTests, setOffloadDiskUsageForTests } from '../src/services/offload';
+import { AppError } from '../src/middleware/errorHandler';
 
 test('a verify failure rolls back completely — destination cleaned, originals untouched', async () => {
   const src = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-drop-src-'));
@@ -193,4 +194,85 @@ test('a platform with no drive discovery says so — an empty dock is never a si
   assert.match(volumesUnavailableReason('win32') ?? '', /Windows/i, 'win32 names the gap');
   assert.equal(volumesUnavailableReason('darwin'), null);
   assert.equal(volumesUnavailableReason('linux'), null);
+});
+
+/* ── the sentence a destination without room produces ──
+   The refusal has to name numbers a person can act on. It used to divide by
+   1073741824 and print one decimal, so a 30 MB offload onto a drive with
+   20 MB free read "need 0.0 GB, only 0.0 GB free" — two zeroes about two real
+   quantities, in the one app whose promise is that its numbers are true.
+   Nothing asserted this string before. Free space is read through a ForTests
+   seam because no test can make a real volume have 20 MB free on three
+   operating systems, and patching the module export does nothing under tsx. */
+
+function scanOfOneClaimedFile(dir: string, filePath: string, size: number) {
+  const scan = createScanRecord(dir);
+  scan.status = 'complete';
+  scan.root = {
+    name: path.basename(dir), path: dir, size, type: 'dir', modifiedAt: Date.now(), isHidden: false,
+    children: [{ name: path.basename(filePath), path: filePath, size, type: 'file' as const, modifiedAt: Date.now(), isHidden: false }],
+  };
+  return scan;
+}
+
+test('a destination without room says what is needed and what is free, in units a person reads', async () => {
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-full-src-'));
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-full-dest-'));
+  const movie = path.join(src, 'movie.mov');
+  // prepareOffload plans from the scan tree and never stats the source, so the
+  // file on disk can be a token: the 30 MB is the size the scan claims.
+  fs.writeFileSync(movie, 'placeholder');
+  const scan = scanOfOneClaimedFile(src, movie, 30 * 1024 * 1024);
+
+  const restore = setOffloadDiskUsageForTests(async () => ({
+    total: 1024 * 1024 * 1024, free: 20 * 1024 * 1024, used: 1004 * 1024 * 1024,
+  }));
+  try {
+    await assert.rejects(
+      () => prepareOffload(scan, [movie], dest),
+      (err: unknown) => {
+        assert.ok(err instanceof AppError, 'the too-small destination is refused');
+        assert.equal(err.code, 'DEST_FULL');
+        assert.match(err.message, /30\.0 MB/, 'the payload is named at its real size');
+        assert.match(err.message, /20\.0 MB/, 'and so is the room left on the drive');
+        assert.doesNotMatch(err.message, /0\.0 GB/, 'megabytes are never rounded away to "0.0 GB"');
+        return true;
+      },
+    );
+  } finally {
+    restore();
+    fs.rmSync(src, { recursive: true, force: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
+});
+
+test('a destination that is only just too small never reads as though it had room', async () => {
+  // 30.3 MB free against a 30.0 MB plan. FREE_SPACE_MARGIN refuses it, so the
+  // sentence must not read "needs 30.0 MB … only 30.3 MB is free", which
+  // states its own contradiction and invites the user to retry forever.
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-margin-src-'));
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-margin-dest-'));
+  const movie = path.join(src, 'movie.mov');
+  fs.writeFileSync(movie, 'placeholder');
+  const scan = scanOfOneClaimedFile(src, movie, 30 * 1024 * 1024);
+
+  const restore = setOffloadDiskUsageForTests(async () => ({
+    total: 1024 * 1024 * 1024, free: 31_800_000, used: 1024 * 1024 * 1024 - 31_800_000,
+  }));
+  try {
+    await assert.rejects(
+      () => prepareOffload(scan, [movie], dest),
+      (err: unknown) => {
+        assert.ok(err instanceof AppError && err.code === 'DEST_FULL');
+        assert.match(err.message, /30\.0 MB/, 'the plan');
+        assert.match(err.message, /30\.3 MB/, 'and the free space, which is larger');
+        assert.match(err.message, /room to spare/, 'so the headroom the check enforces is said out loud');
+        return true;
+      },
+    );
+  } finally {
+    restore();
+    fs.rmSync(src, { recursive: true, force: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
 });
