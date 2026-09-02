@@ -50,6 +50,7 @@ async function loadTreemap(rootPath, animate = false) {
       $('tmUpBtn').disabled = !state.root || state.treemap.rootPath === state.root.path;
       exitHistoryState();
       refreshTimebar();
+      tmSetEmpty(''); // the rectangle map's note does not describe these renderers
       if (isSun()) { drawSunburst(); }
       else {
         drawCells();
@@ -59,8 +60,16 @@ async function loadTreemap(rootPath, animate = false) {
         if (state.treemap.mode === 'circles' && wasAt) altBeginZoom(shared, wasAt);
       }
     } else {
-      const data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(rootPath)}`);
+      let data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=4096&root=${encodeURIComponent(rootPath)}`);
       if (seq !== tmLoadSeq) return; // a newer view/root load has superseded this fetch
+      // The 4 KB floor keeps a big folder's map legible; in a folder of
+      // dotfiles, scripts or one small file it hides everything, and a blank
+      // panel reads as a broken app. When it drew nothing and there are bytes
+      // to draw, ask again without the floor.
+      if (!data.nodes.length && data.root.size > 0) {
+        data = await api(`/api/scan/${state.scanId}/treemap?maxDepth=${state.treemap.maxDepth}&minSize=1&root=${encodeURIComponent(rootPath)}`);
+        if (seq !== tmLoadSeq) return;
+      }
       if (state.treemap.history.scrubbing) return; // same rule as above: a scrub in flight owns the map
       state.treemap.rootPath = data.root.path;
       state.treemap.rootName = data.root.name;
@@ -244,6 +253,14 @@ function treemapCanvasHeight(wrap) {
   return Math.max(360, Math.floor(window.innerHeight - top - padY - below - mainPadB));
 }
 
+/** The note over an empty map. Empty text hides it; the note is a live region, so it is also read out. */
+function tmSetEmpty(text) {
+  const el = $('tmEmpty');
+  if (!el) return;
+  el.textContent = text;
+  el.hidden = !text;
+}
+
 function drawTreemap() {
   const wrap = $('treemapWrap');
   const cssW = wrap.clientWidth - 20;
@@ -273,6 +290,21 @@ function drawTreemap() {
     px.push({ n, x, y, w, h, frame: n.expanded });
   }
   state.treemap.pxRects = px;
+
+  // A map with nothing to draw must say so — a blank panel reads as a broken
+  // app, not as a small folder. loadTreemap already dropped the 4 KB floor
+  // when it would have hidden everything, so this is a genuinely empty
+  // folder, or a panel too small for the files it holds.
+  if (!px.length) {
+    tmSetEmpty(state.treemap.rootSize > 0
+      ? `Nothing here is big enough to draw — ${formatBytes(state.treemap.rootSize)} in files too small for a rectangle at this size. Open the Grid view to list them.`
+      : 'This folder is empty.');
+    renderSearchOverlay();
+    presentTreemap();
+    renderTmLegend();
+    return;
+  }
+  tmSetEmpty('');
 
   // Pass 1: cushion-shaded leaf fills.
   for (const r of px) {

@@ -960,6 +960,27 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .size-badge { font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 7px; flex: none;
   background: var(--surface-2); white-space: nowrap; }
 
+/* ── Folders the OS refused ──
+   A quiet advisory row, not an error card: the scan did work, it just could
+   not see everything. Uses the shared warning recipe so it reads correctly
+   in both themes (the literal yellow it replaced measured 1.09:1 on white). */
+.access-row {
+  display: flex; align-items: flex-start; gap: 10px; margin-top: 12px;
+  padding: 11px 13px; border-radius: var(--r-md);
+  background: var(--warn-soft); border: 1px solid var(--warn-line);
+}
+.access-row .ic { color: var(--warn); flex: none; margin-top: 1px; }
+.access-body { flex: 1; min-width: 0; }
+.access-text { font-size: 13px; font-weight: 600; }
+.access-hint { font-size: 11.5px; margin-top: 3px; line-height: 1.5; }
+#accessOpenBtn { flex: none; align-self: center; }
+
+/* The note over a map with nothing to draw. */
+.tm-empty-note {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 13.5px; color: var(--text-2); text-align: center; padding: 24px; pointer-events: none;
+}
+
 /* ── Treemap view ── */
 /* The toolbar is TWO deliberate rows, the way a macOS app draws one — never
    one line that wraps wherever it happens to run out of room.
@@ -3306,6 +3327,19 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
                the bar, and a second copy of the same words on screen would
                be noise. -->
           <div id="scanAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+          <!-- Folders the OS would not open. Hidden unless there are some:
+               a scan that read everything says nothing here. On a Mac this
+               is the everyday state of a fresh install, and saying "0 B,
+               looks clean" about a folder nobody was allowed to read is the
+               confident wrongness this app exists to avoid. -->
+          <div class="access-row" id="accessRow" role="status" aria-live="polite" hidden>
+            <span data-icon="alert" data-size="14"></span>
+            <div class="access-body">
+              <div class="access-text" id="accessText"></div>
+              <div class="access-hint muted" id="accessHint"></div>
+            </div>
+            <button class="btn" id="accessOpenBtn" hidden>Open Privacy settings</button>
+          </div>
         </div>
 
         <div class="card glass">
@@ -3506,6 +3540,11 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <button class="pill" id="tmDiffToggle" aria-pressed="false" title="Tint what grew green and what shrank red, compared with the previous snapshot">Diff</button>
     </div>
     <div class="glass" id="treemapWrap">
+      <!-- The note over a map with nothing to draw. A folder whose every file
+           is under the 4 KB floor, or that really is empty, used to paint a
+           blank canvas and say nothing at all — indistinguishable from a
+           renderer that had failed. role="status" so it is read out too. -->
+      <div id="tmEmpty" class="tm-empty-note" role="status" aria-live="polite" hidden></div>
       <!-- v4 §4.3 — the simulated "after". The banner is not decoration: a map
            that shows space you do not have yet has to say so, all the time it
            is on screen. -->
@@ -7819,11 +7858,33 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
     if (abandonIfStopped(resp.scanId, gen)) return;
     followScanProgress(resp.scanId, path, resp.incremental === true, t0);
   } catch (e) {
-    // A background refresh that fails must not blow away the tree already on
-    // screen — the indexed view is still perfectly usable.
+    // A failed background refresh keeps the indexed tree on screen.
     if (quiet) { quietRescanFailed(e); return; }
     failScan(e.message);
   }
+}
+
+/**
+ * The quiet rescan behind an index-first paint failed.
+ *
+ * "Quiet" was taken literally: the function returned, and the spinner, the
+ * three skeleton cards and the Stop button stayed up for ever over a tree
+ * that was never going to be refreshed. The tree itself is still good — it
+ * came from the index — so it stays; what has to end is the pretence that
+ * something is still happening, and the badge's claim that the index is
+ * current, which is exactly what just failed to be confirmed.
+ */
+function quietRescanFailed(e) {
+  state.scanning = false;
+  endScanChrome();
+  restoreDashboardPanels();
+  const why = (e && e.message) || 'the folder could not be read';
+  const el = $('scanStatus');
+  el.classList.add('error');
+  el.innerHTML = icon('alert', 14) + '<span>Showing the saved index — the refresh failed: ' + escapeHtml(why) + '</span>';
+  $('indexBadge').classList.add('stale');
+  toast('Couldn’t refresh this folder: ' + why, 'error');
+  drainScanQueue(); // a folder waiting behind this one still deserves its turn
 }
 
 /** Follow a running scan (disk or cloud) over SSE, with the stall watchdog. */
@@ -8373,100 +8434,123 @@ async function renderGrowthProjection() {
   }
 }
 
-/* ── Refused folders ──
-   A folder the OS would not let TreeMap open comes back from every engine as
-   an ordinary empty folder, and on a Mac that is the everyday state of a
-   fresh install: Desktop, Documents and Downloads are refused until the app
-   has Full Disk Access. Congratulating the user on a clean, empty folder is
-   the confident wrongness this app exists to avoid — so the count is named
-   on the dashboard, in the completion toast, and to the tour.
+/* ── Refused folders ── */
+/* A folder the operating system would not open is not an empty folder.
+   On a Mac without Full Disk Access, scanning Desktop, Documents or
+   Downloads returns nothing at all, and every surface downstream said so
+   cheerfully: "Scanned 0 files — 0 B", a green "Scan complete" toast, and a
+   first-run card congratulating the user on a folder with nothing to clean.
+   That is the app being confidently wrong about the user's own disk.
 
-   Two sources, in order of trust: the server's own `stats.refused` (the
-   engine counted its refusals), and — for a server without that field — a
-   probe of the folders that matter through the picker's listing endpoint,
-   which answers 403 for exactly the folders a scan silently skipped. */
-const REFUSED_PROBE_NAMES = ['Desktop', 'Documents', 'Downloads'];
+   Two sources of truth, in order. The server counts what it was refused
+   while walking (`stats.refused`), which costs nothing and covers every
+   case. An older server sends no such field, and there the page asks one
+   question of its own: the folder picker's listing endpoint answers 403 for
+   a path the OS is protecting, which is a definitive answer in a single
+   call. Only a result that looks like a refusal is worth asking about — a
+   0-byte root, or one of the three protected folders the scan came back
+   empty-handed from. */
 
-function refusedCopy(platform, n) {
-  const them = n === 1 ? 'it' : 'them';
-  return platform === 'darwin'
-    ? `macOS is protecting ${them}. Give TreeMap Full Disk Access in System Settings › Privacy & Security, then scan again.`
-    : `TreeMap does not have permission to read ${them}. Check the folder permissions, then scan again.`;
+/** The three folders macOS protects by default; the ones a home scan loses. */
+const PROTECTED_HOME_DIRS = ['Desktop', 'Documents', 'Downloads'];
+
+/* Last path segment, either separator — for naming folders in a sentence.
+   NOT `baseNameOf`: `function baseName` is a slice anchor in
+   tests/frontendContract.test.ts, and a second match earlier in the page
+   collapsed three of its regions to the empty string. */
+function lastPathSegment(p) {
+  const parts = String(p).split(/[\\/]/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : String(p);
 }
 
-/** Paint the dashboard row from what the server counted. Tolerates a server that did not count. */
+/** Paint (or hide) the "could not be read" row from whatever we know. */
 function renderRefusedFolders() {
   const row = $('accessRow');
-  const s = state.scanStats || {};
-  const r = s.refused;
-  if (!r || !(r.dirs > 0)) {
-    state.scanRefused = null;
-    if (row) row.hidden = true;
+  const stats = state.scanStats || {};
+  // The server's count wins when it sent one; otherwise whatever the probe found.
+  const fromServer = stats.refused && stats.refused.dirs > 0 ? stats.refused : null;
+  const found = fromServer || state.scanRefused;
+  if (!found || !found.dirs) {
+    row.hidden = true;
+    if (!state.scanRefused || fromServer) state.scanRefused = null;
     return;
   }
-  const examples = Array.isArray(r.examples) ? r.examples : [];
-  state.scanRefused = { dirs: r.dirs, examples, root: !!state.root && examples.includes(state.root.path) };
-  paintRefusedRow(state.system && state.system.platform);
-}
-
-function paintRefusedRow(platform) {
-  const row = $('accessRow');
-  const r = state.scanRefused;
-  if (!row || !r) return;
-  const names = r.examples.map((p) => p.split(/[\\/]/).filter(Boolean).pop() || p).slice(0, 3);
+  if (fromServer) {
+    state.scanRefused = { dirs: fromServer.dirs, examples: [...(fromServer.examples || [])], root: false };
+  }
+  const mac = (state.system || {}).platform === 'darwin';
+  const names = (found.examples || []).map(lastPathSegment).filter(Boolean);
+  const n = found.dirs;
   $('accessText').textContent =
-    `${formatCount(r.dirs)} folder${r.dirs === 1 ? '' : 's'} could not be read` +
-    (names.length ? `: ${names.join(', ')}${r.dirs > names.length ? '…' : ''}` : '');
-  $('accessHint').textContent = refusedCopy(platform, r.dirs);
-  $('accessOpenBtn').hidden = platform !== 'darwin';
-  row.title = r.examples.join('\n');
+    `${formatCount(n)} folder${n === 1 ? '' : 's'} could not be read` +
+    (names.length ? ` — ${names.join(', ')}` : '');
+  $('accessHint').textContent = mac
+    ? 'macOS is protecting them. Give TreeMap Full Disk Access in System Settings › Privacy & Security, then scan again.'
+    : 'TreeMap does not have permission to open them. Check the folder’s permissions, then scan again.';
+  $('accessOpenBtn').hidden = !mac;
   row.hidden = false;
 }
 
 /**
- * Older servers ship no `refused` field. For those, ask the picker's listing
- * endpoint about the folders a refusal would have hidden: the scanned root
- * itself when it came back empty, and — on a Mac — the three protected
- * folders under it when they came back empty or not at all. A 403 is a
- * refusal; a 404 is a folder that simply is not there, and is not counted.
+ * Ask the OS directly, when the server did not say.
+ *
+ * One call per candidate, and only for candidates that look refused: the
+ * scanned folder itself when it came back empty, or a protected home folder
+ * the scan did not read. A 404 is "not on this machine", which is not a
+ * refusal and is not counted.
  */
 async function probeRefusedFolders() {
+  const stats = state.scanStats || {};
+  if (stats.refused) return; // the server already answered
   const root = state.root;
+  if (!root) return;
   const scanId = state.scanId;
-  if (!root || !scanId || root.path.startsWith('cloud://')) return;
-  if ((state.scanStats || {}).refused) return; // the server counted — nothing to guess
-  const platform = state.system && state.system.platform;
-  const emptyNode = (n) => !!n && n.size === 0 && (!n.children || n.children.length === 0);
+  const home = (state.system || {}).homeDir || '';
+  const sep = String(root.path).includes('\\') ? '\\' : '/';
+  const readNothing = (node) => !node || (!node.size && !(node.children || []).length);
+
   const candidates = [];
-  if (emptyNode(root)) candidates.push(root.path);
-  if (platform === 'darwin') {
-    const sep = root.path.includes('\\') ? '\\' : '/';
-    for (const name of REFUSED_PROBE_NAMES) {
-      const p = root.path.endsWith(sep) ? root.path + name : root.path + sep + name;
-      const node = state.pathIndex.get(p);
-      if (!node || emptyNode(node)) candidates.push(p);
+  let rootRefused = false;
+  if (readNothing(root)) {
+    candidates.push(root.path);
+    rootRefused = true;
+  } else if (home && (root.path === home || root.path === home + sep)) {
+    for (const name of PROTECTED_HOME_DIRS) {
+      const p = home + sep + name;
+      const known = state.pathIndex && state.pathIndex.get(p);
+      if (known && known.size > 0) continue; // the scan read it — nothing to ask
+      candidates.push(p);
     }
   }
   if (!candidates.length) return;
+
   const refused = [];
   for (const p of candidates) {
-    try { await api('/api/fs/list?path=' + encodeURIComponent(p)); }
-    catch (e) { if (e && e.status === 403) refused.push(p); }
+    try {
+      await api('/api/fs/list?path=' + encodeURIComponent(p));
+    } catch (e) {
+      if (e && (e.status === 403 || e.code === 'PERMISSION_DENIED')) refused.push(p);
+      // 404 and everything else: not a refusal, and not worth a guess.
+    }
   }
-  if (scanId !== state.scanId) return; // a newer scan owns the dashboard
+  // A rescan may have landed while we were asking; its tree is not this one.
+  if (scanId !== state.scanId) return;
   if (!refused.length) return;
-  state.scanRefused = { dirs: refused.length, examples: refused, root: refused.includes(root.path) };
-  paintRefusedRow(platform);
-  const n = refused.length;
-  if (state.scanRefused.root) {
-    // "Scanned 0 files — 0 B" was a lie about this folder: replace it.
-    const status = $('scanStatus');
-    status.classList.add('error');
-    status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(
-      (platform === 'darwin' ? 'macOS would not let TreeMap look inside this folder. ' : 'TreeMap is not allowed to read this folder. ') +
-      refusedCopy(platform, 1)) + '</span>';
+
+  state.scanRefused = { dirs: refused.length, examples: refused, root: rootRefused };
+  renderRefusedFolders();
+  if (rootRefused) {
+    const mac = (state.system || {}).platform === 'darwin';
+    const line = mac
+      ? 'macOS would not let TreeMap look inside this folder.'
+      : 'TreeMap is not allowed to read this folder.';
+    const fix = mac ? ' Give TreeMap Full Disk Access in System Settings › Privacy & Security, then scan again.' : '';
+    const el = $('scanStatus');
+    el.classList.add('error');
+    el.innerHTML = escapeHtml(line);
+    toast(line + fix, 'error', 15000);
   }
-  toast(`${formatCount(n)} folder${n === 1 ? '' : 's'} could not be read — ` + refusedCopy(platform, n), 'error', 9000);
+  emit(TOPIC.scan, state.scanId);
 }
 /* ── end refused folders ── */
 subscribe(TOPIC.scan, (scanId) => {
@@ -25662,6 +25746,19 @@ function tourAdvanceWin() {
 
 async function tourLoadWins() {
   if (!state.scanId) return;
+  // A fourth non-answer, and the loudest: the folder was never read. On a Mac
+  // without Full Disk Access a scan of Desktop or Documents returns nothing,
+  // and congratulating someone on a folder the OS would not open is the
+  // worst thing the first run can say. The refused probe has already looked
+  // by the time the tour asks.
+  if (state.scanRefused && state.scanRefused.dirs) {
+    tour.step = 'unknown';
+    tour.unknownReason = state.scanRefused.root
+      ? 'macOS would not let TreeMap look inside this folder, so nothing here has been checked.'
+      : `${state.scanRefused.dirs} folder${state.scanRefused.dirs === 1 ? '' : 's'} could not be read, so this is not the whole picture.`;
+    tourRender();
+    return;
+  }
   // Three distinct non-answers must not read as "clean" (review round 1):
   // a still-running scan (202 — poll it out), a broken rule catalog
   // (available:false with its reason), and a transport error. Each gets the
@@ -31569,7 +31666,10 @@ if (window.treemapDesktop) {
   window.treemapDesktop.onScanPath((p) => {
     if (!p) return;
     $('pathInput').value = p;
-    startScan(p);
+    // The same queue the window's own drop uses: the dock and the CLI can
+    // hand over several folders in a burst, and a scan already running must
+    // not swallow the rest.
+    queueScan(p);
   });
 }
 /* ── Drop a folder to scan it ── */
@@ -31585,8 +31685,8 @@ if (window.treemapDesktop) {
 let dragDepth = 0;
 const dragHasFiles = (e) => !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
 function showDropHint(on) {
-  document.documentElement.classList[on ? 'add' : 'remove']('drop-hint');
-  if (!on) dragDepth = 0;
+  if (on) document.documentElement.classList.add('drop-hint');
+  else { document.documentElement.classList.remove('drop-hint'); dragDepth = 0; }
 }
 window.addEventListener('dragenter', (e) => {
   if (!dragHasFiles(e)) return;

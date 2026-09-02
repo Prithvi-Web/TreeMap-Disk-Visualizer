@@ -38,3 +38,10 @@
   </div>
   <div id="nlReason" class="muted" role="status" aria-live="polite" style="font-size:11.5px;margin-top:7px;" hidden></div>
 </div>
+
+<!-- ═══════════ Drop a folder to scan it ═══════════ -->
+<!-- Top level, like #ctxMenu and #rcPopover: it covers the whole window, so
+     it must not be inside .view, which is a container (and so a containing
+     block for fixed children). aria-hidden: it says nothing a screen-reader
+     user has not already been told by the drag itself. -->
+<div id="dropHint" aria-hidden="true"><span>Drop to scan this folder</span></div>

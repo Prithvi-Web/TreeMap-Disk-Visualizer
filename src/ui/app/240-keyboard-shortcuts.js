@@ -169,25 +169,57 @@ if (window.treemapDesktop) {
   window.treemapDesktop.onScanPath((p) => {
     if (!p) return;
     $('pathInput').value = p;
-    startScan(p);
+    // The same queue the window's own drop uses: the dock and the CLI can
+    // hand over several folders in a burst, and a scan already running must
+    // not swallow the rest.
+    queueScan(p);
   });
 }
+/* ── Drop a folder to scan it ── */
+/* Two things the old handler did not do. It gave no sign it was willing to
+   take the drop — the window looked inert until the folder was already
+   released — and it read `files[0]` and dropped the rest on the floor, so a
+   stack of four folders scanned one and silently forgot three.
+
+   The hint is counted, not toggled: `dragenter` and `dragleave` fire again
+   for every child element the pointer crosses, so a bare toggle flickers the
+   whole way across the window. Only a drag carrying FILES lights it — the
+   cart drags its own rows around, and those must leave the page alone. */
+let dragDepth = 0;
+const dragHasFiles = (e) => !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+function showDropHint(on) {
+  if (on) document.documentElement.classList.add('drop-hint');
+  else { document.documentElement.classList.remove('drop-hint'); dragDepth = 0; }
+}
+window.addEventListener('dragenter', (e) => {
+  if (!dragHasFiles(e)) return;
+  dragDepth++;
+  showDropHint(true);
+});
+window.addEventListener('dragleave', (e) => {
+  if (!dragHasFiles(e)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) showDropHint(false);
+});
 window.addEventListener('dragover', (e) => { e.preventDefault(); });
 window.addEventListener('drop', async (e) => {
   e.preventDefault();
-  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-  if (!file) return;
+  showDropHint(false);
+  const files = (e.dataTransfer && e.dataTransfer.files) || [];
+  if (!files.length) return;
   if (!window.treemapDesktop) {
     toast('Drag & drop scanning works in the desktop app — use Browse here', 'error');
     return;
   }
-  const raw = window.treemapDesktop.getPathForFile(file);
-  const dir = raw ? await window.treemapDesktop.resolveScanPath(raw) : null;
-  if (dir) {
-    $('pathInput').value = dir;
-    startScan(dir);
+  // Resolved in the order they were dropped, then queued in that order: the
+  // queue starts the first and tells the user about the rest.
+  for (const file of files) {
+    const raw = window.treemapDesktop.getPathForFile(file);
+    const dir = raw ? await window.treemapDesktop.resolveScanPath(raw) : null;
+    if (dir) queueScan(dir);
   }
 });
+/* ── end drop ── */
 
 /* ───────────────────────────── Boot ───────────────────────────── */
 switchView('dashboard');

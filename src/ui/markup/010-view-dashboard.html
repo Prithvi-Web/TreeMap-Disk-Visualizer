@@ -77,7 +77,27 @@
                events and is being rechecked. Hidden when there is no index. -->
           <div class="index-badge" id="indexBadge" hidden role="status"></div>
           <div class="scan-meta num" id="scanMeta"></div>
-          <div class="progress-track" id="progressTrack"><div class="progress-fill"></div></div>
+          <div class="progress-track" id="progressTrack" role="progressbar" aria-label="Scan progress"><div class="progress-fill"></div></div>
+          <!-- a11y: a scan is a minutes-long process whose only report was a
+               visual counter. This is the one polite live region that speaks
+               it — start, a sentence every ten seconds, the finish and any
+               failure. Visually hidden: sighted users have the counter and
+               the bar, and a second copy of the same words on screen would
+               be noise. -->
+          <div id="scanAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+          <!-- Folders the OS would not open. Hidden unless there are some:
+               a scan that read everything says nothing here. On a Mac this
+               is the everyday state of a fresh install, and saying "0 B,
+               looks clean" about a folder nobody was allowed to read is the
+               confident wrongness this app exists to avoid. -->
+          <div class="access-row" id="accessRow" role="status" aria-live="polite" hidden>
+            <span data-icon="alert" data-size="14"></span>
+            <div class="access-body">
+              <div class="access-text" id="accessText"></div>
+              <div class="access-hint muted" id="accessHint"></div>
+            </div>
+            <button class="btn" id="accessOpenBtn" hidden>Open Privacy settings</button>
+          </div>
         </div>
 
         <div class="card glass">

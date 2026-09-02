@@ -7,9 +7,19 @@
 main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; position: relative; min-width: 0;
   /* The app's single scroller (the window never scrolls) — see body. */
   overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; }
-.view { display: none; animation: viewIn var(--dur-3) var(--ease); }
+/* container-type: the dashboard, trends and city breakpoints measure the
+   VIEW, so collapsing the sidebar rail buys the layout real room — a
+   viewport query could not see the 168px the rail gives back. Every
+   fixed-position overlay sits after </main>, so the view becoming a
+   containing block traps nothing (tests/nlPopContainment pins that).
+   The entrance is opacity only, and brief: the cards' own 12px stagger
+   (fxViewEnter) is the designed arrival. A translateY on the whole view
+   stacked a second 8px of travel on top of it and, worse, moved the entire
+   view — treemap canvas, grid tiles, a timebar with a live backdrop blur —
+   as one composited layer for 380ms on every switch. */
+.view { display: none; animation: viewIn var(--dur-2) var(--ease); container-type: inline-size; }
 .view.active { display: block; }
-@keyframes viewIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes viewIn { from { opacity: 0; } to { opacity: 1; } }
 /* Pane flips (history panels, duplicate modes, Clean Up tabs) arrive as a
    150ms fade instead of a snap. Opacity only, so nothing reflows; the
    animation restarts when [hidden] or display:none lifts, and re-showing an
@@ -19,10 +29,35 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .pane-fade { animation: paneFade var(--dur-1) var(--ease); }
 @keyframes paneFade { from { opacity: 0; } }
 
+/* ── Drop hint ──
+   Shown while a drag carrying files is over the window, so the app looks
+   willing before the folder is released. Deliberately cheap: an inset border
+   and a tint, no backdrop-filter (a full-window filtered surface re-runs on
+   every frame of the drag, which is the one moment the pointer must stay
+   smooth) and no will-change (it exists for a second at a time). */
+#dropHint {
+  position: fixed; inset: 0; z-index: 120; pointer-events: none; opacity: 0;
+  transition: opacity var(--dur-1) var(--ease);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 0 0 0 3px var(--accent);
+  display: flex; align-items: center; justify-content: center;
+}
+:root.drop-hint #dropHint { opacity: 1; }
+#dropHint span {
+  font-size: 15px; font-weight: 600; color: var(--text-1);
+  background: var(--bg-1); border: 1px solid var(--hairline-2); border-radius: 99px;
+  padding: 12px 22px; box-shadow: var(--shadow-2);
+}
+
 /* ── Empty state ── */
 #emptyState { display: flex; flex-direction: column; align-items: center; justify-content: center;
   min-height: 66vh; text-align: center; gap: 14px; }
-#emptyState .mark { filter: drop-shadow(0 16px 50px var(--accent-glow)); animation: float 6s ease-in-out infinite; }
+/* A box-shadow, not a drop-shadow filter: the filter made the mark a render
+   surface whose 50px shadow was re-applied on every frame of the float. The
+   shadow below is rasterised once into the mark's own layer and rides the
+   composited transform; at a 50px blur a rounded-square silhouette and the
+   mark's own are indistinguishable. */
+#emptyState .mark { border-radius: 26px; box-shadow: 0 16px 50px var(--accent-glow); animation: float 6s ease-in-out infinite; }
 @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
 #emptyState h1 { font-size: 30px; font-weight: 700; letter-spacing: -0.6px; margin-top: 8px; }
 #emptyState p { color: var(--text-2); font-size: 14px; max-width: 460px; line-height: 1.6; }

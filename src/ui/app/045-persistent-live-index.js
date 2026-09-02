@@ -170,11 +170,33 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
     if (abandonIfStopped(resp.scanId, gen)) return;
     followScanProgress(resp.scanId, path, resp.incremental === true, t0);
   } catch (e) {
-    // A background refresh that fails must not blow away the tree already on
-    // screen — the indexed view is still perfectly usable.
-    if (quiet) { console.warn('[treemap] background rescan failed:', e); return; }
+    // A failed background refresh keeps the indexed tree on screen.
+    if (quiet) { quietRescanFailed(e); return; }
     failScan(e.message);
   }
+}
+
+/**
+ * The quiet rescan behind an index-first paint failed.
+ *
+ * "Quiet" was taken literally: the function returned, and the spinner, the
+ * three skeleton cards and the Stop button stayed up for ever over a tree
+ * that was never going to be refreshed. The tree itself is still good — it
+ * came from the index — so it stays; what has to end is the pretence that
+ * something is still happening, and the badge's claim that the index is
+ * current, which is exactly what just failed to be confirmed.
+ */
+function quietRescanFailed(e) {
+  state.scanning = false;
+  endScanChrome();
+  restoreDashboardPanels();
+  const why = (e && e.message) || 'the folder could not be read';
+  const el = $('scanStatus');
+  el.classList.add('error');
+  el.innerHTML = icon('alert', 14) + '<span>Showing the saved index — the refresh failed: ' + escapeHtml(why) + '</span>';
+  $('indexBadge').classList.add('stale');
+  toast('Couldn’t refresh this folder: ' + why, 'error');
+  drainScanQueue(); // a folder waiting behind this one still deserves its turn
 }
 
 /** Follow a running scan (disk or cloud) over SSE, with the stall watchdog. */
@@ -190,11 +212,18 @@ function followScanProgress(scanId, path, fast, t0) {
   // frames). If the stream goes quiet mid-scan, poll the result directly.
   let lastSseAt = performance.now();
   let finished = false;
+  let lastAnnounced = 0; // seconds — the live region speaks once every ten
+  // Consecutive polls nobody answered. A refused connection (status 0), an
+  // unreadable body or a proxy's 502–504 all mean the server is not there to
+  // finish this scan; five in a row — fifteen seconds of silence — ends the
+  // wait, because chrome that spins forever over a dead server is a lie.
+  let dead = 0;
   const watchdog = setInterval(async () => {
     if (!state.scanning || finished) { clearInterval(watchdog); return; }
     if (performance.now() - lastSseAt < 6000) return;
     try {
       const r = await api(`/api/scan/${scanId}/result`);
+      dead = 0;
       if (r.status === 'complete' && !finished) {
         finished = true;
         clearInterval(watchdog);
@@ -212,8 +241,19 @@ function followScanProgress(scanId, path, fast, t0) {
         clearInterval(watchdog);
         closeEventSource();
         failScan(e.status === 404 ? 'The scan expired — please run it again.' : e.message);
+        return;
       }
-      /* otherwise: still running or transient — keep waiting */
+      if (e.status === 0 || e.code === 'BAD_RESPONSE' || (e.status >= 502 && e.status <= 504)) {
+        if (++dead >= 5 && !finished) {
+          finished = true;
+          clearInterval(watchdog);
+          closeEventSource();
+          failScan(e.message); // api()'s own sentence: check the app is still running
+        }
+        return;
+      }
+      dead = 0;
+      /* otherwise: still running or transient (a 429, a 202) — keep waiting */
     }
   }, 3000);
   // Hand Stop the two things only this closure can settle. `finished` also
@@ -233,6 +273,13 @@ function followScanProgress(scanId, path, fast, t0) {
         `<span class="num">${fastTag}Scanning… <b>${formatCount(msg.scanned)}</b> items` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + ` · ${secs.toFixed(1)}s</span>`;
       $('scanMeta').textContent = msg.currentPath;
+      // A live region fed every frame would never stop talking; one sentence
+      // every ten seconds says the scan is alive and how far it has got.
+      if (secs - lastAnnounced >= 10) {
+        lastAnnounced = secs;
+        $('scanAnnounce').textContent = `${formatCount(msg.scanned)} items scanned so far`;
+      }
+      $('progressTrack').setAttribute('aria-valuetext', `${formatCount(msg.scanned)} items scanned`);
     } else if (msg.type === 'complete') {
       finished = true;
       clearInterval(watchdog);
@@ -312,9 +359,35 @@ function failScan(message) {
   const status = $('scanStatus');
   status.classList.add('error');
   status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml(message) + '</span>';
+  $('scanAnnounce').textContent = 'Scan failed — ' + message;
   restoreDashboardPanels();
   toast(message, 'error');
+  tourScanFailed(); // v4 §9.2 — the welcome card comes back, with its buttons
   switchView(state.view);
+  drainScanQueue(); // a folder waiting behind this one still gets its turn
+}
+
+/**
+ * A quiet (behind-the-index) rescan that failed.
+ *
+ * The tree on screen is still perfectly usable, so it must not be wiped —
+ * but the chrome the request put up (spinner, Stop, skeletons, "Checking for
+ * changes…") was promising a scan that will never land. Leaving it up was
+ * the bug: unplug the drive a folder lived on, reopen it from Recent, and the
+ * app spun forever with the lists as grey skeletons and "Index live — always
+ * current" underneath. End the chrome, say what the screen is showing, and
+ * stop claiming the index is live.
+ */
+function quietRescanFailed(e) {
+  endScanChrome();
+  restoreDashboardPanels();
+  const status = $('scanStatus');
+  status.classList.add('error');
+  status.innerHTML = icon('alert', 14) + '<span>' + escapeHtml('Showing the saved index — couldn’t rescan: ' + e.message) + '</span>';
+  $('scanAnnounce').textContent = 'Couldn’t rescan this folder: ' + e.message;
+  $('indexBadge').classList.add('stale');
+  toast('Couldn’t rescan this folder: ' + e.message, 'error');
+  drainScanQueue();
 }
 
 /**
@@ -393,6 +466,8 @@ async function finishScan(root, durationMs, stats) {
   $('scanStatus').innerHTML = icon('checkCircle', 14) +
     `<span class="num">Scanned ${files === null ? '' : `<b>${formatCount(files)}</b> files `}` +
     `in ${(durationMs / 1000).toFixed(1)}s — ${formatBytes(root.size)} in ${escapeHtml(root.path)}</span>`;
+  $('scanAnnounce').textContent = (state.scanId ? 'Scan finished — ' : 'Folder opened from the saved index — ') +
+    (files === null ? '' : `${formatCount(files)} files, `) + formatBytes(root.size);
   // Blanked, not merely skipped. Skipping leaves the tiles holding the PREVIOUS
   // scan's numbers, which is the same lie in slower motion: the headline and the
   // engine row go quiet while Files and Folders keep stating another folder's
@@ -412,7 +487,16 @@ async function finishScan(root, durationMs, stats) {
   // scan gets ONE completion toast, on the pass that actually completed (QA D3).
   // FX: the completion pulse rides the same gate — one crossing, one pulse.
   if (state.scanId) {
-    toast(`Scan complete — ${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} files`}`);
+    // Nothing to celebrate about 0 B in 0 files: on a Mac that is what a
+    // folder macOS refused to open looks like, and the refused-folder check
+    // (renderRefusedFolders, on TOPIC.scan) speaks for it once it has looked.
+    // A partial scan says so in the same breath as its total.
+    const refusedDirs = stats && stats.refused && stats.refused.dirs > 0 ? stats.refused.dirs : 0;
+    const empty = root.size === 0 && !files;
+    if (!empty) {
+      toast(`Scan complete — ${formatBytes(root.size)}${files === null ? '' : ` across ${formatCount(files)} files`}` +
+        (refusedDirs ? ` — ${formatCount(refusedDirs)} folder${refusedDirs === 1 ? '' : 's'} could not be read` : ''));
+    }
     fxScanDonePulse();
   }
 
@@ -432,29 +516,7 @@ async function finishScan(root, durationMs, stats) {
     switchView(state.view);
     return;
   }
-  try {
-    /* All three poll. finishScan normally runs against a scan that just
-       finished, but not always: the index paints a tree before any scan has an
-       id, a rescan can be in flight against this one, and all three endpoints
-       answer a running scan with 202. Without poll the 202 body has no `files`
-       / `types` / `folders` field, so the row either read undefined or — once
-       api() started throwing on an unrequested 202 — told the user "could not
-       load stats" about a scan that was merely still running. */
-    const [lf, ft, lfo] = await Promise.all([
-      api(`/api/large-files?scanId=${state.scanId}&limit=10&minSize=1`, undefined, { poll: true }),
-      api(`/api/file-types?scanId=${state.scanId}`, undefined, { poll: true }),
-      api(`/api/large-folders?scanId=${state.scanId}&limit=10`, undefined, { poll: true }),
-    ]);
-    state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders;
-    seedNodes(lf.files); // right-click/cart on a big file must resolve even if pruned away
-    const largest = state.largest[0] || null;
-    $('statLargest').textContent = largest ? `${largest.name} · ${formatBytes(largest.size)}` : '–';
-  } catch (e) { toast('Could not load stats: ' + e.message, 'error'); }
-
-  refreshBigFiles();
-  renderBigFolders();
-  state.donut.animated = false;
-  renderDonut();
+  await loadDashboardLists();
   // Tell every view a new scan landed, then re-enter the current one. Views
   // repoint themselves at the new root in onScanChange, so switchView's mount
   // is the single load path — previously this called loadTreemap()/renderGrid()
@@ -473,6 +535,60 @@ async function finishScan(root, durationMs, stats) {
   // scan completes — pick it up once it lands.
   setTimeout(() => { if (state.view === 'treemap') refreshTimebar(); }, 1500);
   if (state.live.wanted) enableLive(); // Live survives rescans
+}
+
+/**
+ * The three dashboard lists — largest files, type breakdown, largest folders.
+ *
+ * Split out of finishScan so a failed fetch has a retry that re-runs only
+ * this, not the whole scan. When one of the three fails, the cards say so
+ * with a Try again: the old fall-through painted "No files found." and "No
+ * folders above 1 MB found." under a headline that had just said 812,441
+ * files — a 5xx, an unreadable body or an exhausted 429 backoff became a
+ * confident statement that the folder is empty, and the toast that
+ * contradicted it faded in seconds.
+ *
+ * All three poll. finishScan normally runs against a scan that just
+ * finished, but not always: a rescan can be in flight against this one, and
+ * all three endpoints answer a running scan with 202. Without poll the 202
+ * body has no `files` / `types` / `folders` field, so the row either read
+ * undefined or — once api() started throwing on an unrequested 202 — told
+ * the user "could not load stats" about a scan that was merely still running.
+ *
+ * Returns true when the lists were painted from data.
+ */
+async function loadDashboardLists() {
+  const scanId = state.scanId;
+  if (!scanId) return false;
+  try {
+    const [lf, ft, lfo] = await Promise.all([
+      api(`/api/large-files?scanId=${scanId}&limit=10&minSize=1`, undefined, { poll: true }),
+      api(`/api/file-types?scanId=${scanId}`, undefined, { poll: true }),
+      api(`/api/large-folders?scanId=${scanId}&limit=10`, undefined, { poll: true }),
+    ]);
+    if (scanId !== state.scanId) return false; // a newer scan owns the cards now
+    state.largest = lf.files; state.types = ft.types; state.bigFolders = lfo.folders;
+    seedNodes(lf.files); // right-click/cart on a big file must resolve even if pruned away
+    const largest = state.largest[0] || null;
+    $('statLargest').textContent = largest ? `${largest.name} · ${formatBytes(largest.size)}` : '–';
+  } catch (e) {
+    if (scanId !== state.scanId) return false;
+    const retry = (host) => {
+      host.innerHTML = '<div class="muted">Couldn’t load this list — ' + escapeHtml(e.message) +
+        ' <button class="pill" type="button" data-retry-lists>Try again</button></div>';
+      host.querySelector('[data-retry-lists]').addEventListener('click', () => { void loadDashboardLists(); });
+    };
+    retry($('bigFiles'));
+    retry($('bigFolders'));
+    retry($('donutLegend'));
+    fxDonutLoadingSync(false);
+    return false;
+  }
+  refreshBigFiles();
+  renderBigFolders();
+  state.donut.animated = false;
+  renderDonut();
+  return true;
 }
 
 /* Features 11 + 10 — hard-link / cloud-placeholder dashboard notes. */
@@ -597,10 +713,21 @@ async function renderGrowthProjection() {
     if (d >= 365) return; // a year+ out isn't worth a warning banner
     const culprits = (f.topGrowers || []).slice(0, 3)
       .map(g => `${g.name} +${formatBytes(g.bytesPerDay)}/day`).join(' · ');
+    // The slope was fitted to THIS scan's history. When the scan is a folder
+    // — the tour's home folder, a Projects tree — that is the folder's growth
+    // measured against the whole volume's free space, and growth anywhere
+    // else on the volume is invisible to it. The sentence says which. A
+    // server that does not say (`basis`) is read as a folder scan, the
+    // honest default: most scans are.
+    const wholeVolume = f.basis === 'volume';
+    const days = `<b>~${formatCount(d)} day${d === 1 ? '' : 's'}</b>`;
+    const name = escapeHtml(state.root.name || state.root.path);
     el.className = 'growth-proj ' + (d < 30 ? 'danger' : 'warn');
-    el.innerHTML = icon('trendUp', 15) +
-      `<span>At current growth (+${formatBytes(f.bytesPerDay)}/day), this disk is full in <b>~${formatCount(d)} day${d === 1 ? '' : 's'}</b>` +
-      (culprits ? ` — top culprits: ${escapeHtml(culprits)}` : '') + `</span>`;
+    el.innerHTML = icon('trendUp', 15) + '<span>' + (wholeVolume
+      ? `At current growth (+${formatBytes(f.bytesPerDay)}/day), this disk is full in ${days}`
+      : `At ${name}’s growth (+${formatBytes(f.bytesPerDay)}/day), the disk it lives on is full in ${days}`) +
+      (culprits ? ` — top culprits: ${escapeHtml(culprits)}` : '') +
+      (wholeVolume ? '' : ' <span class="muted">Growth elsewhere on the disk is not counted.</span>') + '</span>';
     el.hidden = false;
     return;
   }
@@ -618,6 +745,202 @@ async function renderGrowthProjection() {
     el.hidden = false;
   }
 }
+
+/* ── Refused folders ── */
+/* A folder the operating system would not open is not an empty folder.
+   On a Mac without Full Disk Access, scanning Desktop, Documents or
+   Downloads returns nothing at all, and every surface downstream said so
+   cheerfully: "Scanned 0 files — 0 B", a green "Scan complete" toast, and a
+   first-run card congratulating the user on a folder with nothing to clean.
+   That is the app being confidently wrong about the user's own disk.
+
+   Two sources of truth, in order. The server counts what it was refused
+   while walking (`stats.refused`), which costs nothing and covers every
+   case. An older server sends no such field, and there the page asks one
+   question of its own: the folder picker's listing endpoint answers 403 for
+   a path the OS is protecting, which is a definitive answer in a single
+   call. Only a result that looks like a refusal is worth asking about — a
+   0-byte root, or one of the three protected folders the scan came back
+   empty-handed from. */
+
+/** The three folders macOS protects by default; the ones a home scan loses. */
+const PROTECTED_HOME_DIRS = ['Desktop', 'Documents', 'Downloads'];
+
+/* Last path segment, either separator — for naming folders in a sentence.
+   NOT `baseNameOf`: `function baseName` is a slice anchor in
+   tests/frontendContract.test.ts, and a second match earlier in the page
+   collapsed three of its regions to the empty string. */
+function lastPathSegment(p) {
+  const parts = String(p).split(/[\\/]/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : String(p);
+}
+
+/** Paint (or hide) the "could not be read" row from whatever we know. */
+function renderRefusedFolders() {
+  const row = $('accessRow');
+  const stats = state.scanStats || {};
+  // The server's count wins when it sent one; otherwise whatever the probe found.
+  const fromServer = stats.refused && stats.refused.dirs > 0 ? stats.refused : null;
+  const found = fromServer || state.scanRefused;
+  if (!found || !found.dirs) {
+    row.hidden = true;
+    if (!state.scanRefused || fromServer) state.scanRefused = null;
+    return;
+  }
+  if (fromServer) {
+    state.scanRefused = { dirs: fromServer.dirs, examples: [...(fromServer.examples || [])], root: false };
+  }
+  const mac = (state.system || {}).platform === 'darwin';
+  const names = (found.examples || []).map(lastPathSegment).filter(Boolean);
+  const n = found.dirs;
+  $('accessText').textContent =
+    `${formatCount(n)} folder${n === 1 ? '' : 's'} could not be read` +
+    (names.length ? ` — ${names.join(', ')}` : '');
+  $('accessHint').textContent = mac
+    ? 'macOS is protecting them. Give TreeMap Full Disk Access in System Settings › Privacy & Security, then scan again.'
+    : 'TreeMap does not have permission to open them. Check the folder’s permissions, then scan again.';
+  $('accessOpenBtn').hidden = !mac;
+  row.hidden = false;
+}
+
+/**
+ * Ask the OS directly, when the server did not say.
+ *
+ * One call per candidate, and only for candidates that look refused: the
+ * scanned folder itself when it came back empty, or a protected home folder
+ * the scan did not read. A 404 is "not on this machine", which is not a
+ * refusal and is not counted.
+ */
+async function probeRefusedFolders() {
+  const stats = state.scanStats || {};
+  if (stats.refused) return; // the server already answered
+  const root = state.root;
+  if (!root) return;
+  const scanId = state.scanId;
+  const home = (state.system || {}).homeDir || '';
+  const sep = String(root.path).includes('\\') ? '\\' : '/';
+  const readNothing = (node) => !node || (!node.size && !(node.children || []).length);
+
+  const candidates = [];
+  let rootRefused = false;
+  if (readNothing(root)) {
+    candidates.push(root.path);
+    rootRefused = true;
+  } else if (home && (root.path === home || root.path === home + sep)) {
+    for (const name of PROTECTED_HOME_DIRS) {
+      const p = home + sep + name;
+      const known = state.pathIndex && state.pathIndex.get(p);
+      if (known && known.size > 0) continue; // the scan read it — nothing to ask
+      candidates.push(p);
+    }
+  }
+  if (!candidates.length) return;
+
+  const refused = [];
+  for (const p of candidates) {
+    try {
+      await api('/api/fs/list?path=' + encodeURIComponent(p));
+    } catch (e) {
+      if (e && (e.status === 403 || e.code === 'PERMISSION_DENIED')) refused.push(p);
+      // 404 and everything else: not a refusal, and not worth a guess.
+    }
+  }
+  // A rescan may have landed while we were asking; its tree is not this one.
+  if (scanId !== state.scanId) return;
+  if (!refused.length) return;
+
+  state.scanRefused = { dirs: refused.length, examples: refused, root: rootRefused };
+  renderRefusedFolders();
+  if (rootRefused) {
+    const mac = (state.system || {}).platform === 'darwin';
+    const line = mac
+      ? 'macOS would not let TreeMap look inside this folder.'
+      : 'TreeMap is not allowed to read this folder.';
+    const fix = mac ? ' Give TreeMap Full Disk Access in System Settings › Privacy & Security, then scan again.' : '';
+    const el = $('scanStatus');
+    el.classList.add('error');
+    el.innerHTML = escapeHtml(line);
+    toast(line + fix, 'error', 15000);
+  }
+  emit(TOPIC.scan, state.scanId);
+}
+/* ── end refused folders ── */
+subscribe(TOPIC.scan, (scanId) => {
+  renderRefusedFolders();
+  if (scanId) void probeRefusedFolders();
+});
+$('accessOpenBtn').addEventListener('click', () => {
+  // Electron routes any non-local URL through shell.openExternal, which is
+  // how a settings deep link reaches System Settings. In a browser tab there
+  // is no such door, so the path is said in words instead.
+  if (window.treemapDesktop) window.open('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');
+  else toast('Open System Settings › Privacy & Security › Full Disk Access, switch TreeMap on, then scan again.', 'success', 9000);
+});
+
+/* ── Scan queue ── */
+/* Several folders can arrive at once — a stack dropped from Finder, or the
+   dock and the CLI handing paths over while a scan runs. One scan at a time
+   is the rule (the chrome, the stream and the watchdog are singular), so the
+   rest wait their turn in order and are told so; the old drop handler read
+   the first file and silently ignored the others. Draining waits a tick so
+   the finishing scan's own repaint completes before the next one begins. */
+const scanQueue = [];
+function queueScan(p) {
+  if (!p) return;
+  if (!state.scanning) { void startScan(p); return; }
+  if (scanQueue.includes(p)) return;
+  scanQueue.push(p);
+  const n = scanQueue.length;
+  toast(`Queued ${p} — it scans next${n > 1 ? ` (${n} waiting)` : ''}`, 'success', 5000);
+}
+function drainScanQueue() {
+  if (state.scanning || !scanQueue.length) return;
+  const next = scanQueue.shift();
+  $('pathInput').value = next;
+  void startScan(next);
+}
+function clearScanQueue() { scanQueue.length = 0; }
+subscribe(TOPIC.scan, (scanId) => { if (scanId) setTimeout(drainScanQueue, 0); });
+/* ── end scan queue ── */
+
+/* ── Results expire ──
+   Scan results are kept for a limited time after they settle; the server
+   says how long in `stats.expiresAt`. Every later action would fail with an
+   "unknown or expired scanId" — an error about an identifier the user never
+   saw, under a map that still looks perfectly alive. Two answers: a warning
+   two minutes before, and, once it has happened, a sentence that says what
+   it means with a Scan again beside it. Older servers send no expiresAt and
+   get the second answer only. */
+/* The timer handle and the "already offered" mark live on `state`, not in
+   module scope: they are per-scan facts, they are reset by the same thing
+   that resets the rest of the scan, and it keeps each function readable on
+   its own — which is also how the tests exercise them. */
+function armScanExpiry() {
+  clearTimeout(state.scanExpiryTimer);
+  state.scanExpiryTimer = 0;
+  const at = Number((state.scanStats || {}).expiresAt);
+  if (!state.scanId || !Number.isFinite(at) || at <= 0) return;
+  const warnIn = Math.max(0, at - Date.now() - 2 * 60_000);
+  const scanId = state.scanId;
+  state.scanExpiryTimer = setTimeout(() => {
+    if (scanId !== state.scanId || state.scanning) return;
+    const mins = Math.max(1, Math.round((at - Date.now()) / 60_000));
+    toastAction(`These results expire in about ${mins} minute${mins === 1 ? '' : 's'} — scan again to keep them fresh.`,
+      'Scan again', () => rescan(), 'success', 20000);
+  }, warnIn);
+}
+subscribe(TOPIC.scan, (scanId) => { if (scanId) armScanExpiry(); });
+
+function scanResultsExpired(err, url) {
+  if (!state.root || state.scanning || !state.scanId || !String(url).includes(state.scanId)) return;
+  err.message = 'These results have expired — scan the folder again to refresh them.';
+  // one toast per expired scan, however many calls fail under it
+  if (state.expiredOffered === state.scanId) return;
+  state.expiredOffered = state.scanId;
+  const p = state.root.path;
+  toastAction(err.message, 'Scan again', () => { void startScan(p); }, 'error', 15000);
+}
+/* ── end results expire ── */
 
 $('scanBtn').addEventListener('click', () => {
   if (state.scanning) { void stopScan(); return; } // the same button is Stop mid-scan

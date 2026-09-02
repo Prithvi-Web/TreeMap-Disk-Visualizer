@@ -61,6 +61,16 @@ function tourRender() {
       pi.focus();
       pi.select();
     });
+  } else if (tour.step === 'scanning') {
+    // The click registered — say so. The old card kept offering "Scan my
+    // home folder" for the whole scan, and a second press earned a red
+    // "already running" toast within the first ten seconds.
+    const name = state.root ? state.root.name : ($('pathInput').value.trim() || 'this folder');
+    host.innerHTML = `
+      <div class="tour-step">Welcome · step 1 of 4</div>
+      <h4>${icon('loader', 16)}Reading your files…</h4>
+      <p>TreeMap is measuring every file and folder in ${escapeHtml(name)}. The map appears the moment it finishes — a big folder can take a minute.</p>
+      <div class="tour-row">${skipBtn}</div>`;
   } else if (tour.step === 'map') {
     host.innerHTML = `
       <div class="tour-step">The map · step 2 of 4</div>
@@ -137,6 +147,19 @@ function tourAdvanceWin() {
 
 async function tourLoadWins() {
   if (!state.scanId) return;
+  // A fourth non-answer, and the loudest: the folder was never read. On a Mac
+  // without Full Disk Access a scan of Desktop or Documents returns nothing,
+  // and congratulating someone on a folder the OS would not open is the
+  // worst thing the first run can say. The refused probe has already looked
+  // by the time the tour asks.
+  if (state.scanRefused && state.scanRefused.dirs) {
+    tour.step = 'unknown';
+    tour.unknownReason = state.scanRefused.root
+      ? 'macOS would not let TreeMap look inside this folder, so nothing here has been checked.'
+      : `${state.scanRefused.dirs} folder${state.scanRefused.dirs === 1 ? '' : 's'} could not be read, so this is not the whole picture.`;
+    tourRender();
+    return;
+  }
   // Three distinct non-answers must not read as "clean" (review round 1):
   // a still-running scan (202 — poll it out), a broken rule catalog
   // (available:false with its reason), and a transport error. Each gets the
@@ -162,14 +185,46 @@ async function tourLoadWins() {
   // app-wide rule that they carry no cart button.
   tour.wins = groups.filter((g) => !g.advisory && g.totalSize > 0 && g.items.length > 0).slice(0, 3);
   tour.winIx = 0;
+  // A folder the OS refused to open came back empty, and "clean" would be
+  // the false all-clear this card exists to avoid (renderRefusedFolders).
+  if (!tour.wins.length && state.scanRefused && state.scanRefused.dirs > 0) {
+    const r = state.scanRefused;
+    const mac = state.system && state.system.platform === 'darwin';
+    tour.step = 'unknown';
+    tour.unknownReason = r.root
+      ? (mac ? 'macOS would not let TreeMap look inside this folder' : 'TreeMap was not allowed to read this folder') + ', so nothing here has been checked.'
+      : `${r.dirs} folder${r.dirs === 1 ? '' : 's'} could not be read, so part of this folder has not been checked.`;
+    tourRender();
+    return;
+  }
   tour.step = tour.wins.length ? 'win' : 'clean';
   tourRender();
+}
+
+/** A scan started while the welcome card is up: the card follows. Called from
+ *  beginScanChrome, so Browse, ⌘K, a drop and the card's own button all count. */
+function tourScanStarted() {
+  if (tour.active && tour.step === 'welcome') { tour.step = 'scanning'; tourRender(); }
+}
+/** The scan failed before it landed: the welcome card and its buttons come back. */
+function tourScanFailed() {
+  if (tour.active && tour.step === 'scanning') { tour.step = 'welcome'; tourRender(); }
 }
 
 // A scan landing while the welcome card is up means the user took the step —
 // move with them. Any later scans leave the tour where it is.
 subscribe(TOPIC.scan, () => {
-  if (tour.active && tour.step === 'welcome') { tour.step = 'map'; tourRender(); }
+  if (!tour.active) return;
+  if (!(tour.step === 'welcome' || tour.step === 'scanning')) return;
+  tour.step = 'map';
+  // After finishScan's own synchronous switchView(state.view): the first scan
+  // lands on the dashboard, and the card would narrate a map the user is not
+  // looking at (the restart path below fixed this for Settings › Show the
+  // tour again; the first run it was written for still had it).
+  queueMicrotask(() => {
+    if (tour.active && tour.step === 'map' && state.root && state.view !== 'treemap') switchView('treemap');
+    tourRender();
+  });
 });
 // The tour's Escape lives at the END of the app-wide Escape chain above —
 // not on a listener of its own, where the first review round showed it

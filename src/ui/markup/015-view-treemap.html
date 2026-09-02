@@ -94,6 +94,11 @@
       <button class="pill" id="tmDiffToggle" aria-pressed="false" title="Tint what grew green and what shrank red, compared with the previous snapshot">Diff</button>
     </div>
     <div class="glass" id="treemapWrap">
+      <!-- The note over a map with nothing to draw. A folder whose every file
+           is under the 4 KB floor, or that really is empty, used to paint a
+           blank canvas and say nothing at all — indistinguishable from a
+           renderer that had failed. role="status" so it is read out too. -->
+      <div id="tmEmpty" class="tm-empty-note" role="status" aria-live="polite" hidden></div>
       <!-- v4 §4.3 — the simulated "after". The banner is not decoration: a map
            that shows space you do not have yet has to say so, all the time it
            is on screen. -->

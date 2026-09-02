@@ -87,7 +87,11 @@
   background: linear-gradient(90deg, var(--accent), #5e9dff);
   box-shadow: 0 0 12px var(--accent-glow);
   animation: indeterminate 1.3s var(--ease) infinite; }
-@keyframes indeterminate { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+/* A transform, not margin-left: the margin dirtied layout and repainted the
+   track on every one of ~78 frames per cycle, on the main thread, for the
+   whole scan. The fill is 40% of the track, so 250% of its own width is the
+   same travel as -40% → 100% of the track. */
+@keyframes indeterminate { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
 
 .quick-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .stat-tile { padding: 14px 16px; display: flex; align-items: center; gap: 13px; }
@@ -132,3 +136,24 @@
 .bigfile:hover .actions, .bigfile:focus-within .actions { opacity: 1; }
 .size-badge { font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 7px; flex: none;
   background: var(--surface-2); white-space: nowrap; }
+
+/* ── Folders the OS refused ──
+   A quiet advisory row, not an error card: the scan did work, it just could
+   not see everything. Uses the shared warning recipe so it reads correctly
+   in both themes (the literal yellow it replaced measured 1.09:1 on white). */
+.access-row {
+  display: flex; align-items: flex-start; gap: 10px; margin-top: 12px;
+  padding: 11px 13px; border-radius: var(--r-md);
+  background: var(--warn-soft); border: 1px solid var(--warn-line);
+}
+.access-row .ic { color: var(--warn); flex: none; margin-top: 1px; }
+.access-body { flex: 1; min-width: 0; }
+.access-text { font-size: 13px; font-weight: 600; }
+.access-hint { font-size: 11.5px; margin-top: 3px; line-height: 1.5; }
+#accessOpenBtn { flex: none; align-self: center; }
+
+/* The note over a map with nothing to draw. */
+.tm-empty-note {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 13.5px; color: var(--text-2); text-align: center; padding: 24px; pointer-events: none;
+}
