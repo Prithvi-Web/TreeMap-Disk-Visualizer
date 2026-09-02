@@ -296,7 +296,6 @@ function switchView(name) {
   // moves no pointer, and the card it sat on is hidden DOM now.
   fxEmptyCtaSync(empty);
   fxScanHeroSync();
-  fxHoverSync(null);
   renderCapabilityNotice(view, blocked);
 
   if (empty || blocked) { mountedView = view; return; }

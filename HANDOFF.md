@@ -1,5 +1,91 @@
 # TreeMap — session handoff
 
+## Session 7 — "blazing fast in all areas" (2 September 2026)
+
+Owner, after trying v4.1.1: "hover still feels slow, do the sidebar and card
+beam too … when I scroll in settings up and down it gets slow and glitchy …
+near duplicated images … glitchy. I want this to be insanely fast." Suite
+**2,190 · 0 fail · 3 skips**; typecheck clean; `build-ui --check` matches;
+every change red-first and mutation-proven (six mutants, six caught). Shipped
+as **v4.1.2**.
+
+### The four design removals the owner authorised
+
+All four keep their frost and lose only the part that cost frames:
+
+- **`#sideNav` → `plain: 1`** (no displacement lens; `::before` keeps
+  `blur(26px)`). Its collapse/expand crossed ~21 size buckets, each a
+  displacement-map build on the main thread.
+- **`.modal` → `plain: 1`** (keeps `blur(30px)`). It was the strongest lens in
+  the file (scale 44) over up to 660×84vh.
+- **`.modal-backdrop` loses `backdrop-filter: blur(8px)`.** This was the
+  Settings glitch. The scrim is a full-screen fixed surface with the modal
+  inside it, and Chromium expands damage to the WHOLE of a backdrop-filtered
+  surface — so every scroll frame inside Settings re-blurred the entire
+  screen at 2× DPR, on top of re-running the modal's own lens. The tint
+  carries the focus alone; `--scrim` deepened 0.52→0.60 dark, 0.34→0.42
+  light to compensate.
+- **The card-hover `md` beam is gone** (`fxHoverSync`, its two document
+  listeners, its takeover doors in `fxStateBeam`, and `fxStateBeamLit`, which
+  only hover read). A custom-property animation recomputing style every frame
+  for the whole hover. The `.card.glass:hover` lift is the whole affordance
+  now; state beams (scan, hunt, compare) keep the envelope to themselves.
+  `tests/fxBeamStates.test.ts`'s six hover tests became two — and the harness
+  now records what the wiring registers on `document`, so "hover lights
+  nothing" bites on source, not only on the harness's return list.
+
+Verified on the rebuilt page: sidebar, all 13 modals and the tooltip report
+`__lg.key === 'plain'`; the scrim's computed backdrop-filter is `none`.
+
+### Settings: the content was never the problem
+
+Measured with Settings open: **179 nodes, zero** will-change / goo / roll /
+beam / filter / backdrop-filter / sticky elements inside the modal, and
+**0.66 ms** of layout per scroll step. The whole cost was the compositing
+stack above — the scrim blur and the lens — both now gone.
+
+### Near-duplicates: thumbnails were fine; the first look at a cluster was not
+
+Measured against a 240-image synthetic corpus (sharp-generated, so no real
+photo was touched): a thumbnail is a **256×192 WebP of ~1.1 KB**; the strip
+is already windowed (12 clusters × 24 images, delegated handlers,
+`content-visibility: auto` on rows); the main scroller costs **0.12 ms** of
+layout per step. What a scroll into a fresh cluster actually triggered was
+**24 cold renders at ~46 ms median** (sharp decode, four at a time) — the
+images popped in over a few hundred ms. Now `GET /api/near-duplicates`, the
+first time it returns a completed job, renders every clustered file's
+thumbnail in the background (`warmThumbnails` in `services/thumbnailCache`,
+`THUMB_DIM`/`THUMB_MAX_INPUT` moved there so route and warm can never
+disagree; each file is stat'ed so the cache key is the route's key; tracked
+with `trackWrite` so tests `settled()` it). Measured after: **5 ms median,
+9 ms wall for 24**. `tests/nearDupeThumbWarm.test.ts` (fixtures must clear
+the job's 4 KB `MIN_IMAGE_BYTES` floor — noise, not a pattern).
+
+Honest limit, again: scroll *feel* is compositor work and the pane cannot
+show it (`document.hidden`; lazy images never even start there). Layout,
+DOM and server costs above are measured; the paint side is code-verified.
+
+### Traps this round
+
+- **Never edit sources while `npm test` is running.** A background gate sat
+  at 0% CPU for ten minutes on `compressionProgressStream.test.ts` after the
+  server files under it were rewritten mid-run; alone, that test passes in
+  1.0 s. Kill the runner (`pgrep -f run-tests.js`), rerun clean.
+- **macOS has no `timeout`.** `timeout 150 npx …` is "command not found",
+  and a `| grep` after it turns that into silence. Enforce wall clocks from
+  Python (`subprocess.run(..., timeout=)`), or `node --test-timeout`.
+- A backgrounded `cmd | grep | tail` reports exit 0 even when `cmd` failed.
+- `api()` in the page throws on a 202 ("Still working on that") — poll with
+  a try/catch, not a status check.
+
+### Still open (the audit's remaining items, if any, are recorded below when it lands)
+
+- The `viewIn` entrance animation (`transform: translateY(8px)` + opacity,
+  350 ms) makes the whole view a moving layer while it plays; a scroll
+  started inside that window is not composited. Cosmetic; untested.
+- Modal frost is still `blur(30px)`; a 20px radius would look the same and
+  cost ~half. Not changed — no measurement to justify it from here.
+
 ## Session 6 — the scrubber glitch and the hover cost (1 September 2026, later the same day)
 
 Owner's report, verbatim: "the slider is very glitchy and the ui breaks", and
@@ -124,6 +210,8 @@ in the second commit with tests that were red first and mutation-proven
   fact landing later still rebuilds it once.
 
 ### Left for the owner — two design decisions with the audit's evidence
+
+**Both taken by the owner on 2 September — see Session 7.**
 
 Both are real costs and both are visible signatures; neither was changed.
 

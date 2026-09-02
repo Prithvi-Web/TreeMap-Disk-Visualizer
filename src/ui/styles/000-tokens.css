@@ -24,7 +24,7 @@
   --text-3:        rgba(255,255,255,0.42);
 
   --tm-canvas-bg:  rgba(0,0,0,0.30);
-  --scrim:         rgba(2,4,10,0.52);
+  --scrim:         rgba(2,4,10,0.60);
   --skeleton-a:    rgba(255,255,255,0.05);
   --skeleton-b:    rgba(255,255,255,0.10);
 
@@ -99,7 +99,7 @@
      fills (the cart remove button, #cleanProgress) improve with it. */
   --danger:        #C7261C;
   --tm-canvas-bg:  rgba(10,15,30,0.05);
-  --scrim:         rgba(24,28,44,0.34);
+  --scrim:         rgba(24,28,44,0.42);
   --skeleton-a:    rgba(10,15,30,0.05);
   --skeleton-b:    rgba(10,15,30,0.10);
 

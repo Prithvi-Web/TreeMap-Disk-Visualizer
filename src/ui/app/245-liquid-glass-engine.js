@@ -97,8 +97,14 @@
 
     /* Which elements get the lens, and how strong. */
     const TARGETS = [
-      ['#sideNav',      { scale: 22, ab: 1.5 }],
-      ['.modal',        { scale: 44, ab: 2 }],
+      /* Owner's call, 2 Sep 2026 ("make it blazing fast in all areas"):
+         the two largest lens surfaces keep their frost and drop the lens.
+         The sidebar is 232px × window height and its collapse/expand crossed
+         ~21 size buckets, each a displacement-map build on the main thread;
+         a modal is the strongest lens here over up to 660×84vh and is
+         re-composited on every scroll frame inside it. */
+      ['#sideNav',      { scale: 22, ab: 1.5, plain: 1 }],
+      ['.modal',        { scale: 44, ab: 2, plain: 1 }],
       ['#cartTab',      { scale: 34, ab: 2, track: 1 }],
       ['#cartPanel',    { scale: 40, ab: 2 }],
       ['#selectionBar', { scale: 34, ab: 2 }],

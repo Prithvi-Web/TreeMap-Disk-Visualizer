@@ -10,7 +10,7 @@ import {
   insideAnyScanRoot,
 } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
-import { getOrRenderThumbnail } from '../services/thumbnailCache';
+import { getOrRenderThumbnail, THUMB_DIM, THUMB_MAX_INPUT } from '../services/thumbnailCache';
 import { idempotency } from '../middleware/idempotency';
 import { getPolicy, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
@@ -155,9 +155,9 @@ const PREVIEW_TEXT_BYTES = 8192;
 const PREVIEW_NAME_TEXT = new Set(['dockerfile', 'makefile', 'license', 'readme', '.gitignore', '.env']);
 /** Raster formats sharp can turn into a WebP thumbnail (?thumb) for the near-dupe strip. */
 const THUMB_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif', 'heic', 'heif', 'avif']);
-const THUMB_MAX_INPUT = 60 * 1024 * 1024; // sharp decodes into memory — cap the source size
-/** Longest edge of a generated thumbnail; part of the cache key. */
-const THUMB_DIM = 256;
+// THUMB_DIM and THUMB_MAX_INPUT live with the cache (services/thumbnailCache):
+// the near-duplicate warm-up renders with the same numbers, so the entries
+// it makes are the entries this route finds.
 
 /** Heuristic: NUL byte or >10% control chars ⇒ treat as binary, not text. */
 function looksBinary(buf: Buffer): boolean {

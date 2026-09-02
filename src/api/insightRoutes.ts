@@ -8,6 +8,8 @@ import {
 } from '../services/diskScanner';
 import { getDuplicateJob } from '../services/duplicateFinder';
 import { getNearDupeJob } from '../services/perceptualDupes';
+import { warmThumbnails } from '../services/thumbnailCache';
+import { trackWrite } from '../utils/backgroundWrites';
 import { buildDuplicateDetail } from '../services/dupeViewer';
 import {
   listSnapshots,
@@ -96,6 +98,9 @@ insightRouter.get('/duplicates', (req: Request, res: Response) => {
   });
 });
 
+/** Jobs whose strip thumbnails have been sent to render — one warm per job, however often the strip re-asks. */
+const warmedJobs = new WeakSet<object>();
+
 /**
  * GET /api/near-duplicates?scanId=&threshold=10
  * Perceptual (dHash) near-duplicate image detection (Feature 12). Poll like
@@ -113,6 +118,16 @@ insightRouter.get('/near-duplicates', (req: Request, res: Response) => {
   }
   if (job.status === 'error') {
     throw new AppError(500, 'NEAR_DUPLICATES_FAILED', job.error ?? 'Near-duplicate detection failed');
+  }
+  // The strip lazy-loads a cluster's thumbnails as it scrolls into view, and a
+  // thumbnail the server has never rendered is ~46 ms of sharp decode against
+  // ~6 ms cached (measured). The job has just named every file the strip will
+  // show, so render them now, in the background, once per job — and answer
+  // without waiting: the warm is tracked so a test can settle it, not poll it.
+  if (job.clusters && job.clusters.length && !warmedJobs.has(job)) {
+    warmedJobs.add(job);
+    const paths = job.clusters.flatMap((c) => c.files.map((f) => f.path));
+    trackWrite('warmThumbnails', warmThumbnails(paths).catch(() => 0));
   }
   res.json({
     status: 'complete',

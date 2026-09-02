@@ -196,20 +196,36 @@ function boot(selectors: string[]): Record<string, Fake> {
   return fakes;
 }
 
-test('the tooltip is frosted glass, not a lens: no reference filter, no size observer', () => {
-  const t = boot(['#tooltip', '#sideNav']);
-  const tip = t['#tooltip'], nav = t['#sideNav'];
+test('the tooltip, the sidebar and modals are frosted glass, not lenses: no reference filter, no size observer', () => {
+  // The tooltip moves every frame. The sidebar is a 232px × window-height
+  // surface whose collapse/expand crossed ~21 size buckets, each a
+  // displacement-map build on the main thread. A modal is the strongest lens
+  // in the file (scale 44) over up to 660×84vh, re-composited on every
+  // scroll frame inside it. All three keep the class — .lg::before IS their
+  // fill and their frost, they have no other background — and nothing else.
+  const t = boot(['#tooltip', '#sideNav', '.modal', '#cartPanel']);
   // The control: an ordinary target still gets the full treatment, so a
-  // failure below is the tooltip's exemption and not a broken harness.
-  assert.ok(nav.classes.includes('lg'), 'the sidebar is a lens host');
-  assert.ok(nav.observed, 'and its size is observed');
-  assert.match(nav.props['--lg-backdrop'] || '', /^url\(#lg-f-\d+\) blur\(/, 'and it carries the displacement filter');
-  // The tooltip keeps the class — .lg::before IS its fill and its frost, it
-  // has no other background — and nothing else.
-  assert.ok(tip.classes.includes('lg'), 'the tooltip keeps its frosted ::before');
-  assert.equal(tip.observed, false, 'a card that resizes on every node must not be a ResizeObserver client');
-  assert.equal(tip.props['--lg-backdrop'], undefined,
-    'and never receives a url(#…) reference filter to rasterise against a backdrop that moves every frame');
+  // failure below is an exemption and not a broken harness.
+  const ctl = t['#cartPanel'];
+  assert.ok(ctl.classes.includes('lg') && ctl.observed, 'the cart panel is a lens host whose size is observed');
+  assert.match(ctl.props['--lg-backdrop'] || '', /^url\(#lg-f-\d+\) blur\(/, 'and it carries the displacement filter');
+  for (const sel of ['#tooltip', '#sideNav', '.modal']) {
+    const el = t[sel];
+    assert.ok(el.classes.includes('lg'), `${sel} keeps its frosted ::before`);
+    assert.equal(el.observed, false, `${sel} must not be a ResizeObserver client`);
+    assert.equal(el.props['--lg-backdrop'], undefined, `${sel} never receives a url(#…) reference filter`);
+  }
+});
+
+test('the modal scrim no longer blurs the whole screen behind a scrolling modal', () => {
+  // .modal-backdrop is position:fixed; inset:0 with the modal inside it. A
+  // backdrop-filter on that surface is re-run over the FULL screen (2× DPR)
+  // on every frame anything inside it changes — Chromium expands damage to
+  // the whole backdrop-filtered surface — which is every scroll frame in
+  // Settings. The tint alone carries the focus.
+  const scrim = decls('.modal-backdrop { position: fixed');
+  assert.doesNotMatch(scrim, /backdrop-filter/, 'no full-screen backdrop blur under modals');
+  assert.match(scrim, /background:\s*var\(--scrim\)/, 'the tinted scrim remains');
 });
 
 /* ═══════════════════════ the return-to-Live race ═══════════════════════ */

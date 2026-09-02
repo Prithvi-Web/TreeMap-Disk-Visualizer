@@ -127,33 +127,20 @@ for (const [inputId, stripId] of [['gsearch', 'gsearchBeamStrip'], ['tmSearch', 
 $('nlInput').addEventListener('focus', () => fxOrbShow('nlListen', $('nlListenWell'), 'listening'));
 $('nlInput').addEventListener('blur', () => fxOrbHide('nlListen'));
 
-/* ── State-owned beams vs hover ambience ──────────────────────────────────
-   Two systems now light glass cards: quiet hover ambience (below) and the
-   full-brightness beams real states own. FxBeam keys instances by element,
-   so both talking to the same card directly would fight — hover-leave would
-   switch off a running scan's ring. The contract: a state beam goes through
-   fxStateBeam, which stamps data-fxbeam-state while active; hover skips a
-   stamped card on enter, and a state igniting mid-hover takes the host over
-   (the hover bookkeeping forgets it, so the later hover-leave is a no-op).
-
-   The envelope PERF-7 was accepted against is ONE md beam's blurred layers
-   rastering while a scan runs, so a state beam holds it exclusively: the
-   set below is every host currently lit by a state, and while it is
-   non-empty hover ambience stands down everywhere — a scan lights the scan
-   card, and a ring on whichever sibling card the pointer happens to rest on
-   would be a second one. */
-const fxStateBeamLit = new Set();
-
+/* ── State-owned beams ────────────────────────────────────────────────────
+   A real state (a running scan, a duplicate hunt, a compare) lights its
+   card at full brightness through fxStateBeam, which stamps
+   data-fxbeam-state while active so the CSS lens rules and any later
+   reader can tell an owned host from an idle one. Hover ambience used to
+   share these cards and needed a takeover door here; it is gone, so the
+   stamp is the whole contract. FxBeam keys instances by element: a state
+   beam holds its card exclusively for as long as it is lit. */
 function fxStateBeam(el, opts) {
   if (!el) return;
   if (opts.active) {
-    fxHoverForget(el);
     el.setAttribute('data-fxbeam-state', '');
-    fxStateBeamLit.add(el);
-    fxHoverStandDown();
   } else {
     el.removeAttribute('data-fxbeam-state');
-    fxStateBeamLit.delete(el);
   }
   FxBeam.attach(el, opts);
 }
@@ -163,82 +150,18 @@ function fxStateBeam(el, opts) {
     registry entry), so the off-path detaches instead of fading. */
 function fxStateBeamDrop(el) {
   if (!el) return;
-  fxHoverForget(el);
   el.removeAttribute('data-fxbeam-state');
-  fxStateBeamLit.delete(el);
   FxBeam.detach(el);
 }
 
-/* ── Hover ambience on glass cards ────────────────────────────────────────
-   A QUIET md ring while the pointer rests on a card — the discipline is
-   ambience on hover, full brightness only on real states. Lazy (the first
-   hover creates the instance), pointer-fine only (touch gets nothing, and
-   hover states there are sticky lies), one card lit at a time, and nothing
-   at idle: no listener work beyond a closest() per pointerover, no rAF, no
-   live animations once the fade settles. REDUCED degrades to FxBeam's
-   static glow. After the leave-fade the instance is DETACHED, because
-   cards can be innerHTML-transient (dup/compare progress) and a kept
-   instance on a destroyed card is a stranded stylesheet. */
-let fxHoverEl = null;
-const fxHoverFade = new Map(); // el -> timer for the post-fade detach
-
-/** Forget any hover claim on `el` — the state-beam takeover door. */
-function fxHoverForget(el) {
-  const t = fxHoverFade.get(el);
-  if (t) { clearTimeout(t); fxHoverFade.delete(el); }
-  if (fxHoverEl === el) fxHoverEl = null;
-}
-
-/** Drop a lit ambience ring AT ONCE — no leave-fade. A state that just
-    ignited elsewhere owns the envelope now, and a 0.5s fade-out is 0.5s of
-    a second ring animating at full cost. */
-function fxHoverStandDown() {
-  const el = fxHoverEl;
-  if (!el) return;
-  fxHoverEl = null;
-  fxHoverForget(el);
-  if (!el.hasAttribute('data-fxbeam-state')) FxBeam.detach(el);
-}
-
-function fxHoverSync(card) {
-  // a real state owns this card — or owns the envelope from another one
-  if (card && (fxStateBeamLit.size > 0 || card.hasAttribute('data-fxbeam-state'))) card = null;
-  if (card === fxHoverEl) return;
-  const prev = fxHoverEl;
-  if (prev) {
-    FxBeam.attach(prev, { type: 'md', active: false });
-    fxHoverFade.set(prev, setTimeout(() => {
-      fxHoverFade.delete(prev);
-      // A state that ignited during the fade owns the instance now.
-      if (!prev.hasAttribute('data-fxbeam-state')) FxBeam.detach(prev);
-    }, 900)); // the 0.5s fade + the engine's own 800ms settle margin
-  }
-  fxHoverEl = card;
-  if (card) {
-    fxHoverForget(card); // cancel a pending detach on re-entry…
-    fxHoverEl = card;    // …which cleared the claim this re-stakes
-    /* Ambience weight, and cheap at rest: no bloom child and no hue drift,
-       so a pointer parked on a card while someone reads costs a composited
-       ring instead of a blurred layer repainting at ~60fps — and the one
-       bloomed md beam stays reserved for whatever state owns it. */
-    FxBeam.attach(card, { type: 'md', active: true, strength: 0.5, brightness: 0.9, staticColors: true, bloom: false });
-  }
-}
-
-/* matchMedia is queried per event (input devices come and go); the typeof
-   guard is for the Node extraction harness, which has no CSSOM. */
-const fxHoverMQ = typeof matchMedia === 'function' ? matchMedia('(pointer: fine)') : null;
-document.addEventListener('pointerover', (e) => {
-  if (!fxHoverMQ || !fxHoverMQ.matches) return;
-  const t = e.target;
-  fxHoverSync(t && t.closest ? t.closest('.card.glass') : null);
-});
-/* relatedTarget null means the pointer left the window — the one exit no
-   later pointerover covers. (switchView and closeModal are the other two
-   pointer-less exits; both call fxHoverSync(null) themselves.) */
-document.addEventListener('pointerout', (e) => {
-  if (!e.relatedTarget) fxHoverSync(null);
-});
+/* ── Hover ambience on glass cards: REMOVED (owner's call, 2 Sep 2026) ───
+   A quiet md ring used to light the card under the pointer: a CSS animation
+   on a registered custom property driving two masked conic gradients with
+   filters, recomputing style every frame for the whole hover plus a 0.5s
+   fade — one card at a time, but that card was always the one being read.
+   The owner asked for "blazing fast in all areas", so hover now costs
+   nothing: the .card.glass:hover lift in CSS is the whole affordance, and
+   state beams (a running scan, a hunt) keep the envelope to themselves. */
 
 /* ── Persistent mode pills — the sm ring on settings that are ON ─────────
    A mode pill that stays on is a live state, not a moment: Live while

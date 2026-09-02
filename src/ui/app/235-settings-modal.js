@@ -444,7 +444,6 @@ function closeModal(id) {
   }
   // FX: a keyboard close moves no pointer — the hover ring must not outlive
   // the card it sat on.
-  fxHoverSync(null);
 }
 document.querySelectorAll('[data-close]').forEach(b =>
   b.addEventListener('click', () => closeModal(b.dataset.close)));

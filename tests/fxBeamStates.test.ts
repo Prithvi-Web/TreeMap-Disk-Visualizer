@@ -95,7 +95,6 @@ type Harness = {
   fx: {
     fxStateBeam: (el: FakeEl | null, opts: Record<string, unknown>) => void;
     fxStateBeamDrop: (el: FakeEl | null) => void;
-    fxHoverSync: (card: FakeEl | null) => void;
     fxTmPillBeamsSync: (visible?: boolean) => void;
     fxHuntBeamSync: (hostId: string, on: boolean) => void;
     fxGoalPulseSync: (met: boolean | null) => void;
@@ -110,6 +109,7 @@ type Harness = {
     treemap: { lapse: { loop: boolean }; history: { diff: boolean }; hideCloud: boolean };
   };
   fireTimers(): void;
+  docListeners: string[];
 };
 
 function makeHarness(): Harness {
@@ -128,13 +128,14 @@ function makeHarness(): Harness {
     attach(el: FakeEl, opts: Record<string, unknown>) { beamCalls.push({ kind: 'attach', el, opts }); return el; },
     detach(el: FakeEl) { beamCalls.push({ kind: 'detach', el }); },
   };
-  const documentStub = { createElement: () => fakeEl(), addEventListener: () => {} };
+  const docListeners: string[] = [];
+  const documentStub = { createElement: () => fakeEl(), addEventListener: (name: string) => { docListeners.push(name); } };
   const src = wiringSection();
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const fx = new Function(
     'FxOrbs', 'FxBeam', '$', 'document', 'state', 'setTimeout', 'clearTimeout',
     `'use strict'; ${src}
-     return { fxStateBeam, fxStateBeamDrop, fxHoverSync, fxTmPillBeamsSync, fxHuntBeamSync, fxGoalPulseSync, fxScanDonePulse };`,
+     return { fxStateBeam, fxStateBeamDrop, fxTmPillBeamsSync, fxHuntBeamSync, fxGoalPulseSync, fxScanDonePulse };`,
   )(
     FxOrbs, FxBeam, $, documentStub, state,
     (fn: () => void, ms: number) => { const t: Timer = { id: ++timerSeq, fn, ms, cleared: false, fired: false }; timers.push(t); return t.id; },
@@ -145,124 +146,33 @@ function makeHarness(): Harness {
       if (!t.cleared && !t.fired) { t.fired = true; t.fn(); }
     }
   };
-  return { fx, els, beamCalls, timers, state, fireTimers };
+  return { fx, els, beamCalls, timers, state, fireTimers, docListeners };
 }
 
 const attaches = (h: Harness, el: FakeEl) => h.beamCalls.filter((c) => c.kind === 'attach' && c.el === el);
 const detaches = (h: Harness, el: FakeEl) => h.beamCalls.filter((c) => c.kind === 'detach' && c.el === el);
 
-/* ══════════════ Hover ambience, as behaviour ══════════════ */
+/* ══════════════ Hover ambience: gone, as behaviour ══════════════ */
 
-test('hover: a quiet md ring, one card at a time, detached after the leave-fade', () => {
+test('hover lights nothing: state beams own their cards without a hover door', () => {
+  // The md ring on the hovered card was the cost the owner asked to remove
+  // ("blazing fast in all areas"): a custom-property animation recomputing
+  // style every frame for the whole hover. What must survive its removal is
+  // the state ring itself — a running scan still lights its card, still
+  // stamps ownership, and still has a clean off path with no timers.
   const h = makeHarness();
-  const a = fakeEl('card glass');
-  const b = fakeEl('card glass');
-  h.fx.fxHoverSync(a);
-  assert.equal(attaches(h, a).length, 1, 'enter lights the card');
-  assert.deepEqual(attaches(h, a)[0].opts,
-    { type: 'md', active: true, strength: 0.5, brightness: 0.9, staticColors: true, bloom: false },
-    'quiet: half strength, dimmed, and neither of the two per-frame layers — full brightness and the bloom stay reserved for real states');
-  h.fx.fxHoverSync(a);
-  assert.equal(h.beamCalls.length, 1, 'staying on the card re-attaches nothing');
-  h.fx.fxHoverSync(b);
-  assert.deepEqual(attaches(h, a)[1].opts, { type: 'md', active: false }, 'moving on fades the old card');
-  assert.equal(attaches(h, b).length, 1, 'and lights the new one — never two at once');
-  h.fx.fxHoverSync(null);
-  assert.deepEqual(attaches(h, b)[1].opts, { type: 'md', active: false }, 'leaving all cards fades the last');
-  h.fireTimers();
-  assert.equal(detaches(h, a).length, 1, 'the fade timer detaches — a transient card never strands a stylesheet');
-  assert.equal(detaches(h, b).length, 1);
-});
-
-test('hover: re-entering during the fade cancels the detach and re-lights the same instance', () => {
-  const h = makeHarness();
-  const a = fakeEl('card glass');
-  h.fx.fxHoverSync(a);
-  h.fx.fxHoverSync(null);
-  assert.equal(h.timers.filter((t) => !t.cleared).length, 1, 'the leave armed a detach');
-  h.fx.fxHoverSync(a);
-  assert.equal(h.timers.filter((t) => !t.cleared).length, 0, 're-entry disarmed it');
-  h.fireTimers();
-  assert.equal(detaches(h, a).length, 0, 'no detach ever fires on the re-entered card');
-  assert.equal(attaches(h, a).length, 3, 'on, off, on again — through the one instance');
-});
-
-test('hover defers to state: a stamped card is skipped, and a state igniting mid-hover takes the host over', () => {
-  const h = makeHarness();
+  assert.equal((h.fx as Record<string, unknown>).fxHoverSync, undefined, 'there is no hover sync to call');
+  assert.deepEqual(h.docListeners.filter((n) => n.startsWith('pointer')), [],
+    'evaluating the wiring registers no pointer listener on document — hover is not observed at all');
   const card = fakeEl('card glass');
-  // A state already owns it: hover must not touch it at all.
   h.fx.fxStateBeam(card, { type: 'md', active: true });
-  const before = h.beamCalls.length;
-  h.fx.fxHoverSync(card);
-  assert.equal(h.beamCalls.length, before, 'a data-fxbeam-state card gets no hover attach');
-  // Release, hover it, then let the state ignite mid-hover.
+  assert.ok(card.hasAttribute('data-fxbeam-state'), 'a state stamps ownership');
+  assert.deepEqual(attaches(h, card)[0].opts, { type: 'md', active: true }, 'and lights the ring');
   h.fx.fxStateBeam(card, { type: 'md', active: false });
-  h.fx.fxHoverSync(card);
-  h.fx.fxStateBeam(card, { type: 'md', active: true });
-  const during = h.beamCalls.length;
-  h.fx.fxHoverSync(null);
-  assert.equal(h.beamCalls.length, during, 'the takeover made the later hover-leave a no-op — the state ring survives');
-  h.fireTimers();
-  assert.equal(detaches(h, card).length, 0, 'and no stale hover timer detaches the state’s instance');
-});
-
-test('the one-beam envelope: ambience never blooms, and stands down the moment ANY state beam lights', () => {
-  const h = makeHarness();
-  const parked = fakeEl('card glass');
-  const scanCard = fakeEl('card glass');
-  const other = fakeEl('card glass');
-  h.fx.fxHoverSync(parked);
-  const amb = attaches(h, parked)[0].opts!;
-  assert.equal(amb.bloom, false, 'the ambience ring carries no blurred conic layer');
-  assert.equal(amb.staticColors, true, 'and no per-frame hue drift — nothing rasters while it rests');
-  // A scan lights the scan card. The ring parked under the pointer is a
-  // DIFFERENT card, so nothing in the per-card arbitration would touch it.
-  h.fx.fxStateBeam(scanCard, { type: 'md', active: true });
-  assert.equal(detaches(h, parked).length, 1,
-    'the parked ring goes out at once — not a 500ms fade rastering beside the state beam');
-  const during = h.beamCalls.length;
-  h.fx.fxHoverSync(other);
-  h.fx.fxHoverSync(parked);
-  h.fx.fxHoverSync(other);
-  assert.equal(h.beamCalls.length, during,
-    'and a pointer sweeping the dashboard mid-scan lights nothing at all');
-  h.fireTimers();
-  assert.equal(detaches(h, scanCard).length, 0, 'no stray hover timer touches the state ring');
-  // The state ends: ambience is available again.
-  h.fx.fxStateBeam(scanCard, { type: 'md', active: false });
-  h.fx.fxHoverSync(other);
-  assert.equal(attaches(h, other).length, 1, 'with nothing lit, the pointer gets its quiet ring back');
-});
-
-test('hover: a state igniting during the leave-fade disarms the pending detach', () => {
-  const h = makeHarness();
-  const card = fakeEl('card glass');
-  h.fx.fxHoverSync(card);
-  h.fx.fxHoverSync(null); // fade begins, detach armed
-  h.fx.fxStateBeam(card, { type: 'md', active: true }); // the scan starts inside the 900ms window
-  h.fireTimers();
-  assert.equal(detaches(h, card).length, 0, 'the armed detach never kills the state’s ring');
-});
-
-/**
- * The same hazard, defended twice: fxStateBeam clears the pending timer, and
- * the timer itself re-checks the stamp before detaching. The test above only
- * ever exercises the FIRST — the timer is cleared, so its body is dead code
- * there, and deleting the in-timer check kept the suite green. This reaches
- * the timer with the stamp already set, which is what happens whenever a
- * state lands on the card through a path that did not go via fxStateBeam.
- */
-test('hover: the leave-fade timer itself refuses to detach a card a state now owns', () => {
-  const h = makeHarness();
-  const card = fakeEl('card glass');
-  h.fx.fxHoverSync(card);
-  h.fx.fxHoverSync(null);
-  assert.equal(h.timers.filter((t) => !t.cleared).length, 1, 'the leave armed a detach');
-  card.setAttribute('data-fxbeam-state', ''); // ownership taken without touching the hover bookkeeping
-  h.fireTimers();
-  assert.ok(h.timers.every((t) => t.fired || t.cleared), 'the timer really ran');
-  assert.equal(detaches(h, card).length, 0,
-    'a fired timer must still check ownership — detaching here would strip a live state ring');
+  assert.ok(!card.hasAttribute('data-fxbeam-state'), 'the off path releases it');
+  assert.deepEqual(attaches(h, card)[1].opts, { type: 'md', active: false });
+  assert.equal(h.timers.length, 0, 'no fade timers: nothing hover-shaped is left to arm one');
+  assert.equal(detaches(h, card).length, 0, 'a state ring fades through the engine, it is not detached');
 });
 
 test('fxStateBeamDrop detaches and clears the stamp — the transient-card off door', () => {
@@ -384,17 +294,15 @@ test('the scan-done pulse is one timed pulse that defers to a scan already runni
 
 /* ══════════════ Every activation has its deactivation — structurally ══════════════ */
 
-test('hover wiring: pointer-fine gated pointerover, a window-exit pointerout, and the two pointer-less doors', () => {
+test('no hover wiring: nothing listens to pointerover, and no door calls a hover sync', () => {
   const wiring = wiringSection();
-  assert.match(wiring, /matchMedia\('\(pointer: fine\)'\)/, 'touch devices get no hover states');
-  assert.match(wiring, /document\.addEventListener\('pointerover'/, 'delegated — lazy, one listener, dynamic cards included');
-  assert.match(wiring, /closest \? t\.closest\('\.card\.glass'\) : null/, 'every glass card, resolved per event');
-  assert.match(wiring, /document\.addEventListener\('pointerout'[\s\S]{0,120}!e\.relatedTarget[\s\S]{0,40}fxHoverSync\(null\)/,
-    'leaving the window clears the ring');
+  assert.doesNotMatch(wiring, /document\.addEventListener\('pointerover'/, 'no delegated pointerover listener');
+  assert.doesNotMatch(wiring, /fxHoverSync|fxHoverStandDown|fxHoverForget/, 'no hover bookkeeping survives');
+  assert.doesNotMatch(wiring, /matchMedia\('\(pointer: fine\)'\)/, 'and no per-event pointer-type query');
   const sv = slice('function switchView(', 'function renderCapabilityNotice(');
-  assert.match(sv, /fxHoverSync\(null\)/, 'a keyboard view switch clears it too');
+  assert.doesNotMatch(sv, /fxHoverSync/, 'a view switch has nothing to clear');
   const cm = slice('function closeModal(', 'document.querySelectorAll(\'[data-close]\')');
-  assert.match(cm, /fxHoverSync\(null\)/, 'and so does closing a modal over a hovered card');
+  assert.doesNotMatch(cm, /fxHoverSync/, 'nor does closing a modal');
 });
 
 test('every pill funnel re-syncs the rings, and the treemap mount/unmount are the shared doors', () => {

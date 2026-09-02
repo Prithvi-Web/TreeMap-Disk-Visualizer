@@ -1,7 +1,12 @@
 /* ── Modals ── */
+/* No backdrop-filter on the scrim. It is a full-screen fixed surface with
+   the modal inside it, and Chromium expands damage to the WHOLE of a
+   backdrop-filtered surface, so an 8px blur here was re-run over the entire
+   screen at 2× DPR on every frame anything inside changed — every scroll
+   frame in Settings. The tint carries the focus on its own (--scrim was
+   deepened a little to compensate). */
 .modal-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 100;
   display: none; align-items: center; justify-content: center;
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   animation: fadeIn var(--dur-2) var(--ease); }
 .modal-backdrop.open { display: flex; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
