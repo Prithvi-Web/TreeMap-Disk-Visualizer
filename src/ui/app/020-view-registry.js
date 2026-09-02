@@ -197,6 +197,11 @@ const VIEWS = [
       // thousands of nodes and ~1,500 cart buttons in the document, and every
       // later cart click in every other view paid for them.
       ndClearBody();
+      // The measured trash line belongs to the tab it was written on. It
+      // deliberately survives the rescan the trash starts (finishScan replaces
+      // state.dup and remounts this view), and deliberately does not survive
+      // the user walking away from the tab.
+      dupTrashOutcome = null;
     },
   },
   // Trends, Compare and Offloaded read persisted history, so they work with no

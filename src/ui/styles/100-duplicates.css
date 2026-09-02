@@ -7,6 +7,12 @@
 /* The reclaim funnel between toolbar and list: found → selected → staged.
    Compact tracks; the factory's own stage markup carries names and values. */
 .dup-funnel { margin: 2px 0 14px; }
+
+/* One quiet line under the toolbar. Tokens only, so both themes are correct
+   with no media query; plain flowing text, so every width from 640px up wraps
+   on its own and no container query is needed. */
+.dup-note { font-size: 12px; line-height: 1.55; color: var(--text-3); margin: -2px 0 12px; max-width: 78ch; }
+.dup-note div + div { margin-top: 3px; }
 .dup-list { display: flex; flex-direction: column; gap: 12px; container-type: inline-size; }
 /* Per-group reclaimable mini-bar, the kit recipe at list-row scale. It is
    the least essential column in the head, so it is the one that leaves

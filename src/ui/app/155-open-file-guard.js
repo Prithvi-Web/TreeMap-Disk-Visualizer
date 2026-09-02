@@ -262,7 +262,10 @@ $('confirmOk').addEventListener('click', async () => {
   const ignoreOpenHandles = confirmIgnoreOpenHandles;
   confirmIgnoreOpenHandles = false;
   openHandleSeq++; // any in-flight check belongs to a dialog that is now closed
-  if (cb) { await cb(); return; }
+  // The choice the user just made reaches the callback too. Without this a
+  // callback-based confirm silently drops "Delete anyway", and the server
+  // refuses the same batch for the same reason for ever.
+  if (cb) { await cb({ ignoreOpenHandles }); return; }
   await trashPaths(confirmPaths, { ignoreOpenHandles });
   confirmPaths = [];
 });
@@ -325,7 +328,7 @@ async function trashPaths(paths, { silent = false, ignoreOpenHandles = false } =
 
   if (!silent) {
     if (deleted.length) {
-      toast(`Moved ${deleted.length} ${deleted.length === 1 ? 'item' : 'items'} to Trash — ${formatBytes(recovered)} recovered`);
+      toast(`Moved ${deleted.length} ${deleted.length === 1 ? 'item' : 'items'} to Trash — ${formatBytes(recovered)}`);
     }
     if (failed.length) {
       toast(`${failed.length} failed: ${failed[0].reason}`, 'error');

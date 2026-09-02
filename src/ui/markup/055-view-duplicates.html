@@ -19,6 +19,12 @@
         <button class="btn" id="dupOffloadBtn" disabled title="Copy the selected duplicates to another drive, verify, then trash them locally"><span data-icon="archive"></span>Offload…</button>
         <button class="btn btn-danger" id="dupTrashBtn" disabled><span data-icon="trash"></span>Move to Trash</button>
       </div>
+      <!-- What the figure above does not promise, and what the last trash
+           measurably did. Its own element on purpose: #dupSummary and #dupBody
+           are both rewritten by every hunt, and the rescan a trash starts
+           re-runs the hunt — a line written into either would be erased by the
+           very trash it reports on. -->
+      <div class="dup-note" id="dupNote" hidden></div>
       <div class="dup-funnel" id="dupFunnel" hidden></div>
       <div id="dupBody"></div>
     </div>

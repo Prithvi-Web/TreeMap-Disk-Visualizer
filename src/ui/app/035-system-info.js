@@ -27,8 +27,12 @@ async function loadSystem() {
     loadTrash();
     loadSnapshots();
     loadCloudStatus(); // reads local token state; network only for connected accounts
+    // Handed back so one call can both repaint this panel and answer "how much
+    // is free right now" — these numbers are otherwise painted once at boot.
+    return sys;
   } catch (e) {
     toast('Could not load system info: ' + e.message, 'error');
+    return null;
   }
 }
 

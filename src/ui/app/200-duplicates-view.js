@@ -76,6 +76,7 @@ async function loadDuplicates(force = false) {
       state.dup.status = 'error';
       $('dupSummary').textContent = '';
       $('dupBody').innerHTML = `<div class="card glass"><div class="muted">Duplicate search failed: ${escapeHtml(e.message)}</div></div>`;
+      renderDupNote(); // the one paint path that does not go through updateDupToolbar
     }
   };
   poll();
@@ -206,6 +207,7 @@ function dupFunnelDrop() {
 }
 
 function updateDupToolbar() {
+  renderDupNote(); // every path that repaints this view's chrome already calls this one
   const n = state.dup.selection.size;
   let total = 0;
   for (const p of state.dup.selection) total += nodeFor(p)?.size ?? 0;
@@ -248,16 +250,124 @@ $('dupAutoBtn').addEventListener('click', () => {
   updateDupToolbar();
   toast(`Selected ${state.dup.selection.size} extra copies — the newest copy in each group is kept`);
 });
-$('dupTrashBtn').addEventListener('click', () => {
+$('dupTrashBtn').addEventListener('click', async () => {
   for (const g of state.dup.groups) {
     if (g.files.every(f => state.dup.selection.has(f.path))) {
       toast(`All ${g.count} copies of “${g.files[0].name}” are selected — keep at least one`, 'error');
       return;
     }
   }
-  confirmTrash([...state.dup.selection]);
+  const paths = [...state.dup.selection];
+  if (!paths.length) return;
+  await confirmTrash(paths);
+  // Installed AFTER confirmTrash, which clears the callback as its first act.
+  // Never for a cloud scan: free space on this computer says nothing about a
+  // provider's quota. (The view is disabled for cloud scans anyway — belt to
+  // those braces.)
+  if (isCloudScan()) return;
+  onConfirmTrash = async ({ ignoreOpenHandles } = {}) => {
+    // The BEFORE reading belongs HERE, not where the dialog opened: a person
+    // can sit on a confirmation for minutes, and everything the machine wrote
+    // in that time would land inside the delta and be reported as ours.
+    const before = await freeSpaceNow();
+    const r = await trashPaths(paths, { ignoreOpenHandles });
+    if (!r.deleted.length) return;
+    // loadSystem rather than a bare read: it hands back the fresh numbers AND
+    // repaints Free, Used and the Trash fact, which are otherwise painted once
+    // at boot and never again for the life of the window.
+    const sys = await loadSystem();
+    dupTrashOutcome = dupFreedText(r.deleted.length, before, sys ? sys.freeDisk : null);
+    renderDupNote();
+  };
 });
 $('dupMinSize').addEventListener('change', () => loadDuplicates(true));
+
+/* ── What the reclaimable figure does not promise ── */
+
+/**
+ * The last duplicates trash, in one sentence — measured, not projected.
+ *
+ * Module-level rather than on `state.dup`, because finishScan REPLACES that
+ * object wholesale, and the rescan that runs it is started by the trash
+ * itself: putting the outcome there would have the trash erase its own report
+ * a few seconds later. The view's unmount clears it, so the line lives exactly
+ * as long as the tab it belongs to.
+ */
+let dupTrashOutcome = null;
+/** Last painted note, so the repaint on every checkbox tick costs nothing. */
+let dupNotePainted = '';
+
+/**
+ * Free bytes on the volume the dashboard talks about, or null when this scan
+ * is not on it.
+ *
+ * /api/system measures the HOME folder's volume. A scan of an external drive
+ * would be measured against the wrong disk and read as "nothing changed" no
+ * matter what happened, so it is not measured at all — the caller's unknown
+ * branch says something true on any volume instead. A fresh read every time:
+ * state.system.freeDisk is painted once at boot and never refreshed.
+ */
+async function freeSpaceNow() {
+  const home = (state.system || {}).homeDir;
+  if (!home || !state.root || !state.root.path.startsWith(home)) return null;
+  try { return (await api('/api/system')).freeDisk; } catch { return null; }
+}
+
+/** Under a megabyte is churn, not a result: a disk in use drifts on its own. */
+const DUP_FREED_MIN = 1024 * 1024;
+
+/**
+ * What a duplicates trash actually did, from two readings of the free space.
+ *
+ * The usual answer is "nothing yet", and the reason is the Trash rather than
+ * the duplicates: on every platform TreeMap supports, moving to the Trash is a
+ * move within the same volume — Finder's delete, the Recycle Bin, gio trash —
+ * so the bytes stay where they were until the Trash is emptied. Blaming a flat
+ * reading on shared storage would swap one wrong number for a wrong
+ * explanation; the shared-storage caveat is a separate line, and it is about
+ * the figure, not about this trash.
+ *
+ * The gate is on the raw delta because formatBytes prints '0 B' for anything
+ * negative, and a fabricated zero is exactly what this line exists to avoid.
+ */
+function dupFreedText(count, before, after) {
+  const moved = `Moved ${formatCount(count)} ${count === 1 ? 'copy' : 'copies'} to the Trash. `;
+  if (before === null || after === null) {
+    return moved + 'They still take up the same space until you empty it.';
+  }
+  const delta = after - before;
+  if (delta >= DUP_FREED_MIN) return moved + `Free space went up by ${formatBytes(delta)}.`;
+  return moved + 'Free space hasn’t changed — the Trash is still holding them, and emptying it is what frees the space.';
+}
+
+/**
+ * The lines the note may say, in order. Pure, so the rules can be driven
+ * directly rather than through a painted DOM.
+ *
+ * The Finder line appears only while a reclaimable figure is actually on
+ * screen: it exists to explain that figure's "up to", and standing over an
+ * empty tab it would be a lecture nobody asked for.
+ */
+function dupNoteLines(platform, status, groupCount, outcome) {
+  const lines = [];
+  if (platform === 'darwin' && status === 'complete' && groupCount > 0) {
+    lines.push('Copies made with Finder’s Duplicate share their storage until one of them is changed, so trashing one of those frees nothing.');
+  }
+  if (outcome) lines.push(outcome);
+  return lines;
+}
+
+/** Paint the note. Its own element, so no hunt and no rescan can rewrite it. */
+function renderDupNote() {
+  const el = $('dupNote');
+  if (!el) return;
+  const html = dupNoteLines((state.system || {}).platform, state.dup.status, state.dup.groups.length, dupTrashOutcome)
+    .map((t) => `<div>${escapeHtml(t)}</div>`).join('');
+  if (html === dupNotePainted) return;
+  dupNotePainted = html;
+  el.innerHTML = html;
+  el.hidden = !html;
+}
 
 /* ── Near-duplicate images (Feature 12) ── */
 function setDupMode(mode) {
