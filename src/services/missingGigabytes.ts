@@ -5,6 +5,7 @@ import { wholeDiskOf } from '../platform/macos/diskutil';
 import { getSnapshotAccounting } from './snapshotAccounting';
 import { groupZombies } from './zombieHandles';
 import { storeOf } from './scanStore';
+import { formatBytes } from '../utils/formatBytes';
 import type { ScanResult } from '../models/types';
 import type { LogicalVolumeInfo, VolumeTopology } from '../platform/types';
 import type { SnapshotAccounting } from './snapshotAccounting';
@@ -121,6 +122,18 @@ export interface StatementVolume {
   freeBytes: number;
   /** How the figure was obtained, for the footnote. */
   mechanism: string;
+  /**
+   * The same fact in the user's words — "what macOS reports for Macintosh HD"
+   * — with no call name and no mount path. `mechanism` stays for the API and
+   * the tests; this is what the page prints.
+   */
+  mechanismLabel: string;
+  /**
+   * Blocks only root may use (ext4's 5% reserve): total − used − free. Zero
+   * on APFS and Windows. Reported so used + free + reserved is the disk, and
+   * the dashboard's "used" and this statement's "used" can be the same figure.
+   */
+  reservedBytes: number;
 }
 
 export interface AccountingStatement {
@@ -364,6 +377,7 @@ export async function buildStatement(
   const totalBytes = st.blocks * blockSize;
   const freeBytes = st.bavail * blockSize;
   const usedBytes = (st.blocks - st.bfree) * blockSize;
+  const reservedBytes = Math.max(0, (st.bfree - st.bavail) * blockSize);
 
   // A scan covers the whole volume only when it started AT a mount point of the
   // scan's own device. Anything deeper is a folder, however large.
@@ -380,7 +394,7 @@ export async function buildStatement(
   const scannedNotes: string[] = [];
   if (hardlinked > 0) {
     scannedNotes.push(
-      `${fmt(hardlinked)} of this is data with more than one name. The scan counts each one once, so it is already subtracted here — it is not a separate line.`,
+      `${formatBytes(hardlinked)} of this is data with more than one name. The scan counts each one once, so it is already subtracted here — it is not a separate line.`,
     );
   }
   scannedNotes.push(
@@ -483,6 +497,8 @@ export async function buildStatement(
       usedBytes,
       freeBytes,
       mechanism: `statfs(${mountPoint}) — the shared pool this volume draws from`,
+      mechanismLabel: describeMechanism(volume, plat),
+      reservedBytes,
     },
     lines,
     unaccountedBytes,
@@ -705,7 +721,7 @@ function otherVolumesLine(
   const notes = sized
     .slice()
     .sort((a, b) => (b.usedBytes ?? 0) - (a.usedBytes ?? 0))
-    .map((v) => `${v.name ?? v.id} (${v.mountPoint ?? 'not mounted'}) — ${fmt(v.usedBytes ?? 0)}`);
+    .map((v) => `${v.name ?? v.id} (${v.mountPoint ?? 'not mounted'}) — ${formatBytes(v.usedBytes ?? 0)}`);
   if (unsized.length > 0) {
     notes.push(
       `${String(unsized.length)} more volume${unsized.length === 1 ? '' : 's'} in this pool reported no usage figure, so anything they hold is in Unaccounted.`,
@@ -815,16 +831,21 @@ export function assertBalances(s: AccountingStatement): void {
   }
 }
 
-function fmt(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let n = Math.abs(bytes);
-  let i = 0;
-  while (n >= 1000 && i < units.length - 1) {
-    n /= 1000;
-    i++;
-  }
-  const sign = bytes < 0 ? '-' : '';
-  return `${sign}${n < 10 && i > 0 ? n.toFixed(1) : String(Math.round(n))} ${units[i]}`;
+// Bytes in notes go through the shared formatBytes (binary units), the same
+// function the page uses for every line and chip: a private decimal
+// formatter here made "9.1 GB" sit under an "11.6 GB" row it was part of.
+
+function osName(plat: NodeJS.Platform): string {
+  if (plat === 'darwin') return 'macOS';
+  if (plat === 'win32') return 'Windows';
+  if (plat === 'linux') return 'Linux';
+  return 'the operating system';
+}
+
+/** The footnote's opening in plain words: which disk, according to whom. */
+function describeMechanism(volume: LogicalVolumeInfo, plat: NodeJS.Platform): string {
+  const name = volume.name && volume.name.trim() ? volume.name.trim() : 'this disk';
+  return `what ${osName(plat)} reports for ${name}`;
 }
 
 function msg(err: unknown): string {

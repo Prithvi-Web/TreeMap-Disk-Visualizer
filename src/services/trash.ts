@@ -2,7 +2,7 @@ import { execFile } from 'child_process';
 import { promises as fsp } from 'fs';
 import path from 'path';
 import os from 'os';
-import { meansAbsent } from '../utils/errno';
+import { meansAbsent, describeFsError } from '../utils/errno';
 
 /**
  * Trash accounting (Feature 8). Best-effort, read-only sizing of the system
@@ -282,14 +282,14 @@ async function clearDirectoryContents(dir: string, failed: EmptyTrashResult['fai
   try {
     entries = await fsp.readdir(dir);
   } catch (err) {
-    if (!meansAbsent(err)) failed.push({ location: dir, reason: err instanceof Error ? err.message : String(err) });
+    if (!meansAbsent(err)) failed.push({ location: dir, reason: describeFsError(err) });
     return;
   }
   for (const name of entries) {
     try {
       await fsp.rm(path.join(dir, name), { recursive: true, force: true });
     } catch (err) {
-      failed.push({ location: path.join(dir, name), reason: err instanceof Error ? err.message : String(err) });
+      failed.push({ location: path.join(dir, name), reason: describeFsError(err) });
     }
   }
 }
@@ -308,7 +308,7 @@ async function clearFreedesktopTrash(failed: EmptyTrashResult['failed']): Promis
         try {
           await fsp.rm(path.join(dir, name), { recursive: true, force: true });
         } catch (err) {
-          failed.push({ location: path.join(dir, name), reason: err instanceof Error ? err.message : String(err) });
+          failed.push({ location: path.join(dir, name), reason: describeFsError(err) });
         }
       }
     }
@@ -353,7 +353,10 @@ export async function emptyTrash(): Promise<EmptyTrashResult> {
       ran = true;
       break;
     } catch (err) {
-      failed.push({ location: cmd, reason: err instanceof Error ? err.message : String(err) });
+      // The page prints this after "Emptied X, but …", so it is a sentence;
+      // the command's own output goes to the terminal, where it can be read.
+      console.warn(`[treemap] ${cmd} could not empty the Trash:`, err instanceof Error ? err.message : err);
+      failed.push({ location: cmd, reason: "the system's own Trash emptier did not run" });
     }
   }
   if (!ran && process.platform !== 'darwin' && process.platform !== 'win32') {

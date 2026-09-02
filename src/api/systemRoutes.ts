@@ -20,7 +20,7 @@ export const systemRouter = Router();
 /** GET /api/system -> platform, hostname, disk totals, suggested folders. */
 systemRouter.get('/system', async (_req: Request, res: Response) => {
   const homeDir = os.homedir();
-  const { total, free } = await diskUsage(homeDir);
+  const { total, free, used } = await diskUsage(homeDir);
 
   const candidates = [
     homeDir,
@@ -46,6 +46,7 @@ systemRouter.get('/system', async (_req: Request, res: Response) => {
     hostname: os.hostname(),
     totalDisk: total,
     freeDisk: free,
+    usedDisk: used,
     homeDir,
     commonDirs,
   };

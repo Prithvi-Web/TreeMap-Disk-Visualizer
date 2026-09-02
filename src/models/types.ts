@@ -108,6 +108,12 @@ export interface ScanResult {
   finishedAt?: number;
   /** Used by the TTL evictor. */
   createdAt: number;
+  /**
+   * When a client last asked for this scan by id (stamped by getScan, at
+   * minute granularity). Retention counts from the later of this and
+   * finishedAt, so results in use never expire under the page.
+   */
+  lastUsedAt?: number;
   /** Cooperative cancellation flag (set on shutdown/eviction). */
   cancelled: boolean;
   /** Which enumeration engine produced this scan (dashboard note). */
@@ -144,6 +150,10 @@ export interface ScanResult {
    */
   /** Directories the OS refused to list (EACCES/EPERM). */
   deniedDirs?: number;
+  /** Up to five of those, the smallest paths in sorted order (see scanRefusals). */
+  deniedExamples?: string[];
+  /** Directories that disappeared between being listed and being read. */
+  vanishedDirs?: number;
   /** Directories that failed to list for any other reason, including the deadline. */
   unreadableDirs?: number;
   /** Individual entries whose `lstat` was refused (EACCES/EPERM). */
@@ -207,6 +217,19 @@ export interface ScanStats {
   hardlinkedBytes: number;
   cloudFiles: number;
   cloudBytes: number;
+  /**
+   * Folders the OS would not let the scan list: how many, and up to five of
+   * them (absolute paths, sorted). A protected folder used to scan as
+   * "complete, 0 files"; this is how the page can say what happened instead.
+   */
+  refused: { dirs: number; examples: string[] };
+  /** Folders that disappeared mid-scan — the results are partial when > 0. */
+  vanishedDirs: number;
+  /**
+   * Epoch ms at which these results leave memory; null while the scan runs.
+   * Every read of the scan pushes it out by another 30 minutes.
+   */
+  expiresAt: number | null;
 }
 
 export type ScanEvent =
@@ -230,6 +253,12 @@ export interface SystemInfo {
   hostname: string;
   totalDisk: number;
   freeDisk: number;
+  /**
+   * Bytes the filesystem counts as occupied (blocks − bfree). Not simply
+   * total − free: on ext4 the root reserve is neither, and the Missing
+   * Gigabytes statement reconciles against this figure.
+   */
+  usedDisk: number;
   homeDir: string;
   commonDirs: string[];
 }
@@ -288,6 +317,13 @@ export interface DuplicateJob {
   groups?: DuplicateGroup[];
   groupCount?: number;
   totalReclaimable?: number;
+  /**
+   * True where a same-size, same-hash, different-inode file may still share
+   * its blocks with the original (APFS clones), so `reclaimable` is a ceiling.
+   */
+  reclaimableIsUpperBound?: boolean;
+  /** The sentence to show beside the figure when it is a ceiling. */
+  reclaimableCaveat?: string;
   error?: string;
   startedAt: number;
   finishedAt?: number;

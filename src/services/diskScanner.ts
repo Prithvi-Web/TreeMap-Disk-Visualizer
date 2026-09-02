@@ -13,6 +13,9 @@ import { detectContainerKind } from '../utils/containerKind';
 import { neverDescend } from '../utils/mountBoundaries';
 import { forgetScan } from './containerScanner';
 import { abortGduScan, findGduBinary, gduScanIntoStore } from './gduScanner';
+import { cloudProviderFor } from './cloudFolders';
+import { noteRefused } from './scanRefusals';
+import { permissionDeniedMessage } from '../middleware/errorHandler';
 import { PackedScanStore, ScanStore, Flag, NodeInput, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
 
 /**
@@ -90,7 +93,51 @@ export function classifyFsError(err: NodeJS.ErrnoException): ListingFailure {
   return 'error';
 }
 
-const SCAN_TTL_MS = 30 * 60 * 1000; // 30 minutes after a scan settles
+/**
+ * What the user reads when a scan fails, instead of the disk's own words.
+ *
+ * The HTTP path already mapped ENOENT/EACCES through the error handler; the
+ * progress stream forwarded `scan.error` raw, so unplugging a drive mid-scan
+ * put "ENOENT: no such file or directory, lstat '/Volumes/Backup'" in the
+ * status line. An error with no errno keeps its own message: it was written
+ * by this app and is already a sentence.
+ */
+export function describeScanError(err: unknown): string {
+  const e = err as NodeJS.ErrnoException | null;
+  const code = e && typeof e === 'object' ? e.code : undefined;
+  if (code === 'ENOENT') {
+    return 'The folder disappeared while TreeMap was scanning it — was a drive unplugged, or the folder moved?';
+  }
+  if (code === 'EACCES' || code === 'EPERM') return permissionDeniedMessage(e?.path);
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The root, looked at again once the walk is done.
+ *
+ * A drive unplugged or a folder deleted mid-scan used to settle as 'complete'
+ * with whatever had been read so far — the walker drops a vanished directory
+ * as a race with a delete, which is right for one folder and wrong for the
+ * root. Only ENOENT is a verdict here; a root that is still there but has
+ * become unreadable is a different story, and not a reason to discard a walk
+ * that finished.
+ */
+async function assertRootStillThere(rootPath: string): Promise<void> {
+  try {
+    await fsp.lstat(rootPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw err;
+  }
+}
+
+/** Retention after a scan settles — or after it was last read, whichever is later. */
+export const SCAN_TTL_MS = 30 * 60 * 1000;
+/**
+ * `getScan` stamps lastUsedAt no more often than this. The 'complete' frame on
+ * the progress stream and the /stats read that follows it must report the same
+ * expiresAt, and the evictor only looks once a minute anyway.
+ */
+const TOUCH_GRANULARITY_MS = 60 * 1000;
 /**
  * A 'running' record left wedged by a driver that died (cloud scans register
  * here too) must still be collected eventually — but at a horizon no real
@@ -104,11 +151,23 @@ const EVICT_INTERVAL_MS = 60 * 1000;
 /** In-memory store of all scans, auto-evicted after 30 minutes. */
 const scans = new Map<string, ScanResult>();
 
+/** The later of "it settled" and "someone last asked for it". */
+function lastActivity(scan: ScanResult): number {
+  return Math.max(scan.finishedAt ?? scan.createdAt, scan.lastUsedAt ?? 0);
+}
+
 /** True when a scan's retention window has passed. Running scans only expire
- *  at the wedge horizon; settled ones 30 minutes after they finished. */
+ *  at the wedge horizon; settled ones 30 minutes after they were last used —
+ *  a scan a page is actively reading never expires under it. */
 export function scanExpired(scan: ScanResult, now: number): boolean {
   if (scan.status === 'running') return now - scan.createdAt > RUNNING_SCAN_HARD_CAP_MS;
-  return now - (scan.finishedAt ?? scan.createdAt) > SCAN_TTL_MS;
+  return now - lastActivity(scan) > SCAN_TTL_MS;
+}
+
+/** When a settled scan leaves memory unless it is read again; null while running. */
+export function scanExpiresAt(scan: ScanResult): number | null {
+  if (scan.status === 'running') return null;
+  return lastActivity(scan) + SCAN_TTL_MS;
 }
 
 /**
@@ -145,7 +204,24 @@ function ensureEvictor(): void {
   evictTimer.unref();
 }
 
+/**
+ * A scan by id, as a USE: the retention clock restarts (at minute
+ * granularity). Every route, fact provider and MCP tool that answers a client
+ * about a scan goes through here, which is what keeps results alive under a
+ * page that is using them. Housekeeping that merely checks whether a scan
+ * still exists must use `peekScan` instead.
+ */
 export function getScan(scanId: string): ScanResult | undefined {
+  const scan = scans.get(scanId);
+  if (scan) {
+    const now = Date.now();
+    if (scan.lastUsedAt === undefined || now - scan.lastUsedAt >= TOUCH_GRANULARITY_MS) scan.lastUsedAt = now;
+  }
+  return scan;
+}
+
+/** A scan by id without counting as a use of it. */
+export function peekScan(scanId: string): ScanResult | undefined {
   return scans.get(scanId);
 }
 
@@ -275,6 +351,11 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
 
   // Fail fast on unreadable/nonexistent roots so the API can 4xx properly.
   const rootStat = await fsp.lstat(rootPath);
+  // lstat alone passes for a folder this user may not LIST (macOS TCC: Mail,
+  // Photos, another account's home), and the scan then settled as "complete,
+  // 0 files". Opening it is the honest test, and its EACCES/EPERM carries the
+  // path the error handler turns into the Full Disk Access sentence.
+  if (rootStat.isDirectory()) await (await fsp.opendir(rootPath)).close();
 
   // User-configured "don't scan" patterns; a settings problem never blocks a scan.
   const ignore = await getIgnoreMatchers('scan').catch(() => [] as CompiledIgnore[]);
@@ -349,6 +430,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
           scan.engine = 'gdu-turbo';
           const store = await gduScanIntoStore(scan, bin, cloudProviderFor);
           if (scan.cancelled) return;
+          await assertRootStillThere(scan.rootPath);
           scan.store = store;
           scan.status = 'complete';
           scan.finishedAt = Date.now();
@@ -367,6 +449,10 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         }
       } catch (err) {
         if (scan.cancelled) return; // cancellation is not a gdu failure
+        // A root that vanished is the scan's failure, not gdu's: the walker
+        // would only fail the same way after a pointless second attempt.
+        const e = err as NodeJS.ErrnoException;
+        if (e.code === 'ENOENT' && e.path === scan.rootPath) throw err;
         // gdu is strictly best-effort: a missing binary, a spawn failure, a
         // non-zero exit or an oversized shard must never surface as a scan
         // error. Log it and let the walker produce the scan.
@@ -381,6 +467,8 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         scan.cloudFiles = 0;
         scan.cloudBytes = 0;
         scan.deniedDirs = 0;
+        scan.deniedExamples = [];
+        scan.vanishedDirs = 0;
         scan.unreadableDirs = 0;
         scan.deniedEntries = 0;
         scan.unreadableEntries = 0;
@@ -390,7 +478,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     await walk(scan, rootStat.isDirectory(), ignore, cache);
   })().catch((err: unknown) => {
     scan.status = 'error';
-    scan.error = err instanceof Error ? err.message : String(err);
+    scan.error = describeScanError(err);
     scan.finishedAt = Date.now();
   });
 
@@ -515,13 +603,9 @@ function statToInput(name: string, isDir: boolean, size: number, mtimeMs: number
   return input;
 }
 
-/** Infer a cloud provider for a placeholder file from its path. */
-function cloudProviderFor(p: string): 'icloud' | 'onedrive' | 'dropbox' | undefined {
-  if (/Library\/Mobile Documents|com~apple~CloudDocs|\.icloud$/i.test(p)) return 'icloud';
-  if (/OneDrive/i.test(p)) return 'onedrive';
-  if (/Dropbox/i.test(p)) return 'dropbox';
-  return undefined;
-}
+// cloudProviderFor lives in ./cloudFolders so the walker, the gdu mapper and
+// the live index apply one gate — a sparse file outside a cloud folder is not
+// a placeholder to any of them.
 
 async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore[], cache: Map<string, FileNode> | null): Promise<void> {
   const rootStat = await fsp.lstat(scan.rootPath);
@@ -540,6 +624,7 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
     await drainQueue(scan, store, [{ id: store.rootId, path: scan.rootPath, cached: null, revalidate: false }], ignore, cache, new Set<string>());
   }
   if (scan.cancelled) return;
+  await assertRootStillThere(scan.rootPath); // ENOENT here is the scan's own error, not a partial result
 
   store.finalize();
   store.sumSizes();
@@ -648,11 +733,14 @@ async function processDirectory(
 
   const listed = await readdirWithDeadline(dirPath);
   if (!listed.entries) {
-    // The dir still stays empty — but it is now counted, so Phase 5 can say
-    // "217 folders could not be read" rather than folding them into a residual.
-    // A vanished dir is a race with a delete and accounts for no space at all.
-    if (listed.why === 'denied') scan.deniedDirs = (scan.deniedDirs ?? 0) + 1;
-    else if (listed.why !== 'vanished') scan.unreadableDirs = (scan.unreadableDirs ?? 0) + 1;
+    // The dir still stays empty — but it is now counted (and, for a refusal,
+    // named), so the page can say "7 folders couldn't be read" and point at
+    // one, rather than folding them into a residual or drawing them as empty.
+    // A vanished dir is a race with a delete and accounts for no space at all,
+    // but it is counted too: the results are partial, and the page should say so.
+    if (listed.why === 'denied') noteRefused(scan, dirPath);
+    else if (listed.why === 'vanished') scan.vanishedDirs = (scan.vanishedDirs ?? 0) + 1;
+    else scan.unreadableDirs = (scan.unreadableDirs ?? 0) + 1;
     return;
   }
   let entries: Dirent[] = listed.entries;

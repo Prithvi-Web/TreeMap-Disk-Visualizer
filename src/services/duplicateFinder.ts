@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { createReadStream } from 'fs';
 import { ScanResult, DuplicateGroup, DuplicateJob } from '../models/types';
 import { storeOf } from './scanStore';
-import { getScan } from './diskScanner';
+import { peekScan } from './diskScanner';
 
 /**
  * DuplicateFinder — true (content-equal) duplicate detection over a completed
@@ -50,8 +50,10 @@ export function peekDuplicateJob(scanId: string): DuplicateJob | undefined {
  */
 export function getDuplicateJob(scan: ScanResult, minSize: number): DuplicateJob {
   // Evict jobs whose scan has been evicted so the map can't grow forever.
+  // peekScan, not getScan: housekeeping must not count as the user reading
+  // those other scans, or they would never expire.
   for (const [scanId, job] of jobs) {
-    if (!getScan(scanId)) {
+    if (!peekScan(scanId)) {
       job.cancelled = true;
       jobs.delete(scanId);
     }
@@ -168,6 +170,16 @@ async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void
   job.groups = groups.slice(0, REPORTED_GROUPS);
   job.groupCount = groups.length;
   job.totalReclaimable = groups.reduce((sum, g) => sum + g.reclaimable, 0);
+  // Same size, same hash, different inode is what a real copy looks like — and
+  // exactly what an APFS clone (Finder's Duplicate, `cp -c`) looks like too:
+  // the clone shares every block with the original, so trashing it frees
+  // nothing. Clones cannot be told apart without native code, so on macOS the
+  // figure is an upper bound and says so.
+  job.reclaimableIsUpperBound = process.platform === 'darwin';
+  if (job.reclaimableIsUpperBound) {
+    job.reclaimableCaveat =
+      "Copies made with Finder's Duplicate share their storage on APFS, so trashing one of those frees nothing until it is edited — treat this figure as an upper bound.";
+  }
   job.status = 'complete';
   job.finishedAt = Date.now();
 }

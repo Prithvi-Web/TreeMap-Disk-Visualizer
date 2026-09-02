@@ -424,12 +424,19 @@ function displayPath(target: string, scanRoot: string): string {
  * and it exists so those sentences read in plain English rather than shipping
  * a raw byte count to be formatted by something that cannot see the sentence.
  */
-function formatBytesPlain(bytes: number): string {
+export function formatBytesPlain(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return 'an unknown size';
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
   let value = bytes;
   let unit = 0;
   while (value >= 1000 && unit < units.length - 1) { value /= 1000; unit++; }
-  const shown = unit === 0 ? String(Math.round(value)) : value < 10 ? value.toFixed(1) : String(Math.round(value));
+  const render = (v: number, u: number): string => (u === 0 ? String(Math.round(v)) : v < 10 ? v.toFixed(1) : String(Math.round(v)));
+  let shown = render(value, unit);
+  // Rounding 999.96 gives "1000 MB", which is 1.0 GB in anyone's sentence.
+  if (Number(shown) >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit++;
+    shown = render(value, unit);
+  }
   return `${shown} ${units[unit]}`;
 }

@@ -85,7 +85,7 @@ const running202 = jsonResponse(
 
 const schemas: Json = {
   ApiError: obj(
-    { error: str('Human-readable message'), code: str('Stable machine-readable code, e.g. OUTSIDE_SCAN_ROOT') },
+    { error: str('Human-readable message'), code: str('Stable machine-readable code, e.g. OUTSIDE_SCAN_ROOT; BAD_HOST (403) when the Host header does not name this server') },
     ['error', 'code'],
     'Uniform error body returned by every endpoint',
   ),
@@ -163,8 +163,17 @@ const schemas: Json = {
       hardlinkedBytes: int(),
       cloudFiles: int(),
       cloudBytes: int(),
+      refused: obj(
+        {
+          dirs: int('Folders the OS would not let the scan list'),
+          examples: { type: 'array', items: { type: 'string' }, description: 'Up to five of them, absolute paths, sorted' },
+        },
+        ['dirs', 'examples'],
+      ),
+      vanishedDirs: int('Folders that disappeared mid-scan; the results are partial when > 0'),
+      expiresAt: int('Epoch ms when the results leave memory; null while running. Every read of the scan pushes it out by 30 minutes'),
     },
-    ['scanned', 'fileCount', 'dirCount', 'engine', 'ioThreads', 'durationMs', 'incremental', 'cachedDirs', 'walkedDirs', 'hardlinkedFiles', 'hardlinkedBytes', 'cloudFiles', 'cloudBytes'],
+    ['scanned', 'fileCount', 'dirCount', 'engine', 'ioThreads', 'durationMs', 'incremental', 'cachedDirs', 'walkedDirs', 'hardlinkedFiles', 'hardlinkedBytes', 'cloudFiles', 'cloudBytes', 'refused', 'vanishedDirs', 'expiresAt'],
   ),
   TreemapNode: obj(
     {
@@ -195,10 +204,11 @@ const schemas: Json = {
       hostname: str(),
       totalDisk: int('Bytes'),
       freeDisk: int('Bytes'),
+      usedDisk: int('Bytes the filesystem counts as occupied (blocks − bfree); total − free is larger by the root reserve on ext4'),
       homeDir: str(),
       commonDirs: arr(str()),
     },
-    ['platform', 'hostname', 'totalDisk', 'freeDisk', 'homeDir', 'commonDirs'],
+    ['platform', 'hostname', 'totalDisk', 'freeDisk', 'usedDisk', 'homeDir', 'commonDirs'],
   ),
   VolumeInfo: obj(
     {

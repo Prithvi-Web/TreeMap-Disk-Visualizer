@@ -23,7 +23,7 @@ import { storeOf } from '../services/scanStore';
 import { insideAnyScanRoot } from '../middleware/pathGuard';
 import { isVirtualPath } from '../services/containerScanner';
 import { sanitizePath, PathRejectedError } from '../utils/pathSanitizer';
-import { AppError } from '../middleware/errorHandler';
+import { AppError, permissionDeniedMessage } from '../middleware/errorHandler';
 import { formatBytes } from '../utils/formatBytes';
 import { getPolicy, assertScanAllowed, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
@@ -111,7 +111,7 @@ async function run(fn: () => Promise<ToolResult>): Promise<ToolResult> {
           return fail('Path does not exist', 'PATH_NOT_FOUND');
         case 'EACCES':
         case 'EPERM':
-          return fail('Permission denied', 'PERMISSION_DENIED');
+          return fail(permissionDeniedMessage((err as NodeJS.ErrnoException).path), 'PERMISSION_DENIED');
         case 'ENOTDIR':
           return fail('Path is not a directory', 'NOT_A_DIRECTORY');
       }

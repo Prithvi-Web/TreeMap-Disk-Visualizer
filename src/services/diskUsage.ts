@@ -16,8 +16,25 @@ function exec(cmd: string, args: string[]): Promise<string> {
   });
 }
 
-/** Parse `df -k <path>`: 1024-byte blocks; columns 2 and 4 are total/available. */
-async function unixDiskUsage(target: string): Promise<{ total: number; free: number }> {
+/**
+ * Three numbers, and why there are three rather than two.
+ *
+ * `free` is `bavail`: what a non-root process can actually write. `used` is
+ * `blocks − bfree`: what the filesystem counts as occupied. On APFS and
+ * Windows the two add up to the disk; on ext4 they do not, because the 5%
+ * root reserve is neither free (to anyone this app speaks for) nor used. The
+ * dashboard used to compute used as total − free and the Missing Gigabytes
+ * statement as blocks − bfree, so the same volume showed two "used" figures
+ * 5% apart. One producer, one convention.
+ */
+export interface DiskUsage {
+  total: number;
+  free: number;
+  used: number;
+}
+
+/** Parse `df -k <path>`: 1024-byte blocks; columns 2, 3 and 4 are total/used/available. */
+async function unixDiskUsage(target: string): Promise<DiskUsage> {
   const stdout = await exec('df', ['-k', target]);
   const lines = stdout.trim().split('\n');
   if (lines.length < 2) throw new Error('Unexpected df output');
@@ -26,15 +43,16 @@ async function unixDiskUsage(target: string): Promise<{ total: number; free: num
   // Filesystem 1024-blocks Used Available ... — find the first numeric run.
   const numbers = cols.filter((c) => /^\d+$/.test(c)).map(Number);
   if (numbers.length < 3) throw new Error('Unexpected df output');
-  return assertPlausible('df', numbers[0] * 1024, numbers[2] * 1024);
+  return assertPlausible('df', numbers[0] * 1024, numbers[2] * 1024, numbers[1] * 1024);
 }
 
-async function windowsDiskUsage(target: string): Promise<{ total: number; free: number }> {
+async function windowsDiskUsage(target: string): Promise<DiskUsage> {
   const drive = path.parse(path.resolve(target)).root.replace(/\\$/, ''); // "C:"
   const ps = `Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='${drive}'" | Select-Object Size,FreeSpace | ConvertTo-Json`;
   const stdout = await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
   const parsed = JSON.parse(stdout) as { Size: number; FreeSpace: number };
-  return assertPlausible('Get-CimInstance Win32_LogicalDisk', Number(parsed.Size), Number(parsed.FreeSpace));
+  // Windows has no root reserve: used is simply what is not free.
+  return assertPlausible('Get-CimInstance Win32_LogicalDisk', Number(parsed.Size), Number(parsed.FreeSpace), Number(parsed.Size) - Number(parsed.FreeSpace));
 }
 
 /**
@@ -81,7 +99,7 @@ const STATFS_TIMEOUT_MS = 2_000;
  * way on Windows CI, in three separate runs, on a machine whose disk was
  * perfectly readable throughout.
  */
-async function statfsDiskUsage(target: string): Promise<{ total: number; free: number }> {
+async function statfsDiskUsage(target: string): Promise<DiskUsage> {
   let timer: NodeJS.Timeout | undefined;
   const s = await Promise.race([
     fsp.statfs(target),
@@ -97,7 +115,9 @@ async function statfsDiskUsage(target: string): Promise<{ total: number; free: n
   // are not free space to anyone this app is speaking for. `df` agrees.
   // (On Windows libuv sets the two equal, so the distinction is a no-op there.)
   const free = Number(s.bsize) * Number(s.bavail);
-  return assertPlausible('statfs', total, free);
+  // `bfree`, not `bavail`, for used: the reserve is not occupied either.
+  const used = Number(s.bsize) * (Number(s.blocks) - Number(s.bfree));
+  return assertPlausible('statfs', total, free, used);
 }
 
 /**
@@ -117,14 +137,18 @@ async function statfsDiskUsage(target: string): Promise<{ total: number; free: n
  * root reserve, unclamped) yields ~7e22, which passes `isFinite` and would
  * put "75 ZB free" in front of a user.
  */
-function assertPlausible(source: string, total: number, free: number): { total: number; free: number } {
+function assertPlausible(source: string, total: number, free: number, used: number): DiskUsage {
   if (!Number.isFinite(total) || !Number.isFinite(free) || total <= 0 || free < 0 || free > total) {
     throw new Error(`${source} reported implausible capacity (total ${String(total)}, free ${String(free)})`);
   }
-  return { total, free };
+  // `used` is derived from the same reading and cannot exceed what is not
+  // free; a producer that says otherwise gets the safe answer, not a throw —
+  // total and free are the numbers four features depend on.
+  const usedSafe = Number.isFinite(used) ? Math.min(Math.max(0, used), total - free) : total - free;
+  return { total, free, used: usedSafe };
 }
 
-export async function diskUsage(target: string): Promise<{ total: number; free: number }> {
+export async function diskUsage(target: string): Promise<DiskUsage> {
   try {
     return await statfsDiskUsage(target);
   } catch (statfsErr) {

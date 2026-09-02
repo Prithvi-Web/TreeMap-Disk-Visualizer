@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { startScan, getScan, cancelScan, collectLargestFiles, collectFileTypes } from '../services/diskScanner';
+import { startScan, getScan, cancelScan, collectLargestFiles, collectFileTypes, scanExpiresAt } from '../services/diskScanner';
 import { buildTreemapFromStore } from '../utils/treemap';
 import { pruneTree, PruneResult } from '../utils/pruneTree';
 import { isInside } from '../utils/pathSanitizer';
@@ -36,6 +36,9 @@ export function buildScanStats(scan: ScanResult): ScanStats {
     hardlinkedBytes: scan.hardlinkedBytes ?? 0,
     cloudFiles: scan.cloudFiles ?? 0,
     cloudBytes: scan.cloudBytes ?? 0,
+    refused: { dirs: scan.deniedDirs ?? 0, examples: [...(scan.deniedExamples ?? [])] },
+    vanishedDirs: scan.vanishedDirs ?? 0,
+    expiresAt: scanExpiresAt(scan),
   };
 }
 

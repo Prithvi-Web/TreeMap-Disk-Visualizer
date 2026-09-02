@@ -28,6 +28,7 @@ import { closeIndex } from './services/indexEngine';
 import { stopOAuth } from './services/cloud/oauth';
 import { rateLimiter } from './middleware/rateLimiter';
 import { corsMiddleware } from './middleware/cors';
+import { hostGuard } from './middleware/hostGuard';
 import { requireToken, uiAuthCookie } from './middleware/requireToken';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { cancelAllScans } from './services/diskScanner';
@@ -46,13 +47,49 @@ import { cancelAllEncodeJobs, drainEncodeClients } from './services/compressionA
  * frontend from a different on-disk location.
  *
  * @param publicDir Absolute path to the folder holding index.html.
+ * @param opts.host The address the server binds (default 127.0.0.1). Decides
+ *                  which Host headers are answered — see middleware/hostGuard.
  */
-export function createApp(publicDir: string): express.Express {
+export interface AppOptions {
+  host?: string;
+}
+
+/**
+ * The page's Content-Security-Policy: the single-file, no-external-resources
+ * contract, enforced by the browser on every load rather than only by a test.
+ *
+ * What the page needs: inline script and styles (it is one file), a Worker
+ * built from a blob: URL (the GIF encoder — worker-src falls back to
+ * script-src without this and the export dies silently), blob:/data: images
+ * (favicon, exports, thumbnails), same-origin fetch and EventSource. Nothing
+ * may reach another host: a future slip in one of the page's innerHTML sites
+ * can no longer phone home.
+ *
+ * frame-ancestors is opt-in (TREEMAP_FRAME_ANCESTORS, e.g. 'none' for a
+ * hardened server profile) because the VS Code extension frames this page from
+ * its webview origin; sending 'none' by default would blank that panel.
+ */
+export function contentSecurityPolicy(): string {
+  const base =
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; worker-src blob:; " +
+    "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; " +
+    "font-src 'self' data:; object-src 'none'; base-uri 'none'";
+  const ancestors = process.env.TREEMAP_FRAME_ANCESTORS?.trim();
+  return ancestors ? `${base}; frame-ancestors ${ancestors}` : base;
+}
+
+export function createApp(publicDir: string, opts: AppOptions = {}): express.Express {
   const app = express();
 
-  // This is a local tool; trust no proxies (req.ip = socket address).
-  app.set('trust proxy', false);
+  // This is a local tool; trust no proxies (req.ip = socket address) — unless
+  // the operator says there is exactly one in front (TREEMAP_TRUST_PROXY=1),
+  // so the rate limiter buckets by the client and not by the proxy.
+  app.set('trust proxy', process.env.TREEMAP_TRUST_PROXY === '1' ? 1 : false);
   app.disable('x-powered-by');
+
+  // First, before the body is even parsed: a request that names another host
+  // (DNS rebinding) gets nothing — no page, no cookie, no API.
+  app.use(hostGuard(opts.host ?? '127.0.0.1'));
 
   app.use(express.json({ limit: '1mb' }));
   // Restore the express-4 body invariant: `req.body` is always an object.
@@ -109,7 +146,15 @@ export function createApp(publicDir: string): express.Express {
   // page also hands the browser its session cookie (R2 — the frozen UI keeps
   // calling its own backend without modification).
   app.use(uiAuthCookie);
-  app.use(express.static(publicDir, { index: 'index.html' }));
+  app.use(
+    express.static(publicDir, {
+      index: 'index.html',
+      setHeaders: (res, filePath) => {
+        // Only a document can carry a CSP; JSON, images and the like need none.
+        if (filePath.endsWith('.html')) res.setHeader('Content-Security-Policy', contentSecurityPolicy());
+      },
+    }),
+  );
 
   app.use('/api', notFoundHandler);
   app.use(errorHandler);
@@ -134,7 +179,7 @@ export interface StartOptions {
 /** Start listening and resolve once the socket is bound. */
 export function startServer(opts: StartOptions): Promise<RunningServer> {
   const host = opts.host ?? '127.0.0.1';
-  const app = createApp(opts.publicDir);
+  const app = createApp(opts.publicDir, { host });
   const server = http.createServer(app);
 
   let shuttingDown = false;

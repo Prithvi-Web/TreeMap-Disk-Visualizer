@@ -24,6 +24,23 @@ export class AppError extends Error {
   }
 }
 
+/**
+ * The one sentence for "the OS would not let TreeMap read this".
+ *
+ * Shared by the HTTP error handler, the MCP tools and the scanner's own error
+ * text, so the Browse modal, the Scan button and an agent all read the same
+ * words — and on macOS the words include the ten-second fix, because on a
+ * fresh Mac the folders the Browse modal offers first (Desktop, Documents,
+ * Downloads) are exactly the ones that answer this way until Full Disk Access
+ * is granted. The page shows `error.message` as is.
+ */
+export function permissionDeniedMessage(p: string | undefined): string {
+  const base = `TreeMap isn't allowed to read ${p ? p : 'this folder'}.`;
+  return process.platform === 'darwin'
+    ? `${base} Give TreeMap Full Disk Access in System Settings › Privacy & Security, then try again.`
+    : base;
+}
+
 /** Map common Node fs error codes to HTTP semantics. */
 function fromNodeError(err: NodeJS.ErrnoException): AppError | null {
   switch (err.code) {
@@ -31,7 +48,7 @@ function fromNodeError(err: NodeJS.ErrnoException): AppError | null {
       return new AppError(404, 'PATH_NOT_FOUND', 'Path does not exist');
     case 'EACCES':
     case 'EPERM':
-      return new AppError(403, 'PERMISSION_DENIED', 'Permission denied');
+      return new AppError(403, 'PERMISSION_DENIED', permissionDeniedMessage(err.path));
     case 'ENOTDIR':
       return new AppError(400, 'NOT_A_DIRECTORY', 'Path is not a directory');
     default:

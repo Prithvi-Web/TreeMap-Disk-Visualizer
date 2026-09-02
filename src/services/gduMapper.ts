@@ -1,6 +1,7 @@
 import { FileNode } from '../models/types';
 import { detectContainerKind } from '../utils/containerKind';
 import { ScanStore, NodeInput, Flag } from './scanStore';
+import { keepSmallest } from './scanRefusals';
 
 /**
  * gdu's JSON export -> TreeMap's FileNode.
@@ -36,11 +37,17 @@ export interface GduMapStats {
   hardlinkedBytes: number;
   cloudFiles: number;
   cloudBytes: number;
+  /** Directories gdu flagged `read_error` (ncdu export format): refused, or unreadable. */
+  deniedDirs: number;
+  /** Up to five of those, smallest paths first (scanRefusals.keepSmallest). */
+  deniedExamples: string[];
 }
 
 interface GduMeta {
   name: string;
   mtime: number;
+  /** ncdu export format: the directory could not be read. */
+  read_error?: boolean;
 }
 
 interface GduFile {
@@ -71,6 +78,12 @@ export interface GduMapOptions {
   cloudProviderFor?: (p: string) => 'icloud' | 'onedrive' | 'dropbox' | undefined;
 }
 
+/** A directory gdu could not read: counted, and named while there is room. */
+function noteDenied(stats: GduMapStats, p: string): void {
+  stats.deniedDirs++;
+  keepSmallest(stats.deniedExamples, p);
+}
+
 /**
  * @param doc      a parsed gdu document ([1,2,{header},dir]) or a bare dir node
  * @param rootPath absolute path this tree is rooted at
@@ -87,6 +100,8 @@ export function mapGduTree(
     hardlinkedBytes: 0,
     cloudFiles: 0,
     cloudBytes: 0,
+    deniedDirs: 0,
+    deniedExamples: [],
   };
   const seen = opts.seenInodes ?? new Set<number>();
   const cloudFor = opts.cloudProviderFor;
@@ -160,6 +175,7 @@ export function mapGduTree(
     const isRoot = parent === null;
     const p = isRoot ? rootAbs : parent === '/' ? '/' + meta.name : parent + '/' + meta.name;
     const name = isRoot ? rootAbs.slice(rootAbs.lastIndexOf('/') + 1) || rootAbs : meta.name;
+    if (meta.read_error === true) noteDenied(stats, p);
 
     const children: FileNode[] = [];
     let total = 0;
@@ -221,6 +237,8 @@ export function mapGduTreeIntoStore(
     hardlinkedBytes: 0,
     cloudFiles: 0,
     cloudBytes: 0,
+    deniedDirs: 0,
+    deniedExamples: [],
   };
   const seen = opts.seenInodes ?? new Set<number>();
   const cloudFor = opts.cloudProviderFor;
@@ -288,6 +306,7 @@ export function mapGduTreeIntoStore(
     const isRoot = parentPath === null;
     const p = isRoot ? rootAbs : parentPath === '/' ? '/' + meta.name : parentPath + '/' + meta.name;
     const name = isRoot ? rootAbs.slice(rootAbs.lastIndexOf('/') + 1) || rootAbs : meta.name;
+    if (meta.read_error === true) noteDenied(stats, p);
 
     const dirId = store.addNode(under, {
       name,

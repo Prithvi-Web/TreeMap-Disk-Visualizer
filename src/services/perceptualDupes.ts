@@ -10,7 +10,7 @@ interface CandidateImage {
   size: number;
   modifiedAt: number;
 }
-import { getScan } from './diskScanner';
+import { peekScan } from './diskScanner';
 
 /**
  * PerceptualDupes — near-duplicate IMAGE detection (Feature 12).
@@ -57,8 +57,9 @@ export function cancelAllNearDupeJobs(): void {
  */
 export function getNearDupeJob(scan: ScanResult, threshold: number): NearDupeJob {
   // Evict jobs whose scan has been evicted so the map can't grow forever.
+  // peekScan, not getScan: housekeeping is not the user reading those scans.
   for (const [scanId, job] of jobs) {
-    if (!getScan(scanId)) {
+    if (!peekScan(scanId)) {
       job.cancelled = true;
       jobs.delete(scanId);
     }

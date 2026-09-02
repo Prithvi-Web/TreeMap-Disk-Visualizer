@@ -1,5 +1,6 @@
 import path from 'path';
 import { startServer, activeSseCount, RunningServer } from './server';
+import { bindDecision } from './utils/bindPolicy';
 
 /**
  * Standalone web-server entry point (`npm start`).
@@ -12,6 +13,14 @@ const HOST = process.env.HOST || '127.0.0.1';
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
 let running: RunningServer | null = null;
+
+// A LAN bind with no token does not start (exit 2): see utils/bindPolicy.
+const bind = bindDecision({ host: HOST, token: process.env.TREEMAP_TOKEN, insecure: process.env.TREEMAP_INSECURE_BIND });
+if (!bind.ok) {
+  console.error(`[treemap] ${bind.reason ?? 'refusing to bind'}`);
+  process.exit(2);
+}
+if (bind.warning) console.warn(`[treemap] WARNING: ${bind.warning}`);
 
 startServer({ port: PORT, host: HOST, publicDir: PUBLIC_DIR })
   .then((r) => {

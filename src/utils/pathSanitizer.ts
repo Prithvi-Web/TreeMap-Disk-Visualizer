@@ -353,6 +353,32 @@ export function sanitizePath(input: unknown): string {
   return resolved;
 }
 
+/**
+ * Where a path LIVES: every symlink in its parent chain resolved, the last
+ * component left exactly as spelled.
+ *
+ * This is the form the scan-root guard compares, and the two halves of the
+ * rule are both deliberate. Resolving the parents is what stops
+ * `root/esc/victim.txt` (esc -> somewhere outside the root) walking past a
+ * textual `path.relative` test — the scanner never followed that link, so the
+ * file was never in the map. Leaving the leaf alone is what keeps the link
+ * ITSELF trashable: `root/esc` lives in the root whatever it points at, and
+ * removing a symlink removes the link, never the target. The same resolution
+ * on the root makes an alias spelling of a scanned file (/tmp/x vs
+ * /private/tmp/x on macOS) the same file rather than "outside every scanned
+ * root". The Data-volume firmlink prefix is stripped too, because realpath
+ * collapses neither spelling of that one.
+ *
+ * Cost and freshness are those of `canonDir`'s memo: a batch of paths in one
+ * folder is one realpath, and a directory swapped for a symlink is seen within
+ * five seconds — the window the blocklist already accepts.
+ */
+export function canonicalDirOf(p: string): string {
+  const parent = path.dirname(p);
+  if (parent === p) return stripDataVolume(canonDir(p)); // "/" or "C:\" itself
+  return stripDataVolume(path.join(canonDir(parent), path.basename(p)));
+}
+
 /** True when `child` is `parent` itself or located anywhere beneath it. */
 export function isInside(parent: string, child: string): boolean {
   const rel = path.relative(parent, child);

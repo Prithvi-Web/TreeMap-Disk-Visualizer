@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { FileNode, ScanResult } from '../models/types';
 import { mapGduTreeIntoStore } from './gduMapper';
+import { keepSmallest } from './scanRefusals';
 import { detectContainerKind } from '../utils/containerKind';
 import { neverDescend } from '../utils/mountBoundaries';
 import { PackedScanStore, ScanStore, NodeInput } from './scanStore';
@@ -348,6 +349,10 @@ export async function gduScanIntoStore(
       scan.hardlinkedBytes = (scan.hardlinkedBytes ?? 0) + stats.hardlinkedBytes;
       scan.cloudFiles = (scan.cloudFiles ?? 0) + stats.cloudFiles;
       scan.cloudBytes = (scan.cloudBytes ?? 0) + stats.cloudBytes;
+      // Folders gdu flagged read_error — the same shape the walker publishes.
+      scan.deniedDirs = (scan.deniedDirs ?? 0) + stats.deniedDirs;
+      scan.deniedExamples = scan.deniedExamples ?? [];
+      for (const p of stats.deniedExamples) keepSmallest(scan.deniedExamples, p);
       scan.scanned = scan.fileCount + scan.dirCount;
     }
 

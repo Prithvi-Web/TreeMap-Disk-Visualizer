@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { sanitizePath, isInside } from '../utils/pathSanitizer';
+import { sanitizePath, isInside, canonicalDirOf } from '../utils/pathSanitizer';
 import { allScans } from '../services/diskScanner';
 import { isVirtualPath } from '../services/containerScanner';
 import { AppError } from './errorHandler';
@@ -155,9 +155,20 @@ export function guardQueryPath(...params: string[]) {
   };
 }
 
-/** Is `p` inside the root of any scan this server has run (and not evicted)? */
+/**
+ * Is `p` inside the root of any scan this server has run (and not evicted)?
+ *
+ * Judged on where the path LIVES (`canonicalDirOf`: parents resolved, leaf as
+ * spelled), on both sides. A textual test let a symlink inside a root reach any
+ * file on the disk — the scanner never follows links, so nothing beyond one was
+ * ever scanned — and refused the same file under an alias spelling. This is the
+ * one gate for every destructive and OS-touching route AND the MCP tools, so it
+ * is the one place the rule lives.
+ */
 export function insideAnyScanRoot(p: string): boolean {
-  return allScans().some((scan) => isInside(scan.rootPath, p));
+  if (p.startsWith('cloud://')) return false; // never on this filesystem
+  const where = canonicalDirOf(p);
+  return allScans().some((scan) => isInside(canonicalDirOf(scan.rootPath), where));
 }
 
 /** Reject body paths that fall outside every known scan root. */

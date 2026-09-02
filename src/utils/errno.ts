@@ -96,3 +96,35 @@ export function meansGone(err: unknown): boolean {
   if (found.code !== undefined) return UNRESOLVABLE.has(found.code);
   return found.errno !== undefined && UNRESOLVABLE_ERRNO.has(found.errno);
 }
+
+/**
+ * Why a file operation failed, in words the person reading the toast can act
+ * on. The caller keeps the path beside it, so the sentence never repeats it;
+ * and the raw message (`ENOENT: no such file or directory, lstat '/…'`) stays
+ * in the terminal log, never in the UI. An error with no errno at all is
+ * described honestly as "something went wrong" rather than by whatever a
+ * subprocess printed.
+ */
+export function describeFsError(err: unknown): string {
+  const code = errnoOf(err)?.code;
+  switch (code) {
+    case 'ENOENT':
+    case 'ENOTDIR':
+      return 'it is no longer there';
+    case 'EACCES':
+    case 'EPERM':
+      return process.platform === 'darwin'
+        ? 'macOS would not let TreeMap touch it — give TreeMap Full Disk Access in System Settings › Privacy & Security, or check the folder\'s permissions'
+        : 'TreeMap is not allowed to touch it — check the folder\'s permissions';
+    case 'EBUSY':
+    case 'ETXTBSY':
+      return 'a program still has it open';
+    case 'EROFS':
+      return 'it lives on a read-only volume';
+    case 'EIO':
+    case 'ETIMEDOUT':
+      return 'the disk did not answer — is the drive still connected?';
+    default:
+      return 'something went wrong on the disk';
+  }
+}

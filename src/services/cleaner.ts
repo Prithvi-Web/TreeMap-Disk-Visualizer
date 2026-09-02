@@ -2,6 +2,7 @@ import { execFile, spawn } from 'child_process';
 import { promises as fsp } from 'fs';
 import { CleanResult } from '../models/types';
 import { AppError } from '../middleware/errorHandler';
+import { describeFsError } from '../utils/errno';
 import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 
 /**
@@ -118,7 +119,10 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
       await trashOne(p);
       deleted.push(p);
     } catch (err) {
-      failed.push({ path: p, reason: err instanceof Error ? err.message : String(err) });
+      // The page prints `reason` in a toast, so it gets a sentence; the raw
+      // text (errno, syscall, path) goes to the terminal where it is useful.
+      console.warn(`[treemap] could not move to the Trash: ${p}:`, err instanceof Error ? err.message : err);
+      failed.push({ path: p, reason: describeFsError(err) });
     }
   }
   return { deleted, failed };
