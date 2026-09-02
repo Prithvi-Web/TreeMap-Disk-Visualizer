@@ -9,6 +9,9 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'z' && e.key !== 'Z') return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) return;
+  // A sheet is up: the map is behind a scrim, and magnifying what nobody can
+  // see leaves the lens painted over the dimmed page when the sheet closes.
+  if (topModal()) return;
   if (state.view !== 'treemap' || isSun() || state.lens.held) return;
   state.lens.held = true;
   presentView();
@@ -30,9 +33,32 @@ document.addEventListener('keydown', (e) => {
   // §6.3 — Escape abandons a lasso in progress before it can mean anything
   // else, so a gesture started by accident costs one key rather than an undo.
   if (e.key === 'Escape' && state.lasso.on) { e.preventDefault(); e.stopPropagation(); lassoCancel(); return; }
+  // The tab lists get the arrows first: ArrowRight on the map-layout segment
+  // switches renderer, it does not drill the treemap behind it. The tab has
+  // to be focused for this to fire, so it can never intercept a stray arrow.
+  if (tablistKeydown(e)) return;
+  /* ── Nothing reaches the page under an open sheet ──
+     A dialog is modal: while one is up, the only keys that mean anything are
+     the ones that act on IT. Everything below used to fire straight through
+     the scrim — Enter drilled the map behind a Trash sheet, '?' stacked the
+     shortcuts sheet on Settings, ⌘R rescanned under a confirmation. Escape
+     still passes (it is how a sheet closes), ⌘K keeps its toggle so the
+     palette can be dismissed the way it was summoned, and Tab is handed to
+     the trap that cycles inside the top sheet. */
+  const sheet = topModal();
+  if (sheet && e.key !== 'Escape' && !(mod && e.key.toLowerCase() === 'k')) {
+    if (e.key === 'Tab') modalTrapTab(e, sheet);
+    return;
+  }
   if (e.key === '?' && !typing && !mod) { e.preventDefault(); toggleShortcuts(); return; }
   if (mod && e.key.toLowerCase() === 'r') {
-    if (state.root) { e.preventDefault(); rescan(); }
+    // Claimed unconditionally. Letting it through when there was no root
+    // handed ⌘R to Electron's View › Reload, which during a first scan threw
+    // the whole renderer away — the scan, the progress, the tour — and came
+    // back to an empty welcome screen.
+    e.preventDefault();
+    if (state.scanning) toast('A scan is already running', 'error');
+    else if (state.root) rescan();
     return;
   }
   if (mod && (e.key === 'Backspace' || e.key === 'Delete')) {
@@ -98,7 +124,9 @@ document.addEventListener('keydown', (e) => {
     }
   }
   if (e.key === 'Escape') {
-    const openModal = document.querySelector('.modal-backdrop.open');
+    // The TOPMOST sheet, not the first in DOM order: stacking a confirmation
+    // on Settings and pressing Escape closed Settings underneath it.
+    const openModal = topModal();
     if (openModal) {
       // The palette promises to restore focus (§9.1); the generic class
       // removal would close it without keeping that promise.
@@ -107,6 +135,9 @@ document.addEventListener('keydown', (e) => {
       return;
     }
     if ($('ctxMenu').style.display === 'block') { hideCtxMenu(); return; }
+    // The drawer sits OVER the map, so it is the thing Escape means: before
+    // this, Escape climbed a folder behind an open cart and left it open.
+    if ($('cartDock').classList.contains('open')) { cartDockToggle(false, { focus: true }); return; }
     if (previewIsOpen()) { closePreview(); return; }
     if (typing && document.activeElement === $('gridSearch') && $('gridSearch').value) {
       $('gridSearch').value = ''; state.grid.query = ''; renderGrid(); return;

@@ -3422,8 +3422,8 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
             <!-- v4 §3.3 — the same ten files, ordered by the question people
                  actually have. Sorting, not filtering: nothing leaves the list. -->
             <div class="seg" id="bigFilesSort" role="tablist" aria-label="Sort largest files by" style="margin-left:auto;">
-              <button type="button" data-sort="size" aria-selected="true" title="Biggest first">Size</button>
-              <button type="button" data-sort="reclaim" aria-selected="false" title="Safest and most worthwhile to delete first">Reclaim</button>
+              <button role="tab" type="button" data-sort="size" aria-selected="true" title="Biggest first">Size</button>
+              <button role="tab" type="button" data-sort="reclaim" aria-selected="false" title="Safest and most worthwhile to delete first">Reclaim</button>
             </div>
           </h2>
           <div id="bigFiles"><div class="muted">Run a scan to find your biggest files.</div></div>
@@ -3456,10 +3456,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <!-- v4 §6.2 — four lenses on one tree. Not four views: same root, same
              breadcrumbs, same depth, same colour mode, same highlight box. -->
         <div class="seg" id="tmViewSeg" role="tablist" aria-label="Map layout">
-          <button type="button" data-vm="treemap" aria-selected="true" title="Squarified treemap">Treemap</button>
-          <button type="button" data-vm="sunburst" aria-selected="false" title="Radial sunburst">Sunburst</button>
-          <button type="button" data-vm="circles" aria-selected="false" title="Nested circle packing — every folder is a circle holding its children">Circles</button>
-          <button type="button" data-vm="voronoi" aria-selected="false" title="Voronoi treemap — cells whose areas are proportional to bytes, solved by Lloyd's algorithm">Voronoi</button>
+          <button role="tab" type="button" data-vm="treemap" aria-selected="true" title="Squarified treemap">Treemap</button>
+          <button role="tab" type="button" data-vm="sunburst" aria-selected="false" title="Radial sunburst">Sunburst</button>
+          <button role="tab" type="button" data-vm="circles" aria-selected="false" title="Nested circle packing — every folder is a circle holding its children">Circles</button>
+          <button role="tab" type="button" data-vm="voronoi" aria-selected="false" title="Voronoi treemap — cells whose areas are proportional to bytes, solved by Lloyd's algorithm">Voronoi</button>
         </div>
       </div>
       <div class="tb-group tb-find">
@@ -3486,9 +3486,9 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div class="tb-row tb-row-controls">
       <div class="tb-group tb-appearance">
         <div class="seg" id="tmColorSeg" role="tablist" aria-label="Treemap color mode">
-          <button type="button" data-mode="size" aria-selected="true" title="Color cells by file size">Size</button>
-          <button type="button" data-mode="age" aria-selected="false" title="Color cells by how recently modified">Age</button>
-          <button type="button" data-mode="reclaim" aria-selected="false" title="Color cells by how safe and worthwhile they are to reclaim">Reclaim</button>
+          <button role="tab" type="button" data-mode="size" aria-selected="true" title="Color cells by file size">Size</button>
+          <button role="tab" type="button" data-mode="age" aria-selected="false" title="Color cells by how recently modified">Age</button>
+          <button role="tab" type="button" data-mode="reclaim" aria-selected="false" title="Color cells by how safe and worthwhile they are to reclaim">Reclaim</button>
         </div>
         <label for="tmDepth">Depth</label>
         <select id="tmDepth" aria-label="Treemap depth">
@@ -3531,10 +3531,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <input type="range" id="tmTimeSlider" min="0" max="0" step="1" value="0" aria-label="Scrub through this folder's scan history">
       <span class="tm-timelabel num" id="tmTimeLabel">Live</span>
       <div class="seg seg-fit" id="tmLapseSpeed" role="tablist" aria-label="Time-lapse playback speed">
-        <button type="button" data-speed="0.5" aria-selected="false" title="Half speed">½×</button>
-        <button type="button" data-speed="1" aria-selected="true" title="Normal speed — about a second per snapshot">1×</button>
-        <button type="button" data-speed="2" aria-selected="false" title="Double speed">2×</button>
-        <button type="button" data-speed="4" aria-selected="false" title="Quadruple speed">4×</button>
+        <button role="tab" type="button" data-speed="0.5" aria-selected="false" title="Half speed">½×</button>
+        <button role="tab" type="button" data-speed="1" aria-selected="true" title="Normal speed — about a second per snapshot">1×</button>
+        <button role="tab" type="button" data-speed="2" aria-selected="false" title="Double speed">2×</button>
+        <button role="tab" type="button" data-speed="4" aria-selected="false" title="Quadruple speed">4×</button>
       </div>
       <button class="pill" id="tmLapseLoop" aria-pressed="false" title="Start again from the oldest snapshot when playback reaches the end">Loop</button>
       <button class="pill" id="tmDiffToggle" aria-pressed="false" title="Tint what grew green and what shrank red, compared with the previous snapshot">Diff</button>
@@ -3553,7 +3553,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         <span id="tmPreviewText"></span>
         <button class="pill" id="tmPreviewExit">Exit preview</button>
       </div>
-      <div id="treemapZoom"><canvas id="treemapCanvas" tabindex="0" aria-label="Disk usage treemap. Click a directory to drill in, Escape to go up."></canvas></div>
+      <!-- What j/k selected, spoken. The tooltip is role="tooltip", which is
+           not a live region, so the highlight moved in silence. -->
+      <div id="tmKbAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+      <div id="treemapZoom"><canvas id="treemapCanvas" tabindex="0" aria-label="Disk usage treemap. Use j and k, or the up and down arrows, to move between items; l or Enter opens the selected folder; h or Escape goes back up. The selection is announced as you move."></canvas></div>
       <!-- FX wiring: two orb wells over the canvas. The centred one holds the
            64px "searching" hero while a first scan runs against an empty map;
            the corner chip holds the 20px "shaping" orb while §2.5's refinement
@@ -3594,14 +3597,14 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <div class="tb-row tb-row-controls">
         <div class="tb-group tb-appearance">
           <div class="seg" id="cityHeightSeg" role="tablist" aria-label="What building height means">
-            <button type="button" data-h="staleness" aria-selected="true" title="Taller = longer since anything in it changed">Staleness</button>
-            <button type="button" data-h="files" aria-selected="false" title="Taller = more files inside">Files</button>
-            <button type="button" data-h="depth" aria-selected="false" title="Taller = more deeply nested">Depth</button>
+            <button role="tab" type="button" data-h="staleness" aria-selected="true" title="Taller = longer since anything in it changed">Staleness</button>
+            <button role="tab" type="button" data-h="files" aria-selected="false" title="Taller = more files inside">Files</button>
+            <button role="tab" type="button" data-h="depth" aria-selected="false" title="Taller = more deeply nested">Depth</button>
           </div>
           <div class="seg" id="cityColorSeg" role="tablist" aria-label="What building colour means">
-            <button type="button" data-c="reclaim" aria-selected="true" title="Colour by how safe and worthwhile it is to reclaim">Reclaim</button>
-            <button type="button" data-c="type" aria-selected="false" title="Colour by file kind">Type</button>
-            <button type="button" data-c="age" aria-selected="false" title="Colour by how recently modified">Age</button>
+            <button role="tab" type="button" data-c="reclaim" aria-selected="true" title="Colour by how safe and worthwhile it is to reclaim">Reclaim</button>
+            <button role="tab" type="button" data-c="type" aria-selected="false" title="Colour by file kind">Type</button>
+            <button role="tab" type="button" data-c="age" aria-selected="false" title="Colour by how recently modified">Age</button>
           </div>
         </div>
         <div class="tb-spring" aria-hidden="true"></div>
@@ -3807,17 +3810,17 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
   <!-- ═══════════ History (v4 §7 — calendar · journal · compare in one view) ═══════════ -->
   <section class="view" id="view-history" role="tabpanel" aria-label="History — calendar heatmap, disk journal, and scan compare" hidden>
     <div class="seg" id="histSeg" role="tablist" aria-label="History panel" style="margin-bottom:12px;">
-      <button type="button" data-panel="calendar" aria-selected="true" title="Bytes written per day, one cell per day">Calendar</button>
-      <button type="button" data-panel="journal" aria-selected="false" title="What changed, day by day, honestly attributed">Journal</button>
-      <button type="button" data-panel="compare" aria-selected="false" title="Two scans of one folder, diffed — with the split-slider for history pairs">Compare</button>
+      <button role="tab" type="button" data-panel="calendar" aria-selected="true" title="Bytes written per day, one cell per day">Calendar</button>
+      <button role="tab" type="button" data-panel="journal" aria-selected="false" title="What changed, day by day, honestly attributed">Journal</button>
+      <button role="tab" type="button" data-panel="compare" aria-selected="false" title="Two scans of one folder, diffed — with the split-slider for history pairs">Compare</button>
     </div>
     <div id="histPanelCalendar" class="pane-fade">
     <div class="card glass">
       <h2><span data-icon="calendar"></span>Calendar</h2>
       <div class="rule-row" style="align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
         <div class="seg" id="calChannelSeg" role="tablist" aria-label="Calendar channel">
-          <button type="button" data-ch="modified" aria-selected="true" title="Bytes modified per day — read from the scan itself, exact">Modified</button>
-          <button type="button" data-ch="created" aria-selected="false" title="Bytes created per day — needs per-file stats, capped and reported honestly">Created</button>
+          <button role="tab" type="button" data-ch="modified" aria-selected="true" title="Bytes modified per day — read from the scan itself, exact">Modified</button>
+          <button role="tab" type="button" data-ch="created" aria-selected="false" title="Bytes created per day — needs per-file stats, capped and reported honestly">Created</button>
         </div>
         <span class="muted" id="calHint">Click a day to see those files on the treemap · drag across days for a range</span>
       </div>
@@ -4471,7 +4474,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
 </div>
 
 <!-- ═══════════ Quick-look preview (Feature 4) ═══════════ -->
-<aside id="previewPane" aria-label="File preview" hidden>
+<aside id="previewPane" role="complementary" aria-label="File preview" hidden>
   <div class="pv-head">
     <span class="pv-ic" id="pvIcon"></span>
     <div class="pv-meta"><div class="pv-name" id="pvName"></div><div class="pv-sub num" id="pvSub"></div></div>
@@ -31390,8 +31393,8 @@ document.querySelectorAll('[data-close]').forEach(b =>
 document.querySelectorAll('.modal-backdrop').forEach(bd =>
   bd.addEventListener('mousedown', (e) => { if (e.target === bd) closeModal(bd.id); }));
 
-/* ── Focus discipline for every dialog ──
-   Thirty-two call sites open a sheet by adding `.open` to its backdrop, and
+/* ── Focus discipline for every dialog ── */
+/* Thirty-two call sites open a sheet by adding `.open` to its backdrop, and
    until now only the palette, the duplicate viewer and the two small forms
    moved focus with it: everywhere else Enter could not confirm, Tab walked
    the page under the scrim, and a screen reader was never told a dialog had
@@ -31422,9 +31425,19 @@ document.addEventListener('focusin', (e) => {
   if (top && !top.contains(e.target)) modalFocusInto(top);
 });
 
-/** Open backdrops, bottom to top. Backdrops share one z-index, so DOM order is paint order — except the palette, which paints above every other sheet. */
+/* Which sheet is on top, bottom to top.
+   NOT DOM order. Backdrops share one z-index, so DOM order is what PAINTS —
+   and that is the bug, not the rule: #confirmModal is markup/095 and
+   #settingsModal is markup/110, so a confirmation opened from Settings
+   painted behind the sheet that opened it. The order that matters is the
+   order they were opened in, and `syncModalLayers` lifts the top sheet so
+   the painting agrees with it. The palette still wins outright: it is
+   summoned over anything and hands focus back on close. */
+let modalOpenSeq = 0;
+const modalOrder = new WeakMap(); // backdrop → the tick it was opened on
 function openModals() {
-  const open = [...document.querySelectorAll('.modal-backdrop.open')];
+  const open = [...document.querySelectorAll('.modal-backdrop.open')]
+    .sort((a, b) => (modalOrder.get(a) || 0) - (modalOrder.get(b) || 0));
   const k = open.findIndex((el) => el.id === 'cmdkModal');
   if (k !== -1 && k !== open.length - 1) open.push(...open.splice(k, 1));
   return open;
@@ -31455,6 +31468,7 @@ function modalTrapTab(e, top) {
   else if (!e.shiftKey && (i === -1 || i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
 }
 function modalOpened(el) {
+  modalOrder.set(el, ++modalOpenSeq);
   const prev = lastFocus && lastFocus.isConnected !== false && !el.contains(lastFocus) ? lastFocus : null;
   modalPrevFocus.set(el.id, prev);
 }
@@ -31476,8 +31490,13 @@ function syncModalLayers(moveFocus = true) {
   const open = openModals();
   const top = open.length ? open[open.length - 1] : null;
   for (const el of document.body.children) {
-    if (el.classList.contains('modal-backdrop')) el.inert = el.classList.contains('open') && el !== top;
-    else if (el.id !== 'toasts' && el.id !== 'tooltip' && !el.classList.contains('blob')) el.inert = !!top;
+    if (el.classList.contains('modal-backdrop')) {
+      el.inert = el.classList.contains('open') && el !== top;
+      // Paint follows focus. Stacked sheets share one z-index, so without
+      // this the sheet that owns the keyboard can sit behind the one it was
+      // opened from. Cleared on close so the stylesheet owns the rank again.
+      if (el.style) el.style.zIndex = el === top && open.length > 1 ? '101' : '';
+    } else if (el.id !== 'toasts' && el.id !== 'tooltip' && !el.classList.contains('blob')) el.inert = !!top;
   }
   if (moveFocus && top && !top.contains(document.activeElement)) modalFocusInto(top);
 }
@@ -31495,6 +31514,83 @@ document.querySelectorAll('.modal-backdrop').forEach((el) =>
   modalNet.observe(el, { attributes: true, attributeFilter: ['class'], attributeOldValue: true }));
 /* ── end focus discipline ── */
 
+/* ───────────────────────────── Segmented controls ─────────────────────────────
+   Thirteen controls in this app declare `role="tablist"` — the twelve segments
+   (map layout, colour mode, duplicate mode, playback speed, Clean Up's tabs,
+   the history panes, Disk City's two) plus the sidebar's own nav. Declaring
+   the role is a promise about the keyboard: arrows move between the tabs,
+   Home and End jump to the ends, and exactly one tab at a time is a Tab stop
+   so the control is a single stop in the page's tab order rather than four.
+   None of that was implemented, and a `role="tablist"` whose children answer
+   nothing is worse than no role at all — a screen-reader user is told there
+   is a tab list and then finds it inert.
+
+   Nothing here changes how a tab is CHOSEN. All twelve writers keep setting
+   `aria-selected` exactly as they do today; this file only reacts to it. */
+
+/* ── Roving tabindex ── */
+/* One Tab stop per list, on the selected tab — the pattern every native
+   segmented control follows. A net watches `aria-selected` across the whole
+   document rather than asking the twelve writers to call anything, so a list
+   rendered later (Clean Up's tabs, the history panes) is covered the moment
+   it appears, and a writer that forgets cannot desynchronise the keyboard. */
+function tablistRovingSync(list) {
+  const tabs = [...list.querySelectorAll('[role="tab"]')];
+  if (!tabs.length) return;
+  const selected = tabs.findIndex((t) => t.getAttribute('aria-selected') === 'true');
+  const stop = selected === -1 ? 0 : selected;
+  tabs.forEach((t, i) => t.setAttribute('tabindex', i === stop ? '0' : '-1'));
+}
+
+const tablistNet = new MutationObserver((records) => {
+  const done = new Set();
+  for (const r of records) {
+    const list = r.target.closest && r.target.closest('[role="tablist"]');
+    if (list && !done.has(list)) { done.add(list); tablistRovingSync(list); }
+  }
+});
+tablistNet.observe(document.body, { attributes: true, attributeFilter: ['aria-selected'], subtree: true });
+document.querySelectorAll('[role="tablist"]').forEach((list) => tablistRovingSync(list));
+
+/**
+ * Arrow / Home / End inside a tab list. Returns true when it took the key.
+ *
+ * Selection follows focus, which is the native behaviour for a segmented
+ * control (and what every writer here already does on click) — so the move
+ * is `focus()` plus the element's own `click()`, and no call site changes.
+ * A horizontal list ignores ↑/↓ and a vertical one ignores ←/→, so the axis
+ * the list does not use still scrolls the page.
+ */
+function tablistKeydown(e) {
+  if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft' && e.key !== 'ArrowUp'
+      && e.key !== 'ArrowDown' && e.key !== 'Home' && e.key !== 'End') return false;
+  const tab = e.target;
+  if (!tab || !tab.getAttribute || tab.getAttribute('role') !== 'tab') return false;
+  const list = tab.closest('[role="tablist"]');
+  if (!list) return false;
+  const vertical = list.getAttribute('aria-orientation') === 'vertical';
+  const forward = vertical ? 'ArrowDown' : 'ArrowRight';
+  const back = vertical ? 'ArrowUp' : 'ArrowLeft';
+  if (e.key !== forward && e.key !== back && e.key !== 'Home' && e.key !== 'End') return false;
+  // A hidden tab is not a destination: #cleanTabCloud is hidden until a cloud
+  // placeholder exists, and arrowing onto it would focus nothing visible.
+  const tabs = [...list.querySelectorAll('[role="tab"]')].filter((t) => !t.hidden && !t.disabled);
+  if (!tabs.length) return false;
+  const i = tabs.indexOf(tab);
+  let next;
+  if (e.key === 'Home') next = tabs[0];
+  else if (e.key === 'End') next = tabs[tabs.length - 1];
+  else if (i === -1) next = tabs[0];
+  else if (e.key === forward) next = tabs[(i + 1) % tabs.length];
+  else next = tabs[(i - 1 + tabs.length) % tabs.length];
+  if (!next) return false;
+  e.preventDefault();
+  next.focus();
+  next.click();
+  return true;
+}
+
 /* ───────────────────────────── Keyboard shortcuts ───────────────────────────── */
 /* ── v4 §6.4 — hold Z ──
    `keydown` repeats while a key is held, so the guard on `state.lens.held` is
@@ -31506,6 +31602,9 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'z' && e.key !== 'Z') return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')) return;
+  // A sheet is up: the map is behind a scrim, and magnifying what nobody can
+  // see leaves the lens painted over the dimmed page when the sheet closes.
+  if (topModal()) return;
   if (state.view !== 'treemap' || isSun() || state.lens.held) return;
   state.lens.held = true;
   presentView();
@@ -31527,9 +31626,32 @@ document.addEventListener('keydown', (e) => {
   // §6.3 — Escape abandons a lasso in progress before it can mean anything
   // else, so a gesture started by accident costs one key rather than an undo.
   if (e.key === 'Escape' && state.lasso.on) { e.preventDefault(); e.stopPropagation(); lassoCancel(); return; }
+  // The tab lists get the arrows first: ArrowRight on the map-layout segment
+  // switches renderer, it does not drill the treemap behind it. The tab has
+  // to be focused for this to fire, so it can never intercept a stray arrow.
+  if (tablistKeydown(e)) return;
+  /* ── Nothing reaches the page under an open sheet ──
+     A dialog is modal: while one is up, the only keys that mean anything are
+     the ones that act on IT. Everything below used to fire straight through
+     the scrim — Enter drilled the map behind a Trash sheet, '?' stacked the
+     shortcuts sheet on Settings, ⌘R rescanned under a confirmation. Escape
+     still passes (it is how a sheet closes), ⌘K keeps its toggle so the
+     palette can be dismissed the way it was summoned, and Tab is handed to
+     the trap that cycles inside the top sheet. */
+  const sheet = topModal();
+  if (sheet && e.key !== 'Escape' && !(mod && e.key.toLowerCase() === 'k')) {
+    if (e.key === 'Tab') modalTrapTab(e, sheet);
+    return;
+  }
   if (e.key === '?' && !typing && !mod) { e.preventDefault(); toggleShortcuts(); return; }
   if (mod && e.key.toLowerCase() === 'r') {
-    if (state.root) { e.preventDefault(); rescan(); }
+    // Claimed unconditionally. Letting it through when there was no root
+    // handed ⌘R to Electron's View › Reload, which during a first scan threw
+    // the whole renderer away — the scan, the progress, the tour — and came
+    // back to an empty welcome screen.
+    e.preventDefault();
+    if (state.scanning) toast('A scan is already running', 'error');
+    else if (state.root) rescan();
     return;
   }
   if (mod && (e.key === 'Backspace' || e.key === 'Delete')) {
@@ -31595,7 +31717,9 @@ document.addEventListener('keydown', (e) => {
     }
   }
   if (e.key === 'Escape') {
-    const openModal = document.querySelector('.modal-backdrop.open');
+    // The TOPMOST sheet, not the first in DOM order: stacking a confirmation
+    // on Settings and pressing Escape closed Settings underneath it.
+    const openModal = topModal();
     if (openModal) {
       // The palette promises to restore focus (§9.1); the generic class
       // removal would close it without keeping that promise.
@@ -31604,6 +31728,9 @@ document.addEventListener('keydown', (e) => {
       return;
     }
     if ($('ctxMenu').style.display === 'block') { hideCtxMenu(); return; }
+    // The drawer sits OVER the map, so it is the thing Escape means: before
+    // this, Escape climbed a folder behind an open cart and left it open.
+    if ($('cartDock').classList.contains('open')) { cartDockToggle(false, { focus: true }); return; }
     if (previewIsOpen()) { closePreview(); return; }
     if (typing && document.activeElement === $('gridSearch') && $('gridSearch').value) {
       $('gridSearch').value = ''; state.grid.query = ''; renderGrid(); return;

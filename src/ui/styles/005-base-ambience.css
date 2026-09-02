@@ -38,15 +38,21 @@ button { font-family: inherit; color: inherit; }
 .num { font-variant-numeric: tabular-nums; }
 
 /* Ambient background field */
-.blob { position: fixed; border-radius: 50%; filter: blur(95px); pointer-events: none; z-index: -1; opacity: var(--blob-opacity); }
+.blob { position: fixed; border-radius: 50%; pointer-events: none; z-index: -1; opacity: var(--blob-opacity); }
 /* Static ambience on purpose: these used to drift on infinite animations,
    which kept the GPU re-compositing four giant blurred layers forever —
-   battery and frame-time spent on a 30-second drift nobody watches. */
-.blob.b1 { width: 620px; height: 620px; top: -200px; left: -140px;
-  background: radial-gradient(circle, rgba(10,132,255,0.22), transparent 65%); }
-.blob.b2 { width: 700px; height: 700px; top: 28%; right: -240px;
-  background: radial-gradient(circle, rgba(94,92,230,0.17), transparent 65%); }
-.blob.b3 { width: 520px; height: 520px; bottom: -220px; left: 28%;
-  background: radial-gradient(circle, rgba(48,209,88,0.11), transparent 65%); }
-.blob.b4 { width: 380px; height: 380px; top: 12%; left: 42%;
-  background: radial-gradient(circle, rgba(100,210,255,0.10), transparent 65%); }
+   battery and frame-time spent on a 30-second drift nobody watches.
+   No filter either, for the same reason: `filter: blur(95px)` made each
+   blob its own render surface, re-blurred on every frame whose damage
+   touched it — and something always did (a pulsing dot, a beam, a hover).
+   A blurred radial gradient is just another radial gradient, so the
+   softness is baked in: each blob grew by 280px (140px a side, the offsets
+   pulled back to match) and falls off over two shoulders instead of one. */
+.blob.b1 { width: 900px; height: 900px; top: -340px; left: -280px;
+  background: radial-gradient(circle, rgba(10,132,255,0.22) 0%, rgba(10,132,255,0.10) 34%, transparent 68%); }
+.blob.b2 { width: 980px; height: 980px; top: calc(28% - 140px); right: -380px;
+  background: radial-gradient(circle, rgba(94,92,230,0.17) 0%, rgba(94,92,230,0.08) 34%, transparent 68%); }
+.blob.b3 { width: 800px; height: 800px; bottom: -360px; left: calc(28% - 140px);
+  background: radial-gradient(circle, rgba(48,209,88,0.11) 0%, rgba(48,209,88,0.05) 34%, transparent 68%); }
+.blob.b4 { width: 660px; height: 660px; top: calc(12% - 140px); left: calc(42% - 140px);
+  background: radial-gradient(circle, rgba(100,210,255,0.10) 0%, rgba(100,210,255,0.045) 34%, transparent 68%); }

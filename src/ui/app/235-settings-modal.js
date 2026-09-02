@@ -451,3 +451,124 @@ document.querySelectorAll('[data-close]').forEach(b =>
 // surface delivered it, and per-modal teardown must not depend on which one.
 document.querySelectorAll('.modal-backdrop').forEach(bd =>
   bd.addEventListener('mousedown', (e) => { if (e.target === bd) closeModal(bd.id); }));
+
+/* ── Focus discipline for every dialog ── */
+/* Thirty-two call sites open a sheet by adding `.open` to its backdrop, and
+   until now only the palette, the duplicate viewer and the two small forms
+   moved focus with it: everywhere else Enter could not confirm, Tab walked
+   the page under the scrim, and a screen reader was never told a dialog had
+   opened. Rather than a fourth pattern at every site, one net watches the
+   class flip on every backdrop and applies the same rules to all of them:
+
+   - the page (everything at body level that is not a backdrop or the toasts)
+     goes `inert` while any sheet is up, and so does every open sheet except
+     the topmost — Tab, clicks and assistive tech cannot reach underneath;
+   - focus moves INTO the top sheet: an [autofocus] field, else the primary or
+     danger button in its footer (so Enter confirms a Trash sheet), else the
+     sheet itself; a sheet that already placed focus (the palette, the viewer)
+     is left alone;
+   - Tab and Shift+Tab cycle inside the top sheet (modalTrapTab, called from
+     the app-wide keydown handler);
+   - closing restores focus to where it was before the sheet opened, unless
+     the close already put it somewhere (the palette hands off to its action).
+   `inert` is native in Electron's Chromium — no dependency. */
+let lastFocus = null;             // the most recently focused element, anywhere
+const modalPrevFocus = new Map(); // backdrop id → the element to return focus to
+
+function noteFocus(el) { lastFocus = el; }
+document.addEventListener('focusin', (e) => {
+  noteFocus(e.target);
+  // Belt and braces over inert: focus that lands outside the top sheet (a
+  // programmatic .focus() somewhere in the page) is pulled back in.
+  const top = topModal();
+  if (top && !top.contains(e.target)) modalFocusInto(top);
+});
+
+/* Which sheet is on top, bottom to top.
+   NOT DOM order. Backdrops share one z-index, so DOM order is what PAINTS —
+   and that is the bug, not the rule: #confirmModal is markup/095 and
+   #settingsModal is markup/110, so a confirmation opened from Settings
+   painted behind the sheet that opened it. The order that matters is the
+   order they were opened in, and `syncModalLayers` lifts the top sheet so
+   the painting agrees with it. The palette still wins outright: it is
+   summoned over anything and hands focus back on close. */
+let modalOpenSeq = 0;
+const modalOrder = new WeakMap(); // backdrop → the tick it was opened on
+function openModals() {
+  const open = [...document.querySelectorAll('.modal-backdrop.open')]
+    .sort((a, b) => (modalOrder.get(a) || 0) - (modalOrder.get(b) || 0));
+  const k = open.findIndex((el) => el.id === 'cmdkModal');
+  if (k !== -1 && k !== open.length - 1) open.push(...open.splice(k, 1));
+  return open;
+}
+function topModal() { const open = openModals(); return open.length ? open[open.length - 1] : null; }
+
+function modalFocusables(root) {
+  return [...root.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')]
+    .filter((el) => !el.disabled && el.tabIndex >= 0 && el.getAttribute('aria-hidden') !== 'true' && el.getClientRects().length);
+}
+function modalFocusTarget(backdrop) {
+  const dlg = backdrop.querySelector('.modal') || backdrop;
+  const pick = (sel) => [...dlg.querySelectorAll(sel)].find((el) => !el.disabled && el.getClientRects().length);
+  const target = pick('[autofocus]') || pick('.modal-foot .btn-primary, .modal-foot .btn-danger');
+  if (target) return target;
+  if (!dlg.hasAttribute('tabindex')) dlg.setAttribute('tabindex', '-1');
+  return dlg;
+}
+function modalFocusInto(backdrop) {
+  const t = modalFocusTarget(backdrop);
+  if (t && t.focus) t.focus({ preventScroll: true });
+}
+function modalTrapTab(e, top) {
+  const f = modalFocusables(top);
+  if (!f.length) { e.preventDefault(); return; }
+  const i = f.indexOf(document.activeElement);
+  if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+  else if (!e.shiftKey && (i === -1 || i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
+}
+function modalOpened(el) {
+  modalOrder.set(el, ++modalOpenSeq);
+  const prev = lastFocus && lastFocus.isConnected !== false && !el.contains(lastFocus) ? lastFocus : null;
+  modalPrevFocus.set(el.id, prev);
+}
+function modalClosed(el) {
+  syncModalLayers(false); // lift inert first, or the restored focus is refused
+  const prev = modalPrevFocus.get(el.id) || null;
+  modalPrevFocus.delete(el.id);
+  // A sheet opened from inside this one would return focus into a sheet that
+  // is gone: re-point it at where this one came from.
+  for (const [id, p] of modalPrevFocus) if (p && el.contains(p)) modalPrevFocus.set(id, prev);
+  const active = document.activeElement;
+  // The close already placed focus (the palette restores its own, an action
+  // opened a search box): leave it. Otherwise focus fell to <body> when the
+  // sheet stopped painting, or is still nominally inside it.
+  const drifted = !active || active === document.body || el.contains(active);
+  if (drifted && prev && prev.focus && prev.isConnected !== false) prev.focus({ preventScroll: true });
+}
+function syncModalLayers(moveFocus = true) {
+  const open = openModals();
+  const top = open.length ? open[open.length - 1] : null;
+  for (const el of document.body.children) {
+    if (el.classList.contains('modal-backdrop')) {
+      el.inert = el.classList.contains('open') && el !== top;
+      // Paint follows focus. Stacked sheets share one z-index, so without
+      // this the sheet that owns the keyboard can sit behind the one it was
+      // opened from. Cleared on close so the stylesheet owns the rank again.
+      if (el.style) el.style.zIndex = el === top && open.length > 1 ? '101' : '';
+    } else if (el.id !== 'toasts' && el.id !== 'tooltip' && !el.classList.contains('blob')) el.inert = !!top;
+  }
+  if (moveFocus && top && !top.contains(document.activeElement)) modalFocusInto(top);
+}
+const modalNet = new MutationObserver((records) => {
+  for (const r of records) {
+    const el = r.target;
+    const isOpen = el.classList.contains('open');
+    const wasOpen = (r.oldValue || '').split(/\s+/).includes('open');
+    if (isOpen === wasOpen) continue;
+    if (isOpen) modalOpened(el); else modalClosed(el);
+  }
+  syncModalLayers();
+});
+document.querySelectorAll('.modal-backdrop').forEach((el) =>
+  modalNet.observe(el, { attributes: true, attributeFilter: ['class'], attributeOldValue: true }));
+/* ── end focus discipline ── */

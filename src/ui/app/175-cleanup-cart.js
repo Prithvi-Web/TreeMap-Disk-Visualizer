@@ -570,14 +570,24 @@ async function cartUndoRun(runId) {
  * dock is there. One toggle function rather than three inline handlers, so the
  * class and the drawer cannot drift apart.
  */
-function cartDockToggle(open) {
+function cartDockToggle(open, { focus = false } = {}) {
   const dock = $('cartDock');
   const next = open === undefined ? !dock.classList.contains('open') : open;
+  const hadFocus = dock.contains(document.activeElement);
   dock.classList.toggle('open', next);
   document.body.classList.toggle('cart-open', next);
+  // Keyboard users must land where they can act. A drawer opened from the
+  // tab left focus on the tab, with Escape climbing the map instead of
+  // closing the drawer; closing from inside it left focus on a hidden button.
+  // Pointer users are where their pointer is — a click moves no focus.
+  if (next) {
+    if (focus) requestAnimationFrame(() => { const c = $('cartCollapse'); if (c && dock.classList.contains('open')) c.focus({ preventScroll: true }); });
+  } else if (hadFocus) {
+    $('cartTab').focus({ preventScroll: true });
+  }
 }
 $('cartTab').addEventListener('click', () => cartDockToggle());
-$('cartTab').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cartDockToggle(); } });
+$('cartTab').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cartDockToggle(undefined, { focus: true }); } });
 $('cartCollapse').addEventListener('click', () => cartDockToggle(false));
 $('cartClear').addEventListener('click', cartClear);
 $('cartTrash').addEventListener('click', cartTrashAll);

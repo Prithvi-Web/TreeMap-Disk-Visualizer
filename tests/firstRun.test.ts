@@ -105,7 +105,7 @@ test('one Escape never closes a dialog AND skips the tour', () => {
   // branch claims — modal, menu, preview, climb-out — returns before the
   // tour branch is ever reached.
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
-  const chain = html.slice(html.indexOf("const openModal = document.querySelector('.modal-backdrop.open')"));
+  const chain = html.slice(html.indexOf('const openModal = topModal();'));
   // closeModal(), not a bare class removal: the funnel carries per-modal
   // teardown (the Settings sheet clears its cloud-connect poll + orb there).
   const modalBranch = chain.indexOf('closeModal(openModal.id)');
@@ -137,11 +137,14 @@ test("the wins step never reads a non-answer as clean — polls, and shows refus
 
 test('Escape has one meaning: the tour skip is the LAST branch of the app-wide chain', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  // A missing anchor used to slice(-1) — the last character of the page — and
+  // every containment check below then failed for the wrong reason.
+  assert.notEqual(html.indexOf('const openModal = topModal();'), -1, 'the Escape chain is where this test thinks it is');
   // The dedicated tour listener is gone…
   assert.ok(!/addEventListener\('keydown', \(e\) => \{\n  if \(e\.key === 'Escape' && tour\.active/.test(html),
     'no separate tour Escape listener survives');
   // …and inside the big chain, every established meaning comes first.
-  const chain = html.slice(html.indexOf("const openModal = document.querySelector('.modal-backdrop.open')"));
+  const chain = html.slice(html.indexOf('const openModal = topModal();'));
   const tourAt = chain.indexOf('tour.active && !$(\'tourOverlay\').hidden');
   assert.notEqual(tourAt, -1, 'the tour branch lives in the chain');
   for (const earlier of ['hideCtxMenu()', 'closePreview()', 'exitCartPreview()', 'treemapUp()', 'cityUp()', 'gridUp()']) {

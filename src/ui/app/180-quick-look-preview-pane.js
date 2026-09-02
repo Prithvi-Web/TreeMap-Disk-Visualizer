@@ -40,13 +40,20 @@ function highlightCode(src, ext) {
 }
 
 let pvReqId = 0;
+let pvPrevFocus = null; // where focus was before the pane took it
 function openPreview(node) {
   if (!node || node.type !== 'file') return;
   if (node.path.startsWith('cloud://')) { toast('Quick Look needs file contents — cloud scans never download any'); return; }
   const pane = $('previewPane');
+  const wasOpen = previewIsOpen();
   pane.hidden = false;
   document.body.classList.add('preview-open');
   requestAnimationFrame(() => pane.classList.add('open'));
+  // Focus moves into the pane — it is the last block of markup, so its Close
+  // button is otherwise dozens of Tab stops away — and returns on close.
+  // A second file opened into an already-open pane keeps the first origin.
+  if (!wasOpen) pvPrevFocus = document.activeElement;
+  $('pvClose').focus({ preventScroll: true });
   const ext = previewExt(node);
   $('pvIcon').innerHTML = chipFor({ type: 'file', extension: ext }, 16);
   $('pvName').textContent = node.name; $('pvName').title = node.name;
@@ -150,6 +157,10 @@ function closePreview() {
   document.body.classList.remove('preview-open');
   pvReqId++; // cancel any in-flight render
   setTimeout(() => { if (!pane.classList.contains('open')) pane.hidden = true; }, 260);
+  // Only when the pane still holds focus: a close that came from elsewhere
+  // (a scan landing, a view switch) must not yank the caret across the app.
+  if (pvPrevFocus && document.contains(pvPrevFocus) && pane.contains(document.activeElement)) pvPrevFocus.focus({ preventScroll: true });
+  pvPrevFocus = null;
 }
 function previewIsOpen() { const p = $('previewPane'); return p && !p.hidden && p.classList.contains('open'); }
 $('pvClose').addEventListener('click', closePreview);

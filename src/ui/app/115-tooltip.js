@@ -324,7 +324,7 @@ function showCtxMenu(x, y, node) {
     <button data-act="score">${icon('help', 15)}Why this reclaim score?</button>
     ${node.isTrash ? '' : `<button data-act="offload">${icon('archive', 15)}Offload…</button>`}
     ${node.type === 'dir' ? `<div class="div"></div>
-    ${node.isTrash ? '' : `<button data-act="terminal">${icon('terminal', 15)}Open Terminal Here</button>`}
+    ${node.isTrash ? '' : `<button data-act="terminal">${icon('terminal', 15)}Open in Terminal</button>`}
     <button data-act="budget">${icon('gauge', 15)}${hasBudget ? 'Edit budget…' : 'Set budget…'}</button>
     ${hasBudget ? `<button data-act="budget-remove">${icon('x', 15)}Remove budget</button>` : ''}
     ${node.isTrash ? '' : `<button data-act="note">${icon('doc', 15)}${noteFor(node.path) ? 'Edit note…' : 'Add note…'}</button>`}` : ''}

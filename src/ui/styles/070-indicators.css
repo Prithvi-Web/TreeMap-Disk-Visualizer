@@ -7,7 +7,7 @@
 .alloc-diag .row:last-child { border-bottom: 0; }
 .alloc-diag .row b { color: var(--text-1); font-variant-numeric: tabular-nums; }
 .alloc-diag .note {
-  margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+  margin-top: 10px; padding: 10px 12px; border-radius: var(--r-sm);
   background: var(--surface-2); line-height: 1.5;
 }
 
@@ -22,9 +22,13 @@
 }
 .index-badge.stale .dot { background: var(--warn, #FF9F0A); }
 /* The pulse is a liveness cue, so it is exactly the kind of decoration
-   prefers-reduced-motion exists to switch off (§6). */
+   prefers-reduced-motion exists to switch off (§6). Three breaths, then a
+   steady dot: renderIndexBadge rewrites the badge's innerHTML on every
+   status change, which recreates the dot and replays them, so freshness
+   re-confirmed is still announced — while an untouched dashboard reaches an
+   idle frame instead of compositing a 7px dot forever. */
 @media (prefers-reduced-motion: no-preference) {
-  .index-badge:not(.stale) .dot { animation: indexPulse 2.4s ease-in-out infinite; }
+  .index-badge:not(.stale) .dot { animation: indexPulse 2.4s ease-in-out 3; }
 }
 @keyframes indexPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
@@ -48,8 +52,8 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .growth-proj { display: flex; align-items: center; gap: 9px; margin-top: 14px; padding: 11px 13px; border-radius: var(--r-md); font-size: 12.5px; font-weight: 500; border: 1px solid var(--hairline); }
 .growth-proj[hidden] { display: none; }
 .growth-proj .ic { flex: none; }
-.growth-proj.warn { color: var(--warn); background: rgba(255,214,10,0.08); border-color: rgba(255,214,10,0.25); }
-.growth-proj.danger { color: var(--danger); background: rgba(255,69,58,0.09); border-color: rgba(255,69,58,0.28); }
+.growth-proj.warn { color: var(--warn); background: var(--warn-soft); border-color: var(--warn-line); }
+.growth-proj.danger { color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, transparent); border-color: var(--danger-line); }
 
 /* ── Folder budgets (Feature 15) ── */
 .budget-folder { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--hairline);

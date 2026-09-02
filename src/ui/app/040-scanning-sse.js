@@ -109,6 +109,7 @@ async function stopScan() {
   if (state.abortScan) state.abortScan();
   closeEventSource();
   endScanChrome();
+  clearScanQueue(); // a Stop means stop — folders waiting behind this one are not started
   // Every scanId-keyed endpoint answers a cancelled scan with
   // 500 SCAN_FAILED "Scan stopped by user". Leaving the id in state and then
   // remounting the views below turns one deliberate Stop into a wall of red
@@ -215,6 +216,12 @@ function beginScanChrome({ quiet = false, message = '' } = {}) {
   // FX: the status label shimmers for exactly as long as the scan is
   // genuinely pending — endScanChrome, the single exit funnel, removes it.
   $('scanStatus').classList.add('fx-shimmer-text');
+  // Assistive tech hears the scan start here; followScanProgress speaks again
+  // every ten seconds, and finishScan / failScan say how it ended. The bar
+  // states what it is until the first frame gives it a count.
+  $('scanAnnounce').textContent = message || 'Scanning…';
+  $('progressTrack').setAttribute('aria-valuetext', 'Scanning');
+  tourScanStarted(); // v4 §9.2 — the welcome card follows the user into the scan
   if (quiet) {
     // `message` lets the caller say what is actually happening. A first scan
     // enters here too — startScan shows the chrome before it knows whether the

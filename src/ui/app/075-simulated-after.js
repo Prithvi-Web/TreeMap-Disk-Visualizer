@@ -702,7 +702,7 @@ function updateTimeLabel() {
   const i = Number($('tmTimeSlider').value);
   if (i >= h.snaps.length || !h.snaps[i]) { label.textContent = 'Live'; return; }
   const s = h.snaps[i];
-  label.textContent = `${new Date(s.takenAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${formatBytes(s.totalSize)}`;
+  label.textContent = `${formatWhen(s.takenAt)} · ${formatBytes(s.totalSize)}`;
 }
 
 /**

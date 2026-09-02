@@ -10,10 +10,14 @@ const REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce
 const UNITS = ['B','KB','MB','GB','TB','PB'];
 function formatBytes(n, d = 1) {
   if (!Number.isFinite(n) || n < 0) return '0 B';
-  if (n < 1024) return Math.round(n) + ' B';
   let v = n, u = 0;
   while (v >= 1024 && u < UNITS.length - 1) { v /= 1024; u++; }
-  return v.toFixed(d) + ' ' + UNITS[u];
+  // Rounding can carry a value up to exactly 1024 of its unit — "1024.0 KB",
+  // "1024 B" — a figure no unit system prints. Roll it into the next unit,
+  // which is what the rounded number means. Mirrors src/utils/formatBytes.ts.
+  const shown = u === 0 ? Math.round(v) : Number(v.toFixed(d));
+  if (shown >= 1024 && u < UNITS.length - 1) { v /= 1024; u++; }
+  return u === 0 ? Math.round(v) + ' B' : v.toFixed(d) + ' ' + UNITS[u];
 }
 function formatCount(n) { return (n ?? 0).toLocaleString(); }
 function escapeHtml(s) {
@@ -30,6 +34,22 @@ function formatDate(ms) {
     s = DATE_FMT.format(ms);
     if (dateMemo.size > 20000) dateMemo.clear();
     dateMemo.set(ms, s);
+  }
+  return s;
+}
+/* The one short date-and-time dialect ("Sep 1, 10:31 PM") for every surface
+   that names a moment: the time slider, the history captions, the compare
+   pickers. Memoised like formatDate — the compare view builds hundreds of
+   option labels from it. */
+const WHEN_FMT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const whenMemo = new Map();
+function formatWhen(ms) {
+  if (!ms) return '–';
+  let s = whenMemo.get(ms);
+  if (s === undefined) {
+    s = WHEN_FMT.format(ms);
+    if (whenMemo.size > 5000) whenMemo.clear();
+    whenMemo.set(ms, s);
   }
   return s;
 }

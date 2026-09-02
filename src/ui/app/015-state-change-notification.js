@@ -162,3 +162,20 @@ async function ensureNodes(paths) {
     } catch { /* unresolved: callers fall back to what they already hold */ }
   }
 }
+
+/**
+ * A toast with one button — for the cases where the right next step is a
+ * single click away (scan again, try again). `fn` runs once and the toast
+ * goes with it. Same surface and lifetime as toast(), so it reads as one
+ * family; longer by default because it is asking for a decision.
+ */
+function toastAction(msg, label, fn, kind = 'success', ms = 12000) {
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  el.innerHTML = icon(kind === 'error' ? 'alert' : 'checkCircle', 16) + '<span>' + escapeHtml(msg) + '</span>' +
+    '<button class="pill" type="button" style="margin-left:10px;flex:none;">' + escapeHtml(label) + '</button>';
+  const gone = () => { el.classList.add('out'); setTimeout(() => el.remove(), 320); };
+  el.querySelector('button').addEventListener('click', () => { gone(); fn(); });
+  $('toasts').appendChild(el);
+  setTimeout(gone, ms);
+}

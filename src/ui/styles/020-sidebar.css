@@ -20,13 +20,23 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-
   display: flex; flex-direction: column; gap: 12px;
   padding: 14px 12px 12px;
   transition: width var(--dur-3) var(--ease);
+  /* In flow, nothing ever moves beneath the sidebar except the static page
+     gradient, the blobs and the grain — the exact situation the in-flow
+     cards give for dropping live blur. Yet Chromium expands damage inside a
+     backdrop-filtered surface to the whole surface, so the scan spinner and
+     the focused search field's line beam re-blurred ~1 Mpx of panel 60×/s.
+     A tinted fill reads the same over a static backdrop; the frost comes
+     back only in the narrow-window overlay state, where the panel really
+     floats over content (see the media block below). --lg-blur stays
+     declared because that state reads it. */
+  --lg-backdrop: none;
   --lg-tint: linear-gradient(165deg, rgba(255,255,255,0.045), rgba(255,255,255,0) 60%),
-             color-mix(in srgb, var(--bg-1) 55%, transparent);
+             color-mix(in srgb, var(--bg-1) 78%, transparent);
   --lg-blur: 26px;
 }
 :root[data-theme="light"] #sideNav {
   --lg-tint: linear-gradient(165deg, rgba(255,255,255,0.6), rgba(255,255,255,0.15) 60%),
-             color-mix(in srgb, var(--bg-1) 45%, transparent);
+             color-mix(in srgb, var(--bg-1) 70%, transparent);
 }
 /* As a floating card the sidebar keeps the default .lg rounded shine ring —
    it inherits the card's border-radius. */
@@ -89,9 +99,12 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-
 #sideNav.collapsed .side-top { flex-direction: column; gap: 10px; }
 #sideNav.collapsed .logo { flex: none; }
 #sideNav.collapsed #headerSpin.on { position: absolute; top: 12px; right: 8px; }
-#sideNav.collapsed .tabbar button { justify-content: center; padding: 9.5px 0; }
+/* Only the horizontal padding changes. The vertical padding is inherited
+   from the expanded rule so both states share one row height — a rail row
+   2px taller dropped every tab by 2px × its index (the 15th by 28px) the
+   instant the fold began, a stagger that read as the list re-flowing. */
+#sideNav.collapsed .tabbar button { justify-content: center; padding-left: 0; padding-right: 0; position: relative; }
 #sideNav.collapsed .tabbar button.tab-unavailable::after { position: absolute; margin: 0; transform: translate(11px, -8px); }
-#sideNav.collapsed .tabbar button { position: relative; }
 #sideNav.collapsed .side-foot .btn { justify-content: center; padding: 0 8px; }
 #sideNav.collapsed .side-foot .btn .ic { margin: 0; }
 #sideNav.collapsed .side-foot-row { flex-direction: column; align-items: center; }
@@ -133,7 +146,15 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-
      outcome, not a side effect. Below .modal-backdrop (100): a dialog
      opened from the overlay sidebar still wins. */
   #sideNav:not(.collapsed) { position: fixed; left: 0; top: 0; z-index: 91;
-    height: calc(100dvh - 24px); box-shadow: 24px 0 64px rgba(0,0,0,0.35); }
+    height: calc(100dvh - 24px); box-shadow: var(--shadow-3);
+    /* Floating over live content is the one state that earns a real blur:
+       the frost returns here with the translucent overlay tint. */
+    --lg-backdrop: blur(var(--lg-blur)) saturate(var(--lg-sat));
+    --lg-tint: linear-gradient(165deg, rgba(255,255,255,0.045), rgba(255,255,255,0) 60%),
+               color-mix(in srgb, var(--bg-1) 55%, transparent); }
+  :root[data-theme="light"] #sideNav:not(.collapsed) {
+    --lg-tint: linear-gradient(165deg, rgba(255,255,255,0.6), rgba(255,255,255,0.15) 60%),
+               color-mix(in srgb, var(--bg-1) 45%, transparent); }
   body { grid-template-columns: var(--side-w-rail) minmax(0, 1fr); }
   /* Going `position: fixed` takes the sidebar OUT of the grid, so main — now
      the only in-flow item — auto-placed into track 1 and rendered 64px wide

@@ -89,9 +89,11 @@ function renderZombies(report) {
     const bar = p.bytes > 0 && maxHeld > 0
       ? `<span class="fx-bar-track"><span class="fx-bar-fill" data-w="${Math.max(3, (p.bytes / maxHeld) * 100).toFixed(1)}" style="${fxBarStyle(i)}"></span></span>`
       : '';
-    return `<div class="zh-row"${i >= ZH_VISIBLE_ROWS ? ' hidden' : ''}>` +
-      `<span class="nm" title="Holding: ${escapeHtml(files)}">${escapeHtml(p.processName)}</span>` +
-      `<span class="pid num">pid ${p.pid}</span>` +
+    // The process id is a fact nobody needs to decide anything — the Restart
+    // button already targets the process — so it lives in the row's title
+    // for the curious, not beside the name.
+    return `<div class="zh-row" title="Process ${p.pid} — holding: ${escapeHtml(files)}"${i >= ZH_VISIBLE_ROWS ? ' hidden' : ''}>` +
+      `<span class="nm">${escapeHtml(p.processName)}</span>` +
       bar +
       `<b class="sz num">${held}</b>` +
       `<button class="pill" data-zh-restart="${i}" title="Ask it to quit so the space frees${p.appBundle ? ', then reopen it' : ''}">Restart</button>` +

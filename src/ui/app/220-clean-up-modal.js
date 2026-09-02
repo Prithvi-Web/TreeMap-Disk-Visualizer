@@ -489,9 +489,9 @@ function renderSmartGroups(catalog) {
   const catLabel = { regenerable: 'Regenerables', cache: 'Caches', junk: 'Junk' };
   const present = ['regenerable', 'cache', 'junk'].filter(c => smartGroups.some(g => g.category === c));
   const filterPills = present.length > 1
-    ? `<div class="smart-filters" role="tablist" aria-label="Filter suggestions by type">
-        <button class="pill active" data-cat="all">All</button>` +
-        present.map(c => `<button class="pill" data-cat="${c}">${catLabel[c]}</button>`).join('') + `</div>`
+    ? `<div class="smart-filters" role="group" aria-label="Filter suggestions by type">
+        <button class="pill active" data-cat="all" aria-pressed="true">All</button>` +
+        present.map(c => `<button class="pill" data-cat="${c}" aria-pressed="false">${catLabel[c]}</button>`).join('') + `</div>`
     : '';
   // v4 §3.3 — every rule here already says a thing is safe to remove. The
   // score answers the next question: which of them is most worth removing.
@@ -574,7 +574,10 @@ function renderSmartGroups(catalog) {
     // Scoped to [data-cat]: the Reclaim ordering lives in a second
     // .smart-filters row, and an unscoped selector cleared its active state
     // every time someone picked a category.
-    host.querySelectorAll('.smart-filters .pill[data-cat]').forEach(x => x.classList.toggle('active', x === p));
+    host.querySelectorAll('.smart-filters .pill[data-cat]').forEach(x => {
+      x.classList.toggle('active', x === p);
+      x.setAttribute('aria-pressed', String(x === p)); // toggle pills, like the ordering row beside them
+    });
     host.querySelectorAll('.smart-group').forEach(g => {
       g.style.display = (cat === 'all' || g.dataset.cat === cat) ? '' : 'none';
     });

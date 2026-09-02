@@ -9,8 +9,19 @@
      start, which rolls every column up from 0.
    - The DOM carries the real target: the in-flow sizer per slot is the
      final digit; the animated column is aria-hidden presentation.
+   - A finished glide collapses back to the plain target string. The strips
+     say nothing the string does not once they have stopped, and at rest
+     the dashboard and cart carried several hundred leftover slot boxes
+     through every later style recalc and layout. data-v / data-fxv are
+     the resume points, so nothing is lost with them.
    FxNum.math is DOM-free so the suite exercises it in Node. */
 const FxNum = (() => {
+  /* The column transition is 560ms (140-fx-numerals.css); the settle waits
+     past it. One timer per element: a newer roll re-arms it, and the
+     `firstChild === root` guard makes a stale settle a no-op when a newer
+     roll or a snap has already replaced the structure. A transitionend
+     listener is not used because every column fires its own. */
+  const ROLL_SETTLE_MS = 650;
   const math = {
     /** Maximal digit runs and the statics between them, in order. */
     tokenize(str) {
@@ -88,6 +99,8 @@ const FxNum = (() => {
     el.appendChild(root);
     // One kicked frame, not a loop: the glide itself is a CSS transition.
     requestAnimationFrame(() => { for (const c of cols) c.col.style.transform = `translateY(${-c.to}em)`; });
+    clearTimeout(el._fxSettle);
+    el._fxSettle = setTimeout(() => { if (el.firstChild === root) el.textContent = toStr; }, ROLL_SETTLE_MS);
   }
 
   /**

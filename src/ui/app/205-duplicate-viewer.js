@@ -45,6 +45,12 @@ async function openDupeViewer(kind, idx) {
   }
 }
 
+/** The dHash distance between two images, in the Match dropdown's own vocabulary rather than block counts. */
+function dupeSimilarity(d) {
+  if (!(d > 0)) return 'looks identical';
+  return `${Math.round(100 - (d / 64) * 100)}% similar to the keeper`;
+}
+
 function closeDupeViewer() {
   dupeViewer.seq++; // any in-flight detail fetch belongs to a viewer that is gone
   closeModal('dupeViewerModal');
@@ -102,7 +108,7 @@ function renderDupeViewer() {
           const ms = Date.parse(f.captureDate);
           return `<span class="num">taken ${Number.isFinite(ms) ? formatDate(ms) : escapeHtml(f.captureDate)}</span>`;
         })()}</div>
-        ${f.visualDiff && i !== ref ? `<div class="dv-absent num">${f.visualDiff.hammingDistance} of 64 blocks differ</div>` : ''}
+        ${f.visualDiff && i !== ref ? `<div class="dv-absent num">${dupeSimilarity(f.visualDiff.hammingDistance)}</div>` : ''}
         <div class="dv-absent" title="${escapeHtml(f.path)}" style="word-break:break-all;">${escapeHtml(f.path)}</div>
         <button class="pill" data-dv-keep="${i}">Keep this one</button>
       </div>

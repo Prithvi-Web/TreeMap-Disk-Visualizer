@@ -1377,7 +1377,7 @@ function renderCityChrome() {
     legend.innerHTML =
       `<span class="tml-item"><b>Footprint</b> = size on disk</span>` +
       `<span class="tml-item"><b>Height</b> = ${escapeHtml(heightLabel)}</span>` +
-      `<span class="tml-item city-ramp"><b>Colour</b> = ${escapeHtml(colourLabel)}` +
+      `<span class="tml-item city-ramp"><b>Color</b> = ${escapeHtml(colourLabel)}` +
       (ramp ? `<i style="background:${ramp}"></i>` : '') + `</span>`;
   }
 

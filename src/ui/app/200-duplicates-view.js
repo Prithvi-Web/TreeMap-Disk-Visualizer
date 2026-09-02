@@ -109,7 +109,7 @@ function renderDuplicates() {
         ${chipFor({ type: 'file', extension: ext })}
         <div class="meta">
           <div class="nm">${escapeHtml(g.files[0].name)}</div>
-          <div class="sub num">${g.count} copies × ${formatBytes(g.size)} · sha-256 ${g.hash.slice(0, 12)}…</div>
+          <div class="sub num" title="Content fingerprint ${escapeHtml(g.hash.slice(0, 12))}…">${g.count} identical copies × ${formatBytes(g.size)}</div>
         </div>
         <div class="bar-track dup-mini"><div class="fx-bar-fill" data-w="${Math.max(4, (g.reclaimable / maxRec) * 100).toFixed(1)}" style="${fxBarStyle(gi)}"></div></div>
         <span class="reclaim num">+${formatBytes(g.reclaimable)} reclaimable</span>

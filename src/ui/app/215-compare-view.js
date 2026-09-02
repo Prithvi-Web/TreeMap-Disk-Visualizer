@@ -22,7 +22,7 @@ async function loadCompareOptions() {
       if (!byRoot.has(o.rootPath)) byRoot.set(o.rootPath, []);
       byRoot.get(o.rootPath).push(o);
     }
-    const label = (o) => `${o.kind === 'scan' ? 'Scan (full diff)' : 'History'} · ${new Date(o.when).toLocaleString()} · ${formatBytes(o.size)}`;
+    const label = (o) => `${o.kind === 'scan' ? 'Scan (full diff)' : 'History'} · ${formatWhen(o.when)} · ${formatBytes(o.size)}`;
     const html = [...byRoot.entries()].map(([root, list]) =>
       `<optgroup label="${escapeHtml(root)}">` +
       list.sort((x, y) => y.when - x.when).map(o =>
@@ -124,7 +124,7 @@ async function initCmpSplit(rootPath, whenA, whenB) {
     // STORED trees, which can differ from the picked times (review H11).
     const foot = $('cmpSplitFoot');
     if (foot) foot.innerHTML =
-      `<span>◀ ${new Date(cmpSplit.whenA).toLocaleString()}</span><span>${new Date(cmpSplit.whenB).toLocaleString()} ▶</span>`;
+      `<span>◀ ${formatWhen(cmpSplit.whenA)}</span><span>${formatWhen(cmpSplit.whenB)} ▶</span>`;
     const range = $('cmpSplitRange');
     range.addEventListener('input', () => cmpSplitDraw());
     cmpSplitDraw();
@@ -141,7 +141,7 @@ function cmpSplitDraw() {
   const range = $('cmpSplitRange');
   const pct = Number(range.value);
   range.setAttribute('aria-valuetext',
-    `${pct} percent — left of the divider: ${new Date(cmpSplit.whenA).toLocaleString()}, right: ${new Date(cmpSplit.whenB).toLocaleString()}`);
+    `${pct} percent — left of the divider: ${formatWhen(cmpSplit.whenA)}, right: ${formatWhen(cmpSplit.whenB)}`);
   const cw = canvas.clientWidth, ch = canvas.clientHeight;
   const dpr = window.devicePixelRatio || 1;
   if (canvas.width !== Math.round(cw * dpr)) canvas.width = Math.round(cw * dpr);
@@ -215,7 +215,7 @@ function renderCompare(r) {
     </div>` : '';
   $('cmpBody').innerHTML = splitCard + `
     <div class="card glass">
-      <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>${new Date(r.whenA).toLocaleString()} → ${new Date(r.whenB).toLocaleString()}${r.deep ? '' : ' · top-level folders only'}</h2>
+      <h2><span style="display:inline-flex;">${icon('diff', 13)}</span>${formatWhen(r.whenA)} → ${formatWhen(r.whenB)}${r.deep ? '' : ' · top-level folders only'}</h2>
       <div class="muted num" style="margin-bottom:12px;">Total ${up ? 'grew' : 'shrank'} by
         <b class="cmp-total" style="color:${up ? '#ff6b61' : 'var(--ok)'}">${formatBytes(Math.abs(r.totalDelta))}</b>
         &nbsp;·&nbsp; <span class="cmp-ct" data-n="${counts.added}">${counts.added}</span> added · <span class="cmp-ct" data-n="${counts.removed}">${counts.removed}</span> removed · <span class="cmp-ct" data-n="${counts.grew}">${counts.grew}</span> grew · <span class="cmp-ct" data-n="${counts.shrank}">${counts.shrank}</span> shrank${r.truncated ? ' · biggest 1,000 shown' : ''}</div>

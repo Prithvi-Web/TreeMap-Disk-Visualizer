@@ -135,7 +135,7 @@ function renderSunburstFrame(root, arcs, geo) {
   const st = $('tmStatus');
   if (st) {
     st.textContent = state.treemap.history.active
-      ? `Viewing ${new Date(state.treemap.history.viewingAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${formatBytes(root.size)} — drag the slider to Live to interact`
+      ? `Viewing ${formatWhen(state.treemap.history.viewingAt)} · ${formatBytes(root.size)} — drag the slider to Live to interact`
       : `${formatCount(arcs.length)} segments · ${geo.rings} rings · ${formatBytes(root.size)} total`;
   }
 

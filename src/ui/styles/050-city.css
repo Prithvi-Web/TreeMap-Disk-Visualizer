@@ -61,7 +61,9 @@
    a layout failure rather than as a key. */
 #cityLegend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; }
 #cityLegend .tml-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-@media (max-width: 1100px) { #cityLegend .tml-item { white-space: normal; } }
+/* A container query on the view (025-layout.css): the legend wraps when the
+   VIEW is narrow, which a collapsed sidebar rail can prevent. */
+@container (max-width: 800px) { #cityLegend .tml-item { white-space: normal; } }
 
 .city-table { margin-top: 12px; }
 .city-table > summary { cursor: pointer; font-size: 12px; color: var(--text-2); padding: 6px 2px;

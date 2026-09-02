@@ -273,6 +273,21 @@ function kbSelect(node) {
   state.treemap.kbSel = node || null;
   presentView();
   if (node) kbShowTip(node); else hideTooltip();
+  // The highlight moves silently for a screen reader: the tooltip is
+  // role=tooltip, not a live region. Say what is selected — name, kind, size
+  // and share of this view — so Enter and Delete act on something the user
+  // has been told about.
+  const live = $('tmKbAnnounce');
+  if (!live) return;
+  if (!node) { live.textContent = ''; return; }
+  const pct = state.treemap.rootSize > 0 ? (node.size / state.treemap.rootSize) * 100 : 0;
+  live.textContent = `${node.name}, ${node.type === 'dir' ? 'folder' : 'file'}, ${formatBytes(node.size)}, ` +
+    `${pct.toFixed(1)} percent of this view${cartHas(node.path) ? ', in cart' : ''}`;
+}
+/** After a drill or a climb: say where we are, ahead of what is selected there. */
+function kbAnnounceRoot() {
+  const live = $('tmKbAnnounce');
+  if (live) live.textContent = `Now in ${state.treemap.rootName || state.treemap.rootPath}. ${live.textContent}`;
 }
 function kbMove(delta) {
   const sibs = kbSiblings();
@@ -287,6 +302,7 @@ async function kbDrill() {
   if (sel.type === 'dir') {
     await loadTreemap(sel.path, true);
     kbSelect(kbSiblings()[0] || null);
+    kbAnnounceRoot();
   } else {
     openPreview(sel);
   }
@@ -300,8 +316,15 @@ async function kbUp() {
   await loadTreemap(parent, true);
   const sibs = kbSiblings();
   kbSelect(sibs.find((s) => s.path === oldRoot) || sibs[0] || null);
+  kbAnnounceRoot();
 }
-function toggleShortcuts() { $('shortcutsModal').classList.toggle('open'); }
+function toggleShortcuts() {
+  const m = $('shortcutsModal');
+  // Never a second sheet on top of a first: with Settings open, "?" stacked
+  // this on top, and Escape then closed Settings underneath it.
+  if (!m.classList.contains('open') && topModal()) return;
+  m.classList.toggle('open');
+}
 
 /* ── Zoom out (button, breadcrumbs already handle jumps) ── */
 function treemapUp() {

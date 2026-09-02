@@ -12,7 +12,7 @@
 
    API:  FxBeam.attach(el, { type, active, duration?, strength?, opacity?,
                              brightness?, saturation?, hueRange?, staticColors?,
-                             bloom?, borderRadius?, onActivate?, onDeactivate? })
+                             spin?, bloom?, borderRadius?, onActivate?, onDeactivate? })
          FxBeam.detach(el)
    attach is idempotent — attaching to an already-attached element
    reconfigures it in place (same instance, and the same shared stylesheet
@@ -22,7 +22,10 @@
    upstream presets exceed 1); brightness/saturation override this
    instance's --fxb-*-bright/-sat tokens; hueRange caps the drift at ±deg
    (clamped to the upstream 30° maximum — the palette itself stays blue);
-   staticColors kills the hue drift while motion continues; bloom:false
+   staticColors kills the hue drift while motion continues; spin:false
+   (rotate family only) parks the ring — no angle animation, no rotating
+   window mask, a steady complete ring that still fades in and out, so a
+   persistent state costs zero frames; bloom:false
    drops the blurred conic layer (ambience weight); borderRadius
    skips the computed-style read; onActivate/onDeactivate fire on the
    lit/unlit edges (detach of a lit beam counts as a deactivation). Every
@@ -285,6 +288,10 @@ const FxBeam = (() => {
       if (Number.isFinite(v)) out.hueRange = Math.max(0, Math.min(30, v));
     }
     if (o.staticColors !== undefined) out.staticColors = !!o.staticColors;
+    /* Not an upstream prop either: a mode pill that stays on is a state,
+       not an activity, and a 60fps angle animation through three masked
+       gradient layers is the wrong price for a state. */
+    if (o.spin !== undefined) out.spin = !!o.spin;
     /* Not an upstream prop: the app's own ambience weight. `bloom: false`
        drops the blurred conic layer entirely (the layer is a child div, so
        this is DOM, not CSS — the shared sheet is unaffected). */
@@ -378,11 +385,17 @@ const FxBeam = (() => {
 
   /* md — full ring: rotating shine + colored ring (::after), masked inner
      wash (::before), blurred conic bloom (child div). */
-  function buildRotateCSS(id, type, duration, radius, reduced, hueRange, staticColors) {
+  function buildRotateCSS(id, type, duration, radius, reduced, hueRange, staticColors, spin) {
     const sm = type === 'sm';
     const tok = sm ? 'sm' : 'md';
     const innerR = Math.max(0, radius - 1);
     const hr = hueRange === undefined ? HUE_RANGE : hueRange;
+    /* still: the ring does not rotate. The fades keep their keyframes; the
+       spin keyframes are not emitted at all, and neither pseudo-element
+       carries the angle-driven window mask — the ring is complete. The
+       shine conic still reads the angle, parked at 103deg so its highlight
+       window sits at the upper-left edge: light from above, once. */
+    const still = spin === false;
     /* staticColors pins the hue but must keep the brightness/saturation the
        drifting filter otherwise carried — a bare "no animation" would also
        silently drop both tokens. reduced keeps its established no-filter
@@ -390,16 +403,25 @@ const FxBeam = (() => {
     const anim = reduced ? ''
       : staticColors ? `\n  filter: brightness(var(--fxb-${tok}-bright, 1.3)) saturate(var(--fxb-${tok}-sat, 1.2));`
       : `\n  animation: fxb-hue-${id} 12s ease-in-out infinite;`;
-    const wrapperAnim = (fade) => reduced ? '' :
-      `\n  animation: fxb-spin-${id} ${duration}s linear infinite, fxb-${fade}-${id} ${fade === 'fade-in' ? '0.6' : '0.5'}s ease forwards;`;
+    const fadeAnim = (fade) => `fxb-${fade}-${id} ${fade === 'fade-in' ? '0.6' : '0.5'}s ease forwards`;
+    const wrapperAnim = (fade) => reduced ? ''
+      : still ? `\n  animation: ${fadeAnim(fade)};\n  --fxb-a-${id}: 103deg;`
+      : `\n  animation: fxb-spin-${id} ${duration}s linear infinite, ${fadeAnim(fade)};`;
     const colorG = sm ? smallGradients() : borderGradients();
     const innerG = sm ? smallInnerGradients() : borderInnerGradients();
-    const afterMask = `${windowMask(id)}, ${RING_MASK}`;
-    const beforeMask = sm
-      ? smallWindowMask(id)
-      : `${windowMask(id)}, ${EDGE_FRAME_MASK}`;
-    const beforeComposite = sm ? 'add' : 'intersect, add';
-    const beforeWebkitComposite = sm ? 'source-over' : 'source-in, source-over';
+    const afterMask = still ? RING_MASK : `${windowMask(id)}, ${RING_MASK}`;
+    const afterComposite = still ? 'exclude' : 'intersect, exclude';
+    const afterWebkitComposite = still ? 'xor' : 'source-in, xor';
+    /* sm's wash is masked by its window alone, so a still sm wash needs no
+       mask at all; md's keeps the edge frame that shapes it. */
+    const beforeMask = still
+      ? (sm ? '' : EDGE_FRAME_MASK)
+      : sm ? smallWindowMask(id) : `${windowMask(id)}, ${EDGE_FRAME_MASK}`;
+    const beforeComposite = still ? 'add' : sm ? 'add' : 'intersect, add';
+    const beforeWebkitComposite = still ? 'source-over' : sm ? 'source-over' : 'source-in, source-over';
+    const beforeMaskDecl = beforeMask
+      ? `\n  -webkit-mask-image: ${beforeMask};\n  -webkit-mask-composite: ${beforeWebkitComposite};\n  mask-image: ${beforeMask};\n  mask-composite: ${beforeComposite};`
+      : '';
     const shadowSpread = sm ? '5px 1px' : '9px 1px';
     /* No per-instance `position`: the shared `[data-fxbeam]` base rule owns it
        at class specificity, so a host laid out deliberately (an absolutely
@@ -424,9 +446,9 @@ const FxBeam = (() => {
   clip-path: inset(0 round ${radius}px);
   background: ${shineConic(id)}, ${colorG};
   -webkit-mask: ${afterMask};
-  -webkit-mask-composite: source-in, xor;
+  -webkit-mask-composite: ${afterWebkitComposite};
   mask: ${afterMask};
-  mask-composite: intersect, exclude;
+  mask-composite: ${afterComposite};
   pointer-events: none;
   z-index: 2;
   opacity: ${opacityCalc(id, tok, 'stroke')};${anim}
@@ -439,11 +461,7 @@ const FxBeam = (() => {
   border-radius: ${radius}px;
   clip-path: inset(0 round ${radius}px);
   background: ${innerG};
-  box-shadow: inset 0 0 ${shadowSpread} var(--fxb-${tok}-shadow, rgba(255, 255, 255, 0.27));
-  -webkit-mask-image: ${beforeMask};
-  -webkit-mask-composite: ${beforeWebkitComposite};
-  mask-image: ${beforeMask};
-  mask-composite: ${beforeComposite};
+  box-shadow: inset 0 0 ${shadowSpread} var(--fxb-${tok}-shadow, rgba(255, 255, 255, 0.27));${beforeMaskDecl}
   pointer-events: none;
   z-index: 1;
   opacity: ${opacityCalc(id, tok, 'inner')};${anim}
@@ -467,8 +485,7 @@ const FxBeam = (() => {
   display: block;
   opacity: ${opacityCalc(id, tok, 'bloom')};
 }
-${reduced ? '' : `@keyframes fxb-spin-${id} { to { --fxb-a-${id}: 360deg; } }
-${fadeKeyframes(id)}
+${reduced ? '' : `${still ? '' : `@keyframes fxb-spin-${id} { to { --fxb-a-${id}: 360deg; } }\n`}${fadeKeyframes(id)}
 ${staticColors ? '' : hueKeyframes(id, hr, tok)}
 ${pausedRule(id)}`}`;
   }
@@ -883,13 +900,14 @@ ${pausedRule(id)}`}`;
       specificity so a host with a deliberate layout (an absolutely
       positioned .fx-beam-strip overlay) can still override it. */
   function buildCSS(id, type, theme, duration, radius, reduced, knobs) {
-    /* `knobs` is the optional per-attach bag — {hueRange, staticColors}.
-       Omitting it (every pre-knob caller, the extraction tests' 6-arg calls)
-       must produce byte-identical CSS to passing both as undefined. */
+    /* `knobs` is the optional per-attach bag — {hueRange, staticColors,
+       spin}. Omitting it (every pre-knob caller, the extraction tests'
+       6-arg calls) must produce byte-identical CSS to passing all three as
+       undefined. spin is a rotate-family knob; line and pulse ignore it. */
     const k = knobs || {};
     if (type === 'line') return buildLineCSS(id, theme, duration, radius, reduced, k.hueRange, k.staticColors);
     if (type === 'pulse-inner' || type === 'pulse-outside') return buildPulseCSS(id, type, theme, duration, radius, reduced, k.staticColors);
-    return buildRotateCSS(id, type, duration, radius, reduced, k.hueRange, k.staticColors);
+    return buildRotateCSS(id, type, duration, radius, reduced, k.hueRange, k.staticColors, k.spin);
   }
 
   /* ── Shared ~30fps pulse driver (port of pulseDriver.ts) ── */
@@ -1064,7 +1082,7 @@ ${pausedRule(id)}`}`;
   }
 
   function rebuild(inst) {
-    const { type, duration, hueRange, staticColors } = inst.cfg;
+    const { type, duration, hueRange, staticColors, spin } = inst.cfg;
     const theme = resolveTheme();
     /* md/sm output is theme-agnostic (its scalars are tokens that flip on
        their own), so the theme is not part of THEIR key — otherwise a flip
@@ -1072,15 +1090,17 @@ ${pausedRule(id)}`}`;
     const themeKey = type === 'md' || type === 'sm' ? '' : theme;
     /* Focus/blur and cart pulses re-attach with identical options: an
        unchanged (type, theme, duration, radius, REDUCED, hueRange,
-       staticColors) tuple keeps the sheet and driver config it already has.
-       `bloom` is deliberately absent — it is a DOM layer, not a rule. */
+       staticColors, spin) tuple keeps the sheet and driver config it
+       already has. `bloom` is deliberately absent — it is a DOM layer, not
+       a rule. */
     const buildKey = type + '|' + themeKey + '|' + duration + '|' + inst.radius + '|' + REDUCED
-      + '|' + (hueRange === undefined ? '' : hueRange) + '|' + !!staticColors;
+      + '|' + (hueRange === undefined ? '' : hueRange) + '|' + !!staticColors
+      + '|' + (spin === false ? 'still' : 'spin');
     if (inst.sheetKey !== buildKey) {
       // acquired before the old one is released, so a same-key re-attach can
       // never drop a sheet's last reference and re-parse it
       const entry = acquireSheet(buildKey, (id) =>
-        buildCSS(id, type, theme, duration, inst.radius, REDUCED, { hueRange, staticColors }));
+        buildCSS(id, type, theme, duration, inst.radius, REDUCED, { hueRange, staticColors, spin }));
       const moved = entry.id !== inst.id;
       if (moved) clearIdVars(inst); // reads the OLD id and the OLD driver config
       const old = inst.sheet;

@@ -17,9 +17,15 @@
 @container (max-width: 620px) { .dup-head .bar-track.dup-mini { display: none; } }
 /* Rows are quieter than cards: the full card shadow repeated hundreds of
    times read as noise, so rows carry a hairline lift instead, and a calmer
-   radius keeps the list's rhythm tight. */
-.dup-group { padding: 0; overflow: hidden; border-radius: 14px;
-  box-shadow: inset 0 1px 0 var(--shine), var(--shadow-1); }
+   radius keeps the list's rhythm tight. One rule for BOTH list cards — the
+   exact groups and the near-duplicate clusters — so flipping the mode seg
+   never reshapes the list; and the light selectors are repeated because
+   `:root[data-theme="light"] .glass` outranks a bare class and would hand
+   the light theme the full card shadow back. */
+.dup-group, .nd-cluster,
+:root[data-theme="light"] .dup-group, :root[data-theme="light"] .nd-cluster {
+  border-radius: var(--r-md); box-shadow: inset 0 1px 0 var(--shine), var(--shadow-1); }
+.dup-group { padding: 0; overflow: hidden; }
 .dup-group:hover { border-color: var(--hairline-2); }
 .dup-head { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: pointer; user-select: none;
   transition: background var(--dur-1) var(--ease); }
@@ -28,7 +34,7 @@
 .dup-head .nm { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dup-head .sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
 .dup-head .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap;
-  background: color-mix(in srgb, var(--warn) 12%, transparent); padding: 3px 10px; border-radius: 99px; }
+  background: var(--warn-soft); padding: 3px 10px; border-radius: 99px; }
 .dup-head .chev { transition: transform var(--dur-2) var(--ease); color: var(--text-3); display: inline-flex; }
 .dup-group.open .dup-head .chev { transform: rotate(90deg); }
 .dup-files { display: none; border-top: 1px solid var(--hairline); }
@@ -38,7 +44,7 @@
 .dup-file:last-child { border-bottom: none; }
 .dup-file .pth { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   direction: rtl; text-align: left; color: var(--text-2); }
-.dup-file .tag { font-size: 10px; font-weight: 600; color: var(--ok); border: 1px solid rgba(48,209,88,0.4);
+.dup-file .tag { font-size: 10px; font-weight: 600; color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 40%, transparent);
   padding: 1px 7px; border-radius: 99px; white-space: nowrap; }
 .dup-file .dt { color: var(--text-3); font-size: 11px; white-space: nowrap; }
 .dup-progress { display: flex; flex-direction: column; gap: 12px; align-items: center; padding: 60px 0; color: var(--text-2); }
@@ -52,7 +58,7 @@
 .nd-chead { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .nd-chead .nd-count { font-size: 13px; font-weight: 600; }
 .nd-chead .reclaim { font-size: 12px; font-weight: 600; color: var(--warn); white-space: nowrap; margin-left: auto;
-  background: color-mix(in srgb, var(--warn) 12%, transparent); padding: 3px 10px; border-radius: 99px; }
+  background: var(--warn-soft); padding: 3px 10px; border-radius: 99px; }
 /* A wrapping row, not a carousel: a horizontal scroller nested in the page's
    vertical one latched two-finger gestures that drifted sideways (the page
    stuck, then jumped) and gave every overflowing cluster its own composited

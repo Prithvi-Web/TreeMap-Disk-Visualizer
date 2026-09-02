@@ -51,13 +51,13 @@
 #liveFeed { position: absolute; top: 14px; right: 14px; z-index: 6; width: 252px; padding: 9px 11px;
   --lg-blur: 18px;
   border: 1px solid var(--hairline); border-radius: var(--r-md);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.35); font-size: 12px; }
+  box-shadow: var(--shadow-2); font-size: 12px; }
 #liveFeed .lf-h { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 11.5px;
   text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-2); margin-bottom: 6px; }
 #liveFeed .lf-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
 #liveFeed .lf-row .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-1); }
-#liveFeed .lf-row .up { color: #30D158; flex: none; }
-#liveFeed .lf-row .down { color: #FF453A; flex: none; }
+#liveFeed .lf-row .up { color: var(--ok); flex: none; }
+#liveFeed .lf-row .down { color: var(--danger); flex: none; }
 
 /* ── All storage + cloud accounts (Feature 25) ── */
 /* The list is its own container so the squares shed on a narrow CARD, not
@@ -79,7 +79,7 @@
 @container (max-width: 380px) { .storage-row .asq { display: none; } }
 /* ── Open-file warning in the delete dialog (B2) ── */
 #confirmOpenHandles { margin-top: 13px; padding: 10px 12px; border-radius: var(--r-sm);
-  background: rgba(255,214,10,0.08); border: 1px solid rgba(255,214,10,0.25); font-size: 12.5px; line-height: 1.5; }
+  background: var(--warn-soft); border: 1px solid var(--warn-line); font-size: 12.5px; line-height: 1.5; }
 #confirmOpenHandles.checking { background: var(--surface-2); border-color: var(--hairline); color: var(--text-3); }
 #confirmOpenHandles .oh-head { display: flex; gap: 8px; align-items: flex-start; color: var(--text-1); }
 #confirmOpenHandles .oh-head .ic { color: var(--warn); flex: none; margin-top: 1px; }
@@ -124,7 +124,7 @@
 .cal-legend { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
 /* v4 §8.3 — the drive dock */
 .drive-dock { display: flex; gap: 10px; align-items: stretch; padding: 8px 2px 0; flex-wrap: wrap; }
-.drive-tile { display: flex; align-items: center; gap: 9px; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); min-width: 160px; cursor: default; }
+.drive-tile { display: flex; align-items: center; gap: 9px; padding: 8px 12px; border-radius: var(--r-md); background: var(--surface-2); min-width: 160px; cursor: default; }
 .drive-tile.drop-ok { outline: 2px solid var(--accent); outline-offset: 2px; }
 .drive-tile .drive-free { font-size: 11px; color: var(--text-3); }
 .drive-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--ok) 25%, transparent); position: relative; width: 96px; margin-top: 3px; }
@@ -257,7 +257,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .tm-preview-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
   z-index: 6; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
   border-radius: var(--r-md); background: var(--bg-1); border: 1px solid var(--warn);
-  box-shadow: 0 6px 22px rgba(0,0,0,0.32); font-size: 12.5px; color: var(--text-1);
+  box-shadow: var(--shadow-2); font-size: 12.5px; color: var(--text-1);
   max-width: calc(100% - 28px); }
 .tm-preview-banner[hidden] { display: none; }
 .tm-preview-banner .ic { color: var(--warn); flex: none; }

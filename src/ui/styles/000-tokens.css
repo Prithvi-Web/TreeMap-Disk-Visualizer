@@ -3,10 +3,26 @@
   --accent:        #0A84FF;
   --accent-soft:   rgba(10,132,255,0.16);
   --accent-glow:   rgba(10,132,255,0.35);
+  /* The primary button under the pointer. Dark controls brighten, light
+     controls deepen — the light block re-tunes this, it never inherits. */
+  --accent-hover:  #2492ff;
+  /* Accent as small TEXT on an accent chip (the "cache" tag): the accent
+     itself is a fill colour and measures 4.2:1 on its own 16% chip in the
+     dark theme, so text gets a lighter cousin here and the real accent in
+     light, where the fill is dark enough to be ink. */
+  --accent-ink:    #4aa3ff;
   --ok:            #30D158;
   --warn:          #FFD60A;
   --danger:        #FF453A;
   --danger-soft:   rgba(255,69,58,0.14);
+  /* One warning recipe for every advisory surface (growth projection, open
+     files, advisory groups, portable-session rows, the shrink-video notice,
+     medium security findings). Built from --warn, so the light theme's amber
+     flows through: the old literal yellow border measured 1.09:1 on a white
+     card, i.e. invisible. --danger-line is the same edge for red panels. */
+  --warn-soft:     color-mix(in srgb, var(--warn) 9%, transparent);
+  --warn-line:     color-mix(in srgb, var(--warn) 45%, transparent);
+  --danger-line:   color-mix(in srgb, var(--danger) 45%, transparent);
 
   --bg-0:          #05060a;
   --bg-1:          #0c0d14;
@@ -21,7 +37,11 @@
 
   --text-1:        rgba(255,255,255,0.94);
   --text-2:        rgba(255,255,255,0.63);
-  --text-3:        rgba(255,255,255,0.42);
+  /* 0.47, not 0.42: the tertiary ink carries every file path, date and
+     "you can restore it from the Trash" line, at 10.5–12.5px. 0.42 measured
+     4.09:1 on the page — under AA for text that small. 4.8:1 now, and still
+     clearly quieter than --text-2 (7.9:1). The light block does the same. */
+  --text-3:        rgba(255,255,255,0.47);
 
   --tm-canvas-bg:  rgba(0,0,0,0.30);
   --scrim:         rgba(2,4,10,0.60);
@@ -35,6 +55,11 @@
   --shadow-1: 0 1px 2px rgba(0,0,0,0.32);
   --shadow-2: 0 10px 34px rgba(0,0,0,0.42);
   --shadow-3: 0 28px 80px rgba(0,0,0,0.55);
+  /* Buttons: a resting lift and a hover lift, re-tuned for the light theme
+     like every other shadow — a literal black under a light toolbar was
+     2.5× darker than the cards and segmented controls beside it. */
+  --shadow-btn: 0 1px 2px rgba(0,0,0,0.18);
+  --shadow-btn-hover: 0 4px 14px rgba(0,0,0,0.22);
   --blob-opacity: 0.6;
 
   /* Liquid Glass */
@@ -67,6 +92,16 @@
      It also lifts white-on-accent fills (chips, the cmdk selection row,
      #ctxMenu hover) from 3.7:1 to 5.3:1. */
   --accent:        #0069D6;
+  /* Deeper on hover (6.05:1 under a white label), where the dark theme's
+     #2492ff brightens — the macOS light convention, and the opposite of what
+     inheriting the dark value did: the button got PALER and its 13px label
+     fell to 3.2:1 for as long as the pointer rested on it. */
+  --accent-hover:  #0060C4;
+  /* The accent as chip TEXT needs one more step of depth than the accent
+     as a fill: #0069D6 measures 4.4:1 on its own 8% chip, the deeper blue
+     5.5:1 (it happens to be the hover hue, which is fine — it is the same
+     "deeper accent" in both roles). */
+  --accent-ink:    #0060C4;
 
   --bg-0:          #e9ecf2;
   --bg-1:          #f5f6fa;
@@ -81,11 +116,17 @@
 
   --text-1:        rgba(10,12,20,0.92);
   --text-2:        rgba(10,12,20,0.60);
-  --text-3:        rgba(10,12,20,0.42);
+  /* 0.42 measured 2.81:1 on the page — the paths, dates and the Trash
+     reassurance line were a grey smudge on a white card. 4.7:1 now. */
+  --text-3:        rgba(10,12,20,0.58);
 
   /* The dark theme's #FFD60A yellow is near-invisible on light cards
-     (~1.5:1). Text and badges using --warn need this darker amber here. */
-  --warn:          #B36B00;
+     (~1.5:1). Text and badges using --warn need this darker amber here.
+     #985B00, not the earlier #B36B00: that one measured 4.03:1 on the card,
+     under the 4.5:1 this block promises; this is 5.3:1 on the card and
+     still 4.7:1 on the 9% --warn-soft tint the warning panels sit on. */
+  --warn:          #985B00;
+  --danger-soft:   rgba(199,38,28,0.10);
   /* --ok was the hole in exactly that reasoning: #30D158 measures 1.95:1 on
      the light card, so every green that states a good outcome — Folder
      Budgets' under-budget figure, the duplicate "keep" tag, the down-delta
@@ -106,6 +147,8 @@
   --shadow-1: 0 1px 2px rgba(20,24,40,0.09);
   --shadow-2: 0 10px 34px rgba(20,24,40,0.14);
   --shadow-3: 0 28px 80px rgba(20,24,40,0.22);
+  --shadow-btn: 0 1px 2px rgba(20,24,40,0.08);
+  --shadow-btn-hover: 0 4px 14px rgba(20,24,40,0.12);
   --blob-opacity: 0.45;
 
   --lg-tint: linear-gradient(155deg, rgba(255,255,255,0.65), rgba(255,255,255,0.28) 42%, rgba(255,255,255,0.12) 68%), rgba(252,253,255,0.42);

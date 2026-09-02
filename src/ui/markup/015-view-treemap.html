@@ -10,10 +10,10 @@
         <!-- v4 §6.2 — four lenses on one tree. Not four views: same root, same
              breadcrumbs, same depth, same colour mode, same highlight box. -->
         <div class="seg" id="tmViewSeg" role="tablist" aria-label="Map layout">
-          <button type="button" data-vm="treemap" aria-selected="true" title="Squarified treemap">Treemap</button>
-          <button type="button" data-vm="sunburst" aria-selected="false" title="Radial sunburst">Sunburst</button>
-          <button type="button" data-vm="circles" aria-selected="false" title="Nested circle packing — every folder is a circle holding its children">Circles</button>
-          <button type="button" data-vm="voronoi" aria-selected="false" title="Voronoi treemap — cells whose areas are proportional to bytes, solved by Lloyd's algorithm">Voronoi</button>
+          <button role="tab" type="button" data-vm="treemap" aria-selected="true" title="Squarified treemap">Treemap</button>
+          <button role="tab" type="button" data-vm="sunburst" aria-selected="false" title="Radial sunburst">Sunburst</button>
+          <button role="tab" type="button" data-vm="circles" aria-selected="false" title="Nested circle packing — every folder is a circle holding its children">Circles</button>
+          <button role="tab" type="button" data-vm="voronoi" aria-selected="false" title="Voronoi treemap — cells whose areas are proportional to bytes, solved by Lloyd's algorithm">Voronoi</button>
         </div>
       </div>
       <div class="tb-group tb-find">
@@ -40,9 +40,9 @@
       <div class="tb-row tb-row-controls">
       <div class="tb-group tb-appearance">
         <div class="seg" id="tmColorSeg" role="tablist" aria-label="Treemap color mode">
-          <button type="button" data-mode="size" aria-selected="true" title="Color cells by file size">Size</button>
-          <button type="button" data-mode="age" aria-selected="false" title="Color cells by how recently modified">Age</button>
-          <button type="button" data-mode="reclaim" aria-selected="false" title="Color cells by how safe and worthwhile they are to reclaim">Reclaim</button>
+          <button role="tab" type="button" data-mode="size" aria-selected="true" title="Color cells by file size">Size</button>
+          <button role="tab" type="button" data-mode="age" aria-selected="false" title="Color cells by how recently modified">Age</button>
+          <button role="tab" type="button" data-mode="reclaim" aria-selected="false" title="Color cells by how safe and worthwhile they are to reclaim">Reclaim</button>
         </div>
         <label for="tmDepth">Depth</label>
         <select id="tmDepth" aria-label="Treemap depth">
@@ -85,10 +85,10 @@
       <input type="range" id="tmTimeSlider" min="0" max="0" step="1" value="0" aria-label="Scrub through this folder's scan history">
       <span class="tm-timelabel num" id="tmTimeLabel">Live</span>
       <div class="seg seg-fit" id="tmLapseSpeed" role="tablist" aria-label="Time-lapse playback speed">
-        <button type="button" data-speed="0.5" aria-selected="false" title="Half speed">½×</button>
-        <button type="button" data-speed="1" aria-selected="true" title="Normal speed — about a second per snapshot">1×</button>
-        <button type="button" data-speed="2" aria-selected="false" title="Double speed">2×</button>
-        <button type="button" data-speed="4" aria-selected="false" title="Quadruple speed">4×</button>
+        <button role="tab" type="button" data-speed="0.5" aria-selected="false" title="Half speed">½×</button>
+        <button role="tab" type="button" data-speed="1" aria-selected="true" title="Normal speed — about a second per snapshot">1×</button>
+        <button role="tab" type="button" data-speed="2" aria-selected="false" title="Double speed">2×</button>
+        <button role="tab" type="button" data-speed="4" aria-selected="false" title="Quadruple speed">4×</button>
       </div>
       <button class="pill" id="tmLapseLoop" aria-pressed="false" title="Start again from the oldest snapshot when playback reaches the end">Loop</button>
       <button class="pill" id="tmDiffToggle" aria-pressed="false" title="Tint what grew green and what shrank red, compared with the previous snapshot">Diff</button>
@@ -107,7 +107,10 @@
         <span id="tmPreviewText"></span>
         <button class="pill" id="tmPreviewExit">Exit preview</button>
       </div>
-      <div id="treemapZoom"><canvas id="treemapCanvas" tabindex="0" aria-label="Disk usage treemap. Click a directory to drill in, Escape to go up."></canvas></div>
+      <!-- What j/k selected, spoken. The tooltip is role="tooltip", which is
+           not a live region, so the highlight moved in silence. -->
+      <div id="tmKbAnnounce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+      <div id="treemapZoom"><canvas id="treemapCanvas" tabindex="0" aria-label="Disk usage treemap. Use j and k, or the up and down arrows, to move between items; l or Enter opens the selected folder; h or Escape goes back up. The selection is announced as you move."></canvas></div>
       <!-- FX wiring: two orb wells over the canvas. The centred one holds the
            64px "searching" hero while a first scan runs against an empty map;
            the corner chip holds the 20px "shaping" orb while §2.5's refinement

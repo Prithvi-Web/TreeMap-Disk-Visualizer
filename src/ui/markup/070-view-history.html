@@ -1,17 +1,17 @@
   <!-- ═══════════ History (v4 §7 — calendar · journal · compare in one view) ═══════════ -->
   <section class="view" id="view-history" role="tabpanel" aria-label="History — calendar heatmap, disk journal, and scan compare" hidden>
     <div class="seg" id="histSeg" role="tablist" aria-label="History panel" style="margin-bottom:12px;">
-      <button type="button" data-panel="calendar" aria-selected="true" title="Bytes written per day, one cell per day">Calendar</button>
-      <button type="button" data-panel="journal" aria-selected="false" title="What changed, day by day, honestly attributed">Journal</button>
-      <button type="button" data-panel="compare" aria-selected="false" title="Two scans of one folder, diffed — with the split-slider for history pairs">Compare</button>
+      <button role="tab" type="button" data-panel="calendar" aria-selected="true" title="Bytes written per day, one cell per day">Calendar</button>
+      <button role="tab" type="button" data-panel="journal" aria-selected="false" title="What changed, day by day, honestly attributed">Journal</button>
+      <button role="tab" type="button" data-panel="compare" aria-selected="false" title="Two scans of one folder, diffed — with the split-slider for history pairs">Compare</button>
     </div>
     <div id="histPanelCalendar" class="pane-fade">
     <div class="card glass">
       <h2><span data-icon="calendar"></span>Calendar</h2>
       <div class="rule-row" style="align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
         <div class="seg" id="calChannelSeg" role="tablist" aria-label="Calendar channel">
-          <button type="button" data-ch="modified" aria-selected="true" title="Bytes modified per day — read from the scan itself, exact">Modified</button>
-          <button type="button" data-ch="created" aria-selected="false" title="Bytes created per day — needs per-file stats, capped and reported honestly">Created</button>
+          <button role="tab" type="button" data-ch="modified" aria-selected="true" title="Bytes modified per day — read from the scan itself, exact">Modified</button>
+          <button role="tab" type="button" data-ch="created" aria-selected="false" title="Bytes created per day — needs per-file stats, capped and reported honestly">Created</button>
         </div>
         <span class="muted" id="calHint">Click a day to see those files on the treemap · drag across days for a range</span>
       </div>

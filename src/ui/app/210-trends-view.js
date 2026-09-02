@@ -70,8 +70,13 @@ async function labelTrendForecast(path, seq) {
   if (!ok || !f.fullInDays) return;
   const days = Math.max(1, Math.round(f.fullInDays));
   if (days >= 365) return; // a year+ out is noise, same bar as the dashboard banner
-  $('trendInfo').textContent +=
-    ` · at current growth, disk full ~${formatDate(Date.now() + days * 864e5)}`;
+  // Same basis rule as the dashboard banner: a folder's slope names the
+  // folder, because growth elsewhere on the disk was not measured.
+  const when = formatDate(Date.now() + days * 864e5);
+  const name = path.split(/[\\/]/).filter(Boolean).pop() || path;
+  $('trendInfo').textContent += f.basis === 'volume'
+    ? ` · at current growth, disk full ~${when}`
+    : ` · at ${name}’s growth, the disk it lives on is full ~${when}`;
 }
 $('trendRoot').addEventListener('change', (e) => {
   state.trends.path = e.target.value;

@@ -30,16 +30,20 @@
 .seg button[aria-selected="true"] + button::before,
 .seg button[aria-selected="true"]::before { opacity: 0; }
 
-/* Sidebar-era breakpoints: the column costs the content 232px, so the
-   dashboard steps down earlier than it used to (its two-column form starts
-   scrolling sideways otherwise), and gains a true single-column form that
-   the old header layout never had. */
-@media (max-width: 1500px) {
+/* View-width breakpoints. These are container queries on .view (see
+   025-layout.css), not viewport queries: the sidebar costs the content
+   244px expanded and 76px as a rail, so one window width gives the view
+   168px more or less room that a media query cannot see — collapsing the
+   rail "to make room" did nothing to the dashboard. The thresholds are the
+   old viewport ones (1500 / 1120) minus what an expanded sidebar, the main
+   padding and the scrollbar gutter cost (~300px), so the expanded case is
+   unchanged and the rail case gains the room. */
+@container (max-width: 1200px) {
   .dash-grid { grid-template-columns: 1fr 1fr; }
   .quick-stats { grid-template-columns: 1fr; }
   .trends-grid { grid-template-columns: 1fr; }
 }
-@media (max-width: 1120px) {
+@container (max-width: 820px) {
   .dash-grid { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {

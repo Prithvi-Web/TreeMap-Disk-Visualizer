@@ -171,9 +171,15 @@ function fxStateBeamDrop(el) {
    and Hide-cloud toggles, the no-cloud-files reset) calls it; the treemap's
    mount re-lights and its unmount (visible=false — state.view still says
    'treemap' during unmount, so the caller must say so) is the shared off
-   door. attach is idempotent and keyed, so re-syncing is cheap. */
+   door. attach is idempotent and keyed, so re-syncing is cheap.
+   spin:false + staticColors: a mode that stays on is a state, not an
+   activity. A spinning ring animated a registered <angle> at 60fps through
+   three masked gradient layers and a blurred bloom, plus a 12s hue-rotate
+   filter, per lit pill, for as long as Live (or Lens, Loop, Diff,
+   Hide-cloud) was on — the treemap page never idled. Still, the ring is a
+   steady complete band that fades in and out and then costs nothing. */
 function fxTmPillBeamsSync(visible = state.view === 'treemap') {
-  const pill = (id, on) => { const el = $(id); if (el) FxBeam.attach(el, { type: 'sm', active: !!on && visible, strength: 0.7 }); };
+  const pill = (id, on) => { const el = $(id); if (el) FxBeam.attach(el, { type: 'sm', active: !!on && visible, strength: 0.7, spin: false, staticColors: true }); };
   pill('tmLiveToggle', state.live.on);
   pill('tmLensToggle', state.lens.pinned);
   pill('tmLapseLoop', state.treemap.lapse.loop);

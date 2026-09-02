@@ -109,6 +109,7 @@
     "app/225-global-search.js",
     "app/230-allocation-diagnostic.js",
     "app/235-settings-modal.js",
+    "app/237-tablists.js",
     "app/240-keyboard-shortcuts.js",
     "app/245-liquid-glass-engine.js",
     "shell/000-tail.html"
