@@ -9,6 +9,7 @@
     "hardlinkedBytes": 9999,
     "sparseFiles": 0,
     "sparseBytes": 0,
+    "slackBytes": 0,
     "cloudFiles": 0,
     "cloudBytes": 0,
     "startedAt": 0,
@@ -3422,6 +3423,7 @@
       "hardlinkedBytes": 9999,
       "sparseFiles": 0,
       "sparseBytes": 0,
+      "slackBytes": 0,
       "cloudFiles": 0,
       "cloudBytes": 0,
       "refused": {

@@ -39,6 +39,8 @@ export interface GduMapStats {
   sparseFiles: number;
   /** asize minus dsize, summed over those files. */
   sparseBytes: number;
+  /** And dsize minus asize where a file occupies more than it claims. */
+  slackBytes: number;
   cloudFiles: number;
   cloudBytes: number;
   /** Directories gdu flagged `read_error` (ncdu export format): refused, or unreadable. */
@@ -110,6 +112,7 @@ export function mapGduTree(
     hardlinkedBytes: 0,
     sparseFiles: 0,
     sparseBytes: 0,
+    slackBytes: 0,
     cloudFiles: 0,
     cloudBytes: 0,
     deniedDirs: 0,
@@ -188,6 +191,8 @@ export function mapGduTree(
       if (allocated < size) {
         stats.sparseFiles++;
         stats.sparseBytes += size - allocated;
+      } else if (allocated > size) {
+        stats.slackBytes += allocated - size;
       }
     }
 
@@ -262,6 +267,7 @@ export function mapGduTreeIntoStore(
     hardlinkedBytes: 0,
     sparseFiles: 0,
     sparseBytes: 0,
+    slackBytes: 0,
     cloudFiles: 0,
     cloudBytes: 0,
     deniedDirs: 0,
@@ -334,6 +340,8 @@ export function mapGduTreeIntoStore(
       if (allocated < size) {
         stats.sparseFiles++;
         stats.sparseBytes += size - allocated;
+      } else if (allocated > size) {
+        stats.slackBytes += allocated - size;
       }
     }
 

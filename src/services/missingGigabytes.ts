@@ -785,9 +785,9 @@ const ENGINES_THAT_MEASURE_ALLOCATION: ReadonlySet<string> = new Set(['walker', 
  * balances, and driving it through a whole live scan would prove far less.
  */
 export function sparseLine(scan: ScanResult, plat: NodeJS.Platform): StatementLine {
-  const label = 'Space these files claim but do not occupy';
+  const label = 'What these files claim, against what they hold';
   const detail =
-    'Some files reserve room they have not filled — a virtual machine disk such as Docker.raw is the usual one — and macOS stores many files compressed. The line above counted what they claim; this takes back the part that is not on the disk.';
+    'Some files reserve room they have not filled — a virtual machine disk such as Docker.raw is the usual one — and macOS stores many files compressed, so they claim more than they hold. A very small file is the other way round: the disk hands out room in fixed-size pieces, so it holds a little more than it claims. The line above counted what every file claims; this is the difference, whichever way it falls.';
   const engine = scan.engine ?? 'walker';
   if (plat === 'win32') {
     return {
@@ -804,7 +804,12 @@ export function sparseLine(scan: ScanResult, plat: NodeJS.Platform): StatementLi
       detail, count: null, notes: [], remedy: null,
     };
   }
-  const bytes = scan.sparseBytes ?? 0;
+  // The NET, not the shortfall. Both halves are real and on a tree of small
+  // files the slack is the larger: measured, 3,000 fifty-byte files claim
+  // 0.14 MB and hold 11.72 MB. Subtracting only the shortfall there would push
+  // the residual the wrong way and leave the difference in Unaccounted under
+  // the copy-on-write explanation this line exists to stop over-using.
+  const bytes = (scan.sparseBytes ?? 0) - (scan.slackBytes ?? 0);
   const count = scan.sparseFiles ?? 0;
   const notes: string[] = [];
   if (scan.incremental === true && (scan.cachedDirs ?? 0) > 0) {
@@ -815,9 +820,11 @@ export function sparseLine(scan: ScanResult, plat: NodeJS.Platform): StatementLi
   return {
     id: 'sparseFiles',
     label,
-    bytes: -bytes,
+    // `bytes === 0 ? 0 : -bytes`, not `-bytes`: negating zero yields -0, and a
+    // measured zero must read as zero everywhere it is compared or printed.
+    bytes: bytes === 0 ? 0 : -bytes,
     available: true,
-    detail: count > 0 ? detail : 'Every file this scan walked occupies what it claims, so nothing is taken back off.',
+    detail: count > 0 || (scan.slackBytes ?? 0) > 0 ? detail : 'Every file this scan walked occupies exactly what it claims, so there is nothing to reconcile.',
     count,
     notes,
     remedy: null,

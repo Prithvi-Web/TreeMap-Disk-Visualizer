@@ -407,6 +407,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     hardlinkedBytes: 0,
     sparseFiles: 0,
     sparseBytes: 0,
+    slackBytes: 0,
     cloudFiles: 0,
     cloudBytes: 0,
   };
@@ -476,6 +477,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         scan.hardlinkedBytes = 0;
         scan.sparseFiles = 0;
         scan.sparseBytes = 0;
+        scan.slackBytes = 0;
         scan.cloudFiles = 0;
         scan.cloudBytes = 0;
         scan.deniedDirs = 0;
@@ -774,7 +776,7 @@ async function processDirectory(
 
         if (ent.isDirectory() && !ent.isSymbolicLink()) {
           const stat = await fsp.lstat(fullPath);
-          return { input: statToInput(ent.name, true, 0, stat.mtimeMs, stat.atimeMs), fullPath, isDir: true, shortfall: 0 };
+          return { input: statToInput(ent.name, true, 0, stat.mtimeMs, stat.atimeMs), fullPath, isDir: true, allocDelta: 0 };
         }
         // Files, symlinks (not followed — lstat reports the link itself),
         // sockets, fifos: record as a leaf with whatever size lstat reports.
@@ -785,7 +787,7 @@ async function processDirectory(
           // Returns BEFORE the shortfall below: a symlink reports a non-zero
           // size against zero blocks, indistinguishable from a fully sparse
           // file, and a home folder holds tens of thousands of them.
-          return { input, fullPath, isDir: false, shortfall: 0 };
+          return { input, fullPath, isDir: false, allocDelta: 0 };
         }
         // A cloud placeholder reports a logical size but occupies ~no disk blocks
         // AND lives under a known cloud-sync folder — so plain sparse files
@@ -802,12 +804,15 @@ async function processDirectory(
         // carried out rather than tallied here because a hard-link duplicate's
         // size is zeroed below — tallying it now would take the same bytes off
         // twice.
-        const shortfall =
-          BLOCKS_ARE_MEANINGFUL && input.size > 0 && stat.blocks * 512 < input.size
-            ? input.size - stat.blocks * 512
-            : 0;
+        // Signed: negative when the file occupies less than it claims (a VM
+        // disk, a compressed file), positive when it occupies more (a small
+        // file rounded up to whole pieces of disk). Both halves are needed —
+        // the shortfall alone is not a correction, it is half of one, and on a
+        // tree of small files the other half is the larger.
+        const allocDelta =
+          BLOCKS_ARE_MEANINGFUL && input.size > 0 ? stat.blocks * 512 - input.size : 0;
         // Hard-link key only when the link count says the inode is shared.
-        return { input, fullPath, isDir: false, shortfall, inoKey: stat.nlink > 1 ? `${stat.dev}:${stat.ino}` : undefined };
+        return { input, fullPath, isDir: false, allocDelta, inoKey: stat.nlink > 1 ? `${stat.dev}:${stat.ino}` : undefined };
       })
     );
 
@@ -820,7 +825,7 @@ async function processDirectory(
         else if (why !== 'vanished') scan.unreadableEntries = (scan.unreadableEntries ?? 0) + 1;
         continue;
       }
-      const { input, fullPath, isDir, inoKey, shortfall } = result.value;
+      const { input, fullPath, isDir, inoKey, allocDelta } = result.value;
       // Dedup hard links sequentially so concurrent workers can't race the set.
       if (inoKey) {
         if (seen.has(inoKey)) {
@@ -841,9 +846,13 @@ async function processDirectory(
       // were never added to the tree total, and a cloud placeholder's bytes are
       // already taken off in full by the cloud line — either one would subtract
       // the same space twice.
-      if (shortfall > 0 && !input.hardlinkDuplicate && !input.cloudPlaceholder) {
-        scan.sparseFiles = (scan.sparseFiles ?? 0) + 1;
-        scan.sparseBytes = (scan.sparseBytes ?? 0) + shortfall;
+      if (allocDelta !== 0 && !input.hardlinkDuplicate && !input.cloudPlaceholder) {
+        if (allocDelta < 0) {
+          scan.sparseFiles = (scan.sparseFiles ?? 0) + 1;
+          scan.sparseBytes = (scan.sparseBytes ?? 0) - allocDelta;
+        } else {
+          scan.slackBytes = (scan.slackBytes ?? 0) + allocDelta;
+        }
       }
       if (isDir && input.name === '.git') store.setFlag(dirId, Flag.GitRepo, true);
       const childId = store.addNode(dirId, input);

@@ -201,7 +201,7 @@ async function statLeaf(
   isSymlink: boolean,
   seenInodes: Set<number>,
   cloudProviderFor: (p: string) => 'icloud' | 'onedrive' | 'dropbox' | undefined,
-): Promise<{ input: NodeInput; hardlinkedBytes: number; sparseShortfall: number } | null> {
+): Promise<{ input: NodeInput; hardlinkedBytes: number; allocDelta: number } | null> {
   const p = parent === '/' ? '/' + name : parent + '/' + name;
   try {
     const st = await fsp.lstat(p);
@@ -222,7 +222,7 @@ async function statLeaf(
       input.isSymlink = true;
       // A symlink reports a non-zero size against zero blocks, which is what a
       // fully sparse file looks like — so it returns before that check.
-      return { input, hardlinkedBytes: 0, sparseShortfall: 0 };
+      return { input, hardlinkedBytes: 0, allocDelta: 0 };
     }
 
     // Same rule as the mapper: only files whose link count exceeds 1 can be
@@ -232,7 +232,7 @@ async function statLeaf(
         input.hardlinkDuplicate = true;
         const bytes = input.size;
         input.size = 0;
-        return { input, hardlinkedBytes: bytes, sparseShortfall: 0 };
+        return { input, hardlinkedBytes: bytes, allocDelta: 0 };
       }
       seenInodes.add(st.ino);
     }
@@ -248,9 +248,8 @@ async function statLeaf(
     // What it claims minus what it occupies. The cloud line already takes a
     // placeholder's bytes off in full, so it is excluded here.
     const alloc = BLOCKS_ARE_MEANINGFUL ? st.blocks * 512 : input.size;
-    const sparseShortfall =
-      !input.cloudPlaceholder && input.size > 0 && alloc < input.size ? input.size - alloc : 0;
-    return { input, hardlinkedBytes: 0, sparseShortfall };
+    const allocDelta = !input.cloudPlaceholder && input.size > 0 ? alloc - input.size : 0;
+    return { input, hardlinkedBytes: 0, allocDelta };
   } catch {
     return null; // vanished mid-scan
   }
@@ -324,9 +323,11 @@ export async function gduScanIntoStore(
         scan.cloudFiles = (scan.cloudFiles ?? 0) + 1;
         scan.cloudBytes = (scan.cloudBytes ?? 0) + leaf.input.size;
       }
-      if (leaf.sparseShortfall > 0) {
+      if (leaf.allocDelta < 0) {
         scan.sparseFiles = (scan.sparseFiles ?? 0) + 1;
-        scan.sparseBytes = (scan.sparseBytes ?? 0) + leaf.sparseShortfall;
+        scan.sparseBytes = (scan.sparseBytes ?? 0) - leaf.allocDelta;
+      } else if (leaf.allocDelta > 0) {
+        scan.slackBytes = (scan.slackBytes ?? 0) + leaf.allocDelta;
       }
     }
     scan.scanned = scan.fileCount;
@@ -364,6 +365,7 @@ export async function gduScanIntoStore(
       scan.hardlinkedBytes = (scan.hardlinkedBytes ?? 0) + stats.hardlinkedBytes;
       scan.sparseFiles = (scan.sparseFiles ?? 0) + stats.sparseFiles;
       scan.sparseBytes = (scan.sparseBytes ?? 0) + stats.sparseBytes;
+      scan.slackBytes = (scan.slackBytes ?? 0) + stats.slackBytes;
       scan.cloudFiles = (scan.cloudFiles ?? 0) + stats.cloudFiles;
       scan.cloudBytes = (scan.cloudBytes ?? 0) + stats.cloudBytes;
       // Folders gdu flagged read_error — the same shape the walker publishes.

@@ -93,8 +93,17 @@ function renderFleet() {
       (f.neverShares || []).map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul></div>
   </div>`;
 
+  /* A withdrawn pairing offer is a security event, and the natural reaction to
+     it is to turn the fleet off — so it is composed once and shown in BOTH
+     branches. An alarm that disappears the moment the user acts on it is an
+     alarm that was never really raised. */
+  const alarm = !f.pairing && f.pairingStopped ? `<div class="fleet-alarm">${icon('ban', 13)}
+     <span>Pairing stopped. Another machine on your network (${escapeHtml(f.pairingStopped.address)}) tried too
+     many wrong codes, so the code you were showing stopped working. Nothing was shared with it. Ask for a new
+     code when you are ready to try again.</span></div>` : '';
+
   if (!f.enabled) {
-    host.innerHTML = disclosure +
+    host.innerHTML = alarm + disclosure +
       `<div class="fleet-off">
         <p>Seeing other TreeMaps on your network is <b>off</b>. Nothing is being shared, and this machine is not
         announcing itself to anything.</p>
@@ -180,10 +189,7 @@ function renderFleet() {
       : 'Not listening'}</div>` +
     (f.pairing ? `<div class="fleet-code">Type this code on the other machine: <b>${escapeHtml(f.pairing.code)}</b>
        <button class="pill" id="fleetCancelCode">Stop</button></div>` : '') +
-    (!f.pairing && f.pairingStopped ? `<div class="fleet-alarm">${icon('ban', 13)}
-       <span>Pairing stopped. Another machine on your network (${escapeHtml(f.pairingStopped.address)}) tried too
-       many wrong codes, so the code you were showing stopped working. Nothing was shared with it. Press
-       <b>Pair a machine</b> when you are ready to try again.</span></div>` : '') +
+    alarm +
     help +
     (peers || `<div class="muted" style="padding:10px 2px;">No machines paired yet.</div>`) +
     availableHtml, 'fleet');

@@ -2077,7 +2077,17 @@ test('a withdrawn pairing offer is explained, not silent', () => {
   assert.match(fn, /f\.pairingStopped/, 'the withdrawal is read from the server, not guessed at');
   assert.match(fn, /Pairing stopped/, 'and stated in words');
   assert.match(fn, /tried too/, 'with the reason');
-  assert.match(fn, /Pair a machine/, 'and the way back');
+  // NOT /Pair a machine/: that phrase already occurs three times in this
+  // region (the button, and twice in the how-to-pair help), so asserting it
+  // would pass against the unfixed page and prove nothing.
+  assert.match(fn, /when you are ready to try again/, 'and the way back');
+  // The natural reaction to "another machine was guessing" is to turn the
+  // fleet off — and renderFleet early-returns for the disabled state, so an
+  // alarm built only into the enabled branch disappears at exactly the moment
+  // the user acts on it.
+  const off = fn.slice(fn.indexOf('if (!f.enabled)'), fn.indexOf('const peers'));
+  assert.match(off, /alarm/,
+    'the warning survives turning the fleet off — that is a reaction to it, not a dismissal of it');
 });
 
 test('the off state says plainly that nothing is being shared', () => {

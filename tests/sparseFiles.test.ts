@@ -35,6 +35,10 @@ async function tree(): Promise<string> {
   await fh.close();
   // A solid file, to prove the tally is not just counting everything.
   await fsp.writeFile(path.join(dir, 'solid.bin'), Buffer.alloc(64 * 1024, 7));
+  // And a tiny one: fifty bytes occupying a whole piece of disk. This is the
+  // half a shortfall-only correction misses, and on a tree of small files it
+  // is the larger half.
+  await fsp.writeFile(path.join(dir, 'tiny.txt'), 'x'.repeat(50));
   // A symlink reports a non-zero size against zero blocks — indistinguishable
   // from a fully sparse file unless it is excluded before the check.
   await fsp.symlink(path.join(dir, 'solid.bin'), path.join(dir, 'link.bin'));
@@ -62,6 +66,10 @@ test('a file that claims more than it occupies is counted, and a symlink is not'
     assert.ok(scan.sparseBytes! > 7 * 1024 * 1024,
       `the shortfall is what it claims minus what it holds, got ${String(scan.sparseBytes)}`);
     assert.ok(scan.sparseBytes! <= 8 * 1024 * 1024, 'and never more than it claimed');
+    // The mirror image, and the reason a one-sided correction is wrong: a
+    // 64 KB file occupies whole blocks, so the tree total UNDER-states it.
+    // Measured: 3,000 fifty-byte files claim 0.14 MB and occupy 11.72 MB.
+    assert.ok(scan.slackBytes! > 0, 'the disk hands out space in fixed-size pieces, and that is counted too');
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
   }
@@ -163,4 +171,31 @@ test('gdu, the default engine, can answer this too — it reports what it measur
   const off = mapGduTree(tree as never, '/fx');
   assert.equal(off.stats.sparseFiles, 0, 'and nothing is claimed when the platform cannot say');
   assert.equal(off.stats.sparseBytes, 0);
+});
+
+
+test('the correction is the difference both ways, not just the files that claim too much', () => {
+  // Measured on this Mac: /usr/bin claims 224.0 MB and holds 84.1 MB, so a
+  // shortfall-only line is right to within its 0.3 MB of slack. But 3,000
+  // fifty-byte files claim 0.14 MB and HOLD 11.72 MB — there the scan
+  // under-counts, and a shortfall-only line would leave all of it in
+  // Unaccounted under the clone explanation this fix exists to remove.
+  const claimsMore = sparseLine(baseScan({ sparseBytes: 140 * 1024 ** 2, slackBytes: 300 * 1024 }), 'darwin');
+  assert.equal(claimsMore.bytes, -(140 * 1024 ** 2 - 300 * 1024),
+    'the usual case still takes space back off — net of the slack, not gross');
+
+  const holdsMore = sparseLine(baseScan({ sparseFiles: 0, sparseBytes: 0, slackBytes: 11 * 1024 ** 2 }), 'darwin');
+  assert.equal(holdsMore.bytes, 11 * 1024 ** 2,
+    'a tree of small files occupies MORE than it claims, and the receipt must add that back, not ignore it');
+
+  const balanced = sparseLine(baseScan({ sparseBytes: 5000, slackBytes: 5000 }), 'darwin');
+  assert.equal(balanced.bytes, 0, 'and when the two cancel, the line is a measured zero');
+});
+
+test('the line explains both directions, because a user will meet both', () => {
+  const line = sparseLine(baseScan({ sparseBytes: 1, slackBytes: 0 }), 'darwin');
+  assert.match(line.detail!, /Docker\.raw/, 'the case that motivated it is named');
+  assert.match(line.detail!, /small file/i, 'and so is the opposite case, which is commoner');
+  assert.doesNotMatch(line.label, /but do not occupy/,
+    'a label that only describes one direction contradicts itself when the number is positive');
 });

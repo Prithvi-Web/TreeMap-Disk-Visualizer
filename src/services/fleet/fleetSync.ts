@@ -187,8 +187,16 @@ export function pairingOffer(now = Date.now()): PairingOffer | null {
  * Check a code offered by a would-be peer.
  *
  * Compared in constant time, and consumed on success so one code pairs one
- * device. A wrong code does NOT clear the window — that would let anyone on the
- * network cancel a pairing in progress by guessing once.
+ * device. A single wrong code does NOT clear the window: that would let anyone
+ * on the network cancel a pairing in progress by guessing once.
+ *
+ * Fifty wrong codes DO withdraw it (see the pair route). That is a deliberate
+ * trade and it is worth naming: a device on this LAN can end a pairing that is
+ * in progress, and can do it again after each new code. It is the smaller
+ * harm. The alternative is unlimited guessing against six digits, which is a
+ * stranger pairing themselves to this machine — and the withdrawal is at least
+ * visible, because it tells the person here what happened and which address
+ * did it.
  */
 export function verifyPairingCode(offered: unknown, now = Date.now()): boolean {
   const current = pairingOffer(now);
@@ -367,7 +375,9 @@ export async function handlePeerRequest(
     // this route counts. Checked before anything else: if five wrong guesses
     // still left a sixth free, they would have cost the guesser nothing.
     if ((pairFailures.get(from) ?? 0) >= PAIR_ATTEMPT_LIMIT) {
-      send(res, 429, { error: 'Too many wrong codes from this machine. Ask for a new code and try again.' });
+      // Read on the machine that TYPED the code, not the one showing it, so it
+      // must never say "this machine" about the other one.
+      send(res, 429, { error: 'Too many wrong codes have been tried from this computer. Ask for a new code on the other machine and start again.' });
       return;
     }
     const offer = pairingOffer();
@@ -398,7 +408,7 @@ export async function handlePeerRequest(
         } catch {
           /* telling someone must never break the refusal */
         }
-        send(res, 429, { error: 'Too many wrong codes. This machine has stopped offering a pairing code.' });
+        send(res, 429, { error: 'Too many wrong codes have been tried, so the other machine has stopped offering a code. Ask for a new one there.' });
         return;
       }
       send(res, 401, { error: 'That code is not right' });

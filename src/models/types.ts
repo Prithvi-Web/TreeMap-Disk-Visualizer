@@ -140,6 +140,13 @@ export interface ScanResult {
   sparseFiles?: number;
   /** The SHORTFALL those files carry: what they claim minus what they occupy. */
   sparseBytes?: number;
+  /**
+   * The mirror image, and the reason the shortfall alone is not a correction:
+   * a disk hands out space in fixed-size pieces, so a very small file OCCUPIES
+   * more than it claims. Summed over a tree of small files this dominates —
+   * measured, 3,000 fifty-byte files claim 0.14 MB and hold 11.72 MB.
+   */
+  slackBytes?: number;
   /** Cloud placeholder files detected (size > 0 but ~0 disk blocks). */
   cloudFiles?: number;
   /** Logical bytes those cloud placeholders report but don't occupy on disk. */
@@ -229,6 +236,8 @@ export interface ScanStats {
   sparseFiles: number;
   /** What those files claim, minus what they occupy. */
   sparseBytes: number;
+  /** And what small files occupy beyond what they claim. */
+  slackBytes: number;
   cloudFiles: number;
   cloudBytes: number;
   /**

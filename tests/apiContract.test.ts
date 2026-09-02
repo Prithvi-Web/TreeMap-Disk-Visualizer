@@ -151,6 +151,7 @@ const RESULT_PAYLOAD = {
   hardlinkedBytes: 0,
   sparseFiles: 0,
   sparseBytes: 0,
+  slackBytes: 0,
   cloudFiles: 0,
   cloudBytes: 0,
   startedAt: 1_000,

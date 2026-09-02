@@ -138,7 +138,14 @@ function finalSseEvent(port: number, scanId: string): Promise<unknown> {
 // `expiresAt` is a wall clock like the rest of these — `lastActivity(scan) +
 // SCAN_TTL_MS` — so it differs on every run and would make byte-identity
 // unachievable rather than merely broken. Presence and shape still compare.
-const VOLATILE_NUMBERS = new Set(['startedAt', 'finishedAt', 'durationMs', 'tookMs', 'expiresAt']);
+/*
+ * 'slackBytes' is here for a different reason from the clocks: it is what the
+ * fixture's 152 small files occupy BEYOND what they claim, and that depends on
+ * the block size of whatever filesystem the checkout is sitting on. Its
+ * arithmetic is pinned in tests/sparseFiles.test.ts against a synthetic
+ * reading; here only its presence and position matter.
+ */
+const VOLATILE_NUMBERS = new Set(['startedAt', 'finishedAt', 'durationMs', 'tookMs', 'expiresAt', 'slackBytes']);
 
 /** Scrub machine/run-specific values; structure and content stay exact. */
 export function normalize(value: unknown, treeRoot: string): unknown {
