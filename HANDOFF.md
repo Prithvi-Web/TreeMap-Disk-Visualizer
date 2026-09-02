@@ -1,5 +1,108 @@
 # TreeMap — session handoff
 
+## Session 8 — the polish round (2 September 2026)
+
+Owner: "pushed it, check the ci. and polish anything you need to. Make this
+application the best in the world." CI run 33592780731 was **green on macOS,
+Windows and Linux** for the v4.1.3 work. What follows is the round after it.
+
+Shipped as **v4.2.0**, installed at `/Applications/TreeMap.app`. Gate:
+**2,373 tests · 0 fail · 4 skipped**, typecheck clean, `build-ui --check`
+matches (112 parts — `app/237-tablists.js` is new).
+
+### The one the owner could feel
+
+TreeMap's main process sat at **20–60% CPU with the window closed**, eighteen
+minutes after its last scan. `sample` put the time in `sqlite3_step` on a
+`SUM(is_dir)` over 1.1M rows, and the index's own WAL ticked every second or
+two. The app-data directory lives under the home folder, the home folder was
+the indexed root, so **every flush wrote the WAL, the watcher reported the
+WAL, and the next flush applied it and wrote the WAL again** — for ever, at
+the 400 ms cadence, each turn re-counting the whole root.
+
+Two changes: `startWatcher` drops events inside `appDataDir()` (case-folded
+off Linux — Electron's userData is `treemap`, `appDataDir()` says `TreeMap`,
+one directory on a case-insensitive volume), and `applyPendingChanges` keeps
+the root counts **by delta** (subtree deletes use `RETURNING is_dir`) instead
+of re-summing the table.
+
+Verified in the INSTALLED app, not just in tests: an isolated data dir placed
+inside the scanned root (the exact loop condition), index `ready`, watcher
+`live` — **0.0% CPU across 40 s and a frozen WAL**, and a file created in the
+watched tree still landed (31206 → 31207), so the fix silences the app's own
+writes and nothing else.
+
+### The one that was worst to say
+
+On a Mac without Full Disk Access, scanning Desktop or Documents returned
+nothing and the app reported "Scanned 0 files — 0 B", toasted "Scan
+complete", and the first-run card **congratulated the user on a clean
+folder**. The server now counts what it was refused; the page names those
+folders and offers the Privacy settings button; an older server gets a
+one-call probe (the picker's listing endpoint answers 403 for a protected
+path) for a 0-byte root or a protected home folder the scan came back empty
+from. A 404 is "not here", not a refusal. 0 B in 0 files is never toasted as
+success, and the tour takes its "could not check" branch.
+
+### The rest, by cluster
+
+- **Security.** Scan-root confinement was TEXTUAL: a directory symlink inside
+  a scanned folder walked every "inside the root" gate out to any file on the
+  disk. It now judges where a path LIVES (parents resolved, leaf as spelled,
+  so the link itself stays trashable). Plus a Host-header check, a runtime
+  CSP, a per-launch API token for the desktop app, and a non-loopback bind
+  that refuses to start without a token.
+- **Keyboard and dialogs.** One net gives all thirty-two sheets focus,
+  a Tab trap, inert underneath and focus restored. Two real bugs fell out:
+  stacked sheets were ordered by DOM, so a confirmation opened FROM Settings
+  painted behind it; and Escape read the FIRST open backdrop, so it closed
+  Settings underneath the confirmation. The thirteen tablists are real tab
+  lists now (role=tab, arrows, roving tabindex).
+- **Desktop.** Window state restored, a real menu (DevTools and Reload
+  dev-only, so ⌘R can never bin a running scan), dock progress, a scan queue
+  for dropped folders, an updater that stops nagging.
+- **Numbers and copy.** `formatBytes` never prints "1024.0 KB"; sparse files
+  are not cloud placeholders; APFS clones are not reclaimable bytes; one date
+  formatter; one dialect (color/center/folder); a welcome screen that
+  explains a treemap instead of comparing itself to GrandPerspective.
+- **Docs.** README, SECURITY, the issue templates, views.svg and the package
+  metadata were checked against the code, line by line, and now agree with it.
+
+### Traps this round paid for
+
+- **`braced()` closes on a brace in the SIGNATURE.** `async function api(url,
+  options, opts = {})` and `function cartDockToggle(open, { focus = false } =
+  {})` both "closed" on their own parameter list, so three test files were
+  asserting against the two characters `{}` — silently passing. Every copy of
+  the helper now walks the parameter list first.
+- **A new function name can collide with a slice anchor.** A helper called
+  `baseNameOf` matched `function baseName`, an anchor three
+  frontendContract slices depend on, and being EARLIER in the page collapsed
+  all three regions to the empty string. Grep the anchors before naming.
+- **A region anchor must be a single-line comment.** `slice('/* ── X ── */',
+  …)` does not match `/* ── X ──\n   prose */`. Put the prose in a second
+  comment.
+- **`open -a` DOES pass an env var through.** A CPU measurement taken against
+  `TREEMAP_DATA_DIR=… open -a TreeMap` was reading an EMPTY index with no
+  watcher and would have "proved" the fix at 0% while proving nothing. Always
+  confirm the watcher is `live` before believing an idle number.
+- **A golden fixture holding a wall clock can never match.** `expiresAt` went
+  into the byte-identity goldens; it is normalised like every other volatile
+  number now, and the fixture was re-recorded only after a structural diff of
+  all eleven endpoints showed exactly three added keys.
+
+### Left undone, deliberately
+
+- The audit's second wave (a 115-agent verification pass) raised items nobody
+  has implemented: a brute-forceable 6-digit fleet pairing code with no rate
+  limit on the peer server, "need 0.0 GB" in the offload space error, the
+  Trends forecast line and its date coming from two different fits, and a
+  sparse-file receipt that blames the gap on clones. All are written up in
+  `scratchpad/polish-raised-2.json` reasoning, none are in this build.
+- Decimal-vs-binary bytes (data-truth-6) is the owner's call, not a defect:
+  the app is internally consistent and disagrees with Finder by ~7%.
+- v4.2.0 is built and installed but **not published as a GitHub release**.
+
 ## Session 7 — "blazing fast in all areas" (2 September 2026)
 
 Owner, after trying v4.1.1: "hover still feels slow, do the sidebar and card
