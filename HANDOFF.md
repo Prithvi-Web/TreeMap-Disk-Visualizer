@@ -1,5 +1,141 @@
 # TreeMap — session handoff
 
+## Session 9 — the seven number fixes, a CHANGELOG, and v5.0.0 (2 September 2026)
+
+Shipped as **v5.0.0**, built, verified inside the asar, and installed at
+`/Applications/TreeMap.app`. The previous build is parked at
+`release/TreeMap-4.2.0-previous.app`. Gate: **2,412 tests · 0 fail · 3
+skipped**, typecheck clean, `build-ui --check` matches (112 parts).
+
+**v5.0.0 is not yet pushed and not yet published.** The owner pushes; the
+GitHub release is theirs to publish and needs a `v5.0.0` tag before the
+in-app updater can see it.
+
+### The seven, and what each one was actually saying
+
+Every one was the app stating something untrue. All seven are red-first and
+mutation-proven; 47 mutants, 47 caught (7 needed a second attempt because the
+first version of the test was not evidence).
+
+1. **Fleet pairing was brute-forceable.** The doc comment claimed "a million
+   possibilities against a three-minute window and a rate limiter"; there was
+   no rate limiter, and an audit had measured 33,966 guesses in three seconds.
+   Now five wrong codes per machine and fifty in total, checked BEFORE the
+   offer is looked up so a sixth attempt is refused even when it is right.
+   Addresses are normalised (`::ffff:` stripped) or a dual-stack socket buys a
+   second allowance. A withdrawn offer raises a line in the Fleet panel.
+2. **Offload said "need 0.0 GB"** about 30 MB. Both figures go through
+   formatBytes now. The same line had a second untruth: the check refuses at
+   bytesTotal × 1.02 but named the raw total, so inside that window it stated
+   its own contradiction. The headroom is said out loud.
+3. **The Trends dashed line and the date beside it were two different fits.**
+   The chart ran its own unweighted linreg while the date came from the
+   server's recency-weighted one — and with status 'ok' the server slope is
+   guaranteed positive while linreg could still come back NEGATIVE, so the
+   chart could draw a descending tail, clamped to zero, beside "disk full
+   ~<date>". `forecastOk` (a boolean) became `forecastRate` (bytes/day, or
+   null); the tail rises at exactly that rate.
+4. **Sparse files claimed space the disk does not hold** and the gap was
+   blamed on clones. See the two-sided note below — this one was shipped
+   wrong first and repaired.
+5. **Duplicates promised bytes trashing would not free.** The clone caveat is
+   on screen on darwin, and after a trash the MEASURED delta is reported.
+6. **"Used" meant two different things.** Half was already done in 9c14572;
+   six UI/report/tray sites still derived `total − free`. They read the
+   published `usedDisk` now, and the receipt says "Free to you" and draws the
+   reserve as its own band.
+7. **Two hard-link counts wore near-identical labels.** Relabelled, not
+   recounted. A third row now reconciles them outright.
+
+### What the adversarial pass found in work already committed
+
+A 16-agent recon ran plan-then-verify on all seven. The verifiers were worth
+more than the planners, because they audited SHIPPED code:
+
+- **The sparse correction was one-sided and therefore wrong.** It subtracted
+  only the shortfall and ignored block slack — a small file OCCUPIES more than
+  it claims. Measured: `/usr/bin` claims 224.0 MB and holds 84.1 MB (slack
+  0.3 MB, so it was nearly right), but 3,000 fifty-byte files claim 0.14 MB
+  and hold 11.72 MB, where the scan UNDER-counts by 11.58 MB and the one-sided
+  line said nothing — leaving the whole difference in Unaccounted under the
+  clone explanation the fix exists to stop over-using. The error equalled the
+  slack on every tree tested. Now a signed delta, and the receipt line is the
+  NET, which is also what the allocation panel two clicks away has always
+  reported.
+- **The fleet alarm hid itself.** `renderFleet` early-returns for the disabled
+  state and the alarm was only in the enabled branch — so turning the fleet
+  off, the natural reaction, deleted the explanation.
+- **The 429 named the wrong machine.** That text is read on the machine that
+  TYPED the code.
+- **A comment the fix made untrue.** `verifyPairingCode` still promised a
+  wrong code never clears the window — true of one guess, false of fifty.
+- **The duplicates measurement skipped the commonest roots** (`/`, `/Users`
+  fail a one-directional `startsWith(home)`) and survived into a cloud scan.
+
+### Verified in the INSTALLED app, not only in tests
+
+Driven over CDP against `/Applications/TreeMap.app` (never the dev Electron
+binary — Gatekeeper deletes it). A synthetic tree claiming 512.27 MB while
+holding 1.81 MB, built in the scratchpad; the owner's real folders were never
+scanned.
+
+- `/api/capabilities` → 5.0.0; `/api/system` publishes `usedDisk`.
+- A real scan on the **gdu-turbo** engine (the default) reported
+  `sparseFiles 1 · sparseBytes 512.00 MB · slackBytes 1.55 MB` — matching
+  `lstat` ground truth exactly, with the symlink correctly excluded.
+- The receipt printed `sparseFiles −510.45 MB` against a `scanned` line of
+  512.27 MB, so the statement now says the tree holds 1.8 MB — which is what
+  `du -sh` says. `used + free + reserved === total` held.
+- Dashboard: "1 file claims 512.0 MB more than it takes" (verb agreeing), and
+  on a three-name inode "2 extra file names (8.0 MB)".
+- Legend: "Free to you — 280.6 GB". No reserved band on APFS, correctly.
+- Duplicates: the clone caveat rendered under "up to 4.0 MB reclaimable".
+- Fleet alarm rendered in BOTH branches, in both themes, and vanished once a
+  fresh code was on screen.
+- Offload against a real 20 MB volume: "this needs 30.0 MB plus a little room
+  to spare, and only 19.3 MB is free".
+- No horizontal overflow at 640 / 900 / 1440, no `will-change` at rest, no
+  backdrop-filter on the new surfaces, no console errors.
+
+### Traps this round paid for
+
+- **`asar extract-file` writes to the CURRENT DIRECTORY**, not stdout. A
+  verification script that redirects its output silently overwrote the repo's
+  `package.json` with the asar's stripped copy (no scripts — `npm test`
+  became "Missing script: test") and littered eight extracted `.js` files into
+  the repo root. Read an asar by parsing its header in Node instead; there is
+  a working reader in this session's scratchpad.
+- **Replacing every `"version": "4.2.0"` in package-lock.json bumps
+  DEPENDENCIES.** Six third-party packages were moved to a version that does
+  not exist. Only two nodes describe TreeMap: the lock root and
+  `packages[""]`.
+- **`shasum -a 256 $FILES` with an unquoted zsh variable is one bogus
+  filename.** shasum errors, and the empty-string digest is compared to
+  itself — a restore check that always passes. This is the same trap the
+  prompt warned about, met in a new place.
+- **A mutant that "passes" may not have been applied.** One gdu mutant
+  reported green because its anchor did not match and the file was never
+  changed. Assert the anchor count inside the mutation script.
+- **`-0 !== 0` under `assert/strict`** (Object.is). A measured zero produced
+  by negation must be normalised.
+- **`renderFleet()` takes no arguments** — it reads `state.fleet.data`. And
+  `switchView('fleet')` re-fetches, overwriting anything you just stubbed.
+
+### Left undone, deliberately
+
+- **A fast rescan under-counts the claimed-versus-held line.** Unchanged
+  folders are read from the previous scan and not re-measured, and no
+  per-node allocation is persisted. The line says it is a floor. Persisting
+  allocation per node is the real fix.
+- **`reclaimableCaveat` / `reclaimableIsUpperBound` are still dead.** The
+  server computes them; `/api/duplicates` and the MCP tool both drop them.
+  The clone line on screen is the client's own darwin check, so those two
+  fields remain unreachable. Merging them would mean two mechanisms for one
+  sentence.
+- **Decimal vs binary bytes** and **Empty Folders listing `~/.Trash`** remain
+  the owner's product decisions, per session 8.
+
+
 ## Session 8 — the polish round (2 September 2026)
 
 Owner: "pushed it, check the ci. and polish anything you need to. Make this
