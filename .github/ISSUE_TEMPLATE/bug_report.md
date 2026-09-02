@@ -44,8 +44,8 @@ Dashboard, Treemap, Disk City, Grid, Apps, Libraries, Security, Fleet, Missing G
 2.
 3.
 
-**Console output**
-In the desktop app: View → Toggle Developer Tools, then the Console tab. In a browser: right-click → Inspect → Console. Paste anything red.
+**Anything TreeMap told you**
+The exact wording of any red banner or toast, and the folder it was about. In a browser tab you can add the console: right-click → Inspect → Console, and paste anything red. (Released desktop builds have no Developer Tools menu — the wording of the message is enough.)
 
 ```
 ```

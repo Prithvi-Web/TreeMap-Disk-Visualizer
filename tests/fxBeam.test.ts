@@ -60,11 +60,11 @@ interface Internals {
   normalizeOpts: (opts?: unknown) => {
     type: string; active: boolean; duration: number; strength: number;
     opacity?: number; brightness?: number; saturation?: number; hueRange?: number;
-    staticColors?: boolean; borderRadius?: number;
+    staticColors?: boolean; spin?: boolean; borderRadius?: number;
     onActivate?: (el: unknown) => void; onDeactivate?: (el: unknown) => void;
   };
   buildCSS: (id: string, type: string, theme: string, duration: number, radius: number, reduced: boolean,
-    knobs?: { hueRange?: number; staticColors?: boolean }) => string;
+    knobs?: { hueRange?: number; staticColors?: boolean; spin?: boolean }) => string;
 }
 
 const section = extractSection();
@@ -373,6 +373,59 @@ test('buildCSS: staticColors freezes the hue but never the motion or the brightn
   assert.ok(line.includes('fxb-travel-t9') && line.includes('fxb-breathe-t9'), 'the line glow still travels and breathes');
 });
 
+/* ══════════════════ spin:false — a state that costs zero frames ══════════════════
+   A persistent mode pill (Live, Lens, Loop, Diff, Hide-cloud) is a state,
+   not an activity. The rotate family's ring animates a registered <angle>
+   property at 60fps through three masked gradient layers for as long as
+   the mode is on. `spin: false` keeps the fade-in/fade-out and drops the
+   rotation: no spin keyframes, and no angle-driven window mask on either
+   pseudo-element — the ring is steady and complete. */
+
+test('normalizeOpts: spin coerces to a boolean and stays absent unless supplied', () => {
+  const I = instantiate();
+  assert.equal(I.normalizeOpts({ spin: false }).spin, false);
+  assert.equal(I.normalizeOpts({ spin: 0 }).spin, false, 'a falsy scalar reads as still');
+  assert.equal(I.normalizeOpts({ spin: true }).spin, true);
+  assert.ok(!('spin' in I.normalizeOpts({})), 'absent stays absent — the four-key shape is untouched');
+  assert.ok(!('spin' in I.normalizeOpts({ type: 'sm', active: true })));
+});
+
+test('buildCSS: spin:false emits a steady, complete ring — no spin keyframes, no rotating window mask, fades kept', () => {
+  const I = instantiate();
+  for (const type of ['md', 'sm']) {
+    const still = I.buildCSS('t9', type, 'dark', 1.96, 10, false, { spin: false });
+    assert.ok(!still.includes('fxb-spin-t9'), `${type}: the host never names the spin animation`);
+    assert.ok(!still.includes('@keyframes fxb-spin'), `${type}: and no spin keyframes are emitted`);
+    assert.ok(still.includes('fxb-fade-in-t9') && still.includes('fxb-fade-out-t9'), `${type}: the fades survive`);
+    assert.ok(still.includes('[data-fxbeam="t9"][data-fxbeam-on]'), `${type}: the lit rule exists`);
+    assert.equal((still.match(/{/g) || []).length, (still.match(/}/g) || []).length, `${type}: braces balance`);
+    let depth = 0;
+    for (const ch of still) { if (ch === '(') depth++; else if (ch === ')') depth--; assert.ok(depth >= 0); }
+    assert.equal(depth, 0, `${type}: parens balance`);
+    const masks = [...still.matchAll(/(?:-webkit-)?mask(?:-image)?:\s*([^;]+);/g)].map((m) => m[1]);
+    assert.ok(masks.length >= 4, `${type}: the ring, wash and bloom layers are all masked`);
+    for (const m of masks) assert.ok(!m.includes('conic-gradient'), `${type}: no angle-driven window in any mask — the ring is complete (${m.slice(0, 60)}…)`);
+    assert.ok(masks.some((m) => m.includes('content-box')), `${type}: the ring mask itself remains`);
+  }
+  assert.equal(
+    I.buildCSS('t9', 'sm', 'dark', 1.96, 10, false, { spin: true }),
+    I.buildCSS('t9', 'sm', 'dark', 1.96, 10, false, {}),
+    'spin:true is the default — every existing rotate caller is byte-identical',
+  );
+  assert.ok(I.buildCSS('t9', 'sm', 'dark', 1.96, 10, false, {}).includes('fxb-spin-t9'), 'and the default still spins');
+  // still + staticColors: the only animations left are the two fades.
+  const quiet = I.buildCSS('t9', 'sm', 'dark', 1.96, 10, false, { spin: false, staticColors: true });
+  const anims = [...quiet.matchAll(/animation:\s*([^;]+);/g)].map((m) => m[1].trim());
+  assert.ok(anims.length >= 2, 'the fade-in and fade-out rules still animate');
+  for (const a of anims) assert.match(a, /^fxb-fade-(in|out)-t9 /, `a persistent mode animates nothing but its fades (${a})`);
+  assert.ok(!quiet.includes('@keyframes fxb-hue'), 'no hue drift either');
+  // Untouched elsewhere: line and pulse ignore the knob.
+  for (const type of ['line', 'pulse-inner', 'pulse-outside']) {
+    assert.equal(I.buildCSS('t9', type, 'dark', 2.5, 13, false, { spin: false }), I.buildCSS('t9', type, 'dark', 2.5, 13, false),
+      `${type}: spin is a rotate-family knob only`);
+  }
+});
+
 test('the lifecycle honors the knobs: radius override skips measuring, detach clears the overrides, edges fire callbacks', () => {
   const src = section;
   const attachAt = src.indexOf('function attach(');
@@ -507,6 +560,22 @@ test('a host that moves to another build key takes its inline per-id state with 
     Object.keys(el.style.props).filter((p) => p.startsWith('--fxb-')), [],
     'detach leaves no --fxb-* property behind at all',
   );
+});
+
+test('spin is part of the sheet key: a still ring and a spinning ring never share a stylesheet', () => {
+  const { beam, sheets } = lifecycle();
+  const el = beamEl();
+  beam.attach(el, { type: 'sm', active: true, borderRadius: 10, spin: false });
+  const stillId = el.attrs['data-fxbeam'];
+  assert.equal(sheets().length, 1);
+  assert.ok(!sheets()[0].textContent.includes('fxb-spin-'), 'the still sheet carries no spin');
+  beam.attach(el, { type: 'sm', active: true, borderRadius: 10 });
+  assert.notEqual(el.attrs['data-fxbeam'], stillId, 'a different build key is a different instance id');
+  assert.equal(sheets().length, 2, 'and a second sheet');
+  assert.ok(sheets().some((s) => s.textContent.includes('fxb-spin-')), 'the default sheet spins');
+  beam.attach(el, { type: 'sm', active: true, borderRadius: 10, spin: false });
+  assert.equal(el.attrs['data-fxbeam'], stillId, 're-entry to still reuses the cached still sheet');
+  assert.equal(sheets().length, 2, 'without parsing a third');
 });
 
 test('bloom:false drops the blurred layer entirely — ambience weight is a missing node, not a faded one', () => {

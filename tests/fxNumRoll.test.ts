@@ -78,6 +78,10 @@ function makeEl(tag = 'span'): any {
     },
     set(v: string) { own = String(v); e.children = []; },
   });
+  // A settled roll checks that the strip it built is still the element's
+  // first child before collapsing it; a real text node would sit here after
+  // a snap, and null is as good as "not the strip" for that guard.
+  Object.defineProperty(e, 'firstChild', { get() { return e.children[0] ?? null; } });
   // Enough of a parser for the summary markup the app actually writes:
   // text with <b>/<span> wrappers around the digit runs.
   Object.defineProperty(e, 'innerHTML', {
@@ -134,7 +138,9 @@ function outline(n: any): string {
   return (n.children || []).map((c: any) => {
     if (c.nodeType === 3) return c.nodeValue;
     if (c.className === 'fx-roll') { const p = rollPair(c); return `«${p.from}→${p.to}»`; }
-    return `${c.tagName.toLowerCase()}[${outline(c)}]`;
+    // A childless element prints its own text: the fake's textContent setter
+    // stores plain text on the element rather than as a child node.
+    return `${c.tagName.toLowerCase()}[${c.children.length ? outline(c) : c.textContent}]`;
   }).join('');
 }
 
@@ -143,8 +149,18 @@ function fmtCount(n: number): string {
   return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
+type FakeTimer = { id: number; fn: () => void; ms: number; cleared: boolean; fired: boolean };
+
 function loadFxNum(reduced: boolean) {
   const rafQueue: Array<(t: number) => void> = [];
+  /* The settle timer that collapses a finished glide back to text. Faked so
+     the collapse is observable without waiting out a real 560ms transition. */
+  const timers: FakeTimer[] = [];
+  let timerSeq = 0;
+  const setTimeoutStub = (fn: () => void, ms: number) => { const t: FakeTimer = { id: ++timerSeq, fn, ms, cleared: false, fired: false }; timers.push(t); return t.id; };
+  const clearTimeoutStub = (id: number) => { const t = timers.find((x) => x.id === id); if (t) t.cleared = true; };
+  /** Fire every armed timer once, in order, as the clock passing would. */
+  const settle = () => { for (const t of timers) { if (!t.cleared && !t.fired) { t.fired = true; t.fn(); } } };
   const documentStub = {
     hidden: false,
     createElement: (tag: string) => makeEl(tag),
@@ -166,11 +182,11 @@ function loadFxNum(reduced: boolean) {
     },
   };
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
-  const out = new Function('REDUCED', 'document', 'requestAnimationFrame', 'formatCount', 'NodeFilter',
+  const out = new Function('REDUCED', 'document', 'requestAnimationFrame', 'formatCount', 'NodeFilter', 'setTimeout', 'clearTimeout',
     `'use strict'; ${SRC}\nreturn { FxNum, countUp };`)(
     reduced, documentStub, (cb: (t: number) => void) => { rafQueue.push(cb); return rafQueue.length; },
-    fmtCount, { SHOW_TEXT: 4 });
-  return { ...out, rafQueue, doc: documentStub };
+    fmtCount, { SHOW_TEXT: 4 }, setTimeoutStub, clearTimeoutStub);
+  return { ...out, rafQueue, doc: documentStub, timers, settle };
 }
 
 test('FX: Rolling Numerals — section evaluates in Node and exposes the API', () => {
@@ -370,6 +386,86 @@ test('rollHtml snaps on a shape change and on an unkeyed or unchanged paint', ()
   assert.equal(outline(same), 'b[12] groups · b[3.4 GB] reclaimable',
     'nothing moved — a repaint of the same numbers rolls nothing');
   assert.equal(rafQueue.length, 0);
+});
+
+/* ══════════════════ the glide settles back to text ══════════════════ */
+
+/* A rolled number used to keep ~13 nodes per digit in the DOM forever —
+   dashboard and cart at rest carried several hundred leftover slot boxes,
+   each an overflow:clip box with an absolutely positioned child, through
+   every later style recalc and layout. Once the 560ms glide has finished
+   the strips say nothing the target string does not, so they collapse. */
+
+test('a finished roll collapses its strips to the plain target string, keeping the resume points', () => {
+  const { FxNum, countUp, rafQueue, timers, settle } = loadFxNum(false);
+  const el = makeEl();
+  FxNum.roll(el, '87%', '93%');
+  rafQueue.shift()!(0);
+  assert.ok(el.children.length > 0, 'the glide is in progress: slots exist');
+  assert.equal(timers.length, 1, 'one settle timer is armed per roll');
+  assert.ok(timers[0].ms > 560, `the settle waits out the 560ms transition (armed for ${timers[0].ms}ms)`);
+  settle();
+  assert.equal(el.children.length, 0, 'the slots are gone');
+  assert.equal(el.textContent, '93%', 'and the element holds the plain target');
+
+  // countUp: data-v survives the collapse, so the NEXT roll still resumes from it.
+  const n = makeEl();
+  countUp(n, 1234567);
+  rafQueue.shift()!(0);
+  settle();
+  assert.equal(n.children.length, 0);
+  assert.equal(n.textContent, '1,234,567');
+  assert.equal(n.dataset.v, 1234567, 'the resume point is untouched');
+  countUp(n, 1234571);
+  assert.deepEqual(startDigits(n), [1, 2, 3, 4, 5, 6, 7], 'the next roll resumes from the settled value');
+
+  // rollText: data-fxv survives too.
+  const t = makeEl();
+  FxNum.rollText(t, '14:32');
+  FxNum.rollText(t, '15:07');
+  rafQueue.length = 0;
+  settle();
+  assert.equal(t.children.length, 0);
+  assert.equal(t.textContent, '15:07');
+  assert.equal(t.dataset.fxv, '15:07');
+});
+
+test('a stale settle is a no-op: a newer roll, or a snap, owns the element by the time it fires', () => {
+  const { FxNum, rafQueue, timers, settle } = loadFxNum(false);
+  const el = makeEl();
+  FxNum.roll(el, '87%', '93%');
+  rafQueue.shift()!(0);
+  const first = timers[0];
+  FxNum.roll(el, '93%', '95%'); // a newer roll before the first settled
+  rafQueue.shift()!(0);
+  const strip = el.children[0];
+  assert.ok(first.cleared, 'the newer roll disarms the older settle');
+  first.fn(); // and even if the clock had already fired it, it must not touch the newer strip
+  assert.equal(el.children[0], strip, 'a stale settle leaves a newer glide alone');
+  settle();
+  assert.equal(el.children.length, 0);
+  assert.equal(el.textContent, '95%', 'the live settle collapses to the newest target');
+
+  const s = makeEl();
+  FxNum.roll(s, '87%', '93%');
+  rafQueue.shift()!(0);
+  FxNum.roll(s, '3.2 GB', '412 MB'); // a snap replaced the strip with plain text
+  assert.equal(s.textContent, '412 MB');
+  settle();
+  assert.equal(s.textContent, '412 MB', 'the settle from the earlier roll cannot overwrite a later snap');
+});
+
+test('rollHtml’s per-run strips settle too, and only the run they wrapped is rewritten', () => {
+  const { FxNum, rafQueue, settle } = loadFxNum(false);
+  const el = makeEl();
+  FxNum.rollHtml(el, SUMMARY_A, 'scan-1');
+  FxNum.rollHtml(el, SUMMARY_B, 'scan-1');
+  assert.equal(outline(el), B_ROLLED);
+  rafQueue.length = 0;
+  settle();
+  assert.equal(rollRoots(el).length, 0, 'no strip survives the glide');
+  assert.equal(el.textContent, B_TEXT, 'the text is exactly the paint');
+  assert.equal(outline(el), 'b[span[14]] groups · b[3.span[6] GB] reclaimable', 'the wrapper spans stay, holding plain digits');
 });
 
 /* ══════════════════ each guard bites on its own ══════════════════ */

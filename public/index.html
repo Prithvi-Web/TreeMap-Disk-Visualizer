@@ -3229,9 +3229,9 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       <rect x="17" y="17" width="8" height="8" rx="3.5" fill="#FF453A"/>
     </svg>
     <h1>See what's eating your disk</h1>
-    <p>Scan any folder for a GrandPerspective-style treemap, a size-proportional grid, and safe one-click clean-up. Files go to the Trash — never deleted outright.</p>
+    <p>TreeMap draws every file as a rectangle: the bigger the rectangle, the more space it takes. Click through to whatever is filling the disk, then clear it out — everything goes to the Trash, never deleted outright.</p>
     <div class="feature-row">
-      <span class="feature"><span data-icon="zap"></span>2M+ items / min</span>
+      <span class="feature"><span data-icon="zap"></span>Reads a whole drive in minutes</span>
       <span class="feature"><span data-icon="shield"></span>Trash-only deletes</span>
       <span class="feature"><span data-icon="eyeOff"></span>No tracking, fully local</span>
     </div>
@@ -3601,15 +3601,15 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
             <button role="tab" type="button" data-h="files" aria-selected="false" title="Taller = more files inside">Files</button>
             <button role="tab" type="button" data-h="depth" aria-selected="false" title="Taller = more deeply nested">Depth</button>
           </div>
-          <div class="seg" id="cityColorSeg" role="tablist" aria-label="What building colour means">
-            <button role="tab" type="button" data-c="reclaim" aria-selected="true" title="Colour by how safe and worthwhile it is to reclaim">Reclaim</button>
-            <button role="tab" type="button" data-c="type" aria-selected="false" title="Colour by file kind">Type</button>
-            <button role="tab" type="button" data-c="age" aria-selected="false" title="Colour by how recently modified">Age</button>
+          <div class="seg" id="cityColorSeg" role="tablist" aria-label="What building color means">
+            <button role="tab" type="button" data-c="reclaim" aria-selected="true" title="Color by how safe and worthwhile it is to reclaim">Reclaim</button>
+            <button role="tab" type="button" data-c="type" aria-selected="false" title="Color by file kind">Type</button>
+            <button role="tab" type="button" data-c="age" aria-selected="false" title="Color by how recently modified">Age</button>
           </div>
         </div>
         <div class="tb-spring" aria-hidden="true"></div>
         <div class="tb-group tb-actions">
-          <button class="pill" id="cityReset" title="Recentre and reset the zoom">Recentre</button>
+          <button class="pill" id="cityReset" title="Recenter and reset the zoom">Recenter</button>
         </div>
       </div>
     </div>
@@ -9430,7 +9430,7 @@ function renderSearchOverlay() {
 function updateTmStatus() {
   const q = state.treemap.query.trim();
   if (state.treemap.history.active && !q) {
-    const when = new Date(state.treemap.history.viewingAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const when = formatWhen(state.treemap.history.viewingAt); // the one dialect, memoised
     $('tmStatus').textContent = `Viewing ${when} · ${formatBytes(state.treemap.rootSize)} — drag the slider to Live to interact`;
     return;
   }

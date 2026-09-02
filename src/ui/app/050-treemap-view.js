@@ -595,7 +595,7 @@ function renderSearchOverlay() {
 function updateTmStatus() {
   const q = state.treemap.query.trim();
   if (state.treemap.history.active && !q) {
-    const when = new Date(state.treemap.history.viewingAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const when = formatWhen(state.treemap.history.viewingAt); // the one dialect, memoised
     $('tmStatus').textContent = `Viewing ${when} · ${formatBytes(state.treemap.rootSize)} — drag the slider to Live to interact`;
     return;
   }

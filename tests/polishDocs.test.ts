@@ -258,10 +258,16 @@ test('the issue templates ask what a TreeMap bug report needs, and route securit
   const bug = readFileSync(path.join(dir, 'bug_report.md'), 'utf8');
   assert.doesNotMatch(bug, /smartphone|iphone|stock browser/i, 'no phone questions in a desktop app');
   for (const needle of ['TreeMap version', '/api/capabilities', 'How you run it', '.dmg', 'Setup', 'portable',
-    'web mode', 'VS Code', 'Docker', 'Which view', 'Developer Tools', 'OS and version']) {
+    'web mode', 'VS Code', 'Docker', 'Which view', 'OS and version']) {
     assert.ok(bug.includes(needle), `bug_report.md asks about: ${needle}`);
   }
-  assert.match(MAIN_JS, /role: 'toggleDevTools'/, 'the desktop app has a Developer Tools menu item the template can point at');
+  // The template must not send a reporter somewhere a RELEASED build does not
+  // go: Developer Tools and Reload are development-only (desktop-polish-4), so
+  // asking a user with a .dmg for a console they have no menu item for is a
+  // dead end. The menu module is where that decision lives.
+  const menu = readFileSync(path.join(__dirname, '..', 'electron', 'lib', 'menu.js'), 'utf8');
+  assert.match(menu, /isPackaged \? \[\] : \[[^\]]*toggleDevTools/, 'Developer Tools is development-only');
+  assert.doesNotMatch(bug, /Toggle Developer Tools/, 'so the template does not send a released user there');
   assert.match(bug, /- \[ \]/, 'the install types are checkboxes');
 });
 
@@ -296,13 +302,18 @@ test('README download links go to the latest release and never to a stale tag or
 });
 
 test('README describes the macOS updater the app actually has', () => {
-  const darwin = section(MAIN_JS, "process.platform === 'darwin'", '} else {');
-  const button = darwin.match(/buttons: \['([^']+)', 'Later'\]/);
+  // The dialog's words live in the pure copy helper, which is where the
+  // unsigned-build story is told; main.js only shows what it returns.
+  const desk = readFileSync(path.join(__dirname, '..', 'electron', 'lib', 'desktop.js'), 'utf8');
+  const button = /buttons: \['([^']+)'/.exec(desk.slice(desk.indexOf('function updateDialogCopy(')));
   assert.ok(button, 'the macOS update dialog has a primary button');
   const bullet = README.split('\n').find((l) => /Auto-updates?\*\*/.test(l));
   assert.ok(bullet, 'the README has an Auto-updates bullet');
   assert.ok(bullet!.includes(button![1]), `the bullet names the "${button![1]}" dialog`);
-  assert.doesNotMatch(bullet!, /skip/i, 'macOS does not "skip" the check — it checks and offers the download');
+  // Not a bare /skip/: the dialog now HAS a "Skip This Version" button, and
+  // naming it is accurate. What the bullet must never say is that macOS skips
+  // the check itself — it checks, and offers the download.
+  assert.doesNotMatch(bullet!, /skips? (the )?(update )?check/i, 'macOS checks; it is the install it cannot do');
 });
 
 test('README first-launch guidance never offers right-click → Open as a working route on current macOS', () => {
