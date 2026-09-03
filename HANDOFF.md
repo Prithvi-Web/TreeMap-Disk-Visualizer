@@ -103,8 +103,10 @@ scanned.
   verification script that redirects its output silently overwrote the repo's
   `package.json` with the asar's stripped copy (no scripts — `npm test`
   became "Missing script: test") and littered eight extracted `.js` files into
-  the repo root. Read an asar by parsing its header in Node instead; there is
-  a working reader in this session's scratchpad.
+  the repo root. Read an asar by parsing its header in Node instead — the
+  format is a 8-byte pickle prefix, `readUInt32LE(12)` is the JSON directory
+  size, that JSON follows immediately, and each entry's `offset` is relative
+  to `16 + jsonSize`. Twenty lines, and it cannot write to your working tree.
 - **Replacing every `"version": "4.2.0"` in package-lock.json bumps
   DEPENDENCIES.** Six third-party packages were moved to a version that does
   not exist. Only two nodes describe TreeMap: the lock root and
