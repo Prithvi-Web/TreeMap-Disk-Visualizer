@@ -23,13 +23,13 @@
 .tm-hints { top: calc(100% + 6px); left: auto; right: 0; min-width: 280px;
   max-width: min(420px, 88vw); max-height: 280px; overflow-y: auto; }
 .tm-hint { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; padding: 6px 10px;
-  border: 0; background: none; border-radius: 8px; cursor: pointer; color: var(--text-1); font-size: 12px; }
+  border: 0; background: none; border-radius: 8px; cursor: var(--cur-hand); color: var(--text-1); font-size: 12px; }
 .tm-hint:hover, .tm-hint[aria-selected="true"] { background: var(--accent-soft); }
 .tm-hint .k { font-weight: 600; color: var(--accent); font-family: var(--mono, ui-monospace, monospace); }
 .tm-hint .h { color: var(--text-3); font-size: 11px; }
 /* 140px floor: below that a scrubber is decoration, so the bar wraps its
    trailing controls instead of shrinking the slider further. */
-.tm-timebar input[type="range"] { flex: 1 1 140px; min-width: 140px; accent-color: var(--accent); cursor: pointer; }
+.tm-timebar input[type="range"] { flex: 1 1 140px; min-width: 140px; accent-color: var(--accent); cursor: var(--cur-hand); }
 /* A floor the width of the longest label, in ch so it scales with the
    label's own (tabular) digits. Measured without it: "Live" is 23px and
    "Sep 30, 10:31 PM · 1023.9 GB" is 174px, so the first input event of a
@@ -61,7 +61,7 @@
   box-shadow: var(--shadow-3); }
 #ctxMenu button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: none;
   background: transparent; color: var(--text-1); font-size: 13px; padding: 8px 11px;
-  border-radius: 8px; cursor: pointer; transition: background var(--dur-1) var(--ease); }
+  border-radius: 8px; cursor: var(--cur-hand); transition: background var(--dur-1) var(--ease); }
 #ctxMenu button .ic { color: var(--text-2); }
 #ctxMenu button:hover { background: var(--accent); color: #fff; }
 #ctxMenu button:hover .ic { color: #fff; }

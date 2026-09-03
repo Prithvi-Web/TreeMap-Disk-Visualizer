@@ -19,8 +19,8 @@
     radial-gradient(90% 70% at 22% 100%, rgba(0,122,255,0.10), transparent 62%),
     linear-gradient(180deg, #f7f8fc, #e9ecf3);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), inset 0 -40px 80px -40px rgba(20,30,60,0.16); }
-#cityCanvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
-#cityCanvas:active { cursor: grabbing; }
+#cityCanvas { display: block; width: 100%; height: 100%; cursor: var(--cur-grab); touch-action: none; }
+#cityCanvas:active { cursor: var(--cur-grabbing); }
 #cityCanvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* The hover card follows the cursor, so it is deliberately small and never
@@ -66,7 +66,7 @@
 @container (max-width: 800px) { #cityLegend .tml-item { white-space: normal; } }
 
 .city-table { margin-top: 12px; }
-.city-table > summary { cursor: pointer; font-size: 12px; color: var(--text-2); padding: 6px 2px;
+.city-table > summary { cursor: var(--cur-hand); font-size: 12px; color: var(--text-2); padding: 6px 2px;
   border-radius: var(--r-sm); }
 .city-table > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* The wrapper scrolls sideways so a deep path column can never widen the
@@ -77,5 +77,5 @@
 .city-table th { color: var(--text-3); font-weight: 600; }
 .city-table td.num, .city-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .city-table button { background: none; border: none; padding: 0; color: var(--accent);
-  cursor: pointer; font: inherit; text-align: left; }
+  cursor: var(--cur-hand); font: inherit; text-align: left; }
 .city-table button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

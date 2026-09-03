@@ -4,6 +4,7 @@
     "shell/000-head.html",
     "styles/000-tokens.css",
     "styles/005-base-ambience.css",
+    "styles/007-cursor.css",
     "styles/010-fx-beam.css",
     "styles/015-primitives.css",
     "styles/020-sidebar.css",

@@ -98,6 +98,29 @@ document.documentElement.dataset.theme =
      --lg-angle, so it stays theme- and pointer-reactive wherever it lands. */
   --lg-ring: linear-gradient(var(--lg-angle, 135deg),
     rgba(255,255,255,0) 8%, var(--ring-b) 34%, var(--ring-a) 62%, rgba(255,255,255,0) 92%);
+
+  /* -- The pointer ------------------------------------------------------
+     One dot, drawn eight ways, INVERTED against the page it sits on: a pale
+     bead here, an ink one in the light block below. A cursor is a static
+     image and cannot sample what is under it, so inversion is resolved per
+     theme -- and because a treemap tile can be any colour at all, every
+     shape also carries a contrast edge in the opposite tone, which is what
+     keeps a white bead readable on a white tile.
+
+     A data: URI cannot interpolate a var(), so the artwork carries its
+     colours literally and the light theme re-declares all eight -- the rule
+     the rest of this file already lives by. Every dot is 28x28 with its
+     hotspot dead centre (14 14), so a click always lands under the bead, and
+     each names the native cursor it would otherwise have been as the
+     fallback after the comma. Wired up in 007-cursor.css. */
+  --cur-dot:      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(255,255,255)'/%3E%3Cstop offset='1' stop-color='rgb(203,211,228)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='14' cy='14.85' r='5.75' fill='rgb(0,0,0)' opacity='.30'/%3E%3Ccircle cx='14' cy='14' r='5.45' fill='rgb(0,0,0)' opacity='.42'/%3E%3Ccircle cx='14' cy='14' r='4.6' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='2.02' ry='1.33' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.95'/%3E%3C/svg%3E") 14 14, auto;
+  --cur-hand:     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(255,255,255)'/%3E%3Cstop offset='1' stop-color='rgb(203,211,228)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='14' cy='14' r='9.4' fill='none' stroke='rgb(0,0,0)' stroke-width='2.8' stroke-opacity='.38'/%3E%3Ccircle cx='14' cy='14' r='9.4' fill='none' stroke='rgb(255,255,255)' stroke-width='1.5' stroke-opacity='.34'/%3E%3Cpath d='M4.69 15.31A9.4 9.4 0 0 1 16.9 5.06' fill='none' stroke='rgb(255,255,255)' stroke-width='1.5' stroke-opacity='.86' stroke-linecap='round'/%3E%3Ccircle cx='14' cy='14.85' r='5.55' fill='rgb(0,0,0)' opacity='.30'/%3E%3Ccircle cx='14' cy='14' r='5.25' fill='rgb(0,0,0)' opacity='.42'/%3E%3Ccircle cx='14' cy='14' r='4.4' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='1.94' ry='1.28' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.95'/%3E%3C/svg%3E") 14 14, pointer;
+  --cur-text:     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(255,255,255)'/%3E%3Cstop offset='1' stop-color='rgb(203,211,228)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Cpath d='M14 3.2V24.8' fill='none' stroke='rgb(0,0,0)' stroke-width='2.6' stroke-opacity='.38' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M14 3.2V24.8' fill='none' stroke='rgb(255,255,255)' stroke-width='1.3' stroke-opacity='.72' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='14' cy='14.85' r='5.15' fill='rgb(0,0,0)' opacity='.30'/%3E%3Ccircle cx='14' cy='14' r='4.85' fill='rgb(0,0,0)' opacity='.42'/%3E%3Ccircle cx='14' cy='14' r='4' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='1.76' ry='1.16' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.95'/%3E%3C/svg%3E") 14 14, text;
+  --cur-grab:     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(255,255,255)'/%3E%3Cstop offset='1' stop-color='rgb(203,211,228)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='14' cy='14' r='9.4' fill='none' stroke='rgb(0,0,0)' stroke-width='2.8' stroke-opacity='.38' stroke-dasharray='5.4 6.4' stroke-linecap='round'/%3E%3Ccircle cx='14' cy='14' r='9.4' fill='none' stroke='rgb(255,255,255)' stroke-width='1.5' stroke-opacity='.34' stroke-dasharray='5.4 6.4' stroke-linecap='round'/%3E%3Ccircle cx='14' cy='14.85' r='5.55' fill='rgb(0,0,0)' opacity='.30'/%3E%3Ccircle cx='14' cy='14' r='5.25' fill='rgb(0,0,0)' opacity='.42'/%3E%3Ccircle cx='14' cy='14' r='4.4' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='1.94' ry='1.28' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.95'/%3E%3C/svg%3E") 14 14, grab;
+  --cur-grabbing: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(255,255,255)'/%3E%3Cstop offset='1' stop-color='rgb(203,211,228)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='14' cy='14' r='6.9' fill='none' stroke='rgb(0,0,0)' stroke-width='2.9' stroke-opacity='.38'/%3E%3Ccircle cx='14' cy='14' r='6.9' fill='none' stroke='rgb(255,255,255)' stroke-width='1.6' stroke-opacity='.34'/%3E%3Cpath d='M7.17 14.96A6.9 6.9 0 0 1 16.13 7.44' fill='none' stroke='rgb(255,255,255)' stroke-width='1.6' stroke-opacity='.86' stroke-linecap='round'/%3E%3Ccircle cx='14' cy='14.85' r='5.35' fill='rgb(0,0,0)' opacity='.30'/%3E%3Ccircle cx='14' cy='14' r='5.05' fill='rgb(0,0,0)' opacity='.42'/%3E%3Ccircle cx='14' cy='14' r='4.2' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='1.85' ry='1.22' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.95'/%3E%3C/svg%3E") 14 14, grabbing;
+  --cur-cross:    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(255,255,255)'/%3E%3Cstop offset='1' stop-color='rgb(203,211,228)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Cpath d='M14 1.8V6.2M14 21.8V26.2M1.8 14H6.2M21.8 14H26.2' fill='none' stroke='rgb(0,0,0)' stroke-width='2.7' stroke-opacity='.38' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M14 1.8V6.2M14 21.8V26.2M1.8 14H6.2M21.8 14H26.2' fill='none' stroke='rgb(255,255,255)' stroke-width='1.4' stroke-opacity='.78' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='14' cy='14.85' r='5.15' fill='rgb(0,0,0)' opacity='.30'/%3E%3Ccircle cx='14' cy='14' r='4.85' fill='rgb(0,0,0)' opacity='.42'/%3E%3Ccircle cx='14' cy='14' r='4' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='1.76' ry='1.16' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.95'/%3E%3C/svg%3E") 14 14, crosshair;
+  --cur-ew:       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(255,255,255)'/%3E%3Cstop offset='1' stop-color='rgb(203,211,228)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Cpath d='M6.6 9.7 2.6 14l4 4.3M21.4 9.7 25.4 14l-4 4.3' fill='none' stroke='rgb(0,0,0)' stroke-width='2.9' stroke-opacity='.38' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M6.6 9.7 2.6 14l4 4.3M21.4 9.7 25.4 14l-4 4.3' fill='none' stroke='rgb(255,255,255)' stroke-width='1.6' stroke-opacity='.82' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='14' cy='14.85' r='5.15' fill='rgb(0,0,0)' opacity='.30'/%3E%3Ccircle cx='14' cy='14' r='4.85' fill='rgb(0,0,0)' opacity='.42'/%3E%3Ccircle cx='14' cy='14' r='4' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='1.76' ry='1.16' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.95'/%3E%3C/svg%3E") 14 14, ew-resize;
+  --cur-no:       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(255,255,255)'/%3E%3Cstop offset='1' stop-color='rgb(203,211,228)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='14' cy='14' r='8.4' fill='none' stroke='rgb(0,0,0)' stroke-width='2.7' stroke-opacity='.38'/%3E%3Ccircle cx='14' cy='14' r='8.4' fill='none' stroke='rgb(255,255,255)' stroke-width='1.4' stroke-opacity='.34'/%3E%3Cpath d='M5.68 15.17A8.4 8.4 0 0 1 16.6 6.01' fill='none' stroke='rgb(255,255,255)' stroke-width='1.4' stroke-opacity='.86' stroke-linecap='round'/%3E%3Cpath d='M8.3 19.7 19.7 8.3' fill='none' stroke='rgb(0,0,0)' stroke-width='2.7' stroke-opacity='.38' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M8.3 19.7 19.7 8.3' fill='none' stroke='rgb(255,255,255)' stroke-width='1.4' stroke-opacity='.78' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cg opacity='.62'%3E%3Ccircle cx='14' cy='14.85' r='5.05' fill='rgb(0,0,0)' opacity='.30'/%3E%3Ccircle cx='14' cy='14' r='4.75' fill='rgb(0,0,0)' opacity='.42'/%3E%3Ccircle cx='14' cy='14' r='3.9' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='1.72' ry='1.13' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.95'/%3E%3C/g%3E%3C/svg%3E") 14 14, not-allowed;
 }
 :root[data-theme="light"] {
   /* The four accent/status hues this block re-tunes (--accent here, then
@@ -179,6 +202,19 @@ document.documentElement.dataset.theme =
   --ring-a: rgba(255,255,255,0.95);
   --ring-b: rgba(255,255,255,0.35);
   --ring-opacity: 0.9;
+
+  /* The same eight, inverted the other way: an ink bead under a white edge.
+     The light source stays in the upper left across both themes -- the bead's
+     gradient, its one specular, and the bright arc on every ring all agree on
+     it, which is what makes the set look turned from one piece. */
+  --cur-dot:      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(78,86,104)'/%3E%3Cstop offset='1' stop-color='rgb(10,13,20)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='14' cy='14.85' r='5.75' fill='rgb(10,13,25)' opacity='.22'/%3E%3Ccircle cx='14' cy='14' r='5.45' fill='rgb(255,255,255)' opacity='.78'/%3E%3Ccircle cx='14' cy='14' r='4.6' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='2.02' ry='1.33' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.42'/%3E%3C/svg%3E") 14 14, auto;
+  --cur-hand:     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(78,86,104)'/%3E%3Cstop offset='1' stop-color='rgb(10,13,20)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='14' cy='14' r='9.4' fill='none' stroke='rgb(255,255,255)' stroke-width='2.8' stroke-opacity='.72'/%3E%3Ccircle cx='14' cy='14' r='9.4' fill='none' stroke='rgb(12,16,24)' stroke-width='1.5' stroke-opacity='.34'/%3E%3Cpath d='M4.69 15.31A9.4 9.4 0 0 1 16.9 5.06' fill='none' stroke='rgb(12,16,24)' stroke-width='1.5' stroke-opacity='.86' stroke-linecap='round'/%3E%3Ccircle cx='14' cy='14.85' r='5.55' fill='rgb(10,13,25)' opacity='.22'/%3E%3Ccircle cx='14' cy='14' r='5.25' fill='rgb(255,255,255)' opacity='.78'/%3E%3Ccircle cx='14' cy='14' r='4.4' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='1.94' ry='1.28' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.42'/%3E%3C/svg%3E") 14 14, pointer;
+  --cur-text:     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(78,86,104)'/%3E%3Cstop offset='1' stop-color='rgb(10,13,20)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Cpath d='M14 3.2V24.8' fill='none' stroke='rgb(255,255,255)' stroke-width='2.6' stroke-opacity='.72' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M14 3.2V24.8' fill='none' stroke='rgb(12,16,24)' stroke-width='1.3' stroke-opacity='.72' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='14' cy='14.85' r='5.15' fill='rgb(10,13,25)' opacity='.22'/%3E%3Ccircle cx='14' cy='14' r='4.85' fill='rgb(255,255,255)' opacity='.78'/%3E%3Ccircle cx='14' cy='14' r='4' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='1.76' ry='1.16' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.42'/%3E%3C/svg%3E") 14 14, text;
+  --cur-grab:     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(78,86,104)'/%3E%3Cstop offset='1' stop-color='rgb(10,13,20)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='14' cy='14' r='9.4' fill='none' stroke='rgb(255,255,255)' stroke-width='2.8' stroke-opacity='.72' stroke-dasharray='5.4 6.4' stroke-linecap='round'/%3E%3Ccircle cx='14' cy='14' r='9.4' fill='none' stroke='rgb(12,16,24)' stroke-width='1.5' stroke-opacity='.34' stroke-dasharray='5.4 6.4' stroke-linecap='round'/%3E%3Ccircle cx='14' cy='14.85' r='5.55' fill='rgb(10,13,25)' opacity='.22'/%3E%3Ccircle cx='14' cy='14' r='5.25' fill='rgb(255,255,255)' opacity='.78'/%3E%3Ccircle cx='14' cy='14' r='4.4' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='1.94' ry='1.28' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.42'/%3E%3C/svg%3E") 14 14, grab;
+  --cur-grabbing: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(78,86,104)'/%3E%3Cstop offset='1' stop-color='rgb(10,13,20)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='14' cy='14' r='6.9' fill='none' stroke='rgb(255,255,255)' stroke-width='2.9' stroke-opacity='.72'/%3E%3Ccircle cx='14' cy='14' r='6.9' fill='none' stroke='rgb(12,16,24)' stroke-width='1.6' stroke-opacity='.34'/%3E%3Cpath d='M7.17 14.96A6.9 6.9 0 0 1 16.13 7.44' fill='none' stroke='rgb(12,16,24)' stroke-width='1.6' stroke-opacity='.86' stroke-linecap='round'/%3E%3Ccircle cx='14' cy='14.85' r='5.35' fill='rgb(10,13,25)' opacity='.22'/%3E%3Ccircle cx='14' cy='14' r='5.05' fill='rgb(255,255,255)' opacity='.78'/%3E%3Ccircle cx='14' cy='14' r='4.2' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='1.85' ry='1.22' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.42'/%3E%3C/svg%3E") 14 14, grabbing;
+  --cur-cross:    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(78,86,104)'/%3E%3Cstop offset='1' stop-color='rgb(10,13,20)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Cpath d='M14 1.8V6.2M14 21.8V26.2M1.8 14H6.2M21.8 14H26.2' fill='none' stroke='rgb(255,255,255)' stroke-width='2.7' stroke-opacity='.72' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M14 1.8V6.2M14 21.8V26.2M1.8 14H6.2M21.8 14H26.2' fill='none' stroke='rgb(12,16,24)' stroke-width='1.4' stroke-opacity='.78' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='14' cy='14.85' r='5.15' fill='rgb(10,13,25)' opacity='.22'/%3E%3Ccircle cx='14' cy='14' r='4.85' fill='rgb(255,255,255)' opacity='.78'/%3E%3Ccircle cx='14' cy='14' r='4' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='1.76' ry='1.16' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.42'/%3E%3C/svg%3E") 14 14, crosshair;
+  --cur-ew:       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(78,86,104)'/%3E%3Cstop offset='1' stop-color='rgb(10,13,20)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Cpath d='M6.6 9.7 2.6 14l4 4.3M21.4 9.7 25.4 14l-4 4.3' fill='none' stroke='rgb(255,255,255)' stroke-width='2.9' stroke-opacity='.72' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M6.6 9.7 2.6 14l4 4.3M21.4 9.7 25.4 14l-4 4.3' fill='none' stroke='rgb(12,16,24)' stroke-width='1.6' stroke-opacity='.82' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='14' cy='14.85' r='5.15' fill='rgb(10,13,25)' opacity='.22'/%3E%3Ccircle cx='14' cy='14' r='4.85' fill='rgb(255,255,255)' opacity='.78'/%3E%3Ccircle cx='14' cy='14' r='4' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='1.76' ry='1.16' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.42'/%3E%3C/svg%3E") 14 14, ew-resize;
+  --cur-no:       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cdefs%3E%3CradialGradient id='b' cx='33%' cy='27%' r='80%'%3E%3Cstop offset='0' stop-color='rgb(78,86,104)'/%3E%3Cstop offset='1' stop-color='rgb(10,13,20)'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='14' cy='14' r='8.4' fill='none' stroke='rgb(255,255,255)' stroke-width='2.7' stroke-opacity='.72'/%3E%3Ccircle cx='14' cy='14' r='8.4' fill='none' stroke='rgb(12,16,24)' stroke-width='1.4' stroke-opacity='.34'/%3E%3Cpath d='M5.68 15.17A8.4 8.4 0 0 1 16.6 6.01' fill='none' stroke='rgb(12,16,24)' stroke-width='1.4' stroke-opacity='.86' stroke-linecap='round'/%3E%3Cpath d='M8.3 19.7 19.7 8.3' fill='none' stroke='rgb(255,255,255)' stroke-width='2.7' stroke-opacity='.72' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M8.3 19.7 19.7 8.3' fill='none' stroke='rgb(12,16,24)' stroke-width='1.4' stroke-opacity='.78' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cg opacity='.62'%3E%3Ccircle cx='14' cy='14.85' r='5.05' fill='rgb(10,13,25)' opacity='.22'/%3E%3Ccircle cx='14' cy='14' r='4.75' fill='rgb(255,255,255)' opacity='.78'/%3E%3Ccircle cx='14' cy='14' r='3.9' fill='url(%23b)'/%3E%3Cellipse cx='12.65' cy='12.5' rx='1.72' ry='1.13' transform='rotate(-34 12.65 12.5)' fill='rgb(255,255,255)' opacity='.42'/%3E%3C/g%3E%3C/svg%3E") 14 14, not-allowed;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -240,6 +276,41 @@ button { font-family: inherit; color: inherit; }
   background: radial-gradient(circle, rgba(48,209,88,0.11) 0%, rgba(48,209,88,0.05) 34%, transparent 68%); }
 .blob.b4 { width: 660px; height: 660px; top: calc(12% - 140px); left: calc(42% - 140px);
   background: radial-gradient(circle, rgba(100,210,255,0.10) 0%, rgba(100,210,255,0.045) 34%, transparent 68%); }
+
+/* ══════════════════ The pointer: one inverted bead ══════════════════ */
+/* `cursor` is an inherited property, so rooting it on <html> is what carries
+   the dot into every element that never names one — including the two
+   canvases, where the treemap and Disk City live. The artwork itself is in
+   000-tokens.css: a pale bead on the dark theme, an ink one on the light,
+   each with a contrast edge in the opposite tone so it survives landing on a
+   tile its own colour.
+
+   The rest of this block exists for the cursors the USER AGENT sets, which
+   inheritance never reaches: Chromium's own sheet makes a text field `text`
+   and a link `pointer`, and those beat an inherited value. Every other cursor
+   in the app is named in the rule that owns the control, and each of those is
+   a --cur- token too — tests/invertedCursor.test.ts fails on the first one
+   that slips back to an OS glyph.
+
+   Hover effects are untouched on purpose. The dot says what KIND of thing is
+   under it; the element's own hover state still says which element. */
+html { cursor: var(--cur-dot); }
+
+/* Typing keeps a hairline through the dot. The caret lands on the dot's
+   centre either way, but the stem is what makes that centre readable in the
+   gap between two characters. */
+input, textarea, [contenteditable]:not([contenteditable="false"]) { cursor: var(--cur-text); }
+
+/* The controls whose UA cursor is the hand. `a` without an href is not a
+   link and does not get one, which matches the UA sheet. */
+a[href], button, select, summary, label[for],
+input[type="checkbox"], input[type="radio"], input[type="range"],
+input[type="color"], input[type="file"],
+input[type="submit"], input[type="button"], input[type="reset"] { cursor: var(--cur-hand); }
+
+/* Refusal stays inside the family: the same bead, dimmed and struck through,
+   rather than the OS circle-slash arriving from nowhere. */
+:disabled, [aria-disabled="true"] { cursor: var(--cur-no); }
 
 /* ══════════ FX: Border Beam — styles ══════════
    Static half of the FxBeam splice (the per-instance gradients, masks and
@@ -487,7 +558,7 @@ button { font-family: inherit; color: inherit; }
   min-height: 30px; padding: 0 13px; border-radius: var(--r-sm);
   border: 1px solid var(--hairline);
   background: linear-gradient(170deg, rgba(255,255,255,0.07), rgba(255,255,255,0) 55%), var(--surface-2);
-  color: var(--text-1); font-size: 13px; font-weight: 500; cursor: pointer;
+  color: var(--text-1); font-size: 13px; font-weight: 500; cursor: var(--cur-hand);
   box-shadow: inset 0 1px 0 var(--shine), var(--shadow-btn);
   transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
               opacity var(--dur-1) var(--ease), box-shadow var(--dur-2) var(--ease),
@@ -509,11 +580,11 @@ button { font-family: inherit; color: inherit; }
   border-color: rgba(255,69,58,0.38); color: #ff6b61; }
 :root[data-theme="light"] .btn-danger { color: #d63a30; }
 .btn-danger:hover { background: rgba(255,69,58,0.24); }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
+.btn:disabled { opacity: 0.45; cursor: var(--cur-no); pointer-events: none; }
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 30px; height: 30px; border-radius: 9px; border: 1px solid transparent;
-  background: transparent; color: var(--text-2); cursor: pointer;
+  background: transparent; color: var(--text-2); cursor: var(--cur-hand);
   transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease),
               border-color var(--dur-1) var(--ease), transform var(--dur-2) var(--ease-spring);
   flex: none;
@@ -544,8 +615,8 @@ input[type="text"], input[type="number"], select {
 input:hover, select:hover { border-color: var(--hairline-2); }
 input:focus, select:focus { border-color: var(--accent); outline: none; background: var(--surface-2);
   box-shadow: inset 0 1.5px 3px rgba(0,0,0,0.1), 0 0 0 3.5px var(--accent-soft), 0 0 18px var(--accent-soft); }
-input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
-select { cursor: pointer; appearance: none; -webkit-appearance: none; padding-right: 28px;
+input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; cursor: var(--cur-hand); }
+select { cursor: var(--cur-hand); appearance: none; -webkit-appearance: none; padding-right: 28px;
   background-image: linear-gradient(45deg, transparent 50%, var(--text-2) 50%), linear-gradient(135deg, var(--text-2) 50%, transparent 50%);
   background-position: calc(100% - 16px) 55%, calc(100% - 11px) 55%;
   background-size: 5px 5px; background-repeat: no-repeat; }
@@ -621,7 +692,7 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-
 .tabbar button {
   display: flex; align-items: center; gap: 10px; width: 100%;
   border: none; background: transparent; color: var(--text-2);
-  font-size: 13px; font-weight: 500; padding: 8.5px 11px; border-radius: 10px; cursor: pointer;
+  font-size: 13px; font-weight: 500; padding: 8.5px 11px; border-radius: 10px; cursor: var(--cur-hand);
   white-space: nowrap; text-align: left;
   transition: color var(--dur-1) var(--ease), background var(--dur-2) var(--ease),
               box-shadow var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-spring);
@@ -930,7 +1001,7 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .donut-legend { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; flex: 1; min-width: 190px;
   container-type: inline-size; }
 .donut-legend .li { display: flex; align-items: center; gap: 9px; padding: 5px 8px; border-radius: 7px;
-  transition: background var(--dur-1) var(--ease); cursor: default; }
+  transition: background var(--dur-1) var(--ease); cursor: var(--cur-dot); }
 .donut-legend .li.hl { background: var(--surface-2); }
 .donut-legend .dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
 .donut-legend .ext { font-weight: 600; min-width: 52px; }
@@ -1047,7 +1118,7 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
   -webkit-mask-image: linear-gradient(to right, transparent 0, #000 34px);
   mask-image: linear-gradient(to right, transparent 0, #000 34px); }
 .crumbs button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid transparent;
-  background: transparent; color: var(--accent); cursor: pointer; font-size: 12.5px; font-weight: 500;
+  background: transparent; color: var(--accent); cursor: var(--cur-hand); font-size: 12.5px; font-weight: 500;
   height: 30px; padding: 0 10px; border-radius: 7px; transition: background var(--dur-1) var(--ease);
   max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
 .crumbs button:hover { background: var(--accent-soft); }
@@ -1063,7 +1134,7 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 #treemapWrap { position: relative; overflow: hidden; padding: 10px; }
 #treemapZoom { transition: transform var(--dur-2) var(--ease), opacity var(--dur-2) var(--ease); transform-origin: center; }
 #treemapZoom.zooming { transform: scale(1.05); opacity: 0; }
-#treemapCanvas { display: block; width: 100%; border-radius: 10px; cursor: default; }
+#treemapCanvas { display: block; width: 100%; border-radius: 10px; cursor: var(--cur-dot); }
 /* Wraps: legend + status + hint need ~700px on one line, and the footer has
    to survive the 640px floor beside an expanded sidebar. */
 .tm-foot { display: flex; align-items: center; gap: 8px 16px; margin-top: 12px; font-size: 11.5px; color: var(--text-2); padding: 0 4px; flex-wrap: wrap; }
@@ -1113,7 +1184,7 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 #gridScroll { position: relative; flex: 1; min-height: 420px; overflow-y: auto; padding: 10px; }
 #gridInner { position: relative; }
 .gcell { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 5px; padding: 8px; cursor: pointer; user-select: none;
+  gap: 5px; padding: 8px; cursor: var(--cur-hand); user-select: none;
   background: var(--surface-1); border: 1px solid var(--hairline); border-radius: var(--r-md);
   box-shadow: inset 0 1px 0 var(--shine);
   transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease),
@@ -1173,7 +1244,7 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .cart-item .sz { color: var(--text-2); white-space: nowrap; font-size: 11.5px; }
 .cart-item.missing { opacity: 0.5; }
 .cart-item .rm { border: none; background: var(--surface-2); color: var(--text-2); width: 22px; height: 22px;
-  border-radius: 50%; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex: none;
+  border-radius: 50%; cursor: var(--cur-hand); display: inline-flex; align-items: center; justify-content: center; flex: none;
   transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
 .cart-item .rm:hover { background: var(--danger); color: #fff; }
 /* v4 §4 — the "not everything is listed" row. Stated, never silent. */
@@ -1217,7 +1288,7 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .cart-mf-undo { margin-top: 13px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .cart-mf-undo .muted { font-size: 11.5px; }
 
-#cartTab { display: flex; align-items: center; gap: 9px; padding: 11px 16px; cursor: pointer;
+#cartTab { display: flex; align-items: center; gap: 9px; padding: 11px 16px; cursor: var(--cur-hand);
   border: 1px solid var(--hairline-2); border-radius: 999px; box-shadow: var(--shadow-2);
   --lg-tint: var(--lg-tint-strong);
   font-size: 13px; color: var(--text-1); user-select: none;
@@ -1256,8 +1327,8 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
     radial-gradient(90% 70% at 22% 100%, rgba(0,122,255,0.10), transparent 62%),
     linear-gradient(180deg, #f7f8fc, #e9ecf3);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.7), inset 0 -40px 80px -40px rgba(20,30,60,0.16); }
-#cityCanvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
-#cityCanvas:active { cursor: grabbing; }
+#cityCanvas { display: block; width: 100%; height: 100%; cursor: var(--cur-grab); touch-action: none; }
+#cityCanvas:active { cursor: var(--cur-grabbing); }
 #cityCanvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* The hover card follows the cursor, so it is deliberately small and never
@@ -1303,7 +1374,7 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 @container (max-width: 800px) { #cityLegend .tml-item { white-space: normal; } }
 
 .city-table { margin-top: 12px; }
-.city-table > summary { cursor: pointer; font-size: 12px; color: var(--text-2); padding: 6px 2px;
+.city-table > summary { cursor: var(--cur-hand); font-size: 12px; color: var(--text-2); padding: 6px 2px;
   border-radius: var(--r-sm); }
 .city-table > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* The wrapper scrolls sideways so a deep path column can never widen the
@@ -1314,7 +1385,7 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
 .city-table th { color: var(--text-3); font-weight: 600; }
 .city-table td.num, .city-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .city-table button { background: none; border: none; padding: 0; color: var(--accent);
-  cursor: pointer; font: inherit; text-align: left; }
+  cursor: var(--cur-hand); font: inherit; text-align: left; }
 .city-table button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ═══════════ Phase 5 (v4 §5.3) — The Missing Gigabytes ═══════════
@@ -1362,7 +1433,7 @@ main { width: 100%; padding: 20px 24px 48px; max-width: 1680px; margin: 0 auto; 
    in the same picture as what is filling it. */
 .mg-bar { position: relative; height: 34px; border-radius: var(--r-sm); overflow: hidden;
   background: var(--mg-free); border: 1px solid var(--hairline); display: flex; margin-top: 14px; }
-.mg-seg { border: none; padding: 0; height: 100%; min-width: 2px; cursor: pointer; position: relative;
+.mg-seg { border: none; padding: 0; height: 100%; min-width: 2px; cursor: var(--cur-hand); position: relative;
   transition: filter var(--dur-1) var(--ease), transform var(--dur-1) var(--ease),
     opacity 160ms var(--ease);
   border-right: 1px solid var(--bg-1); }
@@ -1544,7 +1615,7 @@ body.preview-open #cartDock { right: 348px; max-width: max(240px, calc(100vw - 3
 #sideNav.collapsed #gsearch { display: none; }
 #sideNav.collapsed .gsearch-rail-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 100%; min-height: 36px; border-radius: 11px; cursor: pointer;
+  width: 100%; min-height: 36px; border-radius: 11px; cursor: var(--cur-hand);
   color: var(--text-2); border: 1px solid rgba(255,255,255,0.09);
   background: linear-gradient(170deg, rgba(255,255,255,0.07), rgba(255,255,255,0.015) 65%),
               color-mix(in srgb, var(--surface-2) 55%, transparent);
@@ -1606,7 +1677,7 @@ body.preview-open #cartDock { right: 348px; max-width: max(240px, calc(100vw - 3
 .gsearch-hit {
   display: flex; align-items: center; gap: 9px; width: 100%;
   padding: 7px 10px; border-radius: 8px; border: 0; background: none;
-  color: var(--text-1); font-size: 12.5px; text-align: left; cursor: pointer;
+  color: var(--text-1); font-size: 12.5px; text-align: left; cursor: var(--cur-hand);
 }
 .gsearch-hit:hover, .gsearch-hit[aria-selected="true"] { background: var(--surface-2); }
 .gsearch-hit .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1648,7 +1719,7 @@ body.preview-open #cartDock { right: 348px; max-width: max(240px, calc(100vw - 3
 @keyframes indexPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 /* ── Fast (incremental) rescan toggle (Feature 5) ── */
-.fast-rescan { display: inline-flex; align-items: center; gap: 7px; margin-top: 11px; font-size: 12.5px; color: var(--text-2); cursor: pointer; user-select: none; }
+.fast-rescan { display: inline-flex; align-items: center; gap: 7px; margin-top: 11px; font-size: 12.5px; color: var(--text-2); cursor: var(--cur-hand); user-select: none; }
 .fast-rescan[hidden] { display: none; }
 .fast-rescan input { accent-color: var(--accent); margin: 0; }
 .fast-rescan .ic { color: var(--accent); }
@@ -1693,7 +1764,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 #budgetCard .budget-row .b-edit { flex: none; }
 
 /* ── Trash awareness (Feature 8) ── */
-.fact-trash { cursor: pointer; }
+.fact-trash { cursor: var(--cur-hand); }
 .fact-trash:hover b { color: var(--accent); }
 #trashModalMeta { color: var(--text-2); font-weight: 500; font-size: 13px; }
 .trash-list { max-height: 56vh; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--r-md); }
@@ -1754,7 +1825,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .modal-foot { padding: 14px 22px 20px; display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--hairline); }
 .close-x { border: none; background: var(--surface-2); width: 28px; height: 28px; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
-  cursor: pointer; color: var(--text-2); transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
+  cursor: var(--cur-hand); color: var(--text-2); transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
 .close-x:hover { background: var(--surface-3); color: var(--text-1); }
 .rule-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; font-size: 13.5px; }
 .rule-row .ic { color: var(--text-3); }
@@ -1779,7 +1850,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 /* Browse picker */
 .browse-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: var(--r-md); margin-top: 12px; }
 .browse-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: none;
-  background: transparent; padding: 9px 14px; font-size: 13px; cursor: pointer; color: var(--text-1);
+  background: transparent; padding: 9px 14px; font-size: 13px; cursor: var(--cur-hand); color: var(--text-1);
   border-bottom: 1px solid var(--hairline); transition: background var(--dur-1) var(--ease); }
 .browse-item:hover { background: var(--accent-soft); }
 .browse-item .ic { color: var(--accent); }
@@ -1788,7 +1859,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 0 12px;
   min-height: 30px; border-radius: 99px; border: 1px solid var(--hairline);
   background: linear-gradient(170deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 60%), var(--surface-1);
-  cursor: pointer; box-shadow: inset 0 1px 0 var(--shine);
+  cursor: var(--cur-hand); box-shadow: inset 0 1px 0 var(--shine);
   color: var(--text-2); transition: color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
   box-shadow var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-spring); }
 .pill:hover { color: var(--text-1); border-color: var(--accent); box-shadow: inset 0 1px 0 var(--shine), 0 0 14px var(--accent-soft); }
@@ -1833,7 +1904,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
    reuse even if it looked better. */
 .rc-badge { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
   font-weight: 600; font-variant-numeric: tabular-nums; padding: 2px 8px; border-radius: 99px;
-  border: 1px solid currentColor; background: transparent; cursor: pointer; line-height: 1.5; }
+  border: 1px solid currentColor; background: transparent; cursor: var(--cur-hand); line-height: 1.5; }
 .rc-badge:hover, .rc-badge:focus-visible { background: color-mix(in srgb, currentColor 14%, transparent); }
 /* A score built on two of six signals must not look like one built on all
    six. Low confidence is dashed — visible before the number is read. */
@@ -1888,7 +1959,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 #cmdkList { max-height: 46vh; overflow: auto; margin-top: 8px; }
 #cmdkList .cmdk-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
   padding: 8px 10px; border: 0; background: transparent; border-radius: var(--r-sm);
-  color: var(--text-1); font-size: 13.5px; cursor: pointer; }
+  color: var(--text-1); font-size: 13.5px; cursor: var(--cur-hand); }
 #cmdkList .cmdk-row .hint { margin-left: auto; color: var(--text-3); font-size: 11px;
   max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #cmdkList .cmdk-row[aria-selected="true"] { background: var(--accent); color: #fff; }
@@ -1975,7 +2046,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
    Open by default until a machine is actually paired, then it folds away. */
 .fleet-help { margin-bottom: 12px; border-radius: var(--r-md); border: 1px solid var(--hairline);
   background: var(--surface-1); padding: 0 12px; }
-.fleet-help > summary { cursor: pointer; padding: 10px 0; font-size: 12.5px; font-weight: 500;
+.fleet-help > summary { cursor: var(--cur-hand); padding: 10px 0; font-size: 12.5px; font-weight: 500;
   display: flex; align-items: center; gap: 7px; list-style: none; }
 .fleet-help > summary::-webkit-details-marker { display: none; }
 .fleet-help > summary::after { content: '⌄'; margin-left: auto; color: var(--text-3);
@@ -2059,7 +2130,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .pv-orig-line { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
 .pv-orig-line.muted, .pv-origin .muted { color: var(--text-3); }
 .pv-orig-line b { display: inline-flex; align-items: baseline; gap: 5px; }
-.pv-orig-show { margin-top: 4px; padding: 0; background: none; border: 0; cursor: pointer;
+.pv-orig-show { margin-top: 4px; padding: 0; background: none; border: 0; cursor: var(--cur-hand);
   color: var(--accent); font-size: 11px; text-decoration: underline; }
 .pv-orig-url { margin-top: 4px; }
 .pv-orig-url code { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
@@ -2124,7 +2195,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .bp-section-h { display: flex; align-items: center; gap: 7px; padding: 6px 0; font-size: 12.5px; }
 .bp-section-h b { display: inline-flex; align-items: center; gap: 7px; }
 .bp-acc { border: 1px solid var(--hairline); border-radius: var(--r-md); margin-bottom: 8px; overflow: hidden; background: var(--surface-1); }
-.bp-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer; user-select: none;
+.bp-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: var(--cur-hand); user-select: none;
   transition: background var(--dur-1) var(--ease); }
 .bp-head:hover { background: var(--surface-2); }
 .bp-fav { width: 18px; height: 18px; flex: none; display: inline-flex; }
@@ -2157,9 +2228,9 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
   text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }
 #appsBody .bar { height: 100%; border-radius: 2px; }
 #appsBody .bp-item .cat { flex: none; width: 96px; font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
-#appsBody .bp-item[data-jump] { cursor: pointer; }
+#appsBody .bp-item[data-jump] { cursor: var(--cur-hand); }
 #appsBody .bp-item[data-jump]:hover { background: var(--surface-2); }
-#appsBody .other-row .bp-head { cursor: default; }
+#appsBody .other-row .bp-head { cursor: var(--cur-dot); }
 #appsBody .other-row .bp-head:hover { background: none; }
 
 /* ── Live activity mode (Feature 22) ── */
@@ -2214,9 +2285,9 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
    visually distinct from level 1, because "nothing counted" is not "a little". */
 .cal-year { margin: 12px 0 6px; font-weight: 600; }
 .cal-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 12px); gap: 3px; width: max-content; max-width: 100%; overflow-x: auto; padding-bottom: 4px; }
-.cal-cell { width: 12px; height: 12px; border-radius: 3px; border: none; padding: 0; background: var(--surface-2); cursor: default;
+.cal-cell { width: 12px; height: 12px; border-radius: 3px; border: none; padding: 0; background: var(--surface-2); cursor: var(--cur-dot);
   transition: opacity 160ms var(--ease); }
-.cal-cell[data-date] { cursor: pointer; }
+.cal-cell[data-date] { cursor: var(--cur-hand); }
 /* bklit quarter separators: a full-height hairline that fades 0→1→0, with a
    sideways quarter label riding beside it. A grid item spanning all seven
    rows, so it reads as a thin column between week columns. */
@@ -2234,7 +2305,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 #calBody[data-cal-dim="2"] .cal-cell:not([data-lv="2"]),
 #calBody[data-cal-dim="3"] .cal-cell:not([data-lv="3"]),
 #calBody[data-cal-dim="4"] .cal-cell:not([data-lv="4"]) { opacity: 0.3; }
-.cal-legend .cal-cell[data-lv] { cursor: pointer; }
+.cal-legend .cal-cell[data-lv] { cursor: var(--cur-hand); }
 .cal-cell[data-lv="1"] { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 .cal-cell[data-lv="2"] { background: color-mix(in srgb, var(--accent) 52%, transparent); }
 .cal-cell[data-lv="3"] { background: color-mix(in srgb, var(--accent) 76%, transparent); }
@@ -2245,7 +2316,7 @@ body:has(.modal-backdrop.open) .fx-shimmer-text:not(.modal-backdrop.open *) { an
 .cal-legend { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
 /* v4 §8.3 — the drive dock */
 .drive-dock { display: flex; gap: 10px; align-items: stretch; padding: 8px 2px 0; flex-wrap: wrap; }
-.drive-tile { display: flex; align-items: center; gap: 9px; padding: 8px 12px; border-radius: var(--r-md); background: var(--surface-2); min-width: 160px; cursor: default; }
+.drive-tile { display: flex; align-items: center; gap: 9px; padding: 8px 12px; border-radius: var(--r-md); background: var(--surface-2); min-width: 160px; cursor: var(--cur-dot); }
 .drive-tile.drop-ok { outline: 2px solid var(--accent); outline-offset: 2px; }
 .drive-tile .drive-free { font-size: 11px; color: var(--text-3); }
 .drive-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--ok) 25%, transparent); position: relative; width: 96px; margin-top: 3px; }
@@ -2411,13 +2482,13 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .tm-hints { top: calc(100% + 6px); left: auto; right: 0; min-width: 280px;
   max-width: min(420px, 88vw); max-height: 280px; overflow-y: auto; }
 .tm-hint { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; padding: 6px 10px;
-  border: 0; background: none; border-radius: 8px; cursor: pointer; color: var(--text-1); font-size: 12px; }
+  border: 0; background: none; border-radius: 8px; cursor: var(--cur-hand); color: var(--text-1); font-size: 12px; }
 .tm-hint:hover, .tm-hint[aria-selected="true"] { background: var(--accent-soft); }
 .tm-hint .k { font-weight: 600; color: var(--accent); font-family: var(--mono, ui-monospace, monospace); }
 .tm-hint .h { color: var(--text-3); font-size: 11px; }
 /* 140px floor: below that a scrubber is decoration, so the bar wraps its
    trailing controls instead of shrinking the slider further. */
-.tm-timebar input[type="range"] { flex: 1 1 140px; min-width: 140px; accent-color: var(--accent); cursor: pointer; }
+.tm-timebar input[type="range"] { flex: 1 1 140px; min-width: 140px; accent-color: var(--accent); cursor: var(--cur-hand); }
 /* A floor the width of the longest label, in ch so it scales with the
    label's own (tabular) digits. Measured without it: "Live" is 23px and
    "Sep 30, 10:31 PM · 1023.9 GB" is 174px, so the first input event of a
@@ -2449,7 +2520,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   box-shadow: var(--shadow-3); }
 #ctxMenu button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: none;
   background: transparent; color: var(--text-1); font-size: 13px; padding: 8px 11px;
-  border-radius: 8px; cursor: pointer; transition: background var(--dur-1) var(--ease); }
+  border-radius: 8px; cursor: var(--cur-hand); transition: background var(--dur-1) var(--ease); }
 #ctxMenu button .ic { color: var(--text-2); }
 #ctxMenu button:hover { background: var(--accent); color: #fff; }
 #ctxMenu button:hover .ic { color: #fff; }
@@ -2501,7 +2572,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
   border-radius: var(--r-md); box-shadow: inset 0 1px 0 var(--shine), var(--shadow-1); }
 .dup-group { padding: 0; overflow: hidden; }
 .dup-group:hover { border-color: var(--hairline-2); }
-.dup-head { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: pointer; user-select: none;
+.dup-head { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: var(--cur-hand); user-select: none;
   transition: background var(--dur-1) var(--ease); }
 .dup-head:hover { background: var(--surface-1); }
 .dup-head .meta { flex: 1; min-width: 0; }
@@ -2541,11 +2612,11 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .nd-strip { display: flex; flex-wrap: wrap; gap: 12px; overflow: visible; }
 .nd-item { flex: 0 0 132px; width: 132px; }
 .nd-thumbwrap { position: relative; display: block; width: 132px; height: 100px; border-radius: 9px; overflow: hidden;
-  background: var(--surface-2); border: 1px solid var(--hairline); cursor: pointer; }
+  background: var(--surface-2); border: 1px solid var(--hairline); cursor: var(--cur-hand); }
 .nd-thumbwrap.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 .nd-thumb { width: 100%; height: 100%; object-fit: cover; display: block; background: var(--surface-2); }
 .nd-thumb.broken { display: flex; align-items: center; justify-content: center; color: var(--text-3); }
-.nd-ck { position: absolute; top: 7px; left: 7px; z-index: 2; width: 17px; height: 17px; cursor: pointer; accent-color: var(--accent);
+.nd-ck { position: absolute; top: 7px; left: 7px; z-index: 2; width: 17px; height: 17px; cursor: var(--cur-hand); accent-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(0,0,0,0.35); border-radius: 4px; }
 .nd-badge { position: absolute; bottom: 6px; right: 6px; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 99px;
   background: rgba(0,0,0,0.72); color: #fff; }
@@ -2558,7 +2629,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .nd-chead .nd-shown { font-size: 11.5px; color: var(--text-3); }
 /* "+N more" sits in the strip at thumbnail size so the row stays aligned. */
 .nd-morebtn { width: 132px; height: 100px; border-radius: 9px; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--text-2); cursor: pointer;
+  justify-content: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--text-2); cursor: var(--cur-hand);
   background: var(--surface-2); border: 1px dashed var(--hairline); }
 .nd-morebtn:hover { color: var(--accent); border-color: var(--accent); }
 .nd-loadmore { display: flex; justify-content: center; padding: 4px 0 2px; }
@@ -2608,7 +2679,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 
 /* "What's new since last scan" banner (Dashboard) */
 .whatsnew { display: flex; align-items: center; gap: 10px; padding: 13px 18px; margin-bottom: 18px; }
-.whatsnew .wn-body { display: flex; align-items: center; gap: 12px 14px; flex-wrap: wrap; flex: 1; min-width: 0; cursor: pointer; border-radius: var(--r-sm); }
+.whatsnew .wn-body { display: flex; align-items: center; gap: 12px 14px; flex-wrap: wrap; flex: 1; min-width: 0; cursor: var(--cur-hand); border-radius: var(--r-sm); }
 .whatsnew .wn-body:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .whatsnew .wn-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; }
 .whatsnew .wn-title .ic { color: var(--accent); }
@@ -2653,7 +2724,7 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .seg.seg-fit { grid-auto-columns: auto; }
 .seg button { position: relative; z-index: 1; border: none; background: transparent; color: var(--text-2);
   font-size: 12.5px; font-weight: 540; white-space: nowrap;
-  padding: 0 12px; border-radius: 7px; cursor: pointer;
+  padding: 0 12px; border-radius: 7px; cursor: var(--cur-hand);
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   transition: color var(--dur-1) var(--ease), transform var(--dur-2) var(--ease-spring); }
 .seg button:hover { color: var(--text-1); }
@@ -2894,7 +2965,7 @@ input.fxgoo-range { position: relative; z-index: 1; }
   padding: 5px 8px;
   border-radius: var(--r-sm);
   font-size: 12px;
-  cursor: default;
+  cursor: var(--cur-dot);
   transition: background var(--dur-1) var(--ease);
 }
 .fx-li.hl { background: var(--surface-2); }
@@ -2929,7 +3000,7 @@ input.fxgoo-range { position: relative; z-index: 1; }
   border-radius: var(--r-sm);
   transition: background var(--dur-1) var(--ease);
 }
-button.fx-bar-row { cursor: pointer; }
+button.fx-bar-row { cursor: var(--cur-hand); }
 button.fx-bar-row:hover, button.fx-bar-row:focus-visible { background: var(--surface-2); }
 button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .fx-bar-top { display: flex; align-items: baseline; gap: 10px; }
@@ -4240,7 +4311,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
       </div>
       <label for="noteText" class="muted" style="display:block;margin:12px 0 7px;font-size:12.5px;">A note to your future self — why this folder matters</label>
       <textarea id="noteText" maxlength="2000" rows="4" style="width:100%;resize:vertical;" placeholder="e.g. client archive, keep until 2027" aria-label="Note text"></textarea>
-      <label class="rule-row" style="margin-top:12px;cursor:pointer;">
+      <label class="rule-row" style="margin-top:12px;cursor:var(--cur-hand);">
         <input type="checkbox" id="noteSuppress" checked>
         <span>Pause Smart Suggestions and Autopilot here</span>
       </label>
@@ -4349,7 +4420,7 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
            mix, never a constant, so the equivalence stays honest. -->
       <div class="set-h" style="margin-top:22px;"><span data-icon="image"></span>Human-scale sizes</div>
       <div class="muted" style="margin-bottom:10px;">Next to sizes over about 1 GB, also say what that amounts to — "≈ 3,100 photos like the ones in this folder". The comparison always comes from the folder's <b>own</b> photos, videos or music (at least ten of a kind), never from a made-up average; folders with nothing comparable show nothing.</div>
-      <label class="rule-row" style="cursor:pointer;">
+      <label class="rule-row" style="cursor:var(--cur-hand);">
         <input type="checkbox" id="humanScaleToggle" checked>
         <span>Show human-scale equivalents in tooltips</span>
       </label>
@@ -8819,7 +8890,7 @@ function renderBigFolders() {
   if (!folders.length) { host.innerHTML = '<div class="muted">No folders above 1 MB found.</div>'; return; }
   const max = folders[0].size || 1;
   host.innerHTML = folders.map((f, i) => `
-    <div class="bigfile" data-jump="${escapeHtml(f.path)}" style="cursor:pointer;" role="button" tabindex="0"
+    <div class="bigfile" data-jump="${escapeHtml(f.path)}" style="cursor:var(--cur-hand);" role="button" tabindex="0"
          aria-label="Open ${escapeHtml(f.name)} in the treemap">
       ${chipFor({ type: 'dir' })}
       <div class="meta">
@@ -10902,8 +10973,8 @@ const FxCharts = (() => {
       // over the brush strip the cursor narrates what a press would do
       if (s.brush && brushPx && y >= brushPx.top) {
         const hit = brushHit(x, y);
-        canvas.style.cursor = hit === 'w' || hit === 'e' ? 'ew-resize'
-          : hit === 'mid' ? (win ? 'grab' : 'crosshair') : hit === 'new' ? 'crosshair' : '';
+        canvas.style.cursor = hit === 'w' || hit === 'e' ? 'var(--cur-ew)'
+          : hit === 'mid' ? (win ? 'var(--cur-grab)' : 'var(--cur-cross)') : hit === 'new' ? 'var(--cur-cross)' : '';
         if (hoverT !== null) { hoverT = null; tip.hide(); pill.classList.remove('on'); render(f, m); }
         return;
       }
@@ -15796,8 +15867,8 @@ tmCanvas.addEventListener('mousemove', (e) => {
     if (hit) {
       // §4.3 — a freed block is a hypothetical, not a file: no drill-in cursor,
       // and no tooltip claiming a path that will not exist.
-      tmCanvas.style.cursor = hit.n.freed ? 'default'
-        : (hit.n.type === 'dir' || hit.center) ? 'pointer' : 'default';
+      tmCanvas.style.cursor = hit.n.freed ? 'var(--cur-dot)'
+        : (hit.n.type === 'dir' || hit.center) ? 'var(--cur-hand)' : 'var(--cur-dot)';
       if (hit.n.freed) { hideTooltip(); return; }
       // §6.4 — the lens already names what is under the cursor, and the
       // tooltip is a floating card that lands squarely on top of the glass.
@@ -15815,7 +15886,7 @@ tmCanvas.addEventListener('mousemove', (e) => {
         const pct = state.treemap.rootSize > 0 ? (hit.n.size / state.treemap.rootSize) * 100 : 0;
         showTooltip(e.clientX, e.clientY, hit.n, pct);
       }
-    } else { tmCanvas.style.cursor = 'default'; hideTooltip(); }
+    } else { tmCanvas.style.cursor = 'var(--cur-dot)'; hideTooltip(); }
   });
 });
 tmCanvas.addEventListener('mouseleave', () => {
@@ -20807,7 +20878,7 @@ function showCtxMenu(x, y, node) {
     menu.innerHTML = `
       <button data-act="copy">${icon('copy', 15)}Copy path</button>
       <div class="div"></div>
-      <button disabled style="opacity:.55;cursor:default">${icon('archive', 15)}Inside an archive — act on the archive itself</button>`;
+      <button disabled style="opacity:.55;cursor:var(--cur-dot)">${icon('archive', 15)}Inside an archive — act on the archive itself</button>`;
     menu.style.display = 'block';
     menu.style.left = Math.min(x, window.innerWidth - 230) + 'px';
     menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + 'px';

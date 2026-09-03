@@ -56,7 +56,7 @@ body { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-
 .tabbar button {
   display: flex; align-items: center; gap: 10px; width: 100%;
   border: none; background: transparent; color: var(--text-2);
-  font-size: 13px; font-weight: 500; padding: 8.5px 11px; border-radius: 10px; cursor: pointer;
+  font-size: 13px; font-weight: 500; padding: 8.5px 11px; border-radius: 10px; cursor: var(--cur-hand);
   white-space: nowrap; text-align: left;
   transition: color var(--dur-1) var(--ease), background var(--dur-2) var(--ease),
               box-shadow var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-spring);

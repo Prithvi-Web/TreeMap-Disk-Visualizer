@@ -1,0 +1,34 @@
+/* ══════════════════ The pointer: one inverted bead ══════════════════ */
+/* `cursor` is an inherited property, so rooting it on <html> is what carries
+   the dot into every element that never names one — including the two
+   canvases, where the treemap and Disk City live. The artwork itself is in
+   000-tokens.css: a pale bead on the dark theme, an ink one on the light,
+   each with a contrast edge in the opposite tone so it survives landing on a
+   tile its own colour.
+
+   The rest of this block exists for the cursors the USER AGENT sets, which
+   inheritance never reaches: Chromium's own sheet makes a text field `text`
+   and a link `pointer`, and those beat an inherited value. Every other cursor
+   in the app is named in the rule that owns the control, and each of those is
+   a --cur- token too — tests/invertedCursor.test.ts fails on the first one
+   that slips back to an OS glyph.
+
+   Hover effects are untouched on purpose. The dot says what KIND of thing is
+   under it; the element's own hover state still says which element. */
+html { cursor: var(--cur-dot); }
+
+/* Typing keeps a hairline through the dot. The caret lands on the dot's
+   centre either way, but the stem is what makes that centre readable in the
+   gap between two characters. */
+input, textarea, [contenteditable]:not([contenteditable="false"]) { cursor: var(--cur-text); }
+
+/* The controls whose UA cursor is the hand. `a` without an href is not a
+   link and does not get one, which matches the UA sheet. */
+a[href], button, select, summary, label[for],
+input[type="checkbox"], input[type="radio"], input[type="range"],
+input[type="color"], input[type="file"],
+input[type="submit"], input[type="button"], input[type="reset"] { cursor: var(--cur-hand); }
+
+/* Refusal stays inside the family: the same bead, dimmed and struck through,
+   rather than the OS circle-slash arriving from nowhere. */
+:disabled, [aria-disabled="true"] { cursor: var(--cur-no); }

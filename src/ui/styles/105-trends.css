@@ -42,7 +42,7 @@
 
 /* "What's new since last scan" banner (Dashboard) */
 .whatsnew { display: flex; align-items: center; gap: 10px; padding: 13px 18px; margin-bottom: 18px; }
-.whatsnew .wn-body { display: flex; align-items: center; gap: 12px 14px; flex-wrap: wrap; flex: 1; min-width: 0; cursor: pointer; border-radius: var(--r-sm); }
+.whatsnew .wn-body { display: flex; align-items: center; gap: 12px 14px; flex-wrap: wrap; flex: 1; min-width: 0; cursor: var(--cur-hand); border-radius: var(--r-sm); }
 .whatsnew .wn-body:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .whatsnew .wn-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; }
 .whatsnew .wn-title .ic { color: var(--accent); }

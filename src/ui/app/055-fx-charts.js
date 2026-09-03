@@ -1251,8 +1251,8 @@ const FxCharts = (() => {
       // over the brush strip the cursor narrates what a press would do
       if (s.brush && brushPx && y >= brushPx.top) {
         const hit = brushHit(x, y);
-        canvas.style.cursor = hit === 'w' || hit === 'e' ? 'ew-resize'
-          : hit === 'mid' ? (win ? 'grab' : 'crosshair') : hit === 'new' ? 'crosshair' : '';
+        canvas.style.cursor = hit === 'w' || hit === 'e' ? 'var(--cur-ew)'
+          : hit === 'mid' ? (win ? 'var(--cur-grab)' : 'var(--cur-cross)') : hit === 'new' ? 'var(--cur-cross)' : '';
         if (hoverT !== null) { hoverT = null; tip.hide(); pill.classList.remove('on'); render(f, m); }
         return;
       }

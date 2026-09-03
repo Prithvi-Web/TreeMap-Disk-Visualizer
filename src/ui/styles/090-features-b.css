@@ -3,7 +3,7 @@
 .bp-section-h { display: flex; align-items: center; gap: 7px; padding: 6px 0; font-size: 12.5px; }
 .bp-section-h b { display: inline-flex; align-items: center; gap: 7px; }
 .bp-acc { border: 1px solid var(--hairline); border-radius: var(--r-md); margin-bottom: 8px; overflow: hidden; background: var(--surface-1); }
-.bp-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer; user-select: none;
+.bp-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: var(--cur-hand); user-select: none;
   transition: background var(--dur-1) var(--ease); }
 .bp-head:hover { background: var(--surface-2); }
 .bp-fav { width: 18px; height: 18px; flex: none; display: inline-flex; }
@@ -36,9 +36,9 @@
   text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }
 #appsBody .bar { height: 100%; border-radius: 2px; }
 #appsBody .bp-item .cat { flex: none; width: 96px; font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
-#appsBody .bp-item[data-jump] { cursor: pointer; }
+#appsBody .bp-item[data-jump] { cursor: var(--cur-hand); }
 #appsBody .bp-item[data-jump]:hover { background: var(--surface-2); }
-#appsBody .other-row .bp-head { cursor: default; }
+#appsBody .other-row .bp-head { cursor: var(--cur-dot); }
 #appsBody .other-row .bp-head:hover { background: none; }
 
 /* ── Live activity mode (Feature 22) ── */
@@ -93,9 +93,9 @@
    visually distinct from level 1, because "nothing counted" is not "a little". */
 .cal-year { margin: 12px 0 6px; font-weight: 600; }
 .cal-grid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 12px); gap: 3px; width: max-content; max-width: 100%; overflow-x: auto; padding-bottom: 4px; }
-.cal-cell { width: 12px; height: 12px; border-radius: 3px; border: none; padding: 0; background: var(--surface-2); cursor: default;
+.cal-cell { width: 12px; height: 12px; border-radius: 3px; border: none; padding: 0; background: var(--surface-2); cursor: var(--cur-dot);
   transition: opacity 160ms var(--ease); }
-.cal-cell[data-date] { cursor: pointer; }
+.cal-cell[data-date] { cursor: var(--cur-hand); }
 /* bklit quarter separators: a full-height hairline that fades 0→1→0, with a
    sideways quarter label riding beside it. A grid item spanning all seven
    rows, so it reads as a thin column between week columns. */
@@ -113,7 +113,7 @@
 #calBody[data-cal-dim="2"] .cal-cell:not([data-lv="2"]),
 #calBody[data-cal-dim="3"] .cal-cell:not([data-lv="3"]),
 #calBody[data-cal-dim="4"] .cal-cell:not([data-lv="4"]) { opacity: 0.3; }
-.cal-legend .cal-cell[data-lv] { cursor: pointer; }
+.cal-legend .cal-cell[data-lv] { cursor: var(--cur-hand); }
 .cal-cell[data-lv="1"] { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 .cal-cell[data-lv="2"] { background: color-mix(in srgb, var(--accent) 52%, transparent); }
 .cal-cell[data-lv="3"] { background: color-mix(in srgb, var(--accent) 76%, transparent); }
@@ -124,7 +124,7 @@
 .cal-legend { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
 /* v4 §8.3 — the drive dock */
 .drive-dock { display: flex; gap: 10px; align-items: stretch; padding: 8px 2px 0; flex-wrap: wrap; }
-.drive-tile { display: flex; align-items: center; gap: 9px; padding: 8px 12px; border-radius: var(--r-md); background: var(--surface-2); min-width: 160px; cursor: default; }
+.drive-tile { display: flex; align-items: center; gap: 9px; padding: 8px 12px; border-radius: var(--r-md); background: var(--surface-2); min-width: 160px; cursor: var(--cur-dot); }
 .drive-tile.drop-ok { outline: 2px solid var(--accent); outline-offset: 2px; }
 .drive-tile .drive-free { font-size: 11px; color: var(--text-3); }
 .drive-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--ok) 25%, transparent); position: relative; width: 96px; margin-top: 3px; }

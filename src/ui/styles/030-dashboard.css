@@ -107,7 +107,7 @@
 .donut-legend { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; flex: 1; min-width: 190px;
   container-type: inline-size; }
 .donut-legend .li { display: flex; align-items: center; gap: 9px; padding: 5px 8px; border-radius: 7px;
-  transition: background var(--dur-1) var(--ease); cursor: default; }
+  transition: background var(--dur-1) var(--ease); cursor: var(--cur-dot); }
 .donut-legend .li.hl { background: var(--surface-2); }
 .donut-legend .dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
 .donut-legend .ext { font-weight: 600; min-width: 52px; }

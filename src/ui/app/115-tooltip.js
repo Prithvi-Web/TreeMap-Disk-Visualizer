@@ -307,7 +307,7 @@ function showCtxMenu(x, y, node) {
     menu.innerHTML = `
       <button data-act="copy">${icon('copy', 15)}Copy path</button>
       <div class="div"></div>
-      <button disabled style="opacity:.55;cursor:default">${icon('archive', 15)}Inside an archive — act on the archive itself</button>`;
+      <button disabled style="opacity:.55;cursor:var(--cur-dot)">${icon('archive', 15)}Inside an archive — act on the archive itself</button>`;
     menu.style.display = 'block';
     menu.style.left = Math.min(x, window.innerWidth - 230) + 'px';
     menu.style.top = Math.min(y, window.innerHeight - menu.offsetHeight - 8) + 'px';

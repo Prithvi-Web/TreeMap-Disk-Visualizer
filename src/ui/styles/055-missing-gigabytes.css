@@ -43,7 +43,7 @@
    in the same picture as what is filling it. */
 .mg-bar { position: relative; height: 34px; border-radius: var(--r-sm); overflow: hidden;
   background: var(--mg-free); border: 1px solid var(--hairline); display: flex; margin-top: 14px; }
-.mg-seg { border: none; padding: 0; height: 100%; min-width: 2px; cursor: pointer; position: relative;
+.mg-seg { border: none; padding: 0; height: 100%; min-width: 2px; cursor: var(--cur-hand); position: relative;
   transition: filter var(--dur-1) var(--ease), transform var(--dur-1) var(--ease),
     opacity 160ms var(--ease);
   border-right: 1px solid var(--bg-1); }

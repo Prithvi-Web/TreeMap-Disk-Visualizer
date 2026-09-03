@@ -4,6 +4,22 @@ All notable changes to TreeMap are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and TreeMap uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.0] — 2026-09-02
+
+### Changed
+
+- **The pointer is TreeMap's own now.** One dot, drawn eight ways — default,
+  clickable, text field, grab, dragging, crosshair, resize and disabled —
+  replacing every operating-system cursor inside the window. It is inverted
+  against the page it sits on: a pale bead on the dark theme, an ink bead on
+  the light one. Each shape also carries a contrast edge in the *opposite*
+  tone, so it stays readable when it lands on a treemap tile its own colour.
+- It is a real cursor image rather than an element drawn to follow the mouse,
+  which is the difference that matters in use: nothing to render each frame,
+  no lag behind your hand, and it cannot vanish while the window is busy. Every
+  hover effect is unchanged — the dot says what kind of thing is under it, and
+  the control's own hover state still says which one.
+
 ## [5.0.0] — 2026-09-02
 
 The first public release since 3.2.1. Everything below landed in the seven

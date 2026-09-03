@@ -64,7 +64,7 @@
   -webkit-mask-image: linear-gradient(to right, transparent 0, #000 34px);
   mask-image: linear-gradient(to right, transparent 0, #000 34px); }
 .crumbs button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid transparent;
-  background: transparent; color: var(--accent); cursor: pointer; font-size: 12.5px; font-weight: 500;
+  background: transparent; color: var(--accent); cursor: var(--cur-hand); font-size: 12.5px; font-weight: 500;
   height: 30px; padding: 0 10px; border-radius: 7px; transition: background var(--dur-1) var(--ease);
   max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
 .crumbs button:hover { background: var(--accent-soft); }
@@ -80,7 +80,7 @@
 #treemapWrap { position: relative; overflow: hidden; padding: 10px; }
 #treemapZoom { transition: transform var(--dur-2) var(--ease), opacity var(--dur-2) var(--ease); transform-origin: center; }
 #treemapZoom.zooming { transform: scale(1.05); opacity: 0; }
-#treemapCanvas { display: block; width: 100%; border-radius: 10px; cursor: default; }
+#treemapCanvas { display: block; width: 100%; border-radius: 10px; cursor: var(--cur-dot); }
 /* Wraps: legend + status + hint need ~700px on one line, and the footer has
    to survive the 640px floor beside an expanded sidebar. */
 .tm-foot { display: flex; align-items: center; gap: 8px 16px; margin-top: 12px; font-size: 11.5px; color: var(--text-2); padding: 0 4px; flex-wrap: wrap; }

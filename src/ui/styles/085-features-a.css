@@ -47,7 +47,7 @@
    Open by default until a machine is actually paired, then it folds away. */
 .fleet-help { margin-bottom: 12px; border-radius: var(--r-md); border: 1px solid var(--hairline);
   background: var(--surface-1); padding: 0 12px; }
-.fleet-help > summary { cursor: pointer; padding: 10px 0; font-size: 12.5px; font-weight: 500;
+.fleet-help > summary { cursor: var(--cur-hand); padding: 10px 0; font-size: 12.5px; font-weight: 500;
   display: flex; align-items: center; gap: 7px; list-style: none; }
 .fleet-help > summary::-webkit-details-marker { display: none; }
 .fleet-help > summary::after { content: '⌄'; margin-left: auto; color: var(--text-3);
@@ -131,7 +131,7 @@
 .pv-orig-line { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
 .pv-orig-line.muted, .pv-origin .muted { color: var(--text-3); }
 .pv-orig-line b { display: inline-flex; align-items: baseline; gap: 5px; }
-.pv-orig-show { margin-top: 4px; padding: 0; background: none; border: 0; cursor: pointer;
+.pv-orig-show { margin-top: 4px; padding: 0; background: none; border: 0; cursor: var(--cur-hand);
   color: var(--accent); font-size: 11px; text-decoration: underline; }
 .pv-orig-url { margin-top: 4px; }
 .pv-orig-url code { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;

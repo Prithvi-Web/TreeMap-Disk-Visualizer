@@ -37,7 +37,7 @@
    reuse even if it looked better. */
 .rc-badge { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
   font-weight: 600; font-variant-numeric: tabular-nums; padding: 2px 8px; border-radius: 99px;
-  border: 1px solid currentColor; background: transparent; cursor: pointer; line-height: 1.5; }
+  border: 1px solid currentColor; background: transparent; cursor: var(--cur-hand); line-height: 1.5; }
 .rc-badge:hover, .rc-badge:focus-visible { background: color-mix(in srgb, currentColor 14%, transparent); }
 /* A score built on two of six signals must not look like one built on all
    six. Low confidence is dashed — visible before the number is read. */
@@ -92,7 +92,7 @@
 #cmdkList { max-height: 46vh; overflow: auto; margin-top: 8px; }
 #cmdkList .cmdk-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
   padding: 8px 10px; border: 0; background: transparent; border-radius: var(--r-sm);
-  color: var(--text-1); font-size: 13.5px; cursor: pointer; }
+  color: var(--text-1); font-size: 13.5px; cursor: var(--cur-hand); }
 #cmdkList .cmdk-row .hint { margin-left: auto; color: var(--text-3); font-size: 11px;
   max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #cmdkList .cmdk-row[aria-selected="true"] { background: var(--accent); color: #fff; }

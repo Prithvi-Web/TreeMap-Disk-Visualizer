@@ -1,7 +1,7 @@
 {
   "name": "treemap",
-  "version": "5.0.0",
-  "description": "See exactly what's eating your disk \u2014 a desktop app for macOS and Windows, web mode on Linux, and an MCP server so AI agents can use it too",
+  "version": "5.1.0",
+  "description": "See exactly what's eating your disk — a desktop app for macOS and Windows, web mode on Linux, and an MCP server so AI agents can use it too",
   "author": {
     "name": "Prithvi Vinay",
     "url": "https://github.com/Prithvi-Web"

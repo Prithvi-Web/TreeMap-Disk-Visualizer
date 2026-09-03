@@ -30,7 +30,7 @@
 #sideNav.collapsed #gsearch { display: none; }
 #sideNav.collapsed .gsearch-rail-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 100%; min-height: 36px; border-radius: 11px; cursor: pointer;
+  width: 100%; min-height: 36px; border-radius: 11px; cursor: var(--cur-hand);
   color: var(--text-2); border: 1px solid rgba(255,255,255,0.09);
   background: linear-gradient(170deg, rgba(255,255,255,0.07), rgba(255,255,255,0.015) 65%),
               color-mix(in srgb, var(--surface-2) 55%, transparent);
@@ -92,7 +92,7 @@
 .gsearch-hit {
   display: flex; align-items: center; gap: 9px; width: 100%;
   padding: 7px 10px; border-radius: 8px; border: 0; background: none;
-  color: var(--text-1); font-size: 12.5px; text-align: left; cursor: pointer;
+  color: var(--text-1); font-size: 12.5px; text-align: left; cursor: var(--cur-hand);
 }
 .gsearch-hit:hover, .gsearch-hit[aria-selected="true"] { background: var(--surface-2); }
 .gsearch-hit .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

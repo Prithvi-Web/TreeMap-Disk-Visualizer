@@ -462,8 +462,8 @@ tmCanvas.addEventListener('mousemove', (e) => {
     if (hit) {
       // §4.3 — a freed block is a hypothetical, not a file: no drill-in cursor,
       // and no tooltip claiming a path that will not exist.
-      tmCanvas.style.cursor = hit.n.freed ? 'default'
-        : (hit.n.type === 'dir' || hit.center) ? 'pointer' : 'default';
+      tmCanvas.style.cursor = hit.n.freed ? 'var(--cur-dot)'
+        : (hit.n.type === 'dir' || hit.center) ? 'var(--cur-hand)' : 'var(--cur-dot)';
       if (hit.n.freed) { hideTooltip(); return; }
       // §6.4 — the lens already names what is under the cursor, and the
       // tooltip is a floating card that lands squarely on top of the glass.
@@ -481,7 +481,7 @@ tmCanvas.addEventListener('mousemove', (e) => {
         const pct = state.treemap.rootSize > 0 ? (hit.n.size / state.treemap.rootSize) * 100 : 0;
         showTooltip(e.clientX, e.clientY, hit.n, pct);
       }
-    } else { tmCanvas.style.cursor = 'default'; hideTooltip(); }
+    } else { tmCanvas.style.cursor = 'var(--cur-dot)'; hideTooltip(); }
   });
 });
 tmCanvas.addEventListener('mouseleave', () => {

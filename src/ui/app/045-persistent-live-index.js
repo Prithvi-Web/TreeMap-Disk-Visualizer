@@ -1074,7 +1074,7 @@ function renderBigFolders() {
   if (!folders.length) { host.innerHTML = '<div class="muted">No folders above 1 MB found.</div>'; return; }
   const max = folders[0].size || 1;
   host.innerHTML = folders.map((f, i) => `
-    <div class="bigfile" data-jump="${escapeHtml(f.path)}" style="cursor:pointer;" role="button" tabindex="0"
+    <div class="bigfile" data-jump="${escapeHtml(f.path)}" style="cursor:var(--cur-hand);" role="button" tabindex="0"
          aria-label="Open ${escapeHtml(f.name)} in the treemap">
       ${chipFor({ type: 'dir' })}
       <div class="meta">

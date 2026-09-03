@@ -18,7 +18,7 @@
 .seg.seg-fit { grid-auto-columns: auto; }
 .seg button { position: relative; z-index: 1; border: none; background: transparent; color: var(--text-2);
   font-size: 12.5px; font-weight: 540; white-space: nowrap;
-  padding: 0 12px; border-radius: 7px; cursor: pointer;
+  padding: 0 12px; border-radius: 7px; cursor: var(--cur-hand);
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   transition: color var(--dur-1) var(--ease), transform var(--dur-2) var(--ease-spring); }
 .seg button:hover { color: var(--text-1); }

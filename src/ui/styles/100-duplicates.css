@@ -33,7 +33,7 @@
   border-radius: var(--r-md); box-shadow: inset 0 1px 0 var(--shine), var(--shadow-1); }
 .dup-group { padding: 0; overflow: hidden; }
 .dup-group:hover { border-color: var(--hairline-2); }
-.dup-head { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: pointer; user-select: none;
+.dup-head { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: var(--cur-hand); user-select: none;
   transition: background var(--dur-1) var(--ease); }
 .dup-head:hover { background: var(--surface-1); }
 .dup-head .meta { flex: 1; min-width: 0; }
@@ -73,11 +73,11 @@
 .nd-strip { display: flex; flex-wrap: wrap; gap: 12px; overflow: visible; }
 .nd-item { flex: 0 0 132px; width: 132px; }
 .nd-thumbwrap { position: relative; display: block; width: 132px; height: 100px; border-radius: 9px; overflow: hidden;
-  background: var(--surface-2); border: 1px solid var(--hairline); cursor: pointer; }
+  background: var(--surface-2); border: 1px solid var(--hairline); cursor: var(--cur-hand); }
 .nd-thumbwrap.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 .nd-thumb { width: 100%; height: 100%; object-fit: cover; display: block; background: var(--surface-2); }
 .nd-thumb.broken { display: flex; align-items: center; justify-content: center; color: var(--text-3); }
-.nd-ck { position: absolute; top: 7px; left: 7px; z-index: 2; width: 17px; height: 17px; cursor: pointer; accent-color: var(--accent);
+.nd-ck { position: absolute; top: 7px; left: 7px; z-index: 2; width: 17px; height: 17px; cursor: var(--cur-hand); accent-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(0,0,0,0.35); border-radius: 4px; }
 .nd-badge { position: absolute; bottom: 6px; right: 6px; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 99px;
   background: rgba(0,0,0,0.72); color: #fff; }
@@ -90,7 +90,7 @@
 .nd-chead .nd-shown { font-size: 11.5px; color: var(--text-3); }
 /* "+N more" sits in the strip at thumbnail size so the row stays aligned. */
 .nd-morebtn { width: 132px; height: 100px; border-radius: 9px; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--text-2); cursor: pointer;
+  justify-content: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--text-2); cursor: var(--cur-hand);
   background: var(--surface-2); border: 1px dashed var(--hairline); }
 .nd-morebtn:hover { color: var(--accent); border-color: var(--accent); }
 .nd-loadmore { display: flex; justify-content: center; padding: 4px 0 2px; }
