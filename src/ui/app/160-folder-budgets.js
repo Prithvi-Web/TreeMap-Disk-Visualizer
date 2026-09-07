@@ -51,7 +51,7 @@ function budgetProjectionLine(b) {
   if (p.status === 'over' || b.overBy > 0) return ''; // the red label above already says it
   if (p.status === 'ok' && typeof p.breachInDays === 'number') {
     const days = Math.round(p.breachInDays);
-    const when = new Date(p.breachAtMs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const when = formatDay(p.breachAtMs);
     const approx = p.seriesSource === 'ancestor-trees'
       ? ` <span title="${escapeHtml(p.caveat || '')}">· from shallow history</span>` : '';
     return `<div class="muted num" style="font-size:10.5px;" title="${escapeHtml(formatBytes(p.bytesPerDay))}/day over ${Number(p.seriesPoints) || 0} scans">` +

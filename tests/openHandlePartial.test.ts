@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { lift } from './fixtures/liftFrontend';
+// The page's own formatCount, not a stand-in that agrees with itself (issue #34).
+const pageFormatCount = lift<(n: unknown) => string>(['UI_LOCALE', 'formatCount'], 'formatCount');
 
 /**
  * B2, the preflight's honesty about its own reach.
@@ -115,7 +118,7 @@ function harness(reply: (paths: string[], index: number) => Reply | Promise<Repl
     $,
     () => '',
     (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
-    (n: number) => (n ?? 0).toLocaleString(),
+    pageFormatCount,
     (label: string) => { buttons.push(label); },
     CHUNK,
   );
@@ -154,7 +157,7 @@ test('a selection bigger than one request is either checked in full or says it w
   assert.equal(h.panel.hidden, false,
     `the check covered ${seen.size} of ${set.length} paths and said nothing about the rest`);
   const said = h.text();
-  assert.ok(said.includes(seen.size.toLocaleString()) && said.includes(set.length.toLocaleString()),
+  assert.ok(said.includes(pageFormatCount(seen.size)) && said.includes(pageFormatCount(set.length)),
     `a partial answer has to name both counts, said: ${said}`);
 });
 
@@ -182,7 +185,7 @@ test('a request that never answers is not silently counted as checked', async ()
   await h.check(set);
 
   assert.equal(h.panel.hidden, false, 'the half that was never checked has to be admitted');
-  assert.ok(h.text().includes(CHUNK.toLocaleString()) && h.text().includes(set.length.toLocaleString()),
+  assert.ok(h.text().includes(pageFormatCount(CHUNK)) && h.text().includes(pageFormatCount(set.length)),
     `the panel names how much of the set was actually reached, said: ${h.text()}`);
 });
 
@@ -199,7 +202,7 @@ test('a selection past the preflight budget is bounded, and says how far it got'
   const seen = new Set(h.requests.flat()).size;
   assert.equal(h.panel.hidden, false, 'a budgeted check that stopped early must not read as clear');
   const said = h.text();
-  assert.ok(said.includes(seen.toLocaleString()) && said.includes(set.length.toLocaleString()),
+  assert.ok(said.includes(pageFormatCount(seen)) && said.includes(pageFormatCount(set.length)),
     `the panel names both counts, said: ${said}`);
   assert.deepEqual(h.buttons, [],
     'nothing was found, so the button is not escalated to "Delete anyway"');

@@ -236,9 +236,9 @@ function humanScaleTooltipLine(node) {
   const fact = hsFacts.get(node.path);
   if (!fact || !fact.equivalents || !fact.equivalents.length) return ''; // nothing comparable → nothing said
   const parts = fact.equivalents.slice(0, 2).map((e) =>
-    `≈ ${(Number(e.equivalentCount) || 0).toLocaleString()} ${escapeHtml(e.kind)}`).join(' or ');
+    `≈ ${formatCount(Number(e.equivalentCount) || 0)} ${escapeHtml(e.kind)}`).join(' or ');
   const b = fact.equivalents[0];
-  const basis = `based on the ${b.sampleCount.toLocaleString()} ${escapeHtml(b.kind)} in this folder, average ${formatBytes(b.avgBytes)}` +
+  const basis = `based on the ${formatCount(b.sampleCount)} ${escapeHtml(b.kind)} in this folder, average ${formatBytes(b.avgBytes)}` +
     (fact.capped ? ' · sampled from the first 500k items' : '');
   return `<div class="t-line num">${parts} like the ones here <span class="muted">· ${basis}</span></div>`;
 }

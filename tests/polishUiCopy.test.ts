@@ -41,8 +41,12 @@ test('dates come from one formatter: no bare toLocaleString() on a Date anywhere
   const inline = INDEX.match(/toLocaleString\(\[\], \{ month: 'short'/g) || [];
   assert.deepEqual(inline, [], 'the three inline copies of the short format moved into formatWhen');
   const fn = braced('function formatWhen(');
-  const src = slice('const WHEN_FMT = new Intl.DateTimeFormat(', 'function cssVar(');
-  assert.match(src, /month: ?'short', day: ?'numeric', hour: ?'2-digit', minute: ?'2-digit'/, 'the slider\'s dialect is the one dialect');
+  // UI_LOCALE and HOUR_CYCLE are declared above formatCount; WHEN_FMT needs both.
+  const consts = slice('const UI_LOCALE = ', '/* A count.');
+  assert.match(consts, /const UI_LOCALE = 'en-US';/, 'the one dialect is English (issue #34)');
+  assert.match(consts, /const HOUR_CYCLE = new Intl\.DateTimeFormat\(undefined, \{ hour: 'numeric' \}\)\.resolvedOptions\(\)\.hourCycle;/, 'the clock is the machine\'s');
+  const src = consts + slice('const WHEN_FMT = new Intl.DateTimeFormat(', 'function cssVar(');
+  assert.match(src, /new Intl\.DateTimeFormat\(UI_LOCALE, \{ month: ?'short', day: ?'numeric', hour: ?'2-digit', minute: ?'2-digit', hourCycle: HOUR_CYCLE \}\)/, 'the slider\'s dialect is the one dialect: English words, the machine\'s clock');
   const formatWhen = new Function(`'use strict'; ${src} return formatWhen;`)() as (ms: number) => string;
   assert.equal(formatWhen(0), '–', 'no timestamp, no date');
   const s = formatWhen(Date.UTC(2026, 8, 1, 22, 31, 45));

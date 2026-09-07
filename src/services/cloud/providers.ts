@@ -1,4 +1,5 @@
 import { FileNode, ScanResult } from '../../models/types';
+import { formatCount } from '../../utils/formatCount';
 import { getSettings } from '../settings';
 import { freshAccessToken } from './oauth';
 import { AppError } from '../../middleware/errorHandler';
@@ -206,7 +207,7 @@ const gdrive: CloudProvider = {
       const page = await apiJson(url.toString(), token);
       files.push(...((page.files ?? []) as GDriveFile[]));
       scan.scanned = files.length;
-      scan.currentPath = `Google Drive — ${files.length.toLocaleString()} items listed`;
+      scan.currentPath = `Google Drive — ${formatCount(files.length)} items listed`;
       pageToken = String(page.nextPageToken ?? '');
       if (scan.cancelled) throw new AppError(499, 'CANCELLED', 'Scan cancelled');
     } while (pageToken);
@@ -288,7 +289,7 @@ const dropbox: CloudProvider = {
     for (;;) {
       entries.push(...((resp.entries ?? []) as DropboxEntry[]));
       scan.scanned = entries.length;
-      scan.currentPath = `Dropbox — ${entries.length.toLocaleString()} items listed`;
+      scan.currentPath = `Dropbox — ${formatCount(entries.length)} items listed`;
       if (scan.cancelled) throw new AppError(499, 'CANCELLED', 'Scan cancelled');
       if (!resp.has_more) break;
       resp = await apiJson(`${base}/files/list_folder/continue`, token, {
@@ -372,7 +373,7 @@ const onedrive: CloudProvider = {
       const page = await apiJson(url, token);
       items.push(...((page.value ?? []) as OneDriveItem[]));
       scan.scanned = items.length;
-      scan.currentPath = `OneDrive — ${items.length.toLocaleString()} items listed`;
+      scan.currentPath = `OneDrive — ${formatCount(items.length)} items listed`;
       if (scan.cancelled) throw new AppError(499, 'CANCELLED', 'Scan cancelled');
       const next = page['@odata.nextLink'];
       if (typeof next !== 'string') break;

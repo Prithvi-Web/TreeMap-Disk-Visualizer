@@ -59,6 +59,22 @@ All notable changes to TreeMap are recorded here. The format follows
   about files that claim more room than they use, and its explanation of why
   TreeMap's total can exceed the disk's, give Windows and Linux examples instead
   of Mac ones, and the video re-encoding hint names winget rather than Homebrew.
+- **Numbers and dates are written the English way on every machine.** On a
+  Portuguese or German computer TreeMap printed "1.234 shapes" beside "1.2 GB"
+  — the same dot meaning thousands in one number and tenths in the other — and
+  on an Arabic one it printed Arabic-Indic digits inside English sentences,
+  because counts followed the machine's locale while sizes always used an
+  English decimal point
+  ([#34](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/issues/34)).
+  Every count a person reads, on the page and in the server's messages and
+  reports, is now "1,234" everywhere, and dates read "Sep 6, 2026" rather than
+  "6 de set. de 2026" in the middle of an English sentence. The clock stays
+  your machine's own — 10:31 PM or 22:31, whichever it is set to — and so does
+  the time zone. If your computer is not set to English this is a visible
+  change: TreeMap's numbers and dates now match the English words around them
+  instead of your system's format. The test suite gives the same answer
+  whatever the machine's locale, and runs under a Portuguese locale in CI to
+  keep it that way.
 
 ## [5.0.0] — 2026-09-02
 

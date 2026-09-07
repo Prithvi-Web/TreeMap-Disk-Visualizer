@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { formatCount } from '../utils/formatCount';
 import { TreeSource, asStore } from './scanStore';
 import { STAT_CAP as QUERY_STAT_CAP } from './query/execute';
 
@@ -131,16 +132,16 @@ export function aggregateCalendar(source: TreeSource, opts: CalendarOptions = {}
   });
 
   if (statsCapped > 0) {
-    degraded.set('created', `Creation dates were read for ${statsSpent.toLocaleString()} files; ${statsCapped.toLocaleString()} more were skipped. No scan records creation times, so each one costs a separate read.`);
+    degraded.set('created', `Creation dates were read for ${formatCount(statsSpent)} files; ${formatCount(statsCapped)} more were skipped. No scan records creation times, so each one costs a separate read.`);
   }
   if (statsFailed > 0) {
-    degraded.set('createdUnreadable', `${statsFailed.toLocaleString()} file${statsFailed === 1 ? '' : 's'} could not be read to find a creation date, so they are not in the created days.`);
+    degraded.set('createdUnreadable', `${formatCount(statsFailed)} file${statsFailed === 1 ? '' : 's'} could not be read to find a creation date, so they are not in the created days.`);
   }
   if (statsUnknown > 0) {
-    degraded.set('createdUnknown', `${statsUnknown.toLocaleString()} file${statsUnknown === 1 ? ' has' : 's have'} no recorded creation time on this filesystem, so they are not in the created days.`);
+    degraded.set('createdUnknown', `${formatCount(statsUnknown)} file${statsUnknown === 1 ? ' has' : 's have'} no recorded creation time on this filesystem, so they are not in the created days.`);
   }
   if (mtimeUnknown > 0) {
-    degraded.set('modifiedUnknown', `${mtimeUnknown.toLocaleString()} file${mtimeUnknown === 1 ? ' has' : 's have'} no recorded modification time, so they are not in the modified days.`);
+    degraded.set('modifiedUnknown', `${formatCount(mtimeUnknown)} file${mtimeUnknown === 1 ? ' has' : 's have'} no recorded modification time, so they are not in the modified days.`);
   }
 
   return {

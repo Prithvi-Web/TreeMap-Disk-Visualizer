@@ -1,4 +1,5 @@
 import { promises as fsp } from 'fs';
+import { formatCount } from '../utils/formatCount';
 import path from 'path';
 import crypto from 'crypto';
 import {
@@ -404,7 +405,7 @@ async function walkItem(
       // content to restore, and pretending otherwise would hang the copy.
       if (members.length > MAX_FILES_PER_ENTRY) {
         throw new AppError(413, 'CAPSULE_ITEM_TOO_COMPLEX',
-          `That folder holds more than ${MAX_FILES_PER_ENTRY.toLocaleString()} items — too many to protect in one piece.`);
+          `That folder holds more than ${formatCount(MAX_FILES_PER_ENTRY)} items — too many to protect in one piece.`);
       }
     }
   }

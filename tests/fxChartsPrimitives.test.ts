@@ -46,6 +46,7 @@ function loadFxCharts(): any {
       return v.toFixed(d) + ' ' + UNITS[u];
     }
     function cssVar() { return ''; }
+    function formatDay(ms) { return new Date(ms).toISOString().slice(5, 10); }
     const Canvas2D = { setup() { throw new Error('DOM-only'); }, toLocal() { throw new Error('DOM-only'); }, roundRect() { throw new Error('DOM-only'); } };
   `;
   // eslint-disable-next-line @typescript-eslint/no-implied-eval

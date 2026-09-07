@@ -306,7 +306,7 @@ test('the same input packs the same way twice — no drift between sessions', ()
 /* ═════════ The layout clock, which only one of the two solvers had ═════════ */
 
 const altNoteFor = lift<(i: Record<string, unknown>) => string>(
-  ['formatCount', 'formatBytes', 'ALT_CELL_BUDGET', 'ALT_LAYOUT_BUDGET_MS', 'altNoteFor'], 'altNoteFor',
+  ['UI_LOCALE', 'formatCount', 'formatBytes', 'ALT_CELL_BUDGET', 'ALT_LAYOUT_BUDGET_MS', 'altNoteFor'], 'altNoteFor',
 );
 
 /** A named function's source, brace-matched out of the shipped frontend. */
@@ -506,7 +506,7 @@ test('both solvers are resumable, and buildCells schedules the next slice', () =
 
 test('while refining, the footnote says so in plain words', () => {
   const altRefiningNote = lift<(drawn: number) => string>(
-    ['formatCount', 'altRefiningNote'], 'altRefiningNote',
+    ['UI_LOCALE', 'formatCount', 'altRefiningNote'], 'altRefiningNote',
   );
   assert.equal(altRefiningNote(1234), 'still laying out — 1,234 shapes so far');
 });

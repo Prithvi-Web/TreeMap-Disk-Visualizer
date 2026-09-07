@@ -505,11 +505,7 @@ const FxCharts = (() => {
   const fmtBytes = (v) => formatBytes(v); // the app's ONE byte ladder
   const tone = (name, fallback) => (cssVar(name) || fallback);
 
-  const FX_DATE = { fmt: null };
-  function fxDate(ms) {
-    if (!FX_DATE.fmt) FX_DATE.fmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
-    return FX_DATE.fmt.format(ms);
-  }
+  const fxDate = (ms) => formatDay(ms); // the app's ONE day dialect, like fmtBytes
 
   /** Container that can host an absolutely-positioned tooltip. */
   function anchor(el) {

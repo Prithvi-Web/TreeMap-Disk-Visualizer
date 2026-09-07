@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { lift } from './fixtures/liftFrontend';
+// The page's own formatCount, not a stand-in that agrees with itself (issue #34).
+const pageFormatCount = lift<(n: unknown) => string>(['UI_LOCALE', 'formatCount'], 'formatCount');
 
 /**
  * Dashboard wiring — the bklit kit meeting the dashboard's own cards.
@@ -156,7 +159,7 @@ function renderDiskNotesWith(scanStats: Record<string, unknown>): Record<string,
   )(
     $,
     { scanStats, treemap: { hideCloud: false } },
-    (n: number | null) => (n ?? 0).toLocaleString(),
+    pageFormatCount,
     (n: number) => n + ' B',
     () => {},
   ) as () => void;

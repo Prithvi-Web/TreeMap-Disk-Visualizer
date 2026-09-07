@@ -1,4 +1,5 @@
 import type { Response } from 'express';
+import { formatCount, machineHourCycle, UI_LOCALE } from '../utils/formatCount';
 import PdfPrinter from 'pdfmake/src/printer';
 import type { TDocumentDefinitions, Content, TableCell } from 'pdfmake/interfaces';
 import Excel from 'exceljs';
@@ -162,7 +163,7 @@ export async function streamXlsx(
     }
   }
   if (truncated) {
-    const note = ws.addRow([`— truncated at ${maxRows.toLocaleString()} rows (Excel's sheet limit); export CSV for the full list —`]);
+    const note = ws.addRow([`— truncated at ${formatCount(maxRows)} rows (Excel's sheet limit); export CSV for the full list —`]);
     note.font = { italic: true };
     note.commit();
   }
@@ -208,10 +209,12 @@ function buildDoc(
   const used = disk ? disk.used : 0;
   const summaryRows: TableCell[][] = [
     [{ text: 'Scanned folder', style: 'k' }, { text: scan.rootPath, style: 'v' }],
-    [{ text: 'Generated', style: 'k' }, { text: new Date().toLocaleString(), style: 'v' }],
+    // English like every date in TreeMap; the machine keeps its clock and time zone.
+    [{ text: 'Generated', style: 'k' },
+    { text: new Date().toLocaleString(UI_LOCALE, { dateStyle: 'medium', timeStyle: 'short', hourCycle: machineHourCycle() }), style: 'v' }],
     [{ text: 'Total size', style: 'k' }, { text: formatBytes(totalSize(scan)), style: 'v' }],
-    [{ text: 'Files', style: 'k' }, { text: scan.fileCount.toLocaleString(), style: 'v' }],
-    [{ text: 'Folders', style: 'k' }, { text: scan.dirCount.toLocaleString(), style: 'v' }],
+    [{ text: 'Files', style: 'k' }, { text: formatCount(scan.fileCount), style: 'v' }],
+    [{ text: 'Folders', style: 'k' }, { text: formatCount(scan.dirCount), style: 'v' }],
   ];
   if (disk) {
     summaryRows.push([
@@ -258,7 +261,7 @@ function buildDoc(
         ...topFolders.map((f): TableCell[] => [
           { text: f.path, style: 'cell' },
           { text: formatBytes(f.size), style: 'cellR' },
-          { text: f.fileCount.toLocaleString(), style: 'cellR' },
+          { text: formatCount(f.fileCount), style: 'cellR' },
         ]),
       ],
     },
@@ -275,7 +278,7 @@ function buildDoc(
         [th('Extension'), th('Files'), th('Total Size')],
         ...types.map((t): TableCell[] => [
           { text: t.ext, style: 'cell' },
-          { text: t.count.toLocaleString(), style: 'cellR' },
+          { text: formatCount(t.count), style: 'cellR' },
           { text: formatBytes(t.totalSize), style: 'cellR' },
         ]),
       ],

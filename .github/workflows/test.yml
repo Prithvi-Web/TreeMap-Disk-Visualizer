@@ -13,6 +13,13 @@ name: Tests
 # A job failing on one OS therefore carries real information: it means a
 # mechanism does not behave as documented, which is exactly what needs to
 # surface in CI rather than on a user's machine.
+#
+# One Linux leg runs the whole suite under a Portuguese locale. Node takes its
+# default locale from the environment, and a Portuguese Windows once failed a
+# test that hard-coded "1,234" where the machine printed "1.234" (issue #34).
+# Numbers and dates a person reads are now written the English way everywhere
+# (the machine keeps its clock and time zone), and this leg is the proof that
+# neither the app nor a test follows the machine again.
 
 on:
   push:
@@ -35,6 +42,10 @@ jobs:
             name: Windows
           - os: ubuntu-latest
             name: Linux
+          - os: ubuntu-latest
+            name: Linux (pt-BR locale)
+            locale: pt_BR.UTF-8
+            expect: pt-BR
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -49,6 +60,24 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Run this leg as a Brazilian PC would
+        # LC_ALL is where Node (ICU) reads its default locale from. It is set
+        # here, through GITHUB_ENV, and not as `env:` on the test step: an
+        # `env:` entry that resolves to '' is not "unset" to ICU — Node reads
+        # LC_ALL="" as the root locale `und` — so the three ordinary legs would
+        # have stopped testing what a real machine does. locale-gen makes the
+        # locale exist on the runner: without it every child bash and perl the
+        # suite spawns warns "setlocale: LC_ALL: cannot change locale", and
+        # those lines would land in the TAP the annotator reads.
+        if: matrix.locale
+        run: |
+          sudo locale-gen ${{ matrix.locale }}
+          echo "LC_ALL=${{ matrix.locale }}" >> "$GITHUB_ENV"
+          echo "LANG=${{ matrix.locale }}" >> "$GITHUB_ENV"
+          # The suite compares this with the locale Intl actually resolved, so
+          # a leg that quietly ran in English fails instead of passing twice.
+          echo "TREEMAP_EXPECT_LOCALE=${{ matrix.expect }}" >> "$GITHUB_ENV"
 
       - name: Type-check
         run: npm run typecheck

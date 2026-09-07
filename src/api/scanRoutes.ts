@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { formatCount } from '../utils/formatCount';
 import { startScan, getScan, cancelScan, collectLargestFiles, collectFileTypes, scanExpiresAt } from '../services/diskScanner';
 import { buildTreemapFromStore } from '../utils/treemap';
 import { pruneTree, PruneResult } from '../utils/pruneTree';
@@ -84,7 +85,7 @@ function sseSend(res: Response, event: ScanEvent): boolean {
 export function treeTooLargeMessage(scan: ScanResult): string {
   const nodes = scan.fileCount + scan.dirCount || scan.scanned;
   return (
-    `This scan is too large to display (${nodes.toLocaleString()} items). ` +
+    `This scan is too large to display (${formatCount(nodes)} items). ` +
     `Try scanning a specific folder instead of the whole drive.`
   );
 }

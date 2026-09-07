@@ -190,6 +190,7 @@ function loadKit(): Harness {
       return v.toFixed(d) + ' ' + UNITS[u];
     }
     function cssVar(name) { return ''; }
+    function formatDay(ms) { return new Date(ms).toISOString().slice(5, 10); }
     function getComputedStyle() { return { position: 'relative' }; }
   `;
   // eslint-disable-next-line @typescript-eslint/no-implied-eval

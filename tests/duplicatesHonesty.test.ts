@@ -26,7 +26,7 @@ type FreedText = (count: number, before: number | null, after: number | null) =>
 
 function freedText(): FreedText {
   return lift<FreedText>(
-    ['dupFreedText', 'formatCount', 'formatBytes', 'UNITS', 'DUP_FREED_MIN'],
+    ['dupFreedText', 'UI_LOCALE', 'formatCount', 'formatBytes', 'UNITS', 'DUP_FREED_MIN'],
     'dupFreedText',
   );
 }

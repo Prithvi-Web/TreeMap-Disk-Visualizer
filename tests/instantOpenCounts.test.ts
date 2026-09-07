@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { lift } from './fixtures/liftFrontend';
+// The page's own formatCount, not a stand-in that agrees with itself (issue #34).
+const pageFormatCount = lift<(n: unknown) => string>(['UI_LOCALE', 'formatCount'], 'formatCount');
 
 /**
  * Instant open must not borrow the parent root's counts (A1).
@@ -159,7 +162,7 @@ function runRenderDiskNotes(scanStats: Record<string, unknown>) {
   )(
     $,
     { scanStats, treemap: { hideCloud: false } },
-    (n: number | null) => (n ?? 0).toLocaleString(),
+    pageFormatCount,
     (n: number) => n + ' B',
     () => {},
   ) as () => void;
@@ -199,17 +202,17 @@ function runFinishScan(stats: Record<string, unknown> | null, seed: { files: str
     '$', 'state', 'endScanChrome', 'indexTree', 'updateSelectionBar', 'DUP_PAGE', 'icon',
     'formatCount', 'formatBytes', 'escapeHtml', 'countUp', 'FxNum', 'renderDiskNotes',
     'loadWhatsNew', 'loadDriveHealth', 'loadCostEstimate', 'showListsPending', 'emit', 'TOPIC',
-    'switchView', 'toast', 'fxScanDonePulse',
+    'switchView', 'toast', 'fxScanDonePulse', 'formatClock',
     `'use strict'; ${src} return finishScan;`,
   )(
     $, state, noop, noop, noop, 100, () => '',
-    (n: number | null) => (n ?? 0).toLocaleString(),
+    pageFormatCount,
     (n: number) => n + ' B',
     (s: string) => s,
     (e: El, n: number) => { counted.push([e, n]); },
     { rollText: noop }, noop,
     noop, noop, noop, noop, noop, { scan: 'scan' },
-    noop, noop, noop,
+    noop, noop, noop, () => '10:31 PM',
   ) as (root: unknown, ms: number, stats: unknown) => Promise<void>;
   return fn({ path: '/Users/x/Documents', size: 4_200_000_000 }, 120, stats)
     .then(() => ({ els, counted, state }));

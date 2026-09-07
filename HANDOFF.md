@@ -1,5 +1,89 @@
 # TreeMap — session handoff
 
+## Session 13 — English numbers and dates on every machine: issue #34 (6 September 2026)
+
+The report: one circlePack test expects "1,234 shapes" and a Portuguese
+Windows prints "1.234". REPRODUCED HERE without Windows: Node takes its default
+locale from the environment, so `LC_ALL=pt_BR.UTF-8 npm test` shows exactly
+the reporter's failure. Then the sweep that made the fix honest — the whole
+suite under pt_BR, de_DE, fr_FR, hi_IN and ar_EG: 4 / 4 / 4 / 2 / 12 failures.
+The one reported test was the messenger. `formatCount` in the page and ~20
+server messages used a bare `toLocaleString()` (machine's grouping, even
+Arabic-Indic digits under ar-EG) while `formatBytes` always prints an English
+decimal point: "1.234 shapes" beside "1.2 GB", the same dot meaning two things.
+
+Decision (not the reporter's first suggestion, which would only have made the
+test follow the machine too): what a person reads is written the ENGLISH way
+everywhere — the interface is English and sizes already were. Counts via
+`formatCount` (`src/utils/formatCount.ts`, new; the page's own in
+`000-prelude.js`), which also takes numeric strings and prints a broken number
+(NaN, Infinity) as "–" rather than a confident 0; the two tooltip lines that
+bypassed it go through it. Dates too, after the review fleet asked why
+"6 de set. de 2026" inside an English sentence was any better than "1.234":
+every date format names `UI_LOCALE` ('en-US') — DATE_FMT, WHEN_FMT, DAY_FMT
+(chart axes and budget breach days, behind `formatDay`) and CLOCK_FMT (the
+"last scan" tile, behind `formatClock`) in the prelude, the heatmap's long
+day, the report stamp — and the two clocks pass `hourCycle: HOUR_CYCLE`, a
+probe of the machine's own 12/24-hour setting —
+the one sanctioned `Intl.DateTimeFormat(undefined, …)` in the codebase; the
+report's "Generated" stamp does the same through `machineHourCycle()`. So a
+Brazilian reads "Sep 6, 2026" and "22:31": English words, their own clock and
+time zone. Four tests whose STUBS followed the machine (dashboardWiring,
+instantOpenCounts, openHandleChunkMerge, openHandlePartial) now lift the page's
+real `formatCount` through `tests/fixtures/liftFrontend.ts`; the reporter's
+test is unchanged and deterministic.
+
+`tests/localeIndependence.test.ts`: bans every locale-less form —
+`.toLocaleString()`, `toLocaleDateString([])`, `toLocaleTimeString(undefined, …)`,
+`Intl.NumberFormat()`, `Intl.DateTimeFormat(null, …)`, whitespace-tolerant —
+in src/, electron/ and the built page, comments INCLUDED (a comment that wants
+to name the call writes it without the dot), reporting file:line, and checks
+its own regex against seven bad and five good shapes so it cannot be loosened
+quietly; a table runs page and server `formatCount` side by side over 14
+inputs; every date site is pinned; and a CHILD NODE spawned under pt_BR, de_DE
+and ar_EG, lifting the shipped page's formatCount and formatDate, proves both
+print 1,234,567 and an English date while the machine's own calls do not.
+
+`.github/workflows/test.yml` gained a fourth leg, "Linux (pt-BR locale)".
+TRAP, found by two reviewers independently: the first draft set
+`LC_ALL: ${{ matrix.locale || '' }}` as `env:` on the test step — but to ICU
+an EMPTY LC_ALL is not "unset", it is the root locale `und`, so the three
+ordinary legs would have stopped testing what a real machine does. Now the
+locale leg alone runs `sudo locale-gen` (without it every child bash and perl
+the suite spawns warns "setlocale: cannot change locale" into the TAP; grep
+and sort do not) and writes LC_ALL, LANG and `TREEMAP_EXPECT_LOCALE=pt-BR` to
+`$GITHUB_ENV`; the suite asserts `Intl.NumberFormat().resolvedOptions().locale`
+equals that variable when it is set, so a leg that quietly ran in English
+fails rather than passing twice. CONTRIBUTING states the rule; the CHANGELOG
+tells non-English users plainly that numbers and dates now follow the English
+words around them.
+
+Review fleet (ECC typescript-reviewer and silent-failure-hunter, gstack's
+testing specialist, a CI-semantics adversary): besides the LC_ALL trap they
+removed a comment-stripping regex that could pair a `/*` inside a string with
+a later real `*/` and hide live code from the guard, replaced a one-line probe
+(`indexOf('\n')`) with brace matching, and caught the report stamp being
+pinned to en-US while the docs said dates follow the machine — resolved by
+making dates English everywhere, not by rewording. After the fix the suite was
+run under thirteen locale settings — the default, pt_BR, de_DE, fr_FR, hi_IN,
+ar_EG, then de_CH (apostrophe grouping), fa_IR (Persian digits, Solar Hijri
+dates), en_IN (lakh grouping), sv_SE (no-break space), ja_JP, ru_RU and th_TH
+(Buddhist year): 2,497 tests, 0 failures in every one, run one
+locale at a time (a first attempt with two suites racing showed load-only
+failures in perf-budget tests that pass alone — run sweeps sequentially). Each
+run skips the 3 platform tests; the default run also skips the CI self-proof,
+which ran and passed under the other twelve. 17 deliberate regressions
+(locale constant, string coercion, NaN-as-0, each date site, the hour cycle,
+the CI env lines, the ban regex itself) each turned a test red.
+
+Open follow-ups, none blocking: `containerScanner.ts`'s `parseBsdtarListing`
+reads bsdtar's `-tv` output, whose month names are localised (a Portuguese
+machine prints "set" for September) — pass `LC_ALL=C` to that child or parse
+`-tvv`. A Windows CI leg under `Set-Culture pt-BR` would exercise the path
+Node takes on Windows (the system locale, not LC_ALL); whether a hosted runner
+picks the change up for a new process is unverified, so try it once before
+relying on it.
+
 ## Session 12 — Windows says so in Windows words: issue #33 (6 September 2026)
 
 Root cause, from the code: `snapshotAccounting.ts`'s Windows branch ran

@@ -481,7 +481,7 @@ async function finishScan(root, durationMs, stats) {
   };
   setStat($('statFiles'), files);
   setStat($('statDirs'), dirs);
-  FxNum.rollText($('statLastScan'), new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }));
+  FxNum.rollText($('statLastScan'), formatClock(Date.now()));
   renderDiskNotes();
   // finishScan runs twice per scan by design — the index-first instant paint
   // (scanId still null, see the gate below), then the real completion. One

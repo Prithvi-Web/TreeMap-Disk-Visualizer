@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { lift } from './fixtures/liftFrontend';
+// The page's own formatCount, not a stand-in that agrees with itself (issue #34).
+const pageFormatCount = lift<(n: unknown) => string>(['UI_LOCALE', 'formatCount'], 'formatCount');
 
 /**
  * B2, the chunked preflight's MERGE — what survives being stitched back together.
@@ -139,7 +142,7 @@ function harness(reply: (paths: string[], index: number) => Reply | Promise<Repl
     $,
     () => '',
     (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
-    (n: number) => (n ?? 0).toLocaleString(),
+    pageFormatCount,
     (label: string) => { buttons.push(label); },
     CHUNK,
   );
@@ -193,7 +196,7 @@ test('conflicts found before the checker gave out survive into the report', asyn
   assert.equal(h.panel.hidden, false);
   assert.match(h.text(), /Xcode/, 'the warning reaches the screen');
   const said = h.text();
-  assert.ok(said.includes(CHUNK.toLocaleString()) && said.includes(set.length.toLocaleString()),
+  assert.ok(said.includes(pageFormatCount(CHUNK)) && said.includes(pageFormatCount(set.length)),
     `the panel names how much of the set the answer covers, said: ${said}`);
   assert.match(said, /lsof is not installed\./,
     'and why the rest could not be reached, in the machine’s own words');

@@ -229,11 +229,11 @@ test('a refused scan is never toasted as a clean success, and the tour refuses t
     '$', 'state', 'endScanChrome', 'indexTree', 'updateSelectionBar', 'DUP_PAGE', 'icon', 'formatCount', 'formatBytes', 'escapeHtml',
     'countUp', 'FxNum', 'renderDiskNotes', 'loadWhatsNew', 'loadDriveHealth', 'loadCostEstimate', 'showListsPending', 'emit', 'TOPIC',
     'switchView', 'toast', 'fxScanDonePulse', 'loadDashboardLists', 'buildIndexInBackground', 'renderGrowthProjection', 'loadBudgets',
-    'refreshTimebar', 'enableLive', 'seedNodes', 'setTimeout', 'fxDonutLoadingSync', 'renderRefusedFolders', 'probeRefusedFolders', 'armScanExpiry',
+    'refreshTimebar', 'enableLive', 'seedNodes', 'setTimeout', 'fxDonutLoadingSync', 'renderRefusedFolders', 'probeRefusedFolders', 'armScanExpiry', 'formatClock',
     `'use strict'; ${src} return finishScan;`)(
     $, state, noop, noop, noop, 100, () => '', (n: number | null) => String(n ?? 0), (n: number) => n + ' B', (s: string) => s,
     noop, { rollText: noop }, noop, noop, noop, noop, noop, noop, { scan: 'scan' }, noop, (m: string) => toasts.push(m), noop,
-    async () => {}, noop, noop, noop, noop, noop, noop, noop, noop, noop, async () => {}, noop,
+    async () => {}, noop, noop, noop, noop, noop, noop, noop, noop, noop, async () => {}, noop, () => '10:31 PM',
   ) as (root: unknown, ms: number, stats: unknown) => Promise<void>;
   await finishScan({ path: '/Users/x/Documents', size: 0, children: [] }, 50, { fileCount: 0, dirCount: 1, scanned: 1 });
   assert.equal(toasts.length, 0, 'nothing to celebrate about 0 B in 0 files — the refused probe speaks instead');

@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { formatCount } from '../../utils/formatCount';
 import os from 'os';
 import { getScan } from '../diskScanner';
 import { storeOf } from '../scanStore';
@@ -312,10 +313,10 @@ export async function executeAgainstScan(
   const page = hits.slice(opts.offset, opts.offset + opts.limit);
 
   if (statsCapped > 0) {
-    degraded.set('created', `Creation dates were read for ${statsSpent.toLocaleString()} items; ${statsCapped.toLocaleString()} more were skipped. No scan records creation times, so each one costs a separate read.`);
+    degraded.set('created', `Creation dates were read for ${formatCount(statsSpent)} items; ${formatCount(statsCapped)} more were skipped. No scan records creation times, so each one costs a separate read.`);
   }
   if (statsFailed > 0) {
-    degraded.set('createdUnreadable', `${statsFailed.toLocaleString()} item${statsFailed === 1 ? '' : 's'} could not be read to find a creation date, so they are not in these results.`);
+    degraded.set('createdUnreadable', `${formatCount(statsFailed)} item${statsFailed === 1 ? '' : 's'} could not be read to find a creation date, so they are not in these results.`);
   }
   if (aborted) {
     // A half-finished walk must never be handed back as a confident total.

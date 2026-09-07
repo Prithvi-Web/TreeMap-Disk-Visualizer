@@ -282,7 +282,7 @@ function renderJournal(entries) {
   let lastDay = '';
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];
-    const day = new Date(e.at).toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    const day = new Date(e.at).toLocaleDateString(UI_LOCALE, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
     if (day !== lastDay) {
       lastDay = day;
       parts.push(`<div class="cal-year">${escapeHtml(day)}</div>`);

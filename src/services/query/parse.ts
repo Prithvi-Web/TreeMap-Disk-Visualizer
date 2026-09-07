@@ -1,4 +1,5 @@
 import { parseQuery as parseBareQuery } from '../../utils/searchQuery';
+import { formatCount } from '../../utils/formatCount';
 import type { Ast, CompareOp, DateField, ParseError, ParseResult, Term } from './types';
 
 /**
@@ -427,7 +428,7 @@ export function parse(input: string): ParseResult {
   if (input.length > MAX_QUERY_LENGTH) {
     return {
       ok: false,
-      error: `That query is too long (${input.length.toLocaleString()} characters; the limit is ${MAX_QUERY_LENGTH.toLocaleString()}).`,
+      error: `That query is too long (${formatCount(input.length)} characters; the limit is ${formatCount(MAX_QUERY_LENGTH)}).`,
       offset: MAX_QUERY_LENGTH, length: input.length - MAX_QUERY_LENGTH, expected: ['a shorter query'],
     };
   }

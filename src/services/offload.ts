@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { formatCount } from '../utils/formatCount';
 import { promises as fsp } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -296,7 +297,7 @@ export async function prepareOffload(
   const plan = planOffload(nodes, destDir, existingNames);
   if (plan.length === 0) throw new AppError(400, 'NOTHING_TO_OFFLOAD', 'The selection contains no files');
   if (plan.length > MAX_FILES_PER_JOB) {
-    throw new AppError(400, 'TOO_MANY_FILES', `That's ${plan.length.toLocaleString()} files — offload at most ${MAX_FILES_PER_JOB.toLocaleString()} at a time`);
+    throw new AppError(400, 'TOO_MANY_FILES', `That's ${formatCount(plan.length)} files — offload at most ${formatCount(MAX_FILES_PER_JOB)} at a time`);
   }
   const bytesTotal = plan.reduce((s, p) => s + p.size, 0);
 
