@@ -4,7 +4,7 @@ All notable changes to TreeMap are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and TreeMap uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## [5.1.0] — 2026-09-02
+## [5.1.0] — 2026-09-06
 
 ### Changed
 
@@ -19,6 +19,22 @@ All notable changes to TreeMap are recorded here. The format follows
   no lag behind your hand, and it cannot vanish while the window is busy. Every
   hover effect is unchanged — the dot says what kind of thing is under it, and
   the control's own hover state still says which one.
+
+### Fixed
+
+- **A release could lose its installers, with no way to get them back.** The
+  installers belong to the release entry on GitHub, not to the version tag, so
+  a release that was deleted and made again came back with an empty Assets
+  list — which is what happened to v5.0.0
+  ([#32](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/issues/32)).
+  The build workflow can now be run by hand for an existing tag (Actions →
+  Build & Release → Run workflow → type the tag) to rebuild that version and
+  re-attach its installers; the install instructions are added to the notes
+  only when they are missing; every upload is checked against the release
+  afterwards, name and size; a build that produces no installer fails the run
+  loudly instead of reporting success with nothing attached; and when the
+  workflow creates the release itself, the notes are taken from this file and
+  the release is published only after both installers are attached and checked.
 
 ## [5.0.0] — 2026-09-02
 

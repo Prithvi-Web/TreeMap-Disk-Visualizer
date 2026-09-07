@@ -457,14 +457,20 @@ A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows in
 
 **To cut a release:**
 
-1. Bump the `version` in `package.json` (e.g. `1.2.1`).
-2. Create a matching **tag** prefixed with `v` (e.g. `v1.2.1`) and push it.
-   In GitHub Desktop: **Repository → Push**, then on github.com: **Releases → Draft a new release → Choose a tag →** type `v1.2.1` → **Publish**.
-3. The workflow runs automatically, builds both installers, and uploads them. After a few minutes the download links appear on the Releases page.
+1. Bump the `version` in `package.json` (e.g. `1.2.1`) and add a matching `## [1.2.1]` entry at the top of `CHANGELOG.md`.
+2. Create a matching **tag** prefixed with `v` (e.g. `v1.2.1`) and push it — either way works:
+   - **On github.com:** GitHub Desktop **Repository → Push** first, then **Releases → Draft a new release → Choose a tag →** type `v1.2.1` → **Create new tag: v1.2.1 on publish** → write the notes (or leave them empty) → **Publish release**.
+   - **From GitHub Desktop:** **History →** right-click the commit **→ Create Tag… →** `v1.2.1` **→ Create Tag**, then **Repository → Push**. The workflow creates the release itself, with that version's entry in `CHANGELOG.md` as its notes.
+3. The workflow runs on its own: it builds both installers, uploads them, checks that every file it built is really there, byte for byte, and only then publishes the release — so a release the workflow creates never appears with an empty **Assets** list. (A release you published yourself from the Releases page is public straight away and gets its files a few minutes later, as before.) The install instructions are added under the notes.
+   If a build turns red under **Actions**, the release stays a **Draft** only you can see. Open the run: the **notes** job says what to fix when the problem is the tag or the notes (a tag that does not match the version in `package.json`, a version with no `CHANGELOG.md` entry, or two saved drafts for one tag); otherwise read the red build step. Once the cause is fixed, **Run workflow** with the tag (below) finishes the job.
 
 > **The tag is what ships.** The Releases page's *Latest* and the in-app updater both read the newest `v*` tag. A version bumped in `package.json` but never tagged and pushed is invisible to every user — they are told they are up to date.
 
-You can also trigger a test build anytime from **Actions → Build & Release → Run workflow** (installers are saved as downloadable artifacts instead of a Release).
+> **Edit a release, never delete it.** The installers are attached to the release itself, not to the tag. A release that is deleted and made again comes back with an empty **Assets** list even though the tag still exists — that is how v5.0.0 lost its downloads (issue #32). To change the title or the notes, use **Edit** on the release; the installers stay put.
+
+> **A saved draft does not ship by itself.** Saving a draft creates no tag, so nothing runs. Publish it, or push the tag: the workflow then finds the draft, adds the install instructions, attaches the installers and publishes it once they are all there. Two saved drafts for one tag stop the run until you delete one.
+
+**If a release has no installers** (an empty **Assets** list): **Actions → Build & Release → Run workflow**, leave *Use workflow from* at `main`, type the tag (for example `v5.0.0`) into the box, **Run workflow**. A few minutes later the installers are rebuilt from that tag and attached. Your notes are kept — the install instructions are added under them only if they are missing. Leave the box empty for a test build of `main` — the installers are saved as zip files under **Artifacts** at the bottom of the run's page, and no release is touched.
 
 </details>
 

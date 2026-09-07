@@ -1,5 +1,80 @@
 # TreeMap — session handoff
 
+## Session 11 — the release that lost its installers (6 September 2026)
+
+Issue #32: the v5.0.0 release showed only the two source archives. **What the
+public API proves:** run 33707141991 is the only release.yml run ever on the
+tag (attempt 1, green, 02:18–02:20 UTC on 3 Sep) and both "Upload installers
+to the Release" steps concluded success, with durations matching earlier real
+uploads (the step logs need admin, so the file count is inferred). The release
+that exists now (id 381796200, "v5.0.0 Disk City") was published at 06:48 UTC
+by the owner's account — its published_at equals its updated_at, so it has not
+been touched since — with a release discussion created the same second (a
+web-UI publish), and the publish event's payload lists no assets. **The most
+likely reconstruction, not a record:** a different release object held the
+installers at 02:20 and was deleted (or turned into a draft) before 06:48;
+assets belong to the release entry, not to the tag, so they went with it. The
+events feed cannot say which: it is continuous across its three pages and
+records branch creations, yet holds no release or tag event between 2 Sep 07:16
+and 3 Sep 06:48 UTC, and it never records release deletions at all. Nothing
+re-ran CI because no tag was pushed. Precedents in this repo: v3.2.0 was
+tag-first and CI-authored (a bot release named "3.2.0"), and v2.3.1's release
+has been deleted at some point (its tag and run remain, the release does not).
+
+Contributing causes in the pipeline, all fixed in this session:
+- two uploaders — electron-builder published on its own (GH_TOKEN on the build
+  step, no `--publish never`, policy `onTag`) into a draft named after the bare
+  version whenever the tag was pushed before a release existed; the release
+  action (softprops 2.6.2) would then have adopted that draft, as v3.2.0's
+  bot-authored "3.2.0" shows — whether v5.0.0's deleted release looked like
+  that cannot be known;
+- both matrix jobs PATCHed the release body; when their steps overlap the
+  Windows job can overwrite the note the macOS job appended (they happened not
+  to overlap in 33707141991);
+- the install note was appended unconditionally, so a re-run would print it
+  twice — and a re-run was the only repair path there was;
+- nothing checked, after uploading, that the release held the files.
+
+**The fix:** `release.yml` is now three jobs. `notes` runs alone first
+(`scripts/release-notes.js`: create the release AS A DRAFT with the CHANGELOG
+entry if absent, give a saved draft its notes, add the install note once, else
+touch nothing; the note's own heading — read at the tag — is the "already
+there" signal; the CHANGELOG is read only when notes must be written and the
+note falls back to the checked-out copy, so pre-CHANGELOG tags can be
+repaired; anything but 200/404, a non-JSON body, or two drafts stops the run
+rather than guess). `build` (matrix) checks out the tag typed into the new
+`workflow_dispatch` box (or the pushed one), passes `--publish never` to
+electron-builder exactly once (appended only when the tag's own script lacks
+it — twice makes a list that no longer equals "never" and turns publishing ON;
+the red team reproduced that), uploads per-OS lists with
+`fail_on_unmatched_files` and `overwrite_files: false`, then checks by release
+id that every built file is an asset of the same size and in state
+`uploaded`, and that the note heading survived. `publish` runs only after both
+builds passed and PATCHes `draft:false, make_latest:"legacy"`, so a red build
+leaves an invisible draft, never an empty public release, and a repaired OLD
+tag never becomes Latest. `tests/releasePipeline.test.ts` runs the notes
+script against a real throwaway git tag and a fake GitHub (and the CLI end to
+end against a local HTTP server), and runs the build, check and publish steps
+under /bin/bash with stand-ins for curl and npm.
+
+**Outstanding — the owner's two steps:** push main (GitHub Desktop), then
+Actions → Build & Release → Run workflow → tag `v5.0.0` → Run workflow. The
+release then shows 9 files under Assets. HONEST LIMITS: the workflow cannot be
+executed on this laptop (no `act`, no GitHub credentials) — the YAML's shape,
+the notes script and the check step are tested here, the run itself is
+verified only when it runs; and the check step's bash is exercised under
+/bin/bash on macOS and Linux only, so its first run on a Windows runner (Git
+Bash, a `D:\a\_temp` RUNNER_TEMP) is the real test of that path.
+
+Traps met: GitHub's release `created_at` is the tagged COMMIT's date, not the
+release's; page 1 of the unauthenticated events feed only reaches back to the
+newest non-push event, so "no event in the window" needs the later pages; `gh`
+is not installed here — the REST API via `curl` is the tool, 60 calls/hour
+unauthenticated, so fetch once and save the JSON; the full suite hangs on
+compressionProgressStream.test.ts under heavy parallel load (ten review agents
+running), not only after mid-run edits — kill that one child and re-run the
+file alone.
+
 ## Session 9 — the seven number fixes, a CHANGELOG, and v5.0.0 (2 September 2026)
 
 Shipped as **v5.0.0**, built, verified inside the asar, and installed at
@@ -3176,11 +3251,25 @@ B5 zombie handles.
 5. **`npm rebuild better-sqlite3`** immediately after any electron-builder run.
 6. The user pushes, then publishes via the prefilled link
    `https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/releases/new?tag=vX.Y.Z&title=vX.Y.Z`
-   (create-tag-on-publish fires Build & Release, which uploads all 8 assets).
+   (create-tag-on-publish fires Build & Release, which uploads all 9 assets —
+   dmg + blockmap, zip + blockmap, latest-mac.yml, Setup exe + blockmap, the
+   portable exe, latest.yml — and adds INSTALL-NOTE.md under the notes, once).
+   Pushing the bare tag from GitHub Desktop works too: the `notes` job then
+   creates the release with the CHANGELOG entry as its notes.
+   **Never delete a release that has installers.** Assets hang off the release
+   entry, not the tag; v5.0.0 lost all nine that way (issue #32, 3 Sep 2026).
+   Edit keeps them. **Repair:** Actions → Build & Release → Run workflow → type
+   the tag → the installers are rebuilt from that tag and re-attached; the
+   notes are left alone because the install note is only added when missing.
+   Works for any tag whose release exists, including the pre-CHANGELOG ones
+   (the note falls back to the checked-out INSTALL-NOTE.md). Before and after,
+   glance at the Releases page for a stray Draft named `5.0.0` — a leftover
+   of electron-builder's old publisher — and delete it if one is there.
 7. Verify downloads: sha512+size of zip/dmg/exe against latest-mac.yml /
-   latest.yml (the yml names the exe `TreeMap-Setup-…` while GitHub stores
-   `TreeMap.Setup.…` — same file), mount the DMG, unzip + codesign, MZ header,
-   and grep the shipped app.asar for the change itself.
+   latest.yml (since `nsis.artifactName` went hyphenated the asset is stored as
+   `TreeMap-Setup-x.y.z.exe`, exactly as the yml names it — the post-upload
+   check relies on that), mount the DMG, unzip + codesign, MZ header, and grep
+   the shipped app.asar for the change itself.
 8. **Every reinstall resets Full Disk Access** — the user must toggle TreeMap
    off→on in System Settings → Privacy & Security → Full Disk Access and
    relaunch, or the trash features hide.

@@ -1,8 +1,35 @@
 name: Build & Release
 
 # Builds TreeMap installers for macOS and Windows, then attaches them to a
-# GitHub Release. Triggers when you push a version tag (e.g. v1.0.0) or when
-# you click "Run workflow" in the Actions tab.
+# GitHub Release. Three ways to run it:
+#
+#   * Push a version tag (e.g. v5.0.0). The tag is built and its installers
+#     are attached to the release for that tag. If nobody has published one,
+#     the workflow creates it as a draft, with the CHANGELOG entry as its
+#     notes, and publishes it only once both installers are attached and
+#     checked — so no release of the workflow's making is ever public with an
+#     empty Assets list. (A release the owner publishes first is public before
+#     its files arrive, as it always was.)
+#   * Actions → Build & Release → Run workflow, with a tag typed into the box.
+#     Rebuilds THAT tag and attaches its installers to its existing release.
+#     This is the repair path for a release whose Assets list is empty: the
+#     installers belong to the release entry, not to the tag, so a release
+#     that was deleted and made again comes back without them (v5.0.0, #32).
+#   * Run workflow with the box empty: a test build of main. The installers
+#     are saved as workflow artifacts and no release is touched.
+#
+# Jobs, in order: `notes` settles the release and its notes alone, before the
+# two builds race for it — the install note (.github/INSTALL-NOTE.md) joins
+# the notes once, with the real file names for the version, and only when it
+# is not already there, so a re-run or a repair never prints it twice; `build`
+# makes and uploads the installers and then checks the release holds every
+# file it built, byte for byte; `publish` makes a draft public once both
+# builds passed. A red build leaves a draft only the owner can see, and the
+# repair path finishes it. The publisher built into electron-builder is
+# switched off (--publish never): with a token in its environment it would
+# create its own release named after the bare version ("5.0.0"), and the
+# release action would then upload into whichever of the two it found first.
+# The upload step is the only thing that adds files.
 #
 # Linux is not released here: package.json carries an AppImage target and
 # `npm run dist:linux` builds one locally, but nothing in this matrix publishes
@@ -12,24 +39,93 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to rebuild and attach its installers to (e.g. v5.0.0). Leave empty for a test build of main.'
+        required: false
+        default: ''
+        type: string
 
 permissions:
-  contents: write # needed so the action can create the Release and upload files
+  contents: write # needed to create the Release, edit its notes and upload files
+
+# Two runs for one tag would upload into the same release at once; queue them.
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+# The tag whose release receives the installers: the pushed tag, or the one
+# typed into Run workflow. Empty for a plain test build of main.
+env:
+  RELEASE_TAG: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || '' }}
 
 jobs:
+  notes:
+    # Runs first and alone, so the two builds below never race to create the
+    # release or to rewrite its notes. Skipped for a test build (no tag).
+    if: inputs.tag != '' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.settle.outputs.release_id }}
+      is_draft: ${{ steps.settle.outputs.is_draft }}
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: Create the Release, or bring its notes up to date
+        id: settle
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # No `npm ci` here: the script uses Node built-ins only; keep it so.
+          # It reads package.json, CHANGELOG.md and INSTALL-NOTE.md at the tag
+          # itself, so a repair run started from main describes the version it
+          # rebuilds, not the version main is at. It writes release_id and
+          # is_draft to $GITHUB_OUTPUT for the jobs below.
+          git fetch --no-tags --depth=1 origin "+refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          node scripts/release-notes.js "$RELEASE_TAG"
+
   build:
+    needs: notes
+    # The test build (no tag) runs with the notes job skipped; a failed notes
+    # job stops the builds — there is no release to attach anything to.
+    if: ${{ !cancelled() && needs.notes.result != 'failure' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-latest
             script: dist:mac
+            # Everything this build must hand to the release. The zip and
+            # latest-mac.yml are what the in-app updater reads.
+            files: |
+              release/*.dmg
+              release/*.dmg.blockmap
+              release/*.zip
+              release/*.zip.blockmap
+              release/latest-mac.yml
           - os: windows-latest
             script: dist:win
+            # The installer and its blockmap, the portable exe (electron-builder
+            # writes no blockmap for it), and latest.yml for the updater.
+            files: |
+              release/*.exe
+              release/*.exe.blockmap
+              release/latest.yml
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out the code
         uses: actions/checkout@v5
+        with:
+          # The pushed tag, the tag typed into Run workflow, or main.
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v5
@@ -40,43 +136,141 @@ jobs:
         run: npm ci
 
       - name: Build the installer
-        run: npm run ${{ matrix.script }}
+        shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # No paid signing certificates configured, so skip code signing.
           # Downloaders will see a one-time "unidentified developer" prompt.
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          SCRIPT: ${{ matrix.script }}
+        run: |
+          set -euo pipefail
+          # electron-builder must see --publish never exactly once. With a token
+          # in its environment it would otherwise publish on its own — and given
+          # the flag twice it does the same, because its option parser turns two
+          # values into a list that no longer equals "never". The dist scripts
+          # carry the flag since 5.1.0; older tags, the ones a repair rebuilds,
+          # do not, so it is appended only when the checked-out script lacks it.
+          # No token is passed here either; only the release steps hold one.
+          if node -p "require('./package.json').scripts[process.argv[1]]" "$SCRIPT" | grep -q -- '--publish never'; then
+            npm run "$SCRIPT"
+          else
+            npm run "$SCRIPT" -- --publish never
+          fi
 
       - name: Upload installers to the Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: env.RELEASE_TAG != ''
         uses: softprops/action-gh-release@v2
         with:
-          # Append the install note to whatever changelog is already on the
-          # release. macOS blocks the first launch of any un-notarized app, and
-          # the Releases page is where people hit that wall — so the way past it
-          # has to live here, not only in the README. Appended from the macOS
-          # job ONLY: both matrix jobs touch the same release, and appending
-          # from both would print the note twice.
-          body_path: ${{ matrix.os == 'macos-latest' && '.github/INSTALL-NOTE.md' || '' }}
-          append_body: ${{ matrix.os == 'macos-latest' }}
-          # The .zip / .yml / .blockmap files are what the in-app
-          # auto-updater (electron-updater) reads — keep them published.
-          files: |
-            release/*.dmg
-            release/*.exe
-            release/*.zip
-            release/*.blockmap
-            release/latest*.yml
+          # The release the notes job settled; found by tag, so this works
+          # from Run workflow (whose own ref is main) as well as a tag push.
+          tag_name: ${{ env.RELEASE_TAG }}
+          # A release the workflow created, or a saved draft, stays a draft
+          # until the publish job has seen both builds succeed; a release that
+          # is already public stays public.
+          draft: ${{ needs.notes.outputs.is_draft == 'true' }}
+          # Never delete a working file to upload it again: a re-run adds what
+          # is missing and leaves the rest. A file of the wrong size fails the
+          # check below and is deleted by hand before running again.
+          overwrite_files: false
+          # A pattern that matches nothing means the build produced no
+          # installer: fail the run loudly rather than report success with
+          # nothing attached.
+          fail_on_unmatched_files: true
+          files: ${{ matrix.files }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check the Release now holds every installer this job built
+        if: env.RELEASE_TAG != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.notes.outputs.release_id }}
+          FILES: ${{ matrix.files }}
+        run: |
+          set -euo pipefail
+          # Inline on purpose: this job runs at the TAG, and old tags (v5.0.0
+          # included) have no scripts/ for a repair run to call. Built-ins only:
+          # bash, curl, node. The upload step reporting success is not the
+          # proof; the release is. Read by id, which finds a draft as well.
+          status="$(curl -sS --max-time 60 -o "$RUNNER_TEMP/release.json" -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
+          if [ "$status" != 200 ]; then
+            echo "::error::GET releases/$RELEASE_ID ($RELEASE_TAG) returned HTTP $status"
+            cat "$RUNNER_TEMP/release.json"
+            exit 1
+          fi
+          # name<TAB>size per finished asset: a truncated or half-uploaded
+          # file is caught as well as a missing one.
+          tab=$'\t'
+          node -e 'for (const a of require(process.argv[1]).assets) if (a.state === "uploaded") console.log(`${a.name}\t${a.size}`)' "$RUNNER_TEMP/release.json" > "$RUNNER_TEMP/assets.txt"
+          missing=0
+          for pattern in $FILES; do
+            matched=0
+            for f in $pattern; do
+              [ -e "$f" ] || continue
+              matched=1
+              name="${f##*/}"
+              size="$(wc -c < "$f" | tr -d ' ')"
+              if grep -qxF -- "$name$tab$size" "$RUNNER_TEMP/assets.txt"; then
+                echo "attached: $name ($size bytes)"
+              elif cut -f1 "$RUNNER_TEMP/assets.txt" | grep -qxF -- "$name"; then
+                echo "::error::$name is attached to release $RELEASE_TAG but its size differs from the $size bytes built here; delete it on the release page and run the workflow again"
+                missing=1
+              else
+                echo "::error::$name was built but is not attached to release $RELEASE_TAG"
+                missing=1
+              fi
+            done
+            if [ "$matched" = 0 ]; then
+              echo "::error::nothing here matches $pattern"
+              missing=1
+            fi
+          done
+          # The notes job put the install note on the release; uploading must
+          # not have lost it. Tags from before the note existed skip this.
+          if [ -f .github/INSTALL-NOTE.md ]; then
+            heading="$(grep -m1 '^## ' .github/INSTALL-NOTE.md)"
+            if ! node -e 'process.exit(String(require(process.argv[1]).body || "").includes(process.argv[2]) ? 0 : 1)' "$RUNNER_TEMP/release.json" "$heading"; then
+              echo "::error::the release notes no longer carry the install note heading: $heading"
+              missing=1
+            fi
+          fi
+          [ "$missing" = 0 ]
+
       - name: Save installers as workflow artifacts
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: env.RELEASE_TAG == ''
         uses: actions/upload-artifact@v4
         with:
           name: TreeMap-${{ matrix.os }}
-          path: |
-            release/*.dmg
-            release/*.exe
-            release/*.zip
-            release/latest*.yml
+          path: ${{ matrix.files }}
+
+  publish:
+    needs: [notes, build]
+    # Only after both builds attached and checked their files. A draft the
+    # workflow created (or the owner saved) goes public here; a release that
+    # is already public is left as it is, except that "Latest" is recomputed.
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.notes.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.notes.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          # make_latest "legacy": GitHub picks Latest by version and date, so a
+          # release rebuilt for an OLD tag never becomes the download everyone
+          # is offered, and a new version always does.
+          status="$(curl -sS --max-time 60 -o "$RUNNER_TEMP/publish.json" -w '%{http_code}' -X PATCH \
+            -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' \
+            -d '{"draft":false,"make_latest":"legacy"}' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
+          if [ "$status" != 200 ]; then
+            echo "::error::PATCH releases/$RELEASE_ID ($RELEASE_TAG) returned HTTP $status"
+            cat "$RUNNER_TEMP/publish.json"
+            exit 1
+          fi
+          echo "release $RELEASE_TAG is published with every installer attached"
