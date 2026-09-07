@@ -103,7 +103,7 @@ async function loadProvenance(filePath, reqId) {
 
   const opened = data.lastOpenedAt
     ? `last opened ${escapeHtml(formatDate(data.lastOpenedAt))}`
-    : 'never opened since it was saved, as far as this Mac records';
+    : `never opened since it was saved, as far as ${platformWord({ darwin: 'this Mac', win32: 'Windows', other: 'this computer' })} records`;
 
   if (!data.supported) {
     host.innerHTML = `<div class="pv-orig-line muted">${icon('globe', 12)} ${escapeHtml(data.unsupportedReason || 'This system does not record where files came from.')}</div>`;

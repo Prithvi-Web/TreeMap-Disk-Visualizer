@@ -4686,6 +4686,18 @@ function formatBytes(n, d = 1) {
   return u === 0 ? Math.round(v) + ' B' : v.toFixed(d) + ' ' + UNITS[u];
 }
 function formatCount(n) { return (n ?? 0).toLocaleString(); }
+/* Platform words. /api/system says which OS this is (state.system.platform);
+   until it has answered, or on an OS the table does not name, `other` is used.
+   Every sentence that would name a Mac thing goes through here — issue #33 was
+   a Windows machine reading about Time Machine, Full Disk Access and "This
+   Mac". Keys: darwin, win32, linux, other (required). */
+function platformWord(words) {
+  // `state` is declared with const further down this bundle; before that line
+  // has run, reading it throws even under typeof, so no OS is known yet.
+  let p;
+  try { p = state && state.system ? state.system.platform : undefined; } catch { p = undefined; }
+  return p !== undefined && Object.prototype.hasOwnProperty.call(words, p) ? words[p] : words.other;
+}
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -7304,7 +7316,11 @@ function confirmZombieRestart(p) {
     ? `TreeMap will ask <b>${escapeHtml(p.processName)}</b> to quit, then open it again. The space it is holding frees when it quits.` +
       `<br><span style="color:var(--text-3)">If it has unsaved work it may ask you to save first — nothing is ever force-quit.</span>`
     : `TreeMap will ask <b>${escapeHtml(p.processName)}</b> to quit. <b>If it has unsaved work, that work could be lost.</b>` +
-      `<br><span style="color:var(--text-3)">You’ll need to start it again yourself — TreeMap can only reopen Mac apps automatically.</span>`;
+      `<br><span style="color:var(--text-3)">You’ll need to start it again yourself — ${platformWord({
+        darwin: 'TreeMap can only reopen Mac apps automatically.',
+        win32: 'TreeMap does not reopen programs on Windows.',
+        other: 'TreeMap does not reopen programs on this system.',
+      })}</span>`;
   $('confirmOk').innerHTML = icon('refresh', 15) + 'Restart it';
   $('confirmModal').classList.add('open');
 }
@@ -7436,10 +7452,20 @@ async function loadSnapshots() {
     const s = await api('/api/system/snapshots');
     state.snapshots = s;
     const el = $('snapRow');
-    if (s && s.available && s.snapshots && s.snapshots.length > 0) {
-      const n = s.snapshots.length;
-      $('snapCount').textContent = `${formatCount(n)} local snapshot${n === 1 ? '' : 's'}` + (s.totalBytes ? ` · ~${formatBytes(s.totalBytes)}` : '');
-      $('snapHint').textContent = 'Hidden space from filesystem snapshots — Time Machine recreates these on the next backup, so purging is safe.';
+    // Shown when something was measured or listed: Windows can report space in
+    // storage for restore points with none listed at this moment, and a
+    // measurement must not vanish because the list was empty.
+    if (s && s.available && ((s.snapshots && s.snapshots.length > 0) || s.totalBytes > 0)) {
+      const n = s.snapshots ? s.snapshots.length : 0;
+      const noun = platformWord({ darwin: 'local snapshot', win32: 'restore point', other: 'snapshot' });
+      $('snapCount').textContent = `${formatCount(n)} ${noun}${n === 1 ? '' : 's'}` + (s.totalBytes ? ` · ~${formatBytes(s.totalBytes)}` : '');
+      // Windows manages restore points itself; the purge button is macOS-only
+      // (canPurge) and so is the sentence that justifies it.
+      $('snapHint').textContent = platformWord({
+        darwin: 'Hidden space from filesystem snapshots — Time Machine recreates these on the next backup, so purging is safe.',
+        win32: 'Space held by Windows restore points (Windows calls them shadow copies). Windows manages these itself; TreeMap does not delete them.',
+        other: 'Hidden space held by filesystem snapshots. TreeMap does not delete them.',
+      }) + (s.sizeReason ? ` ${s.sizeReason}` : '');
       $('snapPurgeBtn').hidden = !s.canPurge;
       el.hidden = false;
     } else {
@@ -21004,7 +21030,7 @@ function renderAllStorage() {
     rows.push(`
       <div class="storage-row">
         <span class="chip" style="--tint:#0A84FF">${icon('hardDrive', 15)}</span>
-        <div class="meta"><div class="nm">This Mac</div><div class="pth num">${formatBytes(used)} of ${formatBytes(state.system.totalDisk)}</div></div>
+        <div class="meta"><div class="nm">${platformWord({ darwin: 'This Mac', win32: 'This PC', other: 'This computer' })}</div><div class="pth num">${formatBytes(used)} of ${formatBytes(state.system.totalDisk)}</div></div>
         ${asqStrip(used, state.system.totalDisk, rows.length)}
         <button class="pill" data-storage-scan-local="1">Scan</button>
       </div>`);
@@ -21027,7 +21053,7 @@ function renderAllStorage() {
   /* A3 — how much of the folder you just scanned is not actually on this
      machine. Without this, a scan of a synced folder reports bytes the user
      cannot free by deleting anything locally, and cannot find on their disk
-     either. The "This Mac" bar above comes from the operating system's own
+     either. The local-disk bar above comes from the operating system's own
      accounting and already excludes these, so nothing is double-counted;
      this line explains the gap between the two rather than adding to it. */
   const cloudBytes = state.scanStats ? state.scanStats.cloudBytes || 0 : 0;
@@ -25913,17 +25939,27 @@ function tourAdvanceWin() {
   tourRender();
 }
 
+/* The OS refused a folder: name the OS that did, once, for both first-run cards. */
+function refusedFolderWords() {
+  return platformWord({
+    darwin: 'macOS would not let TreeMap look inside this folder',
+    win32: 'Windows would not let TreeMap look inside this folder',
+    other: 'TreeMap was not allowed to look inside this folder',
+  });
+}
+
 async function tourLoadWins() {
   if (!state.scanId) return;
   // A fourth non-answer, and the loudest: the folder was never read. On a Mac
   // without Full Disk Access a scan of Desktop or Documents returns nothing,
+  // and on Windows a folder another account owns does the same,
   // and congratulating someone on a folder the OS would not open is the
   // worst thing the first run can say. The refused probe has already looked
   // by the time the tour asks.
   if (state.scanRefused && state.scanRefused.dirs) {
     tour.step = 'unknown';
     tour.unknownReason = state.scanRefused.root
-      ? 'macOS would not let TreeMap look inside this folder, so nothing here has been checked.'
+      ? refusedFolderWords() + ', so nothing here has been checked.'
       : `${state.scanRefused.dirs} folder${state.scanRefused.dirs === 1 ? '' : 's'} could not be read, so this is not the whole picture.`;
     tourRender();
     return;
@@ -25957,10 +25993,9 @@ async function tourLoadWins() {
   // the false all-clear this card exists to avoid (renderRefusedFolders).
   if (!tour.wins.length && state.scanRefused && state.scanRefused.dirs > 0) {
     const r = state.scanRefused;
-    const mac = state.system && state.system.platform === 'darwin';
     tour.step = 'unknown';
     tour.unknownReason = r.root
-      ? (mac ? 'macOS would not let TreeMap look inside this folder' : 'TreeMap was not allowed to read this folder') + ', so nothing here has been checked.'
+      ? refusedFolderWords() + ', so nothing here has been checked.'
       : `${r.dirs} folder${r.dirs === 1 ? '' : 's'} could not be read, so part of this folder has not been checked.`;
     tourRender();
     return;
@@ -26733,7 +26768,7 @@ async function loadProvenance(filePath, reqId) {
 
   const opened = data.lastOpenedAt
     ? `last opened ${escapeHtml(formatDate(data.lastOpenedAt))}`
-    : 'never opened since it was saved, as far as this Mac records';
+    : `never opened since it was saved, as far as ${platformWord({ darwin: 'this Mac', win32: 'Windows', other: 'this computer' })} records`;
 
   if (!data.supported) {
     host.innerHTML = `<div class="pv-orig-line muted">${icon('globe', 12)} ${escapeHtml(data.unsupportedReason || 'This system does not record where files came from.')}</div>`;

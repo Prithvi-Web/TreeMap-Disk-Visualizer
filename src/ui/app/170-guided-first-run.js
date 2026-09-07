@@ -145,17 +145,27 @@ function tourAdvanceWin() {
   tourRender();
 }
 
+/* The OS refused a folder: name the OS that did, once, for both first-run cards. */
+function refusedFolderWords() {
+  return platformWord({
+    darwin: 'macOS would not let TreeMap look inside this folder',
+    win32: 'Windows would not let TreeMap look inside this folder',
+    other: 'TreeMap was not allowed to look inside this folder',
+  });
+}
+
 async function tourLoadWins() {
   if (!state.scanId) return;
   // A fourth non-answer, and the loudest: the folder was never read. On a Mac
   // without Full Disk Access a scan of Desktop or Documents returns nothing,
+  // and on Windows a folder another account owns does the same,
   // and congratulating someone on a folder the OS would not open is the
   // worst thing the first run can say. The refused probe has already looked
   // by the time the tour asks.
   if (state.scanRefused && state.scanRefused.dirs) {
     tour.step = 'unknown';
     tour.unknownReason = state.scanRefused.root
-      ? 'macOS would not let TreeMap look inside this folder, so nothing here has been checked.'
+      ? refusedFolderWords() + ', so nothing here has been checked.'
       : `${state.scanRefused.dirs} folder${state.scanRefused.dirs === 1 ? '' : 's'} could not be read, so this is not the whole picture.`;
     tourRender();
     return;
@@ -189,10 +199,9 @@ async function tourLoadWins() {
   // the false all-clear this card exists to avoid (renderRefusedFolders).
   if (!tour.wins.length && state.scanRefused && state.scanRefused.dirs > 0) {
     const r = state.scanRefused;
-    const mac = state.system && state.system.platform === 'darwin';
     tour.step = 'unknown';
     tour.unknownReason = r.root
-      ? (mac ? 'macOS would not let TreeMap look inside this folder' : 'TreeMap was not allowed to read this folder') + ', so nothing here has been checked.'
+      ? refusedFolderWords() + ', so nothing here has been checked.'
       : `${r.dirs} folder${r.dirs === 1 ? '' : 's'} could not be read, so part of this folder has not been checked.`;
     tourRender();
     return;

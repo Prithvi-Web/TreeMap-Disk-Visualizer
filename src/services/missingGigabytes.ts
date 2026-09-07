@@ -2,7 +2,7 @@ import { promises as fsp } from 'fs';
 
 import { platform } from '../platform';
 import { wholeDiskOf } from '../platform/macos/diskutil';
-import { getSnapshotAccounting } from './snapshotAccounting';
+import { ELEVATE_HOW, getSnapshotAccounting } from './snapshotAccounting';
 import { groupZombies } from './zombieHandles';
 import { storeOf } from './scanStore';
 import { formatBytes } from '../utils/formatBytes';
@@ -176,7 +176,8 @@ export interface StatementSources {
   statfs(mountPoint: string): Promise<{ blocks: number; bfree: number; bavail: number; bsize: number }>;
   /** `stat().dev`, or null when the path cannot be read. */
   devOf(target: string): Promise<number | null>;
-  snapshots(): Promise<SnapshotAccounting>;
+  /** `mountPoint` lets Windows scope its restore points to the volume in question. */
+  snapshots(mountPoint?: string): Promise<SnapshotAccounting>;
   zombies(): Promise<ZombieReport>;
 }
 
@@ -190,7 +191,7 @@ export function liveSources(): StatementSources {
       return { blocks: Number(st.blocks), bfree: Number(st.bfree), bavail: Number(st.bavail), bsize: Number(st.bsize) };
     },
     devOf,
-    snapshots: getSnapshotAccounting,
+    snapshots: (mountPoint?: string) => getSnapshotAccounting(mountPoint),
     zombies: leanZombieReport,
   };
 }
@@ -443,7 +444,7 @@ export async function buildStatement(
 
   /* ── Filesystem snapshots ──────────────────────────────────────────────── */
 
-  lines.push(await snapshotLine(sources));
+  lines.push(await snapshotLine(sources, mountPoint));
 
   /* ── Purgeable ─────────────────────────────────────────────────────────── */
 
@@ -459,7 +460,7 @@ export async function buildStatement(
 
   /* ── What the scan was refused ─────────────────────────────────────────── */
 
-  lines.push(unscannableLine(scan));
+  lines.push(unscannableLine(scan, plat));
 
   /* ── The residual ──────────────────────────────────────────────────────── */
 
@@ -518,7 +519,16 @@ export async function buildStatement(
 
 /* ─────────────────────────── the individual lines ─────────────────────────── */
 
-async function snapshotLine(sources: StatementSources): Promise<StatementLine> {
+async function snapshotLine(sources: StatementSources, mountPoint: string): Promise<StatementLine> {
+  // Windows calls them restore points and the receipt says so; elsewhere they
+  // are the filesystem's snapshots.
+  const win = sources.platform === 'win32';
+  const label = win ? 'Restore points' : 'Filesystem snapshots';
+  const some = (n: number) => (win ? `${String(n)} restore point${n === 1 ? '' : 's'}` : `${String(n)} snapshot${n === 1 ? '' : 's'}`);
+  const hidden = win
+    ? 'Restore points hold space no folder scan can see, so any space they hold is inside Unaccounted.'
+    : 'Snapshots pin blocks that no directory walk can see, so any space they hold is inside Unaccounted.';
+  const line = (rest: Omit<StatementLine, 'id' | 'label' | 'notes'> & { notes?: string[] }): StatementLine => ({ id: 'snapshots', label, notes: [], ...rest });
   const remedy: StatementRemedy = {
     action: 'purge-snapshots',
     label: 'Delete local snapshots',
@@ -526,72 +536,68 @@ async function snapshotLine(sources: StatementSources): Promise<StatementLine> {
       'Needs an explicit confirmation. Time Machine recreates local snapshots on its next backup, so this frees space now rather than permanently.',
   };
   try {
-    const acc = await sources.snapshots();
+    const acc = await sources.snapshots(mountPoint);
     if (!acc.available) {
-      return {
-        id: 'snapshots',
-        label: 'Filesystem snapshots',
-        bytes: null,
-        available: false,
-        reason: acc.reason ?? 'snapshot tooling is not available on this system',
-        detail: 'Snapshots pin blocks that no directory walk can see, so any space they hold is inside Unaccounted.',
-        count: null,
-        notes: [],
-        remedy: null,
-      };
+      return line({ bytes: null, available: false, reason: acc.reason ?? 'snapshot tooling is not available on this system', detail: hidden, count: null, remedy: null });
     }
     const count = acc.snapshots.length;
-    // Zero snapshots is a measurement — the tool ran and found none — so this
-    // line legitimately reads 0. One or more snapshots is the opposite case:
-    // `tmutil listlocalsnapshots` names them and does not size them, so the
-    // bytes are genuinely unknown and must not be shown as anything.
-    if (count === 0) {
-      return {
-        id: 'snapshots',
-        label: 'Filesystem snapshots',
+    // Windows could not say which drive each restore point belongs to, so the
+    // figure is the whole PC's; the receipt says so rather than pretend.
+    const notes = acc.scope === 'machine' ? ['This covers restore points on every drive of this PC: Windows did not say which drive each one belongs to.'] : [];
+    if (acc.totalBytes !== null) {
+      // A measured figure is used whatever the list says. Windows can report
+      // space in shadow storage with no restore point listed at that moment,
+      // and a measurement must never be replaced by a zero.
+      if (count === 0 && acc.totalBytes === 0) {
+        return line({
+          bytes: 0,
+          available: true,
+          detail: win ? 'Windows reports no space used by restore points, so they hold nothing.' : 'The operating system reports no space held by snapshots, so they hold nothing.',
+          count: 0,
+          remedy: null,
+        });
+      }
+      const detail =
+        count > 0
+          ? win
+            ? `${some(count)} hold${count === 1 ? 's' : ''} space no folder scan can see.`
+            : `${some(count)} pin${count === 1 ? 's' : ''} blocks that a directory walk never sees.`
+          : win
+            ? 'Windows holds this much in storage for restore points.'
+            : 'The operating system holds this much in snapshot storage.';
+      return line({ bytes: acc.totalBytes, available: true, detail, count, notes, remedy: acc.canPurge && count > 0 ? remedy : null });
+    }
+    // Zero snapshots listed, by a listing that answered and has no doubt about
+    // itself, is a measurement — the tool ran and found none — so this line
+    // legitimately reads 0. A source that lists none but says the list may not
+    // be the whole picture (a standard Windows user) is an unknown, below. One
+    // or more is the other case: `tmutil listlocalsnapshots` names them and
+    // does not size them, so the bytes are genuinely unknown and must not be
+    // shown as anything.
+    if (count === 0 && !acc.sizeReason) {
+      return line({
         bytes: 0,
         available: true,
-        detail: 'There are no local snapshots on this volume, so they hold nothing.',
+        detail: win ? 'This PC has no restore points, so they hold nothing.' : 'There are no local snapshots on this volume, so they hold nothing.',
         count: 0,
-        notes: [],
         remedy: null,
-      };
+      });
     }
-    if (acc.totalBytes !== null) {
-      return {
-        id: 'snapshots',
-        label: 'Filesystem snapshots',
-        bytes: acc.totalBytes,
-        available: true,
-        detail: `${String(count)} snapshot${count === 1 ? '' : 's'} pin blocks that a directory walk never sees.`,
-        count,
-        notes: [],
-        remedy: acc.canPurge ? remedy : null,
-      };
-    }
-    return {
-      id: 'snapshots',
-      label: 'Filesystem snapshots',
+    return line({
       bytes: null,
       available: false,
-      reason: `${String(count)} snapshot${count === 1 ? ' exists' : 's exist'}, but the operating system names them without sizing them, so how much they hold cannot be read here.`,
-      detail: 'Snapshots pin blocks that no directory walk can see, so the space they hold is inside Unaccounted.',
+      // The source knows why the size is missing (Windows: administrator
+      // rights) and says so in its own words; the generic sentence is tmutil's.
+      reason:
+        acc.sizeReason ??
+        `${some(count)} exist${count === 1 ? 's' : ''}, but the operating system names them without sizing them, so how much they hold cannot be read here.`,
+      detail: hidden,
       count,
-      notes: [],
+      notes,
       remedy: acc.canPurge ? remedy : null,
-    };
+    });
   } catch (err) {
-    return {
-      id: 'snapshots',
-      label: 'Filesystem snapshots',
-      bytes: null,
-      available: false,
-      reason: msg(err),
-      detail: 'Snapshots pin blocks that no directory walk can see, so any space they hold is inside Unaccounted.',
-      count: null,
-      notes: [],
-      remedy: null,
-    };
+    return line({ bytes: null, available: false, reason: msg(err), detail: hidden, count: null, remedy: null });
   }
 }
 
@@ -784,10 +790,26 @@ const ENGINES_THAT_MEASURE_ALLOCATION: ReadonlySet<string> = new Set(['walker', 
  * Exported for its own test: the arithmetic here decides whether the receipt
  * balances, and driving it through a whole live scan would prove far less.
  */
+/** The usual reserving file and who compresses files behind the scan's back are per-OS facts; the rest of the sentence is not. */
+function sparseDetail(plat: NodeJS.Platform): string {
+  const reserver =
+    plat === 'darwin'
+      ? 'a virtual machine disk such as Docker.raw'
+      : plat === 'win32'
+        ? 'a virtual machine disk such as WSL\u2019s ext4.vhdx'
+        : 'a virtual machine disk image';
+  const compressor =
+    plat === 'darwin'
+      ? 'macOS stores many files compressed'
+      : plat === 'win32'
+        ? 'Windows can store files compressed'
+        : 'some filesystems store files compressed';
+  return `Some files reserve room they have not filled — ${reserver} is the usual one — and ${compressor}, so they claim more than they hold. A very small file is the other way round: the disk hands out room in fixed-size pieces, so it holds a little more than it claims. The line above counted what every file claims; this is the difference, whichever way it falls.`;
+}
+
 export function sparseLine(scan: ScanResult, plat: NodeJS.Platform): StatementLine {
   const label = 'What these files claim, against what they hold';
-  const detail =
-    'Some files reserve room they have not filled — a virtual machine disk such as Docker.raw is the usual one — and macOS stores many files compressed, so they claim more than they hold. A very small file is the other way round: the disk hands out room in fixed-size pieces, so it holds a little more than it claims. The line above counted what every file claims; this is the difference, whichever way it falls.';
+  const detail = sparseDetail(plat);
   const engine = scan.engine ?? 'walker';
   if (plat === 'win32') {
     return {
@@ -839,7 +861,21 @@ export function sparseLine(scan: ScanResult, plat: NodeJS.Platform): StatementLi
  * the entire truth available, and reporting it as a count with no bytes is the
  * honest shape — a byte estimate here would be invented.
  */
-function unscannableLine(scan: ScanResult): StatementLine {
+/**
+ * The usual fix for a refused folder, per OS. Windows gets the trap spelled
+ * out: TreeMap stays in the system tray after its window closes, and a copy
+ * started with "Run as administrator" meets the single-instance lock and
+ * exits at once, so the user believes they elevated and did not.
+ */
+export function refusedPermissionNote(denied: number, plat: NodeJS.Platform): string {
+  const head = `${String(denied)} refused permission`;
+  if (plat === 'darwin') return `${head} — granting Full Disk Access usually resolves these.`;
+  if (plat === 'win32') return `${head} — running TreeMap as an administrator may let Windows read more of these. ${ELEVATE_HOW}`;
+  if (plat === 'linux') return `${head} — they belong to another user or to the system, so this account is not allowed to read them.`;
+  return `${head}.`;
+}
+
+function unscannableLine(scan: ScanResult, plat: NodeJS.Platform): StatementLine {
   const engine = scan.engine ?? 'walker';
   if (!ENGINES_THAT_COUNT_REFUSALS.has(engine)) {
     return {
@@ -873,7 +909,7 @@ function unscannableLine(scan: ScanResult): StatementLine {
     };
   }
   const notes: string[] = [];
-  if (denied > 0) notes.push(`${String(denied)} refused permission — granting Full Disk Access usually resolves these.`);
+  if (denied > 0) notes.push(refusedPermissionNote(denied, plat));
   if (broken > 0) notes.push(`${String(broken)} could not be read for another reason, such as a mount that stopped responding.`);
   return {
     id: 'unscannable',

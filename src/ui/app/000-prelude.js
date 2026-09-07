@@ -20,6 +20,18 @@ function formatBytes(n, d = 1) {
   return u === 0 ? Math.round(v) + ' B' : v.toFixed(d) + ' ' + UNITS[u];
 }
 function formatCount(n) { return (n ?? 0).toLocaleString(); }
+/* Platform words. /api/system says which OS this is (state.system.platform);
+   until it has answered, or on an OS the table does not name, `other` is used.
+   Every sentence that would name a Mac thing goes through here — issue #33 was
+   a Windows machine reading about Time Machine, Full Disk Access and "This
+   Mac". Keys: darwin, win32, linux, other (required). */
+function platformWord(words) {
+  // `state` is declared with const further down this bundle; before that line
+  // has run, reading it throws even under typeof, so no OS is known yet.
+  let p;
+  try { p = state && state.system ? state.system.platform : undefined; } catch { p = undefined; }
+  return p !== undefined && Object.prototype.hasOwnProperty.call(words, p) ? words[p] : words.other;
+}
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }

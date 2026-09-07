@@ -122,10 +122,20 @@ async function loadSnapshots() {
     const s = await api('/api/system/snapshots');
     state.snapshots = s;
     const el = $('snapRow');
-    if (s && s.available && s.snapshots && s.snapshots.length > 0) {
-      const n = s.snapshots.length;
-      $('snapCount').textContent = `${formatCount(n)} local snapshot${n === 1 ? '' : 's'}` + (s.totalBytes ? ` · ~${formatBytes(s.totalBytes)}` : '');
-      $('snapHint').textContent = 'Hidden space from filesystem snapshots — Time Machine recreates these on the next backup, so purging is safe.';
+    // Shown when something was measured or listed: Windows can report space in
+    // storage for restore points with none listed at this moment, and a
+    // measurement must not vanish because the list was empty.
+    if (s && s.available && ((s.snapshots && s.snapshots.length > 0) || s.totalBytes > 0)) {
+      const n = s.snapshots ? s.snapshots.length : 0;
+      const noun = platformWord({ darwin: 'local snapshot', win32: 'restore point', other: 'snapshot' });
+      $('snapCount').textContent = `${formatCount(n)} ${noun}${n === 1 ? '' : 's'}` + (s.totalBytes ? ` · ~${formatBytes(s.totalBytes)}` : '');
+      // Windows manages restore points itself; the purge button is macOS-only
+      // (canPurge) and so is the sentence that justifies it.
+      $('snapHint').textContent = platformWord({
+        darwin: 'Hidden space from filesystem snapshots — Time Machine recreates these on the next backup, so purging is safe.',
+        win32: 'Space held by Windows restore points (Windows calls them shadow copies). Windows manages these itself; TreeMap does not delete them.',
+        other: 'Hidden space held by filesystem snapshots. TreeMap does not delete them.',
+      }) + (s.sizeReason ? ` ${s.sizeReason}` : '');
       $('snapPurgeBtn').hidden = !s.canPurge;
       el.hidden = false;
     } else {

@@ -35,6 +35,30 @@ All notable changes to TreeMap are recorded here. The format follows
   loudly instead of reporting success with nothing attached; and when the
   workflow creates the release itself, the notes are taken from this file and
   the release is published only after both installers are attached and checked.
+- **Windows restore points are measured in every language, and without
+  guessing.** The Missing GB receipt and the Dashboard read the space Windows
+  restore points use by asking Windows for the numbers directly (the same way
+  TreeMap already lists restore points) instead of searching `vssadmin`'s
+  printed table for English labels — on a Portuguese Windows that table reads
+  "Espaço de armazenamento de cópias de sombra usado: 7,98 GB", and nothing
+  was found ([#33](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/issues/33)).
+  The receipt for one drive no longer books another drive's restore points.
+  Windows normally shows that space only to an administrator; when it is
+  withheld, the receipt says so and how to see it: quit TreeMap from its icon in
+  the system tray first, then start it with Run as administrator — if a copy is
+  still running in the tray, the administrator copy closes at once. A standard
+  account that is shown nothing is told that this may not be the whole picture,
+  rather than a confident zero.
+- **Windows and Linux are no longer told about the Mac** in the Dashboard, the
+  Missing GB receipt, the preview pane and the first-run card. "Time Machine
+  recreates these", "granting Full Disk Access usually resolves these", "This
+  Mac", "as far as this Mac records" and "macOS would not let TreeMap look
+  inside this folder" now say the right thing for the system in front of you —
+  restore points and running as an administrator on Windows, "This PC", and
+  neutral words before TreeMap knows which system it is on. The receipt's line
+  about files that claim more room than they use, and its explanation of why
+  TreeMap's total can exceed the disk's, give Windows and Linux examples instead
+  of Mac ones, and the video re-encoding hint names winget rather than Homebrew.
 
 ## [5.0.0] — 2026-09-02
 

@@ -235,6 +235,14 @@ export function encoderFor(codec: 'hevc' | 'av1', platform: NodeJS.Platform): st
   return codec === 'hevc' ? 'hevc_vaapi' : 'av1_vaapi';
 }
 
+/** How to get ffmpeg on this OS — a Homebrew line means nothing to a Windows user (issue #33). Exported for tests. */
+export function ffmpegInstallHint(plat: NodeJS.Platform): string {
+  if (plat === 'darwin') return 'On a Mac you can add it with Homebrew: brew install ffmpeg.';
+  if (plat === 'win32') return 'On Windows you can add it from a terminal with winget: winget install Gyan.FFmpeg.';
+  if (plat === 'linux') return 'On Linux, install the ffmpeg package from your distribution.';
+  return 'Install ffmpeg with your system\u2019s package manager.';
+}
+
 const realTools: MediaTools = {
   async availability(): Promise<EncoderAvailability> {
     const caps = await getCapabilities();
@@ -243,9 +251,7 @@ const realTools: MediaTools = {
     if (!(await which('ffprobe')) || !(await which('ffmpeg'))) {
       return {
         available: false,
-        reason:
-          'Re-encoding video needs ffmpeg, which is not installed. On a Mac you can add it with Homebrew: brew install ffmpeg. ' +
-          'Everything else in TreeMap works without it.',
+        reason: `Re-encoding video needs ffmpeg, which is not installed. ${ffmpegInstallHint(process.platform)} Everything else in TreeMap works without it.`,
         encoder: null,
         hardwareCodecs: hw.codecs ?? [],
         mechanism: state.mechanism,

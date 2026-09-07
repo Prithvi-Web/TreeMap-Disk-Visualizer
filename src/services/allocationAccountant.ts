@@ -159,19 +159,47 @@ async function volumeGroundTruth(mountPoint: string): Promise<VolumeGroundTruth 
   }
 }
 
-/** Human reading of a reconciliation delta. Never alarming, never hand-waving. */
-function verdictFor(deltaBytes: number, deltaPercent: number): string {
+/**
+ * Human reading of a reconciliation delta. Never alarming, never hand-waving —
+ * and the example of a storage-sharing copy is the one this OS actually makes
+ * (issue #33: a Windows user was told about the Finder). Exported for tests.
+ */
+export function verdictFor(deltaBytes: number, deltaPercent: number, plat: NodeJS.Platform = process.platform): string {
   if (deltaBytes <= 0) {
     return 'TreeMap’s total is at or below what the disk reports, which is expected — some system files are not readable.';
   }
   if (deltaPercent < 2) {
     return 'TreeMap’s total matches what the disk reports.';
   }
-  return (
-    'TreeMap counts more than the disk actually reports as used. The difference is almost certainly files that share ' +
-    'storage with each other — copies made with the Finder’s duplicate command, or by developer tools, take up no extra ' +
-    'space until one of them changes. TreeMap cannot see which files those are, so it counts each one in full.'
-  );
+  const head = 'TreeMap counts more than the disk actually reports as used. ';
+  const tail = ' TreeMap cannot see which files those are, so it counts each one in full.';
+  if (plat === 'darwin') {
+    return (
+      head +
+      'The difference is almost certainly files that share storage with each other — copies made with the Finder’s duplicate ' +
+      'command, or by developer tools, take up no extra space until one of them changes.' +
+      tail
+    );
+  }
+  if (plat === 'win32') {
+    // Windows has no everyday clone command; what makes a total exceed the disk
+    // there is files that take less room than their size says.
+    return (
+      head +
+      'The difference is almost certainly files that take less room on the disk than their size: files Windows stores ' +
+      'compressed, OneDrive files kept online-only, or copies that share storage on a ReFS drive.' +
+      tail
+    );
+  }
+  if (plat === 'linux') {
+    return (
+      head +
+      'The difference is almost certainly files that share storage with each other — copies made on Btrfs, XFS or ZFS take up ' +
+      'no extra space until one side is edited — or files the filesystem stores compressed.' +
+      tail
+    );
+  }
+  return head + 'The difference is almost certainly files that share storage with each other, or take less room on the disk than their size.' + tail;
 }
 
 /**

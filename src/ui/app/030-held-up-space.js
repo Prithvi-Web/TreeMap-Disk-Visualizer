@@ -161,7 +161,11 @@ function confirmZombieRestart(p) {
     ? `TreeMap will ask <b>${escapeHtml(p.processName)}</b> to quit, then open it again. The space it is holding frees when it quits.` +
       `<br><span style="color:var(--text-3)">If it has unsaved work it may ask you to save first — nothing is ever force-quit.</span>`
     : `TreeMap will ask <b>${escapeHtml(p.processName)}</b> to quit. <b>If it has unsaved work, that work could be lost.</b>` +
-      `<br><span style="color:var(--text-3)">You’ll need to start it again yourself — TreeMap can only reopen Mac apps automatically.</span>`;
+      `<br><span style="color:var(--text-3)">You’ll need to start it again yourself — ${platformWord({
+        darwin: 'TreeMap can only reopen Mac apps automatically.',
+        win32: 'TreeMap does not reopen programs on Windows.',
+        other: 'TreeMap does not reopen programs on this system.',
+      })}</span>`;
   $('confirmOk').innerHTML = icon('refresh', 15) + 'Restart it';
   $('confirmModal').classList.add('open');
 }

@@ -48,7 +48,7 @@ function renderAllStorage() {
     rows.push(`
       <div class="storage-row">
         <span class="chip" style="--tint:#0A84FF">${icon('hardDrive', 15)}</span>
-        <div class="meta"><div class="nm">This Mac</div><div class="pth num">${formatBytes(used)} of ${formatBytes(state.system.totalDisk)}</div></div>
+        <div class="meta"><div class="nm">${platformWord({ darwin: 'This Mac', win32: 'This PC', other: 'This computer' })}</div><div class="pth num">${formatBytes(used)} of ${formatBytes(state.system.totalDisk)}</div></div>
         ${asqStrip(used, state.system.totalDisk, rows.length)}
         <button class="pill" data-storage-scan-local="1">Scan</button>
       </div>`);
@@ -71,7 +71,7 @@ function renderAllStorage() {
   /* A3 — how much of the folder you just scanned is not actually on this
      machine. Without this, a scan of a synced folder reports bytes the user
      cannot free by deleting anything locally, and cannot find on their disk
-     either. The "This Mac" bar above comes from the operating system's own
+     either. The local-disk bar above comes from the operating system's own
      accounting and already excludes these, so nothing is double-counted;
      this line explains the gap between the two rather than adding to it. */
   const cloudBytes = state.scanStats ? state.scanStats.cloudBytes || 0 : 0;

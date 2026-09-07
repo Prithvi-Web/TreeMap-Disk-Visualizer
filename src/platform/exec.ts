@@ -87,6 +87,14 @@ export function runText(cmd: string, args: string[], opts: RunOptions = {}): Pro
             reject(new CommandUnavailableError(cmd, `${cmd} is not installed`));
             return;
           }
+          // Node's message for a command it had to kill is "Command failed: "
+          // followed by the ENTIRE command line — for a PowerShell script, a
+          // page of code — and a reason field shows that verbatim to a person.
+          if ((err as { killed?: boolean }).killed === true) {
+            const seconds = Math.round((opts.timeoutMs ?? DEFAULT_TIMEOUT_MS) / 1000);
+            reject(new CommandFailedError(cmd, `${cmd} did not answer within ${String(seconds)} s`, out, errText, null));
+            return;
+          }
           const exitCode = typeof (err as { code?: unknown }).code === 'number' ? (err as unknown as { code: number }).code : null;
           reject(new CommandFailedError(cmd, detail, out, errText, exitCode));
           return;

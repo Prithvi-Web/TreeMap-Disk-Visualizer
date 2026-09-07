@@ -669,3 +669,91 @@ test('a layout that will not read is 409 with its reason, never a 500', async ()
     await fs.promises.rm(dir, { recursive: true, force: true });
   }
 });
+
+/* ═══════════════════ 9. Windows says so in Windows words (issue #33) ═══════════════════ */
+
+test('a snapshot size the platform withholds is explained in the platform’s own words, not tmutil’s', async () => {
+  const s = await buildStatement(
+    scanFixture({ store: storeOfSize(GB) }),
+    sourcesFixture({
+      platform: 'win32',
+      snapshots: {
+        platform: 'win32',
+        snapshots: [{ id: '{A}', date: null, sizeBytes: null }],
+        totalBytes: null,
+        canPurge: false,
+        sizeReason: 'Windows reports the space its restore points hold only to an administrator.',
+      },
+    }),
+  );
+  const line = lineOf(s, 'snapshots');
+  assert.equal(line.available, false);
+  assert.equal(line.bytes, null);
+  assert.equal(line.count, 1);
+  assert.equal(line.reason, 'Windows reports the space its restore points hold only to an administrator.', 'the source’s reason is shown verbatim');
+  assert.doesNotMatch(line.detail, /Time Machine/);
+  assertBalances(s);
+});
+
+test('no restore points on a PC is said as restore points, not as "local snapshots"', async () => {
+  const s = await buildStatement(scanFixture({ store: storeOfSize(GB) }), sourcesFixture({ platform: 'win32', snapshots: { platform: 'win32', snapshots: [], totalBytes: 0 } }));
+  const line = lineOf(s, 'snapshots');
+  assert.equal(line.bytes, 0);
+  assert.match(line.detail, /restore points/);
+  assert.doesNotMatch(line.detail, /local snapshots/);
+  const mac = await buildStatement(scanFixture({ store: storeOfSize(GB) }), sourcesFixture({ snapshots: { snapshots: [], totalBytes: null } }));
+  assert.match(lineOf(mac, 'snapshots').detail, /local snapshots/, 'macOS keeps its own word');
+});
+
+test('a refusal names the fix for the platform it happened on', async () => {
+  const scan = scanFixture({ engine: 'walker', deniedDirs: 3, store: storeOfSize(GB) });
+  const win = lineOf(await buildStatement(scan, sourcesFixture({ platform: 'win32' })), 'unscannable');
+  assert.ok(win.notes.some((n) => /administrator/i.test(n)), 'Windows: run as administrator');
+  assert.ok(win.notes.some((n) => /system tray/i.test(n)), 'and quit the copy in the tray first, or the elevated one exits at once');
+  assert.ok(!win.notes.some((n) => /Full Disk Access/.test(n)), 'Full Disk Access is a macOS setting');
+  const linux = lineOf(await buildStatement(scan, sourcesFixture({ platform: 'linux' })), 'unscannable');
+  assert.ok(!linux.notes.some((n) => /Full Disk Access|administrator/i.test(n)));
+  assert.ok(linux.notes.some((n) => /permission/.test(n)), 'Linux still explains what refused');
+  const mac = lineOf(await buildStatement(scan, sourcesFixture()), 'unscannable');
+  assert.ok(mac.notes.some((n) => /Full Disk Access/.test(n)), 'macOS unchanged');
+  assert.ok(!mac.notes.some((n) => /administrator/i.test(n)));
+});
+
+test('a measured figure is kept even when no restore point is listed; a doubtful empty listing is an unknown, not a zero', async () => {
+  const kept = await buildStatement(
+    scanFixture({ store: storeOfSize(GB) }),
+    sourcesFixture({ platform: 'win32', snapshots: { platform: 'win32', snapshots: [], totalBytes: 9 * GB, scope: 'volume' } }),
+  );
+  const keptLine = lineOf(kept, 'snapshots');
+  assert.equal(keptLine.bytes, 9 * GB, 'storage in use with nothing listed is still storage in use');
+  assert.equal(keptLine.available, true);
+  assert.match(keptLine.detail, /holds this much/);
+  assertBalances(kept);
+
+  const doubtful = await buildStatement(
+    scanFixture({ store: storeOfSize(GB) }),
+    sourcesFixture({ platform: 'win32', snapshots: { platform: 'win32', snapshots: [], totalBytes: null, sizeReason: 'Windows reported none, but only an administrator is shown everything.' } }),
+  );
+  const doubtfulLine = lineOf(doubtful, 'snapshots');
+  assert.equal(doubtfulLine.bytes, null, 'a listing that doubts itself is not a zero');
+  assert.equal(doubtfulLine.available, false);
+  assert.equal(doubtfulLine.reason, 'Windows reported none, but only an administrator is shown everything.');
+  assertBalances(doubtful);
+});
+
+test('a PC-wide figure says so when Windows could not tell which drive each restore point belongs to', async () => {
+  const wide = await buildStatement(
+    scanFixture({ store: storeOfSize(GB) }),
+    sourcesFixture({ platform: 'win32', snapshots: { platform: 'win32', snapshots: [{ id: '{A}', date: null, sizeBytes: null }], totalBytes: 2 * GB, scope: 'machine' } }),
+  );
+  const line = lineOf(wide, 'snapshots');
+  assert.equal(line.bytes, 2 * GB);
+  assert.equal(line.label, 'Restore points', 'the Windows word, as a label');
+  assert.ok(line.notes.some((n) => /every drive of this PC/.test(n)), line.notes.join(' | '));
+  const scoped = await buildStatement(
+    scanFixture({ store: storeOfSize(GB) }),
+    sourcesFixture({ platform: 'win32', snapshots: { platform: 'win32', snapshots: [{ id: '{A}', date: null, sizeBytes: null }], totalBytes: 2 * GB, scope: 'volume' } }),
+  );
+  assert.deepEqual(lineOf(scoped, 'snapshots').notes, [], 'scoped to the drive: nothing to warn about');
+  assert.match(lineOf(scoped, 'snapshots').detail, /1 restore point holds space no folder scan can see/);
+});

@@ -1,5 +1,71 @@
 # TreeMap — session handoff
 
+## Session 12 — Windows says so in Windows words: issue #33 (6 September 2026)
+
+Root cause, from the code: `snapshotAccounting.ts`'s Windows branch ran
+`vssadmin list shadowstorage` and searched its output for the ENGLISH label
+"Used Shadow Copy Storage space:" with `parseFloat` — a Portuguese Windows
+prints "Espaço de armazenamento de cópias de sombra usado: 7,98 GB" (label
+translated, comma decimal), so nothing matched; vssadmin also refuses to run
+unelevated, and the raw error was the receipt's reason. The repo's own
+`src/platform/windows/vss.ts` already did the right thing for shadow COPIES
+(CIM + JSON, "§10 bans regex over human output"); the accounting service had
+never been brought in line. (The reporter saw 7,98 GB from vssadmin at one
+moment and 9,335,943,168 bytes from CIM at another — two readings, not a
+contradiction.)
+
+Fix: `vss.ts` gained `STORAGE_SCRIPT` — `Win32_ShadowStorage` for the bytes,
+`Win32_ShadowCopy` for the count, `Win32_Volume` for the GUID → drive-letter
+map, `IsInRole(Administrator)` for elevation as a boolean, every step in its
+own `try` (ConstrainedLanguage mode forbids the WindowsIdentity type, and a
+script that dies prints a localised error), dates as ISO text (Windows
+PowerShell 5.1 otherwise serialises `\/Date(ms)\/`, now also parsed),
+`-OperationTimeoutSec 10` so a wedged VSS fails as data — and a pure
+`mapShadowStorage`. `snapshotAccounting.ts` maps it with
+`windowsSnapshotsFrom(m, mountPoint)`: scoped to the receipt's drive when the
+map allows (`scope: 'volume'`, else `'machine'` and the receipt says so), a
+measured figure kept even when no restore point is listed, `NEEDS_ADMIN` only
+for a denial (or plain silence) while not an administrator, a standard user
+shown nothing told "may not be the whole picture" rather than zero, a failed
+listing never read as an empty one, and `ELEVATE_HOW` — the one shared, plain
+instruction (right-click the tray icon → Quit TreeMap → Run as administrator;
+a copy still in the tray makes the administrator copy close at once; verified
+against electron/main.js's single-instance lock and tray keep-alive).
+`missingGigabytes.ts`: `snapshotLine(sources, mountPoint)` never trades a
+number for a zero, labels the line "Restore points" on Windows, doubts a
+doubtful empty listing; `unscannableLine(scan, plat)` names the platform's fix;
+`sparseLine` names the platform's reserving file and compressor; `verdictFor`
+gives a TRUE example per platform (Windows: compressed / online-only / ReFS
+clones — not hard links, which are one file). `exec.ts` `runText`: a killed
+command says "did not answer within N s" instead of printing its whole command
+line. `compressionAdvisor.ts`: the ffmpeg hint names winget on Windows. UI:
+`platformWord({darwin, win32, other})` in `000-prelude.js` (TDZ-safe), used at
+six sites; the Dashboard shows a measured figure even with no restore point
+listed. `public/index.html` rebuilt.
+
+Tests: `tests/windowsSnapshotAccounting.test.ts` (mapping against the shapes
+ConvertTo-Json produces, every elevation × listing × storage case, drive
+scoping, the wire-format dates, the killed-command message, every word table
+evaluated per platform, no bare Mac sentence left) + five receipt tests in
+`tests/missingGigabytes.test.ts`; `tests/polishUiScan.test.ts`'s first-run
+sandbox carries the two word helpers and asserts all three wordings.
+
+Review fleet (ECC typescript + silent-failure, a Windows/PowerShell adversary,
+a wording reviewer): found the false zero (measured bytes with no restore point
+listed), the swallowed listing failure, the wire-format dates, the uncaught
+probe, the PC-wide sum, the killed-command message, and three untrue
+sentences (hard links, Docker.raw, "every Windows query uses CIM"). All fixed.
+
+Decided NOT to do here, for the owner: ⌘/⌥/⌫ glyphs in the shortcut sheet and
+the lasso hints are shown on Windows (the handlers already accept Ctrl); the UI
+says "Trash" everywhere, never "Recycle Bin" (the MCP/OpenAPI already say
+"Trash / Recycle Bin"); a one-shot elevated measurement (`Start-Process -Verb
+RunAs`) would spare the quit-and-relaunch dance; a CI step that runs the script
+as a standard user (`New-LocalUser`) would settle whether Win32_ShadowCopy lists
+anything to one. HONEST LIMITS: not executed on Windows here; GitHub's Windows
+runners are administrators, so no CI run exercises a standard user — the code
+therefore refuses to read "nothing listed" as a zero for one.
+
 ## Session 11 — the release that lost its installers (6 September 2026)
 
 Issue #32: the v5.0.0 release showed only the two source archives. **What the

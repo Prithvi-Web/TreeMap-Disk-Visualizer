@@ -242,14 +242,21 @@ test('a refused scan is never toasted as a clean success, and the tour refuses t
   assert.equal(toasts.length, 1);
   assert.match(toasts[0], /3 folders could not be read/, 'a partial scan says so in its completion toast');
 
-  const wins = braced('async function tourLoadWins(');
-  const tour: Record<string, unknown> = { step: 'map', wins: [], winIx: 0, unknownReason: '' };
-  const run = new Function('state', 'api', 'tour', 'tourRender', `'use strict'; ${wins} return tourLoadWins;`)(
-    { scanId: 's1', scanRefused: { dirs: 1, root: true, examples: ['/Users/x/Documents'] } }, async () => ({ groups: [] }), tour, noop,
-  ) as () => Promise<void>;
-  await run();
-  assert.equal(tour.step, 'unknown', 'an unread folder is "could not check", never "looks clean"');
-  assert.match(String(tour.unknownReason), /would not let TreeMap look inside|could not be read/i);
+  // The card names the OS that refused (issue #33): the two word helpers ride
+  // along with the function, exactly as they sit in the built page.
+  const wins = [braced('function platformWord('), braced('function refusedFolderWords('), braced('async function tourLoadWins(')].join('\n');
+  const refusedOn = async (system: { platform: string } | undefined) => {
+    const tour: Record<string, unknown> = { step: 'map', wins: [], winIx: 0, unknownReason: '' };
+    const run = new Function('state', 'api', 'tour', 'tourRender', `'use strict'; ${wins} return tourLoadWins;`)(
+      { scanId: 's1', system, scanRefused: { dirs: 1, root: true, examples: ['/Users/x/Documents'] } }, async () => ({ groups: [] }), tour, noop,
+    ) as () => Promise<void>;
+    await run();
+    assert.equal(tour.step, 'unknown', 'an unread folder is "could not check", never "looks clean"');
+    return String(tour.unknownReason);
+  };
+  assert.match(await refusedOn({ platform: 'darwin' }), /^macOS would not let TreeMap look inside this folder, so nothing here has been checked\.$/);
+  assert.match(await refusedOn({ platform: 'win32' }), /^Windows would not let TreeMap look inside this folder, so nothing here has been checked\.$/, 'a Windows user is not told about macOS');
+  assert.match(await refusedOn(undefined), /^TreeMap was not allowed to look inside this folder, so nothing here has been checked\.$/, 'before /api/system has answered, no OS is named');
   const clean: Record<string, unknown> = { step: 'map', wins: [], winIx: 0, unknownReason: '' };
   await (new Function('state', 'api', 'tour', 'tourRender', `'use strict'; ${wins} return tourLoadWins;`)(
     { scanId: 's1', scanRefused: null }, async () => ({ groups: [] }), clean, noop) as () => Promise<void>)();
