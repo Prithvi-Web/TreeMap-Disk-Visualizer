@@ -1,5 +1,47 @@
 # TreeMap — session handoff
 
+## Session 15 — v5.0.1 prepared: every reported issue fixed, the release is the owner's click (7 September 2026)
+
+All four open issues (#32 pipeline, #33 restore points and Windows wording,
+#34 English counts and dates, #35 Disk Topology association) are fixed on main
+and CI is green on every leg, so the unreleased section ships. Its number
+becomes **5.0.1**, not 5.1.0: it holds only Changed and Fixed entries (the
+cursor, and the four fixes), and a patch number is the honest one under the
+semantic versioning the CHANGELOG header promises. Done here:
+`npm version 5.0.1 --no-git-tag-version` (package.json and the two lock nodes
+that describe the app — nothing else in the lock, see the bulk-replace trap in
+Session 11), the CHANGELOG heading dated today, release.yml's comment.
+Verified before handing over: typecheck; build-ui check; the whole suite under
+the default and the Portuguese locale; the release-pipeline tests; a dry run of
+the notes job's decision for a NEW tag with the real files — no release yet →
+create it as a draft whose body is the 5.0.1 CHANGELOG entry followed by
+INSTALL-NOTE with x.y.z filled in — and `npm run build`. Dependencies are
+unchanged since v5.0.0 (only scripts and the version moved in package.json),
+so the installers CI builds are the ones that built green on 3 September.
+
+**Owner's steps, in order.** 1. GitHub Desktop → Push origin (this commit).
+2. Actions → wait for "Tests" to be green on it. 3. While waiting, the #32
+repair — independent, and better landed FIRST so "Latest" cannot be left on
+5.0.0 by a repair that runs later: Actions → Build & Release → Run workflow →
+type `v5.0.0` → Run workflow; about three minutes later v5.0.0 shows nine
+files. 4. GitHub Desktop → History → right-click this commit → Create Tag… →
+`v5.0.1` → Create Tag → Push origin (Desktop pushes the tag with it). The
+workflow creates the release as a DRAFT with the 5.0.1 CHANGELOG entry and the
+install note, builds both installers, checks each by name and size, and
+publishes only then — the guarantee #32 was fixed to give. The web-form path
+(Releases → Draft a new release → Create new tag on publish) also works but
+publishes the page before the files exist, and its "Generate release notes"
+button would replace the CHANGELOG notes with raw commit titles; if it is used,
+leave the notes empty and the pre-release box unticked. 5. About three minutes
+later the release holds nine files; confirm the Releases page shows "Latest"
+on v5.0.1. 6. If a build goes red: a workflow-created release stays a draft;
+use the run's "Re-run failed jobs" first (only the red leg rebuilds, the green
+leg's files stay); "Run workflow" with the tag is for an empty Assets list,
+because a fresh run compares new files against attached ones and a size
+difference stops it until that file is deleted on the release page. Never
+delete a release that has files. 7. Reply to and close #32–#35 (drafts were
+given in chat); the CHANGELOG bullets link each issue.
+
 ## Session 14 — Windows Disk Topology hangs each volume on its disk: issue #35 (6 September 2026)
 
 The report: two Samsung 980 PROs, C: on one and D: on the other, and the
@@ -78,7 +120,10 @@ mapper's `letterOf` refuses anything but a real letter, and `keyOf` drops
 control characters; a fixture with NUL, null and empty letters pins it. The
 pre-fix code had the same filter, so the phantoms were present in v5.0.0 too.
 
-Known limitations left for a later session, none new: a volume mounted only
+Known limitations left for a later session, none new (the earlier note about
+bsdtar's localised month names in `parseBsdtarListing` was wrong and is
+withdrawn: that parser takes the three date fields as opaque tokens, so a
+Portuguese "set." is as good as "Sep"): a volume mounted only
 at a folder (no letter) is not listed, so its disk reads "No volumes on this
 disk." — the script already selects the volume's GUID `Path`, the correct
 join key; a dynamic-disk (LDM) volume has no letter in `Get-Partition` and

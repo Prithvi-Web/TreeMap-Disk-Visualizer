@@ -148,7 +148,7 @@ jobs:
           # in its environment it would otherwise publish on its own — and given
           # the flag twice it does the same, because its option parser turns two
           # values into a list that no longer equals "never". The dist scripts
-          # carry the flag since 5.1.0; older tags, the ones a repair rebuilds,
+          # carry the flag since 5.0.1; older tags, the ones a repair rebuilds,
           # do not, so it is appended only when the checked-out script lacks it.
           # No token is passed here either; only the release steps hold one.
           if node -p "require('./package.json').scripts[process.argv[1]]" "$SCRIPT" | grep -q -- '--publish never'; then

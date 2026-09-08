@@ -10,25 +10,29 @@ Work on TreeMap at `/Users/prithvivinay/Desktop/Claude Code/Treemap`
 vanilla-JS disk-space visualizer with an Apple-dark Liquid Glass design
 language.
 
-**Read `HANDOFF.md` first — the top section ("Session 9") is the current
+**Read `HANDOFF.md` first — the top section ("Session 15") is the current
 state.** Then read `src/ui/README.md` if you will touch anything under
 `src/ui/`. Do not skip these; they contain the traps that cost previous
 sessions the most time.
 
 ## Where things stand
 
-- **v5.0.0 is built, verified inside the asar, and installed** at
-  `/Applications/TreeMap.app`. The previous build is parked at
-  `release/TreeMap-4.2.0-previous.app`.
-- Gate: **2,412 tests · 0 fail · 3 skipped**; `npm run typecheck` clean;
-  `node scripts/build-ui.js --check` matches (112 parts).
-- `package.json` and `package-lock.json` both say **5.0.0**.
-- `CHANGELOG.md` exists for the first time and covers v3.2.1 → 5.0.0.
+- **v5.0.1 is prepared and committed**: `package.json`, the two root nodes of
+  `package-lock.json` and the top `CHANGELOG.md` heading say 5.0.1. The owner
+  pushes and cuts the release by pushing the tag from GitHub Desktop — HANDOFF
+  Session 15 lists the exact clicks and the two web-form buttons to avoid.
+- Gate at that commit: **2,516 tests · 0 fail · 5 skipped** (3 platform, the
+  CI locale self-proof, the Windows-only live topology test); `npm run
+  typecheck` clean; `node scripts/build-ui.js --check` matches (113 parts);
+  the whole suite green under the default and the Portuguese locale.
+- All four GitHub issues (#32–#35) are fixed on main and CI is green on every
+  leg. The v5.0.0 release's installers still need the owner's one
+  Run-workflow click (HANDOFF Session 15, step 3).
 - The working tree is clean and **everything is committed**.
 
 ## The two things that are actually outstanding
 
-**1. v5.0.0 is unpushed.** The owner pushes. After they say "pushed it",
+**1. After the owner says "pushed it",**
 check CI per OS with the unauthenticated jobs endpoint (`gh` is not installed
 and the logs endpoint 403s without admin rights):
 

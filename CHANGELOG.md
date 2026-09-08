@@ -4,96 +4,98 @@ All notable changes to TreeMap are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and TreeMap uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
-## [5.1.0] — 2026-09-06
+## [5.0.1] — 2026-09-07
+
+Every bug reported against 5.0.0 is fixed in this release; the four reports
+are linked below. Numbers and dates now read the English way on every
+machine, and the Windows pages say Windows things.
 
 ### Changed
 
-- **The pointer is TreeMap's own now.** One dot, drawn eight ways — default,
-  clickable, text field, grab, dragging, crosshair, resize and disabled —
-  replacing every operating-system cursor inside the window. It is inverted
-  against the page it sits on: a pale bead on the dark theme, an ink bead on
-  the light one. Each shape also carries a contrast edge in the *opposite*
-  tone, so it stays readable when it lands on a treemap tile its own colour.
-- It is a real cursor image rather than an element drawn to follow the mouse,
-  which is the difference that matters in use: nothing to render each frame,
-  no lag behind your hand, and it cannot vanish while the window is busy. Every
-  hover effect is unchanged — the dot says what kind of thing is under it, and
-  the control's own hover state still says which one.
+- **The mouse pointer inside TreeMap is now TreeMap's own.** Instead of the
+  system arrow, hand and I-beam you see one small dot, drawn eight ways:
+  plain, over something clickable, in a text field, ready to grab, dragging,
+  crosshair, resizing and disabled. It is pale on the dark theme and ink-dark
+  on the light one, and each shape has a thin edge in the opposite shade so
+  it stays visible on a treemap tile of its own colour.
+- The dot is a true system cursor, so it moves exactly with your hand, never
+  lags, and never disappears while TreeMap is busy. Every hover effect is
+  unchanged: the dot tells you what kind of thing is under it, and the
+  control's own highlight still tells you which one.
 
 ### Fixed
 
-- **A release could lose its installers, with no way to get them back.** The
-  installers belong to the release entry on GitHub, not to the version tag, so
-  a release that was deleted and made again came back with an empty Assets
-  list — which is what happened to v5.0.0
+- **A release could lose its installers, with no way to get them back.** On
+  GitHub the download files belong to the release page, not to the version
+  number, so when the v5.0.0 page was deleted and made again it came back
+  with nothing to download
   ([#32](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/issues/32)).
-  The build workflow can now be run by hand for an existing tag (Actions →
-  Build & Release → Run workflow → type the tag) to rebuild that version and
-  re-attach its installers; the install instructions are added to the notes
-  only when they are missing; every upload is checked against the release
-  afterwards, name and size; a build that produces no installer fails the run
-  loudly instead of reporting success with nothing attached; and when the
-  workflow creates the release itself, the notes are taken from this file and
-  the release is published only after both installers are attached and checked.
+  Two things changed. A new release is
+  published only after both installers are attached and checked, one by one,
+  by name and size, so a release with an empty download list is no longer
+  possible. And a release
+  that has lost its files can have them rebuilt and put back (Actions →
+  Build & Release → Run workflow → type the tag). What you will see: every
+  release page lists the macOS and Windows installers.
 - **Windows restore points are measured in every language, and without
-  guessing.** The Missing GB receipt and the Dashboard read the space Windows
-  restore points use by asking Windows for the numbers directly (the same way
-  TreeMap already lists restore points) instead of searching `vssadmin`'s
-  printed table for English labels — on a Portuguese Windows that table reads
-  "Espaço de armazenamento de cópias de sombra usado: 7,98 GB", and nothing
-  was found ([#33](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/issues/33)).
-  The receipt for one drive no longer books another drive's restore points.
-  Windows normally shows that space only to an administrator; when it is
-  withheld, the receipt says so and how to see it: quit TreeMap from its icon in
-  the system tray first, then start it with Run as administrator — if a copy is
-  still running in the tray, the administrator copy closes at once. A standard
-  account that is shown nothing is told that this may not be the whole picture,
-  rather than a confident zero.
-- **Windows and Linux are no longer told about the Mac** in the Dashboard, the
-  Missing GB receipt, the preview pane and the first-run card. "Time Machine
-  recreates these", "granting Full Disk Access usually resolves these", "This
-  Mac", "as far as this Mac records" and "macOS would not let TreeMap look
-  inside this folder" now say the right thing for the system in front of you —
+  guessing.** The Missing GB receipt and the Dashboard now ask Windows for
+  the space its restore points use as plain numbers. Before, TreeMap read the
+  text Windows prints on screen (`vssadmin`) and looked for English labels in
+  it; on a Portuguese Windows that text reads "Espaço de armazenamento de
+  cópias de sombra usado: 7,98 GB", so nothing was found and the receipt
+  showed nothing
+  ([#33](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/issues/33)).
+  The receipt for one drive no longer counts another drive's restore points;
+  when Windows cannot say which drive a restore point belongs to, the receipt
+  says the figure covers the whole PC. Windows normally shows that space only
+  to an administrator. When it is withheld, the receipt says so and tells you
+  how to see it: quit TreeMap from its icon in the system tray, then start it
+  with Run as administrator. The tray step matters: if a copy is still
+  running there, the administrator copy closes at once and you would think
+  nothing happened.
+- **Windows and Linux are no longer told about the Mac** in the Dashboard,
+  the Missing GB receipt, the preview pane and the first-run card. On
+  Windows, TreeMap used to talk about Time Machine, Full Disk Access and
+  "This Mac". Every one of those sentences now names your own system:
   restore points and running as an administrator on Windows, "This PC", and
-  neutral words before TreeMap knows which system it is on. The receipt's line
-  about files that claim more room than they use, and its explanation of why
-  TreeMap's total can exceed the disk's, give Windows and Linux examples instead
-  of Mac ones, and the video re-encoding hint names winget rather than Homebrew.
+  plain words like "this computer" until TreeMap knows which system it is
+  on. The receipt's example of a file that reserves more room than it fills
+  is now a Windows one (WSL's ext4.vhdx) rather than Docker.raw, and the hint
+  for installing the video re-encoder names the Windows tool (winget) instead
+  of the Mac one (Homebrew). This is the other half of the #33 report.
 - **Numbers and dates are written the English way on every machine.** On a
-  Portuguese or German computer TreeMap printed "1.234 shapes" beside "1.2 GB"
-  — the same dot meaning thousands in one number and tenths in the other — and
-  on an Arabic one it printed Arabic-Indic digits inside English sentences,
-  because counts followed the machine's locale while sizes always used an
-  English decimal point
+  Portuguese or German computer TreeMap printed "1.234 shapes" beside
+  "1.2 GB", the same dot meaning thousands in one number and tenths in the
+  other. On an Arabic computer it printed Arabic-Indic digits inside English
+  sentences. Counts had followed the computer's regional settings while sizes
+  always used an English decimal point
   ([#34](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/issues/34)).
-  Every count a person reads, on the page and in the server's messages and
-  reports, is now "1,234" everywhere, and dates read "Sep 6, 2026" rather than
-  "6 de set. de 2026" in the middle of an English sentence. The clock stays
-  your machine's own — 10:31 PM or 22:31, whichever it is set to — and so does
-  the time zone. If your computer is not set to English this is a visible
-  change: TreeMap's numbers and dates now match the English words around them
-  instead of your system's format. The test suite gives the same answer
-  whatever the machine's locale, and runs under a Portuguese locale in CI to
-  keep it that way.
-- **Disk Topology on Windows now shows each drive letter under the drive it is
-  stored on.** On a Windows PC with two or more drives, the Dashboard's Disk
-  Topology card said "No volumes on this disk." under every drive, and C: and
-  D: were listed separately below as if they belonged to no drive
+  Every count TreeMap shows, on screen, in its messages and in exported
+  reports, is now "1,234", and dates read "Sep 6, 2026" rather than
+  "6 de set. de 2026". The clock stays your own, 10:31 PM or 22:31,
+  whichever your computer uses, and so does the time zone. If your computer
+  is not set to English you will notice this: TreeMap's numbers and dates
+  now match the English words around them. TreeMap is now checked on a
+  Portuguese-language computer so this cannot slip back.
+- **Disk Topology on Windows now shows each drive letter under the drive it
+  is stored on.** On a Windows PC with two or more drives, the Dashboard's
+  Disk Topology card said "No volumes on this disk." under every drive. C:
+  and D: were then listed on their own below, as if they belonged to no drive
   ([#35](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/issues/35)).
-  TreeMap only worked out which drive a letter lives on in one rare case, and
-  otherwise used a rule that is right only for a single-drive PC. Now every
-  drive letter is traced to the drive it is stored on. What you will see: C:
-  under the first SSD and D: under the second, each with its own usage bar,
-  and the stray cards gone. Two drives of the same model are told apart as
-  "(Disk 0)" and "(Disk 1)", the numbers Disk Management uses. If your PC uses
-  Storage Spaces — Windows' way of pooling several drives into one — the
-  pooled letter sits under one combined card naming only the drives in that
-  pool, each of those drives says "Part of the pool below.", and a separate
-  boot drive is no longer shown as part of the pool. A drive letter TreeMap
-  cannot place — a locked BitLocker drive's size, a volume Windows reports
-  without a partition — is shown as unknown rather than guessed, and if
-  Windows reports no partition layout at all the card says so. Single-drive
-  PCs look the same as before.
+  TreeMap now asks Windows which drive each letter is stored on. What you
+  will see: C: under the first SSD and D: under the second, each with its own
+  usage bar, and the stray cards gone. Two drives of the same model are told
+  apart as "(Disk 0)" and "(Disk 1)", the same numbers Windows' Disk
+  Management shows. If your PC uses Storage Spaces, Windows' way of pooling
+  several drives into one, the pooled letter sits under one combined card
+  that names only the drives in that pool. Each of those drives says "Part
+  of the pool below.", and the drive Windows starts from is no longer shown
+  as part of the pool. A locked BitLocker drive still appears under its
+  drive, but its size and free space are shown as unknown rather than as 0.
+  A drive letter that Windows does not tie to any drive keeps its own card
+  instead of being guessed onto one, and if Windows does not say which drive
+  any letter lives on, the card says so. Single-drive PCs look the same as
+  before.
 
 ## [5.0.0] — 2026-09-02
 
