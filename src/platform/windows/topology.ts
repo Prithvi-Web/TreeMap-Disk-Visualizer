@@ -38,7 +38,7 @@ import type { LogicalVolumeInfo, PhysicalDiskInfo, VolumeTopology } from '../typ
 export const TOPOLOGY_SCRIPT = String.raw`
 $ErrorActionPreference = 'SilentlyContinue'
 $disks    = @(Get-Disk | Select-Object Number, FriendlyName, Size, BusType, UniqueId, SerialNumber)
-$volumes  = @(Get-Volume | Where-Object { $_.DriveLetter -and ([string]$_.DriveType) -ne 'CD-ROM' } |
+$volumes  = @(Get-Volume | Where-Object { $_.DriveLetter -match '^[A-Za-z]$' -and ([string]$_.DriveType) -ne 'CD-ROM' } |
                Select-Object DriveLetter, FileSystemLabel, FileSystem, DriveType, Size, SizeRemaining, Path)
 $physical = @(Get-PhysicalDisk | Select-Object DeviceId, FriendlyName, Size, MediaType, UniqueId, SerialNumber)
 $virtual  = @(Get-VirtualDisk | ForEach-Object {
@@ -49,7 +49,7 @@ $virtual  = @(Get-VirtualDisk | ForEach-Object {
     PhysicalDiskIds = @($vd | Get-PhysicalDisk | ForEach-Object { [string]$_.DeviceId })
   }
 })
-$partMap  = @(Get-Partition | Where-Object { $_.DriveLetter } |
+$partMap  = @(Get-Partition | Where-Object { $_.DriveLetter -match '^[A-Za-z]$' } |
                Select-Object DiskNumber, DriveLetter)
 [pscustomobject]@{
   disks = $disks; volumes = $volumes; physical = $physical; virtual = $virtual; partitions = $partMap
@@ -103,10 +103,21 @@ export interface WindowsTopologyDoc {
   partitions?: PsPartition | PsPartition[] | null;
 }
 
-/** Identifiers as keys: trimmed, case-folded, and empty means none. */
+/** Identifiers as keys: control characters dropped, trimmed, case-folded, and empty means none. */
 function keyOf(id: string | number | null | undefined): string | null {
-  const s = id === null || id === undefined ? '' : String(id).trim().toUpperCase();
+  // eslint-disable-next-line no-control-regex
+  const s = id === null || id === undefined ? '' : String(id).replace(/[\u0000-\u001f]/g, '').trim().toUpperCase();
   return s === '' ? null : s;
+}
+/**
+ * A drive letter, or null. A volume without one carries the NUL character in
+ * DriveLetter, which PowerShell's `Where-Object { $_.DriveLetter }` keeps —
+ * a char is always true to it — so the script matches `^[A-Za-z]$` and this
+ * refuses anything else, in case a serialiser hands the NUL through as
+ * "\u0000", "" or null.
+ */
+function letterOf(letter: string | null | undefined): string | null {
+  return typeof letter === 'string' && /^[A-Za-z]$/.test(letter) ? letter.toUpperCase() : null;
 }
 
 /** "HDD" (code 3) is the only value that positively means spinning media. */
@@ -296,11 +307,15 @@ function placeDisks(disksRaw: PsDisk[], partitions: PsPartition[], virtualRaw: P
 function attributeVolumes(volumesRaw: PsVolume[], partitions: PsPartition[], placement: Placement): LogicalVolumeInfo[] {
   const letterToDisk = new Map<string, number>();
   for (const part of partitions) {
-    const letter = keyOf(part.DriveLetter);
+    const letter = letterOf(part.DriveLetter);
     if (letter !== null && typeof part.DiskNumber === 'number') letterToDisk.set(letter, part.DiskNumber);
   }
-  return volumesRaw.filter((v) => !isOpticalDrive(v.DriveType)).map((v) => {
-    const letter = keyOf(v.DriveLetter) ?? '';
+  // Only lettered, non-optical volumes are in the picture: a recovery or EFI
+  // volume has no letter and is not what the panel is about.
+  const lettered = volumesRaw
+    .map((v) => ({ v, letter: letterOf(v.DriveLetter) }))
+    .filter((x): x is { v: PsVolume; letter: string } => x.letter !== null && !isOpticalDrive(x.v.DriveType));
+  return lettered.map(({ v, letter }) => {
     const diskNumber = letterToDisk.get(letter);
     const known = diskNumber === undefined ? undefined : placement.backingByNumber.get(diskNumber);
     // A letter the partition map does not know: when the map is empty it may
@@ -316,9 +331,9 @@ function attributeVolumes(volumesRaw: PsVolume[], partitions: PsPartition[], pla
     const size = typeof v.Size === 'number' && v.Size > 0 ? v.Size : null;
     const remaining = isReadableFilesystem(v.FileSystem) && typeof v.SizeRemaining === 'number' ? v.SizeRemaining : null;
     return {
-      id: letter ? `${letter}:` : (v.FileSystemLabel ?? 'volume'),
-      name: v.FileSystemLabel || (letter ? `${letter}:` : null),
-      mountPoint: letter ? `${letter}:\\` : null,
+      id: `${letter}:`,
+      name: v.FileSystemLabel || `${letter}:`,
+      mountPoint: `${letter}:\\`,
       filesystem: v.FileSystem ?? null,
       sizeBytes: size,
       freeBytes: remaining,

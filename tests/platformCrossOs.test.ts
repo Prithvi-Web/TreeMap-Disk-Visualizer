@@ -644,9 +644,10 @@ test('windows: the mechanism names every cmdlet the answer came from', () => {
 test('windows: the topology script carries the identifiers the mapper joins on, and asks for a space\'s parts by association', () => {
   assert.match(TOPOLOGY_SCRIPT, /Get-Disk \| Select-Object Number, FriendlyName, Size, BusType, UniqueId, SerialNumber/);
   assert.match(TOPOLOGY_SCRIPT, /Get-PhysicalDisk \| Select-Object DeviceId, FriendlyName, Size, MediaType, UniqueId, SerialNumber/);
-  assert.match(TOPOLOGY_SCRIPT, /Get-Volume \| Where-Object \{ \$_\.DriveLetter -and \(\[string\]\$_\.DriveType\) -ne 'CD-ROM' \}/, 'a disc in the drive is not a volume on a disk');
+  assert.match(TOPOLOGY_SCRIPT, /Get-Volume \| Where-Object \{ \$_\.DriveLetter -match '\^\[A-Za-z\]\$' -and \(\[string\]\$_\.DriveType\) -ne 'CD-ROM' \}/, 'a real letter, and a disc in the drive is not a volume on a disk');
+  assert.doesNotMatch(TOPOLOGY_SCRIPT, /Where-Object \{ \$_\.DriveLetter \}/, 'the truthiness filter keeps letterless volumes: [char]0 is true in PowerShell');
   assert.match(TOPOLOGY_SCRIPT, /Select-Object DriveLetter, FileSystemLabel, FileSystem, DriveType, Size, SizeRemaining, Path/);
-  assert.match(TOPOLOGY_SCRIPT, /Get-Partition \| Where-Object \{ \$_\.DriveLetter \} \|\s+Select-Object DiskNumber, DriveLetter/);
+  assert.match(TOPOLOGY_SCRIPT, /Get-Partition \| Where-Object \{ \$_\.DriveLetter -match '\^\[A-Za-z\]\$' \} \|\s+Select-Object DiskNumber, DriveLetter/, 'a real letter — a NUL char is true to Where-Object');
   assert.match(TOPOLOGY_SCRIPT, /DiskNumber = \(\$vd \| Get-Disk \| Select-Object -First 1\)\.Number/, 'the disk a space presents, by CIM association');
   assert.match(TOPOLOGY_SCRIPT, /PhysicalDiskIds = @\(\$vd \| Get-PhysicalDisk \| ForEach-Object \{ \[string\]\$_\.DeviceId \}\)/, 'the drives beneath a space, by CIM association');
   assert.match(TOPOLOGY_SCRIPT, /ConvertTo-Json -Depth 5 -Compress/);
@@ -781,6 +782,30 @@ test('windows: a letter the partition map does not know is unplaced even on a on
   const byLetter = Object.fromEntries(topo.logicalVolumes.map((v) => [v.id, v]));
   assert.deepEqual(byLetter['C:'].physicalDiskIds, ['physical:0']);
   assert.deepEqual(byLetter['E:'].physicalDiskIds, [], 'the partition map knows C: and not E:, so E: is not an ordinary partition');
+});
+
+test('windows: letterless volumes and partitions never reach the picture, however the NUL letter was serialised', () => {
+  // A recovery or EFI volume carries the NUL character as its DriveLetter.
+  // PowerShell's Where-Object keeps it (a char is always true), pwsh serialises
+  // it as "\u0000", Windows PowerShell may hand it through as null or "".
+  const topo = mapWindowsTopology({
+    disks: [{ Number: 0, UniqueId: 'eui.AAAA' }, { Number: 1, UniqueId: 'eui.BBBB' }],
+    physical: [{ DeviceId: '0', MediaType: 'SSD', UniqueId: 'eui.AAAA' }, { DeviceId: '1', MediaType: 'HDD', UniqueId: 'eui.BBBB' }],
+    volumes: [
+      { DriveLetter: 'C', FileSystem: 'NTFS', Size: 1_000_000_000_000, SizeRemaining: 400_000_000_000 },
+      { DriveLetter: '\u0000', FileSystemLabel: 'Recovery', FileSystem: 'NTFS', Size: 1_000_000_000, SizeRemaining: 100_000_000 },
+      { DriveLetter: null, FileSystemLabel: 'SYSTEM', FileSystem: 'FAT32', Size: 100_000_000, SizeRemaining: 70_000_000 },
+      { DriveLetter: '', FileSystem: 'NTFS', Size: 500_000_000, SizeRemaining: 100_000_000 },
+    ],
+    partitions: [
+      { DiskNumber: 0, DriveLetter: 'C' },
+      { DiskNumber: 0, DriveLetter: '\u0000' },
+      { DiskNumber: 1, DriveLetter: '\u0000' },
+      { DiskNumber: 1, DriveLetter: null },
+    ],
+  });
+  assert.deepEqual(topo.logicalVolumes.map((v) => v.id), ['C:'], 'no phantom "\\u0000:" or label-named volume');
+  assert.deepEqual(topo.logicalVolumes[0].physicalDiskIds, ['physical:0'], 'and the NUL partitions did not pin anything to disk 1');
 });
 
 test('windows: a disc in the drive is not a volume on any disk', () => {

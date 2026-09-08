@@ -53,11 +53,30 @@ five cmdlets"; "recorded shapes" for hand-built fixtures; a stale pointer to
 and lsblk round-trips run in CI. The PowerShell claims the script rests on (a
 virtual disk piped by value into `Get-Disk` and `Get-PhysicalDisk`, the three
 identifier keys, enum serialisation, non-elevated access) went to a
-fact-checker with web access: the first run stalled
-without a report and the second had not reported when this was committed, so
-those claims stand as reasoned from the cmdlets' documented parameters, not as
-verified; the live Windows test is the check that will actually run. Append
-the verdicts here when they arrive.
+fact-checker with web access (the first run stalled
+for 600 s with no report; the second, time-boxed to eight lookups, delivered).
+VERIFIED against Microsoft Learn: `Get-Disk -VirtualDisk` and
+`Get-PhysicalDisk -VirtualDisk` both accept the space by value from the
+pipeline and return the disk it presents / "the physical disks used by the
+virtual disk" (not the pool, which is `-StoragePool`); `SerialNumber` is a
+documented parameter of both cmdlets. PLAUSIBLE, UNDOCUMENTED: DeviceId =
+Number (strongly implied: `Get-Disk -Number` carries the alias `DeviceId` and
+binds it from the pipeline; no `-DeviceNumber` parameter exists, so do not
+cite one); UniqueId equality (both are the same VPD page 0x83 identifier with
+the same precedence, but equality is stated nowhere, and USB bridges and
+virtual controllers are where the formats can diverge, hence the three-deep
+fallback); enum serialisation (ConvertTo-Json writes .NET enums as numbers in
+5.1 and 7; the mapper accepts names and codes); and non-elevated access to
+the five `Get-*` cmdlets, which no doc page addresses and which CI cannot
+test because the runner is an administrator. FALSE, and fixed in the
+follow-up commit: `Where-Object { $_.DriveLetter }` does NOT drop letterless
+volumes. PowerShell's `IsTrue` treats a char, NUL included, as true (read
+from LanguagePrimitives.cs), so recovery and EFI volumes reached the mapper
+with a NUL letter, duplicate ids, and under pwsh a partition pin to whichever
+letterless partition came last. Both pipelines now match `^[A-Za-z]$`, the
+mapper's `letterOf` refuses anything but a real letter, and `keyOf` drops
+control characters; a fixture with NUL, null and empty letters pins it. The
+pre-fix code had the same filter, so the phantoms were present in v5.0.0 too.
 
 Known limitations left for a later session, none new: a volume mounted only
 at a folder (no letter) is not listed, so its disk reads "No volumes on this
@@ -66,6 +85,12 @@ join key; a dynamic-disk (LDM) volume has no letter in `Get-Partition` and
 shows as a loose card; a mounted VHDX is listed as a peer of real drives
 (BusType "File Backed Virtual" is fetched and discarded); the POOL card's
 capacity sums volume sizes, which overstates a thin-provisioned space.
+
+CI on the pushed commit (76a509d, run 34181583574): all four legs green,
+Windows included — so the live round-trip has now run once on a real Windows
+machine and held: Get-Partition named the system drive's disk, the disk matched
+its hardware by one of the three keys, and no `disk:N` stand-in was needed.
+That is one plain-disk VM; the pooled path remains fixture-only.
 
 Tests: 18 new — the reporter's machine, a boot SSD beside a mirror with a hot
 spare and an unplaced letter, identifier precedence, shared identifiers, the
