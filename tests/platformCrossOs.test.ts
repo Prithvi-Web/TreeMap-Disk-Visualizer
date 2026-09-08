@@ -9,7 +9,7 @@ import { mapLsblk, mapZpool } from '../src/platform/linux/topology';
 import { parseSubvolumeList } from '../src/platform/linux/btrfs';
 import { addThunarAction, removeThunarAction, nautilusScript, xmlEscape } from '../src/platform/linux/shellIntegration';
 import { parseZoneIdentifier, hostOf as winHostOf } from '../src/platform/windows/zoneIdentifier';
-import { mapWindowsTopology } from '../src/platform/windows/topology';
+import { mapWindowsTopology, readWindowsTopologyDoc, TOPOLOGY_SCRIPT } from '../src/platform/windows/topology';
 import {
   isCloudPlaceholder,
   isSparse,
@@ -37,11 +37,12 @@ import { asArray } from '../src/platform/windows/powershell';
  * the awkward ones (ConvertTo-Json collapsing a one-element array, volume GUID
  * paths, localised output avoided by choosing CIM over vssadmin).
  *
- * The remaining round-trips — does RmGetList actually return a process name,
- * does lsblk actually accept -O — run in CI on windows-latest and ubuntu-latest
- * (.github/workflows/test.yml). That is the honest division: logic is proven
- * here, syscalls are proven there, and nothing is claimed to be verified that
- * is not.
+ * The remaining round-trips run in CI only where a test is gated to that OS
+ * (.github/workflows/test.yml has windows-latest and ubuntu-latest legs). Today
+ * that is the Windows topology live test below; RmGetList and `lsblk -O` are
+ * still checked for the shape of the script and the argv only. That is the
+ * honest division: logic is proven here, a syscall is proven there only when
+ * a live test says so, and nothing is claimed to be verified that is not.
  */
 
 const mkTmp = (): Promise<string> => fsp.mkdtemp(path.join(os.tmpdir(), 'tm-xos-'));
@@ -475,9 +476,10 @@ test('windows: a volume missing size figures reports unknown usage, not zero', (
     volumes: { DriveLetter: 'C', FileSystem: 'NTFS' },
   });
   assert.equal(topo.logicalVolumes[0].usedBytes, null);
+  assert.deepEqual(topo.logicalVolumes[0].physicalDiskIds, ['physical:0'], 'one disk shown and no partition map: the volume can only be there');
 });
 
-test('windows: a Storage Spaces volume is attributed to every disk in the pool', () => {
+test('windows: a Storage Spaces volume is attributed to every unclaimed disk when the association names none', () => {
   const topo = mapWindowsTopology({
     physical: [
       { DeviceId: '0', FriendlyName: 'HDD 1', MediaType: 'HDD' },
@@ -499,6 +501,323 @@ test('windows: a Storage Spaces volume is attributed to every disk in the pool',
 test('windows: MediaType "Unspecified" reports unknown, never "not rotational"', () => {
   const topo = mapWindowsTopology({ physical: { DeviceId: '0', MediaType: 'Unspecified' } });
   assert.equal(topo.physicalDisks[0].rotational, null);
+});
+
+/* Issue #35: two Samsung 980 PROs, C: on one and D: on the other, and the
+   panel said "No volumes on this disk." under both while listing C: and D: as
+   loose "SIMPLE" cards. The mapper only consulted the partition → disk map
+   when Get-PhysicalDisk had returned nothing, and otherwise hung the volumes
+   on the hardware only when there was exactly one disk — so every multi-disk
+   Windows machine without a pool orphaned every volume, and a one-disk laptop
+   (and the CI runner) hid it. */
+const REPORTER_35 = {
+  disks: [
+    { Number: 0, FriendlyName: 'Samsung SSD 980 PRO 2TB', Size: 2_000_398_934_016, BusType: 'NVMe', UniqueId: 'eui.002538B321B0AAAA' },
+    { Number: 1, FriendlyName: 'Samsung SSD 980 PRO 2TB', Size: 2_000_398_934_016, BusType: 'NVMe', UniqueId: 'eui.002538B321B0BBBB' },
+  ],
+  physical: [
+    { DeviceId: '0', FriendlyName: 'Samsung SSD 980 PRO 2TB', Size: 2_000_398_934_016, MediaType: 'SSD', UniqueId: 'eui.002538B321B0AAAA' },
+    { DeviceId: '1', FriendlyName: 'Samsung SSD 980 PRO 2TB', Size: 2_000_398_934_016, MediaType: 'SSD', UniqueId: 'eui.002538B321B0BBBB' },
+  ],
+  volumes: [
+    { DriveLetter: 'C', FileSystem: 'NTFS', Size: 1_999_000_000_000, SizeRemaining: 365_500_000_000 },
+    { DriveLetter: 'D', FileSystem: 'NTFS', Size: 1_999_000_000_000, SizeRemaining: 299_700_000_000 },
+  ],
+  partitions: [{ DiskNumber: 0, DriveLetter: 'C' }, { DiskNumber: 1, DriveLetter: 'D' }],
+};
+
+test('windows: two SSDs, two volumes — each volume hangs on the disk its partition lives on (issue #35)', () => {
+  const topo = mapWindowsTopology(REPORTER_35);
+  assert.equal(topo.physicalDisks.length, 2, 'two drives, no pool');
+  const byLetter = Object.fromEntries(topo.logicalVolumes.map((v) => [v.id, v]));
+  assert.deepEqual(byLetter['C:'].physicalDiskIds, ['physical:0'], 'C: is on disk 0');
+  assert.deepEqual(byLetter['D:'].physicalDiskIds, ['physical:1'], 'D: is on disk 1');
+  assert.equal(byLetter['C:'].kind, 'simple');
+  for (const v of topo.logicalVolumes) {
+    for (const id of v.physicalDiskIds) assert.ok(topo.physicalDisks.some((d) => d.id === id), `${v.id} names a disk that is shown: ${id}`);
+  }
+  assert.equal(topo.physicalDisks[0].rotational, false, 'the hardware facts still come from Get-PhysicalDisk');
+  assert.deepEqual(topo.physicalDisks.map((d) => d.name), ['Samsung SSD 980 PRO 2TB (Disk 0)', 'Samsung SSD 980 PRO 2TB (Disk 1)'], 'two of one model are told apart by the number Disk Management uses');
+});
+
+test('windows: a boot SSD beside a Storage Spaces mirror — C: stays on the SSD, D: spans the two mirror members only', () => {
+  const topo = mapWindowsTopology({
+    disks: [
+      { Number: 0, FriendlyName: 'WD Blue SN580', Size: 1_000_204_886_016, BusType: 'NVMe', UniqueId: 'eui.E8238FA6BF530001' },
+      { Number: 3, FriendlyName: 'Mirror', Size: 4_000_000_000_000, BusType: 'Storage Spaces', UniqueId: '{9f7c1e2a-0000-4000-8000-000000000003}' },
+    ],
+    physical: [
+      { DeviceId: '0', FriendlyName: 'WD Blue SN580', Size: 1_000_204_886_016, MediaType: 'SSD', UniqueId: 'eui.E8238FA6BF530001' },
+      { DeviceId: '1', FriendlyName: 'WDC WD40EFRX', Size: 4_000_787_030_016, MediaType: 'HDD', UniqueId: '5000CCA0BEC2D111' },
+      { DeviceId: '2', FriendlyName: 'WDC WD40EFRX', Size: 4_000_787_030_016, MediaType: 'HDD', UniqueId: '5000CCA0BEC2D222' },
+      // A hot spare: in the pool, so Get-Disk never lists it, but not beneath the mirror.
+      { DeviceId: '5', FriendlyName: 'WDC WD40EFRX', Size: 4_000_787_030_016, MediaType: 'HDD', UniqueId: '5000CCA0BEC2D555' },
+    ],
+    virtual: { FriendlyName: 'Mirror', Size: 4_000_000_000_000, ResiliencySettingName: 'Mirror', DiskNumber: 3, PhysicalDiskIds: ['1', '2'] },
+    volumes: [
+      { DriveLetter: 'C', FileSystem: 'NTFS', Size: 999_000_000_000, SizeRemaining: 400_000_000_000 },
+      { DriveLetter: 'D', FileSystem: 'ReFS', Size: 3_990_000_000_000, SizeRemaining: 1_000_000_000_000 },
+      // A volume the partition query did not name while it named the others.
+      { DriveLetter: 'E', FileSystem: 'NTFS', Size: 10_000_000_000, SizeRemaining: 1_000_000_000 },
+    ],
+    partitions: [{ DiskNumber: 0, DriveLetter: 'C' }, { DiskNumber: 3, DriveLetter: 'D' }],
+  });
+  assert.equal(topo.physicalDisks.length, 4, 'four drives — the virtual disk is not hardware and is not listed as a fifth');
+  const byLetter = Object.fromEntries(topo.logicalVolumes.map((v) => [v.id, v]));
+  assert.deepEqual(byLetter['C:'].physicalDiskIds, ['physical:0'], 'the boot volume is not smeared across the pool');
+  assert.equal(byLetter['C:'].kind, 'simple');
+  assert.deepEqual(byLetter['D:'].physicalDiskIds.slice().sort(), ['physical:1', 'physical:2'], 'the mirror volume spans its two members — not the SSD, not the hot spare');
+  assert.equal(byLetter['D:'].kind, 'storage-spaces');
+  assert.deepEqual(byLetter['E:'].physicalDiskIds, [], 'a letter the partition map does not know, on a machine with two places to be: shown unplaced, never guessed onto the pool');
+  assert.equal(byLetter['E:'].kind, 'simple');
+  assert.deepEqual(topo.physicalDisks.filter((d) => d.name?.startsWith('WDC')).map((d) => d.name), ['WDC WD40EFRX (Disk 1)', 'WDC WD40EFRX (Disk 2)', 'WDC WD40EFRX (Disk 5)'], 'three of one model, told apart');
+});
+
+test('windows: a disk whose bus says Storage Spaces is a space even when the association named nothing', () => {
+  const topo = mapWindowsTopology({
+    disks: [
+      { Number: 0, FriendlyName: 'Boot SSD', UniqueId: 'eui.S' },
+      { Number: 3, FriendlyName: 'Mirror', Size: 4_000_000_000_000, BusType: 'Storage Spaces', UniqueId: '{9f7c1e2a-0000-4000-8000-000000000003}' },
+    ],
+    physical: [{ DeviceId: '0', MediaType: 'SSD', UniqueId: 'eui.S' }, { DeviceId: '1', MediaType: 'HDD', UniqueId: 'A' }, { DeviceId: '2', MediaType: 'HDD', UniqueId: 'B' }],
+    virtual: { FriendlyName: 'Mirror', Size: 4_000_000_000_000, ResiliencySettingName: 'Mirror' },
+    volumes: [{ DriveLetter: 'C', FileSystem: 'NTFS' }, { DriveLetter: 'D', FileSystem: 'ReFS' }],
+    partitions: [{ DiskNumber: 0, DriveLetter: 'C' }, { DiskNumber: 3, DriveLetter: 'D' }],
+  });
+  const byLetter = Object.fromEntries(topo.logicalVolumes.map((v) => [v.id, v]));
+  assert.deepEqual(byLetter['D:'].physicalDiskIds.slice().sort(), ['physical:1', 'physical:2'], 'the drives no plain disk owns — not the boot SSD');
+  assert.equal(byLetter['D:'].kind, 'storage-spaces');
+  assert.deepEqual(byLetter['C:'].physicalDiskIds, ['physical:0']);
+  assert.equal(topo.physicalDisks.length, 3, 'the space is not shown as a fourth, volume-less "disk:3"');
+  assert.match(topo.mechanism, /Get-VirtualDisk/);
+});
+
+test('windows: a disk is matched to its hardware by UniqueId first, and by DeviceId = Number when UniqueIds are absent', () => {
+  // UniqueIds agree, DeviceIds are deliberately crossed: the UniqueId must win.
+  const crossed = mapWindowsTopology({
+    disks: [{ Number: 0, UniqueId: 'eui.AAAA' }, { Number: 1, UniqueId: 'eui.BBBB' }],
+    physical: [{ DeviceId: '1', FriendlyName: 'A', MediaType: 'SSD', UniqueId: 'eui.AAAA' }, { DeviceId: '0', FriendlyName: 'B', MediaType: 'HDD', UniqueId: 'eui.BBBB' }],
+    volumes: [{ DriveLetter: 'C', FileSystem: 'NTFS' }],
+    partitions: [{ DiskNumber: 0, DriveLetter: 'C' }],
+  });
+  assert.deepEqual(crossed.logicalVolumes[0].physicalDiskIds, ['physical:1'], 'disk 0 is the hardware whose UniqueId it shares');
+  // No UniqueIds anywhere (an older Storage module): the device number is the key.
+  const byNumber = mapWindowsTopology({
+    disks: [{ Number: 0 }, { Number: 1 }],
+    physical: [{ DeviceId: '0', MediaType: 'SSD' }, { DeviceId: '1', MediaType: 'HDD' }],
+    volumes: [{ DriveLetter: 'D', FileSystem: 'NTFS' }],
+    partitions: [{ DiskNumber: 1, DriveLetter: 'D' }],
+  });
+  assert.deepEqual(byNumber.logicalVolumes[0].physicalDiskIds, ['physical:1']);
+});
+
+test('windows: a disk the hardware list cannot be matched to still carries its volumes, as itself', () => {
+  const topo = mapWindowsTopology({
+    disks: [{ Number: 5, FriendlyName: 'Mystery Disk', Size: 500_000_000_000, UniqueId: 'vendor-specific-1' }],
+    physical: [{ DeviceId: '0', FriendlyName: 'Some SSD', MediaType: 'SSD', UniqueId: 'eui.CCCC' }],
+    volumes: [{ DriveLetter: 'E', FileSystem: 'exFAT', Size: 499_000_000_000, SizeRemaining: 100_000_000_000 }],
+    partitions: [{ DiskNumber: 5, DriveLetter: 'E' }],
+  });
+  assert.deepEqual(topo.logicalVolumes[0].physicalDiskIds, ['disk:5'], 'never orphaned when the partition map knows the disk');
+  const own = topo.physicalDisks.find((d) => d.id === 'disk:5');
+  assert.ok(own, 'the disk the volume lives on is shown');
+  assert.equal(own!.name, 'Mystery Disk');
+  assert.equal(own!.rotational, null, 'no hardware match, so no claim about the media');
+  assert.ok(topo.physicalDisks.some((d) => d.id === 'physical:0'), 'the unmatched hardware is still listed — it is what the OS reports');
+  // A disk the partition map names but Get-Disk did not list: no friendly name to
+  // show, so it carries the name Disk Management would give it, never its raw id.
+  const nameless = mapWindowsTopology({
+    physical: [{ DeviceId: '0', MediaType: 'SSD', UniqueId: 'eui.AAAA' }, { DeviceId: '1', MediaType: 'HDD', UniqueId: 'eui.BBBB' }],
+    volumes: { DriveLetter: 'E', FileSystem: 'NTFS' },
+    partitions: { DiskNumber: 5, DriveLetter: 'E' },
+  });
+  assert.deepEqual(nameless.logicalVolumes[0].physicalDiskIds, ['disk:5']);
+  assert.equal(nameless.physicalDisks.find((d) => d.id === 'disk:5')!.name, 'Disk 5');
+});
+
+test('windows: the mechanism names every cmdlet the answer came from', () => {
+  assert.match(mapWindowsTopology(REPORTER_35).mechanism, /^Get-Disk \+ Get-Partition \+ Get-PhysicalDisk \+ Get-Volume$/);
+  const pooled = mapWindowsTopology({ ...REPORTER_35, virtual: { FriendlyName: 'Pool', DiskNumber: 9, PhysicalDiskIds: [] } });
+  assert.match(pooled.mechanism, /Get-VirtualDisk/);
+});
+
+test('windows: the topology script carries the identifiers the mapper joins on, and asks for a space\'s parts by association', () => {
+  assert.match(TOPOLOGY_SCRIPT, /Get-Disk \| Select-Object Number, FriendlyName, Size, BusType, UniqueId, SerialNumber/);
+  assert.match(TOPOLOGY_SCRIPT, /Get-PhysicalDisk \| Select-Object DeviceId, FriendlyName, Size, MediaType, UniqueId, SerialNumber/);
+  assert.match(TOPOLOGY_SCRIPT, /Get-Volume \| Where-Object \{ \$_\.DriveLetter -and \(\[string\]\$_\.DriveType\) -ne 'CD-ROM' \}/, 'a disc in the drive is not a volume on a disk');
+  assert.match(TOPOLOGY_SCRIPT, /Select-Object DriveLetter, FileSystemLabel, FileSystem, DriveType, Size, SizeRemaining, Path/);
+  assert.match(TOPOLOGY_SCRIPT, /Get-Partition \| Where-Object \{ \$_\.DriveLetter \} \|\s+Select-Object DiskNumber, DriveLetter/);
+  assert.match(TOPOLOGY_SCRIPT, /DiskNumber = \(\$vd \| Get-Disk \| Select-Object -First 1\)\.Number/, 'the disk a space presents, by CIM association');
+  assert.match(TOPOLOGY_SCRIPT, /PhysicalDiskIds = @\(\$vd \| Get-PhysicalDisk \| ForEach-Object \{ \[string\]\$_\.DeviceId \}\)/, 'the drives beneath a space, by CIM association');
+  assert.match(TOPOLOGY_SCRIPT, /ConvertTo-Json -Depth 5 -Compress/);
+  assert.match(TOPOLOGY_SCRIPT, /^\$ErrorActionPreference = 'SilentlyContinue'$/m, 'a missing cmdlet degrades to an empty list, never to a crash');
+  assert.doesNotMatch(TOPOLOGY_SCRIPT, /FriendlyName -eq|Where-Object \{ \$_\.FriendlyName/, 'nothing is joined by a display name');
+});
+
+const NOT_WINDOWS = process.platform !== 'win32' && 'the live round-trip needs the Windows Storage module';
+test('windows (live): the system drive\'s partition names its disk, that disk is matched to real hardware, and the volume hangs on it', { skip: NOT_WINDOWS }, async () => {
+  // Issue #35 was masked on one-disk machines. This runs on the CI Windows
+  // runner and checks the two things the mapper assumes about real output:
+  // Get-Partition names a disk number for the system drive, and that disk is
+  // matched to a Get-PhysicalDisk entry by UniqueId or by DeviceId = Number.
+  const doc = await readWindowsTopologyDoc();
+  const letter = (process.env.SystemDrive || 'C:').replace(':', '').toUpperCase();
+  const part = asArray(doc.partitions).find((p) => String(p.DriveLetter ?? '').toUpperCase() === letter);
+  assert.ok(part && typeof part.DiskNumber === 'number', `Get-Partition names the disk under ${letter}: — got ${JSON.stringify(doc.partitions)}`);
+  const disk = asArray(doc.disks).find((d) => d.Number === part!.DiskNumber);
+  assert.ok(disk, `Get-Disk lists disk ${part!.DiskNumber}: ${JSON.stringify(doc.disks)}`);
+  const physical = asArray(doc.physical);
+  assert.ok(physical.length >= 1, 'Get-PhysicalDisk lists the hardware');
+  const norm = (s: unknown) => String(s ?? '').trim().toUpperCase();
+  const byUnique = physical.find((p) => norm(p.UniqueId) !== '' && norm(p.UniqueId) === norm(disk!.UniqueId));
+  const bySerial = physical.find((p) => norm(p.SerialNumber) !== '' && norm(p.SerialNumber) === norm(disk!.SerialNumber));
+  const byNumber = physical.find((p) => String(p.DeviceId) === String(disk!.Number));
+  assert.ok(byUnique || bySerial || byNumber, `disk ${disk!.Number} (UniqueId ${disk!.UniqueId}, serial ${disk!.SerialNumber}) matches no hardware by UniqueId, SerialNumber or DeviceId — physical: ${JSON.stringify(physical.map((p) => [p.DeviceId, p.UniqueId, p.SerialNumber]))}`);
+  const topo = mapWindowsTopology(doc);
+  const vol = topo.logicalVolumes.find((v) => v.id === `${letter}:`);
+  assert.ok(vol, `${letter}: is a volume`);
+  assert.ok(vol!.physicalDiskIds.length >= 1, `${letter}: hangs on a disk`);
+  for (const id of vol!.physicalDiskIds) assert.ok(topo.physicalDisks.some((d) => d.id === id), `${id} is a disk that is shown`);
+  assert.ok(!topo.physicalDisks.some((d) => d.id.startsWith('disk:')), `every disk matched its hardware; a "disk:" entry means the identifier assumption failed here: ${JSON.stringify(topo.physicalDisks)}`);
+});
+
+test('windows: two hardware records that would share an id get distinct ids, so no card shows another disk\'s volumes', () => {
+  const byUnique = mapWindowsTopology({
+    physical: [
+      { DeviceId: null, FriendlyName: 'Generic USB Disk', UniqueId: 'AAAA', MediaType: 'Unspecified' },
+      { DeviceId: null, FriendlyName: 'Generic USB Disk', UniqueId: 'BBBB', MediaType: 'Unspecified' },
+    ],
+  });
+  assert.deepEqual(byUnique.physicalDisks.map((d) => d.id), ['physical:AAAA', 'physical:BBBB']);
+  const bare = mapWindowsTopology({ physical: [{ FriendlyName: 'Disk', MediaType: 'HDD' }, { FriendlyName: 'Disk', MediaType: 'HDD' }] });
+  assert.equal(new Set(bare.physicalDisks.map((d) => d.id)).size, 2, 'even with nothing to name them, two records are two cards');
+});
+
+test('windows: an identifier two records share identifies neither — cloned virtual disks fall through to the device number', () => {
+  // A VHDX copied without Set-VHD -ResetDiskIdentifier: both disks carry the
+  // same UniqueId on both cmdlets. First-match-wins would hang D: on disk 0.
+  const topo = mapWindowsTopology({
+    disks: [{ Number: 0, FriendlyName: 'Msft Virtual Disk', UniqueId: '600224803F5C0000' }, { Number: 1, FriendlyName: 'Msft Virtual Disk', UniqueId: '600224803F5C0000' }],
+    physical: [{ DeviceId: '0', FriendlyName: 'Msft Virtual Disk', UniqueId: '600224803F5C0000' }, { DeviceId: '1', FriendlyName: 'Msft Virtual Disk', UniqueId: '600224803F5C0000' }],
+    volumes: [{ DriveLetter: 'C', FileSystem: 'NTFS' }, { DriveLetter: 'D', FileSystem: 'NTFS' }],
+    partitions: [{ DiskNumber: 0, DriveLetter: 'C' }, { DiskNumber: 1, DriveLetter: 'D' }],
+  });
+  const byLetter = Object.fromEntries(topo.logicalVolumes.map((v) => [v.id, v]));
+  assert.deepEqual(byLetter['C:'].physicalDiskIds, ['physical:0']);
+  assert.deepEqual(byLetter['D:'].physicalDiskIds, ['physical:1']);
+  assert.deepEqual(topo.physicalDisks.map((d) => d.name), ['Msft Virtual Disk (Disk 0)', 'Msft Virtual Disk (Disk 1)'], 'same model, told apart by number');
+});
+
+test('windows: a pool member\'s device number is never taken for a plain disk', () => {
+  // A mirror member died and stays listed; a USB stick then gets the free
+  // disk number 2, and its identifiers match no hardware. Matching "2" to the
+  // dead member would hang the stick's volume on a drive in the pool.
+  const topo = mapWindowsTopology({
+    disks: [
+      { Number: 0, FriendlyName: 'WD Blue SN580', UniqueId: 'eui.E8238FA6BF530001' },
+      { Number: 2, FriendlyName: 'USB Flash Drive', UniqueId: 'USBSTOR\\DISK&VEN_KINGSTON&PROD_DATATRAVELER' },
+      { Number: 9, FriendlyName: 'Mirror', BusType: 'Storage Spaces', UniqueId: '{9f7c1e2a-0000-4000-8000-000000000009}' },
+    ],
+    physical: [
+      { DeviceId: '0', FriendlyName: 'WD Blue SN580', MediaType: 'SSD', UniqueId: 'eui.E8238FA6BF530001' },
+      { DeviceId: '2', FriendlyName: 'WDC WD40EFRX', MediaType: 'HDD', UniqueId: '5000CCA0BEC2D222' },
+      { DeviceId: '3', FriendlyName: 'WDC WD40EFRX', MediaType: 'HDD', UniqueId: '5000CCA0BEC2D333' },
+    ],
+    virtual: { FriendlyName: 'Mirror', ResiliencySettingName: 'Mirror', DiskNumber: 9, PhysicalDiskIds: ['2', '3'] },
+    volumes: [{ DriveLetter: 'C', FileSystem: 'NTFS' }, { DriveLetter: 'E', FileSystem: 'exFAT' }, { DriveLetter: 'D', FileSystem: 'ReFS' }],
+    partitions: [{ DiskNumber: 0, DriveLetter: 'C' }, { DiskNumber: 2, DriveLetter: 'E' }, { DiskNumber: 9, DriveLetter: 'D' }],
+  });
+  const byLetter = Object.fromEntries(topo.logicalVolumes.map((v) => [v.id, v]));
+  assert.deepEqual(byLetter['C:'].physicalDiskIds, ['physical:0']);
+  assert.deepEqual(byLetter['E:'].physicalDiskIds, ['disk:2'], 'the stick stands in for itself');
+  assert.equal(topo.physicalDisks.find((d) => d.id === 'disk:2')!.name, 'USB Flash Drive');
+  assert.deepEqual(byLetter['D:'].physicalDiskIds.slice().sort(), ['physical:2', 'physical:3'], 'the mirror keeps both members');
+});
+
+test('windows: SerialNumber is the second key — a drive whose UniqueIds disagree still finds its hardware', () => {
+  const topo = mapWindowsTopology({
+    disks: [
+      { Number: 0, UniqueId: 'eui.AAAA', SerialNumber: 'S0' },
+      { Number: 2, FriendlyName: 'SanDisk Extreme', UniqueId: 'USBSTOR\\DISK&VEN_SANDISK', SerialNumber: ' 4C530001234567890 ' },
+    ],
+    physical: [
+      { DeviceId: '0', MediaType: 'SSD', UniqueId: 'eui.AAAA', SerialNumber: 'S0' },
+      // The device number deliberately disagrees, so only the serial can place it.
+      { DeviceId: '7', FriendlyName: 'SanDisk Extreme', MediaType: 'SSD', UniqueId: '{4c8e1b2a-0000-4000-8000-000000000007}', SerialNumber: '4C530001234567890' },
+    ],
+    volumes: { DriveLetter: 'E', FileSystem: 'exFAT' },
+    partitions: { DiskNumber: 2, DriveLetter: 'E' },
+  });
+  assert.deepEqual(topo.logicalVolumes[0].physicalDiskIds, ['physical:7']);
+  assert.equal(topo.physicalDisks.length, 2, 'no stand-in was needed');
+});
+
+test('windows: when Windows names no partitions on a multi-disk machine, the volumes stay unplaced and the card is told why', () => {
+  const blind = mapWindowsTopology({ ...REPORTER_35, partitions: [] });
+  for (const v of blind.logicalVolumes) assert.deepEqual(v.physicalDiskIds, [], `${v.id} is not guessed onto a disk`);
+  assert.deepEqual(blind.degraded, {
+    degradedTo: 'Get-Disk + Get-PhysicalDisk + Get-Volume',
+    reason: 'Windows did not say which disk each drive letter lives on, so the volumes are listed without their disks.',
+  });
+  assert.equal(mapWindowsTopology(REPORTER_35).degraded, undefined, 'a complete reading carries no note');
+  const laptop = mapWindowsTopology({
+    disks: { Number: 0, UniqueId: 'eui.AAAA' }, physical: { DeviceId: '0', MediaType: 'SSD', UniqueId: 'eui.AAAA' },
+    volumes: { DriveLetter: 'C', FileSystem: 'NTFS' },
+  });
+  assert.deepEqual(laptop.logicalVolumes[0].physicalDiskIds, ['physical:0'], 'one disk is the only place a volume can be');
+  assert.equal(laptop.degraded, undefined);
+  const noHardware = mapWindowsTopology({ disks: [{ Number: 0, FriendlyName: 'SSD' }, { Number: 1, FriendlyName: 'HDD' }], volumes: { DriveLetter: 'C', FileSystem: 'NTFS' }, partitions: { DiskNumber: 0, DriveLetter: 'C' } });
+  assert.deepEqual(noHardware.logicalVolumes[0].physicalDiskIds, ['disk:0']);
+  assert.match(noHardware.degraded!.reason, /did not describe the drives/);
+  assert.equal(noHardware.degraded!.degradedTo, 'Get-Disk + Get-Partition + Get-Volume');
+});
+
+test('windows: a letter the partition map does not know is unplaced even on a one-disk machine — a mounted ISO is not on the SSD', () => {
+  const topo = mapWindowsTopology({
+    disks: { Number: 0, UniqueId: 'eui.AAAA' }, physical: { DeviceId: '0', MediaType: 'SSD', UniqueId: 'eui.AAAA' },
+    volumes: [{ DriveLetter: 'C', FileSystem: 'NTFS' }, { DriveLetter: 'E', FileSystem: 'UDF', Size: 8_000_000_000, SizeRemaining: 0 }],
+    partitions: { DiskNumber: 0, DriveLetter: 'C' },
+  });
+  const byLetter = Object.fromEntries(topo.logicalVolumes.map((v) => [v.id, v]));
+  assert.deepEqual(byLetter['C:'].physicalDiskIds, ['physical:0']);
+  assert.deepEqual(byLetter['E:'].physicalDiskIds, [], 'the partition map knows C: and not E:, so E: is not an ordinary partition');
+});
+
+test('windows: a disc in the drive is not a volume on any disk', () => {
+  const topo = mapWindowsTopology({
+    disks: { Number: 0, UniqueId: 'eui.AAAA' }, physical: { DeviceId: '0', MediaType: 'SSD', UniqueId: 'eui.AAAA' },
+    volumes: [{ DriveLetter: 'C', FileSystem: 'NTFS' }, { DriveLetter: 'F', DriveType: 'CD-ROM', FileSystem: 'UDF', Size: 8_000_000_000, SizeRemaining: 0 }, { DriveLetter: 'G', DriveType: 5, FileSystem: 'CDFS' }],
+    partitions: { DiskNumber: 0, DriveLetter: 'C' },
+  });
+  assert.deepEqual(topo.logicalVolumes.map((v) => v.id), ['C:']);
+});
+
+test('windows: a locked BitLocker or RAW volume reports no figures rather than 0 B used', () => {
+  const topo = mapWindowsTopology({
+    physical: { DeviceId: '0', MediaType: 'SSD' },
+    volumes: [
+      { DriveLetter: 'E', FileSystem: '', Size: 0, SizeRemaining: 0 },
+      { DriveLetter: 'F', FileSystem: 'RAW', Size: 1_000_000_000_000, SizeRemaining: 0 },
+      { DriveLetter: 'C', FileSystem: 'NTFS', Size: 1_000_000_000_000, SizeRemaining: 400_000_000_000 },
+    ],
+  });
+  const byLetter = Object.fromEntries(topo.logicalVolumes.map((v) => [v.id, v]));
+  assert.deepEqual([byLetter['E:'].sizeBytes, byLetter['E:'].freeBytes, byLetter['E:'].usedBytes], [null, null, null], 'locked: nothing is known');
+  assert.deepEqual([byLetter['F:'].sizeBytes, byLetter['F:'].freeBytes, byLetter['F:'].usedBytes], [1_000_000_000_000, null, null], 'RAW: the size is real, "0 free" is not');
+  assert.equal(byLetter['C:'].usedBytes, 600_000_000_000);
+});
+
+test('windows: the numeric codes behind MediaType and BusType are understood too', () => {
+  const topo = mapWindowsTopology({
+    disks: [{ Number: 0, UniqueId: 'A' }, { Number: 3, BusType: 16, UniqueId: 'V' }],
+    physical: [{ DeviceId: '0', MediaType: 4, UniqueId: 'A' }, { DeviceId: '1', MediaType: 3, UniqueId: 'B' }, { DeviceId: '2', MediaType: '5', UniqueId: 'C' }],
+    volumes: [{ DriveLetter: 'C', FileSystem: 'NTFS' }, { DriveLetter: 'D', FileSystem: 'ReFS' }],
+    partitions: [{ DiskNumber: 0, DriveLetter: 'C' }, { DiskNumber: 3, DriveLetter: 'D' }],
+  });
+  assert.deepEqual(topo.physicalDisks.map((d) => d.rotational), [false, true, false]);
+  const byLetter = Object.fromEntries(topo.logicalVolumes.map((v) => [v.id, v]));
+  assert.equal(byLetter['D:'].kind, 'storage-spaces');
+  assert.deepEqual(byLetter['D:'].physicalDiskIds.slice().sort(), ['physical:1', 'physical:2']);
 });
 
 /* ════════════════════════ Windows: shadow copies ════════════════════════ */

@@ -75,6 +75,25 @@ All notable changes to TreeMap are recorded here. The format follows
   instead of your system's format. The test suite gives the same answer
   whatever the machine's locale, and runs under a Portuguese locale in CI to
   keep it that way.
+- **Disk Topology on Windows now shows each drive letter under the drive it is
+  stored on.** On a Windows PC with two or more drives, the Dashboard's Disk
+  Topology card said "No volumes on this disk." under every drive, and C: and
+  D: were listed separately below as if they belonged to no drive
+  ([#35](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/issues/35)).
+  TreeMap only worked out which drive a letter lives on in one rare case, and
+  otherwise used a rule that is right only for a single-drive PC. Now every
+  drive letter is traced to the drive it is stored on. What you will see: C:
+  under the first SSD and D: under the second, each with its own usage bar,
+  and the stray cards gone. Two drives of the same model are told apart as
+  "(Disk 0)" and "(Disk 1)", the numbers Disk Management uses. If your PC uses
+  Storage Spaces — Windows' way of pooling several drives into one — the
+  pooled letter sits under one combined card naming only the drives in that
+  pool, each of those drives says "Part of the pool below.", and a separate
+  boot drive is no longer shown as part of the pool. A drive letter TreeMap
+  cannot place — a locked BitLocker drive's size, a volume Windows reports
+  without a partition — is shown as unknown rather than guessed, and if
+  Windows reports no partition layout at all the card says so. Single-drive
+  PCs look the same as before.
 
 ## [5.0.0] — 2026-09-02
 

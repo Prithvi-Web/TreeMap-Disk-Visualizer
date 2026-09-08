@@ -1,5 +1,91 @@
 # TreeMap — session handoff
 
+## Session 14 — Windows Disk Topology hangs each volume on its disk: issue #35 (6 September 2026)
+
+The report: two Samsung 980 PROs, C: on one and D: on the other, and the
+Dashboard's Disk Topology said "No volumes on this disk." under both while
+listing C: and D: as loose "SIMPLE" cards. Root cause, from the code
+(`src/platform/windows/topology.ts`, `mapWindowsTopology`): the partition →
+disk map from `Get-Partition` was consulted ONLY when `Get-PhysicalDisk` had
+returned nothing; otherwise a volume was hung on the hardware only when there
+was exactly one disk, and on every other machine `physicalDiskIds` was `[]` by
+construction. The panel groups a volume with no disk under its own key, hence
+the loose cards. One-disk machines — laptops, and the CI Windows runner — hid
+it, which is why the file's old comment claiming a live CI round-trip was both
+false (no such test existed) and would not have caught this if it had.
+
+Fix, pure and unit-tested, in four named phases: `indexHardware` (the
+`Get-PhysicalDisk` records, with distinct ids even when DeviceId and name are
+missing or shared), `placeDisks` (each `Get-Disk` entry matched to its hardware
+by `UniqueId`, then `SerialNumber` — both documented on both cmdlets — then by
+the observed DeviceId = Number correspondence, which Windows does not document
+and which a pool member's DeviceId may never satisfy; an identifier two records
+share identifies neither; a disk matching no hardware stands in for itself as
+`disk:N`, named "Disk N"), `attributeVolumes` (a volume follows its partition's
+disk number; a letter the partition map does not know is UNPLACED — `[]` —
+unless the map is empty and the machine has exactly one place to be; a disc
+drive is not a volume; a locked BitLocker or RAW volume reports null figures,
+not "0 B used") and `withDistinctNames` (two drives of one model become
+"… (Disk 0)" / "… (Disk 1)"). Storage Spaces: the script pipes each
+`Get-VirtualDisk` into `Get-Disk` (the disk it presents) and `Get-PhysicalDisk`
+(the drives beneath it); members unknown → the drives no plain disk claims, and
+if there are none, unplaced. `VolumeTopology.degraded` is new: when Windows
+names no partitions on a multi-disk machine, or no hardware at all, the route
+folds `{ degradedTo, reason }` into the capability note the card already
+renders, so a degraded reading is never mistaken for a clean one. The panel
+itself changed once: a disk that is a member of a pool says "Part of the pool
+below." instead of the #35 sentence, which was false of it. The mechanism
+string names the four cmdlets every answer comes from and appends
+`+ Get-VirtualDisk` only when a space was seen.
+
+Review fleet (ECC typescript-reviewer and silent-failure-hunter, a PowerShell
+fact-checker with web access, a real-world-Windows adversary, a docs reviewer)
+on the first version found, and this version fixes: an unplaced volume on a
+pooled machine credited to the pool (two reviewers, independently — a
+confident wrong answer of exactly the class the fix was meant to remove); the
+partition map failing alone reproducing the reported symptom with no signal;
+duplicate `physical:` ids merging two cards; a cloned virtual disk's shared
+UniqueId hanging D: on disk 0; a dead pool member's number matching a new USB
+stick; a stand-in disk titled by its raw id; enum codes instead of names;
+"No volumes on this disk." under every pool member; the mechanism claim "all
+five cmdlets"; "recorded shapes" for hand-built fixtures; a stale pointer to
+`tests/platform.test.ts`; and this test file's own false claim that RmGetList
+and lsblk round-trips run in CI. The PowerShell claims the script rests on (a
+virtual disk piped by value into `Get-Disk` and `Get-PhysicalDisk`, the three
+identifier keys, enum serialisation, non-elevated access) went to a
+fact-checker with web access: the first run stalled
+without a report and the second had not reported when this was committed, so
+those claims stand as reasoned from the cmdlets' documented parameters, not as
+verified; the live Windows test is the check that will actually run. Append
+the verdicts here when they arrive.
+
+Known limitations left for a later session, none new: a volume mounted only
+at a folder (no letter) is not listed, so its disk reads "No volumes on this
+disk." — the script already selects the volume's GUID `Path`, the correct
+join key; a dynamic-disk (LDM) volume has no letter in `Get-Partition` and
+shows as a loose card; a mounted VHDX is listed as a peer of real drives
+(BusType "File Backed Virtual" is fetched and discarded); the POOL card's
+capacity sums volume sizes, which overstates a thin-provisioned space.
+
+Tests: 18 new — the reporter's machine, a boot SSD beside a mirror with a hot
+spare and an unplaced letter, identifier precedence, shared identifiers, the
+pool-member rule, the serial key, the never-orphan rule and the stand-in's
+name, the bus-type-only space, the degraded note (and its absence on one disk
+and on a complete reading), a mounted ISO on a laptop, a disc in the drive,
+locked BitLocker and RAW figures, numeric enum codes, the script's shape, the
+mechanism string, the panel's pool-member note (dashboardWiring), and the live
+round-trip; 22 of 22 deliberate regressions each turned a test red; the whole
+suite: 2,515 tests, 0 failures. The LIVE round-trip (`readWindowsTopologyDoc`) runs
+only on win32 — the windows-latest leg of test.yml, once this is pushed; it
+has not run yet. If it goes red, read which assertion: the identifier one
+carries the raw UniqueIds, serials and DeviceIds and means the app falls back
+to `disk:N` (volumes still shown); the Get-Partition / Get-Disk /
+Get-PhysicalDisk ones mean the query returned nothing usable there, and a
+multi-disk machine would show unplaced volumes with the degraded note. NOT
+executed on Windows here (macOS); the runner is a one-disk VM, so nothing in
+CI exercises the Storage Spaces association output — that path rests on
+hand-built fixtures until someone with a pool runs it.
+
 ## Session 13 — English numbers and dates on every machine: issue #34 (6 September 2026)
 
 The report: one circlePack test expects "1,234 shapes" and a Portuguese

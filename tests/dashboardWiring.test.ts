@@ -209,6 +209,22 @@ test('topology bars moved onto the kit recipe with the danger exception intact',
   assert.match(fn, /formatBytes\(v\.sizeBytes - v\.usedBytes\)/, 'and is arithmetic on those, never a guess');
 });
 
+test('a pool member without volumes of its own says it is part of the pool, never "No volumes on this disk."', () => {
+  // Issue #35 was filed over that sentence; under a Storage Spaces or RAID
+  // member it is false — the member's bytes are in the combined section below.
+  const src = slice('function topoSection(', 'function wireTopologyActions(');
+  const topoSection = new Function('formatBytes', 'escapeHtml', 'fxBarStyle', 'TOPO_VISIBLE_VOLUMES',
+    `'use strict'; ${src} return topoSection;`)((n: number) => n + ' B', (s: string) => String(s), () => '', 6) as (s: Record<string, unknown>, rank?: number) => string;
+  const member = topoSection({ title: 'WDC WD40EFRX', tag: 'HDD', capacity: 4e12, vols: [], inPool: true });
+  assert.match(member, /Part of the pool below\./);
+  assert.doesNotMatch(member, /No volumes on this disk/);
+  const empty = topoSection({ title: 'Spare', tag: 'HDD', capacity: 4e12, vols: [] });
+  assert.match(empty, /No volumes on this disk\./, 'a disk with nothing on it still says so');
+  const render = slice('function renderTopology(', 'function topoSection(');
+  assert.match(render, /inPool: pooledIds\.has\(d\.id\)/, 'membership comes from the multi-disk group keys');
+  assert.match(render, /key\.includes\('\|'\)/, 'a group key with a separator is a pool');
+});
+
 test('topology rolls its numerals and animates its bars through the shared entries', () => {
   const fn = slice('function renderTopology(', 'function topoSection(');
   assert.match(fn, /FxNum\.rollHtml\(body, sections\.join\(''\) \+ note, 'topo'\)/);

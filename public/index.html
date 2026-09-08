@@ -7054,6 +7054,12 @@ function renderTopology(topo) {
     return (d && d.name) || id;
   };
 
+  // A disk that is a member of a pool holds its share of the pool's volumes,
+  // which the combined section below shows; "no volumes" would be false of it
+  // (issue #35 was filed over that very sentence).
+  const pooledIds = new Set();
+  for (const key of groups.keys()) { if (key.includes('|')) for (const id of key.split('|')) pooledIds.add(id); }
+
   const sections = [];
   for (const d of disks) {
     sections.push(topoSection({
@@ -7061,6 +7067,7 @@ function renderTopology(topo) {
       tag: d.rotational === true ? 'HDD' : d.rotational === false ? 'SSD' : null,
       capacity: d.sizeBytes,
       vols: groups.get(d.id) || [],
+      inPool: pooledIds.has(d.id),
     }, sections.length));
   }
   for (const [key, vols] of groups) {
@@ -7091,7 +7098,7 @@ function renderTopology(topo) {
   wireTopologyActions();
 }
 
-function topoSection({ title, tag, capacity, vols }, rank = 0) {
+function topoSection({ title, tag, capacity, vols, inPool = false }, rank = 0) {
   const known = vols.filter((v) => typeof v.usedBytes === 'number');
   const unknown = vols.length - known.length;
   const used = known.reduce((s, v) => s + v.usedBytes, 0);
@@ -7108,7 +7115,7 @@ function topoSection({ title, tag, capacity, vols }, rank = 0) {
   // Usage the platform could not read is said out loud — an absent number is
   // an answer here, a bar quietly missing those bytes would be a wrong one.
   const caveat = !vols.length
-    ? `<div class="topo-note">No volumes on this disk.</div>`
+    ? `<div class="topo-note">${inPool ? 'Part of the pool below.' : 'No volumes on this disk.'}</div>`
     : !known.length
       ? `<div class="topo-note">This disk’s filesystems don’t report how full they are.</div>`
       : unknown > 0

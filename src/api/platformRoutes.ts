@@ -78,7 +78,10 @@ platformRouter.get('/platform/topology', async (_req: Request, res: Response) =>
   } catch (err) {
     throw new AppError(409, 'CAPABILITY_UNAVAILABLE', err instanceof Error ? err.message : String(err));
   }
-  res.json({ ...topology, capability: state });
+  // A reading that could not place every volume says so through the same
+  // capability note the panel already renders for a fallback mechanism.
+  const { degraded, ...rest } = topology;
+  res.json({ ...rest, capability: degraded ? { ...state, ...degraded } : state });
 });
 
 /**

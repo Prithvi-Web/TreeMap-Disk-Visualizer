@@ -44,7 +44,7 @@ import type {
  * | allocated size | GetCompressedFileSize, batched               | 1    |
  * | placeholders   | NTFS cloud reparse attributes, batched       | 1    |
  * | provenance     | Zone.Identifier ADS — plain file read         | 1    |
- * | topology       | Get-PhysicalDisk / Get-VirtualDisk / Get-Volume | 3 |
+ * | topology       | Get-Disk / Get-Partition / Get-PhysicalDisk / Get-Volume (+ Get-VirtualDisk) | 3 |
  * | snapshots      | Win32_ShadowCopy (+ mklink to read)          | 3    |
  * | SMART          | smartctl --json                              | 3    |
  * | shell menu     | reg.exe under HKCU — no admin                | 3    |
@@ -59,7 +59,7 @@ import type {
  *
  * ⚠ **This file was written on macOS and has never been executed on Windows.**
  * Every pure part (parsers, bit arithmetic, argv construction) is unit-tested
- * in tests/platform.test.ts and runs on every OS; the live round-trips run in
+ * in tests/platformCrossOs.test.ts and runs on every OS; the live round-trips run in
  * CI on `windows-latest`. Anything that turns out to be wrong will surface
  * there rather than silently on a user's machine — and every method degrades to
  * "no information" rather than a wrong answer. Recorded in
@@ -402,7 +402,9 @@ export class WindowsProvider extends BaseProvider {
   }
 
   override async probeVolumeTopology(): Promise<CapabilityState> {
-    return { available: true, mechanism: 'Get-PhysicalDisk + Get-Volume' };
+    // The probe cannot know whether a Storage Space exists; the reading itself
+    // appends Get-VirtualDisk to its mechanism when one does.
+    return { available: true, mechanism: 'Get-Disk + Get-Partition + Get-PhysicalDisk + Get-Volume (+ Get-VirtualDisk with Storage Spaces)' };
   }
 
   override async probeProvenance(): Promise<CapabilityState> {

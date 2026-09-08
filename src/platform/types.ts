@@ -385,6 +385,13 @@ export interface VolumeTopology {
   logicalVolumes: LogicalVolumeInfo[];
   /** Mechanism used, for the capability note. */
   mechanism: string;
+  /**
+   * Set when part of the answer could not be established — for instance
+   * Windows named no partitions, so the volumes could not be placed on their
+   * disks. The route folds it into the capability state the panel renders as
+   * a note, so a degraded reading is never mistaken for a clean one.
+   */
+  degraded?: { degradedTo: string; reason: string };
 }
 
 /* ---------- Snapshot recovery (B4) ---------- */

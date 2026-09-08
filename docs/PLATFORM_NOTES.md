@@ -312,7 +312,7 @@ shipped a confidently wrong answer.
 | Placeholders | NTFS cloud reparse attributes, batched | 1 | — |
 | Provenance | `Zone.Identifier` alternate data stream | 1 | Non-NTFS volume → no record exists |
 | Bulk provenance (v4 §3) | the same stream, read concurrently | 1 | `ENOENT` = genuinely not downloaded; any other error = unknown |
-| Topology | `Get-PhysicalDisk` / `Get-VirtualDisk` / `Get-Volume` | 3 | — |
+| Topology | `Get-Disk` / `Get-Partition` / `Get-PhysicalDisk` / `Get-Volume`, plus `Get-VirtualDisk` for Storage Spaces; a volume is joined to its disk through its partition, a disk to its hardware by `UniqueId`, then `SerialNumber`, then `DeviceId` = disk `Number` | 3 | No partition map → volumes listed without their disks and the card says so. Volumes mounted only at a folder are not listed; dynamic-disk (LDM) volumes show as a loose card |
 | Snapshots | `Win32_ShadowCopy` (+ `mklink` to read) | 3 | System Protection off → stated plainly |
 | SMART | `smartctl --json` | 3 | Not installed → download link shown |
 | Shell menu | `reg.exe` under `HKCU` | 3 | — |
