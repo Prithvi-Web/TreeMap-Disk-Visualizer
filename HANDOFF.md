@@ -42,6 +42,22 @@ difference stops it until that file is deleted on the release page. Never
 delete a release that has files. 7. Reply to and close #32–#35 (drafts were
 given in chat); the CHANGELOG bullets link each issue.
 
+**Outcome (8 September 2026, UTC).** The owner pushed bb58034 (Tests green on
+all four legs), then cut v5.0.1 from the web form: run 34188572577 — notes,
+both builds and publish all green; the release is public, not a pre-release,
+holds the nine files, and `/releases/latest` points at it. Verified from a
+clean download: `latest-mac.yml` and `latest.yml` say 5.0.1 and their sizes
+and sha512 digests match the zip, dmg and Setup exe byte for byte, so the
+in-app updater will offer 5.0.1 to 5.0.0 users. Two things to finish by hand:
+(1) the form was published with text pasted into the notes box, so the notes
+job took its "append" path — the release body is that pasted text plus the
+install note, not the CHANGELOG entry; the fix is Releases → v5.0.1 → Edit →
+replace the body with the output of `decide(null, …)` for 5.0.1 (the exact
+text was handed to the owner as a file) — the install note is already in it,
+so paste the whole thing over everything; (2) the v5.0.0 repair click was
+never made (assets still 0) and #32 is still open; #33–#35 were closed by the
+owner with a reply each.
+
 ## Session 14 — Windows Disk Topology hangs each volume on its disk: issue #35 (6 September 2026)
 
 The report: two Samsung 980 PROs, C: on one and D: on the other, and the
