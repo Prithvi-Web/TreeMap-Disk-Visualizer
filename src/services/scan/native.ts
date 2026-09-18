@@ -31,6 +31,8 @@ const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 const MODULE_FILE = 'treemap_core.node';
 
 let outcome: NativeOutcome | null = null;
+/** The candidate list the cached outcome was decided for; a different list is decided afresh. */
+let outcomeKey: string | null = null;
 
 /** Where a module may live, most specific first. */
 export function nativeCandidates(env: NodeJS.ProcessEnv = process.env): string[] {
@@ -52,9 +54,10 @@ function expectedVersion(): string {
   }
 }
 
-function tryLoad(file: string, expected: string, requireModule: (f: string) => unknown): NativeOutcome {
+function tryLoad(file: string, expected: string, requireModule: (f: string) => unknown, injected: boolean): NativeOutcome {
   const triple = `${process.platform}-${process.arch}`;
-  if (!fs.existsSync(file)) {
+  // An injected loader stands in for the file system too (tests); the real one needs the file to exist.
+  if (!injected && !fs.existsSync(file)) {
     return { available: false, reason: `no native module at ${file} for ${triple}; the legacy engines run instead` };
   }
   let loaded: unknown;
@@ -82,26 +85,30 @@ function tryLoad(file: string, expected: string, requireModule: (f: string) => u
 
 /** Loads the native core once per process; every later call returns the same outcome. */
 export function loadNative(opts: LoadOptions = {}): NativeOutcome {
-  if (outcome && !opts.path && !opts.requireModule) return outcome;
+  const candidates = opts.path ? [opts.path] : nativeCandidates();
+  const key = candidates.join('|');
+  if (outcome && outcomeKey === key) return outcome;
   const expected = opts.expectedVersion ?? expectedVersion();
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const requireModule = opts.requireModule ?? ((f: string): unknown => require(f) as unknown);
-  const candidates = opts.path ? [opts.path] : nativeCandidates();
   const reasons: string[] = [];
   for (const file of candidates) {
-    const result = tryLoad(file, expected, requireModule);
+    const result = tryLoad(file, expected, requireModule, opts.requireModule !== undefined);
     if (result.available) {
       outcome = result;
+      outcomeKey = key;
       return result;
     }
     reasons.push(result.reason);
   }
   const failed: NativeOutcome = { available: false, reason: reasons.join('; ') };
   outcome = failed;
+  outcomeKey = key;
   return failed;
 }
 
 /** Test-only: forget the cached outcome. */
 export function resetNativeForTests(): void {
   outcome = null;
+  outcomeKey = null;
 }
