@@ -12,13 +12,13 @@ Every number here is either measured (with the source named) or a **budget**
 | --- | --- | --- | --- |
 | D1 | Build a **native Rust core**, exposed through **napi-rs**, as a new first engine in front of the existing chain | The existing engines both pay one `lstat` per entry (Node through libuv; gdu inside Go) and top out at ~97k and ~129k entries/s here. Listing a directory in one call measured ~683k entries/s on this Mac (§1) | Yes — this is what the prompt asks for; the repo's own platform policy already ranks "a small N-API addon, prebuilt in CI" above a bundled binary |
 | D2 | **Keep every existing engine**, unchanged, as the fallback chain (`gdu-turbo` → `walker`) and as the correctness oracle | Prompt rules 3 and 13; the equivalence test needs an oracle | — |
-| D3 | **Vendor** the audited macOS walker, arena and BLAKE3 crates from the owner's own TreeMapMobile core into this repository, with provenance, then adapt them (napi instead of UniFFI; Windows and Linux listing added; the review's confirmed defects fixed here with tests) | 10,000 lines of tested, mutation-proven Rust that already implements Sections 7.1, 9.2 and 10.2 of the prompt; same owner, same licence; re-writing it would be slower and less safe | **Confirm** (§3) |
+| D3 | **Write the desktop core fresh**, with the TreeMapMobile crates as prior art only (their approach to `getattrlistbulk`, the arena layout and the refusal rules are read, not copied) | The owner decided on 18 September 2026 to keep TreeMap Desktop and TreeMap Mobile separate for now; the desktop core therefore has no shared source with the phone's and each repository stands on its own. The cost is re-implementing what the mobile core proved; the benefit is two codebases that can be reviewed, released and fixed independently | **Decided: separate** (§3) |
 | D4 | The **resource governor lands before the walker** (Phase 2), in Rust, with a Node-side shim so the legacy engines obey the preset as far as they can | Prompt Section 8; retrofitting never holds a budget | — |
 | D5 | Offload and Time Capsule **keep SHA-256**; BLAKE3 is used only for duplicate detection | The on-disk catalogs record no algorithm name; changing them is a migration this project does not need | — |
-| D6 | The stats response gains additive keys, the golden fixture is re-recorded once, and the OpenAPI schema grows with it | Prompt Section 11.2 asks for exactly this; the lock exists to make such a change deliberate | **Confirm** (§12) |
-| D7 | Windows **MFT turbo mode is designed but not built** until the owner approves an elevation prompt | Prompt Section 15: ask before anything that needs elevated privileges | **Decide** (§9.2) |
-| D8 | The deep image tier is **off, invisible and not built** until the owner approves its one runtime dependency and its model download | Prompt Section 15: ask before adding a runtime dependency; Section 3.4 consent | **Decide** (§11.1) |
-| D9 | Work lands on `main` in small commits, one phase at a time, as every TreeMap session has; the owner pushes | The owner's standing workflow; the prompt's "branch per phase" is offered as the alternative | **Decide** |
+| D6 | The stats response gains additive keys, the golden fixture is re-recorded once, and the OpenAPI schema grows with it | Prompt Section 11.2 asks for exactly this; the lock exists to make such a change deliberate | **Approved** 18 Sep 2026 (§12) |
+| D7 | Windows **MFT turbo mode** may be built, strictly opt-in behind an elevation prompt that explains why | Prompt Section 15: ask before anything that needs elevated privileges | **Approved** 18 Sep 2026, for Phase 3's Windows leg (§9.2) |
+| D8 | The deep image tier may add its two backend npm dependencies and download its model on explicit consent; it stays off and invisible until a user opts in | Prompt Section 15: ask before adding a runtime dependency; Section 3.4 consent | **Approved** 18 Sep 2026, for Phase 7 (§11.1) |
+| D9 | Work lands on `main` in small commits, one phase at a time, as every TreeMap session has; the owner pushes | The owner's standing workflow; the prompt's "branch per phase" was offered as the alternative | **Decided: `main`**, 18 Sep 2026 |
 
 ## 1. Why a native core, with the numbers that force it
 
@@ -49,36 +49,25 @@ near-duplicate image detection** (§11.1), where the candidate models are
 `Xenova/clip-vit-base-patch16`. That tier is off by default and downloads
 nothing without consent.
 
-## 3. Reusing the TreeMapMobile core (D3)
+## 3. The TreeMapMobile core as prior art (D3)
 
-What exists there is inventoried in `CURRENT-STATE.md` §14. The plan:
+What exists there is inventoried in `CURRENT-STATE.md` §14. The owner's
+decision (18 September 2026) is to keep the two apps separate for now, so:
 
-* **Vendor by copy, not by path dependency.** The mobile repository is local
-  only (no remote), so CI could never fetch it. The crates are copied into
-  `native/treemap-core/crates/` with a `VENDORED.md` that records the source
-  commit (`main` at `757a7a3`, the last fully gated commit there), the copy
-  date, and every change made after copying. The wip branch is not used.
-* **Take `main`, re-fix the review's findings here.** The landing review's
-  confirmed defects that touch the vendored crates (`walker.rs:1086` symlink
-  swap followed by the fallback, CRITICAL; `walker.rs:1181`; `bulk.rs`'s
-  malformed size becoming a measured zero, dropped there but worth a test;
-  `set_throttle` not capping `workers: 0`) are fixed in the desktop copy,
-  each with a test written first and a recorded mutant, before the crate is
-  wired into the engine. The mobile fix branch is consulted, not copied.
-* **What changes in the copy:** the UniFFI surface is not vendored (`tm-ffi`
-  stays behind); the arena drops `first_child`/`next_sibling` in favour of
-  the breadth-first child ranges the desktop store already uses (§6); `alloc`
-  becomes 4 KiB units in `u32`; `accessed` becomes an optional side column;
-  Windows and Linux listing modules are new; progress and cancellation are
-  re-plumbed to napi; the crate names become `tm-walk`, `tm-store`, `tm-hash`
-  and `tm-imghash` as the prompt names them, so the design and the code use
-  one vocabulary.
-* **What is not reused:** `tm-photos`'s clustering (it is arena-agnostic and
-  small, but the desktop signature is a composite pHash+dHash+colour code
-  with a multi-index search, which is new code); `tm-query`, `tm-reclaim`,
-  `tm-receipt`, `tm-prose`, `tm-history` (mobile-only concerns).
-* **Nothing is built in or written to the mobile repository.** It is parked
-  mid-fix on a dirty branch; this project reads it and leaves it alone.
+* **No source is copied.** The desktop core lives in `native/treemap-core/`
+  with its own crates, tests and lint set; nothing in it depends on, or is
+  copied from, the mobile workspace, and the mobile repository is never
+  built or modified from here.
+* **The mobile core's findings are used as findings.** Its host measurements
+  (`CURRENT-STATE.md` §14), its refusal rule ("a refused folder is never an
+  empty one"), its two-numbers rule (claimed vs allocated bytes), its
+  `getattrlistbulk` attribute list and the review defects it recorded
+  (a symlink swapped in mid-walk must never be followed; a throttle must cap
+  a scan that asks for the default worker count) are requirements here,
+  proven by this repository's own tests.
+* **Re-joining later stays possible.** The desktop crates keep the same
+  conceptual boundaries (walk, store, hash, image hash, governor, bindings),
+  so a future decision to share code is a refactor, not a rewrite.
 
 ## 4. Architecture
 
@@ -412,12 +401,7 @@ Three things the baselines change in this document:
    NVMe row of Section 5.2, 100k–250k entries/s on Tier B, measured under the
    same label.
 
-Waiting for the owner before Phase 2 starts: D3 (vendoring the mobile
-crates), D6 (re-recording the golden stats fixture when the additive keys
-land), D7 (MFT elevation — Phase 3 Windows builds the documented path
-regardless), D8 (the deep tier's dependencies), and D9 (`main` or a branch
-per phase). Phase 2 also needs the first `cargo build` to fetch `napi`,
-`napi-derive`, `napi-build`, `crossbeam-deque`, `objc2-foundation`,
-`windows-sys` and `rustix` from crates.io — a one-time download the owner
-should know about, because the prompt forbids network calls only during
-scanning and hashing, not during a developer build.
+Answered by the owner on 18 September 2026: D3 separate (fresh core), D6
+approved, D7 approved for Phase 3's Windows leg, D8 approved for Phase 7,
+D9 `main`, and the one-time crates.io download for the first `cargo build`
+approved. Phase 2 (the governor) starts from that answer.
