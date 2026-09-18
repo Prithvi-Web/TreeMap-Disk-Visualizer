@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-## Progress (kept current so a context compaction loses nothing — 18 Sep 2026, 14:40)
+## Progress (kept current so a context compaction loses nothing — 18 Sep 2026, 15:30)
 
 Owner's answers recorded in DESIGN.md §0: fresh core (no mobile code), D6–D9 approved, crates download approved. Work is on `main`, unpushed.
 
@@ -13,10 +13,11 @@ Owner's answers recorded in DESIGN.md §0: fresh core (no mobile code), D6–D9 
 | CI (`test.yml`, `release.yml`) + `SECURITY.md` names the module | committed `6e42e37` | releasePipeline 42/42, polishDocs 19/19 |
 | Task 6 UI (Settings row, Dashboard note) | committed `ef6ba6d` | `tests/engineBudgetUi.test.ts` 11/11 |
 | Task 7 bench governor suite | committed `d633d54` | `tests/benchGovernor.test.ts` 10/10 |
-| Task 1 + 3 (preset, controller, governor, loadgen, gate) | **in flight** — the implementer was killed by a usage limit after writing `tests/controller.rs`, then resumed; `lib.rs` is still the placeholder | watch `crates/tm-governor/src/{preset,controller,governor,loadgen}.rs` appear |
-| Task 2 (sample, signals, enforce) | **in flight** — files written (525/404/708 lines + `tests/platform.rs`), not yet compiled; resumed, waits for Task 1's `controller.rs` | |
-| Task 5 (engineBudget service, routes, walker shim, golden re-record, scheduler, electron) | **in flight** — tests written, service half-written, `types.ts` edited; resumed | uncommitted files under `src/services/engineBudget.ts`, `tests/engine*.test.ts`, `tests/fixtures/engineBudgetChild.ts` |
-| Task 4 (tm-node napi bindings, `scripts/build-native.js`, `native/index.d.ts`, `native/README.md`, package.json scripts `build:native`/`test:native`) | **not started** — needs the crate to compile | then package.json `build.files` + `asarUnpack` gain `native/prebuilt/**` |
+| CI fix from the owner's push (Node 20 cannot start a `.ts` worker) | committed `daa1296` | `bench/lib/corpusWorkerEntry.cjs`; the 25 bench tests green with type stripping off; full suite 2,658 / 0 |
+| Task 1 + 3 (preset, controller, governor, loadgen, gate) | **in flight** — `governor.rs`, `loadgen.rs`, `tests/{controller,governor,hold}.rs` written; told to treat a `None` machine share as "no new counters" and to `cargo fmt` | |
+| Task 2 (sample, signals, enforce) | **done, uncommitted** — 10/10 platform tests, 4 mutants red + 1 equivalent recorded; QoS and `setiopolicy_np` are mutually exclusive on macOS so `io` is carried by QoS; `host_statistics64` publishes about once a second | `crates/tm-governor/src/{sample,signals,enforce}.rs`, `tests/platform.rs` |
+| Task 5 (engineBudget service, routes, walker shim, golden re-record, scheduler, electron) | **done, uncommitted, under review** — 21 + 8 tests, 18 mutants red, golden re-recorded (one added key), full suite 2,658 / 0 | `src/services/engineBudget.ts`, `src/api/engineRoutes.ts`, `tests/engine*.test.ts` |
+| Task 4 (tm-node napi bindings, `scripts/build-native.js`, `native/index.d.ts`, `native/README.md`, package.json scripts `build:native`/`test:native`, `build.files` + `asarUnpack`) | **in flight** | |
 | After all tasks | review fleet (ECC reviewers + adversaries incl. a Rust reviewer), fix round, mutants, full gate (`npm run typecheck`, `npm test`, `cargo test`, cross-target checks), `npm run bench -- governor --preset=eco|balanced|turbo --seconds=60 --record` ×3 on a quiet machine, HANDOFF Session 16 addendum, preview server (`preview_start` name `treemap`, http://127.0.0.1:4280) left running for the owner, check-in | |
 
 Unit decision for Task 4: `governorHold(targetPercent, seconds)` takes percent and returns the report in SHARES (0..1) exactly as the Rust `HoldReport`; the bench suite accepts either and verifies `target`.
