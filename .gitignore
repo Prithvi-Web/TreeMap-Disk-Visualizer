@@ -17,3 +17,7 @@ release/
 
 # Benchmark run outputs — every run writes one; only bench/baselines/ is committed
 /bench/results/
+
+# The native core: built by npm run build:native or by CI, never committed
+/native/prebuilt/
+/native/treemap-core/target/
