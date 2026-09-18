@@ -229,7 +229,7 @@ impl Pacer for FakePacer {
         self.starts.fetch_add(1, Ordering::SeqCst);
     }
 
-    fn throttle(&self) {
+    fn throttle(&self, _cancelled: &dyn Fn() -> bool) {
         self.throttles.fetch_add(1, Ordering::SeqCst);
     }
 
@@ -1236,6 +1236,38 @@ mod live {
                 out.stats.entries
             )),
             Err(other) => Err(format!("expected Cancelled, got {other:?}")),
+        }
+    }
+
+    #[test]
+    fn cancel_completes_while_the_governor_is_paused() -> TestResult {
+        // The governor's pause, not the walk's: workers park inside
+        // `throttle()`, and a cancel must still reach them.
+        let fx = five_thousand("cancel-governor-paused")?;
+        let gov = governor();
+        gov.pause();
+        let handle = start(WalkOptions::new(&fx.root), Arc::clone(&gov)).map_err(|e| e.to_string())?;
+        thread::sleep(Duration::from_millis(50));
+        let asked = Instant::now();
+        handle.cancel();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(handle.take());
+        });
+        let outcome = rx.recv_timeout(Duration::from_secs(2));
+        let took = asked.elapsed();
+        gov.resume();
+        match outcome {
+            Ok(Err(WalkError::Cancelled)) => {
+                assert!(took <= REACT_WITHIN * 2, "cancel took {took:?}");
+                Ok(())
+            }
+            Ok(Ok(out)) => Err(format!(
+                "the walk completed ({} entries) under a paused governor",
+                out.stats.entries
+            )),
+            Ok(Err(other)) => Err(format!("expected Cancelled, got {other:?}")),
+            Err(_) => Err("take() did not return within 2 s: the cancel waited on the paused governor".to_owned()),
         }
     }
 

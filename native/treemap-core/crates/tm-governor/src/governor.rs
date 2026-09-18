@@ -248,6 +248,15 @@ impl Governor {
     /// calling thread when needed, blocks while paused, then sleeps in
     /// proportion to the duty (see the module docs).
     pub fn throttle(&self) {
+        self.throttle_unless(&|| false);
+    }
+
+    /// [`throttle`](Self::throttle) for a worker whose own work can be called
+    /// off: while the governor is paused the wait also ends as soon as
+    /// `cancelled()` answers true, and a cancelled worker skips the duty
+    /// sleep. Without this a worker parked in a paused governor could be
+    /// released only by the governor, never by whoever stopped the worker.
+    pub fn throttle_unless(&self, cancelled: &dyn Fn() -> bool) {
         let inner = &*self.inner;
         if inner.stopped.load(Ordering::Acquire) {
             return;
@@ -277,7 +286,10 @@ impl Governor {
             let report = apply_to_current_thread(&current);
             inner.state().mechanisms = report;
         }
-        inner.wait_while_paused();
+        inner.wait_while_paused_unless(cancelled);
+        if cancelled() {
+            return;
+        }
         if let Some(work) = work {
             sleep_from_ledger(throttle_sleep(work, inner.duty()));
         }
@@ -286,6 +298,13 @@ impl Governor {
                 state.last_call_ended = Instant::now();
             }
         });
+    }
+
+    /// How many handles to this governor exist (this one included): each
+    /// worker of a synthetic load holds one, so the count says when they have
+    /// ended. For diagnostics and tests.
+    pub fn handle_count(&self) -> usize {
+        Arc::strong_count(&self.inner)
     }
 
     /// How many workers may run right now.
@@ -402,13 +421,14 @@ impl Inner {
         self.pause_changed.notify_all();
     }
 
-    /// Blocks while paused; wakes on resume, on a thermal change, or on stop.
-    fn wait_while_paused(&self) {
+    /// Blocks while paused; wakes on resume, on a thermal change, on stop, or
+    /// once `cancelled()` answers true (checked every [`PAUSE_POLL`]).
+    fn wait_while_paused_unless(&self, cancelled: &dyn Fn() -> bool) {
         if !self.paused.load(Ordering::Acquire) {
             return;
         }
         let mut guard = self.pause_state();
-        while guard.any() && !self.stopped.load(Ordering::Acquire) {
+        while guard.any() && !self.stopped.load(Ordering::Acquire) && !cancelled() {
             let (next, _) = self
                 .pause_changed
                 .wait_timeout(guard, PAUSE_POLL)

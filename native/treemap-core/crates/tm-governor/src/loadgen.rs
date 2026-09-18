@@ -32,8 +32,9 @@ pub const HOLD_ERROR_PERCENTILE: usize = 95;
 /// The name synthetic workers carry in a debugger.
 const WORKER_THREAD_NAME: &str = "tm-governor-load";
 
-/// Spinning workers that obey a governor. Dropping the handle without
-/// [`stop`](Self::stop) leaves the workers running until the process ends.
+/// Spinning workers that obey a governor. Dropping the handle stops them and
+/// waits for them, exactly as [`stop`](Self::stop) does, so an unwind between
+/// start and stop leaves nothing spinning.
 #[derive(Debug)]
 pub struct SyntheticLoad {
     stop: Arc<AtomicBool>,
@@ -75,24 +76,36 @@ impl SyntheticLoad {
         self.units.load(Ordering::Relaxed)
     }
 
-    /// Stops the workers and waits for them. A worker blocked in a paused
-    /// governor's `throttle()` returns once the governor resumes or stops.
-    pub fn stop(self) {
+    /// Stops the workers and waits for them. A worker parked in a paused
+    /// governor's `throttle()` returns within one pause poll, because it
+    /// throttles with its own stop flag as the cancel condition.
+    pub fn stop(mut self) {
+        self.end();
+    }
+
+    fn end(&mut self) {
         self.stop.store(true, Ordering::Release);
-        for worker in self.workers {
+        for worker in self.workers.drain(..) {
             // A worker that panicked has already stopped spinning; nothing to undo.
             let _ = worker.join();
         }
     }
 }
 
+impl Drop for SyntheticLoad {
+    fn drop(&mut self) {
+        self.end();
+    }
+}
+
 /// One worker: spin, throttle, repeat, while inside the governor's limit.
 fn work(governor: &Governor, index: u32, stop: &AtomicBool, units: &AtomicU64) {
-    while !stop.load(Ordering::Acquire) {
+    let stopped = || stop.load(Ordering::Acquire);
+    while !stopped() {
         if index < governor.worker_limit() {
             spin_for(SPIN_UNIT);
             units.fetch_add(1, Ordering::Relaxed);
-            governor.throttle();
+            governor.throttle_unless(&stopped);
         } else {
             thread::sleep(IDLE_POLL);
         }

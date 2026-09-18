@@ -51,8 +51,9 @@ const NO_REFUSAL: u8 = 0;
 pub trait Pacer: Send + Sync {
     /// Called once on each worker thread before it lists anything.
     fn on_worker_start(&self);
-    /// Called after every directory a worker processes.
-    fn throttle(&self);
+    /// Called after every directory a worker processes; returns early once
+    /// `cancelled()` answers true, even while the pacer is paused.
+    fn throttle(&self, cancelled: &dyn Fn() -> bool);
     /// Re-read between directories: the most workers that may run.
     fn worker_limit(&self) -> u32;
 }
@@ -82,8 +83,8 @@ impl Pacer for GovernorPacer {
         let _applied_early = apply_to_current_thread(&current);
     }
 
-    fn throttle(&self) {
-        self.governor.throttle();
+    fn throttle(&self, cancelled: &dyn Fn() -> bool) {
+        self.governor.throttle_unless(cancelled);
     }
 
     fn worker_limit(&self) -> u32 {
@@ -529,7 +530,7 @@ fn worker(shared: &Arc<Shared>, index: u32) -> Part {
         }
         process_dir(shared, &mut part, &mut buf, &mut pending, &job);
         shared.queue.finish_job();
-        shared.pacer.throttle();
+        shared.pacer.throttle(&|| shared.is_cancelled());
     }
     part.cpu_seconds = thread_cpu_seconds();
     part
