@@ -133,6 +133,19 @@ function gitHead(): { commit: string; dirty: boolean } {
   const head = result.stdout.trim();
   if (!COMMIT_PATTERN.test(head)) return { commit: 'unknown', dirty: false };
   const status = spawnSync('git', ['status', '--porcelain'], { cwd: REPO_ROOT, encoding: 'utf8' });
-  const dirty = !status.error && status.status === 0 && status.stdout.trim().length > 0;
+  const dirty = !status.error && status.status === 0 && dirtyFromStatus(status.stdout);
   return { commit: head, dirty };
+}
+
+/**
+ * Any modified tracked file, or any untracked file that could have been code,
+ * makes the tree dirty. A baseline the harness itself just recorded under
+ * bench/baselines/ is the one untracked file that cannot have been measured.
+ */
+export function dirtyFromStatus(porcelain: string): boolean {
+  return porcelain
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0)
+    .some((line) => !(line.startsWith('?? ') && line.slice(3).startsWith('bench/baselines/')));
 }

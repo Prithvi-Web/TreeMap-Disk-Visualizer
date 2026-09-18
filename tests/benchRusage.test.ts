@@ -89,3 +89,12 @@ test('the probe is compiled into a private per-process directory, never a shared
   const mode = fs.statSync(path.dirname(loc!)).mode & 0o777;
   assert.equal(mode, 0o700, 'owner-only directory');
 });
+
+test('a tree is dirty when tracked code changed, not when a baseline the harness itself just recorded is untracked', async () => {
+  const { dirtyFromStatus } = await import('../bench/lib/machine');
+  assert.equal(dirtyFromStatus(''), false);
+  assert.equal(dirtyFromStatus('?? bench/baselines/enumerate-gdu-turbo-ci20k-darwin-arm64-tierB.json\n'), false);
+  assert.equal(dirtyFromStatus(' M bench/lib/suites.ts\n'), true);
+  assert.equal(dirtyFromStatus('?? bench/lib/newthing.ts\n'), true, 'an untracked source file could have been measured');
+  assert.equal(dirtyFromStatus('?? bench/baselines/x.json\n M src/services/diskScanner.ts\n'), true);
+});

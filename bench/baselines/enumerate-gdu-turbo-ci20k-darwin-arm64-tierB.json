@@ -1,0 +1,154 @@
+{
+  "suite": "enumerate",
+  "corpus": {
+    "name": "ci20k",
+    "params": {
+      "entries": 20000,
+      "fanout": 10,
+      "depth": 6,
+      "flat": 1000,
+      "sizeMedian": 1024,
+      "sizeSigma": 1.2,
+      "sizeMax": 1048576,
+      "duplicateRate": 0.05,
+      "hardlinkRate": 0.01,
+      "sparseRate": 0.001,
+      "seed": 8
+    },
+    "dirs": 2400,
+    "files": 17600,
+    "scale": "20,000 entries"
+  },
+  "engine": "gdu-turbo",
+  "engineDescription": "the bundled gdu binary, one subprocess per top-level directory, output parsed from a JSON file",
+  "entriesUnit": "entries",
+  "machine": {
+    "cpuModel": "Apple M3",
+    "cores": 8,
+    "perfCores": 4,
+    "effCores": 4,
+    "memoryBytes": 17179869184,
+    "platform": "darwin",
+    "arch": "arm64",
+    "osRelease": "27.0.0",
+    "node": "v24.16.0",
+    "commit": "e61b67d079172a307bd8d9bf6957147ebb388819",
+    "dirty": false,
+    "loadAvg": [
+      4.19921875,
+      4.2314453125,
+      3.330078125
+    ],
+    "maxVnodes": 251127,
+    "tier": "B",
+    "tierReason": "8 cores and 16.0 GiB: neither the A clause (>= 8 cores and >= 32.0 GiB, or an Apple Pro/Max/Ultra part) nor the C clause (<= 4 cores or <= 8.0 GiB) applies"
+  },
+  "cache": {
+    "state": "warm",
+    "reason": "a warm-up pass ran and 20,000 entries fit within 80% of kern.maxvnodes (251,127)"
+  },
+  "runs": [
+    {
+      "wallMs": 144.71525,
+      "entries": 20000,
+      "cpuSeconds": 0.5730356249999999,
+      "selfCpuSeconds": 0.10548999999999999,
+      "childCpuSeconds": 0.46754562499999996,
+      "peakRssBytes": 104988672,
+      "bytesRead": null,
+      "bytesReadReason": "gdu reads in child processes; the probe counts only the measuring process",
+      "persistMs": 9.26295799999997,
+      "persistCpuSeconds": 0.01307170800000007,
+      "loadAvg": [
+        4.19921875,
+        4.2314453125,
+        3.330078125
+      ]
+    },
+    {
+      "wallMs": 143.05437500000002,
+      "entries": 20000,
+      "cpuSeconds": 0.569463833,
+      "selfCpuSeconds": 0.096377,
+      "childCpuSeconds": 0.47308683300000004,
+      "peakRssBytes": 99893248,
+      "bytesRead": null,
+      "bytesReadReason": "gdu reads in child processes; the probe counts only the measuring process",
+      "persistMs": 9.44074999999998,
+      "persistCpuSeconds": 0.012792332999999989,
+      "loadAvg": [
+        4.19921875,
+        4.2314453125,
+        3.330078125
+      ]
+    },
+    {
+      "wallMs": 143.724625,
+      "entries": 20000,
+      "cpuSeconds": 0.574860583,
+      "selfCpuSeconds": 0.105632,
+      "childCpuSeconds": 0.46922858300000003,
+      "peakRssBytes": 105349120,
+      "bytesRead": null,
+      "bytesReadReason": "gdu reads in child processes; the probe counts only the measuring process",
+      "persistMs": 12.259083999999973,
+      "persistCpuSeconds": 0.024999457999999947,
+      "loadAvg": [
+        4.19921875,
+        4.2314453125,
+        3.330078125
+      ]
+    },
+    {
+      "wallMs": 144.78250000000003,
+      "entries": 20000,
+      "cpuSeconds": 0.572044542,
+      "selfCpuSeconds": 0.106753,
+      "childCpuSeconds": 0.465291542,
+      "peakRssBytes": 103399424,
+      "bytesRead": null,
+      "bytesReadReason": "gdu reads in child processes; the probe counts only the measuring process",
+      "persistMs": 9.397959000000014,
+      "persistCpuSeconds": 0.013228792000000045,
+      "loadAvg": [
+        4.19921875,
+        4.2314453125,
+        3.330078125
+      ]
+    },
+    {
+      "wallMs": 144.8565,
+      "entries": 20000,
+      "cpuSeconds": 0.589465375,
+      "selfCpuSeconds": 0.109333,
+      "childCpuSeconds": 0.480132375,
+      "peakRssBytes": 103350272,
+      "bytesRead": null,
+      "bytesReadReason": "gdu reads in child processes; the probe counts only the measuring process",
+      "persistMs": 9.181333999999993,
+      "persistCpuSeconds": 0.012917249999999963,
+      "loadAvg": [
+        4.19921875,
+        4.2314453125,
+        3.330078125
+      ]
+    }
+  ],
+  "summary": {
+    "wallMsMedian": 144.71525,
+    "entriesPerSecond": 138202.43547241914,
+    "cpuSecondsPerMillion": 28.651781249999996,
+    "peakRssBytes": 105349120,
+    "bytesReadMedian": null,
+    "spreadPct": 1.2452903201286594,
+    "resolutionPct": 0.6074466455992709,
+    "reproducible": true
+  },
+  "correctness": {
+    "ok": true,
+    "notes": []
+  },
+  "recordedAt": "2026-09-18T20:26:32.865Z",
+  "commit": "e61b67d079172a307bd8d9bf6957147ebb388819",
+  "label": "Phase 1 baseline"
+}
