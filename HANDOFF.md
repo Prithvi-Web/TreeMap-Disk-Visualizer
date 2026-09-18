@@ -1,5 +1,110 @@
 # TreeMap — session handoff
 
+## Session 16 — the fast-scanner master prompt, Phases 0 and 1: the engine's true state, the design, and a harness that will not print a wrong number (18 September 2026)
+
+The owner handed over `TREEMAP-FAST-SCANNER-MASTER-PROMPT.md` (v3: a native
+walker at 500k–1M entries/s, 100M-entry scans, faster duplicate and
+near-duplicate finders, a resource governor, all under "no honest-number
+violations"). Its phase order is binding: verification and design (Phase 0),
+then a benchmark harness and baselines (Phase 1), before a line of engine
+code. Both phases are done and committed on `main` (unpushed, as always —
+the owner pushes from GitHub Desktop). Nothing in `src/` changed except one
+test.
+
+**Phase 0 — `docs/engine/CURRENT-STATE.md`, `DESIGN.md`, `RISKS.md`.** Read
+from the source with four explorers and re-read by hand, then fact-checked
+by a fifth (three stale statements found and fixed). The prompt describes
+the repo from its README and is wrong about it in fifteen places (§15 of
+CURRENT-STATE); the ones that matter: the default engine is the bundled
+`gdu` binary in sharded subprocesses, not the Node walker; a columnar packed
+store already exists at ~50 B/node; the stats response is under a
+byte-identity golden lock; the legacy duplicate finder does not skip cloud
+placeholders and so **can download evicted iCloud/OneDrive files today**
+(RISKS R1 — the first commit of Phase 5 fixes it); `kern.maxvnodes` is
+251,127 on this Mac, so "warm cache at 1M entries" is not a state a default
+macOS install can be in; and the sibling `TreeMapMobile` repository already
+holds a `getattrlistbulk` walker, a memory-mapped arena, BLAKE3 staged
+hashing and dHash clustering in Rust, which the design vendors (D3) rather
+than rewrites — from its `main`, re-fixing the 17 review findings it has
+half-fixed on a wip branch. DESIGN.md carries the memory budget the phase
+gate demanded (100M entries: ≈742 MB spill, ≈396 MB aggregate-only, both
+under the ceiling; 10M in memory does not fit, so the spill threshold is 5M)
+and nine decisions, four of which wait for the owner (below).
+
+**Phase 1 — `bench/`.** `npm run bench` drives the real engines over
+deterministic corpora (a seeded planner over typed arrays, created by worker
+threads; a labelled image corpus with twelve planted transformations) and
+records every number with its load average, cache state and a correctness
+check beside it. It was built by five implementers on disjoint files,
+test-first with a mutant per behaviour, then reviewed by twelve agents (five
+ECC specialists, a fact-checker, two purpose-built adversaries, gstack's
+testing, maintainability, security and red team). The review changed its
+shape: **every measured pass now runs in a fresh child process**
+(`bench/lib/measureWorker.ts`) because the first version measured the
+previous scan's fire-and-forget cache and snapshot writes inside the next
+run's CPU, retained cancelled scans for 30 minutes in the process's peak RSS,
+and would have recorded a walker run as gdu when gdu silently fell back. It
+now refuses rather than guesses (a mismatched engine, a cold series with one
+failed purge, a comparison across corpora/engines/tiers/platforms, a result
+that failed correctness or is not reproducible, a `--record` from a dirty
+tree, an unknown option), and its checks are sound (duplicate recall under
+the finder's 500-group report cap with hard-link names canonicalised,
+near-duplicate correctness judged on precision 0.98, every run checked and
+runs must agree, CPU includes child processes, the comparison band is
+√(a²+b²), a single run has no spread and fewer than three no resolution).
+15 more mutants in that round, all red. Gate at `95df765`: `npm run
+typecheck` (now covering `bench/`), **2,601 tests · 2,596 pass · 0 fail ·
+5 skipped**, `build-ui --check` matches.
+
+**The baselines** (Tier B: Apple M3 4P+4E, 16 GB, macOS 27.0, Node 24.16;
+`bench/baselines/`, every attempt under `bench/results/`): the walker
+enumerates 153k–167k entries/s warm and 82k/s at 1M (`mixed`: 2.66 GB of
+catalog per pass); the app's gdu path ≈195k warm (never under the 5% range
+rule — its first process launch after a pause is 15–27% slower every time)
+and 98k at 1M; CPU is 20–39 s per million entries against the prompt's 3.0;
+the gdu **binary alone** does the 200k tree at ≈330k–420k entries/s, so half
+of the legacy fast path is JSON transport; duplicates at 29k–37k files/s
+with recall 1 and precision 1 by byte comparison; and **the legacy
+near-duplicate engine fails the precision bar at every threshold** (0.18 at
+its default 10; 0.98 only at 0, where recall is 0.15) on the labelled corpus
+— gradient-dominated synthetic originals collide within 10 dHash bits and
+the transitive union-find joins them (RISKS R50 says the corpus may be
+unfair to hash signatures and how Phase 6 guards against that).
+
+**Waiting for the owner before Phase 2 starts** (DESIGN.md §0): D3 vendor
+the mobile crates; D6 re-record the golden stats fixture when the additive
+keys land; D7 Windows MFT needs an elevation prompt (designed, not built);
+D8 the deep image tier's two npm dependencies and its model download; D9
+`main` as now, or a branch per phase as the prompt says. Phase 2's first
+`cargo build` also downloads `napi`, `napi-derive`, `napi-build`,
+`crossbeam-deque`, `objc2-foundation`, `windows-sys` and `rustix` from
+crates.io (Rust 1.97 is installed; `cargo` links fine even though plain `cc`
+cannot on this Mac — the command-line-tools SDK is newer than Xcode 26.6's
+linker, and the harness compiles its one C probe with `xcrun --sdk macosx
+clang -isysroot …`).
+
+**Traps this session, for the next one.** `tsx` hoists imports above a
+`process.env` assignment that precedes them (verified with a two-file
+probe): every test in this repo that sets `TREEMAP_DATA_DIR` before its
+imports is isolated only because `appDataDir()` reads the variable lazily;
+the harness sidesteps it with child processes. `tests/rateLimiterLanes.test.ts`
+was red 3/3 on this Mac before any change: macOS 27 resets loopback
+connections past `kern.ipc.somaxconn` (128) instead of queueing them, so a
+200-connection flood lost one; the flood now keeps 64 sockets open (same
+200 requests, same assertions). `proc_pid_rusage`'s times are mach ticks on
+Apple silicon (24 per µs), its disk counter is physical reads of one
+process only, and `ri_syscalls_*` fields do not exist. A shared temp path
+trusted by mtime for a compiled probe is arbitrary code execution for any
+same-user process; the probe now lives in a per-process `mkdtemp`. Ten of
+the 11 GB of corpora sit under `<tmp>/treemap-bench` — `npm run bench --
+clean` removes them. `src/services/thumbnailCache.ts` is classified as data
+by `file(1)`, so plain `grep` skips it silently; use `grep -a` for any
+absence claim over `src/`. And the review fleet's lesson, again: green
+tests plus recorded mutants still let a wrong number through (the
+persistence leak, the truncation-unsound recall, the near-dup "ok" that
+never read the recall it printed) — only reading the diff adversarially
+found them.
+
 ## Session 15 — v5.0.1 prepared: every reported issue fixed, the release is the owner's click (7 September 2026)
 
 All four open issues (#32 pipeline, #33 restore points and Windows wording,

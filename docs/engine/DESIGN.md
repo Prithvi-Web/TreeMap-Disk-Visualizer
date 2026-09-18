@@ -389,7 +389,28 @@ assertion.
 Delivered: Phase 0 (this file and its two siblings) and Phase 1 (the harness,
 the corpora, the baselines of the legacy engines on this Tier B machine, and
 the test fix that makes the local gate trustworthy again). The measured suite
-figure at the starting commit is in `CURRENT-STATE.md` §13.
+figure at the starting commit is in `CURRENT-STATE.md` §13; the baselines are
+in `CURRENT-STATE.md` §11.1 and `bench/baselines/`.
+
+Three things the baselines change in this document:
+
+1. **The legacy near-duplicate engine has no recordable baseline.** Its
+   precision at the default threshold is 0.18 on the labelled corpus, so the
+   Phase 6 target is not "≥ 100× faster on rescan" against a working
+   baseline but "precision ≥ 0.98 with the recall targets, then speed". The
+   labelled corpus is synthetic (gradients, shapes, noise) and gradient-heavy
+   images are exactly where a 64-bit dHash collides; Phase 6 validates the
+   composite signature on it and, opt-in and locally, on a real photo
+   library with only aggregate numbers recorded (`RISKS.md` R50).
+2. **The gdu binary alone runs at ≈330k–420k entries/s on the 200k tree; the
+   app's gdu path at ≈195k.** Half of the legacy fast path's wall clock is
+   transport, not enumeration. A native in-process walker removes that half
+   before it removes a single syscall, which is why Phase 3's first gate on
+   macOS compares against both the app's gdu path and the bare binary.
+3. **A 1M-entry warm run does not exist on this machine** (`mixed`, 2.66 GB
+   of catalog per pass); the honest Phase 3 target at that size is the cold
+   NVMe row of Section 5.2, 100k–250k entries/s on Tier B, measured under the
+   same label.
 
 Waiting for the owner before Phase 2 starts: D3 (vendoring the mobile
 crates), D6 (re-recording the golden stats fixture when the additive keys

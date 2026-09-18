@@ -276,6 +276,34 @@ must add that field first; the new engine does not touch these paths.
 | Thumbnails | ~20 ms per sharp decode; 46 ms cold vs 6 ms warm in the browser | `thumbnailCache.ts:8-22`, `:143-146` |
 | Threadpool | 16 threads ≈ 1.6× faster than 4 on APFS; 32 slower than 4 | `ioThreads.ts:15-17` |
 
+### 11.1 Measured by the Phase 1 harness (18 September 2026, this machine, `npm run bench`)
+
+Each pass in its own process after a warm-up pass; spread is the full range
+over the median; every row's correctness was checked against the corpus
+manifest on every run. The recorded baselines are under `bench/baselines/`,
+every attempt under `bench/results/` (ignored by git, kept locally).
+
+| Suite | Corpus | Engine | Cache | Rate | Wall (median) | Spread | CPU s per million | Peak RSS | Bytes read |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| enumerate | ci20k (20,000) | gdu-turbo | warm | 138,202 entries/s | 144.7 ms | ±1.2% | 28.65 | 100.5 MB | n/a (child processes) |
+| enumerate | ci20k | turbo-walker | warm | 152,948 entries/s | 130.8 ms | ±3.6% | 26.83 | 103.0 MB | 0 |
+| enumerate | enum200k (200,000) | turbo-walker | warm | 167,451 entries/s | 1,194.4 ms | ±3.1% | 20.41 | 241.9 MB | 0 |
+| enumerate | enum200k | gdu-turbo | warm | ≈195,000 entries/s (median of 5 attempts ≈ 1,010–1,040 ms) | — | ±17–27%: **not recorded** | 24.2–24.5 | 223.7 MB | n/a |
+| enumerate | enum1m (1,000,000) | gdu-turbo | **mixed** | 97,666 entries/s | 10,239 ms | ±1.0% | 32.87 | 358.2 MB | n/a |
+| enumerate | enum1m | turbo-walker | **mixed** | 81,953 entries/s | 12,202 ms | ±3.1% | 39.25 | 364.2 MB | 2.66 GB per pass |
+| duplicates | ci20k | sha256-staged | warm | 36,681 files/s | 479.8 ms | ±0.9% | 99.69 | 161.9 MB | 0 |
+| duplicates | dupes100k (98,560 files, 3.2 GB of real bytes) | sha256-staged | warm | 28,701 files/s | 3,434 ms | ±0.9% | 106.62 | 406.0 MB | 1.3 MB |
+| neardup | images600 (7,800 images) | dhash-pairwise | warm | 351–377 images/s | 20.7–22.2 s | single runs | ≈9,000 | 322–330 MB | 3.28 GB | 
+
+What the rows say, against the prompt's Section 5 targets on this Tier B machine:
+
+* **Enumeration is at about a quarter to a half of the warm Tier B target** (400k–700k entries/s): 153k–167k for the walker and ≈195k for gdu at sizes that fit the vnode cache. Both engines are within 15% of each other on these synthetic trees; the README's earlier "gdu 112k–129k vs walker 69k–97k" was measured on `/Applications` and does not carry over.
+* **At 1M entries the label is `mixed`, not warm**: the walker reads 2.66 GB of catalog per pass because the tree exceeds `kern.maxvnodes`; 82k–98k entries/s is the honest figure and it matches the README's whole-disk number (86k/s over 1.4M items).
+* **CPU per million entries is 20–39 s** against the target of 3.0: the fundamental cost of one syscall, one threadpool hop and one JavaScript object per entry.
+* **gdu's first process launch after a pause costs 15–27% more** (measured directly: the binary alone scans enum200k in 812 ms after a 3 s pause, 590–624 ms with pauses, 473–478 ms back to back), so the harness's range rule never records it at 200k. The direct number is itself a finding: **the gdu binary enumerates this 200k tree at ≈330k–420k entries/s, and the app's engine path — twelve shard processes, JSON files, `JSON.parse`, mapping into the store — costs as much again.**
+* **Duplicates**: recall 1 and precision 1 by byte comparison on every run; 100–107 CPU seconds per million files (SHA-256 over a 64 KiB head for every same-size candidate), with the corpus data resident in the page cache (1.3 MB read).
+* **Near-duplicates**: the legacy dHash engine **fails the precision bar at every threshold** on the labelled corpus — 0.18 at its default 10, 0.55 at 6 and 4, 0.70 at 2, and 0.98 only at 0 where recall falls to 0.15 — because different gradient-dominated originals collide within 10 bits of dHash and the transitive union-find joins them. Its 7,800 images decode in 21 s (2.7 ms each through sharp's shrink-on-load), so at this image size decoding is not the bottleneck the prompt expects; precision is.
+
 ## 12. This machine's ceilings (measured today)
 
 * `kern.maxvnodes = 251,127`. macOS keeps at most that many vnodes cached, so

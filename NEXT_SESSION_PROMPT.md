@@ -10,18 +10,28 @@ Work on TreeMap at `/Users/prithvivinay/Desktop/Claude Code/Treemap`
 vanilla-JS disk-space visualizer with an Apple-dark Liquid Glass design
 language.
 
-**Read `HANDOFF.md` first — the top section ("Session 15") is the current
-state.** Then read `src/ui/README.md` if you will touch anything under
+**Read `HANDOFF.md` first — the top section ("Session 16") is the current
+state — then `docs/engine/DESIGN.md` §0 for the five decisions the owner
+still owes before Phase 2 of the fast-scanner work can start.** Then read `src/ui/README.md` if you will touch anything under
 `src/ui/`. Do not skip these; they contain the traps that cost previous
 sessions the most time.
 
 ## Where things stand
 
+- **The fast-scanner master prompt (`~/Downloads/TREEMAP-FAST-SCANNER-MASTER-PROMPT.md`,
+  v3) is in progress.** Phases 0 and 1 are committed on main: `docs/engine/`
+  (current state, design, risks) and `bench/` (the harness, corpora,
+  baselines under `bench/baselines/`). Phase 2 (the resource governor, in
+  Rust) is next and waits on decisions D3, D6, D7, D8, D9 in `DESIGN.md` §0.
+  `npm run bench -- --help` lists the commands; `npm run bench -- all
+  --small` is the two-minute end-to-end check; `npm run bench -- clean`
+  frees the ~11 GB of corpora under the temp directory.
+
 - **v5.0.1 is prepared and committed**: `package.json`, the two root nodes of
   `package-lock.json` and the top `CHANGELOG.md` heading say 5.0.1. The owner
   pushes and cuts the release by pushing the tag from GitHub Desktop — HANDOFF
   Session 15 lists the exact clicks and the two web-form buttons to avoid.
-- Gate at that commit: **2,516 tests · 0 fail · 5 skipped** (3 platform, the
+- Gate at the latest commit: **2,601 tests · 0 fail · 5 skipped** (`npm run typecheck` now also checks `bench/`); at v5.0.1's commit it was **2,516 tests · 0 fail · 5 skipped** (3 platform, the
   CI locale self-proof, the Windows-only live topology test); `npm run
   typecheck` clean; `node scripts/build-ui.js --check` matches (113 parts);
   the whole suite green under the default and the Portuguese locale.
