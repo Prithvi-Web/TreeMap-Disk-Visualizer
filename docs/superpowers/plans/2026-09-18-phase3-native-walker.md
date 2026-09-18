@@ -7,9 +7,9 @@
 | Task | State | Evidence |
 | --- | --- | --- |
 | Plan written | 18 Sep 2026 | this file |
-| W1 `tm-walk` on macOS (bulk listing, walk, refusals, governor hooks) | not started | |
-| W2 scan API in `tm-node`, `nativeEngine.ts`, selection, stats, settings, golden re-record | not started | |
-| W3 canonical digest, edge-case fixture, equivalence and fallback tests, bench `native` engine | not started | |
+| W1 `tm-walk` on macOS (bulk listing, walk, refusals, governor hooks) | **done** — 56 tests (17 scripted on a fake lister, 9 live on a macOS fixture, 21 parser/probe, 9 climb), 22 mutants red, one guard recorded as shadowed; `libc` 0.2.189 lacks `ATTR_CMN_ERROR`/`SF_DATALESS`/vtype values (declared locally); APFS reports no link count for directories on the bulk path (the per-entry path now agrees); debug-build bulk 526–541k entries/s vs per-entry 801–919k on a flat 5,000-file directory — a debug artefact, the release number is W3's to measure | `crates/tm-walk/**` |
+| W2 scan API in `tm-node`, `nativeEngine.ts`, selection, stats, settings, golden re-record | in flight | |
+| W3 canonical digest, edge-case fixture, equivalence and fallback tests (the bench `native` engine choice moved to W2) | in flight | |
 | W4 Windows listing (`FileIdExtdDirectoryInfo`, `FindFirstFileExW` fallback, long paths) | not started — live proof only on CI | |
 | W5 Linux listing (`getdents64` + `statx`) | not started — live proof only on CI | |
 | W6 Windows MFT turbo (D7, opt-in, elevated helper, cross-check) | not started — last; may ship disabled with the reason recorded | |
