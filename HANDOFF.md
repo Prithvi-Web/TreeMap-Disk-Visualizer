@@ -2,6 +2,81 @@
 
 ## Session 16 — the fast-scanner master prompt, Phases 0 and 1: the engine's true state, the design, and a harness that will not print a wrong number (18 September 2026)
 
+### Later the same day — the push, the CI failure, Phase 2 built, Phase 3 begun
+
+**The owner pushed Phases 0 and 1 and every CI leg went red.** Not the
+harness's arithmetic: `bench/lib/corpus.ts` started a worker thread from a
+`.ts` file, which loads on the Node 24 that built it (a worker inherits tsx's
+`--import` hook there, and Node 24 strips types itself) and fails on CI's
+Node 20 with `ERR_UNKNOWN_FILE_EXTENSION` — Node 20 hands a worker no loader
+hook. Fixed in `daa1296`: the worker starts from
+`bench/lib/corpusWorkerEntry.cjs`, a CommonJS entry that installs tsx's
+require hook in the worker itself; a test starts it with an empty `execArgv`,
+the same situation on every Node version. Two test fixes rode along: the
+suite tests memoise their one corpus build (a failed build showed up as
+`EEXIST` in every later test), and the presets test expects the sparse rate
+Windows actually plans (0). The lesson for every later phase: **CI is Node
+20 — anything a worker thread or child process loads must be plain JS, or a
+`.cjs` entry that requires `tsx/cjs` first.** Neither a local run under
+`NODE_OPTIONS=--no-experimental-strip-types` nor Node 24 reproduces it.
+
+**Phase 2 is committed (`2a9fa90`): the resource governor.** The owner
+answered the five decisions (fresh core, no code shared with TreeMapMobile —
+D3 reversed to "separate"; D6–D9 approved; the crates.io download approved
+once). Built by four implementers on disjoint files, test-first with a
+mutant per behaviour, reviewed by four ECC agents (typescript, security,
+silent-failure, type-design; a Rust review is running), then a fix round:
+
+- `native/treemap-core/crates/tm-governor`: presets, a PI loop every 100 ms
+  on the process's own CPU share, a per-thread sleep ledger, worker shedding,
+  thermal halving/pause, auto mode; QoS per worker thread on macOS (Eco =
+  Background = efficiency cores). **Held for 60 s each on this Mac: 22.6 %
+  against 25, 47.0 % against 50, 89.2 % against 90**, all inside ±5 points.
+  Four things the design had wrong are in `docs/engine/DESIGN.md` §8.1 —
+  the one to remember: a thread-scope `setiopolicy_np` and QoS are mutually
+  exclusive on macOS, so the I/O tier is carried by QoS.
+- `crates/tm-node` + `native/index.d.ts` + `scripts/build-native.js`: the
+  napi module, built into `native/prebuilt/<platform>-<arch>/treemap_core.node`
+  (gitignored; CI builds it on every leg before `npm test`, the release legs
+  before electron-builder, and `build.files`/`asarUnpack` carry it). `npm
+  install` never touches cargo.
+- `src/services/engineBudget.ts`, `src/api/engineRoutes.ts`: the setting
+  (`engineBudget`), the effective preset, the native governor when it is in
+  force or the Node shim when it is not — every answer says `source`. The
+  legacy engines obey it (walker duty clock and worker cap, pause gate inside
+  the batch loop, `nice` + SIGSTOP/SIGCONT on gdu shards, Eco for scheduled
+  scans, pause on sleep). `GET /api/scan/:id/stats` gains `budget` (D6; the
+  golden fixture re-recorded with that one added key). Settings has a
+  "Scanning budget" row; the Dashboard engine note shows the budget.
+- The review round's two real defects: the six-hour evictor dropped a paused
+  gdu shard's record while the stopped process lived on (the red run held
+  the whole test suite open with it — `abortGduScan` now runs on eviction and
+  a forgotten pause resumes its shard); and a governor that loaded but was
+  not answering, or had refused a configuration, was reported as the source
+  of a table constant — now `node-shim` with the fault in `native.reason`,
+  retried after 5 s or at the next setting change. R52 records that body-less
+  POSTs are CORS-simple, as the app's existing routes already are.
+- Gate: `npm run typecheck`; `npm test` **2,682 / 0 / 5 skipped** with the
+  module loaded; `build-ui --check`; `cargo fmt`, `clippy -D warnings`,
+  `cargo test` on both crates; cross-target `cargo check` for Windows and
+  Linux. Windows and Linux mechanisms are compile-checked only — their live
+  proof is the owner's next push.
+
+**Still owed for Phase 2:** the three recorded governor baselines
+(`npm run bench -- governor --preset=eco|balanced|turbo --seconds=60 --record`,
+which the harness refuses on a dirty tree, so they wait for the walker crate
+to land) and the Rust review's findings.
+
+**Phase 3 has begun** — `docs/superpowers/plans/2026-09-18-phase3-native-walker.md`
+fixes the interfaces (a `tm-walk` crate with `getattrlistbulk` on macOS,
+polling progress, ingest into the existing `PackedScanStore` so the JSON is
+identical by construction, a canonical digest for the equivalence gate, the
+never-descend list as the only mount rule). No new crate is needed for it;
+Phase 5 onward (blake3, image decoders) will need the owner's word on another
+crates.io download. The owner's preview runs at http://127.0.0.1:4280
+(`npm start` after `npm run build`; `npm run app` for the desktop shell).
+
+
 The owner handed over `TREEMAP-FAST-SCANNER-MASTER-PROMPT.md` (v3: a native
 walker at 500k–1M entries/s, 100M-entry scans, faster duplicate and
 near-duplicate finders, a resource governor, all under "no honest-number

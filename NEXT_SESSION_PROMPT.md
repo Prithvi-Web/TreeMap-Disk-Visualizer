@@ -10,19 +10,23 @@ Work on TreeMap at `/Users/prithvivinay/Desktop/Claude Code/Treemap`
 vanilla-JS disk-space visualizer with an Apple-dark Liquid Glass design
 language.
 
-**Read `HANDOFF.md` first — the top section ("Session 16") is the current
-state — then `docs/engine/DESIGN.md` §0 for the five decisions the owner
-still owes before Phase 2 of the fast-scanner work can start.** Then read `src/ui/README.md` if you will touch anything under
+**Read `HANDOFF.md` first — the top section ("Session 16", and its "Later
+the same day" block) is the current state — then the progress table at the
+top of `docs/superpowers/plans/2026-09-18-phase3-native-walker.md` for what
+is in flight.** Then read `src/ui/README.md` if you will touch anything under
 `src/ui/`. Do not skip these; they contain the traps that cost previous
 sessions the most time.
 
 ## Where things stand
 
 - **The fast-scanner master prompt (`~/Downloads/TREEMAP-FAST-SCANNER-MASTER-PROMPT.md`,
-  v3) is in progress.** Phases 0 and 1 are committed on main: `docs/engine/`
-  (current state, design, risks) and `bench/` (the harness, corpora,
-  baselines under `bench/baselines/`). Phase 2 (the resource governor, in
-  Rust) is next and waits on decisions D3, D6, D7, D8, D9 in `DESIGN.md` §0.
+  v3) is in progress.** Phases 0, 1 and 2 are committed on main (Phases 0–1
+  pushed; the CI fix `daa1296` and Phase 2 `2a9fa90` are not): `docs/engine/`,
+  `bench/`, `native/treemap-core` (the governor and the napi module),
+  `src/services/engineBudget.ts`. Phase 3 (the native walker, macOS first)
+  is under way per its plan. CI runs Node 20: a worker or child entry must be
+  plain JS or a `.cjs` that requires `tsx/cjs`. The Rust toolchain is for
+  developers and CI only; `npm run build:native` builds the module.
   `npm run bench -- --help` lists the commands; `npm run bench -- all
   --small` is the two-minute end-to-end check; `npm run bench -- clean`
   frees the ~11 GB of corpora under the temp directory.
