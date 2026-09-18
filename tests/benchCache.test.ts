@@ -44,3 +44,27 @@ test('the default purge is a printable table: sudo -n purge on macOS, sync then 
   assert.equal(other.ok, false);
   assert.match(other.error ?? '', /freebsd/);
 });
+
+test('a purge step that fails reports the command and the error, never success', async () => {
+  const { runProcedure } = await import('../bench/lib/cache');
+  const missing = runProcedure({ command: 'nowhere', steps: [{ file: '/nonexistent/purge-binary', args: [] }] });
+  assert.equal(missing.ok, false);
+  assert.match(missing.error ?? '', /nonexistent/);
+  const failing = runProcedure({ command: 'sh -c exit 3', steps: [{ file: 'sh', args: ['-c', 'echo boom >&2; exit 3'] }] });
+  assert.equal(failing.ok, false);
+  assert.match(failing.error ?? '', /boom/);
+  const passing = runProcedure({ command: 'true', steps: [{ file: 'sh', args: ['-c', 'exit 0'] }] });
+  assert.equal(passing.ok, true);
+});
+
+test('the vnode rule in every reason is the one constant, not a repeated literal', async () => {
+  const { cacheState, VNODE_FILL_LIMIT } = await import('../bench/lib/cache');
+  const pct = `${Math.round(VNODE_FILL_LIMIT * 100)}%`;
+  const warm = await cacheState({ requested: 'warm', entries: 10, maxVnodes: 1000, warmedUp: true });
+  assert.ok(warm.reason.includes(pct), warm.reason);
+  const mixed = await cacheState({ requested: 'warm', entries: 999, maxVnodes: 1000, warmedUp: true });
+  assert.ok(mixed.reason.includes(pct), mixed.reason);
+  const linux = await cacheState({ requested: 'warm', entries: 10, warmedUp: true });
+  assert.equal(linux.state, 'warm');
+  assert.match(linux.reason, /not verified|no fixed/);
+});

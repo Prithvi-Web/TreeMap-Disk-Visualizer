@@ -20,6 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { hash32, mulberry32 } from './prng';
+import { MANIFEST_FILE, TREE_DIR, isUnderBenchTmp } from './paths';
 
 export type Transform =
   | 'resize'
@@ -76,7 +77,6 @@ export interface ClusterScore {
 
 /* ---------- constants ---------- */
 
-const MANIFEST_FILE = 'manifest.json';
 const ORIGINALS_DIR = 'originals';
 const LANDSCAPE = { width: 1600, height: 1200 };
 const PORTRAIT = { width: 1200, height: 1600 };
@@ -319,6 +319,11 @@ async function writeVariant(sharp: SharpFactory, root: string, index: number, tr
  * is the one the caller sees, and it also stops the other lanes from starting
  * further items, so a failed build does not keep writing in the background.
  */
+/**
+ * `limit` lanes pull items in order. The first failure stops every lane from
+ * taking another item, and the pool rejects only once every lane has
+ * settled — so when the caller sees the rejection, nothing is still writing.
+ */
 async function runPool<T>(items: readonly T[], limit: number, work: (item: T) => Promise<void>): Promise<void> {
   let next = 0;
   let failed = false;
@@ -334,7 +339,9 @@ async function runPool<T>(items: readonly T[], limit: number, work: (item: T) =>
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+  const outcomes = await Promise.allSettled(Array.from({ length: Math.min(limit, items.length) }, lane));
+  const first = outcomes.find((o): o is PromiseRejectedResult => o.status === 'rejected');
+  if (first) throw first.reason;
 }
 
 function validateParams(params: ImageCorpusParams): void {
@@ -364,21 +371,23 @@ export async function createImageCorpus(root: string, params: ImageCorpusParams)
   validateParams(params);
   const sharp = loadSharp();
   const absoluteRoot = path.resolve(root);
-  fs.mkdirSync(path.join(absoluteRoot, ORIGINALS_DIR), { recursive: true });
-  for (const transform of params.transforms) fs.mkdirSync(path.join(absoluteRoot, transform), { recursive: true });
+  // The scanned folder is `<root>/tree`; the manifest sits beside it, never inside what an engine scans.
+  const treeRoot = path.join(absoluteRoot, TREE_DIR);
+  fs.mkdirSync(path.join(treeRoot, ORIGINALS_DIR), { recursive: true });
+  for (const transform of params.transforms) fs.mkdirSync(path.join(treeRoot, transform), { recursive: true });
 
   const indices = Array.from({ length: params.originals }, (_, index) => index);
-  await runPool(indices, CONCURRENCY, (index) => writeOriginal(sharp, absoluteRoot, params.seed, index));
+  await runPool(indices, CONCURRENCY, (index) => writeOriginal(sharp, treeRoot, params.seed, index));
   const jobs = indices.flatMap((index) => params.transforms.map((transform) => ({ index, transform })));
-  await runPool(jobs, CONCURRENCY, (job) => writeVariant(sharp, absoluteRoot, job.index, job.transform));
+  await runPool(jobs, CONCURRENCY, (job) => writeVariant(sharp, treeRoot, job.index, job.transform));
 
   const images: ImageManifestEntry[] = indices.flatMap((index) => [
-    { path: originalFile(absoluteRoot, index), original: index, transform: 'original' as const },
-    ...params.transforms.map((transform) => ({ path: variantFile(absoluteRoot, index, transform), original: index, transform })),
+    { path: originalFile(treeRoot, index), original: index, transform: 'original' as const },
+    ...params.transforms.map((transform) => ({ path: variantFile(treeRoot, index, transform), original: index, transform })),
   ]);
   const manifest: ImageManifest = {
     params: { originals: params.originals, seed: params.seed, transforms: [...params.transforms] },
-    root: absoluteRoot,
+    root: treeRoot,
     images,
   };
   fs.writeFileSync(path.join(absoluteRoot, MANIFEST_FILE), JSON.stringify(manifest, null, 2));
@@ -425,7 +434,7 @@ function reusableManifest(root: string, params: ImageCorpusParams): ImageManifes
   } catch {
     return undefined;
   }
-  if (!isImageManifest(parsed) || parsed.root !== root || !sameParams(parsed.params, params)) return undefined;
+  if (!isImageManifest(parsed) || parsed.root !== path.join(root, TREE_DIR) || !sameParams(parsed.params, params)) return undefined;
   if (parsed.images.length !== params.originals * (params.transforms.length + 1)) return undefined;
   if (!parsed.images.every((img) => fs.existsSync(img.path))) return undefined;
   return parsed;

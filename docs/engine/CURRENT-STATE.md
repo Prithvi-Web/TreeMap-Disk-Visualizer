@@ -45,14 +45,14 @@ that description turned out to be wrong or stale. Everything downstream
 | `cloud` | Provider-API scans (Google Drive, Dropbox, OneDrive) — not a filesystem engine | `src/services/cloud/cloudScan.ts:22` |
 | `ntfs-mft` | **Never assigned.** Exists only in the type, in a UI label map, and in the July design that ruled it out of scope | `src/ui/app/045-persistent-live-index.js:641`, `docs/superpowers/specs/2026-07-16-turbo-scan-5m-design.md:214` |
 
-### 2.1 Selection logic, verbatim (`diskScanner.ts:428-441`)
+### 2.1 Selection logic (`diskScanner.ts:428-441`; the conditions as in the source, the reasons from the block comment above them)
 
 ```ts
 const gduEligible =
   rootStat.isDirectory() &&
-  !cache &&                 // no usable mtime cache for this root
+  !cache &&                 // reason: no usable mtime cache for this root
   !opts.incremental &&
-  ignore.length === 0 &&    // gdu's -i/-I cannot express the app's ignore globs
+  ignore.length === 0 &&    // reason: gdu's -i/-I cannot express the app's ignore globs
   process.env.TREEMAP_NO_GDU !== '1';
 // ...
 if (gduEligible) {
@@ -76,8 +76,8 @@ cpus × 2))` before libuv's pool exists (16 on this machine); `electron/main.js:
 does the same for the desktop. The comment records the measurement the master
 prompt cites: 16 threads scan about 1.6× faster than 4 on APFS and 32 is
 slower than 4. The walker's own concurrency is fixed at module load:
-`CONCURRENCY = min(32, max(8, IO_THREADS))` (so 16 here) and `STAT_BATCH = 64`
-(`diskScanner.ts:40-41`). There is **no adaptive concurrency anywhere**.
+`CONCURRENCY = min(32, max(8, IO_THREADS))` (so 16 here) and `STAT_BATCH = IO_THREADS > 4 ? 64 : 32`
+(so 64 here; `diskScanner.ts:40-41`). There is **no adaptive concurrency anywhere**.
 
 ## 3. The Node walker (`src/services/diskScanner.ts`)
 
@@ -125,7 +125,7 @@ consumer accepts either a legacy object tree or a store.
 | Mount points, firmlinks | A hard-coded never-descend list — darwin `/System/Volumes`, `/Volumes`, `/dev`, `/home`, `/net`, `/Network`; linux `/proc`, `/sys`, `/dev`, `/run`. **No device-id check**, on purpose: firmlinks put `/Users` on a different device than `/` | `:865`, `src/utils/mountBoundaries.ts:16-21` |
 | Permission denied | Listed directory → `deniedDirs` and the five smallest paths as examples; an entry's `lstat` → `deniedEntries`. The scan continues | `:755`, `:824`, `src/services/scanRefusals.ts:13-30` |
 | Vanished mid-walk | Directory → `vanishedDirs`; entry → skipped; only the **root** vanishing fails the scan | `:756`, `:825`, `:133-139` |
-| NFC/NFD names | **No normalisation anywhere in `src/`**; names are stored as returned | grep |
+| NFC/NFD names | **No normalisation anywhere in `src/`**; names are stored as returned | `grep -a` (a stray byte makes `file(1)` classify `src/services/thumbnailCache.ts` as data, and plain `grep` skips it silently — every absence claim over `src/` in this document was re-run with `-a`) |
 | Hidden | Dot-prefix only, on every platform | `:606` |
 | Git repositories | A `.git` child sets `Flag.GitRepo` on the parent | `:857` |
 | Containers | `.photoslibrary`, disk images, archives are tagged, never expanded here | `src/utils/containerKind.ts:12-25` |
@@ -147,7 +147,7 @@ consumer accepts either a legacy object tree or a store.
 
 ## 4. The gdu engine (`src/services/gduScanner.ts`, `src/services/gduMapper.ts`)
 
-* Invocation: `execFile(bin, ['-n', '-x', '-o', outFile, dir], { maxBuffer: 1 MiB, timeout, killSignal: 'SIGKILL' })` — argv array, never a shell (`:144-167`). `-x` keeps gdu on one filesystem.
+* Invocation: `execFile(bin, ['-n', '-x', '-o', outFile, ...(ignoreDirs ? ['-i', ignoreDirs.join(',')] : []), dir], { maxBuffer: 1 MiB, timeout, killSignal: 'SIGKILL' })` — argv array, never a shell (`:144-167`). `-x` keeps gdu on one filesystem; the `-i` branch exists in `runGdu` but is unreachable from a scan, because gdu is only eligible with an empty ignore list.
 * Sharding: one subprocess per top-level directory of the root, each writing `shard-N.json` into a `treemap-gdu-` temp directory that is removed in `finally` (`:270`, `:335-386`). Files directly under the root are `lstat`ed by Node (`statLeaf`, `:198-256`).
 * Guard: a shard over **450 MB** of JSON throws, which restarts the whole scan under the walker — the limit exists because the file is read whole and `JSON.parse`d (`:40`, `:357`); V8 caps a string near 512 MB. A shard that runs longer than **5 minutes** is killed the same way (`:50`).
 * Mapper: gdu's document is `[1, 2, {header}, dirNode]` and a directory is the **flat** array `[meta, child1, child2, …]` (`gduMapper.ts:6-31`); `asize` is the logical size and is omitted when zero; `dsize` is disk usage; `mtime` is whole seconds; `notreg` marks non-regular files; `hlnkc` plus `ino` mark hard links, deduplicated on **inode alone because gdu emits no `dev`** (`:77-82`). Cloud placeholders are `size > 0 && !dsize` inside a known cloud folder. Directory sizes are summed by the store.

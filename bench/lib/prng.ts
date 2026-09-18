@@ -30,3 +30,8 @@ export function hash32(a: number, b: number): number {
   h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
   return (h ^ (h >>> 16)) >>> 0;
 }
+
+/** One draw of `rng` as a uint32: the harness's byte-stream and id source. */
+export function nextUint32(rng: () => number): number {
+  return (rng() * TWO_POW_32) >>> 0;
+}

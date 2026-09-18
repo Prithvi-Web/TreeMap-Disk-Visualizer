@@ -48,11 +48,12 @@ function quantile(sorted: number[], q: number): number {
 /**
  * The resolution of the median as a percentage of itself:
  * sigma ≈ IQR / 1.349, SE ≈ 1.2533 · sigma / √n, band = 2 · SE / median · 100.
- * Infinity when fewer than two runs were taken or the median is not positive.
+ * Infinity when fewer than three runs were taken or the median is not positive.
  */
 export function resolutionBand(values: number[]): number {
   const m = median(values);
-  if (m <= 0 || values.length < 2) return Infinity;
+  // An interquartile range of two points is a guess; three is the least that resolves anything.
+  if (m <= 0 || values.length < 3) return Infinity;
   const sorted = sortedCopy(values);
   const iqr = quantile(sorted, 0.75) - quantile(sorted, 0.25);
   const sigma = iqr / IQR_TO_SIGMA;

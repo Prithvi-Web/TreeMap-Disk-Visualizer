@@ -7,7 +7,7 @@ import { summarize, compareToBaseline, printTable, readResult, writeResult, type
 import { checkScanAgainstManifest, checkDuplicatesAgainstManifest } from '../bench/lib/verify';
 
 function run(wallMs: number, cpuSeconds = 0.5, entries = 200_000, extra: Partial<BenchRun> = {}): BenchRun {
-  return { wallMs, entries, cpuSeconds, childCpuSeconds: null, peakRssBytes: 100_000_000, bytesRead: 1_000, loadAvg: [1, 1, 1], ...extra };
+  return { wallMs, entries, cpuSeconds, selfCpuSeconds: cpuSeconds, childCpuSeconds: 0, peakRssBytes: 100_000_000, bytesRead: 1_000, bytesReadReason: 'test', persistMs: 0, persistCpuSeconds: 0, loadAvg: [1, 1, 1], ...extra };
 }
 
 test('the summary is the median wall clock, entries per second from it, and CPU seconds per million entries', () => {
@@ -38,7 +38,9 @@ function result(wallMsMedian: number, resolutionPct: number): BenchResult {
     suite: 'enumerate',
     corpus: { name: 'enum200k', params: {}, scale: 'full' },
     engine: 'walker',
-    machine: { cpuModel: 'x', cores: 8, perfCores: null, effCores: null, memoryBytes: 1, platform: 'darwin', osRelease: '1', node: 'v1', commit: 'abc1234', loadAvg: [1, 1, 1], maxVnodes: null, tier: 'B', tierReason: 'test' },
+    engineDescription: 'the Node walker',
+    entriesUnit: 'entries',
+    machine: { cpuModel: 'x', cores: 8, perfCores: null, effCores: null, memoryBytes: 1, platform: 'darwin', arch: 'arm64', osRelease: '1', node: 'v1', commit: 'abc1234', dirty: false, loadAvg: [1, 1, 1], maxVnodes: null, tier: 'B', tierReason: 'test' },
     cache: { state: 'warm', reason: 'test' },
     runs: [r, r, r],
     summary: { ...summarize([r, r, r]), resolutionPct },
@@ -56,10 +58,10 @@ test('fifteen percent slower with a two percent band is a regression', () => {
   assert.match(v.sentence, /slower/);
 });
 
-test('one percent slower inside a two percent band is inconclusive, and says at what resolution', () => {
+test('one percent slower inside two combined two-percent bands is inconclusive, and says at what resolution', () => {
   const v = compareToBaseline(result(1010, 2), result(1000, 2));
   assert.equal(v.verdict, 'INCONCLUSIVE');
-  assert.match(v.sentence, /2\.0%/);
+  assert.match(v.sentence, /2\.8% combined resolution/);
 });
 
 test('twenty percent faster passes', () => {
@@ -146,8 +148,8 @@ test('a result with one run survives the trip through JSON without gaining a res
     assert.equal(back.summary.spreadPct, Number.POSITIVE_INFINITY);
     assert.equal(back.summary.reproducible, false);
     const v = compareToBaseline(result(800, 2), back);
-    assert.equal(v.verdict, 'INCONCLUSIVE');
-    assert.match(v.sentence, /single run|no resolution/);
+    assert.equal(v.verdict, 'NOT COMPARABLE', 'a single run is not reproducible, so it cannot be a baseline');
+    assert.match(v.sentence, /single run|not reproducible/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -160,4 +162,127 @@ test('the table says a single run has no spread instead of printing infinity', (
   const table = printTable([r]);
   assert.doesNotMatch(table, /Infinity/);
   assert.match(table, /1 run/);
+});
+
+test('results from different corpora, engines, tiers, platforms, suites or cache states are not comparable', () => {
+  const base = result(1000, 2);
+  for (const patch of [
+    (r: BenchResult) => { r.corpus = { ...r.corpus, name: 'enum1m' }; },
+    (r: BenchResult) => { r.engine = 'gdu-turbo'; },
+    (r: BenchResult) => { r.machine = { ...r.machine, tier: 'C' }; },
+    (r: BenchResult) => { r.machine = { ...r.machine, platform: 'linux' }; },
+    (r: BenchResult) => { r.suite = 'duplicates'; },
+    (r: BenchResult) => { r.cache = { state: 'cold', reason: 'x' }; },
+  ]) {
+    const cur = result(900, 2);
+    patch(cur);
+    const v = compareToBaseline(cur, base);
+    assert.equal(v.verdict, 'NOT COMPARABLE', v.sentence);
+    assert.match(v.sentence, /differ/);
+  }
+});
+
+test('a result that failed correctness or is not reproducible cannot pass a comparison', () => {
+  const base = result(1000, 2);
+  const wrong = result(500, 2);
+  wrong.correctness = { ok: false, notes: ['fileCount: the scan reported 1, the manifest planted 2'] };
+  assert.equal(compareToBaseline(wrong, base).verdict, 'NOT COMPARABLE');
+  const noisy = result(500, 2);
+  noisy.summary = { ...noisy.summary, spreadPct: 30, reproducible: false };
+  assert.equal(compareToBaseline(noisy, base).verdict, 'NOT COMPARABLE');
+});
+
+test('the comparison band combines both resolutions, so two 8% measurements cannot resolve a 10.5% difference', () => {
+  const v = compareToBaseline(result(1105, 8), result(1000, 8));
+  assert.equal(v.verdict, 'INCONCLUSIVE', v.sentence);
+  assert.ok(v.band > 11 && v.band < 11.5, `band ${v.band}`);
+});
+
+test('readResult refuses a file that is not a well-formed result', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-report-'));
+  try {
+    const cases: unknown[] = [
+      { hello: 1 },
+      { summary: 1, runs: 1 },
+      { ...result(1000, 2), summary: {} },
+      { ...result(1000, 2), summary: { ...result(1000, 2).summary, wallMsMedian: '500' } },
+      { ...result(1000, 2), runs: [] },
+      { ...result(1000, 2), summary: { ...result(1000, 2).summary, wallMsMedian: 0 } },
+      { ...result(1000, 2), summary: { ...result(1000, 2).summary, wallMsMedian: -100 } },
+      { ...result(1000, 2), correctness: undefined },
+    ];
+    cases.forEach((c, i) => {
+      const file = path.join(dir, `bad-${i}.json`);
+      fs.writeFileSync(file, JSON.stringify(c));
+      assert.throws(() => readResult(file), /not a bench result/, `case ${i}`);
+    });
+    const good = writeResult(result(1000, 2), dir, 'good.json');
+    assert.equal(readResult(good).summary.wallMsMedian, 1000);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a summary cannot be built from nothing, from a zero wall clock or from zero entries', () => {
+  assert.throws(() => summarize([]), /no runs/);
+  assert.throws(() => summarize([run(0)]), /not a measurement/);
+  assert.throws(() => summarize([run(1000, 0.5, 0)]), /not a measurement/);
+});
+
+test('fewer than three runs have no resolution band', () => {
+  assert.equal(Number.isFinite(summarize([run(1000), run(1010)]).resolutionPct), false);
+  assert.equal(Number.isFinite(summarize([run(1000), run(1010), run(1020)]).resolutionPct), true);
+});
+
+test('the table names the unit each suite counts and prints n/a for an unmeasured load', () => {
+  const r = result(1000, 2);
+  r.suite = 'neardup';
+  r.entriesUnit = 'images';
+  r.runs = r.runs.map((x) => ({ ...x, loadAvg: null }));
+  const table = printTable([r]);
+  assert.match(table, /images\/s/);
+  assert.match(table, /n\/a/);
+});
+
+test('a hard-link name is matched through its family, because the engine may give the bytes to either name', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-verify-alias-'));
+  try {
+    const a1 = path.join(dir, 'a1'), a2 = path.join(dir, 'a2'), a1link = path.join(dir, 'a1link');
+    fs.writeFileSync(a1, Buffer.alloc(4096, 5));
+    fs.writeFileSync(a2, Buffer.alloc(4096, 5));
+    fs.linkSync(a1, a1link);
+    const manifest = { root: dir, duplicateGroups: [{ content: 3, size: 4096, paths: [a1, a2] }], hardlinkFamilies: [{ target: a1, links: [a1link] }] };
+    // The engine listed a1link first, so a1 carries size 0 and the finder reported the link's name.
+    const r = checkDuplicatesAgainstManifest(manifest, [{ size: 4096, files: [{ path: a1link }, { path: a2 }] }], 1024);
+    assert.equal(r.recall, 1, r.notes.join('\n'));
+    assert.equal(r.ok, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('under a report cap, recall counts only the planted groups above the finder\'s cut, and the total count must still match', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-verify-cap-'));
+  try {
+    const mk = (name: string, size: number, fill: number): string => { const p = path.join(dir, name); fs.writeFileSync(p, Buffer.alloc(size, fill)); return p; };
+    const big = [mk('b1', 8192, 1), mk('b2', 8192, 1)];
+    const mid = [mk('m1', 4096, 2), mk('m2', 4096, 2)];
+    const small = [mk('s1', 2048, 3), mk('s2', 2048, 3)];
+    const manifest = { root: dir, duplicateGroups: [
+      { content: 1, size: 8192, paths: big }, { content: 2, size: 4096, paths: mid }, { content: 3, size: 2048, paths: small },
+    ] };
+    const top2 = [{ size: 8192, files: big.map((p) => ({ path: p })) }, { size: 4096, files: mid.map((p) => ({ path: p })) }];
+    const capped = checkDuplicatesAgainstManifest(manifest, top2, 1024, { groupCount: 3 });
+    assert.equal(capped.truncated, true);
+    assert.equal(capped.expectedGroups, 2, 'the small group sits below the cut and cannot have been reported');
+    assert.equal(capped.recall, 1, capped.notes.join('\n'));
+    assert.equal(capped.ok, true);
+    const untruncated = checkDuplicatesAgainstManifest(manifest, top2, 1024, { groupCount: 2 });
+    assert.equal(untruncated.ok, false, 'a finder that found only two of three planted groups is wrong');
+    assert.ok(untruncated.notes.some((n) => /counted 2 groups in total; the corpus planted 3/.test(n)), untruncated.notes.join('\n'));
+    const missingOne = checkDuplicatesAgainstManifest(manifest, top2.slice(0, 1), 1024, { groupCount: 3 });
+    assert.equal(missingOne.recall, 1, 'with one reported group the cut rises to it, so only it is expected');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

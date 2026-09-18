@@ -23,7 +23,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { Worker } from 'node:worker_threads';
-import { hash32, mulberry32 } from './prng';
+import { hash32, mulberry32, nextUint32 } from './prng';
+import { MANIFEST_FILE, TREE_DIR, benchTmpDir } from './paths';
 
 /* ---------------- public surface ---------------- */
 
@@ -93,7 +94,6 @@ export type WorkerReply =
 
 const KiB = 1024;
 const MiB = 1024 * KiB;
-const TWO_POW_32 = 4294967296;
 const NO_INDEX = -1;
 const ROOT_DIR = 0;
 const FLAT_DIR = 1;
@@ -104,14 +104,24 @@ const SPARSE_MIN = 8 * MiB;
 const SPARSE_SPAN = 56 * MiB;      // logical sizes lie in [8 MiB, 64 MiB)
 const CONTENT_PREFIX_BYTES = 8;    // content id + size, so distinct ids are distinct bytes by construction
 const MAX_WORKERS = 8;
-const BENCH_DIR = 'treemap-bench';
-const TREE_DIR = 'tree';
-const MANIFEST_FILE = 'manifest.json';
 
-export const CORPORA: Record<'enum200k' | 'enum1m' | 'dupes100k', CorpusParams> = Object.freeze({
-  enum200k: Object.freeze({ entries: 200_000, fanout: 12, depth: 8, flat: 10_000, sizeMedian: 1024, sizeSigma: 1.2, sizeMax: 2 * MiB, duplicateRate: 0, hardlinkRate: 0.01, sparseRate: 0.001, seed: 2 }),
-  enum1m: Object.freeze({ entries: 1_000_000, fanout: 12, depth: 8, flat: 10_000, sizeMedian: 1024, sizeSigma: 1.2, sizeMax: 2 * MiB, duplicateRate: 0, hardlinkRate: 0.01, sparseRate: 0.001, seed: 4 }),
-  dupes100k: Object.freeze({ entries: 112_000, fanout: 10, depth: 6, flat: 0, sizeMedian: 8192, sizeSigma: 1.6, sizeMax: 64 * MiB, duplicateRate: 0.12, hardlinkRate: 0.005, sparseRate: 0.001, seed: 3 }),
+/**
+ * Sparse files are `ftruncate`-only; NTFS allocates an extended file in full
+ * (no FSCTL_SET_SPARSE from Node), so the presets plant none on Windows and
+ * the manifest says so through its parameters.
+ */
+const sparse = (rate: number): number => (process.platform === 'win32' ? 0 : rate);
+
+export type CorpusName = 'smoke' | 'ci20k' | 'enum200k' | 'enum1m' | 'dupes100k';
+
+export const CORPORA: Readonly<Record<CorpusName, CorpusParams>> = Object.freeze({
+  /** Seconds to build and scan: the CLI's own tests and a first look. */
+  smoke: Object.freeze({ entries: 1_200, fanout: 8, depth: 5, flat: 0, sizeMedian: 2048, sizeSigma: 1.2, sizeMax: 256 * KiB, duplicateRate: 0.12, hardlinkRate: 0.02, sparseRate: sparse(0.005), seed: 7 }),
+  /** The fixed small corpus a CI runner can afford: the regression gate's referent. */
+  ci20k: Object.freeze({ entries: 20_000, fanout: 10, depth: 6, flat: 1_000, sizeMedian: 1024, sizeSigma: 1.2, sizeMax: MiB, duplicateRate: 0.05, hardlinkRate: 0.01, sparseRate: sparse(0.001), seed: 8 }),
+  enum200k: Object.freeze({ entries: 200_000, fanout: 12, depth: 8, flat: 10_000, sizeMedian: 1024, sizeSigma: 1.2, sizeMax: 2 * MiB, duplicateRate: 0, hardlinkRate: 0.01, sparseRate: sparse(0.001), seed: 2 }),
+  enum1m: Object.freeze({ entries: 1_000_000, fanout: 12, depth: 8, flat: 10_000, sizeMedian: 1024, sizeSigma: 1.2, sizeMax: 2 * MiB, duplicateRate: 0, hardlinkRate: 0.01, sparseRate: sparse(0.001), seed: 4 }),
+  dupes100k: Object.freeze({ entries: 112_000, fanout: 10, depth: 6, flat: 0, sizeMedian: 8192, sizeSigma: 1.6, sizeMax: 64 * MiB, duplicateRate: 0.12, hardlinkRate: 0.005, sparseRate: sparse(0.001), seed: 3 }),
 });
 
 /** File `index` is named this inside its directory. */
@@ -270,7 +280,43 @@ export function planCorpus(params: CorpusParams): CorpusPlan {
   const files = params.entries - dirs;
   if (files < 1) throw new RangeError(`${params.entries} entries leave no room for a file beside ${dirs} directories`);
   if (params.flat > files) throw new RangeError(`flat (${params.flat}) exceeds the ${files} files that ${params.entries} entries leave after ${dirs} directories`);
-  return { params: { ...params }, dirParent: tree.dirParent, dirNameId: tree.dirNameId, ...planFiles(params, rng, dirs, tree.flatDir, files) };
+  const plan: CorpusPlan = { params: { ...params }, dirParent: tree.dirParent, dirNameId: tree.dirNameId, ...planFiles(params, rng, dirs, tree.flatDir, files) };
+  assertConsistentPlan(plan);
+  return plan;
+}
+
+/**
+ * The invariants the parallel arrays must hold: one entry per file in every
+ * file array, one per directory in every directory array, every parent
+ * before its child, every file in a real directory, and a hard link that
+ * names an earlier plain file in its own directory. A plan that fails this
+ * can never become a corpus, so a wrong manifest cannot be written.
+ */
+export function assertConsistentPlan(plan: CorpusPlan): void {
+  const dirs = plan.dirParent.length;
+  const files = plan.fileDir.length;
+  if (plan.dirNameId.length !== dirs) throw new Error(`plan: dirNameId length ${plan.dirNameId.length} differs from ${dirs} directories`);
+  for (const [name, arr] of [['fileSize', plan.fileSize], ['fileContent', plan.fileContent], ['fileRole', plan.fileRole], ['fileHardlinkOf', plan.fileHardlinkOf]] as const) {
+    if (arr.length !== files) throw new Error(`plan: ${name} length ${arr.length} differs from ${files} files`);
+  }
+  for (let d = 1; d < dirs; d++) {
+    if (plan.dirParent[d] < 0 || plan.dirParent[d] >= d) throw new Error(`plan: directory ${d} has parent ${plan.dirParent[d]}, which does not precede it`);
+  }
+  for (let i = 0; i < files; i++) {
+    const dir = plan.fileDir[i];
+    if (dir < 0 || dir >= dirs) throw new Error(`plan: file ${i} is in directory ${dir}, which does not exist`);
+    if (!Number.isInteger(plan.fileSize[i]) || plan.fileSize[i] < 0) throw new Error(`plan: file ${i} has size ${plan.fileSize[i]}`);
+    const role = plan.fileRole[i];
+    const target = plan.fileHardlinkOf[i];
+    if (role === Role.hardlink) {
+      if (target < 0 || target >= i || plan.fileDir[target] !== dir || plan.fileRole[target] !== Role.plain) {
+        throw new Error(`plan: hard link ${i} names target ${target}, which is not an earlier plain file in its directory`);
+      }
+    } else if (target !== NO_INDEX) {
+      throw new Error(`plan: file ${i} is not a hard link but carries target ${target}`);
+    }
+    if (role > Role.sparse) throw new Error(`plan: file ${i} has unknown role ${role}`);
+  }
 }
 
 /* ---------------- bytes ---------------- */
@@ -294,15 +340,20 @@ export function contentBytes(content: number, size: number): Buffer {
   header.copy(buf, 0, 0, prefix);
   const rng = mulberry32(hash32(id, size));
   let offset = prefix;
-  for (; offset + 4 <= size; offset += 4) buf.writeUInt32LE((rng() * TWO_POW_32) >>> 0, offset);
+  for (; offset + 4 <= size; offset += 4) buf.writeUInt32LE(nextUint32(rng), offset);
   if (offset < size) {
-    const tail = (rng() * TWO_POW_32) >>> 0;
+    const tail = nextUint32(rng);
     for (let shift = 0; offset < size; offset++, shift += 8) buf[offset] = (tail >>> shift) & 0xff;
   }
   return buf;
 }
 
 /* ---------------- manifest ---------------- */
+
+/** The on-disk rule for file `i`: `<its directory>/f<i>`. One definition, used by the manifest, the creator and the checks. */
+export function filePath(dirPaths: readonly string[], fileDir: Int32Array, i: number): string {
+  return path.join(dirPaths[fileDir[i]], fileName(i));
+}
 
 function directoryPaths(plan: CorpusPlan, root: string): string[] {
   const paths: string[] = new Array<string>(plan.dirParent.length);
@@ -311,7 +362,8 @@ function directoryPaths(plan: CorpusPlan, root: string): string[] {
   return paths;
 }
 
-function planDigest(plan: CorpusPlan): string {
+/** The reproducibility proof: a digest over every planned value. */
+export function planDigest(plan: CorpusPlan): string {
   const hash = createHash('sha256');
   for (const arr of [plan.dirParent, plan.dirNameId, plan.fileDir, plan.fileSize, plan.fileContent, plan.fileRole, plan.fileHardlinkOf]) {
     hash.update(Buffer.from(arr.buffer, arr.byteOffset, arr.byteLength));
@@ -340,7 +392,7 @@ function bucketBy(files: number, keys: number, keyOf: (i: number) => number): { 
 export function manifestFor(plan: CorpusPlan, root: string, name: string): CorpusManifest {
   const files = plan.fileDir.length;
   const dirPaths = directoryPaths(plan, root);
-  const pathOf = (i: number): string => path.join(dirPaths[plan.fileDir[i]], fileName(i));
+  const pathOf = (i: number): string => filePath(dirPaths, plan.fileDir, i);
 
   let logicalBytes = 0;
   for (let i = 0; i < files; i++) if (plan.fileRole[i] !== Role.hardlink) logicalBytes += plan.fileSize[i];
@@ -440,7 +492,7 @@ export async function createCorpus(root: string, plan: CorpusPlan, opts: CreateO
   if (fs.readdirSync(realRoot).length > 0) throw new Error(`refusing to create a corpus in ${realRoot}: it is not empty`);
   const dirPaths = directoryPaths(plan, realRoot);
   for (let d = 1; d < dirPaths.length; d++) fs.mkdirSync(dirPaths[d]);   // parents precede children
-  const pathOf = (i: number): string => path.join(dirPaths[plan.fileDir[i]], fileName(i));
+  const pathOf = (i: number): string => filePath(dirPaths, plan.fileDir, i);
 
   const shared = {
     fileDir: sharedCopy(plan.fileDir),
@@ -459,13 +511,26 @@ export async function createCorpus(root: string, plan: CorpusPlan, opts: CreateO
   }
 
   const replies = await Promise.all(jobs.map(runWorker));
-  for (const reply of replies) if (!reply.ok) throw new Error(`corpus worker failed: ${reply.error}`);
+  let deferred = 0;
+  replies.forEach((reply, k) => {
+    if (!reply.ok) throw new Error(`corpus worker failed: ${reply.error}`);
+    const span = jobs[k].end - jobs[k].start;
+    if (reply.written + reply.deferredLinks !== span) {
+      throw new Error(`corpus worker ${k} accounted for ${reply.written + reply.deferredLinks} of ${span} files`);
+    }
+    deferred += reply.deferredLinks;
+  });
 
+  let linked = 0;
   for (let i = 0; i < files; i++) {
     if (plan.fileRole[i] !== Role.hardlink) continue;
     const target = plan.fileHardlinkOf[i];
-    if (chunkOf(target) !== chunkOf(i)) fs.linkSync(pathOf(target), pathOf(i));
+    if (chunkOf(target) !== chunkOf(i)) {
+      fs.linkSync(pathOf(target), pathOf(i));
+      linked++;
+    }
   }
+  if (linked !== deferred) throw new Error(`the workers deferred ${deferred} hard links but the main thread created ${linked}`);
 
   return manifestFor(plan, realRoot, opts.name ?? path.basename(realRoot));
 }
@@ -480,7 +545,7 @@ function canonicalParams(params: CorpusParams): string {
 export function corpusDir(name: string, params: CorpusParams): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) throw new RangeError(`corpus name ${JSON.stringify(name)} must be letters, digits, '.', '_' or '-'`);
   const hash8 = createHash('sha256').update(canonicalParams(params)).digest('hex').slice(0, 8);
-  return path.join(os.tmpdir(), BENCH_DIR, `${name}-${hash8}`);
+  return path.join(benchTmpDir(), `${name}-${hash8}`);
 }
 
 function isManifest(value: unknown): value is CorpusManifest {
@@ -519,12 +584,43 @@ function readManifest(file: string): CorpusManifest | null {
 
 /** Removes a corpus directory — and only a corpus directory: anything outside `os.tmpdir()/treemap-bench/` is refused. */
 function removeCorpusDir(dir: string): void {
-  const base = path.join(os.tmpdir(), BENCH_DIR);
+  const base = benchTmpDir();
   const relative = path.relative(base, dir);
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative) || relative.includes(path.sep)) {
     throw new Error(`refusing to remove ${dir}: corpora live only directly under ${base}`);
   }
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+}
+
+/** How many manifest paths a reuse checks on disk: enough to notice a reaped or moved tree, cheap enough to run every time. */
+const REUSE_SAMPLE = 32;
+
+/**
+ * A manifest is reused only when its root is the tree directory beside it
+ * (never a root the file merely claims) and a sample of the paths it lists
+ * still exist; macOS reaps unused temp files and a partly reaped corpus would
+ * otherwise fail correctness with a confusing message.
+ */
+function reusable(manifest: CorpusManifest, treeRoot: string): boolean {
+  let realTree: string;
+  try {
+    realTree = fs.realpathSync(treeRoot);
+  } catch {
+    return false;
+  }
+  if (manifest.root !== realTree && manifest.root !== treeRoot) return false;
+  const sample: string[] = [];
+  for (const g of manifest.duplicateGroups) { for (const p of g.paths) { if (sample.length < REUSE_SAMPLE) sample.push(p); } }
+  for (const f of manifest.hardlinkFamilies) { if (sample.length < REUSE_SAMPLE) sample.push(f.target); }
+  for (const f of manifest.sparseFiles) { if (sample.length < REUSE_SAMPLE) sample.push(f.path); }
+  if (sample.length === 0) {
+    try {
+      return fs.readdirSync(manifest.root).length > 0;
+    } catch {
+      return false;
+    }
+  }
+  return sample.every((p) => fs.existsSync(p));
 }
 
 /**
@@ -540,7 +636,7 @@ export async function ensureCorpus(name: string, params: CorpusParams): Promise<
   const plan = planCorpus(params);
 
   const existing = readManifest(manifestPath);
-  if (existing && isDeepStrictEqual(existing.params, params) && existing.planDigest === planDigest(plan) && fs.existsSync(existing.root)) {
+  if (existing && isDeepStrictEqual(existing.params, params) && existing.planDigest === planDigest(plan) && reusable(existing, treeRoot)) {
     return existing;
   }
 

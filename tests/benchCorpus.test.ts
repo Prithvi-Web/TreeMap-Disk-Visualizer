@@ -495,3 +495,54 @@ test('the presets are the ones the plan names and plan within budget', (t) => {
     }
   }
 });
+
+test('a plan whose arrays disagree is refused, so a wrong plan can never become a corpus', async () => {
+  const { planCorpus, assertConsistentPlan } = await import('../bench/lib/corpus');
+  const plan = planCorpus({ entries: 300, fanout: 4, depth: 3, flat: 0, sizeMedian: 512, sizeSigma: 1, sizeMax: 8192, duplicateRate: 0.1, hardlinkRate: 0.05, sparseRate: 0.01, seed: 21 });
+  assertConsistentPlan(plan);
+  const short = { ...plan, fileSize: plan.fileSize.slice(0, plan.fileSize.length - 1) };
+  assert.throws(() => assertConsistentPlan(short), /length/);
+  const badLink = { ...plan, fileHardlinkOf: Int32Array.from(plan.fileHardlinkOf) };
+  const linkIndex = Array.from(plan.fileRole).findIndex((r) => r === 2);
+  assert.ok(linkIndex >= 0, 'the plan has a hard link');
+  badLink.fileHardlinkOf[linkIndex] = -1;
+  assert.throws(() => assertConsistentPlan(badLink), /hard link/);
+});
+
+test('the plan digest changes when any planned value changes', async () => {
+  const { planCorpus, planDigest } = await import('../bench/lib/corpus');
+  const params = { entries: 300, fanout: 4, depth: 3, flat: 0, sizeMedian: 512, sizeSigma: 1, sizeMax: 8192, duplicateRate: 0.1, hardlinkRate: 0.05, sparseRate: 0.01, seed: 22 };
+  const a = planCorpus(params);
+  const b = planCorpus(params);
+  assert.equal(planDigest(a), planDigest(b));
+  const c = planCorpus(params);
+  c.fileSize[7] += 1;
+  assert.notEqual(planDigest(c), planDigest(a), 'one changed size changes the digest');
+  const d = planCorpus(params);
+  d.fileContent[3] = d.fileContent[3] === 1 ? 2 : 1;
+  assert.notEqual(planDigest(d), planDigest(a), 'one changed content id changes the digest');
+});
+
+test('the presets name every corpus the CLI can ask for, and plant no sparse files on Windows', async () => {
+  const { CORPORA } = await import('../bench/lib/corpus');
+  for (const name of ['smoke', 'ci20k', 'enum200k', 'enum1m', 'dupes100k'] as const) assert.ok(name in CORPORA, name);
+  assert.ok(CORPORA.smoke.entries <= 2_000);
+  assert.ok(CORPORA.smoke.duplicateRate > 0, 'the smoke corpus exercises the duplicate finder');
+  if (process.platform === 'win32') for (const p of Object.values(CORPORA)) assert.equal(p.sparseRate, 0);
+});
+
+test('a reused corpus is checked, not trusted: a manifest whose root moved or whose files vanished is rebuilt', async () => {
+  const { ensureCorpus, corpusDir } = await import('../bench/lib/corpus');
+  const params = { entries: 200, fanout: 4, depth: 3, flat: 0, sizeMedian: 512, sizeSigma: 1, sizeMax: 8192, duplicateRate: 0.1, hardlinkRate: 0, sparseRate: 0, seed: 23 };
+  const name = 'reusecheck';
+  const first = await ensureCorpus(name, params);
+  const manifestFile = path.join(corpusDir(name, params), 'manifest.json');
+  const tampered = { ...first, root: os.homedir() };
+  fs.writeFileSync(manifestFile, JSON.stringify(tampered));
+  const second = await ensureCorpus(name, params);
+  assert.notEqual(second.root, os.homedir(), 'a root outside the corpus directory is never adopted');
+  fs.rmSync(second.duplicateGroups[0]?.paths[0] ?? path.join(second.root, 'd0'), { force: true, recursive: true });
+  const third = await ensureCorpus(name, params);
+  for (const g of third.duplicateGroups) for (const p of g.paths) assert.ok(fs.existsSync(p), `rebuilt: ${p}`);
+  fs.rmSync(corpusDir(name, params), { recursive: true, force: true });
+});

@@ -327,7 +327,7 @@ without it. Adds two backend npm dependencies, which is why it waits for D8.
 
 ## 12. API contract (Phase 3 onward, additive only — D6)
 
-* `GET /api/scan/:id/stats` and the SSE `complete` frame gain: `engineReason`, `fastPath`, `fallbackReason`, `budget`, `entriesPerSecond`, `cpuSeconds`, `peakRssBytes`, `bytesRead`, `cacheHitRate`, `storageMode`, `placeholdersSkipped`. Every existing key keeps its name, type and position. `openapi.ts`'s `ScanStats` grows by the same keys; `tests/fixtures/golden/responses.json` is re-recorded in the same commit with the reason in the commit message.
+* `GET /api/scan/:id/stats` and the SSE `complete` frame gain: `engineReason`, `fastPath`, `fallbackReason`, `budget`, `entriesPerSecond`, `cpuSeconds`, `peakRssBytes`, `bytesRead`, `cacheHitRate`, `storageMode`, `placeholdersSkipped`. Every existing key keeps its name, type and position. `cpuSeconds`, `peakRssBytes` and `bytesRead` are **per-scan deltas measured by the engine itself** (the native core's own counters around the walk), never the process's lifetime figures — the harness learned in Phase 1 that a process-lifetime peak or a self-only counter is a wrong number the moment two scans share a process; a value the platform cannot measure is `null` with the reason in `engineReason`. `openapi.ts`'s `ScanStats` grows by the same keys; `tests/fixtures/golden/responses.json` is re-recorded in the same commit with the reason in the commit message.
 * `GET /api/duplicates` gains per group `hashAlgo`, `stagesUsed`, `bytesRead`, `verifiedByteCompare`, `sharesStorage`, and a top-level `notHashed` list; it also starts carrying the `reclaimableIsUpperBound`/`reclaimableCaveat` pair the finder already computes.
 * `GET /api/near-duplicates` gains `tier`, per-image `signature` and `decodePath`, `clusterRepresentative`, `confidence`.
 * New: `GET /api/engine/capabilities`, `GET|PUT /api/engine/budget` (live effect), `POST /api/scan/:id/pause`, `POST /api/scan/:id/resume`. All go through the same guards and the `meta`/`api` lanes as their neighbours.
@@ -356,7 +356,7 @@ features, a pause button on every long operation. Every new part is added to
 * Governor: sustained-load tests per preset asserting the band (±5 points over 60 s); synthetic thermal "serious" state; synthetic battery; the UI frame budget through the existing browser test setup.
 * Duplicates: recall 1.0 and zero false positives by byte comparison on the planted corpus; hard links and clones never reclaimable.
 * Every new assertion is reddened once by a recorded mutant before it counts, the house rule.
-* CI: correctness on all three OSes; a reduced benchmark on every PR, median of 5 on a fixed small corpus, failing on a > 10% regression against the committed baseline.
+* CI: correctness on all three OSes. The performance gate is an **in-job relative A/B**: the same runner scans the fixed `ci20k` corpus with the legacy engine and with the native engine in the same job, median of 5 each, and fails when native is slower than legacy or slower than its own committed ratio by more than a CI-specific band (hosted runners are Tier C-class and noisy; a Tier B laptop baseline says nothing about them, and `bench compare` refuses to compare across tiers or platforms by design). The absolute Tier B baselines under `bench/baselines/` are for the README's numbers, not for CI.
 
 ## 16. Intentional differences from the legacy engines
 
@@ -375,7 +375,7 @@ assertion.
 | Phase | Commits (each small, each reviewable) | Gate |
 | --- | --- | --- |
 | 0 | `docs(engine): current state, design, risks` | this file's §7 arrives under the ceiling |
-| 1 | `bench: corpus generator`, `bench: runner + cache control`, `bench: baselines for the legacy engines`, `test: the lane-drain flood keeps ≤ 64 sockets` | `npm run bench` reproducible, variance < 5% over three runs, baselines committed |
+| 1 | `bench: seeded PRNG, arithmetic, cache refusal`, `bench: machine record + rusage`, `bench: corpus generator`, `bench: image corpus`, `bench: runner, report, checks`, `bench: the review round (child processes, refusals, sound checks)`, `bench: baselines for the legacy engines`, `test: the lane-drain flood keeps ≤ 64 sockets` | `npm run bench` reproducible (spread under 5% over three runs, each in a fresh process), correctness proven beside every timing, baselines committed only from runs that passed both |
 | 2 | `native: workspace + governor crate`, `feat(engine): budget presets, /api/engine/budget` | 25/50/90% held ±5 points for 60 s on this tier (Tier A and C reported as not available here) |
 | 3 | macOS walker, then Windows, then Linux, each behind the probe | equivalence digest identical; targets met on the available tier; budgets held |
 | 4 | store: spill, aggregate-only, incremental index | 100M synthetic scan inside the ceiling; views responsive |

@@ -158,7 +158,7 @@ function sha256(file: string): string {
 /* ---------- the corpus ---------- */
 
 test('every original has one file per transform in the manifest and on disk, and manifest.json matches', gated, (t) => {
-  assert.equal(manifest.root, ROOT);
+  assert.equal(manifest.root, path.join(ROOT, 'tree'));
   assert.deepEqual(manifest.params, PARAMS);
   assert.equal(manifest.images.length, ORIGINALS * (ALL_TRANSFORMS.length + 1));
   const bytesByKind = new Map<Kind, number>();
@@ -287,8 +287,8 @@ test('the same seed renders the same bytes, and a different index renders a diff
   const again = path.join(TMP, 'again');
   const one = await createImageCorpus(again, { originals: 1, seed: SEED, transforms: [...ALL_TRANSFORMS] });
   assert.equal(one.images.length, ALL_TRANSFORMS.length + 1);
-  assert.equal(sha256(path.join(again, 'originals', 'img-0.jpg')), sha256(fileOf(0, 'original')), 'original 0 differs between two corpora with the same seed');
-  assert.equal(sha256(path.join(again, 'crop-10', 'img-0.jpg')), sha256(fileOf(0, 'crop-10')), 'crop-10 of original 0 differs between two corpora with the same seed');
+  assert.equal(sha256(path.join(again, 'tree', 'originals', 'img-0.jpg')), sha256(fileOf(0, 'original')), 'original 0 differs between two corpora with the same seed');
+  assert.equal(sha256(path.join(again, 'tree', 'crop-10', 'img-0.jpg')), sha256(fileOf(0, 'crop-10')), 'crop-10 of original 0 differs between two corpora with the same seed');
   assert.notEqual(sha256(fileOf(0, 'original')), sha256(fileOf(1, 'original')), 'originals 0 and 1 are byte-identical');
 });
 
@@ -427,10 +427,33 @@ test('ensureImageCorpus refuses to build or remove anything outside os.tmpdir()'
 
 test('a variant that cannot be written fails the build naming the file, and the pool stops instead of finishing in the background', gated, async () => {
   const root = path.join(TMP, 'unwritable');
-  fs.mkdirSync(path.join(root, 'webp', 'img-0.webp'), { recursive: true }); // a directory sits where the file must go
+  fs.mkdirSync(path.join(root, 'tree', 'webp', 'img-0.webp'), { recursive: true }); // a directory sits where the file must go
   await assert.rejects(createImageCorpus(root, PARAMS), /webp of original 0/);
-  await new Promise((resolve) => setTimeout(resolve, 1000)); // give any lane that ignored the failure time to finish
-  const written = ALL_TRANSFORMS.flatMap((t) => fs.readdirSync(path.join(root, t)).filter((name) => fs.statSync(path.join(root, t, name)).isFile()));
+  // The pool settles every lane before it rejects, so the tree must be exactly as it is now, forever.
+  const snapshot = (): string => ALL_TRANSFORMS.flatMap((t) => fs.readdirSync(path.join(root, 'tree', t)).filter((name) => fs.statSync(path.join(root, 'tree', t, name)).isFile()).map((name) => `${t}/${name}`)).sort().join('\n');
+  const atRejection = snapshot();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.equal(snapshot(), atRejection, 'a lane kept writing after the build had rejected');
+  const written = atRejection.split('\n').filter(Boolean);
   assert.ok(written.length < ORIGINALS * ALL_TRANSFORMS.length, `all ${written.length} variants were written despite the failure`);
-  assert.equal(fs.existsSync(path.join(root, 'crop-5', 'img-3.jpg')), false, 'a job far behind the failure was still run');
+});
+
+test('the image tree lives under <root>/tree with the manifest beside it, never inside the scanned folder', async () => {
+  let sharp: unknown = null;
+  try { sharp = require('sharp'); } catch { sharp = null; }
+  if (!sharp) return;
+  const { createImageCorpus, ALL_TRANSFORMS } = await import('../bench/lib/images');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-images-layout-'));
+  try {
+    const m = await createImageCorpus(root, { originals: 1, seed: 3, transforms: [...ALL_TRANSFORMS] });
+    assert.equal(m.root, path.join(root, 'tree'));
+    assert.ok(fs.existsSync(path.join(root, 'manifest.json')));
+    assert.ok(!fs.existsSync(path.join(m.root, 'manifest.json')));
+    for (const img of m.images) assert.ok(img.path.startsWith(m.root + path.sep), img.path);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

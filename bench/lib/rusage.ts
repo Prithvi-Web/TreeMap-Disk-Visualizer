@@ -89,8 +89,18 @@ const PROC_STAT_CUTIME_INDEX = 13;
 const PROC_STAT_CSTIME_INDEX = 14;
 const FAILURE_MESSAGE_LIMIT = 200;
 const PROBE_SOURCE = path.join(__dirname, '..', 'probes', 'darwin-rusage.c');
-const PROBE_DIR = path.join(os.tmpdir(), 'treemap-bench', 'probes');
-const PROBE_BINARY = path.join(PROBE_DIR, 'darwin-rusage');
+/**
+ * The probe is compiled once per process into a private `mkdtemp` directory
+ * (owner-only, unpredictable name) and executed only from there. A shared,
+ * predictable path trusted by modification time would let any other process
+ * of the same user plant a binary the harness then runs; a fresh directory
+ * per process costs one clang invocation and closes that door.
+ */
+const PROBE_DIR_PREFIX = path.join(os.tmpdir(), 'treemap-bench-probe-');
+const PROBE_NAME = 'darwin-rusage';
+/** A compiler or probe that has not returned in this long is a failure, not a wait. */
+const COMPILE_TIMEOUT_MS = 60_000;
+const PROBE_TIMEOUT_MS = 5_000;
 const DARWIN_SOURCE = 'proc_pid_rusage(RUSAGE_INFO_V4).ri_diskio_bytesread via bench/probes/darwin-rusage.c';
 const LINUX_SOURCE = 'read_bytes from /proc/self/io';
 const WINDOWS_REASON = 'bytes read are not exposed to Node on Windows; GetProcessIoCounters needs native code';
@@ -175,45 +185,51 @@ function darwinProbeState(): ProbeState {
   return darwinProbe;
 }
 
+let probeDir: string | undefined;
+
+/** Where this process's probe binary lives, once built; `null` before the first snapshot or when the build failed. */
+export function probeLocation(): string | null {
+  return darwinProbe?.kind === 'ready' ? darwinProbe.binary : null;
+}
+
 function buildDarwinProbe(): ProbeState {
   try {
-    if (isProbeCurrent()) return { kind: 'ready', binary: PROBE_BINARY };
-    const sdk = spawnSync('xcrun', ['--sdk', 'macosx', '--show-sdk-path'], { encoding: 'utf8' });
+    const sdk = spawnSync('xcrun', ['--sdk', 'macosx', '--show-sdk-path'], { encoding: 'utf8', timeout: COMPILE_TIMEOUT_MS });
     const sdkPath = (sdk.stdout ?? '').trim();
     if (sdk.error || sdk.status !== 0 || sdkPath === '') {
       return { kind: 'failed', reason: describeFailure('xcrun --sdk macosx --show-sdk-path', sdk) };
     }
-    fs.mkdirSync(PROBE_DIR, { recursive: true });
-    // Compile beside the final name and rename into place, so a second process
-    // compiling at the same moment never runs a half-written binary.
-    const staging = `${PROBE_BINARY}.${process.pid}.tmp`;
+    probeDir = fs.mkdtempSync(PROBE_DIR_PREFIX);
+    const binary = path.join(probeDir, PROBE_NAME);
     const compile = spawnSync(
       'xcrun',
-      ['--sdk', 'macosx', 'clang', '-O2', '-isysroot', sdkPath, '-o', staging, PROBE_SOURCE],
-      { encoding: 'utf8' },
+      ['--sdk', 'macosx', 'clang', '-O2', '-isysroot', sdkPath, '-o', binary, PROBE_SOURCE],
+      { encoding: 'utf8', timeout: COMPILE_TIMEOUT_MS },
     );
     if (compile.error || compile.status !== 0) {
-      fs.rmSync(staging, { force: true });
+      removeProbeDir();
       return { kind: 'failed', reason: describeFailure('compiling bench/probes/darwin-rusage.c', compile) };
     }
-    fs.renameSync(staging, PROBE_BINARY);
-    return { kind: 'ready', binary: PROBE_BINARY };
+    process.once('exit', removeProbeDir);
+    return { kind: 'ready', binary };
   } catch (error: unknown) {
+    removeProbeDir();
     return { kind: 'failed', reason: `building the darwin-rusage probe failed: ${errorMessage(error)}` };
   }
 }
 
-/** A missing or unreadable binary is rebuilt; a missing source fails the compile with clang's own message. */
-function isProbeCurrent(): boolean {
+function removeProbeDir(): void {
+  if (probeDir === undefined) return;
   try {
-    return fs.statSync(PROBE_BINARY).mtimeMs >= fs.statSync(PROBE_SOURCE).mtimeMs;
+    fs.rmSync(probeDir, { recursive: true, force: true });
   } catch {
-    return false;
+    /* a leftover owner-only directory holds nothing but a compiled probe */
   }
+  probeDir = undefined;
 }
 
 function readDarwinProbe(binary: string): DarwinProbeReading {
-  const run = spawnSync(binary, [String(process.pid)], { encoding: 'utf8' });
+  const run = spawnSync(binary, [String(process.pid)], { encoding: 'utf8', timeout: PROBE_TIMEOUT_MS });
   if (run.error || run.status !== 0) {
     throw new Error(describeFailure('running the darwin-rusage probe', run));
   }

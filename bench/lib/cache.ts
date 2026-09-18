@@ -3,7 +3,7 @@
  *
  * A run is `cold` only when the purge procedure itself reported success;
  * `warm` only after an un-measured warm-up pass over a tree the vnode cache
- * can hold (on macOS, at most 80% of `kern.maxvnodes`); a warmed tree larger
+ * can hold (on macOS, at most `VNODE_FILL_LIMIT` of `kern.maxvnodes`); a warmed tree larger
  * than that is `mixed`; everything else is `unknown` with the reason stated.
  * The harness never guesses a cache state it did not verify.
  */
@@ -53,12 +53,13 @@ export interface PurgeProcedureSpec {
 }
 
 /** A warmed tree counts as cached only when it fits inside this share of the vnode cache. */
-const VNODE_FILL_LIMIT = 0.8;
+export const VNODE_FILL_LIMIT = 0.8;
 /** A purge that has not returned in this long is reported as failed, not waited on. */
 const PURGE_TIMEOUT_MS = 30_000;
 const WARM_UP_PROCEDURE = 'one un-measured pass over the corpus';
 
 const count = (n: number): string => n.toLocaleString('en-US');
+const limitPct = (): string => `${Math.round(VNODE_FILL_LIMIT * 100)}%`;
 
 export const PURGE_PROCEDURES: Readonly<Record<'darwin' | 'linux' | 'win32', PurgeProcedureSpec>> = {
   darwin: { command: 'sudo -n purge', steps: [{ file: 'sudo', args: ['-n', 'purge'] }] },
@@ -94,6 +95,11 @@ function runStep(step: PurgeStep, command: string): PurgeResult {
 export async function defaultPurge(platform: NodeJS.Platform = process.platform): Promise<PurgeResult> {
   const spec = procedureFor(platform);
   if (spec === undefined) return { ok: false, command: '', error: `no purge procedure is known for ${platform}` };
+  return runProcedure(spec);
+}
+
+/** Runs every step of a procedure in order; the first failing step is the result. Exported so the failure shapes are testable without root. */
+export function runProcedure(spec: PurgeProcedureSpec): PurgeResult {
   if (spec.refusal !== undefined) return { ok: false, command: spec.command, error: spec.refusal };
   for (const step of spec.steps) {
     const result = runStep(step, spec.command);
@@ -118,19 +124,23 @@ async function coldVerdict(opts: CacheStateOptions): Promise<CacheVerdict> {
 function warmVerdict(opts: CacheStateOptions): CacheVerdict {
   if (!opts.warmedUp) return { state: 'unknown', reason: 'no warm-up pass was run' };
   if (opts.maxVnodes === undefined) {
-    return { state: 'warm', reason: 'a warm-up pass ran; the vnode-cache rule applies only where kern.maxvnodes is known (macOS)', procedure: WARM_UP_PROCEDURE };
+    return {
+      state: 'warm',
+      reason: 'a warm-up pass ran; this platform has no fixed vnode limit to check against (the rule is macOS-only), so residency is not verified beyond the warm-up',
+      procedure: WARM_UP_PROCEDURE,
+    };
   }
   const limit = opts.maxVnodes * VNODE_FILL_LIMIT;
   if (opts.entries > limit) {
     return {
       state: 'mixed',
-      reason: `${count(opts.entries)} entries exceed 80% of kern.maxvnodes (${count(opts.maxVnodes)}), so the vnode cache cannot hold the whole tree after a warm-up pass`,
+      reason: `${count(opts.entries)} entries exceed ${limitPct()} of kern.maxvnodes (${count(opts.maxVnodes)}), so the vnode cache cannot hold the whole tree after a warm-up pass`,
       procedure: WARM_UP_PROCEDURE,
     };
   }
   return {
     state: 'warm',
-    reason: `a warm-up pass ran and ${count(opts.entries)} entries fit within 80% of kern.maxvnodes (${count(opts.maxVnodes)})`,
+    reason: `a warm-up pass ran and ${count(opts.entries)} entries fit within ${limitPct()} of kern.maxvnodes (${count(opts.maxVnodes)})`,
     procedure: WARM_UP_PROCEDURE,
   };
 }

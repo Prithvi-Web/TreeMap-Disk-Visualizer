@@ -10,78 +10,141 @@ README, the UI or a release note.
 ## Commands
 
 ```
-npm run bench -- enumerate [--corpus=enum200k|enum1m] [--engine=auto|gdu|walker] [--runs=3] [--cache=warm|cold] [--record] [--label=...]
-npm run bench -- duplicates [--corpus=dupes100k] [--runs=3] [--min-size=1024] [--record]
-npm run bench -- neardup [--originals=600] [--runs=1] [--threshold=10] [--record]
-npm run bench -- all [--record]
+npm run bench -- enumerate [--corpus=enum200k|enum1m|ci20k|smoke|dupes100k] [--engine=auto|gdu|walker] [--runs=3] [--cache=warm|cold] [--record] [--label=...]
+npm run bench -- duplicates [--corpus=dupes100k|smoke|ci20k|enum200k|enum1m] [--runs=3] [--min-size=1024] [--cache=warm|cold] [--record] [--label=...]
+npm run bench -- neardup [--originals=600] [--runs=1] [--threshold=10] [--cache=warm|cold] [--record] [--label=...]
+npm run bench -- all [--small] [--runs=3] [--originals=600] [--record] [--label=...]
 npm run bench -- compare <result.json> <baseline.json>
+npm run bench -- clean
 ```
 
-Corpora are built once under the OS temp directory
-(`<tmp>/treemap-bench/<name>-<hash of the parameters>/`) and reused while
-their `manifest.json` still matches the parameters. Nothing is ever written
-inside the repository except `bench/results/` (ignored by git) and, with
-`--record`, `bench/baselines/`.
+An option that is misspelled or does not belong to the command is refused,
+never ignored: `--run=3` is an error, not a silent default.
 
-Every run isolates `TREEMAP_DATA_DIR` in a fresh temp directory, so the
-harness never shares a cache, a snapshot store or a settings file with an
-installed TreeMap.
+`compare` exits **0** on PASS, **1** on FAIL, **2** on INCONCLUSIVE and **3**
+on NOT COMPARABLE, so a script can tell "no regression" from "could not
+tell" from "these two files do not describe the same thing".
+
+`all --small` runs every suite on the smoke corpus and two images: the
+end-to-end check the test suite itself runs.
+
+## How a number is taken
+
+**Every measured pass is a fresh child process.** The harness starts
+`bench/lib/measureWorker.ts` once per run with an isolated app-data
+directory and the engine gate in that child's environment. That is what
+makes the columns comparable:
+
+* peak RSS is the pass's own (no scans retained from earlier passes, no
+  corpus builder in the same heap);
+* CPU seconds and bytes read cannot include the previous scan's persistence;
+* the engine variable is set before a single service is imported, so nothing
+  depends on import order.
+
+The scan is timed to the instant its status leaves `running`. The app then
+writes its rescan cache and a snapshot in the background; the harness waits
+for those through the app's own write ledger and reports them separately as
+`persistMs` / `persistCpuSeconds` in every run record — never inside the
+scan's numbers, never lost. For trees of 300,000 nodes or fewer the app also
+materialises the cache tree synchronously before completion is observable;
+that cost is inside the scan's wall clock by the app's design, and the record
+says so.
+
+Corpora are built once under the OS temp directory
+(`<tmp>/treemap-bench/<name>-<hash of the parameters>/tree`, the manifest
+beside the tree) and reused while their `manifest.json` still matches the
+parameters, still points at that tree, and a sample of the paths it lists
+still exists. Nothing is written inside the repository except
+`bench/results/` (ignored by git) and, with `--record`, `bench/baselines/`.
+`TREEMAP_BENCH_OUT=<dir>` redirects the results directory.
 
 ## What a row means
 
 | Column | Meaning |
 | --- | --- |
-| `entries/s` | files + directories (the root included) divided by the median wall clock of the runs |
+| `rate` | what the suite counts per second: `entries/s` (files + directories, the root included) for enumerate, `files/s` for duplicates, `images/s` for near-duplicates |
 | `wall (median)` | median of `--runs` measured passes; a warm-up pass is never counted |
-| `spread` | (max − min) / median across the runs; over 5% the row is marked `(>5%)` and is not reproducible — rerun on a quieter machine before believing it |
-| `CPU s/M` | CPU seconds (user + system, this process only) per million entries — the efficiency figure the design gates on, not wall clock |
-| `peak RSS` | the process's peak resident set (`process.resourceUsage().maxRSS`) |
-| `bytes read` | bytes the process read from disk: `proc_pid_rusage` on macOS, `/proc/self/io` on Linux; `n/a` on Windows and for engines that read in a child process (gdu) — the harness says so rather than guessing |
-| `load` | the 1-minute load average at the end of each run, one figure per run |
-| `correct` | the engine's counts and bytes agree with the corpus manifest; for duplicates, recall 1 and zero false positives **by byte comparison**; for near-duplicates, the job completed without truncation |
+| `spread` | (max − min) / median across the runs; over 5% the row is marked `(>5%)` and is not reproducible — rerun on a quieter machine before believing it; one run has no spread |
+| `CPU s/M` | CPU seconds per million entries **including child processes** (gdu's shards count), the efficiency figure the design gates on |
+| `peak RSS` | the measuring process's peak resident set — its own lifetime, which is this one pass plus the Node runtime it needed |
+| `bytes read` | physical bytes the measuring process read: `proc_pid_rusage` on macOS, `/proc/self/io` on Linux; `n/a` on Windows and for gdu, which reads in child processes the probe cannot see. A warm pass legitimately reads 0 |
+| `load` | the 1-minute load average at the end of each run, one figure per run; `n/a` on Windows, which has none |
+| `correct` | every run's counts and bytes agree with the corpus manifest and with each other; for duplicates, every planted group the finder could report was reported whole and every reported group is byte-identical **by reading the files**, with hard-link families never counted as reclaimable; for near-duplicates, the decoder ran, nothing was cut off, something was clustered, and precision reached the 0.98 bar the design sets |
 
 A correctness failure is printed beside the timing and makes the command exit
-non-zero. An engine that is fast and wrong has measured nothing.
+non-zero. A result that failed correctness or is not reproducible is never
+recorded as a baseline and is refused by `compare`. An engine that is fast
+and wrong has measured nothing.
+
+## Refusals, never guesses
+
+* `--engine=gdu` without a gdu binary is an error, and a run that asked for
+  gdu but whose scan fell back to the walker (the app does that on any gdu
+  failure) is an error too — the number would describe the wrong engine.
+* A cold series is `cold` only when the purge procedure succeeded before
+  **every** measured run; one failure and the result says `unknown` with the
+  runs it could not purge.
+* `--record` refuses a result that failed correctness, is not reproducible,
+  or was measured on a working tree with uncommitted changes (the commit it
+  cites would not be the code measured).
+* `compare` refuses two results that differ in suite, corpus, corpus
+  parameters, engine, unit, machine tier, platform, architecture or cache
+  state.
 
 ## Cache state, and why a run is not "cold" just because you said so
 
-The state printed beside each result is one of:
-
-* **warm** — a full un-measured pass ran first, and the tree fits this
-  machine's vnode cache. On macOS `kern.maxvnodes` (251,127 on the Tier B
-  machine the baselines come from) caps how many entries can be warm at once.
+* **warm** — a full un-measured pass ran first, and (on macOS) the tree fits
+  80% of this machine's vnode cache, `kern.maxvnodes` (251,127 on the Tier B
+  machine the baselines come from). Off macOS there is no fixed limit to
+  check, and the label says residency was not verified beyond the warm-up.
+  For the duplicate and near-duplicate suites the warm-up is one un-measured
+  job run, and the label says whether the file data stayed in the page cache
+  is not verified.
 * **mixed** — a warm-up pass ran but the tree is larger than 80% of
-  `kern.maxvnodes`, so the metadata cache cannot hold it. This is the honest
-  label for a 1M-entry scan on a default macOS install: every scan past the
-  cache size pays catalog reads, whatever the enumeration API.
-* **cold** — the purge procedure ran **and exited 0** immediately before the
-  measured pass. The harness will not call a run cold on any other evidence.
-* **unknown** — the purge was requested and failed, or no warm-up pass ran.
+  `kern.maxvnodes`. This is the honest label for a 1M-entry scan on a default
+  macOS install: every scan past the cache size pays catalog reads, whatever
+  the enumeration API.
+* **cold** — the purge procedure ran **and exited 0** before every measured
+  pass.
+* **unknown** — a purge failed, or no warm-up pass ran.
 
-Procedures the harness runs for `--cache=cold`:
+Procedures the harness runs for `--cache=cold` (no shell, fixed arguments):
 
 | Platform | Command | Needs |
 | --- | --- | --- |
-| macOS | `sudo -n purge` | a cached sudo credential: run `sudo -v` in the same terminal first, then `npm run bench -- enumerate --cache=cold` |
-| Linux | `sync` then `sudo -n sh -c 'echo 3 > /proc/sys/vm/drop_caches'` | the same |
+| macOS | `sudo -n purge` | a way to run that one command without a prompt. The narrow option is a sudoers rule limited to it — `<you> ALL=(root) NOPASSWD: /usr/sbin/purge` — so nothing else in the process can use it; the broad option is `sudo -v` in the same terminal first, which leaves a root ticket every process of yours can use for a few minutes, and `sudo -k` afterwards |
+| Linux | `sync` then `sudo -n sh -c 'echo 3 > /proc/sys/vm/drop_caches'` | the same, for that command. On a distribution whose `/tmp` is tmpfs the corpora live in RAM and cannot be evicted, so a cold run there is not cold whatever the label says; keep `TMPDIR` on a disk |
 | Windows | none unattended: RAMMap → Empty → Empty Standby List by hand | a cold run on Windows is recorded as `unknown` with that reason |
 
 ## Machine tiers
 
-Results name the machine (CPU, cores, memory, OS, Node, commit) and a tier from
-`docs/engine/DESIGN.md` §5.1: **A** 8+ cores and 32 GB or a Pro/Max/Ultra
-part; **C** 4 cores or fewer, or 8 GB or less; **B** everything else. The
-baselines committed here were taken on a Tier B Apple M3 (4P+4E, 16 GB). A
-number from one tier says nothing about another; the tier is in the file name.
+Results name the machine (CPU, cores split by performance level, memory, OS,
+architecture, Node, commit) and a tier by the rule in `bench/lib/machine.ts`,
+which follows the master prompt's Section 5.1: **C** when the machine has 4
+cores or fewer or 8 GiB or less (decided first — a small machine is small
+whatever its name says); **A** when it has 8+ cores and 32 GiB, or is an
+Apple Pro/Max/Ultra part; **B** everything between. The baselines committed
+here were taken on a Tier B Apple M3 (4P+4E, 16 GB). A number from one tier
+says nothing about another, and the tier, platform and architecture are in
+the baseline's file name and checked by `compare`.
 
 ## Corpora
 
 | Name | Entries | Notes |
 | --- | --- | --- |
+| `smoke` | 1,200 | 12% planted duplicates, hard links, sparse files; seconds to build and scan — the CLI's own tests |
+| `ci20k` | 20,000 | 5% duplicates, one flat directory of 1,000; the fixed small corpus a CI runner can afford |
 | `enum200k` | 200,000 | log-normal sizes (median 1 KiB), one flat directory of 10,000 children, 1% hard links, 0.1% sparse; fits the vnode cache |
 | `enum1m` | 1,000,000 | the same shape at the prompt's full enumeration size; **cannot be warm on a default macOS install** |
-| `dupes100k` | ~112,000 (≈100k files) | median 8 KiB, sizes quantised so the size-bucket stage has real work, **12% planted byte-identical duplicates**, hard-link families, sparse files; about 5 GB — one tenth of the prompt's file count and one hundredth of its bytes, and labelled so in every result |
+| `dupes100k` | ~112,000 (≈100k files) | median 8 KiB, sizes quantised so the size-bucket stage has real work, **12% planted byte-identical duplicates**, hard-link families, sparse files — one tenth of the prompt's file count and one hundredth of its bytes, and labelled so in every result |
 | `images<N>` | N originals × 13 (original + 12 transforms) | synthetic photos with planted resize, re-encode at two qualities, crops of 5/10/20%, rotation, watermark, screenshot-of-image, PNG and WebP conversion, colour shift; the manifest is the labelled truth for recall and precision |
+
+Measured on this Mac: the five corpora plus 600 originals of images take
+about **11 GB** of temp space (`enum1m` alone about 3.5 GB on disk; sparse
+files count for nothing there). `npm run bench -- clean` removes them all and
+prints what it freed. On Windows the presets plant no sparse files, because
+an extended file allocates in full there; every manifest carries the
+parameters it was built with, so the difference is recorded, not hidden.
 
 The plan behind every corpus is a pure function of its parameters and seed:
 `planDigest` in the manifest is the proof, and `tests/benchCorpus.test.ts`
@@ -92,11 +155,14 @@ holds it.
 `npm run bench -- compare current.json baseline.json` prints one of:
 
 * `PASS` — faster, or slower by less than the 10% gate;
-* `FAIL` — slower by more than 10% (and more than the measurement's own
-  resolution) — the CI gate;
-* `INCONCLUSIVE` — the difference is inside the resolution band of the two
-  measurements. That is not a pass and not a fail; it is "cannot tell at this
-  resolution", and the fix is `--runs=15`, not a verdict.
+* `FAIL` — slower by more than 10% (and more than the combined resolution of
+  the two measurements, √(a² + b²));
+* `INCONCLUSIVE` — the difference is inside that combined band. That is not
+  a pass and not a fail; it is "cannot tell at this resolution", and the fix
+  is `--runs=15`, not a verdict. A result with fewer than three runs has no
+  resolution at all;
+* `NOT COMPARABLE` — the two files describe different things, or one of them
+  failed correctness or is not reproducible.
 
 ## Plain words for the README
 

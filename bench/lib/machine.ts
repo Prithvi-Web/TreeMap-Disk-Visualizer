@@ -30,11 +30,15 @@ export interface MachineRecord {
   effCores: number | null;
   memoryBytes: number;
   platform: string;
+  /** `process.arch`: a baseline from one architecture says nothing about another. */
+  arch: string;
   osRelease: string;
   node: string;
-  /** Full `git rev-parse HEAD`, or `'unknown'` when git cannot answer. */
+  /** Full `git rev-parse HEAD`, `-dirty` appended when the tree had uncommitted changes; `'unknown'` when git cannot answer. */
   commit: string;
-  loadAvg: number[];
+  dirty: boolean;
+  /** 1/5/15-minute load; `null` where the OS does not measure it (Windows). */
+  loadAvg: number[] | null;
   /** `kern.maxvnodes`; `null` off macOS. */
   maxVnodes: number | null;
   tier: MachineTier;
@@ -52,12 +56,21 @@ const TIER_A_MIN_MEMORY_BYTES = 32 * GIB;
 const TIER_C_MAX_CORES = 4;
 const TIER_C_MAX_MEMORY_BYTES = 8 * GIB;
 /**
- * Word-bounded on purpose: `Intel(R) Xeon(R) Processor` contains "Pro" and is
- * not a Pro/Max/Ultra part.
+ * Only Apple's own Pro/Max/Ultra parts skip the core-and-memory rule: an
+ * `Intel(R) Core(TM) Ultra 5` laptop with 8 GiB is a Tier C machine, and
+ * `Intel(R) Xeon(R) Processor` contains "Pro" without being one.
  */
-const TIER_A_MODEL = /\b(?:Pro|Max|Ultra)\b/;
+const TIER_A_MODEL = /^Apple M\d+ (?:Pro|Max|Ultra)\b/;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 const REPO_ROOT = path.join(__dirname, '..', '..');
+
+function formatGiB(bytes: number): string {
+  return (bytes / GIB).toFixed(1);
+}
+
+/** Printed from the constants that decide them, so the sentence cannot drift from the rule. */
+const A_CLAUSE = `>= ${TIER_A_MIN_CORES} cores and >= ${formatGiB(TIER_A_MIN_MEMORY_BYTES)} GiB, or an Apple Pro/Max/Ultra part`;
+const C_CLAUSE = `<= ${TIER_C_MAX_CORES} cores or <= ${formatGiB(TIER_C_MAX_MEMORY_BYTES)} GiB`;
 
 export async function describeMachine(): Promise<MachineRecord> {
   const cpus = os.cpus();
@@ -66,6 +79,7 @@ export async function describeMachine(): Promise<MachineRecord> {
   const memoryBytes = os.totalmem();
   const isDarwin = process.platform === 'darwin';
   const { tier, tierReason } = classifyTier(cpuModel, cores, memoryBytes);
+  const head = gitHead();
   return {
     cpuModel,
     cores,
@@ -73,10 +87,12 @@ export async function describeMachine(): Promise<MachineRecord> {
     effCores: isDarwin ? sysctlNumber('hw.perflevel1.logicalcpu') : null,
     memoryBytes,
     platform: process.platform,
+    arch: process.arch,
     osRelease: os.release(),
     node: process.version,
-    commit: gitHead(),
-    loadAvg: os.loadavg(),
+    commit: head.dirty ? `${head.commit}-dirty` : head.commit,
+    dirty: head.dirty,
+    loadAvg: process.platform === 'win32' ? null : os.loadavg(),
     maxVnodes: isDarwin ? sysctlNumber('kern.maxvnodes') : null,
     tier,
     tierReason,
@@ -84,35 +100,22 @@ export async function describeMachine(): Promise<MachineRecord> {
 }
 
 /**
- * A: at least 8 cores and 32 GiB, or a Pro/Max/Ultra model.
- * C: 4 cores or fewer, or 8 GiB or less.
- * B: everything in between.
+ * The prompt's tiers (its Section 5.1) as a rule a person can argue with.
+ * C is decided first — a small machine is small whatever its name says —
+ * then A, then B for everything between.
  */
 export function classifyTier(cpuModel: string, cores: number, memoryBytes: number): TierVerdict {
   const memory = `${formatGiB(memoryBytes)} GiB`;
+  if (cores <= TIER_C_MAX_CORES || memoryBytes <= TIER_C_MAX_MEMORY_BYTES) {
+    return { tier: 'C', tierReason: `${cores} cores and ${memory} fall in the C clause (${C_CLAUSE})` };
+  }
   if (cores >= TIER_A_MIN_CORES && memoryBytes >= TIER_A_MIN_MEMORY_BYTES) {
-    return { tier: 'A', tierReason: `${cores} cores and ${memory} meet the A clause (>= 8 cores and >= 32 GiB)` };
+    return { tier: 'A', tierReason: `${cores} cores and ${memory} meet the A clause (${A_CLAUSE})` };
   }
-  const model = TIER_A_MODEL.exec(cpuModel);
-  if (model) {
-    return { tier: 'A', tierReason: `CPU model "${cpuModel}" carries "${model[0]}", the A clause for Pro/Max/Ultra parts` };
+  if (TIER_A_MODEL.test(cpuModel)) {
+    return { tier: 'A', tierReason: `CPU model "${cpuModel}" is an Apple Pro/Max/Ultra part, the A clause (${A_CLAUSE})` };
   }
-  if (cores <= TIER_C_MAX_CORES) {
-    return { tier: 'C', tierReason: `${cores} cores fall in the C clause (<= 4 cores)` };
-  }
-  if (memoryBytes <= TIER_C_MAX_MEMORY_BYTES) {
-    return { tier: 'C', tierReason: `${memory} falls in the C clause (<= 8 GiB)` };
-  }
-  return {
-    tier: 'B',
-    tierReason:
-      `${cores} cores and ${memory}: neither the A clause (>= 8 cores and >= 32 GiB, or a Pro/Max/Ultra model)` +
-      ' nor the C clause (<= 4 cores or <= 8 GiB) applies',
-  };
-}
-
-function formatGiB(bytes: number): string {
-  return (bytes / GIB).toFixed(1);
+  return { tier: 'B', tierReason: `${cores} cores and ${memory}: neither the A clause (${A_CLAUSE}) nor the C clause (${C_CLAUSE}) applies` };
 }
 
 /** One key per call: a missing key would otherwise shift every line after it. */
@@ -123,9 +126,13 @@ function sysctlNumber(key: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-function gitHead(): string {
+/** A baseline must cite the code that was measured: an uncommitted change is part of it. */
+function gitHead(): { commit: string; dirty: boolean } {
   const result = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8' });
-  if (result.error || result.status !== 0) return 'unknown';
+  if (result.error || result.status !== 0) return { commit: 'unknown', dirty: false };
   const head = result.stdout.trim();
-  return COMMIT_PATTERN.test(head) ? head : 'unknown';
+  if (!COMMIT_PATTERN.test(head)) return { commit: 'unknown', dirty: false };
+  const status = spawnSync('git', ['status', '--porcelain'], { cwd: REPO_ROOT, encoding: 'utf8' });
+  const dirty = !status.error && status.status === 0 && status.stdout.trim().length > 0;
+  return { commit: head, dirty };
 }

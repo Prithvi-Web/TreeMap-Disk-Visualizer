@@ -48,3 +48,12 @@ test('a measurement that cannot be resolved says so: one run or a non-positive m
   assert.throws(() => median([]), /empty/);
   assert.equal(formatMs(1234.56), '1234.6 ms');
 });
+
+test('the band is two standard errors of the median from IQR/1.349, worked by hand', () => {
+  // sorted [90,95,100,105,110]: q25 95, q75 105, IQR 10, sigma 7.4129, SE 1.2533·7.4129/√5 = 4.1549, band 8.3098%
+  assert.ok(Math.abs(resolutionBand([90, 95, 100, 105, 110]) - 8.3098) < 0.001);
+});
+
+test('two runs have no band either: an interquartile range needs three points', () => {
+  assert.equal(resolutionBand([100, 101]), Number.POSITIVE_INFINITY);
+});
