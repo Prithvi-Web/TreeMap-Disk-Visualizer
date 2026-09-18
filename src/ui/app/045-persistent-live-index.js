@@ -641,7 +641,7 @@ function renderDiskNotes() {
       const label = { 'gdu-turbo': 'Turbo engine (gdu)', 'turbo-walker': 'Turbo walker', 'ntfs-mft': 'NTFS MFT reader', walker: 'Standard walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
       const rate = s.durationMs > 0 ? Math.round(s.scanned / (s.durationMs / 1000)) : 0;
       $('engineText').textContent = `${label} — scanned ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s` +
-        (rate ? ` · ${formatCount(rate)}/s` : '');
+        (rate ? ` · ${formatCount(rate)}/s` : '') + engineBudgetNote(s);
       $('engineHint').textContent = s.engine === 'gdu-turbo'
         ? 'A bundled gdu subprocess per top-level folder — same counts as the built-in walker, measurably faster.'
         : s.ioThreads > 4
@@ -652,6 +652,19 @@ function renderDiskNotes() {
   }
   // renderCloudSafe() walks the whole tree server-side. It only fills the Clean
   // Up modal, so it runs when that modal opens — not on every scan completion.
+}
+
+/* Phase 2 — the budget the scan ran under, when the stats say so. `effective`
+   is what actually ran (Automatic resolves to Balanced, or to Eco on battery),
+   which is the only honest thing to print beside a duration. Stats from a
+   build without the field add nothing rather than a guess. */
+function budgetPresetLabel(preset) {
+  const s = String(preset || '');
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+}
+function engineBudgetNote(s) {
+  const effective = s && s.budget ? s.budget.effective : '';
+  return effective ? ` · budget: ${budgetPresetLabel(effective)}` : '';
 }
 
 /* Feature 10 — "Cloud-safe deletes" list in the Clean Up modal. */

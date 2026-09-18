@@ -11,6 +11,36 @@
       <div id="schedList"></div>
       <button class="btn" id="schedAddBtn"><span data-icon="plus"></span>Add scheduled scan</button>
 
+      <!-- Phase 2 §11.4 — the scanning budget. Four presets, saved the moment
+           one is picked: a budget is a dial, not a form. The endpoint ships
+           with the native engine, so a build without it says so in words
+           (see loadEngineBudget) rather than leaving a blank row. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="gauge"></span>Scanning budget</div>
+      <div class="muted" style="margin-bottom:10px;">How much of this computer a scan is allowed to use. Picking one saves it straight away.</div>
+      <div id="engineBudgetOptions" role="radiogroup" aria-label="Scanning budget">
+        <label class="rule-row budget-row" for="engineBudget-auto">
+          <input type="radio" name="engineBudget" id="engineBudget-auto" value="auto" checked>
+          <span class="budget-name">Automatic</span>
+          <span class="muted budget-help">Balanced, and Eco by itself on battery or when the Mac runs hot</span>
+        </label>
+        <label class="rule-row budget-row" for="engineBudget-eco">
+          <input type="radio" name="engineBudget" id="engineBudget-eco" value="eco">
+          <span class="budget-name">Eco</span>
+          <span class="muted budget-help">A quarter of the machine; scans take longer and stay out of your way</span>
+        </label>
+        <label class="rule-row budget-row" for="engineBudget-balanced">
+          <input type="radio" name="engineBudget" id="engineBudget-balanced" value="balanced">
+          <span class="budget-name">Balanced</span>
+          <span class="muted budget-help">Half the machine; backs off while you are working</span>
+        </label>
+        <label class="rule-row budget-row" for="engineBudget-turbo">
+          <input type="radio" name="engineBudget" id="engineBudget-turbo" value="turbo">
+          <span class="budget-name">Turbo</span>
+          <span class="muted budget-help">All of it; for when you are watching and want it now</span>
+        </label>
+      </div>
+      <div class="muted" id="engineBudgetNote" role="status" aria-live="polite"></div>
+
       <div class="set-h" style="margin-top:22px;"><span data-icon="trendUp"></span>Disk-full forecast</div>
       <div class="muted" style="margin-bottom:10px;">Scheduled scans also project when the disk will fill up (needs 5+ scans across 2+ days). You'll get a notification when the forecast drops below:</div>
       <div class="rule-row">

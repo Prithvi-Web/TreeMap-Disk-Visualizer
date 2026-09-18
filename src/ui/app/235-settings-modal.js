@@ -6,7 +6,7 @@ $('settingsBtn').addEventListener('click', async () => {
   $('settingsModal').classList.add('open');
   $('settingsStatus').textContent = '';
   void renderAllocationDiagnostic(); // A2 — independent of settings loading
-  void renderShellIntegration();     // D2 — same
+  void loadEngineBudget();           // Phase 2 — its own endpoint, its own failure mode
   try {
     settingsData = await api('/api/settings');
   } catch (e) {
@@ -24,6 +24,82 @@ $('settingsBtn').addEventListener('click', async () => {
   renderReclaimWeights();
   $('humanScaleToggle').checked = settingsData.humanScaleUnits !== false;
 });
+
+/* ── Scanning budget (Phase 2 §11.4) ──
+   Four presets, saved the moment one is picked — a budget is a dial, not a
+   form, so it does not wait for the Save button and does not ride on
+   PUT /api/settings. The endpoint ships with the native engine, so a build
+   without it answers 404: that is a state to show in the row, in words —
+   not a blank, and not an error toast. */
+const ENGINE_BUDGET_PRESETS = ['auto', 'eco', 'balanced', 'turbo'];
+const ENGINE_BUDGET_UNAVAILABLE = 'Not available in this build';
+let engineBudget = null; // the server's last answer, or null when it has none
+
+function engineBudgetInputs() {
+  return ENGINE_BUDGET_PRESETS.map((p) => $(`engineBudget-${p}`)).filter(Boolean);
+}
+
+/** The line under the radios: what is running now, and how faithfully. */
+function engineBudgetStatusText(data) {
+  const effective = data && data.effective;
+  if (!effective || !effective.preset) return '';
+  const approx = effective.source === 'node-shim' ? ' — this build can only keep to it approximately' : '';
+  return `Right now: ${budgetPresetLabel(effective.preset)}${approx}.`;
+}
+
+/** What a failed read says. A 404 is a build without the feature, not a fault. */
+function engineBudgetErrorText(err) {
+  if (err && err.status === 404) return ENGINE_BUDGET_UNAVAILABLE;
+  return 'Could not read the scanning budget: ' + (err && err.message ? err.message : 'no answer');
+}
+
+function renderEngineBudget(data) {
+  engineBudget = data;
+  const preset = data && data.setting && ENGINE_BUDGET_PRESETS.includes(data.setting.preset) ? data.setting.preset : 'auto';
+  for (const input of engineBudgetInputs()) {
+    input.disabled = false;
+    input.checked = input.value === preset;
+  }
+  const note = $('engineBudgetNote');
+  if (note) note.textContent = engineBudgetStatusText(data);
+}
+
+function renderEngineBudgetUnavailable(err) {
+  engineBudget = null;
+  for (const input of engineBudgetInputs()) input.disabled = true;
+  const note = $('engineBudgetNote');
+  if (note) note.textContent = engineBudgetErrorText(err);
+}
+
+async function loadEngineBudget() {
+  let data;
+  try { data = await api('/api/engine/budget'); }
+  catch (e) { renderEngineBudgetUnavailable(e); return; }
+  renderEngineBudget(data);
+}
+
+async function saveEngineBudget(preset) {
+  // The row has no cpuPercent control, so the stored value rides along
+  // unchanged rather than being reset by a save it was never part of.
+  const cpuPercent = engineBudget && engineBudget.setting && engineBudget.setting.cpuPercent != null
+    ? engineBudget.setting.cpuPercent : null;
+  try {
+    const data = await api('/api/engine/budget', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preset, cpuPercent }),
+    });
+    renderEngineBudget(data);
+    toast(`Scanning budget: ${budgetPresetLabel(preset)}`);
+  } catch (e) {
+    // The radio moved under the pointer before the server had its say: put it
+    // back on what is actually stored, and say why.
+    if (engineBudget) renderEngineBudget(engineBudget); else renderEngineBudgetUnavailable(e);
+    toast('Could not save the scanning budget: ' + e.message, 'error');
+  }
+}
+for (const input of engineBudgetInputs()) {
+  input.addEventListener('change', () => { if (input.checked) void saveEngineBudget(input.value); });
+}
 
 /* ── Cleanup target (v4 §4.1) ──
    Stored as bytes; shown in whichever unit divides evenly, largest first, so
