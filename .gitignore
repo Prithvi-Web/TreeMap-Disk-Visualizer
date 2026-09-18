@@ -14,3 +14,6 @@ release/
 /vscode-extension/out/
 /vscode-extension/*.vsix
 .gstack/
+
+# Benchmark run outputs — every run writes one; only bench/baselines/ is committed
+/bench/results/
