@@ -293,7 +293,14 @@ must add that field first; the new engine does not touch these paths.
   the `xcrun` form.
 * `proc_pid_rusage(RUSAGE_INFO_V4)` returns `ri_diskio_bytesread` for any
   process of the same user without root (verified against Finder: 85,602,304
-  bytes read). That is the bytes-read counter the harness will use on macOS.
+  bytes read). That is the bytes-read counter the harness uses on macOS, with
+  two limits measured while building it: the counter is **physical** reads
+  only (a warm-cache pass legitimately reports 0) and it **excludes child
+  processes**, so a gdu scan's reads are invisible to it and the harness says
+  `n/a` for that engine. Also: `ri_user_time` and `ri_system_time` are **mach
+  absolute-time ticks on Apple silicon** (timebase 125/3, 24 MHz), not
+  nanoseconds — read raw they are 41.7× too small; the probe converts through
+  `mach_timebase_info`.
 
 ## 13. The suite at this commit (measured today)
 
