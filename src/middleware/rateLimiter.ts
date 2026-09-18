@@ -72,6 +72,8 @@ const META_PATHS = new Set([
   '/cloud/status',       // the token store
   '/cost/estimate',      // one O(1) size lookup against a shipped price table
   '/cost/pricing',       // the shipped table itself
+  '/engine/budget',      // the setting from memory, plus one read of the governor's own state
+  '/engine/capabilities', // the loader's cached verdict and the governor's probes, no I/O
   '/forecast',           // stored snapshot rows and one statfs
   '/index/status',       // one index row
   '/notes',              // the notes store

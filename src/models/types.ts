@@ -120,6 +120,12 @@ export interface ScanResult {
   engine?: 'walker' | 'turbo-walker' | 'gdu-turbo' | 'ntfs-mft' | 'cloud';
   /** libuv threadpool size the scan ran with. */
   ioThreads?: number;
+  /**
+   * The scanning budget this scan ran under, captured when it started (Phase
+   * 2) — every record has one, so /stats never has to guess. A scheduled scan
+   * records Eco whatever the setting says.
+   */
+  budget: ScanBudget;
   /** True when this scan reused the on-disk mtime cache (fast rescan). */
   incremental?: boolean;
   /** Directories served from the cache (incremental scans only). */
@@ -253,6 +259,35 @@ export interface ScanStats {
    * Every read of the scan pushes it out by another 30 minutes.
    */
   expiresAt: number | null;
+  /**
+   * The budget the scan ran under (Phase 2, D6): the setting's preset, what it
+   * resolved to, and whether the native governor or the Node shim held it.
+   * Additive — every key before it keeps its name, type and position.
+   */
+  budget: ScanBudget;
+}
+
+/* ---------- The scanning budget (Phase 2) ---------- */
+
+/** The setting's presets; `auto` resolves to Balanced, or Eco on battery or heat. */
+export type BudgetPreset = 'auto' | 'eco' | 'balanced' | 'turbo';
+/** What a scan actually runs at. */
+export type EffectiveBudgetPreset = 'eco' | 'balanced' | 'turbo';
+/** Who holds the budget: the Rust governor, or the best-effort Node shim. */
+export type BudgetSource = 'native' | 'node-shim';
+
+/** The persisted setting (src/services/engineBudget.ts owns its meaning). */
+export interface EngineBudgetSetting {
+  preset: BudgetPreset;
+  /** 1–100 replaces the preset's CPU ceiling; null keeps the preset's own. */
+  cpuPercent: number | null;
+}
+
+/** The budget a scan ran under, captured when it started. */
+export interface ScanBudget {
+  preset: BudgetPreset;
+  effective: EffectiveBudgetPreset;
+  source: BudgetSource;
 }
 
 export type ScanEvent =
@@ -579,6 +614,11 @@ export interface AppSettings {
    * honestly shows the tour again.
    */
   tourDone: boolean;
+  /**
+   * The scanning budget (Phase 2): Automatic, Eco, Balanced or Turbo, with an
+   * optional CPU percentage. Default Automatic with no override.
+   */
+  engineBudget: EngineBudgetSetting;
 }
 
 /** A budget cross-referenced against a scan: how the folder measures up now. */

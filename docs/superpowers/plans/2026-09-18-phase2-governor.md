@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-## Progress (kept current so a context compaction loses nothing — 18 Sep 2026, 15:30)
+## Progress (kept current so a context compaction loses nothing — 18 Sep 2026, 16:40)
 
 Owner's answers recorded in DESIGN.md §0: fresh core (no mobile code), D6–D9 approved, crates download approved. Work is on `main`, unpushed.
 
@@ -14,11 +14,13 @@ Owner's answers recorded in DESIGN.md §0: fresh core (no mobile code), D6–D9 
 | Task 6 UI (Settings row, Dashboard note) | committed `ef6ba6d` | `tests/engineBudgetUi.test.ts` 11/11 |
 | Task 7 bench governor suite | committed `d633d54` | `tests/benchGovernor.test.ts` 10/10 |
 | CI fix from the owner's push (Node 20 cannot start a `.ts` worker) | committed `daa1296` | `bench/lib/corpusWorkerEntry.cjs`; the 25 bench tests green with type stripping off; full suite 2,658 / 0 |
-| Task 1 + 3 (preset, controller, governor, loadgen, gate) | **in flight** — `governor.rs`, `loadgen.rs`, `tests/{controller,governor,hold}.rs` written; told to treat a `None` machine share as "no new counters" and to `cargo fmt` | |
-| Task 2 (sample, signals, enforce) | **done, uncommitted** — 10/10 platform tests, 4 mutants red + 1 equivalent recorded; QoS and `setiopolicy_np` are mutually exclusive on macOS so `io` is carried by QoS; `host_statistics64` publishes about once a second | `crates/tm-governor/src/{sample,signals,enforce}.rs`, `tests/platform.rs` |
-| Task 5 (engineBudget service, routes, walker shim, golden re-record, scheduler, electron) | **done, uncommitted, under review** — 21 + 8 tests, 18 mutants red, golden re-recorded (one added key), full suite 2,658 / 0 | `src/services/engineBudget.ts`, `src/api/engineRoutes.ts`, `tests/engine*.test.ts` |
-| Task 4 (tm-node napi bindings, `scripts/build-native.js`, `native/index.d.ts`, `native/README.md`, package.json scripts `build:native`/`test:native`, `build.files` + `asarUnpack`) | **in flight** | |
-| After all tasks | review fleet (ECC reviewers + adversaries incl. a Rust reviewer), fix round, mutants, full gate (`npm run typecheck`, `npm test`, `cargo test`, cross-target checks), `npm run bench -- governor --preset=eco|balanced|turbo --seconds=60 --record` ×3 on a quiet machine, HANDOFF Session 16 addendum, preview server (`preview_start` name `treemap`, http://127.0.0.1:4280) left running for the owner, check-in | |
+| Task 1 + 3 (preset, controller, governor, loadgen, gate) | **done** — 14 + 10 + 1 (+3 ignored 60 s) tests, 7 mutants red; the 60 s holds: Eco 0.2255, Balanced 0.4702, Turbo 0.8924 (means of the last half; targets 0.25 / 0.50 / 0.90) | `crates/tm-governor/src/{preset,controller,governor,loadgen}.rs`, `tests/{controller,governor,hold}.rs`; findings in DESIGN §8.1 |
+| Task 2 (sample, signals, enforce) | **done** — 10/10 platform tests, 4 mutants red + 1 equivalent recorded; QoS and `setiopolicy_np` are mutually exclusive on macOS so `io` is carried by QoS; `host_statistics64` publishes about once a second | `crates/tm-governor/src/{sample,signals,enforce}.rs`, `tests/platform.rs` |
+| Task 4 (tm-node napi bindings, `scripts/build-native.js`, `native/index.d.ts`, `native/README.md`, package.json scripts, `build.files` + `asarUnpack`) | **done** — loader 12/12 on the real module, buildNative 5/5, 9 mutants red; `governorHold(10, 2)` mean 0.1014; bench governor eco 10 s: mean 24.1 %, p95 1.9 pt | `crates/tm-node/src/lib.rs`, `native/index.d.ts`, `scripts/build-native.js` |
+| Task 5 (engineBudget service, routes, walker shim, golden re-record, scheduler, electron) | **done** — 32 + 9 tests, 18 + 9 mutants red, golden re-recorded (one added key) | `src/services/engineBudget.ts`, `src/api/engineRoutes.ts`, `tests/engine*.test.ts` |
+| Review fleet (typescript, security, silent-failure, type-design) and the fix round | **done** — 2 HIGH (a paused gdu shard outliving the six-hour evictor; a governor that loaded but is not answering reported as the source of its numbers), 3 MEDIUM, 6 LOW; all fixed with red-first tests and 11 recorded mutants; R52 (body-less POSTs) recorded as the app's posture | this commit |
+| Gate | **green** — `npm run typecheck`, `npm test` 2,682 / 0 / 5 skipped with the module loaded, `build-ui --check`, `cargo fmt/clippy/test` on both crates, both cross-target checks | |
+| Still to do | a Rust review pass over the two crates (with Phase 3's), `npm run bench -- governor --preset=eco|balanced|turbo --seconds=60 --record` ×3 on a quiet, clean tree (after the walker crate lands, since the harness refuses a dirty tree), HANDOFF Session 16 addendum, the preview server for the owner | |
 
 Unit decision for Task 4: `governorHold(targetPercent, seconds)` takes percent and returns the report in SHARES (0..1) exactly as the Rust `HoldReport`; the bench suite accepts either and verifies `target`.
 

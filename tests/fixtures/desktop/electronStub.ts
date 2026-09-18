@@ -260,9 +260,12 @@ export function makeStub(opts: StubOptions) {
     quitAndInstall(): void { autoUpdater.quitAndInstalls++; },
   });
 
+  /** Electron's sleep/wake source; tests emit 'suspend' and 'resume' on it. */
+  const powerMonitor = new EventEmitter();
+
   const electron = {
     app, BrowserWindow: FakeWindow, Tray: FakeTray, Menu, Notification: FakeNotification, shell, ipcMain, dialog,
-    nativeImage, screen, session, clipboard,
+    nativeImage, screen, session, clipboard, powerMonitor,
   };
 
   const backend = {
@@ -270,6 +273,13 @@ export function makeStub(opts: StubOptions) {
     shutdowns: 0,
     growthHandlers: [] as Array<(alert: unknown) => void>,
     port: 43210,
+    /** The scan registry main.js reads on sleep and wake, and what it asked of each. */
+    scans: [] as Array<Record<string, unknown> & { scanId: string; status: string; rootPath: string }>,
+    pausedIds: new Set<string>(),
+    /** Scans the stand-in refuses to pause (gdu on Windows in real life). */
+    unpausable: new Set<string>(),
+    paused: [] as string[],
+    resumed: [] as string[],
   };
   const dist: Record<string, unknown> = {
     'dist/server.js': {
@@ -283,6 +293,23 @@ export function makeStub(opts: StubOptions) {
     'dist/utils/formatBytes.js': { formatBytes },
     'dist/services/storage.js': { appDataDir: () => opts.dataDir },
     'dist/services/portableMode.js': { isEphemeral: () => !!opts.ephemeral },
+    'dist/services/diskScanner.js': { allScans: () => backend.scans },
+    'dist/services/engineBudget.js': {
+      isScanPaused: (id: string): boolean => backend.pausedIds.has(id),
+      pauseScan: (scan: { scanId: string }) => {
+        if (backend.unpausable.has(scan.scanId)) {
+          return { scanId: scan.scanId, paused: false, supported: false, reason: 'the stand-in cannot pause this engine', source: 'node-shim' };
+        }
+        backend.paused.push(scan.scanId);
+        backend.pausedIds.add(scan.scanId);
+        return { scanId: scan.scanId, paused: true, supported: true, source: 'node-shim' };
+      },
+      resumeScan: (scan: { scanId: string }) => {
+        backend.resumed.push(scan.scanId);
+        backend.pausedIds.delete(scan.scanId);
+        return { scanId: scan.scanId, paused: false, supported: true, source: 'node-shim' };
+      },
+    },
   };
 
   return { electron, updater: { autoUpdater }, backend, dist, app, ipcMain, dialog, Menu, shell, clipboard, session, screen, autoUpdater };

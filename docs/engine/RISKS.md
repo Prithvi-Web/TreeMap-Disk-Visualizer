@@ -48,11 +48,12 @@ likelihood. Companion to [`CURRENT-STATE.md`](CURRENT-STATE.md) and
 
 | # | Risk | Severity | Where it stands | Retired by |
 | --- | --- | --- | --- | --- |
-| R24 | **The budget is a thread count, not a ceiling.** Without QoS, I/O policy and duty cycling, "Eco" is a label | HIGH — the user's primary ask | Built first (Phase 2), with the OS primitives per platform and a closed loop | Phase 2's held-band test, 60 s at 25/50/90 ± 5 points |
+| R24 | **The budget is a thread count, not a ceiling.** Without QoS, I/O policy and duty cycling, "Eco" is a label | HIGH — the user's primary ask | **Retired 18 Sep 2026**: QoS per worker thread, a sleep ledger per thread, worker shedding, and the loop held 22.6 / 47.0 / 89.2 % against 25 / 50 / 90 for 60 s each (DESIGN §8.1). Open remainder: Eco and Balanced have no headroom on 8 cores (R52a) | Phase 2 (done) |
 | R25 | **Only Tier B exists here.** Tier A and Tier C bands cannot be verified on this Mac | MEDIUM | Reported as "not available on this machine", never as passed; CI runners (2–4 vCPU) stand in for Tier C with their noise stated | Phase 2 |
-| R26 | **The legacy engines cannot hold Eco exactly** (Node cannot set QoS or I/O policy; gdu is a child process) | MEDIUM | Best-effort control (concurrency, yields, `nice`, fewer shards) and the stats say `best effort` | Phase 2 |
+| R26 | **The legacy engines cannot hold Eco exactly** (Node cannot set QoS or I/O policy; gdu is a child process) | MEDIUM | Built as the Node shim: a per-worker duty clock, a worker cap, `nice` on gdu shards, and every answer says `source: 'node-shim'`; a governor that loaded but is not in force is reported as the shim too, never as a measurement | Phase 2 (done); the native walker's own workers are governed directly in Phase 3 |
 | R27 | **Thermal and battery signals need Objective-C/IOKit calls from Rust** | LOW | `objc2-foundation` and IOKit through the `core-foundation` crates; a synthetic thermal state drives the tests | Phase 2 |
 | R28 | **Sleep/wake**: a scan that keeps a drive awake, or resumes into a vanished mount | MEDIUM | Pause on will-sleep, resume from checkpoint on wake, re-probe the root | Phase 2/3 |
+| R52a | **Eco and Balanced sit at duty 1.0 on 8 cores** (`max_workers × 1.0 / cores` equals the ceiling), so a competing process pulls the share below target with nothing the loop can add; measured as an 8 s Eco dip to 0.16–0.19 while `syspolicyd` ran, inside the band by 2.0–2.6 points | LOW | Recorded with the measurement in DESIGN §8.1; a third Eco worker on ≥ 8 cores is the candidate fix, to be measured, not assumed | Phase 8 tuning |
 
 ## E. Memory and the 100M path
 

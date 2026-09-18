@@ -197,6 +197,25 @@ test('spec matches reality: POST /api/scan round-trip and stats', async () => {
     const largest = await req(port, 'GET', `/api/large-files?scanId=${scanId}&minSize=0`);
     assert.equal(largest.status, 200);
     assertMatchesSpec(doc, '/api/large-files', 'get', '200', largest.body);
+
+    // Phase 2: the engine surface. The data directory is this test's own, so
+    // the PUT writes nobody's real settings; pause/resume on a finished scan
+    // answer `paused: false` with a reason, the same shape as on a running one.
+    const caps = await req(port, 'GET', '/api/engine/capabilities');
+    assert.equal(caps.status, 200);
+    assertMatchesSpec(doc, '/api/engine/capabilities', 'get', '200', caps.body);
+    const budget = await req(port, 'GET', '/api/engine/budget');
+    assert.equal(budget.status, 200);
+    assertMatchesSpec(doc, '/api/engine/budget', 'get', '200', budget.body);
+    const put = await req(port, 'PUT', '/api/engine/budget', { preset: 'balanced' });
+    assert.equal(put.status, 200);
+    assertMatchesSpec(doc, '/api/engine/budget', 'put', '200', put.body);
+    const paused = await req(port, 'POST', `/api/scan/${scanId}/pause`);
+    assert.equal(paused.status, 200);
+    assertMatchesSpec(doc, '/api/scan/{scanId}/pause', 'post', '200', paused.body);
+    const resumed = await req(port, 'POST', `/api/scan/${scanId}/resume`);
+    assert.equal(resumed.status, 200);
+    assertMatchesSpec(doc, '/api/scan/{scanId}/resume', 'post', '200', resumed.body);
   } finally {
     await close();
     fs.rmSync(fixture, { recursive: true, force: true });
@@ -255,6 +274,10 @@ test('capabilities marks exactly the destructive endpoints as destructive', asyn
       'POST /api/zombie-handles/restart',
       // Saving a policy is saving a standing instruction to delete things.
       'PUT /api/autopilot/policies',
+      // The scanning budget is persisted config, the same as PUT /api/settings
+      // (which writes the same key): an agent switching the whole machine to
+      // Turbo is a deliberate act, not something a read may do in passing.
+      'PUT /api/engine/budget',
       // Writing a note mutates persisted config, and flipping suppress:false
       // re-opens the folder to automation — the same class of consequence as
       // editing settings (v4 §9.5).

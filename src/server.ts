@@ -24,6 +24,7 @@ import { factRouter } from './api/factRoutes';
 import { queryRouter } from './api/queryRoutes';
 import { cartRouter } from './api/cartRoutes';
 import { noteRouter } from './api/noteRoutes';
+import { engineRouter } from './api/engineRoutes';
 import { closeIndex } from './services/indexEngine';
 import { stopOAuth } from './services/cloud/oauth';
 import { rateLimiter } from './middleware/rateLimiter';
@@ -141,6 +142,7 @@ export function createApp(publicDir: string, opts: AppOptions = {}): express.Exp
   app.use('/api', queryRouter);
   app.use('/api', cartRouter);
   app.use('/api', noteRouter);
+  app.use('/api', engineRouter);
 
   // Frontend: the single-file UI. When token auth is enabled, serving the
   // page also hands the browser its session cookie (R2 — the frozen UI keeps

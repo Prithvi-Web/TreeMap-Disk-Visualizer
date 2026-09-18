@@ -10,6 +10,7 @@ import { detectContainerKind } from '../utils/containerKind';
 import { neverDescend } from '../utils/mountBoundaries';
 import { PackedScanStore, ScanStore, NodeInput } from './scanStore';
 import { platform } from '../platform';
+import { applyChildBudget, isScanPaused, registerPausable, unregisterPausable, whenResumed } from './engineBudget';
 
 /**
  * The gdu turbo engine.
@@ -139,21 +140,44 @@ export function abortGduScan(scanId: string): boolean {
 }
 
 /**
+ * Remember the shard a scan has in flight, so a cancel or an eviction can kill
+ * it. One registration path for the scanner and for tests, because a test
+ * that registers a child some other way proves nothing about the real one.
+ */
+export function trackShard(scanId: string, child: ChildProcess): void {
+  activeShards.set(scanId, child);
+}
+
+export function untrackShard(scanId: string): void {
+  activeShards.delete(scanId);
+}
+
+/** What a caller may do to a shard in flight: stop it in place and let it continue (SIGSTOP / SIGCONT). */
+export interface ShardControls {
+  pause(): void;
+  resume(): void;
+}
+
+/**
  * Spawn gdu for one directory, exporting JSON to `outFile`.
  *
  * execFile with an argv array — never `exec` with a string and never
  * shell: true — because `dir` originates in user input.
  *
- * `onSpawn` hands the caller the live child so it can be killed early. Note
- * that a kill and a timeout are indistinguishable here — both set `err.killed`
- * — so a cancel-kill reports the timeout message. That text never reaches a
- * user: diskScanner returns on `scan.cancelled` before it logs or falls back.
+ * `onSpawn` hands the caller the live child so it can be killed early, plus
+ * the shard's controls so a paused scan can stop it in place. The shard's
+ * deadline is this function's own timer rather than execFile's `timeout`,
+ * because a paused shard must not run it down: five minutes stopped is not
+ * five minutes wedged on a dead mount. The timer is cleared while the shard
+ * is stopped and re-armed with what remains. Only the deadline reports as a
+ * timeout; a cancel-kill reports as a plain failure — text that never reaches
+ * a user, since diskScanner returns on `scan.cancelled` before it logs.
  */
 export function runGdu(
   bin: string,
   dir: string,
   outFile: string,
-  opts: { ignoreDirs?: string[]; timeoutMs?: number; onSpawn?: (child: ChildProcess) => void } = {},
+  opts: { ignoreDirs?: string[]; timeoutMs?: number; onSpawn?: (child: ChildProcess, shard: ShardControls) => void } = {},
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     // -x: never cross filesystem boundaries — inside a shard this skips
@@ -164,18 +188,51 @@ export function runGdu(
     if (opts.ignoreDirs?.length) args.push('-i', opts.ignoreDirs.join(','));
     args.push(dir);
     const timeout = opts.timeoutMs ?? SHARD_TIMEOUT_MS;
-    const child = execFile(bin, args, { maxBuffer: 1 << 20, timeout, killSignal: 'SIGKILL' }, (err) => {
+    let timedOut = false;
+    let remainingMs = timeout;
+    let armedAt = Date.now();
+    let timer: NodeJS.Timeout | null = null;
+    const child = execFile(bin, args, { maxBuffer: 1 << 20, killSignal: 'SIGKILL' }, (err) => {
+      disarm();
       if (err) {
         reject(
           new Error(
-            err.killed
+            timedOut
               ? `gdu timed out after ${Math.round(timeout / 60000)} min on ${dir} — likely a blocking mount`
               : `gdu failed: ${err.message}`,
           ),
         );
       } else resolve();
     });
-    opts.onSpawn?.(child);
+    // unref'd: the child's own handle is what keeps the process alive while a
+    // shard runs, so the deadline never holds a process that is otherwise done.
+    const arm = (): void => {
+      armedAt = Date.now();
+      timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, remainingMs);
+      timer.unref();
+    };
+    const disarm = (): void => {
+      if (!timer) return;
+      clearTimeout(timer);
+      timer = null;
+      remainingMs = Math.max(0, remainingMs - (Date.now() - armedAt));
+    };
+    const exited = (): boolean => child.exitCode !== null || child.signalCode !== null;
+    arm();
+    opts.onSpawn?.(child, {
+      pause: () => {
+        disarm();
+        if (!exited()) child.kill('SIGSTOP');
+      },
+      resume: () => {
+        if (exited()) return;
+        child.kill('SIGCONT');
+        arm();
+      },
+    });
   });
 }
 
@@ -334,6 +391,12 @@ export async function gduScanIntoStore(
 
     for (let i = 0; i < dirs.length; i++) {
       if (scan.cancelled) throw new Error('cancelled');
+      // A paused scan starts no new shard; the one in flight was stopped in
+      // place by its controls, so between the two nothing reads the disk.
+      if (isScanPaused(scan.scanId)) {
+        await whenResumed(scan.scanId);
+        if (scan.cancelled) throw new Error('cancelled');
+      }
       const dirPath = childPath(dirs[i].name);
       scan.currentPath = dirPath;
 
@@ -341,9 +404,18 @@ export async function gduScanIntoStore(
       // Registered only for the duration of this one subprocess, so a cancel
       // can never kill a child that already exited and been replaced.
       try {
-        await runGdu(bin, dirPath, outFile, { onSpawn: (child) => activeShards.set(scan.scanId, child) });
+        await runGdu(bin, dirPath, outFile, {
+          onSpawn: (child, shard) => {
+            trackShard(scan.scanId, child);
+            // The budget: a lower priority under Eco and Balanced, and the
+            // handle a pause uses to stop this shard in place.
+            applyChildBudget(scan.scanId, child);
+            registerPausable(scan.scanId, shard);
+          },
+        });
       } finally {
-        activeShards.delete(scan.scanId);
+        untrackShard(scan.scanId);
+        unregisterPausable(scan.scanId);
       }
 
       const st = await fsp.stat(outFile);

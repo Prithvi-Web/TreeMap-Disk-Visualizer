@@ -3431,7 +3431,12 @@
         "examples": []
       },
       "vanishedDirs": 0,
-      "expiresAt": 0
+      "expiresAt": 0,
+      "budget": {
+        "preset": "auto",
+        "effective": "<BUDGET>",
+        "source": "<BUDGET>"
+      }
     }
   },
   "subtreeCode": {

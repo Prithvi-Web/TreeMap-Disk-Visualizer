@@ -4,6 +4,7 @@ import { readJsonFile, writeJsonFile } from './storage';
 import { compileIgnoreList, CompiledIgnore } from '../utils/glob';
 import { DEFAULT_RECLAIM_WEIGHTS, RECLAIM_COMPONENT_IDS, ReclaimWeights } from './reclaimScore';
 import { clearFactCacheForProvider } from './facts/registry';
+import { applyEngineBudgetSetting, normalizeEngineBudget } from './engineBudget';
 
 /**
  * Settings — the user's ignore list and scheduled scans, persisted to
@@ -195,13 +196,18 @@ export async function getSettings(): Promise<AppSettings> {
       // Only boolean true counts: a truthy string in a hand-edited file must
       // not silence a tour the user never saw (v4 §9.2).
       tourDone: raw.tourDone === true,
+      engineBudget: normalizeEngineBudget(raw.engineBudget),
     };
+    // The budget module keeps the live copy — the walker, the gdu engine and
+    // the scheduler read it without importing settings — so every load and
+    // every update hands it over.
+    applyEngineBudgetSetting(cache.engineBudget);
   }
   return cache;
 }
 
 /** Replace ignore list and/or schedules (input is re-validated here). */
-export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown; tourDone?: unknown }): Promise<AppSettings> {
+export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown; tourDone?: unknown; engineBudget?: unknown }): Promise<AppSettings> {
   const current = await getSettings();
   const next: AppSettings = {
     ignore: patch.ignore !== undefined ? normalizeIgnore(patch.ignore) : current.ignore,
@@ -238,6 +244,9 @@ export async function updateSettings(patch: { ignore?: unknown; schedules?: unkn
     tourDone: patch.tourDone !== undefined
       ? patch.tourDone === true
       : current.tourDone,
+    engineBudget: patch.engineBudget !== undefined
+      ? normalizeEngineBudget(patch.engineBudget)
+      : current.engineBudget,
   };
   // Preserve lastRunAt across edits that didn't intend to reset it.
   if (patch.schedules !== undefined) {
@@ -259,6 +268,7 @@ export async function updateSettings(patch: { ignore?: unknown; schedules?: unkn
   );
 
   cache = next;
+  applyEngineBudgetSetting(cache.engineBudget);
   await writeJsonFile(SETTINGS_FILE, cache);
   if (weightsChanged) clearFactCacheForProvider('reclaimScore');
   return cache;

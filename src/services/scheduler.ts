@@ -131,7 +131,9 @@ async function runScheduled(sched: ScheduleConfig): Promise<void> {
   const history = await listSnapshots(target);
   const prev = history[history.length - 1];
 
-  const scan = await startScan(target);
+  // Eco whatever the setting says: nobody asked for this scan right now, so
+  // it must never be the reason the computer feels slow (Phase 2, §8.5).
+  const scan = await startScan(target, { budget: 'eco' });
   await waitForScan(scan.scanId);
   const done = getScan(scan.scanId);
   if (!done || done.status !== 'complete' || !done.store) return;

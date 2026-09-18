@@ -256,6 +256,61 @@ launched at a lower `nice` and with fewer parallel shards under Eco. They
 cannot set QoS or I/O policy from Node, and the stats say `budget:
 'eco (best effort)'` for them so the number is never overstated.
 
+### 8.1 As built (Phase 2, 18 September 2026) — where the design above was wrong
+
+Measured on this Mac (Apple M3, 8 cores, macOS 27) while building
+`native/treemap-core/crates/tm-governor` and the Node side
+(`src/services/engineBudget.ts`); each item is pinned by a test named in the
+Phase 2 plan.
+
+* **QoS and `setiopolicy_np(IOPOL_SCOPE_THREAD)` are mutually exclusive on
+  macOS.** After a thread-scope I/O policy call, `pthread_get_qos_class_np`
+  reports `QOS_CLASS_UNSPECIFIED` and every later
+  `pthread_set_qos_class_self_np` returns `EPERM`, in either order. XNU derives
+  the disk I/O tier from the QoS class (Background → the throttled tier,
+  Utility → the utility tier), so the governor sets QoS only and reports the
+  I/O mechanism as carried by QoS. The table's `IOPOL_THROTTLE` /
+  `IOPOL_UTILITY` cells describe the tiers reached, not calls made.
+* **`host_statistics64` publishes new CPU counters about once a second**, so a
+  100 ms tick usually sees no new machine-wide reading; the loop keeps the
+  last published share (`machineBusyShare` in the snapshot, `null` until the
+  first) and never treats the gap as a fault. The process's own share
+  (`getrusage`) is fine-grained and is what the loop controls on.
+* **The inter-batch sleep alone cannot hold a duty at low QoS.** A 2.84 ms
+  sleep costs ~4 ms at the default class, ~17 ms at Utility and ~155 ms at
+  Background — the very classes Balanced and Eco apply. `throttle()` therefore
+  keeps a per-thread sleep ledger (owe `(1 − duty) / duty × work`, capped at
+  1 s; sleep once ≥ 1 ms is owed; subtract what was actually slept; credit
+  bounded at 250 ms) rather than sleeping a computed amount each call.
+  Windows' 15.6 ms timer would have broken Turbo the same way.
+* **Conditional anti-windup was a defect** (the P term pins the duty at the
+  floor before the integral gets there, then a shrinking error exposes the
+  frozen integral as a jump from 0.05 to 0.31); the integral is clamped
+  instead. The worker-drop threshold is a duty of 0.4, not 0.25, because Eco
+  on two cores settles at exactly 0.25 and the plan's own two-core case could
+  never fire.
+* **The held bands, 60 s each, `cargo test --release --test hold -- --ignored`,
+  load ≈ 2.7 before, nothing else building:** Eco target 0.25 → mean of the
+  last half **0.2255**; Balanced 0.50 → **0.4702**; Turbo 0.90 → **0.8924**.
+  All inside ±5 points; Tier A and Tier C are not available on this machine
+  and are reported as such (R25). Eco and Balanced have **no headroom on
+  8 cores** — `max_workers × 1.0 / cores` equals the ceiling exactly, so both
+  sit at duty 1.0 and any competing process pulls the share below target with
+  nothing the loop can add (Eco dipped to 0.16–0.19 for eight seconds while
+  `syspolicyd` ran). They held, by 2.0–2.6 points; a third Eco worker on
+  ≥ 8 cores is the obvious relief and is left for Phase 8's tuning pass with
+  the measurement above as its reason.
+* **The Node shim** (`source: 'node-shim'`) replaces the design's
+  `'eco (best effort)'` wording: `GET /api/engine/budget`, every scan record's
+  `budget` and every pause reply say who held the budget. A governor that
+  loaded but is not in force — a snapshot that throws or arrives in the wrong
+  shape, or a configure it refused — is `node-shim` too, with the fault in
+  `native.reason` and retried (a refused configure after 5 s or at the next
+  setting change); the review round found the first version reporting a
+  table constant under `source: 'native'` in that state.
+* **`governorHold`** runs on libuv's pool as an `AsyncTask`, acceptable for
+  the test-only measurement; a scan never will (§4.2).
+
 ## 9. The rest of the walk plan
 
 ### 9.1 Incremental rescan (Phase 4)

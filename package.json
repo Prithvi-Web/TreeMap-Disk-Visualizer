@@ -33,6 +33,8 @@
     "start": "node dist/index.js",
     "test": "node scripts/run-tests.js",
     "typecheck": "tsc --noEmit && tsc -p bench/tsconfig.json",
+    "build:native": "node scripts/build-native.js",
+    "test:native": "cargo test --manifest-path native/treemap-core/Cargo.toml --workspace",
     "capabilities:report": "tsx scripts/report-capabilities.ts",
     "bench:v4": "tsx scripts/bench-v4.ts",
     "bench": "tsx bench/run.ts",
@@ -90,12 +92,14 @@
       "dist/**/*",
       "public/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "native/prebuilt/**"
     ],
     "asarUnpack": [
       "**/node_modules/sharp/**",
       "**/node_modules/@img/**",
-      "**/node_modules/@foliojs-fork/**"
+      "**/node_modules/@foliojs-fork/**",
+      "native/prebuilt/**"
     ],
     "publish": {
       "provider": "github",

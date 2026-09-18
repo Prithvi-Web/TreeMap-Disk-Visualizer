@@ -33,7 +33,7 @@ if (!Number(process.env.UV_THREADPOOL_SIZE)) {
   process.env.UV_THREADPOOL_SIZE = String(Math.min(16, Math.max(8, require('os').cpus().length * 2)));
 }
 
-const { app, BrowserWindow, Tray, Menu, Notification, shell, ipcMain, dialog, nativeImage, screen, session, clipboard } =
+const { app, BrowserWindow, Tray, Menu, Notification, shell, ipcMain, dialog, nativeImage, screen, session, clipboard, powerMonitor } =
   require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -46,6 +46,8 @@ const { diskUsage } = require(path.join(__dirname, '..', 'dist', 'services', 'di
 const { formatBytes } = require(path.join(__dirname, '..', 'dist', 'utils', 'formatBytes.js'));
 const { appDataDir } = require(path.join(__dirname, '..', 'dist', 'services', 'storage.js'));
 const { isEphemeral } = require(path.join(__dirname, '..', 'dist', 'services', 'portableMode.js'));
+const { allScans } = require(path.join(__dirname, '..', 'dist', 'services', 'diskScanner.js'));
+const { pauseScan, resumeScan, isScanPaused } = require(path.join(__dirname, '..', 'dist', 'services', 'engineBudget.js'));
 const desktop = require('./lib/desktop');
 const guards = require('./lib/guards');
 const windowState = require('./lib/windowState');
@@ -239,6 +241,7 @@ async function boot() {
   createWindow(running.port);
   createTray();
   wireGrowthNotifications();
+  wirePowerEvents();
   setupAutoUpdates();
 }
 
@@ -412,6 +415,37 @@ function wireGrowthNotifications() {
     const n = new Notification({ title, body });
     n.on('click', showMainWindow);
     n.show();
+  });
+}
+
+/* ───────────────────────────── Sleep and wake ───────────────────────────── */
+
+const pausedForSleep = new Set();
+
+/**
+ * Closing the lid pauses every running scan; opening it resumes exactly those.
+ * A scan the person paused themselves stays paused across the nap, and a scan
+ * that could not be paused (gdu on Windows) is logged, not pretended. The
+ * server runs in this process, so the scan service is called directly. Electron
+ * only provides powerMonitor once the app is ready, which is why this is wired
+ * from boot() and not at load.
+ */
+function wirePowerEvents() {
+  if (!powerMonitor || typeof powerMonitor.on !== 'function') return;
+  powerMonitor.on('suspend', () => {
+    for (const scan of allScans()) {
+      if (scan.status !== 'running' || isScanPaused(scan.scanId)) continue;
+      const outcome = pauseScan(scan);
+      if (outcome.paused) pausedForSleep.add(scan.scanId);
+      else console.warn(`[treemap] could not pause the scan of ${scan.rootPath} for sleep: ${outcome.reason}`);
+    }
+  });
+  powerMonitor.on('resume', () => {
+    for (const scan of allScans()) {
+      if (!pausedForSleep.has(scan.scanId)) continue;
+      if (scan.status === 'running') resumeScan(scan);
+    }
+    pausedForSleep.clear();
   });
 }
 

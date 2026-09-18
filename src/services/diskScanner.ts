@@ -1,7 +1,7 @@
 import { promises as fsp, Dirent, Stats } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { FileNode, ScanResult, LargeFolder, EmptyFoldersResult, CompareEntry } from '../models/types';
+import { FileNode, ScanResult, LargeFolder, EmptyFoldersResult, CompareEntry, EffectiveBudgetPreset } from '../models/types';
 import { saveSnapshot } from './snapshots';
 import { trackWrite } from '../utils/backgroundWrites';
 import { getIgnoreMatchers } from './settings';
@@ -18,6 +18,7 @@ import { noteRefused } from './scanRefusals';
 import { permissionDeniedMessage } from '../middleware/errorHandler';
 import { PackedScanStore, ScanStore, Flag, NodeInput, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
 import { platform } from '../platform';
+import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBatch, whenResumed, workerCap } from './engineBudget';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -38,6 +39,12 @@ import { platform } from '../platform';
  */
 
 const CONCURRENCY = Math.min(32, Math.max(8, IO_THREADS));
+/**
+ * The scanning budget caps the workers below CONCURRENCY (Eco: two). The cap
+ * is read when the walk starts and again after this many entries, so a
+ * budget changed mid-scan shows within about a second of walking.
+ */
+const CAP_REFRESH_ENTRIES = 1000;
 const STAT_BATCH = IO_THREADS > 4 ? 64 : 32;
 /** Yield to the event loop after this many entries so SSE stays responsive. */
 const YIELD_EVERY = 2000;
@@ -193,21 +200,34 @@ export function onScanForgotten(fn: (scanId: string) => void): void {
 
 let evictTimer: NodeJS.Timeout | null = null;
 
+/**
+ * Drop every scan whose retention has passed; returns the ids dropped. Runs on
+ * the evictor's timer, and directly from a test, which is the only way the
+ * six-hour hard cap can be exercised.
+ */
+export function evictExpiredScans(now = Date.now()): string[] {
+  const evicted: string[] = [];
+  for (const [id, scan] of scans) {
+    if (!scanExpired(scan, now)) continue;
+    scan.cancelled = true;
+    scans.delete(id);
+    // The shard first: a paused gdu shard is SIGSTOPped with its own deadline
+    // disarmed, so dropping the record without killing it would leave a
+    // stopped process, its temp directory and its descriptors behind for good.
+    abortGduScan(id);
+    forgetScan(id); // drop its expanded-container registry too
+    forgetScanBudget(id); // and its throttle clock, forced preset and pause
+    for (const hook of scanForgottenHooks) {
+      try { hook(id); } catch { /* a derived cache must not break eviction */ }
+    }
+    evicted.push(id);
+  }
+  return evicted;
+}
+
 function ensureEvictor(): void {
   if (evictTimer) return;
-  evictTimer = setInterval(() => {
-    const now = Date.now();
-    for (const [id, scan] of scans) {
-      if (scanExpired(scan, now)) {
-        scan.cancelled = true;
-        scans.delete(id);
-        forgetScan(id); // drop its expanded-container registry too
-        for (const hook of scanForgottenHooks) {
-          try { hook(id); } catch { /* a derived cache must not break eviction */ }
-        }
-      }
-    }
-  }, EVICT_INTERVAL_MS);
+  evictTimer = setInterval(() => { evictExpiredScans(); }, EVICT_INTERVAL_MS);
   // Don't let the evictor keep the process alive on shutdown.
   evictTimer.unref();
 }
@@ -250,6 +270,7 @@ export function cancelAllScans(): void {
   for (const scan of scans.values()) {
     scan.cancelled = true;
     abortGduScan(scan.scanId);
+    forgetScanBudget(scan.scanId); // a paused walker is released to read the flag
   }
 }
 
@@ -289,6 +310,10 @@ export function cancelScan(scanId: string): boolean {
   if (!scan) return false;
   scan.cancelled = true;
   abortGduScan(scanId); // no-op unless a gdu subprocess is mid-shard
+  // A paused walker is parked on the budget's gate; releasing it here lets it
+  // read `cancelled` and return. Nothing else is awaited before the record
+  // settles below, so the walker cannot get ahead of the status it reads.
+  forgetScanBudget(scanId);
   if (scan.status !== 'running') return false;
   scan.status = 'error';
   scan.error = SCAN_CANCELLED_MESSAGE;
@@ -339,6 +364,9 @@ export function createScanRecord(rootPath: string): ScanResult {
     startedAt: Date.now(),
     createdAt: Date.now(),
     cancelled: false,
+    // Captured at start like every scan's, so /stats can state it; a cloud
+    // lister does not throttle, but the budget in force is still a fact.
+    budget: scanBudget(),
   };
   defineRootAccessor(scan);
   scans.set(scan.scanId, scan);
@@ -352,6 +380,12 @@ export function createScanRecord(rootPath: string): ScanResult {
 export interface ScanOptions {
   /** Reuse the on-disk mtime cache to skip unchanged subtrees (fast rescan). */
   incremental?: boolean;
+  /**
+   * Run at this preset whatever the setting says or later becomes. The
+   * scheduler's scans pass 'eco': nobody asked for them right now, so they
+   * must never be the reason the computer feels slow.
+   */
+  budget?: EffectiveBudgetPreset;
 }
 
 export async function startScan(rootPath: string, opts: ScanOptions = {}): Promise<ScanResult> {
@@ -387,8 +421,9 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     }
   }
 
+  const scanId = crypto.randomUUID();
   const scan: ScanResult = {
-    scanId: crypto.randomUUID(),
+    scanId,
     rootPath,
     status: 'running',
     scanned: 0,
@@ -398,6 +433,9 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     startedAt: Date.now(),
     createdAt: Date.now(),
     cancelled: false,
+    // The budget this scan runs under, captured now (the settings read above
+    // handed the budget module the persisted setting) and kept on the record.
+    budget: beginScanBudget(scanId, opts.budget),
     engine: IO_THREADS > 4 ? 'turbo-walker' : 'walker',
     ioThreads: IO_THREADS,
     incremental: !!cache,
@@ -494,6 +532,10 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     scan.status = 'error';
     scan.error = describeScanError(err);
     scan.finishedAt = Date.now();
+  }).finally(() => {
+    // The budget's per-scan state (throttle clock, forced preset, pause) dies
+    // with the walk, whichever way it ended.
+    forgetScanBudget(scan.scanId);
   });
 
   return scan;
@@ -664,6 +706,14 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
 function drainQueue(scan: ScanResult, store: ScanStore, initial: DirJob[], ignore: CompiledIgnore[], cache: Map<string, FileNode> | null, seen: Set<string>): Promise<void> {
   const queue: DirJob[] = [...initial];
   let active = 0;
+  // The budget's worker cap: Eco lists two folders at a time, Turbo all of
+  // CONCURRENCY. Read at the start and again every CAP_REFRESH_ENTRIES so a
+  // budget changed mid-scan shows within about a second.
+  let limit = Math.min(CONCURRENCY, workerCap(scan.scanId));
+  let capReadAt = scan.scanned;
+  // Each in-flight listing borrows a worker slot; the budget's throttle keeps
+  // its rest clock per slot, as the native governor does per thread.
+  const freeSlots = Array.from({ length: CONCURRENCY }, (_, i) => i);
 
   return new Promise<void>((resolve, reject) => {
     const pump = (): void => {
@@ -671,13 +721,19 @@ function drainQueue(scan: ScanResult, store: ScanStore, initial: DirJob[], ignor
         if (active === 0) resolve();
         return;
       }
-      while (active < CONCURRENCY && queue.length > 0) {
+      if (scan.scanned - capReadAt >= CAP_REFRESH_ENTRIES) {
+        limit = Math.min(CONCURRENCY, workerCap(scan.scanId));
+        capReadAt = scan.scanned;
+      }
+      while (active < limit && queue.length > 0) {
         const job = queue.shift()!;
+        const slot = freeSlots.pop() ?? active; // never empty: active < limit ≤ CONCURRENCY
         active++;
-        processDirectory(scan, store, job, queue, ignore, cache, seen)
+        processDirectory(scan, store, job, queue, ignore, cache, seen, slot)
           .catch((err: unknown) => reject(err))
           .finally(() => {
             active--;
+            freeSlots.push(slot);
             if (queue.length === 0 && active === 0) resolve();
             else pump();
           });
@@ -700,9 +756,15 @@ async function processDirectory(
   queue: DirJob[],
   ignore: CompiledIgnore[],
   cache: Map<string, FileNode> | null,
-  seen: Set<string>
+  seen: Set<string>,
+  worker: number,
 ): Promise<void> {
   if (scan.cancelled) return;
+  // Paused: park here until resumed (or cancelled, which releases the gate).
+  if (isScanPaused(scan.scanId)) {
+    await whenResumed(scan.scanId);
+    if (scan.cancelled) return;
+  }
   const { id: dirId, path: dirPath } = job;
 
   // Incremental: a directory whose own mtime is unchanged keeps its cached
@@ -768,6 +830,13 @@ async function processDirectory(
 
   for (let i = 0; i < entries.length; i += STAT_BATCH) {
     if (scan.cancelled) return;
+    // The pause gate sits inside the batch loop, not only per folder: a
+    // folder of 100,000 entries would otherwise keep counting for seconds
+    // after the person pressed pause.
+    if (isScanPaused(scan.scanId)) {
+      await whenResumed(scan.scanId);
+      if (scan.cancelled) return;
+    }
     const batch = entries.slice(i, i + STAT_BATCH);
 
     const settled = await Promise.allSettled(
@@ -873,6 +942,9 @@ async function processDirectory(
       // even while crunching one enormous directory.
       await new Promise<void>((r) => setImmediate(r));
     }
+    // The budget: rest in proportion to the work since this worker's previous
+    // batch (Eco three parts rest to one of work; Turbo none at all).
+    await throttleBatch(scan.scanId, worker);
   }
 }
 

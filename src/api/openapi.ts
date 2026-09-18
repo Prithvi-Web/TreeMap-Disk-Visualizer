@@ -175,8 +175,94 @@ const schemas: Json = {
       ),
       vanishedDirs: int('Folders that disappeared mid-scan; the results are partial when > 0'),
       expiresAt: int('Epoch ms when the results leave memory; null while running. Every read of the scan pushes it out by 30 minutes'),
+      budget: ref('ScanBudget'),
     },
-    ['scanned', 'fileCount', 'dirCount', 'engine', 'ioThreads', 'durationMs', 'incremental', 'cachedDirs', 'walkedDirs', 'hardlinkedFiles', 'hardlinkedBytes', 'sparseFiles', 'sparseBytes', 'slackBytes', 'cloudFiles', 'cloudBytes', 'refused', 'vanishedDirs', 'expiresAt'],
+    ['scanned', 'fileCount', 'dirCount', 'engine', 'ioThreads', 'durationMs', 'incremental', 'cachedDirs', 'walkedDirs', 'hardlinkedFiles', 'hardlinkedBytes', 'sparseFiles', 'sparseBytes', 'slackBytes', 'cloudFiles', 'cloudBytes', 'refused', 'vanishedDirs', 'expiresAt', 'budget'],
+  ),
+  /* ---- the scanning budget (Phase 2) ---- */
+  ScanBudget: obj(
+    {
+      preset: { type: 'string', enum: ['auto', 'eco', 'balanced', 'turbo'], description: 'The setting when the scan started; a scheduled scan records eco whatever the setting says' },
+      effective: { type: 'string', enum: ['eco', 'balanced', 'turbo'], description: 'What actually ran: auto resolves to balanced, or to eco on battery or when the machine is thermally serious' },
+      source: { type: 'string', enum: ['native', 'node-shim'], description: 'Who held the budget: the native governor, or the best-effort Node shim' },
+    },
+    ['preset', 'effective', 'source'],
+    'The budget a scan ran under, captured when it started',
+  ),
+  EngineBudgetSetting: obj(
+    {
+      preset: { type: 'string', enum: ['auto', 'eco', 'balanced', 'turbo'], description: 'auto is balanced, or eco on battery or heat when the native governor can tell; without it, balanced' },
+      cpuPercent: nullable(int("1–100 replaces the preset's CPU ceiling; null keeps the preset's own")),
+    },
+    ['preset', 'cpuPercent'],
+    'The scanning budget setting (src/services/engineBudget.ts)',
+  ),
+  EngineMechanism: obj(
+    {
+      available: bool(),
+      mechanism: str('What the platform provides, e.g. pthread_set_qos_class_self_np; "none" when nothing does'),
+      reason: nullable(str('Why it is unavailable; null when it is available')),
+    },
+    ['available', 'mechanism', 'reason'],
+    'One OS mechanism the governor can use — the same shape in Rust, native/index.d.ts and here',
+  ),
+  NativeCoreStatus: obj(
+    {
+      available: bool(),
+      version: nullable(str("The loaded module's version; null when it is not loaded")),
+      reason: nullable(str('Why it is not loaded, or why a loaded module is not in force right now (a fault the app retries) — the Node shim\'s rules apply meanwhile; null when it is in force')),
+    },
+    ['available', 'version', 'reason'],
+  ),
+  EffectiveBudget: obj(
+    {
+      preset: { type: 'string', enum: ['eco', 'balanced', 'turbo'] },
+      targetShare: num('The share of the whole machine the budget aims for, 0–1'),
+      source: { type: 'string', enum: ['native', 'node-shim'] },
+    },
+    ['preset', 'targetShare', 'source'],
+    'What the setting resolves to right now',
+  ),
+  EngineBudgetState: obj(
+    {
+      setting: ref('EngineBudgetSetting'),
+      effective: ref('EffectiveBudget'),
+      native: ref('NativeCoreStatus'),
+      snapshot: nullable(opaque("The native governor's live snapshot (budget, effective, targetShare, share1s, workers, duty, thermal, onBattery, interacting, paused, ticks, mechanisms); null without the native core — nothing measured, nothing reported")),
+      source: { type: 'string', enum: ['native', 'node-shim'], description: 'Who holds the budget right now' },
+    },
+    ['setting', 'effective', 'native', 'snapshot', 'source'],
+  ),
+  EngineCapabilities: obj(
+    {
+      native: ref('NativeCoreStatus'),
+      mechanisms: obj(
+        {
+          qos: ref('EngineMechanism'),
+          ioPolicy: ref('EngineMechanism'),
+          priority: ref('EngineMechanism'),
+          thermal: ref('EngineMechanism'),
+          battery: ref('EngineMechanism'),
+          interaction: ref('EngineMechanism'),
+          machineCpu: ref('EngineMechanism'),
+        },
+        ['qos', 'ioPolicy', 'priority', 'thermal', 'battery', 'interaction', 'machineCpu'],
+        'Each absent with its reason when the native core is not loaded',
+      ),
+      source: { type: 'string', enum: ['native', 'node-shim'] },
+    },
+    ['native', 'mechanisms', 'source'],
+  ),
+  ScanPauseOutcome: obj(
+    {
+      scanId: str(),
+      status: str("The scan record's status: 'running', 'complete' or 'error'"),
+      paused: bool('Whether the scan is paused after this call'),
+      supported: bool("Whether this scan's engine can be paused on this platform at all"),
+      reason: str('Why it is not paused, or cannot be — present whenever paused is false'),
+      source: { type: 'string', enum: ['native', 'node-shim'] },
+    },
+    ['scanId', 'status', 'paused', 'supported', 'source'],
   ),
   TreemapNode: obj(
     {
@@ -677,8 +763,9 @@ const schemas: Json = {
           + 'computed from each folder’s own file mix. Default true; cosmetic only.',
       ),
       tourDone: bool('Whether the guided first run (v4 §9.2) was completed or skipped. Only boolean true counts.'),
+      engineBudget: ref('EngineBudgetSetting'),
     },
-    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights', 'cleanupGoalBytes', 'humanScaleUnits', 'tourDone'],
+    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights', 'cleanupGoalBytes', 'humanScaleUnits', 'tourDone', 'engineBudget'],
   ),
 };
 
@@ -1968,8 +2055,70 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Replace whichever settings lists are present in the body',
     tag: 'settings',
     destructive: true,
-    requestBody: jsonBody(opaque('Any subset of AppSettings: ignore, schedules, budgets, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes, humanScaleUnits, tourDone')),
+    requestBody: jsonBody(opaque('Any subset of AppSettings: ignore, schedules, budgets, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes, humanScaleUnits, tourDone, engineBudget')),
     responses: { '200': jsonResponse('Updated settings', ref('AppSettings')), '400': errorResponse('Bad shape') },
+  },
+  /* ------------ the scanning budget (Phase 2) ------------ */
+  {
+    method: 'get',
+    path: '/api/engine/capabilities',
+    summary: "The native core's status and the seven OS mechanisms it can use on this machine — each named, or absent with the reason",
+    tag: 'engine',
+    destructive: false,
+    responses: { '200': jsonResponse('Mechanisms', ref('EngineCapabilities')) },
+  },
+  {
+    method: 'get',
+    path: '/api/engine/budget',
+    summary: "The scanning budget: the setting, what it resolves to right now, who holds it (native governor or Node shim), and the governor's snapshot",
+    tag: 'engine',
+    destructive: false,
+    responses: { '200': jsonResponse('The budget', ref('EngineBudgetState')) },
+  },
+  {
+    method: 'put',
+    path: '/api/engine/budget',
+    summary: 'Change the scanning budget — running scans follow at their next batch; the same setting PUT /api/settings writes as engineBudget',
+    tag: 'engine',
+    destructive: true,
+    requestBody: jsonBody(
+      obj(
+        {
+          preset: { type: 'string', enum: ['auto', 'eco', 'balanced', 'turbo'] },
+          cpuPercent: nullable(int("1–100 replaces the preset's CPU ceiling; null keeps the preset's own")),
+        },
+        undefined,
+        'Either key or both; an omitted key keeps its value',
+      ),
+    ),
+    responses: {
+      '200': jsonResponse('The budget after the change', ref('EngineBudgetState')),
+      '400': errorResponse('BAD_SETTING: not one of the four presets, cpuPercent outside 1–100, or a key that is neither'),
+    },
+  },
+  {
+    method: 'post',
+    path: '/api/scan/{scanId}/pause',
+    summary: 'Pause a running scan: the walker stops counting within a batch and a gdu shard is stopped in place; a refusal says why (gdu cannot be paused on Windows)',
+    tag: 'scan',
+    destructive: false,
+    parameters: [pathParam('scanId', 'Scan id')],
+    responses: {
+      '200': jsonResponse("The scan's pause state after the request", ref('ScanPauseOutcome')),
+      '404': errorResponse('Unknown scanId'),
+    },
+  },
+  {
+    method: 'post',
+    path: '/api/scan/{scanId}/resume',
+    summary: 'Resume a paused scan',
+    tag: 'scan',
+    destructive: false,
+    parameters: [pathParam('scanId', 'Scan id')],
+    responses: {
+      '200': jsonResponse("The scan's pause state after the request", ref('ScanPauseOutcome')),
+      '404': errorResponse('Unknown scanId'),
+    },
   },
   {
     method: 'get',
@@ -2874,6 +3023,7 @@ export function buildOpenApiDocument(): Json {
       { name: 'offload', description: 'Copy-verify-trash offload to another drive' },
       { name: 'system', description: 'Host, disk and OS trash' },
       { name: 'settings', description: 'Settings, notifications and live watch' },
+      { name: 'engine', description: 'The scanning budget — Eco, Balanced, Turbo — and the native core that holds it' },
       { name: 'cloud', description: "The user's own cloud accounts" },
       { name: 'facts', description: 'Per-path derived facts, delivered as a sidecar to the scan tree' },
       { name: 'query', description: 'The query grammar, and the views saved from it' },

@@ -150,10 +150,23 @@ const VOLATILE_NUMBERS = new Set(['startedAt', 'finishedAt', 'durationMs', 'took
 /** Scrub machine/run-specific values; structure and content stay exact. */
 export function normalize(value: unknown, treeRoot: string): unknown {
   const fixString = (s: string): string => s.split(treeRoot).join('<ROOT>');
-  const walk = (v: unknown, key?: string): unknown => {
+  const walk = (v: unknown, key?: string, parent?: string): unknown => {
     if (typeof v === 'string') {
       if (key === 'scanId') return '<SCAN>';
       if (key === 'engine') return '<ENGINE>';
+      // The scan's budget (Phase 2) is a machine fact like `engine`: which
+      // preset Automatic resolved to, and whether the native governor or the
+      // Node shim held it, differ between a laptop on battery with the module
+      // built and a runner without it. The setting's own preset stays exact,
+      // and the baseline had no budget at all, so this never touched it.
+      if (parent === 'budget' && (key === 'effective' || key === 'source')) {
+        // Scrubbed only when it is a legal value: 'auto' leaking through as the
+        // effective preset, or a source nobody defined, is a regression the
+        // byte comparison must still catch.
+        const allowed = key === 'effective' ? ['eco', 'balanced', 'turbo'] : ['native', 'node-shim'];
+        if (!allowed.includes(v)) throw new Error(`golden: budget.${key} is "${v}", not one of ${allowed.join(' | ')} — a value outside the enum is a regression, not a machine fact`);
+        return '<BUDGET>';
+      }
       return fixString(v);
     }
     if (typeof v === 'number') {
@@ -166,7 +179,7 @@ export function normalize(value: unknown, treeRoot: string): unknown {
     if (v && typeof v === 'object') {
       const out: Record<string, unknown> = {};
       for (const [k, val] of Object.entries(v)) {
-        out[fixString(k)] = walk(val, k);
+        out[fixString(k)] = walk(val, k, key);
       }
       return out;
     }

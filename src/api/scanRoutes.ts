@@ -14,6 +14,7 @@ import { budgetGauges } from '../services/budgetGauges';
 import { getPolicy, assertScanAllowed } from '../services/policy';
 import { streamCsv, streamPdf, streamXlsx } from '../services/reportExport';
 import { sseSend as sseWrite } from '../utils/sse';
+import { scanBudget } from '../services/engineBudget';
 import { ScanResult, ScanEvent, ScanStats, BudgetStatus } from '../models/types';
 
 export const scanRouter = Router();
@@ -43,6 +44,9 @@ export function buildScanStats(scan: ScanResult): ScanStats {
     refused: { dirs: scan.deniedDirs ?? 0, examples: [...(scan.deniedExamples ?? [])] },
     vanishedDirs: scan.vanishedDirs ?? 0,
     expiresAt: scanExpiresAt(scan),
+    // Phase 2 (D6): the budget the scan ran under, captured when it started;
+    // last, so every key before it keeps its position.
+    budget: scan.budget,
   };
 }
 
