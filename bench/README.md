@@ -14,6 +14,7 @@ npm run bench -- enumerate [--corpus=enum200k|enum1m|ci20k|smoke|dupes100k] [--e
 npm run bench -- duplicates [--corpus=dupes100k|smoke|ci20k|enum200k|enum1m] [--runs=3] [--min-size=1024] [--cache=warm|cold] [--record] [--label=...]
 npm run bench -- neardup [--originals=600] [--runs=1] [--threshold=10] [--cache=warm|cold] [--record] [--label=...]
 npm run bench -- all [--small] [--runs=3] [--originals=600] [--record] [--label=...]
+npm run bench -- governor [--preset=eco|balanced|turbo] [--seconds=60] [--record] [--label=...]
 npm run bench -- compare <result.json> <baseline.json>
 npm run bench -- clean
 ```
@@ -62,7 +63,7 @@ still exists. Nothing is written inside the repository except
 
 | Column | Meaning |
 | --- | --- |
-| `rate` | what the suite counts per second: `entries/s` (files + directories, the root included) for enumerate, `files/s` for duplicates, `images/s` for near-duplicates |
+| `rate` | what the suite counts per second: `entries/s` (files + directories, the root included) for enumerate, `files/s` for duplicates, `images/s` for near-duplicates, `samples/s` for the governor (its row is explained below) |
 | `wall (median)` | median of `--runs` measured passes; a warm-up pass is never counted |
 | `spread` | (max − min) / median across the runs; over 5% the row is marked `(>5%)` and is not reproducible — rerun on a quieter machine before believing it; one run has no spread |
 | `CPU s/M` | CPU seconds per million entries **including child processes** (gdu's shards count), the efficiency figure the design gates on |
@@ -75,6 +76,45 @@ A correctness failure is printed beside the timing and makes the command exit
 non-zero. A result that failed correctness or is not reproducible is never
 recorded as a baseline and is refused by `compare`. An engine that is fast
 and wrong has measured nothing.
+
+## The governor row
+
+`npm run bench -- governor` is the Phase 2 gate for the native resource
+governor (`docs/superpowers/plans/2026-09-18-phase2-governor.md`, Task 7).
+It configures the governor for one preset with auto mode off, asks the native
+module to hold its own synthetic load at that preset's ceiling — Eco 25%,
+Balanced 50%, Turbo 90% of machine CPU — for `--seconds` (60 by default,
+the gate's length), and records the share the hold's independent sampler saw.
+The evidence is in the lines under the table, not the timing columns:
+
+* `rate` is samples per second (the sampler's cadence, about 10/s), not a
+  throughput; `wall (median)` is the hold's measured length, which is the
+  length asked for;
+* `spread` is the hold's own p95 |error| in percentage points of machine
+  CPU — one run is the whole series, so there is no spread across runs;
+* `correct` is the band verdict the native hold returns: the mean of the
+  **last half** of the run held within ±5 points of the preset's ceiling. The
+  notes print the target, the mean, the mean of the last half, the p95 error,
+  the final worker count and duty, and the series compacted to every 10th
+  sample. The harness never recomputes or smooths any of them;
+* a governor result is reproducible when the band held, and a single run is
+  enough — the hold is itself a series of several hundred samples — so
+  `--record` accepts it (on a clean tree, as for every suite);
+* `CPU s/M`, `peak RSS`, `load` and the persist fields are the measuring
+  process's own: CPU seconds are its `process.cpuUsage()` delta and include
+  the synthetic load, which runs on the process's threads; `bytes read` and
+  persistence do not apply and the run record says so.
+
+When the native module cannot load (no prebuilt for this platform, a version
+mismatch), the row is `FAIL` with the loader's reason as its only note and a
+single zero-sample run — `n/a` in the timing columns, zeros in the record,
+never a series that no governor produced. The command exits 1.
+
+`compare` between two governor results of the same preset and length is
+INCONCLUSIVE by construction: their wall clocks are the prescribed hold
+length, and a single hold has no resolution across runs. Different presets
+or lengths are NOT COMPARABLE (the corpus is `hold-<preset>` with the seconds
+in its parameters). Read the two CORRECTNESS lines and series instead.
 
 ## Refusals, never guesses
 

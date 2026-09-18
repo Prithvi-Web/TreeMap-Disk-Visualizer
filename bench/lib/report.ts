@@ -18,6 +18,10 @@
  *    reproducible. Anything else is NOT COMPARABLE, never PASS or FAIL.
  * 5. A result read from disk is validated field by field before a number of
  *    it is used; a single run's missing resolution survives the JSON trip.
+ * 6. A result that failed its correctness check may carry a zero wall clock:
+ *    a governor hold that never ran (no native module) measured nothing, and
+ *    zero is the honest count of nothing. A result that claims correctness
+ *    with no wall clock is malformed.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,11 +29,11 @@ import type { MachineRecord } from './machine';
 import type { CacheState } from './cache';
 import { formatMs, median, resolutionBand, spreadPct } from './stats';
 
-export type SuiteName = 'enumerate' | 'duplicates' | 'neardup';
-export const SUITES: readonly SuiteName[] = ['enumerate', 'duplicates', 'neardup'];
-/** What each suite counts: the enumerate suite files + directories, the others files or images. */
-export type EntriesUnit = 'entries' | 'files' | 'images';
-const UNITS: readonly EntriesUnit[] = ['entries', 'files', 'images'];
+export type SuiteName = 'enumerate' | 'duplicates' | 'neardup' | 'governor';
+export const SUITES: readonly SuiteName[] = ['enumerate', 'duplicates', 'neardup', 'governor'];
+/** What each suite counts: the enumerate suite files + directories, the others files or images; the governor suite the samples of one hold. */
+export type EntriesUnit = 'entries' | 'files' | 'images' | 'samples';
+const UNITS: readonly EntriesUnit[] = ['entries', 'files', 'images', 'samples'];
 const CACHE_STATES: readonly CacheState[] = ['cold', 'warm', 'mixed', 'unknown'];
 const TIERS = ['A', 'B', 'C'] as const;
 
@@ -60,9 +64,10 @@ export interface BenchSummary {
   cpuSecondsPerMillion: number;
   peakRssBytes: number;
   bytesReadMedian: number | null;
+  /** (max − min) / median of the wall clocks across runs. The governor suite stores the hold's p95 |error| in percentage points of machine CPU here: its one run is a whole series (see governorSuite.ts). */
   spreadPct: number;
   resolutionPct: number;
-  /** True when the runs spread less than 5% — the Phase 1 gate. */
+  /** True when the runs spread less than 5% — the Phase 1 gate. For the governor suite, true when the hold stayed in its band. */
   reproducible: boolean;
 }
 
@@ -199,22 +204,36 @@ const fmtBytes = (n: number | null): string => {
 };
 const fmtCount = (n: number): string => Math.round(n).toLocaleString('en-US');
 
+/** The spread column: across runs for the scan suites; for the governor, the hold's own p95 |error| in points of machine CPU (bench/README.md, "The governor row"). */
+function spreadCell(r: BenchResult): string {
+  if (r.suite === 'governor') {
+    if (!(r.summary.wallMsMedian > 0)) return 'n/a (no hold)';
+    return `±${r.summary.spreadPct.toFixed(1)} pt p95${r.summary.reproducible ? '' : ' (outside the band)'}`;
+  }
+  if (r.runs.length < 2) return `n/a (${r.runs.length} run)`;
+  return `±${r.summary.spreadPct.toFixed(1)}%${r.summary.reproducible ? '' : ` (>${REPRODUCIBLE_SPREAD_PCT}%)`}`;
+}
+
 export function printTable(results: BenchResult[]): string {
   const header = ['suite', 'corpus', 'engine', 'cache', 'rate', 'wall (median)', 'spread', 'CPU s/M', 'peak RSS', 'bytes read', 'load', 'correct'];
-  const rows = results.map((r) => [
-    r.suite,
-    r.corpus.name,
-    r.engine,
-    r.cache.state,
-    `${fmtCount(r.summary.entriesPerSecond)} ${r.entriesUnit}/s`,
-    formatMs(r.summary.wallMsMedian),
-    r.runs.length < 2 ? `n/a (${r.runs.length} run)` : `±${r.summary.spreadPct.toFixed(1)}%${r.summary.reproducible ? '' : ` (>${REPRODUCIBLE_SPREAD_PCT}%)`}`,
-    r.summary.cpuSecondsPerMillion.toFixed(2),
-    fmtBytes(r.summary.peakRssBytes),
-    fmtBytes(r.summary.bytesReadMedian),
-    r.runs.map((x) => (x.loadAvg === null ? 'n/a' : (x.loadAvg[0] ?? 0).toFixed(1))).join('/'),
-    r.correctness.ok ? 'ok' : 'FAIL',
-  ]);
+  const rows = results.map((r) => {
+    // A zero wall clock is a result that measured nothing (a hold that never ran): its rate and clock are n/a, not 0.
+    const measured = r.summary.wallMsMedian > 0;
+    return [
+      r.suite,
+      r.corpus.name,
+      r.engine,
+      r.cache.state,
+      measured ? `${fmtCount(r.summary.entriesPerSecond)} ${r.entriesUnit}/s` : 'n/a',
+      measured ? formatMs(r.summary.wallMsMedian) : 'n/a',
+      spreadCell(r),
+      measured ? r.summary.cpuSecondsPerMillion.toFixed(2) : 'n/a',
+      fmtBytes(r.summary.peakRssBytes),
+      fmtBytes(r.summary.bytesReadMedian),
+      r.runs.map((x) => (x.loadAvg === null ? 'n/a' : (x.loadAvg[0] ?? 0).toFixed(1))).join('/'),
+      r.correctness.ok ? 'ok' : 'FAIL',
+    ];
+  });
   const widths = header.map((h, i) => Math.max(h.length, ...rows.map((row) => row[i].length)));
   const line = (cells: string[]): string => cells.map((c, i) => c.padEnd(widths[i])).join('  ');
   return [line(header), widths.map((w) => '─'.repeat(w)).join('  '), ...rows.map(line)].join('\n');
@@ -254,12 +273,14 @@ export function isBenchResult(value: unknown): value is BenchResult {
   if (!isRecord(v.machine) || !(TIERS as readonly unknown[]).includes(v.machine.tier) || typeof v.machine.platform !== 'string' || typeof v.machine.arch !== 'string') return false;
   if (!isRecord(v.cache) || !(CACHE_STATES as readonly unknown[]).includes(v.cache.state) || typeof v.cache.reason !== 'string') return false;
   if (!Array.isArray(v.runs) || v.runs.length === 0 || !v.runs.every((r) => isRecord(r) && typeof r.wallMs === 'number' && Number.isFinite(r.wallMs))) return false;
+  if (!isRecord(v.correctness) || typeof v.correctness.ok !== 'boolean' || !Array.isArray(v.correctness.notes)) return false;
   if (!isRecord(v.summary)) return false;
   const s = v.summary;
-  if (typeof s.wallMsMedian !== 'number' || !Number.isFinite(s.wallMsMedian) || s.wallMsMedian <= 0) return false;
+  if (typeof s.wallMsMedian !== 'number' || !Number.isFinite(s.wallMsMedian) || s.wallMsMedian < 0) return false;
+  // Rule 6: a zero wall clock is admitted only on a result that failed its correctness check.
+  if (s.wallMsMedian === 0 && v.correctness.ok) return false;
   if (typeof s.entriesPerSecond !== 'number' || !Number.isFinite(s.entriesPerSecond) || s.entriesPerSecond < 0) return false;
   if (!isNumberOrNull(s.spreadPct) || !isNumberOrNull(s.resolutionPct) || typeof s.reproducible !== 'boolean') return false;
-  if (!isRecord(v.correctness) || typeof v.correctness.ok !== 'boolean' || !Array.isArray(v.correctness.notes)) return false;
   if (typeof v.recordedAt !== 'string' || typeof v.commit !== 'string' || typeof v.label !== 'string') return false;
   return true;
 }

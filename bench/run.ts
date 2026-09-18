@@ -3,8 +3,9 @@
  * bench — the performance harness for the scan engine work (docs/engine/DESIGN.md §17).
  * Usage lines live in USAGE below; `--help` prints them. See bench/README.md.
  *
- * Every number printed was produced by a fresh child process on this machine,
- * under the load average and cache state printed beside it. `--record` copies
+ * Every number printed was produced by a fresh child process on this machine
+ * (the governor hold by the native module inside this one), under the load
+ * average and cache state printed beside it. `--record` copies
  * a result into bench/baselines/ as the referent every later "N× faster" claim
  * cites — and refuses when the result failed its correctness check, was not
  * reproducible, or was measured on a dirty tree.
@@ -13,6 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { EngineChoice } from './lib/suites';
+import type { GovernorPreset } from './lib/governorSuite';
 import type { BenchResult } from './lib/report';
 import type { CorpusName } from './lib/corpus';
 import type { RequestedCache } from './lib/cache';
@@ -27,6 +29,7 @@ const USAGE = [
   'npm run bench -- duplicates [--corpus=dupes100k|smoke|ci20k|enum200k|enum1m] [--runs=3] [--min-size=1024] [--cache=warm|cold] [--record] [--label=...]',
   'npm run bench -- neardup [--originals=600] [--runs=1] [--threshold=10] [--cache=warm|cold] [--record] [--label=...]',
   'npm run bench -- all [--small] [--runs=3] [--originals=600] [--record] [--label=...]',
+  'npm run bench -- governor [--preset=eco|balanced|turbo] [--seconds=60] [--record] [--label=...]',
   'npm run bench -- compare <result.json> <baseline.json>      exit 0 PASS · 1 FAIL · 2 INCONCLUSIVE · 3 NOT COMPARABLE',
   'npm run bench -- clean                                       removes every corpus and probe under the temp directory',
 ];
@@ -41,6 +44,10 @@ const DEFAULT_ORIGINALS = 600;
 const SMALL_ORIGINALS = 2;
 const DEFAULT_THRESHOLD = 10;
 const IMAGE_SEED = 5;
+/** The governor hold: the plan's gate is 60 s per preset; under a second is not a hold. */
+const DEFAULT_PRESET: GovernorPreset = 'balanced';
+const DEFAULT_HOLD_SECONDS = 60;
+const HOLD_SECONDS_RANGE = { min: 1, max: 3600 };
 const EXIT_BY_VERDICT: Record<string, number> = { PASS: 0, FAIL: 1, INCONCLUSIVE: 2, 'NOT COMPARABLE': 3 };
 
 /** Options are `--name=value` or a bare flag from a per-command allow-list; anything else is refused, never ignored. */
@@ -51,6 +58,7 @@ const OPTIONS_BY_COMMAND: Record<string, readonly string[]> = {
   duplicates: ['corpus', 'runs', 'min-size', 'cache', 'label'],
   neardup: ['originals', 'runs', 'threshold', 'cache', 'label'],
   all: ['runs', 'originals', 'label'],
+  governor: ['preset', 'seconds', 'label'],
   compare: [],
   clean: [],
   help: [],
@@ -203,6 +211,14 @@ async function main(): Promise<void> {
       await duplicates(small ? 'smoke' : 'dupes100k', runs, DEFAULT_MIN_SIZE, 'warm');
       await nearDup(small ? SMALL_ORIGINALS : intOption(p, 'originals', DEFAULT_ORIGINALS, 1, 20_000), 1, DEFAULT_THRESHOLD, 'warm');
       process.stdout.write(`\n${report.printTable(results)}\n`);
+      break;
+    }
+    case 'governor': {
+      const governor = await import('./lib/governorSuite');
+      const preset = oneOf(p, 'preset', DEFAULT_PRESET, governor.GOVERNOR_PRESETS);
+      const seconds = intOption(p, 'seconds', DEFAULT_HOLD_SECONDS, HOLD_SECONDS_RANGE.min, HOLD_SECONDS_RANGE.max);
+      process.stdout.write(`\ngovernor: holding the ${preset} ceiling for ${seconds} s on this machine, load ${(os.loadavg()[0] ?? 0).toFixed(2)}\n`);
+      finish(await governor.runGovernor({ preset, seconds, label }));
       break;
     }
     default:
