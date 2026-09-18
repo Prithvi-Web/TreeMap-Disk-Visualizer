@@ -70,6 +70,14 @@ export interface NearDupOptions extends CommonOptions {
 }
 
 const tsxCli = (): string => path.join(path.dirname(require.resolve('tsx/package.json')), 'dist', 'cli.mjs');
+/**
+ * A pause after every child exits. The first measured run after the warm-up
+ * was the slow one on every series measured while building this: the kernel
+ * is still tearing down the previous process (hundreds of MB of pages) when
+ * the next one starts, and that teardown is not the engine's cost.
+ */
+const SETTLE_MS = 500;
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const WORKER = path.join(__dirname, 'measureWorker.ts');
 
 /** One measured pass in a fresh process with its own app-data directory; the directory is removed once the child has exited. */
@@ -99,6 +107,7 @@ async function runChild(job: Omit<WorkerJob, 'outFile'>): Promise<WorkerSuccess>
     return result;
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 3 });
+    await sleep(SETTLE_MS);
   }
 }
 
