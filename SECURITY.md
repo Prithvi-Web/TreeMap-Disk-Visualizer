@@ -62,6 +62,8 @@ Scan results themselves are memory only: a scan expires 30 minutes after it sett
 
 Thumbnails for the near-duplicate strip are held in memory only. A portable build keeps all of the above beside the executable, and on a read-only medium keeps everything in memory and says so.
 
+One more file ships **with** the app rather than being written by it: `treemap_core.node`, the native scan core (Rust, built in CI, in the app bundle beside the gdu binary). It is never downloaded at run time and never compiled on your machine; the app loads it only when its version matches the app's, and when it is missing or refuses to load the built-in engines run instead and the dashboard says why. It reads the folders you scan and writes nothing anywhere except the app-data folder above.
+
 ## Rate limiting
 
 The local API is token-bucket rate limited per client IP, in three lanes chosen by what a request costs the server, never by who is asking:

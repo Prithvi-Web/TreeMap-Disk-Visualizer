@@ -61,6 +61,30 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The native core (native/treemap-core, Rust) is built on every leg so a
+      # platform whose module does not compile fails here, never on a user's
+      # machine. Users never need Rust: npm ci does not touch the crate, and the
+      # app falls back to the legacy engines with a stated reason when the
+      # module is absent.
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache the Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/treemap-core
+
+      - name: Check the native core (format, lints, tests)
+        shell: bash
+        working-directory: native/treemap-core
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+
+      - name: Build the native module for this platform
+        run: npm run build:native
+
       - name: Run this leg as a Brazilian PC would
         # LC_ALL is where Node (ICU) reads its default locale from. It is set
         # here, through GITHUB_ENV, and not as `env:` on the test step: an

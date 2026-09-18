@@ -135,6 +135,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache the Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/treemap-core
+
+      - name: Build the native module for this platform
+        # A missing prebuild must fail the release, never ship a broken install
+        # (docs/engine/DESIGN.md §14).
+        run: npm run build:native
+
       - name: Build the installer
         shell: bash
         env:
