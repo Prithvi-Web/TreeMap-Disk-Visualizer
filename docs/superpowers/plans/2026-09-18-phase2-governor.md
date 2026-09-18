@@ -2,6 +2,25 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Progress (kept current so a context compaction loses nothing — 18 Sep 2026, 14:40)
+
+Owner's answers recorded in DESIGN.md §0: fresh core (no mobile code), D6–D9 approved, crates download approved. Work is on `main`, unpushed.
+
+| Task | State | Evidence |
+| --- | --- | --- |
+| Workspace skeleton + crates fetched | committed `2d55883` | `native/treemap-core/Cargo.lock` |
+| Loader `src/services/scan/native.ts` + `tests/nativeLoader.test.ts` | committed `cbc78e2`, `4254d32` | 5/5, handshake mutant red |
+| CI (`test.yml`, `release.yml`) + `SECURITY.md` names the module | committed `6e42e37` | releasePipeline 42/42, polishDocs 19/19 |
+| Task 6 UI (Settings row, Dashboard note) | committed `ef6ba6d` | `tests/engineBudgetUi.test.ts` 11/11 |
+| Task 7 bench governor suite | committed `d633d54` | `tests/benchGovernor.test.ts` 10/10 |
+| Task 1 + 3 (preset, controller, governor, loadgen, gate) | **in flight** — the implementer was killed by a usage limit after writing `tests/controller.rs`, then resumed; `lib.rs` is still the placeholder | watch `crates/tm-governor/src/{preset,controller,governor,loadgen}.rs` appear |
+| Task 2 (sample, signals, enforce) | **in flight** — files written (525/404/708 lines + `tests/platform.rs`), not yet compiled; resumed, waits for Task 1's `controller.rs` | |
+| Task 5 (engineBudget service, routes, walker shim, golden re-record, scheduler, electron) | **in flight** — tests written, service half-written, `types.ts` edited; resumed | uncommitted files under `src/services/engineBudget.ts`, `tests/engine*.test.ts`, `tests/fixtures/engineBudgetChild.ts` |
+| Task 4 (tm-node napi bindings, `scripts/build-native.js`, `native/index.d.ts`, `native/README.md`, package.json scripts `build:native`/`test:native`) | **not started** — needs the crate to compile | then package.json `build.files` + `asarUnpack` gain `native/prebuilt/**` |
+| After all tasks | review fleet (ECC reviewers + adversaries incl. a Rust reviewer), fix round, mutants, full gate (`npm run typecheck`, `npm test`, `cargo test`, cross-target checks), `npm run bench -- governor --preset=eco|balanced|turbo --seconds=60 --record` ×3 on a quiet machine, HANDOFF Session 16 addendum, preview server (`preview_start` name `treemap`, http://127.0.0.1:4280) left running for the owner, check-in | |
+
+Unit decision for Task 4: `governorHold(targetPercent, seconds)` takes percent and returns the report in SHARES (0..1) exactly as the Rust `HoldReport`; the bench suite accepts either and verifies `target`.
+
 **Goal:** the app has a user-selectable resource budget (Eco / Balanced / Turbo, plus a numeric override) that a native Rust governor holds within ±5 percentage points of machine CPU using real OS mechanisms and a closed loop; the legacy engines obey it as far as Node allows; the setting, the live state and the machine's mechanisms are visible through the API and a Settings row; and the whole thing degrades to the legacy behaviour with a stated reason when the native module cannot load.
 
 **Architecture:** `native/treemap-core/` is a Cargo workspace (edition 2024, Rust ≥ 1.85, the strict lint set already in its `Cargo.toml`). `tm-governor` is pure Rust with platform modules behind `cfg`; `tm-node` is the only napi crate. `scripts/build-native.js` builds the release library and copies it to `native/prebuilt/<platform>-<arch>/treemap_core.node`; `src/services/scan/native.ts` loads it with a version handshake and falls back with a reason. `src/services/engineBudget.ts` owns the setting and drives either the native governor or the Node shim. Every measured pass of the gate (25/50/90 held for 60 s) is recorded by `npm run bench -- governor`.
