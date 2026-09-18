@@ -54,9 +54,22 @@ async function listen() {
 
 interface Res { status: number; url: string }
 
-function req(port: number, method: string, url: string): Promise<Res> {
+/**
+ * For the lane-drain floods only. Each one opens every connection in a single
+ * tick, and macOS clamps a listen backlog to `kern.ipc.somaxconn` (128); on
+ * macOS 27 a connect that overflows the backlog is reset rather than queued,
+ * so 200 simultaneous connects to the loopback server lost one to
+ * `connect ECONNRESET` (GitHub's runners never saw it). At most 64 connections
+ * are open at once, yet all 200 (and all 60) requests are still sent and the
+ * assertions are unchanged; keepAlive is off so no idle socket outlives the
+ * test. Raise maxSockets past the backlog, or drop the agent, and the test is
+ * red again on a Mac.
+ */
+const FLOOD_AGENT = new http.Agent({ keepAlive: false, maxSockets: 64 });
+
+function req(port: number, method: string, url: string, agent?: http.Agent): Promise<Res> {
   return new Promise((resolve, reject) => {
-    const r = http.request({ host: '127.0.0.1', port, path: url, method }, (res) => {
+    const r = http.request({ host: '127.0.0.1', port, path: url, method, agent }, (res) => {
       res.resume();
       res.on('end', () => resolve({ status: res.statusCode ?? 0, url }));
     });
@@ -162,12 +175,12 @@ test('hammering an endpoint that walks the disk is still rate limited', async ()
 test('draining the strict lane leaves the metadata lane untouched, and the reverse', async () => {
   const s = await listen();
   try {
-    await Promise.all(Array.from({ length: 60 }, () => req(s.port, 'GET', `/api/fs/list?path=${encodeURIComponent(tmp)}`)));
+    await Promise.all(Array.from({ length: 60 }, () => req(s.port, 'GET', `/api/fs/list?path=${encodeURIComponent(tmp)}`, FLOOD_AGENT)));
     assert.equal((await req(s.port, 'GET', '/api/settings')).status, 200,
       'a flood of tree walks must not starve the app of its own metadata');
 
     resetRateLimiter();
-    await Promise.all(Array.from({ length: 200 }, () => req(s.port, 'GET', '/api/settings')));
+    await Promise.all(Array.from({ length: 200 }, () => req(s.port, 'GET', '/api/settings', FLOOD_AGENT)));
     assert.notEqual((await req(s.port, 'GET', `/api/fs/list?path=${encodeURIComponent(tmp)}`)).status, 429,
       'and a flood of metadata reads must not spend the strict allowance');
   } finally {
