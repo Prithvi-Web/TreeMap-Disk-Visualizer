@@ -5,8 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
+import { Worker } from 'node:worker_threads';
 import {
-  CORPORA, contentBytes, corpusDir, createCorpus, ensureCorpus, manifestFor, planCorpus,
+  CORPORA, contentBytes, corpusDir, corpusWorkerEntry, createCorpus, ensureCorpus, manifestFor, planCorpus,
 } from '../bench/lib/corpus';
 import type { CorpusParams, CorpusPlan } from '../bench/lib/corpus';
 
@@ -476,9 +477,12 @@ test('ensureCorpus reuses a corpus whose manifest matches and rebuilds one whose
 });
 
 test('the presets are the ones the plan names and plan within budget', (t) => {
-  assert.deepEqual(CORPORA.enum200k, { entries: 200_000, fanout: 12, depth: 8, flat: 10_000, sizeMedian: 1024, sizeSigma: 1.2, sizeMax: 2 * MiB, duplicateRate: 0, hardlinkRate: 0.01, sparseRate: 0.001, seed: 2 });
+  // Windows plants no sparse files (the generator only ftruncates, which NTFS
+  // does not treat as sparse), so every preset's sparse rate is 0 there.
+  const sparseRate = process.platform === 'win32' ? 0 : 0.001;
+  assert.deepEqual(CORPORA.enum200k, { entries: 200_000, fanout: 12, depth: 8, flat: 10_000, sizeMedian: 1024, sizeSigma: 1.2, sizeMax: 2 * MiB, duplicateRate: 0, hardlinkRate: 0.01, sparseRate, seed: 2 });
   assert.deepEqual(CORPORA.enum1m, { ...CORPORA.enum200k, entries: 1_000_000, seed: 4 });
-  assert.deepEqual(CORPORA.dupes100k, { entries: 112_000, fanout: 10, depth: 6, flat: 0, sizeMedian: 8192, sizeSigma: 1.6, sizeMax: 64 * MiB, duplicateRate: 0.12, hardlinkRate: 0.005, sparseRate: 0.001, seed: 3 });
+  assert.deepEqual(CORPORA.dupes100k, { entries: 112_000, fanout: 10, depth: 6, flat: 0, sizeMedian: 8192, sizeSigma: 1.6, sizeMax: 64 * MiB, duplicateRate: 0.12, hardlinkRate: 0.005, sparseRate, seed: 3 });
 
   for (const [name, params] of Object.entries(CORPORA)) {
     const t0 = performance.now();
@@ -545,4 +549,24 @@ test('a reused corpus is checked, not trusted: a manifest whose root moved or wh
   const third = await ensureCorpus(name, params);
   for (const g of third.duplicateGroups) for (const p of g.paths) assert.ok(fs.existsSync(p), `rebuilt: ${p}`);
   fs.rmSync(corpusDir(name, params), { recursive: true, force: true });
+});
+
+test('the corpus worker entry loads in a worker thread that inherited no loader hooks, as on Node 20', async () => {
+  // Node 20 does not hand tsx's --import hook to worker threads (Node 22 and
+  // later do), which is why a .ts worker entry passed locally on Node 24 and
+  // failed every CI leg with ERR_UNKNOWN_FILE_EXTENSION. Starting the entry
+  // with an empty execArgv is the same situation on every Node version: the
+  // entry must be able to load itself.
+  const job = {
+    start: 0, end: 0, dirPaths: [] as string[],
+    fileDir: new Int32Array(0), fileSize: new Float64Array(0), fileContent: new Uint32Array(0),
+    fileRole: new Uint8Array(0), fileHardlinkOf: new Int32Array(0),
+  };
+  const reply = await new Promise<unknown>((resolve, reject) => {
+    const worker = new Worker(corpusWorkerEntry(), { execArgv: [], workerData: job });
+    worker.once('message', resolve);
+    worker.once('error', reject);
+    worker.once('exit', (code) => reject(new Error(`worker exited with ${code} before replying`)));
+  });
+  assert.deepEqual(reply, { ok: true, written: 0, bytes: 0, deferredLinks: 0 });
 });

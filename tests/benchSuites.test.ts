@@ -18,14 +18,18 @@ after(() => {
 
 const SMALL = { entries: 600, fanout: 5, depth: 4, flat: 0, sizeMedian: 512, sizeSigma: 1, sizeMax: 65_536, duplicateRate: 0.1, hardlinkRate: 0.02, sparseRate: 0.01, seed: 11 };
 
-let smallManifest: CorpusManifest | null = null;
-async function small(): Promise<CorpusManifest> {
-  if (!smallManifest) {
+// One build, shared by every test: the promise is memoised, not the result,
+// so a build that fails is reported by each test as the failure it was
+// rather than as EEXIST on the directory the first attempt left behind (which
+// is what CI showed when the worker entry could not load on Node 20).
+let smallBuild: Promise<CorpusManifest> | null = null;
+function small(): Promise<CorpusManifest> {
+  if (!smallBuild) {
     const dir = path.join(CORPUS_DIR, 'small');
     fs.mkdirSync(dir);
-    smallManifest = await createCorpus(dir, planCorpus(SMALL));
+    smallBuild = createCorpus(dir, planCorpus(SMALL));
   }
-  return smallManifest;
+  return smallBuild;
 }
 
 test('enumerate drives the real walker in a child process and every run agrees with the manifest', async () => {

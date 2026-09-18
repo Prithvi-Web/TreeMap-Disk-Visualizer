@@ -448,14 +448,19 @@ function sharedCopy<T extends PlanArray>(source: T): T {
   return copy;
 }
 
-function workerFile(): string {
-  const ts = path.join(__dirname, 'corpusWorker.ts');
-  return fs.existsSync(ts) ? ts : path.join(__dirname, 'corpusWorker.js');
+/**
+ * The file a corpus worker thread starts from: a CommonJS entry that installs
+ * tsx's require hook in the worker and then loads `corpusWorker.ts` through
+ * it. Node 20 does not pass tsx's `--import` hook on to worker threads, so a
+ * `.ts` entry loads only on Node 22 and later; this one loads everywhere.
+ */
+export function corpusWorkerEntry(): string {
+  return path.join(__dirname, 'corpusWorkerEntry.cjs');
 }
 
 function runWorker(job: WorkerJob): Promise<WorkerReply> {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(workerFile(), { workerData: job });
+    const worker = new Worker(corpusWorkerEntry(), { workerData: job });
     let settled = false;
     worker.once('message', (reply: WorkerReply) => {
       settled = true;
