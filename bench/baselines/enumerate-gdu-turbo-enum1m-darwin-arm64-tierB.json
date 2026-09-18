@@ -1,0 +1,120 @@
+{
+  "suite": "enumerate",
+  "corpus": {
+    "name": "enum1m",
+    "params": {
+      "entries": 1000000,
+      "fanout": 12,
+      "depth": 8,
+      "flat": 10000,
+      "sizeMedian": 1024,
+      "sizeSigma": 1.2,
+      "sizeMax": 2097152,
+      "duplicateRate": 0,
+      "hardlinkRate": 0.01,
+      "sparseRate": 0.001,
+      "seed": 4
+    },
+    "dirs": 120000,
+    "files": 880000,
+    "scale": "1M entries: the prompt's full enumeration size"
+  },
+  "engine": "gdu-turbo",
+  "engineDescription": "the bundled gdu binary, one subprocess per top-level directory, output parsed from a JSON file",
+  "entriesUnit": "entries",
+  "machine": {
+    "cpuModel": "Apple M3",
+    "cores": 8,
+    "perfCores": 4,
+    "effCores": 4,
+    "memoryBytes": 17179869184,
+    "platform": "darwin",
+    "arch": "arm64",
+    "osRelease": "27.0.0",
+    "node": "v24.16.0",
+    "commit": "95df76582fa818d1b4e6a5f635e750e229fe4468",
+    "dirty": false,
+    "loadAvg": [
+      3.7255859375,
+      4.12451171875,
+      4.146484375
+    ],
+    "maxVnodes": 251127,
+    "tier": "B",
+    "tierReason": "8 cores and 16.0 GiB: neither the A clause (>= 8 cores and >= 32.0 GiB, or an Apple Pro/Max/Ultra part) nor the C clause (<= 4 cores or <= 8.0 GiB) applies"
+  },
+  "cache": {
+    "state": "mixed",
+    "reason": "1,000,000 entries exceed 80% of kern.maxvnodes (251,127), so the vnode cache cannot hold the whole tree after a warm-up pass"
+  },
+  "runs": [
+    {
+      "wallMs": 10239.002542,
+      "entries": 1000000,
+      "cpuSeconds": 32.8671825,
+      "selfCpuSeconds": 1.0448929999999998,
+      "childCpuSeconds": 31.822289499999997,
+      "peakRssBytes": 371474432,
+      "bytesRead": null,
+      "bytesReadReason": "gdu reads in child processes; the probe counts only the measuring process",
+      "persistMs": 13.060332999999446,
+      "persistCpuSeconds": 0.021932749999999723,
+      "loadAvg": [
+        3.15478515625,
+        3.96923828125,
+        4.08984375
+      ]
+    },
+    {
+      "wallMs": 10177.856583,
+      "entries": 1000000,
+      "cpuSeconds": 33.289389125999996,
+      "selfCpuSeconds": 1.0771789999999999,
+      "childCpuSeconds": 32.212210125999995,
+      "peakRssBytes": 375603200,
+      "bytesRead": null,
+      "bytesReadReason": "gdu reads in child processes; the probe counts only the measuring process",
+      "persistMs": 5.698667000000569,
+      "persistCpuSeconds": 0.01099433300000352,
+      "loadAvg": [
+        3.88134765625,
+        4.0859375,
+        4.12841796875
+      ]
+    },
+    {
+      "wallMs": 10280.399042,
+      "entries": 1000000,
+      "cpuSeconds": 32.862084376,
+      "selfCpuSeconds": 1.068722,
+      "childCpuSeconds": 31.793362376,
+      "peakRssBytes": 372064256,
+      "bytesRead": null,
+      "bytesReadReason": "gdu reads in child processes; the probe counts only the measuring process",
+      "persistMs": 13.593417000000045,
+      "persistCpuSeconds": 0.021608998999996798,
+      "loadAvg": [
+        4.74169921875,
+        4.263671875,
+        4.19091796875
+      ]
+    }
+  ],
+  "summary": {
+    "wallMsMedian": 10239.002542,
+    "entriesPerSecond": 97665.76342744696,
+    "cpuSecondsPerMillion": 32.8671825,
+    "peakRssBytes": 375603200,
+    "bytesReadMedian": null,
+    "spreadPct": 1.0014887541962523,
+    "resolutionPct": 0.5371907669592277,
+    "reproducible": true
+  },
+  "correctness": {
+    "ok": true,
+    "notes": []
+  },
+  "recordedAt": "2026-09-18T20:43:37.375Z",
+  "commit": "95df76582fa818d1b4e6a5f635e750e229fe4468",
+  "label": "Phase 1 baseline, attempt 3"
+}

@@ -1,0 +1,124 @@
+{
+  "suite": "duplicates",
+  "corpus": {
+    "name": "ci20k",
+    "params": {
+      "entries": 20000,
+      "fanout": 10,
+      "depth": 6,
+      "flat": 1000,
+      "sizeMedian": 1024,
+      "sizeSigma": 1.2,
+      "sizeMax": 1048576,
+      "duplicateRate": 0.05,
+      "hardlinkRate": 0.01,
+      "sparseRate": 0.001,
+      "seed": 8
+    },
+    "dirs": 2400,
+    "files": 17600,
+    "scale": "17,600 files, 0.91 GB logical — the prompt's corpus is 1M files / 500 GB"
+  },
+  "engine": "sha256-staged",
+  "engineDescription": "size bucket → SHA-256 of the first 64 KiB → full SHA-256, four files at a time",
+  "entriesUnit": "files",
+  "machine": {
+    "cpuModel": "Apple M3",
+    "cores": 8,
+    "perfCores": 4,
+    "effCores": 4,
+    "memoryBytes": 17179869184,
+    "platform": "darwin",
+    "arch": "arm64",
+    "osRelease": "27.0.0",
+    "node": "v24.16.0",
+    "commit": "95df76582fa818d1b4e6a5f635e750e229fe4468",
+    "dirty": false,
+    "loadAvg": [
+      2.8095703125,
+      4.0029296875,
+      4.10546875
+    ],
+    "maxVnodes": 251127,
+    "tier": "B",
+    "tierReason": "8 cores and 16.0 GiB: neither the A clause (>= 8 cores and >= 32.0 GiB, or an Apple Pro/Max/Ultra part) nor the C clause (<= 4 cores or <= 8.0 GiB) applies"
+  },
+  "cache": {
+    "state": "warm",
+    "reason": "a warm-up pass ran and 20,000 entries fit within 80% of kern.maxvnodes (251,127); whether the file data stayed in the page cache is not verified"
+  },
+  "runs": [
+    {
+      "wallMs": 480.362042,
+      "entries": 17600,
+      "cpuSeconds": 1.7789707499999998,
+      "selfCpuSeconds": 1.7776769999999997,
+      "childCpuSeconds": 0.0012937500000000102,
+      "peakRssBytes": 167886848,
+      "bytesRead": 0,
+      "bytesReadReason": "proc_pid_rusage(RUSAGE_INFO_V4).ri_diskio_bytesread via bench/probes/darwin-rusage.c",
+      "persistMs": 0.010125000000016371,
+      "persistCpuSeconds": 0.002248292000000013,
+      "loadAvg": [
+        3.22509765625,
+        4.06884765625,
+        4.1279296875
+      ]
+    },
+    {
+      "wallMs": 479.812625,
+      "entries": 17600,
+      "cpuSeconds": 1.7545402079999999,
+      "selfCpuSeconds": 1.753218,
+      "childCpuSeconds": 0.0013222080000000053,
+      "peakRssBytes": 169754624,
+      "bytesRead": 0,
+      "bytesReadReason": "proc_pid_rusage(RUSAGE_INFO_V4).ri_diskio_bytesread via bench/probes/darwin-rusage.c",
+      "persistMs": 0.010625000000004547,
+      "persistCpuSeconds": 0.0065656249999997,
+      "loadAvg": [
+        3.22509765625,
+        4.06884765625,
+        4.1279296875
+      ]
+    },
+    {
+      "wallMs": 476.09862499999997,
+      "entries": 17600,
+      "cpuSeconds": 1.748158625,
+      "selfCpuSeconds": 1.746772,
+      "childCpuSeconds": 0.0013866249999999886,
+      "peakRssBytes": 168067072,
+      "bytesRead": 0,
+      "bytesReadReason": "proc_pid_rusage(RUSAGE_INFO_V4).ri_diskio_bytesread via bench/probes/darwin-rusage.c",
+      "persistMs": 0.010041999999998552,
+      "persistCpuSeconds": 0.006662500000000363,
+      "loadAvg": [
+        3.22509765625,
+        4.06884765625,
+        4.1279296875
+      ]
+    }
+  ],
+  "summary": {
+    "wallMsMedian": 479.812625,
+    "entriesPerSecond": 36680.985624336165,
+    "cpuSecondsPerMillion": 99.68978454545453,
+    "peakRssBytes": 169754624,
+    "bytesReadMedian": 0,
+    "spreadPct": 0.8885587368610828,
+    "resolutionPct": 0.47661598529462784,
+    "reproducible": true
+  },
+  "correctness": {
+    "ok": true,
+    "notes": [
+      "run 1: recall 1.0000 over 500 planted groups the finder could report (its report holds 500 of 787 found: the rule counts groups above its cut) at or above 1,024 B; precision 1.0000 over 500 reported groups; 0 false positives by byte comparison; 0 hard-link families reported; 0 missed",
+      "run 2: recall 1.0000 over 500 planted groups the finder could report (its report holds 500 of 787 found: the rule counts groups above its cut) at or above 1,024 B; precision 1.0000 over 500 reported groups; 0 false positives by byte comparison; 0 hard-link families reported; 0 missed",
+      "run 3: recall 1.0000 over 500 planted groups the finder could report (its report holds 500 of 787 found: the rule counts groups above its cut) at or above 1,024 B; precision 1.0000 over 500 reported groups; 0 false positives by byte comparison; 0 hard-link families reported; 0 missed"
+    ]
+  },
+  "recordedAt": "2026-09-18T20:42:27.572Z",
+  "commit": "95df76582fa818d1b4e6a5f635e750e229fe4468",
+  "label": "Phase 1 baseline, attempt 2"
+}
