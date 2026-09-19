@@ -78,13 +78,16 @@ native/
       tm-walk/                  platform listing (darwin bulk, windows ex-dir-info, linux getdents+statx),
                                 work-stealing walk, refusal accounting, placeholder flags
       tm-store/                 columnar arena, name interner, mmap spill, BFS finalize, aggregation,
-                                aggregate-only mode, canonical digest for the equivalence test
+                                aggregate-only mode
       tm-hash/                  BLAKE3 sample + full digests, per-device read scheduling, byte compare
       tm-imghash/               EXIF thumbnail parse, tiny-decode input, pHash/dHash/colour hash, MIH index
       tm-governor/              presets, closed loop, QoS/io-policy/nice per platform, thermal, battery
       tm-node/                  napi-rs bindings — the only crate Node touches
-    VENDORED.md                 provenance of the crates copied from TreeMapMobile
+    (no VENDORED.md: nothing is copied from TreeMapMobile — D3, §3; the mobile crates are prior art only.
+     Corrected 18 September 2026: this tree once listed a provenance file for vendored crates)
   prebuilt/<platform>-<arch>/treemap_core.node    built by CI, never committed, shipped in the bundle
+
+tests/fixtures/canonicalTree.ts the canonical digest of a store (§5.1, P3-8), pure over ScanStore, shared with bench/
 
 src/services/scan/
   ScanEngine.ts                 the Engine interface, selection order, capability probe, forced-engine setting
@@ -108,7 +111,7 @@ answerable from the UI.
 ### 4.2 Threading
 
 * The core owns a thread pool sized by the governor (§8), never libuv's. Every napi entry point that can take longer than a millisecond is an `AsyncTask` or returns a promise resolved from the core's threads.
-* Progress crosses the boundary through **shared atomic counters** read by a synchronous, sub-microsecond napi getter; the existing SSE endpoint keeps polling at 150 ms and keeps its frame shape. No per-file callback exists. A batched `ThreadsafeFunction` carries only the "recent paths" sample and the completion event, at most 10 times a second.
+* Progress crosses the boundary through **shared atomic counters** read by a synchronous, sub-microsecond napi getter; the existing SSE endpoint keeps polling at 150 ms and keeps its frame shape. No per-file callback exists. **Amended 18 September 2026 (P3-1):** there is no `ThreadsafeFunction` at all — the SSE loop already polls, so Node polls `scanPoll(handle)` at its 150 ms cadence for the counters, the current path (sampled at most every 50 ms on the Rust side) and completion; one fewer cross-thread mechanism to get wrong.
 * `NativeScanStore` reads the arena through typed-array views over napi external buffers — zero copy — so every existing consumer (`collectLargestFiles`, the treemap routes, missing gigabytes, duplicates) runs unchanged against `ScanStore`.
 
 ## 5. The walker (Phase 3)
@@ -117,9 +120,9 @@ Platform listing, one call per directory, nothing per file:
 
 | Platform | Call | Buffer | Attributes | Fallback |
 | --- | --- | --- | --- | --- |
-| macOS | `getattrlistbulk` on an `O_RDONLY|O_DIRECTORY|O_NOFOLLOW` descriptor (vendored `bulk.rs`) | 64 KiB per worker today; 256 KiB is the prompt's suggestion and Phase 1's harness decides | `RETURNED_ATTRS, ERROR, NAME, DEVID, OBJTYPE, MODTIME, FLAGS, FILEID` + `LINKCOUNT, ALLOCSIZE, DATALENGTH`; `ACCTIME` only when the atime feature is on. `ATTR_CMN_RETURNED_ATTRS` is honoured for every entry | `fdopendir` + `fstatat(AT_SYMLINK_NOFOLLOW)` on `ENOTSUP` |
-| Windows | `GetFileInformationByHandleEx(FileIdExtdDirectoryInfo)` on a handle opened with `FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT`, `\\?\` prefix, long paths on | 256 KiB | name, attributes, times, `EndOfFile`, `AllocationSize`, file id, `ReparseTag`; cloud tags and `RECALL_ON_DATA_ACCESS`/`OFFLINE` set the placeholder flag; reparse points are leaves | `FindFirstFileExW(FindExInfoBasic, FIND_FIRST_EX_LARGE_FETCH)` |
-| Linux | raw `getdents64` (256 KiB) for names and `d_type`, then `statx(AT_SYMLINK_NOFOLLOW|AT_STATX_DONT_SYNC)` with the minimal mask; `io_uring` batched `statx` behind runtime detection (kernel ≥ 5.6, not blocked by seccomp) | 256 KiB | `TYPE, MODE, SIZE, BLOCKS, MTIME, INO, NLINK` | synchronous `statx`; FUSE and network mounts are enumerated but flagged read-hostile |
+| macOS | `getattrlistbulk` on an `O_RDONLY|O_DIRECTORY|O_NOFOLLOW` descriptor (written fresh in `tm-walk`, D3 — nothing vendored) | 64 KiB per worker today; 256 KiB is the prompt's suggestion and Phase 1's harness decides | `RETURNED_ATTRS, ERROR, NAME, DEVID, OBJTYPE, MODTIME, ACCTIME, FLAGS, FILEID` + `LINKCOUNT, ALLOCSIZE, DATALENGTH`, in one buffer (P3-5, 18 September 2026: atime is collected, not optional — the "last used" fact and the JSON depend on `accessedAt`). `ATTR_CMN_RETURNED_ATTRS` is honoured for every entry | `fdopendir` + `fstatat(AT_SYMLINK_NOFOLLOW)` on `ENOTSUP` |
+| Windows | `GetFileInformationByHandleEx(FileIdExtdDirectoryInfo)` on a handle opened with `FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT`, `\\?\` prefix, long paths on | 256 KiB | name, attributes, times (`LastAccessTime` included, P3-5), `EndOfFile`, `AllocationSize`, file id, `ReparseTag`; cloud tags and `RECALL_ON_DATA_ACCESS`/`OFFLINE` set the placeholder flag; reparse points are leaves | `FindFirstFileExW(FindExInfoBasic, FIND_FIRST_EX_LARGE_FETCH)` |
+| Linux | raw `getdents64` (256 KiB) for names and `d_type`, then `statx(AT_SYMLINK_NOFOLLOW|AT_STATX_DONT_SYNC)` with the minimal mask; `io_uring` batched `statx` behind runtime detection (kernel ≥ 5.6, not blocked by seccomp) | 256 KiB | `TYPE, MODE, SIZE, BLOCKS, MTIME, ATIME, INO, NLINK` (`STATX_ATIME` added by P3-5) | synchronous `statx`; FUSE and network mounts are enumerated but flagged read-hostile |
 
 Parallelism: a work-stealing deque of **directories** (`crossbeam-deque`),
 one worker owns a whole directory batch; per-device queues keyed on the
@@ -127,11 +130,23 @@ device id the listing returns; **hill-climbing** worker count re-evaluated
 every 250 ms against entries/s with a noise floor, capped by the governor at
 all times; zero allocation in the hot loop — names go into a per-worker byte
 arena and paths are rebuilt from parent indices on demand. Firmlinks and
-mount points are recognised by device id against the root's device and by
-the existing never-descend list (both, because the list is what the legacy
-walker uses and the equivalence test must agree). Symlinks are never
-followed. `(dev, ino)` for `nlink > 1` goes to a side table, and the first
+mount points are recognised by **the existing never-descend list only**
+(`src/utils/mountBoundaries.ts`), exactly as the legacy walker does; device
+ids are recorded for the hard-link key but never gate descent (**P3-3,
+18 September 2026**: the equivalence gate is absolute, and a device rule
+would diverge from the walker on firmlinks and nested mounts — the edge
+fixture's two `hdiutil` volumes prove the walker descends into both; a
+device-boundary setting for every engine is a Phase 8 question). Symlinks
+are never followed. `(dev, ino)` for `nlink > 1` goes to a side table, and the first
 name seen owns the bytes exactly as today.
+
+**Not eligible for the native engine (P3-4, 18 September 2026)** — the
+legacy walker runs instead, with the reason in `engineReason`: an incremental
+scan (the mtime cache belongs to the walker until Phase 4's index), a
+non-empty ignore list (the glob dialect lives in `src/utils/glob.ts`, and a
+Rust re-implementation is a divergence risk), a root that is not a
+directory, and a forced engine setting other than `auto` or `native`. Never
+degrade to a broken state; every reason is a sentence in the stats.
 
 ### 5.1 The correctness gate
 
@@ -143,6 +158,19 @@ exclusions, same flags. `tm-store` exports the canonical serialisation;
 digests and, on mismatch, prints the first differing path. Any difference is
 a bug in the new engine until proven otherwise; the intentional ones are
 listed in §16 and nowhere else.
+
+**As built (18 September 2026, P3-8):** the digest lives in
+`tests/fixtures/canonicalTree.ts`, not in `tm-store` — it is a pure function
+over the `ScanStore` every engine writes, hashed with Node's `crypto`, so
+the same code digests a walker, gdu or native store. It normalises exactly
+two order-dependent facts and nothing else: a directory's children are
+sorted by the bytes of their names, and a hard-link family's bytes are
+assigned to the member with the smallest path (the family list comes from
+the corpus manifest or the edge fixture). Every other fact — sizes, mtimes,
+atimes, the five flags, extension, container, provider — is compared as
+recorded. `tests/nativeEquivalence.test.ts` is the gate; `tests/edgeCases.test.ts`
+pins the walker's behaviour on every §15 case the OS can build, and skips
+the rest with the reason.
 
 ## 6. The store (Phase 4)
 
@@ -408,11 +436,12 @@ Listed here and nowhere else; each one is justified and each must be
 reflected in the equivalence test as a normalisation, never as a loosened
 assertion.
 
-1. **Refusals are counted on every engine.** gdu reports a refused directory as an empty one; the native walker counts it, like the Node walker. The equivalence test therefore compares against the Node walker's tree, not gdu's, for refusal fields.
+1. **Refusals are counted on every engine.** gdu reports a refused directory as an empty one; the native walker counts it, like the Node walker. The equivalence test therefore compares against the Node walker's tree, not gdu's, for refusal fields. Two more gdu limits (CURRENT-STATE §4) shape the gdu leg of the gate, and only that leg: gdu records **no `accessedAt`** and **whole-second mtimes**, so `tests/nativeEquivalence.test.ts` stamps the corpora to whole seconds before the gdu run and sets the `accessedAt` column aside — every other column and every counter must agree, and on this Mac they do (18 September 2026).
 2. **Hard links are keyed on `(dev, ino)`** on every engine; gdu's inode-only key is a documented limit the native path does not inherit.
 3. **Near-duplicate representative** becomes highest resolution → largest → oldest, from "newest".
-4. **`accessedAt`** is off by default in the native path (a side column, on when the feature needs it); the Node walker records it always.
+4. **Withdrawn 18 September 2026 (P3-5).** `accessedAt` was to be off by default in the native path; it is collected on every platform (`ATTR_CMN_ACCTIME`, `STATX_ATIME`, `LastAccessTime`) and compared by the digest, because the "last used" fact and the JSON depend on it.
 5. **The mtime cache** (a 300k-node JSON tree) is superseded by the arena index for native scans; the legacy walker keeps its own.
+6. **Two order-dependent facts are normalised by the digest, not by the engines (P3-8, 18 September 2026):** the order a listing returns children in, and which name of a hard-link family was seen first. Two legacy walks are not byte-identical to each other on those two points, so the digest sorts a directory's children by name bytes and gives a family's bytes to its lexicographically smallest path before hashing. Nothing else is normalised; the assertion is not loosened, it is made well-defined.
 
 ## 17. Phase plan → commits
 
