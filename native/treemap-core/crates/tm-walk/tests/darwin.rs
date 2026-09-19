@@ -61,12 +61,17 @@ struct Packed {
     nlink: u32,
     alloc: i64,
     len: i64,
+    /// The returned directory group (`ATTR_DIR_*`), packed between the common and the file group.
+    dir: u32,
+    mountstatus: u32,
 }
 
 fn regular(name: &'static [u8], len: i64) -> Packed {
     Packed {
         common: ALL_COMMON,
         file: ALL_FILE,
+        dir: 0,
+        mountstatus: 0,
         error: 0,
         name,
         objtype: VREG,
@@ -110,6 +115,9 @@ fn pack(e: &Packed) -> Result<Vec<u8>, TryFromIntError> {
     if e.common & libc::ATTR_CMN_FILEID != 0 {
         after_name.extend_from_slice(&e.fileid.to_ne_bytes());
     }
+    if e.dir & libc::ATTR_DIR_MOUNTSTATUS != 0 {
+        after_name.extend_from_slice(&e.mountstatus.to_ne_bytes());
+    }
     if e.file & libc::ATTR_FILE_LINKCOUNT != 0 {
         after_name.extend_from_slice(&e.nlink.to_ne_bytes());
     }
@@ -138,7 +146,7 @@ fn pack(e: &Packed) -> Result<Vec<u8>, TryFromIntError> {
     }
     let mut out = Vec::with_capacity(total);
     out.extend_from_slice(&u32::try_from(total)?.to_ne_bytes());
-    for group in [e.common, 0, 0, e.file, 0] {
+    for group in [e.common, 0, e.dir, e.file, 0] {
         out.extend_from_slice(&group.to_ne_bytes());
     }
     out.extend_from_slice(&before_name);
@@ -391,6 +399,38 @@ fn a_directory_entry_ignores_a_file_group_it_was_given() -> TestResult {
 }
 
 #[test]
+fn a_directory_the_file_system_marks_as_a_mount_point_is_listed_for_a_second_look() -> TestResult {
+    // getattrlistbulk answers for the covered directory, lstat for the mounted
+    // volume's root; the lister re-reads a mount point with fstatat, so the
+    // parser must say which entries are mount points.
+    let mut mounted = regular(b"mnt", 0);
+    mounted.objtype = VDIR;
+    mounted.file = 0;
+    mounted.dir = libc::ATTR_DIR_MOUNTSTATUS;
+    mounted.mountstatus = libc::DIR_MNTSTATUS_MNTPOINT;
+    let mut plain = regular(b"plain", 0);
+    plain.objtype = VDIR;
+    plain.file = 0;
+    plain.dir = libc::ATTR_DIR_MOUNTSTATUS;
+    plain.mountstatus = 0;
+    let listing = parsed(&[regular(b"a.txt", 3), mounted, plain], true)?;
+    assert_eq!(listing.entries.len(), 3);
+    assert_eq!(
+        listing.mount_points,
+        vec![1],
+        "only the entry with the mount-point bit"
+    );
+    let map = by_name(&listing);
+    assert_eq!(entry(&map, "mnt")?.kind, KIND_DIR);
+    assert_eq!(
+        entry(&map, "plain")?.mtime_ms.to_bits(),
+        time_ms(1_700_000_000, 123_456_789).to_bits(),
+        "the group after the dir group still parses"
+    );
+    Ok(())
+}
+
+#[test]
 fn rejects_a_corrupt_length() -> TestResult {
     let mut raw = buffer(&[regular(b"a.bin", 1)])?;
     let mut out = Listing::default();
@@ -626,6 +666,119 @@ fn the_bulk_listing_and_the_per_entry_fallback_agree_entry_by_entry() -> TestRes
         "atime asked for and returned"
     );
     Ok(())
+}
+
+/// Attaches a small sparse disk image at `mountpoint`; `None` (with the reason
+/// printed) when hdiutil is not there or refuses. No password is needed for a
+/// mount point the user owns.
+fn attach_image(dir: &Path, mountpoint: &Path) -> Result<Option<PathBuf>, String> {
+    let image = dir.join("edge.sparseimage");
+    let created = std::process::Command::new("hdiutil")
+        .args([
+            "create",
+            "-size",
+            "8m",
+            "-fs",
+            "APFS",
+            "-type",
+            "SPARSE",
+            "-volname",
+            "TmWalkMount",
+            "-quiet",
+        ])
+        .arg(&image)
+        .output();
+    let created = match created {
+        Ok(out) if out.status.success() => out,
+        Ok(out) => {
+            println!(
+                "skipped: hdiutil create refused: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+            return Ok(None);
+        }
+        Err(err) => {
+            println!("skipped: hdiutil is not available: {err}");
+            return Ok(None);
+        }
+    };
+    let _ = created;
+    let attached = std::process::Command::new("hdiutil")
+        .args(["attach", "-mountpoint"])
+        .arg(mountpoint)
+        .args(["-nobrowse", "-quiet"])
+        .arg(&image)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !attached.status.success() {
+        println!(
+            "skipped: hdiutil attach refused: {}",
+            String::from_utf8_lossy(&attached.stderr).trim()
+        );
+        return Ok(None);
+    }
+    Ok(Some(image))
+}
+
+fn detach(mountpoint: &Path) {
+    let _ = std::process::Command::new("hdiutil")
+        .args(["detach", "-quiet"])
+        .arg(mountpoint)
+        .output();
+}
+
+#[test]
+fn a_mount_point_carries_the_mounted_roots_attributes_as_lstat_reports_them() -> TestResult {
+    let fx = Fixture::new("mount")?;
+    let mountpoint = fx.root.join("mnt");
+    fs::create_dir(&mountpoint).map_err(|e| e.to_string())?;
+    fx.file("beside.txt", 10)?;
+    let Some(_image) = attach_image(&fx.root, &mountpoint)? else {
+        return Ok(());
+    };
+    let result = (|| -> TestResult {
+        let expected = tm_walk::platform::per_entry::lstat_meta(&mountpoint, true)
+            .map_err(|e| format!("lstat: errno {e}"))?;
+        let mut buf = ListBuffer::new(0);
+        let path = DarwinLister::new()
+            .list(&fx.root, true, &mut buf)
+            .map_err(|r| format!("listing refused: {r:?}"))?;
+        assert_eq!(path, FastPath::Bulk);
+        let map = by_name(&buf.listing);
+        let got = entry(&map, "mnt")?;
+        assert_eq!(got.kind, KIND_DIR);
+        assert_eq!(
+            got.dev.to_bits(),
+            expected.dev.to_bits(),
+            "the mounted volume's device, not the covered directory's"
+        );
+        assert_eq!(
+            got.ino.to_bits(),
+            expected.ino.to_bits(),
+            "the mounted root's inode"
+        );
+        assert_eq!(
+            got.mtime_ms.to_bits(),
+            expected.mtime_ms.to_bits(),
+            "mtime: bulk {} vs lstat {}",
+            got.mtime_ms,
+            expected.mtime_ms
+        );
+        assert_eq!(
+            got.atime_ms.to_bits(),
+            expected.atime_ms.to_bits(),
+            "atime: bulk {} vs lstat {}",
+            got.atime_ms,
+            expected.atime_ms
+        );
+        assert!(
+            buf.listing.mount_points.is_empty(),
+            "the second look leaves no pending mount points behind"
+        );
+        Ok(())
+    })();
+    detach(&mountpoint);
+    result
 }
 
 #[test]

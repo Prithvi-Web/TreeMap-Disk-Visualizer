@@ -87,12 +87,18 @@ pub struct Listing {
     pub denied_entries: u64,
     /// Entries omitted for any other per-entry error (a vanished entry is not counted).
     pub unreadable_entries: u64,
+    /// Indices of entries the file system reported as mount points. A bulk
+    /// listing answers for the covered directory where `lstat` answers for the
+    /// mounted volume's root, so the lister re-reads these with `fstatat`
+    /// before the listing is handed on, and empties this list.
+    pub mount_points: Vec<usize>,
 }
 
 impl Listing {
     /// Forgets the previous directory; keeps the allocations.
     pub fn clear(&mut self) {
         self.names.clear();
+        self.mount_points.clear();
         self.entries.clear();
         self.denied_entries = 0;
         self.unreadable_entries = 0;

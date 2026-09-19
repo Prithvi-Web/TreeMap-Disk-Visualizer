@@ -157,7 +157,7 @@ fn list_bulk(fd: &OwnedFd, want_atime: bool, buf: &mut ListBuffer) -> Result<Bul
         reserved: 0,
         commonattr: COMMON_ATTRS | atime,
         volattr: 0,
-        dirattr: 0,
+        dirattr: libc::ATTR_DIR_MOUNTSTATUS,
         fileattr: FILE_ATTRS,
         forkattr: 0,
     };
@@ -183,11 +183,50 @@ fn list_bulk(fd: &OwnedFd, want_atime: bool, buf: &mut ListBuffer) -> Result<Bul
             return Err(errno);
         }
         if n == 0 {
+            restat_mount_points(fd, want_atime, listing);
             return Ok(BulkOutcome::Listed);
         }
         first = false;
         let count = usize::try_from(n).map_err(|_| libc::EIO)?;
         parse_batch(raw, count, want_atime, listing).map_err(|_| libc::EIO)?;
+    }
+}
+
+/// A mount point's bulk record describes the covered directory; `lstat` — and
+/// so the legacy walker — describes the mounted volume's root. Every entry the
+/// file system marked as a mount point is re-read with `fstatat` and its facts
+/// replaced; one that vanished meanwhile keeps the bulk facts.
+fn restat_mount_points(fd: &OwnedFd, want_atime: bool, listing: &mut Listing) {
+    for index in std::mem::take(&mut listing.mount_points) {
+        let Some(entry) = listing.entries.get(index) else {
+            continue;
+        };
+        let Some(name) = listing.names.get(entry.name.clone()) else {
+            continue;
+        };
+        let Ok(c) = CString::new(name) else {
+            continue;
+        };
+        // SAFETY: all-zero is a valid `stat` (plain integers).
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: `fd` is an open directory, `c` a NUL-terminated name relative
+        // to it, `st` a writable stat; the flag stops a final symlink from being
+        // followed, so this reads exactly what lstat on the joined path reads.
+        let rc = unsafe {
+            libc::fstatat(
+                fd.as_raw_fd(),
+                c.as_ptr(),
+                &raw mut st,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        };
+        if rc != 0 {
+            continue;
+        }
+        let meta = per_entry::meta_from_stat(&st, want_atime);
+        if let Some(entry) = listing.entries.get_mut(index) {
+            entry.meta = meta;
+        }
     }
 }
 
@@ -318,7 +357,7 @@ fn parse_entry(entry: &[u8], want_atime: bool, out: &mut Listing) -> Result<(), 
     let mut cur = Cursor { buf: entry, pos: 4 };
     let common = cur.u32()?;
     let _vol = cur.u32()?;
-    let _dir = cur.u32()?;
+    let dir = cur.u32()?;
     let file = cur.u32()?;
     let _fork = cur.u32()?;
     if common & ATTR_CMN_ERROR != 0 {
@@ -390,6 +429,12 @@ fn parse_entry(entry: &[u8], want_atime: bool, out: &mut Listing) -> Result<(), 
         0.0
     };
 
+    // The directory group sits between the common and the file group.
+    let mountstatus = if dir & libc::ATTR_DIR_MOUNTSTATUS != 0 {
+        cur.u32()?
+    } else {
+        0
+    };
     let kind = match objtype {
         VDIR => KIND_DIR,
         VLNK => KIND_SYMLINK,
@@ -441,6 +486,9 @@ fn parse_entry(entry: &[u8], want_atime: bool, out: &mut Listing) -> Result<(), 
             withheld,
         },
     );
+    if kind == KIND_DIR && mountstatus & libc::DIR_MNTSTATUS_MNTPOINT != 0 {
+        out.mount_points.push(out.entries.len().saturating_sub(1));
+    }
     Ok(())
 }
 
