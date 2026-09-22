@@ -176,46 +176,35 @@ scripts/build-ui.js --check` clean; the host `cargo test --workspace` 126
 tests green; host clippy clean; both cross targets `cargo check --all-targets`
 clean.
 
-**CI is red, and will be red again on the next push, for two known reasons
-at the Rust step, before the tests run.** Both are reproduced locally, both
-are one-line fixes, and the owner asked for them to be fixed in this session:
-1. `cargo fmt --all -- --check` fails on
-   `native/treemap-core/crates/tm-walk/tests/walk.rs` (two hunks around lines
-   1249 and 1270, a test added in `0bc3aa4` without running fmt on that
-   crate). Fix: `cd native/treemap-core && cargo fmt -p tm-walk`, and confirm
-   only `tests/walk.rs` changed.
-2. `cargo clippy --workspace --all-targets -- -D warnings` fails on the Linux
-   runners with `useless_conversion` at
-   `native/treemap-core/crates/tm-governor/src/sample.rs:222` — `tv_usec` is
-   already `i64` on linux-gnu (`i32` on macOS, so the host never sees it).
-   Reproduce with `cargo clippy --offline -p tm-governor --target
-   x86_64-unknown-linux-gnu -- -D warnings`; fix so both targets lint clean
-   without a lint suppression if possible (a small helper that widens through
-   a type both platforms accept, e.g. converting via `i64::try_from` on a
-   value first cast to `i128`, or matching on `cfg`), then re-check the
-   macOS host too.
-Commit them as one `ci:` commit, then run the whole Rust gate exactly as
-CI's step does — `cargo fmt --all -- --check`, `cargo clippy --workspace
---all-targets -- -D warnings`, `cargo test --workspace` — on the host, and
-`cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu --
--D warnings` and the same for `x86_64-pc-windows-msvc`, before asking the
-owner to push. The preview server was not running at the end of the session;
-start it fresh (`npm run build`, then `preview_start` name `treemap`) before
-the check-in.
+**CI's two Rust-step failures are fixed (`6983dae`), and the whole Rust gate
+was run here exactly as CI runs it.** `cargo fmt --all -- --check`, `cargo
+clippy --workspace --all-targets -- -D warnings` on the host and against both
+cross targets, and `cargo test --workspace` (152 passed, 3 ignored) are clean.
+The fmt failure was `tests/walk.rs`; the Linux-only `useless_conversion` was
+`tv_usec`, now widened through `i128` so both targets lint clean with no
+suppression. **CI has not run on this since - the owner's push is what proves
+it**, and that push is also the first live run of `windows.rs` and `linux.rs`.
+
+The preview server is running (`npm run build` then `preview_start` name
+`treemap`, http://127.0.0.1:4280); a real scan of a 106-entry temp fixture
+through the app reported `engine: native`, `fastPath: bulk`, no fallback.
 
 ## What remains of Phase 3, in order
 
-1. The two CI fixes; `npm test`; ask the owner to push; read the four CI
-   legs (the Rust step, then the test step's annotations) and fix what the
-   Windows and Linux runners reveal about the listings — this is the first
-   live proof of `windows.rs` and `linux.rs`, and the eight questions above
-   are the reading guide. A red leg there is information about the platform,
-   not a reason to loosen the equivalence gate.
-2. A **Rust review** (`ecc:rust-reviewer`, read-only) over `crates/tm-walk`
-   (all of it, including `windows.rs`/`linux.rs`) and the scan bindings in
-   `crates/tm-node/src/lib.rs`, then the fix round with red-first tests and
-   mutants, as Phase 2's review was done (its two liveness findings are the
-   pattern: a worker parked in a paused governor; a load without `Drop`).
+1. **Ask the owner to push**, then read the four CI legs (the Rust step, then
+   the test step's annotations) and fix what the Windows and Linux runners
+   reveal about the listings - this is the first live proof of `windows.rs`
+   and `linux.rs`, and the eight questions below are the reading guide. A red
+   leg there is information about the platform, not a reason to loosen the
+   equivalence gate.
+2. ~~A Rust review~~ **done 22 September 2026** (`3b3c18e`, `95d5a0e`): four
+   read-only reviewers over `tm-walk`, both cross-platform listings, the scan
+   bindings and the fallback path; nine defects fixed red-first with a mutant
+   each, five risks recorded (R53-R57) for what was deliberately not changed.
+   The two that mattered most: a worker panic wedged the walk forever, and
+   `scanTake` joined the driver on Node's main thread, so one wedged network
+   mount would have frozen the whole app. **R55 is an open question for the
+   owner** (a Windows volume without file ids reports every leaf unreadable).
 3. The **measurement** (Phase 3 plan, W3 step 7, and the phase gate): on a
    quiet machine, `npm run bench -- enumerate --corpus=ci20k --engine=native
    --runs=7 --cache=warm --record`, then `enum200k` (5 runs) and `enum1m`
