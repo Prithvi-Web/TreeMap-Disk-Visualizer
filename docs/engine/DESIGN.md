@@ -19,6 +19,7 @@ Every number here is either measured (with the source named) or a **budget**
 | D7 | Windows **MFT turbo mode** may be built, strictly opt-in behind an elevation prompt that explains why | Prompt Section 15: ask before anything that needs elevated privileges | **Approved** 18 Sep 2026, for Phase 3's Windows leg (§9.2) |
 | D8 | The deep image tier may add its two backend npm dependencies and download its model on explicit consent; it stays off and invisible until a user opts in | Prompt Section 15: ask before adding a runtime dependency; Section 3.4 consent | **Approved** 18 Sep 2026, for Phase 7 (§11.1) |
 | D9 | Work lands on `main` in small commits, one phase at a time, as every TreeMap session has; the owner pushes | The owner's standing workflow; the prompt's "branch per phase" was offered as the alternative | **Decided: `main`**, 18 Sep 2026 |
+| D10 | Rust crates from crates.io may be added for Phases 5–8 (BLAKE3 for the duplicate digests, an image decoder and DCT for the fast near-duplicate tier, an embedded key–value store for the digest and signature caches), each pinned in `Cargo.lock`, built by CI only, never needed by an end user | The owner's word on 21 September 2026: "Rust crates is a part of coding"; the prompt's §15 ask-before rule for dependencies is therefore answered for the Rust side; a frontend dependency remains forbidden and a runtime npm dependency still needs its own ask (D8 covers the deep tier's two) | **Approved** 21 Sep 2026, for Phases 5–8 |
 
 ## 1. Why a native core, with the numbers that force it
 
