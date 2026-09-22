@@ -99,160 +99,118 @@ after each phase in plain English with the measured numbers.
    baselines; §11 has **not** yet received the Phase 3 numbers).
 6. `src/ui/README.md` before touching anything under `src/ui/`.
 
-## Where things stand (verified 21 September 2026)
+## Where things stand (verified 21 September 2026, end of the session)
 
-**Pushed.** `main` equals `origin/main` at `928257c`. The owner pushed on
-19 September. Everything through the equivalence gate is on GitHub:
-- the CI fix for the Node 20 worker (`daa1296`);
-- Phase 2 complete (`2a9fa90` + `0bc3aa4`): the Rust governor
-  (`crates/tm-governor`) held **22.6 / 47.0 / 89.2 %** against 25 / 50 / 90
-  for 60 s each on this Mac; the napi module (`crates/tm-node`,
-  `native/index.d.ts`, `scripts/build-native.js` → `native/prebuilt/<platform>-<arch>/treemap_core.node`,
-  gitignored, built by CI on every leg); the budget in the app
-  (`src/services/engineBudget.ts`, `src/api/engineRoutes.ts`,
-  `GET /api/engine/capabilities`, `GET|PUT /api/engine/budget`,
-  `POST /api/scan/:id/pause|resume`, the Settings row, `budget` in the scan
-  stats with the golden fixture re-recorded); four ECC reviews and a Rust
-  review, every finding fixed red-first;
-- Phase 3, W1: the macOS `getattrlistbulk` walker crate (`crates/tm-walk`,
-  `e984c34`) and the mount-point fix (`0a0ea2e`: a mount point carries the
-  mounted root's attributes as `lstat` reports them — the gate's first real
-  finding);
-- Phase 3, W3: the equivalence gate (`928257c`): `tests/fixtures/canonicalTree.ts`
-  (the digest), `tests/fixtures/edgeCases.ts` (13 of the prompt's §12.2
-  cases built here, including two hdiutil mounts; the case-collision pair
-  skipped on case-insensitive APFS with the reason), `tests/nativeEquivalence.test.ts`
-  — the walker twice, gdu vs walker, native vs walker, and a forced load
-  failure all digest identically on `smoke` (1,200 nodes), `ci20k` (20,000)
-  and the 50-node edge fixture, apart from `accessedAt`, which gdu cannot
-  record (DESIGN §16 amended).
+**The working tree is clean and every piece of finished work is committed.**
+`main` is 5 commits ahead of `origin/main` (`928257c`, which the owner
+pushed on 19 September); the owner pushes from GitHub Desktop. On GitHub
+already: the CI fix for the Node 20 worker (`daa1296`); Phase 2 complete
+(`2a9fa90` + `0bc3aa4`: the Rust governor held **22.6 / 47.0 / 89.2 %**
+against 25 / 50 / 90 for 60 s each on this Mac; the napi module; the budget
+in the app with its routes, Settings row and `budget` in the scan stats;
+four ECC reviews and a Rust review, every finding fixed red-first); Phase 3
+W1, the macOS `getattrlistbulk` walker crate (`e984c34`) with the
+mount-point fix (`0a0ea2e`); Phase 3 W3, the equivalence gate (`928257c`).
 
-**CI at `928257c` is red on all four legs, before the tests run.** The step
-"Check the native core (format, lints, tests)" fails. Two causes, both
-reproduced locally against the committed tree, both tiny, neither applied
-yet — they are your first job:
+Committed locally since, not yet pushed (ask the owner to push first thing):
+- `f64c287` **W2 — the native engine in the app.** `crates/tm-node` gained
+  `scanProbe/scanStart/scanPoll/scanPause/scanResume/scanCancel/scanTake`
+  (typed arrays handed over without copying, every export
+  `#[napi(catch_unwind)]`, the walk governed by the same governor the budget
+  drives); `src/services/scan/nativeEngine.ts` (eligibility, polling,
+  ingest through the shared `statToInput` in `src/services/scan/nodeInput.ts`);
+  selection in `startScan` is forced setting → native → gdu → walker and every
+  record states `engineReason` and `fastPath`; `GET /api/scan/:id/stats`
+  appends, after `budget`, in this order: `engineReason`, `fastPath`,
+  `fallbackReason`, `entriesPerSecond` (null while running), `cpuSeconds`,
+  `peakRssBytes` (always null, a per-process figure), `bytesRead`,
+  `cacheHitRate` (null until Phase 4), `storageMode`, `placeholdersSkipped`;
+  the golden fixture re-recorded with exactly those ten keys; the `engine`
+  setting (`auto | native | gdu | walker`) with its "Scan engine" Settings
+  row and the reason on hover in the Dashboard note; the bench's `native`
+  engine choice; `TREEMAP_NATIVE_MODULE` exclusive when set. The one real
+  defect its byte-identity test caught: libuv sorts `readdir` listings while
+  `getattrlistbulk` returns APFS's hash order, so the ingest emits children
+  byte-sorted by name. **Measured on a 20,401-entry temp fixture, warm and
+  busy Mac, 5 runs after a warm-up: walker 275,689 entries/s, native 850,042
+  (3.1×), end to end through the app.** 31 + 9 + 1 tests, 10 mutants red.
+- `5367ee0` the macOS mount test detaches its image on a failing run (a
+  guard with `Drop`; two images had been left mounted by a red mutant run).
+- `82289c1` **W4 + W5 — the Windows and Linux listings**
+  (`crates/tm-walk/src/platform/windows.rs` 1,209 lines, `linux.rs` 571,
+  `tests/windows_parse.rs` 16 tests, `tests/linux_parse.rs` 13, the `cfg`
+  dispatch in `platform/mod.rs`, `windows-sys` 0.61.2 with seven feature
+  gates, and the Windows hard-link **file-id collision rule** in `walk.rs`
+  because a family spans directories and workers). Rules, mirroring libuv:
+  every reparse point is a symlink-kind leaf whose size is the UTF-8 length
+  of the substitute name with `\??\X:` (4 units) or `\??\UNC\` (6 units)
+  stripped; a volume mount point is a size-0 leaf never descended; WSL links
+  and `AF_UNIX` sockets are denied like `lstat`; cloud tags and
+  `RECALL_ON_DATA_ACCESS | RECALL_ON_OPEN | OFFLINE` set the dataless flag;
+  FILETIME goes through libuv's exact `sec`/`nsec` split (a FILETIME of 0
+  lands in April 2009 as in Node — mirrored, not corrected, because the gate
+  compares against Node); Linux uses raw `getdents64` + `statx` with
+  `stx_mask` honoured like `RETURNED_ATTRS`, `ENOSYS` → `fstatat`, `makedev`
+  as glibc. Proven here only by synthetic-buffer tests and both cross
+  targets' `cargo check --all-targets` and clippy. **Eight things only the CI
+  runners can prove — read the first Windows/Linux run against them:** libuv
+  typing every reparse point as a link (if the legacy side shows them
+  `isSymlink: false`, change `stage_record`'s `LinkClass::Followed` arm to
+  the attribute kind); the `lstat` size of a cloud placeholder and of a
+  volume mount point; `ino` on ReFS (the runner is NTFS); `nlink` versus the
+  collision rule (the equivalence digest is the proof); the `FindFirstFileExW`
+  fallback on a volume without file ids (every leaf would be `withheld`,
+  `unreadableEntries = fileCount` — an owner decision for exFAT/SD cards);
+  `statx` masks on FUSE/NFS/overlayfs and the `ENOSYS` switch;
+  `prefixed_path` on a root with forward slashes or a bare `C:`;
+  `GetThreadTimes`, the `FILE_SHARE_*` sharing on locked system directories,
+  `ERROR_DIRECTORY` → Vanished. The collision map costs ~28 B per candidate
+  file for the walk's duration (a Phase 4 item).
+- `85fc7c7` decision **D10** in `DESIGN.md` §0: the owner approved Rust
+  crates from crates.io for Phases 5–8 (BLAKE3, an image decoder and DCT, an
+  embedded key–value store), pinned in `Cargo.lock`, built by CI only.
+
+The last full run on this tree: `npm test` **2,758 passed, 0 failed, 6
+skipped** with the module built and loaded; `npm run typecheck` clean; `node
+scripts/build-ui.js --check` clean; the host `cargo test --workspace` 126
+tests green; host clippy clean; both cross targets `cargo check --all-targets`
+clean.
+
+**CI is red, and will be red again on the next push, for two known reasons
+at the Rust step, before the tests run.** Both are reproduced locally, both
+are one-line fixes, and the owner asked for them to be fixed in this session:
 1. `cargo fmt --all -- --check` fails on
-   `native/treemap-core/crates/tm-walk/tests/walk.rs` (two hunks around
-   lines 1249 and 1270: a test added in `0bc3aa4` without running fmt on that
-   crate). Fix: `cd native/treemap-core && cargo fmt -p tm-walk`, then check
-   that only `tests/walk.rs` changed.
+   `native/treemap-core/crates/tm-walk/tests/walk.rs` (two hunks around lines
+   1249 and 1270, a test added in `0bc3aa4` without running fmt on that
+   crate). Fix: `cd native/treemap-core && cargo fmt -p tm-walk`, and confirm
+   only `tests/walk.rs` changed.
 2. `cargo clippy --workspace --all-targets -- -D warnings` fails on the Linux
    runners with `useless_conversion` at
    `native/treemap-core/crates/tm-governor/src/sample.rs:222` — `tv_usec` is
    already `i64` on linux-gnu (`i32` on macOS, so the host never sees it).
    Reproduce with `cargo clippy --offline -p tm-governor --target
    x86_64-unknown-linux-gnu -- -D warnings`; fix so both targets lint clean
-   (e.g. `i64::from(st.tv_usec)` → a cast helper that is a no-op on i64, or a
-   `#[allow]` with the reason; prefer a form that compiles on both without a
-   lint).
-Commit these as one `ci:` commit, then run the whole Rust gate on the host
-and on both cross targets **with `--all-targets`**, exactly as CI does:
-`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`
-(host), `cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu -- -D warnings`,
-the same for `x86_64-pc-windows-msvc`, `cargo test --workspace`.
-
-**Uncommitted work on disk — finished by two implementer agents, reviewed by
-nobody, verified only by their own reports.** 32 modified files (+1,271/−167)
-and 9 new files (5,155 lines). `npm run typecheck`, `node scripts/build-ui.js
---check` and the host `cargo clippy --workspace --all-targets` are clean on
-this tree. Treat it as two changes and commit them separately after you have
-run their tests yourself:
-
-*W2 — the native engine in the app* (`src/services/scan/nativeEngine.ts`,
-`src/services/scan/nodeInput.ts` (`statToInput` extracted so both engines
-share it), `src/services/scan/native.ts` (`TREEMAP_NATIVE_MODULE` is now the
-only candidate when set, plus a test seam `setNativeLoadOverrideForTests`),
-`src/services/diskScanner.ts` (selection forced → native → gdu → walker;
-`engineReason`, `fastPath`, `fallbackReason`, `cpuSeconds`, `bytesRead`,
-`peakRssBytes`, `placeholdersSkipped` on every record), `src/api/scanRoutes.ts`
-(`buildScanStats` gains, after `budget`, in this order: `engineReason`,
-`fastPath`, `fallbackReason`, `entriesPerSecond`, `cpuSeconds`,
-`peakRssBytes`, `bytesRead`, `cacheHitRate`, `storageMode`,
-`placeholdersSkipped`), `src/api/openapi.ts`, `src/api/settingsRoutes.ts`,
-`src/services/settings.ts`, `src/models/types.ts` (`engine: 'auto' | 'native'
-| 'gdu' | 'walker'` setting), `src/services/engineBudget.ts`,
-`src/utils/mountBoundaries.ts` (`neverDescendPaths`), the Settings "Scan
-engine" row (`src/ui/markup/110-modal-settings.html`,
-`src/ui/app/235-settings-modal.js`, `045-persistent-live-index.js` with the
-reason on hover, `165-command-palette.js`, `src/ui/styles/110-settings.css`,
-`public/index.html` regenerated), `bench/lib/measureWorker.ts` +
-`bench/lib/suites.ts` + `bench/run.ts` + `bench/README.md` (the `native`
-engine choice), `native/treemap-core/crates/tm-node/src/lib.rs` (+351 lines:
-`scanProbe`, `scanStart`, `scanPoll`, `scanPause`, `scanResume`, `scanCancel`,
-`scanTake`; typed arrays handed over without copying; every export
-`#[napi(catch_unwind)]`), `crates/tm-node/Cargo.toml` (+ `tm-walk`),
-`native/index.d.ts`, `native/README.md`, `tests/nativeEngine.test.ts` (31
-tests), `tests/engineSettingUi.test.ts` (9), `tests/fixtures/nativeEngineChild.ts`,
-`tests/nativeLoader.test.ts` (+1), `tests/fixtures/goldenHarness.ts` +
-`tests/fixtures/golden/responses.json` (re-recorded: only `sseComplete.stats`
-changed, by the ten added keys; every other endpoint byte-identical; the
-harness pins `engine: 'walker'` so the golden keeps guarding the store).
-Its report: 10 mutants red; the one real defect the byte-identity test caught
-was **child order** — libuv sorts `readdir` listings with `strcmp` off
-Windows while `getattrlistbulk` returns APFS's hash order, so the ingest
-emits each directory's children byte-sorted by name (which also makes the
-hard-link "first name seen" choice match the walker's within a directory);
-a single-file root is not native-eligible; the poll loop starts at 1 ms and
-doubles to 100 ms so tiny scans do not report absurd rates. **Measured on a
-20,401-entry temp fixture, warm and busy machine, 5 runs after a warm-up:
-walker median 275,689 entries/s, native median 850,042 entries/s (3.1×);
-`cpuSeconds` 0.036–0.044 s for native, `null` for the walker.** This is the
-app's end-to-end number (the ingest runs on the event loop), not the crate's.
-
-*W4 + W5 — the Windows and Linux listings in `crates/tm-walk`*
-(`src/platform/windows.rs` 1,209 lines, `src/platform/linux.rs` 571,
-`tests/windows_parse.rs` 16 tests, `tests/linux_parse.rs` 13, `src/platform/mod.rs`
-(the `cfg` dispatch), `src/lib.rs` + `src/platform/unsupported.rs` (doc
-wording), `crates/tm-walk/Cargo.toml` (`[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = [Win32_Foundation, Win32_Security,
-Win32_Storage_FileSystem, Win32_System_IO, Win32_System_Ioctl,
-Win32_System_SystemServices, Win32_System_Threading] }`, resolving to the
-locked 0.61.2, nothing downloaded), `Cargo.lock` (+1 edge), and — outside its
-ownership, flagged — `src/walk.rs` (+42: the Windows hard-link
-**file-id collision rule**, which must live in the walk because a family
-spans directories and workers). Its report: 88/88 crate tests on the host,
-both cross targets `cargo check --all-targets` and clippy clean, 22 mutants
-(20 red, two survivors resolved: one dead rewrite deleted, one guard recorded
-as shadowed). Rules as implemented, mirroring libuv: every reparse point is a
-symlink-kind leaf whose size is the UTF-8 length of the substitute name with
-`\??\X:` (4 units) or `\??\UNC\` (6 units) stripped; a volume mount point is
-a size-0 symlink-kind leaf, never descended; WSL links and `AF_UNIX` sockets
-are denied like `lstat`; cloud tags and `RECALL_ON_DATA_ACCESS | RECALL_ON_OPEN
-| OFFLINE` set the dataless flag; FILETIME goes through libuv's exact
-`sec`/`nsec` split (a FILETIME of 0 lands in April 2009 and 2038 wraps —
-mirrored, not corrected, because the gate compares against Node); Linux uses
-raw `getdents64` + `statx` with `stx_mask` honoured like `RETURNED_ATTRS`,
-`ENOSYS` → `fstatat`, `makedev` as glibc. **Eight things only the CI runners
-can prove**, listed in the W4+W5 report and to be read against the first
-Windows/Linux CI run with the native engine: libuv typing every reparse point
-as a link; the `lstat` size of a cloud placeholder and of a volume mount
-point; `ino` on ReFS; `nlink` versus the collision rule (the equivalence
-digest is the proof); the `FindFirstFileExW` fallback on a volume without
-file ids (every leaf would be `withheld` — an owner decision for exFAT/SD
-cards); `statx` masks on FUSE/NFS/overlayfs; `prefixed_path` on a root with
-forward slashes or a bare `C:`; `GetThreadTimes`, the `FILE_SHARE_*` sharing,
-and `ERROR_DIRECTORY` → Vanished. The collision map costs ~28 B per candidate
-file for the walk's duration (a Phase 4 item).
-
-To land them: rebuild the module (`node scripts/build-native.js`), run
-`npx tsx --test tests/nativeEngine.test.ts tests/engineSettingUi.test.ts
-tests/nativeLoader.test.ts tests/goldenResponses.test.ts
-tests/discoverability.test.ts tests/apiContract.test.ts
-tests/polishServerStats.test.ts tests/scanCancel.test.ts tests/benchSuites.test.ts
-tests/benchCli.test.ts tests/nativeEquivalence.test.ts tests/edgeCases.test.ts`,
-the Rust gate above, then commit W2 (`feat(engine): the native walker is
-selected when it can be as correct as the legacy one, and every fallback
-names its reason`) and W4+W5 (`native(walk): the Windows and Linux listings
-behind the probe — proven by the equivalence suite on the CI legs`), then
-the full `npm test` (last full run: **2,682 passed, 0 failed, 5 skipped**, at
-the Phase 2 commit, with the module loaded; expect ~2,760 now).
+   without a lint suppression if possible (a small helper that widens through
+   a type both platforms accept, e.g. converting via `i64::try_from` on a
+   value first cast to `i128`, or matching on `cfg`), then re-check the
+   macOS host too.
+Commit them as one `ci:` commit, then run the whole Rust gate exactly as
+CI's step does — `cargo fmt --all -- --check`, `cargo clippy --workspace
+--all-targets -- -D warnings`, `cargo test --workspace` — on the host, and
+`cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu --
+-D warnings` and the same for `x86_64-pc-windows-msvc`, before asking the
+owner to push. The preview server was not running at the end of the session;
+start it fresh (`npm run build`, then `preview_start` name `treemap`) before
+the check-in.
 
 ## What remains of Phase 3, in order
 
-1. The two CI fixes and the two commits above; `npm test`; ask the owner to
-   push; read the four CI legs (the Rust step, then the test step's
-   annotations) and fix what the Windows and Linux runners reveal about the
-   listings — this is the first live proof of `windows.rs` and `linux.rs`.
+1. The two CI fixes; `npm test`; ask the owner to push; read the four CI
+   legs (the Rust step, then the test step's annotations) and fix what the
+   Windows and Linux runners reveal about the listings — this is the first
+   live proof of `windows.rs` and `linux.rs`, and the eight questions above
+   are the reading guide. A red leg there is information about the platform,
+   not a reason to loosen the equivalence gate.
 2. A **Rust review** (`ecc:rust-reviewer`, read-only) over `crates/tm-walk`
    (all of it, including `windows.rs`/`linux.rs`) and the scan bindings in
    `crates/tm-node/src/lib.rs`, then the fix round with red-first tests and
@@ -305,7 +263,9 @@ the Phase 2 commit, with the module loaded; expect ~2,760 now).
   faster than the bulk walk and defers change-journal rescan (FSEvents/USN)
   to a Phase 8 decision. Ceilings: 100M ≤ 1.5 GB spill, ≤ 400 MB aggregate;
   5M-projected in memory ≤ 700 MB.
-- **Phase 5** (duplicates: size buckets → BLAKE3 sample of head/middle/tail →
+- **Phase 5** — write its plan first (`docs/superpowers/plans/…-phase5-duplicates.md`,
+  the same format: fixed interfaces, a progress table, bite-sized test-first
+  tasks, the crates it adds named with their licences). Then: (duplicates: size buckets → BLAKE3 sample of head/middle/tail →
   full digest → optional byte compare; per-device read scheduling; persisted
   digests; hard links and clones never reclaimable; **cloud placeholders
   provably never read** — the legacy finder can download evicted iCloud files
@@ -325,10 +285,13 @@ the Phase 2 commit, with the module loaded; expect ~2,760 now).
 
 ## Decisions the owner still owes — ask in a check-in, keep working on what needs none
 
-- **A crates.io download for Phase 5+** (blake3, an image decoder, an
-  LMDB/SQLite binding). The owner approved one download for Phase 2; Phases 3
-  and 4 need none. Ask before adding any crate; say what it is for and that
-  it is built in CI only.
+- **Rust crates are approved (D10, 21 September 2026)** for Phases 5–8:
+  BLAKE3 for the duplicate digests, an image decoder and DCT for the fast
+  near-duplicate tier, an embedded key–value store for the digest and
+  signature caches. Pin each in `Cargo.lock`, build in CI only, name each one
+  and its licence in the phase's plan, and keep `npm install` free of cargo.
+  A frontend dependency is still forbidden; a runtime npm dependency beyond
+  D8's two for the deep tier still needs its own ask.
 - Anything the master prompt's §15 lists: a public API shape change (only
   additive changes so far, D6 approved), the offload digest algorithm (do not
   change it), a frontend runtime dependency (never), elevated privileges (D7

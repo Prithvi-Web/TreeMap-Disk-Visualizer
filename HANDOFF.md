@@ -17,13 +17,19 @@ equivalence gate) are committed, and the gate's first real finding — a mount
 point's attributes — is fixed (`0a0ea2e`). W2 (the native engine in the app:
 selection, stats, the Scan engine setting, the bench choice, the napi scan
 bindings) and W4+W5 (the Windows and Linux listings, compile-checked here)
-are **finished on disk and uncommitted**; their reports are summarised in
-`NEXT_SESSION_PROMPT.md` with the exact file lists, the measured
-275,689 → 850,042 entries/s on a 20k fixture, and the eight things only the
-CI runners can prove. The Phase 4 plan is written and committed
-(`docs/superpowers/plans/2026-09-18-phase4-storage.md`). Three agents were
-cut off by usage limits during this stretch and resumed from disk; the
-session ended on the owner's request for a hand-over prompt.
+were finished on disk by their implementers and, after a full verification
+here (2,758 / 0 / 6 skipped; every Rust test; both cross targets), are
+**committed** as `f64c287` and `82289c1`, with `5367ee0` (the mount test
+detaches on a failing run) between them; three tests that Phase 3 made stale
+were updated to their real intent in `f64c287`. `NEXT_SESSION_PROMPT.md` has
+the exact file lists, the measured 275,689 → 850,042 entries/s on a 20k
+fixture, and the eight things only the CI runners can prove. The owner
+approved Rust crates for Phases 5–8 (D10). The Phase 4 plan is written and
+committed (`docs/superpowers/plans/2026-09-18-phase4-storage.md`). Three
+agents were cut off by usage limits during this stretch and resumed from
+disk; the session ended on the owner's request for a hand-over prompt, with
+the two CI fixes deliberately left for the next session at the owner's
+request.
 
 ### Later the same day — the push, the CI failure, Phase 2 built, Phase 3 begun
 
