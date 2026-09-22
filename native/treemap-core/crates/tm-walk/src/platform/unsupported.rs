@@ -1,5 +1,5 @@
-//! Every platform without a native listing yet: Windows until W4, Linux until
-//! W5. The probe says so in words and `start` refuses, so the Node side runs
+//! Every platform without a native listing (macOS, Windows and Linux have
+//! one). The probe says so in words and `start` refuses, so the Node side runs
 //! the legacy chain with the reason in the stats.
 
 use std::path::Path;

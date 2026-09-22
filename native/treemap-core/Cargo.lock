@@ -315,6 +315,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tm-governor",
+ "tm-walk",
 ]
 
 [[package]]
@@ -323,6 +324,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "tm-governor",
+ "windows-sys",
 ]
 
 [[package]]

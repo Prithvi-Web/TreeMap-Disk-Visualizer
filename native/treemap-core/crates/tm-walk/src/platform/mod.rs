@@ -1,9 +1,11 @@
 //! The platform listing behind one trait, [`Lister`]: given a directory, fill a
 //! reusable [`ListBuffer`] with its entries and say which path did it, or say
 //! why the directory was refused. macOS is [`darwin`] (with [`per_entry`] as
-//! its fallback); every other platform is [`unsupported`] until its task lands.
-//! The walk core never calls the OS directly, so a fake `Lister` drives it in
-//! tests on every platform.
+//! its fallback), Windows is [`windows`], Linux is [`linux`]; every other
+//! platform is [`unsupported`]. The parsers of the two cross platforms are
+//! portable and compiled everywhere so their synthetic-buffer tests run here;
+//! only their calls are behind `cfg`. The walk core never calls the OS
+//! directly, so a fake `Lister` drives it in tests on every platform.
 
 use std::ops::Range;
 use std::path::Path;
@@ -14,10 +16,12 @@ use crate::{DEFAULT_BUFFER_BYTES, FastPath, MIN_BUFFER_BYTES, Probe, WalkError};
 
 #[cfg(target_os = "macos")]
 pub mod darwin;
+pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod per_entry;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 pub mod unsupported;
+pub mod windows;
 
 /// Everything the listing knows about one entry besides its name. Times are
 /// milliseconds computed as `sec * 1e3 + nsec / 1e6` without rounding (P3-6);
@@ -155,7 +159,8 @@ impl ListBuffer {
     }
 }
 
-/// A platform's listing. Implemented for macOS in [`darwin`]; tests script their own.
+/// A platform's listing. Implemented for macOS in [`darwin`], Windows in
+/// [`windows`] and Linux in [`linux`]; tests script their own.
 pub trait Lister: Send + Sync {
     /// The facts about `path` itself, without following a final symlink
     /// (used for the root, at the start and again at the end).
@@ -173,7 +178,15 @@ pub fn platform_lister() -> Result<Arc<dyn Lister>, WalkError> {
     {
         Ok(Arc::new(darwin::DarwinLister::new()))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        Ok(Arc::new(linux::LinuxLister::new()))
+    }
+    #[cfg(windows)]
+    {
+        Ok(Arc::new(windows::WindowsLister::new()))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         Err(WalkError::Unsupported(unsupported::reason()))
     }
@@ -185,7 +198,15 @@ pub fn platform_probe(root: &Path) -> Probe {
     {
         darwin::probe(root)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::probe(root)
+    }
+    #[cfg(windows)]
+    {
+        windows::probe(root)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         unsupported::probe(root)
     }
@@ -215,9 +236,13 @@ pub fn last_errno() -> i32 {
         .unwrap_or(libc::EIO)
 }
 
-/// The calling thread's own CPU time in seconds, from `CLOCK_THREAD_CPUTIME_ID`;
-/// NaN where the platform has no thread clock yet (Windows until W4).
+/// The calling thread's own CPU time in seconds: `CLOCK_THREAD_CPUTIME_ID` on
+/// Unix, `GetThreadTimes` on Windows; NaN where the platform has no thread clock.
 pub fn thread_cpu_seconds() -> f64 {
+    #[cfg(windows)]
+    {
+        windows::thread_cpu_seconds()
+    }
     #[cfg(unix)]
     {
         // SAFETY: all-zero is a valid `timespec`.
@@ -229,7 +254,7 @@ pub fn thread_cpu_seconds() -> f64 {
         }
         (ts.tv_sec as f64) + (ts.tv_nsec as f64) / 1e9
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         f64::NAN
     }

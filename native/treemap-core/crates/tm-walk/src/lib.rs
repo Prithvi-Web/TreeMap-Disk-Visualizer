@@ -4,8 +4,9 @@
 //!
 //! * [`platform`] is the listing behind one trait: macOS lists with
 //!   `getattrlistbulk` and falls back to `readdir` + `fstatat` where a volume
-//!   refuses it; every other platform reports itself unavailable until its task
-//!   lands (W4 Windows, W5 Linux).
+//!   refuses it; Windows with `FileIdExtdDirectoryInfo` and falls back to
+//!   `FindFirstFileExW`; Linux with `getdents64` + `statx`; every other
+//!   platform reports itself unavailable.
 //! * [`walk`] runs the workers, obeys the governor (`throttle()` after every
 //!   directory, `worker_limit()` re-read between directories), honours pause
 //!   and cancel, and merges the per-worker columns at the end.

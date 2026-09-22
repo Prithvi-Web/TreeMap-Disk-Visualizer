@@ -12,7 +12,7 @@
 //! the driver merges every worker's columns into the output in id order.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
@@ -251,6 +251,10 @@ struct Part {
     mtime: Vec<f64>,
     atime: Vec<f64>,
     hardlinks: Vec<HardlinkRef>,
+    /// Leaves whose listing reported no link count (`nlink == 0`, Windows):
+    /// `(dev bits, ino bits, node)`, resolved into families by id collision at
+    /// the merge.
+    id_candidates: Vec<(u64, u64, u32)>,
     refusals: Vec<DirRefusal>,
     cpu_seconds: f64,
 }
@@ -601,6 +605,9 @@ fn process_dir(
                     dev: meta.dev,
                     ino: meta.ino,
                 });
+            } else if meta.kind == KIND_FILE && meta.nlink == 0 && !meta.withheld {
+                part.id_candidates
+                    .push((meta.dev.to_bits(), meta.ino.to_bits(), id));
             }
         }
     }
@@ -740,6 +747,7 @@ fn merge(parts: &[Part], total: usize) -> Result<Merged, WalkError> {
         .iter()
         .flat_map(|p| p.hardlinks.iter().copied())
         .collect();
+    collide_ids(parts, &mut hardlinks);
     hardlinks.sort_by_key(|h| h.node);
     let mut refusals: Vec<DirRefusal> = parts
         .iter()
@@ -766,6 +774,38 @@ fn merge(parts: &[Part], total: usize) -> Result<Merged, WalkError> {
         hardlinks,
         refusals,
     })
+}
+
+/// The file-id collision rule for listings without a link count: every
+/// candidate whose `(dev, ino)` is seen more than once is a hard-link family
+/// member and gets a ref, the first-seen member included (once). A lone id is
+/// a file whose other names, if any, are outside the scan, exactly what the
+/// legacy `nlink > 1` key yields for it: keyed but never a duplicate. The
+/// map costs one entry per candidate file for the whole walk (Phase 4 item).
+fn collide_ids(parts: &[Part], hardlinks: &mut Vec<HardlinkRef>) {
+    let mut first_seen: HashMap<(u64, u64), (u32, bool)> = HashMap::new();
+    for &(dev, ino, node) in parts.iter().flat_map(|p| p.id_candidates.iter()) {
+        match first_seen.get_mut(&(dev, ino)) {
+            None => {
+                first_seen.insert((dev, ino), (node, false));
+            }
+            Some((first, emitted)) => {
+                if !*emitted {
+                    hardlinks.push(HardlinkRef {
+                        node: *first,
+                        dev: f64::from_bits(dev),
+                        ino: f64::from_bits(ino),
+                    });
+                    *emitted = true;
+                }
+                hardlinks.push(HardlinkRef {
+                    node,
+                    dev: f64::from_bits(dev),
+                    ino: f64::from_bits(ino),
+                });
+            }
+        }
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
