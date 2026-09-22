@@ -2,6 +2,29 @@
 
 ## Session 16 — the fast-scanner master prompt, Phases 0 and 1: the engine's true state, the design, and a harness that will not print a wrong number (18 September 2026)
 
+### 19–21 September — pushed again, red again, and Phase 3 three-quarters done
+
+The owner pushed everything through the equivalence gate (`928257c`); CI is
+red on all four legs at the Rust step, before the tests run: `cargo fmt` on
+`crates/tm-walk/tests/walk.rs` (a test committed unformatted in `0bc3aa4`)
+and a Linux-only clippy `useless_conversion` in
+`crates/tm-governor/src/sample.rs:222`. Both are reproduced locally, both
+are one-line fixes, neither is applied — `NEXT_SESSION_PROMPT.md` makes them
+the next session's first job.
+
+Phase 3 since the previous addendum: W1 (the macOS bulk walker) and W3 (the
+equivalence gate) are committed, and the gate's first real finding — a mount
+point's attributes — is fixed (`0a0ea2e`). W2 (the native engine in the app:
+selection, stats, the Scan engine setting, the bench choice, the napi scan
+bindings) and W4+W5 (the Windows and Linux listings, compile-checked here)
+are **finished on disk and uncommitted**; their reports are summarised in
+`NEXT_SESSION_PROMPT.md` with the exact file lists, the measured
+275,689 → 850,042 entries/s on a 20k fixture, and the eight things only the
+CI runners can prove. The Phase 4 plan is written and committed
+(`docs/superpowers/plans/2026-09-18-phase4-storage.md`). Three agents were
+cut off by usage limits during this stretch and resumed from disk; the
+session ended on the owner's request for a hand-over prompt.
+
 ### Later the same day — the push, the CI failure, Phase 2 built, Phase 3 begun
 
 **The owner pushed Phases 0 and 1 and every CI leg went red.** Not the

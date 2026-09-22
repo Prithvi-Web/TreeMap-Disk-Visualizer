@@ -6,191 +6,360 @@ Copy everything below the line into a fresh session started in
 ---
 
 Work on TreeMap at `/Users/prithvivinay/Desktop/Claude Code/Treemap`
-(GitHub: `Prithvi-Web/TreeMap-Disk-Visualizer`). It is an Electron + Express +
-vanilla-JS disk-space visualizer with an Apple-dark Liquid Glass design
-language.
+(GitHub: `Prithvi-Web/TreeMap-Disk-Visualizer`), an Electron + Express +
+vanilla-JS disk-space visualizer, now gaining a native Rust scan engine under
+`native/treemap-core`. You are continuing the **fast-scanner master prompt**
+(`/Users/prithvivinay/Downloads/TREEMAP-FAST-SCANNER-MASTER-PROMPT.md`, v3):
+read it in full first — its phase order is binding, and its three overriding
+rules (no safety regression, no number that was not measured, never degrade
+to a broken state) override everything else, including this prompt.
 
-**Read `HANDOFF.md` first — the top section ("Session 16", and its "Later
-the same day" block) is the current state — then the progress table at the
-top of `docs/superpowers/plans/2026-09-18-phase3-native-walker.md` for what
-is in flight.** Then read `src/ui/README.md` if you will touch anything under
-`src/ui/`. Do not skip these; they contain the traps that cost previous
-sessions the most time.
+The owner's standing instruction for this work, verbatim: *"All features to
+be made perfectly and tell me when every phase is completed do not stop untill
+all phases are finished and all the CI checks are perfect."* Work through
+Phases 3 → 8 in order, one committed and gated phase at a time, and check in
+after each phase in plain English with the measured numbers.
 
-## Where things stand
+## Who you are working for, and the house rules
 
-- **The fast-scanner master prompt (`~/Downloads/TREEMAP-FAST-SCANNER-MASTER-PROMPT.md`,
-  v3) is in progress.** Phases 0, 1 and 2 are committed on main (Phases 0–1
-  pushed; the CI fix `daa1296` and Phase 2 `2a9fa90` are not): `docs/engine/`,
-  `bench/`, `native/treemap-core` (the governor and the napi module),
-  `src/services/engineBudget.ts`. Phase 3 (the native walker, macOS first)
-  is under way per its plan. CI runs Node 20: a worker or child entry must be
-  plain JS or a `.cjs` that requires `tsx/cjs`. The Rust toolchain is for
-  developers and CI only; `npm run build:native` builds the module.
-  `npm run bench -- --help` lists the commands; `npm run bench -- all
-  --small` is the two-minute end-to-end check; `npm run bench -- clean`
-  frees the ~11 GB of corpora under the temp directory.
+- The owner is **not a programmer**. Every message in plain English; every
+  command they might run as a copy-paste line that starts with
+  `cd "/Users/prithvivinay/Desktop/Claude Code/Treemap" && …`. Never assume
+  they know git or npm. **You commit; the owner pushes from GitHub Desktop.**
+  Never `git push`. Never `git checkout`, `git stash` or `git clean` on the
+  working tree without saying why first — there is uncommitted work on disk
+  (below).
+- "Flawless" means: 100 % honest coverage, zero known defects, every new
+  assertion reddened once by a recorded mutant restored byte-identically,
+  the full suite green, and every claim verified by running the thing. A
+  green test is not evidence until you have watched it fail.
+- Per-feature check-ins with a running preview. The preview is
+  `preview_start` name `treemap` (http://127.0.0.1:4280; it runs `npm start`
+  from `dist/`, so run `npm run build` first). The desktop alternative for
+  the owner is `npm run app`. **Nothing was listening on 4280 when the last
+  session ended — start it fresh.**
+- Never edit sources while `npm test` runs; never let an implementer agent
+  run the whole suite (only its own test files); never scan or touch the
+  owner's real folders (every fixture under `os.tmpdir()`); deletes only ever
+  to the Trash; no network during scanning or hashing; no Rust toolchain for
+  end users (`npm install` never touches cargo); the frontend stays
+  zero-dependency (`public/index.html` is generated from the parts in
+  `src/ui/manifest.json` by `node scripts/build-ui.js`; edit the parts, never
+  the output; `--check` must stay clean); never run electron-builder without
+  `--publish never`; never build in or modify the sibling TreeMapMobile repo
+  (decision D3: the desktop core is written fresh); a cold-cache purge only
+  ever through `sudo -n purge`, never prompting for a password.
+- ECC's GateGuard blocks the first Bash/Edit/Write of a session until you
+  state the request in one sentence and what the command produces; state
+  the facts and retry. It also blocks `git commit --amend` and `rm -rf`-shaped
+  commands as destructive: use plain commits.
+- **CI runs Node 20** (locally it is Node 24). Anything a worker thread or a
+  child process loads must be plain JavaScript or a `.cjs` entry that does
+  `require('tsx/cjs')` first (see `bench/lib/corpusWorkerEntry.cjs` and the
+  commit `daa1296`). A local run does not reproduce this; a test that starts
+  the entry with `execArgv: []` does.
+- There is no `gh` CLI and no Homebrew on this Mac. Read CI through the
+  public API: runs at
+  `https://api.github.com/repos/Prithvi-Web/TreeMap-Disk-Visualizer/actions/runs?per_page=5`,
+  jobs at `…/actions/runs/<id>/jobs`, and each job's failure text at
+  `https://api.github.com/repos/Prithvi-Web/TreeMap-Disk-Visualizer/check-runs/<job id>/annotations`
+  (job logs need admin rights; the test step annotates every failing test
+  with its assertion).
+- Rust: use `--offline` on every cargo command (every crate is in
+  `Cargo.lock`; a new crate means asking the owner first — see "decisions
+  owed"), and give every agent its own
+  `CARGO_TARGET_DIR` under the session scratchpad so parallel builds never
+  share a target directory. The workspace lint set denies `unwrap`, `expect`,
+  `panic`, `todo`, `unimplemented`, `unreachable`, `indexing_slicing`; every
+  `unsafe` block carries a true `// SAFETY:` comment. Windows and Linux are
+  compile-checked here with `cargo check --all-targets --target
+  x86_64-pc-windows-msvc` and `--target x86_64-unknown-linux-gnu` (both
+  installed; no linker needed; `cargo clippy` works cross-target too) and
+  proven live only by the CI runners. A release build takes about 11 s.
+- Machine: Apple M3 (4P+4E), 16 GB, macOS 27.0, APFS, `kern.maxvnodes` ≈
+  251k (a warm cache above ~250k entries is not a state this Mac can be in),
+  Tier B in the prompt's terms; Tier A and C bands are reported as "not
+  available on this machine", never as passed.
 
-- **v5.0.1 is prepared and committed**: `package.json`, the two root nodes of
-  `package-lock.json` and the top `CHANGELOG.md` heading say 5.0.1. The owner
-  pushes and cuts the release by pushing the tag from GitHub Desktop — HANDOFF
-  Session 15 lists the exact clicks and the two web-form buttons to avoid.
-- Gate at the latest commit: **2,601 tests · 0 fail · 5 skipped** (`npm run typecheck` now also checks `bench/`); at v5.0.1's commit it was **2,516 tests · 0 fail · 5 skipped** (3 platform, the
-  CI locale self-proof, the Windows-only live topology test); `npm run
-  typecheck` clean; `node scripts/build-ui.js --check` matches (113 parts);
-  the whole suite green under the default and the Portuguese locale.
-- All four GitHub issues (#32–#35) are fixed on main and CI is green on every
-  leg. The v5.0.0 release's installers still need the owner's one
-  Run-workflow click (HANDOFF Session 15, step 3).
-- The working tree is clean and **everything is committed**.
+## Read these first, in this order
 
-## The two things that are actually outstanding
+1. `HANDOFF.md` — the "Session 16" block and its two "Later" addenda are the
+   narrative of how everything below came to be.
+2. `docs/superpowers/plans/2026-09-18-phase3-native-walker.md` — the progress
+   table at the top is the live state of Phase 3; the interfaces in it are
+   fixed.
+3. `docs/superpowers/plans/2026-09-18-phase4-storage.md` — Phase 4's plan,
+   written and committed, not started.
+4. `docs/superpowers/plans/2026-09-18-phase2-governor.md` (done; its progress
+   table records what was measured and the review outcomes) and
+   `2026-09-18-phase1-bench-harness.md` (done).
+5. `docs/engine/DESIGN.md` (§0 decisions, §8.1 the governor as built, §5 the
+   walker as built, §16 the intentional engine differences), `RISKS.md`
+   (R52, R52a are the latest), `CURRENT-STATE.md` (§11 holds the Phase 1
+   baselines; §11 has **not** yet received the Phase 3 numbers).
+6. `src/ui/README.md` before touching anything under `src/ui/`.
 
-**1. After the owner says "pushed it",**
-check CI per OS with the unauthenticated jobs endpoint (`gh` is not installed
-and the logs endpoint 403s without admin rights):
+## Where things stand (verified 21 September 2026)
 
-```
-curl -s "https://api.github.com/repos/Prithvi-Web/TreeMap-Disk-Visualizer/actions/runs?per_page=3"
-curl -s "https://api.github.com/repos/Prithvi-Web/TreeMap-Disk-Visualizer/actions/runs/<id>/jobs"
-```
+**Pushed.** `main` equals `origin/main` at `928257c`. The owner pushed on
+19 September. Everything through the equivalence gate is on GitHub:
+- the CI fix for the Node 20 worker (`daa1296`);
+- Phase 2 complete (`2a9fa90` + `0bc3aa4`): the Rust governor
+  (`crates/tm-governor`) held **22.6 / 47.0 / 89.2 %** against 25 / 50 / 90
+  for 60 s each on this Mac; the napi module (`crates/tm-node`,
+  `native/index.d.ts`, `scripts/build-native.js` → `native/prebuilt/<platform>-<arch>/treemap_core.node`,
+  gitignored, built by CI on every leg); the budget in the app
+  (`src/services/engineBudget.ts`, `src/api/engineRoutes.ts`,
+  `GET /api/engine/capabilities`, `GET|PUT /api/engine/budget`,
+  `POST /api/scan/:id/pause|resume`, the Settings row, `budget` in the scan
+  stats with the golden fixture re-recorded); four ECC reviews and a Rust
+  review, every finding fixed red-first;
+- Phase 3, W1: the macOS `getattrlistbulk` walker crate (`crates/tm-walk`,
+  `e984c34`) and the mount-point fix (`0a0ea2e`: a mount point carries the
+  mounted root's attributes as `lstat` reports them — the gate's first real
+  finding);
+- Phase 3, W3: the equivalence gate (`928257c`): `tests/fixtures/canonicalTree.ts`
+  (the digest), `tests/fixtures/edgeCases.ts` (13 of the prompt's §12.2
+  cases built here, including two hdiutil mounts; the case-collision pair
+  skipped on case-insensitive APFS with the reason), `tests/nativeEquivalence.test.ts`
+  — the walker twice, gdu vs walker, native vs walker, and a forced load
+  failure all digest identically on `smoke` (1,200 nodes), `ci20k` (20,000)
+  and the 50-node edge fixture, apart from `accessedAt`, which gdu cannot
+  record (DESIGN §16 amended).
 
-A run's top-level conclusion hides which OS did what, so always list the jobs.
-When a job fails, its per-test annotations are readable without admin rights:
-`/check-runs/<job_id>/annotations`.
+**CI at `928257c` is red on all four legs, before the tests run.** The step
+"Check the native core (format, lints, tests)" fails. Two causes, both
+reproduced locally against the committed tree, both tiny, neither applied
+yet — they are your first job:
+1. `cargo fmt --all -- --check` fails on
+   `native/treemap-core/crates/tm-walk/tests/walk.rs` (two hunks around
+   lines 1249 and 1270: a test added in `0bc3aa4` without running fmt on that
+   crate). Fix: `cd native/treemap-core && cargo fmt -p tm-walk`, then check
+   that only `tests/walk.rs` changed.
+2. `cargo clippy --workspace --all-targets -- -D warnings` fails on the Linux
+   runners with `useless_conversion` at
+   `native/treemap-core/crates/tm-governor/src/sample.rs:222` — `tv_usec` is
+   already `i64` on linux-gnu (`i32` on macOS, so the host never sees it).
+   Reproduce with `cargo clippy --offline -p tm-governor --target
+   x86_64-unknown-linux-gnu -- -D warnings`; fix so both targets lint clean
+   (e.g. `i64::from(st.tv_usec)` → a cast helper that is a no-op on i64, or a
+   `#[allow]` with the reason; prefer a form that compiles on both without a
+   lint).
+Commit these as one `ci:` commit, then run the whole Rust gate on the host
+and on both cross targets **with `--all-targets`**, exactly as CI does:
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`
+(host), `cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu -- -D warnings`,
+the same for `x86_64-pc-windows-msvc`, `cargo test --workspace`.
 
-**Windows CI is the one to watch this time.** Session 9 added a platform gate
-(`blocksAreMeaningful`) that is false only on Windows, and two new scan
-counters that are always 0 there. The golden fixture test skips on Windows, so
-it will not catch a mistake in that gate — the live round-trips will.
+**Uncommitted work on disk — finished by two implementer agents, reviewed by
+nobody, verified only by their own reports.** 32 modified files (+1,271/−167)
+and 9 new files (5,155 lines). `npm run typecheck`, `node scripts/build-ui.js
+--check` and the host `cargo clippy --workspace --all-targets` are clean on
+this tree. Treat it as two changes and commit them separately after you have
+run their tests yourself:
 
-**2. The GitHub release is the owner's step.** It needs a pushed `v5.0.0` tag
-before the in-app updater can see it. Release notes are ready in
-`CHANGELOG.md` under `## [5.0.0]` — hand them over; never publish a release
-yourself, and never run electron-builder without `--publish never`
-(`build.publish` points at this repo and it will push one on its own if a
-token is in the environment).
+*W2 — the native engine in the app* (`src/services/scan/nativeEngine.ts`,
+`src/services/scan/nodeInput.ts` (`statToInput` extracted so both engines
+share it), `src/services/scan/native.ts` (`TREEMAP_NATIVE_MODULE` is now the
+only candidate when set, plus a test seam `setNativeLoadOverrideForTests`),
+`src/services/diskScanner.ts` (selection forced → native → gdu → walker;
+`engineReason`, `fastPath`, `fallbackReason`, `cpuSeconds`, `bytesRead`,
+`peakRssBytes`, `placeholdersSkipped` on every record), `src/api/scanRoutes.ts`
+(`buildScanStats` gains, after `budget`, in this order: `engineReason`,
+`fastPath`, `fallbackReason`, `entriesPerSecond`, `cpuSeconds`,
+`peakRssBytes`, `bytesRead`, `cacheHitRate`, `storageMode`,
+`placeholdersSkipped`), `src/api/openapi.ts`, `src/api/settingsRoutes.ts`,
+`src/services/settings.ts`, `src/models/types.ts` (`engine: 'auto' | 'native'
+| 'gdu' | 'walker'` setting), `src/services/engineBudget.ts`,
+`src/utils/mountBoundaries.ts` (`neverDescendPaths`), the Settings "Scan
+engine" row (`src/ui/markup/110-modal-settings.html`,
+`src/ui/app/235-settings-modal.js`, `045-persistent-live-index.js` with the
+reason on hover, `165-command-palette.js`, `src/ui/styles/110-settings.css`,
+`public/index.html` regenerated), `bench/lib/measureWorker.ts` +
+`bench/lib/suites.ts` + `bench/run.ts` + `bench/README.md` (the `native`
+engine choice), `native/treemap-core/crates/tm-node/src/lib.rs` (+351 lines:
+`scanProbe`, `scanStart`, `scanPoll`, `scanPause`, `scanResume`, `scanCancel`,
+`scanTake`; typed arrays handed over without copying; every export
+`#[napi(catch_unwind)]`), `crates/tm-node/Cargo.toml` (+ `tm-walk`),
+`native/index.d.ts`, `native/README.md`, `tests/nativeEngine.test.ts` (31
+tests), `tests/engineSettingUi.test.ts` (9), `tests/fixtures/nativeEngineChild.ts`,
+`tests/nativeLoader.test.ts` (+1), `tests/fixtures/goldenHarness.ts` +
+`tests/fixtures/golden/responses.json` (re-recorded: only `sseComplete.stats`
+changed, by the ten added keys; every other endpoint byte-identical; the
+harness pins `engine: 'walker'` so the golden keeps guarding the store).
+Its report: 10 mutants red; the one real defect the byte-identity test caught
+was **child order** — libuv sorts `readdir` listings with `strcmp` off
+Windows while `getattrlistbulk` returns APFS's hash order, so the ingest
+emits each directory's children byte-sorted by name (which also makes the
+hard-link "first name seen" choice match the walker's within a directory);
+a single-file root is not native-eligible; the poll loop starts at 1 ms and
+doubles to 100 ms so tiny scans do not report absurd rates. **Measured on a
+20,401-entry temp fixture, warm and busy machine, 5 runs after a warm-up:
+walker median 275,689 entries/s, native median 850,042 entries/s (3.1×);
+`cpuSeconds` 0.036–0.044 s for native, `null` for the walker.** This is the
+app's end-to-end number (the ingest runs on the event loop), not the crate's.
 
-## The owner
+*W4 + W5 — the Windows and Linux listings in `crates/tm-walk`*
+(`src/platform/windows.rs` 1,209 lines, `src/platform/linux.rs` 571,
+`tests/windows_parse.rs` 16 tests, `tests/linux_parse.rs` 13, `src/platform/mod.rs`
+(the `cfg` dispatch), `src/lib.rs` + `src/platform/unsupported.rs` (doc
+wording), `crates/tm-walk/Cargo.toml` (`[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [Win32_Foundation, Win32_Security,
+Win32_Storage_FileSystem, Win32_System_IO, Win32_System_Ioctl,
+Win32_System_SystemServices, Win32_System_Threading] }`, resolving to the
+locked 0.61.2, nothing downloaded), `Cargo.lock` (+1 edge), and — outside its
+ownership, flagged — `src/walk.rs` (+42: the Windows hard-link
+**file-id collision rule**, which must live in the walk because a family
+spans directories and workers). Its report: 88/88 crate tests on the host,
+both cross targets `cargo check --all-targets` and clippy clean, 22 mutants
+(20 red, two survivors resolved: one dead rewrite deleted, one guard recorded
+as shadowed). Rules as implemented, mirroring libuv: every reparse point is a
+symlink-kind leaf whose size is the UTF-8 length of the substitute name with
+`\??\X:` (4 units) or `\??\UNC\` (6 units) stripped; a volume mount point is
+a size-0 symlink-kind leaf, never descended; WSL links and `AF_UNIX` sockets
+are denied like `lstat`; cloud tags and `RECALL_ON_DATA_ACCESS | RECALL_ON_OPEN
+| OFFLINE` set the dataless flag; FILETIME goes through libuv's exact
+`sec`/`nsec` split (a FILETIME of 0 lands in April 2009 and 2038 wraps —
+mirrored, not corrected, because the gate compares against Node); Linux uses
+raw `getdents64` + `statx` with `stx_mask` honoured like `RETURNED_ATTRS`,
+`ENOSYS` → `fstatat`, `makedev` as glibc. **Eight things only the CI runners
+can prove**, listed in the W4+W5 report and to be read against the first
+Windows/Linux CI run with the native engine: libuv typing every reparse point
+as a link; the `lstat` size of a cloud placeholder and of a volume mount
+point; `ino` on ReFS; `nlink` versus the collision rule (the equivalence
+digest is the proof); the `FindFirstFileExW` fallback on a volume without
+file ids (every leaf would be `withheld` — an owner decision for exFAT/SD
+cards); `statx` masks on FUSE/NFS/overlayfs; `prefixed_path` on a root with
+forward slashes or a bare `C:`; `GetThreadTimes`, the `FILE_SHARE_*` sharing,
+and `ERROR_DIRECTORY` → Vanished. The collision map costs ~28 B per candidate
+file for the walk's duration (a Phase 4 item).
 
-A non-coder. Explain in plain English, give copy-pasteable commands, and
-never assume git or npm knowledge. **They push; you commit.**
+To land them: rebuild the module (`node scripts/build-native.js`), run
+`npx tsx --test tests/nativeEngine.test.ts tests/engineSettingUi.test.ts
+tests/nativeLoader.test.ts tests/goldenResponses.test.ts
+tests/discoverability.test.ts tests/apiContract.test.ts
+tests/polishServerStats.test.ts tests/scanCancel.test.ts tests/benchSuites.test.ts
+tests/benchCli.test.ts tests/nativeEquivalence.test.ts tests/edgeCases.test.ts`,
+the Rust gate above, then commit W2 (`feat(engine): the native walker is
+selected when it can be as correct as the legacy one, and every fallback
+names its reason`) and W4+W5 (`native(walk): the Windows and Linux listings
+behind the probe — proven by the equivalence suite on the CI legs`), then
+the full `npm test` (last full run: **2,682 passed, 0 failed, 5 skipped**, at
+the Phase 2 commit, with the module loaded; expect ~2,760 now).
 
-## Decided, do not reopen
+## What remains of Phase 3, in order
 
-- **No Apple Developer program.** Declined three times now (26 August,
-  2 September, and again this session by standing decision). The macOS build
-  stays un-notarized and the Windows build unsigned. Do not add notarization,
-  do not add signing config, do not price it again, and do not treat
-  Gatekeeper as a bug.
-- **Never document right-click → Open.** Apple removed that bypass in
-  Sequoia. The only correct macOS instruction is: open it once, then
-  **System Settings › Privacy & Security › Open Anyway**, and that button
-  expires after about an hour. README, INSTALL-NOTE and now CHANGELOG.md all
-  say this correctly, and `tests/polishDocs.test.ts` holds them to it.
-- **Decimal vs binary bytes is NOT in scope.** Internally consistent,
-  disagrees with Finder by ~7%. Owner's product decision. Leave
-  `formatBytes`'s base alone.
-- **Empty Folders listing `~/.Trash` and `.git/objects/info` is NOT in
-  scope.** Those folders really are empty.
+1. The two CI fixes and the two commits above; `npm test`; ask the owner to
+   push; read the four CI legs (the Rust step, then the test step's
+   annotations) and fix what the Windows and Linux runners reveal about the
+   listings — this is the first live proof of `windows.rs` and `linux.rs`.
+2. A **Rust review** (`ecc:rust-reviewer`, read-only) over `crates/tm-walk`
+   (all of it, including `windows.rs`/`linux.rs`) and the scan bindings in
+   `crates/tm-node/src/lib.rs`, then the fix round with red-first tests and
+   mutants, as Phase 2's review was done (its two liveness findings are the
+   pattern: a worker parked in a paused governor; a load without `Drop`).
+3. The **measurement** (Phase 3 plan, W3 step 7, and the phase gate): on a
+   quiet machine, `npm run bench -- enumerate --corpus=ci20k --engine=native
+   --runs=7 --cache=warm --record`, then `enum200k` (5 runs) and `enum1m`
+   (5 runs; its cache state is `mixed` on this Mac and the harness says so);
+   `npm run bench -- compare` against the Phase 1 baselines under
+   `bench/baselines/` (walker 153k–167k entries/s warm, 82k at 1M; the app's
+   gdu path ≈ 195k warm, 98k at 1M). The harness refuses `--record` on a dirty
+   tree and refuses a series whose runs spread more than 5 %, and it prints
+   `NOT COMPARABLE` when conditions differ — report exactly what it prints.
+   Then the three **governor baselines**: `npm run bench -- governor
+   --preset=eco|balanced|turbo --seconds=60 --record` (each on a quiet
+   machine; the bench refuses a report whose target was scaled by
+   interaction or heat, so do not touch the Mac during a run). The Tier B
+   targets to compare against, and to state honestly if missed: warm Turbo
+   400–700k entries/s, warm Eco 150–250k, CPU-seconds per million ≤ 3.0
+   Turbo / ≤ 2.0 Eco. Record the numbers in `docs/engine/CURRENT-STATE.md`
+   §11 and in the check-in.
+4. **W6, Windows MFT turbo mode (D7, approved)** — the plan's last task:
+   opt-in setting, an elevated read-only helper, the 1,000-entry cross-check
+   that disables the mode on the first mismatch, declined elevation is not an
+   error. It cannot be run here; parsers on synthetic records are the local
+   proof. If the CI Windows leg cannot prove the live path, it ships behind
+   the setting with `engineReason: 'not verified on this build'`.
+5. Documentation that must move with the engine: `README.md:174` ("TreeMap
+   ships no native code") and `docs/PLATFORM_NOTES.md:18` ("ships no native
+   addons") are now false and must be rewritten in the commit that ships the
+   engine — the prompt forbids any performance number in the README that did
+   not come from `bench/` on a named machine under named conditions;
+   `docs/engine/DESIGN.md:127` still names `crossbeam-deque` although the walk
+   uses a std queue (fix the sentence); `SECURITY.md` already names
+   `treemap_core.node` (a test requires it). Then the Phase 3 check-in and a
+   HANDOFF.md addendum.
 
-## Known gaps, if you are looking for work
+## Phases 4 to 8
 
-These are written up honestly rather than hidden, and none is urgent.
+- **Phase 4** — `docs/superpowers/plans/2026-09-18-phase4-storage.md` is
+  written: `tm-store` builds the finalized columns in `PackedScanStore`'s own
+  layout in Rust (P4-1), the app reads them through views with no ingest copy
+  (`PackedScanStore.fromColumns`), spill mode (`write()` then a private
+  `mmap`, the 3× free-space and same-volume rules, cleanup on forget/quit/
+  startup), aggregate-only mode with its UI notice naming what is off, and
+  a synthetic 100M-entry gate through a scripted `Lister` measured by the
+  bench child (labelled `source: synthetic`, never a throughput baseline).
+  Decision P4-9 records why an mtime-keyed incremental rescan cannot be
+  faster than the bulk walk and defers change-journal rescan (FSEvents/USN)
+  to a Phase 8 decision. Ceilings: 100M ≤ 1.5 GB spill, ≤ 400 MB aggregate;
+  5M-projected in memory ≤ 700 MB.
+- **Phase 5** (duplicates: size buckets → BLAKE3 sample of head/middle/tail →
+  full digest → optional byte compare; per-device read scheduling; persisted
+  digests; hard links and clones never reclaimable; **cloud placeholders
+  provably never read** — the legacy finder can download evicted iCloud files
+  today, RISKS R1, and the first commit of Phase 5 fixes that), **Phase 6**
+  (near-duplicate fast tier: EXIF thumbnail / shrink-on-load decode, pHash +
+  dHash + colour hash, multi-index hashing, union-find, a cache; the legacy
+  dHash scored precision 0.18 on the labelled corpus and R50 warns the
+  corpus may be unfair to hash signatures), **Phase 7** (the opt-in deep
+  tier, D8 approved: consent, pinned-checksum download, ANE on Apple
+  silicon, off by default), **Phase 8** (UI badge and live readout, README
+  numbers from `bench/`, the CI perf regression gate as an in-job A/B, the
+  same-origin decision from R52, the Eco headroom tuning from R52a) — each
+  needs its plan written in the same format (`docs/superpowers/plans/…`,
+  fixed interfaces, a progress table at the top kept current, bite-sized
+  test-first tasks) before its first line of code, and its own review fleet
+  and gate before its check-in.
 
-1. **A fast rescan under-counts the claimed-versus-held line.** Unchanged
-   folders are read from the previous scan and not re-measured, and no
-   per-node allocation is persisted, so the figure is a floor. The line says
-   so. The real fix is persisting allocation per node in the index — that is
-   a proper piece of work, not a patch.
-2. **`reclaimableCaveat` and `reclaimableIsUpperBound` are dead fields.** The
-   duplicate finder computes them; `/api/duplicates` (`src/api/insightRoutes.ts`)
-   and the MCP `find_duplicates` tool both drop them on the floor. The clone
-   caveat the user sees is the client's own darwin check. Either surface the
-   server's fields and delete the client check, or delete the server fields —
-   but not both mechanisms.
-3. **`f.basis` is read by the UI and sent by nothing.**
-   `src/ui/app/210-trends-view.js` and `045-persistent-live-index.js` both
-   branch on it; grep finds it in no `.ts` file at all. The folder branch is
-   the only one that runs in production, and the 'volume' branch is pinned by
-   a test with a stub that supplies a field the server never sends.
-4. **The openapi `/api/missing-gigabytes` volume schema** was behind the
-   server until this session and is only spot-checked —
-   `assertMatchesSpec` runs on `/api/system` and `/api/scan` only, and walks
-   top-level keys. Other nested response schemas may have drifted the same way.
+## Decisions the owner still owes — ask in a check-in, keep working on what needs none
 
-## How to work — non-negotiable
+- **A crates.io download for Phase 5+** (blake3, an image decoder, an
+  LMDB/SQLite binding). The owner approved one download for Phase 2; Phases 3
+  and 4 need none. Ask before adding any crate; say what it is for and that
+  it is built in CI only.
+- Anything the master prompt's §15 lists: a public API shape change (only
+  additive changes so far, D6 approved), the offload digest algorithm (do not
+  change it), a frontend runtime dependency (never), elevated privileges (D7
+  approved for MFT only).
+- Two smaller ones, flagged and parked: the Dashboard note's wording for the
+  thermal case ("when the Mac runs hot" is macOS-specific; a platform word is
+  needed for Windows and Linux), and whether a volume without file ids on
+  Windows should report every leaf as `withheld` (the crate's contract) or
+  something friendlier.
 
-- **`public/index.html` is GENERATED.** ~35,000 lines, built by concatenating
-  112 files under `src/ui/` in `src/ui/manifest.json` order. Never edit it.
-  Edit the sources and run `node scripts/build-ui.js`. A new source file must
-  be added to the manifest or the build refuses.
-- **Never run a destructive operation.** Deletes, offloads and Autopilot runs
-  are dry-run only. Treat the owner's real files as untouchable. Never scan or
-  touch their real folders in a test — build a synthetic tree in the
-  scratchpad. (Session 9 verified the whole sparse-file feature against a
-  512 MB synthetic tree and a 20 MB disk image, both cleaned up afterwards.)
-- **Test-first, and prove each test bites.** Write the test, watch it fail,
-  implement, watch it pass, then mutate the implementation, watch the test
-  fail, restore by inverse edit, and confirm the file is byte-identical.
-  Report the mutants. A test that never went red is not evidence — and
-  neither is a mutant whose anchor did not match, so assert the anchor count
-  inside the mutation script. Session 9 ran 47 mutants for 47 behaviours and
-  had to rewrite 7 tests that did not bite.
-- **Never anchor a test to a comment or an exact line.** Assert the invariant.
-  Region slicing between anchors is the house style, but the anchor must be a
-  **single-line** comment, and it must be UNIQUE in the built page — `:root {`
-  is not, because the tokens sheet defines it first.
-- **Verify with real input, not synthetic `.click()`.**
-- Both themes and every window width from 640px up must stay correct. Prefer
-  container queries over viewport media queries.
-- Design invariants: every Liquid Glass target stays `plain: 1`; never attach
-  a border beam to a glass host; no backdrop-filter on a full-screen scrim; no
-  `will-change` at rest; no external scripts, styles or fonts; no new npm
-  dependencies.
-- The app's voice: calm, plain English, sentence case, "folder" not
-  "directory", "Trash" for the OS trash, and never jargon a user did not ask
-  for — no errno, no status codes, no hashes, no pids.
+## How the last session worked, so you can work the same way
 
-## Traps that will cost you hours
-
-1. **`asar extract-file` writes to the CURRENT DIRECTORY, not stdout.** A
-   verification script that redirects its output overwrote this repo's
-   `package.json` with the asar's stripped copy — `npm test` became "Missing
-   script: test" — and dropped eight extracted `.js` files in the repo root.
-   Parse the asar header in Node instead and read files out of it.
-2. **Never bulk-replace a version string in `package-lock.json`.** Six
-   third-party packages sit at whatever version TreeMap happens to be on. Only
-   two nodes describe TreeMap: the lock root and `packages[""]`.
-3. **zsh does not word-split an unquoted `$VAR`.** `shasum -a 256 $FILES` is
-   one bogus filename; shasum errors and the empty-string digest compares
-   equal to itself, so a restore check passes while proving nothing. Use
-   explicit filenames, or `git diff`.
-4. **`braced()` closes on a brace in the SIGNATURE.** `async function api(url,
-   options, opts = {})` "closes" on its own parameter list. Fixed copies walk
-   the parameter list first; if you write a new helper, do the same. And
-   `appFn` cuts at the first `\n}`, so a function body must never have a `}`
-   at column 0.
-5. **A new function name can collide with a slice anchor.** Grep the anchors
-   before you name anything.
-6. **`open -a` DOES pass an env var through.** Confirm the watcher is `live`
-   before believing an idle-CPU number.
-7. **Linux has no recursive `fs.watch`.** Never write a test that depends on
-   watching a directory it just made.
-8. **Never edit sources while `npm test` is running.**
-9. **macOS has no `timeout`.** Enforce wall clocks from Python
-   `subprocess.run(..., timeout=)`.
-10. **A golden fixture holding a filesystem-dependent number can never
-    match.** `slackBytes` is normalised in `tests/fixtures/goldenHarness.ts`
-    for exactly this reason — it is what the fixture's small files round up
-    to, which depends on the block size. Normalise, do not re-record.
-11. **electron-builder breaks `npm test`** until `npm rebuild better-sqlite3`.
-12. **`req.query` is a getter in Express 5** — assigning to it is discarded.
-13. **`-0 !== 0` under `assert/strict`.** Normalise a negated zero.
-14. **Driving the installed app:** never extract or launch the bare dev
-    Electron binary — Gatekeeper flags it as malware and deletes it. Launch
-    `/Applications/TreeMap.app` with `--remote-debugging-port=9222` and drive
-    it over CDP, and only when no TreeMap is already running
-    (`app.requestSingleInstanceLock()`). `renderFleet()` takes no arguments —
-    it reads `state.fleet.data` — and `switchView` re-fetches, overwriting
-    anything you just stubbed.
+- Parallel implementer agents on disjoint files, each with a fixed interface
+  from the plan, test-first with a mutant per behaviour, forbidden from
+  `npm test`, committing nothing; you review their reports, run the gates,
+  and commit. A review fleet (ECC typescript/security/silent-failure/
+  type-design reviewers, plus `ecc:rust-reviewer` for Rust) reads the diff
+  read-only and reports at file:line; you verify each finding in the code
+  before fixing it red-first.
+- Agents die on usage limits mid-task. Their files stay on disk. Resume one
+  with `SendMessage` telling it to re-read its own files before editing; keep
+  the plan's progress table current so a compaction or a limit loses nothing.
+- The equivalence gate (`tests/nativeEquivalence.test.ts`) is the oracle for
+  any change to an engine or the store: if it goes red, the engine is wrong
+  until proven otherwise; never loosen it — the only normalisations are the
+  ones DESIGN §16 lists.
+- `npm run bench -- clean` removes the corpora (~11 GB under
+  `os.tmpdir()/treemap-bench`); `bench/results/` is gitignored; give the
+  owner the `cd … && npm run bench -- clean` line if they ask about disk
+  space.
+- Verification traps this repo has already paid for are in the memory notes
+  and in `HANDOFF.md`'s earlier sessions: a check that passes for the wrong
+  reason, a mutant never applied, a stub that agrees with itself, a
+  background harness that outlived its agent. Watch each test fail first.
