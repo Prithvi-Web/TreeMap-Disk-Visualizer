@@ -173,8 +173,8 @@ async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void
   // Same size, same hash, different inode is what a real copy looks like — and
   // exactly what an APFS clone (Finder's Duplicate, `cp -c`) looks like too:
   // the clone shares every block with the original, so trashing it frees
-  // nothing. Clones cannot be told apart without native code, so on macOS the
-  // figure is an upper bound and says so.
+  // nothing. Clone identity is not read (the native scan core does not request
+  // ATTR_CMNEXT_CLONEID), so on macOS the figure is an upper bound and says so.
   job.reclaimableIsUpperBound = process.platform === 'darwin';
   if (job.reclaimableIsUpperBound) {
     job.reclaimableCaveat =

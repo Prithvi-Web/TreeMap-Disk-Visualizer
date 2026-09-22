@@ -3,6 +3,8 @@ import { createReadStream } from 'fs';
 import path from 'path';
 import os from 'os';
 import { BaseProvider } from '../base';
+import { fastEnumerationState } from '../fastEnumeration';
+import { nativeScanModule } from '../../services/scan/native';
 import { commandExists, runJson, reasonOf } from '../exec';
 import { openHandlesFor, zombieHandles } from './lsofGuard';
 import { downloadOrigin, readDownloadOriginsMac } from './provenance';
@@ -185,13 +187,14 @@ export class MacOsProvider extends BaseProvider {
   /* ---------------- Capability probes ---------------- */
 
   override async probeFastEnumeration(): Promise<CapabilityState> {
-    return {
-      available: true,
-      mechanism: 'readdir + lstat, device-aware concurrency',
-      degradedTo: 'readdir + lstat',
-      reason:
-        "macOS's bulk-enumeration call (getattrlistbulk) needs native code TreeMap does not ship, so folders are read the ordinary way. Scans are still fast; the first scan of a very large drive takes a little longer than it could.",
-    };
+    // Decided by the loader, not by this build's opinion of itself: since
+    // Phase 3 the native scan core lists a folder with one getattrlistbulk
+    // call, and when the core did not load the sentence says why.
+    return fastEnumerationState(nativeScanModule(), {
+      call: 'getattrlistbulk',
+      legacy: 'readdir + lstat, device-aware concurrency',
+      legacyShort: 'readdir + lstat',
+    });
   }
 
   override async probeLiveIndex(): Promise<CapabilityState> {

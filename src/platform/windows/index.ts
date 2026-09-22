@@ -2,6 +2,8 @@ import { promises as fsp, createReadStream } from 'fs';
 import path from 'path';
 import os from 'os';
 import { BaseProvider } from '../base';
+import { fastEnumerationState } from '../fastEnumeration';
+import { nativeScanModule } from '../../services/scan/native';
 import { commandExists, runJson } from '../exec';
 import { openHandlesFor, openHandlesBatchFor } from './restartManager';
 import { downloadOrigin, readDownloadOriginsWindows } from './zoneIdentifier';
@@ -48,7 +50,7 @@ import type {
  * | snapshots      | Win32_ShadowCopy (+ mklink to read)          | 3    |
  * | SMART          | smartctl --json                              | 3    |
  * | shell menu     | reg.exe under HKCU — no admin                | 3    |
- * | MFT enumeration| unreachable — see probeFastEnumeration       | —    |
+ * | fast listing   | FileIdExtdDirectoryInfo in the native scan core; MFT mode (D7) not built — see probeFastEnumeration | 2 |
  * | zombie handles | unreachable — see probeZombieHandles         | —    |
  *
  * `subscribeToChanges` is inherited because Node's recursive `fs.watch` is
@@ -303,13 +305,17 @@ export class WindowsProvider extends BaseProvider {
   /* ---------------- Capability probes ---------------- */
 
   override async probeFastEnumeration(): Promise<CapabilityState> {
-    return {
-      available: true,
-      mechanism: 'readdir + lstat',
-      degradedTo: 'readdir + lstat',
-      reason:
-        "Reading the drive's own file table directly (the trick that makes WizTree fast) needs low-level disk access TreeMap does not currently ship, so folders are read the ordinary way. Scans still work on every drive type, including USB sticks and network drives, where that trick does not apply at all.",
-    };
+    // Decided by the loader: the native scan core lists a folder with one
+    // FileIdExtdDirectoryInfo call. The MFT "turbo" mode (D7) is a separate
+    // opt-in that is not part of this build, and the note says so either way.
+    return fastEnumerationState(nativeScanModule(), {
+      call: 'FileIdExtdDirectoryInfo',
+      legacy: 'readdir + lstat',
+      legacyShort: 'readdir + lstat',
+      note:
+        "Reading the drive's own file table directly (the trick that makes WizTree fast) is not part of this build. " +
+        'Scans work on every drive type, including USB sticks and network drives, where that trick does not apply at all.',
+    });
   }
 
   override async probeLiveIndex(): Promise<CapabilityState> {

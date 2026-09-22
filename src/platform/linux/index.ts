@@ -3,6 +3,8 @@ import { createReadStream, promises as fsp } from 'fs';
 import path from 'path';
 import os from 'os';
 import { BaseProvider } from '../base';
+import { fastEnumerationState } from '../fastEnumeration';
+import { nativeScanModule } from '../../services/scan/native';
 import { commandExists, runJson } from '../exec';
 import { openHandlesFor, zombieHandles } from './procFdGuard';
 import { volumeTopology, isRotational, queueDepth, topologyReason } from './topology';
@@ -381,7 +383,13 @@ export class LinuxProvider extends BaseProvider {
   /* ---------------- Capability probes ---------------- */
 
   override async probeFastEnumeration(): Promise<CapabilityState> {
-    return { available: true, mechanism: 'readdir + lstat, concurrency sized from /sys/block' };
+    // Decided by the loader: the native scan core lists a folder with raw
+    // getdents64 and statx; without it the walker's readdir + lstat path runs.
+    return fastEnumerationState(nativeScanModule(), {
+      call: 'getdents64',
+      legacy: 'readdir + lstat, concurrency sized from /sys/block',
+      legacyShort: 'readdir + lstat',
+    });
   }
 
   override async probeLiveIndex(): Promise<CapabilityState> {

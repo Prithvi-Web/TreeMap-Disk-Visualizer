@@ -20,9 +20,11 @@ import type { PlaceholderInfo } from '../types';
  * thing SEEK_HOLE adds, are not something TreeMap displays. Deviation recorded
  * in docs/PLATFORM_NOTES.md.
  *
- * **Clone families: NOT available without native code.** Grouping APFS clones
- * requires `getattrlist` with `ATTR_CMNEXT_CLONEID`, which no Node API and no
- * bundled binary exposes — `diskutil` does not report clone identity at all.
+ * **Clone families: NOT available.** Grouping APFS clones requires
+ * `getattrlist` with `ATTR_CMNEXT_CLONEID`, which no Node API and no bundled
+ * binary exposes — `diskutil` does not report clone identity at all — and
+ * which the native scan core does not request (it lists folders and governs
+ * the scan, nothing else).
  * Rather than print a confidently wrong "exclusive bytes" figure, this module
  * reports clone identity as unknown and A2 falls back to what *can* be known
  * exactly: the allocated-block sum, reconciled against the volume's own

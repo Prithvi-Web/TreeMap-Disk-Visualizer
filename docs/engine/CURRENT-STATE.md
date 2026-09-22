@@ -256,7 +256,7 @@ must add that field first; the new engine does not touch these paths.
 
 ## 10. Platform notes that bind the new engine
 
-* macOS allocated bytes = `st_blocks × 512` from `lstat`; a 50 MB truncate-only sparse file reports `blocks = 0` (`src/platform/macos/allocation.ts:11-14`). `SEEK_DATA/SEEK_HOLE` is unreachable from Node. Clone families are recorded as **unavailable without native code** (`:23-37`); a measured `cp -c` clone consumed −4,096 bytes while `st_blocks` reported the full size (`docs/PLATFORM_NOTES.md:80-88`).
+* macOS allocated bytes = `st_blocks × 512` from `lstat`; a 50 MB truncate-only sparse file reports `blocks = 0` (`src/platform/macos/allocation.ts:11-14`). `SEEK_DATA/SEEK_HOLE` is unreachable from Node. Clone families are recorded as **unavailable** (`:23-37`; the native scan core does not request `ATTR_CMNEXT_CLONEID`); a measured `cp -c` clone consumed −4,096 bytes while `st_blocks` reported the full size (`docs/PLATFORM_NOTES.md:80-88`).
 * `blocksAreMeaningful` is false on Windows (libuv leaves `blocks` at 0), so Windows scans have no sparse/slack/allocation accounting at all today (`src/platform/index.ts:44-53`).
 * Both Windows and Linux platform code was written on macOS and is proven only by CI round-trips (`docs/PLATFORM_NOTES.md:22-33`).
 * The persistent index (`src/services/indexEngine.ts`, SQLite) is a separate subsystem with its own watcher; it stores a node in 183 bytes on disk (README:760). It is not the scan engine and is out of this project's scope except where the new engine must not fight it for the app-data directory.

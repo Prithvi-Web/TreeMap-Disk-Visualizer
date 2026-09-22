@@ -121,13 +121,14 @@ Platform listing, one call per directory, nothing per file:
 
 | Platform | Call | Buffer | Attributes | Fallback |
 | --- | --- | --- | --- | --- |
-| macOS | `getattrlistbulk` on an `O_RDONLY|O_DIRECTORY|O_NOFOLLOW` descriptor (written fresh in `tm-walk`, D3 — nothing vendored) | 64 KiB per worker today; 256 KiB is the prompt's suggestion and Phase 1's harness decides | `RETURNED_ATTRS, ERROR, NAME, DEVID, OBJTYPE, MODTIME, ACCTIME, FLAGS, FILEID` + `LINKCOUNT, ALLOCSIZE, DATALENGTH`, in one buffer (P3-5, 18 September 2026: atime is collected, not optional — the "last used" fact and the JSON depend on `accessedAt`). `ATTR_CMN_RETURNED_ATTRS` is honoured for every entry | `fdopendir` + `fstatat(AT_SYMLINK_NOFOLLOW)` on `ENOTSUP` |
+| macOS | `getattrlistbulk` on an `O_RDONLY|O_DIRECTORY|O_NOFOLLOW` descriptor (written fresh in `tm-walk`, D3 — nothing vendored) | 256 KiB per worker (`DEFAULT_BUFFER_BYTES`); the one-shot probe uses 64 KiB | `RETURNED_ATTRS, ERROR, NAME, DEVID, OBJTYPE, MODTIME, ACCTIME, FLAGS, FILEID` + `LINKCOUNT, ALLOCSIZE, DATALENGTH`, in one buffer (P3-5, 18 September 2026: atime is collected, not optional — the "last used" fact and the JSON depend on `accessedAt`). `ATTR_CMN_RETURNED_ATTRS` is honoured for every entry | `fdopendir` + `fstatat(AT_SYMLINK_NOFOLLOW)` on `ENOTSUP` |
 | Windows | `GetFileInformationByHandleEx(FileIdExtdDirectoryInfo)` on a handle opened with `FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT`, `\\?\` prefix, long paths on | 256 KiB | name, attributes, times (`LastAccessTime` included, P3-5), `EndOfFile`, `AllocationSize`, file id, `ReparseTag`; cloud tags and `RECALL_ON_DATA_ACCESS`/`OFFLINE` set the placeholder flag; reparse points are leaves | `FindFirstFileExW(FindExInfoBasic, FIND_FIRST_EX_LARGE_FETCH)` |
-| Linux | raw `getdents64` (256 KiB) for names and `d_type`, then `statx(AT_SYMLINK_NOFOLLOW|AT_STATX_DONT_SYNC)` with the minimal mask; `io_uring` batched `statx` behind runtime detection (kernel ≥ 5.6, not blocked by seccomp) | 256 KiB | `TYPE, MODE, SIZE, BLOCKS, MTIME, ATIME, INO, NLINK` (`STATX_ATIME` added by P3-5) | synchronous `statx`; FUSE and network mounts are enumerated but flagged read-hostile |
+| Linux | raw `getdents64` (256 KiB) for names and `d_type`, then `statx(AT_SYMLINK_NOFOLLOW|AT_STATX_DONT_SYNC)` with the minimal mask; `io_uring` batched `statx` behind runtime detection (kernel ≥ 5.6, not blocked by seccomp — design only, not built: §5.2) | 256 KiB | `TYPE, MODE, SIZE, BLOCKS, MTIME, ATIME, INO, NLINK` (`STATX_ATIME` added by P3-5) | synchronous `statx`; FUSE and network mounts are enumerated but flagged read-hostile |
 
-Parallelism: a work-stealing deque of **directories** (`crossbeam-deque`),
+Parallelism: a shared queue of **directories** (as built: a
+`std::sync::{Mutex, Condvar}` queue with in-flight accounting, no crate — §5.2),
 one worker owns a whole directory batch; per-device queues keyed on the
-device id the listing returns; **hill-climbing** worker count re-evaluated
+device id the listing returns (not built — §5.2); **hill-climbing** worker count re-evaluated
 every 250 ms against entries/s with a noise floor, capped by the governor at
 all times; zero allocation in the hot loop — names go into a per-worker byte
 arena and paths are rebuilt from parent indices on demand. Firmlinks and
@@ -172,6 +173,27 @@ atimes, the five flags, extension, container, provider — is compared as
 recorded. `tests/nativeEquivalence.test.ts` is the gate; `tests/edgeCases.test.ts`
 pins the walker's behaviour on every §15 case the OS can build, and skips
 the rest with the reason.
+
+### 5.2 As built (Phase 3, 22 September 2026) — where the design above was wrong
+
+Recorded the way §8.1 records the governor, so the table and the paragraph
+above read as design and this reads as fact:
+
+1. **The queue is `std`, not `crossbeam-deque`.** `crates/tm-walk/src/queue.rs`
+   is a `Mutex<VecDeque<DirJob>>` with a `Condvar` and in-flight accounting;
+   the Phase 3 plan added no crate, and a work-stealing deque bought nothing
+   the hill-climber (`climb.rs`) does not already decide.
+2. **One queue, not one per device.** Device ids are recorded for the
+   hard-link key (P3-3) and never key a queue. Per-device scheduling matters
+   where bytes are read, not where names are listed; it belongs to Phase 5's
+   read scheduler (§10.3), and the walk will not grow a second queue on a
+   claim.
+3. **Linux `io_uring` is not built.** `platform/linux.rs` issues synchronous
+   `statx` through the directory descriptor; runtime detection of `io_uring`
+   is deferred until the Linux CI leg has proven the synchronous path and a
+   measurement shows the syscall overhead is the bottleneck.
+4. **Buffers:** every listing uses `DEFAULT_BUFFER_BYTES` (256 KiB) per worker
+   on every platform; the one-shot capability probe lists with 64 KiB.
 
 ## 6. The store (Phase 4)
 
@@ -420,7 +442,7 @@ features, a pause button on every long operation. Every new part is added to
 * CI builds `treemap_core.node` on each release leg natively — macOS runner: `aarch64-apple-darwin` and `x86_64-apple-darwin` (Apple's toolchain cross-links the second); Windows runner: `x86_64-pc-windows-msvc`; two new Linux legs (`ubuntu-latest` for x64, `ubuntu-24.04-arm` for arm64) — with `dtolnay/rust-toolchain@stable` and a cargo cache. The `.node` files land in `native/prebuilt/<platform>-<arch>/` before `electron-builder` runs and are listed in `build.files` + `asarUnpack`. `test.yml` builds the module on every OS and runs the equivalence suite natively, so a target that fails to build fails the run.
 * Web-mode users (`git clone` + `npm ci` + `npm start`) get the legacy chain unless they run `npm run build:native` or `node scripts/fetchNative.js`, which downloads the matching prebuild from the GitHub release with SHA-256 verification, mirroring `fetchGdu.js`. A missing prebuild for a supported target fails the release job.
 * The Electron packaging step already rebuilds native modules for Electron's ABI; a N-API module needs no rebuild, and the loader checks a version handshake before trusting the binary.
-* `README.md`'s sentence "TreeMap ships no native code" and `docs/PLATFORM_NOTES.md`'s "no native addons" are updated in the same commit that ships the module.
+* `README.md`'s sentence "TreeMap ships no native code" and `docs/PLATFORM_NOTES.md`'s "no native addons" were meant to change in the commit that shipped the module (`f64c287`); they changed one commit later, on 22 September 2026, together with the "Fast scanning" capability probes and the Missing GB sentences that had printed the same claim.
 
 ## 15. Testing
 

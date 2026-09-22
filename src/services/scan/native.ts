@@ -9,6 +9,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import type { NativeProbe, NativeProgress, ScanStartOptions, WalkResult } from '../../../native/index';
 
 export interface NativeModule {
   version(): string;
@@ -131,4 +132,41 @@ export function setNativeLoadOverrideForTests(opts: LoadOptions | null): void {
 export function resetNativeForTests(): void {
   outcome = null;
   outcomeKey = null;
+}
+
+/* ------------------------------ the scan surface ------------------------------ */
+
+/** The exports a module must have before the native engine (Phase 3) will walk a folder with it. */
+export const SCAN_FUNCTIONS = ['scanProbe', 'scanStart', 'scanPoll', 'scanPause', 'scanResume', 'scanCancel', 'scanTake'] as const;
+
+/** The part of tm-node's surface the native engine uses (native/index.d.ts declares the whole of it). */
+export interface ScanModule extends NativeModule {
+  scanProbe(root: string): NativeProbe;
+  scanStart(root: string, opts: ScanStartOptions): number;
+  scanPoll(handle: number): NativeProgress;
+  scanPause(handle: number): void;
+  scanResume(handle: number): void;
+  scanCancel(handle: number): void;
+  scanTake(handle: number): WalkResult;
+}
+
+export type ScanModuleOutcome =
+  | { available: true; module: ScanModule; path: string }
+  | { available: false; reason: string };
+
+/**
+ * The loaded module's scan surface, or why there is none: not loaded (the
+ * loader's reason), or loaded from an older contract without the scan
+ * functions — a stale prebuilt falls back with the function named rather
+ * than throwing on the first scan. Lives with the loader so the platform
+ * capability probes can ask the same question without importing the engine.
+ */
+export function nativeScanModule(): ScanModuleOutcome {
+  const outcome = loadNative();
+  if (!outcome.available) return outcome;
+  const missing = SCAN_FUNCTIONS.filter((name) => typeof outcome.module[name] !== 'function');
+  if (missing.length > 0) {
+    return { available: false, reason: `the native module at ${outcome.path} has no ${missing[0]}(), so it cannot walk a folder; rebuild it with npm run build:native` };
+  }
+  return { available: true, module: outcome.module as ScanModule, path: outcome.path };
 }

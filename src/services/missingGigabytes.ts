@@ -63,7 +63,8 @@ import type { ZombieReport } from './zombieHandles';
  * `NSURLVolumeAvailableCapacityForImportantUsageKey`, a native API. Checked,
  * not assumed: `diskutil info -plist`, `diskutil apfs list -plist` and
  * `system_profiler -json SPStorageDataType` were each read on this machine and
- * none carries a purgeable figure. §7 forbids native modules, so this line is
+ * none carries a purgeable figure. The native scan core does not read it (it
+ * lists folders and governs the scan, nothing else), so this line is
  * unavailable with that reason, its bytes live inside `unaccounted`, and
  * `unaccounted` says so. It never reads 0.
  */
@@ -400,7 +401,7 @@ export async function buildStatement(
     );
   }
   scannedNotes.push(
-    'Copy-on-write clones cannot be told apart from real copies without native code, which TreeMap does not ship: a clone reports its full size and its own inode, exactly as a genuine copy does. Where clones exist, this line is an over-count and the difference lands in Unaccounted below.',
+    'Copy-on-write clones cannot yet be told apart from real copies — no Node API exposes clone identity, and TreeMap\'s native scan core does not ask APFS for it: a clone reports its full size and its own inode, exactly as a genuine copy does. Where clones exist, this line is an over-count and the difference lands in Unaccounted below.',
   );
   lines.push({
     id: 'scanned',
@@ -470,7 +471,7 @@ export async function buildStatement(
 
   const includes = unknownLines.map((l) => l.label);
   if (!coversWholeVolume) includes.unshift(`everything on ${mountPoint} outside ${rootPath}`);
-  includes.push('space shared by copy-on-write clones, which cannot be attributed without native code');
+  includes.push('space shared by copy-on-write clones, whose identity the scan does not read');
 
   lines.push({
     id: 'unaccounted',
@@ -612,7 +613,7 @@ async function snapshotLine(sources: StatementSources, mountPoint: string): Prom
 export function purgeableLine(plat: NodeJS.Platform): StatementLine {
   const reason =
     plat === 'darwin'
-      ? 'macOS reports purgeable space only through a native API (NSURLVolumeAvailableCapacityForImportantUsageKey). diskutil, diskutil apfs and system_profiler were each checked on this machine and none carries the figure, and TreeMap ships no native code — so this cannot be measured here.'
+      ? 'macOS reports purgeable space only through a native API (NSURLVolumeAvailableCapacityForImportantUsageKey). diskutil, diskutil apfs and system_profiler were each checked on this machine and none carries the figure, and TreeMap\'s native scan core does not read it — so this cannot be measured here.'
       : plat === 'win32'
         ? 'Windows has no purgeable-space concept; space reclaimable by Storage Sense is not reported as used, so there is nothing to account for on this line.'
         : 'This filesystem has no purgeable-space concept, so there is nothing to account for on this line.';

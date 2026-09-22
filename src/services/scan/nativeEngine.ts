@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { NativeProbe, NativeProgress, ScanStartOptions, WalkResult } from '../../../native/index';
-import { loadNative, NativeModule } from './native';
+import { nativeScanModule, type ScanModule } from './native';
 import { statToInput } from './nodeInput';
 import { Flag, ScanStore, joinPath } from '../scanStore';
 import { cloudProviderFor } from '../cloudFolders';
@@ -53,7 +53,8 @@ export const NATIVE_POLL_FIRST_MS = 1;
 /** What `fastPath` says when the native listing was probed and refused (P3-9). */
 export const FAST_PATH_UNAVAILABLE = 'unavailable';
 /** The scan surface a module must export to walk a folder. */
-export const SCAN_FUNCTIONS = ['scanProbe', 'scanStart', 'scanPoll', 'scanPause', 'scanResume', 'scanCancel', 'scanTake'] as const;
+export { SCAN_FUNCTIONS, nativeScanModule } from './native';
+export type { ScanModule, ScanModuleOutcome } from './native';
 
 /**
  * Does `allocBytes` mean anything here? On Windows libuv leaves `blocks` at
@@ -70,39 +71,8 @@ const BLOCKS_ARE_MEANINGFUL = platform().blocksAreMeaningful;
  */
 const SORT_CHILDREN = platform().platform !== 'windows';
 
-/** The part of tm-node's surface this module uses (native/index.d.ts declares the whole of it). */
-export interface ScanModule extends NativeModule {
-  scanProbe(root: string): NativeProbe;
-  scanStart(root: string, opts: ScanStartOptions): number;
-  scanPoll(handle: number): NativeProgress;
-  scanPause(handle: number): void;
-  scanResume(handle: number): void;
-  scanCancel(handle: number): void;
-  scanTake(handle: number): WalkResult;
-}
-
-export type ScanModuleOutcome =
-  | { available: true; module: ScanModule; path: string }
-  | { available: false; reason: string };
-
 function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-/**
- * The loaded module's scan surface, or why there is none: not loaded (the
- * loader's reason), or loaded from an older contract without the scan
- * functions — a stale prebuilt falls back with the function named rather
- * than throwing on the first scan.
- */
-export function nativeScanModule(): ScanModuleOutcome {
-  const outcome = loadNative();
-  if (!outcome.available) return outcome;
-  const missing = SCAN_FUNCTIONS.filter((name) => typeof outcome.module[name] !== 'function');
-  if (missing.length > 0) {
-    return { available: false, reason: `the native module at ${outcome.path} has no ${missing[0]}(), so it cannot walk a folder; rebuild it with npm run build:native` };
-  }
-  return { available: true, module: outcome.module as ScanModule, path: outcome.path };
 }
 
 /* ------------------------------ eligibility ------------------------------ */

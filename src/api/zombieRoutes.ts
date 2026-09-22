@@ -15,7 +15,7 @@ import { AppError } from '../middleware/errorHandler';
  * probe's human-readable reason, so the panel renders the honest unavailable
  * state (§2.2) instead of a blank. On Windows that reason explains that the
  * space frees on process or system restart — the mechanism itself needs
- * native handle enumeration TreeMap does not ship (§B5: pick one and do it
+ * native handle enumeration TreeMap's native core does not include (§B5: pick one and do it
  * completely, or report why not).
  */
 
