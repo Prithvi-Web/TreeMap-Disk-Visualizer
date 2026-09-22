@@ -9,14 +9,18 @@ use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::fs;
 use std::num::TryFromIntError;
+use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use tm_walk::platform::darwin::{
-    ATTR_CMN_ERROR, DarwinLister, SF_DATALESS, VDIR, VFIFO, VLNK, VREG, parse_batch,
+    ATTR_CMN_ERROR, DarwinLister, SF_DATALESS, TypeFallback, VDIR, VFIFO, VLNK, VREG, open_dir,
+    parse_batch,
 };
+use tm_walk::platform::per_entry::{PER_ENTRY_BATCH, fstatat_meta, lstat_meta};
 use tm_walk::platform::{ListBuffer, Lister, Listing, Meta, refusal_from_errno, time_ms};
 use tm_walk::{
     DEFAULT_BUFFER_BYTES, FLAG_DATALESS, FastPath, KIND_DIR, KIND_FILE, KIND_SYMLINK,
@@ -169,10 +173,24 @@ fn buffer(entries: &[Packed]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// A type fallback that is never asked: every entry of these buffers carries its type.
+fn never_asked(_name: &[u8]) -> Option<Meta> {
+    None
+}
+
 fn parsed(entries: &[Packed], want_atime: bool) -> Result<Listing, String> {
+    parsed_with(entries, want_atime, &mut never_asked)
+}
+
+fn parsed_with(
+    entries: &[Packed],
+    want_atime: bool,
+    type_fallback: &mut TypeFallback<'_>,
+) -> Result<Listing, String> {
     let raw = buffer(entries)?;
     let mut out = Listing::default();
-    parse_batch(&raw, entries.len(), want_atime, &mut out).map_err(|e| format!("{e:?}"))?;
+    parse_batch(&raw, entries.len(), want_atime, &mut out, type_fallback)
+        .map_err(|e| format!("{e:?}"))?;
     Ok(out)
 }
 
@@ -431,11 +449,92 @@ fn a_directory_the_file_system_marks_as_a_mount_point_is_listed_for_a_second_loo
 }
 
 #[test]
+fn an_entry_whose_type_was_withheld_takes_every_fact_from_the_fallback_stat() -> TestResult {
+    // Without the type the parser cannot tell a directory from a leaf, and a
+    // directory recorded as a leaf loses its whole subtree: one stat through
+    // the directory descriptor answers, and every fact comes from it.
+    let mut typeless = regular(b"sub", 0);
+    typeless.common &= !libc::ATTR_CMN_OBJTYPE;
+    typeless.file = 0;
+    let stat = Meta {
+        kind: KIND_DIR,
+        flags: 0,
+        size: 0.0,
+        alloc: 0.0,
+        mtime_ms: time_ms(1_600_000_000, 1),
+        atime_ms: time_ms(1_600_000_001, 2),
+        dev: f64::from(DEV) + 1.0,
+        ino: 7_777.0,
+        nlink: 0,
+        withheld: false,
+    };
+    let mut asked: Vec<Vec<u8>> = Vec::new();
+    let listing = parsed_with(
+        &[
+            regular(b"before.bin", 1),
+            typeless,
+            regular(b"after.bin", 2),
+        ],
+        true,
+        &mut |name: &[u8]| {
+            asked.push(name.to_vec());
+            Some(stat)
+        },
+    )?;
+    assert_eq!(
+        asked,
+        vec![b"sub".to_vec()],
+        "only the entry without the type bit is asked about, by its name"
+    );
+    let map = by_name(&listing);
+    let sub = entry(&map, "sub")?;
+    assert_eq!(*sub, stat, "every fact is the stat's, withheld included");
+    assert_eq!(sub.kind, KIND_DIR);
+    assert!(!sub.withheld);
+    assert_eq!(entry(&map, "before.bin")?.size.to_bits(), 1.0_f64.to_bits());
+    assert_eq!(
+        entry(&map, "after.bin")?.size.to_bits(),
+        2.0_f64.to_bits(),
+        "the entry after it still parses in place"
+    );
+    assert_eq!(listing.unreadable_entries, 0);
+    Ok(())
+}
+
+#[test]
+fn an_entry_whose_type_was_withheld_and_whose_stat_failed_stays_a_withheld_leaf() -> TestResult {
+    let mut typeless = regular(b"unknown", 5);
+    typeless.common &= !libc::ATTR_CMN_OBJTYPE;
+    let mut asked = 0_usize;
+    let listing = parsed_with(&[typeless, regular(b"plain.bin", 3)], true, &mut |_name| {
+        asked += 1;
+        None
+    })?;
+    assert_eq!(asked, 1, "asked once, for the typeless entry");
+    let map = by_name(&listing);
+    let u = entry(&map, "unknown")?;
+    assert_eq!(u.kind, KIND_FILE, "nothing says directory: a leaf");
+    assert!(u.withheld, "marked so the walk counts it");
+    assert_eq!(
+        u.size.to_bits(),
+        5.0_f64.to_bits(),
+        "what the record does carry is still read, as before"
+    );
+    assert_eq!(
+        u.mtime_ms.to_bits(),
+        time_ms(1_700_000_000, 123_456_789).to_bits()
+    );
+    assert_eq!(entry(&map, "plain.bin")?.size.to_bits(), 3.0_f64.to_bits());
+    assert_eq!(listing.unreadable_entries, 0, "kept, not omitted");
+    Ok(())
+}
+
+#[test]
 fn rejects_a_corrupt_length() -> TestResult {
     let mut raw = buffer(&[regular(b"a.bin", 1)])?;
     let mut out = Listing::default();
     assert!(
-        parse_batch(&raw, 2, true, &mut out).is_err(),
+        parse_batch(&raw, 2, true, &mut out, &mut never_asked).is_err(),
         "more entries than the buffer holds"
     );
     if let Some(first) = raw.first_mut() {
@@ -445,7 +544,7 @@ fn rejects_a_corrupt_length() -> TestResult {
         *second = 0;
     }
     assert!(
-        parse_batch(&raw, 1, true, &mut Listing::default()).is_err(),
+        parse_batch(&raw, 1, true, &mut Listing::default(), &mut never_asked).is_err(),
         "a zero length cannot advance"
     );
     let mut huge = buffer(&[regular(b"a.bin", 1)])?;
@@ -453,7 +552,7 @@ fn rejects_a_corrupt_length() -> TestResult {
         *hi = 0xFF;
     }
     assert!(
-        parse_batch(&huge, 1, true, &mut Listing::default()).is_err(),
+        parse_batch(&huge, 1, true, &mut Listing::default(), &mut never_asked).is_err(),
         "a length past the buffer"
     );
     Ok(())
@@ -748,8 +847,7 @@ fn a_mount_point_carries_the_mounted_roots_attributes_as_lstat_reports_them() ->
     };
     let _mounted = Mounted(mountpoint.clone());
     (|| -> TestResult {
-        let expected = tm_walk::platform::per_entry::lstat_meta(&mountpoint, true)
-            .map_err(|e| format!("lstat: errno {e}"))?;
+        let expected = lstat_meta(&mountpoint, true).map_err(|e| format!("lstat: errno {e}"))?;
         let mut buf = ListBuffer::new(0);
         let path = DarwinLister::new()
             .list(&fx.root, true, &mut buf)
@@ -788,6 +886,29 @@ fn a_mount_point_carries_the_mounted_roots_attributes_as_lstat_reports_them() ->
         );
         Ok(())
     })()
+}
+
+#[test]
+fn fstatat_through_the_directory_descriptor_reads_what_lstat_reads() -> TestResult {
+    // The one stat behind the per-entry listing, the mount-point re-read and
+    // the bulk listing's type fallback.
+    let fx = consistency_fixture()?;
+    let fd = open_dir(&fx.root).map_err(|e| format!("open: errno {e}"))?;
+    for name in ["sub", "link", "odd.bin", "fifo"] {
+        let c = CString::new(name).map_err(|e| e.to_string())?;
+        let got =
+            fstatat_meta(fd.as_raw_fd(), &c, true).map_err(|e| format!("{name}: errno {e}"))?;
+        let want =
+            lstat_meta(&fx.root.join(name), true).map_err(|e| format!("{name}: errno {e}"))?;
+        assert_eq!(got, want, "{name}");
+    }
+    let missing = CString::new("nowhere").map_err(|e| e.to_string())?;
+    assert_eq!(
+        fstatat_meta(fd.as_raw_fd(), &missing, true),
+        Err(libc::ENOENT),
+        "a missing entry is the errno, not a Meta"
+    );
+    Ok(())
 }
 
 #[test]
@@ -886,6 +1007,115 @@ fn the_probe_reports_per_entry_with_a_reason_when_bulk_is_refused() {
     let probe = probe_with(&PerEntryOnly, Path::new("/anywhere"));
     assert_eq!(probe.fast_path, FastPath::PerEntry);
     assert!(probe.reason.contains("per-entry"), "{}", probe.reason);
+}
+
+// ---------------------------------------------------------------------------
+// Live: the two signals the walk threads through the buffer
+// ---------------------------------------------------------------------------
+
+/// Entries in the cadence fixture: two full per-entry batches and a partial third.
+const CADENCE_ENTRIES: usize = 2 * PER_ENTRY_BATCH + 88;
+
+/// A buffer whose walk was cancelled before the listing started.
+fn stopped_buffer() -> ListBuffer {
+    ListBuffer::with_signals(
+        0,
+        Arc::new(AtomicBool::new(true)),
+        Arc::new(AtomicU64::new(0)),
+    )
+}
+
+fn beats(buf: &ListBuffer) -> u64 {
+    buf.heartbeat.load(Ordering::Acquire)
+}
+
+#[test]
+fn the_bulk_listing_beats_per_answered_batch_and_once_for_the_empty_answer_that_ends_it()
+-> TestResult {
+    let fx = consistency_fixture()?;
+    let lister = DarwinLister::new();
+    let mut buf = ListBuffer::new(0);
+    let path = lister
+        .list(&fx.root, true, &mut buf)
+        .map_err(|r| format!("{r:?}"))?;
+    assert_eq!(path, FastPath::Bulk);
+    assert_eq!(buf.listing.len(), 10);
+    assert!(
+        beats(&buf) >= 2,
+        "at least one batch with entries and the empty answer that ends the listing: {}",
+        beats(&buf)
+    );
+    let empty = fx.root.join("empty");
+    fs::create_dir(&empty).map_err(|e| e.to_string())?;
+    let mut buf = ListBuffer::new(0);
+    lister
+        .list(&empty, true, &mut buf)
+        .map_err(|r| format!("{r:?}"))?;
+    assert!(buf.listing.is_empty());
+    assert_eq!(
+        beats(&buf),
+        1,
+        "an empty directory is one answer, so even it beats once"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_per_entry_listing_beats_every_batch_of_entries_and_once_when_the_stream_ends() -> TestResult
+{
+    let fx = Fixture::new("cadence")?;
+    for i in 0..CADENCE_ENTRIES {
+        fx.file(&format!("e{i:04}"), 0)?;
+    }
+    let lister = DarwinLister::per_entry_only();
+    let mut buf = ListBuffer::new(0);
+    let path = lister
+        .list(&fx.root, false, &mut buf)
+        .map_err(|r| format!("{r:?}"))?;
+    assert_eq!(path, FastPath::PerEntry);
+    assert_eq!(buf.listing.len(), CADENCE_ENTRIES);
+    let expected =
+        u64::try_from(CADENCE_ENTRIES / PER_ENTRY_BATCH + 1).map_err(|e| e.to_string())?;
+    assert_eq!(
+        beats(&buf),
+        expected,
+        "one beat per full batch of {PER_ENTRY_BATCH} and one for the partial last"
+    );
+    let empty = fx.root.join("empty");
+    fs::create_dir(&empty).map_err(|e| e.to_string())?;
+    let mut buf = ListBuffer::new(0);
+    lister
+        .list(&empty, false, &mut buf)
+        .map_err(|r| format!("{r:?}"))?;
+    assert_eq!(beats(&buf), 1, "an empty directory still beats once");
+    Ok(())
+}
+
+#[test]
+fn a_buffer_whose_stop_is_set_refuses_the_bulk_listing_before_any_batch() -> TestResult {
+    let fx = consistency_fixture()?;
+    let mut buf = stopped_buffer();
+    assert_eq!(
+        DarwinLister::new().list(&fx.root, true, &mut buf),
+        Err(Refusal::Unreadable),
+        "the walk discards the listing on cancel; the kind is immaterial"
+    );
+    assert!(buf.listing.is_empty(), "no entry was staged");
+    assert_eq!(beats(&buf), 0, "no batch was issued");
+    Ok(())
+}
+
+#[test]
+fn a_buffer_whose_stop_is_set_refuses_the_per_entry_listing_before_any_entry() -> TestResult {
+    let fx = consistency_fixture()?;
+    let mut buf = stopped_buffer();
+    assert_eq!(
+        DarwinLister::per_entry_only().list(&fx.root, true, &mut buf),
+        Err(Refusal::Unreadable)
+    );
+    assert!(buf.listing.is_empty(), "no entry was staged");
+    assert_eq!(beats(&buf), 0, "no batch was read");
+    Ok(())
 }
 
 #[test]

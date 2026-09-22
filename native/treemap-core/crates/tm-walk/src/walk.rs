@@ -10,10 +10,17 @@
 //! `throttle()`. Ids come from one atomic counter at discovery, so a directory
 //! is always listed after it was numbered and `parent[i] < i` holds. At the end
 //! the driver merges every worker's columns into the output in id order.
+//!
+//! A panic on a worker is a fault, not a wedge: the listing runs under
+//! `catch_unwind`, the first fault's text is kept, the walk is cancelled, every
+//! thread is still joined, and `take()` returns [`WalkError::Internal`] naming
+//! the panic. The same fault path ends a walk whose ids would wrap.
 
+use std::any::Any;
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -45,6 +52,12 @@ const PAUSE_POLL: Duration = Duration::from_millis(50);
 const NEVER: u64 = u64::MAX;
 /// `root_refused` before any refusal.
 const NO_REFUSAL: u8 = 0;
+/// The fault recorded when the id counter reaches its ceiling: ids are `u32`
+/// and the root holds 0, so `u32::MAX - 1` entries is the most a walk can number.
+const ID_CEILING_FAULT: &str = "the walk exceeded 4,294,967,294 entries";
+/// The bytes a directory name must not hold to be joined onto its parent as
+/// one component: `/` everywhere, `\` too on Windows.
+const NAME_SEPARATORS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
 
 /// What the walk asks of a governor. Implemented for [`Governor`] by
 /// [`GovernorPacer`]; a test scripts its own to count the calls.
@@ -105,6 +118,10 @@ pub struct Progress {
     pub bytes: u64,
     /// A directory being listed, sampled at most every [`SAMPLE_INTERVAL`].
     pub current_path: Option<String>,
+    /// Batches the OS has answered so far, across every worker (see
+    /// [`ListBuffer::heartbeat`]): it advances while a directory is still
+    /// listing, when `entries` cannot.
+    pub heartbeat: u64,
     /// True once [`WalkHandle::take`] will not block.
     pub done: bool,
 }
@@ -130,7 +147,10 @@ struct Shared {
     dataless: AtomicU64,
     active_target: AtomicU32,
     paused: AtomicBool,
-    cancelled: AtomicBool,
+    /// Shared with every worker's [`ListBuffer`], so a listing stops between batches.
+    cancelled: Arc<AtomicBool>,
+    /// Shared with every worker's [`ListBuffer`]; see [`Progress::heartbeat`].
+    heartbeat: Arc<AtomicU64>,
     done: AtomicBool,
     pause_lock: Mutex<()>,
     pause_changed: Condvar,
@@ -139,6 +159,9 @@ struct Shared {
     current_path: Mutex<Option<String>>,
     root_fast_path: AtomicU8,
     root_refused: AtomicU8,
+    /// The first fault that ended the walk, as the sentence `take()` returns:
+    /// a worker's panic, or the id ceiling. Set once; later faults are dropped.
+    fault: Mutex<Option<String>>,
     result: Mutex<Option<Result<WalkOutput, WalkError>>>,
 }
 
@@ -164,7 +187,8 @@ impl Shared {
             dataless: AtomicU64::new(0),
             active_target: AtomicU32::new(1),
             paused: AtomicBool::new(false),
-            cancelled: AtomicBool::new(false),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            heartbeat: Arc::new(AtomicU64::new(0)),
             done: AtomicBool::new(false),
             pause_lock: Mutex::new(()),
             pause_changed: Condvar::new(),
@@ -173,8 +197,23 @@ impl Shared {
             current_path: Mutex::new(None),
             root_fast_path: AtomicU8::new(FastPath::Unavailable.code()),
             root_refused: AtomicU8::new(NO_REFUSAL),
+            fault: Mutex::new(None),
             result: Mutex::new(None),
         }
+    }
+
+    /// Keeps `text` as the walk's fault unless one was recorded already: the
+    /// first fault is the one that ended the walk, the rest are its consequences.
+    fn record_fault(&self, text: String) {
+        let mut fault = lock(&self.fault);
+        if fault.is_none() {
+            *fault = Some(text);
+        }
+    }
+
+    /// Records a walker thread's panic as the walk's fault.
+    fn record_panic(&self, payload: &(dyn Any + Send)) {
+        self.record_fault(format!("a walker thread panicked: {}", panic_text(payload)));
     }
 
     /// The most workers that may run right now: the hill-climber's target,
@@ -312,6 +351,7 @@ impl WalkHandle {
             files: s.files.load(Ordering::Acquire),
             bytes: s.bytes.load(Ordering::Acquire),
             current_path: lock(&s.current_path).clone(),
+            heartbeat: s.heartbeat.load(Ordering::Acquire),
             done: s.done.load(Ordering::Acquire),
         }
     }
@@ -348,11 +388,26 @@ impl WalkHandle {
 
     fn join_driver(&mut self) -> Result<(), WalkError> {
         if let Some(driver) = self.driver.take() {
-            driver
-                .join()
-                .map_err(|_| WalkError::Internal("the walk's driver thread panicked".to_owned()))?;
+            driver.join().map_err(|payload| {
+                WalkError::Internal(format!(
+                    "the walk's driver thread panicked: {}",
+                    panic_text(&*payload)
+                ))
+            })?;
         }
         Ok(())
+    }
+}
+
+/// The text of a panic payload: what `panic!` was given, whether it was
+/// formatted (`String`) or a literal (`&str`); `no message` for anything else.
+pub fn panic_text(payload: &(dyn Any + Send)) -> String {
+    if let Some(text) = payload.downcast_ref::<String>() {
+        text.clone()
+    } else if let Some(text) = payload.downcast_ref::<&str>() {
+        (*text).to_owned()
+    } else {
+        "no message".to_owned()
     }
 }
 
@@ -445,12 +500,18 @@ fn run_walk(shared: &Arc<Shared>, root_meta: Meta) -> Result<WalkOutput, WalkErr
     shared.queue.close();
     shared.pause_changed.notify_all();
 
+    // Every thread is joined, whatever the first one reported: a dead thread
+    // must not leave the others listing behind a handle that says it is done.
     let mut parts = vec![root_part];
     for handle in threads {
         match handle.join() {
             Ok(part) => parts.push(part),
-            Err(_) => return Err(WalkError::Internal("a walker thread panicked".to_owned())),
+            Err(payload) => shared.record_panic(&*payload),
         }
+    }
+    // A fault comes before the cancel check: the cancel was the fault's own.
+    if let Some(text) = lock(&shared.fault).take() {
+        return Err(WalkError::Internal(text));
     }
     if let Some(e) = spawn_failure {
         return Err(e);
@@ -524,7 +585,11 @@ fn spawn_up_to(
 fn worker(shared: &Arc<Shared>, index: u32) -> Part {
     shared.pacer.on_worker_start();
     let mut part = Part::default();
-    let mut buf = ListBuffer::new(shared.buffer_bytes);
+    let mut buf = ListBuffer::with_signals(
+        shared.buffer_bytes,
+        Arc::clone(&shared.cancelled),
+        Arc::clone(&shared.heartbeat),
+    );
     let mut pending: Vec<DirJob> = Vec::new();
     let may_run = || index < shared.effective_target();
     while let Some(job) = shared.queue.next_job(&may_run) {
@@ -532,12 +597,38 @@ fn worker(shared: &Arc<Shared>, index: u32) -> Part {
             shared.queue.finish_job();
             break;
         }
-        process_dir(shared, &mut part, &mut buf, &mut pending, &job);
+        // A panic inside the listing (an overflow check, a platform bug) must
+        // still hand the job back, or `in_flight` never reaches zero and the
+        // queue never closes: the panic becomes the walk's fault instead.
+        let listed = catch_unwind(AssertUnwindSafe(|| {
+            process_dir(shared, &mut part, &mut buf, &mut pending, &job);
+        }));
+        if let Err(payload) = listed {
+            shared.record_panic(&*payload);
+            shared.queue.finish_job();
+            shared.cancel();
+            break;
+        }
         shared.queue.finish_job();
         shared.pacer.throttle(&|| shared.is_cancelled());
     }
     part.cpu_seconds = thread_cpu_seconds();
     part
+}
+
+/// The next node id, or `None` once the counter has reached its ceiling: it
+/// never wraps, so no two nodes are numbered alike.
+fn take_id(next_id: &AtomicU32) -> Option<u32> {
+    next_id
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(1))
+        .ok()
+}
+
+/// True when a name the OS returned holds a separator, so that joining it
+/// onto its parent would make several components and list somewhere else
+/// (such names are creatable on NTFS through WSL).
+fn name_is_a_path(name: &[u8]) -> bool {
+    name.iter().any(|byte| NAME_SEPARATORS.contains(byte))
 }
 
 /// Lists one directory and records what it holds.
@@ -579,7 +670,14 @@ fn process_dir(
         }
         let meta = &entry.meta;
         let name = listing.name(entry);
-        let id = shared.next_id.fetch_add(1, Ordering::AcqRel);
+        let Some(id) = take_id(&shared.next_id) else {
+            // The columns are full: a wrapped id would overwrite an earlier
+            // node's, so the walk ends here as a fault.
+            shared.record_fault(ID_CEILING_FAULT.to_owned());
+            shared.cancel();
+            pending.clear();
+            return;
+        };
         part.push(id, job.id, name, meta);
         shared.entries.fetch_add(1, Ordering::AcqRel);
         if meta.withheld {
@@ -590,9 +688,19 @@ fn process_dir(
         }
         if meta.kind == KIND_DIR {
             shared.dirs.fetch_add(1, Ordering::AcqRel);
-            let child = child_path(&job.path, name);
-            if !shared.never_descend.contains(&child) {
-                pending.push(DirJob { id, path: child });
+            if name_is_a_path(name) {
+                // Joined, the name would become several components and the
+                // walk would list somewhere else: refused, exactly as a
+                // directory that could not be read is, and never enqueued.
+                part.refusals.push(DirRefusal {
+                    node: id,
+                    why: Refusal::Unreadable,
+                });
+            } else {
+                let child = child_path(&job.path, name);
+                if !shared.never_descend.contains(&child) {
+                    pending.push(DirJob { id, path: child });
+                }
             }
         } else {
             shared.files.fetch_add(1, Ordering::AcqRel);
@@ -681,8 +789,21 @@ fn place<T: Copy>(dst: &mut [T], i: usize, src: &[T], j: usize, id: u32) -> Resu
     Ok(())
 }
 
+/// Marks slot `i` as node `id`'s, or says the id was seen before: two nodes
+/// with one id would write the same columns, the second over the first.
+fn claim(placed: &mut [bool], i: usize, id: u32) -> Result<(), WalkError> {
+    let total = placed.len();
+    let slot = placed.get_mut(i).ok_or_else(|| out_of_range(id, total))?;
+    if *slot {
+        return Err(WalkError::Internal(format!("node {id} was numbered twice")));
+    }
+    *slot = true;
+    Ok(())
+}
+
 /// Merges every part's columns into id order and lays the names out in one arena.
 fn merge(parts: &[Part], total: usize) -> Result<Merged, WalkError> {
+    let mut placed = vec![false; total];
     let mut parent = vec![0_u32; total];
     let mut kind = vec![0_u8; total];
     let mut flags = vec![0_u8; total];
@@ -694,6 +815,7 @@ fn merge(parts: &[Part], total: usize) -> Result<Merged, WalkError> {
     for part in parts {
         for (j, &id) in part.ids.iter().enumerate() {
             let i = id as usize;
+            claim(&mut placed, i, id)?;
             place(&mut parent, i, &part.parent, j, id)?;
             place(&mut kind, i, &part.kind, j, id)?;
             place(&mut flags, i, &part.flags, j, id)?;
@@ -810,4 +932,130 @@ fn collide_ids(parts: &[Part], hardlinks: &mut Vec<HardlinkRef>) {
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::MIN_BUFFER_BYTES;
+
+    /// A pacer that does nothing and allows one worker.
+    struct IdlePacer;
+
+    impl Pacer for IdlePacer {
+        fn on_worker_start(&self) {}
+        fn throttle(&self, _cancelled: &dyn Fn() -> bool) {}
+        fn worker_limit(&self) -> u32 {
+            1
+        }
+    }
+
+    /// A lister whose every directory holds one file.
+    struct OneFile;
+
+    impl Lister for OneFile {
+        fn stat_dir(&self, _path: &Path, _want_atime: bool) -> Result<Meta, Refusal> {
+            Ok(Meta::unknown(KIND_DIR))
+        }
+
+        fn list(
+            &self,
+            _dir: &Path,
+            _want_atime: bool,
+            buf: &mut ListBuffer,
+        ) -> Result<FastPath, Refusal> {
+            buf.listing.clear();
+            buf.listing.push(b"only.bin", Meta::unknown(KIND_FILE));
+            Ok(FastPath::Unavailable)
+        }
+    }
+
+    /// A part holding one node per `(id, parent)`.
+    fn part_with(nodes: &[(u32, u32)]) -> Part {
+        let mut part = Part::default();
+        for &(id, parent) in nodes {
+            part.push(id, parent, b"n", &Meta::unknown(KIND_FILE));
+        }
+        part
+    }
+
+    #[test]
+    fn merge_refuses_two_nodes_with_one_id() -> Result<(), String> {
+        let root = part_with(&[(0, 0)]);
+        let first = part_with(&[(1, 0)]);
+        let again = part_with(&[(1, 0)]);
+        match merge(&[root, first, again], 2) {
+            Err(WalkError::Internal(text)) if text.contains("numbered twice") => Ok(()),
+            Err(other) => Err(format!("expected the duplicate to be named, got {other:?}")),
+            Ok(merged) => Err(format!(
+                "merged {} nodes although an id was numbered twice",
+                merged.parent.len()
+            )),
+        }
+    }
+
+    #[test]
+    fn merge_places_distinct_ids() -> Result<(), String> {
+        let root = part_with(&[(0, 0)]);
+        let first = part_with(&[(1, 0)]);
+        let second = part_with(&[(2, 1)]);
+        let merged = merge(&[root, first, second], 3).map_err(|e| e.to_string())?;
+        assert_eq!(merged.parent, vec![0, 0, 1]);
+        Ok(())
+    }
+
+    #[test]
+    fn the_id_counter_stops_at_its_ceiling_instead_of_wrapping() {
+        let next_id = AtomicU32::new(u32::MAX - 1);
+        assert_eq!(take_id(&next_id), Some(u32::MAX - 1));
+        assert_eq!(take_id(&next_id), None);
+        assert_eq!(take_id(&next_id), None, "and stays there");
+        assert_eq!(next_id.load(Ordering::Acquire), u32::MAX);
+    }
+
+    #[test]
+    fn a_directory_past_the_id_ceiling_faults_and_cancels_the_walk() {
+        let shared = Shared::new(
+            WalkOptions::new("/fake"),
+            Arc::new(IdlePacer),
+            Arc::new(OneFile),
+        );
+        shared.next_id.store(u32::MAX, Ordering::Release);
+        let mut part = Part::default();
+        let mut buf = ListBuffer::new(MIN_BUFFER_BYTES);
+        let mut pending = Vec::new();
+        let job = DirJob {
+            id: 0,
+            path: PathBuf::from("/fake"),
+        };
+        process_dir(&shared, &mut part, &mut buf, &mut pending, &job);
+        assert_eq!(lock(&shared.fault).as_deref(), Some(ID_CEILING_FAULT));
+        assert!(shared.is_cancelled());
+        assert!(pending.is_empty());
+        assert!(part.ids.is_empty(), "nothing is numbered past the ceiling");
+        assert_eq!(shared.entries.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn panic_text_reads_string_and_str_payloads() {
+        let formatted: Box<dyn Any + Send> = Box::new(String::from("formatted"));
+        let literal: Box<dyn Any + Send> = Box::new("literal");
+        let other: Box<dyn Any + Send> = Box::new(7_u8);
+        assert_eq!(panic_text(&*formatted), "formatted");
+        assert_eq!(panic_text(&*literal), "literal");
+        assert_eq!(panic_text(&*other), "no message");
+    }
+
+    #[test]
+    fn a_name_is_a_path_when_it_holds_a_separator() {
+        assert!(name_is_a_path(b"evil/.."));
+        assert!(name_is_a_path(b"/"));
+        assert!(!name_is_a_path(b"plain"));
+        assert!(!name_is_a_path(b".."));
+        if cfg!(windows) {
+            assert!(name_is_a_path(b"evil\\.."));
+        } else {
+            assert!(!name_is_a_path(b"evil\\.."));
+        }
+    }
 }

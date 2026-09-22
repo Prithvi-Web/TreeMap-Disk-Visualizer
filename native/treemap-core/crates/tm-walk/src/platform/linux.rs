@@ -1,7 +1,7 @@
 //! Linux: raw `getdents64` into a reusable buffer for the names and `d_type`,
 //! then one `statx(AT_SYMLINK_NOFOLLOW | AT_STATX_DONT_SYNC)` per entry
 //! through the directory descriptor, with `fstatat` as the fallback when the
-//! kernel (or a seccomp filter) answers `ENOSYS`.
+//! kernel answers `ENOSYS` or a seccomp filter answers `EPERM`.
 //!
 //! The facts are what Node's `lstat` reports: kind from `st_mode`, `st_size`,
 //! `st_blocks * 512` as the allocation, `st_dev` (glibc's `makedev` of the
@@ -276,6 +276,16 @@ pub fn meta_from_statx(facts: &StatxFacts, want_atime: bool, d_type: u8) -> Meta
     }
 }
 
+/// True for an answer that means `statx` cannot be used at all, so the lister
+/// switches to `fstatat` for good: `ENOSYS` from a kernel without the call,
+/// and `EPERM` from a seccomp filter that rejects the call outright (Docker's
+/// default profile did, on older runtimes) — libuv treats the two alike for
+/// exactly that reason, and a real permission problem is `EACCES`, not `EPERM`.
+#[cfg(unix)]
+pub fn statx_unusable(errno: i32) -> bool {
+    errno == libc::ENOSYS || errno == libc::EPERM
+}
+
 #[cfg(target_os = "linux")]
 const _: () = {
     assert!(DT_UNKNOWN == libc::DT_UNKNOWN);
@@ -338,8 +348,8 @@ mod os {
         Ok(unsafe { OwnedFd::from_raw_fd(fd) })
     }
 
-    /// One `statx` (or, after `ENOSYS`, one `fstatat`) of `name` relative to
-    /// `dirfd`; `name` is NUL-terminated by the caller.
+    /// One `statx` (or, once `statx` proved unusable, one `fstatat`) of `name`
+    /// relative to `dirfd`; `name` is NUL-terminated by the caller.
     fn stat_entry(
         dirfd: i32,
         name: *const libc::c_char,
@@ -358,7 +368,7 @@ mod os {
                 return Ok(facts_from_statx(&stx));
             }
             let errno = last_errno();
-            if errno != libc::ENOSYS {
+            if !super::statx_unusable(errno) {
                 return Err(errno);
             }
             statx_unavailable.store(true, Ordering::Relaxed);
@@ -417,35 +427,44 @@ mod os {
         }
     }
 
-    /// The `getdents64` loop over `fd` into `buf.raw`, one `statx` per entry.
+    /// The `getdents64` loop over `fd` into `buf.raw`, one `statx` per entry;
+    /// the walk's stop flag is checked before each call and its heartbeat
+    /// bumped after each answer.
     fn list_getdents(
         fd: &OwnedFd,
         want_atime: bool,
         buf: &mut ListBuffer,
         statx_unavailable: &AtomicBool,
     ) -> Result<(), i32> {
-        let ListBuffer { raw, listing } = buf;
         let dirfd = fd.as_raw_fd();
         let mut name_c: Vec<u8> = Vec::new();
         loop {
-            // SAFETY: `dirfd` is an open directory; `raw` is a writable buffer of
-            // exactly `raw.len()` bytes; the kernel writes at most that many.
+            if buf.stopped() {
+                // The walk discards the listing on cancel, so which errno ends it is immaterial.
+                return Err(libc::ECANCELED);
+            }
+            // SAFETY: `dirfd` is an open directory; `buf.raw` is a writable buffer
+            // of exactly `buf.raw.len()` bytes; the kernel writes at most that many.
             let n = unsafe {
                 libc::syscall(
                     libc::SYS_getdents64,
                     dirfd,
-                    raw.as_mut_ptr().cast::<c_void>(),
-                    raw.len(),
+                    buf.raw.as_mut_ptr().cast::<c_void>(),
+                    buf.raw.len(),
                 )
             };
             if n < 0 {
                 return Err(last_errno());
             }
+            // Every answer beats, the empty one that ends the listing included,
+            // so even an empty directory beats once.
+            buf.beat();
             if n == 0 {
                 return Ok(());
             }
             let filled = usize::try_from(n).map_err(|_| libc::EIO)?;
-            let batch = raw.get(..filled).ok_or(libc::EIO)?;
+            let batch = buf.raw.get(..filled).ok_or(libc::EIO)?;
+            let listing = &mut buf.listing;
             parse_dirents(batch, &mut |d: &Dirent<'_>| {
                 name_c.clear();
                 name_c.extend_from_slice(d.name);
@@ -482,8 +501,8 @@ mod os {
         Ok(meta_from_statx(&facts, want_atime, super::DT_UNKNOWN))
     }
 
-    /// The Linux lister: `getdents64` and `statx`, with `fstatat` once the
-    /// kernel has answered `ENOSYS`.
+    /// The Linux lister: `getdents64` and `statx`, with `fstatat` once `statx`
+    /// was refused with `ENOSYS` or `EPERM` ([`super::statx_unusable`]).
     #[derive(Debug, Default)]
     pub struct LinuxLister {
         statx_unavailable: AtomicBool,
@@ -548,7 +567,7 @@ mod os {
                 reason: format!(
                     "getdents64 and {} listed the root directory ({} entries)",
                     if statx_unavailable.load(Ordering::Relaxed) {
-                        "fstatat (statx answered ENOSYS)"
+                        "fstatat (statx answered ENOSYS or EPERM)"
                     } else {
                         "statx"
                     },

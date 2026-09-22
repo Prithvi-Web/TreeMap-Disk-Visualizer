@@ -93,6 +93,9 @@ pub const ERROR_INVALID_NAME: u32 = 123;
 pub const ERROR_DIRECTORY: u32 = 267;
 /// `ERROR_ELEVATION_REQUIRED`.
 pub const ERROR_ELEVATION_REQUIRED: u32 = 740;
+/// `ERROR_OPERATION_ABORTED`: what a listing the walk cancelled between two
+/// batches ends with (the walk discards it, so the code is immaterial).
+pub const ERROR_OPERATION_ABORTED: u32 = 995;
 /// `ERROR_NOACCESS`.
 pub const ERROR_NOACCESS: u32 = 998;
 /// `ERROR_PRIVILEGE_NOT_HELD`.
@@ -161,7 +164,8 @@ fn fail(record: usize, reason: &'static str) -> ParseError {
 /// allocation size nor a file id (`None`).
 #[derive(Debug, Clone, Copy)]
 pub struct Record<'a> {
-    /// The name as UTF-16LE bytes, exactly as the record holds it, no NUL.
+    /// The name as UTF-16LE bytes, as the record holds it up to its first NUL
+    /// unit (a record's name has none; a corrupt one is cut there).
     pub name: &'a [u8],
     /// `FileAttributes`.
     pub attributes: u32,
@@ -263,6 +267,13 @@ pub fn parse_records(buf: &[u8], visit: &mut dyn FnMut(&Record<'_>)) -> Result<u
         if next != 0 && name_end > next {
             return Err(fail(index, "the name extends beyond the record"));
         }
+        // A NUL unit ends the name, as a NUL ends the name in a macOS record;
+        // units, not bytes: a zero byte can belong to a unit such as U+0100.
+        let name = name
+            .chunks_exact(2)
+            .position(|unit| unit == [0, 0])
+            .and_then(|nul| name.get(..nul.saturating_mul(2)))
+            .unwrap_or(name);
         let unreadable = || fail(index, "the record header is not addressable");
         let record = Record {
             name,
@@ -502,7 +513,13 @@ pub fn stage_record(
     let is_dir = attrs & FILE_ATTRIBUTE_DIRECTORY != 0;
     let is_reparse = attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0;
     let tag = if is_reparse { rec.reparse_tag } else { 0 };
-    let behind = if is_dir { 0.0 } else { rec.end_of_file as f64 };
+    // A negative size or allocation cannot come from the kernel (a corrupt
+    // record) and reads as 0, as the Linux fallback reads a negative `st_size`.
+    let behind = if is_dir {
+        0.0
+    } else {
+        rec.end_of_file.max(0) as f64
+    };
     let class = link_class(tag);
     let (kind, size) = match (is_reparse, class) {
         (false, _) if is_dir => (KIND_DIR, 0.0),
@@ -533,7 +550,7 @@ pub fn stage_record(
     let alloc = if kind == KIND_DIR {
         0.0
     } else {
-        rec.allocation.map_or(0.0, |a| a as f64)
+        rec.allocation.map_or(0.0, |a| a.max(0) as f64)
     };
     let withheld = kind != KIND_DIR && (rec.allocation.is_none() || rec.file_id_low.is_none());
     let flags = if is_dataless(attrs, tag) {
@@ -596,6 +613,12 @@ pub fn refusal_from_win32(code: u32) -> Refusal {
     }
 }
 
+/// True when `path` holds a NUL: a Win32 call given such a path would stop
+/// reading at the NUL and silently open the truncated path instead.
+pub fn has_embedded_nul(path: &str) -> bool {
+    path.bytes().any(|b| b == 0)
+}
+
 /// `path` with the `\\?\` prefix that lifts the 260-character limit: slashes
 /// become backslashes, `\\server\share` becomes `\\?\UNC\server\share`, a
 /// drive path gets `\\?\`, and a path that already has a `\\?\`, `\\.\` or
@@ -650,6 +673,7 @@ const _: () = {
     assert!(ERROR_INVALID_NAME == f::ERROR_INVALID_NAME);
     assert!(ERROR_DIRECTORY == f::ERROR_DIRECTORY);
     assert!(ERROR_ELEVATION_REQUIRED == f::ERROR_ELEVATION_REQUIRED);
+    assert!(ERROR_OPERATION_ABORTED == f::ERROR_OPERATION_ABORTED);
     assert!(ERROR_NOACCESS == f::ERROR_NOACCESS);
     assert!(ERROR_PRIVILEGE_NOT_HELD == f::ERROR_PRIVILEGE_NOT_HELD);
     assert!(ERROR_CANT_ACCESS_FILE == f::ERROR_CANT_ACCESS_FILE);
@@ -683,9 +707,10 @@ mod os {
 
     use super::{
         DirFacts, ERROR_CANT_ACCESS_FILE, ERROR_DIRECTORY, ERROR_FILE_NOT_FOUND,
-        ERROR_INVALID_DATA, ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES, ERROR_NOT_SUPPORTED,
-        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FLAG_DATALESS, KIND_DIR, KIND_FILE,
-        KIND_SYMLINK, LinkClass, Record, ReparseSource, filetime_ms, is_dataless, is_dot_entry,
+        ERROR_INVALID_DATA, ERROR_INVALID_NAME, ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES,
+        ERROR_NOT_SUPPORTED, ERROR_OPERATION_ABORTED, FILE_ATTRIBUTE_DIRECTORY,
+        FILE_ATTRIBUTE_REPARSE_POINT, FLAG_DATALESS, KIND_DIR, KIND_FILE, KIND_SYMLINK, LinkClass,
+        Record, ReparseSource, filetime_ms, has_embedded_nul, is_dataless, is_dot_entry,
         link_class, parse_records, prefixed_path, refusal_from_win32, reparse_target_len,
         stage_record,
     };
@@ -704,6 +729,12 @@ mod os {
     const SHARE_ALL: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
     /// FILETIME ticks per second, as a double.
     const TICKS_PER_SECOND_F64: f64 = 1e7;
+    /// Records per batch of the `FindNextFileW` fallback, which answers one
+    /// record per call: the walk's stop flag is checked before each batch and
+    /// its heartbeat bumped after it, as `list_extd` does per call, and the
+    /// last, partial batch beats when the search ends. The same cadence as
+    /// macOS's per-entry fallback.
+    const FIND_BATCH: usize = 256;
 
     /// An open file or directory handle, closed on drop.
     struct Handle(HANDLE);
@@ -736,12 +767,18 @@ mod os {
         std::io::Error::from_raw_os_error(i32::try_from(code).unwrap_or(i32::MAX))
     }
 
-    /// `path` as a NUL-terminated UTF-16 `\\?\` path.
-    fn wide(path: &Path) -> Vec<u16> {
-        prefixed_path(&path.to_string_lossy())
+    /// `path` as a NUL-terminated UTF-16 `\\?\` path, or `ERROR_INVALID_NAME`
+    /// when the path holds a NUL of its own: passed on, that NUL would end the
+    /// string early and the call would silently open a truncated path.
+    fn wide(path: &Path) -> Result<Vec<u16>, u32> {
+        let text = path.to_string_lossy();
+        if has_embedded_nul(&text) {
+            return Err(ERROR_INVALID_NAME);
+        }
+        Ok(prefixed_path(&text)
             .encode_utf16()
             .chain(std::iter::once(0))
-            .collect()
+            .collect())
     }
 
     fn join_wide(dir: &Path, name: &[u16]) -> PathBuf {
@@ -767,7 +804,7 @@ mod os {
     /// Opens `path` itself (never through a final reparse point unless
     /// `flags` says so) for `access`, sharing everything.
     fn open(path: &Path, access: u32, flags: u32) -> Result<Handle, u32> {
-        let name = wide(path);
+        let name = wide(path)?;
         // SAFETY: `name` is NUL-terminated and outlives the call; no security
         // attributes and no template handle are passed; OPEN_EXISTING creates nothing.
         let handle = unsafe {
@@ -958,32 +995,39 @@ mod os {
         Unsupported(u32),
     }
 
-    /// The `FileIdExtdDirectoryInfo` loop over `handle` into `buf.raw`, staging every batch.
+    /// The `FileIdExtdDirectoryInfo` loop over `handle` into `buf.raw`, staging
+    /// every batch; the walk's stop flag is checked before each call and its
+    /// heartbeat bumped after each answer.
     fn list_extd(
         handle: &Handle,
         dir: &Path,
         facts: DirFacts,
         buf: &mut ListBuffer,
     ) -> Result<Outcome, u32> {
-        let ListBuffer { raw, listing } = buf;
-        let size = u32::try_from(raw.len()).unwrap_or(u32::MAX);
+        let size = u32::try_from(buf.raw.len()).unwrap_or(u32::MAX);
         let mut class = FileIdExtdDirectoryRestartInfo;
         let mut first = true;
         loop {
+            if buf.stopped() {
+                // The walk discards the listing on cancel, so which error ends it is immaterial.
+                return Err(ERROR_OPERATION_ABORTED);
+            }
             // SAFETY: `handle` is an open directory; the pointer and `size`
-            // describe `raw`, writable for its whole length; the class is a
+            // describe `buf.raw`, writable for its whole length; the class is a
             // directory-listing class the call fills in place.
             let ok = unsafe {
                 GetFileInformationByHandleEx(
                     handle.0,
                     class,
-                    raw.as_mut_ptr().cast::<c_void>(),
+                    buf.raw.as_mut_ptr().cast::<c_void>(),
                     size,
                 )
             };
             if ok == 0 {
                 let code = last_error();
                 if code == ERROR_NO_MORE_FILES {
+                    // The end is an answer too: even an empty volume root beats once.
+                    buf.beat();
                     return Ok(Outcome::Listed);
                 }
                 if first && (code == ERROR_INVALID_PARAMETER || code == ERROR_NOT_SUPPORTED) {
@@ -991,19 +1035,26 @@ mod os {
                 }
                 return Err(code);
             }
+            buf.beat();
             first = false;
             class = FileIdExtdDirectoryInfo;
-            parse_records(raw, &mut |rec: &Record<'_>| {
+            let listing = &mut buf.listing;
+            parse_records(&buf.raw, &mut |rec: &Record<'_>| {
                 stage_record(rec, facts, dir, &FileReparse, listing);
             })
             .map_err(|_| ERROR_INVALID_DATA)?;
         }
     }
 
-    /// The fallback: `FindFirstFileExW` over `dir\*`, staging each record; no
-    /// allocation size and no file id, so every leaf is withheld.
-    fn list_find(dir: &Path, facts: DirFacts, out: &mut Listing) -> Result<(), u32> {
-        let pattern = wide(&dir.join("*"));
+    /// The fallback: `FindFirstFileExW` over `dir\*`, staging each record into
+    /// `buf.listing`; no allocation size and no file id, so every leaf is
+    /// withheld. The walk's two signals are paced by [`FIND_BATCH`].
+    fn list_find(dir: &Path, facts: DirFacts, buf: &mut ListBuffer) -> Result<(), u32> {
+        if buf.stopped() {
+            // The walk discards the listing on cancel, so which error ends it is immaterial.
+            return Err(ERROR_OPERATION_ABORTED);
+        }
+        let pattern = wide(&dir.join("*"))?;
         // SAFETY: all-zero is a valid WIN32_FIND_DATAW.
         let mut data: WIN32_FIND_DATAW = unsafe { std::mem::zeroed() };
         // SAFETY: `pattern` is NUL-terminated; the pointer is a writable
@@ -1021,8 +1072,9 @@ mod os {
         };
         if handle == INVALID_HANDLE_VALUE {
             let code = last_error();
-            // A volume root with nothing in it has no `.` either.
+            // A volume root with nothing in it has no `.` either; that answer beats too.
             return if code == ERROR_FILE_NOT_FOUND {
+                buf.beat();
                 Ok(())
             } else {
                 Err(code)
@@ -1030,13 +1082,25 @@ mod os {
         }
         let find = FindHandle(handle);
         let mut name = Vec::new();
+        let mut in_batch = 0_usize;
         loop {
-            stage_find(&data, &mut name, facts, dir, out);
+            stage_find(&data, &mut name, facts, dir, &mut buf.listing);
+            in_batch += 1;
+            if in_batch == FIND_BATCH {
+                buf.beat();
+                in_batch = 0;
+                if buf.stopped() {
+                    // As above: the walk discards a cancelled listing.
+                    return Err(ERROR_OPERATION_ABORTED);
+                }
+            }
             // SAFETY: `find` is an open search handle and `data` a writable WIN32_FIND_DATAW.
             let ok = unsafe { FindNextFileW(find.0, &raw mut data) };
             if ok == 0 {
                 let code = last_error();
                 return if code == ERROR_NO_MORE_FILES {
+                    // The end is an answer too: the last, partial batch beats here.
+                    buf.beat();
                     Ok(())
                 } else {
                     Err(code)
@@ -1115,7 +1179,7 @@ mod os {
                 Ok(Outcome::Unsupported(_code)) => {
                     drop(handle);
                     buf.listing.clear();
-                    list_find(dir, facts, &mut buf.listing).map_err(refusal_from_win32)?;
+                    list_find(dir, facts, buf).map_err(refusal_from_win32)?;
                     Ok(FastPath::PerEntry)
                 }
                 Err(code) => Err(refusal_from_win32(code)),

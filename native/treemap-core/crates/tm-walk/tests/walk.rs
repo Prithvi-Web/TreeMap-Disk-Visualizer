@@ -8,9 +8,10 @@
 //! and a real governor, and check the facts the legacy walker would record.
 
 use std::collections::{HashMap, VecDeque};
+use std::panic::panic_any;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -66,16 +67,37 @@ fn file_meta(size: f64, ino: f64, nlink: u32) -> Meta {
 
 type FakeListing = Result<Vec<(Vec<u8>, Meta)>, Refusal>;
 
+/// What the fake does for one particular directory before it answers.
+#[derive(Clone)]
+enum Special {
+    /// Panics with this message (a `String` payload) instead of answering.
+    Panic(String),
+    /// Sleeps this long first, whatever the walk's signals say: the shape of
+    /// a listing loop that does not read them.
+    Sleep(Duration),
+    /// Answers after `batches` batches `each` apart, beating after every
+    /// batch and returning `Unreadable` as soon as the stop flag is set: the
+    /// shape of a platform loop that honours the walk's signals.
+    Batches { batches: u32, each: Duration },
+}
+
 /// A scripted tree: every directory's listing (or its refusal), a per-listing
-/// delay, the answers `stat_dir` gives for the root, and counters the tests read.
+/// delay, what happens before particular directories answer, the answers
+/// `stat_dir` gives for the root, and counters the tests read.
 struct FakeTree {
     root: PathBuf,
     dirs: HashMap<PathBuf, FakeListing>,
+    specials: HashMap<PathBuf, Special>,
     root_stats: Mutex<VecDeque<Result<Meta, Refusal>>>,
+    /// Panics with the message on this (zero-based) `stat_dir` call.
+    stat_panic: Option<(u64, String)>,
     delay: Duration,
     fast_path: FastPath,
     next_ino: f64,
+    /// Every path `list` was asked for, in call order.
+    listed: Mutex<Vec<PathBuf>>,
     list_calls: AtomicU64,
+    stat_calls: AtomicU64,
     in_flight: AtomicU32,
     peak_in_flight: AtomicU32,
 }
@@ -88,11 +110,15 @@ impl FakeTree {
         Self {
             root,
             dirs,
+            specials: HashMap::new(),
             root_stats: Mutex::new(VecDeque::from([Ok(dir_meta())])),
+            stat_panic: None,
             delay: Duration::ZERO,
             fast_path: FastPath::Bulk,
             next_ino: 1_000.0,
+            listed: Mutex::new(Vec::new()),
             list_calls: AtomicU64::new(0),
+            stat_calls: AtomicU64::new(0),
             in_flight: AtomicU32::new(0),
             peak_in_flight: AtomicU32::new(0),
         }
@@ -115,6 +141,64 @@ impl FakeTree {
             .unwrap_or_else(PoisonError::into_inner)
             .push_back(answer);
         self
+    }
+
+    /// Scripts a panic with `message` on the `call`-th (zero-based) `stat_dir`:
+    /// call 0 is the check at start, call 1 the driver's re-check at the end.
+    fn stat_panic_on(mut self, call: u64, message: &str) -> Self {
+        self.stat_panic = Some((call, message.to_owned()));
+        self
+    }
+
+    /// Scripts what happens when `rel` is listed, before the fake answers.
+    fn special(&mut self, rel: &str, special: Special) {
+        let abs = self.abs(rel);
+        self.specials.insert(abs, special);
+    }
+
+    /// Every path `list` was asked for so far.
+    fn listed_paths(&self) -> Vec<PathBuf> {
+        self.listed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Listings in progress right now.
+    fn in_flight(&self) -> u32 {
+        self.in_flight.load(Ordering::SeqCst)
+    }
+
+    /// The listing itself, once the call has been counted: the scripted wait,
+    /// the per-listing delay, then the entries.
+    fn answer(&self, dir: &Path, buf: &mut ListBuffer) -> Result<FastPath, Refusal> {
+        match self.specials.get(dir) {
+            Some(Special::Sleep(for_how_long)) => thread::sleep(*for_how_long),
+            Some(Special::Batches { batches, each }) => {
+                for _ in 0..*batches {
+                    thread::sleep(*each);
+                    buf.beat();
+                    if buf.stopped() {
+                        return Err(Refusal::Unreadable);
+                    }
+                }
+            }
+            Some(Special::Panic(_)) | None => {}
+        }
+        if !self.delay.is_zero() {
+            thread::sleep(self.delay);
+        }
+        match self.dirs.get(dir) {
+            Some(Ok(entries)) => {
+                buf.listing.clear();
+                for (name, meta) in entries {
+                    buf.listing.push(name, *meta);
+                }
+                Ok(self.fast_path)
+            }
+            Some(Err(why)) => Err(*why),
+            None => Err(Refusal::Vanished),
+        }
     }
 
     fn abs(&self, rel: &str) -> PathBuf {
@@ -167,7 +251,15 @@ impl FakeTree {
 }
 
 impl Lister for FakeTree {
+    #[expect(
+        clippy::panic,
+        reason = "the fake panics on purpose: the walk under test must survive it"
+    )]
     fn stat_dir(&self, _path: &Path, _want_atime: bool) -> Result<Meta, Refusal> {
+        let call = self.stat_calls.fetch_add(1, Ordering::SeqCst);
+        if let Some((_, message)) = self.stat_panic.as_ref().filter(|(at, _)| *at == call) {
+            panic_any(message.clone());
+        }
         let mut answers = self
             .root_stats
             .lock()
@@ -179,6 +271,10 @@ impl Lister for FakeTree {
         }
     }
 
+    #[expect(
+        clippy::panic,
+        reason = "the fake panics on purpose: the walk under test must survive it"
+    )]
     fn list(
         &self,
         dir: &Path,
@@ -186,22 +282,16 @@ impl Lister for FakeTree {
         buf: &mut ListBuffer,
     ) -> Result<FastPath, Refusal> {
         self.list_calls.fetch_add(1, Ordering::SeqCst);
+        self.listed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(dir.to_path_buf());
+        if let Some(Special::Panic(message)) = self.specials.get(dir) {
+            panic_any(message.clone());
+        }
         let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak_in_flight.fetch_max(now, Ordering::SeqCst);
-        if !self.delay.is_zero() {
-            thread::sleep(self.delay);
-        }
-        let result = match self.dirs.get(dir) {
-            Some(Ok(entries)) => {
-                buf.listing.clear();
-                for (name, meta) in entries {
-                    buf.listing.push(name, *meta);
-                }
-                Ok(self.fast_path)
-            }
-            Some(Err(why)) => Err(*why),
-            None => Err(Refusal::Vanished),
-        };
+        let result = self.answer(dir, buf);
         self.in_flight.fetch_sub(1, Ordering::SeqCst);
         result
     }
@@ -212,6 +302,8 @@ struct FakePacer {
     limit: AtomicU32,
     throttles: AtomicU64,
     starts: AtomicU64,
+    /// Panics with the message when the worker thread of this name starts.
+    start_panic: Option<(String, String)>,
 }
 
 impl FakePacer {
@@ -220,13 +312,37 @@ impl FakePacer {
             limit: AtomicU32::new(limit),
             throttles: AtomicU64::new(0),
             starts: AtomicU64::new(0),
+            start_panic: None,
+        })
+    }
+
+    /// A pacer whose `on_worker_start` panics with `message` on the worker
+    /// thread named `thread` (the walk names them `tm-walk-worker-<index>`).
+    fn panicking_at_start(limit: u32, thread: &str, message: &str) -> Arc<Self> {
+        Arc::new(Self {
+            limit: AtomicU32::new(limit),
+            throttles: AtomicU64::new(0),
+            starts: AtomicU64::new(0),
+            start_panic: Some((thread.to_owned(), message.to_owned())),
         })
     }
 }
 
 impl Pacer for FakePacer {
+    #[expect(
+        clippy::panic,
+        reason = "the fake panics on purpose: the walk under test must survive it"
+    )]
     fn on_worker_start(&self) {
         self.starts.fetch_add(1, Ordering::SeqCst);
+        let here = thread::current();
+        if let Some((_, message)) = self
+            .start_panic
+            .as_ref()
+            .filter(|(name, _)| here.name() == Some(name.as_str()))
+        {
+            panic_any(message.clone());
+        }
     }
 
     fn throttle(&self, _cancelled: &dyn Fn() -> bool) {
@@ -373,6 +489,20 @@ fn wait_done(handle: &WalkHandle) -> TestResult {
     } else {
         Err("the walk did not finish in time".to_owned())
     }
+}
+
+/// `take()` on a helper thread, waited for at most `within`: a walk that
+/// never ends fails the test instead of hanging it.
+fn take_within(
+    handle: WalkHandle,
+    within: Duration,
+) -> Result<Result<WalkOutput, WalkError>, String> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(handle.take());
+    });
+    rx.recv_timeout(within)
+        .map_err(|_| format!("take() did not return within {within:?}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -755,6 +885,200 @@ fn the_fast_path_in_the_stats_is_the_root_listing_path() -> TestResult {
     let (_, out) = run(tree, options(Path::new("/fake")), 1)?;
     assert_eq!(out.stats.fast_path, FastPath::PerEntry);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Scripted tests: a worker that panics, a name that is a path, a cancel that
+// reaches a listing in progress
+// ---------------------------------------------------------------------------
+
+/// What the scripted `d7` panics with.
+const PANIC_MESSAGE: &str = "fixture panic: directory 7";
+/// How long a walk that ends in a fault may take to hand it over.
+const FAULT_WITHIN: Duration = Duration::from_secs(5);
+
+/// A wide tree whose `d7` panics when listed, walked by two workers: the
+/// handle's `take()` outcome, bounded, and the tree for its counters.
+fn walk_with_a_panicking_directory()
+-> Result<(Arc<FakeTree>, Result<WalkOutput, WalkError>), String> {
+    let mut tree = wide_tree(20, 5, Duration::from_millis(2));
+    tree.special("d7", Special::Panic(PANIC_MESSAGE.to_owned()));
+    let tree = Arc::new(tree);
+    let mut opts = options(Path::new("/fake"));
+    opts.max_workers = 2;
+    let handle = start_with(opts, FakePacer::new(2), tree.clone()).map_err(|e| e.to_string())?;
+    let result = take_within(handle, FAULT_WITHIN)?;
+    Ok((tree, result))
+}
+
+#[test]
+fn a_panic_inside_a_listing_ends_the_walk_instead_of_wedging_it() -> TestResult {
+    let (tree, result) = walk_with_a_panicking_directory()?;
+    match result {
+        Err(WalkError::Internal(_)) => {}
+        other => return Err(format!("expected Internal, got {other:?}")),
+    }
+    let calls = tree.calls();
+    thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        tree.calls(),
+        calls,
+        "nothing is listed once take() has returned"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_panic_message_is_in_the_internal_error() -> TestResult {
+    let (_, result) = walk_with_a_panicking_directory()?;
+    match result {
+        Err(WalkError::Internal(text)) if text.contains(PANIC_MESSAGE) => Ok(()),
+        Err(WalkError::Internal(text)) => Err(format!(
+            "the generic sentence alone is not enough: {text:?} does not name {PANIC_MESSAGE:?}"
+        )),
+        other => Err(format!("expected Internal, got {other:?}")),
+    }
+}
+
+#[test]
+fn a_panic_on_the_only_worker_still_ends_the_walk() -> TestResult {
+    let mut tree = wide_tree(20, 5, Duration::ZERO);
+    tree.special("d7", Special::Panic(PANIC_MESSAGE.to_owned()));
+    let tree = Arc::new(tree);
+    let mut opts = options(Path::new("/fake"));
+    opts.max_workers = 1;
+    let handle = start_with(opts, FakePacer::new(1), tree).map_err(|e| e.to_string())?;
+    match take_within(handle, FAULT_WITHIN)? {
+        Err(WalkError::Internal(text)) if text.contains(PANIC_MESSAGE) => Ok(()),
+        other => Err(format!("expected Internal naming the panic, got {other:?}")),
+    }
+}
+
+#[test]
+fn a_worker_that_dies_outside_a_listing_is_reported_after_every_worker_is_joined() -> TestResult {
+    // Worker 0 dies in `on_worker_start`, outside the listing; worker 1 does
+    // the work and is inside a 300 ms listing when the cancel lands. The
+    // driver joins worker 0 first and must go on to join worker 1 rather than
+    // report the dead thread while worker 1 is still listing.
+    let message = "fixture panic: worker 0 at start";
+    let mut tree = FakeTree::new("/fake");
+    let slow = tree.add_dir("", "slow");
+    tree.special(&slow, Special::Sleep(Duration::from_millis(300)));
+    tree.add_dir("", "d1");
+    tree.add_dir("", "d2");
+    let slow_abs = tree.abs(&slow);
+    let tree = Arc::new(tree);
+    let pacer = FakePacer::panicking_at_start(2, "tm-walk-worker-0", message);
+    let mut opts = options(Path::new("/fake"));
+    opts.max_workers = 2;
+    let handle = start_with(opts, pacer, tree.clone()).map_err(|e| e.to_string())?;
+    if !wait_until(Duration::from_secs(2), || {
+        tree.listed_paths().contains(&slow_abs)
+    }) {
+        return Err("the surviving worker never reached `slow`".to_owned());
+    }
+    handle.cancel();
+    let result = take_within(handle, FAULT_WITHIN)?;
+    assert_eq!(
+        tree.in_flight(),
+        0,
+        "take() returned while a worker was still listing: the join loop gave up at the dead thread"
+    );
+    match result {
+        Err(WalkError::Internal(text)) if text.contains(message) => Ok(()),
+        other => Err(format!("expected Internal naming the panic, got {other:?}")),
+    }
+}
+
+#[test]
+fn a_panic_on_the_driver_thread_is_reported_with_its_message() -> TestResult {
+    // The second `stat_dir` is the driver's end-of-walk re-check of the root.
+    let message = "fixture panic: the end-of-walk stat";
+    let mut tree = FakeTree::new("/fake").stat_panic_on(1, message);
+    tree.add_file("", "a.bin", 1.0);
+    let tree = Arc::new(tree);
+    let handle = start_with(options(Path::new("/fake")), FakePacer::new(1), tree)
+        .map_err(|e| e.to_string())?;
+    match take_within(handle, FAULT_WITHIN)? {
+        Err(WalkError::Internal(text))
+            if text.contains("the walk's driver thread panicked") && text.contains(message) =>
+        {
+            Ok(())
+        }
+        other => Err(format!(
+            "expected Internal naming the driver's panic, got {other:?}"
+        )),
+    }
+}
+
+#[test]
+fn a_directory_whose_name_is_a_path_is_refused_and_never_listed() -> TestResult {
+    let mut tree = FakeTree::new("/fake");
+    tree.add_entry("", b"evil/..", dir_meta());
+    let fine = tree.add_dir("", "fine");
+    tree.add_file(&fine, "after.bin", 1.0);
+    let (tree, out) = run(tree, options(Path::new("/fake")), 2)?;
+    let index = index_by_path(&out)?;
+    let evil = node(&index, &out, "evil/..")?;
+    assert_eq!(evil.kind(), KIND_DIR);
+    assert_eq!(evil.flags() & FLAG_REFUSED_DIR, FLAG_REFUSED_DIR);
+    assert_eq!(evil.children(), 0);
+    assert_eq!(
+        out.refusals,
+        vec![DirRefusal {
+            node: evil.id(),
+            why: Refusal::Unreadable,
+        }],
+        "refused exactly as an unreadable directory is"
+    );
+    assert!(index.contains_key("fine/after.bin"), "the walk went on");
+    assert_eq!(out.stats.dirs_listed, 2, "the root and `fine`");
+    let asked: Vec<String> = tree
+        .listed_paths()
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        asked.iter().all(|p| !p.contains("evil")),
+        "the lister was asked for a path built from the name: {asked:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn cancel_stops_a_listing_between_its_batches_and_the_heartbeat_advances_meanwhile() -> TestResult {
+    let mut tree = FakeTree::new("/fake");
+    let huge = tree.add_dir("", "huge");
+    tree.special(
+        &huge,
+        Special::Batches {
+            batches: 50,
+            each: Duration::from_millis(20),
+        },
+    );
+    let tree = Arc::new(tree);
+    let handle = start_with(options(Path::new("/fake")), FakePacer::new(2), tree)
+        .map_err(|e| e.to_string())?;
+    if !wait_until(Duration::from_secs(2), || handle.progress().heartbeat > 0) {
+        return Err("the heartbeat never advanced".to_owned());
+    }
+    let first = handle.progress().heartbeat;
+    if !wait_until(Duration::from_secs(2), || {
+        handle.progress().heartbeat > first
+    }) {
+        return Err(format!("the heartbeat stopped at {first}"));
+    }
+    assert!(
+        !handle.progress().done,
+        "a one-second listing is still going"
+    );
+    handle.cancel();
+    // The listing has 50 batches of 20 ms left at most; a cancel that reaches
+    // it between batches returns long before the second it would take.
+    match take_within(handle, Duration::from_millis(300))? {
+        Err(WalkError::Cancelled) => Ok(()),
+        other => Err(format!("expected Cancelled, got {other:?}")),
+    }
 }
 
 #[cfg(not(target_os = "macos"))]

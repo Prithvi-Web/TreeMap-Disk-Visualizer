@@ -364,6 +364,31 @@ fn atime_is_nan_when_not_wanted_or_not_returned_and_never_marks_the_entry() {
     );
 }
 
+/// The two answers after which the lister stops asking `statx` (libuv's rule).
+#[cfg(unix)]
+#[test]
+fn statx_is_unusable_after_enosys_and_after_eperm_but_not_after_any_other_errno() {
+    use tm_walk::platform::linux::statx_unusable;
+    assert!(statx_unusable(libc::ENOSYS), "a kernel without the call");
+    assert!(
+        statx_unusable(libc::EPERM),
+        "a seccomp filter (Docker's default profile) rejects the call with EPERM, not ENOSYS"
+    );
+    for errno in [
+        libc::EACCES,
+        libc::ENOENT,
+        libc::ENOTDIR,
+        libc::EINVAL,
+        libc::EIO,
+        0,
+    ] {
+        assert!(
+            !statx_unusable(errno),
+            "errno {errno} is that entry's problem, not the call's"
+        );
+    }
+}
+
 #[test]
 fn the_requested_mask_is_exactly_the_legacy_facts() {
     assert_eq!(

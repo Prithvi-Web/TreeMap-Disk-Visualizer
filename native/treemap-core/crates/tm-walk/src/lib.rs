@@ -36,7 +36,7 @@ pub mod walk;
 
 pub use output::{DirRefusal, HardlinkRef, Refusal, WalkOutput, WalkStats};
 pub use platform::{Entry, ListBuffer, Lister, Listing, Meta};
-pub use walk::{GovernorPacer, Pacer, Progress, WalkHandle, start_with};
+pub use walk::{GovernorPacer, Pacer, Progress, WalkHandle, panic_text, start_with};
 
 /// A regular file, socket, fifo or device: a leaf with its lstat size.
 pub const KIND_FILE: u8 = 0;
@@ -52,6 +52,8 @@ pub const FLAG_REFUSED_DIR: u8 = 2;
 pub const DEFAULT_BUFFER_BYTES: usize = 256 * 1024;
 /// The smallest listing buffer: room for one entry with the longest legal name.
 pub const MIN_BUFFER_BYTES: usize = 4096;
+/// The most a worker's listing buffer may be: a caller's larger request is clamped, never allocated.
+pub const MAX_BUFFER_BYTES: usize = 16 * 1024 * 1024;
 
 /// What to walk and how.
 #[derive(Clone, Debug, PartialEq, Eq)]

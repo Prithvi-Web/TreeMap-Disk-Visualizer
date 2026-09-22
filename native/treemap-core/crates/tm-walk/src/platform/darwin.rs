@@ -9,7 +9,9 @@
 //! length, the `attribute_set_t`, `ATTR_CMN_ERROR` (only when returned), then
 //! the common attributes in bit order and the file attributes in bit order,
 //! each 4-byte aligned. A field that was not returned is never read: the
-//! column keeps its "unknown" value and the entry is marked withheld.
+//! column keeps its "unknown" value and the entry is marked withheld — except
+//! the type, without which a directory would pass for a leaf: that entry is
+//! re-read with `fstatat` through the directory descriptor first.
 //!
 //! Three constants the `libc` crate (0.2.189) lacks are defined here from the
 //! SDK headers: `ATTR_CMN_ERROR`, `SF_DATALESS` and the `vtype` values.
@@ -113,7 +115,7 @@ impl Lister for DarwinLister {
                 Err(errno) => return Err(refusal_from_errno(errno)),
             }
         }
-        per_entry::list(fd, want_atime, &mut buf.listing).map_err(refusal_from_errno)?;
+        per_entry::list(fd, want_atime, buf).map_err(refusal_from_errno)?;
         Ok(FastPath::PerEntry)
     }
 }
@@ -161,17 +163,20 @@ fn list_bulk(fd: &OwnedFd, want_atime: bool, buf: &mut ListBuffer) -> Result<Bul
         fileattr: FILE_ATTRS,
         forkattr: 0,
     };
-    let ListBuffer { raw, listing } = buf;
     let mut first = true;
     loop {
+        if buf.stopped() {
+            // The walk discards the listing on cancel, so which errno ends it is immaterial.
+            return Err(libc::ECANCELED);
+        }
         // SAFETY: `fd` is an open directory; `attrs` is a valid attrlist for the
-        // call; `raw` is a writable buffer of exactly `raw.len()` bytes.
+        // call; `buf.raw` is a writable buffer of exactly `buf.raw.len()` bytes.
         let n = unsafe {
             libc::getattrlistbulk(
                 fd.as_raw_fd(),
                 (&raw mut attrs).cast::<c_void>(),
-                raw.as_mut_ptr().cast::<c_void>(),
-                raw.len(),
+                buf.raw.as_mut_ptr().cast::<c_void>(),
+                buf.raw.len(),
                 0,
             )
         };
@@ -182,14 +187,28 @@ fn list_bulk(fd: &OwnedFd, want_atime: bool, buf: &mut ListBuffer) -> Result<Bul
             }
             return Err(errno);
         }
+        // Every answer beats, the empty one that ends the listing included, so
+        // even an empty directory beats once.
+        buf.beat();
         if n == 0 {
-            restat_mount_points(fd, want_atime, listing);
+            restat_mount_points(fd, want_atime, &mut buf.listing);
             return Ok(BulkOutcome::Listed);
         }
         first = false;
         let count = usize::try_from(n).map_err(|_| libc::EIO)?;
-        parse_batch(raw, count, want_atime, listing).map_err(|_| libc::EIO)?;
+        parse_batch(&buf.raw, count, want_atime, &mut buf.listing, &mut |name| {
+            stat_at(fd, name, want_atime)
+        })
+        .map_err(|_| libc::EIO)?;
     }
+}
+
+/// The entry `name` of the open directory `fd`, as `lstat` on the joined path
+/// would report it; `None` when the stat failed (a name with a NUL cannot
+/// come from a listing, but is refused rather than truncated).
+fn stat_at(fd: &OwnedFd, name: &[u8], want_atime: bool) -> Option<Meta> {
+    let c = CString::new(name).ok()?;
+    per_entry::fstatat_meta(fd.as_raw_fd(), &c, want_atime).ok()
 }
 
 /// A mount point's bulk record describes the covered directory; `lstat` — and
@@ -204,26 +223,9 @@ fn restat_mount_points(fd: &OwnedFd, want_atime: bool, listing: &mut Listing) {
         let Some(name) = listing.names.get(entry.name.clone()) else {
             continue;
         };
-        let Ok(c) = CString::new(name) else {
+        let Some(meta) = stat_at(fd, name, want_atime) else {
             continue;
         };
-        // SAFETY: all-zero is a valid `stat` (plain integers).
-        let mut st: libc::stat = unsafe { std::mem::zeroed() };
-        // SAFETY: `fd` is an open directory, `c` a NUL-terminated name relative
-        // to it, `st` a writable stat; the flag stops a final symlink from being
-        // followed, so this reads exactly what lstat on the joined path reads.
-        let rc = unsafe {
-            libc::fstatat(
-                fd.as_raw_fd(),
-                c.as_ptr(),
-                &raw mut st,
-                libc::AT_SYMLINK_NOFOLLOW,
-            )
-        };
-        if rc != 0 {
-            continue;
-        }
-        let meta = per_entry::meta_from_stat(&st, want_atime);
         if let Some(entry) = listing.entries.get_mut(index) {
             entry.meta = meta;
         }
@@ -239,13 +241,20 @@ pub struct ParseError {
     pub reason: &'static str,
 }
 
+/// The stat behind an entry whose type the file system withheld: `fstatat`
+/// through the directory descriptor on the live path, a script in tests.
+/// `None` when that stat failed too.
+pub type TypeFallback<'a> = dyn FnMut(&[u8]) -> Option<Meta> + 'a;
+
 /// Parses `count` entries from `raw` (as `getattrlistbulk` left them) into `out`.
-/// Per-entry problems become counters; a malformed length is an error.
+/// Per-entry problems become counters; a malformed length is an error. An
+/// entry whose type was withheld is asked about through `type_fallback`.
 pub fn parse_batch(
     raw: &[u8],
     count: usize,
     want_atime: bool,
     out: &mut Listing,
+    type_fallback: &mut TypeFallback<'_>,
 ) -> Result<(), ParseError> {
     let mut pos = 0_usize;
     for index in 0..count {
@@ -270,7 +279,7 @@ pub fn parse_batch(
             entry: index,
             reason: "the entry range is not addressable",
         })?;
-        match parse_entry(entry, want_atime, out) {
+        match parse_entry(entry, want_atime, out, type_fallback) {
             Ok(()) | Err(Problem::Vanished) => {}
             Err(Problem::Denied) => out.denied_entries = out.denied_entries.saturating_add(1),
             Err(Problem::Unreadable) => {
@@ -353,7 +362,12 @@ impl Cursor<'_> {
 }
 
 /// One entry, through its own returned set.
-fn parse_entry(entry: &[u8], want_atime: bool, out: &mut Listing) -> Result<(), Problem> {
+fn parse_entry(
+    entry: &[u8],
+    want_atime: bool,
+    out: &mut Listing,
+    type_fallback: &mut TypeFallback<'_>,
+) -> Result<(), Problem> {
     let mut cur = Cursor { buf: entry, pos: 4 };
     let common = cur.u32()?;
     let _vol = cur.u32()?;
@@ -384,6 +398,16 @@ fn parse_entry(entry: &[u8], want_atime: bool, out: &mut Listing) -> Result<(), 
         .unwrap_or(name_raw);
     if name.is_empty() {
         return Err(Problem::Unreadable);
+    }
+    if common & libc::ATTR_CMN_OBJTYPE == 0 {
+        // Without the type a directory would be recorded as a leaf and its
+        // whole subtree silently lost: one stat through the directory
+        // descriptor says what the entry is, and every fact is taken from it.
+        // Only when that stat fails too does the entry stay a withheld leaf.
+        if let Some(meta) = type_fallback(name) {
+            out.push(name, meta);
+            return Ok(());
+        }
     }
 
     let mut withheld = false;

@@ -10,9 +10,10 @@
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::output::Refusal;
-use crate::{DEFAULT_BUFFER_BYTES, FastPath, MIN_BUFFER_BYTES, Probe, WalkError};
+use crate::{DEFAULT_BUFFER_BYTES, FastPath, MAX_BUFFER_BYTES, MIN_BUFFER_BYTES, Probe, WalkError};
 
 #[cfg(target_os = "macos")]
 pub mod darwin;
@@ -142,20 +143,57 @@ pub struct ListBuffer {
     pub raw: Vec<u8>,
     /// The staged entries of the current directory.
     pub listing: Listing,
+    /// The walk's cancel flag: a listing loop that sees it set returns between
+    /// two batches instead of issuing the next call, so a cancel does not wait
+    /// for a huge directory to finish listing.
+    pub stop: Arc<AtomicBool>,
+    /// Bumped once per batch the OS answered, across every worker: the caller
+    /// can tell a directory that is listing slowly from a call that never
+    /// returned, which the entry count alone cannot (entries are counted only
+    /// once a directory's listing is complete).
+    pub heartbeat: Arc<AtomicU64>,
 }
 
 impl ListBuffer {
-    /// A buffer of `buffer_bytes` (0 = [`DEFAULT_BUFFER_BYTES`], never below [`MIN_BUFFER_BYTES`]).
+    /// A buffer of `buffer_bytes` (0 = [`DEFAULT_BUFFER_BYTES`], clamped to
+    /// [`MIN_BUFFER_BYTES`]..=[`MAX_BUFFER_BYTES`]) with signals nobody else
+    /// holds — a probe's, or a test's.
     pub fn new(buffer_bytes: usize) -> Self {
+        Self::with_signals(
+            buffer_bytes,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
+        )
+    }
+
+    /// A buffer whose `stop` and `heartbeat` are the walk's own, shared by
+    /// every worker.
+    pub fn with_signals(
+        buffer_bytes: usize,
+        stop: Arc<AtomicBool>,
+        heartbeat: Arc<AtomicU64>,
+    ) -> Self {
         let bytes = if buffer_bytes == 0 {
             DEFAULT_BUFFER_BYTES
         } else {
-            buffer_bytes.max(MIN_BUFFER_BYTES)
+            buffer_bytes.clamp(MIN_BUFFER_BYTES, MAX_BUFFER_BYTES)
         };
         Self {
             raw: vec![0; bytes],
             listing: Listing::default(),
+            stop,
+            heartbeat,
         }
+    }
+
+    /// True once the walk was cancelled: stop between batches.
+    pub fn stopped(&self) -> bool {
+        self.stop.load(Ordering::Acquire)
+    }
+
+    /// One more batch answered by the OS.
+    pub fn beat(&self) {
+        self.heartbeat.fetch_add(1, Ordering::AcqRel);
     }
 }
 

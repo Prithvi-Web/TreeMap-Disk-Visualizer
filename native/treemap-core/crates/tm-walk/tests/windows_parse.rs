@@ -19,7 +19,7 @@ use tm_walk::platform::windows::{
     FILE_ATTRIBUTE_REPARSE_POINT, FILETIME_UNIX_EPOCH, IO_REPARSE_TAG_APPEXECLINK,
     IO_REPARSE_TAG_CLOUD, IO_REPARSE_TAG_LX_SYMLINK, IO_REPARSE_TAG_MOUNT_POINT,
     IO_REPARSE_TAG_SYMLINK, IO_REPARSE_TAG_WOF, RECORD_HEADER_BYTES, Record, ReparseSource,
-    filetime_ms, filetime_to_timespec, is_dataless, parse_records, prefixed_path,
+    filetime_ms, filetime_to_timespec, has_embedded_nul, is_dataless, parse_records, prefixed_path,
     refusal_from_win32, reparse_target_len, stage_record,
 };
 use tm_walk::platform::{ListBuffer, Lister, Listing, Meta, time_ms};
@@ -575,6 +575,79 @@ fn a_record_without_an_id_or_an_allocation_is_withheld() -> TestResult {
     assert_eq!(a.alloc.to_bits(), 0.0_f64.to_bits());
     assert_eq!(a.ino.to_bits(), 0.0_f64.to_bits());
     Ok(())
+}
+
+#[test]
+fn a_negative_size_or_allocation_in_a_corrupt_record_clamps_to_zero() -> TestResult {
+    let mut bad = file("bad.bin", -1);
+    bad.alloc = -5;
+    // A followed reparse point is sized by the object behind it: the same clamp.
+    let mut behind = file("compressed.dll", -7);
+    behind.attributes = FILE_ATTRIBUTE_REPARSE_POINT;
+    behind.tag = IO_REPARSE_TAG_WOF;
+    let listing = staged(
+        &[bad, behind, file("fine.bin", 3)],
+        &FakeReparse::default(),
+        false,
+    )?;
+    let map = by_name(&listing);
+    let b = entry(&map, "bad.bin")?;
+    assert_eq!(
+        b.size.to_bits(),
+        0.0_f64.to_bits(),
+        "a size the kernel could not have written reads as 0, never as a negative byte count"
+    );
+    assert_eq!(b.alloc.to_bits(), 0.0_f64.to_bits());
+    assert!(
+        !b.withheld,
+        "clamped, not withheld: the record was answered, as the Linux fallback treats a negative st_size"
+    );
+    assert_eq!(
+        entry(&map, "compressed.dll")?.size.to_bits(),
+        0.0_f64.to_bits()
+    );
+    assert_eq!(entry(&map, "fine.bin")?.size.to_bits(), 3.0_f64.to_bits());
+    Ok(())
+}
+
+#[test]
+fn a_name_is_cut_at_its_first_nul_unit_and_only_at_a_unit_boundary() -> TestResult {
+    // `A\u{4100}` is the bytes 41 00 00 41: two zero bytes that straddle a
+    // unit boundary are not a NUL unit, so nothing is cut there.
+    let entries = [file("ab\0cd", 1), file("A\u{4100}", 2)];
+    let listing = staged(&entries, &FakeReparse::default(), false)?;
+    let map = by_name(&listing);
+    assert!(
+        entry(&map, "ab").is_ok(),
+        "cut at the NUL unit, as a macOS record's name is cut at its NUL: {:?}",
+        map.keys()
+    );
+    assert!(
+        entry(&map, "A\u{4100}").is_ok(),
+        "no unit is NUL: {:?}",
+        map.keys()
+    );
+    assert_eq!(map.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn has_embedded_nul_finds_a_nul_anywhere_in_the_path() {
+    assert!(!has_embedded_nul("C:\\Users\\x"));
+    assert!(!has_embedded_nul(""));
+    assert!(
+        has_embedded_nul("C:\\Users\\x\0y"),
+        "a NUL in the middle would end the wide string early and open a truncated path"
+    );
+    assert!(has_embedded_nul("\0"));
+    assert!(
+        has_embedded_nul("C:\\Users\\x\0"),
+        "a trailing one too: the caller adds the terminator itself"
+    );
+    assert!(
+        !has_embedded_nul("C:\\Users\\\u{100}"),
+        "a code point whose UTF-16 unit has a zero byte is not a NUL"
+    );
 }
 
 #[test]
