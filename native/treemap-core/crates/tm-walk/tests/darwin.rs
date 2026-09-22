@@ -727,6 +727,16 @@ fn detach(mountpoint: &Path) {
         .output();
 }
 
+/// Detaches on drop, so a failing assertion cannot leave the image mounted
+/// (two were found mounted after a red mutant run of the test below).
+struct Mounted(PathBuf);
+
+impl Drop for Mounted {
+    fn drop(&mut self) {
+        detach(&self.0);
+    }
+}
+
 #[test]
 fn a_mount_point_carries_the_mounted_roots_attributes_as_lstat_reports_them() -> TestResult {
     let fx = Fixture::new("mount")?;
@@ -736,7 +746,8 @@ fn a_mount_point_carries_the_mounted_roots_attributes_as_lstat_reports_them() ->
     let Some(_image) = attach_image(&fx.root, &mountpoint)? else {
         return Ok(());
     };
-    let result = (|| -> TestResult {
+    let _mounted = Mounted(mountpoint.clone());
+    (|| -> TestResult {
         let expected = tm_walk::platform::per_entry::lstat_meta(&mountpoint, true)
             .map_err(|e| format!("lstat: errno {e}"))?;
         let mut buf = ListBuffer::new(0);
@@ -776,9 +787,7 @@ fn a_mount_point_carries_the_mounted_roots_attributes_as_lstat_reports_them() ->
             "the second look leaves no pending mount points behind"
         );
         Ok(())
-    })();
-    detach(&mountpoint);
-    result
+    })()
 }
 
 #[test]
