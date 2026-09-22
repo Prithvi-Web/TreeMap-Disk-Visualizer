@@ -1246,7 +1246,8 @@ mod live {
         let fx = five_thousand("cancel-governor-paused")?;
         let gov = governor();
         gov.pause();
-        let handle = start(WalkOptions::new(&fx.root), Arc::clone(&gov)).map_err(|e| e.to_string())?;
+        let handle =
+            start(WalkOptions::new(&fx.root), Arc::clone(&gov)).map_err(|e| e.to_string())?;
         thread::sleep(Duration::from_millis(50));
         let asked = Instant::now();
         handle.cancel();
@@ -1267,7 +1268,10 @@ mod live {
                 out.stats.entries
             )),
             Ok(Err(other)) => Err(format!("expected Cancelled, got {other:?}")),
-            Err(_) => Err("take() did not return within 2 s: the cancel waited on the paused governor".to_owned()),
+            Err(_) => Err(
+                "take() did not return within 2 s: the cancel waited on the paused governor"
+                    .to_owned(),
+            ),
         }
     }
 

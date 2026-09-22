@@ -217,9 +217,12 @@ fn rusage_cpu_seconds() -> Option<f64> {
     if rc != 0 {
         return None;
     }
-    // tv_usec is i32 on macOS and i64 on Linux; i64::from takes both.
+    // tv_usec is i32 on macOS and i64 on Linux. Widening through i128 is a
+    // real conversion on both (so clippy's useless_conversion stays quiet on
+    // Linux), and f64 has no From<i128>, so the final cast trips no
+    // cast_lossless on macOS either.
     let seconds = |tv: libc::timeval| {
-        tv.tv_sec as f64 + i64::from(tv.tv_usec) as f64 / MICROSECONDS_PER_SECOND
+        tv.tv_sec as f64 + i128::from(tv.tv_usec) as f64 / MICROSECONDS_PER_SECOND
     };
     Some(seconds(usage.ru_utime) + seconds(usage.ru_stime))
 }
