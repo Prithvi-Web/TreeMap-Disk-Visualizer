@@ -18,9 +18,11 @@
 //! scan. A scan (Phase 3) runs on `tm-walk`'s own threads behind a handle:
 //! `scanStart` returns the handle, Node polls `scanPoll` at the SSE cadence (atomics
 //! on this side, no callback and no `ThreadsafeFunction`, decision P3-1),
-//! `scanPause`/`scanResume`/`scanCancel` reach the handle, and `scanTake` moves the
-//! columns into typed arrays without copying and frees the handle. The walk obeys
-//! the same process-wide governor `governorConfigure` drives.
+//! `scanPause`/`scanResume`/`scanCancel` reach the handle, and `scanTake` — once a
+//! poll has reported `done`; a walk still running is refused, never joined on
+//! Node's thread — moves the columns into typed arrays without copying and frees
+//! the handle. The walk obeys the same process-wide governor `governorConfigure`
+//! drives.
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -343,7 +345,8 @@ struct Finished {
 
 /// One walk as the table holds it: running behind its handle, or finished. The
 /// poll that first sees `done` takes the handle so that a failure is reported by
-/// `scanPoll` and thrown by `scanTake`; `scanTake` removes the slot either way.
+/// `scanPoll` and thrown by `scanTake`; `scanTake` removes the slot either way,
+/// but only once the walk is done — a running one is refused and stays.
 enum Slot {
     Running(WalkHandle),
     Finished(Box<Finished>),
@@ -424,7 +427,10 @@ fn stats_json(stats: &WalkStats) -> Value {
     })
 }
 
-/// The progress object `scanPoll` returns.
+/// The progress object `scanPoll` returns. `heartbeat` is the walk's own count of
+/// listing batches the OS has answered, across every worker: it advances while one
+/// huge directory is still listing, when `entries` cannot, so Node can tell a slow
+/// walk from a wedged one.
 fn progress_json(progress: &Progress, error: Option<&str>) -> Value {
     json!({
         "done": progress.done,
@@ -433,6 +439,7 @@ fn progress_json(progress: &Progress, error: Option<&str>) -> Value {
         "dirs": progress.dirs,
         "files": progress.files,
         "bytes": progress.bytes,
+        "heartbeat": progress.heartbeat,
         "currentPath": progress.current_path,
     })
 }
@@ -567,8 +574,8 @@ pub fn scan_start(root: String, opts: Option<Value>) -> Result<u32> {
 }
 
 /// The walk's progress right now: `{ done, error, entries, dirs, files, bytes,
-/// currentPath }`. Once the walk is done its outcome is kept for `scanTake`, and
-/// `error` says how it ended when it did not produce an output.
+/// heartbeat, currentPath }`. Once the walk is done its outcome is kept for
+/// `scanTake`, and `error` says how it ended when it did not produce an output.
 #[napi(js_name = "scanPoll", catch_unwind)]
 pub fn scan_poll(handle: u32) -> Result<Value> {
     let mut slots = lock(&scans().slots);
@@ -632,21 +639,40 @@ pub fn scan_resume(handle: u32) -> Result<()> {
     with_running(handle, WalkHandle::resume)
 }
 
-/// Ends the walk; `scanTake` then throws the cancellation and frees the handle.
+/// Ends the walk at the workers' next check; a poll then reports `done`, and
+/// `scanTake` throws the cancellation and frees the handle.
 #[napi(js_name = "scanCancel", catch_unwind)]
 pub fn scan_cancel(handle: u32) -> Result<()> {
     with_running(handle, WalkHandle::cancel)
 }
 
-/// The walk's output as columns. Blocks until the walk is done (poll first), then
-/// frees the handle — a walk that failed or was cancelled throws its reason and is
-/// freed too. An unknown handle is refused.
+/// The refusal for a take of a walk that has not reported done.
+const STILL_RUNNING: &str =
+    "the walk is still running: poll it until done — cancel first to end it — before taking it";
+
+/// The walk's output as columns, once the walk is done (poll until `done`), and
+/// the handle freed — a walk that failed or was cancelled throws its reason and is
+/// freed too. A walk still running is refused and kept, never joined: joining it
+/// would block the caller's thread — Node's main thread — until every worker
+/// returned, and a worker wedged inside a listing syscall on a dead network mount
+/// never does. An unknown handle is refused.
 #[napi(js_name = "scanTake", catch_unwind)]
 pub fn scan_take(handle: u32) -> Result<WalkResult> {
-    let slot = lock(&scans().slots)
-        .remove(&handle)
-        .ok_or_else(|| unknown_handle(handle))?;
+    let slot = {
+        let mut slots = lock(&scans().slots);
+        let slot = slots
+            .remove(&handle)
+            .ok_or_else(|| unknown_handle(handle))?;
+        if let Slot::Running(walk) = &slot
+            && !walk.progress().done
+        {
+            slots.insert(handle, slot);
+            return Err(refuse(STILL_RUNNING));
+        }
+        slot
+    };
     let result = match slot {
+        // Done: the driver has finished, so the join returns at once.
         Slot::Running(walk) => walk.take(),
         Slot::Finished(finished) => finished.result,
     };

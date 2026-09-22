@@ -6,7 +6,7 @@ import { Flag, ScanStore, joinPath } from '../scanStore';
 import { cloudProviderFor } from '../cloudFolders';
 import { noteRefused } from '../scanRefusals';
 import { neverDescendPaths } from '../../utils/mountBoundaries';
-import { isScanPaused, registerPausable, unregisterPausable } from '../engineBudget';
+import { budgetSnapshot, isScanPaused, registerPausable, unregisterPausable } from '../engineBudget';
 import { platform } from '../../platform';
 import type { EngineSetting, ScanResult } from '../../models/types';
 
@@ -50,6 +50,19 @@ export const NATIVE_POLL_MS = 100;
  * a couple of milliseconds instead of waiting out a whole cadence.
  */
 export const NATIVE_POLL_FIRST_MS = 1;
+/**
+ * How long the cancel path waits for a cancelled walk to report done before
+ * abandoning its handle to the module (see `settle`).
+ */
+export const NATIVE_CANCEL_DEADLINE_MS = 5_000;
+/**
+ * How long a native walk may show nothing new — no entry, no heartbeat, and
+ * neither the scan's pause gate nor a governor hold holding it — before it is
+ * a stall the legacy chain retries. The same bound as the legacy walker's
+ * `READDIR_DEADLINE_MS` per directory (src/services/diskScanner.ts): a dead
+ * network mount costs a bounded time, not the whole scan.
+ */
+export const NATIVE_STALL_MS = 30_000;
 /** What `fastPath` says when the native listing was probed and refused (P3-9). */
 export const FAST_PATH_UNAVAILABLE = 'unavailable';
 /** The scan surface a module must export to walk a folder. */
@@ -124,12 +137,15 @@ export function nativeRule(input: Omit<EligibilityInput, 'native'>): string | nu
 export function nativeEligibility(rootPath: string, input: EligibilityInput): Eligibility {
   const rule = nativeRule(input);
   if (rule !== null) return { ok: false, reason: rule, fallback: false, probeRefused: false };
+  // A forced setting that could not be honoured says so, as the rules above
+  // and gdu's fallback do: the stats must show the setting was not ignored.
+  const asked = input.forced === 'native' ? 'the Scan engine setting asks for the native engine, but ' : '';
   if (!input.native.available) {
-    return { ok: false, reason: `the native module is not loaded: ${input.native.reason}`, fallback: true, probeRefused: false };
+    return { ok: false, reason: `${asked}the native module is not loaded: ${input.native.reason}`, fallback: true, probeRefused: false };
   }
   const probe = input.native.probe;
   if (probe.fastPath === FAST_PATH_UNAVAILABLE) {
-    return { ok: false, reason: `the native listing is unavailable for ${rootPath}: ${probe.reason}`, fallback: true, probeRefused: true };
+    return { ok: false, reason: `${asked}the native listing is unavailable for ${rootPath}: ${probe.reason}`, fallback: true, probeRefused: true };
   }
   const chosen = input.forced === 'native'
     ? 'the native engine was chosen by the Scan engine setting'
@@ -367,10 +383,73 @@ function withErrno(err: unknown, rootPath: string): Error {
   return e;
 }
 
-/** Take a handle that was cancelled or failed, so the module frees it; the refusal it throws is the point. */
-function release(module: ScanModule, handle: number): void {
+/** The deadlines the walk loop reads and the clock it reads them by. */
+interface WalkTiming {
+  cancelDeadlineMs: number;
+  stallMs: number;
+  now: () => number;
+}
+
+const WALL_CLOCK: WalkTiming = { cancelDeadlineMs: NATIVE_CANCEL_DEADLINE_MS, stallMs: NATIVE_STALL_MS, now: () => Date.now() };
+let timing: WalkTiming = WALL_CLOCK;
+
+/** Test-only: shorter deadlines and a clock of the test's own; null restores the constants and the wall clock. */
+export function setNativeWalkTimingForTests(over: Partial<WalkTiming> | null): void {
+  timing = over ? { ...WALL_CLOCK, ...over } : WALL_CLOCK;
+}
+
+/**
+ * Whether the governor is holding every worker in its throttle — critical
+ * heat, or a caller's `governorPause()` — which the walk's workers obey too.
+ * Read only when a poll showed nothing new, so the common case never asks.
+ */
+function governorHeld(): boolean {
+  return budgetSnapshot().snapshot?.paused === true;
+}
+
+/**
+ * End a walk and free its handle without ever blocking on it: cancel, poll
+ * until the walk reports done, then take it — the cancellation the take
+ * throws is the point, the refusal is what frees the handle.
+ *
+ * A walk that has not reported done by NATIVE_CANCEL_DEADLINE_MS is
+ * abandoned. A worker wedged inside a directory-listing syscall (a dead SMB,
+ * NFS or FUSE mount) cannot be interrupted from user space, and a take of a
+ * walk still running would join its driver thread on this — Node's main —
+ * thread, freezing the whole app for as long as the kernel holds the worker.
+ * So the thread is abandoned in the module rather than the app frozen: the
+ * slot stays in the module's table, with its threads, for the life of the
+ * process, and the app goes on without it.
+ *
+ * Nothing here throws. An unknown handle (already taken, or never started)
+ * has nothing to free, and the caller's own outcome — a cancel, a stall, an
+ * error mid-walk — is the one that matters.
+ */
+async function settle(mod: ScanModule, handle: number): Promise<void> {
   try {
-    module.scanTake(handle);
+    mod.scanCancel(handle);
+  } catch {
+    return; // an unknown handle: nothing to free
+  }
+  const t0 = timing.now();
+  let interval = NATIVE_POLL_FIRST_MS;
+  for (;;) {
+    let done: boolean;
+    try {
+      done = mod.scanPoll(handle).done;
+    } catch {
+      return; // the handle is gone meanwhile: nothing to free
+    }
+    if (done) break;
+    if (timing.now() - t0 >= timing.cancelDeadlineMs) {
+      console.warn(`[treemap] the native walk did not answer a cancel within ${timing.cancelDeadlineMs / 1000} s; its handle and threads are left to the module`);
+      return;
+    }
+    await sleep(interval);
+    interval = Math.min(NATIVE_POLL_MS, interval * 2);
+  }
+  try {
+    mod.scanTake(handle);
   } catch {
     /* a cancelled or failed walk refuses to be taken — and is freed by the refusal */
   }
@@ -381,16 +460,20 @@ function release(module: ScanModule, handle: number): void {
  * created): start, then poll — from NATIVE_POLL_FIRST_MS doubling up to
  * NATIVE_POLL_MS — updating `scan.scanned` and
  * `scan.currentPath`, honouring `scan.cancelled` (the walk is cancelled and
- * its handle freed) and the Phase 2 pause gate (the scan's `Pausable` pauses
- * the handle the instant the gate closes, and the poll loop re-checks the
- * gate, so neither path can be missed), then take the columns, ingest them,
- * finalize and sum. `scan.cpuSeconds` is the walk's own thread CPU plus the
- * ingest's `process.cpuUsage()` delta, or null where the walk could not
- * measure its own (a platform without a thread clock), never zero.
+ * its handle settled, see `settle`) and the Phase 2 pause gate (the scan's
+ * `Pausable` pauses the handle the instant the gate closes, and the poll
+ * loop re-checks the gate, so neither path can be missed), then take the
+ * columns, ingest them, finalize and sum. `scan.cpuSeconds` is the walk's
+ * own thread CPU plus the ingest's `process.cpuUsage()` delta, or null where
+ * the walk could not measure its own (a platform without a thread clock),
+ * never zero.
  *
  * Throws what the walk threw: a root refusal carries Node's errno code so the
  * caller can tell the scan's own failure from one the legacy chain should
- * retry.
+ * retry. A walk that shows nothing new for NATIVE_STALL_MS — no entry, no
+ * heartbeat, no pause holding it — is settled and thrown as a stall, which
+ * the caller turns into a fallback. A module that throws mid-walk has its
+ * handle settled first, so nothing is leaked behind the error.
  */
 export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath: string, module?: ScanModule): Promise<void> {
   const mod = module ?? mustScanModule();
@@ -402,29 +485,59 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
     if (want) mod.scanPause(handle);
     else mod.scanResume(handle);
   };
+  let settled = false;
+  const settleOnce = async (): Promise<void> => {
+    if (settled) return;
+    settled = true;
+    await settle(mod, handle);
+  };
   registerPausable(scan.scanId, { pause: () => setPaused(true), resume: () => setPaused(false) });
+  // When the walk last showed something new. `entries` counts a directory
+  // only once its listing completes, so one huge directory would look stalled
+  // for the length of its listing; `heartbeat` — batches the OS has answered,
+  // across every worker — advances through it. A walk the scan's pause gate
+  // or a governor hold (critical heat, governorPause) is holding is not
+  // stalled: it was told to wait.
+  let lastProgressAt = timing.now();
+  let lastEntries = -1;
+  let lastHeartbeat = -1;
   try {
     let interval = NATIVE_POLL_FIRST_MS;
     for (;;) {
       if (scan.cancelled) {
-        mod.scanCancel(handle);
-        release(mod, handle);
+        await settleOnce();
         return;
       }
-      setPaused(isScanPaused(scan.scanId));
+      const paused = isScanPaused(scan.scanId);
+      setPaused(paused);
       const progress = mod.scanPoll(handle);
       scan.scanned = 1 + progress.entries;
       if (progress.currentPath) scan.currentPath = progress.currentPath;
       if (progress.done) break;
+      const now = timing.now();
+      const moved = progress.entries !== lastEntries || progress.heartbeat !== lastHeartbeat;
+      lastEntries = progress.entries;
+      lastHeartbeat = progress.heartbeat;
+      if (moved || paused || nativePaused || governorHeld()) lastProgressAt = now;
+      if (now - lastProgressAt > timing.stallMs) {
+        // The same net as the legacy walker's READDIR_DEADLINE_MS: a wedged
+        // mount is a bounded cost and a fallback, not a scan that never ends.
+        await settleOnce();
+        throw new Error(`the native walk made no progress for ${timing.stallMs / 1000} s at ${scan.currentPath ?? rootPath}`);
+      }
       await sleep(interval);
       interval = Math.min(NATIVE_POLL_MS, interval * 2);
     }
+  } catch (err: unknown) {
+    // A module that threw mid-walk (a poll, a pause, a resume) still holds a
+    // handle with threads behind it: settle it before the error propagates.
+    await settleOnce();
+    throw err;
   } finally {
     unregisterPausable(scan.scanId);
   }
   if (scan.cancelled) {
-    mod.scanCancel(handle);
-    release(mod, handle);
+    await settleOnce();
     return;
   }
   let cols: WalkResult;

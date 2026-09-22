@@ -29,7 +29,9 @@ import {
   KIND_DIR,
   KIND_FILE,
   KIND_SYMLINK,
+  NATIVE_CANCEL_DEADLINE_MS,
   NATIVE_POLL_MS,
+  NATIVE_STALL_MS,
   REFUSAL_DENIED,
   REFUSAL_UNREADABLE,
   REFUSAL_VANISHED,
@@ -37,6 +39,8 @@ import {
   ingestColumns,
   nativeEligibility,
   nativeScanModule,
+  runNativeWalk,
+  setNativeWalkTimingForTests,
 } from '../src/services/scan/nativeEngine';
 import { statToInput } from '../src/services/scan/nodeInput';
 import { PackedScanStore, storeOf } from '../src/services/scanStore';
@@ -66,11 +70,19 @@ import type { EngineSetting, ScanResult } from '../src/models/types';
  *     names the missing path.
  *  4. The real module (native/prebuilt, built by scripts/build-native.js)
  *     reports `engine: 'native'`, `fastPath: 'bulk'`, no fallback and the
- *     walker's counters; pause stops the count; cancel frees the handle.
+ *     walker's counters; pause stops the count; cancel frees the handle; a
+ *     take of a walk still running is refused, never joined (N1).
+ *  5. The walk can neither freeze the app nor run forever (section 3b): a
+ *     cancel is settled by polling to done and abandoned at a deadline when
+ *     the walk never answers (N2); a walk that shows nothing new — no entry,
+ *     no heartbeat, and neither the scan's pause gate nor a governor hold
+ *     holding it — for NATIVE_STALL_MS is a stall the legacy chain retries
+ *     (N3); and a module that throws mid-walk has its handle settled before
+ *     the error propagates (N4).
  *
- * The first three run against a fake module injected through the loader's own
- * seam, exactly as tests/engineBudget.test.ts does; the fourth is skipped with
- * its reason when no prebuilt module is on disk.
+ * The fake-module tests run against a fake injected through the loader's own
+ * seam, exactly as tests/engineBudget.test.ts does; the real-module tests are
+ * skipped with their reason when no prebuilt module is on disk.
  */
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')) as { nativeVersion: string };
@@ -274,16 +286,40 @@ interface FakeScript {
   startError?: string;
   /** The error the walk ends with (reported by poll, thrown by take). */
   walkError?: string;
+  /**
+   * A worker wedged inside a directory-listing syscall (a dead network
+   * mount): every poll reports the same entries and heartbeat, and a cancel
+   * is never answered with done, so the walk can only be abandoned.
+   */
+  wedged?: boolean;
+  /** One huge directory still listing: entries stay at zero until the walk is done while the heartbeat ticks on every poll. */
+  hugeDir?: boolean;
+  /** The n-th poll (1-based) throws this instead of reporting. */
+  pollThrows?: { at: number; message: string };
+  /** Called at every poll, before it reports: the stall tests advance an injected clock here, the cancel tests flip the record. */
+  onPoll?: (polls: number) => void;
+  /** Adds the governor surface with a snapshot in this state, so `budgetSnapshot()` sees a live governor (a thermal hold is `paused: true`). */
+  governor?: { paused: boolean };
 }
 
-interface FakeHandle { root: string; columns: WalkResult; polls: number; paused: boolean; cancelled: boolean; done: boolean }
+interface FakeHandle { root: string; columns: WalkResult; polls: number; pollCalls: number; paused: boolean; cancelled: boolean; done: boolean }
 
-/** A fake tm-node with the scan surface over hand-built columns, injected through the real loader so the handshake still runs. */
+/** The N1 refusal, word for word as tm-node throws it, so the fake and the module agree on what a take of a running walk is. */
+const STILL_RUNNING = 'the walk is still running: poll it until done — cancel first to end it — before taking it';
+
+/**
+ * A fake tm-node with the scan surface over hand-built columns, injected
+ * through the real loader so the handshake still runs. It keeps the real
+ * module's contract where the engine depends on it: a cancel is answered
+ * with `done` by the next poll (the workers stop at their next check, never
+ * inside the cancel call), and a take of a walk that is not done is refused
+ * and keeps the handle (N1). `calls.log` records every call in order.
+ */
 function useFakeNative(script: FakeScript) {
   resetNativeForTests();
   resetEngineBudgetForTests();
   const handles = new Map<number, FakeHandle>();
-  const calls = { probe: [] as string[], start: [] as Array<{ root: string; opts: ScanStartOptions }>, pause: 0, resume: 0, cancel: 0, take: 0 };
+  const calls = { probe: [] as string[], start: [] as Array<{ root: string; opts: ScanStartOptions }>, pause: 0, resume: 0, cancel: 0, take: 0, log: [] as string[] };
   let next = 1;
   const steps = script.steps ?? 3;
   const must = (h: number): FakeHandle => {
@@ -291,35 +327,55 @@ function useFakeNative(script: FakeScript) {
     if (!s) throw new Error(`no scan handle ${h}: it was taken, cancelled or never started`);
     return s;
   };
+  const governorSnapshot = () => ({
+    budget: { preset: 'balanced', cpuPercent: null }, effective: 'balanced', targetShare: 0.5, share1s: 0.1, workers: 2, duty: 0.5,
+    thermal: script.governor?.paused ? 'critical' : 'nominal', onBattery: false, interacting: false, machineBusyShare: null,
+    paused: script.governor?.paused === true, ticks: 1, mechanisms: {},
+  });
   const module = {
     version: () => pkg.nativeVersion,
     scanProbe: (root: string): NativeProbe => { calls.probe.push(root); return script.probe ?? { fastPath: 'bulk', reason: 'fake: the root was listed through the getattrlistbulk path' }; },
     scanStart: (root: string, opts: ScanStartOptions): number => {
       if (script.startError) throw new Error(script.startError);
       calls.start.push({ root, opts });
+      calls.log.push('start');
       const id = next++;
-      handles.set(id, { root, columns: (script.columns ?? (() => columnsFromDisk(root)))(), polls: 0, paused: false, cancelled: false, done: false });
+      handles.set(id, { root, columns: (script.columns ?? (() => columnsFromDisk(root)))(), polls: 0, pollCalls: 0, paused: false, cancelled: false, done: false });
       return id;
     },
     scanPoll: (h: number): NativeProgress => {
       const s = must(h);
+      s.pollCalls++;
+      script.onPoll?.(s.pollCalls);
+      if (script.pollThrows && s.pollCalls === script.pollThrows.at) throw new Error(script.pollThrows.message);
       const total = s.columns.parent.length - 1;
+      if (script.wedged) {
+        calls.log.push('poll');
+        return { done: false, error: null, entries: 0, dirs: 0, files: 0, bytes: 0, heartbeat: 1, currentPath: path.join(s.root, 'wedged-mount') };
+      }
+      if (s.cancelled) s.done = true; // the workers saw the cancel at their next check
       if (!s.paused && !s.done) s.polls++;
       if (s.polls >= steps) s.done = true;
-      const entries = s.done ? total : Math.min(total, Math.floor((total * s.polls) / steps));
-      return { done: s.done, error: s.done && script.walkError ? script.walkError : null, entries, dirs: 0, files: entries, bytes: 0, currentPath: s.done ? null : path.join(s.root, `step-${s.polls}`) };
+      calls.log.push(s.done ? 'poll:done' : 'poll');
+      const entries = s.done ? total : script.hugeDir ? 0 : Math.min(total, Math.floor((total * s.polls) / steps));
+      return { done: s.done, error: s.done && script.walkError ? script.walkError : null, entries, dirs: 0, files: entries, bytes: 0, heartbeat: s.polls, currentPath: s.done ? null : path.join(s.root, `step-${s.polls}`) };
     },
-    scanPause: (h: number): void => { must(h).paused = true; calls.pause++; },
-    scanResume: (h: number): void => { must(h).paused = false; calls.resume++; },
-    scanCancel: (h: number): void => { const s = must(h); s.cancelled = true; s.done = true; calls.cancel++; },
+    scanPause: (h: number): void => { must(h).paused = true; calls.pause++; calls.log.push('pause'); },
+    scanResume: (h: number): void => { must(h).paused = false; calls.resume++; calls.log.push('resume'); },
+    scanCancel: (h: number): void => { must(h).cancelled = true; calls.cancel++; calls.log.push('cancel'); },
     scanTake: (h: number): WalkResult => {
       const s = must(h);
       calls.take++;
+      calls.log.push('take');
+      if (!s.done) throw new Error(STILL_RUNNING);
       handles.delete(h);
       if (s.cancelled) throw new Error('the native scan was cancelled');
       if (script.walkError) throw new Error(script.walkError);
       return s.columns;
     },
+    ...(script.governor
+      ? { governorCapabilities: () => ({}), governorConfigure: () => undefined, governorSnapshot, governorPause: () => undefined, governorResume: () => undefined }
+      : {}),
   };
   setNativeLoadOptionsForTests({ path: '/fake/treemap_core.node', requireModule: () => module });
   const outcome = loadNative({ path: '/fake/treemap_core.node', requireModule: () => module });
@@ -368,6 +424,38 @@ function counters(scan: ScanResult): Record<string, unknown> {
 function rootInput(root: string) {
   const st = fs.lstatSync(root);
   return statToInput(path.basename(root) || root, true, 0, st.mtimeMs, st.atimeMs);
+}
+
+/**
+ * A clock the fake's polls advance by a second each (through `onPoll`), so the
+ * stall and cancel deadlines the tests inject are crossed by a known poll
+ * count whatever the machine is doing meanwhile: with a 2.5 s threshold, the
+ * fourth poll that shows nothing new is the one that crosses it.
+ */
+const POLL_SECOND_MS = 1_000;
+function fakeClock() {
+  let now = 0;
+  return { now: () => now, tick: () => { now += POLL_SECOND_MS; } };
+}
+
+/** A record and a store for driving `runNativeWalk` directly, outside `startScan`. */
+function recordFor(root: string): { scan: ScanResult; store: PackedScanStore } {
+  return { scan: createScanRecord(root), store: new PackedScanStore(root, path.sep, rootInput(root)) };
+}
+
+/**
+ * Waits for `walk` to end, for at most `ms`. A walk the engine never ends
+ * (no stall detector, no cancel deadline) would hang the run: past the bound
+ * the fake forgets its handles, so the loop's next poll throws and the walk
+ * ends, and the caller asserts 'settled' — a failure, not a hang.
+ */
+async function bounded(walk: Promise<void>, fake: { handles: Map<number, FakeHandle> }, ms = 10_000): Promise<'settled' | 'timed out'> {
+  const outcome = await Promise.race([walk.then(() => 'settled' as const, () => 'settled' as const), sleep(ms).then(() => 'timed out' as const)]);
+  if (outcome === 'timed out') {
+    fake.handles.clear();
+    await walk.catch(() => undefined);
+  }
+  return outcome;
 }
 
 /* ═══════════════════ 1. the eligibility table ═══════════════════ */
@@ -444,6 +532,31 @@ test('nativeEligibility: forced native on a platform whose probe is unavailable 
   assert.match(r.reason, /not built for linux yet/);
   assert.equal(r.fallback, true);
   assert.equal(r.probeRefused, true, 'so the stats can say fastPath: unavailable');
+});
+
+test('nativeEligibility: forced native that could not be honoured says the setting asked for it — a module that is not loaded, and a probe that refused — as the rules and gdu already do', () => {
+  const asked = 'the Scan engine setting asks for the native engine, but ';
+  const missing = nativeEligibility('/tree', { ...base, forced: 'native', native: { available: false, reason: 'no native module at /x/treemap_core.node for linux-x64; the legacy engines run instead' } });
+  assert.equal(missing.ok, false);
+  if (!missing.ok) {
+    assert.equal(missing.reason, `${asked}the native module is not loaded: no native module at /x/treemap_core.node for linux-x64; the legacy engines run instead`);
+    assert.equal(missing.fallback, true);
+  }
+  const probe: NativeProbe = { fastPath: 'unavailable', reason: 'the native listing is not built for linux yet' };
+  const refused = nativeEligibility('/tree', { ...base, forced: 'native', native: { available: true, probe } });
+  assert.equal(refused.ok, false);
+  if (!refused.ok) {
+    assert.equal(refused.reason, `${asked}the native listing is unavailable for /tree: the native listing is not built for linux yet`);
+    assert.equal(refused.fallback, true);
+    assert.equal(refused.probeRefused, true);
+  }
+  // Automatic asked for nothing, so neither sentence claims it did.
+  const auto = nativeEligibility('/tree', { ...base, native: { available: false, reason: 'no module' } });
+  assert.equal(auto.ok, false);
+  if (!auto.ok) assert.equal(auto.reason, 'the native module is not loaded: no module');
+  const autoProbe = nativeEligibility('/tree', { ...base, native: { available: true, probe } });
+  assert.equal(autoProbe.ok, false);
+  if (!autoProbe.ok) assert.equal(autoProbe.reason, 'the native listing is unavailable for /tree: the native listing is not built for linux yet');
 });
 
 test('nativeEligibility: the rules come before the probe — forced native and incremental is still not eligible, and says both', () => {
@@ -851,6 +964,188 @@ test('cancelling a native scan settles the record at once and releases the handl
   }
 });
 
+/* ═══════════════════ 3b. settling, stalls and a throw mid-walk (N2–N4) ═══════════════════ */
+
+test('a cancel settles in the module’s order: cancel, then polls until the walk reports done, then the one take that frees the handle — never a take before done', async () => {
+  const { root, locked } = await buildEdgeFixture('treemap-native-settle-');
+  try {
+    const { scan, store } = recordFor(root);
+    const fake = useFakeNative({ steps: 40, onPoll: (n) => { if (n === 2) scan.cancelled = true; } });
+    await runNativeWalk(scan, store, root, fake.module);
+    const log = fake.calls.log;
+    const cancelAt = log.indexOf('cancel');
+    assert.ok(cancelAt > 0, `no cancel in: ${log.join(' ')}`);
+    assert.deepEqual(log.slice(cancelAt), ['cancel', 'poll:done', 'take'], 'after the cancel: a poll that reports done, then the one take');
+    assert.equal(fake.calls.take, 1);
+    assert.equal(fake.handles.size, 0, 'the handle was freed');
+  } finally {
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('a cancelled walk that never reports done is abandoned at the cancel deadline: polling stops, take is never called, and the handle stays in the module', async () => {
+  const { root, locked } = await buildEdgeFixture('treemap-native-abandon-');
+  const clock = fakeClock();
+  try {
+    assert.equal(NATIVE_CANCEL_DEADLINE_MS, 5_000);
+    setNativeWalkTimingForTests({ cancelDeadlineMs: 2_500, now: clock.now });
+    const { scan, store } = recordFor(root);
+    const fake = useFakeNative({ wedged: true, onPoll: (n) => { clock.tick(); if (n === 2) scan.cancelled = true; } });
+    const walk = runNativeWalk(scan, store, root, fake.module);
+    assert.equal(await bounded(walk, fake, 3_000), 'settled', 'runNativeWalk did not return within 3 s of a cancel the walk never answered');
+    await walk;
+    assert.equal(fake.calls.cancel, 1);
+    const after = fake.calls.log.slice(fake.calls.log.indexOf('cancel') + 1);
+    assert.ok(after.length >= 1 && after.every((c) => c === 'poll'), `after the cancel, polls and then nothing: ${after.join(' ')}`);
+    assert.equal(after.length, 3, 'polled at 1 s and 2 s within the 2.5 s deadline, at 3 s past it, then abandoned');
+    assert.equal(fake.calls.take, 0, 'a take of a wedged walk would block the app; it is never attempted');
+    assert.equal(fake.handles.size, 1, 'the handle is left in the module for the life of the process');
+  } finally {
+    setNativeWalkTimingForTests(null);
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('a walk that shows nothing new for the stall threshold is a stall: cancelled, abandoned when the cancel goes unanswered, and thrown as a sentence naming the directory', async () => {
+  const { root, locked } = await buildEdgeFixture('treemap-native-stall-');
+  const clock = fakeClock();
+  try {
+    assert.equal(NATIVE_STALL_MS, 30_000, 'the legacy walker’s READDIR_DEADLINE_MS');
+    setNativeWalkTimingForTests({ stallMs: 2_500, cancelDeadlineMs: 1_500, now: clock.now });
+    const { scan, store } = recordFor(root);
+    const fake = useFakeNative({ wedged: true, onPoll: clock.tick });
+    const walk = runNativeWalk(scan, store, root, fake.module);
+    assert.equal(await bounded(walk, fake), 'settled', 'the wedged walk was never ended: no stall was detected within 10 s');
+    await assert.rejects(walk, (err: unknown) => {
+      assert.equal((err as Error).message, `the native walk made no progress for 2.5 s at ${path.join(root, 'wedged-mount')}`);
+      return true;
+    });
+    const log = fake.calls.log;
+    assert.deepEqual(log.slice(0, log.indexOf('cancel')), ['start', 'poll', 'poll', 'poll', 'poll'], 'the first poll is the baseline; the next three showed nothing new at 1 s and 2 s (within 2.5 s) and 3 s (past it)');
+    assert.equal(fake.calls.cancel, 1, 'the stalled walk was cancelled');
+    assert.equal(fake.calls.take, 0);
+    assert.equal(fake.handles.size, 1, 'and abandoned when the cancel went unanswered');
+  } finally {
+    setNativeWalkTimingForTests(null);
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('a walk that keeps moving is never a stall however long it takes: entries growing, or only the heartbeat while one huge directory lists', async () => {
+  const { root, total, locked } = await buildEdgeFixture('treemap-native-steady-');
+  const clock = fakeClock();
+  try {
+    setNativeWalkTimingForTests({ stallMs: 2_500, now: clock.now });
+    for (const hugeDir of [false, true]) {
+      const { scan, store } = recordFor(root);
+      const fake = useFakeNative({ steps: 8, hugeDir, onPoll: clock.tick });
+      await runNativeWalk(scan, store, root, fake.module);
+      const what = hugeDir ? 'heartbeat only' : 'entries';
+      assert.equal(fake.calls.cancel, 0, `${what}: eight polls a second apart, three times the threshold, and never cancelled`);
+      assert.equal(fake.calls.log.filter((c) => c.startsWith('poll')).length, 8, what);
+      assert.equal(fake.calls.take, 1, what);
+      assert.equal(scan.scanned, total, what);
+    }
+  } finally {
+    setNativeWalkTimingForTests(null);
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('a paused walk is not a stall: the pause gate holds it past the threshold and it finishes after resume, on the native engine', async () => {
+  const { root, total, locked } = await buildEdgeFixture('treemap-native-stall-paused-');
+  const clock = fakeClock();
+  try {
+    setNativeWalkTimingForTests({ stallMs: 2_500, now: clock.now });
+    const fake = useFakeNative({ steps: 40, onPoll: clock.tick });
+    await updateSettings({ engine: 'native' });
+    const scan = await startScan(root);
+    while (scan.status === 'running' && scan.scanned < 3) await sleep(5);
+    assert.equal(pauseScan(scan).paused, true);
+    const pausedAt = fake.calls.log.length;
+    // Six polls a (fake) second apart while paused: 6 s without a new entry or heartbeat, past the 2.5 s threshold.
+    const t0 = Date.now();
+    while (fake.calls.log.length - pausedAt < 6) {
+      assert.ok(Date.now() - t0 < 5_000, 'the paused walk stopped being polled');
+      await sleep(5);
+    }
+    assert.equal(scan.status, 'running');
+    assert.equal(fake.calls.cancel, 0, 'a paused walk was cancelled as a stall');
+    assert.equal(resumeScan(scan).paused, false);
+    const done = await settle(scan.scanId);
+    assert.equal(done.status, 'complete', done.error);
+    assert.equal(done.engine, 'native');
+    assert.equal(done.fallbackReason, null);
+    assert.equal(done.scanned, total);
+  } finally {
+    setNativeWalkTimingForTests(null);
+    await updateSettings({ engine: 'auto' });
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('a governor hold (critical heat, or governorPause) is not a stall either; once it lifts, a walk still showing nothing new is', async () => {
+  const { root, locked } = await buildEdgeFixture('treemap-native-stall-governor-');
+  const clock = fakeClock();
+  try {
+    setNativeWalkTimingForTests({ stallMs: 2_500, cancelDeadlineMs: 1_500, now: clock.now });
+    const governor = { paused: true };
+    const { scan, store } = recordFor(root);
+    const fake = useFakeNative({ wedged: true, governor, onPoll: (n) => { clock.tick(); if (n === 6) governor.paused = false; } });
+    const walk = runNativeWalk(scan, store, root, fake.module);
+    assert.equal(await bounded(walk, fake), 'settled', 'the wedged walk was never ended once the hold lifted');
+    await assert.rejects(walk, /made no progress for 2\.5 s/);
+    const log = fake.calls.log;
+    assert.equal(log.indexOf('cancel'), 1 + 8, `five polls under the hold went unpunished; it lifted before the sixth, and the eighth — 3 s after the last held poll — crossed 2.5 s: ${log.join(' ')}`);
+  } finally {
+    setNativeWalkTimingForTests(null);
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('a native walk that stalls falls back to the walker with the stall as the reason, and the scan completes', async () => {
+  const { root, total, locked } = await buildEdgeFixture('treemap-native-stall-fallback-');
+  const clock = fakeClock();
+  try {
+    setNativeWalkTimingForTests({ stallMs: 2_500, cancelDeadlineMs: 1_500, now: clock.now });
+    const fake = useFakeNative({ wedged: true, onPoll: clock.tick });
+    await updateSettings({ engine: 'auto' });
+    const scan = await startScan(root);
+    const t0 = Date.now();
+    while (scan.status === 'running' && Date.now() - t0 < 10_000) await sleep(10);
+    if (scan.status === 'running') fake.handles.clear(); // unblock the loop, so the failure below is a failure and not a hang
+    assert.notEqual(scan.status, 'running', 'the scan never left the wedged native walk: no stall was detected within 10 s');
+    await settle(scan.scanId);
+    assert.equal(scan.status, 'complete', scan.error);
+    assert.equal(scan.engine === 'walker' || scan.engine === 'turbo-walker', true, scan.engine);
+    assert.match(scan.fallbackReason ?? '', /^the native engine failed part-way: the native walk made no progress for 2\.5 s at /);
+    assert.equal(scan.fastPath, 'readdir+lstat');
+    assert.equal(scan.scanned, total, 'nothing the stalled native attempt counted is left in the total');
+    assert.equal(fake.calls.cancel, 1);
+    assert.equal(fake.calls.take, 0);
+    assert.equal(fake.handles.size, 1, 'the wedged handle stays in the module');
+  } finally {
+    setNativeWalkTimingForTests(null);
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('a module that throws mid-walk does not leak the handle: the walk is cancelled and settled before the error propagates', async () => {
+  const { root, locked } = await buildEdgeFixture('treemap-native-midthrow-');
+  try {
+    const { scan, store } = recordFor(root);
+    const fake = useFakeNative({ steps: 40, pollThrows: { at: 2, message: 'the native module lost the walk: a worker thread panicked' } });
+    await assert.rejects(runNativeWalk(scan, store, root, fake.module), /lost the walk: a worker thread panicked/);
+    const log = fake.calls.log;
+    const cancelAt = log.indexOf('cancel');
+    assert.ok(cancelAt > 0, `no cancel in: ${log.join(' ')}`);
+    assert.deepEqual(log.slice(cancelAt), ['cancel', 'poll:done', 'take'], 'settled after the throw: cancelled, polled to done, taken to free it');
+    assert.equal(fake.handles.size, 0, 'the handle was freed');
+  } finally {
+    await unlockAndRemove(root, locked);
+  }
+});
+
 test('in a process pinned to a module that is not there, the walker runs, the fallback names the path, and the scan is complete and correct', async () => {
   const { root, total } = await buildWideTree(20, 30, 'treemap-native-child-');
   const dataDir = path.join(os.tmpdir(), `treemap-native-child-data-${process.pid}`);
@@ -973,8 +1268,11 @@ test('real module: cancel releases the handle — take throws the cancellation, 
     const h = real.core.scanStart(root, { neverDescend: [], wantAtime: true });
     real.core.scanCancel(h);
     const t0 = Date.now();
-    assert.throws(() => real.core.scanTake(h), /cancelled/);
-    assert.ok(Date.now() - t0 < 1_000, 'the cancelled walk let go within a second');
+    while (!real.core.scanPoll(h).done) {
+      assert.ok(Date.now() - t0 < 1_000, 'the cancelled walk never reported done within a second');
+      await sleep(5);
+    }
+    assert.throws(() => real.core.scanTake(h), /cancelled/, 'a take once done throws the cancellation, and that frees the handle');
     assert.throws(() => real.core.scanTake(h), /handle/, 'the handle is gone');
     assert.throws(() => real.core.scanPoll(h), /handle/);
     assert.throws(() => real.core.scanTake(999_999), /handle/, 'a handle that never existed');
@@ -992,13 +1290,58 @@ test('real module: cancel releases the handle — take throws the cancellation, 
   }
 });
 
+test('real module: scanTake never blocks — a walk still running is refused and kept, the done walk hands over its columns, and a second take says the handle is unknown', { skip: process.platform !== 'darwin' && 'the native listing is macOS-only until W4/W5' }, async (t) => {
+  const real = loadReal(t);
+  if (!real) return;
+  const { root, total } = await buildWideTree(200, 50, 'treemap-native-take-real-');
+  try {
+    // In a child process: the behaviour this replaces was a synchronous join
+    // of the driver thread on the caller's thread, which on a paused walk
+    // never returns and no JavaScript timer can interrupt. A take that blocks
+    // is therefore a child killed at the timeout and a failed assertion here,
+    // never a hung test run. Only the pause holds the walk; a 10 000-entry
+    // fixture on one worker is far from done when the pause lands.
+    const script = `
+      const m = require(process.env.TM_MODULE);
+      const out = {};
+      const h = m.scanStart(process.env.TM_ROOT, { neverDescend: [], wantAtime: false, maxWorkers: 1 });
+      m.scanPause(h);
+      out.doneAfterPause = m.scanPoll(h).done;
+      try { m.scanTake(h); out.pausedTake = 'returned columns'; } catch (e) { out.pausedTake = e.message; }
+      out.doneAfterRefusal = m.scanPoll(h).done;
+      m.scanResume(h);
+      const until = Date.now() + 20_000;
+      const nap = new Int32Array(new SharedArrayBuffer(4));
+      while (!m.scanPoll(h).done && Date.now() < until) Atomics.wait(nap, 0, 0, 5);
+      out.entries = m.scanTake(h).parent.length;
+      try { m.scanTake(h); out.secondTake = 'returned columns'; } catch (e) { out.secondTake = e.message; }
+      console.log(JSON.stringify(out));
+    `;
+    const r = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 30_000, env: { ...process.env, TM_MODULE: real.path, TM_ROOT: root } });
+    assert.equal(r.status, 0, `the child did not finish (status ${r.status}, signal ${r.signal}): a take of a running walk blocked instead of refusing\n${r.stderr}`);
+    const out = JSON.parse(r.stdout.trim().split('\n').pop() ?? '{}') as { doneAfterPause: boolean; pausedTake: string; doneAfterRefusal: boolean; entries: number; secondTake: string };
+    assert.equal(out.doneAfterPause, false, 'the pause landed before the walk was done, so the pause is what held it');
+    assert.equal(out.pausedTake, STILL_RUNNING);
+    assert.equal(out.doneAfterRefusal, false, 'the refusal kept the handle: a poll still answers for it');
+    assert.equal(out.entries, total, 'resumed, polled to done, taken: every entry');
+    assert.match(out.secondTake, /no scan handle/);
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('real module: the walk result is columns, not copies — typed arrays of the declared kinds with one root and parent < child', { skip: process.platform !== 'darwin' && 'the native listing is macOS-only until W4/W5' }, async (t) => {
   const real = loadReal(t);
   if (!real) return;
   const { root, total } = await buildWideTree(5, 4, 'treemap-native-columns-real-');
   try {
     const h = real.core.scanStart(root, { neverDescend: neverDescendPaths(), wantAtime: false });
-    while (!real.core.scanPoll(h).done) await sleep(5);
+    let progress = real.core.scanPoll(h);
+    while (!progress.done) {
+      await sleep(5);
+      progress = real.core.scanPoll(h);
+    }
+    assert.ok(Number.isInteger(progress.heartbeat) && progress.heartbeat >= 1, `heartbeat ${progress.heartbeat}: a walk that listed six directories had at least one batch answered`);
     const cols = real.core.scanTake(h);
     assert.ok(cols.parent instanceof Uint32Array && cols.nameOff instanceof Uint32Array && cols.names instanceof Uint8Array);
     assert.ok(cols.kind instanceof Uint8Array && cols.flags instanceof Uint8Array);

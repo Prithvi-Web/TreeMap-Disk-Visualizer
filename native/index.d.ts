@@ -178,6 +178,13 @@ export interface NativeProgress {
   files: number;
   /** The leaves' logical bytes so far. */
   bytes: number;
+  /**
+   * Listing batches the OS has answered so far, across every worker. It
+   * advances while one huge directory is still listing — when `entries`
+   * cannot, because a directory's entries are counted only once its listing
+   * completes — so a poller can tell a slow walk from a wedged one.
+   */
+  heartbeat: number;
   /** A directory being listed, sampled at most every 50 ms; null before the first sample. */
   currentPath: string | null;
 }
@@ -256,12 +263,15 @@ export function scanPause(handle: number): void;
 /** Lets paused workers continue where they stopped. */
 export function scanResume(handle: number): void;
 
-/** Ends the walk; `scanTake()` then throws the cancellation and frees the handle. */
+/** Ends the walk at the workers' next check; a poll then reports `done`, and `scanTake()` throws the cancellation and frees the handle. */
 export function scanCancel(handle: number): void;
 
 /**
- * The walk's output. Blocks until the walk is done (poll first), then frees
- * the handle. Throws with a plain-English message when the walk failed or was
- * cancelled — the handle is freed either way — and when `handle` is unknown.
+ * The walk's output, once a poll has reported `done`, and the handle freed.
+ * Throws with a plain-English message when the walk failed or was cancelled
+ * — the handle is freed either way — and when `handle` is unknown. A walk
+ * still running is refused ("the walk is still running: …") and kept: it is
+ * never joined on the calling thread, so a worker wedged in a listing syscall
+ * can never freeze the app; cancel it and poll to `done` first, or leave it.
  */
 export function scanTake(handle: number): WalkResult;
