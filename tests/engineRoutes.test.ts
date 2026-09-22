@@ -287,8 +287,13 @@ test('every scan’s stats carry the budget it ran under, in the spec and in the
     const stats = await req(port, 'GET', `/api/scan/${started.body.scanId}/stats`);
     assertMatchesSpec(doc, '/api/scan/{scanId}/stats', 'get', '200', stats.body);
     assert.deepEqual(stats.body.budget, { preset: 'eco', effective: 'eco', source: 'node-shim' });
+    // Additive, in order: every key the pre-Phase-2 stats had keeps its
+    // position, `budget` (Phase 2) follows them, and whatever later phases
+    // append comes after `budget` — never before it, never in between.
     const keys = Object.keys(stats.body);
-    assert.equal(keys[keys.length - 1], 'budget', 'additive: every existing key keeps its position, the new one comes last');
+    const legacyKeys = ['scanId', 'status', 'scanned', 'fileCount', 'dirCount', 'engine', 'ioThreads', 'durationMs', 'incremental', 'cachedDirs', 'walkedDirs', 'hardlinkedFiles', 'hardlinkedBytes', 'sparseFiles', 'sparseBytes', 'slackBytes', 'cloudFiles', 'cloudBytes', 'refused', 'vanishedDirs', 'expiresAt'];
+    assert.deepEqual(keys.slice(0, legacyKeys.length), legacyKeys, 'every pre-existing key keeps its position');
+    assert.equal(keys[legacyKeys.length], 'budget', 'the Phase 2 key comes right after them');
 
     // A hand-assembled record (an agent test, a cloud scan) still answers with
     // the budget in force rather than a hole in a required field.

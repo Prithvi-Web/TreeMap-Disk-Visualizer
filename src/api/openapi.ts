@@ -176,8 +176,19 @@ const schemas: Json = {
       vanishedDirs: int('Folders that disappeared mid-scan; the results are partial when > 0'),
       expiresAt: int('Epoch ms when the results leave memory; null while running. Every read of the scan pushes it out by 30 minutes'),
       budget: ref('ScanBudget'),
+      /* ---- Phase 3 (D6): after budget, in this order ---- */
+      engineReason: str('Why this engine ran, in a sentence: the setting, the rule or the probe that chose it; for the legacy engines also that CPU seconds are not measured per scan'),
+      fastPath: str('The listing mechanism: bulk / extdDirInfo / getdents / perEntry for the native engine, readdir+lstat for the built-in walker, gdu, cloud; unavailable when the native listing was probed and refused and the legacy chain ran, with the reason in fallbackReason'),
+      fallbackReason: nullable(str('Why an engine that was wanted could not run — a missing native module, a refused probe, a failed walk, a missing gdu; null when nothing fell back')),
+      entriesPerSecond: nullable(int('scanned ÷ the scan’s own seconds; null while running, and when the duration is zero')),
+      cpuSeconds: nullable(num('CPU seconds the engine measured for this scan alone (the native walk’s threads plus the ingest); null where the engine does not measure per scan, with the reason in engineReason')),
+      peakRssBytes: nullable(int('Always null: resident memory is a per-process figure and cannot be attributed to one scan')),
+      bytesRead: nullable(int('Bytes read from disk for this scan alone; null unless the engine measured them')),
+      cacheHitRate: nullable(num('null until Phase 4’s index exists to hit')),
+      storageMode: { type: 'string', enum: ['memory'], description: 'Where the tree lives; memory until Phase 4’s spill and aggregate modes' },
+      placeholdersSkipped: int('Entries the walk found dataless (a cloud placeholder whose bytes are not local); 0 for the legacy engines, which detect none at walk time'),
     },
-    ['scanned', 'fileCount', 'dirCount', 'engine', 'ioThreads', 'durationMs', 'incremental', 'cachedDirs', 'walkedDirs', 'hardlinkedFiles', 'hardlinkedBytes', 'sparseFiles', 'sparseBytes', 'slackBytes', 'cloudFiles', 'cloudBytes', 'refused', 'vanishedDirs', 'expiresAt', 'budget'],
+    ['scanned', 'fileCount', 'dirCount', 'engine', 'ioThreads', 'durationMs', 'incremental', 'cachedDirs', 'walkedDirs', 'hardlinkedFiles', 'hardlinkedBytes', 'sparseFiles', 'sparseBytes', 'slackBytes', 'cloudFiles', 'cloudBytes', 'refused', 'vanishedDirs', 'expiresAt', 'budget', 'engineReason', 'fastPath', 'fallbackReason', 'entriesPerSecond', 'cpuSeconds', 'peakRssBytes', 'bytesRead', 'cacheHitRate', 'storageMode', 'placeholdersSkipped'],
   ),
   /* ---- the scanning budget (Phase 2) ---- */
   ScanBudget: obj(
@@ -764,8 +775,9 @@ const schemas: Json = {
       ),
       tourDone: bool('Whether the guided first run (v4 §9.2) was completed or skipped. Only boolean true counts.'),
       engineBudget: ref('EngineBudgetSetting'),
+      engine: { type: 'string', enum: ['auto', 'native', 'gdu', 'walker'], description: 'The Scan engine (Phase 3): auto picks the native engine when this build has it and the scan is eligible, then gdu, then the built-in walker; the others force one. Default auto' },
     },
-    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights', 'cleanupGoalBytes', 'humanScaleUnits', 'tourDone', 'engineBudget'],
+    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights', 'cleanupGoalBytes', 'humanScaleUnits', 'tourDone', 'engineBudget', 'engine'],
   ),
 };
 
@@ -2055,8 +2067,8 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     summary: 'Replace whichever settings lists are present in the body',
     tag: 'settings',
     destructive: true,
-    requestBody: jsonBody(opaque('Any subset of AppSettings: ignore, schedules, budgets, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes, humanScaleUnits, tourDone, engineBudget')),
-    responses: { '200': jsonResponse('Updated settings', ref('AppSettings')), '400': errorResponse('Bad shape') },
+    requestBody: jsonBody(opaque('Any subset of AppSettings: ignore, schedules, budgets, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes, humanScaleUnits, tourDone, engineBudget, engine')),
+    responses: { '200': jsonResponse('Updated settings', ref('AppSettings')), '400': errorResponse('Bad shape; BAD_SETTING when engine is not one of auto, native, gdu, walker') },
   },
   /* ------------ the scanning budget (Phase 2) ------------ */
   {

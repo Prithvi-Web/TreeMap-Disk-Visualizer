@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { AppSettings, IgnoreEntry, ScheduleConfig, IgnoreScope, BudgetEntry, CloudCredentials } from '../models/types';
+import { AppSettings, IgnoreEntry, ScheduleConfig, IgnoreScope, BudgetEntry, CloudCredentials, EngineSetting } from '../models/types';
 import { readJsonFile, writeJsonFile } from './storage';
 import { compileIgnoreList, CompiledIgnore } from '../utils/glob';
 import { DEFAULT_RECLAIM_WEIGHTS, RECLAIM_COMPONENT_IDS, ReclaimWeights } from './reclaimScore';
@@ -17,8 +17,15 @@ const MAX_IGNORE = 100;
 const MAX_SCHEDULES = 20;
 const MAX_BUDGETS = 100;
 const SCOPES: IgnoreScope[] = ['scan', 'suggest', 'both'];
+/** The Scan engine setting's values (Phase 3), in the order Settings lists them. */
+export const ENGINE_SETTINGS: readonly EngineSetting[] = ['auto', 'native', 'gdu', 'walker'];
 
 let cache: AppSettings | null = null;
+
+/** A hand-edited engine is normalised, never trusted: anything but the four values is Automatic. */
+function normalizeEngine(raw: unknown): EngineSetting {
+  return ENGINE_SETTINGS.includes(raw as EngineSetting) ? (raw as EngineSetting) : 'auto';
+}
 
 function normalizeIgnore(raw: unknown): IgnoreEntry[] {
   if (!Array.isArray(raw)) return [];
@@ -197,6 +204,7 @@ export async function getSettings(): Promise<AppSettings> {
       // not silence a tour the user never saw (v4 §9.2).
       tourDone: raw.tourDone === true,
       engineBudget: normalizeEngineBudget(raw.engineBudget),
+      engine: normalizeEngine(raw.engine),
     };
     // The budget module keeps the live copy — the walker, the gdu engine and
     // the scheduler read it without importing settings — so every load and
@@ -207,7 +215,7 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 /** Replace ignore list and/or schedules (input is re-validated here). */
-export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown; tourDone?: unknown; engineBudget?: unknown }): Promise<AppSettings> {
+export async function updateSettings(patch: { ignore?: unknown; schedules?: unknown; budgets?: unknown; forecastThresholdDays?: unknown; watchIdleMinutes?: unknown; timeCapsuleRetentionDays?: unknown; timeCapsuleMaxPercent?: unknown; cloud?: unknown; reclaimWeights?: unknown; cleanupGoalBytes?: unknown; humanScaleUnits?: unknown; tourDone?: unknown; engineBudget?: unknown; engine?: unknown }): Promise<AppSettings> {
   const current = await getSettings();
   const next: AppSettings = {
     ignore: patch.ignore !== undefined ? normalizeIgnore(patch.ignore) : current.ignore,
@@ -247,6 +255,7 @@ export async function updateSettings(patch: { ignore?: unknown; schedules?: unkn
     engineBudget: patch.engineBudget !== undefined
       ? normalizeEngineBudget(patch.engineBudget)
       : current.engineBudget,
+    engine: patch.engine !== undefined ? normalizeEngine(patch.engine) : current.engine,
   };
   // Preserve lastRunAt across edits that didn't intend to reset it.
   if (patch.schedules !== undefined) {

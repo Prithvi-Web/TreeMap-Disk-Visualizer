@@ -65,6 +65,44 @@ test('the candidate list starts with the environment override and names the preb
   assert.ok(plain.some((p) => p.endsWith(path.join('native', 'prebuilt', `${process.platform}-${process.arch}`, 'treemap_core.node'))), plain.join('\n'));
 });
 
+test('TREEMAP_NATIVE_MODULE is the only candidate: pointed at a path that is not there, the loader refuses naming that path and never falls through to a prebuilt', () => {
+  const missing = path.join(os.tmpdir(), 'treemap-forced-legacy', 'treemap_core.node');
+  assert.deepEqual(nativeCandidates({ TREEMAP_NATIVE_MODULE: missing }), [missing], 'nothing behind the override');
+
+  const prebuilt = path.join(__dirname, '..', 'native', 'prebuilt', `${process.platform}-${process.arch}`, 'treemap_core.node');
+  const previous = process.env.TREEMAP_NATIVE_MODULE;
+  process.env.TREEMAP_NATIVE_MODULE = missing;
+  try {
+    // A prebuilt that WOULD load, stood up through the injected loader so the
+    // proof does not depend on whether this machine has built one: only the
+    // override may be asked, and it is not there.
+    resetNativeForTests();
+    const injected = loadNative({
+      requireModule: (file) => {
+        if (file === missing) throw new Error(`dlopen(${file}): no such file`);
+        return { version: () => pkg.nativeVersion };
+      },
+    });
+    assert.equal(injected.available, false, 'the prebuilt answered behind the override');
+    if (!injected.available) {
+      assert.ok(injected.reason.includes(missing), injected.reason);
+      assert.ok(!injected.reason.includes(prebuilt), 'the prebuilt was never consulted');
+    }
+    // And through the real file system, on a machine that has a prebuilt.
+    resetNativeForTests();
+    const real = loadNative();
+    assert.equal(real.available, false);
+    if (!real.available) {
+      assert.ok(real.reason.includes(missing), real.reason);
+      assert.ok(!real.reason.includes(prebuilt), real.reason);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.TREEMAP_NATIVE_MODULE;
+    else process.env.TREEMAP_NATIVE_MODULE = previous;
+    resetNativeForTests();
+  }
+});
+
 /* ------------------------------------------------------------------------ */
 /* The real module (Phase 2, Task 4). Built by scripts/build-native.js and   */
 /* driven through the loader, so the handshake, the JSON shapes and the      */

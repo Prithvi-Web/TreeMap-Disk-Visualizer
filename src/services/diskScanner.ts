@@ -1,24 +1,25 @@
 import { promises as fsp, Dirent, Stats } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { FileNode, ScanResult, LargeFolder, EmptyFoldersResult, CompareEntry, EffectiveBudgetPreset } from '../models/types';
+import { FileNode, ScanResult, LargeFolder, EmptyFoldersResult, CompareEntry, EffectiveBudgetPreset, EngineSetting } from '../models/types';
 import { saveSnapshot } from './snapshots';
 import { trackWrite } from '../utils/backgroundWrites';
-import { getIgnoreMatchers } from './settings';
+import { getIgnoreMatchers, getSettings } from './settings';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
 import { readJsonFile, appDataDir } from './storage';
 import { isEphemeral } from './portableMode';
 import { IO_THREADS } from '../utils/ioThreads';
-import { detectContainerKind } from '../utils/containerKind';
 import { neverDescend } from '../utils/mountBoundaries';
 import { forgetScan } from './containerScanner';
 import { abortGduScan, findGduBinary, gduScanIntoStore } from './gduScanner';
 import { cloudProviderFor } from './cloudFolders';
 import { noteRefused } from './scanRefusals';
 import { permissionDeniedMessage } from '../middleware/errorHandler';
-import { PackedScanStore, ScanStore, Flag, NodeInput, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
+import { PackedScanStore, ScanStore, Flag, fileNodeToInput, buildStoreFromTree, asStore, TreeSource } from './scanStore';
 import { platform } from '../platform';
 import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBatch, whenResumed, workerCap } from './engineBudget';
+import { statToInput } from './scan/nodeInput';
+import { FAST_PATH_UNAVAILABLE, decideNative, rootName, runNativeWalk } from './scan/nativeEngine';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -39,6 +40,14 @@ import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBa
  */
 
 const CONCURRENCY = Math.min(32, Math.max(8, IO_THREADS));
+/** The walker's own label: turbo when the libuv pool is sized above the default 4. */
+const WALKER_ENGINE: ScanResult['engine'] = IO_THREADS > 4 ? 'turbo-walker' : 'walker';
+/** The walker's listing mechanism, as `fastPath` names it. */
+const WALKER_FAST_PATH = 'readdir+lstat';
+/** gdu's, likewise. */
+const GDU_FAST_PATH = 'gdu';
+/** The clause every legacy engine's reason ends with: why `cpuSeconds` is null for it. */
+const CPU_NOT_MEASURED = 'CPU seconds are not measured per scan by this engine';
 /**
  * The scanning budget caps the workers below CONCURRENCY (Eco: two). The cap
  * is read when the walk starts and again after this many entries, so a
@@ -367,10 +376,79 @@ export function createScanRecord(rootPath: string): ScanResult {
     // Captured at start like every scan's, so /stats can state it; a cloud
     // lister does not throttle, but the budget in force is still a fact.
     budget: scanBudget(),
+    // A provider enumerates its own files: no listing mechanism of ours ran,
+    // nothing fell back, and nothing was measured per scan.
+    engineReason: `a cloud provider listing: the provider enumerates its own files; ${CPU_NOT_MEASURED}`,
+    fastPath: 'cloud',
+    fallbackReason: null,
+    cpuSeconds: null,
+    bytesRead: null,
+    peakRssBytes: null,
+    placeholdersSkipped: 0,
   };
   defineRootAccessor(scan);
   scans.set(scan.scanId, scan);
   return scan;
+}
+
+/** The sentence a legacy engine's `engineReason` carries: what it is, every reason the faster engines did not run, and the CPU clause. */
+function legacyReason(engine: 'gdu' | 'walker', why: string[]): string {
+  const label = engine === 'gdu' ? 'gdu was chosen' : 'the built-in walker ran';
+  return `${label}: ${[...why, CPU_NOT_MEASURED].join('; ')}`;
+}
+
+/** Record why an engine that was wanted could not run; a second reason joins the first rather than replacing it. */
+function noteFallback(scan: ScanResult, reason: string): void {
+  scan.fallbackReason = scan.fallbackReason ? `${scan.fallbackReason}; ${reason}` : reason;
+}
+
+/**
+ * Discard whatever an aborted engine attempt accumulated, so the engine that
+ * runs next does not count on top of it.
+ */
+function resetCounters(scan: ScanResult): void {
+  scan.fileCount = 0;
+  scan.dirCount = 0;
+  scan.scanned = 0;
+  scan.walkedDirs = 0;
+  scan.cachedDirs = 0;
+  scan.hardlinkedFiles = 0;
+  scan.hardlinkedBytes = 0;
+  scan.sparseFiles = 0;
+  scan.sparseBytes = 0;
+  scan.slackBytes = 0;
+  scan.cloudFiles = 0;
+  scan.cloudBytes = 0;
+  scan.deniedDirs = 0;
+  scan.deniedExamples = [];
+  scan.vanishedDirs = 0;
+  scan.unreadableDirs = 0;
+  scan.deniedEntries = 0;
+  scan.unreadableEntries = 0;
+  scan.placeholdersSkipped = 0;
+  scan.cpuSeconds = null;
+  scan.currentPath = scan.rootPath;
+}
+
+/**
+ * A finished tree becomes the scan's result, and the two background writes
+ * start: the mtime cache for a future fast rescan, then the snapshot for
+ * Trends. Failures there must never fail the scan itself — and each is
+ * caught: an unawaited AND uncaught rejection here reached Node's
+ * unhandledRejection, which is fatal by default, so a cache write failing
+ * would have taken the whole app down.
+ */
+function settleComplete(scan: ScanResult, store: ScanStore): void {
+  scan.store = store;
+  scan.status = 'complete';
+  scan.finishedAt = Date.now();
+  scan.currentPath = scan.rootPath;
+  trackWrite('saveMtimeCache', saveMtimeCache(scan).catch((err: unknown) => {
+    console.error('[treemap] mtime cache save failed:', err);
+  }));
+  trackWrite('saveSnapshot', saveSnapshot(scan).catch((err: unknown) => {
+    console.error('[treemap] snapshot save failed:', err);
+  }));
 }
 
 /**
@@ -401,6 +479,9 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
 
   // User-configured "don't scan" patterns; a settings problem never blocks a scan.
   const ignore = await getIgnoreMatchers('scan').catch(() => [] as CompiledIgnore[]);
+  // The engine the user asked for (Phase 3); the same rule — Automatic when
+  // the settings cannot be read.
+  const forced: EngineSetting = await getSettings().then((s) => s.engine, () => 'auto' as EngineSetting);
 
   // Incremental rescan: load the previous tree so unchanged directories (same
   // mtime) can be substituted from cache instead of re-walked.
@@ -421,6 +502,20 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     }
   }
 
+  const rootIsDir = rootStat.isDirectory();
+  const incremental = opts.incremental === true || cache !== null;
+
+  /*
+   * Engine selection (Phase 3, decision P3-4 and DESIGN §4.1), in order:
+   * forced setting → native (eligible, module loaded, root probed) → gdu (as
+   * before) → the walker. The rules cost nothing and come first, so a scan
+   * the setting sends elsewhere never loads a module or pays for a probe; a
+   * refused probe or a missing module is a `fallbackReason`, a rule is a
+   * clause in `engineReason`, and the walker's sentence ends with every
+   * reason the faster engines did not run.
+   */
+  const native = decideNative(rootPath, { incremental, ignoreCount: ignore.length, forced, rootIsDir });
+
   const scanId = crypto.randomUUID();
   const scan: ScanResult = {
     scanId,
@@ -436,8 +531,15 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     // The budget this scan runs under, captured now (the settings read above
     // handed the budget module the persisted setting) and kept on the record.
     budget: beginScanBudget(scanId, opts.budget),
-    engine: IO_THREADS > 4 ? 'turbo-walker' : 'walker',
+    engine: WALKER_ENGINE,
     ioThreads: IO_THREADS,
+    engineReason: '',
+    fastPath: WALKER_FAST_PATH,
+    fallbackReason: null,
+    cpuSeconds: null,
+    bytesRead: null,
+    peakRssBytes: null,
+    placeholdersSkipped: 0,
     incremental: !!cache,
     cachedDirs: 0,
     walkedDirs: 0,
@@ -452,9 +554,20 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
   defineRootAccessor(scan);
   scans.set(scan.scanId, scan);
 
+  /** Why each faster engine did not run, in order — the clauses of a legacy engine's reason. */
+  const why: string[] = [];
+  /** The fast path a legacy engine reports: `unavailable` once the native listing was probed and refused (P3-9), else its own. */
+  let legacyFastPath: string | null = null;
+  if (!native.eligibility.ok) {
+    why.push(native.eligibility.reason);
+    if (native.eligibility.fallback) noteFallback(scan, native.eligibility.reason);
+    if (native.eligibility.probeRefused) legacyFastPath = FAST_PATH_UNAVAILABLE;
+  }
+
   /**
-   * The gdu turbo engine is preferred (~112-120k items/sec sharded, vs the
-   * walker's 69-97k) but only where it can be exactly as correct as the walker:
+   * The gdu turbo engine is preferred to the walker (~112-120k items/sec
+   * sharded, vs the walker's 69-97k) but only where it can be exactly as
+   * correct as the walker:
    *
    *  - directories only (a single-file "scan" isn't worth a subprocess);
    *  - not incremental — the mtime cache is built around the walker's
@@ -462,40 +575,69 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
    *  - no ignore list — gdu's -i/-I cannot faithfully express this app's glob
    *    patterns, and quietly scanning something the user excluded is worse than
    *    being slower. Fall back rather than approximate.
+   *
+   * The Scan engine setting can turn it off (walker) or ask for it (gdu); a
+   * rule that keeps a scan gdu asked for off it is a fallback, named.
    */
-  const gduEligible =
-    rootStat.isDirectory() &&
-    !cache &&
-    !opts.incremental &&
-    ignore.length === 0 &&
-    process.env.TREEMAP_NO_GDU !== '1';
+  const gduRule = forced === 'walker' ? 'the Scan engine setting asks for the built-in walker'
+    : !rootIsDir ? 'the root is a single file, which needs no gdu process'
+      : incremental ? 'this is an incremental rescan, which gdu has no cache for'
+        : ignore.length > 0 ? `the scan has ${ignore.length} "don't scan" pattern${ignore.length === 1 ? '' : 's'} gdu cannot express`
+          : process.env.TREEMAP_NO_GDU === '1' ? 'gdu is switched off by TREEMAP_NO_GDU'
+            : null;
+  const gduWanted = !native.eligibility.ok && gduRule === null;
+  if (!native.eligibility.ok && gduRule !== null && forced !== 'walker') {
+    if (forced === 'gdu') noteFallback(scan, `${gduRule} (the Scan engine setting asked for gdu)`);
+    why.push(gduRule);
+  }
 
   // Fire and forget — errors land on the record, never as unhandled rejections.
   void (async () => {
-    if (gduEligible) {
+    if (native.eligibility.ok && native.module) {
+      scan.engine = 'native';
+      scan.fastPath = native.eligibility.fastPath;
+      scan.engineReason = native.eligibility.reason;
+      scan.fallbackReason = null;
+      const store = new PackedScanStore(rootPath, path.sep, statToInput(rootName(rootPath), true, rootStat.size, rootStat.mtimeMs, rootStat.atimeMs));
+      try {
+        await runNativeWalk(scan, store, rootPath, native.module);
+        if (scan.cancelled) return;
+        await assertRootStillThere(scan.rootPath);
+        settleComplete(scan, store);
+        return;
+      } catch (err) {
+        if (scan.cancelled) return; // cancellation is not a native failure
+        // A root that vanished is the scan's failure, not the engine's: the
+        // legacy chain would only fail the same way after a pointless retry.
+        const e = err as NodeJS.ErrnoException;
+        if (e.code === 'ENOENT' && e.path === scan.rootPath) throw err;
+        // Anything else is a fallback: the legacy chain produces the scan,
+        // and the stats say what the native engine could not do.
+        const reason = `the native engine failed part-way: ${e instanceof Error ? e.message : String(err)}`;
+        console.warn(`[treemap] ${reason}; using the legacy engines`);
+        resetCounters(scan);
+        noteFallback(scan, reason);
+        why.push(reason);
+        scan.engine = WALKER_ENGINE;
+        scan.fastPath = WALKER_FAST_PATH;
+      }
+    }
+    if (gduWanted) {
       try {
         const bin = await findGduBinary();
         if (bin) {
           scan.engine = 'gdu-turbo';
+          scan.fastPath = legacyFastPath ?? GDU_FAST_PATH;
+          scan.engineReason = legacyReason('gdu', [...why, 'a gdu binary is available and the scan is a full walk with no ignore list']);
           const store = await gduScanIntoStore(scan, bin, cloudProviderFor);
           if (scan.cancelled) return;
           await assertRootStillThere(scan.rootPath);
-          scan.store = store;
-          scan.status = 'complete';
-          scan.finishedAt = Date.now();
-          scan.currentPath = scan.rootPath;
-          trackWrite('saveMtimeCache', saveMtimeCache(scan).catch((err: unknown) => {
-            // Was unawaited AND uncaught: a rejection here reached Node's
-            // unhandledRejection, which is fatal by default — a cache write
-            // failing would have taken the whole app down. Same treatment as
-            // its sibling below, for the same reason.
-            console.error('[treemap] mtime cache save failed:', err);
-          }));
-          trackWrite('saveSnapshot', saveSnapshot(scan).catch((err: unknown) => {
-            console.error('[treemap] snapshot save failed:', err);
-          }));
+          settleComplete(scan, store);
           return;
         }
+        const missing = 'no gdu binary is bundled or on PATH';
+        why.push(missing);
+        if (forced === 'gdu') noteFallback(scan, `${missing} (the Scan engine setting asked for gdu)`);
       } catch (err) {
         if (scan.cancelled) return; // cancellation is not a gdu failure
         // A root that vanished is the scan's failure, not gdu's: the walker
@@ -505,29 +647,19 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         // gdu is strictly best-effort: a missing binary, a spawn failure, a
         // non-zero exit or an oversized shard must never surface as a scan
         // error. Log it and let the walker produce the scan.
+        const reason = `gdu failed: ${e instanceof Error ? e.message : String(err)}`;
         console.warn(`[treemap] gdu engine unavailable, using walker: ${String(err)}`);
         // Discard whatever the aborted attempt accumulated so the walker
         // doesn't double-count on top of it.
-        scan.fileCount = 0;
-        scan.dirCount = 0;
-        scan.scanned = 0;
-        scan.hardlinkedFiles = 0;
-        scan.hardlinkedBytes = 0;
-        scan.sparseFiles = 0;
-        scan.sparseBytes = 0;
-        scan.slackBytes = 0;
-        scan.cloudFiles = 0;
-        scan.cloudBytes = 0;
-        scan.deniedDirs = 0;
-        scan.deniedExamples = [];
-        scan.vanishedDirs = 0;
-        scan.unreadableDirs = 0;
-        scan.deniedEntries = 0;
-        scan.unreadableEntries = 0;
+        resetCounters(scan);
+        noteFallback(scan, reason);
+        why.push(reason);
       }
-      scan.engine = IO_THREADS > 4 ? 'turbo-walker' : 'walker';
     }
-    await walk(scan, rootStat.isDirectory(), ignore, cache);
+    scan.engine = WALKER_ENGINE;
+    scan.fastPath = legacyFastPath ?? WALKER_FAST_PATH;
+    scan.engineReason = legacyReason('walker', why);
+    await walk(scan, rootIsDir, ignore, cache);
   })().catch((err: unknown) => {
     scan.status = 'error';
     scan.error = describeScanError(err);
@@ -638,37 +770,18 @@ async function saveMtimeCache(scan: ScanResult): Promise<void> {
   }
 }
 
-/** Everything lstat tells us about one entry, shaped for store.addNode. */
-function statToInput(name: string, isDir: boolean, size: number, mtimeMs: number, atimeMs?: number): NodeInput {
-  const input: NodeInput = {
-    name,
-    isDir,
-    size: isDir ? 0 : size,
-    modifiedAt: Math.round(mtimeMs),
-    isHidden: name.startsWith('.'),
-  };
-  // atime === 0 means "never recorded" on several filesystems — omit rather
-  // than let a 1970 date surface anywhere.
-  if (atimeMs !== undefined && atimeMs > 0) input.accessedAt = Math.round(atimeMs);
-  if (!isDir) {
-    const ext = path.extname(name).toLowerCase().replace(/^\./, '');
-    if (ext) input.extension = ext;
-  }
-  const container = detectContainerKind(name, isDir);
-  if (container) input.container = container;
-  return input;
-}
-
-// cloudProviderFor lives in ./cloudFolders so the walker, the gdu mapper and
-// the live index apply one gate — a sparse file outside a cloud folder is not
-// a placeholder to any of them.
+// statToInput lives in ./scan/nodeInput so the walker and the native engine
+// shape every node through one function; cloudProviderFor lives in
+// ./cloudFolders so the walker, the gdu mapper and the live index apply one
+// gate — a sparse file outside a cloud folder is not a placeholder to any of
+// them.
 
 async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore[], cache: Map<string, FileNode> | null): Promise<void> {
   const rootStat = await fsp.lstat(scan.rootPath);
   const store = new PackedScanStore(
     scan.rootPath,
     path.sep,
-    statToInput(path.basename(scan.rootPath) || scan.rootPath, rootIsDir, rootStat.size, rootStat.mtimeMs, rootStat.atimeMs),
+    statToInput(rootName(scan.rootPath), rootIsDir, rootStat.size, rootStat.mtimeMs, rootStat.atimeMs),
   );
   scan.scanned = 1;
   if (rootIsDir) scan.dirCount = 1;
@@ -684,19 +797,7 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
 
   store.finalize();
   store.sumSizes();
-  scan.store = store;
-  scan.status = 'complete';
-  scan.finishedAt = Date.now();
-  scan.currentPath = scan.rootPath;
-
-  // Persist the tree for future fast rescans, then snapshot for Trends.
-  // Failures here must never fail the scan itself.
-  trackWrite('saveMtimeCache', saveMtimeCache(scan).catch((err: unknown) => {
-    console.error('[treemap] mtime cache save failed:', err);
-  }));
-  trackWrite('saveSnapshot', saveSnapshot(scan).catch((err: unknown) => {
-    console.error('[treemap] snapshot save failed:', err);
-  }));
+  settleComplete(scan, store);
 }
 
 /**

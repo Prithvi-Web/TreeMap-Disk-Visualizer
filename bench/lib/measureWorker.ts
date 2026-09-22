@@ -21,6 +21,7 @@ import os from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { startScan, cancelAllScans } from '../../src/services/diskScanner';
 import { findGduBinary, type FindOptions } from '../../src/services/gduScanner';
+import { nativeScanModule } from '../../src/services/scan/nativeEngine';
 import { getDuplicateJob } from '../../src/services/duplicateFinder';
 import { getNearDupeJob } from '../../src/services/perceptualDupes';
 import { storeOf } from '../../src/services/scanStore';
@@ -29,7 +30,9 @@ import type { ScanResult } from '../../src/models/types';
 import { diffUsage, snapshotUsage } from './rusage';
 import type { BenchRun } from './report';
 
-export type EngineChoice = 'auto' | 'gdu' | 'walker';
+/** Which engine a pass asks for; `native` is the Phase 3 walker and is refused when the build has no module. */
+export type EngineChoice = 'auto' | 'native' | 'gdu' | 'walker';
+export const ENGINE_CHOICES: readonly EngineChoice[] = ['auto', 'native', 'gdu', 'walker'];
 
 export interface WorkerJob {
   suite: 'enumerate' | 'duplicates' | 'neardup';
@@ -115,6 +118,10 @@ async function main(job: WorkerJob): Promise<WorkerSuccess> {
     const bin = await findGduBinary(job.gduFind ?? {});
     if (!bin) throw new Error('gdu was requested but no gdu binary is available (bundled, ./gdu, or $PATH); run `npm run fetch:gdu:dev` first');
   }
+  if (job.engine === 'native') {
+    const surface = nativeScanModule();
+    if (!surface.available) throw new Error(`the native engine was requested but this build cannot run it: ${surface.reason}`);
+  }
 
   if (job.suite === 'enumerate') {
     const timed = await measured((scan: ScanResult) => scan.scanned, async () => settledScan(await startScan(job.root)));
@@ -174,7 +181,7 @@ function readJob(file: string | undefined): WorkerJob {
   const j = parsed as Record<string, unknown>;
   if (!['enumerate', 'duplicates', 'neardup'].includes(String(j.suite))) throw new Error(`measureWorker: unknown suite ${String(j.suite)}`);
   if (typeof j.root !== 'string' || typeof j.outFile !== 'string') throw new Error('measureWorker: root and outFile are required');
-  if (!['auto', 'gdu', 'walker'].includes(String(j.engine))) throw new Error(`measureWorker: unknown engine ${String(j.engine)}`);
+  if (!(ENGINE_CHOICES as readonly string[]).includes(String(j.engine))) throw new Error(`measureWorker: unknown engine ${String(j.engine)}`);
   return parsed as WorkerJob;
 }
 

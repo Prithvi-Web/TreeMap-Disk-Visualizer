@@ -25,7 +25,7 @@ const RESULTS_DIR = process.env.TREEMAP_BENCH_OUT ?? path.join(REPO, 'bench', 'r
 const BASELINES_DIR = path.join(REPO, 'bench', 'baselines');
 
 const USAGE = [
-  'npm run bench -- enumerate [--corpus=enum200k|enum1m|ci20k|smoke|dupes100k] [--engine=auto|gdu|walker] [--runs=3] [--cache=warm|cold] [--record] [--label=...]',
+  'npm run bench -- enumerate [--corpus=enum200k|enum1m|ci20k|smoke|dupes100k] [--engine=auto|native|gdu|walker] [--runs=3] [--cache=warm|cold] [--record] [--label=...]',
   'npm run bench -- duplicates [--corpus=dupes100k|smoke|ci20k|enum200k|enum1m] [--runs=3] [--min-size=1024] [--cache=warm|cold] [--record] [--label=...]',
   'npm run bench -- neardup [--originals=600] [--runs=1] [--threshold=10] [--cache=warm|cold] [--record] [--label=...]',
   'npm run bench -- all [--small] [--runs=3] [--originals=600] [--record] [--label=...]',
@@ -35,7 +35,7 @@ const USAGE = [
 ];
 
 const CORPUS_NAMES: readonly CorpusName[] = ['smoke', 'ci20k', 'enum200k', 'enum1m', 'dupes100k'];
-const ENGINES: readonly EngineChoice[] = ['auto', 'gdu', 'walker'];
+const ENGINES: readonly EngineChoice[] = ['auto', 'native', 'gdu', 'walker'];
 const CACHES: readonly RequestedCache[] = ['warm', 'cold'];
 const RUNS_RANGE = { min: 1, max: 50 };
 const DEFAULT_RUNS = 3;

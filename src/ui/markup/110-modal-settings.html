@@ -41,6 +41,34 @@
       </div>
       <div class="muted" id="engineBudgetNote" role="status" aria-live="polite"></div>
 
+      <!-- Phase 3 — which engine walks the disk. Four choices, saved the moment
+           one is picked like the budget above; Automatic is the right answer for
+           almost everyone, the rest are for checking one engine against another. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="activity"></span>Scan engine</div>
+      <div class="muted" style="margin-bottom:10px;">Which engine reads the disk. Picking one saves it straight away and applies from the next scan; every engine counts the same files the same way.</div>
+      <div id="scanEngineOptions" role="radiogroup" aria-label="Scan engine">
+        <label class="rule-row budget-row" for="scanEngine-auto">
+          <input type="radio" name="scanEngine" id="scanEngine-auto" value="auto" checked>
+          <span class="budget-name">Automatic</span>
+          <span class="muted budget-help">TreeMap picks the fastest engine that is exactly as correct</span>
+        </label>
+        <label class="rule-row budget-row" for="scanEngine-native">
+          <input type="radio" name="scanEngine" id="scanEngine-native" value="native">
+          <span class="budget-name">Native</span>
+          <span class="muted budget-help">the built-in fast engine, when this build has it</span>
+        </label>
+        <label class="rule-row budget-row" for="scanEngine-gdu">
+          <input type="radio" name="scanEngine" id="scanEngine-gdu" value="gdu">
+          <span class="budget-name">gdu</span>
+          <span class="muted budget-help">the bundled gdu helper, one process per top-level folder</span>
+        </label>
+        <label class="rule-row budget-row" for="scanEngine-walker">
+          <input type="radio" name="scanEngine" id="scanEngine-walker" value="walker">
+          <span class="budget-name">Built-in walker</span>
+          <span class="muted budget-help">the original engine — slower, and the one every other engine is checked against</span>
+        </label>
+      </div>
+
       <div class="set-h" style="margin-top:22px;"><span data-icon="trendUp"></span>Disk-full forecast</div>
       <div class="muted" style="margin-bottom:10px;">Scheduled scans also project when the disk will fill up (needs 5+ scans across 2+ days). You'll get a notification when the forecast drops below:</div>
       <div class="rule-row">

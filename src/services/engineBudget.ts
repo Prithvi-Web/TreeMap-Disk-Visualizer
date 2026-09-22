@@ -1,5 +1,5 @@
 import os from 'node:os';
-import { loadNative, LoadOptions, NativeModule, NativeOutcome } from './scan/native';
+import { loadNative, LoadOptions, NativeModule, NativeOutcome, setNativeLoadOverrideForTests } from './scan/native';
 import type { Mechanism, MechanismName, NativeBudget, NativeCapabilities, NativeSnapshot } from '../../native/index';
 import { platform } from '../platform';
 import type { PlatformName } from '../platform/types';
@@ -161,8 +161,6 @@ interface GovernorModule extends NativeModule {
 
 const GOVERNOR_FUNCTIONS = ['governorCapabilities', 'governorConfigure', 'governorSnapshot', 'governorPause', 'governorResume'] as const;
 
-let loadOptionsOverride: LoadOptions | null = null;
-
 /**
  * A governor that loaded but is not in force. Two faults, kept apart because
  * they clear differently: a snapshot that threw or came back in the wrong
@@ -206,9 +204,9 @@ function nativeFault(): string | null {
   return configureFault ?? snapshotFault;
 }
 
-/** The loader's verdict for this process (cached by the loader itself). */
+/** The loader's verdict for this process (cached by the loader itself; a test override applies through the loader's own seam). */
 function nativeOutcome(): NativeOutcome {
-  const outcome = loadNative(loadOptionsOverride ?? {});
+  const outcome = loadNative();
   if (!outcome.available) return outcome;
   const missing = GOVERNOR_FUNCTIONS.filter((name) => typeof outcome.module[name] !== 'function');
   if (missing.length > 0) {
@@ -478,7 +476,7 @@ export function resetEngineBudgetForTests(): void {
   configureFault = null;
   retryConfigureAt = 0;
   clock = () => Date.now();
-  loadOptionsOverride = null;
+  setNativeLoadOverrideForTests(null);
 }
 
 /** Test-only: the clock the configure retry window reads. */
@@ -486,9 +484,13 @@ export function setClockForTests(now: (() => number) | null): void {
   clock = now ?? (() => Date.now());
 }
 
-/** Test-only: point the loader at a fake module (or at a path that is not there). */
+/**
+ * Test-only: point the loader at a fake module (or at a path that is not
+ * there). The seam is the loader's own, so the native engine (Phase 3) sees
+ * the same module this budget does.
+ */
 export function setNativeLoadOptionsForTests(opts: LoadOptions | null): void {
-  loadOptionsOverride = opts;
+  setNativeLoadOverrideForTests(opts);
 }
 
 /* ------------------------------ the duty ------------------------------ */

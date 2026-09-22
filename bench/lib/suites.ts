@@ -34,6 +34,7 @@ export function nearDupVerdict(v: { available: boolean; truncated: boolean; pair
 }
 
 const ENGINE_DESCRIPTIONS: Record<string, string> = {
+  native: 'the native walker (tm-walk: one getattrlistbulk call per directory on macOS) on its own threads, columns ingested into the packed store',
   'gdu-turbo': 'the bundled gdu binary, one subprocess per top-level directory, output parsed from a JSON file',
   'turbo-walker': 'the Node walker (readdir + one lstat per entry) on a libuv pool sized above 4 threads',
   walker: 'the Node walker (readdir + one lstat per entry) on the default 4-thread libuv pool',
@@ -88,6 +89,10 @@ async function runChild(job: Omit<WorkerJob, 'outFile'>): Promise<WorkerSuccess>
   const env: NodeJS.ProcessEnv = { ...process.env, TREEMAP_DATA_DIR: dataDir };
   if (job.engine === 'walker') env.TREEMAP_NO_GDU = '1';
   else delete env.TREEMAP_NO_GDU;
+  // The engine is forced through the app's own setting in the child's private
+  // data directory (Phase 3): `auto` is the app's selection, anything else is
+  // that engine or a refusal below — never a quiet substitute.
+  if (job.engine !== 'auto') fs.writeFileSync(path.join(dataDir, 'settings.json'), JSON.stringify({ engine: job.engine }));
   fs.writeFileSync(jobFile, JSON.stringify({ ...job, outFile }));
   try {
     const stderr = await new Promise<string>((resolve, reject) => {
@@ -112,7 +117,9 @@ async function runChild(job: Omit<WorkerJob, 'outFile'>): Promise<WorkerSuccess>
 }
 
 function assertRequestedEngine(requested: EngineChoice, actual: string): void {
-  const mismatch = (requested === 'gdu' && actual !== 'gdu-turbo') || (requested === 'walker' && actual === 'gdu-turbo');
+  const mismatch = (requested === 'native' && actual !== 'native')
+    || (requested === 'gdu' && actual !== 'gdu-turbo')
+    || (requested === 'walker' && (actual === 'gdu-turbo' || actual === 'native'));
   if (mismatch) throw new Error(`requested ${requested} but the scan ran on ${actual}; the number would describe the wrong engine`);
 }
 

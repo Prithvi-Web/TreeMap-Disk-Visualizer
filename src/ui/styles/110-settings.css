@@ -14,8 +14,9 @@
 .sched-row input:not([type="checkbox"]), .sched-row select,
 .ign-row input, .ign-row select { min-width: 0; width: 100%; }
 .ign-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(110px, 200px) 30px; gap: 8px; align-items: center; margin-bottom: 8px; }
-/* The scanning budget: a radio, its name, and one sentence per row. The row is
-   the label, so the sentence is a click target too. */
+/* The scanning budget, and the scan engine (Phase 3) which shares the shape: a
+   radio, its name, and one sentence per row. The row is the label, so the
+   sentence is a click target too. */
 .budget-row { align-items: flex-start; padding: 6px 0; cursor: var(--cur-hand); }
 .budget-row input[type="radio"] { accent-color: var(--accent); width: 15px; height: 15px; margin: 2px 0 0; flex: none; cursor: var(--cur-hand); }
 .budget-row .budget-name { flex: none; width: 88px; font-weight: 600; }

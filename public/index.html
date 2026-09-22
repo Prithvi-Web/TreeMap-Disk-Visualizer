@@ -2703,8 +2703,9 @@ body.cart-open .tm-preview-banner { left: 14px; transform: none;
 .sched-row input:not([type="checkbox"]), .sched-row select,
 .ign-row input, .ign-row select { min-width: 0; width: 100%; }
 .ign-row { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(110px, 200px) 30px; gap: 8px; align-items: center; margin-bottom: 8px; }
-/* The scanning budget: a radio, its name, and one sentence per row. The row is
-   the label, so the sentence is a click target too. */
+/* The scanning budget, and the scan engine (Phase 3) which shares the shape: a
+   radio, its name, and one sentence per row. The row is the label, so the
+   sentence is a click target too. */
 .budget-row { align-items: flex-start; padding: 6px 0; cursor: var(--cur-hand); }
 .budget-row input[type="radio"] { accent-color: var(--accent); width: 15px; height: 15px; margin: 2px 0 0; flex: none; cursor: var(--cur-hand); }
 .budget-row .budget-name { flex: none; width: 88px; font-weight: 600; }
@@ -4398,6 +4399,34 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
         </label>
       </div>
       <div class="muted" id="engineBudgetNote" role="status" aria-live="polite"></div>
+
+      <!-- Phase 3 — which engine walks the disk. Four choices, saved the moment
+           one is picked like the budget above; Automatic is the right answer for
+           almost everyone, the rest are for checking one engine against another. -->
+      <div class="set-h" style="margin-top:22px;"><span data-icon="activity"></span>Scan engine</div>
+      <div class="muted" style="margin-bottom:10px;">Which engine reads the disk. Picking one saves it straight away and applies from the next scan; every engine counts the same files the same way.</div>
+      <div id="scanEngineOptions" role="radiogroup" aria-label="Scan engine">
+        <label class="rule-row budget-row" for="scanEngine-auto">
+          <input type="radio" name="scanEngine" id="scanEngine-auto" value="auto" checked>
+          <span class="budget-name">Automatic</span>
+          <span class="muted budget-help">TreeMap picks the fastest engine that is exactly as correct</span>
+        </label>
+        <label class="rule-row budget-row" for="scanEngine-native">
+          <input type="radio" name="scanEngine" id="scanEngine-native" value="native">
+          <span class="budget-name">Native</span>
+          <span class="muted budget-help">the built-in fast engine, when this build has it</span>
+        </label>
+        <label class="rule-row budget-row" for="scanEngine-gdu">
+          <input type="radio" name="scanEngine" id="scanEngine-gdu" value="gdu">
+          <span class="budget-name">gdu</span>
+          <span class="muted budget-help">the bundled gdu helper, one process per top-level folder</span>
+        </label>
+        <label class="rule-row budget-row" for="scanEngine-walker">
+          <input type="radio" name="scanEngine" id="scanEngine-walker" value="walker">
+          <span class="budget-name">Built-in walker</span>
+          <span class="muted budget-help">the original engine — slower, and the one every other engine is checked against</span>
+        </label>
+      </div>
 
       <div class="set-h" style="margin-top:22px;"><span data-icon="trendUp"></span>Disk-full forecast</div>
       <div class="muted" style="margin-bottom:10px;">Scheduled scans also project when the disk will fill up (needs 5+ scans across 2+ days). You'll get a notification when the forecast drops below:</div>
@@ -8550,15 +8579,20 @@ function renderDiskNotes() {
     // row states "scanned 0 items" and "0/s" as fact about a folder that plainly
     // holds files. There is nothing honest left to say, so the row says nothing.
     if (s.engine && s.durationMs > 0 && s.scanned != null) {
-      const label = { 'gdu-turbo': 'Turbo engine (gdu)', 'turbo-walker': 'Turbo walker', 'ntfs-mft': 'NTFS MFT reader', walker: 'Standard walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
+      const label = { native: 'Native engine', 'gdu-turbo': 'Turbo engine (gdu)', 'turbo-walker': 'Turbo walker', 'ntfs-mft': 'NTFS MFT reader', walker: 'Standard walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
       const rate = s.durationMs > 0 ? Math.round(s.scanned / (s.durationMs / 1000)) : 0;
       $('engineText').textContent = `${label} — scanned ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + engineBudgetNote(s);
-      $('engineHint').textContent = s.engine === 'gdu-turbo'
-        ? 'A bundled gdu subprocess per top-level folder — same counts as the built-in walker, measurably faster.'
-        : s.ioThreads > 4
-          ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
-          : '';
+      // Phase 3 — why this engine ran, on hover: the stats' own sentence, and
+      // the fallback reason when something faster could not run.
+      $('engineText').title = engineReasonTitle(s);
+      $('engineHint').textContent = s.engine === 'native'
+        ? 'The built-in native engine lists each folder in one call and hands the tree over in one piece — same counts as the built-in walker.'
+        : s.engine === 'gdu-turbo'
+          ? 'A bundled gdu subprocess per top-level folder — same counts as the built-in walker, measurably faster.'
+          : s.ioThreads > 4
+            ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
+            : '';
       en.hidden = false;
     } else en.hidden = true;
   }
@@ -8577,6 +8611,15 @@ function budgetPresetLabel(preset) {
 function engineBudgetNote(s) {
   const effective = s && s.budget ? s.budget.effective : '';
   return effective ? ` · budget: ${budgetPresetLabel(effective)}` : '';
+}
+/* Phase 3 — the hover title of the engine row: why this engine ran, and what
+   fell back when something faster could not run. Stats from a build without
+   the field say nothing. */
+function engineReasonTitle(s) {
+  const reason = s && typeof s.engineReason === 'string' ? s.engineReason : '';
+  if (!reason) return '';
+  const fallback = typeof s.fallbackReason === 'string' && s.fallbackReason ? s.fallbackReason : '';
+  return fallback ? `${reason} — ${fallback}` : reason;
 }
 
 /* Feature 10 — "Cloud-safe deletes" list in the Clean Up modal. */
@@ -25702,6 +25745,7 @@ const CMDK_ACTIONS = [
 const CMDK_SETTINGS_SECTIONS = [
   { name: 'Scheduled scans', hint: 'schedule, recurring, automatic' },
   { name: 'Scanning budget', hint: 'eco, balanced, turbo, battery, slower, faster' },
+  { name: 'Scan engine', hint: 'native, gdu, walker, fastest, engine' },
   { name: 'Disk-full forecast', hint: 'warning, days, projection' },
   { name: 'Live activity', hint: 'watch, auto-pause' },
   { name: 'Time Capsule', hint: 'retention, undo copies' },
@@ -31383,7 +31427,46 @@ $('settingsBtn').addEventListener('click', async () => {
   renderCleanupGoalFields();
   renderReclaimWeights();
   $('humanScaleToggle').checked = settingsData.humanScaleUnits !== false;
+  renderScanEngine(settingsData.engine); // Phase 3 — rides on the settings just loaded
 });
+
+/* ── Scan engine (Phase 3) ──
+   Which engine reads the disk: Automatic (the native engine when this build
+   has it, else gdu, else the built-in walker) or one of them forced. A dial
+   like the budget below — saved the moment it is picked, through the one
+   api() wrapper to PUT /api/settings with the single key { engine } — and it
+   applies from the next scan. */
+const SCAN_ENGINES = ['auto', 'native', 'gdu', 'walker'];
+const SCAN_ENGINE_LABELS = { auto: 'Automatic', native: 'Native', gdu: 'gdu', walker: 'Built-in walker' };
+
+function scanEngineInputs() {
+  return SCAN_ENGINES.map((e) => $(`scanEngine-${e}`)).filter(Boolean);
+}
+
+/** Check the stored choice; a value the page does not know renders as Automatic, never as nothing. */
+function renderScanEngine(engine) {
+  const chosen = SCAN_ENGINES.includes(engine) ? engine : 'auto';
+  for (const input of scanEngineInputs()) input.checked = input.value === chosen;
+}
+
+async function saveScanEngine(engine) {
+  try {
+    settingsData = await api('/api/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ engine }),
+    });
+    renderScanEngine(settingsData.engine);
+    toast(`Scan engine: ${SCAN_ENGINE_LABELS[settingsData.engine] || settingsData.engine} — from the next scan`);
+  } catch (e) {
+    // The radio moved under the pointer before the server had its say: put it
+    // back on what is actually stored, and say why.
+    renderScanEngine(settingsData.engine);
+    toast('Could not save the scan engine: ' + e.message, 'error');
+  }
+}
+for (const input of scanEngineInputs()) {
+  input.addEventListener('change', () => { if (input.checked) void saveScanEngine(input.value); });
+}
 
 /* ── Scanning budget (Phase 2 §11.4) ──
    Four presets, saved the moment one is picked — a budget is a dial, not a

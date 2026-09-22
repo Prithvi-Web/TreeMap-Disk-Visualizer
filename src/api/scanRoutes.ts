@@ -19,6 +19,20 @@ import { ScanResult, ScanEvent, ScanStats, BudgetStatus } from '../models/types'
 
 export const scanRouter = Router();
 
+/** What /stats says for a record assembled without a reason (hand-built records in tests); every engine sets its own. */
+export const ENGINE_REASON_UNRECORDED = 'the engine did not record why it was chosen';
+
+/**
+ * scanned ÷ the scan's own seconds, once it is complete; null while it runs
+ * (a rate of a partial count would describe nothing) and when the duration
+ * is zero (a rate cannot be infinite).
+ */
+export function entriesPerSecond(scan: ScanResult): number | null {
+  if (scan.status !== 'complete' || !scan.finishedAt) return null;
+  const ms = scan.finishedAt - scan.startedAt;
+  return ms > 0 ? Math.round(scan.scanned / (ms / 1000)) : null;
+}
+
 /**
  * The one place scan counters are shaped, shared by /stats and the SSE
  * 'complete' frame so the two cannot drift apart.
@@ -45,8 +59,22 @@ export function buildScanStats(scan: ScanResult): ScanStats {
     vanishedDirs: scan.vanishedDirs ?? 0,
     expiresAt: scanExpiresAt(scan),
     // Phase 2 (D6): the budget the scan ran under, captured when it started;
-    // last, so every key before it keeps its position.
+    // after every earlier key, so each keeps its position.
     budget: scan.budget,
+    // Phase 3 (D6): why the engine ran, how it listed, what fell back and what
+    // it measured — after budget, in this order. A figure the engine did not
+    // measure for this scan is null with the reason in engineReason; the
+    // defaults are for records assembled without an engine (tests).
+    engineReason: scan.engineReason ?? ENGINE_REASON_UNRECORDED,
+    fastPath: scan.fastPath ?? 'unrecorded',
+    fallbackReason: scan.fallbackReason ?? null,
+    entriesPerSecond: entriesPerSecond(scan),
+    cpuSeconds: scan.cpuSeconds ?? null,
+    peakRssBytes: null,
+    bytesRead: scan.bytesRead ?? null,
+    cacheHitRate: null,
+    storageMode: 'memory',
+    placeholdersSkipped: scan.placeholdersSkipped ?? 0,
   };
 }
 

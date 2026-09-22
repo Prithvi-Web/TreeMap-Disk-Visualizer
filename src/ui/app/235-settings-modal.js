@@ -23,7 +23,46 @@ $('settingsBtn').addEventListener('click', async () => {
   renderCleanupGoalFields();
   renderReclaimWeights();
   $('humanScaleToggle').checked = settingsData.humanScaleUnits !== false;
+  renderScanEngine(settingsData.engine); // Phase 3 — rides on the settings just loaded
 });
+
+/* ── Scan engine (Phase 3) ──
+   Which engine reads the disk: Automatic (the native engine when this build
+   has it, else gdu, else the built-in walker) or one of them forced. A dial
+   like the budget below — saved the moment it is picked, through the one
+   api() wrapper to PUT /api/settings with the single key { engine } — and it
+   applies from the next scan. */
+const SCAN_ENGINES = ['auto', 'native', 'gdu', 'walker'];
+const SCAN_ENGINE_LABELS = { auto: 'Automatic', native: 'Native', gdu: 'gdu', walker: 'Built-in walker' };
+
+function scanEngineInputs() {
+  return SCAN_ENGINES.map((e) => $(`scanEngine-${e}`)).filter(Boolean);
+}
+
+/** Check the stored choice; a value the page does not know renders as Automatic, never as nothing. */
+function renderScanEngine(engine) {
+  const chosen = SCAN_ENGINES.includes(engine) ? engine : 'auto';
+  for (const input of scanEngineInputs()) input.checked = input.value === chosen;
+}
+
+async function saveScanEngine(engine) {
+  try {
+    settingsData = await api('/api/settings', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ engine }),
+    });
+    renderScanEngine(settingsData.engine);
+    toast(`Scan engine: ${SCAN_ENGINE_LABELS[settingsData.engine] || settingsData.engine} — from the next scan`);
+  } catch (e) {
+    // The radio moved under the pointer before the server had its say: put it
+    // back on what is actually stored, and say why.
+    renderScanEngine(settingsData.engine);
+    toast('Could not save the scan engine: ' + e.message, 'error');
+  }
+}
+for (const input of scanEngineInputs()) {
+  input.addEventListener('change', () => { if (input.checked) void saveScanEngine(input.value); });
+}
 
 /* ── Scanning budget (Phase 2 §11.4) ──
    Four presets, saved the moment one is picked — a budget is a dial, not a

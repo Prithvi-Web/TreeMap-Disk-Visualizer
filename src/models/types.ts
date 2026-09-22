@@ -117,9 +117,32 @@ export interface ScanResult {
   /** Cooperative cancellation flag (set on shutdown/eviction). */
   cancelled: boolean;
   /** Which enumeration engine produced this scan (dashboard note). */
-  engine?: 'walker' | 'turbo-walker' | 'gdu-turbo' | 'ntfs-mft' | 'cloud';
+  engine?: 'walker' | 'turbo-walker' | 'gdu-turbo' | 'ntfs-mft' | 'cloud' | 'native';
   /** libuv threadpool size the scan ran with. */
   ioThreads?: number;
+  /**
+   * Why this engine ran, in a sentence (Phase 3): the setting, the rule or the
+   * probe that chose it, and — for the legacy engines — that they do not
+   * measure their own CPU. Every record has one, so /stats never has a hole.
+   */
+  engineReason: string;
+  /**
+   * The listing mechanism: `bulk` / `extdDirInfo` / `getdents` / `perEntry`
+   * for the native engine, `readdir+lstat` for the built-in walker, `gdu`,
+   * `cloud`; `unavailable` when the native listing was probed and refused
+   * and the legacy chain ran instead (decision P3-9).
+   */
+  fastPath: string;
+  /** Why an engine that was wanted could not run (a missing module, a refused probe, a failed walk, a missing gdu); null when nothing fell back. */
+  fallbackReason: string | null;
+  /** CPU seconds the engine measured for this scan alone (the native walk's threads plus the ingest); null where the engine does not measure per scan. */
+  cpuSeconds: number | null;
+  /** Bytes read from disk for this scan alone; null unless the engine measured them. */
+  bytesRead: number | null;
+  /** Always null: resident memory is a per-process figure and cannot be attributed to one scan. */
+  peakRssBytes: null;
+  /** Entries the walk found dataless (a cloud placeholder whose bytes are not local); the legacy engines detect none at walk time. */
+  placeholdersSkipped: number;
   /**
    * The scanning budget this scan ran under, captured when it started (Phase
    * 2) — every record has one, so /stats never has to guess. A scheduled scan
@@ -265,7 +288,29 @@ export interface ScanStats {
    * Additive — every key before it keeps its name, type and position.
    */
   budget: ScanBudget;
+  /**
+   * Phase 3 (D6), after `budget` and in this order: why the engine ran, how it
+   * listed, what fell back, and what it measured. A figure the engine did not
+   * measure for this scan is null with the reason folded into `engineReason`.
+   */
+  engineReason: string;
+  fastPath: string;
+  fallbackReason: string | null;
+  /** scanned ÷ the scan's own seconds; null while running or when the duration is zero. */
+  entriesPerSecond: number | null;
+  cpuSeconds: number | null;
+  /** Always null: resident memory is a per-process figure and cannot be attributed to one scan. */
+  peakRssBytes: null;
+  bytesRead: number | null;
+  /** null until Phase 4's index exists to hit. */
+  cacheHitRate: null;
+  /** Where the tree lives; `memory` until Phase 4's spill and aggregate modes. */
+  storageMode: 'memory';
+  placeholdersSkipped: number;
 }
+
+/** The Scan engine setting: Automatic picks the native engine when the build has it, then gdu, then the built-in walker. */
+export type EngineSetting = 'auto' | 'native' | 'gdu' | 'walker';
 
 /* ---------- The scanning budget (Phase 2) ---------- */
 
@@ -619,6 +664,12 @@ export interface AppSettings {
    * optional CPU percentage. Default Automatic with no override.
    */
   engineBudget: EngineBudgetSetting;
+  /**
+   * The Scan engine (Phase 3): Automatic, or one engine forced. Automatic
+   * picks the native engine when this build has it and the scan is eligible,
+   * then gdu, then the built-in walker. Default Automatic.
+   */
+  engine: EngineSetting;
 }
 
 /** A budget cross-referenced against a scan: how the folder measures up now. */

@@ -72,6 +72,7 @@ const CMDK_ACTIONS = [
 const CMDK_SETTINGS_SECTIONS = [
   { name: 'Scheduled scans', hint: 'schedule, recurring, automatic' },
   { name: 'Scanning budget', hint: 'eco, balanced, turbo, battery, slower, faster' },
+  { name: 'Scan engine', hint: 'native, gdu, walker, fastest, engine' },
   { name: 'Disk-full forecast', hint: 'warning, days, projection' },
   { name: 'Live activity', hint: 'watch, auto-pause' },
   { name: 'Time Capsule', hint: 'retention, undo copies' },

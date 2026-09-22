@@ -70,14 +70,18 @@ test('runGdu rejects a missing binary instead of throwing synchronously', async 
   );
 });
 
-test('a scan completes via the walker when gdu is disabled', async () => {
+test('a scan completes without gdu when gdu is disabled', async () => {
+  // Since Phase 3 the native engine sits ahead of gdu in the selection, so a
+  // build with the module runs native here and one without it runs the
+  // walker; what this proves is that gdu is never used when it is disabled.
   const dir = await makeTree();
   process.env.TREEMAP_NO_GDU = '1';
   try {
     const started = await startScan(dir, { incremental: false });
     const s = await settle(started.scanId);
     assert.equal(s.status, 'complete');
-    assert.ok(s.engine === 'walker' || s.engine === 'turbo-walker', `engine was ${s.engine}`);
+    assert.ok(s.engine === 'walker' || s.engine === 'turbo-walker' || s.engine === 'native', `engine was ${s.engine}`);
+    assert.notEqual(s.engine, 'gdu-turbo');
     assert.ok(s.root);
   } finally {
     delete process.env.TREEMAP_NO_GDU;

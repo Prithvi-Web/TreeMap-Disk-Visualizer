@@ -3436,7 +3436,17 @@
         "preset": "auto",
         "effective": "<BUDGET>",
         "source": "<BUDGET>"
-      }
+      },
+      "engineReason": "<REASON>",
+      "fastPath": "<FASTPATH>",
+      "fallbackReason": "<FALLBACK>",
+      "entriesPerSecond": "<RATE>",
+      "cpuSeconds": "<CPU>",
+      "peakRssBytes": null,
+      "bytesRead": "<BYTES>",
+      "cacheHitRate": null,
+      "storageMode": "memory",
+      "placeholdersSkipped": 0
     }
   },
   "subtreeCode": {

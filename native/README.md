@@ -9,6 +9,7 @@ loaded the legacy engines take over and the API says why.
 native/
   treemap-core/          the Cargo workspace (edition 2024, Rust ≥ 1.85)
     crates/tm-governor   the resource governor: presets, the closed loop, the OS mechanisms — pure Rust
+    crates/tm-walk       the native walker: one listing call per directory, a governed walk, columnar output
     crates/tm-node       the napi-rs bindings — the only crate Node touches
   index.d.ts             the module's TypeScript declaration, the one source of truth for its shapes
   prebuilt/<platform>-<arch>/treemap_core.node   the built module (gitignored)
@@ -71,7 +72,9 @@ never answer for a newer one.
 
 `loadNative()` (`src/services/scan/native.ts`) tries, in order:
 
-1. `TREEMAP_NATIVE_MODULE`, when set;
+1. `TREEMAP_NATIVE_MODULE`, when set — and then nothing else: the variable
+   is exclusive, so pointing it at a path that is not there forces the legacy
+   engines (the reason names that path) and never falls through to a prebuilt;
 2. `native/prebuilt/<platform>-<arch>/treemap_core.node` under the app root;
 3. `<process.resourcesPath>/native/treemap_core.node` (an Electron layout).
 
@@ -100,10 +103,40 @@ strings, `Option` as `null`, shares as fractions of the whole machine (0..1).
 | `governorSnapshot()` | the Rust `Snapshot`: budget, effective preset, `targetShare`, `share1s`, `workers`, `duty`, thermal, battery, interaction, `machineBusyShare`, `paused`, `ticks`, the mechanisms last applied |
 | `governorPause()` / `governorResume()` | block and release the workers; a thermal pause is the governor's own and stays |
 | `governorHold(targetPercent, seconds)` | test-only: holds a percent of the machine with a synthetic load and resolves with the Rust `HoldReport` in shares |
+| `scanProbe(root)` | `{ fastPath, reason }`: opens and lists `root` once with this platform's listing (`bulk` on macOS; `unavailable` with the reason on a file, a root that cannot be read, or a platform whose listing is not built yet); never throws |
+| `scanStart(root, opts)` | starts a walk on `tm-walk`'s own threads, governed by the same process-wide governor, and returns a handle; `opts` is `{ neverDescend: string[], wantAtime: boolean, maxWorkers?: number, bufferBytes?: number }` (0 or absent lets the hill-climber decide); refuses a root that is not a folder or cannot be read with Node's errno spelling in front (`ENOENT: …`), and a platform without a listing |
+| `scanPoll(handle)` | `{ done, error, entries, dirs, files, bytes, currentPath }` from the walk's atomics — no callback, no `ThreadsafeFunction` (decision P3-1); once done, how the walk ended is in `error` |
+| `scanPause(handle)` / `scanResume(handle)` | stop the workers at their next check (between directories and every 256 entries inside one) and let them go on; nothing is re-listed |
+| `scanCancel(handle)` | ends the walk; `scanTake` then throws the cancellation and frees the handle |
+| `scanTake(handle)` | the columns (`WalkResult` in `native/index.d.ts`): typed arrays created from the Rust vectors without copying, the hard-link and refusal side tables, and the stats; frees the handle; throws in plain English when the walk failed or was cancelled (freeing it too) or when the handle is unknown |
 
 The governor is one per process, started lazily on the first call with this
 machine's sampler and signals, at the Automatic budget (the app's default);
-the app configures it on every settings load.
+the app configures it on every settings load. A walk obeys that same governor:
+every worker calls its throttle after each directory and re-reads its worker
+limit between directories, so the Scanning budget bounds the native engine
+exactly as it bounds the legacy ones.
+
+## The native walker (Phase 3)
+
+`src/services/scan/nativeEngine.ts` drives a scan: `scanStart`, then
+`scanPoll` from 1 ms doubling up to 100 ms (so a scan of a few dozen entries
+settles in a couple of milliseconds and a long one is polled at the SSE
+cadence), `scanPause`/`scanResume` the instant the Phase 2 pause gate closes
+or opens (the scan's `Pausable`), `scanCancel` on the record's cancel flag,
+then `scanTake` and an ingest into the same `PackedScanStore` every engine
+writes, through the same `statToInput` (`src/services/scan/nodeInput.ts`).
+The columns are in discovery order with every parent before its children;
+the ingest emits each directory's children byte-sorted by name off Windows,
+because libuv's `scandir` sorts the legacy walker's listing that way while
+`getattrlistbulk` returns APFS's own hash order — with that, the JSON the app
+emits is byte-identical to the walker's on the same tree
+(`tests/nativeEngine.test.ts`). `cpuSeconds` is the walk's own thread CPU
+(`CLOCK_THREAD_CPUTIME_ID`) plus the ingest's `process.cpuUsage()` delta, or
+null where the platform has no thread clock — never zero.
+
+A handle that is never taken is freed when the process exits; `scanTake` on
+an unknown handle throws.
 
 A hold replaces only the ceiling — the configured preset, and with it the QoS
 class and I/O policy the OS gives the workers, stays what it was — and hands
@@ -121,10 +154,11 @@ you are not touching.
 `governorHold` is a napi `AsyncTask`, so its `compute` runs on libuv's thread
 pool (four threads by default). That is acceptable for a test-only measurement
 of a few seconds — one pool thread is busy for the hold's length, and Node's
-own file work shares the rest — and it is not how a scan will run: Phase 3
-runs a scan on a dedicated thread and reports back through a batched
-`ThreadsafeFunction`. The governor's tick thread is `tm-governor-tick`, the
-synthetic workers are `tm-governor-load-N`.
+own file work shares the rest — and it is not how a scan runs: a walk runs on
+`tm-walk`'s own threads (`tm-walk-driver` and `tm-walk-worker-N`, up to the
+governor's limit) and Node reads its atomics through `scanPoll`, so libuv's
+pool and the event loop are never in the walk's path. The governor's tick
+thread is `tm-governor-tick`, the synthetic workers are `tm-governor-load-N`.
 
 ## Safety and lints
 

@@ -15,7 +15,9 @@
  * gdu additionally runs with --no-cross, which catches boundaries this list
  * can't know about (DMGs mounted mid-tree, cryptexes); the walker relies on
  * this list alone because firmlinks make same-device checks wrong on macOS
- * (/Users legitimately sits on a different volume than /).
+ * (/Users legitimately sits on a different volume than /). The native walker
+ * (Phase 3) is handed this same list and nothing else, for the same reason
+ * (decision P3-3).
  */
 const DARWIN_SKIP = new Set(['/System/Volumes', '/Volumes', '/dev', '/home', '/net', '/Network']);
 const LINUX_SKIP = new Set(['/proc', '/sys', '/dev', '/run']);
@@ -24,4 +26,11 @@ export function neverDescend(p: string, platform: NodeJS.Platform = process.plat
   if (platform === 'darwin') return DARWIN_SKIP.has(p);
   if (platform === 'linux') return LINUX_SKIP.has(p);
   return false;
+}
+
+/** The whole list for a platform, in a fixed order — what the native walker is given. */
+export function neverDescendPaths(platform: NodeJS.Platform = process.platform): string[] {
+  if (platform === 'darwin') return [...DARWIN_SKIP];
+  if (platform === 'linux') return [...LINUX_SKIP];
+  return [];
 }

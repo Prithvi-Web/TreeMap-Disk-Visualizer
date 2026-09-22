@@ -638,15 +638,20 @@ function renderDiskNotes() {
     // row states "scanned 0 items" and "0/s" as fact about a folder that plainly
     // holds files. There is nothing honest left to say, so the row says nothing.
     if (s.engine && s.durationMs > 0 && s.scanned != null) {
-      const label = { 'gdu-turbo': 'Turbo engine (gdu)', 'turbo-walker': 'Turbo walker', 'ntfs-mft': 'NTFS MFT reader', walker: 'Standard walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
+      const label = { native: 'Native engine', 'gdu-turbo': 'Turbo engine (gdu)', 'turbo-walker': 'Turbo walker', 'ntfs-mft': 'NTFS MFT reader', walker: 'Standard walker', cloud: 'Cloud metadata listing' }[s.engine] || s.engine;
       const rate = s.durationMs > 0 ? Math.round(s.scanned / (s.durationMs / 1000)) : 0;
       $('engineText').textContent = `${label} — scanned ${formatCount(s.scanned)} items in ${(s.durationMs / 1000).toFixed(1)} s` +
         (rate ? ` · ${formatCount(rate)}/s` : '') + engineBudgetNote(s);
-      $('engineHint').textContent = s.engine === 'gdu-turbo'
-        ? 'A bundled gdu subprocess per top-level folder — same counts as the built-in walker, measurably faster.'
-        : s.ioThreads > 4
-          ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
-          : '';
+      // Phase 3 — why this engine ran, on hover: the stats' own sentence, and
+      // the fallback reason when something faster could not run.
+      $('engineText').title = engineReasonTitle(s);
+      $('engineHint').textContent = s.engine === 'native'
+        ? 'The built-in native engine lists each folder in one call and hands the tree over in one piece — same counts as the built-in walker.'
+        : s.engine === 'gdu-turbo'
+          ? 'A bundled gdu subprocess per top-level folder — same counts as the built-in walker, measurably faster.'
+          : s.ioThreads > 4
+            ? `${s.ioThreads} parallel I/O threads keep the disk saturated instead of Node's default 4.`
+            : '';
       en.hidden = false;
     } else en.hidden = true;
   }
@@ -665,6 +670,15 @@ function budgetPresetLabel(preset) {
 function engineBudgetNote(s) {
   const effective = s && s.budget ? s.budget.effective : '';
   return effective ? ` · budget: ${budgetPresetLabel(effective)}` : '';
+}
+/* Phase 3 — the hover title of the engine row: why this engine ran, and what
+   fell back when something faster could not run. Stats from a build without
+   the field say nothing. */
+function engineReasonTitle(s) {
+  const reason = s && typeof s.engineReason === 'string' ? s.engineReason : '';
+  if (!reason) return '';
+  const fallback = typeof s.fallbackReason === 'string' && s.fallbackReason ? s.fallbackReason : '';
+  return fallback ? `${reason} — ${fallback}` : reason;
 }
 
 /* Feature 10 — "Cloud-safe deletes" list in the Clean Up modal. */

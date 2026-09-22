@@ -33,11 +33,22 @@ const MODULE_FILE = 'treemap_core.node';
 let outcome: NativeOutcome | null = null;
 /** The candidate list the cached outcome was decided for; a different list is decided afresh. */
 let outcomeKey: string | null = null;
+/**
+ * Test-only: what a call with no options loads instead of the real
+ * candidates — a fake module, or a path that is not there. One seam for every
+ * consumer (the budget, the native engine), so a test that pins one pins all.
+ */
+let overrideOptions: LoadOptions | null = null;
 
-/** Where a module may live, most specific first. */
+/**
+ * Where a module may live, most specific first. `TREEMAP_NATIVE_MODULE` is
+ * exclusive: a person who points it at a module is testing that module, and
+ * one who points it at a path that is not there is forcing the legacy
+ * engines — either way the prebuilt must not answer behind their back.
+ */
 export function nativeCandidates(env: NodeJS.ProcessEnv = process.env): string[] {
+  if (env.TREEMAP_NATIVE_MODULE) return [env.TREEMAP_NATIVE_MODULE];
   const out: string[] = [];
-  if (env.TREEMAP_NATIVE_MODULE) out.push(env.TREEMAP_NATIVE_MODULE);
   const triple = `${process.platform}-${process.arch}`;
   out.push(path.join(REPO_ROOT, 'native', 'prebuilt', triple, MODULE_FILE));
   const resources = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
@@ -83,17 +94,21 @@ function tryLoad(file: string, expected: string, requireModule: (f: string) => u
   return { available: true, module: mod, version, path: file };
 }
 
-/** Loads the native core once per process; every later call returns the same outcome. */
-export function loadNative(opts: LoadOptions = {}): NativeOutcome {
-  const candidates = opts.path ? [opts.path] : nativeCandidates();
+/**
+ * Loads the native core once per process; every later call returns the same
+ * outcome. With no options the test override applies when one is set.
+ */
+export function loadNative(opts?: LoadOptions): NativeOutcome {
+  const options = opts ?? overrideOptions ?? {};
+  const candidates = options.path ? [options.path] : nativeCandidates();
   const key = candidates.join('|');
   if (outcome && outcomeKey === key) return outcome;
-  const expected = opts.expectedVersion ?? expectedVersion();
+  const expected = options.expectedVersion ?? expectedVersion();
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const requireModule = opts.requireModule ?? ((f: string): unknown => require(f) as unknown);
+  const requireModule = options.requireModule ?? ((f: string): unknown => require(f) as unknown);
   const reasons: string[] = [];
   for (const file of candidates) {
-    const result = tryLoad(file, expected, requireModule, opts.requireModule !== undefined);
+    const result = tryLoad(file, expected, requireModule, options.requireModule !== undefined);
     if (result.available) {
       outcome = result;
       outcomeKey = key;
@@ -105,6 +120,11 @@ export function loadNative(opts: LoadOptions = {}): NativeOutcome {
   outcome = failed;
   outcomeKey = key;
   return failed;
+}
+
+/** Test-only: what a no-option load uses (a fake module, or a path that is not there); null clears it. */
+export function setNativeLoadOverrideForTests(opts: LoadOptions | null): void {
+  overrideOptions = opts;
 }
 
 /** Test-only: forget the cached outcome. */

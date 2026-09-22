@@ -16,10 +16,18 @@ import path from 'node:path';
  * exact same driver.
  *
  * Normalized: scanId, timestamps/durations, engine/ioThreads (machine
- * facts), accessedAt values (atime is best-effort by design — presence still
- * compares), and the fixture root path (replaced by <ROOT> so goldens don't
- * bake in a machine path). Everything else — structure, names, sizes,
+ * facts), the Phase 2 budget and the Phase 3 engine facts (engineReason,
+ * fastPath, fallbackReason, entriesPerSecond, cpuSeconds — what ran and how
+ * fast differ between machines; each is checked for a legal value before it
+ * is scrubbed), accessedAt values (atime is best-effort by design — presence
+ * still compares), and the fixture root path (replaced by <ROOT> so goldens
+ * don't bake in a machine path). Everything else — structure, names, sizes,
  * mtimes, flags, child order, property order — must match exactly.
+ *
+ * The scan is pinned to the built-in walker (the engine setting and gdu off),
+ * as the baseline was: the golden guards the store rewrite's frontend parity,
+ * and the native engine's equality with the walker has its own gate
+ * (tests/nativeEquivalence.test.ts).
  *
  * Directory-listing order note: children ride in readdir order, which on
  * APFS is a deterministic function of the entry names — stable across runs
@@ -147,10 +155,51 @@ function finalSseEvent(port: number, scanId: string): Promise<unknown> {
  */
 const VOLATILE_NUMBERS = new Set(['startedAt', 'finishedAt', 'durationMs', 'tookMs', 'expiresAt', 'slackBytes']);
 
+/*
+ * The Phase 3 engine facts (D6): which mechanism listed, why, what fell back
+ * and how fast are machine facts like `engine` itself. Each is scrubbed only
+ * when it is a legal value — a fast path nobody defined, an empty reason, a
+ * rate of zero or a negative CPU time is a regression the byte comparison
+ * must still catch, not a machine fact.
+ */
+const FAST_PATHS = ['bulk', 'extdDirInfo', 'getdents', 'perEntry', 'readdir+lstat', 'gdu', 'cloud', 'unavailable'];
+
+function scrubEngineFact(key: string, v: unknown): { scrubbed: unknown } | null {
+  const bad = (what: string): never => {
+    throw new Error(`golden: ${key} is ${JSON.stringify(v)}, ${what} — a value outside the contract is a regression, not a machine fact`);
+  };
+  switch (key) {
+    case 'engineReason':
+      if (typeof v !== 'string' || v.length < 10) bad('not a sentence');
+      return { scrubbed: '<REASON>' };
+    case 'fastPath':
+      if (typeof v !== 'string' || !FAST_PATHS.includes(v)) bad(`not one of ${FAST_PATHS.join(' | ')}`);
+      return { scrubbed: '<FASTPATH>' };
+    case 'fallbackReason':
+      if (v !== null && (typeof v !== 'string' || v.length < 10)) bad('neither null nor a sentence');
+      return { scrubbed: '<FALLBACK>' };
+    case 'entriesPerSecond':
+      if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) bad('not a positive rate for a complete scan');
+      return { scrubbed: '<RATE>' };
+    case 'cpuSeconds':
+      if (v !== null && (typeof v !== 'number' || !Number.isFinite(v) || v < 0)) bad('neither null nor a non-negative number');
+      return { scrubbed: '<CPU>' };
+    case 'bytesRead':
+      if (v !== null && (typeof v !== 'number' || !Number.isInteger(v) || v < 0)) bad('neither null nor a byte count');
+      return { scrubbed: '<BYTES>' };
+    default:
+      return null;
+  }
+}
+
 /** Scrub machine/run-specific values; structure and content stay exact. */
 export function normalize(value: unknown, treeRoot: string): unknown {
   const fixString = (s: string): string => s.split(treeRoot).join('<ROOT>');
   const walk = (v: unknown, key?: string, parent?: string): unknown => {
+    if (key !== undefined && (typeof v === 'string' || typeof v === 'number' || v === null)) {
+      const fact = scrubEngineFact(key, v);
+      if (fact) return fact.scrubbed;
+    }
     if (typeof v === 'string') {
       if (key === 'scanId') return '<SCAN>';
       if (key === 'engine') return '<ENGINE>';
@@ -209,6 +258,9 @@ export async function captureGolden(
   fs.writeFileSync(
     path.join(dataDir, 'settings.json'),
     JSON.stringify({
+      // The walker, whatever this machine has built (Phase 3): the engine the
+      // baseline ran on. A settings file the baseline did not read ignores it.
+      engine: 'walker',
       budgets: [
         { path: path.join(treeRoot, 'docs'), maxBytes: 10_000 },
         { path: path.join(treeRoot, 'media'), maxBytes: 999_999_999 },

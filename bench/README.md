@@ -10,7 +10,7 @@ README, the UI or a release note.
 ## Commands
 
 ```
-npm run bench -- enumerate [--corpus=enum200k|enum1m|ci20k|smoke|dupes100k] [--engine=auto|gdu|walker] [--runs=3] [--cache=warm|cold] [--record] [--label=...]
+npm run bench -- enumerate [--corpus=enum200k|enum1m|ci20k|smoke|dupes100k] [--engine=auto|native|gdu|walker] [--runs=3] [--cache=warm|cold] [--record] [--label=...]
 npm run bench -- duplicates [--corpus=dupes100k|smoke|ci20k|enum200k|enum1m] [--runs=3] [--min-size=1024] [--cache=warm|cold] [--record] [--label=...]
 npm run bench -- neardup [--originals=600] [--runs=1] [--threshold=10] [--cache=warm|cold] [--record] [--label=...]
 npm run bench -- all [--small] [--runs=3] [--originals=600] [--record] [--label=...]
@@ -121,6 +121,13 @@ in its parameters). Read the two CORRECTNESS lines and series instead.
 * `--engine=gdu` without a gdu binary is an error, and a run that asked for
   gdu but whose scan fell back to the walker (the app does that on any gdu
   failure) is an error too — the number would describe the wrong engine.
+* `--engine=native` (Phase 3) forces the native walker through the app's own
+  `engine` setting, written into the child's private data directory; a build
+  without the module, or a scan that did not report `engine: 'native'` (the
+  app falls back to the legacy chain on any native failure, saying why in
+  `fallbackReason`), is an error for the same reason. `--engine=walker` and
+  `--engine=gdu` are forced the same way, so `auto` is the only pass that
+  measures the app's own selection.
 * A cold series is `cold` only when the purge procedure succeeded before
   **every** measured run; one failure and the result says `unknown` with the
   runs it could not purge.

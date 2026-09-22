@@ -128,9 +128,16 @@ test('the writes that bit us are the ones being tracked', () => {
   const scanner = readFileSync(path.join(SRC, 'services', 'diskScanner.ts'), 'utf8');
   assert.match(scanner, /trackWrite\('saveSnapshot'/, 'the snapshot write behind the CI race');
   assert.match(scanner, /trackWrite\('saveMtimeCache'/, 'and the cache write beside it');
-  assert.equal(
-    (scanner.match(/trackWrite\(/g) ?? []).length, 4,
-    'both scan-completion paths — the incremental one and the full one — track both writes',
+  // Since Phase 3 every completion path (the native engine, gdu, the walker)
+  // ends in one settleComplete(), which is where both writes are tracked; so
+  // the check is that the function tracks both and that every path reaches it.
+  const settle = scanner.slice(scanner.indexOf('function settleComplete('));
+  const body = settle.slice(0, settle.indexOf('\n}\n') + 3);
+  assert.equal((body.match(/trackWrite\(/g) ?? []).length, 2, 'settleComplete tracks both writes');
+  assert.equal((scanner.match(/trackWrite\(/g) ?? []).length, 2, 'and nowhere else writes untracked');
+  assert.ok(
+    (scanner.match(/settleComplete\(scan, store\)/g) ?? []).length >= 3,
+    'every scan-completion path — native, gdu and the walker — settles through it',
   );
   for (const [file, label] of [
     ['services/cloud/cloudScan.ts', "trackWrite('saveSnapshot(cloud)'"],

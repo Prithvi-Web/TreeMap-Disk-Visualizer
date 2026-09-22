@@ -15,21 +15,29 @@
 //!
 //! `governorHold` is an [`AsyncTask`]: its `compute` runs on libuv's thread pool,
 //! which is acceptable for a test-only measurement of a few seconds and not for a
-//! scan. Phase 3 runs a scan on a dedicated thread and reports through a batched
-//! `ThreadsafeFunction`.
+//! scan. A scan (Phase 3) runs on `tm-walk`'s own threads behind a handle:
+//! `scanStart` returns the handle, Node polls `scanPoll` at the SSE cadence (atomics
+//! on this side, no callback and no `ThreadsafeFunction`, decision P3-1),
+//! `scanPause`/`scanResume`/`scanCancel` reach the handle, and `scanTake` moves the
+//! columns into typed arrays without copying and frees the handle. The walk obeys
+//! the same process-wide governor `governorConfigure` drives.
 
 use std::any::Any;
+use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError, TryLockError};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, TryLockError};
 
-use napi::bindgen_prelude::AsyncTask;
+use napi::bindgen_prelude::{AsyncTask, Float64Array, Uint8Array, Uint32Array};
 use napi::{Env, Error, Result, ScopedTask, Status, Unknown};
 use napi_derive::napi;
-use serde::Serialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use tm_governor::{
     Budget, Governor, HoldReport, Preset, capabilities, hold, platform_sampler, platform_signals,
 };
+use tm_walk::{Progress, Refusal, WalkError, WalkHandle, WalkOptions, WalkOutput, WalkStats};
 
 /// The budget the governor starts with before the app configures it: Automatic,
 /// Balanced that yields to battery and heat, which is also the app's default setting.
@@ -301,4 +309,347 @@ impl<'task> ScopedTask<'task> for HoldTask {
     fn resolve(&mut self, env: &'task Env, output: HoldReport) -> Result<Unknown<'task>> {
         env.to_js_value(&output)
     }
+}
+
+/* ------------------------------ the native walker (Phase 3) ------------------------------ */
+
+/// The shape `scanStart` accepts, for the refusal message.
+const START_SHAPE: &str = "scanStart needs options like { neverDescend: string[], wantAtime: boolean, maxWorkers?: number, bufferBytes?: number }";
+
+/// What `scanStart` takes, checked at the boundary: unknown keys are refused so a
+/// misspelled option can never be silently ignored.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StartOptions {
+    /// Absolute paths the walk never descends into (the legacy list, passed from Node).
+    #[serde(default)]
+    never_descend: Vec<String>,
+    /// Whether to record access times.
+    #[serde(default)]
+    want_atime: bool,
+    /// A fixed worker count, still capped by the governor; absent, null or 0 lets the hill-climber decide.
+    #[serde(default)]
+    max_workers: Option<u32>,
+    /// Bytes per worker listing buffer; absent, null or 0 is the crate's default.
+    #[serde(default)]
+    buffer_bytes: Option<u32>,
+}
+
+/// A walk that has ended: the last progress it reported and its outcome.
+struct Finished {
+    progress: Progress,
+    result: std::result::Result<WalkOutput, WalkError>,
+}
+
+/// One walk as the table holds it: running behind its handle, or finished. The
+/// poll that first sees `done` takes the handle so that a failure is reported by
+/// `scanPoll` and thrown by `scanTake`; `scanTake` removes the slot either way.
+enum Slot {
+    Running(WalkHandle),
+    Finished(Box<Finished>),
+}
+
+/// Every walk this process has started and not yet taken, by handle.
+struct Scans {
+    slots: Mutex<HashMap<u32, Slot>>,
+    next: AtomicU32,
+}
+
+static SCANS: OnceLock<Scans> = OnceLock::new();
+
+fn scans() -> &'static Scans {
+    SCANS.get_or_init(|| Scans {
+        slots: Mutex::new(HashMap::new()),
+        next: AtomicU32::new(1),
+    })
+}
+
+/// The refusal for a handle the table does not hold.
+fn unknown_handle(handle: u32) -> Error {
+    refuse(format!(
+        "no scan handle {handle}: it was taken, cancelled or never started"
+    ))
+}
+
+/// How a walk ended other than with an output, in plain English. A root refusal
+/// is prefixed with Node's own errno spelling, so the scanner's error path turns
+/// it into the sentence every engine uses.
+fn walk_error_text(err: &WalkError) -> String {
+    match err {
+        WalkError::RootNotDirectory => {
+            "ENOTDIR: the root is not a folder, so the native engine cannot walk it".to_owned()
+        }
+        WalkError::RootRefused(Refusal::Denied) => {
+            "EACCES: the native engine was not allowed to list the root".to_owned()
+        }
+        WalkError::RootRefused(Refusal::Vanished) => {
+            "ENOENT: the root disappeared while the native engine was scanning it".to_owned()
+        }
+        WalkError::RootRefused(Refusal::Unreadable) => {
+            "EIO: the root could not be read by the native engine".to_owned()
+        }
+        WalkError::Unsupported(reason) => reason.clone(),
+        WalkError::Cancelled => "the native scan was cancelled".to_owned(),
+        WalkError::Internal(reason) => format!("the native engine failed: {reason}"),
+    }
+}
+
+/// [`walk_error_text`] as the JavaScript error: a root that is not a folder is the
+/// caller's mistake, everything else a failure.
+fn walk_error(err: &WalkError) -> Error {
+    let text = walk_error_text(err);
+    match err {
+        WalkError::RootNotDirectory => refuse(text),
+        WalkError::RootRefused(_)
+        | WalkError::Unsupported(_)
+        | WalkError::Cancelled
+        | WalkError::Internal(_) => failure(text),
+    }
+}
+
+/// The walk's stats as JavaScript sees them: camelCase, `cpuSeconds` null where the
+/// platform has no thread clock (never zero, which would be a measurement).
+fn stats_json(stats: &WalkStats) -> Value {
+    json!({
+        "dirsListed": stats.dirs_listed,
+        "entries": stats.entries,
+        "wallMs": stats.wall_ms,
+        "cpuSeconds": stats.cpu_seconds.is_finite().then_some(stats.cpu_seconds),
+        "fastPath": stats.fast_path.as_str(),
+        "workersPeak": stats.workers_peak,
+        "climbSteps": stats.climb_steps,
+        "deniedEntries": stats.denied_entries,
+        "unreadableEntries": stats.unreadable_entries,
+        "dataless": stats.dataless,
+    })
+}
+
+/// The progress object `scanPoll` returns.
+fn progress_json(progress: &Progress, error: Option<&str>) -> Value {
+    json!({
+        "done": progress.done,
+        "error": error,
+        "entries": progress.entries,
+        "dirs": progress.dirs,
+        "files": progress.files,
+        "bytes": progress.bytes,
+        "currentPath": progress.current_path,
+    })
+}
+
+/// The walk's product as `scanTake` returns it: columns in discovery order (index
+/// 0 is the root, `parent[i] < i`), each created from the Rust `Vec` without
+/// copying — napi takes the allocation over and frees it when JavaScript drops
+/// the array — plus the side tables and the stats.
+#[napi(object)]
+pub struct WalkResult {
+    /// Parent index; the root's is 0.
+    pub parent: Uint32Array,
+    /// `parent.length + 1` offsets into `names`.
+    pub name_off: Uint32Array,
+    /// Every name as UTF-8, back to back.
+    pub names: Uint8Array,
+    /// 0 = file (or socket, fifo, device), 1 = directory, 2 = symlink.
+    pub kind: Uint8Array,
+    /// Bit 1 = dataless, bit 2 = a directory that could not be listed.
+    pub flags: Uint8Array,
+    /// Logical size in bytes (0 for directories).
+    pub size: Float64Array,
+    /// Allocated bytes (0 for directories).
+    pub alloc_bytes: Float64Array,
+    /// Modification time in milliseconds, unrounded; NaN when withheld.
+    pub mtime_ms: Float64Array,
+    /// Access time the same way; NaN when not asked for or not recorded.
+    pub atime_ms: Float64Array,
+    /// Every leaf whose link count exceeds one, sorted by node: its index.
+    pub hardlink_node: Uint32Array,
+    /// Its `st_dev` as a double.
+    pub hardlink_dev: Float64Array,
+    /// Its `st_ino` as a double.
+    pub hardlink_ino: Float64Array,
+    /// Every directory that could not be listed, sorted by node: its index.
+    pub refusal_node: Uint32Array,
+    /// Why: 1 denied, 2 vanished, 3 unreadable.
+    pub refusal_why: Uint8Array,
+    /// The Rust `WalkStats` in camelCase (`cpuSeconds` null where unmeasured).
+    pub stats: Value,
+}
+
+/// Moves a walk's output into typed arrays. Nothing is copied but the two small
+/// side tables, which are split into their columns.
+fn columns(output: WalkOutput) -> WalkResult {
+    let WalkOutput {
+        parent,
+        name_off,
+        names,
+        kind,
+        flags,
+        size,
+        alloc_bytes,
+        mtime_ms,
+        atime_ms,
+        hardlinks,
+        refusals,
+        stats,
+    } = output;
+    let mut hardlink_node = Vec::with_capacity(hardlinks.len());
+    let mut hardlink_dev = Vec::with_capacity(hardlinks.len());
+    let mut hardlink_ino = Vec::with_capacity(hardlinks.len());
+    for link in &hardlinks {
+        hardlink_node.push(link.node);
+        hardlink_dev.push(link.dev);
+        hardlink_ino.push(link.ino);
+    }
+    let mut refusal_node = Vec::with_capacity(refusals.len());
+    let mut refusal_why = Vec::with_capacity(refusals.len());
+    for refusal in &refusals {
+        refusal_node.push(refusal.node);
+        refusal_why.push(refusal.why.code());
+    }
+    WalkResult {
+        parent: Uint32Array::new(parent),
+        name_off: Uint32Array::new(name_off),
+        names: Uint8Array::new(names),
+        kind: Uint8Array::new(kind),
+        flags: Uint8Array::new(flags),
+        size: Float64Array::new(size),
+        alloc_bytes: Float64Array::new(alloc_bytes),
+        mtime_ms: Float64Array::new(mtime_ms),
+        atime_ms: Float64Array::new(atime_ms),
+        hardlink_node: Uint32Array::new(hardlink_node),
+        hardlink_dev: Float64Array::new(hardlink_dev),
+        hardlink_ino: Float64Array::new(hardlink_ino),
+        refusal_node: Uint32Array::new(refusal_node),
+        refusal_why: Uint8Array::new(refusal_why),
+        stats: stats_json(&stats),
+    }
+}
+
+/// Opens and lists `root` once with this platform's listing; no side effects
+/// beyond the read. `{ fastPath, reason }`, never a throw.
+#[napi(js_name = "scanProbe", catch_unwind)]
+pub fn scan_probe(root: String) -> Value {
+    let probe = tm_walk::probe(&PathBuf::from(root));
+    json!({ "fastPath": probe.fast_path.as_str(), "reason": probe.reason })
+}
+
+/// Starts a walk of `root` on `tm-walk`'s own threads, governed by the process-wide
+/// governor, and returns its handle. Refuses options of the wrong shape, a root
+/// that is not a folder or cannot be read (with Node's errno spelling in front),
+/// and a platform without a native listing, each in plain English.
+#[napi(js_name = "scanStart", catch_unwind)]
+pub fn scan_start(root: String, opts: Option<Value>) -> Result<u32> {
+    let raw = opts.unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+    let received = raw.to_string();
+    let options: StartOptions = serde_json::from_value(raw)
+        .map_err(|err| refuse(format!("{START_SHAPE}; got {received}: {err}")))?;
+    let walk_options = WalkOptions {
+        root: PathBuf::from(root),
+        never_descend: options
+            .never_descend
+            .into_iter()
+            .map(PathBuf::from)
+            .collect(),
+        want_atime: options.want_atime,
+        max_workers: options
+            .max_workers
+            .map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX)),
+        buffer_bytes: options
+            .buffer_bytes
+            .map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX)),
+    };
+    let governor = Arc::new(shared().governor.clone());
+    let handle = tm_walk::start(walk_options, governor).map_err(|err| walk_error(&err))?;
+    let table = scans();
+    let id = table.next.fetch_add(1, Ordering::AcqRel);
+    lock(&table.slots).insert(id, Slot::Running(handle));
+    Ok(id)
+}
+
+/// The walk's progress right now: `{ done, error, entries, dirs, files, bytes,
+/// currentPath }`. Once the walk is done its outcome is kept for `scanTake`, and
+/// `error` says how it ended when it did not produce an output.
+#[napi(js_name = "scanPoll", catch_unwind)]
+pub fn scan_poll(handle: u32) -> Result<Value> {
+    let mut slots = lock(&scans().slots);
+    let slot = slots
+        .remove(&handle)
+        .ok_or_else(|| unknown_handle(handle))?;
+    let (progress, error) = match slot {
+        Slot::Running(walk) => {
+            let progress = walk.progress();
+            if progress.done {
+                let result = walk.take();
+                let error = result.as_ref().err().map(walk_error_text);
+                slots.insert(
+                    handle,
+                    Slot::Finished(Box::new(Finished {
+                        progress: progress.clone(),
+                        result,
+                    })),
+                );
+                (progress, error)
+            } else {
+                slots.insert(handle, Slot::Running(walk));
+                (progress, None)
+            }
+        }
+        Slot::Finished(finished) => {
+            let progress = finished.progress.clone();
+            let error = finished.result.as_ref().err().map(walk_error_text);
+            slots.insert(handle, Slot::Finished(finished));
+            (progress, error)
+        }
+    };
+    drop(slots);
+    Ok(progress_json(&progress, error.as_deref()))
+}
+
+/// Runs `act` on a walk that is still running; a finished walk has nothing to
+/// pause, resume or cancel and is left alone; an unknown handle is refused.
+fn with_running(handle: u32, act: impl FnOnce(&WalkHandle)) -> Result<()> {
+    let slots = lock(&scans().slots);
+    match slots.get(&handle) {
+        None => Err(unknown_handle(handle)),
+        Some(Slot::Running(walk)) => {
+            act(walk);
+            Ok(())
+        }
+        Some(Slot::Finished(_)) => Ok(()),
+    }
+}
+
+/// Stops the workers at their next check (between directories and every 256
+/// entries inside one); nothing is re-listed on resume.
+#[napi(js_name = "scanPause", catch_unwind)]
+pub fn scan_pause(handle: u32) -> Result<()> {
+    with_running(handle, WalkHandle::pause)
+}
+
+/// Lets paused workers continue where they stopped.
+#[napi(js_name = "scanResume", catch_unwind)]
+pub fn scan_resume(handle: u32) -> Result<()> {
+    with_running(handle, WalkHandle::resume)
+}
+
+/// Ends the walk; `scanTake` then throws the cancellation and frees the handle.
+#[napi(js_name = "scanCancel", catch_unwind)]
+pub fn scan_cancel(handle: u32) -> Result<()> {
+    with_running(handle, WalkHandle::cancel)
+}
+
+/// The walk's output as columns. Blocks until the walk is done (poll first), then
+/// frees the handle — a walk that failed or was cancelled throws its reason and is
+/// freed too. An unknown handle is refused.
+#[napi(js_name = "scanTake", catch_unwind)]
+pub fn scan_take(handle: u32) -> Result<WalkResult> {
+    let slot = lock(&scans().slots)
+        .remove(&handle)
+        .ok_or_else(|| unknown_handle(handle))?;
+    let result = match slot {
+        Slot::Running(walk) => walk.take(),
+        Slot::Finished(finished) => finished.result,
+    };
+    let output = result.map_err(|err| walk_error(&err))?;
+    Ok(columns(output))
 }
