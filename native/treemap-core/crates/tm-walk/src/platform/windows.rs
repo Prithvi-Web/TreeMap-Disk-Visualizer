@@ -715,7 +715,7 @@ mod os {
         stage_record,
     };
     use crate::output::Refusal;
-    use crate::platform::{ListBuffer, Lister, Listing, Meta};
+    use crate::platform::{DirTimes, ListBuffer, Lister, Listing, Meta};
     use crate::{FastPath, Probe};
 
     /// The probe's own listing buffer.
@@ -932,23 +932,32 @@ mod os {
         } else {
             0
         };
-        let atime_ms = if want_atime {
-            filetime_ms(ticks(info.ftLastAccessTime))
-        } else {
-            f64::NAN
-        };
+        let times = own_times(&info, want_atime);
         Ok(Meta {
             kind,
             flags,
             size,
             alloc: 0.0,
-            mtime_ms: filetime_ms(ticks(info.ftLastWriteTime)),
-            atime_ms,
+            mtime_ms: times.mtime_ms,
+            atime_ms: times.atime_ms,
             dev: f64::from(info.dwVolumeSerialNumber),
             ino: size_of_parts(info.nFileIndexHigh, info.nFileIndexLow) as f64,
             nlink: if is_dir { 0 } else { info.nNumberOfLinks },
             withheld: kind != KIND_DIR,
         })
+    }
+
+    /// A handle's own last-write and last-access times, as libuv's `lstat`
+    /// computes them: the directory's own record, not its parent's index copy.
+    fn own_times(info: &BY_HANDLE_FILE_INFORMATION, want_atime: bool) -> DirTimes {
+        DirTimes {
+            mtime_ms: filetime_ms(ticks(info.ftLastWriteTime)),
+            atime_ms: if want_atime {
+                filetime_ms(ticks(info.ftLastAccessTime))
+            } else {
+                f64::NAN
+            },
+        }
     }
 
     /// Opens `dir` to list it. The listing types every reparse point as a
@@ -1174,16 +1183,21 @@ mod os {
                 dev: info.dwVolumeSerialNumber,
                 want_atime,
             };
-            match list_extd(&handle, dir, facts, buf) {
-                Ok(Outcome::Listed) => Ok(FastPath::ExtdDirInfo),
+            // The directory's own times, from the handle this listing opened:
+            // its parent's index holds a lazily updated copy (see DirTimes).
+            let times = own_times(&info, want_atime);
+            let path = match list_extd(&handle, dir, facts, buf) {
+                Ok(Outcome::Listed) => FastPath::ExtdDirInfo,
                 Ok(Outcome::Unsupported(_code)) => {
                     drop(handle);
                     buf.listing.clear();
                     list_find(dir, facts, buf).map_err(refusal_from_win32)?;
-                    Ok(FastPath::PerEntry)
+                    FastPath::PerEntry
                 }
-                Err(code) => Err(refusal_from_win32(code)),
-            }
+                Err(code) => return Err(refusal_from_win32(code)),
+            };
+            buf.listing.own_times = Some(times);
+            Ok(path)
         }
     }
 

@@ -53,7 +53,14 @@ async function waitForCache(rootPath: string): Promise<void> {
 }
 
 async function scanOnce(root: string, incremental: boolean): Promise<ScanResult> {
-  process.env.TREEMAP_NO_GDU = '1'; // deterministic walker on every machine
+  // No gdu. The FIRST scan runs on whichever engine Automatic picks — the
+  // native engine wherever its module loads — and a fast rescan always runs
+  // on the walker (P3-4), reading the mtime cache the first scan wrote: the
+  // cross-engine path every user takes. (This comment used to say "the
+  // walker on every machine"; written before the native engine existed, it
+  // stopped being true, and on Windows this very path exposed the native
+  // listing's lazily updated directory times — see DirTimes in tm-walk.)
+  process.env.TREEMAP_NO_GDU = '1';
   try {
     const started = await startScan(root, { incremental });
     return await settle(started.scanId);

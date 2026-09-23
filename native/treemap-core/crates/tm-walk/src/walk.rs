@@ -31,7 +31,7 @@ use tm_governor::{Governor, apply_to_current_thread, profile};
 
 use crate::climb::Climber;
 use crate::output::{DirRefusal, HardlinkRef, Refusal, WalkOutput, WalkStats};
-use crate::platform::{ListBuffer, Lister, Meta, thread_cpu_seconds};
+use crate::platform::{DirTimes, ListBuffer, Lister, Meta, thread_cpu_seconds};
 use crate::queue::{DirJob, Queue};
 use crate::{
     FLAG_DATALESS, FLAG_REFUSED_DIR, FastPath, KIND_DIR, KIND_FILE, WalkError, WalkOptions,
@@ -295,6 +295,9 @@ struct Part {
     /// the merge.
     id_candidates: Vec<(u64, u64, u32)>,
     refusals: Vec<DirRefusal>,
+    /// Directories whose own listing reported their own times (Windows), which
+    /// replace the copy their parent's listing gave; applied at the merge.
+    time_patches: Vec<(u32, DirTimes)>,
     cpu_seconds: f64,
 }
 
@@ -657,6 +660,11 @@ fn process_dir(
     }
     shared.dirs_listed.fetch_add(1, Ordering::AcqRel);
     let listing = &buf.listing;
+    // The root's node already holds its own times (stat_dir reads the root
+    // itself), so only a subdirectory's parent-given copy can be stale.
+    if let Some(times) = listing.own_times.filter(|_| job.id != 0) {
+        part.time_patches.push((job.id, times));
+    }
     shared
         .denied_entries
         .fetch_add(listing.denied_entries, Ordering::AcqRel);
@@ -837,6 +845,15 @@ fn merge(parts: &[Part], total: usize) -> Result<Merged, WalkError> {
         name_off.push(running);
     }
     let mut names = vec![0_u8; running as usize];
+    // A directory's own times, read when it was listed, replace the copy its
+    // parent's listing reported (see DirTimes).
+    for part in parts {
+        for &(id, times) in &part.time_patches {
+            let i = usize::try_from(id).map_err(|_| out_of_range(id, total))?;
+            *mtime.get_mut(i).ok_or_else(|| out_of_range(id, total))? = times.mtime_ms;
+            *atime.get_mut(i).ok_or_else(|| out_of_range(id, total))? = times.atime_ms;
+        }
+    }
     for part in parts {
         let mut src = 0_usize;
         for (j, &id) in part.ids.iter().enumerate() {

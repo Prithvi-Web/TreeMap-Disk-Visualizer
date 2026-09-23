@@ -194,6 +194,18 @@ above read as design and this reads as fact:
    measurement shows the syscall overhead is the bottleneck.
 4. **Buffers:** every listing uses `DEFAULT_BUFFER_BYTES` (256 KiB) per worker
    on every platform; the one-shot capability probe lists with 64 KiB.
+5. **Windows directory times come from the directory itself** (23 September
+   2026). NTFS keeps a copy of each directory's times in its PARENT's index
+   and updates that copy lazily, so the times `FileIdExtdDirectoryInfo`
+   reports for a subdirectory can be older than the directory's own — the
+   ones libuv's `lstat`, and so the legacy walker, reads. When the walk lists
+   a directory, the handle it opened already carries the directory's own
+   `BY_HANDLE_FILE_INFORMATION`; the listing reports those times
+   (`Listing::own_times`, `DirTimes`) and the merge puts them on the
+   directory's node. No extra call. A directory that is never listed (refused,
+   or on the never-descend list) keeps its parent's copy. Found because the
+   fast-rescan tests failed only on Windows: the first scan now runs natively,
+   the rescan on the walker, and no directory's mtime ever matched.
 
 ## 6. The store (Phase 4)
 

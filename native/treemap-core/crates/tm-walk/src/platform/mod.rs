@@ -79,6 +79,18 @@ pub struct Entry {
     pub meta: Meta,
 }
 
+/// A directory's own times, read from the directory itself while it was
+/// listed. Windows keeps a copy of each directory's times in its PARENT's
+/// index and updates that copy lazily, so what the parent's listing reported
+/// can be stale; these are what `lstat` — and so the legacy walker — reads.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DirTimes {
+    /// Last write, in ms since the epoch, computed as `lstat` computes it.
+    pub mtime_ms: f64,
+    /// Last access, in ms since the epoch; NaN when the walk did not ask for it.
+    pub atime_ms: f64,
+}
+
 /// One directory's entries, staged in a worker's reusable buffers. Names are
 /// the OS bytes (the walk needs them to build child paths); the lossy UTF-8
 /// form is produced once, when a name goes into the output arena.
@@ -97,6 +109,10 @@ pub struct Listing {
     /// mounted volume's root, so the lister re-reads these with `fstatat`
     /// before the listing is handed on, and empties this list.
     pub mount_points: Vec<usize>,
+    /// The listed directory's own times, when the platform read them from the
+    /// directory itself (Windows); `None` where the parent's listing already
+    /// reported each entry's own attributes (macOS, Linux).
+    pub own_times: Option<DirTimes>,
 }
 
 impl Listing {
@@ -107,6 +123,7 @@ impl Listing {
         self.entries.clear();
         self.denied_entries = 0;
         self.unreadable_entries = 0;
+        self.own_times = None;
     }
 
     /// Appends one entry.

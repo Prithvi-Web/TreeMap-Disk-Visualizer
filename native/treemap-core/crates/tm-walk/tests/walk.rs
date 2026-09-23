@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tm_walk::platform::{ListBuffer, Lister, Meta};
+use tm_walk::platform::{DirTimes, ListBuffer, Lister, Meta};
 use tm_walk::walk::Pacer;
 use tm_walk::{
     DirRefusal, FLAG_REFUSED_DIR, FastPath, KIND_DIR, KIND_FILE, Refusal, WalkError, WalkHandle,
@@ -100,6 +100,8 @@ struct FakeTree {
     stat_calls: AtomicU64,
     in_flight: AtomicU32,
     peak_in_flight: AtomicU32,
+    /// The times a directory's own listing reports for the directory itself.
+    own_times: HashMap<PathBuf, DirTimes>,
 }
 
 impl FakeTree {
@@ -121,7 +123,14 @@ impl FakeTree {
             stat_calls: AtomicU64::new(0),
             in_flight: AtomicU32::new(0),
             peak_in_flight: AtomicU32::new(0),
+            own_times: HashMap::new(),
         }
+    }
+
+    /// Scripts the times the listing of `rel` reports for the directory itself.
+    fn own_times(&mut self, rel: &str, times: DirTimes) {
+        let path = self.abs(rel);
+        self.own_times.insert(path, times);
     }
 
     fn with_delay(mut self, delay: Duration) -> Self {
@@ -292,6 +301,9 @@ impl Lister for FakeTree {
         let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak_in_flight.fetch_max(now, Ordering::SeqCst);
         let result = self.answer(dir, buf);
+        if result.is_ok() {
+            buf.listing.own_times = self.own_times.get(dir).copied();
+        }
         self.in_flight.fetch_sub(1, Ordering::SeqCst);
         result
     }
@@ -1081,7 +1093,62 @@ fn cancel_stops_a_listing_between_its_batches_and_the_heartbeat_advances_meanwhi
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows keeps a copy of each directory's times in its PARENT's index and
+/// updates that copy lazily, so the times a parent's listing reports for a
+/// subdirectory can be stale. The subdirectory's own listing reads the
+/// directory's own times from the handle it opened, and those win: they are
+/// what `lstat` — and so the legacy walker — reads. A directory whose listing
+/// reports no times of its own (macOS and Linux, whose listings already read
+/// each entry's own attributes) keeps what its parent's listing said.
+#[test]
+fn a_directorys_own_times_from_its_listing_replace_its_parents_copy() -> TestResult {
+    let mut tree = FakeTree::new("/r");
+    let fresh = tree.add_dir("", "fresh");
+    tree.add_dir("", "plain");
+    tree.own_times(
+        &fresh,
+        DirTimes {
+            mtime_ms: 1_790_000_000_000.25,
+            atime_ms: 1_790_000_000_500.5,
+        },
+    );
+    let (_, out) = run(tree, options(Path::new("/r")), 2)?;
+    let paths = rel_paths(&out)?;
+    let at = |rel: &str| {
+        paths
+            .iter()
+            .position(|p| p == rel)
+            .ok_or_else(|| format!("no node {rel} in {paths:?}"))
+    };
+    let (f, p) = (at("fresh")?, at("plain")?);
+    assert_eq!(
+        out.mtime_ms.get(f).copied(),
+        Some(1_790_000_000_000.25),
+        "fresh: its own mtime"
+    );
+    assert_eq!(
+        out.atime_ms.get(f).copied(),
+        Some(1_790_000_000_500.5),
+        "fresh: its own atime"
+    );
+    assert_eq!(
+        out.mtime_ms.get(p).copied(),
+        Some(dir_meta().mtime_ms),
+        "plain: its parent's copy"
+    );
+    assert!(
+        out.atime_ms.get(p).is_some_and(|a| a.is_nan()),
+        "plain: its parent's copy (no atime)"
+    );
+    Ok(())
+}
+
+/// The platforms `platform/unsupported.rs` serves: everything without a
+/// native listing. This used to be `not(target_os = "macos")`, written before
+/// the Windows and Linux listings existed; it never ran off macOS until CI's
+/// Rust step first reached the tests, and then it failed on both (Getdents,
+/// ExtdDirInfo), correctly — those platforms are supported now.
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 #[test]
 fn start_and_probe_report_the_platform_as_unsupported() -> TestResult {
     use tm_governor::{Budget, FakeSampler, FakeSignals, Governor, Preset};
@@ -1105,6 +1172,64 @@ fn start_and_probe_report_the_platform_as_unsupported() -> TestResult {
         Err(WalkError::Unsupported(reason)) if reason == expected => Ok(()),
         other => Err(format!("expected Unsupported({expected:?}), got {other:?}")),
     }
+}
+
+/// The live half of the Linux and Windows listings, which their synthetic-buffer
+/// tests cannot give and only the CI runners can run: the probe names this
+/// platform's own call, and a real walk of a real tree returns every entry and
+/// every byte. (macOS has its own live module below.)
+#[cfg(any(target_os = "linux", windows))]
+#[test]
+fn the_probe_and_a_real_walk_use_this_platforms_listing() -> TestResult {
+    use tm_governor::{Budget, FakeSampler, FakeSignals, Governor, Preset};
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let root = std::env::temp_dir().join(format!("tm-walk-live-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(root.join("sub")).map_err(|e| e.to_string())?;
+    let outcome = (|| -> TestResult {
+        std::fs::write(root.join("a.txt"), b"hello").map_err(|e| e.to_string())?;
+        std::fs::write(root.join("sub").join("b.bin"), vec![7_u8; 1000])
+            .map_err(|e| e.to_string())?;
+
+        let probe = tm_walk::probe(&root);
+        #[cfg(target_os = "linux")]
+        let expected = (FastPath::Getdents, "getdents64 and ");
+        #[cfg(windows)]
+        let expected = (FastPath::ExtdDirInfo, "FileIdExtdDirectoryInfo ");
+        if probe.fast_path != expected.0 || !probe.reason.starts_with(expected.1) {
+            return Err(format!(
+                "expected {:?} with a reason starting {:?}, got {probe:?}",
+                expected.0, expected.1
+            ));
+        }
+
+        let governor = Arc::new(Governor::start(
+            Budget {
+                preset: Preset::Balanced,
+                cpu_percent: None,
+            },
+            false,
+            Box::new(FakeSampler::new(4)),
+            Box::new(FakeSignals::default()),
+        ));
+        let handle = tm_walk::start(options(&root), governor).map_err(|e| e.to_string())?;
+        let out = take_within(handle, Duration::from_secs(10))?.map_err(|e| e.to_string())?;
+        // The root, a.txt, sub and sub/b.bin — and the 1,005 bytes of the two files.
+        if out.parent.len() != 4 {
+            return Err(format!("4 nodes, got {}: {out:?}", out.parent.len()));
+        }
+        let bytes: f64 = out.size.iter().sum();
+        if (bytes - 1005.0).abs() > f64::EPSILON {
+            return Err(format!("1005 bytes in all, got {bytes}"));
+        }
+        if !out.refusals.is_empty() {
+            return Err(format!("nothing refused, got {:?}", out.refusals));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    outcome
 }
 
 // ---------------------------------------------------------------------------
