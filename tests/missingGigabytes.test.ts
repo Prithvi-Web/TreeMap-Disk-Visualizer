@@ -535,6 +535,28 @@ test('an engine that cannot see refusals reports unknown, not zero', async () =>
   assert.match(lineOf(s, 'unaccounted').detail, /Refused to the scan/, 'and it is named in the residual');
 });
 
+test('the native engine and the NTFS turbo mode count refusals exactly, as the walker does', async () => {
+  // Both fill the counters from a walk's own refusal table (ingestColumns in
+  // nativeEngine.ts), and the equivalence gate holds the native engine's
+  // counters equal to the walker's. The statement once said of the default
+  // engine that its refusals "cannot be known" and sent the user to
+  // TREEMAP_NO_GDU=1 for a count the scan already had (the pre-landing review
+  // of 23 Sep 2026).
+  for (const engine of ['native', 'ntfs-mft'] as const) {
+    const s = await buildStatement(
+      scanFixture({ engine, deniedDirs: 12, deniedEntries: 5, unreadableDirs: 2, store: storeOfSize(GB) }),
+      sourcesFixture(),
+    );
+    const line = lineOf(s, 'unscannable');
+    assert.equal(line.count, 19, `${engine}: 12 + 5 denied, plus 2 unreadable`);
+    assert.equal(line.bytes, null, engine);
+    assert.doesNotMatch(line.reason ?? '', /cannot be known/, engine);
+    const none = lineOf(await buildStatement(scanFixture({ engine, store: storeOfSize(GB) }), sourcesFixture()), 'unscannable');
+    assert.equal(none.count, 0, `${engine}: nothing refused is a real zero`);
+    assert.equal(none.available, true, engine);
+  }
+});
+
 /* ═══════════════════ 6. Corrections that are already applied ═══════════════════ */
 
 test('hard links are reported as a note, not subtracted a second time', async () => {

@@ -764,18 +764,23 @@ function otherVolumesLine(
  * So on a gdu scan the count is not zero, it is unknown, and the line says so.
  * Printing "0 refused" from an engine that cannot tell would be precisely the
  * confidently-wrong answer this whole view exists to eliminate.
+ *
+ * The native engine counts them as the walker does — the equivalence gate
+ * holds its counters equal to the walker's — and the NTFS turbo mode fills the
+ * same counters from its own table (both through `ingestColumns`).
  */
-const ENGINES_THAT_COUNT_REFUSALS: ReadonlySet<string> = new Set(['walker', 'turbo-walker']);
+const ENGINES_THAT_COUNT_REFUSALS: ReadonlySet<string> = new Set(['walker', 'turbo-walker', 'native', 'ntfs-mft']);
 
 /**
  * Engines that can measure how much room a file really takes.
  *
- * The walker reads `stat.blocks` and gdu reports `dsize`, so both can say what
- * a file occupies as well as what it claims. A cloud listing has no such
- * figure — it knows only the size a provider reports — so on a cloud scan the
- * answer is unknown, not zero.
+ * The walker reads `stat.blocks`, the native engine each file's allocation,
+ * and gdu reports `dsize`, so all three can say what a file occupies as well
+ * as what it claims. A cloud listing has no such figure — it knows only the
+ * size a provider reports — so on a cloud scan the answer is unknown, not
+ * zero. (On Windows no engine is asked: `sparseLine` answers first.)
  */
-const ENGINES_THAT_MEASURE_ALLOCATION: ReadonlySet<string> = new Set(['walker', 'turbo-walker', 'gdu-turbo']);
+const ENGINES_THAT_MEASURE_ALLOCATION: ReadonlySet<string> = new Set(['walker', 'turbo-walker', 'native', 'gdu-turbo']);
 
 /**
  * Space the scanned files claim but do not occupy.

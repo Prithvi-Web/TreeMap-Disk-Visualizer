@@ -127,6 +127,15 @@ test('an engine that cannot measure what a file occupies says so, rather than re
 
   const gdu = sparseLine(baseScan({ engine: 'gdu-turbo' }), 'darwin');
   assert.equal(gdu.available, true, 'gdu reports dsize, so it can answer this');
+
+  // The native engine reads each file's allocation and fills the same
+  // sparse and slack counters as the walker (ingestColumns); the line once
+  // called its figure unknowable (the pre-landing review of 23 Sep 2026).
+  for (const plat of ['darwin', 'linux'] as const) {
+    const native = sparseLine(baseScan({ engine: 'native' }), plat);
+    assert.equal(native.available, true, `${plat}: the native engine measures what a file occupies`);
+    assert.equal(native.bytes, -(52 * 1024 ** 3), plat);
+  }
 });
 
 test('a fast rescan says its figure is a floor, because unchanged folders were not measured again', () => {
