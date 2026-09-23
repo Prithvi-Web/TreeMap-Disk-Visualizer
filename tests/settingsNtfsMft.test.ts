@@ -6,8 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 // Every settings write lands in a directory of this file's own.
-const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-ntfs-mft-setting-test-'));
-process.env.TREEMAP_DATA_DIR = DATA_DIR;
+import { isolatedDataDir } from './fixtures/dataDir';
+const DATA_DIR = isolatedDataDir('treemap-ntfs-mft-setting-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';

@@ -7,7 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-b5-data-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('tm-b5-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { groupZombies, appBundleOf, zombieReport, restartProcess } from '../src/services/zombieHandles';

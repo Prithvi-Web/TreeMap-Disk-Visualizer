@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-polish-numbers-data-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-polish-numbers-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';

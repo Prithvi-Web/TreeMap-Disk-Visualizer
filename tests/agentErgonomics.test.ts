@@ -5,13 +5,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-ergo-test-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-ergo-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { formatBytes } from '../src/utils/formatBytes';
 import { pending, settled } from '../src/utils/backgroundWrites';
+import { cancelAllScans } from '../src/services/diskScanner';
 
 /**
  * Agent ergonomics: the blocking scan path (?wait=true) and the one-call
@@ -221,6 +223,9 @@ test('agent summary answers 202 while the scan is still running and 404 for unkn
     assert.equal(missing.status, 404);
     assert.equal(missing.body.code, 'SCAN_NOT_FOUND');
   } finally {
+    // The node_modules scan is still walking: stopped here, or it would save
+    // its snapshot into the data folder after the file had removed it.
+    cancelAllScans();
     await close();
     fs.rmSync(fixture, { recursive: true, force: true });
     fs.rmSync(process.env.TREEMAP_DATA_DIR!, { recursive: true, force: true });

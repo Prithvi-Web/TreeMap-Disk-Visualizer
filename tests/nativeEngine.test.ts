@@ -11,7 +11,8 @@ import path from 'node:path';
 // Every write this file causes — settings, mtime caches, snapshots — lands in
 // a directory of its own, never in the owner's real app data. gdu stays off so
 // the legacy engine under comparison is always the walker.
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-native-engine-test-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-native-engine-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import type * as NativeCore from '../native/index';

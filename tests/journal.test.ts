@@ -5,7 +5,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-journal-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('tm-journal-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { AppEntry, AuditEntry, SnapshotTreeNode, Snapshot } from '../src/models/types';

@@ -8,7 +8,8 @@ import { readFileSync } from 'node:fs';
 // Isolated app-data, before anything that reads settings is imported. Without
 // this the suite rewrites the user's real settings.json — including their
 // cleanup target, which is the very field under test here.
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-cart-test-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-cart-test-');
 
 import { getSettings, updateSettings } from '../src/services/settings';
 

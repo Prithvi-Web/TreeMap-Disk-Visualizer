@@ -7,7 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 // Isolate notes.json (and everything else) from the user's real app data.
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-notes-test-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-notes-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import {

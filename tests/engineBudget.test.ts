@@ -8,7 +8,8 @@ import path from 'node:path';
 
 // Every write this file causes — settings, mtime caches, snapshots — lands in
 // a directory of its own, never in the owner's real app data.
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-budget-test-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-budget-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { getSettings, updateSettings } from '../src/services/settings';

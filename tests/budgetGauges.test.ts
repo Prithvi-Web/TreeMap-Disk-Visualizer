@@ -11,8 +11,8 @@ import path from 'path';
  * dir is pointed at a temp directory before the services load so nothing
  * here can ever touch a real snapshots.json.
  */
-const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-budget-gauges-'));
-process.env.TREEMAP_DATA_DIR = DATA_DIR;
+import { isolatedDataDir } from './fixtures/dataDir';
+const DATA_DIR = isolatedDataDir('tm-budget-gauges-');
 
 import { Snapshot, SnapshotTreeNode } from '../src/models/types';
 import { budgetGauges, budgetHistorySeries, computeBudgetProjection } from '../src/services/budgetGauges';

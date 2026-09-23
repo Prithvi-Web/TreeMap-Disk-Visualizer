@@ -310,7 +310,8 @@ import path from 'node:path';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 
-process.env.TREEMAP_DATA_DIR = process.env.TREEMAP_DATA_DIR || fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-nl-route-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+if (!process.env.TREEMAP_DATA_DIR) isolatedDataDir('treemap-nl-route-');
 
 function reqHttp(port: number, method: string, url: string, body?: unknown): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {

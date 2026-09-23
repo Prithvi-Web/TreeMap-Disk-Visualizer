@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 // Every settings write lands in a directory of this file's own.
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-engine-setting-test-'));
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-engine-setting-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
