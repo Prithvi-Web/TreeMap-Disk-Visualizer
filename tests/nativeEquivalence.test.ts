@@ -109,6 +109,18 @@ after(async () => {
   if (edgeBuild) await (await edgeBuild).cleanup();
 });
 
+/**
+ * On CI the native module is built on every leg before the suite runs, so a
+ * module that cannot walk there is a broken build, not a developer's machine
+ * without Rust: the gate fails instead of skipping. A skip would leave the
+ * Node step green with the native engine never compared — the gap a review of
+ * this file found once W4 and W5 had landed. Off CI it skips, with the reason.
+ */
+function skipOrFailOnCi(t: { skip(message?: string): void }, reason: string): void {
+  if (process.env.CI) assert.fail(`on CI the native module is built on every leg, so this is a failure, not a skip: ${reason}`);
+  t.skip(reason);
+}
+
 /* ---------------------------- the child runs ---------------------------- */
 
 interface RunOptions {
@@ -241,7 +253,7 @@ for (const { label, load } of TREES) {
     const ref = await referenceWalk(tree);
     const missing = w2Missing(ref.probe);
     if (missing) {
-      t.skip(`${tree.name}: ${missing}`);
+      skipOrFailOnCi(t, `${tree.name}: ${missing}`);
       return;
     }
     tree.freeze(true);
@@ -250,17 +262,17 @@ for (const { label, load } of TREES) {
       // W2 is in, the module on disk is not the walker's: the forced engine must fall back and say why.
       assert.ok(typeof native.fallbackReason === 'string' && native.fallbackReason.length > 0, `a native run without a walking module names the reason; got ${JSON.stringify(native.fallbackReason)} (loader: ${ref.probe.moduleReason})`);
       assert.ok(WALKER_ENGINES.has(native.engine), `the fallback is the walker, not ${native.engine}`);
-      t.skip(`${tree.name}: the native module cannot walk here — ${native.fallbackReason}`);
+      skipOrFailOnCi(t, `${tree.name}: the native module cannot walk here — ${native.fallbackReason}`);
       return;
     }
     if (!NATIVE_ENGINES.has(native.engine)) {
+      // A failure on every platform. Until W4 (Windows) and W5 (Linux) landed,
+      // P3-9 let a forced run off macOS that fell back with a reason skip here;
+      // with both in, that escape would let the gate pass on Linux and Windows
+      // without the native engine ever running, so a fallback is a failure
+      // that names the engine that ran and why.
       const reason = native.fallbackReason ?? native.engineReason ?? 'no reason recorded';
-      if (process.platform !== 'darwin' && typeof native.fallbackReason === 'string' && native.fallbackReason.length > 0) {
-        // P3-9: until W4/W5 land, the native engine on the other platforms reports its reason and the legacy chain runs.
-        t.skip(`${tree.name}: the native listing is not available on ${process.platform} — ${reason}`);
-        return;
-      }
-      assert.fail(`the native engine was forced and the module exports scanStart, but the scan ran on ${native.engine}: ${reason}`);
+      assert.fail(`the native engine was forced on ${process.platform} and the module exports scanStart, but the scan ran on ${native.engine}: ${reason}`);
     }
     assertSameTree('walker', 'native', ref, native);
     t.diagnostic(`${tree.name}: native (fastPath ${native.fastPath ?? 'unreported'}) and the walker agree: ${ref.lines.length} nodes, digest ${ref.digest}; ${countersLine(native.counters)}`);
@@ -300,7 +312,7 @@ test(`(d) a forced load failure: TREEMAP_NATIVE_MODULE=${MISSING_MODULE} runs th
   const ref = await referenceWalk(tree);
   const missing = w2Missing(ref.probe);
   if (missing) {
-    t.skip(missing);
+    skipOrFailOnCi(t, missing);
     return;
   }
   tree.freeze(true);

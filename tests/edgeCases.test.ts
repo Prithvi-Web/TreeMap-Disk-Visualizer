@@ -16,7 +16,7 @@ import path from 'node:path';
 import { startScan, cancelAllScans } from '../src/services/diskScanner';
 import { Flag, storeOf, type ScanStore } from '../src/services/scanStore';
 import type { ScanResult } from '../src/models/types';
-import { buildEdgeCases, type EdgeCaseFixture, type EdgeCaseName, type CaseResult } from './fixtures/edgeCases';
+import { buildEdgeCases, freezeTimes, DIRECTORY_ATIME_ANCHOR_SECONDS, type EdgeCaseFixture, type EdgeCaseName, type CaseResult } from './fixtures/edgeCases';
 
 /**
  * The legacy walker on every edge case the master prompt's §12.2 names
@@ -30,6 +30,13 @@ import { buildEdgeCases, type EdgeCaseFixture, type EdgeCaseName, type CaseResul
 const WALK_DEADLINE_MS = 120_000;
 const SETTLE_POLL_MS = 10;
 const GiB = 1024 ** 3;
+/**
+ * How far a file's atime may sit from its mtime plus one second. On Windows
+ * libuv hands a stamp over as 100 ns ticks computed through a double, which
+ * at this magnitude can land a tick or two either side; a microsecond covers
+ * that and nothing a real defect would produce.
+ */
+const STAMP_TOLERANCE_MS = 0.001;
 
 let fixture: EdgeCaseFixture;
 let scan: ScanResult;
@@ -55,6 +62,12 @@ function directoryTimes(root: string): Map<string, { atimeMs: number; mtimeMs: n
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Resolves once the clock has entered a new whole second, so two calls either side of it cannot share a `Math.floor(Date.now() / 1000)`. */
+async function nextWholeSecond(): Promise<void> {
+  const start = Math.floor(Date.now() / 1000);
+  while (Math.floor(Date.now() / 1000) === start) await sleep(SETTLE_POLL_MS);
+}
 
 /** The walk, settled — or a failure naming the deadline, which is what a followed symlink loop would look like. */
 async function walked(root: string): Promise<ScanResult> {
@@ -122,10 +135,27 @@ test('the fixture builds, the walker completes it on the forced engine, and ever
 });
 
 test('the fixture is time-stable: the walk lists every directory and moves no atime and no mtime', (t) => {
-  // The builder stamps atime one second after mtime; macOS and Linux bump a
-  // directory's atime on a listing only when it is not newer than the mtime,
-  // so a walk — this one, or the equivalence gate's many — changes nothing.
-  assert.ok(timesBefore.size >= 20, `${timesBefore.size} directories captured`);
+  // Listing a directory reads it, and each platform decides differently
+  // whether that moves its atime: APFS only when the atime is not newer than
+  // the mtime; Linux's default relatime also when it is not newer than the
+  // ctime, or is more than a day old; NTFS, where last-access updates are on,
+  // only when it is more than an hour from the time of the listing. The
+  // builder stamps every directory's atime from one anchor half an hour ahead
+  // of this process's start — after the 2023 mtime, after the ctime the stamp
+  // itself set, inside the day and inside the hour — so no rule fires, and a
+  // walk (this one, or the equivalence gate's many) changes nothing.
+  //
+  // The directories checked are held to the builder's own inventory, taken by
+  // its stamping walk on this platform, rather than to a fixed count: a
+  // capture that skipped a directory fails by name instead of leaving that
+  // directory's times unchecked, and a platform that legitimately builds
+  // fewer (Windows has no mounts, no refused folder, no sparse or odd-name
+  // folders) is held to exactly what it built. Equal sizes as well, because a
+  // floor alone could be lowered to nothing and still pass.
+  const inventory = fixture.directories;
+  const missed = inventory.filter((dir) => !timesBefore.has(dir));
+  assert.deepEqual(missed, [], `the capture missed ${missed.length} of the ${inventory.length} directories the builder stamped`);
+  assert.equal(timesBefore.size, inventory.length, `the capture found ${timesBefore.size} directories and the builder stamped ${inventory.length}`);
   const moved: string[] = [];
   for (const [dir, before] of timesBefore) {
     const after = fs.lstatSync(dir);
@@ -133,7 +163,54 @@ test('the fixture is time-stable: the walk lists every directory and moves no at
     assert.ok(before.atimeMs > before.mtimeMs, `${dir} was stamped with atime after mtime (${before.atimeMs} > ${before.mtimeMs})`);
   }
   assert.deepEqual(moved, [], 'no directory time moved during the walk');
-  t.diagnostic(`${timesBefore.size} directories kept their atime and mtime through the walk`);
+  t.diagnostic(`${timesBefore.size} directories — every one the builder stamped — kept their atime and mtime through the walk`);
+});
+
+test('freezeTimes stamps every directory atime from one anchor per process: after its ctime and its mtime, identical on a re-stamp, while a file keeps mtime + 1 s', async () => {
+  // (i) is what Linux's relatime and APFS need before they leave an atime
+  // alone at a listing. (ii) is what the equivalence gate needs, because its
+  // runs are separated by re-stamps and must all see one tree — so the two
+  // stamps below straddle a whole second, which a per-call anchor could not
+  // survive. (iii) is the file rule, unchanged: nothing in a walk reads a
+  // file, so nothing moves its atime.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-freeze-'));
+  try {
+    const sub = path.join(root, 'sub');
+    const file = path.join(root, 'file.txt');
+    fs.mkdirSync(sub);
+    fs.writeFileSync(file, 'x');
+    const atimes = (): Array<[string, number]> => [root, sub, file].map((p) => [p, fs.lstatSync(p).atimeMs]);
+
+    freezeTimes(root);
+    for (const dir of [root, sub]) {
+      const st = fs.lstatSync(dir);
+      assert.ok(st.atimeMs > st.ctimeMs, `(i) ${dir}: its atime ${st.atimeMs} is after the ctime the stamp set, ${st.ctimeMs}`);
+      assert.ok(st.atimeMs > st.mtimeMs, `(i) ${dir}: its atime ${st.atimeMs} is after its mtime ${st.mtimeMs}`);
+    }
+    const f = fs.lstatSync(file);
+    assert.ok(Math.abs(f.atimeMs - f.mtimeMs - 1000) < STAMP_TOLERANCE_MS, `(iii) the file's atime ${f.atimeMs} is its mtime ${f.mtimeMs} plus one second`);
+    const first = atimes();
+
+    await nextWholeSecond();
+    freezeTimes(root);
+    assert.deepEqual(atimes(), first, '(ii) a re-stamp in a later second writes exactly the same atimes');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('freezeTimes refuses to stamp once the clock reaches its anchor, rather than stamp directory atimes the next Linux listing would move', () => {
+  // A stamp at or past the anchor would write a directory atime no newer than
+  // the ctime the stamp itself sets, and relatime moves exactly that: the
+  // tree would drift under the gate with nothing saying why. The option moves
+  // only the clock this check reads, never the stamps.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-freeze-'));
+  try {
+    assert.doesNotThrow(() => freezeTimes(root, { nowSeconds: DIRECTORY_ATIME_ANCHOR_SECONDS - 1 }), 'a second before the anchor, every directory atime is still ahead of its ctime');
+    assert.throws(() => freezeTimes(root, { nowSeconds: DIRECTORY_ATIME_ANCHOR_SECONDS }), /relatime/, 'at the anchor the fixture refuses, naming the rule it would break');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('a skipped case is a real inability: on macOS and Linux every case builds except the ones the platform cannot', (t) => {

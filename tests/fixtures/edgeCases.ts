@@ -11,11 +11,35 @@
  * Time-stable by construction: after every case is built, `freezeTimes`
  * stamps each entry with a deterministic mtime (a base plus its index in a
  * name-ordered walk plus a sub-second fraction, some at .9996 s, so the
- * engines' rounding is exercised) and an atime one second later. macOS, like
- * Linux's relatime, bumps a directory's atime on a listing only when the
- * atime is not newer than the mtime (measured on this machine, on APFS, on
- * 18 September 2026), so a stamped tree keeps its times through any number
- * of walks and its digest is a function of the tree alone. Layout:
+ * engines' rounding is exercised). A file's or a symlink's atime is its mtime
+ * plus one second: nothing in a walk reads their contents, so nothing moves
+ * it. A directory's atime is different, because listing a directory IS
+ * reading it, and each platform has its own rule for when a listing moves it:
+ *
+ *  - macOS (APFS) moves it only when the atime is not newer than the mtime
+ *    (measured on this machine on 18 September 2026);
+ *  - Linux, under the default `relatime` (relatime_need_update in
+ *    fs/inode.c), moves it when the atime is not newer than the mtime, OR not
+ *    newer than the ctime, OR more than 24 hours old. `utimes` itself sets
+ *    the ctime to now, so the 2023 atime this fixture used to stamp was older
+ *    than its ctime and older than a day, and the first listing moved it:
+ *    that is how the first Linux CI run of the equivalence gate failed;
+ *  - Windows (NTFS, where last-access updates are on for the volume) moves it
+ *    on an enumeration only when the stored time is more than an hour from
+ *    the time of the listing.
+ *
+ * So every directory's atime is stamped from ONE anchor per process, half an
+ * hour ahead of the moment this module loaded (plus the entry's fraction):
+ * newer than its 2023 mtime, newer than the ctime the stamp sets for the
+ * first half hour, less than a day old, and within the hour of any listing in
+ * the first ninety minutes — no rule on the three platforms fires. One anchor
+ * per process, not per call, is what makes every re-stamp write the same
+ * values, so the equivalence gate's runs, each after a re-stamp, see one tree.
+ * A process past its first half hour is refused rather than allowed to stamp
+ * a tree Linux would move. A stamped tree keeps its times through any number
+ * of walks, and within one process its digest is a function of the tree
+ * alone; the directories' accessedAt column differs between processes by
+ * design, and nothing compares digests across processes. Layout:
  *
  *   links/file/{target.txt, to-file}      links/broken/dangling
  *   links/loop/{loop-a, loop-b, self, into-siblings}
@@ -60,6 +84,12 @@ export interface EdgeCaseFixture {
   hardlinkFamilies: string[][];
   /** Entries whose times could not be stamped (a read-only volume, a refused listing), with the errno. */
   unstamped: string[];
+  /**
+   * Every directory under the root, the root included, as the builder's
+   * stamping walk found them on this platform: what the time-stable test holds
+   * its own walk to, so a platform that builds fewer is never held to more.
+   */
+  directories: string[];
   /** Restores permissions, detaches the mounts, removes the root and the images. Throws if a mount cannot be detached. */
   cleanup(): Promise<void>;
 }
@@ -69,10 +99,14 @@ export interface FreezeOptions {
   baseSeconds?: number;
   /** Whether mtimes carry sub-second fractions (default true); false stamps whole seconds, which is what gdu can report. */
   fractions?: boolean;
+  /** The clock, in seconds since the epoch, that the anchor check reads; default now. For tests: it moves the check, never the stamps. */
+  nowSeconds?: number;
 }
 export interface FreezeReport {
   stamped: number;
   skipped: Array<{ path: string; code: string }>;
+  /** Every directory the walk entered, the root included, in walk order: listed, or refused with the refusal in `skipped`. */
+  directories: string[];
 }
 
 const KiB = 1024;
@@ -91,6 +125,21 @@ const DETACH_RETRY_MS = 500;
 export const FREEZE_BASE_SECONDS = 1_700_000_000;
 /** Cycled per entry: the .9994/.9996 and .4995/.5005 pairs sit either side of a millisecond rounding boundary. */
 const FRACTIONS = [0, 0.25, 0.5, 0.75, 0.9994, 0.9996, 0.0004, 0.0006, 0.4995, 0.5005];
+/**
+ * How far ahead of this module's load the directory atimes are stamped. Far
+ * enough that for half an hour the ctime a stamp sets stays behind the atime
+ * (Linux's relatime moves one that does not); near enough that the atime is
+ * within the hour of every listing in the first ninety minutes (NTFS moves one
+ * that is not). Half an hour is also the window for stamping: see the check
+ * at the top of `freezeTimes`.
+ */
+const ANCHOR_AHEAD_SECONDS = 30 * 60;
+/**
+ * The one instant every directory atime in this process is stamped from,
+ * fixed when this module loads — never per call, so a re-stamp writes exactly
+ * what the last one did. Whole seconds; each directory adds its fraction.
+ */
+export const DIRECTORY_ATIME_ANCHOR_SECONDS = Math.floor(Date.now() / 1000) + ANCHOR_AHEAD_SECONDS;
 const NFC_NAME = 'café.txt';
 const NFD_NAME = 'café.txt';
 const ODD_NAMES = ['with\nnewline.txt', 'with\ttab.txt', 'emoji-\u{1F642}.txt'];
@@ -398,24 +447,35 @@ async function readOnlyMount(root: string, images: string, mounted: string[]): P
 
 /* --------------------------------- times --------------------------------- */
 
+type EntryKind = 'directory' | 'symlink' | 'other';
+
 /**
  * Stamps every entry under `root` (and the root itself) with a deterministic
- * mtime and an atime one second later, in a name-ordered walk so the same tree
- * gets the same times anywhere. Symlinks are stamped with lutimes. An entry
- * that cannot be stamped (a read-only volume, a refused listing) is reported,
- * never thrown.
+ * mtime, in a name-ordered walk so the same tree gets the same mtimes
+ * anywhere. A file's or symlink's atime is its mtime plus one second; a
+ * directory's is `DIRECTORY_ATIME_ANCHOR_SECONDS` plus its fraction — the
+ * header says which rule on which platform each choice satisfies. Symlinks
+ * are stamped with lutimes. An entry that cannot be stamped (a read-only
+ * volume, a refused listing) is reported, never thrown; a process that has
+ * outlived its anchor is refused outright, because every directory it
+ * stamped would move at Linux's next listing.
  */
 export function freezeTimes(root: string, opts: FreezeOptions = {}): FreezeReport {
   const base = opts.baseSeconds ?? FREEZE_BASE_SECONDS;
   const fractions = opts.fractions ?? true;
-  const report: FreezeReport = { stamped: 0, skipped: [] };
+  const nowSeconds = opts.nowSeconds ?? Date.now() / 1000;
+  if (nowSeconds >= DIRECTORY_ATIME_ANCHOR_SECONDS) {
+    throw new Error(`freezeTimes: this process loaded the fixture more than ${ANCHOR_AHEAD_SECONDS / 60} minutes ago, so its directory-atime anchor is no longer ahead of the clock. A directory stamped now would carry an atime no newer than the ctime the stamp itself sets, which Linux's relatime moves at the next listing, and the tree would not stay time-stable. Stamp from a fresh process.`);
+  }
+  const report: FreezeReport = { stamped: 0, skipped: [], directories: [] };
   let index = 0;
-  const stamp = (p: string, isSymlink: boolean): void => {
+  const stamp = (p: string, kind: EntryKind): void => {
     const i = index++;
-    const mtime = base + i + (fractions ? FRACTIONS[i % FRACTIONS.length] : 0);
-    const atime = mtime + 1;
+    const fraction = fractions ? FRACTIONS[i % FRACTIONS.length] : 0;
+    const mtime = base + i + fraction;
+    const atime = kind === 'directory' ? DIRECTORY_ATIME_ANCHOR_SECONDS + fraction : mtime + 1;
     try {
-      if (isSymlink) fs.lutimesSync(p, atime, mtime);
+      if (kind === 'symlink') fs.lutimesSync(p, atime, mtime);
       else fs.utimesSync(p, atime, mtime);
       report.stamped++;
     } catch (err) {
@@ -423,6 +483,7 @@ export function freezeTimes(root: string, opts: FreezeOptions = {}): FreezeRepor
     }
   };
   const visit = (dir: string): void => {
+    report.directories.push(dir);
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -433,12 +494,13 @@ export function freezeTimes(root: string, opts: FreezeOptions = {}): FreezeRepor
     entries.sort((a, b) => Buffer.compare(Buffer.from(a.name), Buffer.from(b.name)));
     for (const e of entries) {
       const p = path.join(dir, e.name);
-      if (e.isDirectory() && !e.isSymbolicLink()) visit(p);
-      stamp(p, e.isSymbolicLink());
+      const kind: EntryKind = e.isSymbolicLink() ? 'symlink' : e.isDirectory() ? 'directory' : 'other';
+      if (kind === 'directory') visit(p);
+      stamp(p, kind);
     }
   };
   visit(root);
-  stamp(root, false);
+  stamp(root, 'directory');
   return report;
 }
 
@@ -492,6 +554,7 @@ export async function buildEdgeCases(root: string): Promise<EdgeCaseFixture> {
       cases: { ...cases, deniedDirectory },
       hardlinkFamilies,
       unstamped: freeze.skipped.map((s) => `${s.path} (${s.code})`),
+      directories: freeze.directories,
       cleanup,
     };
   } catch (err) {
