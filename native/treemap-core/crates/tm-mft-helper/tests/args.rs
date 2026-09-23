@@ -328,3 +328,22 @@ fn every_refusal_reads_as_one_line() {
         );
     }
 }
+
+#[test]
+fn a_line_or_paragraph_separator_in_an_argument_cannot_break_a_refusal_across_lines() {
+    // The pre-landing review of 23 Sep 2026: U+2028 and U+2029 are not
+    // control characters (Unicode files them as Zl and Zp, not Cc), so the
+    // replacement let them through — yet Unicode names both line terminators,
+    // and any reader that follows Unicode ends a line at either, which breaks
+    // the promise that every refusal is one line.
+    for separator in ['\u{2028}', '\u{2029}'] {
+        let refusal = ArgError::VolumeNotDriveLetter {
+            volume: format!("C{separator}:"),
+        };
+        assert_eq!(
+            refusal.to_string(),
+            "the volume argument \"C\u{FFFD}:\" is not a drive letter such as C:",
+            "{separator:?}"
+        );
+    }
+}

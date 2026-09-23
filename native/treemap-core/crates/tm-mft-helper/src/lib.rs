@@ -108,12 +108,21 @@ pub enum ArgError {
     },
 }
 
-/// `text` in quotes with any control character replaced, so a refusal is
-/// always one line whatever a path holds.
+/// `text` in quotes with every character that can end a line replaced, so a
+/// refusal is always one line whatever a path holds: the control characters,
+/// and the line and paragraph separators U+2028 and U+2029, which are not
+/// control characters yet end a line for any reader that follows Unicode (the
+/// pre-landing review of 23 Sep 2026).
 fn quoted(text: &str) -> String {
     let clean: String = text
         .chars()
-        .map(|c| if c.is_control() { '\u{FFFD}' } else { c })
+        .map(|c| {
+            if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') {
+                '\u{FFFD}'
+            } else {
+                c
+            }
+        })
         .collect();
     format!("\"{clean}\"")
 }
