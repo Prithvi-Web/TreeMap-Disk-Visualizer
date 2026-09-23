@@ -79,8 +79,9 @@ const OFF_VALUE_LENGTH: usize = 0x10;
 const OFF_VALUE_OFFSET: usize = 0x14;
 /// A non-resident attribute's header: through the initialized size.
 const NON_RESIDENT_HEADER_BYTES: usize = 0x40;
-/// A compressed or sparse non-resident attribute's header: through the
-/// clusters actually allocated.
+/// A compressed or sparse non-resident attribute's longer header: through
+/// the clusters actually allocated — written only where the run list starts
+/// after it (NTFS gives a later extent the short header, flags or not).
 const COMPRESSED_HEADER_BYTES: usize = 0x48;
 const OFF_LOWEST_VCN: usize = 0x10;
 const OFF_RUN_LIST: usize = 0x20;
@@ -569,9 +570,6 @@ fn attribute(attr: &[u8]) -> Result<Attribute<'_>, &'static str> {
     let flags = read_u16(attr, OFF_ATTR_FLAGS).ok_or(SHORT_HEADER)?;
     let header = match non_resident {
         0 => RESIDENT_HEADER_BYTES,
-        1 if flags & (ATTR_FLAG_COMPRESSION_MASK | ATTR_FLAG_SPARSE) != 0 => {
-            COMPRESSED_HEADER_BYTES
-        }
         1 => NON_RESIDENT_HEADER_BYTES,
         _ => return Err("the non-resident flag is neither 0 nor 1"),
     };
@@ -598,6 +596,13 @@ fn attribute(attr: &[u8]) -> Result<Attribute<'_>, &'static str> {
         if runs_off < header {
             return Err("the run list lies inside the attribute header");
         }
+        // The clusters actually allocated follow the fixed header only in a
+        // compressed or sparse attribute, and only where the record wrote
+        // them: its run list's offset says which (the first Windows CI run
+        // refused a real volume on a later sparse extent with the short
+        // header, 23 Sep 2026).
+        let has_total = flags & (ATTR_FLAG_COMPRESSION_MASK | ATTR_FLAG_SPARSE) != 0
+            && runs_off >= COMPRESSED_HEADER_BYTES;
         let runs = attr
             .get(runs_off..)
             .ok_or("the run list lies outside the attribute")?;
@@ -606,7 +611,7 @@ fn attribute(attr: &[u8]) -> Result<Attribute<'_>, &'static str> {
             allocated: read_u64(attr, OFF_ALLOCATED_SIZE).ok_or(SHORT_HEADER)?,
             data_size: read_u64(attr, OFF_DATA_SIZE).ok_or(SHORT_HEADER)?,
             initialized: read_u64(attr, OFF_INITIALIZED_SIZE).ok_or(SHORT_HEADER)?,
-            total_allocated: if header == COMPRESSED_HEADER_BYTES {
+            total_allocated: if has_total {
                 Some(read_u64(attr, OFF_COMPRESSED_SIZE).ok_or(SHORT_HEADER)?)
             } else {
                 None

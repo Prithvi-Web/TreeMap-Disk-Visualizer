@@ -636,13 +636,75 @@ fn sparse_or_compressed_data_is_allocated_what_it_actually_holds() -> TestResult
 }
 
 #[test]
-fn a_run_list_inside_the_attribute_header_is_refused() -> TestResult {
-    // Sparse, so the header is 0x48 bytes long; the builder put the run list
-    // at 0x40 (no compressed size was given), inside it.
-    let f = FileRecord::new(73).attr(non_resident(
+fn a_sparse_extent_whose_run_list_follows_the_short_header_is_read() -> TestResult {
+    // The field of clusters actually allocated (0x40) is written only where
+    // the record says so, by its run list's offset: NTFS gives a later
+    // extent of a sparse attribute the short header. The first Windows CI
+    // run refused a real volume on exactly that (record 79915, 23 Sep 2026).
+    let later = FileRecord::new(73).attr(non_resident(
         DATA,
         "",
         ATTR_SPARSE,
+        &Extent {
+            lowest_vcn: 256,
+            highest_vcn: 511,
+            runs: vec![0x11, 0x01, 0x05, 0x00],
+            ..Extent::default()
+        },
+    ));
+    let r = parse(&later)?;
+    assert_eq!(r.data_size, None, "a later extent carries no sizes");
+    let first = FileRecord::new(74).attr(non_resident(
+        DATA,
+        "",
+        ATTR_SPARSE,
+        &Extent {
+            highest_vcn: 255,
+            allocated: 1_048_576,
+            size: 1_000_000,
+            initialized: 1_000_000,
+            runs: vec![0x01, 0xFF, 0x00],
+            ..Extent::default()
+        },
+    ));
+    let r = parse(&first)?;
+    assert_eq!(r.data_size, Some(1_000_000));
+    assert_eq!(
+        r.data_alloc,
+        Some(1_048_576),
+        "without the field, the allocated size"
+    );
+    // A run list after 0x48 in an attribute that is neither compressed nor
+    // sparse does not make what lies at 0x40 the clusters allocated.
+    let plain = FileRecord::new(76).attr(non_resident(
+        DATA,
+        "",
+        0,
+        &Extent {
+            highest_vcn: 1,
+            allocated: 8192,
+            size: 5000,
+            initialized: 5000,
+            compressed: Some(4096),
+            runs: vec![0x11, 0x02, 0x05, 0x00],
+            ..Extent::default()
+        },
+    ));
+    assert_eq!(
+        parse(&plain)?.data_alloc,
+        Some(8192),
+        "the flags call for no such field"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_run_list_inside_the_attribute_header_is_refused() -> TestResult {
+    // Inside the 0x40 bytes every non-resident header has, whatever its flags.
+    let mut attr = non_resident(
+        DATA,
+        "",
+        0,
         &Extent {
             allocated: 4096,
             size: 10,
@@ -650,7 +712,9 @@ fn a_run_list_inside_the_attribute_header_is_refused() -> TestResult {
             runs: vec![0x11, 0x01, 0x05, 0x00],
             ..Extent::default()
         },
-    ));
+    );
+    put(&mut attr, 0x20, &0x38_u16.to_le_bytes())?;
+    let f = FileRecord::new(75).attr(attr);
     let reason = bad_attribute_at(refusal(&f)?, f.first_attribute())?;
     // The exact reason, not the word "header", which the refusal of a header
     // that does not fit in its attribute says too (the pre-landing review of
