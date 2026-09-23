@@ -141,6 +141,20 @@ impl Listing {
         self.names.get(entry.name.clone()).unwrap_or(&[])
     }
 
+    /// Orders the entries by their raw name bytes, as `strcmp` would — the
+    /// order libuv's `scandir` gives the legacy walker everywhere but Windows.
+    /// Names within one directory are unique, so the unstable sort is exact.
+    /// Call it on a listing the lister has handed on: [`Listing::mount_points`]
+    /// holds indices into the entries, and by then it is empty.
+    pub fn sort_by_name(&mut self) {
+        let Self { names, entries, .. } = self;
+        entries.sort_unstable_by(|a, b| {
+            let a = names.get(a.name.clone()).unwrap_or(&[]);
+            let b = names.get(b.name.clone()).unwrap_or(&[]);
+            a.cmp(b)
+        });
+    }
+
     /// How many entries were listed.
     pub fn len(&self) -> usize {
         self.entries.len()

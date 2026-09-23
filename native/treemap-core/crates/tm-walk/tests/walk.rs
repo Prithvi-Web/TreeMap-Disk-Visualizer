@@ -828,6 +828,38 @@ fn hardlink_refs_exist_only_for_shared_inodes() -> TestResult {
 }
 
 #[test]
+fn a_directorys_children_are_numbered_in_name_byte_order_except_on_windows() -> TestResult {
+    // The legacy walker lists with fs.readdir, and libuv's scandir sorts that
+    // listing with strcmp everywhere but Windows, where it keeps the file
+    // system's order. Numbering in that order leaves the ingest's own sort,
+    // kept for older modules, its best case: input already sorted.
+    let listed: [&[u8]; 6] = [b"b", b"a2", b"C", b"a", b"\xC3\xA4", b"a-"];
+    let mut tree = FakeTree::new("/fake");
+    for (name, ino) in listed.iter().zip([10.0, 11.0, 12.0, 13.0, 14.0, 15.0]) {
+        tree.add_entry("", name, file_meta(1.0, ino, 1));
+    }
+    let (_, out) = run(tree, options(Path::new("/fake")), 1)?;
+    let mut numbered: Vec<Vec<u8>> = Vec::new();
+    for i in 1..out.parent.len() {
+        if out.parent.get(i) == Some(&0) {
+            let start = *out.name_off.get(i).ok_or("name_off")? as usize;
+            let end = *out.name_off.get(i + 1).ok_or("name_off")? as usize;
+            numbered.push(out.names.get(start..end).ok_or("names")?.to_vec());
+        }
+    }
+    let expected: Vec<Vec<u8>> = if cfg!(windows) {
+        listed.iter().map(|n| n.to_vec()).collect()
+    } else {
+        [&b"C"[..], b"a", b"a-", b"a2", b"b", b"\xC3\xA4"]
+            .iter()
+            .map(|n| n.to_vec())
+            .collect()
+    };
+    assert_eq!(numbered, expected);
+    Ok(())
+}
+
+#[test]
 fn names_are_stored_as_utf8_with_lossy_replacement() -> TestResult {
     let mut tree = FakeTree::new("/fake");
     tree.add_entry("", b"caf\xC3\xA9.txt", file_meta(1.0, 7.0, 1));
