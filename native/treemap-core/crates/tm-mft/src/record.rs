@@ -301,8 +301,16 @@ pub(crate) fn read_i64(buf: &[u8], off: usize) -> Option<i64> {
 }
 
 /// A file reference's sequence number.
-fn sequence_of(reference: u64) -> u16 {
+pub(crate) fn sequence_of(reference: u64) -> u16 {
     u16::try_from(reference >> REFERENCE_SEQUENCE_SHIFT).unwrap_or(u16::MAX)
+}
+
+/// Whether the header of `buf` says the record is in use, read from the
+/// bytes as they are: the flags lie in the first protected unit but never in
+/// its last two bytes, so a fix-up (applied or not) cannot change them. What
+/// the volume reader asks of a record [`parse_record`] refused.
+pub(crate) fn header_in_use(buf: &[u8]) -> bool {
+    read_u16(buf, OFF_FLAGS).is_some_and(|flags| flags & RECORD_IN_USE != 0)
 }
 
 fn bad_header(reason: &'static str) -> RecordError {
