@@ -781,6 +781,8 @@ const schemas: Json = {
         description: 'The Scan engine (Phase 3): auto picks the native engine when this build has it and the scan is eligible, then gdu, then the built-in walker; the others force one. Default auto. '
           + 'ntfs-mft is the NTFS turbo mode (M6): Windows only — refused with 400 BAD_SETTING on every other platform — and opt-in, never chosen by auto. '
           + 'After Windows asks for administrator permission it runs an elevated, read-only helper that reads the drive’s file table directly. '
+          + 'It is used only where no program running as the user could change that helper — TreeMap installed for everyone who uses the computer (Program Files); '
+          + 'installed only for one user, or run as a portable copy, the scan falls back and says why. '
           + 'Not verified on this build.',
       },
     },

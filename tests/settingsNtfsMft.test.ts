@@ -220,7 +220,7 @@ function slice(a: string, b: string): string {
 }
 
 const TURBO_ROW_OPEN = '<label class="rule-row budget-row" for="scanEngine-ntfs-mft" id="scanEngineRow-ntfs-mft" hidden>';
-const TURBO_SENTENCE = 'Windows only: asks Windows for administrator permission, then reads the drive’s file table directly, read-only — not verified on this build';
+const TURBO_SENTENCE = 'Windows only, with TreeMap installed for everyone who uses the computer: asks Windows for administrator permission, then reads the drive’s file table directly, read-only — not verified on this build';
 
 test('Settings ships a fifth Scan engine radio, NTFS turbo, in the one radio group and hidden by default', () => {
   // The group holds labels, inputs and spans only, so its first </div> is its own.
