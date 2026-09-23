@@ -859,7 +859,7 @@ fn merge(parts: &[Part], total: usize) -> Result<Merged, WalkError> {
     // parent's listing reported (see DirTimes).
     for part in parts {
         for &(id, times) in &part.time_patches {
-            let i = usize::try_from(id).map_err(|_| out_of_range(id, total))?;
+            let i = id as usize;
             *mtime.get_mut(i).ok_or_else(|| out_of_range(id, total))? = times.mtime_ms;
             *atime.get_mut(i).ok_or_else(|| out_of_range(id, total))? = times.atime_ms;
         }
