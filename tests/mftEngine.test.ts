@@ -15,6 +15,7 @@ import {
   KIND_FILE,
   MFT_NOT_VERIFIED,
   MFT_TEMP_FOLDER,
+  helperTempRoot,
   resetMftSessionForTests,
   runMftWalk,
   type MftLaunchOutcome,
@@ -397,7 +398,7 @@ test('one scan asks at a time (W6-1): a scan that wants the mode while another w
     });
   };
   const deps = { launcher, module: fakeModule(flat(3)).module, helperPath: 'C:\\app\\tm-mft-helper.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED };
-  const walk = () => { const r = recordFor(ROOT); return runMftWalk(r.scan, r.store, ROOT, deps); };
+  const walk = (root = ROOT) => { const r = recordFor(root); return runMftWalk(r.scan, r.store, root, deps); };
 
   const first = walk();
   const second = await walk();
@@ -408,12 +409,14 @@ test('one scan asks at a time (W6-1): a scan that wants the mode while another w
   // A prompt that ends in any way frees the next scan to ask: a launch that failed…
   answers[0]({ kind: 'failed', reason: 'powershell.exe was not found' });
   await first;
-  const third = walk();
+  // A failed launch switches its drive off for the session (so it is not
+  // asked about again for nothing): the next scans are of other drives.
+  const third = walk('D:\\data');
   assert.equal(requests.length, 2, 'asked once the first prompt was over');
   // …and a launcher that threw.
   failures[1](new Error('spawn EACCES'));
   await third;
-  const fourth = walk();
+  const fourth = walk('E:\\data');
   assert.equal(requests.length, 3, 'asked once the second prompt was over');
   answers[2]({ kind: 'failed', reason: 'done' });
   await fourth;
@@ -617,14 +620,18 @@ test('a helper refusal, a missing launcher, a missing helper and a root without 
   assert.match(refused.reason, /exFAT, not NTFS/, 'the helper’s own sentence');
   assert.equal(fs.existsSync(exit2.requests[0].output), false, 'removed');
 
+  // Each case on a fresh session: the refusal above switched C: off.
+  resetMftSessionForTests();
   const none = await runMftWalk(r.scan, r.store, ROOT, { launcher: null, module: fakeModule(flat(1)).module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder });
   assert.ok(!none.used && none.failed);
   assert.match(none.reason, /desktop app/);
 
+  resetMftSessionForTests();
   const noHelper = await runMftWalk(r.scan, r.store, ROOT, { launcher: fakeLauncher({ kind: 'exited', code: 0 }).launcher, module: fakeModule(flat(1)).module, helperPath: null, tempFolder: folder });
   assert.ok(!noHelper.used && noHelper.failed);
   assert.match(noHelper.reason, /tm-mft-helper/);
 
+  resetMftSessionForTests();
   const unc = await runMftWalk(r.scan, r.store, '\\\\server\\share', { launcher: fakeLauncher({ kind: 'exited', code: 0 }).launcher, module: fakeModule(flat(1)).module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder });
   assert.ok(!unc.used);
   assert.match(unc.reason, /drive letter/);
@@ -632,8 +639,57 @@ test('a helper refusal, a missing launcher, a missing helper and a root without 
   fs.rmSync(folder, { recursive: true, force: true });
 });
 
-test('the app temp folder is the OS temp folder’s TreeMap-mft, the one the helper resolves for itself', () => {
+test('after the prompt, a launch that fails, a helper that exits non-zero or a result that cannot be read switches the mode off for the drive: no scan asks again for nothing', async () => {
+  // Each of these outlives one scan — a PowerShell that cannot start the
+  // helper, a helper that refuses its folder or crashes, a result that will
+  // not read — and the mode once asked on every scan anyway (the
+  // pre-landing review of 23 Sep 2026).
+  const unreadable: MftModule = { mftTake: () => { throw new Error('the columns file ends inside its size column'); }, mftCrossCheck: () => [] };
+  const cases: Array<[string, MftLauncher, MftModule]> = [
+    ['a failed launch', fakeLauncher({ kind: 'failed', reason: 'PowerShell refused to start the helper' }).launcher, fakeModule(flat(3)).module],
+    ['a non-zero exit', fakeLauncher({ kind: 'exited', code: 3 }).launcher, fakeModule(flat(3)).module],
+    ['an unreadable result', fakeLauncher({ kind: 'exited', code: 0 }).launcher, unreadable],
+    ['a launcher that throws', async () => { throw new Error('spawn EACCES'); }, fakeModule(flat(3)).module],
+  ];
+  for (const [label, launcher, module] of cases) {
+    resetMftSessionForTests();
+    const folder = tempFolder();
+    const r = recordFor(ROOT);
+    const first = await runMftWalk(r.scan, r.store, ROOT, { launcher, module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
+    assert.ok(!first.used && first.failed, `${label}: ${JSON.stringify(first)}`);
+    assert.match(first.reason, /the mode is off for C: until TreeMap restarts/, label);
+    const again = fakeLauncher({ kind: 'exited', code: 0 });
+    const second = await runMftWalk(r.scan, r.store, ROOT, { launcher: again.launcher, module: fakeModule(flat(3)).module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
+    assert.equal(again.requests.length, 0, `${label}: nobody is asked again`);
+    assert.match(second.reason, /off for C: until TreeMap restarts/, label);
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test('a helper that refuses before writing anything most often will not write to the folder it was given, and the reason says why', async () => {
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const launcher: MftLauncher = async () => ({ kind: 'exited', code: 2 });
+  const r = recordFor(ROOT);
+  const out = await runMftWalk(r.scan, r.store, ROOT, { launcher, module: fakeModule(flat(3)).module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
+  assert.ok(!out.used && out.failed, JSON.stringify(out));
+  assert.match(out.reason, /refused before writing anything/);
+  assert.match(out.reason, /TMP and TEMP/);
+  fs.rmSync(folder, { recursive: true, force: true });
+});
+
+test('the app temp folder is worked out as the helper works out its own: TMP, then TEMP, then USERPROFILE, on Windows', () => {
   assert.equal(MFT_TEMP_FOLDER, 'TreeMap-mft');
+  // Read from the helper's source, not restated: the two must name one folder.
+  const helperSource = fs.readFileSync(path.join(__dirname, '..', 'native', 'treemap-core', 'crates', 'tm-mft-helper', 'src', 'lib.rs'), 'utf8');
+  assert.ok(helperSource.includes(`pub const APP_TEMP_FOLDER: &str = "${MFT_TEMP_FOLDER}";`), 'the helper names the same folder');
+  // Rust's std::env::temp_dir() is Windows' GetTempPath2: TMP first. Node's
+  // os.tmpdir() reads TEMP first, so where the two differed the helper
+  // refused the app's output as outside its own folder.
+  assert.equal(helperTempRoot({ TMP: 'C:\\T1', TEMP: 'C:\\T2', USERPROFILE: 'C:\\U' }, true), 'C:\\T1');
+  assert.equal(helperTempRoot({ TEMP: 'C:\\T2', USERPROFILE: 'C:\\U' }, true), 'C:\\T2');
+  assert.equal(helperTempRoot({ USERPROFILE: 'C:\\U' }, true), 'C:\\U');
+  assert.equal(helperTempRoot({ TMP: 'C:\\T1' }, false), os.tmpdir(), 'elsewhere, the OS temp folder');
 });
 
 /* ══════════════ 3. the real module ══════════════ */

@@ -424,7 +424,14 @@ fixed, as built:
    scans could raise until someone clicked yes (the security review of M6),
    and a reset through Settings would have been one anything that reaches
    the API could repeat (its second review). Both are rules, not failures
-   (`src/services/scan/mftPrompt.ts`). Nothing a program running as the user
+   (`src/services/scan/mftPrompt.ts`). What goes wrong once the helper was
+   asked for — a launch that fails, a helper that exits non-zero, a result
+   that will not read, a divergence — switches the drive off until TreeMap
+   restarts, so a drive where the mode cannot work is not asked about again
+   for nothing; and the app's temp folder is worked out the helper's way
+   (TMP before TEMP, `helperTempRoot`), since a folder the helper does not
+   call its own is one it refuses (the pre-landing review of 23 Sep 2026).
+   Nothing a program running as the user
    could have changed is started as administrator (its third review):
    PowerShell by its full path under the system folder the kernel reports
    (`systemDirectory`, `GetSystemDirectoryW` — never by name, which Windows

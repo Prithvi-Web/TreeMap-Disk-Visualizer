@@ -727,6 +727,25 @@ export function columnPathOf(cols: WalkResult, rootPath: string, sep: string): (
   };
 }
 
+/**
+ * The folder the app's temp folder for the helper lives in, worked out the
+ * way the helper works out its own: Rust's `std::env::temp_dir()`, which on
+ * Windows is GetTempPath2 — TMP, then TEMP, then USERPROFILE. Node's
+ * os.tmpdir() reads TEMP first, so where TMP and TEMP differ the two named
+ * different folders, the helper refused the app's output as outside its own,
+ * and every scan asked again for nothing (the pre-landing review of 23 Sep
+ * 2026). Elsewhere, and with none of the three set, the OS temp folder.
+ */
+export function helperTempRoot(env: NodeJS.ProcessEnv = process.env, onWindows = process.platform === 'win32'): string {
+  if (onWindows) {
+    for (const name of ['TMP', 'TEMP', 'USERPROFILE'] as const) {
+      const value = env[name];
+      if (value) return value;
+    }
+  }
+  return os.tmpdir();
+}
+
 function removeQuietly(file: string): void {
   try {
     fs.rmSync(file, { force: true });
@@ -761,6 +780,15 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
   if (volume === null) return notUsed('the scan root is not on a drive letter, so there is no NTFS volume to read', false);
   const off = mftSwitchedOff.get(volume);
   if (off !== undefined) return notUsed(`it is off for ${volume} until TreeMap restarts, because ${off}`, true);
+  // What goes wrong once the helper was asked for outlives this scan — a
+  // PowerShell that cannot start it, a helper that refuses its folder or
+  // crashes, a result that will not read, a divergence — so the drive is off
+  // until TreeMap restarts rather than asked about again for nothing (the
+  // pre-landing review of 23 Sep 2026: it once asked on every scan).
+  const switchOff = (why: string): MftOutcome => {
+    mftSwitchedOff.set(volume, why);
+    return notUsed(`${why}; the mode is off for ${volume} until TreeMap restarts`, true);
+  };
   const launcher = deps.launcher === undefined ? mftLauncher : deps.launcher;
   if (!launcher) return notUsed('asking Windows for administrator permission needs the desktop app, and this server runs without it', true);
   const found = deps.module === undefined ? mftModuleOrReason() : (deps.module ?? 'no native module was given');
@@ -776,7 +804,7 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
   if (unsafe) {
     return notUsed(`Windows would start ${helperPath} as administrator, and ${unsafe}; installed for anyone who uses this computer (in Program Files), TreeMap can use it`, false);
   }
-  const folder = deps.tempFolder ?? path.join(os.tmpdir(), MFT_TEMP_FOLDER);
+  const folder = deps.tempFolder ?? path.join(helperTempRoot(), MFT_TEMP_FOLDER);
   try {
     fs.mkdirSync(folder, { recursive: true });
   } catch (err: unknown) {
@@ -814,7 +842,7 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
     try {
       launched = await launcher({ helperPath, volume, root: rootPath, output });
     } catch (err: unknown) {
-      return notUsed(`the helper could not be started: ${describe(err)}`, true);
+      return switchOff(`the helper could not be started: ${describe(err)}`);
     } finally {
       // The prompt is over whatever the clock says: a clock that throws here
       // must not leave it marked open (the TypeScript review of M6).
@@ -828,9 +856,15 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
     }
     if (scan.cancelled) return notUsed('the scan was cancelled', false);
     if (launched.kind === 'declined') return notUsed(`${launched.reason}, so the folders were listed instead`, false);
-    if (launched.kind === 'failed') return notUsed(`the helper could not be started: ${launched.reason}`, true);
+    if (launched.kind === 'failed') return switchOff(`the helper could not be started: ${launched.reason}`);
     if (launched.code !== 0) {
-      let why = `the helper exited with code ${launched.code} and left no reason (an elevated process's error output does not reach the app)`;
+      // With no file, exit 2 is a refusal before the output was made: the
+      // helper writes only inside its own temp folder, which is not the one
+      // the app named when TMP and TEMP differ or the yes came from another
+      // account (an elevated process's error output does not reach the app).
+      let why = launched.code === 2
+        ? 'the helper refused before writing anything (exit 2, no file): it writes only inside its own temp folder, so TMP and TEMP may name different folders here, or the administrator who said yes is another account, with a temp folder of its own'
+        : `the helper exited with code ${launched.code} and left no reason (an elevated process's error output does not reach the app)`;
       if (fs.existsSync(output)) {
         try {
           mod.mftTake(output);
@@ -838,18 +872,17 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
           why = `the reader refused: ${describe(err)}`;
         }
       }
-      return notUsed(why, true);
+      return switchOff(why);
     }
     let cols: WalkResult;
     try {
       cols = mod.mftTake(output);
     } catch (err: unknown) {
-      return notUsed(`the helper's result could not be read: ${describe(err)}`, true);
+      return switchOff(`the helper's result could not be read: ${describe(err)}`);
     }
     const verdict = await crossCheckMft(cols, columnPathOf(cols, rootPath, store.sep), readStarted, (p, e) => mod.mftCrossCheck(p, e), deps.random ?? Math.random);
     if (!verdict.ok) {
-      mftSwitchedOff.set(volume, verdict.reason);
-      return notUsed(`${verdict.reason}; the mode is off for ${volume} until TreeMap restarts`, true);
+      return switchOff(verdict.reason);
     }
     // A gate that verified too little must not open (mftCrossCheck.ts,
     // requiredMatches). Every entry written within the margin is also the
