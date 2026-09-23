@@ -7,9 +7,10 @@ import path from 'path';
  * endpoint and the desktop tray (which shows free space in the menu bar).
  */
 
-function exec(cmd: string, args: string[]): Promise<string> {
+function exec(cmd: string, args: string[], extraEnv?: Record<string, string>): Promise<string> {
+  const env = extraEnv ? { ...process.env, ...extraEnv } : undefined;
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: 10_000, windowsHide: true }, (err, stdout, stderr) => {
+    execFile(cmd, args, { timeout: 10_000, windowsHide: true, ...(env ? { env } : {}) }, (err, stdout, stderr) => {
       if (err) reject(new Error((stderr || err.message).trim()));
       else resolve(stdout);
     });
@@ -70,10 +71,38 @@ async function unixDiskUsage(target: string): Promise<DiskUsage> {
   return fromDf(await exec('df', ['-k', target]), process.platform);
 }
 
+/**
+ * The PowerShell that reads one drive's size and free space. The drive
+ * travels in the environment and is compared as a value, never spliced into
+ * the script: a scan root can be anything a caller sends, and statfs failing
+ * on a made-up one is what brings this command in — spliced into the old
+ * double-quoted `-Filter`, a network share named `$(...)` ran as code (the
+ * pre-landing review of 23 Sep 2026).
+ */
+const WINDOWS_DISK_SCRIPT =
+  'Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -eq $env:TREEMAP_DISK_DRIVE } | Select-Object Size,FreeSpace | ConvertTo-Json';
+
+/**
+ * The command that asks Windows about the drive `target` is on, or null when
+ * it is on no drive letter (a share, a device path): Windows reports capacity
+ * per drive letter. Pure — exported so tests pin it on any platform.
+ */
+export function windowsDiskUsageCommand(target: string): { cmd: string; args: string[]; env: Record<string, string> } | null {
+  const root = path.win32.parse(path.win32.resolve(target)).root; // "C:\\"
+  const letter = /^([A-Za-z]):\\$/.exec(root);
+  if (!letter) return null;
+  return {
+    cmd: 'powershell.exe',
+    args: ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_DISK_SCRIPT],
+    env: { TREEMAP_DISK_DRIVE: `${letter[1].toUpperCase()}:` },
+  };
+}
+
 async function windowsDiskUsage(target: string): Promise<DiskUsage> {
-  const drive = path.parse(path.resolve(target)).root.replace(/\\$/, ''); // "C:"
-  const ps = `Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='${drive}'" | Select-Object Size,FreeSpace | ConvertTo-Json`;
-  const stdout = await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+  const command = windowsDiskUsageCommand(target);
+  if (!command) throw new Error(`${target} is on no drive letter, and Windows reports capacity per drive letter`);
+  const stdout = await exec(command.cmd, command.args, command.env);
+  if (stdout.trim() === '') throw new Error(`Windows reported no drive ${command.env.TREEMAP_DISK_DRIVE}`);
   const parsed = JSON.parse(stdout) as { Size: number; FreeSpace: number };
   // Windows has no root reserve: used is simply what is not free.
   return assertPlausible('Get-CimInstance Win32_LogicalDisk', Number(parsed.Size), Number(parsed.FreeSpace), Number(parsed.Size) - Number(parsed.FreeSpace));

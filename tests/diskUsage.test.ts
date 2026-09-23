@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { diskUsage, fromStatfs, fromDf } from '../src/services/diskUsage';
+import { execFileSync } from 'node:child_process';
+import { diskUsage, fromStatfs, fromDf, windowsDiskUsageCommand } from '../src/services/diskUsage';
 
 /**
  * Disk capacity, on whatever platform is running this.
@@ -188,4 +189,34 @@ test('the df fallback does not quietly change what "used" means', () => {
   assert.ok(linux.used + linux.free < linux.total, 'and the reserve is neither');
   assert.equal(linux.total - linux.used - linux.free, (1048576000 - 600000000 - 396288000) * 1024,
     'the shortfall is exactly the 5% ext4 keeps back');
+});
+
+/* ---------------- Windows: the drive reaches PowerShell as data ---------------- */
+
+test('the Windows command reads one drive letter from the environment; the script holds no part of the path', () => {
+  // A scan root can be anything a caller sends (the API, an AI agent through
+  // MCP), and statfs failing on a made-up one is what brings this command in.
+  // The drive used to be spliced into a double-quoted PowerShell string, where
+  // `$(...)` runs: the review of 23 Sep 2026.
+  const c = windowsDiskUsageCommand('c:\\Users\\me\\$(second)"\'x');
+  assert.ok(c, 'a path on a drive letter has a command');
+  assert.equal(c.cmd, 'powershell.exe');
+  assert.deepEqual(c.env, { TREEMAP_DISK_DRIVE: 'C:' });
+  for (const arg of c.args) assert.ok(!arg.includes('second') && !arg.includes('Users'), arg);
+  assert.match(c.args[c.args.length - 1], /\$_\.DeviceID -eq \$env:TREEMAP_DISK_DRIVE/);
+});
+
+test('a path on no drive letter has no Windows command: shares and anything else are refused before PowerShell', () => {
+  for (const target of ['\\\\server\\share\\x', '\\\\x\\$(second)\\y', '\\\\?\\UNC\\s\\h\\x', '//server/share/x']) {
+    assert.equal(windowsDiskUsageCommand(target), null, target);
+  }
+  assert.deepEqual(windowsDiskUsageCommand('D:/data')?.env, { TREEMAP_DISK_DRIVE: 'D:' });
+});
+
+test('on Windows the command reads the system drive for real', { skip: process.platform !== 'win32' && 'PowerShell and Win32_LogicalDisk exist only on Windows' }, () => {
+  const c = windowsDiskUsageCommand(`${process.env.SystemDrive ?? 'C:'}\\`);
+  assert.ok(c);
+  const out = execFileSync(c.cmd, c.args, { encoding: 'utf8', env: { ...process.env, ...c.env } });
+  const parsed = JSON.parse(out) as { Size: number; FreeSpace: number };
+  assert.ok(Number(parsed.Size) > 0 && Number(parsed.FreeSpace) >= 0, out);
 });
