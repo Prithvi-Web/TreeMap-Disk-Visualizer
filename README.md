@@ -181,7 +181,7 @@ Also stated rather than implied: hard links are already counted once by the scan
 <td width="50%" valign="top">
 
 ### 🧬 Duplicates
-Finds **true** duplicates (size + streamed SHA-256), grouped with reclaimable space per group. Auto-select keeps the newest copy of each. A **Near-Duplicate Images** tab catches resized, re-encoded and screenshot copies with a perceptual **dHash**. And because bulk-deleting duplicates is the scariest action in the app, every group has a **Compare** view: copies side by side — thumbnail, dimensions, EXIF capture date, size, path — with the recommended keep marked **and the rule that picked it stated**, the differing dHash regions highlighted over near-duplicate pairs ("4 of 64 blocks differ"), and full keyboard control (←/→ groups, 1–9 keeper, Space stages the rest). Facts the disk doesn't record show as exactly that — *"no capture date recorded"* — never a guess.
+Finds **true** duplicates (size + streamed SHA-256), grouped with reclaimable space per group. **Online-only files are never opened** — reading an iCloud, OneDrive or Dropbox placeholder would download it — so they are left unchecked, and the view says how many and how big. Auto-select keeps the newest copy of each. A **Near-Duplicate Images** tab catches resized, re-encoded and screenshot copies with a perceptual **dHash**. And because bulk-deleting duplicates is the scariest action in the app, every group has a **Compare** view: copies side by side — thumbnail, dimensions, EXIF capture date, size, path — with the recommended keep marked **and the rule that picked it stated**, the differing dHash regions highlighted over near-duplicate pairs ("4 of 64 blocks differ"), and full keyboard control (←/→ groups, 1–9 keeper, Space stages the rest). Facts the disk doesn't record show as exactly that — *"no capture date recorded"* — never a guess.
 
 </td>
 <td width="50%" valign="top">
@@ -500,7 +500,7 @@ A workflow (`.github/workflows/release.yml`) builds the macOS **and** Windows in
 | `GET /api/large-folders?scanId=` | Top N largest folders (recursive sizes) |
 | `GET /api/file-types?scanId=` | Size breakdown by extension |
 | `GET /api/apps?scanId=` | Per-app storage attribution: totals, app / cache / data / logs breakdown, safe-to-clear bytes |
-| `GET /api/duplicates?scanId=` | Duplicate groups (starts hashing; poll until complete) |
+| `GET /api/duplicates?scanId=` | Duplicate groups (starts hashing; poll until complete); `notHashed` counts the online-only files it left unread |
 | `GET /api/near-duplicates?scanId=&threshold=` | Perceptual (dHash) near-duplicate image clusters |
 | `GET /api/empty-folders?scanId=` | Recursively empty folders (`ignoreJunk` configurable) |
 | `GET /api/compare?scanIdA=&scanIdB=` | File-level diff of two scans of the same root |
@@ -691,6 +691,7 @@ Disk tools should never lose your data. TreeMap is built defensively:
 - 📤 Offload never bare-moves: copy first, verify every byte against a SHA-256 read back from the destination, and only then trash the originals — any failure rolls back with local data untouched.
 - ☁️ Cloud scanning is strictly opt-in and metadata-only: no file contents are ever downloaded, OAuth tokens live only in the local app-data folder (Disconnect wipes them), cloud deletes go to the provider's own trash, and with no account connected no cloud code path executes at all.
 - 🧬 The Duplicates view refuses to trash *every* copy in a group — at least one always stays.
+- 🧬 The duplicate finder never opens an online-only file (an iCloud, OneDrive or Dropbox placeholder): reading one would download it. It says how many it left unchecked instead.
 - 🚦 Token-bucket rate limiting per client IP, in three lanes priced by what a request costs the server — 10 requests/s sustained (bursts of 20) for the API, 150/s (300) for thumbnails, 60/s (120) for cheap metadata — plus graceful SIGTERM shutdown that drains live SSE streams and stops background hashing, scheduled scans & live-activity watchers.
 - ⏳ Scan results live in memory only and auto-expire after 30 minutes. What does reach disk — history snapshots, settings, the SQLite live index, Time Capsule copies, the offload catalog, the journal and the audit log — sits in the platform app-data folder (`~/Library/Application Support/TreeMap`, `%APPDATA%\TreeMap`, or `~/.config/treemap`) and never leaves the machine. [SECURITY.md](SECURITY.md) lists every file, and every outbound connection the app can make.
 
