@@ -15,6 +15,7 @@ import { MFT_CROSS_CHECK_ATTEMPTS, MFT_CROSS_CHECK_SAMPLE, MFT_FLUSH_MARGIN_MS, 
 import {
   KIND_DIR,
   KIND_FILE,
+  KIND_SYMLINK,
   MFT_NOT_VERIFIED,
   MFT_TEMP_FOLDER,
   driveOf,
@@ -950,6 +951,65 @@ test('mftCrossCheck opens real files, unelevated: a match, a planted size mismat
     assert.equal(results[3].outcome, 'unopenable');
     assert.ok(results[3].reason && results[3].reason.length > 0);
     assert.throws(() => mod.mftCrossCheck([file], []), /one \{ kind/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** JSON as serde_json writes a value: an object's keys in sorted order, since its map is ordered by key. */
+function serdeJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v !== null && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : v,
+  );
+}
+
+test('mftCrossCheck names every field that differs, in order, never follows a link, and refuses an expected list of the wrong shape', () => {
+  const mod = realModule();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mft-fields-'));
+  try {
+    const file = path.join(dir, 'real.bin');
+    fs.writeFileSync(file, Buffer.alloc(1234));
+    // A junction on Windows (no privilege needed), a symbolic link elsewhere.
+    const link = path.join(dir, 'link');
+    fs.symlinkSync(dir, link, 'junction');
+    const st = fs.lstatSync(file);
+    const dirSt = fs.lstatSync(dir);
+    const results = mod.mftCrossCheck(
+      [file, dir, file, link],
+      [
+        { kind: KIND_FILE, size: 1234, mtimeMs: st.mtimeMs + 1 },
+        { kind: KIND_FILE, size: 0, mtimeMs: dirSt.mtimeMs },
+        { kind: KIND_DIR, size: 0, mtimeMs: 0 },
+        // What the link points to, as if it had been followed.
+        { kind: KIND_DIR, size: 0, mtimeMs: dirSt.mtimeMs },
+      ],
+    );
+    assert.deepEqual(results[0], { outcome: 'mismatch', kind: KIND_FILE, size: 1234, mtimeMs: st.mtimeMs, differs: ['mtime'], reason: null }, 'the last-write time alone, and the live one');
+    assert.deepEqual(results[1], { outcome: 'mismatch', kind: KIND_DIR, size: 0, mtimeMs: dirSt.mtimeMs, differs: ['kind'], reason: null }, 'the kind alone');
+    assert.deepEqual(results[2].differs, ['kind', 'size', 'mtime'], 'every field, in the order a reason names them');
+    assert.equal(results[3].kind, KIND_SYMLINK, 'the link itself, never what it points to');
+    assert.ok(results[3].differs.includes('kind'), JSON.stringify(results[3]));
+
+    const shape = 'mftCrossCheck needs one { kind: 0 | 1 | 2, size: number, mtimeMs: number } per path';
+    const wrongShapes: Array<[string, unknown]> = [
+      ['not a list', {}],
+      ['a field missing', [{ kind: KIND_FILE, size: 1 }]],
+      ['a field it does not know', [{ kind: KIND_FILE, size: 1, mtimeMs: 1, sizeOnDisk: 1 }]],
+      ['a kind past a byte', [{ kind: 256, size: 1, mtimeMs: 1 }]],
+      ['a size that is text', [{ kind: KIND_FILE, size: '1', mtimeMs: 1 }]],
+    ];
+    for (const [label, expected] of wrongShapes) {
+      assert.throws(
+        () => mod.mftCrossCheck([file], expected as MftExpected[]),
+        (err: Error) => err.message.startsWith(`${shape}; got ${serdeJson(expected)}: `),
+        label,
+      );
+    }
+    const one = [{ kind: KIND_FILE, size: 1, mtimeMs: 1 }];
+    assert.throws(() => mod.mftCrossCheck([file, dir], one), (err: Error) => err.message === `${shape}: 2 paths but 1 expected entries`);
+    assert.throws(() => mod.mftCrossCheck([], one), (err: Error) => err.message === `${shape}: 0 paths but 1 expected entries`);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
