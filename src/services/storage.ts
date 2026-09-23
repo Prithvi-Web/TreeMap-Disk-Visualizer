@@ -199,10 +199,24 @@ export function writeJsonFile(name: string, data: unknown): Promise<void> {
       const file = path.join(dir, name);
       const tmp = file + '.tmp';
       await fsp.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
-      await fsp.rename(tmp, file);
+      await replaceWith(tmp, file);
     });
   writeQueues.set(name, next);
   return next;
+}
+
+/**
+ * Renames `tmpPath` over `file`. A rename that fails — on Windows, a target
+ * another program holds open refuses one — removes `tmpPath` and rethrows, so no
+ * tmp file outlives a failed write (the pre-landing review of 23 Sep 2026).
+ */
+async function replaceWith(tmpPath: string, file: string): Promise<void> {
+  try {
+    await fsp.rename(tmpPath, file);
+  } catch (err) {
+    await fsp.rm(tmpPath, { force: true });
+    throw err;
+  }
 }
 
 /**
@@ -260,7 +274,7 @@ export function writeFileChunked(
         if (failed) throw failure;
         return false;
       }
-      await fsp.rename(tmpPath, file);
+      await replaceWith(tmpPath, file);
       return true;
     });
   // The queue holds a promise that never rejects: the caller handles `next`,

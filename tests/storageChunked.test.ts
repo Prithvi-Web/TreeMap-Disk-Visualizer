@@ -19,7 +19,9 @@ function withDataDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const prior = process.env.TREEMAP_DATA_DIR;
   process.env.TREEMAP_DATA_DIR = dir;
   return fn(dir).finally(() => {
-    process.env.TREEMAP_DATA_DIR = prior;
+    // Assigned undefined, process.env holds the string "undefined".
+    if (prior === undefined) delete process.env.TREEMAP_DATA_DIR;
+    else process.env.TREEMAP_DATA_DIR = prior;
     fs.rmSync(dir, { recursive: true, force: true });
   });
 }
@@ -174,4 +176,25 @@ test('a read-only portable session writes nothing and never asks the producer', 
     fs.chmodSync(readOnly, 0o700);
     fs.rmSync(base, { recursive: true, force: true });
   }
+});
+
+test('a rename that fails removes the tmp file and rejects, for both writers', async () => {
+  // The pre-landing review of 23 Sep 2026: the rename was the one step whose
+  // failure left the tmp file behind (on Windows, a target another program
+  // holds open refuses it). A non-empty folder at the target's name refuses
+  // a rename on every platform.
+  await withDataDir(async (dir) => {
+    const { writeFileChunked, writeJsonFile } = await import('../src/services/storage');
+    for (const name of ['chunked.json', 'whole.json']) {
+      fs.mkdirSync(path.join(dir, name));
+      fs.writeFileSync(path.join(dir, name, 'keep'), 'x');
+    }
+    await assert.rejects(writeFileChunked('chunked.json', async (write) => {
+      await write('{}');
+      return true;
+    }));
+    await assert.rejects(writeJsonFile('whole.json', { a: 1 }));
+    assert.deepEqual(leftovers(dir), [], 'no tmp file stays');
+    assert.ok(fs.existsSync(path.join(dir, 'chunked.json', 'keep')) && fs.existsSync(path.join(dir, 'whole.json', 'keep')), 'what was there is untouched');
+  });
 });
