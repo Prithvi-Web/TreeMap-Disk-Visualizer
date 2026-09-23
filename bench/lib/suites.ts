@@ -7,20 +7,22 @@
  * into a number.
  *
  * Refusals, never guesses: a requested engine the scan did not run on, a
- * cold series whose purge failed, a job that errored — each is an error or a
- * downgraded label with the reason, never a silently different number.
+ * requested budget the scan did not record, a cold series whose purge failed,
+ * a job that errored — each is an error or a downgraded label with the
+ * reason, never a silently different number.
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type { FindOptions } from '../../src/services/gduScanner';
+import type { ScanBudget } from '../../src/models/types';
 import { cacheState, defaultPurge, type CacheVerdict, type PurgeProcedure, type PurgeResult, type RequestedCache } from './cache';
 import type { CorpusManifest } from './corpus';
 import { scoreClusters, type ImageManifest } from './images';
 import { describeMachine, type MachineRecord } from './machine';
 import type { EngineChoice, WorkerJob, WorkerResult, WorkerSuccess } from './measureWorker';
-import { summarize, type BenchResult, type BenchRun, type EntriesUnit, type SuiteName } from './report';
+import { summarize, type BenchBudget, type BenchResult, type BenchRun, type EntriesUnit, type RequestedBudget, type ScanPreset, type SuiteName } from './report';
 import { checkDuplicatesAgainstManifest, checkRunsAgree, checkScanAgainstManifest, type ScanCounts } from './verify';
 
 export type { EngineChoice } from './measureWorker';
@@ -54,10 +56,14 @@ export interface EnumerateOptions extends CommonOptions {
   manifest: CorpusManifest;
   engine: EngineChoice;
   cache: RequestedCache;
+  /** The budget preset every pass scans under, set in each measuring process with the app's own setter. */
+  preset: ScanPreset;
   /** Test hook: where to look for gdu (a nonexistent `bundledPath` with `pathLookup: false` means "no binary"). */
   gduFind?: FindOptions;
   /** Test hook: make the child report this engine, to prove the mismatch refusal. */
   pretendEngine?: string;
+  /** Test hook: make the child report these budget fields instead of its scan's own, to prove the budget refusals. */
+  pretendBudget?: Partial<ScanBudget>;
 }
 
 export interface DuplicatesOptions extends CommonOptions {
@@ -123,10 +129,18 @@ function assertRequestedEngine(requested: EngineChoice, actual: string): void {
   if (mismatch) throw new Error(`requested ${requested} but the scan ran on ${actual}; the number would describe the wrong engine`);
 }
 
+/** The scan's own record must name the setting the series asked for (Automatic when it named none); any other would be another budget's number. */
+function assertRequestedBudget(requested: RequestedBudget, recorded: ScanBudget): void {
+  if (recorded.preset !== requested) {
+    throw new Error(`requested the ${requested} budget but the scan recorded the ${recorded.preset} setting; the number would describe another budget`);
+  }
+}
+
 interface Series {
   runs: BenchRun[];
   results: WorkerSuccess[];
   cache: CacheVerdict;
+  budget: BenchBudget;
 }
 
 /**
@@ -136,6 +150,7 @@ interface Series {
  */
 async function series(job: Omit<WorkerJob, 'outFile'>, opts: CommonOptions & { engine?: EngineChoice }, machine: MachineRecord, entries: number, dataNote: string): Promise<Series> {
   const requested = opts.cache ?? 'warm';
+  const requestedBudget: RequestedBudget = job.preset ?? 'auto';
   const purge = opts.purge ?? defaultPurge;
   const runs: BenchRun[] = [];
   const results: WorkerSuccess[] = [];
@@ -145,6 +160,7 @@ async function series(job: Omit<WorkerJob, 'outFile'>, opts: CommonOptions & { e
   if (requested === 'warm') {
     const warm = await runChild(job);
     if (opts.engine) assertRequestedEngine(opts.engine, warm.engine);
+    assertRequestedBudget(requestedBudget, warm.budget);
     warmedUp = true;
   }
 
@@ -155,6 +171,7 @@ async function series(job: Omit<WorkerJob, 'outFile'>, opts: CommonOptions & { e
     }
     const result = await runChild(job);
     if (opts.engine) assertRequestedEngine(opts.engine, result.engine);
+    assertRequestedBudget(requestedBudget, result.budget);
     if (result.engine === 'gdu-turbo') {
       result.run.bytesRead = null;
       result.run.bytesReadReason = 'gdu reads in child processes; the probe counts only the measuring process';
@@ -175,7 +192,8 @@ async function series(job: Omit<WorkerJob, 'outFile'>, opts: CommonOptions & { e
     cache = await cacheState({ requested: 'warm', entries, maxVnodes: machine.maxVnodes ?? undefined, warmedUp });
     if (dataNote) cache = { ...cache, reason: `${cache.reason}; ${dataNote}` };
   }
-  return { runs, results, cache };
+  // Each measured run's preset is the one its scan recorded, so a series the governor moved says so.
+  return { runs, results, cache, budget: { requested: requestedBudget, effective: results.map((r) => r.budget.effective) } };
 }
 
 function build(suite: SuiteName, engine: string, unit: EntriesUnit, corpus: BenchResult['corpus'], machine: MachineRecord, s: Series, correctness: BenchResult['correctness'], label: string): BenchResult {
@@ -187,6 +205,7 @@ function build(suite: SuiteName, engine: string, unit: EntriesUnit, corpus: Benc
     entriesUnit: unit,
     machine,
     cache: { state: s.cache.state, reason: s.cache.reason },
+    budget: s.budget,
     runs: s.runs,
     summary: summarize(s.runs),
     correctness,
@@ -209,7 +228,7 @@ function scaleOf(entries: number, maxVnodes: number | null): string {
 export async function runEnumerate(opts: EnumerateOptions): Promise<BenchResult> {
   const machine = await describeMachine();
   const entries = opts.manifest.files + opts.manifest.dirs;
-  const s = await series({ suite: 'enumerate', root: opts.manifest.root, engine: opts.engine, gduFind: opts.gduFind, pretendEngine: opts.pretendEngine }, opts, machine, entries, '');
+  const s = await series({ suite: 'enumerate', root: opts.manifest.root, engine: opts.engine, preset: opts.preset, gduFind: opts.gduFind, pretendEngine: opts.pretendEngine, pretendBudget: opts.pretendBudget }, opts, machine, entries, '');
   const perRun: ScanCounts[] = s.results.map((r) => r.counts);
   const notes: string[] = [];
   let ok = true;

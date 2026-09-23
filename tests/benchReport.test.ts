@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { summarize, compareToBaseline, printTable, readResult, writeResult, type BenchResult, type BenchRun } from '../bench/lib/report';
+import { summarize, compareToBaseline, printTable, readResult, recordRefusal, writeResult, type BenchResult, type BenchRun, type StoredResult } from '../bench/lib/report';
 import { checkScanAgainstManifest, checkDuplicatesAgainstManifest } from '../bench/lib/verify';
 
 function run(wallMs: number, cpuSeconds = 0.5, entries = 200_000, extra: Partial<BenchRun> = {}): BenchRun {
@@ -42,6 +42,7 @@ function result(wallMsMedian: number, resolutionPct: number): BenchResult {
     entriesUnit: 'entries',
     machine: { cpuModel: 'x', cores: 8, perfCores: null, effCores: null, memoryBytes: 1, platform: 'darwin', arch: 'arm64', osRelease: '1', node: 'v1', commit: 'abc1234', dirty: false, loadAvg: [1, 1, 1], maxVnodes: null, tier: 'B', tierReason: 'test' },
     cache: { state: 'warm', reason: 'test' },
+    budget: { requested: 'turbo', effective: ['turbo', 'turbo', 'turbo'] },
     runs: [r, r, r],
     summary: { ...summarize([r, r, r]), resolutionPct },
     correctness: { ok: true, notes: [] },
@@ -49,6 +50,12 @@ function result(wallMsMedian: number, resolutionPct: number): BenchResult {
     commit: 'abc1234',
     label: 'test',
   };
+}
+
+/** A result as every Phase 1 baseline was written: before the governor existed, with no budget field at all. */
+function preGovernor(r: BenchResult): StoredResult {
+  const { budget: _dropped, ...rest } = r;
+  return rest;
 }
 
 test('fifteen percent slower with a two percent band is a regression', () => {
@@ -141,6 +148,7 @@ test('a result with one run survives the trip through JSON without gaining a res
   try {
     const r = result(1000, Number.POSITIVE_INFINITY);
     r.runs = [run(1000)];
+    r.budget = { requested: 'turbo', effective: ['turbo'] };
     r.summary = summarize(r.runs);
     const file = writeResult(r, dir, 'one.json');
     const back = readResult(file);
@@ -285,4 +293,133 @@ test('under a report cap, recall counts only the planted groups above the finder
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+/* ------------------------------ the budget ------------------------------ */
+
+const PRE_GOVERNOR = 'none (recorded before the governor)';
+
+test('the budget is a condition: a different preset, or a result recorded before the governor, is not comparable', () => {
+  const base = result(1000, 2);
+  const legacy = preGovernor(base);
+  const againstLegacy = compareToBaseline(result(900, 2), legacy);
+  assert.equal(againstLegacy.verdict, 'NOT COMPARABLE', againstLegacy.sentence);
+  assert.equal(againstLegacy.sentence, `the two results differ in budget (turbo vs ${PRE_GOVERNOR}), so their wall clocks measure different things`);
+  const legacyAgainst = compareToBaseline(preGovernor(result(900, 2)), base);
+  assert.equal(legacyAgainst.verdict, 'NOT COMPARABLE', legacyAgainst.sentence);
+  assert.match(legacyAgainst.sentence, /budget \(none \(recorded before the governor\) vs turbo\)/);
+  const eco = result(900, 2);
+  eco.budget = { requested: 'eco', effective: ['eco', 'eco', 'eco'] };
+  const presets = compareToBaseline(eco, base);
+  assert.equal(presets.verdict, 'NOT COMPARABLE', presets.sentence);
+  assert.match(presets.sentence, /budget \(eco vs turbo\)/);
+  assert.equal(compareToBaseline(result(900, 2), base).verdict, 'PASS', 'the same preset leaves the verdict to the numbers');
+  assert.equal(compareToBaseline(preGovernor(result(900, 2)), legacy).verdict, 'PASS', 'two results from before the governor still compare with each other');
+});
+
+test('every committed baseline still reads, and one recorded before the governor is not comparable with the same result under a budget', () => {
+  const dir = path.join(__dirname, '..', 'bench', 'baselines');
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+  assert.ok(files.length > 0, 'the baselines directory is not empty');
+  for (const f of files) {
+    const baseline = readResult(path.join(dir, f));
+    if (baseline.budget !== undefined) continue; // recorded under a budget: the tests above cover those
+    const budgeted: StoredResult = { ...baseline, budget: { requested: 'turbo', effective: baseline.runs.map(() => 'turbo') } };
+    const v = compareToBaseline(budgeted, baseline);
+    assert.equal(v.verdict, 'NOT COMPARABLE', `${f}: ${v.sentence}`);
+    assert.equal(v.sentence, `the two results differ in budget (turbo vs ${PRE_GOVERNOR}), so their wall clocks measure different things`, f);
+  }
+});
+
+test('--record refuses a series whose budget moved, naming the runs and presets, as it refuses a wide spread', () => {
+  assert.equal(recordRefusal(result(1000, 2)), null, 'a correct, reproducible, budget-steady result from a clean tree is recordable');
+
+  const eco = result(1000, 2);
+  eco.budget = { requested: 'eco', effective: ['eco', 'balanced', 'eco'] };
+  const ecoRefusal = recordRefusal(eco) ?? '';
+  assert.match(ecoRefusal, /^its budget moved: eco was requested but run 2 ran under balanced /);
+  assert.match(ecoRefusal, /scales Eco and Balanced back while someone is using the computer/, 'Eco and Balanced are interaction-scaled, and the refusal says so');
+
+  const two = result(1000, 2);
+  two.budget = { requested: 'balanced', effective: ['eco', 'balanced', 'turbo'] };
+  assert.match(recordRefusal(two) ?? '', /balanced was requested but run 1 ran under eco and run 3 under turbo /);
+
+  const turbo = result(1000, 2);
+  turbo.budget = { requested: 'turbo', effective: ['balanced', 'balanced', 'turbo'] };
+  const turboRefusal = recordRefusal(turbo) ?? '';
+  assert.match(turboRefusal, /^its budget moved: turbo was requested but runs 1 and 2 ran under balanced /);
+  assert.match(turboRefusal, /never scales Turbo back for interaction/, 'Turbo is not interaction-scaled, and the refusal says so');
+  assert.doesNotMatch(turboRefusal, /Eco and Balanced/);
+
+  const auto = result(1000, 2);
+  auto.budget = { requested: 'auto', effective: ['balanced', 'eco', 'balanced'] };
+  assert.match(recordRefusal(auto) ?? '', /^its budget moved: the app's default \(Automatic\) ran under balanced in runs 1 and 3 and eco in run 2 /);
+  const steadyAuto = result(1000, 2);
+  steadyAuto.budget = { requested: 'auto', effective: ['balanced', 'balanced', 'balanced'] };
+  assert.equal(recordRefusal(steadyAuto), null, 'Automatic that resolved the same way in every run is one condition');
+
+  const movedOnDirtyTree = result(1000, 2);
+  movedOnDirtyTree.budget = { requested: 'eco', effective: ['eco', 'balanced', 'eco'] };
+  movedOnDirtyTree.machine = { ...movedOnDirtyTree.machine, dirty: true };
+  assert.match(recordRefusal(movedOnDirtyTree) ?? '', /^its budget moved/, 'the budget is judged with the spread, before the tree');
+
+  // The refusals that were already there keep their words and their order.
+  const wrong = result(1000, 2);
+  wrong.correctness = { ok: false, notes: ['fileCount: the scan reported 1, the manifest planted 2'] };
+  assert.equal(recordRefusal(wrong), 'it failed its correctness check');
+  const noisy = result(1000, 2);
+  noisy.summary = { ...noisy.summary, spreadPct: 7.5, reproducible: false };
+  assert.equal(recordRefusal(noisy), 'its runs spread 7.5% (the rule is under 5%)');
+  const dirty = result(1000, 2);
+  dirty.machine = { ...dirty.machine, dirty: true };
+  assert.equal(recordRefusal(dirty), 'the working tree had uncommitted changes, so the commit it cites is not the code measured');
+});
+
+test('a result whose budget moved cannot pass a comparison, and the sentence names the side and the runs', () => {
+  const base = result(1000, 2);
+  const moved = result(900, 2);
+  moved.budget = { requested: 'turbo', effective: ['turbo', 'balanced', 'turbo'] };
+  const current = compareToBaseline(moved, base);
+  assert.equal(current.verdict, 'NOT COMPARABLE', current.sentence);
+  assert.match(current.sentence, /^the current result's budget moved: turbo was requested but run 2 ran under balanced /);
+  const baseline = compareToBaseline(result(900, 2), moved);
+  assert.equal(baseline.verdict, 'NOT COMPARABLE', baseline.sentence);
+  assert.match(baseline.sentence, /^the baseline's budget moved: /);
+});
+
+test('readResult validates a budget field by field, and reads a result without one as recorded before the governor', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-report-budget-'));
+  try {
+    const cases: unknown[] = [
+      { ...result(1000, 2), budget: 'turbo' },
+      { ...result(1000, 2), budget: { requested: 'fast', effective: ['turbo', 'turbo', 'turbo'] } },
+      { ...result(1000, 2), budget: { requested: 'turbo', effective: 'turbo' } },
+      { ...result(1000, 2), budget: { requested: 'turbo', effective: ['turbo'] } },
+      { ...result(1000, 2), budget: { requested: 'turbo', effective: ['turbo', 3, 'turbo'] } },
+    ];
+    cases.forEach((c, i) => {
+      const file = path.join(dir, `bad-budget-${i}.json`);
+      fs.writeFileSync(file, JSON.stringify(c));
+      assert.throws(() => readResult(file), /not a bench result/, `case ${i}`);
+    });
+    const legacyFile = path.join(dir, 'legacy.json');
+    fs.writeFileSync(legacyFile, JSON.stringify(preGovernor(result(1000, 2))));
+    const legacy = readResult(legacyFile);
+    assert.equal(legacy.budget, undefined);
+    assert.ok(printTable([legacy]).includes(PRE_GOVERNOR), 'the table says the result predates the governor');
+    assert.deepEqual(readResult(writeResult(result(1000, 2), dir, 'good.json')).budget, { requested: 'turbo', effective: ['turbo', 'turbo', 'turbo'] });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the table carries the budget beside the cache state: the preset asked for, then what each run ran under', () => {
+  const steady = printTable([result(1000, 2)]);
+  const [header, , row] = steady.split('\n');
+  assert.match(header, /cache\s+budget\s+rate/);
+  assert.ok(row.includes('turbo: turbo/turbo/turbo'), row);
+  assert.doesNotMatch(row, /moved/);
+  const moved = result(1000, 2);
+  moved.budget = { requested: 'eco', effective: ['eco', 'balanced', 'eco'] };
+  assert.ok(printTable([moved]).includes('eco: eco/balanced/eco (moved)'), printTable([moved]));
 });

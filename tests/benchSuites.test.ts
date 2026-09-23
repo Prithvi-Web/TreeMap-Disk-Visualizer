@@ -5,6 +5,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { planCorpus, createCorpus, type CorpusManifest } from '../bench/lib/corpus';
 import { runEnumerate, runDuplicates, runNearDup } from '../bench/lib/suites';
+import { budgetMoved } from '../bench/lib/report';
 import { createImageCorpus, ALL_TRANSFORMS } from '../bench/lib/images';
 
 // Every measured pass runs in a CHILD process with its own isolated data
@@ -34,7 +35,7 @@ function small(): Promise<CorpusManifest> {
 
 test('enumerate drives the real walker in a child process and every run agrees with the manifest', async () => {
   const manifest = await small();
-  const result = await runEnumerate({ manifest, corpusName: 'test600', engine: 'walker', runs: 3, cache: 'warm', label: 'suite test' });
+  const result = await runEnumerate({ manifest, corpusName: 'test600', engine: 'walker', preset: 'turbo', runs: 3, cache: 'warm', label: 'suite test' });
   assert.ok(result.engine === 'walker' || result.engine === 'turbo-walker', result.engine);
   assert.equal(result.correctness.ok, true, result.correctness.notes.join('\n'));
   assert.equal(result.runs.length, 3);
@@ -56,7 +57,7 @@ test('enumerate drives the real walker in a child process and every run agrees w
 test('asking for gdu when the binary is unavailable is refused, never silently downgraded', async () => {
   const manifest = await small();
   await assert.rejects(
-    runEnumerate({ manifest, corpusName: 'tiny', engine: 'gdu', runs: 1, cache: 'warm', label: 'suite test', gduFind: { bundledPath: path.join(CORPUS_DIR, 'no-such-gdu'), pathLookup: false } }),
+    runEnumerate({ manifest, corpusName: 'tiny', engine: 'gdu', preset: 'turbo', runs: 1, cache: 'warm', label: 'suite test', gduFind: { bundledPath: path.join(CORPUS_DIR, 'no-such-gdu'), pathLookup: false } }),
     /gdu/,
   );
 });
@@ -65,7 +66,7 @@ test('a run whose engine differs from the one requested is refused', async () =>
   const manifest = await small();
   // The walker was requested but the child is told to report a different engine name.
   await assert.rejects(
-    runEnumerate({ manifest, corpusName: 'tiny', engine: 'walker', runs: 1, cache: 'warm', label: 'suite test', pretendEngine: 'gdu-turbo' }),
+    runEnumerate({ manifest, corpusName: 'tiny', engine: 'walker', preset: 'turbo', runs: 1, cache: 'warm', label: 'suite test', pretendEngine: 'gdu-turbo' }),
     /requested walker but the scan ran on gdu-turbo/,
   );
 });
@@ -77,13 +78,13 @@ test('a cold series is labelled cold only when every measured run was purged', a
     calls += 1;
     return calls === 1 ? { ok: true, command: 'fake purge' } : { ok: false, command: 'fake purge', error: 'a password is required' };
   };
-  const result = await runEnumerate({ manifest, corpusName: 'tiny', engine: 'walker', runs: 3, cache: 'cold', label: 'suite test', purge });
+  const result = await runEnumerate({ manifest, corpusName: 'tiny', engine: 'walker', preset: 'turbo', runs: 3, cache: 'cold', label: 'suite test', purge });
   assert.equal(calls, 3, 'one purge per measured run');
   assert.equal(result.cache.state, 'unknown');
   assert.match(result.cache.reason, /runs 2, 3/);
   assert.match(result.cache.reason, /password/);
   const allOk = async (): Promise<{ ok: boolean; command: string }> => ({ ok: true, command: 'fake purge' });
-  const cold = await runEnumerate({ manifest, corpusName: 'tiny', engine: 'walker', runs: 2, cache: 'cold', label: 'suite test', purge: allOk });
+  const cold = await runEnumerate({ manifest, corpusName: 'tiny', engine: 'walker', preset: 'turbo', runs: 2, cache: 'cold', label: 'suite test', purge: allOk });
   assert.equal(cold.cache.state, 'cold');
 });
 
@@ -101,6 +102,40 @@ test('the duplicate suite drives the real finder and proves every planted group 
   assert.equal(result.cache.state, 'warm');
 });
 
+test("enumerate scans under the preset it names, set by the app's own setter in the child, and records what each scan's own record says", async () => {
+  const manifest = await small();
+  // Automatic never resolves to Turbo, so a Turbo record can only mean the preset was applied, not defaulted.
+  const turbo = await runEnumerate({ manifest, corpusName: 'test600', engine: 'walker', preset: 'turbo', runs: 2, cache: 'warm', label: 'suite test' });
+  assert.equal(turbo.correctness.ok, true, turbo.correctness.notes.join('\n'));
+  assert.deepEqual(turbo.budget, { requested: 'turbo', effective: ['turbo', 'turbo'] });
+  const eco = await runEnumerate({ manifest, corpusName: 'test600', engine: 'walker', preset: 'eco', runs: 1, cache: 'warm', label: 'suite test' });
+  assert.deepEqual(eco.budget, { requested: 'eco', effective: ['eco'] });
+});
+
+test('a preset the scan did not record is refused: the number would describe another budget', async () => {
+  const manifest = await small();
+  // The child reports its scan's setting as Automatic: what a preset undone by the settings load would leave behind.
+  await assert.rejects(
+    runEnumerate({ manifest, corpusName: 'tiny', engine: 'walker', preset: 'eco', runs: 1, cache: 'warm', label: 'suite test', pretendBudget: { preset: 'auto' } }),
+    /requested the eco budget but the scan recorded the auto setting/,
+  );
+});
+
+test("the effective presets are the scans' own, not the request: a child that reports another carries it into the result as a moved budget", async () => {
+  const manifest = await small();
+  const result = await runEnumerate({ manifest, corpusName: 'tiny', engine: 'walker', preset: 'eco', runs: 2, cache: 'warm', label: 'suite test', pretendBudget: { effective: 'balanced' } });
+  assert.deepEqual(result.budget, { requested: 'eco', effective: ['balanced', 'balanced'] });
+  assert.match(budgetMoved(result.budget) ?? '', /^eco was requested but runs 1 and 2 ran under balanced /);
+});
+
+test("the duplicate suite names no preset and records what the app's default resolved to in each run", async () => {
+  const manifest = await small();
+  const result = await runDuplicates({ manifest, corpusName: 'test600', runs: 1, minSize: 1024, label: 'suite test' });
+  assert.equal(result.budget.requested, 'auto');
+  assert.equal(result.budget.effective.length, 1);
+  for (const preset of result.budget.effective) assert.ok(preset === 'balanced' || preset === 'eco', `Automatic resolves to Balanced or Eco, never ${preset}`);
+});
+
 test('the near-duplicate suite judges precision, not just completion', async () => {
   let sharp: unknown = null;
   try { sharp = require('sharp'); } catch { sharp = null; }
@@ -111,6 +146,8 @@ test('the near-duplicate suite judges precision, not just completion', async () 
   assert.equal(result.entriesUnit, 'images');
   assert.equal(result.engine, 'dhash-pairwise');
   assert.equal(result.runs[0].entries, manifest.images.length);
+  assert.equal(result.budget.requested, 'auto', 'the near-duplicate suite names no preset: its scan runs under the app\'s own default');
+  assert.equal(result.budget.effective.length, 1);
   assert.match(result.correctness.notes.join('\n'), /precision/);
   assert.match(result.correctness.notes.join('\n'), /recall by transform/);
   // Two clearly different synthetic originals must never be joined: precision is the correctness bar.

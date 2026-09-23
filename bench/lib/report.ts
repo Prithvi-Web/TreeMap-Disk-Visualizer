@@ -5,7 +5,8 @@
  * Rules, each borrowed from `scripts/bench-v4.ts` or learned from a review
  * that made this harness print a wrong number:
  *
- * 1. A figure carries the load it was taken under and the cache state.
+ * 1. A figure carries the load it was taken under, the cache state and the
+ *    budget.
  * 2. A difference smaller than the measurement's own resolution is not a
  *    result; it prints INCONCLUSIVE with the band stated. The band of a
  *    comparison combines both measurements' bands.
@@ -13,15 +14,20 @@
  *    in `bytesReadReason`, and the summary's `bytesReadMedian` is null the
  *    moment any run could not.
  * 4. Two results are compared only when they describe the same thing — same
- *    suite, corpus, engine, machine tier, platform, architecture and cache
- *    state — and only when both passed their correctness check and were
- *    reproducible. Anything else is NOT COMPARABLE, never PASS or FAIL.
+ *    suite, corpus, engine, machine tier, platform, architecture, cache
+ *    state and budget — and only when both passed their correctness check,
+ *    were reproducible and ran under the budget they name. Anything else is
+ *    NOT COMPARABLE, never PASS or FAIL.
  * 5. A result read from disk is validated field by field before a number of
  *    it is used; a single run's missing resolution survives the JSON trip.
  * 6. A result that failed its correctness check may carry a zero wall clock:
  *    a governor hold that never ran (no native module) measured nothing, and
  *    zero is the honest count of nothing. A result that claims correctness
  *    with no wall clock is malformed.
+ * 7. The budget a run ran under is the product's own record of it (the
+ *    scan's `budget.effective`), never the request copied. A result written
+ *    before the governor existed has no budget and reads as exactly that; it
+ *    is not rewritten, and it compares only with another like it.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -36,6 +42,29 @@ export type EntriesUnit = 'entries' | 'files' | 'images' | 'samples';
 const UNITS: readonly EntriesUnit[] = ['entries', 'files', 'images', 'samples'];
 const CACHE_STATES: readonly CacheState[] = ['cold', 'warm', 'mixed', 'unknown'];
 const TIERS = ['A', 'B', 'C'] as const;
+
+/** The three presets a scan can be asked to run under: the app's own (src/services/engineBudget.ts). */
+export type ScanPreset = 'eco' | 'balanced' | 'turbo';
+export const SCAN_PRESETS: readonly ScanPreset[] = ['eco', 'balanced', 'turbo'];
+/** What a series asked the budget for: a preset, or `auto` — the app's own default, which the suites that name no preset run under. */
+export type RequestedBudget = ScanPreset | 'auto';
+export const REQUESTED_BUDGETS: readonly RequestedBudget[] = [...SCAN_PRESETS, 'auto'];
+
+/**
+ * The budget a series ran under. `requested` is what the harness asked for;
+ * `effective` holds, per measured run and in order, the preset that run's
+ * scan recorded for itself — `ScanResult.budget.effective`, which the stats
+ * route serves as `budget` — the product's word, never recomputed here.
+ */
+export interface BenchBudget {
+  requested: RequestedBudget;
+  effective: string[];
+}
+
+/** The effective preset of a run that measured nothing (a governor hold that never ran). */
+export const NO_BUDGET = 'none';
+/** How a result written before the governor existed — every Phase 1 baseline — reads wherever a budget is expected. */
+export const PRE_GOVERNOR_BUDGET = 'none (recorded before the governor)';
 
 export interface BenchRun {
   wallMs: number;
@@ -81,6 +110,8 @@ export interface BenchResult {
   entriesUnit: EntriesUnit;
   machine: MachineRecord;
   cache: { state: CacheState; reason: string };
+  /** The budget every run scanned under. Every suite records it; `StoredResult` is the shape of the files written before it existed. */
+  budget: BenchBudget;
   runs: BenchRun[];
   summary: BenchSummary;
   correctness: { ok: boolean; notes: string[] };
@@ -88,6 +119,13 @@ export interface BenchResult {
   commit: string;
   label: string;
 }
+
+/**
+ * A result as a file holds it. One written before the governor existed —
+ * every Phase 1 baseline — has no budget: it reads as PRE_GOVERNOR_BUDGET, so
+ * it compares only with another like it, and nothing here rewrites it.
+ */
+export type StoredResult = Omit<BenchResult, 'budget'> & { budget?: BenchBudget };
 
 export type VerdictKind = 'PASS' | 'FAIL' | 'INCONCLUSIVE' | 'NOT COMPARABLE';
 
@@ -127,8 +165,62 @@ export function summarize(runs: BenchRun[]): BenchSummary {
   };
 }
 
+/**
+ * Why the product may move each budget — its own rules (tm-governor's preset
+ * table; Automatic in src/services/engineBudget.ts), stated beside a moved
+ * series, never offered as the diagnosis of one.
+ */
+const WHY_A_BUDGET_MOVES: Readonly<Record<RequestedBudget, string>> = {
+  eco: 'the governor scales Eco and Balanced back while someone is using the computer, and any preset under thermal pressure',
+  balanced: 'the governor scales Eco and Balanced back while someone is using the computer, and any preset under thermal pressure',
+  turbo: 'the governor never scales Turbo back for interaction, only under thermal pressure',
+  auto: 'Automatic is Balanced, and Eco on battery or under serious heat',
+};
+
+/** "a", "a and b", "a, b and c". */
+function joinAnd(parts: string[]): string {
+  return parts.length <= 1 ? parts.join('') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/** "run 2", "runs 1 and 3". */
+const runList = (runs: number[]): string => `${runs.length === 1 ? 'run' : 'runs'} ${joinAnd(runs.map(String))}`;
+
+/**
+ * Why a series' runs did not all run under the budget it names (for
+ * Automatic, under one budget), with the runs and presets named — or null
+ * when they did. A run that measured nothing ran under no budget, which is
+ * not a move; a result written before the governor has nothing to judge.
+ */
+export function budgetMoved(budget: BenchBudget | undefined): string | null {
+  if (!budget) return null;
+  const runsByPreset = new Map<string, number[]>();
+  budget.effective.forEach((preset, i) => {
+    if (preset !== NO_BUDGET) runsByPreset.set(preset, [...(runsByPreset.get(preset) ?? []), i + 1]);
+  });
+  const why = WHY_A_BUDGET_MOVES[budget.requested];
+  if (budget.requested === 'auto') {
+    if (runsByPreset.size <= 1) return null;
+    const parts = [...runsByPreset].map(([preset, runs]) => `${preset} in ${runList(runs)}`);
+    return `the app's default (Automatic) ran under ${joinAnd(parts)} (${why}); the series measured more than one budget`;
+  }
+  const moved = [...runsByPreset].filter(([preset]) => preset !== budget.requested);
+  if (moved.length === 0) return null;
+  const parts = moved.map(([preset, runs], i) => `${runList(runs)}${i === 0 ? ' ran' : ''} under ${preset}`);
+  return `${budget.requested} was requested but ${joinAnd(parts)} (${why}); the series does not measure the budget it names`;
+}
+
+/** The budget line printed under a result: what was asked for, what each run ran under, and whether that moved. */
+export function describeBudget(r: StoredResult): string {
+  if (!r.budget) return PRE_GOVERNOR_BUDGET;
+  const moved = budgetMoved(r.budget);
+  return `${r.budget.requested} requested, ran under ${r.budget.effective.join('/')}${moved ? ` — moved: ${moved}` : ''}`;
+}
+
+/** The budget as a comparison's condition: the preset asked for, or the word for a result from before the governor. */
+const budgetCondition = (r: StoredResult): string => r.budget?.requested ?? PRE_GOVERNOR_BUDGET;
+
 /** The fields two results must share before their wall clocks mean the same thing. */
-function comparabilityDifferences(current: BenchResult, baseline: BenchResult): string[] {
+function comparabilityDifferences(current: StoredResult, baseline: StoredResult): string[] {
   const out: string[] = [];
   const same = (label: string, a: unknown, b: unknown): void => {
     if (a !== b) out.push(`${label} (${String(a)} vs ${String(b)})`);
@@ -142,19 +234,39 @@ function comparabilityDifferences(current: BenchResult, baseline: BenchResult): 
   same('platform', current.machine.platform, baseline.machine.platform);
   same('architecture', current.machine.arch, baseline.machine.arch);
   same('cache state', current.cache.state, baseline.cache.state);
+  same('budget', budgetCondition(current), budgetCondition(baseline));
   return out;
 }
 
-function unusable(result: BenchResult, which: string): string | null {
+/**
+ * Why `--record` refuses to make this result a baseline, or null when it may:
+ * a baseline is the referent every later claim cites, so it must have passed
+ * its correctness check, be reproducible, have run under the budget it names,
+ * and name the code it measured.
+ */
+export function recordRefusal(r: BenchResult): string | null {
+  if (!r.correctness.ok) return 'it failed its correctness check';
+  if (!r.summary.reproducible) {
+    return `its runs spread ${Number.isFinite(r.summary.spreadPct) ? `${r.summary.spreadPct.toFixed(1)}%` : 'over a single run'} (the rule is under ${REPRODUCIBLE_SPREAD_PCT}%)`;
+  }
+  const moved = budgetMoved(r.budget);
+  if (moved) return `its budget moved: ${moved}`;
+  if (r.machine.dirty) return 'the working tree had uncommitted changes, so the commit it cites is not the code measured';
+  return null;
+}
+
+function unusable(result: StoredResult, which: string): string | null {
   if (!result.correctness.ok) return `${which} failed its correctness check, so it measured nothing`;
   if (!result.summary.reproducible) {
     const spread = Number.isFinite(result.summary.spreadPct) ? `${result.summary.spreadPct.toFixed(1)}%` : 'a single run';
     return `${which} is not reproducible (${spread} against the ${REPRODUCIBLE_SPREAD_PCT}% rule)`;
   }
+  const moved = budgetMoved(result.budget);
+  if (moved) return `${which}'s budget moved: ${moved}`;
   return null;
 }
 
-export function compareToBaseline(current: BenchResult, baseline: BenchResult): Verdict {
+export function compareToBaseline(current: StoredResult, baseline: StoredResult): Verdict {
   const base = baseline.summary.wallMsMedian;
   const cur = current.summary.wallMsMedian;
   const deltaPct = ((cur - base) / base) * 100;
@@ -205,7 +317,7 @@ const fmtBytes = (n: number | null): string => {
 const fmtCount = (n: number): string => Math.round(n).toLocaleString('en-US');
 
 /** The spread column: across runs for the scan suites; for the governor, the hold's own p95 |error| in points of machine CPU (bench/README.md, "The governor row"). */
-function spreadCell(r: BenchResult): string {
+function spreadCell(r: StoredResult): string {
   if (r.suite === 'governor') {
     if (!(r.summary.wallMsMedian > 0)) return 'n/a (no hold)';
     return `±${r.summary.spreadPct.toFixed(1)} pt p95${r.summary.reproducible ? '' : ' (outside the band)'}`;
@@ -214,8 +326,14 @@ function spreadCell(r: BenchResult): string {
   return `±${r.summary.spreadPct.toFixed(1)}%${r.summary.reproducible ? '' : ` (>${REPRODUCIBLE_SPREAD_PCT}%)`}`;
 }
 
-export function printTable(results: BenchResult[]): string {
-  const header = ['suite', 'corpus', 'engine', 'cache', 'rate', 'wall (median)', 'spread', 'CPU s/M', 'peak RSS', 'bytes read', 'load', 'correct'];
+/** The budget column: the preset asked for, then what each run ran under, one per run as the load column has them; `(moved)` when they differ. */
+function budgetCell(r: StoredResult): string {
+  if (!r.budget) return PRE_GOVERNOR_BUDGET;
+  return `${r.budget.requested}: ${r.budget.effective.join('/')}${budgetMoved(r.budget) ? ' (moved)' : ''}`;
+}
+
+export function printTable(results: readonly StoredResult[]): string {
+  const header = ['suite', 'corpus', 'engine', 'cache', 'budget', 'rate', 'wall (median)', 'spread', 'CPU s/M', 'peak RSS', 'bytes read', 'load', 'correct'];
   const rows = results.map((r) => {
     // A zero wall clock is a result that measured nothing (a hold that never ran): its rate and clock are n/a, not 0.
     const measured = r.summary.wallMsMedian > 0;
@@ -224,6 +342,7 @@ export function printTable(results: BenchResult[]): string {
       r.corpus.name,
       r.engine,
       r.cache.state,
+      budgetCell(r),
       measured ? `${fmtCount(r.summary.entriesPerSecond)} ${r.entriesUnit}/s` : 'n/a',
       measured ? formatMs(r.summary.wallMsMedian) : 'n/a',
       spreadCell(r),
@@ -242,17 +361,17 @@ export function printTable(results: BenchResult[]): string {
 /** A file-name-safe spelling of an engine or corpus id. */
 export const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-export function resultFileName(r: BenchResult): string {
+export function resultFileName(r: StoredResult): string {
   const stamp = r.recordedAt.replace(/[:.]/g, '-');
   return `${r.suite}-${slug(r.engine)}-${slug(r.corpus.name)}-${stamp}.json`;
 }
 
 /** Baselines are keyed on everything a comparison requires to match. */
-export function baselineFileName(r: BenchResult): string {
+export function baselineFileName(r: StoredResult): string {
   return `${r.suite}-${slug(r.engine)}-${slug(r.corpus.name)}-${slug(r.machine.platform)}-${slug(r.machine.arch)}-tier${r.machine.tier}.json`;
 }
 
-export function writeResult(r: BenchResult, dir: string, fileName = resultFileName(r)): string {
+export function writeResult(r: StoredResult, dir: string, fileName = resultFileName(r)): string {
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, fileName);
   fs.writeFileSync(file, JSON.stringify(r, null, 2) + '\n');
@@ -263,7 +382,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 const isNumberOrNull = (v: unknown): boolean => v === null || (typeof v === 'number' && Number.isFinite(v));
 
 /** Field-by-field: every number a comparison or a table reads must exist and be a finite number of the right sign. */
-export function isBenchResult(value: unknown): value is BenchResult {
+export function isBenchResult(value: unknown): value is StoredResult {
   if (!isRecord(value)) return false;
   const v = value;
   if (!(SUITES as readonly unknown[]).includes(v.suite)) return false;
@@ -273,6 +392,12 @@ export function isBenchResult(value: unknown): value is BenchResult {
   if (!isRecord(v.machine) || !(TIERS as readonly unknown[]).includes(v.machine.tier) || typeof v.machine.platform !== 'string' || typeof v.machine.arch !== 'string') return false;
   if (!isRecord(v.cache) || !(CACHE_STATES as readonly unknown[]).includes(v.cache.state) || typeof v.cache.reason !== 'string') return false;
   if (!Array.isArray(v.runs) || v.runs.length === 0 || !v.runs.every((r) => isRecord(r) && typeof r.wallMs === 'number' && Number.isFinite(r.wallMs))) return false;
+  // Rule 7: no budget is a result from before the governor; a budget names a known request and one preset per run.
+  if (v.budget !== undefined) {
+    const b = v.budget;
+    if (!isRecord(b) || !(REQUESTED_BUDGETS as readonly unknown[]).includes(b.requested)) return false;
+    if (!Array.isArray(b.effective) || b.effective.length !== v.runs.length || !b.effective.every((p) => typeof p === 'string')) return false;
+  }
   if (!isRecord(v.correctness) || typeof v.correctness.ok !== 'boolean' || !Array.isArray(v.correctness.notes)) return false;
   if (!isRecord(v.summary)) return false;
   const s = v.summary;
@@ -285,7 +410,7 @@ export function isBenchResult(value: unknown): value is BenchResult {
   return true;
 }
 
-export function readResult(file: string): BenchResult {
+export function readResult(file: string): StoredResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(fs.readFileSync(file, 'utf8'));

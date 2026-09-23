@@ -70,6 +70,7 @@ test('a hold the governor kept in band is a governor result: one run of samples,
     { fn: 'governorHold', args: [PRESET_CEILING_PERCENT.eco, 2] },
   ], "the governor is configured for the preset with auto mode off, then asked to hold that preset's ceiling");
   assert.equal(result.runs.length, 1, 'one run: the hold is itself the series');
+  assert.deepEqual(result.budget, { requested: 'eco', effective: ['eco'] }, "the hold's target is checked against the eco ceiling with auto mode off, so eco is what it ran under");
   const run = result.runs[0];
   assert.equal(run.entries, 25, 'entries is the sample count');
   assert.ok(run.wallMs >= FAKE_HOLD_MS / 2 && run.wallMs < 5_000, `wallMs ${run.wallMs} is the measured hold, not seconds × 1000 assumed`);
@@ -147,6 +148,7 @@ test("no native module: an honest failure carrying the loader's reason, one zero
   }
   assert.equal(result.corpus.name, 'hold-turbo');
   assert.deepEqual(result.corpus.params, { preset: 'turbo', seconds: 60, targetShare: 0.9 });
+  assert.deepEqual(result.budget, { requested: 'turbo', effective: ['none'] }, 'no hold ran, so its one run ran under no budget');
   assert.equal(isBenchResult(result), true, 'a hold that never ran is still a well-formed record');
   await withTempDir('treemap-bench-governor-', (dir) => {
     const back = readResult(writeResult(result, dir, 'failed.json'));
@@ -156,6 +158,8 @@ test("no native module: an honest failure carrying the loader's reason, one zero
     assert.doesNotMatch(table, /NaN|Infinity/);
     assert.match(table, /FAIL/);
     assert.match(table, /n\/a/, 'nothing was measured, so the timing columns say so');
+    assert.ok(table.includes('turbo: none'), table);
+    assert.doesNotMatch(table, /moved/, 'a hold that never ran did not run under another budget');
     const verdict = compareToBaseline(back, back);
     assert.equal(verdict.verdict, 'NOT COMPARABLE');
     assert.doesNotMatch(verdict.sentence, /NaN/);
@@ -223,6 +227,7 @@ test("the governor command runs end to end and writes a result whatever the nati
     const written = readResult(path.join(out, files[0]));
     assert.equal(written.suite, 'governor');
     assert.equal(written.corpus.name, 'hold-eco');
+    assert.deepEqual(written.budget, { requested: 'eco', effective: [written.runs[0].entries === 0 ? 'none' : 'eco'] });
     // Either the module held eco for a second (a real series, its verdict) or it could not load (its reason, no series) — never a series without a module.
     if (written.runs[0].entries === 0) {
       assert.equal(r.status, 1);

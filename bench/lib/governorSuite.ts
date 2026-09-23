@@ -25,7 +25,7 @@ import os from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { loadNative, type NativeModule, type NativeOutcome } from '../../src/services/scan/native';
 import { describeMachine } from './machine';
-import { summarize, type BenchResult, type BenchRun, type BenchSummary } from './report';
+import { NO_BUDGET, summarize, type BenchResult, type BenchRun, type BenchSummary } from './report';
 
 export type GovernorPreset = 'eco' | 'balanced' | 'turbo';
 export const GOVERNOR_PRESETS: readonly GovernorPreset[] = ['eco', 'balanced', 'turbo'];
@@ -73,7 +73,7 @@ type HoldFn = (targetPercent: number, seconds: number) => Promise<unknown>;
 type ConfigureFn = (budget: { preset: GovernorPreset; cpuPercent: number | null }, auto: boolean) => unknown;
 type GovernorApi = { hold: HoldFn; configure: ConfigureFn } | { refused: string };
 /** Everything a result carries besides what the hold decides. */
-type ResultFrame = Omit<BenchResult, 'runs' | 'summary' | 'correctness' | 'recordedAt'>;
+type ResultFrame = Omit<BenchResult, 'budget' | 'runs' | 'summary' | 'correctness' | 'recordedAt'>;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 const sameTarget = (a: number, b: number): boolean => Math.abs(a - b) <= TARGET_TOLERANCE;
@@ -93,9 +93,9 @@ export async function runGovernor(opts: GovernorOptions): Promise<BenchResult> {
     label: opts.label,
   };
   const native = opts.native ?? loadNative();
-  if (!native.available) return notHeld(frame, native.reason);
+  if (!native.available) return notHeld(frame, opts.preset, native.reason);
   const api = governorApi(native);
-  if ('refused' in api) return notHeld(frame, api.refused);
+  if ('refused' in api) return notHeld(frame, opts.preset, api.refused);
 
   // Auto mode off: the gate measures the preset asked for, not the one battery or thermal state would pick.
   api.configure({ preset: opts.preset, cpuPercent: null }, false);
@@ -129,6 +129,8 @@ export async function runGovernor(opts: GovernorOptions): Promise<BenchResult> {
   };
   return {
     ...frame,
+    // Auto mode is off and parseHoldReport refused any target but this preset's ceiling, so the hold ran under the preset asked for.
+    budget: { requested: opts.preset, effective: [opts.preset] },
     runs: [run],
     summary,
     correctness: { ok: report.withinBand, notes: holdNotes(opts, report, wallMs) },
@@ -145,7 +147,7 @@ export async function runGovernor(opts: GovernorOptions): Promise<BenchResult> {
  * every comparison and baseline (`isBenchResult` admits a zero wall clock
  * only on a result that failed correctness — its rule 6).
  */
-function notHeld(frame: ResultFrame, reason: string): BenchResult {
+function notHeld(frame: ResultFrame, preset: GovernorPreset, reason: string): BenchResult {
   const run: BenchRun = {
     wallMs: 0,
     entries: 0,
@@ -169,7 +171,8 @@ function notHeld(frame: ResultFrame, reason: string): BenchResult {
     resolutionPct: 0,
     reproducible: false,
   };
-  return { ...frame, runs: [run], summary, correctness: { ok: false, notes: [reason] }, recordedAt: new Date().toISOString() };
+  // Nothing ran, so the one run ran under no budget: NO_BUDGET, never the preset that was asked for.
+  return { ...frame, budget: { requested: preset, effective: [NO_BUDGET] }, runs: [run], summary, correctness: { ok: false, notes: [reason] }, recordedAt: new Date().toISOString() };
 }
 
 /** The two exports the hold needs, or the reason a loaded module cannot hold anything (a build from before the governor). */

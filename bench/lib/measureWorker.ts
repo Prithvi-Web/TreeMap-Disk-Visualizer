@@ -15,6 +15,10 @@
  *
  * The job arrives as a JSON file (argv[2]); the result leaves as a JSON file
  * (`job.outFile`). Nothing crosses stdout, which stays free for diagnostics.
+ *
+ * A job that names a budget preset has it set before the scan with the app's
+ * own setter, and every result carries the budget the scan's own record says
+ * it ran under — the parent refuses a preset that did not take.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -26,9 +30,11 @@ import { getDuplicateJob } from '../../src/services/duplicateFinder';
 import { getNearDupeJob } from '../../src/services/perceptualDupes';
 import { storeOf } from '../../src/services/scanStore';
 import { settled } from '../../src/utils/backgroundWrites';
-import type { ScanResult } from '../../src/models/types';
+import { applyEngineBudgetSetting } from '../../src/services/engineBudget';
+import { getSettings } from '../../src/services/settings';
+import type { ScanBudget, ScanResult } from '../../src/models/types';
 import { diffUsage, snapshotUsage } from './rusage';
-import type { BenchRun } from './report';
+import { SCAN_PRESETS, type BenchRun, type ScanPreset } from './report';
 
 /** Which engine a pass asks for; `native` is the Phase 3 walker and is refused when the build has no module. */
 export type EngineChoice = 'auto' | 'native' | 'gdu' | 'walker';
@@ -42,6 +48,10 @@ export interface WorkerJob {
   gduFind?: FindOptions;
   /** Test hook: report this engine name instead of the scan's own, to prove the mismatch refusal. */
   pretendEngine?: string;
+  /** The budget preset to scan under; absent for the suites that run under the app's own default (Automatic). */
+  preset?: ScanPreset;
+  /** Test hook: report these fields instead of the scan's own budget record, to prove the budget refusals. */
+  pretendBudget?: Partial<ScanBudget>;
   minSize?: number;
   threshold?: number;
   /** What the near-duplicate suite counts (the corpus's image count). */
@@ -53,6 +63,8 @@ export interface WorkerSuccess {
   engine: string;
   counts: { fileCount: number; dirCount: number; scanned: number; rootSize: number };
   run: BenchRun;
+  /** The budget the scan's own record says it ran under: `ScanResult.budget`, which GET /api/scan/:id/stats serves as `budget`. */
+  budget: ScanBudget;
   groups?: Array<{ size: number; files: Array<{ path: string }> }>;
   groupCount?: number;
   clusters?: string[][];
@@ -77,6 +89,18 @@ async function settledScan(scan: ScanResult): Promise<ScanResult> {
 function counts(scan: ScanResult): WorkerSuccess['counts'] {
   const store = storeOf(scan);
   return { fileCount: scan.fileCount, dirCount: scan.dirCount, scanned: scan.scanned, rootSize: store.size(store.rootId) };
+}
+
+/**
+ * The preset is the app's own setting, set with the app's own setter. The
+ * settings file is loaded first because its first load hands the budget
+ * module the persisted setting (settings.ts) — Automatic, in this child's
+ * fresh data directory — and startScan's own settings read would otherwise
+ * undo the preset set here, silently.
+ */
+async function applyPreset(preset: ScanPreset): Promise<void> {
+  await getSettings();
+  applyEngineBudgetSetting({ preset, cpuPercent: null });
 }
 
 interface Timed<T> { value: T; run: BenchRun }
@@ -122,11 +146,13 @@ async function main(job: WorkerJob): Promise<WorkerSuccess> {
     const surface = nativeScanModule();
     if (!surface.available) throw new Error(`the native engine was requested but this build cannot run it: ${surface.reason}`);
   }
+  if (job.preset) await applyPreset(job.preset);
+  const budgetOf = (scan: ScanResult): ScanBudget => ({ ...scan.budget, ...job.pretendBudget });
 
   if (job.suite === 'enumerate') {
     const timed = await measured((scan: ScanResult) => scan.scanned, async () => settledScan(await startScan(job.root)));
     const scan = timed.value;
-    return { ok: true, engine: job.pretendEngine ?? scan.engine ?? 'unset', counts: counts(scan), run: timed.run };
+    return { ok: true, engine: job.pretendEngine ?? scan.engine ?? 'unset', counts: counts(scan), run: timed.run, budget: budgetOf(scan) };
   }
 
   // The scan itself is not what these suites measure: it runs first, un-timed, and its persistence settles before the job starts.
@@ -148,6 +174,7 @@ async function main(job: WorkerJob): Promise<WorkerSuccess> {
       engine,
       counts: counts(scan),
       run: timed.run,
+      budget: budgetOf(scan),
       groups: (dup.groups ?? []).map((g) => ({ size: g.size, files: g.files.map((f) => ({ path: f.path })) })),
       groupCount: dup.groupCount ?? (dup.groups ?? []).length,
     };
@@ -166,6 +193,7 @@ async function main(job: WorkerJob): Promise<WorkerSuccess> {
     engine,
     counts: counts(scan),
     run: timed.run,
+    budget: budgetOf(scan),
     clusters: (near.clusters ?? []).map((c) => c.files.map((f) => f.path)),
     decoder: near.decoder,
     available: near.available,
@@ -182,6 +210,10 @@ function readJob(file: string | undefined): WorkerJob {
   if (!['enumerate', 'duplicates', 'neardup'].includes(String(j.suite))) throw new Error(`measureWorker: unknown suite ${String(j.suite)}`);
   if (typeof j.root !== 'string' || typeof j.outFile !== 'string') throw new Error('measureWorker: root and outFile are required');
   if (!(ENGINE_CHOICES as readonly string[]).includes(String(j.engine))) throw new Error(`measureWorker: unknown engine ${String(j.engine)}`);
+  if (j.preset !== undefined && !(SCAN_PRESETS as readonly unknown[]).includes(j.preset)) throw new Error(`measureWorker: unknown preset ${String(j.preset)}`);
+  if (j.suite === 'enumerate' && j.preset === undefined) {
+    throw new Error("measureWorker: the enumerate suite scans under a named preset (eco, balanced or turbo), never the app's Automatic default, which no number can name");
+  }
   return parsed as WorkerJob;
 }
 

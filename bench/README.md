@@ -10,7 +10,7 @@ README, the UI or a release note.
 ## Commands
 
 ```
-npm run bench -- enumerate [--corpus=enum200k|enum1m|ci20k|smoke|dupes100k] [--engine=auto|native|gdu|walker] [--runs=3] [--cache=warm|cold] [--record] [--label=...]
+npm run bench -- enumerate [--corpus=enum200k|enum1m|ci20k|smoke|dupes100k] [--engine=auto|native|gdu|walker] [--preset=eco|balanced|turbo] [--runs=3] [--cache=warm|cold] [--record] [--label=...]
 npm run bench -- duplicates [--corpus=dupes100k|smoke|ci20k|enum200k|enum1m] [--runs=3] [--min-size=1024] [--cache=warm|cold] [--record] [--label=...]
 npm run bench -- neardup [--originals=600] [--runs=1] [--threshold=10] [--cache=warm|cold] [--record] [--label=...]
 npm run bench -- all [--small] [--runs=3] [--originals=600] [--record] [--label=...]
@@ -69,6 +69,7 @@ still exists. Nothing is written inside the repository except
 | `CPU s/M` | CPU seconds per million entries **including child processes** (gdu's shards count), the efficiency figure the design gates on |
 | `peak RSS` | the measuring process's peak resident set — its own lifetime, which is this one pass plus the Node runtime it needed |
 | `bytes read` | physical bytes the measuring process read: `proc_pid_rusage` on macOS, `/proc/self/io` on Linux; `n/a` on Windows and for gdu, which reads in child processes the probe cannot see. A warm pass legitimately reads 0 |
+| `budget` | the budget preset asked for, then the preset each measured run ran under, one per run (`turbo: turbo/turbo/turbo`); `(moved)` when a run ran under another (see "The budget" below); `none (recorded before the governor)` on a result written before the budget existed |
 | `load` | the 1-minute load average at the end of each run, one figure per run; `n/a` on Windows, which has none |
 | `correct` | every run's counts and bytes agree with the corpus manifest and with each other; for duplicates, every planted group the finder could report was reported whole and every reported group is byte-identical **by reading the files**, with hard-link families never counted as reclaimable; for near-duplicates, the decoder ran, nothing was cut off, something was clustered, and precision reached the 0.98 bar the design sets |
 
@@ -76,6 +77,39 @@ A correctness failure is printed beside the timing and makes the command exit
 non-zero. A result that failed correctness or is not reproducible is never
 recorded as a baseline and is refused by `compare`. An engine that is fast
 and wrong has measured nothing.
+
+## The budget
+
+The app scans under a resource budget — Eco, Balanced or Turbo, or Automatic
+(Balanced on mains, Eco on battery or under serious heat) — and the master
+prompt's enumeration targets are set per budget: warm Turbo 400–700k
+entries/s, warm Eco 150–250k on Tier B. A number measured under an unnamed
+budget cannot be held to either, so every result names its budget.
+
+* **enumerate** scans under `--preset`, **Turbo when none is given**: the
+  headline target is Turbo's, and the app's own default (Automatic) resolves
+  differently by power and heat, so a number measured under it could not say
+  which. Each measuring process sets the preset with the app's own setter,
+  `applyEngineBudgetSetting({ preset, cpuPercent: null })`, after loading the
+  settings file — the settings' first load hands the budget module the
+  persisted setting, and would otherwise undo the preset inside `startScan`,
+  silently. The native governor, when loaded, is reconfigured by that call
+  with Automatic off.
+* **duplicates** and **neardup** name no preset: their scans run under the
+  app's default, and the result records what it resolved to. **governor**
+  records the preset it held (auto mode is off, and a hold of another target
+  is refused), or `none` for a hold that never ran.
+* The record is the product's, not the harness's: `budget.requested` is what
+  was asked for, and `budget.effective` holds, per measured run, the
+  `effective` preset of that scan's own `budget` record — the one
+  `GET /api/scan/:id/stats` serves, captured when the scan starts. A scan
+  whose record names a setting other than the one asked for is refused outright
+  (the preset did not take). A series whose runs ran under another preset
+  (for Automatic, under more than one) is marked `(moved)`, is never recorded
+  as a baseline, and cannot pass a comparison. Two product rules are worth
+  knowing when that happens: the governor scales Eco and Balanced back while
+  someone is using the computer (Turbo it does not), and any preset under
+  thermal pressure; the scan's record names the preset, not that scaling.
 
 ## The governor row
 
@@ -131,12 +165,18 @@ in its parameters). Read the two CORRECTNESS lines and series instead.
 * A cold series is `cold` only when the purge procedure succeeded before
   **every** measured run; one failure and the result says `unknown` with the
   runs it could not purge.
+* A requested budget preset that the scan's own record does not name is an
+  error: the number would describe another budget.
 * `--record` refuses a result that failed correctness, is not reproducible,
-  or was measured on a working tree with uncommitted changes (the commit it
-  cites would not be the code measured).
+  ran a run under a budget other than the one it names (the refusal names
+  the runs and presets), or was measured on a working tree with uncommitted
+  changes (the commit it cites would not be the code measured).
 * `compare` refuses two results that differ in suite, corpus, corpus
-  parameters, engine, unit, machine tier, platform, architecture or cache
-  state.
+  parameters, engine, unit, machine tier, platform, architecture, cache
+  state or budget, and a result whose budget moved. A result written before
+  the budget existed — every Phase 1 baseline in `bench/baselines/` — reads
+  as `none (recorded before the governor)`, so it is NOT COMPARABLE with any
+  result that names a budget; the baselines are not rewritten.
 
 ## Cache state, and why a run is not "cold" just because you said so
 
@@ -208,8 +248,9 @@ holds it.
   a pass and not a fail; it is "cannot tell at this resolution", and the fix
   is `--runs=15`, not a verdict. A result with fewer than three runs has no
   resolution at all;
-* `NOT COMPARABLE` — the two files describe different things, or one of them
-  failed correctness or is not reproducible.
+* `NOT COMPARABLE` — the two files describe different things (a different
+  budget included), or one of them failed correctness, is not reproducible,
+  or did not run under the budget it names.
 
 ## Plain words for the README
 

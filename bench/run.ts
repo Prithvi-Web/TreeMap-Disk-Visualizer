@@ -5,17 +5,18 @@
  *
  * Every number printed was produced by a fresh child process on this machine
  * (the governor hold by the native module inside this one), under the load
- * average and cache state printed beside it. `--record` copies
+ * average, cache state and budget printed beside it. `--record` copies
  * a result into bench/baselines/ as the referent every later "N× faster" claim
  * cites — and refuses when the result failed its correctness check, was not
- * reproducible, or was measured on a dirty tree.
+ * reproducible, did not run under the budget it names, or was measured on a
+ * dirty tree.
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { EngineChoice } from './lib/suites';
 import type { GovernorPreset } from './lib/governorSuite';
-import type { BenchResult } from './lib/report';
+import type { BenchResult, ScanPreset } from './lib/report';
 import type { CorpusName } from './lib/corpus';
 import type { RequestedCache } from './lib/cache';
 import { benchTmpDir } from './lib/paths';
@@ -25,7 +26,8 @@ const RESULTS_DIR = process.env.TREEMAP_BENCH_OUT ?? path.join(REPO, 'bench', 'r
 const BASELINES_DIR = path.join(REPO, 'bench', 'baselines');
 
 const USAGE = [
-  'npm run bench -- enumerate [--corpus=enum200k|enum1m|ci20k|smoke|dupes100k] [--engine=auto|native|gdu|walker] [--runs=3] [--cache=warm|cold] [--record] [--label=...]',
+  'npm run bench -- enumerate [--corpus=enum200k|enum1m|ci20k|smoke|dupes100k] [--engine=auto|native|gdu|walker] [--preset=eco|balanced|turbo] [--runs=3] [--cache=warm|cold] [--record] [--label=...]',
+  "      --preset defaults to turbo: the enumeration targets are set per budget and the headline one (warm 400–700k entries/s on Tier B) is Turbo's; the app's own default, Automatic, is Balanced or Eco by power and heat, so a number measured under it could not say which",
   'npm run bench -- duplicates [--corpus=dupes100k|smoke|ci20k|enum200k|enum1m] [--runs=3] [--min-size=1024] [--cache=warm|cold] [--record] [--label=...]',
   'npm run bench -- neardup [--originals=600] [--runs=1] [--threshold=10] [--cache=warm|cold] [--record] [--label=...]',
   'npm run bench -- all [--small] [--runs=3] [--originals=600] [--record] [--label=...]',
@@ -37,6 +39,9 @@ const USAGE = [
 const CORPUS_NAMES: readonly CorpusName[] = ['smoke', 'ci20k', 'enum200k', 'enum1m', 'dupes100k'];
 const ENGINES: readonly EngineChoice[] = ['auto', 'native', 'gdu', 'walker'];
 const CACHES: readonly RequestedCache[] = ['warm', 'cold'];
+const PRESETS: readonly ScanPreset[] = ['eco', 'balanced', 'turbo'];
+/** The enumerate suite's budget when none is named: the headline target's condition (see the usage line). */
+const DEFAULT_ENUMERATE_PRESET: ScanPreset = 'turbo';
 const RUNS_RANGE = { min: 1, max: 50 };
 const DEFAULT_RUNS = 3;
 const DEFAULT_MIN_SIZE = 1024;
@@ -54,7 +59,7 @@ const EXIT_BY_VERDICT: Record<string, number> = { PASS: 0, FAIL: 1, INCONCLUSIVE
 interface Parsed { positionals: string[]; options: Map<string, string>; flags: Set<string> }
 const FLAGS = new Set(['record', 'small', 'help']);
 const OPTIONS_BY_COMMAND: Record<string, readonly string[]> = {
-  enumerate: ['corpus', 'engine', 'runs', 'cache', 'label'],
+  enumerate: ['corpus', 'engine', 'preset', 'runs', 'cache', 'label'],
   duplicates: ['corpus', 'runs', 'min-size', 'cache', 'label'],
   neardup: ['originals', 'runs', 'threshold', 'cache', 'label'],
   all: ['runs', 'originals', 'label'],
@@ -157,15 +162,13 @@ async function main(): Promise<void> {
     process.stdout.write(`\n${report.printTable([r])}\n`);
     for (const note of r.correctness.notes) process.stdout.write(`  ${r.correctness.ok ? 'note' : 'CORRECTNESS'}: ${note}\n`);
     process.stdout.write(`  cache: ${r.cache.state} — ${r.cache.reason}\n`);
+    process.stdout.write(`  budget: ${report.describeBudget(r)}\n`);
     process.stdout.write(`  scale: ${r.corpus.scale}\n`);
     process.stdout.write(`  engine: ${r.engine} — ${r.engineDescription}\n`);
     process.stdout.write(`  written: ${path.relative(REPO, file)}\n`);
     if (!r.correctness.ok) process.exitCode = 1;
     if (record) {
-      const refusal = !r.correctness.ok ? 'it failed its correctness check'
-        : !r.summary.reproducible ? `its runs spread ${Number.isFinite(r.summary.spreadPct) ? `${r.summary.spreadPct.toFixed(1)}%` : 'over a single run'} (the rule is under ${report.REPRODUCIBLE_SPREAD_PCT}%)`
-        : r.machine.dirty ? 'the working tree had uncommitted changes, so the commit it cites is not the code measured'
-        : null;
+      const refusal = report.recordRefusal(r);
       if (refusal) {
         process.stdout.write(`  NOT RECORDED as a baseline: ${refusal}\n`);
         process.exitCode = 1;
@@ -176,12 +179,12 @@ async function main(): Promise<void> {
     }
   };
 
-  const enumerate = async (corpusName: CorpusName, engine: EngineChoice, runs: number, cache: RequestedCache): Promise<void> => {
+  const enumerate = async (corpusName: CorpusName, engine: EngineChoice, preset: ScanPreset, runs: number, cache: RequestedCache): Promise<void> => {
     const params = corpus.CORPORA[corpusName];
     process.stdout.write(`\ncorpus ${corpusName}: ${params.entries.toLocaleString('en-US')} entries (building or reusing under ${benchTmpDir()})…\n`);
     const manifest = await corpus.ensureCorpus(corpusName, params);
-    process.stdout.write(`engine ${engine}, ${runs} run(s), cache ${cache}, load ${(os.loadavg()[0] ?? 0).toFixed(2)}\n`);
-    finish(await suites.runEnumerate({ manifest, corpusName, engine, runs, cache, label }));
+    process.stdout.write(`engine ${engine}, budget ${preset}, ${runs} run(s), cache ${cache}, load ${(os.loadavg()[0] ?? 0).toFixed(2)}\n`);
+    finish(await suites.runEnumerate({ manifest, corpusName, engine, preset, runs, cache, label }));
   };
   const duplicates = async (corpusName: CorpusName, runs: number, minSize: number, cache: RequestedCache): Promise<void> => {
     const manifest = await corpus.ensureCorpus(corpusName, corpus.CORPORA[corpusName]);
@@ -195,7 +198,7 @@ async function main(): Promise<void> {
 
   switch (command) {
     case 'enumerate':
-      await enumerate(oneOf(p, 'corpus', 'enum200k', CORPUS_NAMES), oneOf(p, 'engine', 'auto', ENGINES), intOption(p, 'runs', DEFAULT_RUNS, RUNS_RANGE.min, RUNS_RANGE.max), oneOf(p, 'cache', 'warm', CACHES));
+      await enumerate(oneOf(p, 'corpus', 'enum200k', CORPUS_NAMES), oneOf(p, 'engine', 'auto', ENGINES), oneOf(p, 'preset', DEFAULT_ENUMERATE_PRESET, PRESETS), intOption(p, 'runs', DEFAULT_RUNS, RUNS_RANGE.min, RUNS_RANGE.max), oneOf(p, 'cache', 'warm', CACHES));
       break;
     case 'duplicates':
       await duplicates(oneOf(p, 'corpus', 'dupes100k', CORPUS_NAMES), intOption(p, 'runs', DEFAULT_RUNS, RUNS_RANGE.min, RUNS_RANGE.max), intOption(p, 'min-size', DEFAULT_MIN_SIZE, 1, 1 << 30), oneOf(p, 'cache', 'warm', CACHES));
@@ -207,7 +210,7 @@ async function main(): Promise<void> {
       const small = p.flags.has('small');
       const runs = intOption(p, 'runs', DEFAULT_RUNS, RUNS_RANGE.min, RUNS_RANGE.max);
       const corpora: CorpusName[] = small ? ['smoke'] : ['enum200k', 'enum1m'];
-      for (const corpusName of corpora) for (const engine of ['gdu', 'walker'] as const) await enumerate(corpusName, engine, runs, 'warm');
+      for (const corpusName of corpora) for (const engine of ['gdu', 'walker'] as const) await enumerate(corpusName, engine, DEFAULT_ENUMERATE_PRESET, runs, 'warm');
       await duplicates(small ? 'smoke' : 'dupes100k', runs, DEFAULT_MIN_SIZE, 'warm');
       await nearDup(small ? SMALL_ORIGINALS : intOption(p, 'originals', DEFAULT_ORIGINALS, 1, 20_000), 1, DEFAULT_THRESHOLD, 'warm');
       process.stdout.write(`\n${report.printTable(results)}\n`);

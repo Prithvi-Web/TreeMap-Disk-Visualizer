@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { summarize, writeResult, type BenchResult, type BenchRun } from '../bench/lib/report';
+import { readResult, summarize, writeResult, type BenchResult, type BenchRun } from '../bench/lib/report';
 
 const REPO = path.join(__dirname, '..');
 const tsxCli = path.join(path.dirname(require.resolve('tsx/package.json')), 'dist', 'cli.mjs');
@@ -24,6 +24,7 @@ function fakeResult(wallMs: number): BenchResult {
     entriesUnit: 'entries',
     machine: { cpuModel: 'x', cores: 1, perfCores: null, effCores: null, memoryBytes: 1, platform: 'test', arch: 'x64', osRelease: '0', node: 'v0', commit: 'unknown', dirty: false, loadAvg: [0, 0, 0], maxVnodes: null, tier: 'C', tierReason: 'test' },
     cache: { state: 'unknown', reason: 'test' },
+    budget: { requested: 'turbo', effective: ['turbo', 'turbo', 'turbo'] },
     runs: [run, run, run],
     summary: { ...summarize([run, run, run]), resolutionPct: 1 },
     correctness: { ok: true, notes: [] },
@@ -97,9 +98,62 @@ test('the smoke corpus runs the enumerate and duplicates commands end to end', (
     assert.match(r.stdout, /correct/);
     const files = fs.readdirSync(out).filter((f) => f.startsWith('enumerate-'));
     assert.equal(files.length, 1, files.join(','));
+    // No --preset: the enumerate suite scans under Turbo, and says so beside the cache state.
+    assert.deepEqual(readResult(path.join(out, files[0])).budget, { requested: 'turbo', effective: ['turbo', 'turbo'] });
+    assert.match(r.stdout, /^ {2}budget: turbo requested, ran under turbo\/turbo$/m);
     const d = spawnSync(process.execPath, [tsxCli, path.join(REPO, 'bench', 'run.ts'), 'duplicates', '--corpus=smoke', '--runs=1', '--label=cli test'], { cwd: REPO, encoding: 'utf8', timeout: 300_000, env });
     assert.equal(d.status, 0, d.stdout + d.stderr);
     assert.match(d.stdout, /recall 1\.0000/);
+    assert.match(d.stdout, /^ {2}budget: auto requested, ran under (balanced|eco)$/m, "the duplicate suite runs under the app's default and says what it resolved to");
+  } finally {
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test('--preset is guarded: one of three presets for enumerate, never Automatic, and not an option of the suites that name none', () => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-cli-guard-'));
+  // One smoke run into a scratch directory: were the guard ever to lapse, the run it let through would be small and would write nothing into bench/results.
+  const guarded = (...args: string[]): { status: number | null; stdout: string; stderr: string } => {
+    const r = spawnSync(process.execPath, [tsxCli, path.join(REPO, 'bench', 'run.ts'), ...args, '--corpus=smoke', '--runs=1'], { cwd: REPO, encoding: 'utf8', timeout: 120_000, env: { ...process.env, TREEMAP_BENCH_OUT: out } });
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  };
+  try {
+    const fast = guarded('enumerate', '--preset=fast');
+    assert.equal(fast.status, 1, fast.stdout + fast.stderr);
+    assert.match(fast.stderr, /--preset must be one of eco, balanced, turbo/);
+    const auto = guarded('enumerate', '--preset=auto');
+    assert.equal(auto.status, 1, auto.stdout + auto.stderr);
+    assert.match(auto.stderr, /--preset must be one of eco, balanced, turbo/);
+    const dup = guarded('duplicates', '--preset=eco');
+    assert.equal(dup.status, 1, dup.stdout + dup.stderr);
+    assert.match(dup.stderr, /unknown option --preset for duplicates/);
+  } finally {
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test('the enumerate usage names --preset and says the default is Turbo and why', () => {
+  const r = bench('--help');
+  assert.equal(r.status, 0, r.stderr);
+  const line = r.stdout.split('\n').find((l) => l.startsWith('npm run bench -- enumerate'));
+  assert.ok(line?.includes('[--preset=eco|balanced|turbo]'), line);
+  assert.match(r.stdout, /--preset defaults to turbo/);
+  assert.match(r.stdout, /headline/, 'the reason: the headline enumeration target is a Turbo figure');
+  assert.match(r.stdout, /Automatic/, "and why the app's own default is not a condition a number can name");
+});
+
+test('--preset=eco reaches the measuring process, and the budget is printed and written with the result', () => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-cli-preset-'));
+  try {
+    const env = { ...process.env, TREEMAP_BENCH_OUT: out };
+    const r = spawnSync(process.execPath, [tsxCli, path.join(REPO, 'bench', 'run.ts'), 'enumerate', '--corpus=smoke', '--engine=walker', '--runs=1', '--preset=eco', '--label=cli test'], { cwd: REPO, encoding: 'utf8', timeout: 300_000, env });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /budget eco/, 'the progress line names the preset before the runs start');
+    assert.match(r.stdout, /enumerate\s+smoke\s+\S+\s+\S+\s+eco: eco\s/, 'the table carries it beside the cache state');
+    assert.match(r.stdout, /^ {2}budget: eco requested, ran under eco$/m);
+    const files = fs.readdirSync(out).filter((f) => f.startsWith('enumerate-'));
+    assert.equal(files.length, 1, files.join(','));
+    assert.deepEqual(readResult(path.join(out, files[0])).budget, { requested: 'eco', effective: ['eco'] });
   } finally {
     fs.rmSync(out, { recursive: true, force: true });
   }
