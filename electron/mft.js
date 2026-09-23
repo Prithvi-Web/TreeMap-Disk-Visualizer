@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Windows whole-drive fast scan (M6, decision W6-1): the elevation launcher.
+ * The Windows NTFS turbo mode (M6, decision W6-1): the elevation launcher.
  *
  * TreeMap itself never runs elevated. Only tm-mft-helper.exe does, for one
  * scan: it reads one drive's file table directly, read-only, and writes what

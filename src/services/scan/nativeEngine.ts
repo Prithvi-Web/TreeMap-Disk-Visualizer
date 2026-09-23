@@ -208,12 +208,17 @@ export function decideNative(rootPath: string, pre: Omit<EligibilityInput, 'nati
  *    a known cloud folder — the path is built only for those entries;
  *  - each directory's children are emitted in the walker's order: libuv's
  *    `scandir` sorts a readdir listing with `strcmp` on every platform but
- *    Windows, so the walker's children are byte-sorted by name while the
- *    native listing arrives in the file system's own order (APFS's is a hash
- *    order) — the ingest sorts the same way, off Windows, so the JSON and the
- *    hard-link choice below agree with the walker by construction;
- *  - hard links are keyed `${dev}:${ino}` in that order: the first name seen
- *    keeps the bytes, every later one is a duplicate with size 0 and the
+ *    Windows, so the walker's children are byte-sorted by name. The native
+ *    listers sort the same way before the walk numbers their entries
+ *    (tm-walk's `Listing::sort_by_name`), so off Windows the columns arrive
+ *    in that order already; the ingest sorts again — one pass over sorted
+ *    input — which keeps a module built before the listers sorted right. The
+ *    JSON and the hard-link choice below agree with the walker by
+ *    construction;
+ *  - hard links are keyed by the family number the walk gave each
+ *    (`hardlinkFamily`: files told apart by their exact ids), in that order:
+ *    the first name seen keeps the bytes, every later one is a duplicate
+ *    with size 0 and the
  *    `hardlinkedFiles/Bytes` tallies (the walker's own choice within a
  *    directory; across directories both engines' choice is a race, which the
  *    equivalence digest normalises, decision P3-8);
@@ -684,8 +689,10 @@ function mftModuleOrReason(): MftModule | string {
   const outcome = loadNative();
   if (!outcome.available) return `the native module is not loaded: ${outcome.reason}`;
   const mod = outcome.module;
-  if (typeof mod.mftTake !== 'function' || typeof mod.mftCrossCheck !== 'function') {
-    return `the native module at ${outcome.path} has no mftTake(), so it cannot read the helper's result; rebuild it with npm run build:native`;
+  const missing = (['mftTake', 'mftCrossCheck'] as const).filter((name) => typeof mod[name] !== 'function');
+  if (missing.length > 0) {
+    const named = missing.map((name) => `${name}()`).join(' or ');
+    return `the native module at ${outcome.path} has no ${named}, so it cannot read or check the helper's result; rebuild it with npm run build:native`;
   }
   return mod as unknown as MftModule;
 }

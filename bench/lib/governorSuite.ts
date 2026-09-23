@@ -25,10 +25,11 @@ import os from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { loadNative, type NativeModule, type NativeOutcome } from '../../src/services/scan/native';
 import { describeMachine } from './machine';
-import { NO_BUDGET, summarize, type BenchResult, type BenchRun, type BenchSummary } from './report';
+import { NO_BUDGET, SCAN_PRESETS, summarize, type BenchResult, type BenchRun, type BenchSummary, type ScanPreset } from './report';
 
-export type GovernorPreset = 'eco' | 'balanced' | 'turbo';
-export const GOVERNOR_PRESETS: readonly GovernorPreset[] = ['eco', 'balanced', 'turbo'];
+/** The governor's presets are the scan's: one list (bench/lib/report.ts), so the two cannot drift. */
+export type GovernorPreset = ScanPreset;
+export const GOVERNOR_PRESETS: readonly GovernorPreset[] = SCAN_PRESETS;
 /** The preset table's ceilings (the plan's Section 8.1), in percent of machine CPU: what each preset is asked to hold. */
 export const PRESET_CEILING_PERCENT: Readonly<Record<GovernorPreset, number>> = { eco: 25, balanced: 50, turbo: 90 };
 /** The gate's band around the ceiling, in percentage points, judged over the last half of the run. */

@@ -11,7 +11,7 @@
 //! asked for it.
 //!
 //! Read-only by construction (W6-2): the volume is opened `GENERIC_READ`
-//! ([`tm_mft::read_volume`]), and the only thing this process ever creates
+//! (`tm_mft::read_volume`, Windows only), and the only thing this process ever creates
 //! or writes is its own output file, which must be named as the app names it
 //! and sit directly inside the app's temp folder — this user's
 //! `%TEMP%\TreeMap-mft`, resolved by the helper itself, never taken from its

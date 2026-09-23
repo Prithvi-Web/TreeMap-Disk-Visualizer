@@ -15,6 +15,7 @@ import {
   KIND_FILE,
   MFT_NOT_VERIFIED,
   MFT_TEMP_FOLDER,
+  driveOf,
   helperTempRoot,
   resetMftSessionForTests,
   runMftWalk,
@@ -27,7 +28,7 @@ import { MFT_DECLINE_QUIET_MS } from '../src/services/scan/mftPrompt';
 import { statToInput } from '../src/services/scan/nodeInput';
 import { PackedScanStore } from '../src/services/scanStore';
 import { createScanRecord } from '../src/services/diskScanner';
-import { loadNative } from '../src/services/scan/native';
+import { loadNative, resetNativeForTests, setNativeLoadOverrideForTests } from '../src/services/scan/native';
 
 /**
  * The Windows MFT turbo mode on the Node side — M6 of
@@ -892,5 +893,43 @@ test('mftCrossCheck opens real files, unelevated: a match, a planted size mismat
     assert.throws(() => mod.mftCrossCheck([file], []), /one \{ kind/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a module without the reader or the checker is named for exactly what it lacks, and nobody is asked', async () => {
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const { launcher, requests } = fakeLauncher({ kind: 'exited', code: 0 });
+  const cases: [string[], string][] = [
+    [['mftCrossCheck'], 'has no mftCrossCheck(), so'],
+    [['mftTake'], 'has no mftTake(), so'],
+    [['mftTake', 'mftCrossCheck'], 'has no mftTake() or mftCrossCheck(), so'],
+  ];
+  try {
+    for (const [lacking, sentence] of cases) {
+      const standIn: Record<string, unknown> = { version: () => '0.0.0-test', mftTake: () => flat(1), mftCrossCheck: () => [] };
+      for (const name of lacking) delete standIn[name];
+      resetNativeForTests();
+      setNativeLoadOverrideForTests({ path: '/stand-in/treemap_core.node', expectedVersion: '0.0.0-test', requireModule: () => standIn });
+      const r = recordFor(ROOT);
+      const outcome = await runMftWalk(r.scan, r.store, ROOT, { launcher, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
+      assert.equal(outcome.used, false, lacking.join('+'));
+      assert.ok(outcome.reason.includes(`the native module at /stand-in/treemap_core.node ${sentence} it cannot read or check the helper's result`), outcome.reason);
+    }
+    assert.equal(requests.length, 0, 'nobody is asked for a result nothing could read');
+  } finally {
+    setNativeLoadOverrideForTests(null);
+    resetNativeForTests();
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test('the drive of a scan root is its letter, upper-cased; a root without one has none', () => {
+  assert.equal(driveOf('c:\\Users\\me'), 'C:');
+  assert.equal(driveOf('D:/data'), 'D:');
+  assert.equal(driveOf('E:\\'), 'E:');
+  // Drive-relative, a UNC share, a POSIX path, a device path: no drive letter to read.
+  for (const root of ['C:', 'C:data', '\\\\server\\share\\x', '/Users/me', '\\\\?\\C:\\x', '1:\\x']) {
+    assert.equal(driveOf(root), null, root);
   }
 });

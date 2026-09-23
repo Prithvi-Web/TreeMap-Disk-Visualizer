@@ -16,7 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { EngineChoice } from './lib/suites';
 import type { GovernorPreset } from './lib/governorSuite';
-import type { BenchResult, ScanPreset } from './lib/report';
+import { SCAN_PRESETS, type BenchResult, type ScanPreset } from './lib/report';
 import type { CorpusName } from './lib/corpus';
 import type { RequestedCache } from './lib/cache';
 import { benchTmpDir } from './lib/paths';
@@ -39,7 +39,6 @@ const USAGE = [
 const CORPUS_NAMES: readonly CorpusName[] = ['smoke', 'ci20k', 'enum200k', 'enum1m', 'dupes100k'];
 const ENGINES: readonly EngineChoice[] = ['auto', 'native', 'gdu', 'walker'];
 const CACHES: readonly RequestedCache[] = ['warm', 'cold'];
-const PRESETS: readonly ScanPreset[] = ['eco', 'balanced', 'turbo'];
 /** The enumerate suite's budget when none is named: the headline target's condition (see the usage line). */
 const DEFAULT_ENUMERATE_PRESET: ScanPreset = 'turbo';
 const RUNS_RANGE = { min: 1, max: 50 };
@@ -205,7 +204,7 @@ async function main(): Promise<void> {
 
   switch (command) {
     case 'enumerate':
-      await enumerate(oneOf(p, 'corpus', 'enum200k', CORPUS_NAMES), oneOf(p, 'engine', 'auto', ENGINES), oneOf(p, 'preset', DEFAULT_ENUMERATE_PRESET, PRESETS), intOption(p, 'runs', DEFAULT_RUNS, RUNS_RANGE.min, RUNS_RANGE.max), oneOf(p, 'cache', 'warm', CACHES));
+      await enumerate(oneOf(p, 'corpus', 'enum200k', CORPUS_NAMES), oneOf(p, 'engine', 'auto', ENGINES), oneOf(p, 'preset', DEFAULT_ENUMERATE_PRESET, SCAN_PRESETS), intOption(p, 'runs', DEFAULT_RUNS, RUNS_RANGE.min, RUNS_RANGE.max), oneOf(p, 'cache', 'warm', CACHES));
       break;
     case 'duplicates':
       await duplicates(oneOf(p, 'corpus', 'dupes100k', CORPUS_NAMES), intOption(p, 'runs', DEFAULT_RUNS, RUNS_RANGE.min, RUNS_RANGE.max), intOption(p, 'min-size', DEFAULT_MIN_SIZE, 1, 1 << 30), oneOf(p, 'cache', 'warm', CACHES));

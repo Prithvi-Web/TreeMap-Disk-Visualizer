@@ -2,7 +2,7 @@
 //! reusable [`ListBuffer`] with its entries and say which path did it, or say
 //! why the directory was refused. macOS is [`darwin`] (with [`per_entry`] as
 //! its fallback), Windows is [`windows`], Linux is [`linux`]; every other
-//! platform is [`unsupported`]. The parsers of the two cross platforms are
+//! platform is `unsupported`. The parsers of the two cross platforms are
 //! portable and compiled everywhere so their synthetic-buffer tests run here;
 //! only their calls are behind `cfg`. The walk core never calls the OS
 //! directly, so a fake `Lister` drives it in tests on every platform.

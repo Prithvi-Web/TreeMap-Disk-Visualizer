@@ -257,7 +257,7 @@ fn unprivileged_checks(api: &dyn VolumeApi, root: &Path) -> Result<Checked, MftE
 }
 
 /// What the app asks before it raises any prompt: the helper's own checks
-/// that need no administrator ([`unprivileged_checks`]), so a network drive,
+/// that need no administrator (`unprivileged_checks`), so a network drive,
 /// one Windows cannot type or a volume that is not NTFS is refused before
 /// anyone is asked about a drive the elevated helper would only refuse (the
 /// pre-landing review of 23 Sep 2026). The root itself is never opened: it

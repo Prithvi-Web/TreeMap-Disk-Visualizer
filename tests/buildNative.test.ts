@@ -25,7 +25,6 @@ interface Helpers {
   workspaceVersion(toml: string): string | null;
   versionHandshake(nativeVersion: unknown, crateVersion: string | null): string | null;
   cargoMissingHint(): string;
-  installModule(src: string, dest: string): void;
   helpersFor(platform: string): { crate: string; file: string }[];
   installAll(installs: { src: string; dest: string }[]): void;
   buildAndInstall(opts: {
@@ -53,11 +52,11 @@ test('the module is installed as a new file each time, never copied over the old
     const src = path.join(dir, 'libtm_node.dylib');
     const dest = path.join(dir, 'treemap_core.node');
     fs.writeFileSync(src, 'first build');
-    helpers.installModule(src, dest);
+    helpers.installAll([{ src, dest }]);
     // bigint: an NTFS file id above 2^53 (a sequence number past 31) would round.
     const first = fs.statSync(dest, { bigint: true }).ino;
     fs.writeFileSync(src, 'second build');
-    helpers.installModule(src, dest);
+    helpers.installAll([{ src, dest }]);
     assert.equal(fs.readFileSync(dest, 'utf8'), 'second build');
     assert.notEqual(fs.statSync(dest, { bigint: true }).ino, first, 'a new file replaced the old one: its inode changed');
     assert.deepEqual(fs.readdirSync(dir).sort(), ['libtm_node.dylib', 'treemap_core.node'], 'and no temporary file is left behind');

@@ -355,12 +355,13 @@ function messageBox(options) {
 }
 
 /**
- * Windows whole-drive fast scan (M6, W6-1). TreeMap never runs elevated: the
- * scan engine hands a whole-drive scan to tm-mft-helper.exe through this
+ * The Windows NTFS turbo mode (M6, W6-1). TreeMap never runs elevated: the
+ * scan engine hands a scan in that mode — any folder on a local NTFS drive,
+ * read from the drive's file table — to tm-mft-helper.exe through this
  * launcher, which asks one plain question first (electron/mft.js). A dialog
  * that fails resolves undefined here, which the launcher treats as "not
  * asked" and starts nothing. Registered once. If it cannot be registered, only
- * the fast path is lost: the app still starts and scans the normal way.
+ * the turbo mode is lost: the app still starts and scans the normal way.
  *
  * PowerShell is started by its full path under the system folder the kernel
  * reports — never by name, which Windows would look up in this app's own
@@ -388,7 +389,7 @@ function registerMftLauncher() {
       refuseTarget: elevationRefusal,
     }));
   } catch (err) {
-    console.error('[treemap] the fast whole-drive scan is unavailable:', err);
+    console.error('[treemap] the NTFS turbo mode is unavailable:', err);
   }
 }
 

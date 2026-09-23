@@ -23,10 +23,18 @@
 //!   sentence.
 //! * [`win32`] goes from a scan root to an open, checked volume: a drive
 //!   letter's local NTFS volume holding the root, opened read-only. Its
-//!   `cfg(windows)` layer is the calls alone (`read_volume`, Windows only);
+//!   `cfg(windows)` layer is the calls alone (`read_volume`; `precheck`, the
+//!   checks that need no administrator, which the app runs before it asks;
+//!   and `system_directory`, where the app finds PowerShell by full path);
 //!   the order and every refusal are portable and tested with a script.
+//! * [`columns`] is the file that carries the result from the elevated
+//!   helper to the app: the columns and stats, or the helper's refusal as a
+//!   sentence, versioned by its magic; the reader checks every length and
+//!   the shape the ingest relies on before it trusts a byte.
 //!
-//! The elevated helper that runs `read_volume` for the app is M6.
+//! The elevated helper that runs `read_volume` and writes the columns file is
+//! the `tm-mft-helper` crate; the app reads that file through `tm-node`'s
+//! `mftTake`.
 
 pub mod columns;
 pub mod error;

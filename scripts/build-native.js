@@ -200,7 +200,7 @@ function buildAndInstall({ library, helpers, release, dir, runCargo, exists, ins
 }
 
 /**
- * Puts the library cargo built at `dest` as a new file: copied to a
+ * Puts each file cargo built at its `dest` as a new file: copied to a
  * temporary name beside it, then renamed over it. Copying over the old file
  * in place keeps its inode, and on macOS the kernel's cached code signature
  * for that inode then no longer matches the new bytes: every process that
@@ -208,14 +208,9 @@ function buildAndInstall({ library, helpers, release, dir, runCargo, exists, ins
  * even `cmp` reading it. It happened on 23 Sep 2026, when a rebuild landed
  * while a test run had the old module loaded, and failed 24 test files. The
  * rename also means no process ever loads a half-copied module.
- */
-function installModule(src, dest) {
-  installAll([{ src, dest }]);
-}
-
-/**
- * Installs each `{ src, dest }` as `installModule` does, in two steps so a
- * failure leaves as little as it can (the TypeScript review of M6): every
+ *
+ * In two steps, so a failure leaves as little as it can (the TypeScript
+ * review of M6): every
  * file is first copied to a temporary name beside its destination — a copy
  * that fails removes every temporary and installs nothing — and only then is
  * each renamed over its destination. A rename is not undone, so one that
@@ -259,5 +254,5 @@ function installAll(installs) {
 if (require.main === module) {
   main();
 } else {
-  module.exports = { libraryFileName, prebuiltDir, targetDir, workspaceVersion, versionHandshake, cargoMissingHint, installModule, installAll, helpersFor, buildAndInstall };
+  module.exports = { libraryFileName, prebuiltDir, targetDir, workspaceVersion, versionHandshake, cargoMissingHint, installAll, helpersFor, buildAndInstall };
 }

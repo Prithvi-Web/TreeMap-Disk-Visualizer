@@ -2,7 +2,7 @@
 //! hill-climber and merges the output, and the handle Node polls.
 //!
 //! Each worker applies the governor's profile to its thread at start, then
-//! loops: take a directory from the [`Queue`] (parking when its index is above
+//! loops: take a directory from the `Queue` (parking when its index is above
 //! the count it may run: the hill-climber's target and the governor's
 //! `worker_limit()`, re-read before every directory), wait while paused, list
 //! it into its own reusable [`ListBuffer`], append the entries to its own
