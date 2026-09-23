@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tm_walk::climb::{START_WORKERS, start_for};
+use tm_walk::climb::{INTERVAL, START_WORKERS, start_for};
 use tm_walk::platform::{DirTimes, ListBuffer, Lister, Meta, performance_cores};
 use tm_walk::walk::{GovernorPacer, Pacer};
 use tm_walk::{
@@ -689,7 +689,15 @@ fn a_climbing_walk_starts_at_the_pacers_start_count() -> TestResult {
     let out = handle.take().map_err(|e| e.to_string())?;
     assert_eq!(tree.peak(), 4, "four listings in flight from the start");
     assert_eq!(out.stats.workers_peak, 4);
-    assert_eq!(out.stats.climb_steps, 0, "the start is not a step");
+    // That the start is not a step is climb.rs's
+    // `a_start_is_bounded_by_the_ceiling_and_is_not_a_step`, where time is an
+    // argument. Here the real clock runs: a walk that ended inside the
+    // climber's first interval took no step, but a loaded runner's 20 ms
+    // sleeps can run past it, and then the climber rightly probes once (the
+    // macOS CI leg, 23 Sep 2026).
+    if out.stats.wall_ms < INTERVAL.as_secs_f64() * 1e3 {
+        assert_eq!(out.stats.climb_steps, 0, "the start is not a step");
+    }
     Ok(())
 }
 
