@@ -100,19 +100,30 @@ test('in a folder that refuses new files, a program this user could still change
   }
 });
 
+/** `whoami /groups`, or '' where there is none (off Windows, or it failed). */
+function windowsGroups(): string {
+  if (process.platform !== 'win32') return '';
+  try {
+    return execFileSync('whoami', ['/groups'], { encoding: 'utf8' });
+  } catch {
+    return '';
+  }
+}
+
 /**
- * Whether this process is an elevated Windows administrator (its groups carry
- * the high mandatory level, S-1-16-12288). CI's Windows runner is one; the app
- * never is: it asks from an unelevated process, where the Administrators group
- * is deny-only and System32's folders refuse a new file.
+ * Whether this process holds a Windows administrator's full token: the high
+ * or system mandatory level, or the Administrators group (S-1-5-32-544)
+ * enabled rather than deny-only — which is how a runner image with UAC
+ * turned off shows it, without the high label. CI's Windows runner wrote
+ * into System32's folders while the label check alone said no (the first
+ * Windows CI run, 23 Sep 2026). The app never runs so: it asks from an
+ * unelevated process, where the group is deny-only and System32's folders
+ * refuse a new file.
  */
 function elevatedOnWindows(): boolean {
-  if (process.platform !== 'win32') return false;
-  try {
-    return /S-1-16-12288/.test(execFileSync('whoami', ['/groups'], { encoding: 'utf8' }));
-  } catch {
-    return false;
-  }
+  const groups = windowsGroups();
+  if (/S-1-16-(12288|16384)/.test(groups)) return true;
+  return groups.split(/\r?\n/).some((line) => line.includes('S-1-5-32-544') && /Enabled group/i.test(line) && !/deny only/i.test(line));
 }
 
 test('a program the system owns, in a folder the system owns, may be started as administrator', {
@@ -126,5 +137,5 @@ test('a program the system owns, in a folder the system owns, may be started as 
     ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
     : ['/usr/bin/true', '/bin/sh'].filter((p) => fs.existsSync(p)).map((p) => fs.realpathSync(p)).find((p) => fs.lstatSync(p).isFile());
   assert.ok(system && fs.existsSync(system), `a system program to try (${system})`);
-  assert.equal(elevationRefusal(system), null);
+  assert.equal(elevationRefusal(system), null, process.platform === 'win32' ? `not elevated by the checks above; whoami /groups:\n${windowsGroups()}` : undefined);
 });
