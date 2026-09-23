@@ -250,6 +250,45 @@ test('a spawn that throws outright is a failure too, not a rejected promise', as
   assert.match((outcome as { reason: string }).reason, /EPERM/);
 });
 
+/** One launch on Windows past a yes, with PowerShell behaving as `behave` says. */
+async function launchWith(behave: (child: FakeChild) => void): Promise<Outcome> {
+  const { createMftLauncher } = loadMft();
+  return createMftLauncher({ ...SAFE, showMessageBox: fakeDialog(CONTINUE).showMessageBox, spawn: fakeSpawn(behave).spawn, platform: 'win32' })(REQUEST);
+}
+
+test('a failure with nothing on stderr still gives a reason, and one whose stderr could not be read says why', async () => {
+  const { PS_FAILED_EXIT, OWNER_REFUSED_EXIT } = loadMft();
+  assert.deepEqual(await launchWith(exitsWith(PS_FAILED_EXIT)), { kind: 'failed', reason: 'PowerShell could not start the helper: it gave no reason' });
+  assert.deepEqual(await launchWith(exitsWith(OWNER_REFUSED_EXIT, [Buffer.from('  \r\n')])), {
+    kind: 'failed',
+    reason: 'nothing was started as administrator: it gave no reason',
+  });
+  const unreadable = await launchWith((child) => {
+    child.stderr.emit('error', new Error('EPIPE: the pipe broke'));
+    child.emit('close', PS_FAILED_EXIT, null);
+  });
+  assert.deepEqual(unreadable, { kind: 'failed', reason: 'PowerShell could not start the helper: its error output could not be read (EPIPE: the pipe broke)' });
+  // What was read before the pipe broke is the better reason. A stream with an
+  // encoding set hands over strings, not bytes.
+  const partial = await launchWith((child) => {
+    child.stderr.emit('data', 'Access is denied.');
+    child.stderr.emit('error', new Error('EPIPE: the pipe broke'));
+    child.emit('close', PS_FAILED_EXIT, null);
+  });
+  assert.deepEqual(partial, { kind: 'failed', reason: 'PowerShell could not start the helper: Access is denied.' });
+});
+
+test('PowerShell stopped by a signal, or closed with no exit code, is a failure, never the helper’s success', async () => {
+  assert.deepEqual(await launchWith((child) => child.emit('close', null, 'SIGTERM')), {
+    kind: 'failed',
+    reason: 'PowerShell was stopped (SIGTERM) before the helper finished',
+  });
+  assert.deepEqual(await launchWith((child) => child.emit('close', null, null)), {
+    kind: 'failed',
+    reason: 'PowerShell was stopped (no exit code) before the helper finished',
+  });
+});
+
 test('a malformed request fails before any question is asked', async () => {
   const { createMftLauncher } = loadMft();
   const bad: Array<Partial<MftRequest>> = [
