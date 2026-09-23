@@ -410,6 +410,25 @@ test('eviction semantics: dropping the store frees it for GC (no registry leaks)
   assert.deepEqual(statics, [], 'PackedScanStore must hold no static state');
 });
 
+test('names are stored as their UTF-8, whether ASCII or not', () => {
+  // The name pool is UTF-8: a name reads back as what an encode then a
+  // decode of it gives (a lone surrogate becomes U+FFFD). The ASCII fast
+  // path in appendName must agree with TextEncoder on every one of these.
+  const names = [
+    'plain.txt', 'x', `${'a'.repeat(300)}.bin`, 'del\u007fedge', 'pad\u0080edge', 'é', 'café.txt', 'abcé',
+    '文件', 'emoji😀', 'lone\ud800half', 'tail\udfff', 'mixed ascii then 文 then ascii',
+  ];
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const root: NodeInput = { name: 'root', isDir: true, size: 0, modifiedAt: 1, isHidden: false };
+  const packed = new PackedScanStore('/r', '/', root);
+  const ids = names.map((name) => packed.addNode(packed.rootId, { name, isDir: false, size: 1, modifiedAt: 1, isHidden: false }));
+  packed.finalize();
+  const read = packed.childIds(packed.rootId).map((id) => packed.name(id));
+  assert.equal(ids.length, names.length);
+  assert.deepEqual(read, names.map((name) => decoder.decode(encoder.encode(name))));
+});
+
 /* --------------------------- streamed tree JSON --------------------------- */
 
 /** The JSON a whole-tree prune stringifies to: what `scan.root` serialises as. */
