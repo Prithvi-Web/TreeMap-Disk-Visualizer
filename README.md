@@ -688,6 +688,7 @@ Disk tools should never lose your data. TreeMap is built defensively:
 - 🔒 Paths are sanitized and traversal-proofed; system dirs (`/proc`, `/sys`, `/dev`, `/run`, `C:\Windows\System32`, …) are blocked outright.
 - 🎯 Trash/open endpoints only accept paths **inside a folder you scanned** — and never paths *inside an archive* (only the archive itself can be trashed).
 - ♻️ Deletes always go through the OS Trash — undo from Finder/Explorer any time.
+- 🪟 On Windows, a path Windows would rewrite before binning it (a name ending in a dot or a space) is left alone, with a sentence saying why — never a different file in the Recycle Bin.
 - 📤 Offload never bare-moves: copy first, verify every byte against a SHA-256 read back from the destination, and only then trash the originals — any failure rolls back with local data untouched.
 - ☁️ Cloud scanning is strictly opt-in and metadata-only: no file contents are ever downloaded, OAuth tokens live only in the local app-data folder (Disconnect wipes them), cloud deletes go to the provider's own trash, and with no account connected no cloud code path executes at all.
 - 🧬 The Duplicates view refuses to trash *every* copy in a group — at least one always stays.
