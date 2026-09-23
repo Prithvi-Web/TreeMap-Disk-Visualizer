@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { promises as fsp } from 'node:fs';
 import fs from 'node:fs';
@@ -24,7 +24,9 @@ import { FileNode, ScanResult } from '../src/models/types';
 
 // Isolate every cache/snapshot write from the user's real app data. Scans in
 // this suite would otherwise land in the real snapshots.json.
-process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-inc-test-'));
+const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-inc-test-'));
+process.env.TREEMAP_DATA_DIR = DATA_DIR;
+after(() => fs.rmSync(DATA_DIR, { recursive: true, force: true }));
 
 function cacheFileFor(rootPath: string): string {
   const h = crypto.createHash('sha1').update(rootPath).digest('hex').slice(0, 16);
