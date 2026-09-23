@@ -388,17 +388,43 @@ async function attachAt(image: string, mountPoint: string, readonly: boolean, mo
   return r;
 }
 
+/**
+ * Whether a volume is still mounted on `mountPoint`: its device differs from
+ * its parent folder's. A mount point that is gone has nothing on it.
+ */
+function stillMounted(mountPoint: string): boolean {
+  try {
+    return fs.statSync(mountPoint).dev !== fs.statSync(path.dirname(mountPoint)).dev;
+  } catch {
+    return false;
+  }
+}
+
 function detach(mountPoint: string, mounted: string[]): string | null {
+  const forget = (): void => {
+    const i = mounted.indexOf(mountPoint);
+    if (i !== -1) mounted.splice(i, 1);
+  };
   let last = '';
   for (let attempt = 0; attempt < DETACH_ATTEMPTS; attempt++) {
     const r = hdiutil(['detach', mountPoint, ...(attempt === DETACH_ATTEMPTS - 1 ? ['-force'] : [])]);
     if (r.ok) {
-      const i = mounted.indexOf(mountPoint);
-      if (i !== -1) mounted.splice(i, 1);
+      forget();
       return null;
     }
     last = r.reason;
+    // A detach that timed out or was refused can still complete a moment
+    // later, and the next attempt then fails with "No such file or directory"
+    // for a volume already gone: asked, not assumed (23 Sep 2026, under load).
+    if (!stillMounted(mountPoint)) {
+      forget();
+      return null;
+    }
     spawnSync('sleep', [String(DETACH_RETRY_MS / 1000)]);
+  }
+  if (!stillMounted(mountPoint)) {
+    forget();
+    return null;
   }
   return last;
 }
