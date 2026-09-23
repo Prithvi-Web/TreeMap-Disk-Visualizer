@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { summarize, compareToBaseline, printTable, readResult, recordRefusal, writeResult, baselineFileName, recordBaseline, REQUESTED_BUDGETS, type BenchResult, type BenchRun, type StoredResult } from '../bench/lib/report';
+import { summarize, compareToBaseline, describeBudget, printTable, readResult, recordRefusal, writeResult, baselineFileName, recordBaseline, PRE_GOVERNOR_BUDGET, REQUESTED_BUDGETS, type BenchResult, type BenchRun, type StoredResult } from '../bench/lib/report';
 import { checkScanAgainstManifest, checkDuplicatesAgainstManifest } from '../bench/lib/verify';
 
 function run(wallMs: number, cpuSeconds = 0.5, entries = 200_000, extra: Partial<BenchRun> = {}): BenchRun {
@@ -161,6 +161,45 @@ test('a result with one run survives the trip through JSON without gaining a res
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('--record refuses a single-run series in words, never as an infinite spread', () => {
+  // summarize() gives one run an Infinity spread, and the near-duplicate
+  // suite runs once by default: this is the refusal its --record prints.
+  const one = result(1000, Number.POSITIVE_INFINITY);
+  one.runs = [run(1000)];
+  one.budget = { requested: 'turbo', effective: ['turbo'] };
+  one.summary = summarize(one.runs);
+  assert.equal(recordRefusal(one), 'its runs spread over a single run (the rule is under 5%)');
+  assert.equal(compareToBaseline(result(1000, 2), one).sentence, 'the baseline is not reproducible (a single run against the 5% rule)');
+  assert.equal(compareToBaseline(one, result(1000, 2)).sentence, 'the current result is not reproducible (a single run against the 5% rule)');
+});
+
+test('a two-run result is compared in words that count its runs: it takes three to resolve anything', () => {
+  // A single run is refused before this, as not reproducible, so the only
+  // result with no resolution that reaches it has two runs.
+  const two = result(1000, 2);
+  two.runs = [run(1000), run(1010)];
+  two.budget = { requested: 'turbo', effective: ['turbo', 'turbo'] };
+  two.summary = summarize(two.runs);
+  assert.equal(two.summary.reproducible, true);
+  assert.equal(two.summary.resolutionPct, Number.POSITIVE_INFINITY);
+  const current = compareToBaseline(two, result(1000, 2));
+  assert.equal(current.verdict, 'INCONCLUSIVE');
+  assert.equal(current.sentence, '+0.5% (1000.0 ms → 1005.0 ms), but the current result has 2 runs, too few for a resolution (it takes at least three)');
+  const baseline = compareToBaseline(result(1000, 2), two);
+  assert.equal(baseline.sentence, '-0.5% (1005.0 ms → 1000.0 ms), but the baseline has 2 runs, too few for a resolution (it takes at least three)');
+});
+
+test('the budget line says what was asked, what each run ran under, and what moved; a result from before the governor says so', () => {
+  assert.equal(describeBudget(result(1000, 2)), 'turbo requested, ran under turbo/turbo/turbo');
+  const moved = result(1000, 2);
+  moved.budget = { requested: 'balanced', effective: ['eco', 'balanced', 'turbo'] };
+  const refusal = recordRefusal(moved) ?? '';
+  assert.ok(refusal.startsWith('its budget moved: '), refusal);
+  assert.equal(describeBudget(moved), `balanced requested, ran under eco/balanced/turbo — moved: ${refusal.slice('its budget moved: '.length)}`);
+  assert.equal(describeBudget(preGovernor(result(1000, 2))), PRE_GOVERNOR_BUDGET);
+  assert.equal(PRE_GOVERNOR_BUDGET, 'none (recorded before the governor)');
 });
 
 test('the table says a single run has no spread instead of printing infinity', () => {
@@ -558,6 +597,9 @@ test('readResult keeps a recorded --min-size and --threshold and refuses a malfo
   try {
     assert.equal(readResult(writeResult(duplicatesAt(1000, 1024), dir, 'dup.json')).minSize, 1024);
     assert.equal(readResult(writeResult(nearDupAt(1000, 10), dir, 'near.json')).threshold, 10);
+    // Zero is a value the CLI accepts (--threshold=0 is exact matches only): it must read back.
+    assert.equal(readResult(writeResult(duplicatesAt(1000, 0), dir, 'dup0.json')).minSize, 0);
+    assert.equal(readResult(writeResult(nearDupAt(1000, 0), dir, 'near0.json')).threshold, 0);
     const cases: unknown[] = [
       { ...duplicatesAt(1000), minSize: '1024' },
       { ...duplicatesAt(1000), minSize: -1 },

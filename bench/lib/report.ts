@@ -295,12 +295,15 @@ export function compareToBaseline(current: StoredResult, baseline: StoredResult)
   const a = current.summary.resolutionPct;
   const b = baseline.summary.resolutionPct;
   if (!Number.isFinite(a) || !Number.isFinite(b)) {
-    const which = Number.isFinite(a) ? 'the baseline' : 'the current result';
+    // A single run was refused above as not reproducible, so the side named
+    // here has two: say so, rather than blame a single run.
+    const [which, side] = Number.isFinite(a) ? ['the baseline', baseline] : ['the current result', current];
+    const n = side.runs.length;
     return {
       verdict: 'INCONCLUSIVE',
       deltaPct,
       band: Number.POSITIVE_INFINITY,
-      sentence: `${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(1)}% (${times}), but ${which} has too few runs for a resolution (a single run has no resolution; take at least three)`,
+      sentence: `${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(1)}% (${times}), but ${which} has ${n} run${n === 1 ? '' : 's'}, too few for a resolution (it takes at least three)`,
     };
   }
   // Two medians each resolved to ±a and ±b differ by noise up to √(a²+b²).
