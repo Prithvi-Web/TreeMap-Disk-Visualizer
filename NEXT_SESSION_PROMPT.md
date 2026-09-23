@@ -41,10 +41,11 @@ Copy everything below the line into a fresh session started in
 - Leads not started: the walker could emit folders pre-sorted (removes the ingest's 12.6 ms name sort; a Rust contract change); `statToInput` costs 14 ms per 200k (must stay shared and byte-identical).
 
 ### Next (in order)
-1. ~~Land M6~~ done (`8bbd8c8`, `b4dc6dc`).
-2. Ask the owner to push; read CI; fix what Linux/Windows reveal (watcher).
-3. **Phase 3 check-in** to the owner: plain English; the table in CURRENT-STATE §11.2; decisions needed — Eco's QoS (above), RISKS R1 (cloud-placeholder safety in the duplicate finder, pull forward?), R55; then **Phase 4** (plan: `docs/superpowers/plans/2026-09-18-phase4-storage.md`).
-4. Queued: walker ci20k Turbo 156.9 ms now vs 130.8 ms in Phase 1 — explained (`workerCap` + `throttleBatch`, see Findings); a design decision, not changed. (The edge-case skip question was answered by `c767742`: it runs on Windows with per-case allowances.)
+1. **The owner pushes** (67 commits at `4ccaadb`+). The CI watcher (`Monitor` on `scratchpad/watch-ci.sh`, re-armed every 30 min) reports each leg and its annotations. Read every leg: it is the first run of the Linux and Windows listings, W6's helper and launcher, the junction/pinning/owner/`systemDirectory` tests, the live listing-order test, `refresh_families` against real NTFS (equivalence (c) on Windows), and gdu's (b) on Linux. Fix whatever they reveal test-first; a first Windows claim to watch: a folder ABOVE a held one cannot be renamed (`tests/args.rs` asserts it).
+2. **The owner's decisions:** may I push myself; Eco QoS (Background vs Utility); R1 pulled forward (the duplicate finder reads cloud placeholders — CRITICAL, shipped); R55 (FAT32/exFAT entries); **R59** (Windows falls back to the walker instead of gdu, which keys no hard links there).
+3. **Phase 4** (`docs/superpowers/plans/2026-09-18-phase4-storage.md`) once Phase 3 is gated on CI. S1's child-order note (raw-byte POSIX listings vs the ingest's lossy-UTF-8 stable sort) is in the plan.
+4. When the machine is quiet (load ≤ 2.5, clean tree): re-record `enumerate-native-enum200k` Turbo (today's compare: 414,292 e/s, PASS +3.3%, not recorded) and update CURRENT-STATE §11.2 with the commit.
+5. Leads not started: `statToInput` costs ~14 ms per 200k (must stay shared and byte-identical); a lone hard link on Windows keeps its listing's stale copy (DESIGN §16 item 9) — only a per-file open fixes it.
 
 ### Scratchpad tools (not committed; `/private/tmp/claude-501/-Users-prithvivinay-Desktop-Claude-Code/2ae6ee28-e5aa-45ad-b898-349d19889320/scratchpad/`)
 `attribute-app.ts` (stage timings of one `startScan` in a fresh process; `ONLYCOLD=1`), `stage-preload.mjs` (the same inside the real bench: `STAGE_DIR=… STAGE_ROOT=<manifest root> NODE_OPTIONS="--import …/stage-preload.mjs" npm run bench -- …`), `profile-ingest.ts`, `ablate-*/run.ts`, `mut-*.sh` (planted-bug harnesses: fresh scratch copy, one mutant at a time, exact-once patterns), `record-phase3.sh` (the baseline batch, load-gated), `watch-ci.sh`.
