@@ -1,0 +1,87 @@
+{
+  "suite": "governor",
+  "corpus": {
+    "name": "hold-turbo",
+    "params": {
+      "preset": "turbo",
+      "seconds": 60,
+      "targetShare": 0.9
+    },
+    "scale": "this machine"
+  },
+  "engine": "tm-governor",
+  "engineDescription": "the native Rust governor (tm-governor) holding its own synthetic load at the preset's CPU ceiling, the share sampled by the hold's independent sampler",
+  "entriesUnit": "samples",
+  "machine": {
+    "cpuModel": "Apple M3",
+    "cores": 8,
+    "perfCores": 4,
+    "effCores": 4,
+    "memoryBytes": 17179869184,
+    "platform": "darwin",
+    "arch": "arm64",
+    "osRelease": "27.0.0",
+    "node": "v24.16.0",
+    "commit": "ad975e44bed36d798db2a3f5e2c93fb6961c6f27",
+    "dirty": false,
+    "loadAvg": [
+      3.96484375,
+      3.6708984375,
+      3.58349609375
+    ],
+    "maxVnodes": 251127,
+    "tier": "B",
+    "tierReason": "8 cores and 16.0 GiB: neither the A clause (>= 8 cores and >= 32.0 GiB, or an Apple Pro/Max/Ultra part) nor the C clause (<= 4 cores or <= 8.0 GiB) applies"
+  },
+  "cache": {
+    "state": "unknown",
+    "reason": "not applicable: the hold reads no files"
+  },
+  "commit": "ad975e44bed36d798db2a3f5e2c93fb6961c6f27",
+  "label": "phase3",
+  "budget": {
+    "requested": "turbo",
+    "effective": [
+      "turbo"
+    ]
+  },
+  "runs": [
+    {
+      "wallMs": 60010.201917,
+      "entries": 600,
+      "cpuSeconds": 432.095816,
+      "selfCpuSeconds": 432.095816,
+      "childCpuSeconds": 0,
+      "peakRssBytes": 72220672,
+      "bytesRead": null,
+      "bytesReadReason": "the hold reads no files; the measuring process's own reads were not probed",
+      "persistMs": 0,
+      "persistCpuSeconds": 0,
+      "loadAvg": [
+        8.20166015625,
+        4.90673828125,
+        4.04736328125
+      ]
+    }
+  ],
+  "summary": {
+    "wallMsMedian": 60010.201917,
+    "entriesPerSecond": 9.998299969559492,
+    "cpuSecondsPerMillion": 720159.6933333334,
+    "peakRssBytes": 72220672,
+    "bytesReadMedian": null,
+    "spreadPct": 3.082641254693419,
+    "resolutionPct": null,
+    "reproducible": true
+  },
+  "correctness": {
+    "ok": true,
+    "notes": [
+      "target 90.0% of machine CPU (the turbo ceiling) held for 60 s (60010 ms measured): mean 90.0% over 600 samples, mean of the last half 90.0%, p95 |error| 3.1 points — within the ±5 point band over the last half",
+      "final workers 8, final duty 0.90",
+      "series (every 10th of 600 samples, % of machine CPU): 89.4 92.2 89.2 89.6 90.7 91.0 88.7 90.1 93.8 88.5 89.6 90.1 89.4 89.8 89.5 88.5 92.9 90.5 87.6 91.1 90.5 89.3 87.7 90.5 88.0 88.0 90.8 91.2 90.9 89.4 90.5 91.1 88.7 87.4 91.7 90.4 87.5 88.7 90.3 89.3 88.1 90.7 86.1 91.1 89.7 89.6 89.2 89.9 88.5 90.4 89.3 86.9 83.7 90.3 88.4 90.3 89.2 89.8 90.1 91.2",
+      "CPU seconds, peak RSS and load are the measuring process's own (the synthetic load runs on its threads); bytes read and persistence do not apply"
+    ]
+  },
+  "recordedAt": "2026-09-23T08:32:38.237Z"
+}

@@ -1,0 +1,87 @@
+{
+  "suite": "governor",
+  "corpus": {
+    "name": "hold-eco",
+    "params": {
+      "preset": "eco",
+      "seconds": 60,
+      "targetShare": 0.25
+    },
+    "scale": "this machine"
+  },
+  "engine": "tm-governor",
+  "engineDescription": "the native Rust governor (tm-governor) holding its own synthetic load at the preset's CPU ceiling, the share sampled by the hold's independent sampler",
+  "entriesUnit": "samples",
+  "machine": {
+    "cpuModel": "Apple M3",
+    "cores": 8,
+    "perfCores": 4,
+    "effCores": 4,
+    "memoryBytes": 17179869184,
+    "platform": "darwin",
+    "arch": "arm64",
+    "osRelease": "27.0.0",
+    "node": "v24.16.0",
+    "commit": "ad975e44bed36d798db2a3f5e2c93fb6961c6f27",
+    "dirty": false,
+    "loadAvg": [
+      3.8818359375,
+      3.39990234375,
+      3.4921875
+    ],
+    "maxVnodes": 251127,
+    "tier": "B",
+    "tierReason": "8 cores and 16.0 GiB: neither the A clause (>= 8 cores and >= 32.0 GiB, or an Apple Pro/Max/Ultra part) nor the C clause (<= 4 cores or <= 8.0 GiB) applies"
+  },
+  "cache": {
+    "state": "unknown",
+    "reason": "not applicable: the hold reads no files"
+  },
+  "commit": "ad975e44bed36d798db2a3f5e2c93fb6961c6f27",
+  "label": "phase3",
+  "budget": {
+    "requested": "eco",
+    "effective": [
+      "eco"
+    ]
+  },
+  "runs": [
+    {
+      "wallMs": 60019.886791,
+      "entries": 600,
+      "cpuSeconds": 115.476391,
+      "selfCpuSeconds": 115.476391,
+      "childCpuSeconds": 0,
+      "peakRssBytes": 71729152,
+      "bytesRead": null,
+      "bytesReadReason": "the hold reads no files; the measuring process's own reads were not probed",
+      "persistMs": 0,
+      "persistCpuSeconds": 0,
+      "loadAvg": [
+        3.72607421875,
+        3.408203125,
+        3.486328125
+      ]
+    }
+  ],
+  "summary": {
+    "wallMsMedian": 60019.886791,
+    "entriesPerSecond": 9.996686633037273,
+    "cpuSecondsPerMillion": 192460.65166666667,
+    "peakRssBytes": 71729152,
+    "bytesReadMedian": null,
+    "spreadPct": 2.5024455926817124,
+    "resolutionPct": null,
+    "reproducible": true
+  },
+  "correctness": {
+    "ok": true,
+    "notes": [
+      "target 25.0% of machine CPU (the eco ceiling) held for 60 s (60020 ms measured): mean 24.1% over 600 samples, mean of the last half 24.1%, p95 |error| 2.5 points — within the ±5 point band over the last half",
+      "final workers 2, final duty 1.00",
+      "series (every 10th of 600 samples, % of machine CPU): 24.9 24.8 24.3 23.8 25.3 24.4 24.4 24.9 24.6 24.8 24.4 24.3 24.6 24.8 24.4 24.5 25.1 22.8 24.4 25.0 23.9 24.0 24.8 23.9 24.4 24.9 19.5 22.5 24.7 24.6 24.0 24.9 24.2 24.4 25.2 24.4 24.1 24.9 23.8 24.2 25.3 24.2 24.1 25.1 24.3 24.4 24.8 24.2 24.0 25.1 24.5 24.2 24.6 23.7 24.2 24.6 22.8 23.8 25.0 24.3",
+      "CPU seconds, peak RSS and load are the measuring process's own (the synthetic load runs on its threads); bytes read and persistence do not apply"
+    ]
+  },
+  "recordedAt": "2026-09-23T08:30:12.578Z"
+}
