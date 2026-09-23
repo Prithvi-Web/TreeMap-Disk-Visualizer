@@ -11,7 +11,7 @@ use std::cell::Cell;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use common::{Scratch, plant_folder_link};
+use common::{Scratch, plant_file_link, plant_folder_link};
 use tm_mft::columns::{ColumnsFile, decode};
 use tm_mft_helper::{
     APP_TEMP_FOLDER, EXIT_OK, EXIT_REFUSED, Request, create_output, landing_refusal,
@@ -212,6 +212,40 @@ fn a_link_planted_at_the_output_name_is_not_followed() -> TestResult {
     assert_eq!(
         std::fs::read(&target).map_err(|e| e.to_string())?,
         b"precious"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_dangling_link_planted_at_the_output_name_is_refused_and_nothing_is_created_where_it_points()
+-> TestResult {
+    // The pre-landing review of 23 Sep 2026. The link above leads to a file
+    // that exists; this one leads nowhere yet, the case where following it
+    // would CREATE a file wherever it points, as this elevated process. The
+    // name itself must be refused (CREATE_NEW, O_EXCL) on Windows as on unix:
+    // the landing check would only see that the file had gone elsewhere
+    // after it was made there. On Windows this is a real symbolic link, not
+    // a junction, which the CI runner can plant as an administrator.
+    let scratch = Scratch::new("run-dangling")?;
+    let fence = scratch.folder(APP_TEMP_FOLDER)?;
+    let target = scratch.path("never-made.txt");
+    let out = fence.join("dangling.tmmft");
+    plant_file_link(&target, &out)?;
+    let read = Cell::new(false);
+    let outcome = run(&args("C:", "C:\\data", &out), &fence, |_| {
+        read.set(true);
+        Ok(tiny())
+    });
+    assert_eq!(outcome.code, EXIT_REFUSED);
+    assert!(!read.get(), "the volume was read");
+    assert!(
+        std::fs::symlink_metadata(&target).is_err(),
+        "a file was created where the link points"
+    );
+    let message = outcome.message.unwrap_or_default();
+    assert!(
+        message.contains("could not be created"),
+        "refused only after the file was made: {message}"
     );
     Ok(())
 }

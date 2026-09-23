@@ -82,3 +82,23 @@ pub fn plant_folder_link(target: &Path, at: &Path) -> Result<(), String> {
         ))
     }
 }
+
+/// A symbolic link at `at` to the file `target`, which need not exist.
+#[cfg(unix)]
+pub fn plant_file_link(target: &Path, at: &Path) -> Result<(), String> {
+    std::os::unix::fs::symlink(target, at).map_err(|e| format!("{}: {e}", at.display()))
+}
+
+/// A symbolic link at `at` to the file `target`, which need not exist. Unlike
+/// a junction it takes the right to create symbolic links — an administrator,
+/// as the CI runner is, or Developer Mode — and a test that cannot plant it
+/// fails saying so rather than passing without it.
+#[cfg(windows)]
+pub fn plant_file_link(target: &Path, at: &Path) -> Result<(), String> {
+    std::os::windows::fs::symlink_file(target, at).map_err(|e| {
+        format!(
+            "{}: {e} (a symbolic link needs an administrator or Developer Mode)",
+            at.display()
+        )
+    })
+}
