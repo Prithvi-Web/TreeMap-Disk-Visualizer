@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -99,7 +100,25 @@ test('in a folder that refuses new files, a program this user could still change
   }
 });
 
-test('a program the system owns, in a folder the system owns, may be started as administrator', { skip: process.getuid?.() === 0 && 'root may write anywhere' }, () => {
+/**
+ * Whether this process is an elevated Windows administrator (its groups carry
+ * the high mandatory level, S-1-16-12288). CI's Windows runner is one; the app
+ * never is: it asks from an unelevated process, where the Administrators group
+ * is deny-only and System32's folders refuse a new file.
+ */
+function elevatedOnWindows(): boolean {
+  if (process.platform !== 'win32') return false;
+  try {
+    return /S-1-16-12288/.test(execFileSync('whoami', ['/groups'], { encoding: 'utf8' }));
+  } catch {
+    return false;
+  }
+}
+
+test('a program the system owns, in a folder the system owns, may be started as administrator', {
+  skip: (process.getuid?.() === 0 && 'root may write anywhere')
+    || (elevatedOnWindows() && 'this process is an elevated administrator, who may add files to System32’s folders; the app asks from an unelevated one'),
+}, () => {
   const system = process.platform === 'win32'
     ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
     : ['/usr/bin/true', '/bin/sh'].find((p) => fs.existsSync(p));
