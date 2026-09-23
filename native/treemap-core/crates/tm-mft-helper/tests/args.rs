@@ -6,10 +6,11 @@
 mod common;
 
 use std::ffi::OsString;
+use std::path::Path;
 
 use common::{Scratch, canonical, plant_folder_link};
 use tm_mft_helper::{
-    APP_TEMP_FOLDER, ArgError, app_temp_folder, check_output, check_root_on_volume,
+    APP_TEMP_FOLDER, ArgError, Request, app_temp_folder, check_output, check_root_on_volume,
     hold_temp_folder, parse_volume, validate,
 };
 
@@ -144,6 +145,33 @@ fn an_output_whose_name_is_not_the_app_s_is_refused() -> TestResult {
             Err(ArgError::OutputName { .. })
         ),
         "the folder itself is not a file name"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_bare_output_name_is_refused_for_naming_no_folder() -> TestResult {
+    // The pre-landing review of 23 Sep 2026 found no test reached this
+    // refusal. The parent of a bare name is the empty path, not none at all,
+    // so it is the check for an empty folder that refuses it and says why;
+    // without that check the empty path would go on to be resolved, and the
+    // refusal would carry the system's "not found" instead.
+    let scratch = Scratch::new("bare")?;
+    let fence = scratch.folder(APP_TEMP_FOLDER)?;
+    let refused = check_output(Path::new("x.tmmft"), &fence);
+    assert_eq!(
+        refused,
+        Err(ArgError::OutputFolder {
+            output: "x.tmmft".to_owned(),
+            reason: "it names no folder".to_owned(),
+        })
+    );
+    assert_eq!(
+        refused.map_err(|e| e.to_string()),
+        Err(
+            "the folder of the output file \"x.tmmft\" cannot be resolved: \"it names no folder\""
+                .to_owned()
+        )
     );
     Ok(())
 }
@@ -289,6 +317,64 @@ fn validate_takes_exactly_volume_root_output_and_checks_each() -> TestResult {
         let few: Vec<OsString> = (0..n).map(|i| OsString::from(format!("a{i}"))).collect();
         assert_eq!(validate(&few, &fence), Err(ArgError::Usage { got: n }));
     }
+    Ok(())
+}
+
+/// One unit no `str` can hold: a lone 0xFF byte on unix, a lone surrogate on
+/// Windows — what a mangled path could hand the helper.
+#[cfg(unix)]
+fn not_unicode() -> OsString {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::OsStr::from_bytes(&[0xFF]).to_owned()
+}
+
+/// One unit no `str` can hold: a lone 0xFF byte on unix, a lone surrogate on
+/// Windows — what a mangled path could hand the helper.
+#[cfg(windows)]
+fn not_unicode() -> OsString {
+    use std::os::windows::ffi::OsStringExt;
+    OsString::from_wide(&[0xD800])
+}
+
+/// `before`, one unit no `str` can hold, then `after`.
+fn with_a_bad_unit(before: &str, after: &str) -> OsString {
+    [OsString::from(before), not_unicode(), OsString::from(after)]
+        .into_iter()
+        .collect()
+}
+
+#[test]
+fn an_argument_that_is_not_unicode_is_refused_and_named_by_its_position() -> TestResult {
+    // The pre-landing review of 23 Sep 2026: no test handed validate an
+    // argument no `str` can hold, so reading the arguments lossily passed
+    // every test — and a lossy root is a folder the user never named, U+FFFD
+    // where their byte was, which the helper would then read. Each position
+    // gets an argument that is otherwise well formed.
+    let scratch = Scratch::new("not-unicode")?;
+    let fence = scratch.folder(APP_TEMP_FOLDER)?;
+    let volume = OsString::from("C:");
+    let root = OsString::from("C:\\data");
+    let output = fence.join("x.tmmft").into_os_string();
+    let refused: Vec<Result<Request, ArgError>> = [
+        [with_a_bad_unit("C", ":"), root.clone(), output.clone()],
+        [volume.clone(), with_a_bad_unit("C:\\da", "ta"), output],
+        [
+            volume,
+            root,
+            fence.join(with_a_bad_unit("x", ".tmmft")).into_os_string(),
+        ],
+    ]
+    .iter()
+    .map(|args| validate(args, &fence))
+    .collect();
+    assert_eq!(
+        refused,
+        vec![
+            Err(ArgError::NotUnicode { which: "volume" }),
+            Err(ArgError::NotUnicode { which: "root" }),
+            Err(ArgError::NotUnicode { which: "output" }),
+        ]
+    );
     Ok(())
 }
 
