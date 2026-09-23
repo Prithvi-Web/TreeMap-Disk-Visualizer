@@ -997,10 +997,46 @@ test('a root that disappears under a native walk is the scan’s own error, in t
   }
 });
 
+test('a finished walk is noticed within a short poll, not a whole progress cadence', async () => {
+  // The poll that updates progress is also how a walk's end is noticed. At a
+  // 100 ms cadence a finished walk sat unnoticed 20-40 ms on a 200,000-entry
+  // scan and ~28 ms on a 100 ms one (M3, 23 Sep 2026). Past its ramp (1, 2,
+  // 4 ... ms) the loop polls every NATIVE_POLL_MS; a median over the gaps
+  // keeps one slow timer on a busy machine from deciding the verdict.
+  const { root, locked } = await buildEdgeFixture('treemap-native-slack-');
+  try {
+    const { scan, store } = recordFor(root);
+    const polls: number[] = [];
+    const fake = useFakeNative({ steps: Number.MAX_SAFE_INTEGER, onPoll: () => { polls.push(performance.now()); } });
+    let endedAt = 0;
+    let takenAt = 0;
+    const take = fake.module.scanTake;
+    fake.module.scanTake = (h: number) => {
+      takenAt = performance.now();
+      return take(h);
+    };
+    // Ends the walk well past the ramp, as a real walk ends: between two polls.
+    const timer = setTimeout(() => {
+      for (const h of fake.handles.values()) h.done = true;
+      endedAt = performance.now();
+    }, 400);
+    await runNativeWalk(scan, store, root, fake.module);
+    clearTimeout(timer);
+    const RAMP = 8;
+    const gaps = polls.slice(RAMP + 1).map((t, i) => t - polls[RAMP + i]).sort((a, b) => a - b);
+    const median = gaps[Math.floor(gaps.length / 2)];
+    assert.ok(median <= 25, `past its ramp the loop polled every ${median.toFixed(1)} ms (NATIVE_POLL_MS is ${NATIVE_POLL_MS})`);
+    assert.ok(endedAt > 0 && takenAt >= endedAt, 'the walk ended when the test ended it, and was taken after');
+    assert.ok(takenAt - endedAt < 60, `the end was noticed ${Math.round(takenAt - endedAt)} ms after the walk ended`);
+  } finally {
+    await unlockAndRemove(root, locked);
+  }
+});
+
 test('pausing a native scan stops `scanned` within 200 ms and resuming finishes it with every entry counted', async () => {
   const { root, total, locked } = await buildEdgeFixture('treemap-native-pause-');
   try {
-    const fake = useFakeNative({ steps: 40 }); // four seconds of polls, unless paused
+    const fake = useFakeNative({ steps: 400 }); // about four seconds of polls at NATIVE_POLL_MS, unless paused
     await updateSettings({ engine: 'native' });
     const scan = await startScan(root);
     const t0 = Date.now();
@@ -1034,7 +1070,7 @@ test('pausing a native scan stops `scanned` within 200 ms and resuming finishes 
 test('cancelling a native scan settles the record at once and releases the handle: it is cancelled natively and taken to free it', async () => {
   const { root, locked } = await buildEdgeFixture('treemap-native-cancel-');
   try {
-    const fake = useFakeNative({ steps: 40 });
+    const fake = useFakeNative({ steps: 400 }); // still running when the cancel comes, however slow the machine
     await updateSettings({ engine: 'native' });
     const scan = await startScan(root);
     while (scan.status === 'running' && scan.scanned < 3) await sleep(5);

@@ -42,8 +42,15 @@ export const REFUSAL_DENIED = 1;
 export const REFUSAL_VANISHED = 2;
 /** `refusalWhy`: any other listing error. */
 export const REFUSAL_UNREADABLE = 3;
-/** How often a long native walk is polled — the SSE cadence's order (P3-1). */
-export const NATIVE_POLL_MS = 100;
+/**
+ * How often a native walk is polled once past the first-poll ramp. The poll
+ * is how progress crosses to Node (P3-1: polling, never a callback) and also
+ * how the walk's end is noticed, so it is short: at 100 ms a finished walk
+ * sat unnoticed 20-40 ms on a 200,000-entry scan and ~28 ms on a 100 ms one
+ * (M3, 23 September 2026). A poll is a few atomic reads behind one napi call;
+ * the progress stream still reads the record at its own 150 ms.
+ */
+export const NATIVE_POLL_MS = 10;
 /**
  * The first poll interval. A poll is an atomic read, so the loop starts here
  * and doubles up to NATIVE_POLL_MS: a scan of a few dozen entries settles in
