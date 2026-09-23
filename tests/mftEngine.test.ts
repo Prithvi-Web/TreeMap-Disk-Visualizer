@@ -225,6 +225,12 @@ function tempFolder(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mft-run-'));
 }
 
+/**
+ * The elevation check (mftHelperPath.ts) standing aside: these tests' helper
+ * paths are names, not files. The test that is about the check replaces it.
+ */
+const allowElevation = (_file: string): string | null => null;
+
 /** A launcher that records its requests and answers `outcome`, writing a placeholder output when it "ran". */
 function fakeLauncher(outcome: Awaited<ReturnType<MftLauncher>>) {
   const requests: MftLaunchRequest[] = [];
@@ -251,7 +257,7 @@ test('declined elevation is a fallback with its own reason — never an error, n
   const { launcher, requests } = fakeLauncher({ kind: 'declined', reason: 'elevation was declined at the Windows prompt' });
   const { module, calls } = fakeModule(flat(3));
   const { scan, store } = recordFor(ROOT);
-  const outcome = await runMftWalk(scan, store, ROOT, { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', tempFolder: folder, now: () => READ_STARTED });
+  const outcome = await runMftWalk(scan, store, ROOT, { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
   assert.equal(outcome.used, false);
   assert.ok(!outcome.used && outcome.failed === false, 'a choice, not a failure: no fallbackReason');
   assert.match(outcome.reason, /declined/);
@@ -264,6 +270,30 @@ test('declined elevation is a fallback with its own reason — never an error, n
   assert.match(path.basename(requests[0].output), /^[0-9a-f-]+\.tmmft$/);
   assert.deepEqual(fs.readdirSync(folder), [], 'no file left behind');
   assert.equal(scan.status, 'running', 'the scan goes on — on the listing walk');
+  fs.rmSync(folder, { recursive: true, force: true });
+});
+
+test('a helper a program running as the user could change is never started: nobody is asked, and the reason says how to fix it', async () => {
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const { launcher, requests } = fakeLauncher({ kind: 'exited', code: 0 });
+  const { module, calls } = fakeModule(flat(3));
+  const helperPath = 'C:\\Users\\me\\AppData\\Local\\Programs\\TreeMap\\tm-mft-helper.exe';
+  const checked: string[] = [];
+  const elevationRefusal = (file: string): string | null => {
+    checked.push(file);
+    return 'the folder C:\\Users\\me\\AppData\\Local\\Programs\\TreeMap lets any program running as you add or replace files in it';
+  };
+  const { scan, store } = recordFor(ROOT);
+  const outcome = await runMftWalk(scan, store, ROOT, { launcher, module, helperPath, elevationRefusal, tempFolder: folder, now: () => READ_STARTED });
+  assert.deepEqual(checked, [helperPath], 'the helper that would run is the one checked');
+  assert.equal(requests.length, 0, 'nobody was asked');
+  assert.equal(calls.take, 0);
+  assert.ok(!outcome.used && outcome.failed === false, 'how TreeMap is installed is a rule, not a failure');
+  assert.equal(
+    outcome.reason,
+    `the NTFS turbo mode (${MFT_NOT_VERIFIED}: no test has run its elevation prompt end to end) was not used: Windows would start ${helperPath} as administrator, and the folder C:\\Users\\me\\AppData\\Local\\Programs\\TreeMap lets any program running as you add or replace files in it; installed for anyone who uses this computer (in Program Files), TreeMap can use it`,
+  );
   fs.rmSync(folder, { recursive: true, force: true });
 });
 
@@ -285,7 +315,7 @@ test('one scan asks at a time (W6-1): a scan that wants the mode while another w
       failures.push((e) => { open--; reject(e); });
     });
   };
-  const deps = { launcher, module: fakeModule(flat(3)).module, helperPath: 'C:\\app\\tm-mft-helper.exe', tempFolder: folder, now: () => READ_STARTED };
+  const deps = { launcher, module: fakeModule(flat(3)).module, helperPath: 'C:\\app\\tm-mft-helper.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED };
   const walk = () => { const r = recordFor(ROOT); return runMftWalk(r.scan, r.store, ROOT, deps); };
 
   const first = walk();
@@ -314,7 +344,7 @@ test('after a decline no scan asks for ten minutes — the reason says how long 
   const folder = tempFolder();
   let now = READ_STARTED;
   const { launcher, requests } = fakeLauncher({ kind: 'declined', reason: 'elevation was declined at the Windows prompt' });
-  const deps = { launcher, module: fakeModule(flat(3)).module, helperPath: 'C:\\app\\tm-mft-helper.exe', tempFolder: folder, now: () => now };
+  const deps = { launcher, module: fakeModule(flat(3)).module, helperPath: 'C:\\app\\tm-mft-helper.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => now };
   const walk = () => { const r = recordFor(ROOT); return runMftWalk(r.scan, r.store, ROOT, deps); };
 
   await walk();
@@ -356,7 +386,7 @@ test('an app temp folder that is a link or junction is refused before anyone is 
   const { launcher, requests } = fakeLauncher({ kind: 'exited', code: 0 });
   const { module, calls } = fakeModule(flat(3));
   const { scan, store } = recordFor(ROOT);
-  const outcome = await runMftWalk(scan, store, ROOT, { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', tempFolder: linked, now: () => READ_STARTED });
+  const outcome = await runMftWalk(scan, store, ROOT, { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', elevationRefusal: allowElevation, tempFolder: linked, now: () => READ_STARTED });
   assert.equal(requests.length, 0, 'nobody was asked');
   assert.equal(calls.take, 0);
   assert.ok(!outcome.used && outcome.failed === true, JSON.stringify(outcome));
@@ -366,7 +396,7 @@ test('an app temp folder that is a link or junction is refused before anyone is 
   const file = path.join(base, 'a-file');
   fs.writeFileSync(file, '');
   const r = recordFor(ROOT);
-  const notFolder = await runMftWalk(r.scan, r.store, ROOT, { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', tempFolder: file, now: () => READ_STARTED });
+  const notFolder = await runMftWalk(r.scan, r.store, ROOT, { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', elevationRefusal: allowElevation, tempFolder: file, now: () => READ_STARTED });
   assert.equal(requests.length, 0, 'nobody was asked');
   assert.ok(!notFolder.used && notFolder.failed === true, JSON.stringify(notFolder));
   fs.rmSync(base, { recursive: true, force: true });
@@ -378,7 +408,7 @@ test('a helper that ran and a cross-check that passed: the columns are ingested,
   const { launcher, requests } = fakeLauncher({ kind: 'exited', code: 0 });
   const { module, calls } = fakeModule(flat(10));
   const { scan, store } = recordFor(ROOT);
-  const outcome = await runMftWalk(scan, store, ROOT, { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', tempFolder: folder, now: () => READ_STARTED, random: seeded(4) });
+  const outcome = await runMftWalk(scan, store, ROOT, { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED, random: seeded(4) });
   assert.equal(outcome.used, true, JSON.stringify(outcome));
   assert.match(outcome.reason, new RegExp(MFT_NOT_VERIFIED), 'every scan through the mode says so');
   assert.match(outcome.reason, /11 of 11/, 'how many entries were checked');
@@ -407,7 +437,7 @@ test('a table the app could verify none of is not trusted — every entry too re
     const { launcher, requests } = fakeLauncher({ kind: 'exited', code: 0 });
     const { module } = fakeModule(cols, check);
     const { scan, store } = recordFor(ROOT);
-    const deps = { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', tempFolder: folder, now: () => READ_STARTED, random: seeded(4) };
+    const deps = { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED, random: seeded(4) };
     const outcome = await runMftWalk(scan, store, ROOT, deps);
     assert.equal(outcome.used, false, `${label}: ${JSON.stringify(outcome)}`);
     assert.ok(!outcome.used && outcome.failed === false, `${label}: an inability to check, not a failure of the reader`);
@@ -430,7 +460,7 @@ test('a divergence switches the mode off for the volume for the session: the rea
   const first = fakeLauncher({ kind: 'exited', code: 0 });
   const { module } = fakeModule(flat(4), check);
   const a = recordFor(ROOT);
-  const outcome = await runMftWalk(a.scan, a.store, ROOT, { launcher: first.launcher, module, helperPath: 'x.exe', tempFolder: folder, now: () => READ_STARTED, random: seeded(8) });
+  const outcome = await runMftWalk(a.scan, a.store, ROOT, { launcher: first.launcher, module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED, random: seeded(8) });
   assert.equal(outcome.used, false);
   assert.ok(!outcome.used && outcome.failed === true, 'a fallbackReason');
   assert.match(outcome.reason, /C:\\data\\f2/, 'the entry');
@@ -441,13 +471,13 @@ test('a divergence switches the mode off for the volume for the session: the rea
 
   const second = fakeLauncher({ kind: 'exited', code: 0 });
   const b = recordFor(`${ROOT}\\sub`);
-  const again = await runMftWalk(b.scan, b.store, `${ROOT}\\sub`, { launcher: second.launcher, module, helperPath: 'x.exe', tempFolder: folder, now: () => READ_STARTED });
+  const again = await runMftWalk(b.scan, b.store, `${ROOT}\\sub`, { launcher: second.launcher, module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
   assert.equal(again.used, false);
   assert.equal(second.requests.length, 0, 'no second prompt this session');
   assert.match(again.reason, /C:\\data\\f2/, 'the original divergence is repeated');
   const d = fakeLauncher({ kind: 'declined', reason: 'no' });
   const other = recordFor('D:\\x');
-  await runMftWalk(other.scan, other.store, 'D:\\x', { launcher: d.launcher, module, helperPath: 'x.exe', tempFolder: folder, now: () => READ_STARTED });
+  await runMftWalk(other.scan, other.store, 'D:\\x', { launcher: d.launcher, module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
   assert.equal(d.requests.length, 1, 'another volume is still offered');
   fs.rmSync(folder, { recursive: true, force: true });
 });
@@ -458,12 +488,12 @@ test('a helper refusal, a missing launcher, a missing helper and a root without 
   const refusing: MftModule = { mftTake: () => { throw new Error('D: is formatted exFAT, not NTFS; only NTFS keeps a master file table'); }, mftCrossCheck: () => [] };
   const exit2 = fakeLauncher({ kind: 'exited', code: 2 });
   const r = recordFor(ROOT);
-  const refused = await runMftWalk(r.scan, r.store, ROOT, { launcher: exit2.launcher, module: refusing, helperPath: 'x.exe', tempFolder: folder });
+  const refused = await runMftWalk(r.scan, r.store, ROOT, { launcher: exit2.launcher, module: refusing, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder });
   assert.ok(!refused.used && refused.failed, JSON.stringify(refused));
   assert.match(refused.reason, /exFAT, not NTFS/, 'the helper’s own sentence');
   assert.equal(fs.existsSync(exit2.requests[0].output), false, 'removed');
 
-  const none = await runMftWalk(r.scan, r.store, ROOT, { launcher: null, module: fakeModule(flat(1)).module, helperPath: 'x.exe', tempFolder: folder });
+  const none = await runMftWalk(r.scan, r.store, ROOT, { launcher: null, module: fakeModule(flat(1)).module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder });
   assert.ok(!none.used && none.failed);
   assert.match(none.reason, /desktop app/);
 
@@ -471,7 +501,7 @@ test('a helper refusal, a missing launcher, a missing helper and a root without 
   assert.ok(!noHelper.used && noHelper.failed);
   assert.match(noHelper.reason, /tm-mft-helper/);
 
-  const unc = await runMftWalk(r.scan, r.store, '\\\\server\\share', { launcher: fakeLauncher({ kind: 'exited', code: 0 }).launcher, module: fakeModule(flat(1)).module, helperPath: 'x.exe', tempFolder: folder });
+  const unc = await runMftWalk(r.scan, r.store, '\\\\server\\share', { launcher: fakeLauncher({ kind: 'exited', code: 0 }).launcher, module: fakeModule(flat(1)).module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder });
   assert.ok(!unc.used);
   assert.match(unc.reason, /drive letter/);
   for (const o of [refused, none, noHelper, unc]) assert.match(o.reason, new RegExp(MFT_NOT_VERIFIED));
@@ -515,6 +545,19 @@ function encodeColumnsFile(c: WalkResult, flags = 1): Buffer {
   parts.push(u64(s.dirsListed), u64(s.entries), f64(s.wallMs), f64(s.cpuSeconds ?? Number.NaN), Buffer.from([5]), u32(s.workersPeak), u32(s.climbSteps), u64(s.deniedEntries), u64(s.unreadableEntries), u64(s.dataless));
   return Buffer.concat(parts);
 }
+
+test('systemDirectory: the kernel’s answer on Windows, a full path to its System32; null anywhere else', () => {
+  const mod = realModule() as unknown as { systemDirectory?: () => string | null };
+  assert.equal(typeof mod.systemDirectory, 'function', 'the module exports systemDirectory');
+  const dir = mod.systemDirectory?.();
+  if (process.platform === 'win32') {
+    assert.ok(typeof dir === 'string' && path.win32.isAbsolute(dir), `${dir}`);
+    assert.match(dir, /\\System32$/i);
+    assert.ok(fs.existsSync(path.join(dir, 'WindowsPowerShell', 'v1.0', 'powershell.exe')), 'PowerShell is where the launcher will look');
+  } else {
+    assert.equal(dir, null);
+  }
+});
 
 test('mftTake reads a columns file written to the documented format, every column equal; a refusal throws the helper’s sentence; a tampered file throws', () => {
   const mod = realModule();

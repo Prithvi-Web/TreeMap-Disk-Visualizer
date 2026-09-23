@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { MftExpected, MftLiveCheck, NativeProbe, NativeProgress, ScanStartOptions, WalkResult } from '../../../native/index';
 import { loadNative, nativeScanModule, type ScanModule } from './native';
 import { crossCheckMft } from './mftCrossCheck';
+import { elevationRefusal, unpackedPath } from './mftHelperPath';
 import { mftPromptBlocked, mftPromptEnded, mftPromptStarted, resetMftPromptForTests } from './mftPrompt';
 import { statToInput } from './nodeInput';
 import { Flag, ScanStore, joinPath } from '../scanStore';
@@ -622,6 +623,8 @@ export interface MftDeps {
   launcher?: MftLauncher | null;
   module?: MftModule | null;
   helperPath?: string | null;
+  /** Why a program must not be started as administrator, or null (mftHelperPath.ts). */
+  elevationRefusal?: (file: string) => string | null;
   tempFolder?: string;
   now?: () => number;
   random?: () => number;
@@ -659,12 +662,34 @@ export function driveOf(rootPath: string): string | null {
   return m ? `${m[1].toUpperCase()}:` : null;
 }
 
-/** Where the helper may be: beside the prebuilt module, or in a packaged app's resources. */
-export function mftHelperCandidates(): string[] {
-  const out = [path.join(__dirname, '..', '..', '..', 'native', 'prebuilt', `${process.platform}-${process.arch}`, MFT_HELPER_FILE)];
-  const resources = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+/**
+ * Where the helper may be: beside the prebuilt module (build-native installs
+ * it there on Windows), or in a packaged app's resources. Each as a path
+ * Windows can start: in a packaged app the first runs through `app.asar`,
+ * which only Electron's own `fs` sees into, so it is read under
+ * `app.asar.unpacked`, where the release unpacks `native/prebuilt`
+ * (`unpackedPath`). `appRoot` and `resources` are seams for tests.
+ */
+export function mftHelperCandidates(
+  appRoot: string = path.join(__dirname, '..', '..', '..'),
+  resources: string | undefined = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath,
+): string[] {
+  const out = [unpackedPath(path.join(appRoot, 'native', 'prebuilt', `${process.platform}-${process.arch}`, MFT_HELPER_FILE))];
   if (resources) out.push(path.join(resources, 'native', MFT_HELPER_FILE));
   return out;
+}
+
+/**
+ * Windows' system folder as the kernel reports it, through the native module
+ * (`systemDirectory`), or null: off Windows, without the module, or with one
+ * built before it had the call. main.js starts PowerShell from it by its full
+ * path (electron/mft.js).
+ */
+export function windowsSystemDirectory(): string | null {
+  const outcome = loadNative();
+  if (!outcome.available) return null;
+  const call = (outcome.module as { systemDirectory?: () => string | null }).systemDirectory;
+  return typeof call === 'function' ? call() : null;
 }
 
 /** The loaded module's MFT surface, or why there is none. */
@@ -733,6 +758,14 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
   const mod = found;
   const helperPath = deps.helperPath === undefined ? (mftHelperCandidates().find((p) => fs.existsSync(p)) ?? null) : deps.helperPath;
   if (!helperPath) return notUsed(`no ${MFT_HELPER_FILE} ships with this build (looked at ${mftHelperCandidates().join(', ')})`, true);
+  // Nothing a program running as the user could change is started as
+  // administrator (the third security review of M6): asked before the prompt,
+  // so no one is asked for a yes that could not be used. How TreeMap is
+  // installed is a rule, not a failure, and the reason says how to fix it.
+  const unsafe = (deps.elevationRefusal ?? elevationRefusal)(helperPath);
+  if (unsafe) {
+    return notUsed(`Windows would start ${helperPath} as administrator, and ${unsafe}; installed for anyone who uses this computer (in Program Files), TreeMap can use it`, false);
+  }
   const folder = deps.tempFolder ?? path.join(os.tmpdir(), MFT_TEMP_FOLDER);
   try {
     fs.mkdirSync(folder, { recursive: true });

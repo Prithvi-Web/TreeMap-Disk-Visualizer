@@ -296,6 +296,15 @@ export function scanTake(handle: number): WalkResult;
  */
 export function mftTake(path: string): WalkResult;
 
+/**
+ * Windows' system folder as the kernel reports it (`GetSystemDirectoryW`), or
+ * null — off Windows, or if Windows does not answer. The NTFS turbo mode's
+ * launcher starts PowerShell from it by its full path: never by name, which
+ * Windows would look up in the app's own folder first, and never from
+ * `SystemRoot` or `windir`, which a program running as the user can shadow.
+ */
+export function systemDirectory(): string | null;
+
 /** What the master file table said about one entry, for `mftCrossCheck`. */
 export interface MftExpected {
   /** 0 = file, 1 = directory, 2 = symlink (as in `WalkResult.kind`). */

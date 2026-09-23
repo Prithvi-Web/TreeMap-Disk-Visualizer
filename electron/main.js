@@ -361,12 +361,32 @@ function messageBox(options) {
  * that fails resolves undefined here, which the launcher treats as "not
  * asked" and starts nothing. Registered once. If it cannot be registered, only
  * the fast path is lost: the app still starts and scans the normal way.
+ *
+ * PowerShell is started by its full path under the system folder the kernel
+ * reports — never by name, which Windows would look up in this app's own
+ * folder first, and never from SystemRoot or windir, which a program running
+ * as the user can shadow — and nothing such a program could change is started
+ * as administrator (elevationRefusal; the third security review of M6).
+ * Without the kernel's answer every scan is refused, with that reason.
  */
 function registerMftLauncher() {
   if (process.platform !== 'win32') return;
   try {
-    const { setMftLauncher } = require(path.join(__dirname, '..', 'dist', 'services', 'scan', 'nativeEngine.js'));
-    setMftLauncher(createMftLauncher({ showMessageBox: messageBox, spawn: require('child_process').spawn }));
+    const scanDir = path.join(__dirname, '..', 'dist', 'services', 'scan');
+    const { setMftLauncher, windowsSystemDirectory } = require(path.join(scanDir, 'nativeEngine.js'));
+    const { elevationRefusal } = require(path.join(scanDir, 'mftHelperPath.js'));
+    const system = windowsSystemDirectory();
+    if (!system) {
+      setMftLauncher(async () => ({ kind: 'failed', reason: "Windows' system folder could not be read, so PowerShell could not be started by its full path" }));
+      return;
+    }
+    setMftLauncher(createMftLauncher({
+      showMessageBox: messageBox,
+      spawn: require('child_process').spawn,
+      powershell: path.win32.join(system, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      workingDirectory: system,
+      refuseTarget: elevationRefusal,
+    }));
   } catch (err) {
     console.error('[treemap] the fast whole-drive scan is unavailable:', err);
   }

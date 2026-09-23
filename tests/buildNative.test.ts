@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { MFT_HELPER_FILE, mftHelperCandidates } from '../src/services/scan/nativeEngine';
 
 /**
  * scripts/build-native.js builds the native core and puts it where the loader
@@ -25,6 +26,7 @@ interface Helpers {
   versionHandshake(nativeVersion: unknown, crateVersion: string | null): string | null;
   cargoMissingHint(): string;
   installModule(src: string, dest: string): void;
+  helpersFor(platform: string): { crate: string; file: string }[];
 }
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -51,6 +53,22 @@ test('the module is installed as a new file each time, never copied over the old
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('on Windows the NTFS turbo helper is built beside the module, under the name the app looks for; it is built nowhere else', () => {
+  assert.deepEqual(helpers.helpersFor('win32'), [{ crate: 'tm-mft-helper', file: MFT_HELPER_FILE }]);
+  for (const p of ['darwin', 'linux', 'freebsd']) assert.deepEqual(helpers.helpersFor(p), [], p);
+  // cargo names a binary's executable after its [[bin]] name (plus .exe on
+  // Windows), so the crate must build exactly the file the app looks for.
+  const toml = fs.readFileSync(path.join(REPO, 'native', 'treemap-core', 'crates', 'tm-mft-helper', 'Cargo.toml'), 'utf8');
+  assert.match(toml, /^name = "tm-mft-helper"$/m, 'the package');
+  assert.match(toml, /\[\[bin\]\]\r?\nname = "tm-mft-helper"\r?\n/, 'the binary');
+});
+
+test('after npm run build:native the helper sits where the app looks for it first', { skip: process.platform !== 'win32' && 'the helper is built only for Windows' }, () => {
+  const [first] = mftHelperCandidates();
+  assert.equal(path.basename(first), MFT_HELPER_FILE);
+  assert.ok(fs.existsSync(first), `${first} exists — run npm run build:native`);
 });
 
 test('the library cargo writes is named per platform, and a platform the workspace does not build for is refused by name', () => {

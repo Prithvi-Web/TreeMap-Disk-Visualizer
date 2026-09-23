@@ -16,10 +16,19 @@
  *      2 refusal). There is no timeout: the person may take a while at the
  *      prompt.
  *
- * Pure: no `electron` import. main.js injects dialog.showMessageBox and
- * child_process.spawn, and src/services/scan/nativeEngine.ts receives the
- * launcher through setMftLauncher, so plain Node tests
- * (tests/electronMft.test.ts) drive every branch with fakes.
+ * Nothing is started as administrator that a program running as the user
+ * could have changed (the third security review of M6): PowerShell is started
+ * by its full path under the system folder the kernel reports, from that
+ * folder, never by a name Windows would look up in the app's own folder; both
+ * it and the helper pass `refuseTarget` before the question is even asked; and
+ * the script checks, just before it starts the helper, that Windows or its
+ * administrators own the helper and its folder (TRUSTED_OWNER_SIDS).
+ *
+ * Pure: no `electron` import. main.js injects dialog.showMessageBox,
+ * child_process.spawn, the PowerShell path, its folder and the target check,
+ * and src/services/scan/nativeEngine.ts receives the launcher through
+ * setMftLauncher, so plain Node tests (tests/electronMft.test.ts) drive every
+ * branch with fakes.
  *
  * Outcome, always one of:
  *   { kind: 'exited', code }     the helper ran elevated and exited with `code`
@@ -27,10 +36,32 @@
  *   { kind: 'failed', reason }   the launch itself failed; nothing ran elevated
  */
 
+const path = require('path');
+
+/*
+ * The script's own exit codes sit beside the helper's, which are only 0
+ * (columns written), 2 (refused, the reason in its output file) or a crash
+ * (Rust's 101, or an NTSTATUS such as 0xC0000005): none of the three below
+ * can be the helper's own answer (the third security review of M6, LOW).
+ */
 /** ERROR_CANCELLED: the Windows permission prompt was declined. */
 const DECLINED_EXIT = 1223;
 /** The script's own code for "PowerShell could not start the helper". */
 const PS_FAILED_EXIT = 9001;
+/** The script's own code for "the helper or its folder has an owner outside TRUSTED_OWNER_SIDS". */
+const OWNER_REFUSED_EXIT = 9002;
+/**
+ * The owners a program may have to be started as administrator: the
+ * Administrators group, SYSTEM and TrustedInstaller — by security identifier,
+ * since their names change with Windows' display language. An install for
+ * anyone who uses the computer is owned by one of them; one "only for me", a
+ * portable copy or a checkout is owned by the user, who could change it.
+ */
+const TRUSTED_OWNER_SIDS = Object.freeze([
+  'S-1-5-32-544',
+  'S-1-5-18',
+  'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464',
+]);
 /** The most of PowerShell's stderr a failure reason carries. */
 const STDERR_CAP_BYTES = 4096;
 
@@ -106,15 +137,26 @@ function explanation(volume) {
  * with this machine's own wording of error 1223, which both come from
  * Windows, so it holds in every display language.
  * @param {{ helperPath: string, volume: string, root: string, output: string }} request
+ * @param {string} workingDirectory the folder the helper starts in
  * @returns {string}
  */
-function elevationScript({ helperPath, volume, root, output }) {
+function elevationScript({ helperPath, volume, root, output }, workingDirectory) {
   const argline = [volume, root, output].map(quoteWindowsArg).join(' ');
   const isCancelled = `$x -is [System.ComponentModel.Win32Exception] -and $x.NativeErrorCode -eq ${DECLINED_EXIT}`;
+  const trusted = TRUSTED_OWNER_SIDS.map(psSingleQuote).join(', ');
   return [
     "$ErrorActionPreference = 'Stop'",
     'try {',
-    `  $p = Start-Process -FilePath ${psSingleQuote(helperPath)} -ArgumentList ${psSingleQuote(argline)} -Verb RunAs -WindowStyle Hidden -Wait -PassThru`,
+    // Who owns the helper and its folder, checked last thing before the start:
+    // an owner outside TRUSTED_OWNER_SIDS could have changed what runs.
+    `  foreach ($item in @(${psSingleQuote(helperPath)}, ${psSingleQuote(path.win32.dirname(helperPath))})) {`,
+    '    $owner = (Get-Acl -LiteralPath $item).GetOwner([System.Security.Principal.SecurityIdentifier]).Value',
+    `    if (@(${trusted}) -notcontains $owner) {`,
+    '      [Console]::Error.WriteLine("$item is owned by $owner, not by Windows or its administrators")',
+    `      exit ${OWNER_REFUSED_EXIT}`,
+    '    }',
+    '  }',
+    `  $p = Start-Process -FilePath ${psSingleQuote(helperPath)} -ArgumentList ${psSingleQuote(argline)} -WorkingDirectory ${psSingleQuote(workingDirectory)} -Verb RunAs -WindowStyle Hidden -Wait -PassThru`,
     // A missing exit code must never read as `exit 0`, which is success.
     "  if ($null -eq $p -or $null -eq $p.ExitCode) { throw 'Windows did not report how the helper finished' }",
     '  exit $p.ExitCode',
@@ -191,13 +233,14 @@ function collectStderr(stream) {
 function outcomeOfExit(code, signal, stderrText) {
   if (code === DECLINED_EXIT) return declined(PROMPT_DECLINED_REASON);
   if (code === PS_FAILED_EXIT) return failed(`PowerShell could not start the helper: ${stderrText()}`);
+  if (code === OWNER_REFUSED_EXIT) return failed(`nothing was started as administrator: ${stderrText()}`);
   if (typeof code === 'number') return { kind: 'exited', code };
   return failed(`PowerShell was stopped (${signal || 'no exit code'}) before the helper finished`);
 }
 
 /** Run the script; resolves exactly once, and never rejects. */
-function runElevated(spawn, powershell, request) {
-  const args = ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encodeCommand(elevationScript(request))];
+function runElevated(spawn, powershell, workingDirectory, request) {
+  const args = ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encodeCommand(elevationScript(request, workingDirectory))];
   return new Promise((resolve) => {
     let settled = false;
     const settle = (outcome) => {
@@ -206,7 +249,7 @@ function runElevated(spawn, powershell, request) {
       resolve(outcome);
     };
     try {
-      const child = spawn(powershell, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+      const child = spawn(powershell, args, { cwd: workingDirectory, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
       const stderrText = collectStderr(child.stderr);
       // `on`, not `once`: an 'error' emitted with no listener left would throw.
       child.on('error', (err) => settle(failed(`PowerShell could not be started: ${messageOf(err)}`)));
@@ -219,17 +262,34 @@ function runElevated(spawn, powershell, request) {
 }
 
 /**
+ * On Windows `powershell` and `workingDirectory` must be full paths and
+ * `refuseTarget` a function (a TypeError otherwise): main.js passes
+ * powershell.exe under the system folder the kernel reports, that folder, and
+ * the check that refuses a program the user's own processes could change.
  * @param {{
  *   showMessageBox: (options: object) => Promise<{ response: number } | undefined>,
  *   spawn: Function,
  *   platform?: string,
  *   powershell?: string,
+ *   workingDirectory?: string,
+ *   refuseTarget?: (file: string) => string | null,
  * }} deps
  * @returns {(request: { helperPath: string, volume: string, root: string, output: string }) => Promise<object>}
  */
-function createMftLauncher({ showMessageBox, spawn, platform = process.platform, powershell = 'powershell.exe' } = {}) {
+function createMftLauncher({ showMessageBox, spawn, platform = process.platform, powershell, workingDirectory, refuseTarget } = {}) {
   if (typeof showMessageBox !== 'function' || typeof spawn !== 'function') {
     throw new TypeError('createMftLauncher needs showMessageBox and spawn functions');
+  }
+  if (platform === 'win32') {
+    if (typeof powershell !== 'string' || !path.win32.isAbsolute(powershell)) {
+      throw new TypeError('createMftLauncher needs the full path of powershell.exe: by name, Windows would look in the app’s own folder first');
+    }
+    if (typeof workingDirectory !== 'string' || !path.win32.isAbsolute(workingDirectory)) {
+      throw new TypeError('createMftLauncher needs the full path of the folder PowerShell and the helper start in');
+    }
+    if (typeof refuseTarget !== 'function') {
+      throw new TypeError('createMftLauncher needs refuseTarget, the check that nothing a program running as the user could change is started as administrator');
+    }
   }
   return async function launchMftHelper(request) {
     if (platform !== 'win32') {
@@ -237,9 +297,19 @@ function createMftLauncher({ showMessageBox, spawn, platform = process.platform,
     }
     const problem = requestProblem(request);
     if (problem) return failed(problem);
+    // Before the question: a yes that could not be used should not be asked for.
+    for (const target of [powershell, request.helperPath]) {
+      let why;
+      try {
+        why = refuseTarget(target);
+      } catch (err) {
+        why = `${target} could not be checked: ${messageOf(err)}`;
+      }
+      if (why) return failed(`nothing was started as administrator: ${why}`);
+    }
     const stop = await askFirst(showMessageBox, request.volume);
     if (stop) return stop;
-    return runElevated(spawn, powershell, request);
+    return runElevated(spawn, powershell, workingDirectory, request);
   };
 }
 
@@ -251,4 +321,6 @@ module.exports = {
   explanation,
   DECLINED_EXIT,
   PS_FAILED_EXIT,
+  OWNER_REFUSED_EXIT,
+  TRUSTED_OWNER_SIDS,
 };

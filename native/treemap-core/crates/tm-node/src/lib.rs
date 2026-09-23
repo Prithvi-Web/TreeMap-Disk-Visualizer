@@ -725,6 +725,25 @@ pub fn mft_take(path: String) -> Result<WalkResult> {
     }
 }
 
+/// Windows' system folder as the kernel reports it, or `null` (elsewhere, or
+/// if Windows does not answer). The NTFS turbo mode's launcher starts
+/// PowerShell from it by its full path, never by name or from an
+/// environment variable (the third security review of M6).
+#[napi(js_name = "systemDirectory")]
+pub fn system_directory() -> Option<String> {
+    system_directory_here()
+}
+
+#[cfg(windows)]
+fn system_directory_here() -> Option<String> {
+    tm_mft::system_directory().map(|dir| dir.to_string_lossy().into_owned())
+}
+
+#[cfg(not(windows))]
+fn system_directory_here() -> Option<String> {
+    None
+}
+
 /// The shape `mftCrossCheck` accepts for each expected entry.
 const EXPECTED_SHAPE: &str =
     "mftCrossCheck needs one { kind: 0 | 1 | 2, size: number, mtimeMs: number } per path";

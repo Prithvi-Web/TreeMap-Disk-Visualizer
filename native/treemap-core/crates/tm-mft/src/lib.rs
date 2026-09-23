@@ -44,6 +44,6 @@ pub use record::{
 pub use runs::{ExtentError, MftExtent, MftExtents, decode_runs};
 pub use tree::{BuildError, RecordTable, build_tree, collate, with_root_name};
 pub use volume::{Chunk, Geometry, MAX_CHUNK_BYTES, Volume, VolumeFacts, plan_chunks, read_mft};
-#[cfg(windows)]
-pub use win32::read_volume;
 pub use win32::{OpenedVolume, RootIdentity, VolumeApi, VolumeInformation, read_volume_with};
+#[cfg(windows)]
+pub use win32::{read_volume, system_directory};

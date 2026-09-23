@@ -277,12 +277,12 @@ const _: () = {
 
 #[cfg(windows)]
 mod os {
-    use std::ffi::c_void;
+    use std::ffi::{OsString, c_void};
     use std::fs::{File, OpenOptions};
-    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::os::windows::fs::{FileExt, OpenOptionsExt};
     use std::os::windows::io::AsRawHandle;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::ptr;
 
     use tm_walk::WalkOutput;
@@ -294,6 +294,7 @@ mod os {
     };
     use windows_sys::Win32::System::IO::DeviceIoControl;
     use windows_sys::Win32::System::Ioctl::FSCTL_GET_NTFS_VOLUME_DATA;
+    use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
 
     use super::{
         IO_ALIGN, OpenedVolume, RootIdentity, VolumeApi, VolumeInformation, aligned_window,
@@ -523,7 +524,29 @@ mod os {
     pub fn read_volume(root: &Path, want_atime: bool) -> Result<WalkOutput, MftError> {
         read_volume_with(&WindowsApi, root, want_atime)
     }
+
+    /// Windows' system folder as the kernel reports it (`GetSystemDirectoryW`),
+    /// or `None` if it does not answer. The app starts PowerShell from it by
+    /// its full path: never by a name, which Windows would look up in the
+    /// app's own folder first, and never from `SystemRoot` or `windir`, which
+    /// a program running as the user can shadow in `HKCU\Environment` (the
+    /// third security review of M6).
+    pub fn system_directory() -> Option<PathBuf> {
+        let mut units = vec![0_u16; LONG_PATH_UNITS];
+        // SAFETY: `units` is writable for `len_u32(&units)` UTF-16 units; the
+        // call writes at most that many, its NUL included, and returns how
+        // many it wrote without the NUL — or, for a buffer too small, the
+        // size it needs, and 0 on failure — so a return below the length is
+        // the written prefix.
+        let written = unsafe { GetSystemDirectoryW(units.as_mut_ptr(), len_u32(&units)) };
+        let written = usize::try_from(written).ok()?;
+        if written == 0 || written >= units.len() {
+            return None;
+        }
+        units.truncate(written);
+        Some(PathBuf::from(OsString::from_wide(&units)))
+    }
 }
 
 #[cfg(windows)]
-pub use os::read_volume;
+pub use os::{read_volume, system_directory};

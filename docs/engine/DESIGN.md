@@ -412,7 +412,18 @@ fixed, as built:
    scans could raise until someone clicked yes (the security review of M6),
    and a reset through Settings would have been one anything that reaches
    the API could repeat (its second review). Both are rules, not failures
-   (`src/services/scan/mftPrompt.ts`).
+   (`src/services/scan/mftPrompt.ts`). Nothing a program running as the user
+   could have changed is started as administrator (its third review):
+   PowerShell by its full path under the system folder the kernel reports
+   (`systemDirectory`, `GetSystemDirectoryW` — never by name, which Windows
+   looks up in the app's own folder first, nor from `SystemRoot`/`windir`,
+   which `HKCU\Environment` can shadow), started in that folder; the helper
+   only where this user can neither add a file to its folder nor change it
+   (`elevationRefusal`: tried, never inferred, before anyone is asked) — so an
+   install for anyone who uses the computer (Program Files), not one "only for
+   me" or a portable copy, which fall back with that reason; and, last thing
+   before `Start-Process`, the script refuses a helper or folder whose owner is
+   not Administrators, SYSTEM or TrustedInstaller, by security identifier.
 2. **Read-only by construction (W6-2).** The helper
    (`crates/tm-mft-helper`) takes `<volume> <root> <output file>`; it checks
    that the volume is a drive letter, that the root is an absolute folder

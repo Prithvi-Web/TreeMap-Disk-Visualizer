@@ -12,11 +12,13 @@
  *      (src/services/scan/native.ts) refuses a module whose version() is not
  *      nativeVersion, so a drift is caught here, before a module is built that
  *      would only be refused at run time;
- *   2. `cargo build --release -p tm-node` in the workspace, with cargo's own
- *      output on this terminal;
+ *   2. `cargo build --release -p tm-node` in the workspace — on Windows with
+ *      `-p tm-mft-helper` too, the NTFS turbo mode's elevated helper — with
+ *      cargo's own output on this terminal;
  *   3. the library cargo wrote (libtm_node.dylib / libtm_node.so / tm_node.dll)
- *      is copied to native/prebuilt/<platform>-<arch>/treemap_core.node and
- *      VERSION is written beside it;
+ *      is copied to native/prebuilt/<platform>-<arch>/treemap_core.node, the
+ *      Windows helper to tm-mft-helper.exe beside it, and VERSION is written
+ *      beside them;
  *   4. the module's path is printed on stdout, as the last line; everything
  *      else this script says goes to stderr.
  *
@@ -43,6 +45,19 @@ function libraryFileName(platform) {
   const name = LIBRARY_BY_PLATFORM[platform];
   if (!name) throw new Error(`build-native: no native build for platform "${platform}" (the workspace builds for darwin, linux and win32)`);
   return name;
+}
+
+/**
+ * The executables built and installed beside the module, per platform. The
+ * NTFS turbo mode's elevated helper (W6, M6) exists for Windows only; the app
+ * looks for it beside the module first (mftHelperCandidates in
+ * src/services/scan/nativeEngine.ts), and the release bundles native/prebuilt
+ * whole, unpacked from the asar.
+ */
+const HELPERS_BY_PLATFORM = { win32: [{ crate: 'tm-mft-helper', file: 'tm-mft-helper.exe' }] };
+
+function helpersFor(platform) {
+  return HELPERS_BY_PLATFORM[platform] ?? [];
 }
 
 function prebuiltDir(repo, platform, arch) {
@@ -103,7 +118,8 @@ function main() {
     process.exit(1);
   }
 
-  const args = ['build', '--release', '-p', CRATE];
+  const helpers = helpersFor(process.platform);
+  const args = ['build', '--release', '-p', CRATE, ...helpers.flatMap((h) => ['-p', h.crate])];
   console.error(`build-native: cargo ${args.join(' ')} in ${WORKSPACE}`);
   const r = spawnSync('cargo', args, { cwd: WORKSPACE, stdio: 'inherit' });
   if (r.error && r.error.code === 'ENOENT') {
@@ -119,18 +135,27 @@ function main() {
     process.exit(r.status || 1);
   }
 
-  const src = path.join(targetDir(process.env, WORKSPACE), 'release', library);
-  if (!fs.existsSync(src)) {
-    console.error(`build-native: cargo finished but ${src} does not exist`);
-    process.exit(1);
-  }
+  // Every file is checked before any is installed, so a build that made the
+  // module but not a helper never leaves a new module beside an old helper.
+  const release = path.join(targetDir(process.env, WORKSPACE), 'release');
   const dir = prebuiltDir(REPO, process.platform, process.arch);
+  const installs = [
+    { src: path.join(release, library), dest: path.join(dir, MODULE_FILE) },
+    ...helpers.map((h) => ({ src: path.join(release, h.file), dest: path.join(dir, h.file) })),
+  ];
+  for (const { src } of installs) {
+    if (!fs.existsSync(src)) {
+      console.error(`build-native: cargo finished but ${src} does not exist; nothing was copied`);
+      process.exit(1);
+    }
+  }
   fs.mkdirSync(dir, { recursive: true });
-  const dest = path.join(dir, MODULE_FILE);
-  installModule(src, dest);
+  for (const { src, dest } of installs) installModule(src, dest);
+  const [moduleDest, ...helperDests] = installs.map((i) => i.dest);
   fs.writeFileSync(path.join(dir, VERSION_FILE), `${pkg.nativeVersion}\n`);
-  console.error(`build-native: native version ${pkg.nativeVersion}, ${fs.statSync(dest).size} bytes`);
-  console.log(dest);
+  for (const dest of helperDests) console.error(`build-native: ${path.basename(dest)}, ${fs.statSync(dest).size} bytes`);
+  console.error(`build-native: native version ${pkg.nativeVersion}, ${fs.statSync(moduleDest).size} bytes`);
+  console.log(moduleDest);
 }
 
 /**
@@ -157,5 +182,5 @@ function installModule(src, dest) {
 if (require.main === module) {
   main();
 } else {
-  module.exports = { libraryFileName, prebuiltDir, targetDir, workspaceVersion, versionHandshake, cargoMissingHint, installModule };
+  module.exports = { libraryFileName, prebuiltDir, targetDir, workspaceVersion, versionHandshake, cargoMissingHint, installModule, helpersFor };
 }
