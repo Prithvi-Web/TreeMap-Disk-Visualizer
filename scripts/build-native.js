@@ -161,7 +161,8 @@ function runCargo(args) {
  * failed behind it. A module that fails to build, or was not written, installs
  * nothing; a helper that fails either way is left out, the module is
  * installed, and the result still fails (exit 1) so the error is seen. Every
- * file that built is then installed together (installAll). Runs nothing
+ * file that built is then installed together (installAll); an install that
+ * fails part-way still reports what it installed. Runs nothing
  * itself: `runCargo(args)` answers `{ ok }` or `{ ok: false, code, message }`,
  * `exists(file)` and `install(installs)` are the file system's.
  * @returns {{ code: number, messages: string[], installed: string[] }}
@@ -185,7 +186,9 @@ function buildAndInstall({ library, helpers, release, dir, runCargo, exists, ins
   try {
     install(installs);
   } catch (err) {
-    return { code: 1, messages: [err.message], installed: [] };
+    // A rename that failed after another stood (installAll) says which: the
+    // module among them was replaced, so VERSION must be written beside it.
+    return { code: 1, messages: [err.message], installed: Array.isArray(err.installed) ? err.installed : [] };
   }
   const installed = installs.map((i) => i.dest);
   if (failed.length === 0) return { code: 0, messages: [], installed };
@@ -218,7 +221,8 @@ function installModule(src, dest) {
  * each renamed over its destination. A rename is not undone, so one that
  * fails after another succeeded (the file held open by a running TreeMap or
  * an antivirus scan) throws naming what was installed and what was not,
- * with the temporaries it left removed.
+ * with the temporaries it left removed; the error's `installed` holds the
+ * destinations installed before it.
  */
 function installAll(installs) {
   const staged = [];
@@ -236,13 +240,17 @@ function installAll(installs) {
   staged.forEach(({ tmp, dest }, i) => {
     try {
       fs.renameSync(tmp, dest);
-      installed.push(path.basename(dest));
+      installed.push(dest);
     } catch (err) {
       const left = staged.slice(i);
       for (const rest of left) fs.rmSync(rest.tmp, { force: true });
-      throw new Error(
-        `build-native: installing ${path.basename(dest)} failed (${err.message}); installed: ${installed.join(', ') || 'nothing'}; ` +
-          `not installed: ${left.map((rest) => path.basename(rest.dest)).join(', ')} — close whatever is using them and run npm run build:native again`,
+      const named = installed.map((done) => path.basename(done)).join(', ') || 'nothing';
+      throw Object.assign(
+        new Error(
+          `build-native: installing ${path.basename(dest)} failed (${err.message}); installed: ${named}; ` +
+            `not installed: ${left.map((rest) => path.basename(rest.dest)).join(', ')} — close whatever is using them and run npm run build:native again`,
+        ),
+        { installed },
       );
     }
   });

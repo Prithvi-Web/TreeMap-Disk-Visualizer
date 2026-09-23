@@ -115,7 +115,12 @@ test('a rename that fails after another succeeded names what was installed and w
     fs.writeFileSync(path.join(helperDest, 'in-use'), 'x'); // a non-empty folder where the helper goes: its rename fails
     assert.throws(
       () => helpers.installAll([{ src: moduleSrc, dest: moduleDest }, { src: helperSrc, dest: helperDest }]),
-      /installing tm-mft-helper\.exe failed .*; installed: treemap_core\.node; not installed: tm-mft-helper\.exe/,
+      (err: Error & { installed?: string[] }) => {
+        assert.match(err.message, /installing tm-mft-helper\.exe failed .*; installed: treemap_core\.node; not installed: tm-mft-helper\.exe/);
+        // Carried, not only named: the caller writes VERSION beside a module it replaced.
+        assert.deepEqual(err.installed, [moduleDest]);
+        return true;
+      },
     );
     assert.equal(fs.readFileSync(moduleDest, 'utf8'), 'new module', 'the rename before it stands, and is named');
     assert.deepEqual(fs.readdirSync(dir).filter((name) => name.endsWith('.tmp')), [], 'no temporary is left');
@@ -162,6 +167,22 @@ test('a helper that fails to build costs only itself: the module is installed, a
   assert.deepEqual(installs, [[MODULE_INSTALL]], 'the module is installed all the same');
   assert.match(r.messages.join('\n'), /the module was installed, but tm-mft-helper did not build/);
   assert.match(r.messages.join('\n'), /cargo exited 101/);
+});
+
+test('an install that fails part-way reports what it installed, so VERSION is written beside a replaced module', () => {
+  // The pre-landing review of 23 Sep 2026: the module's rename had stood, a
+  // helper's failed, and the result said nothing was installed — so VERSION
+  // was left naming the module that had just been replaced.
+  const build = (install: (i: { src: string; dest: string }[]) => void) =>
+    helpers.buildAndInstall({ library: 'tm_node.dll', helpers: [HELPER], release: RELEASE, dir: PREBUILT, runCargo: fakeCargo().runCargo, exists: () => true, install });
+  const partial = Object.assign(new Error('build-native: installing tm-mft-helper.exe failed (EBUSY); installed: treemap_core.node; not installed: tm-mft-helper.exe'), { installed: [MODULE_INSTALL.dest] });
+  const r = build(() => { throw partial; });
+  assert.equal(r.code, 1, 'the run still fails, so the error is seen');
+  assert.deepEqual(r.messages, [partial.message]);
+  assert.deepEqual(r.installed, [MODULE_INSTALL.dest]);
+  const none = build(() => { throw new Error('build-native: copying the built files failed, so none was installed: ENOSPC'); });
+  assert.equal(none.code, 1);
+  assert.deepEqual(none.installed, [], 'an error that installed nothing says so');
 });
 
 test('a module that fails to build installs nothing and builds no helper', () => {
