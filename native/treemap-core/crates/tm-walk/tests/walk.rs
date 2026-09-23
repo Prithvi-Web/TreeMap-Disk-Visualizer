@@ -76,10 +76,12 @@ enum Special {
     /// Sleeps this long first, whatever the walk's signals say: the shape of
     /// a listing loop that does not read them.
     Sleep(Duration),
-    /// Answers after `batches` batches `each` apart, beating after every
-    /// batch and returning `Unreadable` as soon as the stop flag is set: the
-    /// shape of a platform loop that honours the walk's signals.
-    Batches { batches: u32, each: Duration },
+    /// Beats every `each` and never answers on its own: it returns
+    /// `Unreadable` once the stop flag is set, the shape of a platform loop
+    /// that honours the walk's signals. Only a stop ends it, so a test needs
+    /// no clock to tell a cancel that reached the listing from one that did
+    /// not: the second never returns.
+    UntilStopped { each: Duration },
 }
 
 /// A scripted tree: every directory's listing (or its refusal), a per-listing
@@ -202,15 +204,13 @@ impl FakeTree {
     fn answer(&self, dir: &Path, buf: &mut ListBuffer) -> Result<FastPath, Refusal> {
         match self.specials.get(dir) {
             Some(Special::Sleep(for_how_long)) => thread::sleep(*for_how_long),
-            Some(Special::Batches { batches, each }) => {
-                for _ in 0..*batches {
-                    thread::sleep(*each);
-                    buf.beat();
-                    if buf.stopped() {
-                        return Err(Refusal::Unreadable);
-                    }
+            Some(Special::UntilStopped { each }) => loop {
+                thread::sleep(*each);
+                buf.beat();
+                if buf.stopped() {
+                    return Err(Refusal::Unreadable);
                 }
-            }
+            },
             Some(Special::Panic(_)) | None => {}
         }
         if !self.delay.is_zero() {
@@ -1411,8 +1411,7 @@ fn cancel_stops_a_listing_between_its_batches_and_the_heartbeat_advances_meanwhi
     let huge = tree.add_dir("", "huge");
     tree.special(
         &huge,
-        Special::Batches {
-            batches: 50,
+        Special::UntilStopped {
             each: Duration::from_millis(20),
         },
     );
@@ -1430,12 +1429,12 @@ fn cancel_stops_a_listing_between_its_batches_and_the_heartbeat_advances_meanwhi
     }
     assert!(
         !handle.progress().done,
-        "a one-second listing is still going"
+        "a listing only a stop can end is still going"
     );
     handle.cancel();
-    // The listing has 50 batches of 20 ms left at most; a cancel that reaches
-    // it between batches returns long before the second it would take.
-    match take_within(handle, Duration::from_millis(300))? {
+    // Only a cancel that reaches the listing between two batches ends it, so
+    // the wait is generous: a slow machine takes longer, never a wrong answer.
+    match take_within(handle, SETTLE)? {
         Err(WalkError::Cancelled) => Ok(()),
         other => Err(format!("expected Cancelled, got {other:?}")),
     }
@@ -1451,8 +1450,7 @@ fn a_cancel_that_interrupts_the_roots_own_listing_is_a_cancel_not_a_refused_root
     let mut tree = FakeTree::new("/fake");
     tree.special(
         "",
-        Special::Batches {
-            batches: 50,
+        Special::UntilStopped {
             each: Duration::from_millis(20),
         },
     );
@@ -1463,7 +1461,7 @@ fn a_cancel_that_interrupts_the_roots_own_listing_is_a_cancel_not_a_refused_root
         return Err("the root's listing never started".to_owned());
     }
     handle.cancel();
-    match take_within(handle, Duration::from_millis(300))? {
+    match take_within(handle, SETTLE)? {
         Err(WalkError::Cancelled) => Ok(()),
         other => Err(format!("expected Cancelled, got {other:?}")),
     }
