@@ -23,6 +23,7 @@ import { scoreClusters, type ImageManifest } from './images';
 import { describeMachine, type MachineRecord } from './machine';
 import type { EngineChoice, WorkerJob, WorkerResult, WorkerSuccess } from './measureWorker';
 import { summarize, type BenchBudget, type BenchResult, type BenchRun, type EntriesUnit, type RequestedBudget, type ScanPreset, type SuiteName } from './report';
+import { PROBE_BINARY_ENV, PROBE_FAILURE_ENV, probeHandoff } from './rusage';
 import { checkDuplicatesAgainstManifest, checkRunsAgree, checkScanAgainstManifest, type ScanCounts } from './verify';
 
 export type { EngineChoice } from './measureWorker';
@@ -87,12 +88,18 @@ const SETTLE_MS = 500;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const WORKER = path.join(__dirname, 'measureWorker.ts');
 
-/** One measured pass in a fresh process with its own app-data directory; the directory is removed once the child has exited. */
-async function runChild(job: Omit<WorkerJob, 'outFile'>): Promise<WorkerSuccess> {
+/**
+ * One measured pass in a fresh process with its own app-data directory; the
+ * directory is removed once the child has exited. `probe` is this process's
+ * usage-probe hand-off (`probeHandoff()`): it replaces whatever probe
+ * variables this process inherited, so the child runs exactly the harness's.
+ */
+async function runChild(job: Omit<WorkerJob, 'outFile'>, probe: Readonly<Record<string, string>>): Promise<WorkerSuccess> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-data-'));
   const jobFile = path.join(dataDir, 'job.json');
   const outFile = path.join(dataDir, 'result.json');
-  const env: NodeJS.ProcessEnv = { ...process.env, TREEMAP_DATA_DIR: dataDir };
+  const { [PROBE_BINARY_ENV]: _inheritedBinary, [PROBE_FAILURE_ENV]: _inheritedFailure, ...inherited } = process.env;
+  const env: NodeJS.ProcessEnv = { ...inherited, ...probe, TREEMAP_DATA_DIR: dataDir };
   if (job.engine === 'walker') env.TREEMAP_NO_GDU = '1';
   else delete env.TREEMAP_NO_GDU;
   // The engine is forced through the app's own setting in the child's private
@@ -122,6 +129,22 @@ async function runChild(job: Omit<WorkerJob, 'outFile'>): Promise<WorkerSuccess>
   }
 }
 
+/**
+ * A child that compiled the usage probe did foreign work just before its
+ * timed window (rusage.ts says what that did and did not measure). One that
+ * ran a probe other than the harness's did not get the hand-off. Either is a
+ * harness fault, refused rather than kept.
+ */
+function assertProbeHandedOver(probe: Readonly<Record<string, string>>, result: WorkerSuccess): void {
+  if (result.probe.builds > 0) {
+    throw new Error(`the measuring process compiled the usage probe itself (${result.probe.builds} time(s)) right before its timed window; the harness builds it once, before the warm-up, so no child does foreign work inside a measured run`);
+  }
+  const binary = probe[PROBE_BINARY_ENV];
+  if (binary !== undefined && result.probe.location !== binary) {
+    throw new Error(`the measuring process ran the usage probe at ${result.probe.location ?? 'nowhere'}, not the one the harness built (${binary})`);
+  }
+}
+
 function assertRequestedEngine(requested: EngineChoice, actual: string): void {
   const mismatch = (requested === 'native' && actual !== 'native')
     || (requested === 'gdu' && actual !== 'gdu-turbo')
@@ -144,6 +167,7 @@ interface Series {
 }
 
 /**
+ * The usage probe is built first (once per invocation), then:
  * Warm: one un-measured pass first, then the label the vnode rule allows.
  * Cold: the purge procedure before EVERY measured pass; one failure and the
  * whole series is `unknown`, naming the runs that were not purged.
@@ -155,10 +179,13 @@ async function series(job: Omit<WorkerJob, 'outFile'>, opts: CommonOptions & { e
   const runs: BenchRun[] = [];
   const results: WorkerSuccess[] = [];
   const failedPurges: Array<{ run: number; result: PurgeResult }> = [];
+  // The usage probe is built here, once per invocation (later series reuse it) and before the warm-up, so whatever its compile disturbs is behind the warm-up pass.
+  const probe = probeHandoff();
 
   let warmedUp = false;
   if (requested === 'warm') {
-    const warm = await runChild(job);
+    const warm = await runChild(job, probe);
+    assertProbeHandedOver(probe, warm);
     if (opts.engine) assertRequestedEngine(opts.engine, warm.engine);
     assertRequestedBudget(requestedBudget, warm.budget);
     warmedUp = true;
@@ -169,7 +196,8 @@ async function series(job: Omit<WorkerJob, 'outFile'>, opts: CommonOptions & { e
       const result = await purge();
       if (!result.ok) failedPurges.push({ run: i + 1, result });
     }
-    const result = await runChild(job);
+    const result = await runChild(job, probe);
+    assertProbeHandedOver(probe, result);
     if (opts.engine) assertRequestedEngine(opts.engine, result.engine);
     assertRequestedBudget(requestedBudget, result.budget);
     if (result.engine === 'gdu-turbo') {
@@ -262,7 +290,9 @@ export async function runDuplicates(opts: DuplicatesOptions): Promise<BenchResul
       ` ${check.falsePositives} false positives by byte comparison; ${check.sharedStorageGroups} hard-link families reported; ${check.missedGroups} missed`;
     notes.push(line, ...check.notes.map((n) => `run ${i + 1}: ${n}`));
   });
-  return build('duplicates', 'sha256-staged', 'files', { name: opts.corpusName, params: opts.manifest.params, dirs: opts.manifest.dirs, files: opts.manifest.files, scale: `${opts.manifest.files.toLocaleString('en-US')} files, ${(opts.manifest.logicalBytes / 1e9).toFixed(2)} GB logical — the prompt's corpus is 1M files / 500 GB` }, machine, s, { ok, notes }, opts.label);
+  const result = build('duplicates', 'sha256-staged', 'files', { name: opts.corpusName, params: opts.manifest.params, dirs: opts.manifest.dirs, files: opts.manifest.files, scale: `${opts.manifest.files.toLocaleString('en-US')} files, ${(opts.manifest.logicalBytes / 1e9).toFixed(2)} GB logical — the prompt's corpus is 1M files / 500 GB` }, machine, s, { ok, notes }, opts.label);
+  // The size floor decides which files are hashed at all: a condition of every comparison (report.ts).
+  return { ...result, minSize: opts.minSize };
 }
 
 export async function runNearDup(opts: NearDupOptions): Promise<BenchResult> {
@@ -288,5 +318,7 @@ export async function runNearDup(opts: NearDupOptions): Promise<BenchResult> {
       `run ${i + 1}: precision ${score.precision.toFixed(4)} over ${score.pairs} same-cluster pairs (the bar is ${NEAR_DUP_PRECISION_FLOOR}); recall by transform: ${recallLines.join(', ')}`,
     );
   });
-  return build('neardup', 'dhash-pairwise', 'images', { name: opts.corpusName, params: opts.manifest.params, images, scale: `${images.toLocaleString('en-US')} images — the prompt's corpus is 200k` }, machine, s, { ok, notes }, opts.label);
+  const result = build('neardup', 'dhash-pairwise', 'images', { name: opts.corpusName, params: opts.manifest.params, images, scale: `${images.toLocaleString('en-US')} images — the prompt's corpus is 200k` }, machine, s, { ok, notes }, opts.label);
+  // The threshold decides which pairs join a cluster: a condition of every comparison (report.ts).
+  return { ...result, threshold: opts.threshold };
 }

@@ -19,6 +19,13 @@
  * A job that names a budget preset has it set before the scan with the app's
  * own setter, and every result carries the budget the scan's own record says
  * it ran under — the parent refuses a preset that did not take.
+ *
+ * This process never compiles the macOS usage probe: the parent built it
+ * before the warm-up and names it in the environment (rusage.ts), because a
+ * compile here would be foreign work just before the timed window (see
+ * rusage.ts for what that did and did not measure). Every result says which
+ * probe ran and how many this process compiled, and the parent refuses a
+ * child that compiled one.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -33,7 +40,7 @@ import { settled } from '../../src/utils/backgroundWrites';
 import { applyEngineBudgetSetting } from '../../src/services/engineBudget';
 import { getSettings } from '../../src/services/settings';
 import type { ScanBudget, ScanResult } from '../../src/models/types';
-import { diffUsage, snapshotUsage } from './rusage';
+import { diffUsage, probeBuildCount, probeLocation, snapshotUsage } from './rusage';
 import { SCAN_PRESETS, type BenchRun, type ScanPreset } from './report';
 
 /** Which engine a pass asks for; `native` is the Phase 3 walker and is refused when the build has no module. */
@@ -72,8 +79,12 @@ export interface WorkerSuccess {
   available?: boolean;
   reason?: string;
   truncated?: boolean;
+  /** The usage probe this process ran (`null` where none ran) and how many times it compiled one — 0 when the parent's hand-off took. */
+  probe: { location: string | null; builds: number };
 }
 export interface WorkerFailure { ok: false; error: string }
+/** What a pass measured; the entry point adds the probe it measured with. */
+type MeasuredPass = Omit<WorkerSuccess, 'probe'>;
 export type WorkerResult = WorkerSuccess | WorkerFailure;
 
 /** Tight enough that the wall clock carries no visible polling floor (the app's own waiter polls at 250 ms). */
@@ -137,7 +148,7 @@ async function measured<T>(entries: (value: T) => number, work: () => Promise<T>
   };
 }
 
-async function main(job: WorkerJob): Promise<WorkerSuccess> {
+async function main(job: WorkerJob): Promise<MeasuredPass> {
   if (job.engine === 'gdu') {
     const bin = await findGduBinary(job.gduFind ?? {});
     if (!bin) throw new Error('gdu was requested but no gdu binary is available (bundled, ./gdu, or $PATH); run `npm run fetch:gdu:dev` first');
@@ -221,7 +232,8 @@ if (require.main === module) {
   const job = readJob(process.argv[2]);
   main(job)
     .then((result) => {
-      fs.writeFileSync(job.outFile, JSON.stringify(result));
+      const success: WorkerSuccess = { ...result, probe: { location: probeLocation(), builds: probeBuildCount() } };
+      fs.writeFileSync(job.outFile, JSON.stringify(success));
       cancelAllScans();
       process.exit(0);
     })

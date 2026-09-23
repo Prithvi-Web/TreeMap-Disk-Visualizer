@@ -477,3 +477,111 @@ test('every committed baseline sits where the name rule puts it, and no budgeted
     }
   }
 });
+
+/* -------------- a baseline is never replaced by another condition -------------- */
+
+test('--record refuses to replace a baseline of the same name measured under another condition, names the condition, and leaves the file byte-identical', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-baselines-guard-'));
+  try {
+    const recorded = recordBaseline(result(1000, 2), dir);
+    const before = fs.readFileSync(recorded);
+    // Each of these keeps the file name (the name carries no cache state, corpus parameters, unit, --min-size or --threshold, and slugs fold case), but compare treats each as a condition.
+    const conditions: Array<[string, (r: BenchResult) => void, RegExp]> = [
+      ['cache state', (r) => { r.cache = { state: 'mixed', reason: 'x' }; }, /cache state \(mixed vs warm\)/],
+      ['corpus parameters', (r) => { r.corpus = { ...r.corpus, params: { entries: 1 } }; }, /corpus parameters \(\{"entries":1\} vs \{\}\)/],
+      ['unit', (r) => { r.entriesUnit = 'files'; }, /unit \(files vs entries\)/],
+      ['engine spelled another way', (r) => { r.engine = 'Walker'; }, /engine \(Walker vs walker\)/],
+      ['--min-size', (r) => { r.minSize = 4096; }, /--min-size \(4096 vs not recorded\)/],
+      ['--threshold', (r) => { r.threshold = 12; }, /--threshold \(12 vs not recorded\)/],
+    ];
+    for (const [name, patch, pattern] of conditions) {
+      const next = result(900, 2);
+      patch(next);
+      assert.equal(baselineFileName(next), path.basename(recorded), `${name}: the same file name`);
+      assert.throws(() => recordBaseline(next, dir), (err: unknown) => err instanceof Error && /^refusing to replace /.test(err.message) && pattern.test(err.message), name);
+      assert.ok(fs.readFileSync(recorded).equals(before), `${name}: the recorded baseline is byte-identical`);
+    }
+    const again = recordBaseline(result(900, 2), dir);
+    assert.equal(again, recorded, 'a re-measurement under the same conditions replaces it, as --record always has');
+    assert.equal(readResult(again).summary.wallMsMedian, 900);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--record refuses to replace a file under a baseline name that is not a result it can read', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-baselines-unreadable-'));
+  try {
+    const file = path.join(dir, baselineFileName(result(1000, 2)));
+    fs.writeFileSync(file, 'not a result');
+    assert.throws(() => recordBaseline(result(1000, 2), dir), (err: unknown) => err instanceof Error && /^refusing to replace a baseline this harness cannot read: .*not a bench result/.test(err.message));
+    assert.equal(fs.readFileSync(file, 'utf8'), 'not a result');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/* ------------------- --min-size and --threshold are conditions ------------------- */
+
+function duplicatesAt(wallMs: number, minSize?: number): BenchResult {
+  const r = { ...result(wallMs, 2), suite: 'duplicates' as const, engine: 'sha256-staged', entriesUnit: 'files' as const };
+  return minSize === undefined ? r : { ...r, minSize };
+}
+
+function nearDupAt(wallMs: number, threshold?: number): BenchResult {
+  const r = { ...result(wallMs, 2), suite: 'neardup' as const, engine: 'dhash-pairwise', entriesUnit: 'images' as const };
+  return threshold === undefined ? r : { ...r, threshold };
+}
+
+test('two duplicate results at different --min-size, or one that never recorded its value, are not comparable', () => {
+  const differ = compareToBaseline(duplicatesAt(900, 4096), duplicatesAt(1000, 1024));
+  assert.equal(differ.verdict, 'NOT COMPARABLE', differ.sentence);
+  assert.match(differ.sentence, /--min-size \(4096 vs 1024\)/);
+  const unrecorded = compareToBaseline(duplicatesAt(900, 1024), duplicatesAt(1000));
+  assert.equal(unrecorded.verdict, 'NOT COMPARABLE', unrecorded.sentence);
+  assert.match(unrecorded.sentence, /--min-size \(1024 vs not recorded\)/);
+  assert.equal(compareToBaseline(duplicatesAt(900, 1024), duplicatesAt(1000, 1024)).verdict, 'PASS', 'the same --min-size leaves the verdict to the numbers');
+});
+
+test('two near-duplicate results at different --threshold, or one that never recorded its value, are not comparable', () => {
+  const differ = compareToBaseline(nearDupAt(900, 12), nearDupAt(1000, 10));
+  assert.equal(differ.verdict, 'NOT COMPARABLE', differ.sentence);
+  assert.match(differ.sentence, /--threshold \(12 vs 10\)/);
+  const unrecorded = compareToBaseline(nearDupAt(900), nearDupAt(1000, 10));
+  assert.equal(unrecorded.verdict, 'NOT COMPARABLE', unrecorded.sentence);
+  assert.match(unrecorded.sentence, /--threshold \(not recorded vs 10\)/);
+  assert.equal(compareToBaseline(nearDupAt(900, 10), nearDupAt(1000, 10)).verdict, 'PASS', 'the same --threshold leaves the verdict to the numbers');
+});
+
+test('readResult keeps a recorded --min-size and --threshold and refuses a malformed one', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-report-options-'));
+  try {
+    assert.equal(readResult(writeResult(duplicatesAt(1000, 1024), dir, 'dup.json')).minSize, 1024);
+    assert.equal(readResult(writeResult(nearDupAt(1000, 10), dir, 'near.json')).threshold, 10);
+    const cases: unknown[] = [
+      { ...duplicatesAt(1000), minSize: '1024' },
+      { ...duplicatesAt(1000), minSize: -1 },
+      { ...duplicatesAt(1000), minSize: 1.5 },
+      { ...nearDupAt(1000), threshold: null },
+      { ...nearDupAt(1000), threshold: 'ten' },
+    ];
+    cases.forEach((c, i) => {
+      const file = path.join(dir, `bad-option-${i}.json`);
+      fs.writeFileSync(file, JSON.stringify(c));
+      assert.throws(() => readResult(file), /not a bench result/, `case ${i}`);
+    });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/* --------------------- a tree git could not vouch for --------------------- */
+
+test("--record refuses a result whose tree git could not vouch for, and quotes git's failure", () => {
+  const unverified = result(1000, 2);
+  unverified.machine = { ...unverified.machine, dirty: true, dirtyReason: 'git status failed: fatal: index file smaller than expected' };
+  assert.equal(
+    recordRefusal(unverified),
+    'git could not say whether the working tree was clean (git status failed: fatal: index file smaller than expected), so the commit it cites may not be the code measured',
+  );
+});

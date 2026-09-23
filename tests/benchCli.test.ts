@@ -67,6 +67,22 @@ test('bench compare exits 1 on a regression, 0 on a pass, 2 when inconclusive an
   }
 });
 
+test('bench compare exits 3 when two duplicate results ran at different --min-size, and two near-duplicate results at different --threshold', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-cli-options-'));
+  try {
+    const dup = (wallMs: number, minSize: number): BenchResult => ({ ...fakeResult(wallMs), suite: 'duplicates', engine: 'sha256-staged', entriesUnit: 'files', minSize });
+    const near = (wallMs: number, threshold: number): BenchResult => ({ ...fakeResult(wallMs), suite: 'neardup', engine: 'dhash-pairwise', entriesUnit: 'images', threshold });
+    const sizes = bench('compare', writeResult(dup(700, 4096), dir, 'dup-4096.json'), writeResult(dup(1000, 1024), dir, 'dup-1024.json'));
+    assert.equal(sizes.status, 3, sizes.stdout + sizes.stderr);
+    assert.match(sizes.stdout, /^NOT COMPARABLE: .*--min-size \(4096 vs 1024\)/);
+    const thresholds = bench('compare', writeResult(near(700, 12), dir, 'near-12.json'), writeResult(near(1000, 10), dir, 'near-10.json'));
+    assert.equal(thresholds.status, 3, thresholds.stdout + thresholds.stderr);
+    assert.match(thresholds.stdout, /^NOT COMPARABLE: .*--threshold \(12 vs 10\)/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('an unknown command is refused with a non-zero exit', () => {
   const r = bench('frobnicate');
   assert.equal(r.status, 1);

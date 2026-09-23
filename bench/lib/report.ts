@@ -15,7 +15,8 @@
  *    moment any run could not.
  * 4. Two results are compared only when they describe the same thing — same
  *    suite, corpus, engine, machine tier, platform, architecture, cache
- *    state and budget — and only when both passed their correctness check,
+ *    state, budget, and the duplicate suite's `--min-size` or the
+ *    near-duplicate suite's `--threshold` — and only when both passed their correctness check,
  *    were reproducible and ran under the budget they name. Anything else is
  *    NOT COMPARABLE, never PASS or FAIL.
  * 5. A result read from disk is validated field by field before a number of
@@ -118,6 +119,10 @@ export interface BenchResult {
   recordedAt: string;
   commit: string;
   label: string;
+  /** The duplicate suite's `--min-size` in bytes — which files are hashed at all. Absent on the other suites and on results written before it was recorded. */
+  minSize?: number;
+  /** The near-duplicate suite's `--threshold` — which pairs join a cluster. Absent on the other suites and on results written before it was recorded. */
+  threshold?: number;
 }
 
 /**
@@ -219,6 +224,10 @@ export function describeBudget(r: StoredResult): string {
 /** The budget as a comparison's condition: the preset asked for, or the word for a result from before the governor. */
 const budgetCondition = (r: StoredResult): string => r.budget?.requested ?? PRE_GOVERNOR_BUDGET;
 
+/** How a suite option reads as a condition when the result does not carry it (another suite, or written before it was recorded). */
+export const OPTION_NOT_RECORDED = 'not recorded';
+const optionCondition = (value: number | undefined): string => (value === undefined ? OPTION_NOT_RECORDED : String(value));
+
 /** The fields two results must share before their wall clocks mean the same thing. */
 function comparabilityDifferences(current: StoredResult, baseline: StoredResult): string[] {
   const out: string[] = [];
@@ -235,6 +244,8 @@ function comparabilityDifferences(current: StoredResult, baseline: StoredResult)
   same('architecture', current.machine.arch, baseline.machine.arch);
   same('cache state', current.cache.state, baseline.cache.state);
   same('budget', budgetCondition(current), budgetCondition(baseline));
+  same('--min-size', optionCondition(current.minSize), optionCondition(baseline.minSize));
+  same('--threshold', optionCondition(current.threshold), optionCondition(baseline.threshold));
   return out;
 }
 
@@ -251,7 +262,11 @@ export function recordRefusal(r: BenchResult): string | null {
   }
   const moved = budgetMoved(r.budget);
   if (moved) return `its budget moved: ${moved}`;
-  if (r.machine.dirty) return 'the working tree had uncommitted changes, so the commit it cites is not the code measured';
+  if (r.machine.dirty) {
+    return r.machine.dirtyReason === undefined
+      ? 'the working tree had uncommitted changes, so the commit it cites is not the code measured'
+      : `git could not say whether the working tree was clean (${r.machine.dirtyReason}), so the commit it cites may not be the code measured`;
+  }
   return null;
 }
 
@@ -377,6 +392,13 @@ export function resultFileName(r: StoredResult): string {
  * name: a recording under a budget never replaces a baseline from before it.
  * `budget-` spells out which field the word is, because engine ids carry
  * `turbo` too (`gdu-turbo`, `turbo-walker`).
+ *
+ * The name does not carry every condition a comparison keys on — not the
+ * cache state, the corpus parameters, `--min-size` or `--threshold`, and a
+ * slug folds case — so two differently measured results can share a name.
+ * Adding the cache state would move every budgeted baseline already
+ * committed; `recordBaseline` refuses to replace a baseline measured under
+ * another condition instead.
  */
 export function baselineFileName(r: StoredResult): string {
   const stem = `${r.suite}-${slug(r.engine)}-${slug(r.corpus.name)}-${slug(r.machine.platform)}-${slug(r.machine.arch)}-tier${r.machine.tier}`;
@@ -390,13 +412,51 @@ export function writeResult(r: StoredResult, dir: string, fileName = resultFileN
   return file;
 }
 
-/** `--record`'s one write: the result under its baseline name in `dir` (bench/baselines/ from the CLI). Returns the file written. */
+/** Why `recordBaseline` would not replace the baseline already under the name; the message is the sentence printed. */
+export class BaselineConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BaselineConflictError';
+  }
+}
+
+/**
+ * Why the file under this result's baseline name must not be replaced by it,
+ * or null when it may: a baseline measured under any condition a comparison
+ * keys on other than this result's would silently change what every later
+ * comparison against it measures, and a file this harness cannot read is not
+ * replaced unseen.
+ */
+function baselineConflict(r: StoredResult, file: string): string | null {
+  if (!fs.existsSync(file)) return null;
+  let recorded: StoredResult;
+  try {
+    recorded = readResult(file);
+  } catch (err: unknown) {
+    return `refusing to replace a baseline this harness cannot read: ${err instanceof Error ? err.message : String(err)}; move it aside first if it is meant to go`;
+  }
+  const differences = comparabilityDifferences(r, recorded);
+  if (differences.length === 0) return null;
+  return `refusing to replace ${file}: this result and the baseline recorded there differ in ${differences.join('; ')} (this result's first), so the replacement would silently change what every comparison against it measures; move the old baseline aside first if that change is meant`;
+}
+
+/**
+ * `--record`'s one write: the result under its baseline name in `dir`
+ * (bench/baselines/ from the CLI). Returns the file written. Throws
+ * `BaselineConflictError` rather than replace a baseline measured under
+ * another condition; the same conditions re-measured replace it.
+ */
 export function recordBaseline(r: StoredResult, dir: string): string {
-  return writeResult(r, dir, baselineFileName(r));
+  const fileName = baselineFileName(r);
+  const conflict = baselineConflict(r, path.join(dir, fileName));
+  if (conflict !== null) throw new BaselineConflictError(conflict);
+  return writeResult(r, dir, fileName);
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 const isNumberOrNull = (v: unknown): boolean => v === null || (typeof v === 'number' && Number.isFinite(v));
+/** A suite option is absent, or a whole number no smaller than zero. */
+const isOptionalCount = (v: unknown): boolean => v === undefined || (typeof v === 'number' && Number.isInteger(v) && v >= 0);
 
 /** Field-by-field: every number a comparison or a table reads must exist and be a finite number of the right sign. */
 export function isBenchResult(value: unknown): value is StoredResult {
@@ -416,6 +476,7 @@ export function isBenchResult(value: unknown): value is StoredResult {
     if (!Array.isArray(b.effective) || b.effective.length !== v.runs.length || !b.effective.every((p) => typeof p === 'string')) return false;
   }
   if (!isRecord(v.correctness) || typeof v.correctness.ok !== 'boolean' || !Array.isArray(v.correctness.notes)) return false;
+  if (!isOptionalCount(v.minSize) || !isOptionalCount(v.threshold)) return false;
   if (!isRecord(v.summary)) return false;
   const s = v.summary;
   if (typeof s.wallMsMedian !== 'number' || !Number.isFinite(s.wallMsMedian) || s.wallMsMedian < 0) return false;

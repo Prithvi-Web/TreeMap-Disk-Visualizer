@@ -173,8 +173,15 @@ async function main(): Promise<void> {
         process.stdout.write(`  NOT RECORDED as a baseline: ${refusal}\n`);
         process.exitCode = 1;
       } else {
-        const b = report.recordBaseline(r, BASELINES_DIR);
-        process.stdout.write(`  baseline: ${path.relative(REPO, b)}\n`);
+        try {
+          const b = report.recordBaseline(r, BASELINES_DIR);
+          process.stdout.write(`  baseline: ${path.relative(REPO, b)}\n`);
+        } catch (err: unknown) {
+          // A baseline measured under other conditions is refused like any other refusal; anything else is a real failure.
+          if (!(err instanceof report.BaselineConflictError)) throw err;
+          process.stdout.write(`  NOT RECORDED as a baseline: ${err.message}\n`);
+          process.exitCode = 1;
+        }
       }
     }
   };

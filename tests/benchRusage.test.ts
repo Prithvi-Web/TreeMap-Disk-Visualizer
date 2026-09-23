@@ -2,9 +2,10 @@ import { test } from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { describeMachine } from '../bench/lib/machine';
-import { snapshotUsage, diffUsage } from '../bench/lib/rusage';
+import { snapshotUsage, diffUsage, probeLocation } from '../bench/lib/rusage';
 
 /**
  * The benchmark harness records every number with the conditions it was taken
@@ -74,7 +75,8 @@ test('the machine record carries the architecture and says whether the tree was 
   const m = await describeMachine();
   assert.equal(m.arch, process.arch);
   assert.equal(typeof m.dirty, 'boolean');
-  if (m.dirty) assert.match(m.commit, /-dirty$/);
+  // A commit git could not name stays `unknown`: there is no hash to mark (tests/benchMachine.test.ts).
+  if (m.dirty && m.commit !== 'unknown') assert.match(m.commit, /-dirty$/);
   if (process.platform === 'win32') assert.equal(m.loadAvg, null);
 });
 
@@ -88,6 +90,73 @@ test('the probe is compiled into a private per-process directory, never a shared
   assert.ok(/treemap-bench-probe-[A-Za-z0-9]{6}/.test(loc!), `mkdtemp-style directory: ${loc}`);
   const mode = fs.statSync(path.dirname(loc!)).mode & 0o777;
   assert.equal(mode, 0o700, 'owner-only directory');
+});
+
+/* ------------- the probe hand-off: no measuring process compiles ------------- */
+
+const RUSAGE_MODULE = path.join(__dirname, '..', 'bench', 'lib', 'rusage.ts');
+const TSX_CLI = path.join(path.dirname(require.resolve('tsx/package.json')), 'dist', 'cli.mjs');
+
+interface ChildProbe { location: string | null; builds: number | null; bytesRead: number | null; bytesReadReason: string }
+
+/**
+ * One usage snapshot in a fresh process — what a measuring child takes just
+ * before its timed window — reporting which probe it ran and how many it
+ * compiled (`builds` is null where the module has no build counter).
+ */
+function snapshotInFreshProcess(env: NodeJS.ProcessEnv): ChildProbe {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-rusage-child-'));
+  try {
+    const script = path.join(dir, 'snapshot.ts');
+    fs.writeFileSync(script, [
+      `import * as rusage from ${JSON.stringify(RUSAGE_MODULE)};`,
+      'const counter = (rusage as unknown as { probeBuildCount?: () => number }).probeBuildCount;',
+      'void rusage.snapshotUsage().then((s) => {',
+      '  process.stdout.write(JSON.stringify({ location: rusage.probeLocation(), builds: counter ? counter() : null, bytesRead: s.bytesRead, bytesReadReason: s.bytesReadReason }));',
+      '});',
+    ].join('\n'));
+    const r = spawnSync(process.execPath, [TSX_CLI, script], { encoding: 'utf8', env, timeout: 120_000 });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout) as ChildProbe;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** This process's environment without the hand-off variables: a child started with it is a standalone run. */
+function standaloneEnv(): NodeJS.ProcessEnv {
+  const { TREEMAP_BENCH_PROBE: _binary, TREEMAP_BENCH_PROBE_FAILURE: _failure, ...rest } = process.env;
+  return rest;
+}
+
+test("a measuring process handed the harness's probe runs that binary and compiles none", async () => {
+  if (process.platform !== 'darwin') return;
+  await snapshotUsage();
+  const harnessProbe = probeLocation();
+  assert.ok(harnessProbe, 'this process built a probe to hand over');
+  const child = snapshotInFreshProcess({ ...standaloneEnv(), TREEMAP_BENCH_PROBE: harnessProbe });
+  assert.equal(child.location, harnessProbe, 'the child ran the probe it was handed, not one it compiled');
+  assert.equal(child.builds, 0, 'the child ran no compiler');
+  assert.equal(typeof child.bytesRead, 'number', child.bytesReadReason);
+  assert.ok(fs.existsSync(harnessProbe), "the child left the harness's probe in place when it exited");
+});
+
+test('a measuring process handed a failed build reports that reason, reads no bytes, and compiles nothing', () => {
+  if (process.platform !== 'darwin') return;
+  const reason = "compiling bench/probes/darwin-rusage.c failed: a stand-in for the harness's own failure";
+  const child = snapshotInFreshProcess({ ...standaloneEnv(), TREEMAP_BENCH_PROBE_FAILURE: reason });
+  assert.equal(child.bytesRead, null);
+  assert.equal(child.bytesReadReason, reason, 'the failure is reported as the build reported it, never silently');
+  assert.equal(child.location, null);
+  assert.equal(child.builds, 0);
+});
+
+test('with nothing handed over, a process builds its own probe, as a standalone run always has', () => {
+  if (process.platform !== 'darwin') return;
+  const child = snapshotInFreshProcess(standaloneEnv());
+  assert.match(child.location ?? '', /treemap-bench-probe-[A-Za-z0-9]{6}/);
+  assert.equal(child.builds, 1);
+  assert.equal(typeof child.bytesRead, 'number', child.bytesReadReason);
 });
 
 test('a tree is dirty when tracked code changed, not when a baseline the harness itself just recorded is untracked', async () => {

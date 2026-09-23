@@ -11,9 +11,8 @@
  * Sources:
  *   - CPU seconds and peak RSS: `process.resourceUsage()` — user + system CPU
  *     in microseconds; `maxRSS` in KiB on macOS and Linux, bytes on Windows.
- *   - Bytes read: macOS compiles `bench/probes/darwin-rusage.c` once per
- *     process into `os.tmpdir()/treemap-bench/probes/` (rebuilt when the
- *     source is newer than the binary) and asks the kernel for
+ *   - Bytes read: macOS compiles `bench/probes/darwin-rusage.c` into a
+ *     private `mkdtemp` directory and asks the kernel for
  *     `proc_pid_rusage(RUSAGE_INFO_V4).ri_diskio_bytesread`: bytes this task
  *     physically read from the device — page-cache hits and children's I/O do
  *     not count. Linux reads `read_bytes` from `/proc/self/io`, which means
@@ -23,6 +22,19 @@
  *   - Children's CPU: the probe's `ri_child_*_time` on macOS and
  *     `cutime + cstime` from `/proc/self/stat` on Linux — both accumulate only
  *     as children are reaped; `null` on Windows.
+ *
+ * The compile happens once per bench invocation, in the harness process,
+ * before the first warm-up pass (`probeHandoff()`, called by suites.ts), and
+ * never in a measuring child: a compile (clang, thousands of SDK header
+ * reads) is foreign work that has no place between the warm-up and a timed
+ * scan. It was suspected of evicting the corpus's metadata and slowing
+ * enum200k by ~100 ms; an A/B on 23 Sep 2026 found no such effect (native,
+ * Turbo, warm: 625.9 ms with the compile in every child, 646.9 with no probe
+ * at all, 650.8 with this hand-off), so the hand-off is a rule of method, not
+ * the explanation of any number. The harness names the binary — or
+ * the reason its build failed — in the child's environment
+ * (`PROBE_BINARY_ENV` / `PROBE_FAILURE_ENV`); a process given neither, such
+ * as a standalone run, compiles its own on its first snapshot, as before.
  *
  * Two artefacts of the method, so nobody mistakes them for results: each
  * macOS snapshot spawns and reaps the probe, which adds the probe's own
@@ -90,11 +102,13 @@ const PROC_STAT_CSTIME_INDEX = 14;
 const FAILURE_MESSAGE_LIMIT = 200;
 const PROBE_SOURCE = path.join(__dirname, '..', 'probes', 'darwin-rusage.c');
 /**
- * The probe is compiled once per process into a private `mkdtemp` directory
- * (owner-only, unpredictable name) and executed only from there. A shared,
- * predictable path trusted by modification time would let any other process
- * of the same user plant a binary the harness then runs; a fresh directory
- * per process costs one clang invocation and closes that door.
+ * The probe is compiled into a private `mkdtemp` directory (owner-only,
+ * unpredictable name) and executed only from there — by the process that
+ * built it and by the measuring children that process names it to in their
+ * environment. A shared, predictable path trusted by modification time would
+ * let any other process of the same user plant a binary the harness then
+ * runs; a fresh directory per build costs one clang invocation and closes
+ * that door. The directory is removed when the process that built it exits.
  */
 const PROBE_DIR_PREFIX = path.join(os.tmpdir(), 'treemap-bench-probe-');
 const PROBE_NAME = 'darwin-rusage';
@@ -105,7 +119,13 @@ const DARWIN_SOURCE = 'proc_pid_rusage(RUSAGE_INFO_V4).ri_diskio_bytesread via b
 const LINUX_SOURCE = 'read_bytes from /proc/self/io';
 const WINDOWS_REASON = 'bytes read are not exposed to Node on Windows; GetProcessIoCounters needs native code';
 
+/** Names the probe binary the harness built, in a measuring child's environment. */
+export const PROBE_BINARY_ENV = 'TREEMAP_BENCH_PROBE';
+/** Carries the reason the harness's probe build failed, in a measuring child's environment; it wins over a binary. */
+export const PROBE_FAILURE_ENV = 'TREEMAP_BENCH_PROBE_FAILURE';
+
 let darwinProbe: ProbeState | undefined;
+let probeBuilds = 0;
 
 export async function snapshotUsage(): Promise<UsageSnapshot> {
   const at = performance.now();
@@ -179,20 +199,50 @@ function darwinIo(): PlatformIo {
   }
 }
 
-/** Compiled at most once per process; the outcome, good or bad, is remembered. */
+/** The probe the harness handed over, or else one compiled here — at most once per process; the outcome, good or bad, is remembered. */
 function darwinProbeState(): ProbeState {
-  darwinProbe ??= buildDarwinProbe();
+  darwinProbe ??= handedOverProbe() ?? buildDarwinProbe();
   return darwinProbe;
+}
+
+/** What the harness put in this process's environment: its built probe, its build's failure, or nothing (`undefined`: build one here). */
+function handedOverProbe(): ProbeState | undefined {
+  const failure = process.env[PROBE_FAILURE_ENV];
+  if (failure) return { kind: 'failed', reason: failure };
+  const binary = process.env[PROBE_BINARY_ENV];
+  if (!binary) return undefined;
+  if (!path.isAbsolute(binary) || !fs.existsSync(binary)) {
+    return { kind: 'failed', reason: `the probe the harness handed over (${binary}) is not there to run` };
+  }
+  return { kind: 'ready', binary };
+}
+
+/**
+ * The environment a measuring child needs to use this process's probe
+ * instead of compiling one: the binary, or the reason the build failed.
+ * Builds the probe first if this process has not — call it before the
+ * warm-up pass. Empty off macOS, where nothing is compiled.
+ */
+export function probeHandoff(): Record<string, string> {
+  if (process.platform !== 'darwin') return {};
+  const probe = darwinProbeState();
+  return probe.kind === 'ready' ? { [PROBE_BINARY_ENV]: probe.binary } : { [PROBE_FAILURE_ENV]: probe.reason };
 }
 
 let probeDir: string | undefined;
 
-/** Where this process's probe binary lives, once built; `null` before the first snapshot or when the build failed. */
+/** Where this process's probe binary lives, once built or handed over; `null` before the first snapshot or when the build failed. */
 export function probeLocation(): string | null {
   return darwinProbe?.kind === 'ready' ? darwinProbe.binary : null;
 }
 
+/** How many times this process ran the compiler for the probe: 1 in the harness or a standalone run, 0 in a child it handed its probe to. */
+export function probeBuildCount(): number {
+  return probeBuilds;
+}
+
 function buildDarwinProbe(): ProbeState {
+  probeBuilds += 1;
   try {
     const sdk = spawnSync('xcrun', ['--sdk', 'macosx', '--show-sdk-path'], { encoding: 'utf8', timeout: COMPILE_TIMEOUT_MS });
     const sdkPath = (sdk.stdout ?? '').trim();

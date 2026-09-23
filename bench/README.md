@@ -40,7 +40,20 @@ makes the columns comparable:
   corpus builder in the same heap);
 * CPU seconds and bytes read cannot include the previous scan's persistence;
 * the engine variable is set before a single service is imported, so nothing
-  depends on import order.
+  depends on import order;
+* no child compiles anything. On macOS the bytes-read probe
+  (`bench/probes/darwin-rusage.c`) is built once per invocation, in the
+  harness, before the first warm-up pass, and named to every child in its
+  environment (`TREEMAP_BENCH_PROBE`, or `TREEMAP_BENCH_PROBE_FAILURE` with the
+  reason when the build failed — reported as `bytes read` n/a with that
+  reason). A compile is foreign work — clang and thousands of SDK header
+  reads — and has no place between the warm-up and a timed scan, whatever it
+  does or does not do to the numbers. It was suspected of slowing enum200k by
+  ~100 ms; an A/B on 23 Sep 2026 found no such effect (native, Turbo, warm:
+  625.9 ms with the compile in every child, 646.9 with no probe at all, 650.8
+  with this hand-off), so this is a rule of method, not the explanation of
+  any number. A child that compiled a probe, or ran another than the
+  harness's, is refused.
 
 The scan is timed to the instant its status leaves `running`. The app then
 writes its rescan cache and a snapshot in the background; the harness waits
@@ -180,10 +193,23 @@ in its parameters). Read the two CORRECTNESS lines and series instead.
   confined to `bench/baselines/` does not count: those are baselines the
   harness recorded itself — a batch writes one before it measures the next
   series — and nothing measured reads them. A change anywhere else does,
-  `bench/baselines-old/` included.
+  `bench/baselines-old/` included. Untracked files are listed with
+  `--untracked-files=all`, so `status.showUntrackedFiles=no` cannot hide
+  them, and a git that cannot answer (`rev-parse` or `status` failing) makes
+  the tree dirty, the refusal quoting git's error — never clean.
+* `--record` also refuses to replace a baseline of the same name measured
+  under any other condition `compare` keys on: the file name carries no
+  cache state, corpus parameters, `--min-size` or `--threshold`, and folds
+  case, so without the refusal a re-record under another condition would
+  silently change what every comparison against it measures. The refusal
+  names the conditions; a re-measurement under the same conditions replaces
+  the file as before. (The cache state is not added to budgeted names: that
+  would move every budgeted baseline already committed.)
 * `compare` refuses two results that differ in suite, corpus, corpus
   parameters, engine, unit, machine tier, platform, architecture, cache
-  state or budget, and a result whose budget moved. A result written before
+  state, budget, the duplicate suite's `--min-size` or the near-duplicate
+  suite's `--threshold` (both recorded in the result; a result written before
+  they were reads as `not recorded`), and a result whose budget moved. A result written before
   the budget existed — every Phase 1 baseline in `bench/baselines/` — reads
   as `none (recorded before the governor)`, so it is NOT COMPARABLE with any
   result that names a budget; the baselines are not rewritten.

@@ -88,11 +88,25 @@ test('a cold series is labelled cold only when every measured run was purged', a
   assert.equal(cold.cache.state, 'cold');
 });
 
+test('the harness builds the usage probe once per invocation, before the first warm-up, and no measuring process compiles one', async () => {
+  if (process.platform !== 'darwin') return;
+  const manifest = await small();
+  const rusage = await import('../bench/lib/rusage');
+  // A child that compiled a probe, or ran one other than the harness's, is refused by the series itself: two series completing is the check on every child, warm-up included.
+  await runEnumerate({ manifest, corpusName: 'test600', engine: 'walker', preset: 'turbo', runs: 2, cache: 'warm', label: 'suite test' });
+  const probe = rusage.probeLocation();
+  assert.ok(probe, 'the harness process built the probe itself');
+  await runEnumerate({ manifest, corpusName: 'test600', engine: 'walker', preset: 'turbo', runs: 1, cache: 'warm', label: 'suite test' });
+  assert.equal(rusage.probeLocation(), probe, 'every series of the invocation hands over the same probe');
+  assert.equal(rusage.probeBuildCount(), 1, 'one compile per invocation, not one per series or per run');
+});
+
 test('the duplicate suite drives the real finder and proves every planted group by bytes', async () => {
   const manifest = await small();
   assert.ok(manifest.duplicateGroups.length > 0, 'the small corpus plants duplicates');
   const result = await runDuplicates({ manifest, corpusName: 'test600', runs: 2, minSize: 1024, label: 'suite test' });
   assert.equal(result.correctness.ok, true, result.correctness.notes.join('\n'));
+  assert.equal(result.minSize, 1024, 'the --min-size the finder ran at is recorded, so a comparison can key on it');
   assert.match(result.correctness.notes[0], /recall 1\.0000/);
   assert.match(result.correctness.notes[0], /precision 1\.0000/);
   assert.equal(result.entriesUnit, 'files');
@@ -145,6 +159,7 @@ test('the near-duplicate suite judges precision, not just completion', async () 
   const result = await runNearDup({ manifest, corpusName: 'images2', runs: 1, threshold: 10, label: 'suite test' });
   assert.equal(result.entriesUnit, 'images');
   assert.equal(result.engine, 'dhash-pairwise');
+  assert.equal(result.threshold, 10, 'the --threshold the job ran at is recorded, so a comparison can key on it');
   assert.equal(result.runs[0].entries, manifest.images.length);
   assert.equal(result.budget.requested, 'auto', 'the near-duplicate suite names no preset: its scan runs under the app\'s own default');
   assert.equal(result.budget.effective.length, 1);

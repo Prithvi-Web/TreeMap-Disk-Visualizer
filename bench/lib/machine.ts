@@ -5,7 +5,8 @@
  * about anything, so every result file carries this record beside its
  * numbers. Everything here is read, not assumed: the CPU model, core count and
  * memory from `os`, the commit from `git rev-parse HEAD` (or `'unknown'` when
- * there is no git to ask), the load average at the moment the record was
+ * there is no git to ask — which then counts as a dirty tree, see `gitHead`),
+ * the load average at the moment the record was
  * taken, and on macOS three `sysctl` values — `kern.maxvnodes`, the ceiling on
  * how many directory entries a warm metadata cache can hold (§12 of
  * docs/engine/CURRENT-STATE.md), and the performance/efficiency core split
@@ -17,7 +18,7 @@
  */
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 
 export type MachineTier = 'A' | 'B' | 'C';
 
@@ -34,9 +35,12 @@ export interface MachineRecord {
   arch: string;
   osRelease: string;
   node: string;
-  /** Full `git rev-parse HEAD`, `-dirty` appended when the tree had uncommitted changes outside bench/baselines/ (see `dirtyFromStatus`); `'unknown'` when git cannot answer. */
+  /** Full `git rev-parse HEAD`, `-dirty` appended when the tree counts as dirty (see `dirty`); `'unknown'` when git cannot name the commit. */
   commit: string;
+  /** True when the tree had uncommitted changes outside bench/baselines/ (see `dirtyFromStatus`), or when git could not say whether it had (see `dirtyReason`). */
   dirty: boolean;
+  /** Set when the tree counts as dirty because git could not answer: its failure, in its own words. Absent when git answered. */
+  dirtyReason?: string;
   /** 1/5/15-minute load; `null` where the OS does not measure it (Windows). */
   loadAvg: number[] | null;
   /** `kern.maxvnodes`; `null` off macOS. */
@@ -80,6 +84,7 @@ export async function describeMachine(): Promise<MachineRecord> {
   const isDarwin = process.platform === 'darwin';
   const { tier, tierReason } = classifyTier(cpuModel, cores, memoryBytes);
   const head = gitHead();
+  const commit = head.commit === UNKNOWN_COMMIT || !head.dirty ? head.commit : `${head.commit}-dirty`;
   return {
     cpuModel,
     cores,
@@ -90,8 +95,9 @@ export async function describeMachine(): Promise<MachineRecord> {
     arch: process.arch,
     osRelease: os.release(),
     node: process.version,
-    commit: head.dirty ? `${head.commit}-dirty` : head.commit,
+    commit,
     dirty: head.dirty,
+    ...(head.dirtyReason === undefined ? {} : { dirtyReason: head.dirtyReason }),
     loadAvg: process.platform === 'win32' ? null : os.loadavg(),
     maxVnodes: isDarwin ? sysctlNumber('kern.maxvnodes') : null,
     tier,
@@ -126,15 +132,42 @@ function sysctlNumber(key: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-/** A baseline must cite the code that was measured: an uncommitted change is part of it. */
-function gitHead(): { commit: string; dirty: boolean } {
-  const result = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8' });
-  if (result.error || result.status !== 0) return { commit: 'unknown', dirty: false };
-  const head = result.stdout.trim();
-  if (!COMMIT_PATTERN.test(head)) return { commit: 'unknown', dirty: false };
-  const status = spawnSync('git', ['status', '--porcelain'], { cwd: REPO_ROOT, encoding: 'utf8' });
-  const dirty = !status.error && status.status === 0 && dirtyFromStatus(status.stdout);
-  return { commit: head, dirty };
+const UNKNOWN_COMMIT = 'unknown';
+/** Enough of git's own error to name the failure. */
+const GIT_ERROR_LIMIT = 200;
+
+function git(args: readonly string[]): SpawnSyncReturns<string> {
+  return spawnSync('git', [...args], { cwd: REPO_ROOT, encoding: 'utf8' });
+}
+
+/** Why a git invocation did not answer, in its own words; null when it did. */
+function gitFailure(command: string, result: SpawnSyncReturns<string>): string | null {
+  if (result.error) return `${command} failed: ${result.error.message}`;
+  if (result.status === 0) return null;
+  const detail = (result.stderr ?? '').trim() || (result.signal ? `killed by ${result.signal}` : `exit status ${String(result.status)}`);
+  return `${command} failed: ${detail.slice(0, GIT_ERROR_LIMIT)}`;
+}
+
+/**
+ * A baseline must cite the code that was measured: an uncommitted change is
+ * part of it. The check fails closed — a git that cannot name the commit or
+ * cannot list the tree's changes makes the tree dirty, with git's error as
+ * the reason, never clean — and asks for every untracked file by name
+ * (`--untracked-files=all`), so a user's `status.showUntrackedFiles=no` cannot
+ * hide code that was measured.
+ */
+function gitHead(): { commit: string; dirty: boolean; dirtyReason?: string } {
+  const head = git(['rev-parse', 'HEAD']);
+  const headFailure = gitFailure('git rev-parse HEAD', head);
+  if (headFailure !== null) return { commit: UNKNOWN_COMMIT, dirty: true, dirtyReason: headFailure };
+  const commit = head.stdout.trim();
+  if (!COMMIT_PATTERN.test(commit)) {
+    return { commit: UNKNOWN_COMMIT, dirty: true, dirtyReason: `git rev-parse HEAD printed ${JSON.stringify(commit.slice(0, GIT_ERROR_LIMIT))}, which is not a commit` };
+  }
+  const status = git(['status', '--porcelain', '--untracked-files=all']);
+  const statusFailure = gitFailure('git status', status);
+  if (statusFailure !== null) return { commit, dirty: true, dirtyReason: statusFailure };
+  return { commit, dirty: dirtyFromStatus(status.stdout) };
 }
 
 /**
