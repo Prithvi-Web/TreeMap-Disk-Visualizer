@@ -152,6 +152,22 @@ test('a program the system owns, in a folder the system owns, may be started as 
   assert.equal(elevationRefusal(system), null, process.platform === 'win32' ? `not elevated by the checks above; whoami /groups:\n${windowsGroups()}` : undefined);
 });
 
+/**
+ * The privileges `whoami /priv` lists that open files past an access list (backup,
+ * restore, take ownership), for the record when a deny entry did not hold.
+ */
+function bypassPrivileges(): string {
+  try {
+    const lines = execFileSync(system32('whoami.exe'), ['/priv'], { encoding: 'utf8' })
+      .split(/\r?\n/)
+      .filter((line) => /SeBackupPrivilege|SeRestorePrivilege|SeTakeOwnershipPrivilege/.test(line))
+      .map((line) => line.replace(/\s+/g, ' ').trim());
+    return lines.length > 0 ? lines.join('; ') : 'none of backup, restore or take-ownership is held';
+  } catch (err) {
+    return `whoami /priv failed: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 /** This user's security identifier (`whoami /user`), or null off Windows. */
 function currentUserSid(): string | null {
   if (process.platform !== 'win32') return null;
@@ -162,7 +178,7 @@ function currentUserSid(): string | null {
 
 test('on Windows each door is tried in turn: a folder that refuses new files, then a file that refuses a change of its attributes', {
   skip: process.platform !== 'win32' && 'deny entries in an access list are Windows’',
-}, () => {
+}, (t) => {
   // Deny entries hold even for an administrator, so this runs on the elevated
   // CI runner, which the System32 test above cannot: it is the one Windows
   // run of the answer "may be started". Node asks to write with every write
@@ -180,6 +196,24 @@ test('on Windows each door is tried in turn: a folder that refuses new files, th
   };
   try {
     icacls(dir, '/deny', `*${sid}:(WD)`);
+    // Calibration first. An administrator's full token — the CI runner's — can hold backup
+    // and restore rights, which open files past any access list, as root does on POSIX: the
+    // first Windows run of this test (23 Sep 2026) saw the deny entry not hold. Such a process
+    // is refused nothing here, and the app never runs as one (it asks from an unelevated
+    // process), so the test says so instead of failing; the product still refused there.
+    const canary = path.join(dir, 'canary.tmp');
+    let writesThrough = false;
+    try {
+      fs.closeSync(fs.openSync(canary, 'wx'));
+      writesThrough = true;
+    } catch (err) {
+      assert.equal((err as NodeJS.ErrnoException).code, 'EPERM', 'the deny entry refuses the new file');
+    }
+    if (writesThrough) {
+      fs.rmSync(canary, { force: true });
+      t.skip(`this process creates files through a deny entry (${bypassPrivileges()})`);
+      return;
+    }
     assert.equal(elevationRefusal(helper), `${helper} could be changed by any program running as you`, 'the folder refuses a new file; the file itself can still be changed');
     assert.deepEqual(fs.readdirSync(dir), ['tm-mft-helper.exe'], 'no probe was left, or made');
     icacls(helper, '/deny', `*${sid}:(WA)`);

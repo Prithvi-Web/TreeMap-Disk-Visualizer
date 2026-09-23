@@ -4,7 +4,7 @@
 
 use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -12,6 +12,17 @@ use tm_governor::governor::{THROTTLE_SLEEP_CAP, throttle_sleep};
 use tm_governor::{
     Budget, FakeSampler, FakeSignals, Governor, Preset, Signals, SyntheticLoad, Thermal,
 };
+
+/// Held by every test in this file, so they run one at a time. These tests measure sleeps
+/// and shares against a fake sampler that reports a fixed CPU time per tick; beside the tests
+/// that burn CPU (the synthetic load, the cadence spins), a starved tick thread catches up
+/// with ticks a few milliseconds apart, the fake then reads as many times the budget, and the
+/// duty falls mid-measurement (the macOS CI leg of 23 Sep 2026: from about 0.4 to 0.25).
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// The machine the fakes describe.
 const CORES: u32 = 8;
@@ -121,6 +132,7 @@ fn cadence(governor: &Governor, units: u32) -> Duration {
 #[test]
 fn throttle_sleeps_in_proportion_to_the_duty() {
     const UNITS: u32 = 50;
+    let _serial = serial();
     let spin_total = SPIN * UNITS;
     let mut sampler = idle_sampler();
     let governor = Governor::start(
@@ -179,6 +191,7 @@ fn throttle_sleeps_in_proportion_to_the_duty() {
 
 #[test]
 fn pause_blocks_throttle_within_200_ms_and_resume_releases_it() {
+    let _serial = serial();
     let governor = Governor::start(
         budget(Preset::Balanced),
         false,
@@ -225,6 +238,7 @@ fn pause_blocks_throttle_within_200_ms_and_resume_releases_it() {
 
 #[test]
 fn configure_takes_effect_on_the_next_tick() {
+    let _serial = serial();
     let governor = Governor::start(
         budget(Preset::Balanced),
         false,
@@ -274,6 +288,7 @@ fn configure_takes_effect_on_the_next_tick() {
 
 #[test]
 fn auto_mode_flips_balanced_to_eco_on_battery_or_heat_and_back() {
+    let _serial = serial();
     let signals = SharedSignals::quiet();
     let governor = Governor::start(
         budget(Preset::Balanced),
@@ -383,6 +398,7 @@ fn auto_mode_flips_balanced_to_eco_on_battery_or_heat_and_back() {
 
 #[test]
 fn snapshot_reports_the_effective_preset_the_last_second_share_and_the_mechanisms() {
+    let _serial = serial();
     let mut sampler = idle_sampler();
     let governor = Governor::start(
         budget(Preset::Eco),
@@ -429,6 +445,7 @@ fn snapshot_reports_the_effective_preset_the_last_second_share_and_the_mechanism
 
 #[test]
 fn stop_ends_the_tick_thread_within_500_ms_and_is_idempotent() {
+    let _serial = serial();
     let governor = Governor::start(
         budget(Preset::Turbo),
         false,
@@ -460,6 +477,7 @@ fn stop_ends_the_tick_thread_within_500_ms_and_is_idempotent() {
 
 #[test]
 fn a_missing_machine_share_keeps_the_last_measured_one() {
+    let _serial = serial();
     // `host_statistics64` publishes new counters about once a second, so most ticks read
     // `None`. `None` is "no new counters yet": the snapshot keeps the last real reading, the
     // loop is neither paused nor reset, and a governor that never gets one never invents one.
@@ -524,6 +542,7 @@ fn throttle_honours_the_duty_on_average_despite_stretched_sleeps() {
     // so the loop rests at the feed-forward duty 0.4 (Balanced at 20% of eight cores).
     const UNIT: Duration = Duration::from_millis(2);
     const UNITS: u32 = 200;
+    let _serial = serial();
     let mut sampler = FakeSampler::new(CORES);
     sampler.push_cpu(FIFTH_MACHINE_CPU_PER_TICK_S);
     let governor = Governor::start(
@@ -544,23 +563,29 @@ fn throttle_honours_the_duty_on_average_despite_stretched_sleeps() {
 
     governor.throttle();
     let started = Instant::now();
+    // Each unit is owed work / duty at the duty its own throttle() call reads, which the loop
+    // may move between two calls: summed per call, never the midpoint of two readings.
+    let mut expected = 0.0;
+    let mut lowest = f64::INFINITY;
     for _ in 0..UNITS {
         spin_for(UNIT);
+        let duty = governor.snapshot().duty;
+        lowest = lowest.min(duty);
+        expected += UNIT.as_secs_f64() / duty;
         governor.throttle();
     }
     let took = started.elapsed().as_secs_f64();
-    let duty = f64::midpoint(duty_before, governor.snapshot().duty);
-    let expected = f64::from(UNITS) * UNIT.as_secs_f64() / duty;
     let ratio = took / expected;
     assert!(
         (0.85..=1.15).contains(&ratio),
-        "{UNITS} units of {UNIT:?} at duty {duty:.3} should take {expected:.3}s, took {took:.3}s (ratio {ratio:.3})"
+        "{UNITS} units of {UNIT:?} at the duties in force (from {duty_before:.3}, lowest {lowest:.3}) should take {expected:.3}s, took {took:.3}s (ratio {ratio:.3})"
     );
     governor.stop();
 }
 
 #[test]
 fn the_owed_sleep_is_proportional_capped_and_never_negative() {
+    let _serial = serial();
     // (1 − duty) / duty × work: 19× at the floor, 0 at full duty, capped at one second.
     let work = Duration::from_millis(2);
     assert_eq!(throttle_sleep(work, 0.05), Duration::from_millis(38));
@@ -603,6 +628,7 @@ fn the_synthetic_load_obeys_the_worker_limit_live() {
     // complete about a quarter of the ten-millisecond units one unthrottled thread would,
     // not four times as many: only the thread inside the limit may spin.
     const RUN: Duration = Duration::from_secs(2);
+    let _serial = serial();
     let mut sampler = FakeSampler::new(1);
     sampler.push_cpu(0.025);
     let governor = Governor::start(
