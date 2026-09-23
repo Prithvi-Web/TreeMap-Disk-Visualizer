@@ -877,16 +877,17 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
   }
   // The helper refuses a temp folder that is a link or a junction, which would
   // send its elevated write wherever it points (the security review of M6), so
-  // asking first would only raise a prompt whose yes cannot be used. Node sees
-  // a Windows junction as a symbolic link; the helper also refuses any other
-  // reparse point, which Node cannot see.
+  // asking first would only raise a prompt whose yes cannot be used. lstat
+  // does not follow a link, and Node sees a Windows junction as one, so a link
+  // or a junction is never a directory here: one test covers both. The helper
+  // also refuses any other reparse point, which Node cannot see.
   let unfollowed: fs.Stats;
   try {
     unfollowed = fs.lstatSync(folder);
   } catch (err: unknown) {
     return notUsed(`the app's temp folder ${folder} could not be checked: ${describe(err)}`, true);
   }
-  if (unfollowed.isSymbolicLink() || !unfollowed.isDirectory()) {
+  if (!unfollowed.isDirectory()) {
     return notUsed(`the app's temp folder ${folder} is a link, a junction or not a folder, and the elevated helper writes nothing through one`, true);
   }
   const now = deps.now ?? Date.now;

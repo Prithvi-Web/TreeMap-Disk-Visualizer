@@ -316,6 +316,9 @@ function tempFolder(): string {
  */
 const allowElevation = (_file: string): string | null => null;
 
+/** How every reason for not using the mode begins. */
+const NOT_USED = `the NTFS turbo mode (${MFT_NOT_VERIFIED}: no test has run its elevation prompt end to end) was not used:`;
+
 /** A launcher that records its requests and answers `outcome`, writing a placeholder output when it "ran". */
 function fakeLauncher(outcome: Awaited<ReturnType<MftLauncher>>) {
   const requests: MftLaunchRequest[] = [];
@@ -529,6 +532,8 @@ test('an app temp folder that is a link or junction is refused before anyone is 
   const notFolder = await runMftWalk(r.scan, r.store, ROOT, { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', elevationRefusal: allowElevation, tempFolder: file, now: () => READ_STARTED });
   assert.equal(requests.length, 0, 'nobody was asked');
   assert.ok(!notFolder.used && notFolder.failed === true, JSON.stringify(notFolder));
+  // A file in the folder's place fails at mkdir (EEXIST), before the link check.
+  assert.ok(notFolder.reason.startsWith(`${NOT_USED} the app's temp folder ${file} could not be made: `), notFolder.reason);
   fs.rmSync(base, { recursive: true, force: true });
 });
 
@@ -648,25 +653,77 @@ test('after the prompt, a launch that fails, a helper that exits non-zero or a r
   // not read — and the mode once asked on every scan anyway (the
   // pre-landing review of 23 Sep 2026).
   const unreadable: MftModule = { mftTake: () => { throw new Error('the columns file ends inside its size column'); }, mftCrossCheck: () => [] };
-  const cases: Array<[string, MftLauncher, MftModule]> = [
-    ['a failed launch', fakeLauncher({ kind: 'failed', reason: 'PowerShell refused to start the helper' }).launcher, fakeModule(flat(3)).module],
-    ['a non-zero exit', fakeLauncher({ kind: 'exited', code: 3 }).launcher, fakeModule(flat(3)).module],
-    ['an unreadable result', fakeLauncher({ kind: 'exited', code: 0 }).launcher, unreadable],
-    ['a launcher that throws', async () => { throw new Error('spawn EACCES'); }, fakeModule(flat(3)).module],
+  // Each case's own reason, word for word: the part that says what went wrong
+  // is the part a person can act on.
+  const cases: Array<[string, MftLauncher, MftModule, string]> = [
+    ['a failed launch', fakeLauncher({ kind: 'failed', reason: 'PowerShell refused to start the helper' }).launcher, fakeModule(flat(3)).module, 'the helper could not be started: PowerShell refused to start the helper'],
+    ['a non-zero exit', fakeLauncher({ kind: 'exited', code: 3 }).launcher, fakeModule(flat(3)).module, "the helper exited with code 3 and left no reason (an elevated process's error output does not reach the app)"],
+    ['an unreadable result', fakeLauncher({ kind: 'exited', code: 0 }).launcher, unreadable, "the helper's result could not be read: the columns file ends inside its size column"],
+    ['a launcher that throws', async () => { throw new Error('spawn EACCES'); }, fakeModule(flat(3)).module, 'the helper could not be started: spawn EACCES'],
   ];
-  for (const [label, launcher, module] of cases) {
+  for (const [label, launcher, module, why] of cases) {
     resetMftSessionForTests();
     const folder = tempFolder();
     const r = recordFor(ROOT);
     const first = await runMftWalk(r.scan, r.store, ROOT, { launcher, module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
-    assert.ok(!first.used && first.failed, `${label}: ${JSON.stringify(first)}`);
-    assert.match(first.reason, /the mode is off for C: until TreeMap restarts/, label);
+    assert.deepEqual(first, { used: false, failed: true, reason: `${NOT_USED} ${why}; the mode is off for C: until TreeMap restarts` }, label);
     const again = fakeLauncher({ kind: 'exited', code: 0 });
     const second = await runMftWalk(r.scan, r.store, ROOT, { launcher: again.launcher, module: fakeModule(flat(3)).module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
     assert.equal(again.requests.length, 0, `${label}: nobody is asked again`);
-    assert.match(second.reason, /off for C: until TreeMap restarts/, label);
+    assert.deepEqual(second, { used: false, failed: true, reason: `${NOT_USED} it is off for C: until TreeMap restarts, because ${why}` }, label);
     fs.rmSync(folder, { recursive: true, force: true });
   }
+});
+
+test('an app temp folder that cannot be made, cannot be checked, or turns out not to be a folder is a failure that names it, and nobody is asked', async (t) => {
+  resetMftSessionForTests();
+  const base = tempFolder();
+  const inTheWay = path.join(base, 'a-file');
+  fs.writeFileSync(inTheWay, '');
+  const { launcher, requests } = fakeLauncher({ kind: 'exited', code: 0 });
+  const { module, calls } = fakeModule(flat(3));
+  const helperPath = 'C:\\app\\tm-mft-helper.exe';
+
+  // A file where a folder of the path should be: mkdir fails, with an errno
+  // that differs by platform, so only what TreeMap wrote is compared.
+  const unmade = path.join(inTheWay, MFT_TEMP_FOLDER);
+  const a = recordFor(ROOT);
+  const made = await runMftWalk(a.scan, a.store, ROOT, { launcher, module, helperPath, elevationRefusal: allowElevation, tempFolder: unmade, now: () => READ_STARTED });
+  assert.equal(made.used, false);
+  assert.equal(made.failed, true);
+  assert.ok(made.reason.startsWith(`${NOT_USED} the app's temp folder ${unmade} could not be made: `), made.reason);
+  assert.ok(made.reason.length > `${NOT_USED} the app's temp folder ${unmade} could not be made: `.length, 'the error follows');
+
+  // A folder that was made but cannot be looked at: the check fails closed.
+  const folder = path.join(base, MFT_TEMP_FOLDER);
+  const realLstat = fs.lstatSync;
+  t.mock.method(fs, 'lstatSync', (p: fs.PathLike, ...rest: unknown[]) => {
+    if (p === folder) throw new Error(`EACCES: permission denied, lstat '${folder}'`);
+    return (realLstat as (p: fs.PathLike, ...rest: unknown[]) => fs.Stats)(p, ...rest);
+  });
+  const b = recordFor(ROOT);
+  const checked = await runMftWalk(b.scan, b.store, ROOT, { launcher, module, helperPath, elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
+  t.mock.restoreAll();
+  assert.deepEqual(checked, { used: false, failed: true, reason: `${NOT_USED} the app's temp folder ${folder} could not be checked: EACCES: permission denied, lstat '${folder}'` });
+
+  // The folder swapped for a file between the mkdir and the look (a race no
+  // real run can stage on cue): refused as not a folder.
+  t.mock.method(fs, 'lstatSync', (p: fs.PathLike, ...rest: unknown[]) => {
+    if (p === folder) return { isSymbolicLink: () => false, isDirectory: () => false } as fs.Stats;
+    return (realLstat as (p: fs.PathLike, ...rest: unknown[]) => fs.Stats)(p, ...rest);
+  });
+  const c = recordFor(ROOT);
+  const swapped = await runMftWalk(c.scan, c.store, ROOT, { launcher, module, helperPath, elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
+  t.mock.restoreAll();
+  assert.deepEqual(swapped, {
+    used: false,
+    failed: true,
+    reason: `${NOT_USED} the app's temp folder ${folder} is a link, a junction or not a folder, and the elevated helper writes nothing through one`,
+  });
+
+  assert.equal(requests.length, 0, 'nobody was asked');
+  assert.equal(calls.take, 0, 'nothing was read');
+  fs.rmSync(base, { recursive: true, force: true });
 });
 
 test('an output an earlier run left behind is swept before a scan asks; a recent one, another name, or one a scan is reading is left', async () => {
