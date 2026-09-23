@@ -283,8 +283,10 @@ export function ingestColumns(scan: ScanResult, store: ScanStore, cols: WalkResu
     }
     return (iEnd - off[a]) - (jEnd - off[b]);
   };
-  const links = new Map<number, number>();
-  for (let k = 0; k < cols.hardlinkNode.length; k++) links.set(cols.hardlinkNode[k], k);
+  // Each node's hard-link record, or -1: one typed-array read per file where
+  // a Map lookup cost 5 of the ingest's 64 ms on enum200k (M3, 23 Sep 2026).
+  const linkOf = new Int32Array(n).fill(-1);
+  for (let k = 0; k < cols.hardlinkNode.length; k++) linkOf[cols.hardlinkNode[k]] = k;
   const seen = new Set<string>();
   let dirs = 1;
   let files = 0;
@@ -319,8 +321,8 @@ export function ingestColumns(scan: ScanResult, store: ScanStore, cols: WalkResu
           }
         }
         allocDelta = BLOCKS_ARE_MEANINGFUL && input.size > 0 ? alloc - input.size : 0;
-        const link = links.get(i);
-        if (link !== undefined) inoKey = `${cols.hardlinkDev[link]}:${cols.hardlinkIno[link]}`;
+        const link = linkOf[i];
+        if (link !== -1) inoKey = `${cols.hardlinkDev[link]}:${cols.hardlinkIno[link]}`;
       }
       if (inoKey !== undefined) {
         if (seen.has(inoKey)) {
