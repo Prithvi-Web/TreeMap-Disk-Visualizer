@@ -431,6 +431,13 @@ fixed, as built:
    for nothing; and the app's temp folder is worked out the helper's way
    (TMP before TEMP, `helperTempRoot`), since a folder the helper does not
    call its own is one it refuses (the pre-landing review of 23 Sep 2026).
+   Only a scan a person started in the window asks (`ScanOptions.interactive`,
+   which the window's `POST /api/scan` sends; the scheduler, autopilot, a
+   paired computer, MCP and API calls without it list the folders and say
+   why), the question names the folder beside the drive, and a turbo scan is
+   never written to the fast-rescan cache or the snapshot history
+   (`keepsScan`): its tree holds what an unelevated listing is refused, and
+   kept it would come back in later unelevated scans (the same review).
    Nothing a program running as the user
    could have changed is started as administrator (its third review):
    PowerShell by its full path under the system folder the kernel reports

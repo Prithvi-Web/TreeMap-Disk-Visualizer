@@ -182,8 +182,12 @@ function requestProblem(request) {
   return bad ? `the helper was given no usable ${bad}` : null;
 }
 
-/** Ask the one question. Resolves null to go ahead, or the outcome that ends here. */
-async function askFirst(showMessageBox, volume) {
+/**
+ * Ask the one question. Resolves null to go ahead, or the outcome that ends
+ * here. The folder is named beside the drive: the yes is for this scan's
+ * folder (the pre-landing review of 23 Sep 2026).
+ */
+async function askFirst(showMessageBox, volume, root) {
   let answer;
   try {
     answer = await showMessageBox({
@@ -192,6 +196,7 @@ async function askFirst(showMessageBox, volume) {
       defaultId: CONTINUE_BUTTON,
       cancelId: SCAN_NORMALLY_BUTTON,
       message: explanation(volume),
+      detail: `Folder to scan: ${root}`,
       noLink: true,
     });
   } catch (err) {
@@ -307,7 +312,7 @@ function createMftLauncher({ showMessageBox, spawn, platform = process.platform,
       }
       if (why) return failed(`nothing was started as administrator: ${why}`);
     }
-    const stop = await askFirst(showMessageBox, request.volume);
+    const stop = await askFirst(showMessageBox, request.volume, request.root);
     if (stop) return stop;
     return runElevated(spawn, powershell, workingDirectory, request);
   };

@@ -160,6 +160,9 @@ test('the one question is asked exactly as specified, and "Scan normally" declin
     defaultId: 0,
     cancelId: 1,
     message: explanation('C:'),
+    // The folder too, not only the drive: the yes is for this scan's folder
+    // (the pre-landing review of 23 Sep 2026).
+    detail: `Folder to scan: ${REQUEST.root}`,
     noLink: true,
   });
   assert.equal(ps.calls.length, 0, 'declining in our dialog never reaches the Windows prompt');

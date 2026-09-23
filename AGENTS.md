@@ -26,7 +26,10 @@ OpenAPI 3 spec).
    Agents can skip the polling: `POST /api/scan?wait=true&waitMs=55000`
    blocks until the scan settles and answers `200` with the stats inline
    (`202 { status: "running" }` if it outlives `waitMs`). Scans live in
-   memory for ~30 minutes after completion.
+   memory for ~30 minutes after completion. Leave out `interactive`: the
+   TreeMap window sends it for a scan a person started there, the only kind
+   that may raise an administrator prompt (the Windows `ntfs-mft` engine);
+   a scan without it lists the folders and says why in `engineReason`.
    For the whole picture in one call afterwards:
    `GET /api/agent/summary?scanId=` — top culprits, reclaimable-by-category,
    and the forecast, every number as raw bytes plus a formatted string, in

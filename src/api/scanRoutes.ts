@@ -172,10 +172,12 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  * endpoint is untouched either way.
  */
 scanRouter.post('/scan', guardBodyPath, async (req: Request, res: Response) => {
-  const { path: scanPath, incremental } = req.body as { path: string; incremental?: boolean };
+  const { path: scanPath, incremental, interactive } = req.body as { path: string; incremental?: boolean; interactive?: boolean };
   // agent-policy.json allowedRoots (no policy file = no restriction).
   assertScanAllowed(await getPolicy(), scanPath);
-  const scan = await startScan(scanPath, { incremental: incremental === true }); // lstat failures -> 404/403
+  // `interactive`: the window says a person started this scan, the only kind
+  // that may raise an administrator prompt (ScanOptions.interactive).
+  const scan = await startScan(scanPath, { incremental: incremental === true, interactive: interactive === true }); // lstat failures -> 404/403
 
   if (String(req.query.wait ?? '') === 'true') {
     const waitMs = clampInt(req.query.waitMs, 55_000, 0, 600_000);

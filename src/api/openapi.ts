@@ -896,6 +896,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
         {
           path: str('Absolute directory path (a leading ~ expands to the home directory)'),
           incremental: bool('Reuse the on-disk mtime cache for a fast rescan (default false)'),
+          interactive: bool('A person started this scan in the TreeMap window (default false). Only such a scan may raise an administrator prompt: with the Scan engine setting ntfs-mft, a scan without it lists the folders and says why'),
         },
         ['path'],
       ),

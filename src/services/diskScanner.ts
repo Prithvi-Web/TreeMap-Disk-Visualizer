@@ -439,11 +439,34 @@ function resetCounters(scan: ScanResult): void {
  * unhandledRejection, which is fatal by default, so a cache write failing
  * would have taken the whole app down.
  */
+/** The NTFS turbo mode's walk, replaceable in tests: it needs Windows, a drive and an elevated helper. */
+let mftWalk: typeof runMftWalk = runMftWalk;
+
+/** Test seam: `startScan` runs `fn` as the NTFS turbo mode's walk; null puts the real one back. */
+export function setMftWalkForTests(fn: typeof runMftWalk | null): void {
+  mftWalk = fn ?? runMftWalk;
+}
+
+/**
+ * Whether a finished scan is kept in the walker's fast-rescan cache and the
+ * snapshot history. An NTFS turbo scan read the table as administrator: its
+ * tree holds what an unelevated listing is refused (other accounts'
+ * folders, System Volume Information). Kept, the cache would hand that view
+ * to the next unelevated rescan, the history would set it beside ordinary
+ * scans as growth that is only what this user cannot list, and both would
+ * hold it on disk after a yes given "for this one scan only" (the
+ * pre-landing review of 23 Sep 2026).
+ */
+export function keepsScan(scan: Pick<ScanResult, 'engine'>): boolean {
+  return scan.engine !== 'ntfs-mft';
+}
+
 function settleComplete(scan: ScanResult, store: ScanStore): void {
   scan.store = store;
   scan.status = 'complete';
   scan.finishedAt = Date.now();
   scan.currentPath = scan.rootPath;
+  if (!keepsScan(scan)) return;
   trackWrite('saveMtimeCache', saveMtimeCache(scan).catch((err: unknown) => {
     console.error('[treemap] mtime cache save failed:', err);
   }));
@@ -465,6 +488,14 @@ export interface ScanOptions {
    * must never be the reason the computer feels slow.
    */
   budget?: EffectiveBudgetPreset;
+  /**
+   * A person started this scan in the TreeMap window. Only such a scan may
+   * ask for administrator permission (the NTFS turbo mode): the scheduler,
+   * autopilot, a paired computer, the MCP server and API calls that do not
+   * say so are never the reason a prompt appears on someone's screen (the
+   * pre-landing review of 23 Sep 2026).
+   */
+  interactive?: boolean;
 }
 
 export async function startScan(rootPath: string, opts: ScanOptions = {}): Promise<ScanResult> {
@@ -595,8 +626,12 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
    * chain above runs, and every scan the mode was asked for carries its
    * clause, with W6-9's "not verified on this build", in `engineReason`.
    */
-  const mftWanted = forced === 'ntfs-mft' && mftOfferedOn();
-  if (forced === 'ntfs-mft' && !mftWanted) why.push(`the NTFS turbo mode (${MFT_NOT_VERIFIED}) was not used: it is Windows only`);
+  const mftOffered = forced === 'ntfs-mft' && mftOfferedOn();
+  const mftWanted = mftOffered && opts.interactive === true;
+  if (forced === 'ntfs-mft' && !mftOffered) why.push(`the NTFS turbo mode (${MFT_NOT_VERIFIED}) was not used: it is Windows only`);
+  if (mftOffered && !mftWanted) {
+    why.push(`the NTFS turbo mode (${MFT_NOT_VERIFIED}) was not used: it asks for administrator permission only for a scan started from the TreeMap window, and this one was not`);
+  }
   const mftRule = !mftWanted ? null
     : !rootIsDir ? 'the root is a single file, which needs no volume read'
       : incremental ? 'this is an incremental rescan, and the mtime cache it reuses belongs to the built-in walker'
@@ -620,7 +655,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
       scan.engineReason = `the NTFS turbo mode was chosen by the Scan engine setting (${MFT_NOT_VERIFIED}); it waits for its elevated helper`;
       const store = new PackedScanStore(rootPath, path.sep, statToInput(rootName(rootPath), true, rootStat.size, rootStat.mtimeMs, rootStat.atimeMs));
       try {
-        const outcome = await runMftWalk(scan, store, rootPath);
+        const outcome = await mftWalk(scan, store, rootPath);
         if (scan.cancelled) return;
         if (outcome.used) {
           scan.engineReason = outcome.reason;

@@ -8114,7 +8114,10 @@ async function startScanRequest(path, opts = {}, { quiet = false } = {}) {
     const resp = await api('/api/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path, incremental: !!opts.incremental }),
+      // interactive: a person started this scan here — the one kind that may
+      // raise an administrator prompt; a quiet refresh behind an index-first
+      // paint is not one (ScanOptions.interactive).
+      body: JSON.stringify({ path, incremental: !!opts.incremental, interactive: !quiet }),
     });
     if (abandonIfStopped(resp.scanId, gen)) return;
     followScanProgress(resp.scanId, path, resp.incremental === true, t0);
