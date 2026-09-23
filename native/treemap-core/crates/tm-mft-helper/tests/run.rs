@@ -342,6 +342,36 @@ fn a_refused_read_becomes_a_refusal_file_carrying_the_sentence() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn a_tree_that_cannot_be_written_as_columns_becomes_a_refusal_file_saying_why() -> TestResult {
+    // The pre-landing review of 23 Sep 2026: once the output file exists,
+    // every way the run fails must still leave the app the reason in it, and
+    // the encoder's refusal was reached by no test. A reader that hands back
+    // columns of different lengths is a tree the encoder refuses to write.
+    let scratch = Scratch::new("run-unencodable")?;
+    let fence = scratch.folder(APP_TEMP_FOLDER)?;
+    let out = fence.join("bad.tmmft");
+    let outcome = run(&args("C:", "C:\\data", &out), &fence, |_| {
+        Ok(WalkOutput {
+            size: vec![0.0],
+            ..tiny()
+        })
+    });
+    let sentence = "the tree could not be written as columns: the columns file holds a column shorter or longer than the others";
+    assert_eq!(
+        outcome,
+        tm_mft_helper::Outcome {
+            code: EXIT_REFUSED,
+            message: Some(sentence.to_owned())
+        }
+    );
+    match decode(&std::fs::read(&out).map_err(|e| e.to_string())?) {
+        Ok(ColumnsFile::Refusal(text)) => assert_eq!(text, sentence),
+        other => return Err(format!("expected the refusal, got {other:?}")),
+    }
+    Ok(())
+}
+
 // The landing check: once created, the output file must be found exactly
 // where the check said. The pre-landing review of 23 Sep 2026 found no test
 // reached its refusals — with the folder held from the check on, a file lands
