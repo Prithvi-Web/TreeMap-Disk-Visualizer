@@ -1,0 +1,23 @@
+# Windows builds link the C runtime statically.
+#
+# Rust's MSVC targets link it dynamically by default, so every binary needs
+# VCRUNTIME140.dll, which Windows does not ship. Where it is missing from
+# System32 the loader keeps searching, down the PATH, and an elevated
+# process's PATH includes the user's own entries, which any program running
+# as the user can change: a DLL planted there would run as administrator
+# inside tm-mft-helper.exe (the pre-landing review of 23 Sep 2026). Linked
+# statically, the helper imports only Windows' own DLLs (its build.rs then
+# tells the loader to take those from System32 alone), and treemap_core.node
+# loads on a machine without the Visual C++ runtime, where it would otherwise
+# fall back to the walker. tests/windowsImports.test.ts reads both built
+# images on the Windows CI leg.
+#
+# Cargo reads this file for every command run in this folder, as rustup reads
+# rust-toolchain.toml; CI, `npm run build:native` and the release job all run
+# cargo here.
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
