@@ -757,7 +757,7 @@ test('a withheld directory is never fetched, only counted past the budget', asyn
     const proto = Database.prototype as unknown as { prepare: (sql: string) => unknown };
     const original = proto.prepare;
     let rowsRead = 0;
-    proto.prepare = function patched(sql: string) {
+    proto.prepare = function patched(this: unknown, sql: string) {
       const stmt = original.call(this, sql) as { all: (...a: unknown[]) => unknown[] };
       if (/parent_id = \? ORDER BY size DESC/.test(sql)) {
         const inner = stmt.all.bind(stmt);

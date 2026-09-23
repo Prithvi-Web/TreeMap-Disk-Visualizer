@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** The shipped frontend, read once. */
 export const INDEX = readFileSync(

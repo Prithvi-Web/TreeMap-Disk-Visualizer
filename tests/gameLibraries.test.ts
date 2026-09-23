@@ -165,6 +165,7 @@ test('a disagreement with Steam is reported, not hidden', () => {
   write(manifest, fs.readFileSync(manifest, 'utf8').replace(/"SizeOnDisk"\s+"\d+"/, '"SizeOnDisk"		"90000"'));
   const title = scanGameLibraries(treeOf(root)).libraries[0].titles[0];
   assert.equal(title.reportedBytes, 90_000);
+  assert.ok(title.reportedDelta !== undefined);
   assert.ok(title.reportedDelta > 0.4, 'the gap is surfaced so a stale manifest is visible');
 });
 

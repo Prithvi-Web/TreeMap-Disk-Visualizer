@@ -41,6 +41,10 @@ function record(overrides: Partial<ScanResult>): ScanResult {
   return {
     scanId: 'test', rootPath: '/tmp/x', status: 'complete', scanned: 1, fileCount: 1, dirCount: 0,
     currentPath: '/tmp/x', startedAt: now, createdAt: now, cancelled: false,
+    // Required on every record (the walker's values at start); expiry reads none of them.
+    engineReason: '', fastPath: 'readdir+lstat', fallbackReason: null, cpuSeconds: null,
+    bytesRead: null, peakRssBytes: null, placeholdersSkipped: 0,
+    budget: { preset: 'auto', effective: 'balanced', source: 'node-shim' },
     ...overrides,
   };
 }

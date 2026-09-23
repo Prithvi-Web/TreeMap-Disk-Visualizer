@@ -321,7 +321,7 @@ test('sending a non-object resets the weights to the defaults', async () => {
 /* ══════════════════════ §3.2: no auto-selection ══════════════════════ */
 
 test('nothing in the score model selects, stages or deletes anything', () => {
-  const source = fs.readFileSync(new URL('../src/services/reclaimScore.ts', import.meta.url), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'reclaimScore.ts'), 'utf8');
   // §3.2: "The score never auto-selects anything for deletion. It sorts and it
   // explains." A pure arithmetic module cannot delete anything, and this
   // asserts it stays that way — the moment this file imports the trash, the

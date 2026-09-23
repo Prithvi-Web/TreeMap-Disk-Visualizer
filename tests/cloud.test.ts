@@ -84,6 +84,7 @@ test('retry policy: rate limits and server errors back off, client errors never'
   // 5xx backs off exponentially (jitter ≤ 250ms on top of the base)
   const d1 = retryDelayMs(503, 1, null, '');
   const d2 = retryDelayMs(503, 2, null, '');
+  assert.ok(d1 !== null && d2 !== null, `a 503 is retried on both attempts, got ${d1} and ${d2}`);
   assert.ok(d1 >= 500 && d1 < 800, `attempt1 ~500ms, got ${d1}`);
   assert.ok(d2 >= 1000 && d2 < 1300, `attempt2 ~1000ms, got ${d2}`);
   // Google's rate-limit-flavored 403 is transient…

@@ -90,6 +90,8 @@ type El = Record<string, unknown> & {
   tag: string;
   children: El[];
   listeners: Record<string, Array<(e: unknown) => void>>;
+  parentElement: El | null;
+  appendChild(c: El): El;
   ctx?: Ctx;
 };
 

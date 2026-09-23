@@ -402,7 +402,7 @@ test('the score never selects, stages or trashes anything', async () => {
     await score(fx.scanId, [fx.nodeModules, fx.video, fx.archive]);
     assert.deepEqual(fs.readdirSync(fx.root).sort(), before, 'scoring is inert — §3.2');
     // And nothing in the provider reaches a delete path.
-    const source = fs.readFileSync(new URL('../src/services/facts/reclaimScoreProvider.ts', import.meta.url), 'utf8');
+    const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'facts', 'reclaimScoreProvider.ts'), 'utf8');
     for (const forbidden of ["from '../trash'", "from '../cleaner'", "from '../offload'", "from '../timeCapsule'", 'moveToTrash']) {
       assert.ok(!source.includes(forbidden), `the score provider must not reach ${forbidden}`);
     }
@@ -446,8 +446,8 @@ test('claimFor terminates at the filesystem root rather than looping', () => {
 test('percentiles come from the scan itself, and an empty tree yields no range', () => {
   const sizes = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 64_000, 900_000_000];
   const store = buildStoreFromTree({
-    name: 'root', path: path.join(path.sep, 'r'), size: sizes.reduce((a, b) => a + b, 0), type: 'dir',
-    children: sizes.map((s, i) => ({ name: `f${i}`, path: path.join(path.sep, 'r', `f${i}`), size: s, type: 'file' as const })),
+    name: 'root', path: path.join(path.sep, 'r'), size: sizes.reduce((a, b) => a + b, 0), type: 'dir', modifiedAt: 0, isHidden: false,
+    children: sizes.map((s, i) => ({ name: `f${i}`, path: path.join(path.sep, 'r', `f${i}`), size: s, type: 'file' as const, modifiedAt: 0, isHidden: false })),
   });
   const d = computeSizeDistribution(store);
   assert.equal(d.files, 8);
@@ -456,7 +456,7 @@ test('percentiles come from the scan itself, and an empty tree yields no range',
   assert.ok(d.p50 >= 7_000 && d.p50 <= 9_000, `p50 was ${d.p50}`);
   assert.ok(d.p99 >= 850_000_000 && d.p99 <= 950_000_000, `p99 was ${d.p99}`);
 
-  const bare = buildStoreFromTree({ name: 'root', path: path.join(path.sep, 'e'), size: 0, type: 'dir', children: [] });
+  const bare = buildStoreFromTree({ name: 'root', path: path.join(path.sep, 'e'), size: 0, type: 'dir', modifiedAt: 0, isHidden: false, children: [] });
   const empty = computeSizeDistribution(bare);
   assert.deepEqual(empty, { files: 0, p50: 0, p99: 0 });
 });

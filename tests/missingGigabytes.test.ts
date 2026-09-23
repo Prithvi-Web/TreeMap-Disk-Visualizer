@@ -214,7 +214,10 @@ test('a statement that cannot balance is refused rather than published', () => {
   const broken: AccountingStatement = {
     scanId: 'x',
     rootPath: '/',
-    volume: { mountPoint: '/', totalBytes: 100, usedBytes: 100, freeBytes: 0, mechanism: 'fixture' },
+    volume: {
+      mountPoint: '/', totalBytes: 100, usedBytes: 100, freeBytes: 0, mechanism: 'fixture',
+      mechanismLabel: 'what the operating system reports for this disk', reservedBytes: 0,
+    },
     lines: [
       { id: 'scanned', label: 'Files', bytes: 40, available: true, detail: '', count: null, notes: [], remedy: null },
       { id: 'unaccounted', label: 'Unaccounted', bytes: 20, available: true, detail: '', count: null, notes: [], remedy: null },

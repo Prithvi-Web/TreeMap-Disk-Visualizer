@@ -6,7 +6,6 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 // Isolate every capsule, settings and audit write from the user's real app
 // data — this suite really does protect files into a Time Capsule.
@@ -21,8 +20,7 @@ import { initPortableMode, resetPortableMode } from '../src/services/portableMod
 import { planCartCommit, commitCart, undoCartRun, normalizeRunId, MAX_CART_PATHS } from '../src/services/cartCommit';
 import { updateSettings } from '../src/services/settings';
 
-const __dirname_ = path.dirname(fileURLToPath(import.meta.url));
-const INDEX = readFileSync(path.join(__dirname_, '..', 'public', 'index.html'), 'utf8');
+const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
 /**
  * Phase 4 §4.4 — committing the cart through the Time Capsule.
@@ -60,7 +58,7 @@ let shared: { port: number; close: () => Promise<void> } | null = null;
 async function listen() {
   resetRateLimiter();
   if (shared) return { port: shared.port, close: async () => {} };
-  const app = createApp(path.join(__dirname_, '..', 'public'));
+  const app = createApp(path.join(__dirname, '..', 'public'));
   const server = http.createServer(app);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   shared = {

@@ -472,9 +472,9 @@ function loadPreload() {
   const sent: Array<{ channel: string; args: unknown[] }> = [];
   const invoked: Array<{ channel: string; args: unknown[] }> = [];
   const listeners = new Map<string, (event: unknown, ...args: unknown[]) => void>();
-  let exposed: { name: string; api: Record<string, any> } | null = null;
+  const exposed: Array<{ name: string; api: Record<string, any> }> = [];
   const electron = {
-    contextBridge: { exposeInMainWorld(name: string, api: Record<string, any>) { exposed = { name, api }; } },
+    contextBridge: { exposeInMainWorld(name: string, api: Record<string, any>) { exposed.push({ name, api }); } },
     ipcRenderer: {
       send(channel: string, ...args: unknown[]) { sent.push({ channel, args }); },
       invoke(channel: string, ...args: unknown[]) { invoked.push({ channel, args }); return Promise.resolve('invoked'); },
@@ -493,8 +493,9 @@ function loadPreload() {
     mod._load = orig;
     delete require.cache[file];
   }
-  assert.ok(exposed, 'preload exposes an API');
-  return { api: exposed!.api, name: exposed!.name, sent, invoked, listeners };
+  const bridge = exposed.at(-1);
+  assert.ok(bridge, 'preload exposes an API');
+  return { api: bridge.api, name: bridge.name, sent, invoked, listeners };
 }
 
 test('preload exposes the documented desktop bridge and routes each call to its IPC channel', async () => {

@@ -58,11 +58,13 @@ async function call(
 
   let status = 0;
   let text = '';
-  const res = {
+  const fake = {
     headersSent: false,
     writeHead(code: number) { status = code; this.headersSent = true; return this; },
     end(chunk?: string) { text = chunk ?? ''; },
-  } as unknown as http.ServerResponse;
+  };
+  // A stand-in for the only members handlePeerRequest touches (writeHead, end, headersSent); a real one needs a socket.
+  const res = fake as http.ServerResponse;
 
   const done = handlePeerRequest(req, res, cfg, {
     async summary() { return summary({ acceptsRemoteScan: cfg.allowRemoteScan }); },

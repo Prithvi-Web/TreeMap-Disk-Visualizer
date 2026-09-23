@@ -152,6 +152,7 @@ test('an ignored path inside a fully-pushed repo is NOT claimed as recoverable',
 
     const target = path.join(repo, 'node_modules', 'big.js');
     const ignored = await ignoredPaths(repo, [target, path.join(repo, 'a.txt')]);
+    assert.ok(ignored, 'git check-ignore answered');
     assert.equal(ignored.has(target), true, 'check-ignore sees it');
     assert.equal(ignored.has(path.join(repo, 'a.txt')), false);
 

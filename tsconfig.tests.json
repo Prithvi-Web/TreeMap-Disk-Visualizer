@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  // bench/tsconfig.json owns these (with "types": ["node"]); listing them here too would check them twice under different options.
+  "exclude": ["tests/bench*.test.ts"]
+}

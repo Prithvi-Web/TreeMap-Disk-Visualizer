@@ -68,7 +68,8 @@ test('parseInstallDate: ISO text, PowerShell 5.1’s wire format — bare or wra
   assert.equal(parseInstallDate('2026-09-01T10:00:00.0000000Z'), Date.parse('2026-09-01T10:00:00.0000000Z'));
   assert.equal(parseInstallDate('/Date(1756720800000)/'), 1756720800000, 'the 5.1 wire format, as JSON.parse hands it over');
   assert.equal(parseInstallDate('/Date(1756720800000+0100)/'), 1756720800000, 'an offset suffix is not part of the instant');
-  assert.equal(parseInstallDate({ value: '/Date(1756720800000)/', DateTime: 'terça-feira, 1 de setembro de 2026 10:00:00' }), 1756720800000, 'the wrapper’s value, never its translated text');
+  const wrapped = { value: '/Date(1756720800000)/', DateTime: 'terça-feira, 1 de setembro de 2026 10:00:00' };
+  assert.equal(parseInstallDate(wrapped), 1756720800000, 'the wrapper’s value, never its translated text');
   assert.equal(parseInstallDate({ value: undefined }), null);
   assert.equal(parseInstallDate('hoje'), null);
   assert.equal(parseInstallDate(null), null);

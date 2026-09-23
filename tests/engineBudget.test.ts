@@ -120,16 +120,18 @@ function useFakeNative(snapshot: FakeSnapshot, hooks: FakeHooks = {}) {
   const mech = (name: string) => ({ available: true, mechanism: name, reason: null });
   const module = {
     version: () => pkg.nativeVersion,
-    governorCapabilities: () => ({
-      ...(hooks.governorCapabilities?.() as undefined),
-      qos: mech('pthread_set_qos_class_self_np'),
-      ioPolicy: mech('setiopolicy_np'),
-      priority: mech('setpriority'),
-      thermal: mech('NSProcessInfo.thermalState'),
-      battery: mech('IOPSGetTimeRemainingEstimate'),
-      interaction: mech('CGEventSourceSecondsSinceLastEventType'),
-      machineCpu: mech('host_statistics64'),
-    }),
+    governorCapabilities: () => {
+      hooks.governorCapabilities?.();
+      return {
+        qos: mech('pthread_set_qos_class_self_np'),
+        ioPolicy: mech('setiopolicy_np'),
+        priority: mech('setpriority'),
+        thermal: mech('NSProcessInfo.thermalState'),
+        battery: mech('IOPSGetTimeRemainingEstimate'),
+        interaction: mech('CGEventSourceSecondsSinceLastEventType'),
+        machineCpu: mech('host_statistics64'),
+      };
+    },
     governorConfigure: (budget: unknown, auto: boolean) => {
       hooks.governorConfigure?.(budget, auto);
       configured.push({ budget, auto });
@@ -910,7 +912,7 @@ test('main: sleep pauses every running scan and wake resumes exactly those', asy
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-power-'));
   const h = await loadMain({ dataDir: dir });
   try {
-    const running = (id: string): ScanResult => ({ scanId: id, rootPath: `/${id}`, status: 'running', scanned: 0, fileCount: 0, dirCount: 0, currentPath: '/', startedAt: 1, createdAt: 1, cancelled: false });
+    const running = (id: string): (typeof h.stub.backend.scans)[number] => ({ scanId: id, rootPath: `/${id}`, status: 'running', scanned: 0, fileCount: 0, dirCount: 0, currentPath: '/', startedAt: 1, createdAt: 1, cancelled: false });
     h.stub.backend.scans = [running('a'), { ...running('b'), status: 'complete' }, running('c')];
     h.stub.backend.pausedIds.add('c'); // the user paused this one before closing the lid
     h.stub.electron.powerMonitor.emit('suspend');
@@ -932,7 +934,7 @@ test('main: a scan that cannot be paused for sleep is logged and left alone, nev
   const realWarn = console.warn;
   console.warn = (...args: unknown[]) => { warned.push(args.map(String).join(' ')); };
   try {
-    const running = (id: string): ScanResult => ({ scanId: id, rootPath: `/${id}`, status: 'running', scanned: 0, fileCount: 0, dirCount: 0, currentPath: '/', startedAt: 1, createdAt: 1, cancelled: false });
+    const running = (id: string): (typeof h.stub.backend.scans)[number] => ({ scanId: id, rootPath: `/${id}`, status: 'running', scanned: 0, fileCount: 0, dirCount: 0, currentPath: '/', startedAt: 1, createdAt: 1, cancelled: false });
     h.stub.backend.scans = [running('a'), running('d')];
     h.stub.backend.unpausable.add('d');
     h.stub.electron.powerMonitor.emit('suspend');

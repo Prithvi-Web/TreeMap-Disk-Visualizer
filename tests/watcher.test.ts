@@ -4,9 +4,6 @@ import { FileNode, WatchEvent } from '../src/models/types';
 import { mergePending, capFrame, topLevelDirs } from '../src/services/watcher';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
-const __dirname_ = path.dirname(fileURLToPath(import.meta.url));
 
 /** Pure-logic tests for the live-activity watcher (Live mode). */
 
@@ -89,16 +86,16 @@ test('the top-level fallback list always includes the root, so it is never empty
   // merely a folder that happens to have no subdirectories. That is what makes
   // the zero case rare rather than routine, and it is worth pinning.
   const flat: FileNode = {
-    name: 'flat', path: '/flat', size: 10, type: 'dir', modifiedAt: 0,
-    children: [{ name: 'a.txt', path: '/flat/a.txt', size: 10, type: 'file', modifiedAt: 0 }],
+    name: 'flat', path: '/flat', size: 10, type: 'dir', modifiedAt: 0, isHidden: false,
+    children: [{ name: 'a.txt', path: '/flat/a.txt', size: 10, type: 'file', modifiedAt: 0, isHidden: false }],
   };
   assert.deepEqual(topLevelDirs(flat, 2, 50), ['/flat'], 'a folder of only files still yields the root');
 
   const nested: FileNode = {
-    name: 'r', path: '/r', size: 10, type: 'dir', modifiedAt: 0,
+    name: 'r', path: '/r', size: 10, type: 'dir', modifiedAt: 0, isHidden: false,
     children: [
-      { name: 'a', path: '/r/a', size: 5, type: 'dir', modifiedAt: 0, children: [] },
-      { name: 'f.txt', path: '/r/f.txt', size: 5, type: 'file', modifiedAt: 0 },
+      { name: 'a', path: '/r/a', size: 5, type: 'dir', modifiedAt: 0, isHidden: false, children: [] },
+      { name: 'f.txt', path: '/r/f.txt', size: 5, type: 'file', modifiedAt: 0, isHidden: false },
     ],
   };
   assert.deepEqual(topLevelDirs(nested, 2, 50), ['/r', '/r/a'], 'directories join it; files never do');
@@ -110,12 +107,12 @@ test('the live stream tells the client how many watchers attached, with a reason
   // §2.4 — unavailable is a first-class state carrying its reason, never a
   // blank that reads as "nothing is happening". `engine` names the strategy
   // that was TRIED, which is not the same claim.
-  const routes = readFileSync(path.join(__dirname_, '..', 'src', 'api', 'watchRoutes.ts'), 'utf8');
+  const routes = readFileSync(path.join(__dirname, '..', 'src', 'api', 'watchRoutes.ts'), 'utf8');
   assert.match(routes, /watchers: watching/, 'the init frame carries the count');
   assert.match(routes, /watching === 0/, 'and branches on zero');
   assert.match(routes, /could not be watched for live changes/, 'with a reason the user can act on');
 
-  const app = readFileSync(path.join(__dirname_, '..', 'public', 'index.html'), 'utf8');
+  const app = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
   const init = app.slice(app.indexOf("if (frame.type === 'init')"), app.indexOf("} else if (frame.type === 'activity')"));
   assert.ok(init.length > 100, 'the init handler was located');
   assert.match(init, /frame\.watchers === 0/, 'the client checks it');

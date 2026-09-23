@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 // Isolated app-data, before anything that reads settings is imported. Without
 // this the suite rewrites the user's real settings.json — including their
@@ -13,7 +12,6 @@ process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-ca
 
 import { getSettings, updateSettings } from '../src/services/settings';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
 /**

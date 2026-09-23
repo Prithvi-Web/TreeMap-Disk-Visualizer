@@ -5,7 +5,6 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-q2p-'));
 process.env.TREEMAP_DATA_DIR = DATA_DIR;
@@ -26,9 +25,8 @@ import {
 import { AppError } from '../src/middleware/errorHandler';
 import type { AutopilotPolicy, AutopilotRun } from '../src/models/types';
 
-const __dirname_ = path.dirname(fileURLToPath(import.meta.url));
-const INDEX = readFileSync(path.join(__dirname_, '..', 'public', 'index.html'), 'utf8');
-const AUTOPILOT_SRC = readFileSync(path.join(__dirname_, '..', 'src', 'services', 'autopilot.ts'), 'utf8');
+const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+const AUTOPILOT_SRC = readFileSync(path.join(__dirname, '..', 'src', 'services', 'autopilot.ts'), 'utf8');
 
 /**
  * Phase 4 §4.5 — query → Clean Up rule → Autopilot policy.

@@ -32,7 +32,7 @@
     "build": "node scripts/build-ui.js && tsc && node scripts/copy-assets.js",
     "start": "node dist/index.js",
     "test": "node scripts/run-tests.js",
-    "typecheck": "tsc --noEmit && tsc -p bench/tsconfig.json",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.tests.json && tsc -p bench/tsconfig.json",
     "build:native": "node scripts/build-native.js",
     "test:native": "cargo test --manifest-path native/treemap-core/Cargo.toml --workspace",
     "capabilities:report": "tsx scripts/report-capabilities.ts",
