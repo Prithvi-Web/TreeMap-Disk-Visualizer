@@ -1,0 +1,16 @@
+# The one Rust this workspace is built, linted and tested with — on a
+# developer's machine, on every CI leg, and in the release job alike.
+#
+# rustup reads this file for every cargo command run in this folder (and
+# `npm run build:native` runs cargo here), installing the version on first
+# use. Before it existed, CI took whatever `stable` was newest while a
+# developer's machine kept the version it had: on 23 September 2026 CI was on
+# 1.98.1 and this Mac on 1.97.0, so "the gate passed locally" had never been a
+# simulation of CI at all, and a Rust release could turn CI red with no change
+# to the code. Bump it deliberately — in its own commit, with the full gate
+# (`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --
+# -D warnings`, `cargo test --workspace`) run on the new version first.
+[toolchain]
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
