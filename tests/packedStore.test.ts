@@ -416,7 +416,7 @@ test('names are stored as their UTF-8, whether ASCII or not', () => {
   // path in appendName must agree with TextEncoder on every one of these.
   const names = [
     'plain.txt', 'x', `${'a'.repeat(300)}.bin`, 'del\u007fedge', 'pad\u0080edge', 'é', 'café.txt', 'abcé',
-    '文件', 'emoji😀', 'lone\ud800half', 'tail\udfff', 'mixed ascii then 文 then ascii',
+    '文件', 'emoji😀', 'lone\ud800half', 'tail\udfff', 'mixed ascii then 文 then ascii', 'nul\u0000byte',
   ];
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
@@ -426,6 +426,28 @@ test('names are stored as their UTF-8, whether ASCII or not', () => {
   packed.finalize();
   const read = packed.childIds(packed.rootId).map((id) => packed.name(id));
   assert.equal(ids.length, names.length);
+  assert.deepEqual(read, names.map((name) => decoder.decode(encoder.encode(name))));
+});
+
+test('names survive the name pool growing, ASCII or not, on either side of every doubling', () => {
+  // The pool starts at 16 KiB and doubles when a name might not fit; 3,000
+  // names of 20–79 characters, one in five non-ASCII, cross several doublings
+  // with both of appendName's paths.
+  const rng = makeRng(7);
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const names: string[] = [];
+  for (let i = 0; i < 3000; i++) {
+    const len = 20 + Math.floor(rng() * 60);
+    let s = '';
+    for (let k = 0; k < len; k++) s += rng() < 0.8 ? String.fromCharCode(0x20 + Math.floor(rng() * 0x5f)) : '文';
+    names.push(`${i}-${s}`);
+  }
+  const root: NodeInput = { name: 'root', isDir: true, size: 0, modifiedAt: 1, isHidden: false };
+  const packed = new PackedScanStore('/r', '/', root);
+  for (const name of names) packed.addNode(packed.rootId, { name, isDir: false, size: 1, modifiedAt: 1, isHidden: false });
+  packed.finalize();
+  const read = packed.childIds(packed.rootId).map((id) => packed.name(id));
   assert.deepEqual(read, names.map((name) => decoder.decode(encoder.encode(name))));
 });
 
