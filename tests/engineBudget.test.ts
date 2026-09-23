@@ -376,6 +376,16 @@ test('child priority is 10 under Eco, 5 under Balanced, 0 under Turbo', () => {
 });
 
 /** A gdu stand-in: waits, then writes one valid gdu document for the folder it was given. */
+/**
+ * A stand-in for gdu that works for about `holdMs` and then writes a
+ * one-file result. Real gdu is ONE process, so a SIGSTOP freezes all of its
+ * work and a SIGKILL ends all of it. The work here is therefore a loop of
+ * 10 ms steps: a SIGSTOP stops the loop between steps, and a SIGKILL leaves
+ * at most one 10 ms `sleep` behind. The first version slept once, in a child
+ * the SIGSTOP never reached — on Linux its work finished during the pause
+ * (458 ms held of 700) and, killed, it orphaned a `sleep 5` that kept the
+ * pipes open past the evictor's two seconds.
+ */
 async function fakeGdu(dir: string, holdMs: number): Promise<string> {
   const bin = path.join(dir, 'fake-gdu.sh');
   await fsp.writeFile(bin, [
@@ -383,10 +393,26 @@ async function fakeGdu(dir: string, holdMs: number): Promise<string> {
     'out=""',
     'while [ $# -gt 1 ]; do if [ "$1" = "-o" ]; then out="$2"; fi; shift; done',
     'target="$1"',
-    `sleep ${(holdMs / 1000).toFixed(2)}`,
+    'i=0',
+    `while [ $i -lt ${Math.max(1, Math.ceil(holdMs / 10))} ]; do sleep 0.01; i=$((i + 1)); done`,
     'printf \'[1,2,{"progname":"gdu","progver":"v5.36.1","timestamp":1},[{"name":"%s","mtime":1},{"name":"a.txt","asize":5,"dsize":4096,"mtime":1}]]\' "$target" > "$out"',
   ].join('\n'), { mode: 0o755 });
   return bin;
+}
+
+/**
+ * Resolves once the stand-in has a child process, i.e. once its work is
+ * under way. A pause must land mid-work to test anything: at spawn it lands
+ * before the shell has started, and a stand-in whose work outlives a SIGSTOP
+ * then passes by luck — which is how the old one (one `sleep` child) passed on
+ * macOS, whose shell starts slowly, and failed on Linux, whose `dash` does not.
+ */
+async function whenWorking(pid: number, limitMs = 5000): Promise<void> {
+  const t0 = Date.now();
+  while (spawnSync('pgrep', ['-P', String(pid)], { encoding: 'utf8' }).stdout.trim() === '') {
+    assert.ok(Date.now() - t0 < limitMs, `the stand-in (pid ${pid}) started no work within ${limitMs} ms`);
+    await new Promise((r) => setTimeout(r, 2));
+  }
 }
 
 test('gdu shards are started with os.setPriority(pid, 10) under Eco, through the scanner’s own onSpawn hook', { skip: isWindows && 'the stand-in is a shell script' }, async () => {
@@ -565,12 +591,15 @@ test('a shard’s controls really stop the process: SIGSTOP shows as a stopped s
     await runGdu(bin, root, out, {
       onSpawn: (child, shard) => {
         pid = child.pid ?? 0;
-        shard.pause();
-        setTimeout(() => {
-          const ps = spawnSync('ps', ['-o', 'state=', '-p', String(pid)], { encoding: 'utf8' });
-          stateWhileStopped = ps.stdout.trim();
-          shard.resume();
-        }, 400);
+        // Paused mid-work, as a user pauses a scan (see whenWorking).
+        void whenWorking(pid).then(() => {
+          shard.pause();
+          setTimeout(() => {
+            const ps = spawnSync('ps', ['-o', 'state=', '-p', String(pid)], { encoding: 'utf8' });
+            stateWhileStopped = ps.stdout.trim();
+            shard.resume();
+          }, 400);
+        });
       },
     });
     const took = Date.now() - t0;
@@ -603,6 +632,7 @@ test('the six-hour evictor kills a paused gdu shard instead of leaving it stoppe
       },
     }).then(() => 'finished', (err: Error) => err);
     while (!child) await sleep(5);
+    await whenWorking(child.pid ?? 0); // mid-work, as in the pause test above
     assert.equal(pauseScan(scan).paused, true);
     await sleep(150);
     const state = spawnSync('ps', ['-o', 'state=', '-p', String(child.pid)], { encoding: 'utf8' }).stdout.trim();
