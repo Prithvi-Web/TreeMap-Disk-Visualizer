@@ -1002,7 +1002,10 @@ test('a finished walk is noticed within a short poll, not a whole progress caden
   // 100 ms cadence a finished walk sat unnoticed 20-40 ms on a 200,000-entry
   // scan and ~28 ms on a 100 ms one (M3, 23 Sep 2026). Past its ramp (1, 2,
   // 4 ... ms) the loop polls every NATIVE_POLL_MS; a median over the gaps
-  // keeps one slow timer on a busy machine from deciding the verdict.
+  // keeps one slow timer on a busy machine from deciding the verdict. The
+  // ceiling is half the old 100 ms cadence, which still fails it, and leaves
+  // room for Windows, whose default timer ticks every 15.6 ms: a 10 ms sleep
+  // there wakes on the next tick, 15.6-31.2 ms on a busy runner.
   const { root, locked } = await buildEdgeFixture('treemap-native-slack-');
   try {
     const { scan, store } = recordFor(root);
@@ -1025,7 +1028,7 @@ test('a finished walk is noticed within a short poll, not a whole progress caden
     const RAMP = 8;
     const gaps = polls.slice(RAMP + 1).map((t, i) => t - polls[RAMP + i]).sort((a, b) => a - b);
     const median = gaps[Math.floor(gaps.length / 2)];
-    assert.ok(median <= 25, `past its ramp the loop polled every ${median.toFixed(1)} ms (NATIVE_POLL_MS is ${NATIVE_POLL_MS})`);
+    assert.ok(median <= 50, `past its ramp the loop polled every ${median.toFixed(1)} ms (NATIVE_POLL_MS is ${NATIVE_POLL_MS})`);
     assert.ok(endedAt > 0 && takenAt >= endedAt, 'the walk ended when the test ended it, and was taken after');
     assert.ok(takenAt - endedAt < 60, `the end was noticed ${Math.round(takenAt - endedAt)} ms after the walk ended`);
   } finally {
