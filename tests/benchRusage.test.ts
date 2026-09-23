@@ -98,3 +98,40 @@ test('a tree is dirty when tracked code changed, not when a baseline the harness
   assert.equal(dirtyFromStatus('?? bench/lib/newthing.ts\n'), true, 'an untracked source file could have been measured');
   assert.equal(dirtyFromStatus('?? bench/baselines/x.json\n M src/services/diskScanner.ts\n'), true);
 });
+
+test('a change confined to bench/baselines/ is data the harness recorded and leaves the tree clean; a change to anything else is dirty', async () => {
+  const { dirtyFromStatus } = await import('../bench/lib/machine');
+  // `git status --porcelain` (v1) lines, in the formats git 2.50 prints them.
+  const baselinesOnly = [
+    ' M bench/baselines/enumerate-turbo-walker-ci20k-darwin-arm64-tierB.json', // a tracked baseline an earlier series of the batch replaced
+    'M  bench/baselines/enumerate-gdu-turbo-ci20k-darwin-arm64-tierB.json',
+    'A  bench/baselines/enumerate-native-ci20k-darwin-arm64-tierB-budget-turbo.json',
+    '?? bench/baselines/enumerate-turbo-walker-ci20k-darwin-arm64-tierB-budget-turbo.json',
+    ' D bench/baselines/duplicates-sha256-staged-ci20k-darwin-arm64-tierB.json',
+    'R  bench/baselines/a.json -> bench/baselines/b.json',
+    'RM bench/baselines/a.json -> bench/baselines/b.json',
+    '?? bench/baselines/sub/',
+    '?? "bench/baselines/with space.json"',
+    'R  "bench/baselines/with space.json" -> "bench/baselines/with other space.json"',
+  ];
+  for (const line of baselinesOnly) assert.equal(dirtyFromStatus(`${line}\n`), false, line);
+  const listing = `${baselinesOnly.join('\n')}\n`;
+  assert.equal(dirtyFromStatus(listing), false, 'a listing of nothing but baselines is clean');
+  const elsewhere = [
+    ' M src/services/diskScanner.ts',
+    ' M bench/lib/report.ts',
+    'M  tests/benchReport.test.ts',
+    '?? src/services/newEngine.ts',
+    ' M bench/README.md',
+    ' D package-lock.json',
+    '?? bench/baselines-old/x',
+    ' M bench/baselines-old/x.json',
+    '?? bench/baselinesx.json',
+    'R  src/x.ts -> bench/baselines/x.ts',
+    'R  bench/baselines/x.json -> src/x.json',
+  ];
+  for (const line of elsewhere) {
+    assert.equal(dirtyFromStatus(`${line}\n`), true, line);
+    assert.equal(dirtyFromStatus(`${listing}${line}\n`), true, `${line}, beside the baselines`);
+  }
+});

@@ -110,6 +110,12 @@ budget cannot be held to either, so every result names its budget.
   knowing when that happens: the governor scales Eco and Balanced back while
   someone is using the computer (Turbo it does not), and any preset under
   thermal pressure; the scan's record names the preset, not that scaling.
+* A baseline recorded under a budget is named for the budget asked for:
+  `enumerate-turbo-walker-ci20k-darwin-arm64-tierB-budget-turbo.json`. A
+  Phase 1 baseline, recorded before the governor, keeps the name it was
+  committed under (`…-tierB.json`). The two are different conditions, and
+  neither name can be the other's (a tier is one capital letter), so
+  recording under a budget never replaces a baseline from before it.
 
 ## The governor row
 
@@ -170,7 +176,11 @@ in its parameters). Read the two CORRECTNESS lines and series instead.
 * `--record` refuses a result that failed correctness, is not reproducible,
   ran a run under a budget other than the one it names (the refusal names
   the runs and presets), or was measured on a working tree with uncommitted
-  changes (the commit it cites would not be the code measured).
+  changes (the commit it cites would not be the code measured). A change
+  confined to `bench/baselines/` does not count: those are baselines the
+  harness recorded itself — a batch writes one before it measures the next
+  series — and nothing measured reads them. A change anywhere else does,
+  `bench/baselines-old/` included.
 * `compare` refuses two results that differ in suite, corpus, corpus
   parameters, engine, unit, machine tier, platform, architecture, cache
   state or budget, and a result whose budget moved. A result written before

@@ -34,7 +34,7 @@ export interface MachineRecord {
   arch: string;
   osRelease: string;
   node: string;
-  /** Full `git rev-parse HEAD`, `-dirty` appended when the tree had uncommitted changes; `'unknown'` when git cannot answer. */
+  /** Full `git rev-parse HEAD`, `-dirty` appended when the tree had uncommitted changes outside bench/baselines/ (see `dirtyFromStatus`); `'unknown'` when git cannot answer. */
   commit: string;
   dirty: boolean;
   /** 1/5/15-minute load; `null` where the OS does not measure it (Windows). */
@@ -138,14 +138,35 @@ function gitHead(): { commit: string; dirty: boolean } {
 }
 
 /**
- * Any modified tracked file, or any untracked file that could have been code,
- * makes the tree dirty. A baseline the harness itself just recorded under
- * bench/baselines/ is the one untracked file that cannot have been measured.
+ * The one directory of measurement data the harness writes where git sees it:
+ * `--record`'s baselines. Results go to bench/results/, which git ignores;
+ * corpora, probes and the app's data live under the OS temp directory.
+ */
+const RECORDED_DATA_DIR = 'bench/baselines/';
+
+/**
+ * Any change to a tracked file, or any untracked file that could have been
+ * code, makes the tree dirty — except a change confined to bench/baselines/:
+ * baselines the harness records itself (a batch's first `--record` leaves one
+ * new or replaced there before the next series is measured), which the code
+ * being measured never reads. A rename or copy is confined only when both of
+ * its paths are, and bench/baselines-old/ is not bench/baselines/.
  */
 export function dirtyFromStatus(porcelain: string): boolean {
   return porcelain
     .split('\n')
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0)
-    .some((line) => !(line.startsWith('?? ') && line.slice(3).startsWith('bench/baselines/')));
+    .some((line) => !statusPaths(line).every(isRecordedData));
+}
+
+/** The paths a `git status --porcelain` line names: `XY path`, or `XY from -> to` for a rename (R) or copy (C). */
+function statusPaths(line: string): string[] {
+  const paths = line.slice(3);
+  return /[RC]/.test(line.slice(0, 2)) ? paths.split(' -> ') : [paths];
+}
+
+/** Git quotes a path holding a space or an unusual byte; the prefix is plain ASCII, which it never escapes, so it is read after the quote. */
+function isRecordedData(statusPath: string): boolean {
+  return (statusPath.startsWith('"') ? statusPath.slice(1) : statusPath).startsWith(RECORDED_DATA_DIR);
 }

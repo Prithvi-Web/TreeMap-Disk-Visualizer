@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { summarize, compareToBaseline, printTable, readResult, recordRefusal, writeResult, type BenchResult, type BenchRun, type StoredResult } from '../bench/lib/report';
+import { summarize, compareToBaseline, printTable, readResult, recordRefusal, writeResult, baselineFileName, recordBaseline, REQUESTED_BUDGETS, type BenchResult, type BenchRun, type StoredResult } from '../bench/lib/report';
 import { checkScanAgainstManifest, checkDuplicatesAgainstManifest } from '../bench/lib/verify';
 
 function run(wallMs: number, cpuSeconds = 0.5, entries = 200_000, extra: Partial<BenchRun> = {}): BenchRun {
@@ -422,4 +422,58 @@ test('the table carries the budget beside the cache state: the preset asked for,
   const moved = result(1000, 2);
   moved.budget = { requested: 'eco', effective: ['eco', 'balanced', 'eco'] };
   assert.ok(printTable([moved]).includes('eco: eco/balanced/eco (moved)'), printTable([moved]));
+});
+
+/* -------------------------- the baseline's name -------------------------- */
+
+/** The series of 23 September 2026: the turbo walker on ci20k, recorded under a budget beside its Phase 1 baseline. */
+function turboWalkerCi20k(r: BenchResult): BenchResult {
+  return { ...r, engine: 'turbo-walker', corpus: { ...r.corpus, name: 'ci20k' } };
+}
+/** The name that Phase 1 baseline was committed under, before the governor existed. */
+const PHASE1_NAME = 'enumerate-turbo-walker-ci20k-darwin-arm64-tierB.json';
+
+test('recording a budgeted result beside a baseline from before the governor leaves that file byte-identical and writes its own', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-baselines-'));
+  try {
+    const legacyFile = writeResult(preGovernor(turboWalkerCi20k(result(1200, 2))), dir, PHASE1_NAME);
+    const before = fs.readFileSync(legacyFile);
+    const budgeted = turboWalkerCi20k(result(1000, 2));
+    const written = recordBaseline(budgeted, dir);
+    assert.ok(fs.readFileSync(legacyFile).equals(before), 'the baseline from before the governor is byte-identical');
+    assert.equal(path.basename(written), 'enumerate-turbo-walker-ci20k-darwin-arm64-tierB-budget-turbo.json');
+    assert.deepEqual(fs.readdirSync(dir).sort(), [PHASE1_NAME, path.basename(written)].sort(), 'one new file beside the old one');
+    assert.deepEqual(readResult(written).budget, { requested: 'turbo', effective: ['turbo', 'turbo', 'turbo'] });
+    assert.equal(readResult(legacyFile).budget, undefined);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a baseline name ends in the budget asked for; a result from before the governor keeps the name it was recorded under', () => {
+  const budgeted = turboWalkerCi20k(result(1000, 2));
+  assert.equal(baselineFileName(preGovernor(budgeted)), PHASE1_NAME, 'the Phase 1 names are unchanged, so those baselines are still where the rule puts them');
+  const names = REQUESTED_BUDGETS.map((requested) => {
+    // Automatic resolves to Balanced here: the name is the budget asked for, which is what a comparison keys on.
+    const name = baselineFileName({ ...budgeted, budget: { requested, effective: budgeted.runs.map(() => (requested === 'auto' ? 'balanced' : requested)) } });
+    assert.equal(name, `enumerate-turbo-walker-ci20k-darwin-arm64-tierB-budget-${requested}.json`);
+    return name;
+  });
+  assert.equal(new Set([...names, PHASE1_NAME]).size, REQUESTED_BUDGETS.length + 1, 'every budget has its own file, and none is the Phase 1 one');
+});
+
+test('every committed baseline sits where the name rule puts it, and no budgeted recording of the same series can land on one from before the governor', () => {
+  const dir = path.join(__dirname, '..', 'bench', 'baselines');
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+  const results = files.map((f) => ({ f, r: readResult(path.join(dir, f)) }));
+  const preGovernorFiles = results.filter(({ r }) => r.budget === undefined).map(({ f }) => f);
+  assert.ok(preGovernorFiles.length > 0, 'the Phase 1 baselines are committed');
+  for (const { f, r } of results) {
+    assert.equal(baselineFileName(r), f, `${f} is not the name the rule gives its contents`);
+    if (r.budget !== undefined) continue;
+    for (const requested of REQUESTED_BUDGETS) {
+      const name = baselineFileName({ ...r, budget: { requested, effective: r.runs.map(() => requested) } });
+      assert.ok(!preGovernorFiles.includes(name), `${f} recorded under ${requested} would replace ${name}`);
+    }
+  }
 });

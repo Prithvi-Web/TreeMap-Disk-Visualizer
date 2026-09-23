@@ -173,7 +173,7 @@ async function main(): Promise<void> {
         process.stdout.write(`  NOT RECORDED as a baseline: ${refusal}\n`);
         process.exitCode = 1;
       } else {
-        const b = report.writeResult(r, BASELINES_DIR, report.baselineFileName(r));
+        const b = report.recordBaseline(r, BASELINES_DIR);
         process.stdout.write(`  baseline: ${path.relative(REPO, b)}\n`);
       }
     }

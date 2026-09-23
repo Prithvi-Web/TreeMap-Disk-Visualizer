@@ -366,9 +366,21 @@ export function resultFileName(r: StoredResult): string {
   return `${r.suite}-${slug(r.engine)}-${slug(r.corpus.name)}-${stamp}.json`;
 }
 
-/** Baselines are keyed on everything a comparison requires to match. */
+/**
+ * A baseline's file is keyed on the suite, engine, corpus, platform,
+ * architecture and tier, and — on every result that names one — the budget
+ * asked for, which is what a comparison keys on: `…-tierB-budget-turbo.json`,
+ * or `…-budget-auto.json` for the app's default.
+ * A result from before the governor has no budget and keeps the name it was
+ * committed under (`…-tierB.json`). A tier is one capital letter and a
+ * budgeted name ends in a lowercase word, so neither can ever be the other's
+ * name: a recording under a budget never replaces a baseline from before it.
+ * `budget-` spells out which field the word is, because engine ids carry
+ * `turbo` too (`gdu-turbo`, `turbo-walker`).
+ */
 export function baselineFileName(r: StoredResult): string {
-  return `${r.suite}-${slug(r.engine)}-${slug(r.corpus.name)}-${slug(r.machine.platform)}-${slug(r.machine.arch)}-tier${r.machine.tier}.json`;
+  const stem = `${r.suite}-${slug(r.engine)}-${slug(r.corpus.name)}-${slug(r.machine.platform)}-${slug(r.machine.arch)}-tier${r.machine.tier}`;
+  return r.budget ? `${stem}-budget-${slug(r.budget.requested)}.json` : `${stem}.json`;
 }
 
 export function writeResult(r: StoredResult, dir: string, fileName = resultFileName(r)): string {
@@ -376,6 +388,11 @@ export function writeResult(r: StoredResult, dir: string, fileName = resultFileN
   const file = path.join(dir, fileName);
   fs.writeFileSync(file, JSON.stringify(r, null, 2) + '\n');
   return file;
+}
+
+/** `--record`'s one write: the result under its baseline name in `dir` (bench/baselines/ from the CLI). Returns the file written. */
+export function recordBaseline(r: StoredResult, dir: string): string {
+  return writeResult(r, dir, baselineFileName(r));
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
