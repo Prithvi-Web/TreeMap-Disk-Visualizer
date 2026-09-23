@@ -90,6 +90,34 @@ test('the clone caveat is shown beside a figure it qualifies, and only there', (
     'and off darwin the outcome stands alone');
 });
 
+/* ── what the hunt would have had to download ── */
+
+type NoteLinesWithCloud = (platform: string, status: string, groupCount: number, outcome: string | null, notHashed?: { files: number; bytes: number }) => string[];
+
+test('cloud files the hunt did not open are named in the note, even when no duplicate was found', () => {
+  // The master prompt §3.2: never silently omit them. Opening one downloads it,
+  // so the hunt leaves them alone — and a "No duplicates found" standing over
+  // unchecked cloud files would be a claim nobody made.
+  const dupNoteLines = lift<NoteLinesWithCloud>(['dupNoteLines', 'UI_LOCALE', 'formatCount', 'formatBytes', 'UNITS'], 'dupNoteLines');
+  const many = dupNoteLines('linux', 'complete', 0, null, { files: 3, bytes: 3 * MB });
+  assert.equal(many.length, 1);
+  assert.match(many[0], /^3 cloud files \(3\.0 MB\) were not checked, because opening them would download them/);
+  assert.match(many[0], /make them available offline first/);
+  const one = dupNoteLines('win32', 'complete', 2, null, { files: 1, bytes: MB });
+  assert.match(one[0], /^1 cloud file \(1\.0 MB\) was not checked, because opening it would download it/, 'the singular reads');
+  assert.deepEqual(dupNoteLines('linux', 'complete', 0, null, { files: 0, bytes: 0 }), [], 'none left out, nothing said');
+  assert.deepEqual(dupNoteLines('linux', 'running', 0, null, { files: 3, bytes: 3 * MB }), [], 'nothing claimed while the hunt runs');
+  const mac = dupNoteLines('darwin', 'complete', 4, 'Moved 2 copies to the Trash.', { files: 2, bytes: 2 * MB });
+  assert.equal(mac.length, 3, 'the clone caveat, then the cloud files, then the outcome');
+  assert.match(mac[1], /^2 cloud files/);
+  assert.equal(mac[2], 'Moved 2 copies to the Trash.');
+});
+
+test('the page keeps what the server reports about files it did not open', () => {
+  assert.match(INDEX, /state\.dup\.notHashed = data\.notHashed/, 'the poll stores it');
+  assert.match(INDEX, /dupNoteLines\(.*state\.dup\.notHashed\)/, 'the note is given it');
+});
+
 /* ── the wiring that makes the measurement mean anything ── */
 
 test('the before reading is taken after the user confirms, not when the dialog opens', () => {

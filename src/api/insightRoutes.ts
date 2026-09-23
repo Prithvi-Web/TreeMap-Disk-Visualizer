@@ -94,6 +94,8 @@ insightRouter.get('/duplicates', (req: Request, res: Response) => {
     groups: job.groups ?? [],
     groupCount: job.groupCount ?? 0,
     totalReclaimable: job.totalReclaimable ?? 0,
+    // Cloud placeholders left unopened: opening one downloads it (§3.2).
+    notHashed: job.notHashed ?? { files: 0, bytes: 0, largest: [] },
     tookMs: (job.finishedAt ?? job.startedAt) - job.startedAt,
   });
 });

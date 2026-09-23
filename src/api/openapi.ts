@@ -1215,9 +1215,17 @@ export const ENDPOINTS: EndpointDescriptor[] = [
             groups: arr(ref('DuplicateGroup'), 'Top 500'),
             groupCount: int(),
             totalReclaimable: int(),
+            notHashed: obj(
+              {
+                files: int('Cloud placeholders at or above minSize, left unopened: opening one downloads it'),
+                bytes: int('Their size as the cloud reports it'),
+                largest: arr(obj({ path: str(), size: int() }, ['path', 'size']), 'The largest 20, biggest first'),
+              },
+              ['files', 'bytes', 'largest'],
+            ),
             tookMs: int(),
           },
-          ['status', 'scanId', 'minSize', 'groups', 'groupCount', 'totalReclaimable', 'tookMs'],
+          ['status', 'scanId', 'minSize', 'groups', 'groupCount', 'totalReclaimable', 'notHashed', 'tookMs'],
         ),
       ),
       '202': jsonResponse('Hashing in progress', obj({ status: str("'running'"), hashed: int(), toHash: int() }, ['status', 'hashed', 'toHash'])),

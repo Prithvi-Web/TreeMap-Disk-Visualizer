@@ -204,8 +204,11 @@ export function decideNative(rootPath: string, pre: Omit<EligibilityInput, 'nati
  *    `Math.round` of the times, atime omitted unless above zero);
  *  - a symlink is a leaf with `isSymlink` and no sparse or cloud check, as in
  *    the walker (a link's size against zero blocks looks fully sparse);
- *  - cloud placeholder = size above zero, nothing allocated, AND a path under
- *    a known cloud folder — the path is built only for those entries;
+ *  - cloud placeholder = the walk's own dataless flag, exact wherever the
+ *    file is (macOS `SF_DATALESS`; Windows' recall attributes and cloud
+ *    reparse tags, on a file the walk records as a link) — or, as the walker
+ *    has to guess, size above zero, nothing allocated AND a path under a
+ *    known cloud folder; the path is built only for those entries;
  *  - each directory's children are emitted in the walker's order: libuv's
  *    `scandir` sorts a readdir listing with `strcmp` on every platform but
  *    Windows, so the walker's children are byte-sorted by name. The native
@@ -304,11 +307,12 @@ export function ingestColumns(scan: ScanResult, store: ScanStore, cols: WalkResu
       const input = statToInput(name, isDir, cols.size[i], Number.isFinite(mtime) ? mtime : 0, cols.atimeMs[i]);
       let allocDelta = 0;
       let family: number | undefined;
+      const dataless = (cols.flags[i] & FLAG_DATALESS) !== 0;
       if (kind === KIND_SYMLINK) {
         input.isSymlink = true;
       } else if (!isDir) {
         const alloc = cols.allocBytes[i];
-        if (input.size > 0 && alloc === 0) {
+        if (!dataless && input.size > 0 && alloc === 0) {
           const provider = cloudProviderFor(pathOf(i));
           if (provider) {
             input.cloudPlaceholder = true;
@@ -318,6 +322,13 @@ export function ingestColumns(scan: ScanResult, store: ScanStore, cols: WalkResu
         allocDelta = BLOCKS_ARE_MEANINGFUL && input.size > 0 ? alloc - input.size : 0;
         const link = linkOf[i];
         if (link !== -1) family = cols.hardlinkFamily[link];
+      }
+      // The walk's own flag is exact wherever the file is, a Windows cloud file
+      // recorded as a link included; the guess above is only the walker's.
+      if (dataless && !isDir) {
+        input.cloudPlaceholder = true;
+        const provider = cloudProviderFor(pathOf(i));
+        if (provider) input.cloudProvider = provider;
       }
       if (family !== undefined) {
         if (seen.has(family)) {

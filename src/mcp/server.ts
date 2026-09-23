@@ -507,7 +507,8 @@ export function buildMcpServer(): McpServer {
         'Content-identical duplicate groups in a completed scan (size bucket → partial hash → full SHA-256). ' +
         'Hashing runs in the background: if it is still working after waitMs you get { status: "running", ' +
         'hashed, toHash } — call find_duplicates again with the same arguments to keep polling. Groups come ' +
-        'back largest-reclaimable first.',
+        'back largest-reclaimable first. Cloud placeholders are never opened (opening one downloads it); ' +
+        'they are counted in notHashed instead.',
       inputSchema: {
         scanId: z.string().min(1).describe('A completed scan from scan_path'),
         minSizeBytes: z.number().int().min(1).default(1024).describe('Ignore files smaller than this'),
@@ -555,6 +556,12 @@ export function buildMcpServer(): McpServer {
           totalReclaimable: job.totalReclaimable ?? 0,
           totalReclaimableFormatted: formatBytes(job.totalReclaimable ?? 0),
           groups,
+          // Never silently omitted (§3.2): cloud files left unopened because
+          // opening one downloads it.
+          notHashed: {
+            ...(job.notHashed ?? { files: 0, bytes: 0, largest: [] }),
+            bytesFormatted: formatBytes(job.notHashed?.bytes ?? 0),
+          },
         });
       }),
   );

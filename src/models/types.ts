@@ -436,9 +436,25 @@ export interface DuplicateJob {
   reclaimableIsUpperBound?: boolean;
   /** The sentence to show beside the figure when it is a ceiling. */
   reclaimableCaveat?: string;
+  /** Files not read because reading them would download them; set once complete. */
+  notHashed?: NotHashed;
   error?: string;
   startedAt: number;
   finishedAt?: number;
+}
+
+/**
+ * Cloud placeholders the duplicate pass did not read (the master prompt §3.2):
+ * opening one makes its sync client download it, so they are counted and
+ * named here instead of being hashed — or silently left out.
+ */
+export interface NotHashed {
+  /** Placeholders at or above the pass's minimum size. */
+  files: number;
+  /** Their size as the cloud reports it (none of it is on this disk). */
+  bytes: number;
+  /** The largest of them, biggest first. */
+  largest: { path: string; size: number }[];
 }
 
 /* ---------- Perceptual / near-duplicate images (Feature 12) ---------- */

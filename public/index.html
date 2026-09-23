@@ -28358,6 +28358,7 @@ async function loadDuplicates(force = false) {
       state.dup.groups = data.groups;
       state.dup.groupCount = data.groupCount;
       state.dup.totalReclaimable = data.totalReclaimable;
+      state.dup.notHashed = data.notHashed;
       // A group's files carry no size of their own — every copy is g.size by
       // definition. Seed them so selection totals are right even for copies the
       // pruned tree left out.
@@ -28645,11 +28646,20 @@ function dupFreedText(count, before, after) {
  * The Finder line appears only while a reclaimable figure is actually on
  * screen: it exists to explain that figure's "up to", and standing over an
  * empty tab it would be a lecture nobody asked for.
+ *
+ * The cloud line appears whenever the hunt left files unopened because
+ * opening them would download them (the master prompt §3.2: never silently
+ * omit them) — with or without a figure, since "No duplicates found" over
+ * unchecked files would be a claim nobody made.
  */
-function dupNoteLines(platform, status, groupCount, outcome) {
+function dupNoteLines(platform, status, groupCount, outcome, notHashed) {
   const lines = [];
   if (platform === 'darwin' && status === 'complete' && groupCount > 0) {
     lines.push('Copies made with Finder’s Duplicate share their storage until one of them is changed, so trashing one of those frees nothing.');
+  }
+  if (status === 'complete' && notHashed && notHashed.files > 0) {
+    const one = notHashed.files === 1;
+    lines.push(`${formatCount(notHashed.files)} cloud ${one ? 'file' : 'files'} (${formatBytes(notHashed.bytes)}) ${one ? 'was' : 'were'} not checked, because opening ${one ? 'it' : 'them'} would download ${one ? 'it' : 'them'}. To include ${one ? 'it' : 'them'}, make ${one ? 'it' : 'them'} available offline first.`);
   }
   if (outcome) lines.push(outcome);
   return lines;
@@ -28659,7 +28669,7 @@ function dupNoteLines(platform, status, groupCount, outcome) {
 function renderDupNote() {
   const el = $('dupNote');
   if (!el) return;
-  const html = dupNoteLines((state.system || {}).platform, state.dup.status, state.dup.groups.length, dupTrashOutcome)
+  const html = dupNoteLines((state.system || {}).platform, state.dup.status, state.dup.groups.length, dupTrashOutcome, state.dup.notHashed)
     .map((t) => `<div>${escapeHtml(t)}</div>`).join('');
   if (html === dupNotePainted) return;
   dupNotePainted = html;

@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { createReadStream } from 'fs';
-import { ScanResult, DuplicateGroup, DuplicateJob } from '../models/types';
-import { storeOf } from './scanStore';
+import { ScanResult, DuplicateGroup, DuplicateJob, NotHashed } from '../models/types';
+import { Flag, storeOf } from './scanStore';
 import { peekScan } from './diskScanner';
 
 /**
@@ -14,6 +14,14 @@ import { peekScan } from './diskScanner';
  *
  * Hashing runs as a background job per scanId; the API polls the job record,
  * mirroring how scans themselves report progress.
+ *
+ * Nothing is read that would make a sync client download it (the master
+ * prompt §3.2, RISKS R1): a cloud placeholder is never opened — it is
+ * counted and named in `notHashed` instead — and neither is a symbolic
+ * link, which a read follows (a Windows cloud placeholder is a reparse
+ * point, recorded as a link by both engines) and which is no file of its
+ * own. A hard link's later names carry size 0 in the store (the scan counted
+ * the bytes once), so they never reach a bucket.
  */
 
 const PARTIAL_BYTES = 64 * 1024;
@@ -21,6 +29,16 @@ const PARTIAL_BYTES = 64 * 1024;
 export const REPORTED_GROUPS = 500;
 /** How many files are hashed concurrently. */
 const HASH_CONCURRENCY = 4;
+/** How many placeholders `notHashed` names; it counts them all. */
+const NOT_HASHED_LISTED = 20;
+
+/** Test-only: told of every file the pass opens, before it is opened. */
+let hashOpenObserver: ((file: string) => void) | null = null;
+
+/** Test-only: watch what the pass opens (null stops watching). */
+export function observeHashOpensForTests(observer: ((file: string) => void) | null): void {
+  hashOpenObserver = observer;
+}
 
 const jobs = new Map<string, DuplicateJob>();
 
@@ -91,15 +109,25 @@ async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void
 
   // Stage 1 — bucket every file by size; only same-size files can be equal.
   // Buckets hold bare ids; a path only materializes when a file gets hashed.
+  // Links and cloud placeholders never enter a bucket; the placeholders are
+  // counted instead (see the module comment).
   const bySize = new Map<number, number[]>();
+  const placeholders: number[] = [];
+  let placeholderBytes = 0;
   store.eachFile(store.rootId, (id) => {
     const size = store.size(id);
-    if (size >= job.minSize) {
-      const bucket = bySize.get(size);
-      if (bucket) bucket.push(id);
-      else bySize.set(size, [id]);
+    if (size < job.minSize) return;
+    if (store.flag(id, Flag.Symlink)) return;
+    if (store.flag(id, Flag.CloudPlaceholder)) {
+      placeholders.push(id);
+      placeholderBytes += size;
+      return;
     }
+    const bucket = bySize.get(size);
+    if (bucket) bucket.push(id);
+    else bySize.set(size, [id]);
   });
+  job.notHashed = notHashedReport(placeholders, placeholderBytes, (id) => store.size(id), (id) => store.path(id));
 
   const candidates: number[][] = [];
   for (const bucket of bySize.values()) {
@@ -184,8 +212,23 @@ async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void
   job.finishedAt = Date.now();
 }
 
+/**
+ * What `notHashed` says about `ids`: how many, how much, and the largest
+ * `NOT_HASHED_LISTED` by name, biggest first (ties by path, so the list
+ * does not depend on the order the scan found them).
+ */
+function notHashedReport(ids: number[], bytes: number, sizeOf: (id: number) => number, pathOf: (id: number) => string): NotHashed {
+  const largest = [...ids]
+    .sort((a, b) => sizeOf(b) - sizeOf(a) || a - b)
+    .slice(0, NOT_HASHED_LISTED)
+    .map((id) => ({ path: pathOf(id), size: sizeOf(id) }))
+    .sort((a, b) => b.size - a.size || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return { files: ids.length, bytes, largest };
+}
+
 /** SHA-256 of a file — the whole file, or just the first `limit` bytes. */
 function hashFile(filePath: string, limit?: number): Promise<string> {
+  hashOpenObserver?.(filePath);
   return new Promise((resolve, reject) => {
     const hash = createHash('sha256');
     const stream = createReadStream(filePath, limit ? { start: 0, end: limit - 1 } : {});

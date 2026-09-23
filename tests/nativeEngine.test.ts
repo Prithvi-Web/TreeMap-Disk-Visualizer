@@ -787,6 +787,49 @@ test('ingestColumns: the cloud-placeholder branch on columns built by hand — s
   assert.equal(store.size(store.rootId), 13000);
 });
 
+test('ingestColumns: the walk’s own dataless flag makes a placeholder wherever it is — outside a known cloud folder, and on a Windows cloud file the walk records as a link', () => {
+  // The master prompt §3.2 and RISKS R1/R2: the native walk reads the exact
+  // flag (macOS SF_DATALESS; Windows' recall attributes and cloud reparse
+  // tags), so its placeholders do not depend on the folder-name guess the
+  // walker has to make. A Windows cloud file is a reparse point, which both
+  // engines record as a link sized by the file behind it.
+  const root = '/Users/someone';
+  const names = [path.basename(root), 'Documents', 'report.pdf', 'OneDrive', 'doc.docx', 'plain.bin'];
+  const enc = names.map((n) => Buffer.from(n, 'utf8'));
+  const nameOff = new Uint32Array(names.length + 1);
+  let off = 0;
+  enc.forEach((n, i) => { nameOff[i] = off; off += n.length; });
+  nameOff[names.length] = off;
+  const cols: WalkResult = {
+    parent: Uint32Array.from([0, 0, 1, 0, 3, 1]),
+    nameOff,
+    names: new Uint8Array(Buffer.concat(enc)),
+    kind: Uint8Array.from([KIND_DIR, KIND_DIR, KIND_FILE, KIND_DIR, KIND_SYMLINK, KIND_FILE]),
+    flags: Uint8Array.from([0, 0, FLAG_DATALESS, 0, FLAG_DATALESS, 0]),
+    size: Float64Array.from([0, 0, 5000, 0, 7000, 300]),
+    allocBytes: Float64Array.from([0, 0, 4096, 0, 0, 4096]),
+    mtimeMs: Float64Array.from([1.7e12, 1.7e12, 1.7e12, 1.7e12, 1.7e12, 1.7e12]),
+    atimeMs: Float64Array.from([NaN, NaN, NaN, NaN, NaN, NaN]),
+    hardlinkNode: new Uint32Array(0), hardlinkFamily: new Uint32Array(0),
+    refusalNode: new Uint32Array(0), refusalWhy: new Uint8Array(0),
+    stats: { dirsListed: 3, entries: 5, wallMs: 1, cpuSeconds: 0.01, fastPath: 'bulk', workersPeak: 1, climbSteps: 0, deniedEntries: 0, unreadableEntries: 0, dataless: 2 },
+  };
+  const scan = createScanRecord(root);
+  const store = new PackedScanStore(root, '/', { name: 'someone', isDir: true, size: 0, modifiedAt: 0, isHidden: false });
+  ingestColumns(scan, store, cols, root);
+  store.finalize();
+  store.sumSizes();
+  const report = store.materialize(store.findByPath('/Users/someone/Documents/report.pdf'));
+  assert.equal(report.cloudPlaceholder, true, 'flagged by the walk, outside any known cloud folder, even with blocks allocated');
+  assert.equal(report.cloudProvider, undefined, 'no provider the path names');
+  const doc = store.materialize(store.findByPath('/Users/someone/OneDrive/doc.docx'));
+  assert.equal(doc.isSymlink, true);
+  assert.equal(doc.cloudPlaceholder, true, 'a Windows cloud file recorded as a link is a placeholder too');
+  assert.equal(doc.cloudProvider, 'onedrive');
+  assert.equal(store.materialize(store.findByPath('/Users/someone/Documents/plain.bin')).cloudPlaceholder, undefined, 'no flag, no placeholder');
+  assert.deepEqual({ cloudFiles: scan.cloudFiles, cloudBytes: scan.cloudBytes }, { cloudFiles: 2, cloudBytes: 12000 }, 'both on the cloud line');
+});
+
 test('ingestColumns: hard-link families are told apart by the number the walk gave them, never by rounded ids', () => {
   // The walk groups names by their file's exact identity and numbers each
   // family; the ingest keys on that number. It once keyed on `${dev}:${ino}`
