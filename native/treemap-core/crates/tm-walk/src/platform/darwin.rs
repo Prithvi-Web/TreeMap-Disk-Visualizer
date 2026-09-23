@@ -123,17 +123,17 @@ impl Lister for DarwinLister {
 /// Opens `path` as a directory for reading, without following a final symlink.
 pub fn open_dir(path: &Path) -> Result<OwnedFd, i32> {
     let c = CString::new(path.as_os_str().as_bytes()).map_err(|_| libc::EINVAL)?;
-    // SAFETY: `c` is NUL-terminated; the flags open a directory read-only, refuse
-    // a final symlink, and close the descriptor on exec.
-    let fd = unsafe {
-        libc::open(
-            c.as_ptr(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-        )
-    };
-    if fd < 0 {
-        return Err(last_errno());
-    }
+    let fd = super::retry_eintr(|| {
+        // SAFETY: `c` is NUL-terminated; the flags open a directory read-only,
+        // refuse a final symlink, and close the descriptor on exec.
+        let fd = unsafe {
+            libc::open(
+                c.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 { Err(last_errno()) } else { Ok(fd) }
+    })?;
     // SAFETY: `fd` was just opened and nobody else owns it.
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
@@ -169,24 +169,27 @@ fn list_bulk(fd: &OwnedFd, want_atime: bool, buf: &mut ListBuffer) -> Result<Bul
             // The walk discards the listing on cancel, so which errno ends it is immaterial.
             return Err(libc::ECANCELED);
         }
-        // SAFETY: `fd` is an open directory; `attrs` is a valid attrlist for the
-        // call; `buf.raw` is a writable buffer of exactly `buf.raw.len()` bytes.
-        let n = unsafe {
-            libc::getattrlistbulk(
-                fd.as_raw_fd(),
-                (&raw mut attrs).cast::<c_void>(),
-                buf.raw.as_mut_ptr().cast::<c_void>(),
-                buf.raw.len(),
-                0,
-            )
-        };
-        if n < 0 {
-            let errno = last_errno();
-            if first && (errno == libc::ENOTSUP || errno == libc::EINVAL) {
+        let answer = super::retry_eintr(|| {
+            // SAFETY: `fd` is an open directory; `attrs` is a valid attrlist for
+            // the call; `buf.raw` is a writable buffer of exactly `buf.raw.len()` bytes.
+            let n = unsafe {
+                libc::getattrlistbulk(
+                    fd.as_raw_fd(),
+                    (&raw mut attrs).cast::<c_void>(),
+                    buf.raw.as_mut_ptr().cast::<c_void>(),
+                    buf.raw.len(),
+                    0,
+                )
+            };
+            if n < 0 { Err(last_errno()) } else { Ok(n) }
+        });
+        let n = match answer {
+            Ok(n) => n,
+            Err(errno) if first && (errno == libc::ENOTSUP || errno == libc::EINVAL) => {
                 return Ok(BulkOutcome::Unsupported(errno));
             }
-            return Err(errno);
-        }
+            Err(errno) => return Err(errno),
+        };
         // Every answer beats, the empty one that ends the listing included, so
         // even an empty directory beats once.
         buf.beat();

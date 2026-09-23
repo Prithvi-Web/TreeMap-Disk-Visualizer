@@ -306,6 +306,22 @@ pub fn last_errno() -> i32 {
         .unwrap_or(libc::EIO)
 }
 
+/// Makes `call` again for as long as it fails with `EINTR`, and returns
+/// anything else — success or another errno — at once. A signal that lands
+/// while a worker is inside `open`, `getattrlistbulk`, `getdents64`, `statx`
+/// or `fstatat` says nothing about the file; counted as an error, it would
+/// record a readable directory as unreadable and drop its subtree because of
+/// when a signal arrived.
+#[cfg(unix)]
+pub fn retry_eintr<T>(mut call: impl FnMut() -> Result<T, i32>) -> Result<T, i32> {
+    loop {
+        match call() {
+            Err(libc::EINTR) => {}
+            other => return other,
+        }
+    }
+}
+
 /// The calling thread's own CPU time in seconds: `CLOCK_THREAD_CPUTIME_ID` on
 /// Unix, `GetThreadTimes` on Windows; NaN where the platform has no thread clock.
 pub fn thread_cpu_seconds() -> f64 {

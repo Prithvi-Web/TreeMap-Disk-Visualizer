@@ -28,12 +28,12 @@ pub fn lstat_meta(path: &Path, want_atime: bool) -> Result<Meta, i32> {
     let c = CString::new(path.as_os_str().as_bytes()).map_err(|_| libc::EINVAL)?;
     // SAFETY: all-zero is a valid `stat` (plain integers).
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    // SAFETY: `c` is a NUL-terminated path and `st` a writable stat; lstat fills it
-    // and does not follow a final symlink.
-    let rc = unsafe { libc::lstat(c.as_ptr(), &raw mut st) };
-    if rc != 0 {
-        return Err(last_errno());
-    }
+    super::retry_eintr(|| {
+        // SAFETY: `c` is a NUL-terminated path and `st` a writable stat; lstat
+        // fills it and does not follow a final symlink.
+        let rc = unsafe { libc::lstat(c.as_ptr(), &raw mut st) };
+        if rc == 0 { Ok(()) } else { Err(last_errno()) }
+    })?;
     Ok(meta_from_stat(&st, want_atime))
 }
 
@@ -44,13 +44,14 @@ pub fn lstat_meta(path: &Path, want_atime: bool) -> Result<Meta, i32> {
 pub fn fstatat_meta(dirfd: RawFd, name: &CStr, want_atime: bool) -> Result<Meta, i32> {
     // SAFETY: all-zero is a valid `stat` (plain integers).
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    // SAFETY: `name` is NUL-terminated and `st` a writable stat; a closed or
-    // invalid `dirfd` fails with EBADF rather than doing anything; the flag
-    // stops a final symlink from being followed.
-    let rc = unsafe { libc::fstatat(dirfd, name.as_ptr(), &raw mut st, libc::AT_SYMLINK_NOFOLLOW) };
-    if rc != 0 {
-        return Err(last_errno());
-    }
+    super::retry_eintr(|| {
+        // SAFETY: `name` is NUL-terminated and `st` a writable stat; a closed or
+        // invalid `dirfd` fails with EBADF rather than doing anything; the flag
+        // stops a final symlink from being followed.
+        let rc =
+            unsafe { libc::fstatat(dirfd, name.as_ptr(), &raw mut st, libc::AT_SYMLINK_NOFOLLOW) };
+        if rc == 0 { Ok(()) } else { Err(last_errno()) }
+    })?;
     Ok(meta_from_stat(&st, want_atime))
 }
 
@@ -133,16 +134,21 @@ fn read_all(dir: *mut libc::DIR, want_atime: bool, buf: &mut ListBuffer) -> Resu
             // The walk discards the listing on cancel, so which errno ends it is immaterial.
             return Err(libc::ECANCELED);
         }
-        clear_errno();
-        // SAFETY: `dir` is an open stream; readdir returns null at the end (errno
-        // untouched) or on error (errno set), otherwise a pointer into the
-        // stream's own buffer that stays valid until the next call on it.
-        let ent = unsafe { libc::readdir(dir) };
-        if ent.is_null() {
-            let errno = last_errno();
-            if errno != 0 {
-                return Err(errno);
+        let ent = super::retry_eintr(|| {
+            clear_errno();
+            // SAFETY: `dir` is an open stream; readdir returns null at the end
+            // (errno untouched) or on error (errno set), otherwise a pointer into
+            // the stream's own buffer that stays valid until the next call on it.
+            let ent = unsafe { libc::readdir(dir) };
+            if ent.is_null() {
+                let errno = last_errno();
+                if errno != 0 {
+                    return Err(errno);
+                }
             }
+            Ok(ent)
+        })?;
+        if ent.is_null() {
             // The end is an answer too: the last, partial batch beats here.
             buf.beat();
             return Ok(());

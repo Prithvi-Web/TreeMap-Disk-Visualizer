@@ -317,7 +317,9 @@ mod os {
 
     use super::{Dirent, StatxFacts, dev_parts, meta_from_statx, parse_dirents};
     use crate::output::Refusal;
-    use crate::platform::{ListBuffer, Lister, Listing, Meta, last_errno, refusal_from_errno};
+    use crate::platform::{
+        ListBuffer, Lister, Listing, Meta, last_errno, refusal_from_errno, retry_eintr,
+    };
     use crate::{DEFAULT_BUFFER_BYTES, FastPath, KIND_DIR, Probe};
 
     /// The probe's own listing buffer.
@@ -333,17 +335,17 @@ mod os {
             return Err(libc::EINVAL);
         }
         c.push(0);
-        // SAFETY: `c` is NUL-terminated; the flags open a directory read-only,
-        // refuse a final symlink, and close the descriptor on exec.
-        let fd = unsafe {
-            libc::open(
-                c.as_ptr().cast::<libc::c_char>(),
-                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            )
-        };
-        if fd < 0 {
-            return Err(last_errno());
-        }
+        let fd = retry_eintr(|| {
+            // SAFETY: `c` is NUL-terminated; the flags open a directory read-only,
+            // refuse a final symlink, and close the descriptor on exec.
+            let fd = unsafe {
+                libc::open(
+                    c.as_ptr().cast::<libc::c_char>(),
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                )
+            };
+            if fd < 0 { Err(last_errno()) } else { Ok(fd) }
+        })?;
         // SAFETY: `fd` was just opened and nobody else owns it.
         Ok(unsafe { OwnedFd::from_raw_fd(fd) })
     }
@@ -360,26 +362,26 @@ mod os {
             let mask = super::STATX_WANTED | if want_atime { super::STATX_ATIME } else { 0 };
             // SAFETY: all-zero is a valid `statx` (plain integers).
             let mut stx: libc::statx = unsafe { std::mem::zeroed() };
-            // SAFETY: `dirfd` is open (or AT_FDCWD), `name` is NUL-terminated,
-            // `stx` is a writable statx; the flags stop a final symlink from
-            // being followed.
-            let rc = unsafe { libc::statx(dirfd, name, STATX_FLAGS, mask, &raw mut stx) };
-            if rc == 0 {
-                return Ok(facts_from_statx(&stx));
+            let answer = retry_eintr(|| {
+                // SAFETY: `dirfd` is open (or AT_FDCWD), `name` is NUL-terminated,
+                // `stx` is a writable statx; the flags stop a final symlink from
+                // being followed.
+                let rc = unsafe { libc::statx(dirfd, name, STATX_FLAGS, mask, &raw mut stx) };
+                if rc == 0 { Ok(()) } else { Err(last_errno()) }
+            });
+            match answer {
+                Ok(()) => return Ok(facts_from_statx(&stx)),
+                Err(errno) if !super::statx_unusable(errno) => return Err(errno),
+                Err(_) => statx_unavailable.store(true, Ordering::Relaxed),
             }
-            let errno = last_errno();
-            if !super::statx_unusable(errno) {
-                return Err(errno);
-            }
-            statx_unavailable.store(true, Ordering::Relaxed);
         }
         // SAFETY: all-zero is a valid `stat` (plain integers).
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
-        // SAFETY: as for statx above; fstatat fills `st` and does not follow a final symlink.
-        let rc = unsafe { libc::fstatat(dirfd, name, &raw mut st, libc::AT_SYMLINK_NOFOLLOW) };
-        if rc != 0 {
-            return Err(last_errno());
-        }
+        retry_eintr(|| {
+            // SAFETY: as for statx above; fstatat fills `st` and does not follow a final symlink.
+            let rc = unsafe { libc::fstatat(dirfd, name, &raw mut st, libc::AT_SYMLINK_NOFOLLOW) };
+            if rc == 0 { Ok(()) } else { Err(last_errno()) }
+        })?;
         Ok(facts_from_stat(&st))
     }
 
@@ -443,19 +445,19 @@ mod os {
                 // The walk discards the listing on cancel, so which errno ends it is immaterial.
                 return Err(libc::ECANCELED);
             }
-            // SAFETY: `dirfd` is an open directory; `buf.raw` is a writable buffer
-            // of exactly `buf.raw.len()` bytes; the kernel writes at most that many.
-            let n = unsafe {
-                libc::syscall(
-                    libc::SYS_getdents64,
-                    dirfd,
-                    buf.raw.as_mut_ptr().cast::<c_void>(),
-                    buf.raw.len(),
-                )
-            };
-            if n < 0 {
-                return Err(last_errno());
-            }
+            let n = retry_eintr(|| {
+                // SAFETY: `dirfd` is an open directory; `buf.raw` is a writable buffer
+                // of exactly `buf.raw.len()` bytes; the kernel writes at most that many.
+                let n = unsafe {
+                    libc::syscall(
+                        libc::SYS_getdents64,
+                        dirfd,
+                        buf.raw.as_mut_ptr().cast::<c_void>(),
+                        buf.raw.len(),
+                    )
+                };
+                if n < 0 { Err(last_errno()) } else { Ok(n) }
+            })?;
             // Every answer beats, the empty one that ends the listing included,
             // so even an empty directory beats once.
             buf.beat();
