@@ -46,7 +46,17 @@ Landing order: when both agents are done → `npm run build:native` → `npm run
 
 **Also committed:** `ea55633` native-engine tests run on Linux/Windows (the 62≠60 was a `path.join` backslash vs a `/` split; sparse and order follow the platform's own facts). **Full local gate at `ea55633`: npm test 2,806 / 2,800 pass / 0 fail / 6 skipped; Rust 153 passed; typecheck and UI check clean.** Ready to push — watch for: whether libuv leaves `blocks` at 0 on Windows (the forced-native test will say).
 
+### In flight since the batch (update when each lands)
+- DONE `9c301a9`: W6 M1–M3, crate `tm-mft` (72 tests, 122 mutants red, one re-run by me; Rust gate 225 passed). The W6 plan now carries 8 binding corrections for M4–M6 (512-byte fix-up stride; `$MFT` bootstrap; stop at initialized size; `FastPath::Mft` needed in M6; create M5's hard links after the last write; …).
+- **Sequencing decision:** when the tests-typecheck agent lands, verify+commit it, then take the **Phase 3 measurement while nothing else runs** (no agent, no build), and only then dispatch W6 M4+M5. Commands: see "What remains of Phase 3" §3 below (`npm run bench -- enumerate --corpus=ci20k --engine=native --runs=7 --cache=warm --record`, then enum200k ×5, enum1m ×5, `npm run bench -- compare`, then `npm run bench -- governor --preset=eco|balanced|turbo --seconds=60 --record`); record in CURRENT-STATE §11.
+- CI watcher (`scratchpad/watch-ci.sh`) now waits on `git ls-remote origin refs/heads/main` moving off `scratchpad/remote-base.sha` (no API budget while waiting), then reads the run on the new tip.
+- DONE `5c72bcf`: the test suite is type-checked (`tsconfig.tests.json` in `npm run typecheck`; 38 errors, all harness looseness; bite proven). Full gate at `5c72bcf`: npm test 2,806 / 2,800 / 0 fail / 6 skipped; Rust 225 passed.
+- NOW: the Phase 3 measurement on a clean tree with nothing else running (see the sequencing decision above).
+- (history) Agent "tests-typecheck": test files were never type-checked (root tsconfig = `src/**` only; tsx strips types). 38 errors in ~20 test files. It adds `tsconfig.tests.json`, fixes each error as (a) harness looseness / (b) a real test bug (proved by making the assertion fail once) / (c) a product type bug (reported, not fixed), and wires `npm run typecheck` to include it. No `as any`/ts-ignore allowed.
+- Watcher armed on `f9d523e` (8 commits await the owner's push).
+
 ### Found, queued (not yet done)
+- Rust review of `cc6a0e2` (ecc:rust-reviewer): no CRITICAL/HIGH. LOW nit: `walk.rs` merge converts id→index with `usize::try_from` in the new patch loop but `id as usize` in the placement loop above — harmonise to the existing idiom in the next Rust commit (re-run the Rust gate).
 - DONE `219db7f`: CI fetches gdu (`npm run fetch:gdu:dev`, SHA-256 against the pinned release's sums) before the suite, so (b) now runs on every leg — read what it reveals on Linux/Windows.
 - `tests/edgeCases.test.ts` "a skipped case is a real inability" skips entirely on Windows — review whether that is a true inability.
 
