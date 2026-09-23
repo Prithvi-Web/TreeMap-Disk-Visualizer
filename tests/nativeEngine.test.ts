@@ -1117,40 +1117,46 @@ test('a root that disappears under a native walk is the scan’s own error, in t
   }
 });
 
-test('a finished walk is noticed within a short poll, not a whole progress cadence', async () => {
+test('the poll loop waits 1, 2, 4, 8 ms, then NATIVE_POLL_MS and never longer, and takes a finished walk at the poll that sees it end', async () => {
   // The poll that updates progress is also how a walk's end is noticed. At a
   // 100 ms cadence a finished walk sat unnoticed 20-40 ms on a 200,000-entry
-  // scan and ~28 ms on a 100 ms one (M3, 23 Sep 2026). Past its ramp (1, 2,
-  // 4 ... ms) the loop polls every NATIVE_POLL_MS; a median over the gaps
-  // keeps one slow timer on a busy machine from deciding the verdict. The
-  // ceiling is half the old 100 ms cadence, which still fails it, and leaves
-  // room for Windows, whose default timer ticks every 15.6 ms: a 10 ms sleep
-  // there wakes on the next tick, 15.6-31.2 ms on a busy runner.
+  // scan and ~28 ms on a 100 ms one (M3, 23 Sep 2026). The waits are asked of
+  // the walk's timing, so this is exact on any machine: a busy runner's slow
+  // timer (Windows ticks every 15.6 ms) cannot decide it.
   const { root, locked } = await buildEdgeFixture('treemap-native-slack-');
   try {
     const { scan, store } = recordFor(root);
-    const polls: number[] = [];
-    const fake = useFakeNative({ steps: Number.MAX_SAFE_INTEGER, onPoll: () => { polls.push(performance.now()); } });
-    let endedAt = 0;
-    let takenAt = 0;
-    const take = fake.module.scanTake;
-    fake.module.scanTake = (h: number) => {
-      takenAt = performance.now();
-      return take(h);
-    };
-    // Ends the walk well past the ramp, as a real walk ends: between two polls.
-    const timer = setTimeout(() => {
-      for (const h of fake.handles.values()) h.done = true;
-      endedAt = performance.now();
-    }, 400);
+    const fake = useFakeNative({ steps: 20 });
+    const asked: number[] = [];
+    setNativeWalkTimingForTests({
+      sleep: async (ms: number) => {
+        asked.push(ms);
+        fake.calls.log.push(`sleep:${ms}`);
+      },
+    });
     await runNativeWalk(scan, store, root, fake.module);
-    clearTimeout(timer);
-    const RAMP = 8;
-    const gaps = polls.slice(RAMP + 1).map((t, i) => t - polls[RAMP + i]).sort((a, b) => a - b);
-    const median = gaps[Math.floor(gaps.length / 2)];
-    assert.ok(median <= 50, `past its ramp the loop polled every ${median.toFixed(1)} ms (NATIVE_POLL_MS is ${NATIVE_POLL_MS})`);
-    assert.ok(endedAt > 0 && takenAt >= endedAt, 'the walk ended when the test ended it, and was taken after');
-    assert.ok(takenAt - endedAt < 60, `the end was noticed ${Math.round(takenAt - endedAt)} ms after the walk ended`);
+    assert.ok(NATIVE_POLL_MS <= 10, `M3 chose 10 ms; NATIVE_POLL_MS is ${NATIVE_POLL_MS}`);
+    assert.deepEqual(asked, [1, 2, 4, 8, ...Array<number>(15).fill(NATIVE_POLL_MS)], 'one wait after each of the 19 polls that saw the walk running');
+    assert.deepEqual(fake.calls.log.slice(-3), [`sleep:${NATIVE_POLL_MS}`, 'poll:done', 'take'], 'the poll that sees the end is followed by the take, with no wait between');
+  } finally {
+    setNativeWalkTimingForTests(null);
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('with the real clock the poll loop really waits between polls: it never spins', async () => {
+  // Seven waits of 1, 2, 4, 8, 10, 10 and 10 ms: 45 ms asked. A timer can
+  // fire up to 1 ms early against performance.now() (the loop's clock counts
+  // whole milliseconds), so at least 38 ms pass; a loop that spun would take
+  // a fraction of one.
+  const { root, locked } = await buildEdgeFixture('treemap-native-wait-');
+  try {
+    const { scan, store } = recordFor(root);
+    const fake = useFakeNative({ steps: 8 });
+    const started = performance.now();
+    await runNativeWalk(scan, store, root, fake.module);
+    const took = performance.now() - started;
+    assert.ok(took >= 30, `seven waits asked for 45 ms took ${took.toFixed(1)} ms`);
   } finally {
     await unlockAndRemove(root, locked);
   }
@@ -1238,9 +1244,17 @@ test('a cancelled walk that never reports done is abandoned at the cancel deadli
   const clock = fakeClock();
   try {
     assert.equal(NATIVE_CANCEL_DEADLINE_MS, 5_000);
-    setNativeWalkTimingForTests({ cancelDeadlineMs: 2_500, now: clock.now });
     const { scan, store } = recordFor(root);
     const fake = useFakeNative({ wedged: true, onPoll: (n) => { clock.tick(); if (n === 2) scan.cancelled = true; } });
+    const settleWaits: number[] = [];
+    setNativeWalkTimingForTests({
+      cancelDeadlineMs: 2_500,
+      now: clock.now,
+      sleep: (ms) => {
+        if (fake.calls.cancel > 0) settleWaits.push(ms);
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      },
+    });
     const walk = runNativeWalk(scan, store, root, fake.module);
     assert.equal(await bounded(walk, fake, 3_000), 'settled', 'runNativeWalk did not return within 3 s of a cancel the walk never answered');
     await walk;
@@ -1248,6 +1262,7 @@ test('a cancelled walk that never reports done is abandoned at the cancel deadli
     const after = fake.calls.log.slice(fake.calls.log.indexOf('cancel') + 1);
     assert.ok(after.length >= 1 && after.every((c) => c === 'poll'), `after the cancel, polls and then nothing: ${after.join(' ')}`);
     assert.equal(after.length, 3, 'polled at 1 s and 2 s within the 2.5 s deadline, at 3 s past it, then abandoned');
+    assert.deepEqual(settleWaits, [1, 2], 'the settle loop ramps from NATIVE_POLL_FIRST_MS as the walk loop does');
     assert.equal(fake.calls.take, 0, 'a take of a wedged walk would block the app; it is never attempted');
     assert.equal(fake.handles.size, 1, 'the handle is left in the module for the life of the process');
   } finally {

@@ -383,8 +383,6 @@ export function ingestColumns(scan: ScanResult, store: ScanStore, cols: WalkResu
 
 /* ------------------------------ the walk ------------------------------ */
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
 /**
  * A native refusal as the error the scanner already understands: tm-node
  * prefixes a root refusal with Node's own errno spelling (`ENOENT: …`), so
@@ -398,17 +396,23 @@ function withErrno(err: unknown, rootPath: string): Error {
   return e;
 }
 
-/** The deadlines the walk loop reads and the clock it reads them by. */
+/** The deadlines the walk loop reads, the clock it reads them by, and how it waits between polls. */
 interface WalkTiming {
   cancelDeadlineMs: number;
   stallMs: number;
   now: () => number;
+  sleep: (ms: number) => Promise<void>;
 }
 
-const WALL_CLOCK: WalkTiming = { cancelDeadlineMs: NATIVE_CANCEL_DEADLINE_MS, stallMs: NATIVE_STALL_MS, now: () => Date.now() };
+const WALL_CLOCK: WalkTiming = {
+  cancelDeadlineMs: NATIVE_CANCEL_DEADLINE_MS,
+  stallMs: NATIVE_STALL_MS,
+  now: () => Date.now(),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
 let timing: WalkTiming = WALL_CLOCK;
 
-/** Test-only: shorter deadlines and a clock of the test's own; null restores the constants and the wall clock. */
+/** Test-only: shorter deadlines, a clock and waits of the test's own; null restores the constants and the wall clock. */
 export function setNativeWalkTimingForTests(over: Partial<WalkTiming> | null): void {
   timing = over ? { ...WALL_CLOCK, ...over } : WALL_CLOCK;
 }
@@ -460,7 +464,7 @@ async function settle(mod: ScanModule, handle: number): Promise<void> {
       console.warn(`[treemap] the native walk did not answer a cancel within ${timing.cancelDeadlineMs / 1000} s; its handle and threads are left to the module`);
       return;
     }
-    await sleep(interval);
+    await timing.sleep(interval);
     interval = Math.min(NATIVE_POLL_MS, interval * 2);
   }
   try {
@@ -541,7 +545,7 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
         await settleOnce();
         throw new Error(`the native walk made no progress for ${timing.stallMs / 1000} s at ${scan.currentPath ?? rootPath}`);
       }
-      await sleep(interval);
+      await timing.sleep(interval);
       interval = Math.min(NATIVE_POLL_MS, interval * 2);
     }
   } catch (err: unknown) {
