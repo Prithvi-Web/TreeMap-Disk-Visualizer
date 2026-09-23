@@ -101,6 +101,9 @@ test('a scan completes without gdu when gdu is disabled', async () => {
  * apologising for a wrong number.
  */
 test('gdu and the walker report identical bytes and hardlinks on the same tree', async (t) => {
+  // On Windows gdu keys no hard links (RISKS R59), so this tree’s link is
+  // counted twice there; the scan chain never hands a Windows scan to gdu.
+  if (process.platform === 'win32') return t.skip('gdu keys no hard links on Windows (RISKS R59); the scan chain never uses it there');
   const bin = await findGduBinary();
   if (!bin) return t.skip('gdu not available on this machine');
 

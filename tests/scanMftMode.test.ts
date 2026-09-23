@@ -13,6 +13,7 @@ import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { setMftWalkForTests, startScan } from '../src/services/diskScanner';
 import { updateSettings } from '../src/services/settings';
+import { resetNativeForTests, setNativeLoadOverrideForTests } from '../src/services/scan/native';
 import { settled } from '../src/utils/backgroundWrites';
 import type { ScanResult } from '../src/models/types';
 import type { MftOutcome } from '../src/services/scan/nativeEngine';
@@ -147,6 +148,27 @@ test('the mode’s rules keep it out, each with its reason: a single-file root a
   assert.match(incremental.engineReason ?? '', /incremental rescan/);
   assert.deepEqual(calls, [], 'neither asked');
   await asWindows(() => updateSettings({ engine: 'auto' }));
+});
+
+test('when the native engine scans instead, as on any Windows machine, the mode’s clause is still in the reason', async (t) => {
+  // The first Windows CI run: with a real native module the clause was lost,
+  // because it went only into the reasons the legacy engines give. Here the
+  // decision is Windows' and the module is this machine's own.
+  const prebuilt = path.join(__dirname, '..', 'native', 'prebuilt', `${os.platform()}-${os.arch()}`, 'treemap_core.node');
+  if (!fs.existsSync(prebuilt)) return t.skip('no native module built for this machine');
+  const calls = standIn({ used: true, reason: 'must not run' });
+  resetNativeForTests();
+  setNativeLoadOverrideForTests({ path: prebuilt });
+  try {
+    const scan = await scanWithTurbo({});
+    assert.equal(scan.status, 'complete', scan.error);
+    assert.deepEqual(calls, []);
+    assert.equal(scan.engine, 'native', scan.engineReason ?? '');
+    assert.match(scan.engineReason ?? '', /only for a scan started from the TreeMap window/);
+  } finally {
+    setNativeLoadOverrideForTests(null);
+    resetNativeForTests();
+  }
 });
 
 test('POST /api/scan passes the window’s interactive flag on, and a request without it never asks', async () => {

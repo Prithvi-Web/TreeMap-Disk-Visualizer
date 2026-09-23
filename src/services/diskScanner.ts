@@ -447,6 +447,36 @@ export function setMftWalkForTests(fn: typeof runMftWalk | null): void {
   mftWalk = fn ?? runMftWalk;
 }
 
+/** What `gduRuleFor` weighs about a scan. */
+export interface GduRuleInput {
+  forced: EngineSetting;
+  rootIsDir: boolean;
+  incremental: boolean;
+  ignoreCount: number;
+  /** TREEMAP_NO_GDU is set. */
+  noGdu: boolean;
+  platform: NodeJS.Platform;
+}
+
+/**
+ * Why gdu is not wanted for a scan, the first rule that applies, or null
+ * when it may run (startScan's comment gives the reasons). On Windows it is
+ * never wanted: gdu keys no hard links there, so a tree that has them is
+ * counted more than once, and the built-in walker keys them by file id —
+ * the owner's decision on RISKS R59, 23 Sep 2026.
+ */
+export function gduRuleFor(o: GduRuleInput): string | null {
+  if (o.forced === 'walker') return 'the Scan engine setting asks for the built-in walker';
+  if (o.platform === 'win32') {
+    return 'on Windows gdu keys no hard links (it reads every file id as 0), so a tree that has them would be counted more than once; the built-in walker keys them by file id';
+  }
+  if (!o.rootIsDir) return 'the root is a single file, which needs no gdu process';
+  if (o.incremental) return 'this is an incremental rescan, which gdu has no cache for';
+  if (o.ignoreCount > 0) return `the scan has ${o.ignoreCount} "don't scan" pattern${o.ignoreCount === 1 ? '' : 's'} gdu cannot express`;
+  if (o.noGdu) return 'gdu is switched off by TREEMAP_NO_GDU';
+  return null;
+}
+
 /**
  * Whether a finished scan is kept in the walker's fast-rescan cache and the
  * snapshot history. An NTFS turbo scan read the table as administrator: its
@@ -609,14 +639,17 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
    *    being slower. Fall back rather than approximate.
    *
    * The Scan engine setting can turn it off (walker) or ask for it (gdu); a
-   * rule that keeps a scan gdu asked for off it is a fallback, named.
+   * rule that keeps a scan gdu asked for off it is a fallback, named. The
+   * rules are gduRuleFor's.
    */
-  const gduRule = forced === 'walker' ? 'the Scan engine setting asks for the built-in walker'
-    : !rootIsDir ? 'the root is a single file, which needs no gdu process'
-      : incremental ? 'this is an incremental rescan, which gdu has no cache for'
-        : ignore.length > 0 ? `the scan has ${ignore.length} "don't scan" pattern${ignore.length === 1 ? '' : 's'} gdu cannot express`
-          : process.env.TREEMAP_NO_GDU === '1' ? 'gdu is switched off by TREEMAP_NO_GDU'
-            : null;
+  const gduRule = gduRuleFor({
+    forced,
+    rootIsDir,
+    incremental,
+    ignoreCount: ignore.length,
+    noGdu: process.env.TREEMAP_NO_GDU === '1',
+    platform: process.platform,
+  });
   const gduWanted = !native.eligibility.ok && gduRule === null;
 
   /*
@@ -628,10 +661,14 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
    */
   const mftOffered = forced === 'ntfs-mft' && mftOfferedOn();
   const mftWanted = mftOffered && opts.interactive === true;
-  if (forced === 'ntfs-mft' && !mftOffered) why.push(`the NTFS turbo mode (${MFT_NOT_VERIFIED}) was not used: it is Windows only`);
-  if (mftOffered && !mftWanted) {
-    why.push(`the NTFS turbo mode (${MFT_NOT_VERIFIED}) was not used: it asks for administrator permission only for a scan started from the TreeMap window, and this one was not`);
-  }
+  // Asked for and never tried: the clause whatever engine then scans — the
+  // native engine's reason included, which the first Windows CI run found
+  // it missing from (it went only into the legacy engines' reasons).
+  const mftUntried = forced === 'ntfs-mft' && !mftOffered
+    ? `the NTFS turbo mode (${MFT_NOT_VERIFIED}) was not used: it is Windows only`
+    : mftOffered && !mftWanted
+      ? `the NTFS turbo mode (${MFT_NOT_VERIFIED}) was not used: it asks for administrator permission only for a scan started from the TreeMap window, and this one was not`
+      : null;
   const mftRule = !mftWanted ? null
     : !rootIsDir ? 'the root is a single file, which needs no volume read'
       : incremental ? 'this is an incremental rescan, and the mtime cache it reuses belongs to the built-in walker'
@@ -645,7 +682,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
   // Fire and forget — errors land on the record, never as unhandled rejections.
   void (async () => {
     /** The mode's clause when it was asked for and not used; its fallback when that was a failure. */
-    let mftClause: string | null = null;
+    let mftClause: string | null = mftUntried;
     let mftFallback: string | null = null;
     if (mftWanted && mftRule !== null) {
       mftClause = `the NTFS turbo mode (${MFT_NOT_VERIFIED}) was not used: ${mftRule}`;

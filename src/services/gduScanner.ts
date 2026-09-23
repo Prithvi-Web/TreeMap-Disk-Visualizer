@@ -152,6 +152,22 @@ export function untrackShard(scanId: string): void {
   activeShards.delete(scanId);
 }
 
+/**
+ * gdu's arguments for one shard. `-x`: never cross filesystem boundaries —
+ * inside a shard this skips nested mounts (DMGs, /System/Volumes/*) that
+ * double-count the disk or hang on network I/O; skipped mount roots simply
+ * don't appear in the shard's output, matching the walker's don't-descend
+ * behavior. Not on Windows, where gdu cannot list mount points and refuses
+ * every run that asks ("loading mount points: Only Linux platform is
+ * supported" — the first Windows CI run, 23 Sep 2026).
+ */
+export function gduArgs(outFile: string, dir: string, ignoreDirs: readonly string[], platform: NodeJS.Platform = process.platform): string[] {
+  const args = ['-n', ...(platform === 'win32' ? [] : ['-x']), '-o', outFile];
+  if (ignoreDirs.length) args.push('-i', ignoreDirs.join(','));
+  args.push(dir);
+  return args;
+}
+
 /** What a caller may do to a shard in flight: stop it in place and let it continue (SIGSTOP / SIGCONT). */
 export interface ShardControls {
   pause(): void;
@@ -180,13 +196,7 @@ export function runGdu(
   opts: { ignoreDirs?: string[]; timeoutMs?: number; onSpawn?: (child: ChildProcess, shard: ShardControls) => void } = {},
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    // -x: never cross filesystem boundaries — inside a shard this skips
-    // nested mounts (DMGs, /System/Volumes/*) that double-count the disk or
-    // hang on network I/O. Skipped mount roots simply don't appear in the
-    // shard's output, matching the walker's don't-descend behavior.
-    const args = ['-n', '-x', '-o', outFile];
-    if (opts.ignoreDirs?.length) args.push('-i', opts.ignoreDirs.join(','));
-    args.push(dir);
+    const args = gduArgs(outFile, dir, opts.ignoreDirs ?? []);
     const timeout = opts.timeoutMs ?? SHARD_TIMEOUT_MS;
     let timedOut = false;
     let remainingMs = timeout;
