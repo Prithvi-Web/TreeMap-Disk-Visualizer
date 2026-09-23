@@ -933,3 +933,42 @@ test('the drive of a scan root is its letter, upper-cased; a root without one ha
     assert.equal(driveOf(root), null, root);
   }
 });
+
+test('a scan cancelled while its prompt is open reads nothing the helper wrote, and says it was cancelled', async () => {
+  // The pre-landing review of 23 Sep 2026 found this return untested: the
+  // prompt can outlast the scan that raised it.
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const r = recordFor(ROOT);
+  const { module, calls } = fakeModule(flat(3));
+  const launcher: MftLauncher = async (request) => {
+    fs.writeFileSync(request.output, 'written after the scan was cancelled');
+    r.scan.cancelled = true;
+    return { kind: 'exited', code: 0 };
+  };
+  const outcome = await runMftWalk(r.scan, r.store, ROOT, { launcher, module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
+  assert.deepEqual(outcome, { used: false, failed: false, reason: `the NTFS turbo mode (${MFT_NOT_VERIFIED}: no test has run its elevation prompt end to end) was not used: the scan was cancelled` });
+  assert.equal(calls.take, 0, 'the output was never read');
+  assert.deepEqual(fs.readdirSync(folder), [], 'and it was removed');
+  fs.rmSync(folder, { recursive: true, force: true });
+});
+
+test('with no stand-in for the elevation check, the real one refuses a helper in a folder this user can write', async () => {
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const helperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-helper-writable-'));
+  const helper = path.join(helperDir, 'tm-mft-helper.exe');
+  fs.writeFileSync(helper, 'stand-in');
+  const { launcher, requests } = fakeLauncher({ kind: 'exited', code: 0 });
+  const r = recordFor(ROOT);
+  try {
+    const outcome = await runMftWalk(r.scan, r.store, ROOT, { launcher, module: fakeModule(flat(3)).module, helperPath: helper, tempFolder: folder, now: () => READ_STARTED });
+    assert.equal(outcome.used, false);
+    assert.equal(outcome.used === false && outcome.failed, false, 'how TreeMap is installed is a rule, not a failure');
+    assert.match(outcome.reason, /lets any program running as you add or replace files in it; installed for anyone who uses this computer \(in Program Files\), TreeMap can use it/);
+    assert.equal(requests.length, 0, 'nobody is asked');
+  } finally {
+    fs.rmSync(helperDir, { recursive: true, force: true });
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
