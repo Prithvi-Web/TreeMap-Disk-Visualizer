@@ -9,7 +9,7 @@ process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mf
 process.env.TREEMAP_NO_GDU = '1';
 
 import type { MftExpected, MftLiveCheck, WalkResult } from '../native/index';
-import { MFT_CROSS_CHECK_SAMPLE, MFT_FLUSH_MARGIN_MS, crossCheckMft, type LiveChecker } from '../src/services/scan/mftCrossCheck';
+import { MFT_CROSS_CHECK_ATTEMPTS, MFT_CROSS_CHECK_SAMPLE, MFT_FLUSH_MARGIN_MS, crossCheckMft, type LiveChecker } from '../src/services/scan/mftCrossCheck';
 import {
   KIND_DIR,
   KIND_FILE,
@@ -132,10 +132,10 @@ function fakeChecker(script: (path: string, want: MftExpected, visit: number) =>
 
 /* ══════════════ 1. the cross-check ══════════════ */
 
-test('the cross-check draws 1,000 entries uniformly without replacement, each opened once, all of them when there are fewer', () => {
+test('the cross-check draws 1,000 entries uniformly without replacement, each opened once, all of them when there are fewer', async () => {
   const big = flat(5_000);
   const { check, seen } = fakeChecker();
-  const verdict = crossCheckMft(big, pathOf(big), READ_STARTED, check, seeded(7));
+  const verdict = await crossCheckMft(big, pathOf(big), READ_STARTED, check, seeded(7));
   assert.equal(verdict.ok, true);
   assert.ok(verdict.ok && verdict.checked === MFT_CROSS_CHECK_SAMPLE, JSON.stringify(verdict));
   assert.equal(seen.length, MFT_CROSS_CHECK_SAMPLE, 'one open per drawn entry');
@@ -147,15 +147,15 @@ test('the cross-check draws 1,000 entries uniformly without replacement, each op
 
   const small = flat(40);
   const few = fakeChecker();
-  const all = crossCheckMft(small, pathOf(small), READ_STARTED, few.check, seeded(3));
+  const all = await crossCheckMft(small, pathOf(small), READ_STARTED, few.check, seeded(3));
   assert.ok(all.ok && all.checked === 41, `every one of the 41 entries: ${JSON.stringify(all)}`);
 });
 
-test('a planted mismatch fails the check: the entry is re-read once, and the reason names it and both values', () => {
+test('a planted mismatch fails the check: the entry is re-read once, and the reason names it and both values', async () => {
   // 999 files and the root: exactly 1,000 eligible, so every one is drawn.
   const cols = flat(999);
   const { check, visits } = fakeChecker((p, want) => (p === `${ROOT}\\f123` ? { ...want, size: want.size + 66 } : undefined));
-  const verdict = crossCheckMft(cols, pathOf(cols), READ_STARTED, check, seeded(11));
+  const verdict = await crossCheckMft(cols, pathOf(cols), READ_STARTED, check, seeded(11));
   assert.equal(verdict.ok, false, 'a divergence');
   assert.ok(!verdict.ok);
   assert.equal(verdict.path, `${ROOT}\\f123`);
@@ -165,23 +165,23 @@ test('a planted mismatch fails the check: the entry is re-read once, and the rea
   assert.match(verdict.reason, /\b289 bytes/, 'the live size');
 });
 
-test('correction 9: an entry last written close to the read is never drawn', () => {
+test('correction 9: an entry last written close to the read is never drawn', async () => {
   const cols = flat(2_000, (i) => (i % 2 === 0 ? { mtime: RECENT } : {}));
   const { check, seen } = fakeChecker((_p, want) => ({ ...want, size: want.size + 1 })); // everything drawn would differ
   // Only odd files are eligible; make them all match, and the recent ones never be asked.
   const matchOdd = fakeChecker((p, want) => (Number(p.slice(p.lastIndexOf('f') + 1)) % 2 === 0 ? { ...want, size: -1 } : undefined));
-  const verdict = crossCheckMft(cols, pathOf(cols), READ_STARTED, matchOdd.check, seeded(5));
+  const verdict = await crossCheckMft(cols, pathOf(cols), READ_STARTED, matchOdd.check, seeded(5));
   assert.equal(verdict.ok, true, JSON.stringify(verdict));
   assert.ok(matchOdd.seen.every((p) => p === ROOT || Number(p.slice(p.lastIndexOf('f') + 1)) % 2 === 1), 'no recent entry opened');
   assert.ok(verdict.ok && verdict.eligible === 1_001, 'the root and the 1,000 old files');
   void check; void seen;
 });
 
-test('correction 9: a mismatch whose live re-read shows a write since the read is not a divergence, and is replaced', () => {
+test('correction 9: a mismatch whose live re-read shows a write since the read is not a divergence, and is replaced', async () => {
   const cols = flat(1_500);
   const changed = `${ROOT}\\f7`;
   const { check, visits } = fakeChecker((p, want) => (p === changed ? { ...want, size: 1, mtimeMs: READ_STARTED + 5_000 } : undefined));
-  const verdict = crossCheckMft(cols, pathOf(cols), READ_STARTED, check, seeded(2));
+  const verdict = await crossCheckMft(cols, pathOf(cols), READ_STARTED, check, seeded(2));
   assert.equal(verdict.ok, true, JSON.stringify(verdict));
   // Asserted, not assumed: a draw that missed the planted entry would leave
   // the lines below checking nothing (the TypeScript review of M6).
@@ -191,29 +191,110 @@ test('correction 9: a mismatch whose live re-read shows a write since the read i
   // Force the draw onto it: a table of the root and that one file.
   const lone = columns([{ name: 'data', parent: 0, kind: KIND_DIR }, { name: 'f7', parent: 0, size: 5 }]);
   const again = fakeChecker((p, want) => (p === changed ? { ...want, size: 1, mtimeMs: READ_STARTED + 5_000 } : undefined));
-  const v2 = crossCheckMft(lone, pathOf(lone), READ_STARTED, again.check, seeded(1));
+  const v2 = await crossCheckMft(lone, pathOf(lone), READ_STARTED, again.check, seeded(1));
   assert.ok(v2.ok && v2.recent === 1 && v2.checked === 1, JSON.stringify(v2));
   assert.equal(again.visits.get(changed), 2);
 });
 
-test('a mismatch that matches on its re-read is a transient, not a divergence', () => {
+test('a mismatch that matches on its re-read is a transient, not a divergence', async () => {
   const lone = columns([{ name: 'data', parent: 0, kind: KIND_DIR }, { name: 'f0', parent: 0, size: 5 }]);
   const { check, visits } = fakeChecker((p, want, visit) => (p.endsWith('f0') && visit === 1 ? { ...want, size: 6 } : undefined));
-  const verdict = crossCheckMft(lone, pathOf(lone), READ_STARTED, check, seeded(1));
+  const verdict = await crossCheckMft(lone, pathOf(lone), READ_STARTED, check, seeded(1));
   assert.ok(verdict.ok && verdict.checked === 2, JSON.stringify(verdict));
   assert.equal(visits.get(`${ROOT}\\f0`), 2);
 });
 
-test('an entry the app cannot open is skipped and replaced by another draw', () => {
+test('an entry the app cannot open is skipped and replaced by another draw', async () => {
   // A third of 2,000 cannot be opened; the other 1,334 are enough for 1,000.
   const cols = flat(2_000);
   const { check } = fakeChecker((p) => (Number(p.slice(p.lastIndexOf('f') + 1)) % 3 === 0 ? 'unopenable' : undefined));
-  const verdict = crossCheckMft(cols, pathOf(cols), READ_STARTED, check, seeded(9));
+  const verdict = await crossCheckMft(cols, pathOf(cols), READ_STARTED, check, seeded(9));
   assert.ok(verdict.ok, JSON.stringify(verdict));
   assert.ok(verdict.ok && verdict.checked === MFT_CROSS_CHECK_SAMPLE && verdict.skipped > 0, JSON.stringify(verdict));
 });
 
+test('the check opens at most MFT_CROSS_CHECK_ATTEMPTS entries, and says how few it could verify', async () => {
+  // A root the app can barely open (another account's profile, say) once
+  // cost an open of every eligible entry, on the main thread (the
+  // pre-landing review of 23 Sep 2026).
+  const cols = flat(10_000);
+  const { check, seen } = fakeChecker(() => 'unopenable');
+  const verdict = await crossCheckMft(cols, pathOf(cols), READ_STARTED, check, seeded(4));
+  assert.equal(seen.length, MFT_CROSS_CHECK_ATTEMPTS, 'first reads, and no more');
+  assert.ok(verdict.ok && verdict.checked === 0 && verdict.attempts === MFT_CROSS_CHECK_ATTEMPTS, JSON.stringify(verdict));
+  assert.ok(verdict.ok && verdict.required === MFT_CROSS_CHECK_SAMPLE, 'the evidence a table this size needs');
+});
+
+test('the evidence a table needs: half its eligible entries, at most the sample, at least one', async () => {
+  const need = async (files: number): Promise<number> => {
+    const cols = flat(files);
+    const v = await crossCheckMft(cols, pathOf(cols), READ_STARTED, fakeChecker().check, seeded(1));
+    return v.ok ? v.required : -1;
+  };
+  assert.equal(await need(9), 5, 'ten eligible (the root and nine files): five');
+  assert.equal(await need(5_000), MFT_CROSS_CHECK_SAMPLE);
+  const none = columns([{ name: 'data', parent: 0, kind: KIND_DIR, mtime: RECENT }]);
+  const v = await crossCheckMft(none, pathOf(none), READ_STARTED, fakeChecker().check, seeded(1));
+  assert.ok(v.ok && v.eligible === 0 && v.required === 1 && v.checked === 0, `nothing eligible still needs one match: ${JSON.stringify(v)}`);
+});
+
+test('the check hands the event loop a turn between two batches', async () => {
+  const cols = flat(1_500);
+  let turns = 0;
+  const verdict = await crossCheckMft(cols, pathOf(cols), READ_STARTED, fakeChecker().check, seeded(6), async () => { turns++; });
+  assert.ok(verdict.ok && verdict.checked === MFT_CROSS_CHECK_SAMPLE, JSON.stringify(verdict));
+  assert.equal(turns, 3, 'four batches of 250: a turn before each but the first');
+});
+
+test('a live checker that answers fewer entries than it was asked counts the rest as not opened', async () => {
+  const cols = flat(20);
+  const verdict = await crossCheckMft(cols, pathOf(cols), READ_STARTED, () => [], seeded(1));
+  assert.ok(verdict.ok && verdict.checked === 0 && verdict.skipped === 21, JSON.stringify(verdict));
+});
+
+test('a mismatch whose re-read reports no time is taken as written since the read, never as a divergence', async () => {
+  const lone = columns([{ name: 'data', parent: 0, kind: KIND_DIR }, { name: 'f0', parent: 0, size: 5 }]);
+  const check: LiveChecker = (paths, expected) => paths.map((p, k): MftLiveCheck => (p.endsWith('f0')
+    ? { outcome: 'mismatch', kind: expected[k].kind, size: 6, mtimeMs: null, differs: ['size'], reason: null }
+    : { outcome: 'match', kind: expected[k].kind, size: expected[k].size, mtimeMs: expected[k].mtimeMs, differs: [], reason: null }));
+  const verdict = await crossCheckMft(lone, pathOf(lone), READ_STARTED, check, seeded(1));
+  assert.ok(verdict.ok && verdict.recent === 1 && verdict.checked === 1, JSON.stringify(verdict));
+});
+
 /* ══════════════ 2. runMftWalk ══════════════ */
+
+test('a table the check verified too little of is not trusted, and the sentence counts what was opened', async () => {
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const { launcher } = fakeLauncher({ kind: 'exited', code: 0 });
+  // Nine files in ten cannot be opened: 4,000 first reads verify about 400.
+  const { check } = fakeChecker((p) => (Number(p.slice(p.lastIndexOf('f') + 1)) % 10 === 0 ? undefined : 'unopenable'));
+  const { module } = fakeModule(flat(10_000), check);
+  const r = recordFor(ROOT);
+  const outcome = await runMftWalk(r.scan, r.store, ROOT, { launcher, module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED, random: seeded(8) });
+  assert.ok(!outcome.used && outcome.failed === false, JSON.stringify(outcome));
+  assert.match(outcome.reason, /the cross-check verified \d+ of the 1000 entries it needs \(4000 opened: \d+ could not be opened, 0 had been written since the read; 0 were not eligible/);
+  fs.rmSync(folder, { recursive: true, force: true });
+});
+
+test('a table as deep as NTFS allows is checked without running out of stack', async () => {
+  // The paths the check opens were built by a function that called itself
+  // once per level, and a tree thousands of folders deep threw a RangeError
+  // out of the mode (the pre-landing review of 23 Sep 2026). NTFS paths
+  // reach 32,767 characters: about 16,000 one-letter levels.
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const nodes: Node[] = [{ name: 'data', parent: 0, kind: KIND_DIR }];
+  for (let i = 1; i <= 16_000; i++) nodes.push({ name: 'd', parent: i - 1, kind: KIND_DIR });
+  nodes.push({ name: 'leaf.bin', parent: 16_000, size: 7 });
+  const { launcher } = fakeLauncher({ kind: 'exited', code: 0 });
+  const { module } = fakeModule(columns(nodes));
+  const r = recordFor(ROOT);
+  // The draw takes the last eligible entry first: the leaf, at the bottom.
+  const outcome = await runMftWalk(r.scan, r.store, ROOT, { launcher, module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED, random: () => 0.999999 });
+  assert.ok(outcome.used, JSON.stringify(outcome).slice(0, 400));
+  fs.rmSync(folder, { recursive: true, force: true });
+});
 
 function recordFor(root: string) {
   const scan = createScanRecord(root);
@@ -484,7 +565,7 @@ test('a table the app could verify none of is not trusted — every entry too re
     const outcome = await runMftWalk(scan, store, ROOT, deps);
     assert.equal(outcome.used, false, `${label}: ${JSON.stringify(outcome)}`);
     assert.ok(!outcome.used && outcome.failed === false, `${label}: an inability to check, not a failure of the reader`);
-    assert.match(outcome.reason, /could verify none of its entries/, label);
+    assert.match(outcome.reason, /the cross-check verified 0 of the \d+ entries it needs/, label);
     assert.match(outcome.reason, new RegExp(MFT_NOT_VERIFIED), label);
     assert.equal(store.count, 1, `${label}: nothing was ingested — the store holds only its root`);
     assert.equal(fs.existsSync(requests[0].output), false, `${label}: the output file is removed`);

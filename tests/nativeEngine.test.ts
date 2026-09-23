@@ -36,6 +36,7 @@ import {
   REFUSAL_UNREADABLE,
   REFUSAL_VANISHED,
   SCAN_FUNCTIONS,
+  columnPathOf,
   ingestColumns,
   nativeEligibility,
   nativeScanModule,
@@ -821,6 +822,39 @@ test('ingestColumns: hard-link families are told apart by the number the walk ga
   assert.deepEqual({ files: scan.hardlinkedFiles, bytes: scan.hardlinkedBytes }, { files: 1, bytes: 20 });
   assert.equal(store.materialize(store.findByPath('/r/a.bin')).hardlinkDuplicate, undefined, 'a family of its own');
   assert.equal(store.materialize(store.findByPath('/r/c.bin')).hardlinkDuplicate, true, 'the later name of b’s family');
+});
+
+test('columnPathOf builds a path from its parent chain without recursing, and refuses a chain that never reaches the root', () => {
+  const columnsOf = (parent: number[], names: string[]): WalkResult => {
+    const enc = names.map((n) => Buffer.from(n, 'utf8'));
+    const nameOff = new Uint32Array(names.length + 1);
+    let off = 0;
+    enc.forEach((n, i) => { nameOff[i] = off; off += n.length; });
+    nameOff[names.length] = off;
+    const n = names.length;
+    return {
+      parent: Uint32Array.from(parent), nameOff, names: new Uint8Array(Buffer.concat(enc)),
+      kind: new Uint8Array(n), flags: new Uint8Array(n), size: new Float64Array(n), allocBytes: new Float64Array(n),
+      mtimeMs: new Float64Array(n), atimeMs: new Float64Array(n),
+      hardlinkNode: new Uint32Array(0), hardlinkFamily: new Uint32Array(0), refusalNode: new Uint32Array(0), refusalWhy: new Uint8Array(0),
+      stats: { dirsListed: 1, entries: n - 1, wallMs: 1, cpuSeconds: 0, fastPath: 'bulk', workersPeak: 1, climbSteps: 0, deniedEntries: 0, unreadableEntries: 0, dataless: 0 },
+    };
+  };
+  // A chain 100,000 deep: far past any stack a recursive climb could use.
+  const depth = 100_000;
+  const deep = columnsOf(Array.from({ length: depth + 1 }, (_, i) => Math.max(0, i - 1)), ['r', ...Array.from({ length: depth }, () => 'd')]);
+  const leaf = columnPathOf(deep, '/r', '/')(depth);
+  assert.equal(leaf.length, '/r'.length + depth * 2, 'every level joined once');
+  // What is remembered along the way is exact: the parent, and a sibling built from it.
+  const small = columnsOf([0, 0, 1, 2, 2], ['r', 'a', 'b', 'c', 'c2']);
+  const of = columnPathOf(small, '/r', '/');
+  assert.equal(of(3), '/r/a/b/c');
+  assert.equal(of(2), '/r/a/b', 'the parent, remembered from its child');
+  assert.equal(of(4), '/r/a/b/c2', 'a sibling, built from the remembered parent');
+  assert.equal(columnPathOf(small, '/', '/')(3), '/a/b/c', 'a root that ends in the separator gets no second one');
+  // A corrupt column whose chain loops (1 → 2 → 1) is refused, never climbed forever.
+  const looped = columnsOf([0, 2, 1], ['r', 'a', 'b']);
+  assert.throws(() => columnPathOf(looped, '/r', '/')(1), /node 1's parent chain never reaches the root/);
 });
 
 test('ingestColumns: a refused folder is counted by its kind and named among the five smallest, a vanished one is only counted', () => {

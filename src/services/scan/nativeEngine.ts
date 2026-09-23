@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { MftExpected, MftLiveCheck, NativeProbe, NativeProgress, ScanStartOptions, WalkResult } from '../../../native/index';
 import { loadNative, nativeScanModule, type ScanModule } from './native';
-import { crossCheckMft } from './mftCrossCheck';
+import { MFT_FLUSH_MARGIN_MS, crossCheckMft } from './mftCrossCheck';
 import { elevationRefusal, unpackedPath } from './mftHelperPath';
 import { mftPromptBlocked, mftPromptEnded, mftPromptStarted, resetMftPromptForTests } from './mftPrompt';
 import { statToInput } from './nodeInput';
@@ -236,27 +236,7 @@ export function ingestColumns(scan: ScanResult, store: ScanStore, cols: WalkResu
   const off = cols.nameOff;
   const ids = new Int32Array(n);
   ids[0] = store.rootId;
-  const paths: (string | undefined)[] = new Array<string | undefined>(n);
-  paths[0] = rootPath;
-  const sep = store.sep;
-  /** The full path of node `i`, built on demand from the parent chain and remembered. */
-  const pathOf = (i: number): string => {
-    const known = paths[i];
-    if (known !== undefined) return known;
-    const chain: number[] = [];
-    let k = i;
-    while (paths[k] === undefined) {
-      chain.push(k);
-      k = cols.parent[k];
-    }
-    let p = paths[k] as string;
-    for (let c = chain.length - 1; c >= 0; c--) {
-      const node = chain[c];
-      p = joinPath(p, sep, names.toString('utf8', off[node], off[node + 1]));
-      paths[node] = p;
-    }
-    return p;
-  };
+  const pathOf = columnPathOf(cols, rootPath, store.sep);
 
   const rootMtime = cols.mtimeMs[0];
   if (Number.isFinite(rootMtime)) store.setModifiedAt(store.rootId, Math.round(rootMtime));
@@ -708,18 +688,43 @@ function mftModuleOrReason(): MftModule | string {
   return mod as unknown as MftModule;
 }
 
-/** Node `i`'s full path, built on demand from the parent chain and remembered. */
-function columnPaths(cols: WalkResult, rootPath: string, sep: string): (i: number) => string {
+/**
+ * Node `i`'s full path, built on demand from the parent chain and remembered
+ * with its parent's (for the parent's other children). A table can be as deep
+ * as a path is long — about 16,000 levels on NTFS — so the climb is a loop
+ * (the check's copy of this once called itself per level and ran out of
+ * stack) and the chain is joined once: a path built for every level on the
+ * way costs the square of the depth, which at 100,000 levels ran Node out of
+ * memory (the pre-landing review of 23 Sep 2026). The ingest and the MFT
+ * cross-check share it. Every parent precedes its child (the walk's
+ * contract, and `mftTake`'s check), so the climb ends at the root; a column
+ * that breaks that is refused rather than climbed forever.
+ */
+export function columnPathOf(cols: WalkResult, rootPath: string, sep: string): (i: number) => string {
+  const n = cols.parent.length;
   const names = Buffer.from(cols.names.buffer, cols.names.byteOffset, cols.names.byteLength);
-  const paths = new Map<number, string>([[0, rootPath]]);
-  const of = (i: number): string => {
-    const known = paths.get(i);
+  const off = cols.nameOff;
+  const paths: (string | undefined)[] = new Array<string | undefined>(n);
+  paths[0] = rootPath;
+  return (i: number): string => {
+    const known = paths[i];
     if (known !== undefined) return known;
-    const p = joinPath(of(cols.parent[i]), sep, names.toString('utf8', cols.nameOff[i], cols.nameOff[i + 1]));
-    paths.set(i, p);
+    const chain: number[] = [];
+    let k = i;
+    while (paths[k] === undefined) {
+      if (chain.length >= n) throw new Error(`node ${i}'s parent chain never reaches the root`);
+      chain.push(k);
+      k = cols.parent[k];
+    }
+    // Only the known ancestor can end in the separator (a root such as "/"
+    // or "C:\"); names never hold one, so the rest joins in one go.
+    const parts = new Array<string>(chain.length);
+    for (let c = 0; c < chain.length; c++) parts[chain.length - 1 - c] = names.toString('utf8', off[chain[c]], off[chain[c] + 1]);
+    const p = joinPath(paths[k] as string, sep, parts.join(sep));
+    paths[i] = p;
+    if (chain.length > 1) paths[cols.parent[i]] = p.slice(0, p.length - parts[parts.length - 1].length - sep.length);
     return p;
   };
-  return of;
 }
 
 function removeQuietly(file: string): void {
@@ -841,19 +846,22 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
     } catch (err: unknown) {
       return notUsed(`the helper's result could not be read: ${describe(err)}`, true);
     }
-    const verdict = crossCheckMft(cols, columnPaths(cols, rootPath, store.sep), readStarted, (p, e) => mod.mftCrossCheck(p, e), deps.random ?? Math.random);
+    const verdict = await crossCheckMft(cols, columnPathOf(cols, rootPath, store.sep), readStarted, (p, e) => mod.mftCrossCheck(p, e), deps.random ?? Math.random);
     if (!verdict.ok) {
       mftSwitchedOff.set(volume, verdict.reason);
       return notUsed(`${verdict.reason}; the mode is off for ${volume} until TreeMap restarts`, true);
     }
-    // A gate that verified nothing must not open. Every entry written within
-    // the margin is also the case where the raw read may be missing creates
-    // NTFS had not yet flushed; none openable leaves the table unchecked. Not
-    // a fault of the reader, so the volume stays on offer for the next scan.
-    if (verdict.checked === 0) {
-      const tooRecent = cols.parent.length - verdict.eligible;
+    // A gate that verified too little must not open (mftCrossCheck.ts,
+    // requiredMatches). Every entry written within the margin is also the
+    // case where the raw read may be missing creates NTFS had not yet
+    // flushed; few openable leaves the table all but unchecked. Not a fault
+    // of the reader, so the volume stays on offer for the next scan. The
+    // sentence counts what happened, so its numbers add up.
+    if (verdict.checked < verdict.required) {
+      const ineligible = cols.parent.length - verdict.eligible;
+      const margin = `${MFT_FLUSH_MARGIN_MS / 60_000} minutes`;
       return notUsed(
-        `the cross-check could verify none of its entries (${tooRecent} were written too close to the read to check, ${verdict.skipped} could not be opened), so the table was not trusted and the folders were listed instead`,
+        `the cross-check verified ${verdict.checked} of the ${verdict.required} entries it needs (${verdict.attempts} opened: ${verdict.skipped} could not be opened, ${verdict.recent} had been written since the read; ${ineligible} were not eligible, written within ${margin} of the read or with no time recorded), so the table was not trusted and the folders were listed instead`,
         false,
       );
     }

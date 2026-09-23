@@ -26,20 +26,43 @@ export const MFT_CROSS_CHECK_SAMPLE = 1_000;
  * the table 120 s to catch up with the live file system; so does this.
  */
 export const MFT_FLUSH_MARGIN_MS = 120_000;
-/** Entries opened per native call, so no single call holds the thread long. */
+/** Entries opened per native call; the event loop gets a turn between two. */
 const BATCH = 250;
+/**
+ * The most entries the check opens for a first read. A root the app can
+ * barely open (another account's profile, say) once cost an open of every
+ * eligible entry, one batch after another on the app's main thread (the
+ * pre-landing review of 23 Sep 2026); four samples' worth is enough to find
+ * a thousand matches where even a quarter of the entries open.
+ */
+export const MFT_CROSS_CHECK_ATTEMPTS = 4 * MFT_CROSS_CHECK_SAMPLE;
+
+/** Hands the event loop a turn between two batches. */
+const nextTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+/**
+ * The matches a table needs before it is trusted: half its eligible
+ * entries, at most the sample, and never none — a table the app could
+ * verify little of is not evidence that the reader is right, however few
+ * entries disagreed (the pre-landing review of 23 Sep 2026; it once took a
+ * single match).
+ */
+export function requiredMatches(eligible: number): number {
+  return Math.max(1, Math.min(MFT_CROSS_CHECK_SAMPLE, Math.ceil(eligible / 2)));
+}
 
 /** `mftCrossCheck` as the gate calls it: one live check per path, in order. */
 export type LiveChecker = (paths: string[], expected: MftExpected[]) => MftLiveCheck[];
 
 export type CrossCheckVerdict =
   /**
-   * Every entry checked matched. `checked` entries matched, `skipped` could
+   * No entry checked disagreed. `checked` entries matched, `skipped` could
    * not be opened (each replaced by another draw), `recent` had been written
    * since the read (each replaced too), out of `eligible` entries last
-   * written before the margin.
+   * written before the margin; `attempts` were drawn for a first read, and
+   * the table is trusted only when `checked` reaches `required`.
    */
-  | { ok: true; checked: number; skipped: number; recent: number; eligible: number }
+  | { ok: true; checked: number; skipped: number; recent: number; eligible: number; attempts: number; required: number }
   /** A divergence: the entry, and a sentence naming it and both values. */
   | { ok: false; path: string; reason: string };
 
@@ -69,30 +92,36 @@ function divergence(entry: string, want: MftExpected, live: MftLiveCheck): strin
  * random without replacement from those last written more than
  * MFT_FLUSH_MARGIN_MS before `readStartedMs` (all of them when there are
  * fewer), through `check` — `mftCrossCheck` in the app. An entry that cannot
- * be opened is replaced by another draw. A mismatch is re-read once: a match
- * then is a transient; a live last-write time inside the margin is a file
- * written since the read, replaced by another draw; anything else fails the
- * whole check at once.
+ * be opened is replaced by another draw, up to MFT_CROSS_CHECK_ATTEMPTS
+ * draws in all. A mismatch is re-read once: a match then is a transient; a
+ * live last-write time inside the margin, or none, is a file written since
+ * the read, replaced by another draw; anything else fails the whole check at
+ * once. Each batch of opens is one native call, and `pause` hands the event
+ * loop a turn before every batch but the first, so the app answers while the
+ * check runs.
  */
-export function crossCheckMft(
+export async function crossCheckMft(
   cols: WalkResult,
   pathOf: (i: number) => string,
   readStartedMs: number,
   check: LiveChecker,
   random: () => number = Math.random,
-): CrossCheckVerdict {
+  pause: () => Promise<void> = nextTurn,
+): Promise<CrossCheckVerdict> {
   const cutoff = readStartedMs - MFT_FLUSH_MARGIN_MS;
-  const pool: number[] = [];
+  const pool = new Uint32Array(cols.parent.length);
+  let eligible = 0;
   for (let i = 0; i < cols.parent.length; i++) {
     const written = cols.mtimeMs[i];
-    if (Number.isFinite(written) && written < cutoff) pool.push(i);
+    if (Number.isFinite(written) && written < cutoff) pool[eligible++] = i;
   }
-  const eligible = pool.length;
+  const required = requiredMatches(eligible);
+  const limit = Math.min(eligible, MFT_CROSS_CHECK_ATTEMPTS);
   // A partial Fisher–Yates shuffle: pool[0 .. drawn) are the draws so far.
   let drawn = 0;
   const draw = (): number | null => {
-    if (drawn >= pool.length) return null;
-    const j = drawn + Math.floor(random() * (pool.length - drawn));
+    if (drawn >= limit) return null;
+    const j = drawn + Math.floor(random() * (eligible - drawn));
     const pick = pool[j];
     pool[j] = pool[drawn];
     pool[drawn] = pick;
@@ -104,6 +133,7 @@ export function crossCheckMft(
   let checked = 0;
   let skipped = 0;
   let recent = 0;
+  let batches = 0;
   while (checked < MFT_CROSS_CHECK_SAMPLE) {
     const batch: number[] = [];
     const want = Math.min(BATCH, MFT_CROSS_CHECK_SAMPLE - checked);
@@ -113,6 +143,7 @@ export function crossCheckMft(
       batch.push(next);
     }
     if (batch.length === 0) break;
+    if (batches++ > 0) await pause();
     const first = check(batch.map(pathOf), batch.map(expectedOf));
     const suspects: number[] = [];
     batch.forEach((i, k) => {
@@ -138,5 +169,5 @@ export function crossCheckMft(
       }
     }
   }
-  return { ok: true, checked, skipped, recent, eligible };
+  return { ok: true, checked, skipped, recent, eligible, attempts: drawn, required };
 }

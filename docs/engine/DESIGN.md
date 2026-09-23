@@ -478,10 +478,17 @@ fixed, as built:
    since the table was flushed is replaced, not blamed). The first divergence
    discards the whole result, switches the mode off for that volume until the
    app restarts, and names the entry and both values in `fallbackReason`. A
-   table of which the app could verify **no** entry — every entry written
-   within the margin (exactly where a raw read may be missing unflushed
-   creates), or none it could open — is not trusted either: the folders are
-   listed instead, the reason says which, and the volume stays on offer.
+   table the app could verify **too little** of is not trusted either: it
+   needs matches for half its eligible entries, at most 1,000 and never none
+   (`requiredMatches`), and the check opens at most 4,000 entries
+   (`MFT_CROSS_CHECK_ATTEMPTS`) — so every entry written within the margin
+   (exactly where a raw read may be missing unflushed creates), or a root
+   the app can barely open, lists the folders instead, the reason counts
+   what was opened, and the volume stays on offer. Each batch of 250 opens
+   is one native call, with a turn of the event loop between two, so the app
+   answers while the check runs (the pre-landing review of 23 Sep 2026; the
+   check once took a single match as enough, drew without limit and never
+   yielded).
 5. **Proven on CI or shipped labelled (W6-9).** M5 proves the reader on the
    Windows runner's own volume, as administrator; no CI can answer a UAC
    prompt, so every scan the setting asks for carries `not verified on this
