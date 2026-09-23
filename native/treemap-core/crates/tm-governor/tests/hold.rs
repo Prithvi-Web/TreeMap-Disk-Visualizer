@@ -10,7 +10,7 @@
 //!
 //! Every run prints the series it measured; nothing in the report is assumed.
 
-use tm_governor::{Budget, Governor, HoldReport, Preset, hold, platform_sampler, platform_signals};
+use tm_governor::{Budget, FakeSignals, Governor, HoldReport, Preset, hold, platform_sampler};
 
 /// The band the mean of the last half must sit in, either side of the target.
 const BAND: f64 = 0.05;
@@ -43,7 +43,17 @@ fn run_gate(
         },
         false,
         platform_sampler(),
-        platform_signals(),
+        // A quiet desktop, not this machine's live signals. The hold measures the
+        // loop against the REAL sampler; what the signals do to the target (the
+        // interaction back-off, thermal halving, the battery default) is tested
+        // with scripted signals in controller.rs and governor.rs, and the real
+        // signal readers are tested for honesty in platform.rs. With the live
+        // signals, a person touching the keyboard during the hold made this gate
+        // fail although the governor did exactly what it should: measured on 23
+        // September 2026, 2 workers at duty 0.531 on 8 cores held 0.133 — the
+        // 0.19 target times the 0.7 interaction scale — against a report whose
+        // target was read before the user started typing.
+        Box::new(FakeSignals::default()),
     );
     let mut sampler = platform_sampler();
     let report = hold(&governor, f64::from(seconds), sampler.as_mut());
