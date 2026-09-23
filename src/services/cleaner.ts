@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'child_process';
 import { promises as fsp } from 'fs';
+import path from 'path';
 import { CleanResult } from '../models/types';
 import { AppError } from '../middleware/errorHandler';
 import { describeFsError } from '../utils/errno';
@@ -67,9 +68,30 @@ function appleScriptString(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+/** A path refused before any trash call; its message is the sentence the page shows. */
+class TrashRefusal extends Error {}
+
+/**
+ * Why `p` is not handed to the platform's trash call, or null. On Windows a
+ * name that ends in a dot or a space is one name to NTFS (made from Linux,
+ * or by a program using `\\?\` paths), and Node reaches it exactly; but the
+ * Recycle Bin call normalizes the path the Win32 way and trims the dot or
+ * space — in any part of the path — so trashing `a.` would recycle `a` if
+ * one sits beside it, after `lstat` checked the right file (RISKS R61).
+ */
+export function trashRefusal(p: string, platform: NodeJS.Platform = process.platform): string | null {
+  if (platform !== 'win32') return null;
+  const trimmed = p.split(/[\\/]/).some((part) => part !== '.' && part !== '..' && /[. ]$/.test(part));
+  return trimmed
+    ? 'Windows would trim the dot or space that ends a name in its path and put a different file in the Recycle Bin, so TreeMap leaves it — rename it first, or delete it with the program that made it'
+    : null;
+}
+
 async function trashOne(p: string): Promise<void> {
   // Confirm the path still exists (and learn file-vs-dir for Windows).
   const stat = await fsp.lstat(p); // throws ENOENT -> caught by caller
+  const refusal = trashRefusal(p);
+  if (refusal) throw new TrashRefusal(refusal);
 
   switch (process.platform) {
     case 'darwin': {
@@ -152,7 +174,7 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
       // The page prints `reason` in a toast, so it gets a sentence; the raw
       // text (errno, syscall, path) goes to the terminal where it is useful.
       console.warn(`[treemap] could not move to the Trash: ${p}:`, err instanceof Error ? err.message : err);
-      failed.push({ path: p, reason: describeFsError(err) });
+      failed.push({ path: p, reason: err instanceof TrashRefusal ? err.message : describeFsError(err) });
     }
   }
   return { deleted, failed };
