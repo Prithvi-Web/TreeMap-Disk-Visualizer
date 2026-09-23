@@ -24,10 +24,34 @@ interface Helpers {
   workspaceVersion(toml: string): string | null;
   versionHandshake(nativeVersion: unknown, crateVersion: string | null): string | null;
   cargoMissingHint(): string;
+  installModule(src: string, dest: string): void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const helpers = require(SCRIPT) as Helpers;
+
+test('the module is installed as a new file each time, never copied over the old one in place', () => {
+  // Copying a rebuilt module over the old file keeps its inode, and on macOS
+  // the kernel's cached code signature for that inode then no longer matches:
+  // every process that later maps it is killed with SIGKILL (exit 137) —
+  // node loading it, even cmp reading it (23 Sep 2026: 24 test files failed
+  // that way after a rebuild while a test run had the old module loaded).
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-install-'));
+  try {
+    const src = path.join(dir, 'libtm_node.dylib');
+    const dest = path.join(dir, 'treemap_core.node');
+    fs.writeFileSync(src, 'first build');
+    helpers.installModule(src, dest);
+    const first = fs.statSync(dest).ino;
+    fs.writeFileSync(src, 'second build');
+    helpers.installModule(src, dest);
+    assert.equal(fs.readFileSync(dest, 'utf8'), 'second build');
+    assert.notEqual(fs.statSync(dest).ino, first, 'a new file replaced the old one: its inode changed');
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['libtm_node.dylib', 'treemap_core.node'], 'and no temporary file is left behind');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('the library cargo writes is named per platform, and a platform the workspace does not build for is refused by name', () => {
   assert.equal(helpers.libraryFileName('darwin'), 'libtm_node.dylib');

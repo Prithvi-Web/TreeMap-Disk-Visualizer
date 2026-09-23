@@ -127,14 +127,35 @@ function main() {
   const dir = prebuiltDir(REPO, process.platform, process.arch);
   fs.mkdirSync(dir, { recursive: true });
   const dest = path.join(dir, MODULE_FILE);
-  fs.copyFileSync(src, dest);
+  installModule(src, dest);
   fs.writeFileSync(path.join(dir, VERSION_FILE), `${pkg.nativeVersion}\n`);
   console.error(`build-native: native version ${pkg.nativeVersion}, ${fs.statSync(dest).size} bytes`);
   console.log(dest);
 }
 
+/**
+ * Puts the library cargo built at `dest` as a new file: copied to a
+ * temporary name beside it, then renamed over it. Copying over the old file
+ * in place keeps its inode, and on macOS the kernel's cached code signature
+ * for that inode then no longer matches the new bytes: every process that
+ * later maps the file is killed with SIGKILL (exit 137) — node loading it,
+ * even `cmp` reading it. It happened on 23 Sep 2026, when a rebuild landed
+ * while a test run had the old module loaded, and failed 24 test files. The
+ * rename also means no process ever loads a half-copied module.
+ */
+function installModule(src, dest) {
+  const tmp = `${dest}.${process.pid}.tmp`;
+  fs.copyFileSync(src, tmp);
+  try {
+    fs.renameSync(tmp, dest);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
 if (require.main === module) {
   main();
 } else {
-  module.exports = { libraryFileName, prebuiltDir, targetDir, workspaceVersion, versionHandshake, cargoMissingHint };
+  module.exports = { libraryFileName, prebuiltDir, targetDir, workspaceVersion, versionHandshake, cargoMissingHint, installModule };
 }
