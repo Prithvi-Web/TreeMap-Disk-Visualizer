@@ -98,10 +98,13 @@ pub enum FastPath {
     PerEntry,
     /// No native listing on this platform, or the root could not be probed.
     Unavailable,
+    /// Windows NTFS: the volume's master file table, read by the elevated
+    /// helper (`tm-mft-helper`) instead of listed directory by directory.
+    Mft,
 }
 
 impl FastPath {
-    /// The name the Node side shows: `bulk`, `extdDirInfo`, `getdents`, `perEntry`, `unavailable`.
+    /// The name the Node side shows: `bulk`, `extdDirInfo`, `getdents`, `perEntry`, `unavailable`, `mft`.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Bulk => "bulk",
@@ -109,6 +112,7 @@ impl FastPath {
             Self::Getdents => "getdents",
             Self::PerEntry => "perEntry",
             Self::Unavailable => "unavailable",
+            Self::Mft => "mft",
         }
     }
 
@@ -120,6 +124,7 @@ impl FastPath {
             Self::Getdents => "getdents64 and statx",
             Self::PerEntry => "per-entry (readdir and fstatat)",
             Self::Unavailable => "unavailable",
+            Self::Mft => "the NTFS master file table",
         }
     }
 
@@ -130,6 +135,7 @@ impl FastPath {
             Self::Getdents => 2,
             Self::PerEntry => 3,
             Self::Unavailable => 4,
+            Self::Mft => 5,
         }
     }
 
@@ -139,6 +145,7 @@ impl FastPath {
             1 => Self::ExtdDirInfo,
             2 => Self::Getdents,
             3 => Self::PerEntry,
+            5 => Self::Mft,
             _ => Self::Unavailable,
         }
     }

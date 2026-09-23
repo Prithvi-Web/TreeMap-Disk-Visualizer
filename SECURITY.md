@@ -28,6 +28,7 @@ Please include what the problem is, the steps to reproduce it, the TreeMap versi
 - **No tracking.** No telemetry, no analytics, no crash reporting, no account.
 - **An optional API token.** Set `TREEMAP_TOKEN` and every request to the API must carry it (`Authorization: Bearer …`, or the cookie the UI sets for itself). Off by default — the desktop app never exposes its port beyond this machine.
 - **An audit log.** Every destructive request — executed, dry-run or refused — is appended to `audit.jsonl`.
+- **One opt-in action runs elevated, and it asks first.** On Windows, the Scan engine setting's option to read a drive's file table directly (`ntfs-mft`; off by default, and refused on other systems) starts a small helper, `tm-mft-helper.exe`, with administrator permission — only after a plain-words question and then the Windows permission prompt, and never TreeMap itself. The helper opens the drive read-only and writes exactly one file: a new `<id>.tmmft` in the `TreeMap-mft` folder under the Windows temp folder, a folder it works out for itself and refuses to write outside. It also refuses that folder if it is a link or a junction, which would send the write somewhere else, and holds it open so it cannot be swapped for one while the file is made; TreeMap checks the same before it asks at all. TreeMap then reads that file, opens up to 1,000 of its entries itself, without elevation, to check them, discards the whole result at the first disagreement, and deletes the file. Saying no to either question simply scans the folders the normal way. Only one scan asks at a time, and after a no TreeMap does not ask again for ten minutes, or until it restarts. This mode is not yet verified end to end on a real Windows machine, and every scan that uses it says so.
 
 ## Network
 
@@ -63,6 +64,8 @@ Scan results themselves are memory only: a scan expires 30 minutes after it sett
 Thumbnails for the near-duplicate strip are held in memory only. A portable build keeps all of the above beside the executable, and on a read-only medium keeps everything in memory and says so.
 
 One more file ships **with** the app rather than being written by it: `treemap_core.node`, the native scan core (Rust, built in CI, in the app bundle beside the gdu binary). It is never downloaded at run time and never compiled on your machine; the app loads it only when its version matches the app's, and when it is missing or refuses to load the built-in engines run instead and the dashboard says why. It reads the folders you scan and writes nothing anywhere except the app-data folder above.
+
+The Windows file-table mode adds two things, both named above: `tm-mft-helper.exe`, the helper that runs elevated — **not yet included in the app's builds**, so until it is the option falls back to a normal scan and the scan says why — and, while one of its scans runs, a single short-lived `<id>.tmmft` file in `TreeMap-mft` under the Windows temp folder, which TreeMap deletes as soon as it has read it.
 
 ## Rate limiting
 

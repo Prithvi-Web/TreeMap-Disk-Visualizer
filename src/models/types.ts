@@ -309,8 +309,17 @@ export interface ScanStats {
   placeholdersSkipped: number;
 }
 
-/** The Scan engine setting: Automatic picks the native engine when the build has it, then gdu, then the built-in walker. */
-export type EngineSetting = 'auto' | 'native' | 'gdu' | 'walker';
+/**
+ * The Scan engine setting: Automatic picks the native engine when the build
+ * has it, then gdu, then the built-in walker; the others force one.
+ *
+ * `ntfs-mft` is the NTFS turbo mode (M6): Windows only, and opt-in — it runs
+ * only when this setting names it. Windows asks for administrator permission
+ * for a helper that reads the drive's file table directly, read-only. Off
+ * Windows the value does not exist: PUT /api/settings refuses it, and a
+ * hand-edited file is normalised to Automatic (src/services/settings.ts).
+ */
+export type EngineSetting = 'auto' | 'native' | 'gdu' | 'walker' | 'ntfs-mft';
 
 /* ---------- The scanning budget (Phase 2) ---------- */
 
@@ -667,7 +676,10 @@ export interface AppSettings {
   /**
    * The Scan engine (Phase 3): Automatic, or one engine forced. Automatic
    * picks the native engine when this build has it and the scan is eligible,
-   * then gdu, then the built-in walker. Default Automatic.
+   * then gdu, then the built-in walker. `ntfs-mft` (M6) is the NTFS turbo
+   * mode — Windows only and opt-in, an elevated read-only helper Windows asks
+   * administrator permission for; off Windows it is never stored. Default
+   * Automatic.
    */
   engine: EngineSetting;
 }

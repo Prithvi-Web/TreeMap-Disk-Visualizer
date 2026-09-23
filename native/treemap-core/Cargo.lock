@@ -315,6 +315,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tm-mft-helper"
+version = "0.1.0"
+dependencies = [
+ "tm-mft",
+ "tm-walk",
+]
+
+[[package]]
 name = "tm-node"
 version = "0.1.0"
 dependencies = [
@@ -324,6 +332,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tm-governor",
+ "tm-mft",
  "tm-walk",
 ]
 

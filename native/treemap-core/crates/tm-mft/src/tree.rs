@@ -495,10 +495,9 @@ impl Columns {
                 entries,
                 wall_ms: started.elapsed().as_secs_f64() * 1e3,
                 cpu_seconds: thread_cpu_seconds() - cpu_started,
-                // FastPath has no variant for the MFT; adding one to tm-walk
-                // is the lead's decision. Until then this names none of the
-                // listing paths, which is the least wrong of the five.
-                fast_path: FastPath::Unavailable,
+                // The table was read, not listed (correction 5, M6): the
+                // stats say "mft".
+                fast_path: FastPath::Mft,
                 workers_peak: 1,
                 climb_steps: 0,
                 denied_entries: self.denied,

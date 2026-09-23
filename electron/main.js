@@ -52,6 +52,7 @@ const desktop = require('./lib/desktop');
 const guards = require('./lib/guards');
 const windowState = require('./lib/windowState');
 const { buildMenuTemplate } = require('./lib/menu');
+const { createMftLauncher } = require('./mft');
 
 /** Must match the NSIS shortcut's appId (package.json build.appId) or Windows drops our toasts. */
 const APP_USER_MODEL_ID = 'com.prithviweb.treemap';
@@ -234,6 +235,8 @@ async function boot() {
   // cookie when it serves the UI, so the page needs no change. An owner who
   // set TREEMAP_TOKEN themselves keeps theirs.
   process.env.TREEMAP_TOKEN = desktop.desktopToken(process.env);
+  // Before the server exists, so no scan can start ahead of the launcher.
+  registerMftLauncher();
   // Port 0 → OS assigns a free port, so two machines never collide.
   running = await startServer({ host: '127.0.0.1', port: 0, publicDir });
   console.log(`[treemap] desktop server ready on 127.0.0.1:${running.port}`);
@@ -349,6 +352,24 @@ function messageBox(options) {
   const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
   const shown = win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options);
   return shown.catch(() => undefined);
+}
+
+/**
+ * Windows whole-drive fast scan (M6, W6-1). TreeMap never runs elevated: the
+ * scan engine hands a whole-drive scan to tm-mft-helper.exe through this
+ * launcher, which asks one plain question first (electron/mft.js). A dialog
+ * that fails resolves undefined here, which the launcher treats as "not
+ * asked" and starts nothing. Registered once. If it cannot be registered, only
+ * the fast path is lost: the app still starts and scans the normal way.
+ */
+function registerMftLauncher() {
+  if (process.platform !== 'win32') return;
+  try {
+    const { setMftLauncher } = require(path.join(__dirname, '..', 'dist', 'services', 'scan', 'nativeEngine.js'));
+    setMftLauncher(createMftLauncher({ showMessageBox: messageBox, spawn: require('child_process').spawn }));
+  } catch (err) {
+    console.error('[treemap] the fast whole-drive scan is unavailable:', err);
+  }
 }
 
 /* ─────────────────────────────── Tray ─────────────────────────────── */

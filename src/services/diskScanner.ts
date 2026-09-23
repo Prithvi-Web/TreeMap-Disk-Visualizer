@@ -20,7 +20,7 @@ import { PackedScanStore, ScanStore, Flag, fileNodeToInput, buildStoreFromTree, 
 import { platform } from '../platform';
 import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBatch, whenResumed, workerCap } from './engineBudget';
 import { statToInput } from './scan/nodeInput';
-import { FAST_PATH_UNAVAILABLE, decideNative, rootName, runNativeWalk } from './scan/nativeEngine';
+import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, mftOfferedOn, rootName, runMftWalk, runNativeWalk } from './scan/nativeEngine';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -587,6 +587,21 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
           : process.env.TREEMAP_NO_GDU === '1' ? 'gdu is switched off by TREEMAP_NO_GDU'
             : null;
   const gduWanted = !native.eligibility.ok && gduRule === null;
+
+  /*
+   * The NTFS turbo mode (Phase 3 W6): only when the setting asks for it, and
+   * only on Windows (the setting is refused elsewhere). It goes first; when
+   * it is not used — a rule, a declined prompt, a refusal, a divergence — the
+   * chain above runs, and every scan the mode was asked for carries its
+   * clause, with W6-9's "not verified on this build", in `engineReason`.
+   */
+  const mftWanted = forced === 'ntfs-mft' && mftOfferedOn();
+  if (forced === 'ntfs-mft' && !mftWanted) why.push(`the NTFS turbo mode (${MFT_NOT_VERIFIED}) was not used: it is Windows only`);
+  const mftRule = !mftWanted ? null
+    : !rootIsDir ? 'the root is a single file, which needs no volume read'
+      : incremental ? 'this is an incremental rescan, and the mtime cache it reuses belongs to the built-in walker'
+        : ignore.length > 0 ? `the scan has ${ignore.length} "don't scan" pattern${ignore.length === 1 ? '' : 's'}, and the glob dialect that honours them lives in the built-in walker`
+          : null;
   if (!native.eligibility.ok && gduRule !== null && forced !== 'walker') {
     if (forced === 'gdu') noteFallback(scan, `${gduRule} (the Scan engine setting asked for gdu)`);
     why.push(gduRule);
@@ -594,11 +609,45 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
 
   // Fire and forget — errors land on the record, never as unhandled rejections.
   void (async () => {
+    /** The mode's clause when it was asked for and not used; its fallback when that was a failure. */
+    let mftClause: string | null = null;
+    let mftFallback: string | null = null;
+    if (mftWanted && mftRule !== null) {
+      mftClause = `the NTFS turbo mode (${MFT_NOT_VERIFIED}) was not used: ${mftRule}`;
+    } else if (mftWanted) {
+      scan.engine = 'ntfs-mft';
+      scan.fastPath = 'mft';
+      scan.engineReason = `the NTFS turbo mode was chosen by the Scan engine setting (${MFT_NOT_VERIFIED}); it waits for its elevated helper`;
+      const store = new PackedScanStore(rootPath, path.sep, statToInput(rootName(rootPath), true, rootStat.size, rootStat.mtimeMs, rootStat.atimeMs));
+      try {
+        const outcome = await runMftWalk(scan, store, rootPath);
+        if (scan.cancelled) return;
+        if (outcome.used) {
+          scan.engineReason = outcome.reason;
+          await assertRootStillThere(scan.rootPath);
+          settleComplete(scan, store);
+          return;
+        }
+        mftClause = outcome.reason;
+        if (outcome.failed) mftFallback = outcome.reason;
+      } catch (err) {
+        if (scan.cancelled) return;
+        const e = err as NodeJS.ErrnoException;
+        if (e.code === 'ENOENT' && e.path === scan.rootPath) throw err;
+        mftClause = `the NTFS turbo mode (${MFT_NOT_VERIFIED}) failed part-way: ${e instanceof Error ? e.message : String(err)}`;
+        mftFallback = mftClause;
+      }
+      resetCounters(scan);
+      scan.engine = WALKER_ENGINE;
+      scan.fastPath = WALKER_FAST_PATH;
+    }
+    if (mftClause !== null) why.unshift(mftClause);
+    if (mftFallback !== null) noteFallback(scan, mftFallback);
     if (native.eligibility.ok && native.module) {
       scan.engine = 'native';
       scan.fastPath = native.eligibility.fastPath;
-      scan.engineReason = native.eligibility.reason;
-      scan.fallbackReason = null;
+      scan.engineReason = mftClause === null ? native.eligibility.reason : `${native.eligibility.reason}; ${mftClause}`;
+      scan.fallbackReason = mftFallback;
       const store = new PackedScanStore(rootPath, path.sep, statToInput(rootName(rootPath), true, rootStat.size, rootStat.mtimeMs, rootStat.atimeMs));
       try {
         await runNativeWalk(scan, store, rootPath, native.module);

@@ -31,17 +31,34 @@ $('settingsBtn').addEventListener('click', async () => {
    has it, else gdu, else the built-in walker) or one of them forced. A dial
    like the budget below — saved the moment it is picked, through the one
    api() wrapper to PUT /api/settings with the single key { engine } — and it
-   applies from the next scan. */
-const SCAN_ENGINES = ['auto', 'native', 'gdu', 'walker'];
-const SCAN_ENGINE_LABELS = { auto: 'Automatic', native: 'Native', gdu: 'gdu', walker: 'Built-in walker' };
+   applies from the next scan.
+   M6 adds NTFS turbo (`ntfs-mft`), Windows only: its row ships hidden and is
+   shown only while the page knows the computer is Windows. Anywhere else the
+   server refuses the value, so a stored one is shown as Automatic. */
+const SCAN_ENGINES = ['auto', 'native', 'gdu', 'walker', 'ntfs-mft'];
+const SCAN_ENGINE_LABELS = { auto: 'Automatic', native: 'Native', gdu: 'gdu', walker: 'Built-in walker', 'ntfs-mft': 'NTFS turbo' };
 
 function scanEngineInputs() {
   return SCAN_ENGINES.map((e) => $(`scanEngine-${e}`)).filter(Boolean);
 }
 
-/** Check the stored choice; a value the page does not know renders as Automatic, never as nothing. */
+/** Whether /api/system has said this is Windows. Guarded like platformWord:
+    before the bundle's `const state` line has run, reading it throws. */
+function scanEngineOnWindows() {
+  let p;
+  try { p = state && state.system ? state.system.platform : undefined; } catch { p = undefined; }
+  return p === 'win32';
+}
+
+/** Check the stored choice; a value the page does not know renders as
+    Automatic, never as nothing — and so does NTFS turbo on a page that does
+    not know it is on Windows, whose row stays hidden. */
 function renderScanEngine(engine) {
-  const chosen = SCAN_ENGINES.includes(engine) ? engine : 'auto';
+  const onWindows = scanEngineOnWindows();
+  const turboRow = $('scanEngineRow-ntfs-mft');
+  if (turboRow) turboRow.hidden = !onWindows;
+  const offered = onWindows ? SCAN_ENGINES : SCAN_ENGINES.filter((e) => e !== 'ntfs-mft');
+  const chosen = offered.includes(engine) ? engine : 'auto';
   for (const input of scanEngineInputs()) input.checked = input.value === chosen;
 }
 

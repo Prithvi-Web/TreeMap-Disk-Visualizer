@@ -391,13 +391,78 @@ tree with the arena's own spill format plus a directory index keyed on
 `(dev, ino)`; invalidation gets its own test suite (grandchild changes,
 renames, replaced directories, clock skew).
 
-### 9.2 Windows MFT turbo mode (designed, not built — D7)
+### 9.2 Windows MFT turbo mode (built in W6 — D7; the elevation prompt not verified on this build)
 
-Strictly opt-in, read-only volume handle, NTFS only, cross-checked on 1,000
-random entries against `GetFileInformationByHandleEx`, disabled with a stated
-reason on any divergence, silent fallback when elevation is declined. It is
-the only route to multi-million entries per second on Windows and it needs an
-elevation prompt, which the prompt's Section 15 says to ask about first.
+Strictly opt-in: the Scan engine setting `ntfs-mft` ("NTFS turbo"), offered
+on Windows only — the Settings row is hidden elsewhere and the API refuses the
+value (400 `BAD_SETTING`); a hand-edited settings file is read as Automatic.
+The plan is `docs/superpowers/plans/2026-09-23-phase3-w6-mft.md`; what it
+fixed, as built:
+
+1. **The app never runs elevated (W6-1).** Electron's main process
+   (`electron/mft.js`) shows one plain sentence, then launches
+   `tm-mft-helper.exe` alone with the `runas` verb (`Start-Process -Verb
+   RunAs`, i.e. `ShellExecuteExW`). Declining — the sentence or Windows'
+   prompt — is a choice, not an error: the scan lists the folders and
+   `engineReason` says elevation was declined; `fallbackReason` stays null.
+   One prompt is open at a time: a scan that wants the mode while another
+   waits on the prompt lists its folders instead. After a decline no scan
+   asks for ten minutes — the reason says how many are left — and only time
+   or a restart ends that: a prompt per scan was one anything that starts
+   scans could raise until someone clicked yes (the security review of M6),
+   and a reset through Settings would have been one anything that reaches
+   the API could repeat (its second review). Both are rules, not failures
+   (`src/services/scan/mftPrompt.ts`).
+2. **Read-only by construction (W6-2).** The helper
+   (`crates/tm-mft-helper`) takes `<volume> <root> <output file>`; it checks
+   that the volume is a drive letter, that the root is an absolute folder
+   path on it (no `..`), and that the output is named as the app names it
+   (`<uuid>.tmmft`) and sits directly inside this user's
+   `%TEMP%\TreeMap-mft` — a folder it resolves itself, never from its
+   arguments, and refuses unless it is a real folder: a link, a junction or
+   any other reparse point there would have sent the elevated write wherever
+   it points (the security review of M6). It holds that folder open without
+   `FILE_SHARE_DELETE` from before the file is created until the file is
+   found where the check said, so nothing can move it aside and plant a
+   junction meanwhile, and resolves it again once held, so a folder *above*
+   it swapped for a junction before the hold is caught too (the second
+   review) — while it is held, Windows refuses to rename any folder above it,
+   which the Windows CI leg asserts rather than assumes. It creates that file
+   new (never an existing file, never through a link at its name) before one
+   byte of the volume is read.
+   It writes nothing else, anywhere. The app makes the same link check before
+   it asks, so a planted junction costs no prompt. The volume is opened
+   `GENERIC_READ` (M4).
+3. **The columns file.** A 16-byte header (magic `TMMFT001`, entry count,
+   flags) and `WalkOutput`'s columns little-endian (`tm_mft::columns`); a
+   refusal is the magic `TMMFTERR` and the helper's sentence, because an
+   elevated process's stderr never reaches the app. `mftTake` (tm-node)
+   checks the whole file before trusting it — above all `parent[i] < i`,
+   without which the ingest could loop — and hands over the same typed
+   arrays `scanTake` does, so the ingest, the store and the JSON are the
+   native engine's. The stats say `fastPath: "mft"`, `engine: "ntfs-mft"`.
+4. **The cross-check is the gate at run time (W6-8, correction 9).** Up to
+   1,000 entries, drawn uniformly without replacement from those the table
+   says were last written at least 120 s before the helper was launched, are
+   opened by the app itself — unelevated, `FILE_READ_ATTRIBUTES`, the
+   listing's own `stat_path` — and their kind, size and last-write time
+   compared (`mftCrossCheck`). An entry that cannot be opened is replaced; a
+   mismatch is re-read once; it is a divergence only if it still differs and
+   its live last-write time is itself older than the margin (a file written
+   since the table was flushed is replaced, not blamed). The first divergence
+   discards the whole result, switches the mode off for that volume until the
+   app restarts, and names the entry and both values in `fallbackReason`. A
+   table of which the app could verify **no** entry — every entry written
+   within the margin (exactly where a raw read may be missing unflushed
+   creates), or none it could open — is not trusted either: the folders are
+   listed instead, the reason says which, and the volume stays on offer.
+5. **Proven on CI or shipped labelled (W6-9).** M5 proves the reader on the
+   Windows runner's own volume, as administrator; no CI can answer a UAC
+   prompt, so every scan the setting asks for carries `not verified on this
+   build` in its `engineReason` until something proves the prompt end to end.
+
+It is the only route to multi-million entries per second on Windows; no
+number for it is recorded here, because none has been measured.
 
 ## 10. Exact duplicates (Phase 5)
 
@@ -477,6 +542,7 @@ assertion.
 4. **Withdrawn 18 September 2026 (P3-5).** `accessedAt` was to be off by default in the native path; it is collected on every platform (`ATTR_CMN_ACCTIME`, `STATX_ATIME`, `LastAccessTime`) and compared by the digest, because the "last used" fact and the JSON depend on it.
 5. **The mtime cache** (a 300k-node JSON tree) is superseded by the arena index for native scans; the legacy walker keeps its own.
 6. **Two order-dependent facts are normalised by the digest, not by the engines (P3-8, 18 September 2026):** the order a listing returns children in, and which name of a hard-link family was seen first. Two legacy walks are not byte-identical to each other on those two points, so the digest sorts a directory's children by name bytes and gives a family's bytes to its lexicographically smallest path before hashing. Nothing else is normalised; the assertion is not loosened, it is made well-defined.
+7. **The NTFS turbo mode sees what the unelevated walker is refused (W6-7).** Its helper reads the master file table as administrator, so a folder the listing reports as denied is, in an `ntfs-mft` scan, a folder like any other, with its contents. That is the point of an administrator's metadata view, and hiding it would be a lie of omission, so it is named here rather than smoothed over. The equivalence proof on CI (M5) runs both engines as administrator, where the two agree.
 
 ## 17. Phase plan → commits
 

@@ -775,7 +775,14 @@ const schemas: Json = {
       ),
       tourDone: bool('Whether the guided first run (v4 §9.2) was completed or skipped. Only boolean true counts.'),
       engineBudget: ref('EngineBudgetSetting'),
-      engine: { type: 'string', enum: ['auto', 'native', 'gdu', 'walker'], description: 'The Scan engine (Phase 3): auto picks the native engine when this build has it and the scan is eligible, then gdu, then the built-in walker; the others force one. Default auto' },
+      engine: {
+        type: 'string',
+        enum: ['auto', 'native', 'gdu', 'walker', 'ntfs-mft'],
+        description: 'The Scan engine (Phase 3): auto picks the native engine when this build has it and the scan is eligible, then gdu, then the built-in walker; the others force one. Default auto. '
+          + 'ntfs-mft is the NTFS turbo mode (M6): Windows only — refused with 400 BAD_SETTING on every other platform — and opt-in, never chosen by auto. '
+          + 'After Windows asks for administrator permission it runs an elevated, read-only helper that reads the drive’s file table directly. '
+          + 'Not verified on this build.',
+      },
     },
     ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights', 'cleanupGoalBytes', 'humanScaleUnits', 'tourDone', 'engineBudget', 'engine'],
   ),
@@ -2068,7 +2075,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     tag: 'settings',
     destructive: true,
     requestBody: jsonBody(opaque('Any subset of AppSettings: ignore, schedules, budgets, forecastThresholdDays, watchIdleMinutes, timeCapsuleRetentionDays, timeCapsuleMaxPercent, cloud, reclaimWeights, cleanupGoalBytes, humanScaleUnits, tourDone, engineBudget, engine')),
-    responses: { '200': jsonResponse('Updated settings', ref('AppSettings')), '400': errorResponse('Bad shape; BAD_SETTING when engine is not one of auto, native, gdu, walker') },
+    responses: { '200': jsonResponse('Updated settings', ref('AppSettings')), '400': errorResponse('Bad shape; BAD_SETTING when engine is not one of auto, native, gdu, walker, ntfs-mft — ntfs-mft only on Windows') },
   },
   /* ------------ the scanning budget (Phase 2) ------------ */
   {

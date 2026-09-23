@@ -1,6 +1,11 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import type { NativeProbe, NativeProgress, ScanStartOptions, WalkResult } from '../../../native/index';
-import { nativeScanModule, type ScanModule } from './native';
+import type { MftExpected, MftLiveCheck, NativeProbe, NativeProgress, ScanStartOptions, WalkResult } from '../../../native/index';
+import { loadNative, nativeScanModule, type ScanModule } from './native';
+import { crossCheckMft } from './mftCrossCheck';
+import { mftPromptBlocked, mftPromptEnded, mftPromptStarted, resetMftPromptForTests } from './mftPrompt';
 import { statToInput } from './nodeInput';
 import { Flag, ScanStore, joinPath } from '../scanStore';
 import { cloudProviderFor } from '../cloudFolders';
@@ -576,4 +581,251 @@ function mustScanModule(): ScanModule {
 /** The name a store's root takes: the last path component, or the whole path when there is none (`/`). */
 export function rootName(rootPath: string): string {
   return path.basename(rootPath) || rootPath;
+}
+
+/* ------------------------------ the Windows MFT turbo mode (W6, M6) ------------------------------ */
+
+/**
+ * The app's temp folder under the OS temp folder: the one place
+ * `tm-mft-helper` writes. The helper resolves the same folder for itself
+ * (its `APP_TEMP_FOLDER`) and refuses an output anywhere else (W6-2).
+ */
+export const MFT_TEMP_FOLDER = 'TreeMap-mft';
+/** The elevated helper's file name. */
+export const MFT_HELPER_FILE = 'tm-mft-helper.exe';
+/**
+ * W6-9: CI proves the reader on a real volume (M5), but no CI can answer a
+ * UAC prompt, so nothing proves the elevation end to end. Every scan through
+ * the mode says so, used or not, until something does.
+ */
+export const MFT_NOT_VERIFIED = 'not verified on this build';
+const MFT_LABEL = `${MFT_NOT_VERIFIED}: no test has run its elevation prompt end to end`;
+
+/** What the launcher (electron/mft.js) reports. */
+export type MftLaunchOutcome =
+  /** The helper ran elevated and exited with `code` (0: columns written; 2: refused, the reason in the file). */
+  | { kind: 'exited'; code: number }
+  /** The user said no — to the app's sentence or to Windows' prompt. A choice, never an error (W6-1). */
+  | { kind: 'declined'; reason: string }
+  /** The launch itself failed. */
+  | { kind: 'failed'; reason: string };
+export interface MftLaunchRequest { helperPath: string; volume: string; root: string; output: string }
+/** Asks for elevation and runs the helper once: Electron's main process registers one (`setMftLauncher`). */
+export type MftLauncher = (request: MftLaunchRequest) => Promise<MftLaunchOutcome>;
+/** The part of tm-node the mode uses. */
+export interface MftModule {
+  mftTake(path: string): WalkResult;
+  mftCrossCheck(paths: string[], expected: MftExpected[]): MftLiveCheck[];
+}
+/** Seams for tests; the app passes none. */
+export interface MftDeps {
+  launcher?: MftLauncher | null;
+  module?: MftModule | null;
+  helperPath?: string | null;
+  tempFolder?: string;
+  now?: () => number;
+  random?: () => number;
+}
+export type MftOutcome =
+  /** The store holds the tree, finalized and summed; `reason` is the stats' `engineReason`. */
+  | { used: true; reason: string }
+  /** Fall back to the listing walk. `failed` makes `reason` a `fallbackReason` too; a decline or a rule is a choice. */
+  | { used: false; reason: string; failed: boolean };
+
+let mftLauncher: MftLauncher | null = null;
+
+/** Electron's main process registers the elevation launcher here (Windows only); null removes it. */
+export function setMftLauncher(launcher: MftLauncher | null): void {
+  mftLauncher = launcher;
+}
+
+/** Volumes the cross-check found a divergence on this session, with the sentence (W6-8). */
+const mftSwitchedOff = new Map<string, string>();
+
+/** Test-only: forget the session's divergences, and any prompt or decline. */
+export function resetMftSessionForTests(): void {
+  mftSwitchedOff.clear();
+  resetMftPromptForTests();
+}
+
+/** Whether the mode can be offered on `p`: Windows only. */
+export function mftOfferedOn(p: NodeJS.Platform = process.platform): boolean {
+  return p === 'win32';
+}
+
+/** The drive a root is on (`C:`), or null for a root without one (a UNC path). */
+export function driveOf(rootPath: string): string | null {
+  const m = /^([A-Za-z]):[\\/]/.exec(rootPath);
+  return m ? `${m[1].toUpperCase()}:` : null;
+}
+
+/** Where the helper may be: beside the prebuilt module, or in a packaged app's resources. */
+export function mftHelperCandidates(): string[] {
+  const out = [path.join(__dirname, '..', '..', '..', 'native', 'prebuilt', `${process.platform}-${process.arch}`, MFT_HELPER_FILE)];
+  const resources = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  if (resources) out.push(path.join(resources, 'native', MFT_HELPER_FILE));
+  return out;
+}
+
+/** The loaded module's MFT surface, or why there is none. */
+function mftModuleOrReason(): MftModule | string {
+  const outcome = loadNative();
+  if (!outcome.available) return `the native module is not loaded: ${outcome.reason}`;
+  const mod = outcome.module;
+  if (typeof mod.mftTake !== 'function' || typeof mod.mftCrossCheck !== 'function') {
+    return `the native module at ${outcome.path} has no mftTake(), so it cannot read the helper's result; rebuild it with npm run build:native`;
+  }
+  return mod as unknown as MftModule;
+}
+
+/** Node `i`'s full path, built on demand from the parent chain and remembered. */
+function columnPaths(cols: WalkResult, rootPath: string, sep: string): (i: number) => string {
+  const names = Buffer.from(cols.names.buffer, cols.names.byteOffset, cols.names.byteLength);
+  const paths = new Map<number, string>([[0, rootPath]]);
+  const of = (i: number): string => {
+    const known = paths.get(i);
+    if (known !== undefined) return known;
+    const p = joinPath(of(cols.parent[i]), sep, names.toString('utf8', cols.nameOff[i], cols.nameOff[i + 1]));
+    paths.set(i, p);
+    return p;
+  };
+  return of;
+}
+
+function removeQuietly(file: string): void {
+  try {
+    fs.rmSync(file, { force: true });
+  } catch {
+    /* the app's own temp file; a later scan's folder sweep is not needed for correctness */
+  }
+}
+
+/**
+ * The MFT turbo mode for one scan (W6): ask for elevation → wait for the
+ * helper → `mftTake` → the cross-check → ingest; or say why not.
+ *
+ * Nothing here throws for the mode's own reasons. A root without a drive
+ * letter, a volume already switched off this session, no launcher (the
+ * server without the desktop app), a module or helper that is missing, an
+ * app temp folder that is a link or a junction, another scan's prompt still
+ * open or a decline's quiet period (mftPrompt.ts: rules, not failures), a
+ * declined prompt (a choice: `failed: false`, never an error — W6-1), a
+ * helper that refused (its sentence, read from its output file, since an
+ * elevated process's stderr does not reach the app), and a divergence
+ * (W6-8: the volume is switched off for the session, the entry and both
+ * values in the reason) all return `used: false`, and the caller lists the
+ * folders instead. The helper's output file is removed on every path.
+ */
+export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: string, deps: MftDeps = {}): Promise<MftOutcome> {
+  const notUsed = (why: string, failed: boolean): MftOutcome => ({
+    used: false,
+    reason: `the NTFS turbo mode (${MFT_LABEL}) was not used: ${why}`,
+    failed,
+  });
+  const volume = driveOf(rootPath);
+  if (volume === null) return notUsed('the scan root is not on a drive letter, so there is no NTFS volume to read', false);
+  const off = mftSwitchedOff.get(volume);
+  if (off !== undefined) return notUsed(`it is off for ${volume} until TreeMap restarts, because ${off}`, true);
+  const launcher = deps.launcher === undefined ? mftLauncher : deps.launcher;
+  if (!launcher) return notUsed('asking Windows for administrator permission needs the desktop app, and this server runs without it', true);
+  const found = deps.module === undefined ? mftModuleOrReason() : (deps.module ?? 'no native module was given');
+  if (typeof found === 'string') return notUsed(found, true);
+  const mod = found;
+  const helperPath = deps.helperPath === undefined ? (mftHelperCandidates().find((p) => fs.existsSync(p)) ?? null) : deps.helperPath;
+  if (!helperPath) return notUsed(`no ${MFT_HELPER_FILE} ships with this build (looked at ${mftHelperCandidates().join(', ')})`, true);
+  const folder = deps.tempFolder ?? path.join(os.tmpdir(), MFT_TEMP_FOLDER);
+  try {
+    fs.mkdirSync(folder, { recursive: true });
+  } catch (err: unknown) {
+    return notUsed(`the app's temp folder ${folder} could not be made: ${describe(err)}`, true);
+  }
+  // The helper refuses a temp folder that is a link or a junction, which would
+  // send its elevated write wherever it points (the security review of M6), so
+  // asking first would only raise a prompt whose yes cannot be used. Node sees
+  // a Windows junction as a symbolic link; the helper also refuses any other
+  // reparse point, which Node cannot see.
+  let unfollowed: fs.Stats;
+  try {
+    unfollowed = fs.lstatSync(folder);
+  } catch (err: unknown) {
+    return notUsed(`the app's temp folder ${folder} could not be checked: ${describe(err)}`, true);
+  }
+  if (unfollowed.isSymbolicLink() || !unfollowed.isDirectory()) {
+    return notUsed(`the app's temp folder ${folder} is a link, a junction or not a folder, and the elevated helper writes nothing through one`, true);
+  }
+  const now = deps.now ?? Date.now;
+  // Nothing between this check and mftPromptStarted awaits, so two scans
+  // cannot both pass it.
+  const blocked = mftPromptBlocked(now());
+  if (blocked !== null) return notUsed(blocked, false);
+  const output = path.join(folder, `${crypto.randomUUID()}.tmmft`);
+  // Conservative for correction 9: the read starts no earlier than the launch.
+  const readStarted = now();
+  try {
+    let launched: MftLaunchOutcome | null = null;
+    mftPromptStarted();
+    try {
+      launched = await launcher({ helperPath, volume, root: rootPath, output });
+    } catch (err: unknown) {
+      return notUsed(`the helper could not be started: ${describe(err)}`, true);
+    } finally {
+      mftPromptEnded(launched?.kind === 'declined', now());
+    }
+    if (scan.cancelled) return notUsed('the scan was cancelled', false);
+    if (launched.kind === 'declined') return notUsed(`${launched.reason}, so the folders were listed instead`, false);
+    if (launched.kind === 'failed') return notUsed(`the helper could not be started: ${launched.reason}`, true);
+    if (launched.code !== 0) {
+      let why = `the helper exited with code ${launched.code} and left no reason (an elevated process's error output does not reach the app)`;
+      if (fs.existsSync(output)) {
+        try {
+          mod.mftTake(output);
+        } catch (err: unknown) {
+          why = `the reader refused: ${describe(err)}`;
+        }
+      }
+      return notUsed(why, true);
+    }
+    let cols: WalkResult;
+    try {
+      cols = mod.mftTake(output);
+    } catch (err: unknown) {
+      return notUsed(`the helper's result could not be read: ${describe(err)}`, true);
+    }
+    const verdict = crossCheckMft(cols, columnPaths(cols, rootPath, store.sep), readStarted, (p, e) => mod.mftCrossCheck(p, e), deps.random ?? Math.random);
+    if (!verdict.ok) {
+      mftSwitchedOff.set(volume, verdict.reason);
+      return notUsed(`${verdict.reason}; the mode is off for ${volume} until TreeMap restarts`, true);
+    }
+    // A gate that verified nothing must not open. Every entry written within
+    // the margin is also the case where the raw read may be missing creates
+    // NTFS had not yet flushed; none openable leaves the table unchecked. Not
+    // a fault of the reader, so the volume stays on offer for the next scan.
+    if (verdict.checked === 0) {
+      const tooRecent = cols.parent.length - verdict.eligible;
+      return notUsed(
+        `the cross-check could verify none of its entries (${tooRecent} were written too close to the read to check, ${verdict.skipped} could not be opened), so the table was not trusted and the folders were listed instead`,
+        false,
+      );
+    }
+    const cpuBefore = process.cpuUsage();
+    ingestColumns(scan, store, cols, rootPath);
+    store.finalize();
+    store.sumSizes();
+    const ingest = process.cpuUsage(cpuBefore);
+    const helperCpu = cols.stats.cpuSeconds;
+    scan.cpuSeconds = typeof helperCpu === 'number' && Number.isFinite(helperCpu)
+      ? helperCpu + (ingest.user + ingest.system) / 1e6
+      : null;
+    scan.currentPath = rootPath;
+    const aside = [
+      verdict.skipped > 0 ? `${verdict.skipped} could not be opened and were replaced` : '',
+      verdict.recent > 0 ? `${verdict.recent} had been written since the read and were replaced` : '',
+    ].filter(Boolean);
+    return {
+      used: true,
+      reason: `the NTFS turbo mode (${MFT_LABEL}) read ${volume}'s master file table through its elevated helper, and ${verdict.checked} of ${verdict.eligible} eligible entries, opened by the app itself, matched it${aside.length ? ` (${aside.join('; ')})` : ''}`,
+    };
+  } finally {
+    removeQuietly(output);
+  }
 }

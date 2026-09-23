@@ -17,7 +17,8 @@ import { INDEX, lift } from './fixtures/liftFrontend';
 /**
  * The "Scan engine" setting — Phase 3 plan, W2.
  *
- * `engine` is `auto | native | gdu | walker`, Automatic by default. A
+ * `engine` is `auto | native | gdu | walker`, Automatic by default (M6 adds a
+ * fifth, Windows-only `ntfs-mft` — tests/settingsNtfsMft.test.ts). A
  * hand-edited file is normalised; API input is validated at PUT /api/settings
  * (400 BAD_SETTING). Settings shows it as a "Scan engine" section shaped like
  * the Phase 2 "Scanning budget" row: four radios, one plain sentence each,
@@ -105,7 +106,8 @@ test('PUT /api/settings validates engine strictly: the four values pass, anythin
     assert.match(nothing.body.error, /"engine"/, 'the key is named among the ones a body may carry');
     const spec = (await req(port, 'GET', '/api/openapi.json')).body;
     const engine = spec.components.schemas.AppSettings.properties.engine;
-    assert.deepEqual(engine.enum, [...ENGINES], 'the spec describes the enum');
+    // Plus M6's Windows-only ntfs-mft, which tests/settingsNtfsMft.test.ts covers.
+    assert.deepEqual(engine.enum, [...ENGINES, 'ntfs-mft'], 'the spec describes the enum');
     assert.ok(spec.components.schemas.AppSettings.required.includes('engine'));
   } finally {
     await req(port, 'PUT', '/api/settings', { engine: 'auto' }).catch(() => {});

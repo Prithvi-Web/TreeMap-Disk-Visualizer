@@ -17,14 +17,45 @@ const MAX_IGNORE = 100;
 const MAX_SCHEDULES = 20;
 const MAX_BUDGETS = 100;
 const SCOPES: IgnoreScope[] = ['scan', 'suggest', 'both'];
-/** The Scan engine setting's values (Phase 3), in the order Settings lists them. */
-export const ENGINE_SETTINGS: readonly EngineSetting[] = ['auto', 'native', 'gdu', 'walker'];
+/**
+ * The Scan engine setting's values (Phase 3, and M6's `ntfs-mft`), in the
+ * order Settings lists them — every value, whatever the platform. What one
+ * platform accepts is engineSettingsFor's answer, not this list.
+ */
+export const ENGINE_SETTINGS: readonly EngineSetting[] = Object.freeze(['auto', 'native', 'gdu', 'walker', 'ntfs-mft'] as const);
+/** The NTFS turbo mode reads an NTFS drive's file table: it exists only on Windows. */
+const ENGINE_SETTINGS_OFF_WINDOWS: readonly EngineSetting[] = Object.freeze(ENGINE_SETTINGS.filter((e) => e !== 'ntfs-mft'));
+
+/** The Scan engine values this platform offers: all five on Windows, the four without `ntfs-mft` elsewhere. */
+export function engineSettingsFor(p: NodeJS.Platform = process.platform): readonly EngineSetting[] {
+  return p === 'win32' ? ENGINE_SETTINGS : ENGINE_SETTINGS_OFF_WINDOWS;
+}
+
+const quotedList = (values: readonly string[]): string => values.map((e) => `"${e}"`).join(', ');
+
+/**
+ * Why an API request's `engine` is refused on this platform, as the sentence a
+ * 400 BAD_SETTING carries — or null when it is one of the platform's values.
+ * The NTFS turbo mode off Windows gets its own sentence, so a request copied
+ * from a Windows machine learns why rather than just what.
+ */
+export function engineSettingRefusal(raw: unknown, p: NodeJS.Platform = process.platform): string | null {
+  const offered = engineSettingsFor(p);
+  if (offered.includes(raw as EngineSetting)) return null;
+  if (raw === 'ntfs-mft') {
+    return `"engine" "ntfs-mft" (the NTFS turbo mode) is available only on Windows; here it must be one of ${quotedList(offered)}`;
+  }
+  return `"engine" must be one of ${quotedList(offered)}`;
+}
 
 let cache: AppSettings | null = null;
 
-/** A hand-edited engine is normalised, never trusted: anything but the four values is Automatic. */
+/**
+ * A hand-edited engine is normalised, never trusted: anything but this
+ * platform's values is Automatic — `ntfs-mft` included, off Windows.
+ */
 function normalizeEngine(raw: unknown): EngineSetting {
-  return ENGINE_SETTINGS.includes(raw as EngineSetting) ? (raw as EngineSetting) : 'auto';
+  return engineSettingsFor().includes(raw as EngineSetting) ? (raw as EngineSetting) : 'auto';
 }
 
 function normalizeIgnore(raw: unknown): IgnoreEntry[] {

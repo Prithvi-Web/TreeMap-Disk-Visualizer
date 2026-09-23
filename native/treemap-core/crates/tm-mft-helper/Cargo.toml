@@ -1,0 +1,18 @@
+[package]
+name = "tm-mft-helper"
+description = "The elevated, read-only helper of the Windows MFT turbo mode: reads one NTFS volume's master file table for one scan root and writes the root's subtree as a columns file directly inside the app's temp folder, and nothing else."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "tm-mft-helper"
+path = "src/main.rs"
+
+[dependencies]
+tm-mft = { path = "../tm-mft" }
+tm-walk = { path = "../tm-walk" }

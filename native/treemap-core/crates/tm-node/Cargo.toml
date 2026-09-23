@@ -14,6 +14,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 tm-governor = { path = "../tm-governor" }
+tm-mft = { path = "../tm-mft" }
 tm-walk = { path = "../tm-walk" }
 napi = { workspace = true }
 napi-derive = { workspace = true }

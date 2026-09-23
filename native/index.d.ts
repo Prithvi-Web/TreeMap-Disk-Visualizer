@@ -145,8 +145,12 @@ export function governorHold(targetPercent: number, seconds: number): Promise<Na
 
 /* ------------------------------ the native walker (Phase 3) ------------------------------ */
 
-/** The listing path a platform offers, as the Rust `FastPath` names it. */
-export type NativeFastPath = 'bulk' | 'extdDirInfo' | 'getdents' | 'perEntry' | 'unavailable';
+/**
+ * The listing path a platform offers, as the Rust `FastPath` names it; `mft`
+ * is the Windows MFT turbo mode, whose columns come from the volume's master
+ * file table rather than a listing (`mftTake`).
+ */
+export type NativeFastPath = 'bulk' | 'extdDirInfo' | 'getdents' | 'perEntry' | 'unavailable' | 'mft';
 
 /** What `scanProbe()` found: the path the root would be listed with, and why, in a sentence. */
 export interface NativeProbe {
@@ -275,3 +279,53 @@ export function scanCancel(handle: number): void;
  * can never freeze the app; cancel it and poll to `done` first, or leave it.
  */
 export function scanTake(handle: number): WalkResult;
+
+/* ------------------------------ the Windows MFT turbo mode (W6, M6) ------------------------------ */
+
+/**
+ * The columns `tm-mft-helper` (the one elevated process, launched by
+ * Electron with the `runas` verb) wrote to `path`, directly inside the app's
+ * temp folder: the same shape `scanTake` returns, with `stats.fastPath`
+ * `'mft'`. The file is checked before anything is trusted — a file that is
+ * short, long, tampered with or shaped wrong (a parent that does not precede
+ * its child above all) throws with the reason — and a refusal file throws the
+ * helper's own sentence (an elevated process's stderr never reaches the app).
+ * Only a file named as the app names its columns files (`<id>.tmmft`) is read
+ * at all; any other name throws before a byte of it is read. The file is left
+ * in place; the caller removes it.
+ */
+export function mftTake(path: string): WalkResult;
+
+/** What the master file table said about one entry, for `mftCrossCheck`. */
+export interface MftExpected {
+  /** 0 = file, 1 = directory, 2 = symlink (as in `WalkResult.kind`). */
+  kind: number;
+  size: number;
+  /** The table's last-write time, in the columns' milliseconds. */
+  mtimeMs: number;
+}
+
+/** One entry as the app — unelevated — sees it now. */
+export interface MftLiveCheck {
+  /** `unopenable`: the path could not be opened (denied, vanished); the caller draws another. */
+  outcome: 'match' | 'mismatch' | 'unopenable';
+  /** The live values; null when the path could not be opened. */
+  kind: number | null;
+  size: number | null;
+  mtimeMs: number | null;
+  /** The fields that differ from the table's, in this order: kind, size, mtime. */
+  differs: Array<'kind' | 'size' | 'mtime'>;
+  /** Why the path could not be opened; null otherwise. */
+  reason: string | null;
+}
+
+/**
+ * The run-time gate of the MFT mode (W6-8): each path opened now, by this
+ * unelevated process, with `FILE_READ_ATTRIBUTES` (a final reparse point not
+ * followed — the listing's own `stat_path`; `lstat` elsewhere), and its kind,
+ * size and last-write time compared with `expected` (one per path, in order).
+ * Deciding what a mismatch means — a divergence, or a file changed since the
+ * table was flushed (correction 9) — is the caller's. Throws when the two
+ * arrays differ in length or an expected entry has the wrong shape.
+ */
+export function mftCrossCheck(paths: string[], expected: MftExpected[]): MftLiveCheck[];

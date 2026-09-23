@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireScan, clampInt } from './scanRoutes';
-import { ENGINE_SETTINGS, getSettings, updateSettings, getIgnoreMatchers } from '../services/settings';
+import { engineSettingRefusal, getSettings, updateSettings, getIgnoreMatchers } from '../services/settings';
 import { suppressedNoteRoots } from '../services/notes';
 import { collectCleanupSuggestions } from '../services/cleanupRules';
 import { ruleCatalogStatus } from '../services/rulePacks';
@@ -40,10 +40,13 @@ settingsRouter.put('/settings', async (req: Request, res: Response) => {
       && body.tourDone === undefined && body.engineBudget === undefined && body.engine === undefined) {
     throw new AppError(400, 'NOTHING_TO_UPDATE', 'Body must include "ignore", "schedules", "budgets", "forecastThresholdDays", "watchIdleMinutes", "timeCapsuleRetentionDays", "timeCapsuleMaxPercent", "cloud", "reclaimWeights", "cleanupGoalBytes", "humanScaleUnits", "tourDone", "engineBudget" and/or "engine"');
   }
-  // The Scan engine (Phase 3): one of four words, validated like every other
-  // API field — a hand-edited file is forgiven to Automatic, a request is not.
-  if (body.engine !== undefined && !ENGINE_SETTINGS.includes(body.engine as never)) {
-    throw new AppError(400, 'BAD_SETTING', `"engine" must be one of ${ENGINE_SETTINGS.map((e) => `"${e}"`).join(', ')}`);
+  // The Scan engine (Phase 3): one of this platform's words, validated like
+  // every other API field — a hand-edited file is forgiven to Automatic, a
+  // request is not. M6's `ntfs-mft` exists only on Windows, and elsewhere the
+  // refusal says so.
+  if (body.engine !== undefined) {
+    const refusal = engineSettingRefusal(body.engine);
+    if (refusal !== null) throw new AppError(400, 'BAD_SETTING', refusal);
   }
   if (body.schedules !== undefined) {
     if (!Array.isArray(body.schedules)) {

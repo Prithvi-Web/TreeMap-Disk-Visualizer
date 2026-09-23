@@ -1,0 +1,596 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+// Every write this file causes lands in a directory of its own.
+process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mft-engine-test-'));
+process.env.TREEMAP_NO_GDU = '1';
+
+import type { MftExpected, MftLiveCheck, WalkResult } from '../native/index';
+import { MFT_CROSS_CHECK_SAMPLE, MFT_FLUSH_MARGIN_MS, crossCheckMft, type LiveChecker } from '../src/services/scan/mftCrossCheck';
+import {
+  KIND_DIR,
+  KIND_FILE,
+  MFT_NOT_VERIFIED,
+  MFT_TEMP_FOLDER,
+  resetMftSessionForTests,
+  runMftWalk,
+  type MftLaunchOutcome,
+  type MftLaunchRequest,
+  type MftLauncher,
+  type MftModule,
+} from '../src/services/scan/nativeEngine';
+import { MFT_DECLINE_QUIET_MS } from '../src/services/scan/mftPrompt';
+import { statToInput } from '../src/services/scan/nodeInput';
+import { PackedScanStore } from '../src/services/scanStore';
+import { createScanRecord } from '../src/services/diskScanner';
+import { loadNative } from '../src/services/scan/native';
+
+/**
+ * The Windows MFT turbo mode on the Node side — M6 of
+ * docs/superpowers/plans/2026-09-23-phase3-w6-mft.md.
+ *
+ *  1. The cross-check (W6-8 with correction 9), pure, through a fake live
+ *     checker: up to 1,000 entries drawn uniformly without replacement from
+ *     those last written well before the read began; an unopenable entry is
+ *     replaced; a mismatch is re-read once, and is a divergence only when
+ *     the entry still differs and has not itself changed since the read.
+ *  2. `runMftWalk` through a fake launcher and a fake module: a declined
+ *     prompt is a fallback with its own reason, never an error; a divergence
+ *     switches the mode off for the volume for the session, naming the entry
+ *     and both values; every answer carries W6-9's label.
+ *  3. The real module (after `npm run build:native`): `mftTake` reads a
+ *     columns file written here by an independent encoder of the documented
+ *     format, and `mftCrossCheck` compares real files in the OS temp folder.
+ */
+
+const READ_STARTED = Date.UTC(2026, 8, 23, 12, 0, 0);
+const OLD = READ_STARTED - MFT_FLUSH_MARGIN_MS - 60_000;
+const RECENT = READ_STARTED - 1_000;
+
+/** A seeded PRNG (mulberry32), so every draw here is reproducible. */
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+interface Node { name: string; parent: number; kind?: number; size?: number; mtime?: number }
+
+/** Columns from a node list (index 0 the root, each parent before its children). */
+function columns(nodes: Node[]): WalkResult {
+  const names: number[] = [];
+  const nameOff = [0];
+  for (const n of nodes) {
+    names.push(...Buffer.from(n.name, 'utf8'));
+    nameOff.push(names.length);
+  }
+  const files = nodes.filter((n) => (n.kind ?? KIND_FILE) !== KIND_DIR).length;
+  return {
+    parent: Uint32Array.from(nodes.map((n) => n.parent)),
+    nameOff: Uint32Array.from(nameOff),
+    names: Uint8Array.from(names),
+    kind: Uint8Array.from(nodes.map((n) => n.kind ?? KIND_FILE)),
+    flags: new Uint8Array(nodes.length),
+    size: Float64Array.from(nodes.map((n) => n.size ?? 0)),
+    allocBytes: Float64Array.from(nodes.map((n) => n.size ?? 0)),
+    mtimeMs: Float64Array.from(nodes.map((n) => n.mtime ?? OLD)),
+    atimeMs: Float64Array.from(nodes.map(() => Number.NaN)),
+    hardlinkNode: new Uint32Array(0),
+    hardlinkDev: new Float64Array(0),
+    hardlinkIno: new Float64Array(0),
+    refusalNode: new Uint32Array(0),
+    refusalWhy: new Uint8Array(0),
+    stats: {
+      dirsListed: nodes.length - files, entries: nodes.length - 1, wallMs: 5, cpuSeconds: 0.01, fastPath: 'mft',
+      workersPeak: 1, climbSteps: 0, deniedEntries: 0, unreadableEntries: 0, dataless: 0,
+    },
+  };
+}
+
+/** A root holding `count` files `f0…`, all last written long before the read. */
+function flat(count: number, over: (i: number) => Partial<Node> = () => ({})): WalkResult {
+  const nodes: Node[] = [{ name: 'data', parent: 0, kind: KIND_DIR }];
+  for (let i = 0; i < count; i++) nodes.push({ name: `f${i}`, parent: 0, size: 100 + i, ...over(i) });
+  return columns(nodes);
+}
+
+const ROOT = 'C:\\data';
+const pathOf = (cols: WalkResult) => (i: number): string => {
+  if (i === 0) return ROOT;
+  const name = Buffer.from(cols.names.buffer, cols.names.byteOffset, cols.names.byteLength).toString('utf8', cols.nameOff[i], cols.nameOff[i + 1]);
+  return `${ROOT}\\${name}`;
+};
+
+type Live = { kind: number; size: number; mtimeMs: number } | 'unopenable';
+
+/** A live checker that answers from a script (default: exactly what the table said), recording every path it opens. */
+function fakeChecker(script: (path: string, want: MftExpected, visit: number) => Live | undefined = () => undefined) {
+  const seen: string[] = [];
+  const visits = new Map<string, number>();
+  const check: LiveChecker = (paths, expected) => paths.map((p, k): MftLiveCheck => {
+    seen.push(p);
+    const visit = (visits.get(p) ?? 0) + 1;
+    visits.set(p, visit);
+    const want = expected[k];
+    const live = script(p, want, visit) ?? { kind: want.kind, size: want.size, mtimeMs: want.mtimeMs };
+    if (live === 'unopenable') return { outcome: 'unopenable', kind: null, size: null, mtimeMs: null, differs: [], reason: 'Windows error 5' };
+    const differs: MftLiveCheck['differs'] = [];
+    if (live.kind !== want.kind) differs.push('kind');
+    if (live.size !== want.size) differs.push('size');
+    if (live.mtimeMs !== want.mtimeMs) differs.push('mtime');
+    return { outcome: differs.length ? 'mismatch' : 'match', ...live, differs, reason: null };
+  });
+  return { check, seen, visits };
+}
+
+/* ══════════════ 1. the cross-check ══════════════ */
+
+test('the cross-check draws 1,000 entries uniformly without replacement, each opened once, all of them when there are fewer', () => {
+  const big = flat(5_000);
+  const { check, seen } = fakeChecker();
+  const verdict = crossCheckMft(big, pathOf(big), READ_STARTED, check, seeded(7));
+  assert.equal(verdict.ok, true);
+  assert.ok(verdict.ok && verdict.checked === MFT_CROSS_CHECK_SAMPLE, JSON.stringify(verdict));
+  assert.equal(seen.length, MFT_CROSS_CHECK_SAMPLE, 'one open per drawn entry');
+  assert.equal(new Set(seen).size, MFT_CROSS_CHECK_SAMPLE, 'no entry drawn twice');
+  // Uniform: the draws spread over the whole range, not the first thousand.
+  const indices = seen.map((p) => (p === ROOT ? -1 : Number(p.slice(p.lastIndexOf('f') + 1))));
+  assert.ok(indices.some((i) => i >= 4_000), 'the last fifth is drawn from');
+  assert.ok(indices.some((i) => i < 1_000), 'the first fifth too');
+
+  const small = flat(40);
+  const few = fakeChecker();
+  const all = crossCheckMft(small, pathOf(small), READ_STARTED, few.check, seeded(3));
+  assert.ok(all.ok && all.checked === 41, `every one of the 41 entries: ${JSON.stringify(all)}`);
+});
+
+test('a planted mismatch fails the check: the entry is re-read once, and the reason names it and both values', () => {
+  // 999 files and the root: exactly 1,000 eligible, so every one is drawn.
+  const cols = flat(999);
+  const { check, visits } = fakeChecker((p, want) => (p === `${ROOT}\\f123` ? { ...want, size: want.size + 66 } : undefined));
+  const verdict = crossCheckMft(cols, pathOf(cols), READ_STARTED, check, seeded(11));
+  assert.equal(verdict.ok, false, 'a divergence');
+  assert.ok(!verdict.ok);
+  assert.equal(verdict.path, `${ROOT}\\f123`);
+  assert.equal(visits.get(`${ROOT}\\f123`), 2, 're-read live once before it is called a divergence');
+  assert.match(verdict.reason, /C:\\data\\f123\b/, 'names the entry');
+  assert.match(verdict.reason, /\b223 bytes/, 'the table’s size');
+  assert.match(verdict.reason, /\b289 bytes/, 'the live size');
+});
+
+test('correction 9: an entry last written close to the read is never drawn', () => {
+  const cols = flat(2_000, (i) => (i % 2 === 0 ? { mtime: RECENT } : {}));
+  const { check, seen } = fakeChecker((_p, want) => ({ ...want, size: want.size + 1 })); // everything drawn would differ
+  // Only odd files are eligible; make them all match, and the recent ones never be asked.
+  const matchOdd = fakeChecker((p, want) => (Number(p.slice(p.lastIndexOf('f') + 1)) % 2 === 0 ? { ...want, size: -1 } : undefined));
+  const verdict = crossCheckMft(cols, pathOf(cols), READ_STARTED, matchOdd.check, seeded(5));
+  assert.equal(verdict.ok, true, JSON.stringify(verdict));
+  assert.ok(matchOdd.seen.every((p) => p === ROOT || Number(p.slice(p.lastIndexOf('f') + 1)) % 2 === 1), 'no recent entry opened');
+  assert.ok(verdict.ok && verdict.eligible === 1_001, 'the root and the 1,000 old files');
+  void check; void seen;
+});
+
+test('correction 9: a mismatch whose live re-read shows a write since the read is not a divergence, and is replaced', () => {
+  const cols = flat(1_500);
+  const changed = `${ROOT}\\f7`;
+  const { check, visits } = fakeChecker((p, want) => (p === changed ? { ...want, size: 1, mtimeMs: READ_STARTED + 5_000 } : undefined));
+  const verdict = crossCheckMft(cols, pathOf(cols), READ_STARTED, check, seeded(2));
+  assert.equal(verdict.ok, true, JSON.stringify(verdict));
+  if (visits.has(changed)) {
+    assert.equal(visits.get(changed), 2, 'drawn, re-read once, then set aside');
+    assert.ok(verdict.ok && verdict.recent === 1 && verdict.checked === MFT_CROSS_CHECK_SAMPLE, 'another entry took its place');
+  }
+  // Force the draw onto it: a table of the root and that one file.
+  const lone = columns([{ name: 'data', parent: 0, kind: KIND_DIR }, { name: 'f7', parent: 0, size: 5 }]);
+  const again = fakeChecker((p, want) => (p === changed ? { ...want, size: 1, mtimeMs: READ_STARTED + 5_000 } : undefined));
+  const v2 = crossCheckMft(lone, pathOf(lone), READ_STARTED, again.check, seeded(1));
+  assert.ok(v2.ok && v2.recent === 1 && v2.checked === 1, JSON.stringify(v2));
+  assert.equal(again.visits.get(changed), 2);
+});
+
+test('a mismatch that matches on its re-read is a transient, not a divergence', () => {
+  const lone = columns([{ name: 'data', parent: 0, kind: KIND_DIR }, { name: 'f0', parent: 0, size: 5 }]);
+  const { check, visits } = fakeChecker((p, want, visit) => (p.endsWith('f0') && visit === 1 ? { ...want, size: 6 } : undefined));
+  const verdict = crossCheckMft(lone, pathOf(lone), READ_STARTED, check, seeded(1));
+  assert.ok(verdict.ok && verdict.checked === 2, JSON.stringify(verdict));
+  assert.equal(visits.get(`${ROOT}\\f0`), 2);
+});
+
+test('an entry the app cannot open is skipped and replaced by another draw', () => {
+  // A third of 2,000 cannot be opened; the other 1,334 are enough for 1,000.
+  const cols = flat(2_000);
+  const { check } = fakeChecker((p) => (Number(p.slice(p.lastIndexOf('f') + 1)) % 3 === 0 ? 'unopenable' : undefined));
+  const verdict = crossCheckMft(cols, pathOf(cols), READ_STARTED, check, seeded(9));
+  assert.ok(verdict.ok, JSON.stringify(verdict));
+  assert.ok(verdict.ok && verdict.checked === MFT_CROSS_CHECK_SAMPLE && verdict.skipped > 0, JSON.stringify(verdict));
+});
+
+/* ══════════════ 2. runMftWalk ══════════════ */
+
+function recordFor(root: string) {
+  const scan = createScanRecord(root);
+  const store = new PackedScanStore(root, '\\', statToInput('data', true, 0, OLD, undefined));
+  return { scan, store };
+}
+
+function tempFolder(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mft-run-'));
+}
+
+/** A launcher that records its requests and answers `outcome`, writing a placeholder output when it "ran". */
+function fakeLauncher(outcome: Awaited<ReturnType<MftLauncher>>) {
+  const requests: MftLaunchRequest[] = [];
+  const launcher: MftLauncher = async (request) => {
+    requests.push(request);
+    if (outcome.kind === 'exited') fs.writeFileSync(request.output, 'placeholder');
+    return outcome;
+  };
+  return { launcher, requests };
+}
+
+function fakeModule(cols: WalkResult | (() => WalkResult), check: LiveChecker = fakeChecker().check) {
+  const calls = { take: 0, check: 0 };
+  const module: MftModule = {
+    mftTake: () => { calls.take++; return typeof cols === 'function' ? cols() : cols; },
+    mftCrossCheck: (p, e) => { calls.check++; return check(p, e); },
+  };
+  return { module, calls };
+}
+
+test('declined elevation is a fallback with its own reason — never an error, nothing taken, nothing left behind', async () => {
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const { launcher, requests } = fakeLauncher({ kind: 'declined', reason: 'elevation was declined at the Windows prompt' });
+  const { module, calls } = fakeModule(flat(3));
+  const { scan, store } = recordFor(ROOT);
+  const outcome = await runMftWalk(scan, store, ROOT, { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', tempFolder: folder, now: () => READ_STARTED });
+  assert.equal(outcome.used, false);
+  assert.ok(!outcome.used && outcome.failed === false, 'a choice, not a failure: no fallbackReason');
+  assert.match(outcome.reason, /declined/);
+  assert.match(outcome.reason, new RegExp(MFT_NOT_VERIFIED));
+  assert.equal(calls.take, 0, 'nothing to take');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].volume, 'C:');
+  assert.equal(requests[0].root, ROOT);
+  assert.equal(path.dirname(requests[0].output), folder);
+  assert.match(path.basename(requests[0].output), /^[0-9a-f-]+\.tmmft$/);
+  assert.deepEqual(fs.readdirSync(folder), [], 'no file left behind');
+  assert.equal(scan.status, 'running', 'the scan goes on — on the listing walk');
+  fs.rmSync(folder, { recursive: true, force: true });
+});
+
+test('one scan asks at a time (W6-1): a scan that wants the mode while another waits on the prompt falls back without asking', async () => {
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const requests: MftLaunchRequest[] = [];
+  const answers: ((o: MftLaunchOutcome) => void)[] = [];
+  const failures: ((e: Error) => void)[] = [];
+  let open = 0;
+  const launcher: MftLauncher = (request) => {
+    requests.push(request);
+    // A second prompt while one is open is answered at once, so a missing
+    // rule fails the count below instead of waiting on a prompt forever.
+    if (open > 0) return Promise.resolve({ kind: 'failed', reason: 'a second prompt while one was open' });
+    open++;
+    return new Promise((resolve, reject) => {
+      answers.push((o) => { open--; resolve(o); });
+      failures.push((e) => { open--; reject(e); });
+    });
+  };
+  const deps = { launcher, module: fakeModule(flat(3)).module, helperPath: 'C:\\app\\tm-mft-helper.exe', tempFolder: folder, now: () => READ_STARTED };
+  const walk = () => { const r = recordFor(ROOT); return runMftWalk(r.scan, r.store, ROOT, deps); };
+
+  const first = walk();
+  const second = await walk();
+  assert.equal(requests.length, 1, 'the second scan did not ask');
+  assert.ok(!second.used && second.failed === false, 'a rule, not a failure');
+  assert.match(second.reason, /only one scan asks at a time/);
+
+  // A prompt that ends in any way frees the next scan to ask: a launch that failed…
+  answers[0]({ kind: 'failed', reason: 'powershell.exe was not found' });
+  await first;
+  const third = walk();
+  assert.equal(requests.length, 2, 'asked once the first prompt was over');
+  // …and a launcher that threw.
+  failures[1](new Error('spawn EACCES'));
+  await third;
+  const fourth = walk();
+  assert.equal(requests.length, 3, 'asked once the second prompt was over');
+  answers[2]({ kind: 'failed', reason: 'done' });
+  await fourth;
+  fs.rmSync(folder, { recursive: true, force: true });
+});
+
+test('after a decline no scan asks for ten minutes — the reason says how long — and only time, or a restart, ends it', async () => {
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  let now = READ_STARTED;
+  const { launcher, requests } = fakeLauncher({ kind: 'declined', reason: 'elevation was declined at the Windows prompt' });
+  const deps = { launcher, module: fakeModule(flat(3)).module, helperPath: 'C:\\app\\tm-mft-helper.exe', tempFolder: folder, now: () => now };
+  const walk = () => { const r = recordFor(ROOT); return runMftWalk(r.scan, r.store, ROOT, deps); };
+
+  await walk();
+  assert.equal(requests.length, 1);
+  now += 30_000;
+  const soon = await walk();
+  assert.equal(requests.length, 1, 'half a minute later: not asked again');
+  assert.match(soon.reason, /\b10 more minutes\b/, 'nine and a half minutes left is said as ten, never as fewer than remain');
+  now += MFT_DECLINE_QUIET_MS - 60_000 - 30_000;
+  const quiet = await walk();
+  assert.equal(requests.length, 1, 'nine minutes later: not asked again');
+  assert.ok(!quiet.used && quiet.failed === false, 'a rule, not a failure');
+  assert.match(quiet.reason, /declined/);
+  assert.match(quiet.reason, /\b1 more minute\b/);
+  assert.match(quiet.reason, /, or until TreeMap restarts\b/);
+  assert.doesNotMatch(quiet.reason, /Settings/, 'nothing reachable through the settings API ends it');
+  assert.match(quiet.reason, new RegExp(MFT_NOT_VERIFIED));
+
+  now += 60_000;
+  await walk();
+  assert.equal(requests.length, 2, 'ten minutes after the decline: asked (and declined again)');
+  await walk();
+  assert.equal(requests.length, 2, 'the new decline starts a new quiet period');
+
+  now -= 3_600_000;
+  await walk();
+  assert.equal(requests.length, 3, 'a clock set back does not stretch the quiet period');
+  fs.rmSync(folder, { recursive: true, force: true });
+});
+
+test('an app temp folder that is a link or junction is refused before anyone is asked, and nothing is written where it points', async () => {
+  resetMftSessionForTests();
+  const base = tempFolder();
+  const target = path.join(base, 'somewhere');
+  fs.mkdirSync(target);
+  const linked = path.join(base, MFT_TEMP_FOLDER);
+  // A directory junction on Windows (no privilege needed: the review's attack); a symbolic link elsewhere.
+  fs.symlinkSync(target, linked, 'junction');
+  const { launcher, requests } = fakeLauncher({ kind: 'exited', code: 0 });
+  const { module, calls } = fakeModule(flat(3));
+  const { scan, store } = recordFor(ROOT);
+  const outcome = await runMftWalk(scan, store, ROOT, { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', tempFolder: linked, now: () => READ_STARTED });
+  assert.equal(requests.length, 0, 'nobody was asked');
+  assert.equal(calls.take, 0);
+  assert.ok(!outcome.used && outcome.failed === true, JSON.stringify(outcome));
+  assert.match(outcome.reason, /is a link, a junction or not a folder/);
+  assert.deepEqual(fs.readdirSync(target), [], 'nothing written where it points');
+
+  const file = path.join(base, 'a-file');
+  fs.writeFileSync(file, '');
+  const r = recordFor(ROOT);
+  const notFolder = await runMftWalk(r.scan, r.store, ROOT, { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', tempFolder: file, now: () => READ_STARTED });
+  assert.equal(requests.length, 0, 'nobody was asked');
+  assert.ok(!notFolder.used && notFolder.failed === true, JSON.stringify(notFolder));
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test('a helper that ran and a cross-check that passed: the columns are ingested, the output removed, and the reason carries W6-9’s label', async () => {
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const { launcher, requests } = fakeLauncher({ kind: 'exited', code: 0 });
+  const { module, calls } = fakeModule(flat(10));
+  const { scan, store } = recordFor(ROOT);
+  const outcome = await runMftWalk(scan, store, ROOT, { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', tempFolder: folder, now: () => READ_STARTED, random: seeded(4) });
+  assert.equal(outcome.used, true, JSON.stringify(outcome));
+  assert.match(outcome.reason, new RegExp(MFT_NOT_VERIFIED), 'every scan through the mode says so');
+  assert.match(outcome.reason, /11 of 11/, 'how many entries were checked');
+  assert.equal(calls.take, 1);
+  assert.equal(scan.fileCount, 10);
+  assert.equal(scan.dirCount, 1);
+  assert.equal(store.childIds(store.rootId).length, 10, 'the tree is in the store');
+  assert.equal(fs.existsSync(requests[0].output), false, 'the output file is removed');
+  fs.rmSync(folder, { recursive: true, force: true });
+});
+
+test('a table the app could verify none of is not trusted — every entry too recent, or none could be opened — and the volume stays on offer', async () => {
+  // A gate that checked nothing must not open; and a folder written within
+  // the margin is exactly the one a raw read may be missing creates in.
+  const allRecent = columns([
+    { name: 'data', parent: 0, kind: KIND_DIR, mtime: RECENT },
+    ...Array.from({ length: 5 }, (_, i) => ({ name: `f${i}`, parent: 0, size: 100 + i, mtime: RECENT })),
+  ]);
+  const cases: Array<[string, WalkResult, LiveChecker]> = [
+    ['every entry written within the margin', allRecent, fakeChecker().check],
+    ['no entry could be opened', flat(5), fakeChecker(() => 'unopenable').check],
+  ];
+  for (const [label, cols, check] of cases) {
+    resetMftSessionForTests();
+    const folder = tempFolder();
+    const { launcher, requests } = fakeLauncher({ kind: 'exited', code: 0 });
+    const { module } = fakeModule(cols, check);
+    const { scan, store } = recordFor(ROOT);
+    const deps = { launcher, module, helperPath: 'C:\\app\\tm-mft-helper.exe', tempFolder: folder, now: () => READ_STARTED, random: seeded(4) };
+    const outcome = await runMftWalk(scan, store, ROOT, deps);
+    assert.equal(outcome.used, false, `${label}: ${JSON.stringify(outcome)}`);
+    assert.ok(!outcome.used && outcome.failed === false, `${label}: an inability to check, not a failure of the reader`);
+    assert.match(outcome.reason, /could verify none of its entries/, label);
+    assert.match(outcome.reason, new RegExp(MFT_NOT_VERIFIED), label);
+    assert.equal(store.count, 1, `${label}: nothing was ingested — the store holds only its root`);
+    assert.equal(fs.existsSync(requests[0].output), false, `${label}: the output file is removed`);
+    const again = recordFor(ROOT);
+    await runMftWalk(again.scan, again.store, ROOT, deps);
+    assert.equal(requests.length, 2, `${label}: the mode is not switched off for the volume`);
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test('a divergence switches the mode off for the volume for the session: the reason names the entry and both values, and the next scan is not even offered the prompt', async () => {
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const planted = `${ROOT}\\f2`;
+  const { check } = fakeChecker((p, want) => (p === planted ? { ...want, mtimeMs: want.mtimeMs - 3_600_000 } : undefined));
+  const first = fakeLauncher({ kind: 'exited', code: 0 });
+  const { module } = fakeModule(flat(4), check);
+  const a = recordFor(ROOT);
+  const outcome = await runMftWalk(a.scan, a.store, ROOT, { launcher: first.launcher, module, helperPath: 'x.exe', tempFolder: folder, now: () => READ_STARTED, random: seeded(8) });
+  assert.equal(outcome.used, false);
+  assert.ok(!outcome.used && outcome.failed === true, 'a fallbackReason');
+  assert.match(outcome.reason, /C:\\data\\f2/, 'the entry');
+  assert.match(outcome.reason, new RegExp(String(OLD)), 'the table’s last-write time');
+  assert.match(outcome.reason, new RegExp(String(OLD - 3_600_000)), 'the live one');
+  assert.match(outcome.reason, /off for C: until TreeMap restarts/);
+  assert.equal(a.scan.fileCount, 0, 'nothing was ingested');
+
+  const second = fakeLauncher({ kind: 'exited', code: 0 });
+  const b = recordFor(`${ROOT}\\sub`);
+  const again = await runMftWalk(b.scan, b.store, `${ROOT}\\sub`, { launcher: second.launcher, module, helperPath: 'x.exe', tempFolder: folder, now: () => READ_STARTED });
+  assert.equal(again.used, false);
+  assert.equal(second.requests.length, 0, 'no second prompt this session');
+  assert.match(again.reason, /C:\\data\\f2/, 'the original divergence is repeated');
+  const d = fakeLauncher({ kind: 'declined', reason: 'no' });
+  const other = recordFor('D:\\x');
+  await runMftWalk(other.scan, other.store, 'D:\\x', { launcher: d.launcher, module, helperPath: 'x.exe', tempFolder: folder, now: () => READ_STARTED });
+  assert.equal(d.requests.length, 1, 'another volume is still offered');
+  fs.rmSync(folder, { recursive: true, force: true });
+});
+
+test('a helper refusal, a missing launcher, a missing helper and a root without a drive letter each fall back with their own reason', async () => {
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const refusing: MftModule = { mftTake: () => { throw new Error('D: is formatted exFAT, not NTFS; only NTFS keeps a master file table'); }, mftCrossCheck: () => [] };
+  const exit2 = fakeLauncher({ kind: 'exited', code: 2 });
+  const r = recordFor(ROOT);
+  const refused = await runMftWalk(r.scan, r.store, ROOT, { launcher: exit2.launcher, module: refusing, helperPath: 'x.exe', tempFolder: folder });
+  assert.ok(!refused.used && refused.failed, JSON.stringify(refused));
+  assert.match(refused.reason, /exFAT, not NTFS/, 'the helper’s own sentence');
+  assert.equal(fs.existsSync(exit2.requests[0].output), false, 'removed');
+
+  const none = await runMftWalk(r.scan, r.store, ROOT, { launcher: null, module: fakeModule(flat(1)).module, helperPath: 'x.exe', tempFolder: folder });
+  assert.ok(!none.used && none.failed);
+  assert.match(none.reason, /desktop app/);
+
+  const noHelper = await runMftWalk(r.scan, r.store, ROOT, { launcher: fakeLauncher({ kind: 'exited', code: 0 }).launcher, module: fakeModule(flat(1)).module, helperPath: null, tempFolder: folder });
+  assert.ok(!noHelper.used && noHelper.failed);
+  assert.match(noHelper.reason, /tm-mft-helper/);
+
+  const unc = await runMftWalk(r.scan, r.store, '\\\\server\\share', { launcher: fakeLauncher({ kind: 'exited', code: 0 }).launcher, module: fakeModule(flat(1)).module, helperPath: 'x.exe', tempFolder: folder });
+  assert.ok(!unc.used);
+  assert.match(unc.reason, /drive letter/);
+  for (const o of [refused, none, noHelper, unc]) assert.match(o.reason, new RegExp(MFT_NOT_VERIFIED));
+  fs.rmSync(folder, { recursive: true, force: true });
+});
+
+test('the app temp folder is the OS temp folder’s TreeMap-mft, the one the helper resolves for itself', () => {
+  assert.equal(MFT_TEMP_FOLDER, 'TreeMap-mft');
+});
+
+/* ══════════════ 3. the real module ══════════════ */
+
+const PREBUILT = path.join(__dirname, '..', 'native', 'prebuilt', `${process.platform}-${process.arch}`, 'treemap_core.node');
+
+function realModule(): MftModule {
+  const outcome = loadNative({ path: PREBUILT });
+  assert.ok(outcome.available, `the prebuilt module loads (run npm run build:native): ${outcome.available ? '' : outcome.reason}`);
+  const mod = outcome.module as unknown as MftModule;
+  assert.equal(typeof mod.mftTake, 'function', 'the module exports mftTake');
+  assert.equal(typeof mod.mftCrossCheck, 'function', 'the module exports mftCrossCheck');
+  return mod;
+}
+
+/** The documented format, written by an encoder independent of the Rust one. */
+function encodeColumnsFile(c: WalkResult, flags = 1): Buffer {
+  const n = c.parent.length;
+  const parts: Buffer[] = [];
+  const u32 = (v: number) => { const b = Buffer.alloc(4); b.writeUInt32LE(v); return b; };
+  const u64 = (v: number) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(v)); return b; };
+  const f64 = (v: number) => { const b = Buffer.alloc(8); b.writeDoubleLE(v); return b; };
+  parts.push(Buffer.from('TMMFT001', 'ascii'), u32(n), u32(flags));
+  for (const v of c.parent) parts.push(u32(v));
+  for (const v of c.nameOff) parts.push(u32(v));
+  parts.push(Buffer.from(c.names), Buffer.from(c.kind), Buffer.from(c.flags));
+  for (const col of [c.size, c.allocBytes, c.mtimeMs, c.atimeMs]) for (const v of col) parts.push(f64(v));
+  parts.push(u32(c.hardlinkNode.length));
+  for (let i = 0; i < c.hardlinkNode.length; i++) parts.push(u32(c.hardlinkNode[i]), f64(c.hardlinkDev[i]), f64(c.hardlinkIno[i]));
+  parts.push(u32(c.refusalNode.length));
+  for (let i = 0; i < c.refusalNode.length; i++) parts.push(u32(c.refusalNode[i]), Buffer.from([c.refusalWhy[i]]));
+  const s = c.stats;
+  parts.push(u64(s.dirsListed), u64(s.entries), f64(s.wallMs), f64(s.cpuSeconds ?? Number.NaN), Buffer.from([5]), u32(s.workersPeak), u32(s.climbSteps), u64(s.deniedEntries), u64(s.unreadableEntries), u64(s.dataless));
+  return Buffer.concat(parts);
+}
+
+test('mftTake reads a columns file written to the documented format, every column equal; a refusal throws the helper’s sentence; a tampered file throws', () => {
+  const mod = realModule();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mft-take-'));
+  try {
+    const cols = flat(5);
+    cols.hardlinkNode = Uint32Array.from([2, 3]);
+    cols.hardlinkDev = Float64Array.from([7, 7]);
+    cols.hardlinkIno = Float64Array.from([99, 99]);
+    cols.refusalNode = Uint32Array.from([0]);
+    cols.refusalWhy = Uint8Array.from([3]);
+    const file = path.join(dir, 'a.tmmft');
+    fs.writeFileSync(file, encodeColumnsFile(cols));
+    const back = mod.mftTake(file);
+    for (const key of ['parent', 'nameOff', 'names', 'kind', 'flags', 'size', 'allocBytes', 'mtimeMs', 'hardlinkNode', 'hardlinkDev', 'hardlinkIno', 'refusalNode', 'refusalWhy'] as const) {
+      assert.deepEqual(Array.from(back[key] as ArrayLike<number>), Array.from(cols[key] as ArrayLike<number>), key);
+    }
+    assert.ok(Array.from(back.atimeMs).every(Number.isNaN), 'NaN survives');
+    assert.equal(back.stats.fastPath, 'mft', 'the stats say mft');
+    assert.equal(back.stats.entries, 5);
+
+    const refusal = path.join(dir, 'b.tmmft');
+    const sentence = 'the scan root "D:\\x" is not a folder on C:: it is on another drive';
+    const text = Buffer.from(sentence, 'utf8');
+    const header = Buffer.alloc(16);
+    header.write('TMMFTERR', 0, 'ascii');
+    header.writeUInt32LE(text.length, 8);
+    fs.writeFileSync(refusal, Buffer.concat([header, text]));
+    assert.throws(() => mod.mftTake(refusal), (e: Error) => e.message === sentence);
+
+    const cyclic = flat(3);
+    cyclic.parent[1] = 3;
+    const bad = path.join(dir, 'c.tmmft');
+    fs.writeFileSync(bad, encodeColumnsFile(cyclic));
+    assert.throws(() => mod.mftTake(bad), /parent that does not precede its child/);
+    assert.throws(() => mod.mftTake(path.join(dir, 'missing.tmmft')), /could not be read/);
+
+    // Defense in depth (the security review of M6): only a file named as the
+    // app names its columns files is read — a well-formed one under any other
+    // name is refused on its name, before a byte of it is read.
+    for (const name of ['a.json', 'a.tmmft.exe', 'a.TMMFT', '.tmmft', 'a b.tmmft']) {
+      const misnamed = path.join(dir, name);
+      fs.writeFileSync(misnamed, encodeColumnsFile(cols));
+      assert.throws(() => mod.mftTake(misnamed), /is not a columns file the app named/, name);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('mftCrossCheck opens real files, unelevated: a match, a planted size mismatch with the live values, and a vanished path', () => {
+  const mod = realModule();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-mft-check-'));
+  try {
+    const file = path.join(dir, 'real.bin');
+    fs.writeFileSync(file, Buffer.alloc(1234));
+    const st = fs.lstatSync(file);
+    const dirSt = fs.lstatSync(dir);
+    const results = mod.mftCrossCheck(
+      [file, file, dir, path.join(dir, 'gone')],
+      [
+        { kind: KIND_FILE, size: 1234, mtimeMs: st.mtimeMs },
+        { kind: KIND_FILE, size: 999, mtimeMs: st.mtimeMs },
+        { kind: KIND_DIR, size: 0, mtimeMs: dirSt.mtimeMs },
+        { kind: KIND_FILE, size: 1, mtimeMs: 1 },
+      ],
+    );
+    assert.equal(results[0].outcome, 'match', JSON.stringify(results[0]));
+    assert.equal(results[1].outcome, 'mismatch');
+    assert.deepEqual(results[1].differs, ['size']);
+    assert.equal(results[1].size, 1234, 'the live size');
+    assert.equal(results[2].outcome, 'match', JSON.stringify(results[2]));
+    assert.equal(results[3].outcome, 'unopenable');
+    assert.ok(results[3].reason && results[3].reason.length > 0);
+    assert.throws(() => mod.mftCrossCheck([file], []), /one \{ kind/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

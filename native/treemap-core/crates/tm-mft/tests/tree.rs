@@ -936,9 +936,10 @@ fn the_stats_count_what_was_built() -> TestResult {
     assert_eq!((s.workers_peak, s.climb_steps), (1, 0));
     assert_eq!(
         s.fast_path,
-        FastPath::Unavailable,
-        "a placeholder until FastPath has a variant for the MFT"
+        FastPath::Mft,
+        "the stats name the master file table (\"mft\"), not a listing path"
     );
+    assert_eq!(s.fast_path.as_str(), "mft");
     assert!(s.wall_ms.is_finite() && s.wall_ms >= 0.0);
     Ok(())
 }

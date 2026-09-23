@@ -23,6 +23,14 @@
 //! Node's thread — moves the columns into typed arrays without copying and frees
 //! the handle. The walk obeys the same process-wide governor `governorConfigure`
 //! drives.
+//!
+//! The Windows MFT turbo mode (M6) adds two exports. `mftTake` reads the
+//! columns file `tm-mft-helper` — the one elevated process, launched by
+//! Electron — wrote under the app's temp folder, and hands the columns over
+//! exactly as `scanTake` does, or throws the helper's refusal. `mftCrossCheck`
+//! is the run-time gate (W6-8): each path opened by this unelevated process
+//! with `FILE_READ_ATTRIBUTES` (the listing's own `stat_path`), its kind,
+//! size and last-write time compared with what the table said.
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -39,6 +47,7 @@ use serde_json::{Value, json};
 use tm_governor::{
     Budget, Governor, HoldReport, Preset, capabilities, hold, platform_sampler, platform_signals,
 };
+use tm_mft::columns::{ColumnsFile, OUTPUT_EXTENSION, decode as decode_columns, is_output_name};
 use tm_walk::{Progress, Refusal, WalkError, WalkHandle, WalkOptions, WalkOutput, WalkStats};
 
 /// The budget the governor starts with before the app configures it: Automatic,
@@ -678,4 +687,168 @@ pub fn scan_take(handle: u32) -> Result<WalkResult> {
     };
     let output = result.map_err(|err| walk_error(&err))?;
     Ok(columns(output))
+}
+
+/* ------------------------------ the Windows MFT turbo mode (W6, M6) ------------------------------ */
+
+/// The columns `tm-mft-helper` wrote to `path`, as `scanTake` returns a
+/// walk's: the file is read whole, checked (`tm_mft::columns` refuses a file
+/// that is short, long, tampered with or shaped wrong — a parent that does
+/// not precede its child above all), and moved into typed arrays. A refusal
+/// file throws the helper's own sentence. The file is left where it is: the
+/// app, which made the folder, removes it. Only a file named as the app names
+/// its columns files is read at all ([`is_output_name`]): the one caller
+/// passes the path it made, and the name rule keeps any later one from
+/// pointing this at some other file (the security review of M6).
+#[napi(js_name = "mftTake", catch_unwind)]
+pub fn mft_take(path: String) -> Result<WalkResult> {
+    let path = PathBuf::from(path);
+    let named = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(is_output_name);
+    if !named {
+        return Err(failure(format!(
+            "{} is not a columns file the app named (<id>{OUTPUT_EXTENSION}), so it is not read",
+            path.display()
+        )));
+    }
+    let bytes = std::fs::read(&path).map_err(|err| {
+        failure(format!(
+            "the MFT helper's columns file {} could not be read: {err}",
+            path.display()
+        ))
+    })?;
+    match decode_columns(&bytes).map_err(|err| failure(err.to_string()))? {
+        ColumnsFile::Columns(output) => Ok(columns(*output)),
+        ColumnsFile::Refusal(sentence) => Err(failure(sentence)),
+    }
+}
+
+/// The shape `mftCrossCheck` accepts for each expected entry.
+const EXPECTED_SHAPE: &str =
+    "mftCrossCheck needs one { kind: 0 | 1 | 2, size: number, mtimeMs: number } per path";
+
+/// What the table said about one entry.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Expected {
+    kind: u8,
+    size: f64,
+    mtime_ms: f64,
+}
+
+/// One entry as this process sees it now.
+struct Live {
+    kind: u8,
+    size: f64,
+    mtime_ms: f64,
+}
+
+/// `path` itself, now, as the listing would stat it: on Windows the
+/// listing's own `stat_path` (opened with `FILE_READ_ATTRIBUTES`, a final
+/// reparse point not followed, kind and size by libuv's rules).
+#[cfg(windows)]
+fn live_facts(path: &str) -> std::result::Result<Live, String> {
+    tm_walk::platform::windows::stat_path(std::path::Path::new(path), false)
+        .map(|meta| Live {
+            kind: meta.kind,
+            size: meta.size,
+            mtime_ms: meta.mtime_ms,
+        })
+        .map_err(|code| format!("Windows error {code}"))
+}
+
+/// `path` itself, now, as `lstat` reports it (the cross-check is Windows
+/// only in the app; this keeps the export honest and testable elsewhere).
+#[cfg(unix)]
+fn live_facts(path: &str) -> std::result::Result<Live, String> {
+    use std::os::unix::fs::MetadataExt;
+    use tm_walk::{KIND_DIR, KIND_FILE, KIND_SYMLINK};
+    let meta = std::fs::symlink_metadata(path).map_err(|err| err.to_string())?;
+    let file_type = meta.file_type();
+    let kind = if file_type.is_dir() {
+        KIND_DIR
+    } else if file_type.is_symlink() {
+        KIND_SYMLINK
+    } else {
+        KIND_FILE
+    };
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "sizes cross to JavaScript as doubles (P3-7), exact to 2^53"
+    )]
+    let size = if kind == KIND_DIR {
+        0.0
+    } else {
+        meta.len() as f64
+    };
+    Ok(Live {
+        kind,
+        size,
+        mtime_ms: tm_walk::platform::time_ms(meta.mtime(), meta.mtime_nsec()),
+    })
+}
+
+#[cfg(not(any(windows, unix)))]
+fn live_facts(_path: &str) -> std::result::Result<Live, String> {
+    Err("this platform has no live check".to_owned())
+}
+
+/// The fields that differ, in the order the reason names them.
+fn differing(expected: &Expected, live: &Live) -> Vec<&'static str> {
+    let mut fields = Vec::new();
+    if expected.kind != live.kind {
+        fields.push("kind");
+    }
+    if expected.size.to_bits() != live.size.to_bits() {
+        fields.push("size");
+    }
+    if expected.mtime_ms.to_bits() != live.mtime_ms.to_bits() {
+        fields.push("mtime");
+    }
+    fields
+}
+
+/// Opens each path now, unelevated, and compares its kind, size and
+/// last-write time with what the master file table said (`expected`, one
+/// per path, in order). One result per path: `{ outcome: 'match' |
+/// 'mismatch' | 'unopenable', kind, size, mtimeMs, differs, reason }` — the
+/// live values (null when the path could not be opened), the fields that
+/// differ, and why a path could not be opened. Deciding what a mismatch
+/// means (a divergence, or a file changed since the read) is the caller's.
+#[napi(js_name = "mftCrossCheck", catch_unwind)]
+pub fn mft_cross_check(paths: Vec<String>, expected: Value) -> Result<Value> {
+    let received = expected.to_string();
+    let expected: Vec<Expected> = serde_json::from_value(expected)
+        .map_err(|err| refuse(format!("{EXPECTED_SHAPE}; got {received}: {err}")))?;
+    if expected.len() != paths.len() {
+        return Err(refuse(format!(
+            "{EXPECTED_SHAPE}: {} paths but {} expected entries",
+            paths.len(),
+            expected.len()
+        )));
+    }
+    let results: Vec<Value> = paths
+        .into_iter()
+        .zip(&expected)
+        .map(|(path, want)| match live_facts(&path) {
+            Err(reason) => json!({
+                "outcome": "unopenable", "kind": null, "size": null, "mtimeMs": null,
+                "differs": [], "reason": reason,
+            }),
+            Ok(live) => {
+                let differs = differing(want, &live);
+                json!({
+                    "outcome": if differs.is_empty() { "match" } else { "mismatch" },
+                    "kind": live.kind,
+                    "size": live.size,
+                    "mtimeMs": live.mtime_ms.is_finite().then_some(live.mtime_ms),
+                    "differs": differs,
+                    "reason": null,
+                })
+            }
+        })
+        .collect();
+    Ok(Value::Array(results))
 }

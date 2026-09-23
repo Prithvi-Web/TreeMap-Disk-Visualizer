@@ -28,6 +28,7 @@
 //!
 //! The elevated helper that runs `read_volume` for the app is M6.
 
+pub mod columns;
 pub mod error;
 pub mod record;
 pub mod runs;
