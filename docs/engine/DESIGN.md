@@ -140,7 +140,14 @@ would diverge from the walker on firmlinks and nested mounts — the edge
 fixture's two `hdiutil` volumes prove the walker descends into both; a
 device-boundary setting for every engine is a Phase 8 question). Symlinks
 are never followed. `(dev, ino)` for `nlink > 1` goes to a side table, and the first
-name seen owns the bytes exactly as today.
+name seen owns the bytes exactly as today. Windows' listing reports no link
+count, so there a hard-link family is found by its file ids colliding, and —
+because NTFS refreshes each name's copy of a file's size and times only when
+the file is opened through that name (CreateHardLink's documentation) — each
+family is read once from the file itself, through its first member, and
+every member takes that size and those times, as the legacy walker's
+`lstat` of each name would read them (`refresh_families`, the CI dry run of
+23 September 2026).
 
 **Not eligible for the native engine (P3-4, 18 September 2026)** — the
 legacy walker runs instead, with the reason in `engineReason`: an incremental
@@ -555,6 +562,7 @@ assertion.
 6. **Two order-dependent facts are normalised by the digest, not by the engines (P3-8, 18 September 2026):** the order a listing returns children in, and which name of a hard-link family was seen first. Two legacy walks are not byte-identical to each other on those two points, so the digest sorts a directory's children by name bytes and gives a family's bytes to its lexicographically smallest path before hashing. Nothing else is normalised; the assertion is not loosened, it is made well-defined.
 7. **The NTFS turbo mode sees what the unelevated walker is refused (W6-7).** Its helper reads the master file table as administrator, so a folder the listing reports as denied is, in an `ntfs-mft` scan, a folder like any other, with its contents. That is the point of an administrator's metadata view, and hiding it would be a lie of omission, so it is named here rather than smoothed over. The equivalence proof on CI (M5) runs both engines as administrator, where the two agree.
 8. **A folder that is no longer a folder when it is opened** — replaced by a file between its parent's listing and its own — is counted as vanished by the native walker (`ENOTDIR` → `REFUSAL_VANISHED`, "gone, or no longer a directory, by the time it was listed") and as unreadable by the legacy walker, whose `classifyFsError` treats only `ENOENT` as a race. Only the `vanishedDirs` and `unreadableDirs` counters differ, and only in that race; the equivalence corpora are static, so the gate never meets it and no normalisation is needed. Per entry the two agree: both count an `ENOTDIR` from an entry's stat as unreadable (the pre-CI review of `linux.rs`, 23 September 2026, checked against `diskScanner.ts`). Aligning the legacy walker would move `classifyFsError`, which serves both levels, and with it the per-entry count on every native platform path, so it is left as a choice for a phase that touches the walker.
+9. **On Windows, a file whose other names are all outside the scan keeps its listing's copy of its size and times.** NTFS refreshes a name's copy only when the file is opened through that name, and the listing reports no link count, so a file hard-linked from outside the scanned root and written through that other name since is listed with the older values under the name inside it, where the legacy walker's `lstat` opens the file and reads the new ones. A family whose names are inside the scan is found by its file ids and read from the file (`refresh_families`); a lone name cannot be told from an ordinary file without opening every file, which is what the listing exists to avoid. The equivalence corpora make every link inside the scan, so the gate does not meet it.
 
 ## 17. Phase plan → commits
 

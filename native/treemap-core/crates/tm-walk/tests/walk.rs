@@ -103,6 +103,11 @@ struct FakeTree {
     peak_in_flight: AtomicU32,
     /// The times a directory's own listing reports for the directory itself.
     own_times: HashMap<PathBuf, DirTimes>,
+    /// What `stat_dir` says about a particular file (a hard-link family's,
+    /// read from the file itself); any other path gets the root's answers.
+    file_stats: HashMap<PathBuf, Meta>,
+    /// Every path `stat_dir` answered from `file_stats`, in call order.
+    file_stat_paths: Mutex<Vec<PathBuf>>,
 }
 
 impl FakeTree {
@@ -125,6 +130,8 @@ impl FakeTree {
             in_flight: AtomicU32::new(0),
             peak_in_flight: AtomicU32::new(0),
             own_times: HashMap::new(),
+            file_stats: HashMap::new(),
+            file_stat_paths: Mutex::new(Vec::new()),
         }
     }
 
@@ -265,7 +272,14 @@ impl Lister for FakeTree {
         clippy::panic,
         reason = "the fake panics on purpose: the walk under test must survive it"
     )]
-    fn stat_dir(&self, _path: &Path, _want_atime: bool) -> Result<Meta, Refusal> {
+    fn stat_dir(&self, path: &Path, _want_atime: bool) -> Result<Meta, Refusal> {
+        if let Some(meta) = self.file_stats.get(path) {
+            self.file_stat_paths
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(path.to_path_buf());
+            return Ok(*meta);
+        }
         let call = self.stat_calls.fetch_add(1, Ordering::SeqCst);
         if let Some((_, message)) = self.stat_panic.as_ref().filter(|(at, _)| *at == call) {
             panic_any(message.clone());
@@ -854,6 +868,79 @@ fn a_directorys_children_are_numbered_in_the_order_its_lister_hands_them_over_on
 }
 
 #[test]
+fn a_hard_link_family_found_by_file_id_takes_its_size_and_times_from_the_file_itself() -> TestResult
+{
+    // Windows lists each name's own copy of a file's size and times, and NTFS
+    // refreshes a name's copy only when the file is opened through that name
+    // (CreateHardLink's documentation), so a family whose file was changed
+    // through one name lists stale values under the others, where the legacy
+    // walker's lstat opens every name. The walk reads each family it finds by
+    // file id once, through its first member, and every member takes that.
+    let mut tree = FakeTree::new("/fake");
+    tree.fast_path = FastPath::ExtdDirInfo;
+    tree.add_dir("", "a");
+    tree.add_dir("", "b");
+    let listed = |size: f64, mtime_ms: f64| Meta {
+        mtime_ms,
+        ..file_meta(size, 77.0, 0)
+    };
+    tree.add_entry("a", b"x", listed(5.0, 1_000.0));
+    tree.add_entry("b", b"y", listed(6.0, 2_000.0));
+    // A file id seen once: its other names, if any, are outside the scan.
+    tree.add_entry(
+        "",
+        b"lone",
+        Meta {
+            mtime_ms: 3_000.0,
+            ..file_meta(3.0, 88.0, 0)
+        },
+    );
+    let truth = Meta {
+        mtime_ms: 9_000.5,
+        atime_ms: 9_001.25,
+        ..file_meta(42.0, 77.0, 2)
+    };
+    tree.file_stats
+        .insert(Path::new("/fake").join("a").join("x"), truth);
+    tree.file_stats
+        .insert(Path::new("/fake").join("lone"), truth);
+    let mut opts = options(Path::new("/fake"));
+    opts.want_atime = true;
+    let (tree, out) = run(tree, opts, 1)?;
+    let index = index_by_path(&out)?;
+    for member in ["a/x", "b/y"] {
+        let i = *index.get(member).ok_or(member)?;
+        assert_eq!(out.size.get(i), Some(&42.0), "{member}: the file's size");
+        assert_eq!(
+            out.mtime_ms.get(i),
+            Some(&9_000.5),
+            "{member}: the file's mtime"
+        );
+        assert_eq!(
+            out.atime_ms.get(i),
+            Some(&9_001.25),
+            "{member}: the file's atime"
+        );
+    }
+    let lone = *index.get("lone").ok_or("lone")?;
+    assert_eq!(
+        out.size.get(lone),
+        Some(&3.0),
+        "a lone id keeps what the listing said"
+    );
+    assert_eq!(out.mtime_ms.get(lone), Some(&3_000.0));
+    assert_eq!(
+        *tree
+            .file_stat_paths
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner),
+        vec![Path::new("/fake").join("a").join("x")],
+        "one read per family, through its first member; none for a lone id"
+    );
+    Ok(())
+}
+
+#[test]
 fn names_are_stored_as_utf8_with_lossy_replacement() -> TestResult {
     let mut tree = FakeTree::new("/fake");
     tree.add_entry("", b"caf\xC3\xA9.txt", file_meta(1.0, 7.0, 1));
@@ -1192,6 +1279,34 @@ fn cancel_stops_a_listing_between_its_batches_and_the_heartbeat_advances_meanwhi
     handle.cancel();
     // The listing has 50 batches of 20 ms left at most; a cancel that reaches
     // it between batches returns long before the second it would take.
+    match take_within(handle, Duration::from_millis(300))? {
+        Err(WalkError::Cancelled) => Ok(()),
+        other => Err(format!("expected Cancelled, got {other:?}")),
+    }
+}
+
+#[test]
+fn a_cancel_that_interrupts_the_roots_own_listing_is_a_cancel_not_a_refused_root() -> TestResult {
+    // The listing a cancel interrupts answers with the error it stopped on;
+    // for the root that used to be recorded as the root being refused, and
+    // the driver checked a refused root before a cancel — so a cancel that
+    // landed while the root was being listed came back as "the root could
+    // not be read" (the real-module cancel test caught it on 23 Sep 2026).
+    let mut tree = FakeTree::new("/fake");
+    tree.special(
+        "",
+        Special::Batches {
+            batches: 50,
+            each: Duration::from_millis(20),
+        },
+    );
+    let tree = Arc::new(tree);
+    let handle = start_with(options(Path::new("/fake")), FakePacer::new(2), tree)
+        .map_err(|e| e.to_string())?;
+    if !wait_until(Duration::from_secs(2), || handle.progress().heartbeat > 0) {
+        return Err("the root's listing never started".to_owned());
+    }
+    handle.cancel();
     match take_within(handle, Duration::from_millis(300))? {
         Err(WalkError::Cancelled) => Ok(()),
         other => Err(format!("expected Cancelled, got {other:?}")),

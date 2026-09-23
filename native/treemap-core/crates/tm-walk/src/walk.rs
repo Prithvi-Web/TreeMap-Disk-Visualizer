@@ -529,11 +529,15 @@ fn run_walk(shared: &Arc<Shared>, root_meta: Meta) -> Result<WalkOutput, WalkErr
     if let Some(e) = spawn_failure {
         return Err(e);
     }
-    if let Some(why) = shared.root_refusal() {
-        return Err(WalkError::RootRefused(why));
-    }
+    // A cancel before a refused root: the listing a cancel interrupts answers
+    // with the error it stopped on, and for the root that reads as the root
+    // being refused — a cancel that landed while the root was being listed
+    // came back as "the root could not be read".
     if shared.is_cancelled() {
         return Err(WalkError::Cancelled);
+    }
+    if let Some(why) = shared.root_refusal() {
+        return Err(WalkError::RootRefused(why));
     }
     // The root must still be there, as the legacy walker re-checks at the end.
     shared
@@ -544,8 +548,9 @@ fn run_walk(shared: &Arc<Shared>, root_meta: Meta) -> Result<WalkOutput, WalkErr
     let worker_cpu: f64 = parts.iter().map(|p| p.cpu_seconds).sum();
     let total = usize::try_from(shared.next_id.load(Ordering::Acquire))
         .map_err(|_| WalkError::Internal("too many nodes for this platform".to_owned()))?;
-    let merged = merge(&parts, total)?;
+    let mut merged = merge(&parts, total)?;
     drop(parts);
+    refresh_families(shared, &mut merged);
     let stats = WalkStats {
         dirs_listed: shared.dirs_listed.load(Ordering::Acquire),
         entries: shared.entries.load(Ordering::Acquire),
@@ -572,6 +577,67 @@ fn run_walk(shared: &Arc<Shared>, root_meta: Meta) -> Result<WalkOutput, WalkErr
         refusals: merged.refusals,
         stats,
     })
+}
+
+/// Gives every member of each hard-link family found by file id the size and
+/// times of the file itself. Windows' listing reports each name's own copy of
+/// them, and NTFS refreshes a name's copy only when the file is opened
+/// through that name (CreateHardLink's documentation), so a file changed
+/// through one name lists stale values under the others — where the legacy
+/// walker's lstat opens every name and reads the file. One read per family,
+/// through its lowest-numbered member, on the driver thread once the workers
+/// are done; a family whose file cannot be read keeps what its listing said.
+/// A file whose other names are all outside the scan is not a family here,
+/// and keeps its listing's copy (DESIGN §16).
+fn refresh_families(shared: &Shared, merged: &mut Merged) {
+    for family in &merged.id_families {
+        let Some(&first) = family.first() else {
+            continue;
+        };
+        let Some(path) = node_path(&shared.root, merged, first) else {
+            continue;
+        };
+        let Ok(meta) = shared.lister.stat_dir(&path, shared.want_atime) else {
+            continue;
+        };
+        if meta.kind != KIND_FILE {
+            continue;
+        }
+        for &node in family {
+            let i = node as usize;
+            if let Some(size) = merged.size.get_mut(i) {
+                *size = meta.size;
+            }
+            if let Some(mtime) = merged.mtime.get_mut(i) {
+                *mtime = meta.mtime_ms;
+            }
+            if let Some(atime) = merged.atime.get_mut(i) {
+                *atime = meta.atime_ms;
+            }
+        }
+    }
+}
+
+/// The path of `node`, rebuilt from the parent column and the names under
+/// `root`; `None` if a name is not valid UTF-8 or an index is out of range.
+fn node_path(root: &Path, merged: &Merged, node: u32) -> Option<PathBuf> {
+    let mut chain = Vec::new();
+    let mut at = node;
+    while at != 0 {
+        chain.push(at);
+        if chain.len() > merged.parent.len() {
+            return None;
+        }
+        at = *merged.parent.get(at as usize)?;
+    }
+    let mut path = root.to_path_buf();
+    for &n in chain.iter().rev() {
+        let i = n as usize;
+        let start = *merged.name_off.get(i)? as usize;
+        let end = *merged.name_off.get(i.checked_add(1)?)? as usize;
+        path.push(std::str::from_utf8(merged.names.get(start..end)?).ok()?);
+    }
+    Some(path)
 }
 
 /// Spawns workers lazily up to `target`; a worker above the current target
@@ -795,6 +861,9 @@ struct Merged {
     atime: Vec<f64>,
     hardlinks: Vec<HardlinkRef>,
     refusals: Vec<DirRefusal>,
+    /// Hard-link families found by file id (listings with no link count),
+    /// each as its members' node ids, ascending (see `refresh_families`).
+    id_families: Vec<Vec<u32>>,
 }
 
 fn out_of_range(id: u32, total: usize) -> WalkError {
@@ -898,7 +967,7 @@ fn merge(parts: &[Part], total: usize) -> Result<Merged, WalkError> {
         .iter()
         .flat_map(|p| p.hardlinks.iter().copied())
         .collect();
-    collide_ids(parts, &mut hardlinks);
+    let id_families = collide_ids(parts, &mut hardlinks);
     hardlinks.sort_by_key(|h| h.node);
     let mut refusals: Vec<DirRefusal> = parts
         .iter()
@@ -924,6 +993,7 @@ fn merge(parts: &[Part], total: usize) -> Result<Merged, WalkError> {
         atime,
         hardlinks,
         refusals,
+        id_families,
     })
 }
 
@@ -931,32 +1001,44 @@ fn merge(parts: &[Part], total: usize) -> Result<Merged, WalkError> {
 /// candidate whose `(dev, ino)` is seen more than once is a hard-link family
 /// member and gets a ref, the first-seen member included (once). A lone id is
 /// a file whose other names, if any, are outside the scan, exactly what the
-/// legacy `nlink > 1` key yields for it: keyed but never a duplicate. The
-/// map costs one entry per candidate file for the whole walk (Phase 4 item).
-fn collide_ids(parts: &[Part], hardlinks: &mut Vec<HardlinkRef>) {
-    let mut first_seen: HashMap<(u64, u64), (u32, bool)> = HashMap::new();
+/// legacy `nlink > 1` key yields for it: keyed but never a duplicate. Returns
+/// the families, each as its members' node ids, ascending. The map costs one
+/// entry per candidate file for the whole walk (Phase 4 item); a family list
+/// exists only once an id collides.
+fn collide_ids(parts: &[Part], hardlinks: &mut Vec<HardlinkRef>) -> Vec<Vec<u32>> {
+    let mut first_seen: HashMap<(u64, u64), (u32, Option<usize>)> = HashMap::new();
+    let mut families: Vec<Vec<u32>> = Vec::new();
     for &(dev, ino, node) in parts.iter().flat_map(|p| p.id_candidates.iter()) {
+        let link = |node| HardlinkRef {
+            node,
+            dev: f64::from_bits(dev),
+            ino: f64::from_bits(ino),
+        };
         match first_seen.get_mut(&(dev, ino)) {
             None => {
-                first_seen.insert((dev, ino), (node, false));
+                first_seen.insert((dev, ino), (node, None));
             }
-            Some((first, emitted)) => {
-                if !*emitted {
-                    hardlinks.push(HardlinkRef {
-                        node: *first,
-                        dev: f64::from_bits(dev),
-                        ino: f64::from_bits(ino),
-                    });
-                    *emitted = true;
+            Some((first, family)) => {
+                let at = if let Some(at) = *family {
+                    at
+                } else {
+                    hardlinks.push(link(*first));
+                    families.push(vec![*first]);
+                    let at = families.len().saturating_sub(1);
+                    *family = Some(at);
+                    at
+                };
+                hardlinks.push(link(node));
+                if let Some(members) = families.get_mut(at) {
+                    members.push(node);
                 }
-                hardlinks.push(HardlinkRef {
-                    node,
-                    dev: f64::from_bits(dev),
-                    ino: f64::from_bits(ino),
-                });
             }
         }
     }
+    for members in &mut families {
+        members.sort_unstable();
+    }
+    families
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
