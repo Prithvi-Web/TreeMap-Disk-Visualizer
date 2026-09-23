@@ -232,10 +232,17 @@ pub fn check_root_on_volume(root: &str, volume: &str) -> Result<(), ArgError> {
 /// folder's canonical path joined with the name.
 pub fn check_output(output: &Path, temp_folder: &Path) -> Result<PathBuf, ArgError> {
     let shown = || output.to_string_lossy().into_owned();
+    // The name as given, after its last separator, must be the name `Path`
+    // sees: on Windows `Path` reads a leading `x:` as a drive, so
+    // `x:ads.tmmft` — an alternate data stream of a file `x` — showed the
+    // check only `ads.tmmft` (the first Windows CI run, 23 Sep 2026).
+    let given = output
+        .to_str()
+        .and_then(|text| text.rsplit(['/', '\\']).next());
     let name = output
         .file_name()
         .and_then(|name| name.to_str())
-        .filter(|name| is_output_name(name))
+        .filter(|name| is_output_name(name) && given == Some(*name))
         .ok_or_else(|| ArgError::OutputName { output: shown() })?;
     // The temp folder itself must be a real folder, never a link or junction:
     // canonicalize follows one, so both sides of the comparison below would
@@ -308,9 +315,14 @@ fn refuse_unless_real_folder(meta: &std::fs::Metadata, temp_folder: &Path) -> Re
 /// inside it and found where the check said ([`run`]).
 ///
 /// On Windows the folder is opened as itself (`FILE_FLAG_OPEN_REPARSE_POINT`:
-/// a junction at its name is opened as the junction, and refused) and
-/// without `FILE_SHARE_DELETE`, so while it is held no process can rename or
-/// remove it — and a folder that cannot be moved aside cannot be swapped for
+/// a junction at its name is opened as the junction, and refused), for
+/// listing, and without `FILE_SHARE_DELETE`, so while it is held no process
+/// can rename or remove it. The listing access is what makes the share mode
+/// count: Windows checks sharing only against handles that read, write, run
+/// or delete, so a handle that asks for attributes alone — as this one first
+/// did — holds nothing, and the first Windows CI run renamed the folder
+/// under it (23 Sep 2026). A folder that cannot be moved aside cannot be
+/// swapped for
 /// a junction between the check and the file's creation, the race the
 /// landing check alone could only see once the file was made. Elsewhere,
 /// where the helper never runs elevated, nothing is pinned: holding is the
@@ -331,15 +343,16 @@ pub fn hold_temp_folder(temp_folder: &Path) -> Result<HeldFolder, ArgError> {
     #[cfg(windows)]
     let (meta, held) = {
         use std::os::windows::fs::OpenOptionsExt;
-        /// `FILE_READ_ATTRIBUTES`: enough to read what the folder is.
-        const READ_ATTRIBUTES: u32 = 0x80;
+        /// `FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES`: what the folder is,
+        /// and an access Windows checks sharing against (see above).
+        const LIST_AND_READ_ATTRIBUTES: u32 = 0x1 | 0x80;
         /// `FILE_SHARE_READ | FILE_SHARE_WRITE`, and not `FILE_SHARE_DELETE`.
         const SHARE_ALL_BUT_DELETE: u32 = 0x1 | 0x2;
         /// `FILE_FLAG_BACKUP_SEMANTICS` (so a folder can be opened) and
         /// `FILE_FLAG_OPEN_REPARSE_POINT` (the name itself, not where it leads).
         const THE_FOLDER_ITSELF: u32 = 0x0200_0000 | 0x0020_0000;
         let handle = OpenOptions::new()
-            .access_mode(READ_ATTRIBUTES)
+            .access_mode(LIST_AND_READ_ATTRIBUTES)
             .share_mode(SHARE_ALL_BUT_DELETE)
             .custom_flags(THE_FOLDER_ITSELF)
             .open(temp_folder)

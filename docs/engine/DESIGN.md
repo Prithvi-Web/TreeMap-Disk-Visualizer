@@ -463,9 +463,12 @@ fixed, as built:
    `%TEMP%\TreeMap-mft` — a folder it resolves itself, never from its
    arguments, and refuses unless it is a real folder: a link, a junction or
    any other reparse point there would have sent the elevated write wherever
-   it points (the security review of M6). It holds that folder open without
-   `FILE_SHARE_DELETE` from before the file is created until the file is
-   found where the check said, so nothing can move it aside and plant a
+   it points (the security review of M6). It holds that folder open, for
+   listing and without `FILE_SHARE_DELETE`, from before the file is created
+   until the file is found where the check said (the listing access is what
+   makes the share mode count: Windows checks sharing only against handles
+   that read, write, run or delete, and the first Windows CI run renamed the
+   folder under the attribute-only handle it first had), so nothing can move it aside and plant a
    junction meanwhile, and resolves it again once held, so a folder *above*
    it swapped for a junction before the hold is caught too (the second
    review) — while it is held, Windows refuses to rename any folder above it,
