@@ -9,12 +9,13 @@ mod common;
 
 use std::cell::Cell;
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use common::{Scratch, plant_folder_link};
 use tm_mft::columns::{ColumnsFile, decode};
 use tm_mft_helper::{
-    APP_TEMP_FOLDER, EXIT_OK, EXIT_REFUSED, Request, create_output, record_refusal, run, validate,
+    APP_TEMP_FOLDER, EXIT_OK, EXIT_REFUSED, Request, create_output, landing_refusal,
+    record_refusal, run, validate,
 };
 use tm_walk::{FastPath, KIND_DIR, KIND_FILE, WalkOutput, WalkStats};
 
@@ -305,4 +306,45 @@ fn a_refused_read_becomes_a_refusal_file_carrying_the_sentence() -> TestResult {
         other => return Err(format!("expected the refusal, got {other:?}")),
     }
     Ok(())
+}
+
+// The landing check: once created, the output file must be found exactly
+// where the check said. The pre-landing review of 23 Sep 2026 found no test
+// reached its refusals — with the folder held from the check on, a file lands
+// elsewhere only through a race no test can stage — so the decision is its
+// own function, and each arm is pinned here by its exact sentence.
+
+/// Where these tests say the check put the output.
+const CHECKED: &str = "/fence/TreeMap-mft/x.tmmft";
+
+#[test]
+fn a_file_found_exactly_where_the_check_said_passes_the_landing_check() {
+    let output = Path::new(CHECKED);
+    assert_eq!(landing_refusal(output, Ok(output.to_path_buf())), None);
+}
+
+#[test]
+fn a_file_found_anywhere_else_is_refused_naming_both_places() {
+    assert_eq!(
+        landing_refusal(
+            Path::new(CHECKED),
+            Ok(PathBuf::from("/somewhere-else/x.tmmft"))
+        ),
+        Some(
+            "the output file landed at \"/somewhere-else/x.tmmft\", not at \"/fence/TreeMap-mft/x.tmmft\"; nothing was read"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn a_file_not_found_after_it_was_created_is_refused_with_the_reason() {
+    let gone = std::io::Error::new(std::io::ErrorKind::NotFound, "it is gone");
+    assert_eq!(
+        landing_refusal(Path::new(CHECKED), Err(gone)),
+        Some(
+            "the output file \"/fence/TreeMap-mft/x.tmmft\" could not be found after it was created: it is gone"
+                .to_owned()
+        )
+    );
 }

@@ -458,20 +458,35 @@ pub fn create_output(request: &Request, temp_folder: &Path) -> Result<std::fs::F
     // the file is where the check said all the same. From here the file
     // exists, so a refusal is recorded in it: the app learns why rather than
     // finding a file too short to read.
-    let refusal = match std::fs::canonicalize(&request.output) {
-        Ok(landed) if landed == request.output => return Ok(file),
-        Ok(landed) => format!(
-            "the output file landed at {}, not at {}; nothing was read",
-            quoted(&landed.to_string_lossy()),
-            quoted(&shown)
-        ),
-        Err(e) => format!(
-            "the output file {} could not be found after it was created: {e}",
-            quoted(&shown)
-        ),
+    let Some(refusal) = landing_refusal(&request.output, std::fs::canonicalize(&request.output))
+    else {
+        return Ok(file);
     };
     record_refusal(&mut file, &refusal);
     Err(refusal)
+}
+
+/// Where the output file was found once created, judged against `output`,
+/// where the check said it would be: `None` when it is exactly there, and the
+/// sentence of the refusal otherwise — found somewhere else, or not found at
+/// all. The last step of [`create_output`], kept apart from the file system
+/// and public so a test can reach every arm: with the folder held from the
+/// check on, only a race no test can stage makes a file land elsewhere (the
+/// pre-landing review of 23 Sep 2026).
+pub fn landing_refusal(output: &Path, landed: std::io::Result<PathBuf>) -> Option<String> {
+    let shown = output.to_string_lossy();
+    match landed {
+        Ok(landed) if landed == output => None,
+        Ok(landed) => Some(format!(
+            "the output file landed at {}, not at {}; nothing was read",
+            quoted(&landed.to_string_lossy()),
+            quoted(&shown)
+        )),
+        Err(e) => Some(format!(
+            "the output file {} could not be found after it was created: {e}",
+            quoted(&shown)
+        )),
+    }
 }
 
 /// The whole run, in the order W6-2 needs: validate every argument; create
