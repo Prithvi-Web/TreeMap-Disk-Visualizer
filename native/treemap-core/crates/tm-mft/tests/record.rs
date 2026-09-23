@@ -447,7 +447,10 @@ fn an_attribute_whose_header_does_not_fit_its_length_is_refused() -> TestResult 
     blob.extend([0_u8; 8]);
     let f = FileRecord::new(50).attr(blob);
     let reason = bad_attribute_at(refusal(&f)?, f.first_attribute())?;
-    assert!(reason.contains("header"), "{reason}");
+    // The exact reason: "the run list lies inside the attribute header" says
+    // "header" too, so a check that only looked for the word passed with the
+    // other fault's refusal (the pre-landing review of 23 Sep 2026).
+    assert_eq!(reason, "the attribute header does not fit in its length");
     Ok(())
 }
 
@@ -649,7 +652,10 @@ fn a_run_list_inside_the_attribute_header_is_refused() -> TestResult {
         },
     ));
     let reason = bad_attribute_at(refusal(&f)?, f.first_attribute())?;
-    assert!(reason.contains("header"), "{reason}");
+    // The exact reason, not the word "header", which the refusal of a header
+    // that does not fit in its attribute says too (the pre-landing review of
+    // 23 Sep 2026).
+    assert_eq!(reason, "the run list lies inside the attribute header");
     Ok(())
 }
 

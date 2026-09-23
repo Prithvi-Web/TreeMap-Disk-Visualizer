@@ -13,7 +13,7 @@
 mod common;
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -29,9 +29,9 @@ use tm_mft::win32::{
     root_name, text_until_nul,
 };
 use tm_mft::{
-    BuildError, Chunk, Geometry, MAX_CHUNK_BYTES, MftError, MftExtents, OpenedVolume, RecordError,
-    RootIdentity, Volume, VolumeApi, VolumeFacts, VolumeInformation, plan_chunks, read_mft,
-    read_volume_with,
+    BuildError, Chunk, ExtentError, Geometry, MAX_CHUNK_BYTES, MftError, MftExtents, OpenedVolume,
+    RecordError, RootIdentity, Volume, VolumeApi, VolumeFacts, VolumeInformation, plan_chunks,
+    read_mft, read_volume_with,
 };
 use tm_walk::WalkOutput;
 use tm_walk::platform::thread_cpu_seconds;
@@ -1039,6 +1039,96 @@ fn upcase_is_record_10_whole_named_and_not_sparse() -> TestResult {
     Ok(())
 }
 
+// A run list of `$MFT` or `$UpCase` that does not decode, and runs of `$MFT`
+// that do not map: `MftError::BadRuns` and `MftError::Extents` were named in
+// no test until the pre-landing review of 23 Sep 2026, so a refusal could
+// have named the wrong stream, or a sparse run been dropped from the map,
+// with every test still passing.
+
+/// Record 0 of `spec` holding `runs` as its `$DATA` run list, with the sizes
+/// the layout gives it: only the run list differs from the laid-out one.
+fn mft_record_with_runs(spec: &Spec, runs: Vec<u8>) -> Result<Vec<u8>, String> {
+    spec.named(0, 1, FILE, (5, 5), "$MFT")
+        .attr(data_extent(
+            0,
+            7,
+            spec.mft_records() * spec.record,
+            spec.initialized * spec.record,
+            runs,
+        ))
+        .on_disk()
+}
+
+#[test]
+fn an_mft_run_list_without_its_terminator_is_refused_as_mft_s() -> TestResult {
+    // The standard volume's first run, LCN 16 for 8 clusters, written with
+    // a 3-byte length and a 4-byte offset: 8 bytes, so the attribute ends
+    // right after it and no padding stands in for the missing terminator.
+    let unterminated = vec![0x43, 0x08, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00];
+    let mut spec = standard();
+    // With its terminator the same run reads the whole volume: the refusal
+    // below is the missing terminator's, not the encoding's.
+    let mut terminated = unterminated.clone();
+    terminated.push(0x00);
+    spec.raw.insert(0, mft_record_with_runs(&spec, terminated)?);
+    assert_expected_tree(&read(&spec)?.0);
+    spec.raw
+        .insert(0, mft_record_with_runs(&spec, unterminated)?);
+    assert_eq!(
+        refusal(&spec)?,
+        MftError::BadRuns {
+            stream: "$MFT",
+            error: RecordError::BadRuns {
+                offset: 8,
+                reason: "the run list ends without its terminator",
+            },
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn an_upcase_run_list_that_does_not_decode_is_refused_as_upcase_s() -> TestResult {
+    // 32 clusters one cluster before LCN 0, where the list starts from.
+    let mut spec = standard();
+    let upcase = spec
+        .named(10, 10, FILE, (5, 5), "$UpCase")
+        .attr(data_extent(
+            0,
+            31,
+            UPCASE_BYTES,
+            UPCASE_BYTES,
+            vec![0x11, 0x20, 0xFF, 0x00],
+        ));
+    spec.records.insert(10, Some(upcase));
+    assert_eq!(
+        refusal(&spec)?,
+        MftError::BadRuns {
+            stream: "$UpCase",
+            error: RecordError::BadRuns {
+                offset: 0,
+                reason: "the run points before LCN 0",
+            },
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn a_sparse_run_of_the_mft_is_refused_rather_than_mapped_around() -> TestResult {
+    // 8 clusters with no offset field: sparse, where `$MFT`'s first records
+    // are. NTFS always allocates `$MFT`, and a map that dropped the run
+    // would put every later record at the wrong offset, or none at all.
+    let mut spec = standard();
+    spec.raw
+        .insert(0, mft_record_with_runs(&spec, vec![0x01, 0x08, 0x00])?);
+    assert_eq!(
+        refusal(&spec)?,
+        MftError::Extents(ExtentError::SparseRun { index: 0 })
+    );
+    Ok(())
+}
+
 #[test]
 fn the_root_is_the_record_and_the_sequence_the_handle_named() -> TestResult {
     let spec = standard();
@@ -1557,28 +1647,186 @@ fn every_read_lands_in_a_buffer_aligned_for_a_read_past_the_cache() -> TestResul
     Ok(())
 }
 
+/// Which arm of `MftError`'s `Display` renders `error` (`NotNtfs` has two).
+/// The match has no wildcard, so a new variant stops this test compiling
+/// until it is given an arm here and a row in the table below.
+fn display_arm(error: &MftError) -> &'static str {
+    match error {
+        MftError::BadRoot { .. } => "BadRoot",
+        MftError::NoDriveLetter { .. } => "NoDriveLetter",
+        MftError::NetworkVolume { .. } => "NetworkVolume",
+        MftError::NoVolume { .. } => "NoVolume",
+        MftError::NotNtfs { file_system, .. } if file_system.is_empty() => "NotNtfs, unnamed",
+        MftError::NotNtfs { .. } => "NotNtfs",
+        MftError::NotElevated { .. } => "NotElevated",
+        MftError::OtherVolume { .. } => "OtherVolume",
+        MftError::Os { .. } => "Os",
+        MftError::Io { .. } => "Io",
+        MftError::BadGeometry { .. } => "BadGeometry",
+        MftError::ShortRead { .. } => "ShortRead",
+        MftError::BadMftRecord { .. } => "BadMftRecord",
+        MftError::OverlappingExtents { .. } => "OverlappingExtents",
+        MftError::MftIncomplete { .. } => "MftIncomplete",
+        MftError::BadRecord { .. } => "BadRecord",
+        MftError::MisplacedRecord { .. } => "MisplacedRecord",
+        MftError::BadRuns { .. } => "BadRuns",
+        MftError::Extents(_) => "Extents",
+        MftError::BadUpcase { .. } => "BadUpcase",
+        MftError::RootNotRead { .. } => "RootNotRead",
+        MftError::RootReplaced { .. } => "RootReplaced",
+        MftError::Build(_) => "Build",
+        MftError::Overflow => "Overflow",
+    }
+}
+
+/// The arms `display_arm` names: one row of the table below for each.
+const DISPLAY_ARMS: usize = 24;
+
 #[test]
 fn every_refusal_reads_as_a_sentence_naming_its_facts() {
-    let volume = || "C:\\".to_owned();
-    let cases = [
-        (MftError::NotElevated { volume: volume() }, "elevated"),
+    // Every arm, each with words only its own sentence says, spanning each
+    // fact it interpolates, and facts of one type told apart (two serials,
+    // three byte counts): a sentence that drops a fact, or swaps two, fails.
+    // The pre-landing review of 23 Sep 2026 found 6 of the arms checked,
+    // some by one word.
+    let cases: Vec<(MftError, &str)> = vec![
         (
-            MftError::NotNtfs {
-                volume: volume(),
-                file_system: "ReFS".to_owned(),
+            MftError::BadRoot {
+                reason: "is not an absolute path",
             },
-            "C:\\ is formatted ReFS, not NTFS",
+            "the scan root is not an absolute path",
         ),
         (
-            MftError::NetworkVolume { volume: volume() },
-            "network drive",
+            MftError::NoDriveLetter {
+                volume: "C:\\mnt\\data\\".to_owned(),
+            },
+            "the scan root is on the volume mounted at C:\\mnt\\data\\, which is not a drive letter's root",
+        ),
+        (
+            MftError::NetworkVolume {
+                volume: "Z:\\".to_owned(),
+            },
+            "Z:\\ is a network drive",
+        ),
+        (
+            MftError::NoVolume {
+                volume: "Y:\\".to_owned(),
+            },
+            "Windows reports no volume at Y:\\",
+        ),
+        (
+            MftError::NotNtfs {
+                volume: "D:\\".to_owned(),
+                file_system: "ReFS".to_owned(),
+            },
+            "D:\\ is formatted ReFS, not NTFS",
+        ),
+        (
+            MftError::NotNtfs {
+                volume: "E:\\".to_owned(),
+                file_system: String::new(),
+            },
+            "E:\\ reports no file system name",
+        ),
+        (
+            MftError::NotElevated {
+                volume: "C:\\".to_owned(),
+            },
+            "the volume C:\\ could not be opened for reading: access is denied",
+        ),
+        (
+            MftError::OtherVolume {
+                root_serial: 0x0BAD_F00D,
+                volume_serial: SERIAL,
+            },
+            "serial number 0BADF00D, not on 12345678, the volume its path names",
+        ),
+        (
+            MftError::Os {
+                call: "CreateFileW on the volume",
+                code: 32,
+            },
+            // Windows adds the code's own words after it.
+            "CreateFileW on the volume failed with Windows error 32",
+        ),
+        (
+            MftError::Io {
+                call: "ReadFile on the volume",
+                message: "the device is not ready".to_owned(),
+            },
+            "ReadFile on the volume failed: the device is not ready",
+        ),
+        (
+            MftError::BadGeometry {
+                reason: "a negative MftStartLcn",
+            },
+            "FSCTL_GET_NTFS_VOLUME_DATA reported a negative MftStartLcn",
+        ),
+        (
+            MftError::ShortRead {
+                offset: 409_600,
+                wanted: 131_072,
+                got: 4096,
+            },
+            "the volume returned 4096 of the 131072 bytes asked for at offset 409600",
+        ),
+        (
+            MftError::BadMftRecord {
+                reason: "the record at MftStartLcn is not named $MFT",
+            },
+            "$MFT's own record (0): the record at MftStartLcn is not named $MFT",
+        ),
+        (
+            MftError::OverlappingExtents {
+                stream: "$UpCase",
+                vcn: 8,
+            },
+            "two extents of $UpCase's data map VCN 8",
+        ),
+        (
+            MftError::MftIncomplete {
+                read: 32,
+                wanted: 50,
+            },
+            "$MFT's extents that were found map 32 records, but its initialized size holds 50",
         ),
         (
             MftError::BadRecord {
                 record: 77,
                 error: RecordError::FixupMismatch { sector: 1 },
             },
-            "record 77 is in use but could not be read: the record's unit 1",
+            "record 77 is in use but could not be read: the record's unit 1 does not end in its update sequence number (a torn write)",
+        ),
+        (
+            MftError::MisplacedRecord {
+                position: 21,
+                number: 99,
+            },
+            "the record at position 21 of $MFT says it is record 99",
+        ),
+        (
+            MftError::BadRuns {
+                stream: "$UpCase",
+                error: RecordError::BadRuns {
+                    offset: 3,
+                    reason: "the run points before LCN 0",
+                },
+            },
+            "$UpCase's run list: the run at offset 3 of the run list: the run points before LCN 0",
+        ),
+        (
+            MftError::Extents(ExtentError::SparseRun { index: 2 }),
+            "$MFT's run 2 is sparse",
+        ),
+        (
+            MftError::BadUpcase {
+                reason: "a run of its data is sparse",
+            },
+            "$UpCase (record 10): a run of its data is sparse",
+        ),
+        (
+            MftError::RootNotRead { record: 30 },
+            "the scan root's record 30 is not an in-use record",
         ),
         (
             MftError::RootReplaced {
@@ -1586,20 +1834,26 @@ fn every_refusal_reads_as_a_sentence_naming_its_facts() {
                 sequence: 2,
                 found: 1,
             },
-            "sequence number 2",
+            "the scan root is record 20 with sequence number 2, but the disk holds sequence number 1 there",
         ),
         (
-            MftError::MftIncomplete {
-                read: 32,
-                wanted: 50,
-            },
-            "map 32 records, but its initialized size holds 50",
+            MftError::Build(BuildError::RootNotDirectory { root: 21 }),
+            "the tree could not be built: record 21 is not a directory",
+        ),
+        (
+            MftError::Overflow,
+            "a position or a size on the volume lies past what 64 bits, or this platform's memory, can address",
         ),
     ];
-    for (error, words) in cases {
-        let text = error.to_string();
+    let texts: Vec<String> = cases.iter().map(|(error, _)| error.to_string()).collect();
+    for ((error, words), text) in cases.iter().zip(&texts) {
         assert!(text.contains(words), "{text:?} should say {words:?}");
+        let saying = texts.iter().filter(|t| t.contains(words)).count();
+        assert_eq!(saying, 1, "{words:?} is not {error:?}'s own words");
     }
+    let arms: BTreeSet<&str> = cases.iter().map(|(error, _)| display_arm(error)).collect();
+    assert_eq!(arms.len(), cases.len(), "one row per arm: {arms:?}");
+    assert_eq!(arms.len(), DISPLAY_ARMS, "every arm has a row: {arms:?}");
 }
 
 // ---------------------------------------------------------------------------
