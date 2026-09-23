@@ -282,7 +282,15 @@ for (const { label, load } of TREES) {
 /* ----------------------------------- (b) ----------------------------------- */
 
 for (const name of ['smoke', 'ci20k'] as const) {
-  test(`(b) ${name}: gdu vs the walker → identical apart from the one fact gdu cannot record`, async (t) => {
+  // gdu on Windows keys no hard link — v5.36.1's pkg/analyze/dir_other.go
+  // returns an inode of 0 there, so every name of a family counts its bytes —
+  // and dates a file from its directory entry, which NTFS refreshes per name
+  // (read from gdu's source, 23 Sep 2026). Every corpus here has hard links,
+  // so (b) differs by construction on Windows: DESIGN §16 item 1 and RISKS
+  // R59 name it. (c), the native engine's gate, stays strict everywhere.
+  const gduCannot = process.platform === 'win32'
+    && 'gdu on Windows keys no hard links (pkg/analyze/dir_other.go returns inode 0) and dates files from their directory entries: DESIGN §16 item 1';
+  test(`(b) ${name}: gdu vs the walker → identical apart from the one fact gdu cannot record`, { skip: gduCannot }, async (t) => {
     const tree = await corpusTree(name);
     // Whole seconds: gdu records st_mtime, so a sub-second stamp could never agree.
     tree.freeze(false);
