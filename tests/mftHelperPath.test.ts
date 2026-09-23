@@ -139,3 +139,42 @@ test('a program the system owns, in a folder the system owns, may be started as 
   assert.ok(system && fs.existsSync(system), `a system program to try (${system})`);
   assert.equal(elevationRefusal(system), null, process.platform === 'win32' ? `not elevated by the checks above; whoami /groups:\n${windowsGroups()}` : undefined);
 });
+
+/** This user's security identifier (`whoami /user`), or null off Windows. */
+function currentUserSid(): string | null {
+  if (process.platform !== 'win32') return null;
+  const row = execFileSync('whoami', ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8' }).trim();
+  const sid = row.split(',').pop()?.replace(/"/g, '').trim() ?? '';
+  return /^S-1-\d+(-\d+)+$/.test(sid) ? sid : null;
+}
+
+test('on Windows each door is tried in turn: a folder that refuses new files, then a file that refuses a change of its attributes', {
+  skip: process.platform !== 'win32' && 'deny entries in an access list are Windows’',
+}, () => {
+  // Deny entries hold even for an administrator, so this runs on the elevated
+  // CI runner, which the System32 test above cannot: it is the one Windows
+  // run of the answer "may be started". Node asks to write with every write
+  // right at once (libuv's FILE_GENERIC_WRITE), so a file that refuses a
+  // change of its attributes refuses the open for writing too; an access list
+  // that allows writing the data while refusing the attributes would pass
+  // (RISKS R68: the access list itself is not read).
+  const sid = currentUserSid();
+  assert.ok(sid, 'whoami /user names this user’s security identifier');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-elevation-acl-'));
+  const helper = path.join(dir, 'tm-mft-helper.exe');
+  fs.writeFileSync(helper, 'stand-in');
+  const icacls = (...args: string[]): void => {
+    execFileSync('icacls', args, { encoding: 'utf8' });
+  };
+  try {
+    icacls(dir, '/deny', `*${sid}:(WD)`);
+    assert.equal(elevationRefusal(helper), `${helper} could be changed by any program running as you`, 'the folder refuses a new file; the file itself can still be changed');
+    assert.deepEqual(fs.readdirSync(dir), ['tm-mft-helper.exe'], 'no probe was left, or made');
+    icacls(helper, '/deny', `*${sid}:(WA)`);
+    assert.equal(elevationRefusal(helper), null, 'the folder refuses a new file and the file refuses a change');
+  } finally {
+    icacls(helper, '/remove:d', `*${sid}`);
+    icacls(dir, '/remove:d', `*${sid}`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
