@@ -43,7 +43,8 @@ import {
   setNativeWalkTimingForTests,
 } from '../src/services/scan/nativeEngine';
 import { statToInput } from '../src/services/scan/nodeInput';
-import { PackedScanStore, storeOf } from '../src/services/scanStore';
+import { PackedScanStore, storeOf, type ScanStore } from '../src/services/scanStore';
+import { platform } from '../src/platform';
 import { cancelScan, createScanRecord, getScan, startScan } from '../src/services/diskScanner';
 import { buildScanStats } from '../src/api/scanRoutes';
 import { getSettings, updateSettings } from '../src/services/settings';
@@ -69,8 +70,9 @@ import type { EngineSetting, ScanResult } from '../src/models/types';
  *     process pinned to a module that is not there — runs the walker and
  *     names the missing path.
  *  4. The real module (native/prebuilt, built by scripts/build-native.js)
- *     reports `engine: 'native'`, `fastPath: 'bulk'`, no fallback and the
- *     walker's counters; pause stops the count; cancel frees the handle; a
+ *     reports `engine: 'native'`, the platform's own fast path (`bulk` on
+ *     macOS, `getdents` on Linux, `extdDirInfo` on Windows), no fallback and
+ *     the walker's counters; pause stops the count; cancel frees the handle; a
  *     take of a walk still running is refused, never joined (N1).
  *  5. The walk can neither freeze the app nor run forever (section 3b): a
  *     cancel is settled by polling to done and abandoned at a deadline when
@@ -95,6 +97,27 @@ const canLock = process.platform !== 'win32' && typeof process.getuid === 'funct
 const STATS_TAIL = ['engineReason', 'fastPath', 'fallbackReason', 'entriesPerSecond', 'cpuSeconds', 'peakRssBytes', 'bytesRead', 'cacheHitRate', 'storageMode', 'placeholdersSkipped'];
 const COUNTERS = ['scanned', 'fileCount', 'dirCount', 'walkedDirs', 'cachedDirs', 'hardlinkedFiles', 'hardlinkedBytes', 'sparseFiles', 'sparseBytes', 'slackBytes', 'cloudFiles', 'cloudBytes', 'deniedDirs', 'deniedExamples', 'vanishedDirs', 'unreadableDirs', 'deniedEntries', 'unreadableEntries'] as const;
 
+/*
+ * The two platform facts the ingest reads, read the way nativeEngine.ts reads
+ * them, so an expectation here follows the product's own fact rather than a
+ * platform name. The product holds that `blocks` means nothing on Windows
+ * (src/platform/index.ts), so the walker records no allocation there and
+ * neither engine keeps a sparse or slack account; and libuv's scandir
+ * byte-sorts a readdir listing everywhere but Windows, which keeps the file
+ * system's own order, as the native listing does there.
+ */
+const BLOCKS_ARE_MEANINGFUL = platform().blocksAreMeaningful;
+const SORT_CHILDREN = platform().platform !== 'windows';
+
+/*
+ * The listing the real module names for a folder here: tm-walk's
+ * `platform_probe` (platform/mod.rs) lists with getattrlistbulk on macOS,
+ * getdents64 and statx on Linux and FileIdExtdDirectoryInfo on Windows, named
+ * by `FastPath::as_str` (lib.rs). Every other platform has no native listing
+ * (platform/unsupported.rs), and its probe says so.
+ */
+const NATIVE_FAST_PATH = ({ darwin: 'bulk', linux: 'getdents', win32: 'extdDirInfo' } as Partial<Record<NodeJS.Platform, string>>)[process.platform] ?? 'unavailable';
+
 /* ═══════════════════════════ fixtures ═══════════════════════════ */
 
 const KB = 1024;
@@ -108,7 +131,11 @@ const KB = 1024;
  */
 async function buildEdgeFixture(prefix: string): Promise<{ root: string; total: number; locked: string | null }> {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), prefix));
-  const cloud = path.join('Library', 'Mobile Documents', 'com~apple~CloudDocs');
+  // Written with '/', as every folder below is: path.join turns it into the
+  // platform's separator at the disk, and the count at the end splits on '/'.
+  // Joined with '\' on Windows, this path's three folders counted as one, and
+  // the builder expected two entries fewer than the walker found.
+  const cloud = 'Library/Mobile Documents/com~apple~CloudDocs';
   const dirs = ['docs', 'docs/nested', 'empty', '.hidden-dir', 'repo', 'repo/.git', 'vm', cloud, 'photos.photoslibrary', 'mod0', 'mod1', 'mod2'];
   for (const d of dirs) await fsp.mkdir(path.join(root, d), { recursive: true });
   const file = (rel: string, bytes: number): Promise<void> => fsp.writeFile(path.join(root, rel), Buffer.alloc(bytes, 0x61));
@@ -426,6 +453,47 @@ function rootInput(root: string) {
   return statToInput(path.basename(root) || root, true, 0, st.mtimeMs, st.atimeMs);
 }
 
+/** `cols` ingested into a fresh record for `root`, finalized and summed as runNativeWalk leaves it. */
+function ingested(root: string, cols: WalkResult): ScanResult {
+  const scan = createScanRecord(root);
+  const store = new PackedScanStore(root, path.sep, rootInput(root));
+  ingestColumns(scan, store, cols, root);
+  store.finalize();
+  store.sumSizes();
+  scan.store = store;
+  scan.status = 'complete';
+  return scan;
+}
+
+/** Each folder's children in the order `store` keeps them, keyed by the folder's '/'-joined path below the root ('' is the root). */
+function storeOrder(store: ScanStore): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const visit = (id: number, rel: string): void => {
+    const kids = store.childIds(id);
+    out.set(rel, kids.map((k) => store.name(k)));
+    for (const k of kids) if (store.isDir(k)) visit(k, rel === '' ? store.name(k) : `${rel}/${store.name(k)}`);
+  };
+  visit(store.rootId, '');
+  return out;
+}
+
+/** Each folder's children in the order the listing in `cols` gave them, keyed as `storeOrder` keys them. */
+function listingOrder(cols: WalkResult): Map<string, string[]> {
+  const names = Buffer.from(cols.names.buffer, cols.names.byteOffset, cols.names.byteLength);
+  const rel: string[] = [''];
+  const out = new Map<string, string[]>([['', []]]);
+  for (let i = 1; i < cols.parent.length; i++) {
+    const name = names.toString('utf8', cols.nameOff[i], cols.nameOff[i + 1]);
+    const up = rel[cols.parent[i]];
+    rel[i] = up === '' ? name : `${up}/${name}`;
+    const siblings = out.get(up);
+    assert.ok(siblings, `node ${i} (${rel[i]}) hangs under node ${cols.parent[i]}, which is not a folder`);
+    siblings.push(name);
+    if (cols.kind[i] === KIND_DIR) out.set(rel[i], []);
+  }
+  return out;
+}
+
 /**
  * A clock the fake's polls advance by a second each (through `onPoll`), so the
  * stall and cancel deadlines the tests inject are crossed by a known poll
@@ -591,13 +659,26 @@ test('ingestColumns on hand-built columns produces the walker’s tree byte for 
     assert.equal(legacy.status, 'complete', legacy.error);
     assert.equal(legacy.engine === 'walker' || legacy.engine === 'turbo-walker', true, legacy.engine);
     assert.equal(legacy.scanned, total, 'the fixture builder and the walker agree on the count');
-    // The fixture exercised every branch it was built for.
+    // The fixture exercised every branch it was built for, as far as the
+    // platform lets one be built. The walker calls a file a placeholder when it
+    // claims bytes, occupies no blocks and lives under a cloud folder, so the
+    // truncated file under the iCloud path is one exactly when lstat reports no
+    // blocks for it. APFS and ext4 leave a truncate-only file unallocated; on
+    // Windows, where the product treats blocks as meaningless, the answer is
+    // the platform's, so it is asked here rather than assumed. Sparse
+    // accounting is gated on blocks meaning anything, in both engines, so the
+    // VM image is sparse only where they do.
     assert.equal(legacy.hardlinkedFiles, 1);
     assert.equal(legacy.hardlinkedBytes, 999);
-    assert.equal(legacy.cloudFiles, 1, 'the truncated file under Library/Mobile Documents is a placeholder');
-    assert.equal(legacy.cloudBytes, 4 * KB);
-    assert.ok((legacy.sparseFiles ?? 0) >= 1, 'the truncated VM image is sparse');
-    assert.ok((legacy.sparseBytes ?? 0) >= 1024 * KB);
+    const placeholderBlocks = fs.lstatSync(path.join(root, 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'doc.pages')).blocks;
+    assert.deepEqual({ files: legacy.cloudFiles, bytes: legacy.cloudBytes }, placeholderBlocks === 0 ? { files: 1, bytes: 4 * KB } : { files: 0, bytes: 0 },
+      `the truncated file under Library/Mobile Documents occupies ${placeholderBlocks} blocks here`);
+    if (BLOCKS_ARE_MEANINGFUL) {
+      assert.ok((legacy.sparseFiles ?? 0) >= 1, 'the truncated VM image is sparse');
+      assert.ok((legacy.sparseBytes ?? 0) >= 1024 * KB);
+    } else {
+      assert.deepEqual({ files: legacy.sparseFiles, bytes: legacy.sparseBytes }, { files: 0, bytes: 0 }, 'no sparse account where blocks mean nothing');
+    }
     if (locked) assert.deepEqual({ dirs: legacy.deniedDirs, examples: legacy.deniedExamples }, { dirs: 1, examples: [locked] });
     assert.match(treeJson(legacy), /"name":"repo"[^{]*"gitRepo":true/);
     assert.match(treeJson(legacy), /"name":"link\.txt"[^{]*"isSymlink":true/);
@@ -605,13 +686,7 @@ test('ingestColumns on hand-built columns produces the walker’s tree byte for 
 
     const cols = columnsFromDisk(root);
     assert.equal(cols.parent.length, total);
-    const scan = createScanRecord(root);
-    const store = new PackedScanStore(root, path.sep, rootInput(root));
-    ingestColumns(scan, store, cols, root);
-    store.finalize();
-    store.sumSizes();
-    scan.store = store;
-    scan.status = 'complete';
+    const scan = ingested(root, cols);
 
     assert.equal(treeJson(scan), treeJson(legacy), 'the pruned JSON differs from the walker’s');
     assert.deepEqual(counters(scan), counters(legacy), 'the counters differ from the walker’s');
@@ -621,30 +696,42 @@ test('ingestColumns on hand-built columns produces the walker’s tree byte for 
   }
 });
 
-test('ingestColumns emits each directory’s children in the walker’s order whatever order the listing came in, and keeps the walker’s hard-link twin', async () => {
+test('ingestColumns emits each directory’s children in the order the walker lists them — re-sorted by name bytes wherever libuv sorts a listing, kept as listed on Windows — and the first name in that order keeps a hard link’s bytes', async () => {
   useNoNative();
   const { root, locked } = await buildEdgeFixture('treemap-native-order-');
   try {
     const legacy = await scanWith('walker', root);
+    // The premise: a plain readdir listing is in the walker's own order, since
+    // the walker lists with the same readdir — byte-sorted by libuv, or on
+    // Windows the file system's own order, which the native listing gives too.
+    const plain = columnsFromDisk(root);
+    assert.deepEqual(listingOrder(plain), storeOrder(storeOf(legacy)), 'a plain listing and the walker disagree on the order of a folder');
     const scrambled = columnsFromDisk(root, {}, { scramble: true });
     const rootsFirstChild = Buffer.from(scrambled.names.buffer, scrambled.names.byteOffset + scrambled.nameOff[1], scrambled.nameOff[2] - scrambled.nameOff[1]).toString('utf8');
     assert.equal(rootsFirstChild, 'vm', 'the listing really is scrambled: the root’s first child is its last name');
-    const scan = createScanRecord(root);
-    const store = new PackedScanStore(root, path.sep, rootInput(root));
-    ingestColumns(scan, store, scrambled, root);
-    store.finalize();
-    store.sumSizes();
-    scan.store = store;
-    scan.status = 'complete';
-    assert.equal(treeJson(scan), treeJson(legacy), 'the pruned JSON differs from the walker’s');
-    assert.deepEqual(counters(scan), counters(legacy));
-    assert.match(treeJson(scan), /"name":"hard-b\.bin"[^{}]*"hardlinkDuplicate":true/, 'hard-a keeps the bytes and hard-b is the duplicate, as the walker has it, although the listing named hard-b first');
+    const scan = ingested(root, scrambled);
+    if (SORT_CHILDREN) {
+      assert.equal(treeJson(scan), treeJson(legacy), 'the pruned JSON differs from the walker’s');
+      assert.deepEqual(counters(scan), counters(legacy));
+      assert.match(treeJson(scan), /"name":"hard-b\.bin"[^{}]*"hardlinkDuplicate":true/, 'hard-a keeps the bytes and hard-b is the duplicate, as the walker has it, although the listing named hard-b first');
+    } else {
+      // Where the walker keeps the file system's order, the ingest keeps the
+      // listing's: a scrambled listing stays scrambled, and the name it gives
+      // first keeps a hard link's bytes. A listing in the walker's own order —
+      // which the real listing there gives — is then the walker's tree byte
+      // for byte.
+      assert.deepEqual(storeOrder(storeOf(scan)), listingOrder(scrambled), 'the ingest re-ordered the listing where the walker keeps the listing’s order');
+      assert.match(treeJson(scan), /"name":"hard-a\.bin"[^{}]*"hardlinkDuplicate":true/, 'hard-b, named first by the listing, keeps the bytes and hard-a is the duplicate');
+      const inOrder = ingested(root, plain);
+      assert.equal(treeJson(inOrder), treeJson(legacy), 'the pruned JSON differs from the walker’s');
+      assert.deepEqual(counters(inOrder), counters(legacy));
+    }
   } finally {
     await unlockAndRemove(root, locked);
   }
 });
 
-test('ingestColumns: the cloud-placeholder branch on columns built by hand — size above zero, no allocation, an iCloud path; the same file outside a cloud folder is sparse', () => {
+test('ingestColumns: the cloud-placeholder branch on columns built by hand — size above zero, no allocation, an iCloud path; the same file outside a cloud folder is sparse wherever blocks mean something', () => {
   const root = '/Users/someone';
   const names = [path.basename(root), 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'a.pages', 'vm', 'disk.img'];
   const enc = names.map((n) => Buffer.from(n, 'utf8'));
@@ -684,8 +771,12 @@ test('ingestColumns: the cloud-placeholder branch on columns built by hand — s
   assert.equal(diskNode.accessedAt, undefined, 'a negative atime is omitted');
   assert.equal(diskNode.modifiedAt, 1.7e12 + 1, 'rounded up from .6');
   assert.equal(store.materialize(store.findByPath('/Users/someone/Library')).accessedAt, undefined, 'an atime of zero means never recorded');
+  // The sparse line is gated on the platform's blocks meaning anything, as the
+  // walker's is: on Windows the walker records no allocation, so the ingest
+  // keeps no sparse account either and the image is only its size there.
+  const sparse = BLOCKS_ARE_MEANINGFUL ? { sparseFiles: 1, sparseBytes: 8000 } : { sparseFiles: undefined, sparseBytes: undefined };
   assert.deepEqual({ cloudFiles: scan.cloudFiles, cloudBytes: scan.cloudBytes, sparseFiles: scan.sparseFiles, sparseBytes: scan.sparseBytes, slackBytes: scan.slackBytes ?? 0 },
-    { cloudFiles: 1, cloudBytes: 5000, sparseFiles: 1, sparseBytes: 8000, slackBytes: 0 }, 'the placeholder’s bytes are on the cloud line only, the sparse file’s on the sparse line');
+    { cloudFiles: 1, cloudBytes: 5000, ...sparse, slackBytes: 0 }, 'the placeholder’s bytes are on the cloud line only, the sparse file’s on the sparse line where there is one');
   assert.equal(scan.placeholdersSkipped, 1, 'the walk’s dataless count');
   assert.equal(store.size(store.rootId), 13000);
 });
@@ -1190,24 +1281,34 @@ function loadReal(t: TestContext): { core: Core; path: string } | null {
   return { core: r.module as unknown as Core, path: file };
 }
 
-test('real module: scanProbe reports bulk with a reason on a folder, and unavailable on a file', (t) => {
+test('real module: scanProbe names the platform’s own listing with a reason on a folder, and unavailable on a file', (t) => {
   const real = loadReal(t);
   if (!real) return;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-native-probe-real-'));
   try {
     fs.writeFileSync(path.join(dir, 'a.txt'), 'a');
     const probe = real.core.scanProbe(dir);
-    assert.equal(probe.fastPath, process.platform === 'darwin' ? 'bulk' : 'unavailable', JSON.stringify(probe));
-    assert.ok(probe.reason.length > 10, probe.reason);
+    assert.equal(probe.fastPath, NATIVE_FAST_PATH, JSON.stringify(probe));
+    // Each platform's `probe` (darwin.rs, linux.rs, windows.rs) names its
+    // mechanism and counts what it listed: the one file, since every listing
+    // drops `.` and `..`. Linux names fstatat instead where statx is refused.
+    // A platform without a listing says so for both roots (unsupported.rs).
+    const notBuilt = /^the native listing is not built for \S+ yet$/;
+    const listed = ({
+      bulk: /^getattrlistbulk listed the root directory \(1 entries\)$/,
+      getdents: /^getdents64 and (?:statx|fstatat \(statx answered ENOSYS or EPERM\)) listed the root directory \(1 entries\)$/,
+      extdDirInfo: /^FileIdExtdDirectoryInfo listed the root directory \(1 entries\)$/,
+    } as Partial<Record<string, RegExp>>)[NATIVE_FAST_PATH] ?? notBuilt;
+    assert.match(probe.reason, listed);
     const file = real.core.scanProbe(path.join(dir, 'a.txt'));
     assert.equal(file.fastPath, 'unavailable');
-    assert.match(file.reason, /not a directory|not built/);
+    assert.match(file.reason, NATIVE_FAST_PATH === 'unavailable' ? notBuilt : /^the root is not a directory$/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('real module: a forced native scan reports engine native, fastPath bulk, no fallback, and the walker’s tree and counters byte for byte', { skip: process.platform !== 'darwin' && 'the native listing is macOS-only until W4/W5' }, async (t) => {
+test('real module: a forced native scan reports engine native, the platform’s own fastPath, no fallback, and the walker’s tree and counters byte for byte', async (t) => {
   const real = loadReal(t);
   if (!real) return;
   const { root, total, locked } = await buildEdgeFixture('treemap-native-real-');
@@ -1217,14 +1318,16 @@ test('real module: a forced native scan reports engine native, fastPath bulk, no
     assert.equal(native.status, 'complete', native.error);
     const stats = buildScanStats(native);
     assert.equal(stats.engine, 'native');
-    assert.equal(stats.fastPath, 'bulk');
+    assert.equal(stats.fastPath, NATIVE_FAST_PATH);
     assert.equal(stats.fallbackReason, null);
     assert.match(stats.engineReason, /native engine/);
     assert.equal(stats.scanned, total);
-    assert.ok(typeof stats.cpuSeconds === 'number' && stats.cpuSeconds > 0, `cpuSeconds ${stats.cpuSeconds}`);
-    assert.equal(stats.placeholdersSkipped, 0, 'nothing in the fixture is dataless');
+    // The two engines' agreement first: a test stops at its first failure, and
+    // on a platform whose listing is new this is the finding that matters.
     assert.equal(treeJson(native), treeJson(legacy), 'the native tree differs from the walker’s');
     assert.deepEqual(counters(native), counters(legacy), 'the native counters differ from the walker’s');
+    assert.ok(typeof stats.cpuSeconds === 'number' && stats.cpuSeconds > 0, `cpuSeconds ${stats.cpuSeconds}`);
+    assert.equal(stats.placeholdersSkipped, 0, 'nothing in the fixture is dataless');
     t.diagnostic(`real module on ${total} entries: native ${stats.entriesPerSecond} entries/s (cpu ${stats.cpuSeconds?.toFixed(4)} s) vs walker ${buildScanStats(legacy).entriesPerSecond} entries/s`);
   } finally {
     await updateSettings({ engine: 'auto' });
@@ -1232,7 +1335,7 @@ test('real module: a forced native scan reports engine native, fastPath bulk, no
   }
 });
 
-test('real module: pausing a native scan stops `scanned` within 200 ms, and resuming finishes it with every entry counted', { skip: process.platform !== 'darwin' && 'the native listing is macOS-only until W4/W5' }, async (t) => {
+test('real module: pausing a native scan stops `scanned` within 200 ms, and resuming finishes it with every entry counted', async (t) => {
   const real = loadReal(t);
   if (!real) return;
   const { root, total } = await buildWideTree(400, 50, 'treemap-native-pause-real-');
@@ -1260,7 +1363,7 @@ test('real module: pausing a native scan stops `scanned` within 200 ms, and resu
   }
 });
 
-test('real module: cancel releases the handle — take throws the cancellation, and a second take says the handle is unknown', { skip: process.platform !== 'darwin' && 'the native listing is macOS-only until W4/W5' }, async (t) => {
+test('real module: cancel releases the handle — take throws the cancellation, and a second take says the handle is unknown', async (t) => {
   const real = loadReal(t);
   if (!real) return;
   const { root } = await buildWideTree(200, 50, 'treemap-native-cancel-real-');
@@ -1290,7 +1393,7 @@ test('real module: cancel releases the handle — take throws the cancellation, 
   }
 });
 
-test('real module: scanTake never blocks — a walk still running is refused and kept, the done walk hands over its columns, and a second take says the handle is unknown', { skip: process.platform !== 'darwin' && 'the native listing is macOS-only until W4/W5' }, async (t) => {
+test('real module: scanTake never blocks — a walk still running is refused and kept, the done walk hands over its columns, and a second take says the handle is unknown', async (t) => {
   const real = loadReal(t);
   if (!real) return;
   const { root, total } = await buildWideTree(200, 50, 'treemap-native-take-real-');
@@ -1330,7 +1433,7 @@ test('real module: scanTake never blocks — a walk still running is refused and
   }
 });
 
-test('real module: the walk result is columns, not copies — typed arrays of the declared kinds with one root and parent < child', { skip: process.platform !== 'darwin' && 'the native listing is macOS-only until W4/W5' }, async (t) => {
+test('real module: the walk result is columns, not copies — typed arrays of the declared kinds with one root and parent < child', async (t) => {
   const real = loadReal(t);
   if (!real) return;
   const { root, total } = await buildWideTree(5, 4, 'treemap-native-columns-real-');
@@ -1353,7 +1456,7 @@ test('real module: the walk result is columns, not copies — typed arrays of th
     for (let i = 1; i < total; i++) assert.ok(cols.parent[i] < i, `parent[${i}] = ${cols.parent[i]}`);
     assert.equal(cols.kind[0], KIND_DIR);
     assert.ok(Number.isNaN(cols.atimeMs[1]), 'atime not asked for is NaN');
-    assert.equal(cols.stats.fastPath, 'bulk');
+    assert.equal(cols.stats.fastPath, NATIVE_FAST_PATH);
     assert.equal(cols.stats.entries, total - 1);
     assert.equal(cols.stats.dirsListed, 6);
     assert.ok(cols.stats.cpuSeconds === null || cols.stats.cpuSeconds >= 0);
