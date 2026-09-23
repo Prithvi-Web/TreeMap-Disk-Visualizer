@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import Module from 'node:module';
@@ -405,6 +406,40 @@ test('the encoded command is a Start-Process RunAs script with the helper and it
   assert.match(script, /exit 1223\b/);
   assert.match(script, /\[Console\]::Error\.WriteLine\(/);
   assert.match(script, /exit 9001\b/);
+});
+
+test('on Windows the script parses as PowerShell, the helper path’s quote and all', { skip: process.platform !== 'win32' && 'PowerShell parses it only on Windows' }, async () => {
+  // The script runs only on a real Windows machine, behind the prompt no CI
+  // can answer; whether it parses is the part CI can prove (the pre-landing
+  // review of 23 Sep 2026). Parsing runs nothing.
+  const { createMftLauncher } = loadMft();
+  const ps = fakeSpawn(exitsWith(0));
+  await createMftLauncher({ ...SAFE, showMessageBox: fakeDialog(CONTINUE).showMessageBox, spawn: ps.spawn, platform: 'win32' })(REQUEST);
+  const script = decodeScript(ps.calls[0]);
+  const parse = [
+    '$tokens = $null; $errors = $null',
+    '[void][System.Management.Automation.Language.Parser]::ParseInput($env:TM_SCRIPT, [ref]$tokens, [ref]$errors)',
+    "if ($errors.Count -gt 0) { $errors | ForEach-Object { $_.Message } } else { 'parsed' }",
+  ].join('; ');
+  const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', parse], {
+    encoding: 'utf8',
+    env: { ...process.env, TM_SCRIPT: script },
+  });
+  assert.equal(out.trim(), 'parsed', script);
+});
+
+test('the script never reads a missing exit code as success, and knows a cancelled prompt by its code or its message', async () => {
+  // Only a real Windows prompt can exercise these lines; each is pinned here
+  // (the pre-landing review of 23 Sep 2026 found them unasserted).
+  const { createMftLauncher, DECLINED_EXIT, PS_FAILED_EXIT } = loadMft();
+  const ps = fakeSpawn(exitsWith(0));
+  await createMftLauncher({ ...SAFE, showMessageBox: fakeDialog(CONTINUE).showMessageBox, spawn: ps.spawn, platform: 'win32' })(REQUEST);
+  const script = decodeScript(ps.calls[0]);
+  assert.ok(script.includes("if ($null -eq $p -or $null -eq $p.ExitCode) { throw 'Windows did not report how the helper finished' }"), `a missing exit code is thrown, never exit 0:\n${script}`);
+  assert.ok(script.includes(`$x -is [System.ComponentModel.Win32Exception] -and $x.NativeErrorCode -eq ${DECLINED_EXIT}`), 'the cancel, by its code, on the exception or the one inside it');
+  assert.ok(script.includes(`$cancelled = (New-Object System.ComponentModel.Win32Exception ${DECLINED_EXIT}).Message`), 'the message Windows gives that code');
+  assert.ok(script.includes(`if ($cancelled -and "$($e.Message)".Contains($cancelled)) { exit ${DECLINED_EXIT} }`), 'is a cancel too, where no code survives');
+  assert.ok(script.indexOf('.NativeErrorCode') < script.indexOf(`exit ${PS_FAILED_EXIT}`), 'both before anything is called a failure');
 });
 
 test('encodeCommand is base64 of UTF-16LE, the only encoding -EncodedCommand accepts', () => {
