@@ -602,6 +602,8 @@ export type MftLauncher = (request: MftLaunchRequest) => Promise<MftLaunchOutcom
 export interface MftModule {
   mftTake(path: string): WalkResult;
   mftCrossCheck(paths: string[], expected: MftExpected[]): MftLiveCheck[];
+  /** The helper's checks that need no administrator; absent from a module built before it existed. */
+  mftPrecheck?(root: string): string | null;
 }
 /** Seams for tests; the app passes none. */
 export interface MftDeps {
@@ -794,6 +796,13 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
   const found = deps.module === undefined ? mftModuleOrReason() : (deps.module ?? 'no native module was given');
   if (typeof found === 'string') return notUsed(found, true);
   const mod = found;
+  // The helper's own checks that need no administrator (a local drive
+  // Windows can type, formatted NTFS), run here first: a drive the elevated
+  // helper would only refuse is never the subject of a prompt (the
+  // pre-landing review of 23 Sep 2026). A module built before the check
+  // existed goes ahead as before.
+  const driveRefusal = typeof mod.mftPrecheck === 'function' ? mod.mftPrecheck(rootPath) : null;
+  if (driveRefusal !== null) return notUsed(`${driveRefusal}, so nobody was asked`, false);
   const helperPath = deps.helperPath === undefined ? (mftHelperCandidates().find((p) => fs.existsSync(p)) ?? null) : deps.helperPath;
   if (!helperPath) return notUsed(`no ${MFT_HELPER_FILE} ships with this build (looked at ${mftHelperCandidates().join(', ')})`, true);
   // Nothing a program running as the user could change is started as

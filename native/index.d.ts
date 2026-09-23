@@ -310,6 +310,12 @@ export function mftTake(path: string): WalkResult;
  * `SystemRoot` or `windir`, which a program running as the user can shadow.
  */
 export function systemDirectory(): string | null;
+/**
+ * The NTFS turbo mode's checks that need no administrator (the root's drive
+ * is local, typed, NTFS), run before the prompt: null when they pass, and
+ * always null off Windows; otherwise the helper's own sentence.
+ */
+export function mftPrecheck(root: string): string | null;
 
 /** What the master file table said about one entry, for `mftCrossCheck`. */
 export interface MftExpected {

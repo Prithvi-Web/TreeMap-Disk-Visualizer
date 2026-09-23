@@ -666,6 +666,28 @@ test('after the prompt, a launch that fails, a helper that exits non-zero or a r
   }
 });
 
+test('a drive the helper would refuse is refused before anyone is asked, by the helper’s own checks run unelevated', async () => {
+  // A network drive, one Windows cannot type, or a volume that is not NTFS:
+  // the prompt once came first, and the elevated helper then refused (the
+  // pre-landing review of 23 Sep 2026: the red team). A module built before
+  // mftPrecheck existed goes ahead as before.
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const refusing = fakeLauncher({ kind: 'exited', code: 0 });
+  const sentence = 'C:\\ is a network drive, whose table is on another machine';
+  const precheck: MftModule = { ...fakeModule(flat(3)).module, mftPrecheck: () => sentence };
+  const r = recordFor(ROOT);
+  const out = await runMftWalk(r.scan, r.store, ROOT, { launcher: refusing.launcher, module: precheck, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
+  assert.equal(refusing.requests.length, 0, 'nobody was asked');
+  assert.ok(!out.used && out.failed === false, 'a rule, not a failure');
+  assert.ok(out.reason.includes(sentence), out.reason);
+  const passing = fakeLauncher({ kind: 'exited', code: 0 });
+  const older = await runMftWalk(recordFor(ROOT).scan, recordFor(ROOT).store, ROOT, { launcher: passing.launcher, module: fakeModule(flat(3)).module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
+  assert.equal(passing.requests.length, 1, 'a module without the check asks as before');
+  assert.ok(older.used, JSON.stringify(older));
+  fs.rmSync(folder, { recursive: true, force: true });
+});
+
 test('a helper that refuses before writing anything most often will not write to the folder it was given, and the reason says why', async () => {
   resetMftSessionForTests();
   const folder = tempFolder();
@@ -736,6 +758,18 @@ test('systemDirectory: the kernel’s answer on Windows, a full path to its Syst
     assert.ok(fs.existsSync(path.join(dir, 'WindowsPowerShell', 'v1.0', 'powershell.exe')), 'PowerShell is where the launcher will look');
   } else {
     assert.equal(dir, null);
+  }
+});
+
+test('mftPrecheck: nothing to say off Windows; on Windows the runner’s own system drive passes, and a path with no drive does not', () => {
+  const mod = realModule() as unknown as { mftPrecheck?: (root: string) => string | null };
+  assert.equal(typeof mod.mftPrecheck, 'function', 'the module exports mftPrecheck');
+  if (process.platform === 'win32') {
+    const drive = `${(process.env.SystemDrive ?? 'C:').replace(/\\$/, '')}\\`;
+    assert.equal(mod.mftPrecheck?.(drive), null, `${drive} is a local NTFS volume`);
+    assert.match(mod.mftPrecheck?.('relative\\folder') ?? '', /absolute/, 'a relative root is refused with the reader’s own sentence');
+  } else {
+    assert.equal(mod.mftPrecheck?.(os.tmpdir()), null);
   }
 });
 

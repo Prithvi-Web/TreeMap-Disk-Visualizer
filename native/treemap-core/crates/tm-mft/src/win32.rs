@@ -232,6 +232,40 @@ pub fn check_read(offset: u64, wanted: usize, got: usize) -> Result<(), MftError
     })
 }
 
+/// The volume the checks settled on, for the reads that follow them.
+struct Checked {
+    volume: String,
+    device: String,
+    information: VolumeInformation,
+}
+
+/// The checks that need no administrator, in the module docs' order: the
+/// root is a path with a drive, its volume a local drive Windows can type,
+/// formatted NTFS. The root itself is not opened.
+fn unprivileged_checks(api: &dyn VolumeApi, root: &Path) -> Result<Checked, MftError> {
+    check_root(root)?;
+    let volume = api.volume_path_name(root)?;
+    let device = device_path(&volume)?;
+    check_drive_type(api.drive_type(&volume), &volume)?;
+    let information = api.volume_information(&volume)?;
+    check_file_system(&information.file_system, &volume)?;
+    Ok(Checked {
+        volume,
+        device,
+        information,
+    })
+}
+
+/// What the app asks before it raises any prompt: the helper's own checks
+/// that need no administrator ([`unprivileged_checks`]), so a network drive,
+/// one Windows cannot type or a volume that is not NTFS is refused before
+/// anyone is asked about a drive the elevated helper would only refuse (the
+/// pre-landing review of 23 Sep 2026). The root itself is never opened: it
+/// may be exactly the folder only an administrator can open.
+pub fn precheck_with(api: &dyn VolumeApi, root: &Path) -> Result<(), MftError> {
+    unprivileged_checks(api, root).map(|_| ())
+}
+
 /// The scan root's subtree from its volume's master file table, through
 /// `api`: every check in the module docs' order, then
 /// [`crate::volume::read_mft`]. The stats' times run from the first call.
@@ -242,12 +276,11 @@ pub fn read_volume_with(
 ) -> Result<WalkOutput, MftError> {
     let started = Instant::now();
     let cpu_started = thread_cpu_seconds();
-    check_root(root)?;
-    let volume = api.volume_path_name(root)?;
-    let device = device_path(&volume)?;
-    check_drive_type(api.drive_type(&volume), &volume)?;
-    let information = api.volume_information(&volume)?;
-    check_file_system(&information.file_system, &volume)?;
+    let Checked {
+        volume,
+        device,
+        information,
+    } = unprivileged_checks(api, root)?;
     let identity = api.root_identity(root)?;
     check_same_volume(identity.volume_serial, information.serial)?;
     let mut opened = api.open_volume(&device, &volume)?;
@@ -316,7 +349,7 @@ mod os {
 
     use super::{
         IO_ALIGN, OpenedVolume, RootIdentity, VolumeApi, VolumeInformation, aligned_window,
-        check_read, file_reference, open_error, read_volume_with, text_until_nul,
+        check_read, file_reference, open_error, precheck_with, read_volume_with, text_until_nul,
     };
     use crate::volume::{MftError, VOLUME_DATA_BYTES, Volume};
 
@@ -527,6 +560,12 @@ mod os {
         }
     }
 
+    /// [`precheck_with`] through the Windows calls: what the app asks, without
+    /// elevation, before it raises a prompt.
+    pub fn precheck(root: &Path) -> Result<(), MftError> {
+        precheck_with(&WindowsApi, root)
+    }
+
     /// The scan root's subtree, read from its volume's master file table:
     /// [`read_volume_with`] through the Windows calls. Needs an elevated
     /// process; without one it is [`MftError::NotElevated`].
@@ -558,4 +597,4 @@ mod os {
 }
 
 #[cfg(windows)]
-pub use os::{read_volume, system_directory};
+pub use os::{precheck, read_volume, system_directory};

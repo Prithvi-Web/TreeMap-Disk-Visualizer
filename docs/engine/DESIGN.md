@@ -431,6 +431,11 @@ fixed, as built:
    for nothing; and the app's temp folder is worked out the helper's way
    (TMP before TEMP, `helperTempRoot`), since a folder the helper does not
    call its own is one it refuses (the pre-landing review of 23 Sep 2026).
+   Before any question, the app runs the helper's own checks that need no
+   administrator (`mftPrecheck`: the root's drive is local, one Windows can
+   type, formatted NTFS), so a network, unknown or non-NTFS drive is never
+   the subject of a prompt the helper would only refuse; the root itself is
+   not opened there, since it may be what only an administrator can open.
    Only a scan a person started in the window asks (`ScanOptions.interactive`,
    which the window's `POST /api/scan` sends; the scheduler, autopilot, a
    paired computer, MCP and API calls without it list the folders and say

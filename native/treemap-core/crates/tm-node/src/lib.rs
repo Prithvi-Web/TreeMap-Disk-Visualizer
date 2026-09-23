@@ -24,7 +24,10 @@
 //! the handle. The walk obeys the same process-wide governor `governorConfigure`
 //! drives.
 //!
-//! The Windows MFT turbo mode (M6) adds two exports. `mftTake` reads the
+//! The Windows MFT turbo mode (M6) adds four exports. `mftPrecheck` runs the
+//! helper's checks that need no administrator (the root's drive is local,
+//! typed, NTFS) before the app asks, and `systemDirectory` names the kernel's
+//! System32, where the launcher finds PowerShell. `mftTake` reads the
 //! columns file `tm-mft-helper` — the one elevated process, launched by
 //! Electron — wrote under the app's temp folder, and hands the columns over
 //! exactly as `scanTake` does, or throws the helper's refusal. `mftCrossCheck`
@@ -35,7 +38,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, TryLockError};
 
@@ -725,7 +728,7 @@ pub fn mft_take(path: String) -> Result<WalkResult> {
 /// if Windows does not answer). The NTFS turbo mode's launcher starts
 /// PowerShell from it by its full path, never by name or from an
 /// environment variable (the third security review of M6).
-#[napi(js_name = "systemDirectory")]
+#[napi(js_name = "systemDirectory", catch_unwind)]
 pub fn system_directory() -> Option<String> {
     system_directory_here()
 }
@@ -737,6 +740,27 @@ fn system_directory_here() -> Option<String> {
 
 #[cfg(not(windows))]
 fn system_directory_here() -> Option<String> {
+    None
+}
+
+/// The NTFS turbo mode's checks that need no administrator — the root's
+/// drive is a local drive Windows can type, formatted NTFS — run by the app
+/// before it raises a prompt: `null` when they pass (and on every system but
+/// Windows, which has no such mode), otherwise the helper's own sentence, so
+/// nobody is asked about a drive the elevated helper would only refuse (the
+/// pre-landing review of 23 Sep 2026).
+#[napi(js_name = "mftPrecheck", catch_unwind)]
+pub fn mft_precheck(root: String) -> Option<String> {
+    mft_precheck_here(&PathBuf::from(root))
+}
+
+#[cfg(windows)]
+fn mft_precheck_here(root: &Path) -> Option<String> {
+    tm_mft::precheck(root).err().map(|e| e.to_string())
+}
+
+#[cfg(not(windows))]
+fn mft_precheck_here(_root: &Path) -> Option<String> {
     None
 }
 

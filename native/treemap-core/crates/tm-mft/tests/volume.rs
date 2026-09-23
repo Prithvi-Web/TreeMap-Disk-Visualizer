@@ -31,7 +31,7 @@ use tm_mft::win32::{
 use tm_mft::{
     BuildError, Chunk, ExtentError, Geometry, MAX_CHUNK_BYTES, MftError, MftExtents, OpenedVolume,
     RecordError, RootIdentity, Volume, VolumeApi, VolumeFacts, VolumeInformation, plan_chunks,
-    read_mft, read_volume_with,
+    precheck_with, read_mft, read_volume_with,
 };
 use tm_walk::WalkOutput;
 use tm_walk::platform::thread_cpu_seconds;
@@ -1979,6 +1979,67 @@ fn scripted() -> Result<(Script, Reads), String> {
         Script::ntfs(image, volume_data(4096, 1024, 16, 64 * 1024)),
         reads,
     ))
+}
+
+#[test]
+fn the_precheck_refuses_a_drive_the_helper_would_refuse_and_opens_nothing() -> TestResult {
+    type Setup = fn(&mut Script);
+    // What the app asks before any prompt (the pre-landing review of 23 Sep
+    // 2026): a network drive, one Windows cannot type, a volume that is not
+    // NTFS — refused here, unelevated, so nobody is asked about a drive the
+    // elevated helper would only refuse. The root itself is never opened: it
+    // may be exactly the folder only an administrator can open.
+    let root = scan_root();
+    let (script, _) = scripted()?;
+    assert_eq!(precheck_with(&script, &root), Ok(()));
+    assert_eq!(
+        script.calls(),
+        vec![
+            format!("GetVolumePathNameW {}", root.display()),
+            "GetDriveTypeW C:\\".to_owned(),
+            "GetVolumeInformationW C:\\".to_owned(),
+        ],
+        "a local NTFS drive passes, having opened nothing"
+    );
+    let refusals: [(Setup, MftError); 3] = [
+        (
+            |s| s.drive_type = DRIVE_REMOTE,
+            MftError::NetworkVolume {
+                volume: "C:\\".to_owned(),
+            },
+        ),
+        (
+            |s| s.drive_type = DRIVE_UNKNOWN,
+            MftError::NoVolume {
+                volume: "C:\\".to_owned(),
+            },
+        ),
+        (
+            |s| {
+                s.information = Ok(VolumeInformation {
+                    file_system: "exFAT".to_owned(),
+                    serial: SERIAL,
+                });
+            },
+            MftError::NotNtfs {
+                volume: "C:\\".to_owned(),
+                file_system: "exFAT".to_owned(),
+            },
+        ),
+    ];
+    for (change, want) in refusals {
+        let (mut script, _) = scripted()?;
+        change(&mut script);
+        assert_eq!(precheck_with(&script, &root), Err(want.clone()), "{want}");
+        let calls = script.calls();
+        assert!(
+            calls
+                .iter()
+                .all(|c| !c.starts_with("GetFileInformationByHandle") && !c.starts_with("open ")),
+            "{want}: {calls:?}"
+        );
+    }
+    Ok(())
 }
 
 fn every_call(root: &Path) -> Vec<String> {
