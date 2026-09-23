@@ -237,6 +237,25 @@ fn a_dos_only_name_is_never_an_entry_and_a_dos_alias_adds_none() -> TestResult {
 }
 
 #[test]
+fn two_files_whose_references_differ_past_2_53_are_never_one_family() -> TestResult {
+    // A reference carries its record's sequence number in bits 48..64, so a
+    // record reused 32 times or more has one at or above 2^53, where a double
+    // rounds neighbours together. Keyed as doubles, records 4096 and 4097 at
+    // sequence 40 were one hard-link family, and the ingest dropped the
+    // second file's bytes as a duplicate (the pre-landing review of 23 Sep
+    // 2026).
+    let mut a = file(4_096, ROOT, "a.bin", 10);
+    a.sequence = 40;
+    let mut b = file(4_097, ROOT, "b.bin", 20);
+    b.sequence = 40;
+    let out = build(&table([root(), a, b]))?;
+    assert!(out.hardlinks.is_empty(), "{:?}", out.hardlinks);
+    assert_eq!(out.size.get(node(&out, "a.bin")?), Some(&10.0));
+    assert_eq!(out.size.get(node(&out, "b.bin")?), Some(&20.0));
+    Ok(())
+}
+
+#[test]
 fn a_hard_link_in_two_directories_is_two_entries_with_one_file_reference() -> TestResult {
     let mut linked = file(110, ROOT, "link-a", 77);
     linked.sequence = 3;
@@ -265,15 +284,8 @@ fn a_hard_link_in_two_directories_is_two_entries_with_one_file_reference() -> Te
         vec![a, b],
         "both names; never the lone link, never a symlink's two names"
     );
-    let reference = (3_u64 << 48) + 110;
-    for h in &out.hardlinks {
-        assert_eq!(h.dev.to_bits(), f64::from(SERIAL).to_bits());
-        assert_eq!(
-            h.ino.to_bits(),
-            (reference as f64).to_bits(),
-            "the file reference is the id"
-        );
-    }
+    let families: Vec<u32> = out.hardlinks.iter().map(|h| h.family).collect();
+    assert_eq!(families, vec![0, 0], "one record, one family");
     assert_eq!((at(&out.size, a)?, at(&out.size, b)?), (77.0, 77.0));
     Ok(())
 }
@@ -1105,7 +1117,7 @@ impl Lister for Oracle {
             mtime_ms: times.mtime_ms,
             atime_ms: times.atime_ms,
             dev: f64::from(SERIAL),
-            ino: r.reference() as f64,
+            ino: u128::from(r.reference()),
             nlink: 0,
             withheld: false,
         })
@@ -1181,13 +1193,10 @@ fn assert_same_columns(mft: &WalkOutput, walk: &WalkOutput) {
     );
     assert_eq!(bits(&mft.mtime_ms), bits(&walk.mtime_ms), "mtimes");
     assert_eq!(bits(&mft.atime_ms), bits(&walk.atime_ms), "atimes");
-    let links = |o: &WalkOutput| -> Vec<(u32, u64, u64)> {
-        o.hardlinks
-            .iter()
-            .map(|h| (h.node, h.dev.to_bits(), h.ino.to_bits()))
-            .collect()
-    };
-    assert_eq!(links(mft), links(walk), "hard links");
+    assert_eq!(
+        mft.hardlinks, walk.hardlinks,
+        "hard links, family numbers included"
+    );
     assert_eq!(mft.refusals, walk.refusals, "refusals");
     let counts = |o: &WalkOutput| {
         let s = &o.stats;

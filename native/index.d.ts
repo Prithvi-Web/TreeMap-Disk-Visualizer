@@ -236,10 +236,16 @@ export interface WalkResult {
   mtimeMs: Float64Array;
   /** The same for atime; NaN when not asked for or not recorded. */
   atimeMs: Float64Array;
-  /** Every leaf whose link count exceeds one, sorted by node: its index, `st_dev` and `st_ino` as doubles (P3-7). */
+  /**
+   * Every leaf that shares its file with another name, sorted by node: its
+   * index, and its family's number — the same for every name of one file,
+   * assigned in Rust from the file's exact identity (`(st_dev, st_ino)`, or the
+   * whole 128-bit file id on Windows). An id never crosses as a double: a
+   * reused NTFS record's id passes 2^53, where doubles round neighbours
+   * together (P3-7, amended by the pre-landing review of 23 Sep 2026).
+   */
   hardlinkNode: Uint32Array;
-  hardlinkDev: Float64Array;
-  hardlinkIno: Float64Array;
+  hardlinkFamily: Uint32Array;
   /** Every directory that could not be listed, sorted by node, and why: 1 denied, 2 vanished, 3 unreadable. */
   refusalNode: Uint32Array;
   refusalWhy: Uint8Array;

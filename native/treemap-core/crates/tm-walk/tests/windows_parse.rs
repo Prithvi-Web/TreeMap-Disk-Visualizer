@@ -274,11 +274,7 @@ fn parses_chained_records_a_directory_a_file_and_a_last_name_at_the_buffer_end()
         filetime_ms(FT_2024 + 10_000_000).to_bits()
     );
     assert_eq!(a.dev.to_bits(), f64::from(SERIAL).to_bits());
-    assert_eq!(
-        a.ino.to_bits(),
-        (0x0001_0000_0000_2A2A_u64 as f64).to_bits(),
-        "the low 64 bits of the 128-bit id, as Node's double"
-    );
+    assert_eq!(a.ino, (0x0001_0000_0000_2A2A), "the whole 128-bit id");
     assert_eq!(
         a.nlink, 0,
         "the record has no link count: the walk detects families by collision"
@@ -286,10 +282,7 @@ fn parses_chained_records_a_directory_a_file_and_a_last_name_at_the_buffer_end()
     assert!(!a.withheld);
     let long = entry(&map, &long_name)?;
     assert_eq!(long.size.to_bits(), 7.0_f64.to_bits());
-    assert_eq!(
-        long.ino.to_bits(),
-        (0x0003_0000_0000_0777_u64 as f64).to_bits()
-    );
+    assert_eq!(long.ino, (0x0003_0000_0000_0777));
     assert_eq!(listing.denied_entries + listing.unreadable_entries, 0);
     Ok(())
 }
@@ -552,7 +545,7 @@ fn a_record_without_an_id_or_an_allocation_is_withheld() -> TestResult {
     parse_records(&raw, &mut |rec: &Record<'_>| {
         let partial = Record {
             allocation: None,
-            file_id_low: None,
+            file_id: None,
             ..*rec
         };
         stage_record(
@@ -573,7 +566,35 @@ fn a_record_without_an_id_or_an_allocation_is_withheld() -> TestResult {
         "what it does have is kept"
     );
     assert_eq!(a.alloc.to_bits(), 0.0_f64.to_bits());
-    assert_eq!(a.ino.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(a.ino, 0);
+    Ok(())
+}
+
+#[test]
+fn every_bit_of_a_128_bit_file_id_keeps_two_files_apart() -> TestResult {
+    // A file id is an identity, not a quantity. NTFS keeps a record's
+    // sequence number in bits 48..64 of its reference, so a record reused 32
+    // times or more has an id at or above 2^53, where a double rounds
+    // neighbours together; ReFS ids can differ only above bit 64. As doubles
+    // (the low 64 bits, converted), two different files became one hard-link
+    // family, and one's bytes were dropped as a duplicate of the other's (the
+    // pre-landing review of 23 Sep 2026).
+    let past_2_53: u128 = (40 << 48) | 4_096;
+    let mut a = file("a.bin", 1);
+    a.id = past_2_53;
+    let mut b = file("b.bin", 2);
+    b.id = past_2_53 + 1;
+    let mut c = file("c.bin", 3);
+    c.id = (7 << 64) | past_2_53;
+    let listing = staged(&[a, b, c], &FakeReparse::default(), false)?;
+    let map = by_name(&listing);
+    let (a, b, c) = (
+        entry(&map, "a.bin")?,
+        entry(&map, "b.bin")?,
+        entry(&map, "c.bin")?,
+    );
+    assert_ne!(a.ino, b.ino, "neighbouring references past 2^53");
+    assert_ne!(a.ino, c.ino, "ids that differ only above bit 64");
     Ok(())
 }
 
@@ -882,7 +903,7 @@ struct ScriptedTree {
     dirs: HashMap<PathBuf, Vec<(String, Meta)>>,
 }
 
-fn dir_meta(ino: f64) -> Meta {
+fn dir_meta(ino: u128) -> Meta {
     Meta {
         kind: KIND_DIR,
         flags: 0,
@@ -897,7 +918,7 @@ fn dir_meta(ino: f64) -> Meta {
     }
 }
 
-fn file_meta(size: f64, ino: f64, withheld: bool) -> Meta {
+fn file_meta(size: f64, ino: u128, withheld: bool) -> Meta {
     Meta {
         kind: KIND_FILE,
         size,
@@ -937,7 +958,7 @@ impl ScriptedTree {
 
 impl Lister for ScriptedTree {
     fn stat_dir(&self, _path: &Path, _want_atime: bool) -> Result<Meta, Refusal> {
-        Ok(dir_meta(1.0))
+        Ok(dir_meta(1))
     }
 
     fn list(
@@ -983,23 +1004,23 @@ fn node_by_name(out: &WalkOutput, name: &str) -> Result<u32, String> {
 fn file_id_collisions_yield_exactly_the_legacy_hard_link_families() -> TestResult {
     let mut tree = ScriptedTree::new();
     // A family of three across two directories.
-    tree.add("", "a.bin", file_meta(10.0, 700.0, false));
-    tree.add("", "b.bin", file_meta(10.0, 700.0, false));
-    tree.add("", "sub", dir_meta(2.0));
-    tree.add("sub", "c.bin", file_meta(10.0, 700.0, false));
+    tree.add("", "a.bin", file_meta(10.0, 700, false));
+    tree.add("", "b.bin", file_meta(10.0, 700, false));
+    tree.add("", "sub", dir_meta(2));
+    tree.add("sub", "c.bin", file_meta(10.0, 700, false));
     // One link inside the scan, its sibling outside: a lone id.
-    tree.add("", "lone.bin", file_meta(5.0, 701.0, false));
+    tree.add("", "lone.bin", file_meta(5.0, 701, false));
     // A directory sharing an id with the family: never a member.
-    tree.add("", "dirx", dir_meta(700.0));
+    tree.add("", "dirx", dir_meta(700));
     // A second, independent family of two.
-    tree.add("", "sub2", dir_meta(3.0));
-    tree.add("sub2", "p.bin", file_meta(1.0, 800.0, false));
-    tree.add("sub2", "q.bin", file_meta(1.0, 800.0, false));
+    tree.add("", "sub2", dir_meta(3));
+    tree.add("sub2", "p.bin", file_meta(1.0, 800, false));
+    tree.add("sub2", "q.bin", file_meta(1.0, 800, false));
     // Two withheld entries with the unknown id 0: never matched.
-    tree.add("", "w1.bin", file_meta(1.0, 0.0, true));
-    tree.add("sub", "w2.bin", file_meta(1.0, 0.0, true));
+    tree.add("", "w1.bin", file_meta(1.0, 0, true));
+    tree.add("sub", "w2.bin", file_meta(1.0, 0, true));
     // A symlink sharing an id with a file: symlinks are not keyed, as in the legacy walker.
-    let mut link = file_meta(3.0, 701.0, false);
+    let mut link = file_meta(3.0, 701, false);
     link.kind = KIND_SYMLINK;
     tree.add("", "link", link);
 
@@ -1017,15 +1038,20 @@ fn file_id_collisions_yield_exactly_the_legacy_hard_link_families() -> TestResul
         nodes, expected,
         "one ref per family member, sorted by node; none for the lone file, the directory, the symlink or the withheld ids"
     );
-    for h in &out.hardlinks {
-        assert_eq!(h.dev.to_bits(), f64::from(SERIAL).to_bits());
-        let ino: f64 = if h.node < node_by_name(&out, "p.bin")? {
-            700.0
-        } else {
-            800.0
-        };
-        assert_eq!(h.ino.to_bits(), ino.to_bits(), "node {}", h.node);
-    }
+    let family_of = |name: &str| -> Result<u32, String> {
+        let node = node_by_name(&out, name)?;
+        out.hardlinks
+            .iter()
+            .find(|h| h.node == node)
+            .map(|h| h.family)
+            .ok_or_else(|| format!("{name} has no ref"))
+    };
+    let abc = family_of("a.bin")?;
+    assert_eq!(family_of("b.bin")?, abc, "one file, one family");
+    assert_eq!(family_of("c.bin")?, abc, "across directories");
+    let pq = family_of("p.bin")?;
+    assert_eq!(family_of("q.bin")?, pq);
+    assert_ne!(abc, pq, "two files, two families");
     assert_eq!(out.stats.unreadable_entries, 2, "the two withheld entries");
     Ok(())
 }
@@ -1033,10 +1059,10 @@ fn file_id_collisions_yield_exactly_the_legacy_hard_link_families() -> TestResul
 #[test]
 fn a_link_count_that_was_reported_still_wins_over_collision_detection() -> TestResult {
     let mut tree = ScriptedTree::new();
-    let mut counted = file_meta(10.0, 900.0, false);
+    let mut counted = file_meta(10.0, 900, false);
     counted.nlink = 2;
     tree.add("", "counted.bin", counted);
-    let mut single = file_meta(10.0, 901.0, false);
+    let mut single = file_meta(10.0, 901, false);
     single.nlink = 1;
     tree.add("", "single-a.bin", single);
     tree.add("", "single-b.bin", single);

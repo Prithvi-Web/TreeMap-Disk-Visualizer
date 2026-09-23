@@ -61,8 +61,10 @@ pub struct Canonical {
     pub mtime: Vec<u64>,
     /// The access-time column, as bits.
     pub atime: Vec<u64>,
-    /// `(node, dev bits, ino bits)` per hard-link ref, sorted.
-    pub hardlinks: Vec<(usize, u64, u64)>,
+    /// `(node, family)` per hard-link ref, sorted, the family named by its
+    /// smallest canonical member: two engines number the same families in
+    /// their own orders, so the numbers themselves are not compared.
+    pub hardlinks: Vec<(usize, usize)>,
     /// `(node, why)` per refused directory, sorted.
     pub refusals: Vec<(usize, u8)>,
     /// The counters.
@@ -179,9 +181,16 @@ pub fn canonical(out: &WalkOutput) -> Result<Canonical, String> {
         c.mtime.push(column(&out.mtime_ms, old, "mtime")?.to_bits());
         c.atime.push(column(&out.atime_ms, old, "atime")?.to_bits());
     }
+    let mut first_of: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
     for h in &out.hardlinks {
         let node = column(&canonical_id, h.node as usize, "hard-link node")?;
-        c.hardlinks.push((node, h.dev.to_bits(), h.ino.to_bits()));
+        let first = first_of.entry(h.family).or_insert(node);
+        *first = (*first).min(node);
+    }
+    for h in &out.hardlinks {
+        let node = column(&canonical_id, h.node as usize, "hard-link node")?;
+        let family = first_of.get(&h.family).copied().unwrap_or(node);
+        c.hardlinks.push((node, family));
     }
     c.hardlinks.sort_unstable();
     for r in &out.refusals {
@@ -275,14 +284,7 @@ pub fn differences(mft: &Canonical, listing: &Canonical, limit: usize) -> Vec<St
     let links = |c: &Canonical| -> Vec<String> {
         c.hardlinks
             .iter()
-            .map(|(node, dev, ino)| {
-                format!(
-                    "{:?} dev {} ino {}",
-                    path_of(c, *node),
-                    float(*dev),
-                    float(*ino)
-                )
-            })
+            .map(|(node, family)| format!("{:?} with {:?}", path_of(c, *node), path_of(c, *family)))
             .collect()
     };
     if mft.hardlinks != listing.hardlinks {

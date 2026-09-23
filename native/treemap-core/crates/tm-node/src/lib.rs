@@ -477,12 +477,11 @@ pub struct WalkResult {
     pub mtime_ms: Float64Array,
     /// Access time the same way; NaN when not asked for or not recorded.
     pub atime_ms: Float64Array,
-    /// Every leaf whose link count exceeds one, sorted by node: its index.
+    /// Every leaf that shares its file with another name, sorted by node: its index.
     pub hardlink_node: Uint32Array,
-    /// Its `st_dev` as a double.
-    pub hardlink_dev: Float64Array,
-    /// Its `st_ino` as a double.
-    pub hardlink_ino: Float64Array,
+    /// Its family's number, the same for every name of one file (an id never
+    /// crosses as a double: the pre-landing review of 23 Sep 2026).
+    pub hardlink_family: Uint32Array,
     /// Every directory that could not be listed, sorted by node: its index.
     pub refusal_node: Uint32Array,
     /// Why: 1 denied, 2 vanished, 3 unreadable.
@@ -509,12 +508,10 @@ fn columns(output: WalkOutput) -> WalkResult {
         stats,
     } = output;
     let mut hardlink_node = Vec::with_capacity(hardlinks.len());
-    let mut hardlink_dev = Vec::with_capacity(hardlinks.len());
-    let mut hardlink_ino = Vec::with_capacity(hardlinks.len());
+    let mut hardlink_family = Vec::with_capacity(hardlinks.len());
     for link in &hardlinks {
         hardlink_node.push(link.node);
-        hardlink_dev.push(link.dev);
-        hardlink_ino.push(link.ino);
+        hardlink_family.push(link.family);
     }
     let mut refusal_node = Vec::with_capacity(refusals.len());
     let mut refusal_why = Vec::with_capacity(refusals.len());
@@ -533,8 +530,7 @@ fn columns(output: WalkOutput) -> WalkResult {
         mtime_ms: Float64Array::new(mtime_ms),
         atime_ms: Float64Array::new(atime_ms),
         hardlink_node: Uint32Array::new(hardlink_node),
-        hardlink_dev: Float64Array::new(hardlink_dev),
-        hardlink_ino: Float64Array::new(hardlink_ino),
+        hardlink_family: Uint32Array::new(hardlink_family),
         refusal_node: Uint32Array::new(refusal_node),
         refusal_why: Uint8Array::new(refusal_why),
         stats: stats_json(&stats),

@@ -125,8 +125,7 @@ fn output(
     for path in links {
         out.hardlinks.push(HardlinkRef {
             node: id_of(&ids, path)?,
-            dev: 7.0,
-            ino: 42.0,
+            family: 0,
         });
     }
     for (path, why) in refused {

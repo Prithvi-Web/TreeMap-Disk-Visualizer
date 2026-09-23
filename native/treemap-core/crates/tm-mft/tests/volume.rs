@@ -557,21 +557,9 @@ fn assert_expected_tree(out: &WalkOutput) {
     assert_eq!(out.parent, vec![0, 0, 0, 0, 0, 0, 0, 5, 5, 5]);
     assert_eq!(out.stats.entries, 9);
     assert_eq!(out.stats.dirs_listed, 2);
-    // The two names of record 27, keyed by the volume's serial and the
-    // record's file reference.
-    let links: Vec<(u32, u64, u64)> = out
-        .hardlinks
-        .iter()
-        .map(|h| (h.node, h.dev.to_bits(), h.ino.to_bits()))
-        .collect();
-    let key = |node| {
-        (
-            node,
-            f64::from(SERIAL).to_bits(),
-            (reference(1, 27) as f64).to_bits(),
-        )
-    };
-    assert_eq!(links, vec![key(4), key(8)]);
+    // The two names of record 27: one family, told apart from nothing else.
+    let links: Vec<(u32, u32)> = out.hardlinks.iter().map(|h| (h.node, h.family)).collect();
+    assert_eq!(links, vec![(4, 0), (8, 0)]);
 }
 
 // ---------------------------------------------------------------------------

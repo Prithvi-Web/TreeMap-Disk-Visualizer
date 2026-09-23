@@ -179,8 +179,10 @@ pub struct Record<'a> {
     pub last_write: i64,
     /// `LastAccessTime` as FILETIME ticks.
     pub last_access: i64,
-    /// The low 64 bits of the 128-bit file id (Node's `ino`), when the record has one.
-    pub file_id_low: Option<u64>,
+    /// The whole 128-bit file id, when the record has one. Its low 64 bits are
+    /// what Node reports as `ino`, but only the whole id is an identity: ReFS
+    /// ids can differ only above bit 64 (the pre-landing review of 23 Sep 2026).
+    pub file_id: Option<u128>,
 }
 
 impl Record<'_> {
@@ -220,9 +222,9 @@ fn read_u32(buf: &[u8], off: usize) -> Option<u32> {
     Some(u32::from_le_bytes(bytes.try_into().ok()?))
 }
 
-fn read_u64(buf: &[u8], off: usize) -> Option<u64> {
-    let bytes = buf.get(off..off.checked_add(8)?)?;
-    Some(u64::from_le_bytes(bytes.try_into().ok()?))
+fn read_u128(buf: &[u8], off: usize) -> Option<u128> {
+    let bytes = buf.get(off..off.checked_add(16)?)?;
+    Some(u128::from_le_bytes(bytes.try_into().ok()?))
 }
 
 fn read_i64(buf: &[u8], off: usize) -> Option<i64> {
@@ -283,7 +285,7 @@ pub fn parse_records(buf: &[u8], visit: &mut dyn FnMut(&Record<'_>)) -> Result<u
             allocation: Some(read_i64(rec, OFF_ALLOCATION).ok_or_else(unreadable)?),
             last_write: read_i64(rec, OFF_LAST_WRITE).ok_or_else(unreadable)?,
             last_access: read_i64(rec, OFF_LAST_ACCESS).ok_or_else(unreadable)?,
-            file_id_low: Some(read_u64(rec, OFF_FILE_ID).ok_or_else(unreadable)?),
+            file_id: Some(read_u128(rec, OFF_FILE_ID).ok_or_else(unreadable)?),
         };
         if !is_dot_entry(name) {
             visit(&record);
@@ -552,7 +554,7 @@ pub fn stage_record(
     } else {
         rec.allocation.map_or(0.0, |a| a.max(0) as f64)
     };
-    let withheld = kind != KIND_DIR && (rec.allocation.is_none() || rec.file_id_low.is_none());
+    let withheld = kind != KIND_DIR && (rec.allocation.is_none() || rec.file_id.is_none());
     let flags = if is_dataless(attrs, tag) {
         FLAG_DATALESS
     } else {
@@ -573,7 +575,7 @@ pub fn stage_record(
             mtime_ms: filetime_ms(rec.last_write),
             atime_ms,
             dev: f64::from(facts.dev),
-            ino: rec.file_id_low.map_or(0.0, |id| id as f64),
+            ino: rec.file_id.unwrap_or(0),
             nlink: 0,
             withheld,
         },
@@ -941,7 +943,7 @@ mod os {
             mtime_ms: times.mtime_ms,
             atime_ms: times.atime_ms,
             dev: f64::from(info.dwVolumeSerialNumber),
-            ino: size_of_parts(info.nFileIndexHigh, info.nFileIndexLow) as f64,
+            ino: u128::from(size_of_parts(info.nFileIndexHigh, info.nFileIndexLow)),
             nlink: if is_dir { 0 } else { info.nNumberOfLinks },
             withheld: kind != KIND_DIR,
         })
@@ -1149,7 +1151,7 @@ mod os {
             allocation: None,
             last_write: ticks(data.ftLastWriteTime),
             last_access: ticks(data.ftLastAccessTime),
-            file_id_low: None,
+            file_id: None,
         };
         stage_record(&record, facts, dir, &FileReparse, out);
     }

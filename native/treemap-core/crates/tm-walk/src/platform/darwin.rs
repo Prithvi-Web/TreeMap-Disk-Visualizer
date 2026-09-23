@@ -454,10 +454,10 @@ fn parse_entry(
         0
     };
     let ino = if common & libc::ATTR_CMN_FILEID != 0 {
-        cur.u64()? as f64
+        u128::from(cur.u64()?)
     } else {
         withheld = true;
-        0.0
+        0
     };
 
     // The directory group sits between the common and the file group.

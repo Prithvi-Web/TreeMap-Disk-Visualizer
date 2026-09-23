@@ -10,7 +10,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::panic::panic_any;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -45,13 +45,13 @@ fn dir_meta() -> Meta {
         mtime_ms: 1_700_000_000_000.5,
         atime_ms: f64::NAN,
         dev: 16_777_234.0,
-        ino: 1.0,
+        ino: 1,
         nlink: 2,
         withheld: false,
     }
 }
 
-fn file_meta(size: f64, ino: f64, nlink: u32) -> Meta {
+fn file_meta(size: f64, ino: u128, nlink: u32) -> Meta {
     Meta {
         kind: KIND_FILE,
         flags: 0,
@@ -94,7 +94,7 @@ struct FakeTree {
     stat_panic: Option<(u64, String)>,
     delay: Duration,
     fast_path: FastPath,
-    next_ino: f64,
+    next_ino: u128,
     /// Every path `list` was asked for, in call order.
     listed: Mutex<Vec<PathBuf>>,
     list_calls: AtomicU64,
@@ -108,6 +108,16 @@ struct FakeTree {
     file_stats: HashMap<PathBuf, Meta>,
     /// Every path `stat_dir` answered from `file_stats`, in call order.
     file_stat_paths: Mutex<Vec<PathBuf>>,
+    /// Holds each `file_stats` answer until the test lets it go.
+    stat_gate: Option<Arc<StatGate>>,
+}
+
+/// Lets a test act while the walk is inside a family's read: `stat_dir` sets
+/// `reached`, then waits (bounded) for `release`.
+#[derive(Default)]
+struct StatGate {
+    reached: AtomicBool,
+    release: AtomicBool,
 }
 
 impl FakeTree {
@@ -123,7 +133,7 @@ impl FakeTree {
             stat_panic: None,
             delay: Duration::ZERO,
             fast_path: FastPath::Bulk,
-            next_ino: 1_000.0,
+            next_ino: 1_000,
             listed: Mutex::new(Vec::new()),
             list_calls: AtomicU64::new(0),
             stat_calls: AtomicU64::new(0),
@@ -132,6 +142,7 @@ impl FakeTree {
             own_times: HashMap::new(),
             file_stats: HashMap::new(),
             file_stat_paths: Mutex::new(Vec::new()),
+            stat_gate: None,
         }
     }
 
@@ -234,7 +245,7 @@ impl FakeTree {
     }
 
     fn add_file(&mut self, parent_rel: &str, name: &str, size: f64) {
-        self.next_ino += 1.0;
+        self.next_ino += 1;
         let ino = self.next_ino;
         self.add_entry(parent_rel, name.as_bytes(), file_meta(size, ino, 1));
     }
@@ -278,6 +289,10 @@ impl Lister for FakeTree {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .push(path.to_path_buf());
+            if let Some(gate) = &self.stat_gate {
+                gate.reached.store(true, Ordering::SeqCst);
+                let _released = wait_until(SETTLE, || gate.release.load(Ordering::SeqCst));
+            }
             return Ok(*meta);
         }
         let call = self.stat_calls.fetch_add(1, Ordering::SeqCst);
@@ -789,7 +804,7 @@ fn never_descend_makes_a_childless_directory_node() -> TestResult {
 #[test]
 fn a_withheld_attribute_keeps_the_entry_with_unknown_values_and_counts_it() -> TestResult {
     let mut tree = FakeTree::new("/fake");
-    let mut withheld = file_meta(0.0, 42.0, 1);
+    let mut withheld = file_meta(0.0, 42, 1);
     withheld.mtime_ms = f64::NAN;
     withheld.withheld = true;
     tree.add_entry("", b"odd.bin", withheld);
@@ -814,9 +829,9 @@ fn a_withheld_attribute_keeps_the_entry_with_unknown_values_and_counts_it() -> T
 #[test]
 fn hardlink_refs_exist_only_for_shared_inodes() -> TestResult {
     let mut tree = FakeTree::new("/fake");
-    tree.add_entry("", b"one.bin", file_meta(10.0, 500.0, 2));
-    tree.add_entry("", b"two.bin", file_meta(10.0, 500.0, 2));
-    tree.add_entry("", b"alone.bin", file_meta(10.0, 501.0, 1));
+    tree.add_entry("", b"one.bin", file_meta(10.0, 500, 2));
+    tree.add_entry("", b"two.bin", file_meta(10.0, 500, 2));
+    tree.add_entry("", b"alone.bin", file_meta(10.0, 501, 1));
     let mut shared_dir = dir_meta();
     shared_dir.nlink = 5;
     tree.add_entry("", b"dir", shared_dir);
@@ -834,10 +849,24 @@ fn hardlink_refs_exist_only_for_shared_inodes() -> TestResult {
         nodes, expected,
         "one ref per member, none for a lone file or a directory"
     );
-    for h in &out.hardlinks {
-        assert_eq!(h.ino.to_bits(), 500.0_f64.to_bits());
-        assert_eq!(h.dev.to_bits(), 16_777_234.0_f64.to_bits());
-    }
+    let families: Vec<u32> = out.hardlinks.iter().map(|h| h.family).collect();
+    assert_eq!(families, vec![0, 0], "one file, one family");
+    Ok(())
+}
+
+#[test]
+fn two_counted_files_whose_inodes_differ_past_2_53_are_two_families() -> TestResult {
+    // The POSIX half of the exact key: a link count above one makes a name a
+    // family member on its own, and two such files stay two families however
+    // close their ids are. As doubles, 2^53 and 2^53 + 1 are one number.
+    let mut tree = FakeTree::new("/fake");
+    let past_2_53: u128 = 1 << 53;
+    tree.add_entry("", b"a.bin", file_meta(10.0, past_2_53, 2));
+    tree.add_entry("", b"b.bin", file_meta(20.0, past_2_53 + 1, 2));
+    let (_, out) = run(tree, options(Path::new("/fake")), 1)?;
+    let families: Vec<u32> = out.hardlinks.iter().map(|h| h.family).collect();
+    assert_eq!(families.len(), 2, "{:?}", out.hardlinks);
+    assert_ne!(families.first(), families.get(1), "two files, two families");
     Ok(())
 }
 
@@ -850,7 +879,7 @@ fn a_directorys_children_are_numbered_in_the_order_its_lister_hands_them_over_on
     // listing tm-mft's tests walk on macOS and Linux.
     let listed: [&[u8]; 6] = [b"b", b"a2", b"C", b"a", b"\xC3\xA4", b"a-"];
     let mut tree = FakeTree::new("/fake");
-    for (name, ino) in listed.iter().zip([10.0, 11.0, 12.0, 13.0, 14.0, 15.0]) {
+    for (name, ino) in listed.iter().zip([10, 11, 12, 13, 14, 15]) {
         tree.add_entry("", name, file_meta(1.0, ino, 1));
     }
     let (_, out) = run(tree, options(Path::new("/fake")), 1)?;
@@ -882,7 +911,7 @@ fn a_hard_link_family_found_by_file_id_takes_its_size_and_times_from_the_file_it
     tree.add_dir("", "b");
     let listed = |size: f64, mtime_ms: f64| Meta {
         mtime_ms,
-        ..file_meta(size, 77.0, 0)
+        ..file_meta(size, 77, 0)
     };
     tree.add_entry("a", b"x", listed(5.0, 1_000.0));
     tree.add_entry("b", b"y", listed(6.0, 2_000.0));
@@ -892,13 +921,13 @@ fn a_hard_link_family_found_by_file_id_takes_its_size_and_times_from_the_file_it
         b"lone",
         Meta {
             mtime_ms: 3_000.0,
-            ..file_meta(3.0, 88.0, 0)
+            ..file_meta(3.0, 88, 0)
         },
     );
     let truth = Meta {
         mtime_ms: 9_000.5,
         atime_ms: 9_001.25,
-        ..file_meta(42.0, 77.0, 2)
+        ..file_meta(42.0, 77, 2)
     };
     tree.file_stats
         .insert(Path::new("/fake").join("a").join("x"), truth);
@@ -941,10 +970,109 @@ fn a_hard_link_family_found_by_file_id_takes_its_size_and_times_from_the_file_it
 }
 
 #[test]
+fn a_family_refresh_takes_only_its_own_file() -> TestResult {
+    // The refresh reads each family's file through a path rebuilt from the
+    // names, and a folder on the way swapped for a link since the listing
+    // would lead elsewhere. Only a read that reaches a file with the family's
+    // own id counts; another file, or a folder that somehow shares the id,
+    // leaves every member what its listing said (the pre-landing review of
+    // 23 Sep 2026).
+    let mut tree = FakeTree::new("/fake");
+    tree.fast_path = FastPath::ExtdDirInfo;
+    for dir in ["a", "b", "c", "d"] {
+        tree.add_dir("", dir);
+    }
+    let listed = |size: f64, ino: u128| Meta {
+        mtime_ms: 1_000.0,
+        ..file_meta(size, ino, 0)
+    };
+    tree.add_entry("a", b"x", listed(5.0, 77));
+    tree.add_entry("b", b"y", listed(5.0, 77));
+    tree.file_stats.insert(
+        Path::new("/fake").join("a").join("x"),
+        Meta {
+            mtime_ms: 9_000.0,
+            ..file_meta(42.0, 78, 2)
+        },
+    );
+    tree.add_entry("c", b"p", listed(6.0, 88));
+    tree.add_entry("d", b"q", listed(6.0, 88));
+    tree.file_stats.insert(
+        Path::new("/fake").join("c").join("p"),
+        Meta {
+            ino: 88,
+            ..dir_meta()
+        },
+    );
+    let (_, out) = run(tree, options(Path::new("/fake")), 1)?;
+    let index = index_by_path(&out)?;
+    for (member, size) in [("a/x", 5.0), ("b/y", 5.0), ("c/p", 6.0), ("d/q", 6.0)] {
+        let i = *index.get(member).ok_or(member)?;
+        assert_eq!(out.size.get(i), Some(&size), "{member}: the listing's size");
+        assert_eq!(
+            out.mtime_ms.get(i),
+            Some(&1_000.0),
+            "{member}: the listing's mtime"
+        );
+    }
+    assert_eq!(out.hardlinks.len(), 4, "still two families of two");
+    Ok(())
+}
+
+#[test]
+fn a_cancel_during_the_family_refresh_ends_the_walk_between_two_reads() -> TestResult {
+    // The refresh reads one file per family on the driver thread once the
+    // workers are done, and a volume can hold tens of thousands of families
+    // (WinSxS), so a cancel ends it between two reads rather than after the
+    // last (the pre-landing review of 23 Sep 2026).
+    let mut tree = FakeTree::new("/fake");
+    tree.fast_path = FastPath::ExtdDirInfo;
+    tree.add_dir("", "a");
+    tree.add_dir("", "b");
+    for (name, ino) in [(&b"x"[..], 77_u128), (&b"y"[..], 88)] {
+        tree.add_entry("a", name, file_meta(1.0, ino, 0));
+        tree.add_entry("b", name, file_meta(1.0, ino, 0));
+    }
+    tree.file_stats.insert(
+        Path::new("/fake").join("a").join("x"),
+        file_meta(1.0, 77, 2),
+    );
+    tree.file_stats.insert(
+        Path::new("/fake").join("a").join("y"),
+        file_meta(1.0, 88, 2),
+    );
+    let gate = Arc::new(StatGate::default());
+    tree.stat_gate = Some(Arc::clone(&gate));
+    let tree = Arc::new(tree);
+    let handle = start_with(options(Path::new("/fake")), FakePacer::new(1), tree.clone())
+        .map_err(|e| e.to_string())?;
+    if !wait_until(SETTLE, || gate.reached.load(Ordering::SeqCst)) {
+        return Err("the refresh never read a family".to_owned());
+    }
+    // No listing here beats (no scripted batches), so the one beat is the
+    // refresh's own, before its first read: a long refresh is never taken
+    // for a stalled walk.
+    assert_eq!(handle.progress().heartbeat, 1);
+    handle.cancel();
+    gate.release.store(true, Ordering::SeqCst);
+    let outcome = take_within(handle, SETTLE)?;
+    assert!(matches!(outcome, Err(WalkError::Cancelled)), "{outcome:?}");
+    assert_eq!(
+        tree.file_stat_paths
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len(),
+        1,
+        "the second family was never read"
+    );
+    Ok(())
+}
+
+#[test]
 fn names_are_stored_as_utf8_with_lossy_replacement() -> TestResult {
     let mut tree = FakeTree::new("/fake");
-    tree.add_entry("", b"caf\xC3\xA9.txt", file_meta(1.0, 7.0, 1));
-    tree.add_entry("", b"bad\xFFbyte.txt", file_meta(1.0, 8.0, 1));
+    tree.add_entry("", b"caf\xC3\xA9.txt", file_meta(1.0, 7, 1));
+    tree.add_entry("", b"bad\xFFbyte.txt", file_meta(1.0, 8, 1));
     let (_, out) = run(tree, options(Path::new("/fake")), 1)?;
     assert!(
         std::str::from_utf8(&out.names).is_ok(),
@@ -990,7 +1118,7 @@ fn a_root_that_vanishes_before_the_end_is_root_refused_vanished() -> TestResult 
 
 #[test]
 fn a_root_that_is_not_a_directory_is_refused_at_start() -> TestResult {
-    let tree = FakeTree::new("/fake").root_stat_then(Ok(file_meta(3.0, 9.0, 1)));
+    let tree = FakeTree::new("/fake").root_stat_then(Ok(file_meta(3.0, 9, 1)));
     // The first scripted answer is the directory; drop it so the file answers.
     tree.root_stats
         .lock()
@@ -1739,11 +1867,7 @@ mod live {
             .iter()
             .find(|h| h.node == h2.id())
             .ok_or("no ref for hard2")?;
-        assert_eq!(r1.dev.to_bits(), r2.dev.to_bits());
-        assert_eq!(r1.ino.to_bits(), r2.ino.to_bits());
-        let h_meta = fs::symlink_metadata(fx.path("hard1.bin")).map_err(|e| e.to_string())?;
-        assert_eq!(r1.ino.to_bits(), (h_meta.ino() as f64).to_bits());
-        assert_eq!(r1.dev.to_bits(), (h_meta.dev() as f64).to_bits());
+        assert_eq!(r1.family, r2.family, "one file, one family");
 
         // Names round-trip byte for byte.
         assert_eq!(

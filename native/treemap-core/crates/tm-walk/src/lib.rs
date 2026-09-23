@@ -29,11 +29,13 @@ use std::sync::Arc;
 use tm_governor::Governor;
 
 pub mod climb;
+pub mod links;
 pub mod output;
 pub mod platform;
 mod queue;
 pub mod walk;
 
+pub use links::{IdFamily, LinkKey, hardlink_families};
 pub use output::{DirRefusal, HardlinkRef, Refusal, WalkOutput, WalkStats};
 pub use platform::{Entry, ListBuffer, Lister, Listing, Meta};
 pub use walk::{GovernorPacer, Pacer, Progress, WalkHandle, panic_text, start_with};

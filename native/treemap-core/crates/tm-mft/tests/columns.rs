@@ -55,16 +55,8 @@ fn sample() -> WalkOutput {
         ],
         atime_ms: vec![f64::NAN, 2.0, 3.0, 4.0, 5.0, 6.0],
         hardlinks: vec![
-            HardlinkRef {
-                node: 4,
-                dev: 305_419_896.0,
-                ino: 281_474_976_710_655.0,
-            },
-            HardlinkRef {
-                node: 5,
-                dev: 305_419_896.0,
-                ino: 281_474_976_710_655.0,
-            },
+            HardlinkRef { node: 4, family: 0 },
+            HardlinkRef { node: 5, family: 0 },
         ],
         refusals: vec![DirRefusal {
             node: 1,
@@ -189,7 +181,7 @@ fn the_header_is_the_magic_the_entry_count_and_the_flags_little_endian() -> Test
     let bytes = encoded(&sample())?;
     assert_eq!(HEADER_BYTES, 16);
     assert_eq!(bytes.get(..8), Some(&MAGIC_COLUMNS[..]));
-    assert_eq!(&MAGIC_COLUMNS, b"TMMFT001");
+    assert_eq!(&MAGIC_COLUMNS, b"TMMFT002");
     assert_eq!(
         bytes.get(8..12),
         Some(&6_u32.to_le_bytes()[..]),
@@ -241,11 +233,24 @@ fn a_trailing_byte_is_refused() -> TestResult {
 #[test]
 fn a_wrong_magic_and_an_unknown_flag_are_refused() -> TestResult {
     let good = encoded(&sample())?;
-    let mut magic = good.clone();
-    if let Some(b) = magic.get_mut(7) {
-        *b = b'2';
+    let mut foreign = good.clone();
+    if let Some(b) = foreign.get_mut(0) {
+        *b = b'X';
     }
-    assert_eq!(decode(&magic).err(), Some(ColumnsError::BadMagic));
+    assert_eq!(decode(&foreign).err(), Some(ColumnsError::BadMagic));
+    // Version 1 carried file ids as doubles; a file from a build that still
+    // writes it is named as that, not as something else entirely.
+    let mut older = good.clone();
+    if let Some(b) = older.get_mut(7) {
+        *b = b'1';
+    }
+    let refused = decode(&older).err();
+    assert_eq!(refused, Some(ColumnsError::OtherVersion(*b"TMMFT001")));
+    let sentence = refused.map(|e| e.to_string()).unwrap_or_default();
+    assert!(
+        sentence.contains("another TreeMap build") && sentence.contains("TMMFT001"),
+        "{sentence}"
+    );
     let mut flags = good;
     if let Some(b) = flags.get_mut(12) {
         *b |= 2;
@@ -327,6 +332,14 @@ fn names_kinds_flags_and_side_tables_out_of_range_are_refused() -> TestResult {
             Box::new(|o: &mut WalkOutput| {
                 if let Some(h) = o.hardlinks.get_mut(1) {
                     h.node = 6;
+                }
+            }),
+        ),
+        (
+            "a hard-link family numbered past the table",
+            Box::new(|o: &mut WalkOutput| {
+                if let Some(h) = o.hardlinks.get_mut(1) {
+                    h.family = 2;
                 }
             }),
         ),

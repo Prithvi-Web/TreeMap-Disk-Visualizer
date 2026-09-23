@@ -94,7 +94,7 @@ pub fn meta_from_stat(st: &libc::stat, want_atime: bool) -> Meta {
         mtime_ms,
         atime_ms,
         dev: f64::from(st.st_dev),
-        ino: st.st_ino as f64,
+        ino: u128::from(st.st_ino),
         nlink,
         withheld: false,
     }

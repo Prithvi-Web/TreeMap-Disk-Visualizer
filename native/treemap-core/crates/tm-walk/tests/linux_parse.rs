@@ -241,7 +241,7 @@ fn a_full_mask_yields_every_fact_as_the_legacy_walker_records_it() {
         (0x1_0303_u64 as f64).to_bits(),
         "makedev(259, 3)"
     );
-    assert_eq!(m.ino.to_bits(), 4_242.0_f64.to_bits());
+    assert_eq!(m.ino, 4_242);
     assert_eq!(m.nlink, 1);
     assert!(!m.withheld);
 }
@@ -301,7 +301,7 @@ fn a_withheld_attribute_leaves_the_unknown_value_and_marks_the_entry() {
     let mut no_ino = full(S_IFREG | 0o644);
     no_ino.mask &= !STATX_INO;
     let m = meta_from_statx(&no_ino, true, DT_REG);
-    assert_eq!(m.ino.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(m.ino, 0);
     assert!(m.withheld);
 
     let mut no_nlink = full(S_IFREG | 0o644);

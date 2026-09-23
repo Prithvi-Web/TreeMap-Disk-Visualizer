@@ -34,8 +34,8 @@ use tm_walk::platform::windows::{
 };
 use tm_walk::platform::{Listing, Meta, thread_cpu_seconds};
 use tm_walk::{
-    DirRefusal, FLAG_DATALESS, FLAG_REFUSED_DIR, FastPath, HardlinkRef, KIND_DIR, KIND_FILE,
-    Refusal, WalkOutput, WalkStats,
+    DirRefusal, FLAG_DATALESS, FLAG_REFUSED_DIR, FastPath, KIND_DIR, KIND_FILE, LinkKey, Refusal,
+    WalkOutput, WalkStats, hardlink_families,
 };
 
 use crate::record::{NAMESPACE_DOS, Record};
@@ -337,7 +337,7 @@ fn stage_child(
         },
         last_write: rec.std_info.map_or(0, |s| s.last_write),
         last_access: rec.std_info.map_or(0, |s| s.last_access),
-        file_id_low: Some(rec.reference()),
+        file_id: Some(u128::from(rec.reference())),
     };
     let before = listing.len();
     stage_record(
@@ -378,7 +378,7 @@ fn root_meta(rec: &Record, want_atime: bool) -> Meta {
             _ => f64::NAN,
         },
         dev: 0.0,
-        ino: 0.0,
+        ino: 0,
         nlink: 0,
         withheld: false,
     }
@@ -412,9 +412,8 @@ struct Columns {
     mtime: Vec<f64>,
     atime: Vec<f64>,
     refusals: Vec<DirRefusal>,
-    /// Leaves without a link count, keyed as the walk keys them:
-    /// `(dev bits, ino bits, node)`.
-    candidates: Vec<(u64, u64, u32)>,
+    /// Leaves without a link count, keyed exactly as the walk keys them.
+    candidates: Vec<LinkKey>,
     dirs_listed: u64,
     denied: u64,
     unreadable: u64,
@@ -468,7 +467,11 @@ impl Columns {
     }
 
     fn finish(mut self, started: Instant, cpu_started: f64) -> WalkOutput {
-        let hardlinks = families(&self.candidates);
+        // The walk's own rule, so the two engines cannot drift: a family is an
+        // id seen more than once, told apart by the whole reference, never by
+        // a double (the pre-landing review of 23 Sep 2026). Nothing here needs
+        // the families' refresh — every name of a record reads that record.
+        let (hardlinks, _) = hardlink_families(&mut self.candidates);
         self.refusals.sort_by_key(|r| r.node);
         for refusal in &self.refusals {
             if let Some(flags) = self.flags.get_mut(refusal.node as usize) {
@@ -506,29 +509,6 @@ impl Columns {
             },
         }
     }
-}
-
-/// The walk's file-id collision rule: every candidate whose `(dev, ino)`
-/// appears more than once is a hard-link family member, each member once,
-/// sorted by node; a lone id (its other names outside the scan) is none.
-fn families(candidates: &[(u64, u64, u32)]) -> Vec<HardlinkRef> {
-    let mut by_id: HashMap<(u64, u64), Vec<u32>> = HashMap::new();
-    for &(dev, ino, node) in candidates {
-        by_id.entry((dev, ino)).or_default().push(node);
-    }
-    let mut refs: Vec<HardlinkRef> = by_id
-        .into_iter()
-        .filter(|(_, nodes)| nodes.len() > 1)
-        .flat_map(|((dev, ino), nodes)| {
-            nodes.into_iter().map(move |node| HardlinkRef {
-                node,
-                dev: f64::from_bits(dev),
-                ino: f64::from_bits(ino),
-            })
-        })
-        .collect();
-    refs.sort_by_key(|h| h.node);
-    refs
 }
 
 /// The subtree of the directory record `root`, breadth first, a directory's
@@ -611,8 +591,12 @@ pub fn build_tree(
             } else if meta.kind == KIND_FILE && !meta.withheld {
                 // `stage_record` never reports a link count on Windows, so
                 // every readable file is a collision candidate.
-                out.candidates
-                    .push((meta.dev.to_bits(), meta.ino.to_bits(), id));
+                out.candidates.push(LinkKey {
+                    dev: meta.dev.to_bits(),
+                    ino: meta.ino,
+                    node: id,
+                    counted: false,
+                });
             }
         }
     }

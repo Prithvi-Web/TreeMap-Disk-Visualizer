@@ -45,16 +45,16 @@ impl fmt::Display for Refusal {
     }
 }
 
-/// A leaf whose inode has more than one name: one ref per member, so the
-/// ingest can key `${dev}:${ino}` in id order exactly as the legacy walker does.
-#[derive(Clone, Copy, PartialEq, Debug)]
+/// A leaf that shares its file with another name: one ref per member, so the
+/// ingest counts a family's bytes once, at its first name in id order, as the
+/// legacy walker does. Families are told apart by number, assigned from each
+/// file's exact identity ([`crate::links`]); an id never leaves the walk.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct HardlinkRef {
     /// The node's index in the columns.
     pub node: u32,
-    /// `st_dev` as a double.
-    pub dev: f64,
-    /// `st_ino` as a double (exact to 2^53).
-    pub ino: f64,
+    /// The family's number: the same for every name of one file.
+    pub family: u32,
 }
 
 /// A directory node that could not be listed, and why.

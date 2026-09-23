@@ -84,8 +84,7 @@ function columns(nodes: Node[]): WalkResult {
     mtimeMs: Float64Array.from(nodes.map((n) => n.mtime ?? OLD)),
     atimeMs: Float64Array.from(nodes.map(() => Number.NaN)),
     hardlinkNode: new Uint32Array(0),
-    hardlinkDev: new Float64Array(0),
-    hardlinkIno: new Float64Array(0),
+    hardlinkFamily: new Uint32Array(0),
     refusalNode: new Uint32Array(0),
     refusalWhy: new Uint8Array(0),
     stats: {
@@ -576,13 +575,13 @@ function encodeColumnsFile(c: WalkResult, flags = 1): Buffer {
   const u32 = (v: number) => { const b = Buffer.alloc(4); b.writeUInt32LE(v); return b; };
   const u64 = (v: number) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(v)); return b; };
   const f64 = (v: number) => { const b = Buffer.alloc(8); b.writeDoubleLE(v); return b; };
-  parts.push(Buffer.from('TMMFT001', 'ascii'), u32(n), u32(flags));
+  parts.push(Buffer.from('TMMFT002', 'ascii'), u32(n), u32(flags));
   for (const v of c.parent) parts.push(u32(v));
   for (const v of c.nameOff) parts.push(u32(v));
   parts.push(Buffer.from(c.names), Buffer.from(c.kind), Buffer.from(c.flags));
   for (const col of [c.size, c.allocBytes, c.mtimeMs, c.atimeMs]) for (const v of col) parts.push(f64(v));
   parts.push(u32(c.hardlinkNode.length));
-  for (let i = 0; i < c.hardlinkNode.length; i++) parts.push(u32(c.hardlinkNode[i]), f64(c.hardlinkDev[i]), f64(c.hardlinkIno[i]));
+  for (let i = 0; i < c.hardlinkNode.length; i++) parts.push(u32(c.hardlinkNode[i]), u32(c.hardlinkFamily[i]));
   parts.push(u32(c.refusalNode.length));
   for (let i = 0; i < c.refusalNode.length; i++) parts.push(u32(c.refusalNode[i]), Buffer.from([c.refusalWhy[i]]));
   const s = c.stats;
@@ -609,14 +608,13 @@ test('mftTake reads a columns file written to the documented format, every colum
   try {
     const cols = flat(5);
     cols.hardlinkNode = Uint32Array.from([2, 3]);
-    cols.hardlinkDev = Float64Array.from([7, 7]);
-    cols.hardlinkIno = Float64Array.from([99, 99]);
+    cols.hardlinkFamily = Uint32Array.from([0, 0]);
     cols.refusalNode = Uint32Array.from([0]);
     cols.refusalWhy = Uint8Array.from([3]);
     const file = path.join(dir, 'a.tmmft');
     fs.writeFileSync(file, encodeColumnsFile(cols));
     const back = mod.mftTake(file);
-    for (const key of ['parent', 'nameOff', 'names', 'kind', 'flags', 'size', 'allocBytes', 'mtimeMs', 'hardlinkNode', 'hardlinkDev', 'hardlinkIno', 'refusalNode', 'refusalWhy'] as const) {
+    for (const key of ['parent', 'nameOff', 'names', 'kind', 'flags', 'size', 'allocBytes', 'mtimeMs', 'hardlinkNode', 'hardlinkFamily', 'refusalNode', 'refusalWhy'] as const) {
       assert.deepEqual(Array.from(back[key] as ArrayLike<number>), Array.from(cols[key] as ArrayLike<number>), key);
     }
     assert.ok(Array.from(back.atimeMs).every(Number.isNaN), 'NaN survives');

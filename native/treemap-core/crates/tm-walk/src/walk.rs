@@ -18,7 +18,7 @@
 
 use std::any::Any;
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
@@ -30,6 +30,7 @@ use std::time::{Duration, Instant};
 use tm_governor::{Governor, apply_to_current_thread, profile};
 
 use crate::climb::{Climber, START_WORKERS, start_for};
+use crate::links::{IdFamily, LinkKey, hardlink_families};
 use crate::output::{DirRefusal, HardlinkRef, Refusal, WalkOutput, WalkStats};
 use crate::platform::{DirTimes, ListBuffer, Lister, Meta, performance_cores, thread_cpu_seconds};
 use crate::queue::{DirJob, Queue};
@@ -299,11 +300,11 @@ struct Part {
     alloc: Vec<f64>,
     mtime: Vec<f64>,
     atime: Vec<f64>,
-    hardlinks: Vec<HardlinkRef>,
-    /// Leaves whose listing reported no link count (`nlink == 0`, Windows):
-    /// `(dev bits, ino bits, node)`, resolved into families by id collision at
-    /// the merge.
-    id_candidates: Vec<(u64, u64, u32)>,
+    /// Leaves that may share their file with another name: those whose
+    /// listing reported a link count above one, and those whose listing
+    /// reported none (`nlink == 0`, Windows), each keyed by its exact id and
+    /// resolved into families at the merge ([`hardlink_families`]).
+    link_keys: Vec<LinkKey>,
     refusals: Vec<DirRefusal>,
     /// Directories whose own listing reported their own times (Windows), which
     /// replace the copy their parent's listing gave; applied at the merge.
@@ -550,7 +551,7 @@ fn run_walk(shared: &Arc<Shared>, root_meta: Meta) -> Result<WalkOutput, WalkErr
         .map_err(|_| WalkError::Internal("too many nodes for this platform".to_owned()))?;
     let mut merged = merge(&parts, total)?;
     drop(parts);
-    refresh_families(shared, &mut merged);
+    refresh_families(shared, &mut merged)?;
     let stats = WalkStats {
         dirs_listed: shared.dirs_listed.load(Ordering::Acquire),
         entries: shared.entries.load(Ordering::Acquire),
@@ -589,9 +590,22 @@ fn run_walk(shared: &Arc<Shared>, root_meta: Meta) -> Result<WalkOutput, WalkErr
 /// are done; a family whose file cannot be read keeps what its listing said.
 /// A file whose other names are all outside the scan is not a family here,
 /// and keeps its listing's copy (DESIGN §16).
-fn refresh_families(shared: &Shared, merged: &mut Merged) {
+///
+/// A volume can hold tens of thousands of families (`C:\Windows\WinSxS`), so
+/// each read checks for a cancel and moves the heartbeat: the walk stops when
+/// asked and is never mistaken for a stalled one. And a read counts only when
+/// it reaches the family's own file — a folder on the way swapped for a link
+/// since the listing would lead to another file, whose facts are not this
+/// family's; where a handle's id cannot be matched against the listing's
+/// (ReFS: 64 bits against 128), the family keeps what its listing said (the
+/// pre-landing review of 23 Sep 2026).
+fn refresh_families(shared: &Shared, merged: &mut Merged) -> Result<(), WalkError> {
     for family in &merged.id_families {
-        let Some(&first) = family.first() else {
+        if shared.is_cancelled() {
+            return Err(WalkError::Cancelled);
+        }
+        shared.heartbeat.fetch_add(1, Ordering::AcqRel);
+        let Some(&first) = family.members.first() else {
             continue;
         };
         let Some(path) = node_path(&shared.root, merged, first) else {
@@ -600,10 +614,10 @@ fn refresh_families(shared: &Shared, merged: &mut Merged) {
         let Ok(meta) = shared.lister.stat_dir(&path, shared.want_atime) else {
             continue;
         };
-        if meta.kind != KIND_FILE {
+        if meta.kind != KIND_FILE || meta.dev.to_bits() != family.dev || meta.ino != family.ino {
             continue;
         }
-        for &node in family {
+        for &node in &family.members {
             let i = node as usize;
             if let Some(size) = merged.size.get_mut(i) {
                 *size = meta.size;
@@ -616,6 +630,7 @@ fn refresh_families(shared: &Shared, merged: &mut Merged) {
             }
         }
     }
+    Ok(())
 }
 
 /// The path of `node`, rebuilt from the parent column and the names under
@@ -793,15 +808,14 @@ fn process_dir(
             shared
                 .bytes
                 .fetch_add(whole_bytes(meta.size), Ordering::AcqRel);
-            if meta.kind == KIND_FILE && meta.nlink > 1 {
-                part.hardlinks.push(HardlinkRef {
-                    node: id,
-                    dev: meta.dev,
+            let counted = meta.nlink > 1;
+            if meta.kind == KIND_FILE && (counted || (meta.nlink == 0 && !meta.withheld)) {
+                part.link_keys.push(LinkKey {
+                    dev: meta.dev.to_bits(),
                     ino: meta.ino,
+                    node: id,
+                    counted,
                 });
-            } else if meta.kind == KIND_FILE && meta.nlink == 0 && !meta.withheld {
-                part.id_candidates
-                    .push((meta.dev.to_bits(), meta.ino.to_bits(), id));
             }
         }
     }
@@ -862,8 +876,8 @@ struct Merged {
     hardlinks: Vec<HardlinkRef>,
     refusals: Vec<DirRefusal>,
     /// Hard-link families found by file id (listings with no link count),
-    /// each as its members' node ids, ascending (see `refresh_families`).
-    id_families: Vec<Vec<u32>>,
+    /// with their exact key and members ascending (see `refresh_families`).
+    id_families: Vec<IdFamily>,
 }
 
 fn out_of_range(id: u32, total: usize) -> WalkError {
@@ -963,12 +977,12 @@ fn merge(parts: &[Part], total: usize) -> Result<Merged, WalkError> {
         }
     }
 
-    let mut hardlinks: Vec<HardlinkRef> = parts
+    let mut keys: Vec<LinkKey> = parts
         .iter()
-        .flat_map(|p| p.hardlinks.iter().copied())
+        .flat_map(|p| p.link_keys.iter().copied())
         .collect();
-    let id_families = collide_ids(parts, &mut hardlinks);
-    hardlinks.sort_by_key(|h| h.node);
+    let (hardlinks, id_families) = hardlink_families(&mut keys);
+    drop(keys);
     let mut refusals: Vec<DirRefusal> = parts
         .iter()
         .flat_map(|p| p.refusals.iter().copied())
@@ -995,50 +1009,6 @@ fn merge(parts: &[Part], total: usize) -> Result<Merged, WalkError> {
         refusals,
         id_families,
     })
-}
-
-/// The file-id collision rule for listings without a link count: every
-/// candidate whose `(dev, ino)` is seen more than once is a hard-link family
-/// member and gets a ref, the first-seen member included (once). A lone id is
-/// a file whose other names, if any, are outside the scan, exactly what the
-/// legacy `nlink > 1` key yields for it: keyed but never a duplicate. Returns
-/// the families, each as its members' node ids, ascending. The map costs one
-/// entry per candidate file for the whole walk (Phase 4 item); a family list
-/// exists only once an id collides.
-fn collide_ids(parts: &[Part], hardlinks: &mut Vec<HardlinkRef>) -> Vec<Vec<u32>> {
-    let mut first_seen: HashMap<(u64, u64), (u32, Option<usize>)> = HashMap::new();
-    let mut families: Vec<Vec<u32>> = Vec::new();
-    for &(dev, ino, node) in parts.iter().flat_map(|p| p.id_candidates.iter()) {
-        let link = |node| HardlinkRef {
-            node,
-            dev: f64::from_bits(dev),
-            ino: f64::from_bits(ino),
-        };
-        match first_seen.get_mut(&(dev, ino)) {
-            None => {
-                first_seen.insert((dev, ino), (node, None));
-            }
-            Some((first, family)) => {
-                let at = if let Some(at) = *family {
-                    at
-                } else {
-                    hardlinks.push(link(*first));
-                    families.push(vec![*first]);
-                    let at = families.len().saturating_sub(1);
-                    *family = Some(at);
-                    at
-                };
-                hardlinks.push(link(node));
-                if let Some(members) = families.get_mut(at) {
-                    members.push(node);
-                }
-            }
-        }
-    }
-    for members in &mut families {
-        members.sort_unstable();
-    }
-    families
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

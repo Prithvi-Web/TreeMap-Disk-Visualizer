@@ -140,7 +140,12 @@ would diverge from the walker on firmlinks and nested mounts — the edge
 fixture's two `hdiutil` volumes prove the walker descends into both; a
 device-boundary setting for every engine is a Phase 8 question). Symlinks
 are never followed. `(dev, ino)` for `nlink > 1` goes to a side table, and the first
-name seen owns the bytes exactly as today. Windows' listing reports no link
+name seen owns the bytes exactly as today. The key is exact: the walk groups
+names by each file's whole id (`u128`, Windows' 128-bit file id included) and
+hands the ingest a family number, because a double cannot hold a file id — a
+reused NTFS record keeps its sequence number in bits 48..64, so its id passes
+2^53, where doubles round neighbours together (P3-7, amended by the
+pre-landing review of 23 Sep 2026; `tm_walk::links`). Windows' listing reports no link
 count, so there a hard-link family is found by its file ids colliding, and —
 because NTFS refreshes each name's copy of a file's size and times only when
 the file is opened through that name (CreateHardLink's documentation) — each
@@ -451,8 +456,11 @@ fixed, as built:
    It writes nothing else, anywhere. The app makes the same link check before
    it asks, so a planted junction costs no prompt. The volume is opened
    `GENERIC_READ` (M4).
-3. **The columns file.** A 16-byte header (magic `TMMFT001`, entry count,
-   flags) and `WalkOutput`'s columns little-endian (`tm_mft::columns`); a
+3. **The columns file.** A 16-byte header (magic `TMMFT002`, entry count,
+   flags) and `WalkOutput`'s columns little-endian (`tm_mft::columns`), the
+   hard-link table as `node, family` pairs (version 1 carried `dev` and `ino`
+   as doubles, which cannot hold a file id: the pre-landing review of 23 Sep
+   2026; a file from another build is refused as that); a
    refusal is the magic `TMMFTERR` and the helper's sentence, because an
    elevated process's stderr never reaches the app. `mftTake` (tm-node)
    checks the whole file before trusting it — above all `parent[i] < i`,
@@ -555,7 +563,7 @@ reflected in the equivalence test as a normalisation, never as a loosened
 assertion.
 
 1. **Refusals are counted on every engine.** gdu reports a refused directory as an empty one; the native walker counts it, like the Node walker. The equivalence test therefore compares against the Node walker's tree, not gdu's, for refusal fields. Two more gdu limits (CURRENT-STATE §4) shape the gdu leg of the gate, and only that leg: gdu records **no `accessedAt`** and **whole-second mtimes**, so `tests/nativeEquivalence.test.ts` stamps the corpora to whole seconds before the gdu run and sets the `accessedAt` column aside — every other column and every counter must agree, and on this Mac they do (18 September 2026). On Windows gdu can match neither: v5.36.1's `pkg/analyze/dir_other.go` gives every file an inode of 0, so it keys no hard link and counts every name of a family, and it dates a file from its directory entry — the per-name copy NTFS refreshes lazily. Every corpus has hard links, so the gdu leg (b) is skipped on Windows with that reason (read from gdu's source, 23 September 2026); the native gate (c) is not, and RISKS R59 records what it means for a Windows scan that falls back to gdu.
-2. **Hard links are keyed on `(dev, ino)`** on every engine; gdu's inode-only key is a documented limit the native path does not inherit.
+2. **Hard links are keyed on `(dev, ino)`** on every engine; gdu's inode-only key is a documented limit the native path does not inherit. The key is exact in the native engine and the NTFS turbo mode (a family number from the whole id) and in the walker (an id at or past 2^53 is read again as a bigint, `hardlinkKey` in `diskScanner.ts`); the persistent index is not yet (RISKS R60).
 3. **Near-duplicate representative** becomes highest resolution → largest → oldest, from "newest".
 4. **Withdrawn 18 September 2026 (P3-5).** `accessedAt` was to be off by default in the native path; it is collected on every platform (`ATTR_CMN_ACCTIME`, `STATX_ATIME`, `LastAccessTime`) and compared by the digest, because the "last used" fact and the JSON depend on it.
 5. **The mtime cache** (a 300k-node JSON tree) is superseded by the arena index for native scans; the legacy walker keeps its own.

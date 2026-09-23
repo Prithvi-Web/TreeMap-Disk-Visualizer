@@ -293,7 +293,11 @@ export function ingestColumns(scan: ScanResult, store: ScanStore, cols: WalkResu
   // a Map lookup cost 5 of the ingest's 64 ms on enum200k (M3, 23 Sep 2026).
   const linkOf = new Int32Array(n).fill(-1);
   for (let k = 0; k < cols.hardlinkNode.length; k++) linkOf[cols.hardlinkNode[k]] = k;
-  const seen = new Set<string>();
+  // Hard-link families seen so far, by the number the walk gave each: the
+  // walk tells files apart by their exact ids, which never cross as doubles
+  // (a Windows id past 2^53 rounds into its neighbour: the pre-landing review
+  // of 23 Sep 2026).
+  const seen = new Set<number>();
   let dirs = 1;
   let files = 0;
 
@@ -314,7 +318,7 @@ export function ingestColumns(scan: ScanResult, store: ScanStore, cols: WalkResu
       const mtime = cols.mtimeMs[i];
       const input = statToInput(name, isDir, cols.size[i], Number.isFinite(mtime) ? mtime : 0, cols.atimeMs[i]);
       let allocDelta = 0;
-      let inoKey: string | undefined;
+      let family: number | undefined;
       if (kind === KIND_SYMLINK) {
         input.isSymlink = true;
       } else if (!isDir) {
@@ -328,16 +332,16 @@ export function ingestColumns(scan: ScanResult, store: ScanStore, cols: WalkResu
         }
         allocDelta = BLOCKS_ARE_MEANINGFUL && input.size > 0 ? alloc - input.size : 0;
         const link = linkOf[i];
-        if (link !== -1) inoKey = `${cols.hardlinkDev[link]}:${cols.hardlinkIno[link]}`;
+        if (link !== -1) family = cols.hardlinkFamily[link];
       }
-      if (inoKey !== undefined) {
-        if (seen.has(inoKey)) {
+      if (family !== undefined) {
+        if (seen.has(family)) {
           input.hardlinkDuplicate = true;
           scan.hardlinkedFiles = (scan.hardlinkedFiles ?? 0) + 1;
           scan.hardlinkedBytes = (scan.hardlinkedBytes ?? 0) + input.size;
           input.size = 0; // the first name seen already counted
         } else {
-          seen.add(inoKey);
+          seen.add(family);
         }
       }
       if (input.cloudPlaceholder) {

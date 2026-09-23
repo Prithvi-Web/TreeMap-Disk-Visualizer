@@ -230,7 +230,7 @@ fn parses_a_regular_entry_exactly() -> TestResult {
         time_ms(1_700_000_100, 999_999).to_bits()
     );
     assert_eq!(a.dev.to_bits(), f64::from(DEV).to_bits());
-    assert_eq!(a.ino.to_bits(), 4_242.0_f64.to_bits());
+    assert_eq!(a.ino, 4_242);
     assert_eq!(a.nlink, 1);
     assert!(!a.withheld);
     assert_eq!(listing.denied_entries, 0);
@@ -293,7 +293,7 @@ fn an_atime_that_was_returned_but_not_wanted_is_skipped_not_misread() -> TestRes
         h.flags, 0,
         "UF_HIDDEN is not dataless; the flags field after atime was read in place"
     );
-    assert_eq!(h.ino.to_bits(), 4_242.0_f64.to_bits());
+    assert_eq!(h.ino, 4_242);
     Ok(())
 }
 
@@ -464,7 +464,7 @@ fn an_entry_whose_type_was_withheld_takes_every_fact_from_the_fallback_stat() ->
         mtime_ms: time_ms(1_600_000_000, 1),
         atime_ms: time_ms(1_600_000_001, 2),
         dev: f64::from(DEV) + 1.0,
-        ino: 7_777.0,
+        ino: 7_777,
         nlink: 0,
         withheld: false,
     };
@@ -721,7 +721,7 @@ fn the_bulk_listing_and_the_per_entry_fallback_agree_entry_by_entry() -> TestRes
             ("mtime_ms", b.mtime_ms.to_bits() == s.mtime_ms.to_bits()),
             ("atime_ms", b.atime_ms.to_bits() == s.atime_ms.to_bits()),
             ("dev", b.dev.to_bits() == s.dev.to_bits()),
-            ("ino", b.ino.to_bits() == s.ino.to_bits()),
+            ("ino", b.ino == s.ino),
             ("nlink", b.nlink == s.nlink),
             ("withheld", b.withheld == s.withheld),
         ];
@@ -748,8 +748,8 @@ fn the_bulk_listing_and_the_per_entry_fallback_agree_entry_by_entry() -> TestRes
     assert_eq!(entry(&bulk, "fifo")?.kind, KIND_FILE);
     assert_eq!(entry(&bulk, "odd.bin")?.nlink, 2);
     assert_eq!(
-        entry(&bulk, "odd-again.bin")?.ino.to_bits(),
-        entry(&bulk, "odd.bin")?.ino.to_bits()
+        entry(&bulk, "odd-again.bin")?.ino,
+        entry(&bulk, "odd.bin")?.ino
     );
     assert_eq!(
         entry(&bulk, "odd.bin")?.alloc.to_bits(),
@@ -861,11 +861,7 @@ fn a_mount_point_carries_the_mounted_roots_attributes_as_lstat_reports_them() ->
             expected.dev.to_bits(),
             "the mounted volume's device, not the covered directory's"
         );
-        assert_eq!(
-            got.ino.to_bits(),
-            expected.ino.to_bits(),
-            "the mounted root's inode"
-        );
+        assert_eq!(got.ino, expected.ino, "the mounted root's inode");
         assert_eq!(
             got.mtime_ms.to_bits(),
             expected.mtime_ms.to_bits(),

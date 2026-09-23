@@ -257,10 +257,10 @@ pub fn meta_from_statx(facts: &StatxFacts, want_atime: bool, d_type: u8) -> Meta
         f64::NAN
     };
     let ino = if facts.mask & STATX_INO != 0 {
-        facts.ino as f64
+        u128::from(facts.ino)
     } else {
         withheld = true;
-        0.0
+        0
     };
     Meta {
         kind,

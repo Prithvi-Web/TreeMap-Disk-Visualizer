@@ -433,10 +433,10 @@ fn fixture_facts(c: &Canonical) -> TestResult {
     }
     let (a, b) = (node("a/linked.txt")?, node("a/b/linked-too.txt")?);
     let linked: Vec<usize> = c.hardlinks.iter().map(|h| h.0).collect();
-    let ids: BTreeSet<u64> = c.hardlinks.iter().map(|h| h.2).collect();
-    if linked != [a, b] || ids.len() != 1 {
+    let families: BTreeSet<usize> = c.hardlinks.iter().map(|h| h.1).collect();
+    if linked != [a, b] || families.len() != 1 {
         return Err(format!(
-            "the hard links are {:?}, not the pair {a} and {b} sharing one id",
+            "the hard links are {:?}, not the pair {a} and {b} in one family",
             c.hardlinks
         ));
     }

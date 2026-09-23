@@ -914,6 +914,34 @@ function drainQueue(scan: ScanResult, store: ScanStore, initial: DirJob[], ignor
   });
 }
 
+/** A bigint `lstat`, the one the walker's hard-link key reads when a double cannot hold the id. */
+export type BigLstat = (p: string) => Promise<{ dev: bigint; ino: bigint }>;
+
+/**
+ * The walker's key for a file whose link count says its inode is shared:
+ * `${dev}:${ino}`, exact. `Stats` holds ids as doubles, which are exact only
+ * below 2^53, and a Windows file id is often past it (a reused NTFS record
+ * keeps its sequence number in bits 48..64), where two different files round
+ * to one key and one's bytes vanish as the other's duplicate (the pre-landing
+ * review of 23 Sep 2026). So an id at or past 2^53 is read once more as a
+ * bigint — only for shared files, and only for those ids. A file gone before
+ * that second look keeps the key its first stat gave: the walk has already
+ * counted it.
+ */
+export async function hardlinkKey(
+  fullPath: string,
+  stat: Pick<Stats, 'dev' | 'ino'>,
+  lstatBig: BigLstat = (p) => fsp.lstat(p, { bigint: true }),
+): Promise<string> {
+  if (Number.isSafeInteger(stat.ino)) return `${stat.dev}:${stat.ino}`;
+  try {
+    const exact = await lstatBig(fullPath);
+    return `${exact.dev}:${exact.ino}`;
+  } catch {
+    return `${stat.dev}:${stat.ino}`;
+  }
+}
+
 /**
  * List one directory, stat its entries, add children to the store, enqueue
  * subdirs. Permission errors are swallowed per-directory: the dir simply
@@ -1051,7 +1079,8 @@ async function processDirectory(
         const allocDelta =
           BLOCKS_ARE_MEANINGFUL && input.size > 0 ? stat.blocks * 512 - input.size : 0;
         // Hard-link key only when the link count says the inode is shared.
-        return { input, fullPath, isDir: false, allocDelta, inoKey: stat.nlink > 1 ? `${stat.dev}:${stat.ino}` : undefined };
+        const inoKey = stat.nlink > 1 ? await hardlinkKey(fullPath, stat) : undefined;
+        return { input, fullPath, isDir: false, allocDelta, inoKey };
       })
     );
 

@@ -224,7 +224,10 @@ function columnsFromDisk(root: string, over: Partial<WalkResult['stats']> = {}, 
   const alloc: number[] = [0];
   const mtime: number[] = [];
   const atime: number[] = [];
-  const hardlinks: Array<{ node: number; dev: number; ino: number }> = [];
+  // Numbered by exact identity, as the walk numbers them: a bigint stat, so an
+  // id past 2^53 is still its own.
+  const hardlinks: Array<{ node: number; family: number }> = [];
+  const families = new Map<string, number>();
   const refusals: Array<{ node: number; why: number }> = [];
   const rootStat = fs.lstatSync(root);
   mtime.push(rootStat.mtimeMs);
@@ -273,7 +276,10 @@ function columnsFromDisk(root: string, over: Partial<WalkResult['stats']> = {}, 
       if (isDir) {
         if (!neverDescendPaths().includes(full)) queue.push({ id, dir: full });
       } else if (!ent.isSymbolicLink() && st.nlink > 1) {
-        hardlinks.push({ node: id, dev: st.dev, ino: st.ino });
+        const exact = fs.lstatSync(full, { bigint: true });
+        const key = `${exact.dev}:${exact.ino}`;
+        if (!families.has(key)) families.set(key, families.size);
+        hardlinks.push({ node: id, family: families.get(key)! });
       }
     }
   }
@@ -292,8 +298,7 @@ function columnsFromDisk(root: string, over: Partial<WalkResult['stats']> = {}, 
     mtimeMs: Float64Array.from(mtime),
     atimeMs: Float64Array.from(atime),
     hardlinkNode: Uint32Array.from(hardlinks.map((h) => h.node)),
-    hardlinkDev: Float64Array.from(hardlinks.map((h) => h.dev)),
-    hardlinkIno: Float64Array.from(hardlinks.map((h) => h.ino)),
+    hardlinkFamily: Uint32Array.from(hardlinks.map((h) => h.family)),
     refusalNode: Uint32Array.from(refusals.map((r) => r.node)),
     refusalWhy: Uint8Array.from(refusals.map((r) => r.why)),
     stats: {
@@ -749,7 +754,7 @@ test('ingestColumns: the cloud-placeholder branch on columns built by hand — s
     allocBytes: Float64Array.from([0, 0, 0, 0, 0, 0, 0]),
     mtimeMs: Float64Array.from([1.7e12, 1.7e12, 1.7e12, 1.7e12, 1.7e12 + 0.4, 1.7e12, 1.7e12 + 0.6]),
     atimeMs: Float64Array.from([NaN, 0, NaN, NaN, 1.6e12 + 0.5, NaN, -1]),
-    hardlinkNode: new Uint32Array(0), hardlinkDev: new Float64Array(0), hardlinkIno: new Float64Array(0),
+    hardlinkNode: new Uint32Array(0), hardlinkFamily: new Uint32Array(0),
     refusalNode: new Uint32Array(0), refusalWhy: new Uint8Array(0),
     stats: { dirsListed: 5, entries: 6, wallMs: 1, cpuSeconds: 0.01, fastPath: 'bulk', workersPeak: 1, climbSteps: 0, deniedEntries: 0, unreadableEntries: 0, dataless: 1 },
   };
@@ -781,6 +786,43 @@ test('ingestColumns: the cloud-placeholder branch on columns built by hand — s
   assert.equal(store.size(store.rootId), 13000);
 });
 
+test('ingestColumns: hard-link families are told apart by the number the walk gave them, never by rounded ids', () => {
+  // The walk groups names by their file's exact identity and numbers each
+  // family; the ingest keys on that number. It once keyed on `${dev}:${ino}`
+  // as doubles, and a Windows file id past 2^53 (a record reused 32 times)
+  // rounds into its neighbour's, so two different files counted as one and
+  // the second one's bytes vanished (the pre-landing review of 23 Sep 2026).
+  const root = '/r';
+  const names = ['r', 'a.bin', 'b.bin', 'c.bin'];
+  const enc = names.map((n) => Buffer.from(n, 'utf8'));
+  const nameOff = new Uint32Array(names.length + 1);
+  let off = 0;
+  enc.forEach((n, i) => { nameOff[i] = off; off += n.length; });
+  nameOff[names.length] = off;
+  const cols: WalkResult = {
+    parent: Uint32Array.from([0, 0, 0, 0]),
+    nameOff,
+    names: new Uint8Array(Buffer.concat(enc)),
+    kind: Uint8Array.from([KIND_DIR, KIND_FILE, KIND_FILE, KIND_FILE]),
+    flags: new Uint8Array(4),
+    size: Float64Array.from([0, 10, 20, 20]), allocBytes: Float64Array.from([0, 10, 20, 20]),
+    mtimeMs: Float64Array.from([1, 2, 3, 4]), atimeMs: Float64Array.from([NaN, NaN, NaN, NaN]),
+    hardlinkNode: Uint32Array.from([1, 2, 3]),
+    hardlinkFamily: Uint32Array.from([0, 1, 1]),
+    refusalNode: new Uint32Array(0), refusalWhy: new Uint8Array(0),
+    stats: { dirsListed: 1, entries: 3, wallMs: 1, cpuSeconds: 0, fastPath: 'bulk', workersPeak: 1, climbSteps: 0, deniedEntries: 0, unreadableEntries: 0, dataless: 0 },
+  };
+  const scan = createScanRecord(root);
+  const store = new PackedScanStore(root, '/', { name: 'r', isDir: true, size: 0, modifiedAt: 0, isHidden: false });
+  ingestColumns(scan, store, cols, root);
+  store.finalize();
+  store.sumSizes();
+  assert.equal(store.size(store.rootId), 30, 'a.bin, and one name of the b/c family');
+  assert.deepEqual({ files: scan.hardlinkedFiles, bytes: scan.hardlinkedBytes }, { files: 1, bytes: 20 });
+  assert.equal(store.materialize(store.findByPath('/r/a.bin')).hardlinkDuplicate, undefined, 'a family of its own');
+  assert.equal(store.materialize(store.findByPath('/r/c.bin')).hardlinkDuplicate, true, 'the later name of b’s family');
+});
+
 test('ingestColumns: a refused folder is counted by its kind and named among the five smallest, a vanished one is only counted', () => {
   const root = '/r';
   const names = ['r', 'z-denied', 'a-denied', 'gone', 'bad', 'ok'];
@@ -797,7 +839,7 @@ test('ingestColumns: a refused folder is counted by its kind and named among the
     flags: Uint8Array.from([0, FLAG_REFUSED_DIR, FLAG_REFUSED_DIR, FLAG_REFUSED_DIR, FLAG_REFUSED_DIR, 0]),
     size: new Float64Array(6), allocBytes: new Float64Array(6),
     mtimeMs: Float64Array.from([1, 2, 3, 4, 5, 6]), atimeMs: Float64Array.from([NaN, NaN, NaN, NaN, NaN, NaN]),
-    hardlinkNode: new Uint32Array(0), hardlinkDev: new Float64Array(0), hardlinkIno: new Float64Array(0),
+    hardlinkNode: new Uint32Array(0), hardlinkFamily: new Uint32Array(0),
     refusalNode: Uint32Array.from([1, 2, 3, 4]),
     refusalWhy: Uint8Array.from([REFUSAL_DENIED, REFUSAL_DENIED, REFUSAL_VANISHED, REFUSAL_UNREADABLE]),
     stats: { dirsListed: 2, entries: 5, wallMs: 1, cpuSeconds: 0, fastPath: 'bulk', workersPeak: 1, climbSteps: 0, deniedEntries: 3, unreadableEntries: 2, dataless: 0 },
@@ -1495,7 +1537,7 @@ test('real module: the walk result is columns, not copies — typed arrays of th
     assert.ok(cols.parent instanceof Uint32Array && cols.nameOff instanceof Uint32Array && cols.names instanceof Uint8Array);
     assert.ok(cols.kind instanceof Uint8Array && cols.flags instanceof Uint8Array);
     assert.ok(cols.size instanceof Float64Array && cols.allocBytes instanceof Float64Array && cols.mtimeMs instanceof Float64Array && cols.atimeMs instanceof Float64Array);
-    assert.ok(cols.hardlinkNode instanceof Uint32Array && cols.hardlinkDev instanceof Float64Array && cols.hardlinkIno instanceof Float64Array);
+    assert.ok(cols.hardlinkNode instanceof Uint32Array && cols.hardlinkFamily instanceof Uint32Array);
     assert.ok(cols.refusalNode instanceof Uint32Array && cols.refusalWhy instanceof Uint8Array);
     assert.equal(cols.parent.length, total);
     assert.equal(cols.nameOff.length, total + 1);

@@ -7,7 +7,7 @@
 //!
 //! | bytes | what |
 //! | --- | --- |
-//! | 0..8 | the magic: `TMMFT001` for columns, `TMMFTERR` for a refusal |
+//! | 0..8 | the magic: `TMMFT002` for columns, `TMMFTERR` for a refusal |
 //! | 8..12 | the entry count `n` (the root included), `u32`; for a refusal, the sentence's length in bytes |
 //! | 12..16 | flags, `u32`: bit 0 [`FLAG_ATIME`]; any other bit is refused |
 //!
@@ -15,8 +15,9 @@
 //! (`n` × `u32`), `name_off` (`n + 1` × `u32`), `names` (`name_off[n]`
 //! bytes of UTF-8), `kind` and `flags` (`n` bytes each), `size`,
 //! `alloc_bytes`, `mtime_ms` and `atime_ms` (`n` × `f64` each, NaN kept bit
-//! for bit); the hard-link table (a `u32` count, then `node: u32, dev: f64,
-//! ino: f64` each); the refusal table (a `u32` count, then `node: u32, why:
+//! for bit); the hard-link table (a `u32` count, then `node: u32, family:
+//! u32` each — version 1 carried `dev` and `ino` as doubles, which cannot
+//! hold a file id: the pre-landing review of 23 Sep 2026); the refusal table (a `u32` count, then `node: u32, why:
 //! u8` each); and the stats (`dirs_listed: u64, entries: u64, wall_ms: f64,
 //! cpu_seconds: f64, fast_path: u8, workers_peak: u32, climb_steps: u32,
 //! denied_entries: u64, unreadable_entries: u64, dataless: u64`). Nothing
@@ -37,8 +38,11 @@ use tm_walk::{
     KIND_SYMLINK, Refusal, WalkOutput, WalkStats,
 };
 
-/// The magic of a columns file (format version 1).
-pub const MAGIC_COLUMNS: [u8; 8] = *b"TMMFT001";
+/// The magic of a columns file (format version 2: hard links by family).
+pub const MAGIC_COLUMNS: [u8; 8] = *b"TMMFT002";
+/// What every version's magic starts with, so a file from another build is
+/// named as that rather than as something else entirely.
+const MAGIC_FAMILY: &[u8] = b"TMMFT";
 /// The magic of a refusal: the helper's reason, as a sentence.
 pub const MAGIC_REFUSAL: [u8; 8] = *b"TMMFTERR";
 /// The header: the magic, the entry count and the flags.
@@ -68,8 +72,8 @@ pub fn is_output_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
-/// A hard-link entry: `node: u32, dev: f64, ino: f64`.
-const HARDLINK_BYTES: usize = 4 + 8 + 8;
+/// A hard-link entry: `node: u32, family: u32`.
+const HARDLINK_BYTES: usize = 4 + 4;
 /// A refusal entry: `node: u32, why: u8`.
 const REFUSAL_BYTES: usize = 4 + 1;
 
@@ -89,6 +93,8 @@ pub enum ColumnsError {
     TooShort,
     /// Neither magic.
     BadMagic,
+    /// A columns file from another build: its magic names another version.
+    OtherVersion([u8; 8]),
     /// A header flag this build does not know (the whole flags word).
     UnknownFlags(u32),
     /// The file ends inside a section.
@@ -115,7 +121,12 @@ impl fmt::Display for ColumnsError {
                 "the columns file is shorter than its {HEADER_BYTES}-byte header"
             ),
             Self::BadMagic => f.write_str(
-                "the file is not a TreeMap columns file: its magic is neither TMMFT001 nor TMMFTERR",
+                "the file is not a TreeMap columns file: its magic is neither TMMFT002 nor TMMFTERR",
+            ),
+            Self::OtherVersion(magic) => write!(
+                f,
+                "the columns file was written by another TreeMap build (format {}); this build reads TMMFT002",
+                String::from_utf8_lossy(magic)
             ),
             Self::UnknownFlags(flags) => write!(
                 f,
@@ -224,6 +235,14 @@ pub fn check_shape(out: &WalkOutput) -> Result<(), ColumnsError> {
     if !links.iter().all(|&node| inside(node)) || !sorted(&links) {
         return Err(bad("a hard link outside the nodes, or out of order"));
     }
+    // Families are numbered from 0, at most one per link.
+    if out
+        .hardlinks
+        .iter()
+        .any(|h| usize::try_from(h.family).map_or(true, |f| f >= links.len()))
+    {
+        return Err(bad("a hard-link family numbered past the table"));
+    }
     let refused: Vec<u32> = out.refusals.iter().map(|r| r.node).collect();
     if !refused.iter().all(|&node| inside(node)) || !sorted(&refused) {
         return Err(bad("a refusal outside the nodes, or out of order"));
@@ -292,8 +311,7 @@ pub fn encode_columns(out: &WalkOutput, flags: u32) -> Result<Vec<u8>, ColumnsEr
     w.extend_from_slice(&count(out.hardlinks.len())?.to_le_bytes());
     for link in &out.hardlinks {
         w.extend_from_slice(&link.node.to_le_bytes());
-        w.extend_from_slice(&link.dev.to_le_bytes());
-        w.extend_from_slice(&link.ino.to_le_bytes());
+        w.extend_from_slice(&link.family.to_le_bytes());
     }
     w.extend_from_slice(&count(out.refusals.len())?.to_le_bytes());
     for refusal in &out.refusals {
@@ -426,7 +444,11 @@ pub fn decode(bytes: &[u8]) -> Result<ColumnsFile, ColumnsError> {
         return decode_refusal(&mut r, entries, flags);
     }
     if magic != MAGIC_COLUMNS {
-        return Err(ColumnsError::BadMagic);
+        return Err(if magic.starts_with(MAGIC_FAMILY) {
+            ColumnsError::OtherVersion(magic)
+        } else {
+            ColumnsError::BadMagic
+        });
     }
     if flags & !KNOWN_FLAGS != 0 {
         return Err(ColumnsError::UnknownFlags(flags));
@@ -487,8 +509,7 @@ fn decode_columns(r: &mut Reader<'_>, n: usize) -> Result<WalkOutput, ColumnsErr
         .chunks_exact(HARDLINK_BYTES)
         .map(|c| HardlinkRef {
             node: u32::from_le_bytes([byte(c, 0), byte(c, 1), byte(c, 2), byte(c, 3)]),
-            dev: f64_at(c.get(4..).unwrap_or_default()),
-            ino: f64_at(c.get(12..).unwrap_or_default()),
+            family: u32::from_le_bytes([byte(c, 4), byte(c, 5), byte(c, 6), byte(c, 7)]),
         })
         .collect();
     let refused = usize::try_from(r.u32("refusal count")?).map_err(|_| ColumnsError::TooLarge)?;

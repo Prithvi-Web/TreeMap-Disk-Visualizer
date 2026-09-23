@@ -26,7 +26,7 @@ pub mod windows;
 
 /// Everything the listing knows about one entry besides its name. Times are
 /// milliseconds computed as `sec * 1e3 + nsec / 1e6` without rounding (P3-6);
-/// sizes, `dev` and `ino` are doubles (P3-7).
+/// sizes and `dev` are doubles (P3-7); `ino` is exact, never a double.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Meta {
     /// [`crate::KIND_FILE`], [`crate::KIND_DIR`] or [`crate::KIND_SYMLINK`].
@@ -43,8 +43,13 @@ pub struct Meta {
     pub atime_ms: f64,
     /// The device id.
     pub dev: f64,
-    /// The inode / file id.
-    pub ino: f64,
+    /// The inode or file id, exact: `st_ino`, or on Windows the whole 128-bit
+    /// file id. An identity, not a quantity — as a double, a reused NTFS
+    /// record's id (its sequence number sits in bits 48..64) rounds into its
+    /// neighbour's past 2^53, and ReFS ids can differ only above bit 64, so
+    /// two files became one hard-link family (the pre-landing review of 23
+    /// Sep 2026).
+    pub ino: u128,
     /// Hard-link count; 0 for a directory (not a fact the walk records) or when withheld.
     pub nlink: u32,
     /// True when the file system withheld an attribute the walk needs; the
@@ -63,7 +68,7 @@ impl Meta {
             mtime_ms: f64::NAN,
             atime_ms: f64::NAN,
             dev: 0.0,
-            ino: 0.0,
+            ino: 0,
             nlink: 0,
             withheld: true,
         }
