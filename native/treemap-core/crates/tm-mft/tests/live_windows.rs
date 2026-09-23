@@ -24,8 +24,9 @@
 //! The listing walk reads through the file system's cache, the MFT reader
 //! reads the disk, where NTFS writes `$MFT`'s pages lazily: a fixture made a
 //! moment ago can be missing, or stale, on disk. So the two walks are
-//! repeated until they agree, for at most [`CONVERGE_WITHIN`]; a difference
-//! still there then fails with the last one found.
+//! repeated until they agree; a difference still there once
+//! [`CONVERGE_WITHIN`] has passed and at least [`MIN_TRIES`] tries were made
+//! fails with the last one found.
 #![cfg(windows)]
 
 mod canon;
@@ -64,6 +65,11 @@ const SHORT_ALIAS: &str = "LONGNA~1.TXT";
 const UNICODE_NAME: &str = "\u{fc}n\u{ef}c\u{f8}d\u{e9}-\u{540d}\u{524d}.txt";
 /// How long the table on disk may take to catch up with the cache.
 const CONVERGE_WITHIN: Duration = Duration::from_secs(120);
+/// The fewest tries before a difference fails the test, however long they
+/// took: one try reads the runner's whole system volume, which on a slow
+/// runner can itself outlast [`CONVERGE_WITHIN`] and so leave the table on
+/// disk no second chance to catch up (the pre-landing review of 23 Sep 2026).
+const MIN_TRIES: u32 = 3;
 /// The pause between two tries.
 const RETRY_EVERY: Duration = Duration::from_secs(2);
 /// The most a listing walk of the fixture may take.
@@ -319,7 +325,7 @@ fn the_mft_walk_equals_the_listing_walk_on_a_real_ntfs_volume() -> TestResult {
             Try::Equal(walks) => return verify(&fixture, &walks.0, &walks.1, tries),
             Try::Differs(why) => why,
         };
-        if started.elapsed() >= CONVERGE_WITHIN {
+        if give_up(tries, started.elapsed()) {
             return Err(format!(
                 "after {tries} tries over {:?} the MFT walk still differs from the listing walk (fixture steps that failed: {:?}):\n{last}",
                 started.elapsed(),
@@ -328,6 +334,26 @@ fn the_mft_walk_equals_the_listing_walk_on_a_real_ntfs_volume() -> TestResult {
         }
         thread::sleep(RETRY_EVERY);
     }
+}
+
+/// Whether a try that still differs is the last: only once at least
+/// [`MIN_TRIES`] tries were made and [`CONVERGE_WITHIN`] has passed. Each try
+/// is bounded ([`READ_WITHIN`], [`WALK_WITHIN`]), so the loop is bounded by
+/// count and by time alike, and one slow try cannot spend the window alone.
+fn give_up(tries: u32, elapsed: Duration) -> bool {
+    tries >= MIN_TRIES && elapsed >= CONVERGE_WITHIN
+}
+
+#[test]
+fn a_difference_fails_only_after_three_tries_and_the_whole_window() {
+    // Tries as slow as a read may be: the window is spent during the first,
+    // yet the table on disk gets two more chances to catch up.
+    assert!(!give_up(1, READ_WITHIN));
+    assert!(!give_up(2, READ_WITHIN * 2));
+    assert!(give_up(3, READ_WITHIN * 3));
+    // Quick tries go on until the window is spent, however many there are.
+    assert!(!give_up(40, CONVERGE_WITHIN.saturating_sub(RETRY_EVERY)));
+    assert!(give_up(40, CONVERGE_WITHIN));
 }
 
 /// A developer's unelevated run passes with the reason; CI's cannot skip.
