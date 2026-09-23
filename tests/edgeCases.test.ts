@@ -213,15 +213,26 @@ test('freezeTimes refuses to stamp once the clock reaches its anchor, rather tha
   }
 });
 
-test('a skipped case is a real inability: on macOS and Linux every case builds except the ones the platform cannot', (t) => {
-  if (process.platform === 'win32') {
-    t.skip('on Windows what builds varies with Developer Mode (symbolic links) and NTFS (no sparse proof, no control characters in names)');
-    return;
-  }
+test('a skipped case is a real inability: every case builds except the ones this platform cannot', () => {
   const allowed = new Map<EdgeCaseName, RegExp>([['caseCollision', /case-insensitive/]]);
   if (process.platform !== 'darwin') {
     allowed.set('nestedMount', /only on macOS/);
     allowed.set('readOnlyMount', /only on macOS/);
+  }
+  if (process.platform === 'win32') {
+    // Each for the reason the builder states. Hard links, zero-byte files,
+    // long paths and the NFC/NFD pair get no allowance: they must build here.
+    const noSparseProof = /Stats\.blocks is not reported on Windows/;
+    allowed.set('sparseFile', noSparseProof);
+    allowed.set('sparseFileOver4GiB', noSparseProof);
+    allowed.set('deniedDirectory', /no POSIX mode bits/);
+    // NTFS refuses control characters in a name; the emoji name must still be accepted.
+    allowed.set('oddNames', /^the file system refused "with\\nnewline\.txt" \(\w+\), "with\\ttab\.txt" \(\w+\)$/);
+    // A symbolic link needs Developer Mode or an administrator (CI's runner is one).
+    const noSymlinks = /symbolic link could not be created here: .*EPERM/;
+    allowed.set('symlinkToFile', noSymlinks);
+    allowed.set('brokenSymlink', noSymlinks);
+    allowed.set('circularSymlinks', noSymlinks);
   }
   if (process.getuid?.() === 0) allowed.set('deniedDirectory', /root/);
   for (const name of Object.keys(fixture.cases) as EdgeCaseName[]) {
