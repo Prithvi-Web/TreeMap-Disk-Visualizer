@@ -28,6 +28,12 @@ Copy everything below the line into a fresh session started in
 
 - **Before the review** (05:40–13:25 UTC): 71 commits, `git log --oneline 32d68ff..a1a36d5` — W6 M1–M6, the native engine’s speed work, the bench harness, the CI fixes; this file’s own history has the per-commit notes.
 
+### The five-hour extension, after the review gaps (23 Sep, ~18:40–19:10 UTC)
+- Two read-only **CI dry runs** of the unpushed commits (a pre-push agent reading them as each CI leg would): the first found that under the Windows leg's `shell: bash` a bare `whoami` is Git's coreutils one — fixed by calling System32 tools by full path (`0b748b5`), the likely cause of the first Windows run's System32 test failure; the second predicted no failure at medium or high confidence (`7b4df0f` took its one low-risk note).
+- A full `npm test` now leaves **nothing** in the temp folder (41 folders a run this morning): `tests/fixtures/dataDir.ts` (`isolatedDataDir`, `fileTempDir`), `8162d2a`, `d749040`.
+- Printed claims checked against what shipped today: on Windows the Settings gdu row now says gdu is not used there (R59; `8222f40`, checked in an isolated dev server — its launch entry `treemap-gduhelp` sits in the parent folder's `.claude/launch.json`); the README says online-only files are never opened by the duplicate finder (`4cd1cc9`) and that a Windows path ending in a dot or space is left alone (`69d1f36`).
+- enum200k native Turbo re-recorded at `17eb13d`: 412,291 e/s, PASS 2.9% faster (`b5e6f4b`); Eco refused twice for its spread.
+
 ### CI and the owner's grants (23 Sep 2026, from ~15:50 UTC)
 - **The owner's grants** (memory `treemap-owner-grants`): push after each gated step — but the CLI cannot push (no `gh`, no credential helper; the owner's sign-in lives in GitHub Desktop), so: I commit, the owner pushes from GitHub Desktop, I read every CI leg; R1, R59, R55 approved; crates `tm-store` + `blake3` approved (D10 already had them); Eco stays Background QoS; the owner alone publishes releases (never push a `v*` tag). "Continue for another 5 hrs" (to ~20:45 UTC).
 - **CI run 35883878377 on `58e2181`** (the first push of the day's 100 commits): Linux and Linux pt-BR green (the Linux listing and gdu's (b) leg proven for the first time); macOS: one timing test (fixed, `83e9788`); Windows: 6 test-suite + 3 Rust failures, all diagnosed. **Run 35886778533 on `f200346`**: macOS, Linux, Linux pt-BR all green; Windows the same known failures.
