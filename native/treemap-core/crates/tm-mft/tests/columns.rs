@@ -72,7 +72,7 @@ fn sample() -> WalkOutput {
             climb_steps: 0,
             denied_entries: 7,
             unreadable_entries: 8,
-            dataless: 9,
+            dataless: 1,
         },
     }
 }
@@ -274,6 +274,185 @@ fn refused_shape(change: impl FnOnce(&mut WalkOutput)) -> Result<ColumnsError, S
     }
 }
 
+/// `column[i] = value`, when row `i` exists.
+fn set(column: &mut [f64], i: usize, value: f64) {
+    if let Some(v) = column.get_mut(i) {
+        *v = value;
+    }
+}
+
+/// `o` with node `node` renamed `name`, its name offsets rebuilt.
+fn rename(o: &mut WalkOutput, node: usize, name: &str) {
+    let old: Vec<Vec<u8>> = o
+        .name_off
+        .windows(2)
+        .map(|w| {
+            let at = |k: usize| {
+                w.get(k)
+                    .and_then(|&off| usize::try_from(off).ok())
+                    .unwrap_or(0)
+            };
+            o.names.get(at(0)..at(1)).unwrap_or_default().to_vec()
+        })
+        .collect();
+    let mut names = Vec::new();
+    let mut name_off = vec![0_u32];
+    for (i, bytes) in old.iter().enumerate() {
+        names.extend_from_slice(if i == node {
+            name.as_bytes()
+        } else {
+            bytes.as_slice()
+        });
+        name_off.push(u32::try_from(names.len()).unwrap_or(u32::MAX));
+    }
+    o.names = names;
+    o.name_off = name_off;
+}
+
+/// `bytes` with the one occurrence of `from` replaced by `to`, as long.
+fn patched(bytes: &[u8], from: &[u8], to: &[u8]) -> Result<Vec<u8>, String> {
+    let found: Vec<usize> = bytes
+        .windows(from.len())
+        .enumerate()
+        .filter(|(_, w)| *w == from)
+        .map(|(i, _)| i)
+        .collect();
+    let [at] = found.as_slice() else {
+        return Err(format!("{from:?} occurs {} times, not once", found.len()));
+    };
+    let mut out = bytes.to_vec();
+    out.get_mut(*at..at.saturating_add(from.len()))
+        .ok_or("the patch runs past the file")?
+        .copy_from_slice(to);
+    Ok(out)
+}
+
+#[test]
+fn a_name_that_is_not_one_file_name_is_refused_but_the_root_is_the_scan_path() -> TestResult {
+    // The ingest joins every name onto its parent's path, and the app acts on
+    // that path: `a\b` would name another file, `a:b` a stream of `a`, `..`
+    // the parent. The listing (tm-walk's `stage_record`) never stages one, so
+    // a file holding one was not written by it. The root is named after the
+    // scan path (`C:\` in the sample), which is never joined onto anything.
+    for name in ["", ".", "..", "l/n", "l\\n", "l:n", "l\0n"] {
+        let e = refused_shape(|o| rename(o, 3, name))?;
+        assert!(
+            matches!(e, ColumnsError::BadShape { .. }),
+            "{name:?}: {e:?}"
+        );
+    }
+    let mut dotted = sample();
+    rename(&mut dotted, 3, "...");
+    rename(&mut dotted, 2, ".hidden");
+    same(&columns_of(&encoded(&dotted)?)?, &dotted)
+}
+
+#[test]
+fn stats_no_walk_of_the_nodes_could_have_counted_are_refused() -> TestResult {
+    let cases: Vec<(&str, Change)> = vec![
+        (
+            "more entries than nodes under the root",
+            Box::new(|o: &mut WalkOutput| o.stats.entries = 6),
+        ),
+        (
+            "fewer entries than nodes under the root",
+            Box::new(|o: &mut WalkOutput| o.stats.entries = 4),
+        ),
+        (
+            "more directories listed than nodes",
+            Box::new(|o: &mut WalkOutput| o.stats.dirs_listed = 7),
+        ),
+        (
+            "more dataless entries than nodes",
+            Box::new(|o: &mut WalkOutput| o.stats.dataless = 7),
+        ),
+        (
+            "a denied count JavaScript cannot hold",
+            Box::new(|o: &mut WalkOutput| o.stats.denied_entries = 1 << 53),
+        ),
+        (
+            "an unreadable count JavaScript cannot hold",
+            Box::new(|o: &mut WalkOutput| o.stats.unreadable_entries = u64::MAX),
+        ),
+        (
+            "a wall time that is not a number",
+            Box::new(|o: &mut WalkOutput| o.stats.wall_ms = f64::NAN),
+        ),
+        (
+            "an infinite wall time",
+            Box::new(|o: &mut WalkOutput| o.stats.wall_ms = f64::INFINITY),
+        ),
+        (
+            "a negative wall time",
+            Box::new(|o: &mut WalkOutput| o.stats.wall_ms = -1.0),
+        ),
+        (
+            "a negative CPU time",
+            Box::new(|o: &mut WalkOutput| o.stats.cpu_seconds = -0.5),
+        ),
+        (
+            "an infinite CPU time",
+            Box::new(|o: &mut WalkOutput| o.stats.cpu_seconds = f64::INFINITY),
+        ),
+    ];
+    for (what, change) in cases {
+        let e = refused_shape(change)?;
+        assert!(
+            matches!(e, ColumnsError::BadShape { .. }),
+            "{what}: expected BadShape, got {e:?}"
+        );
+    }
+    // At the edges, all still a walk's: the largest count JavaScript holds
+    // exactly, as many listed directories and dataless entries as nodes, a
+    // zero wall time, and no thread clock (NaN).
+    let mut edge = sample();
+    edge.stats.denied_entries = (1 << 53) - 1;
+    edge.stats.unreadable_entries = (1 << 53) - 1;
+    edge.stats.dirs_listed = 6;
+    edge.stats.dataless = 6;
+    edge.stats.wall_ms = 0.0;
+    edge.stats.cpu_seconds = f64::NAN;
+    same(&columns_of(&encoded(&edge)?)?, &edge)
+}
+
+#[test]
+fn a_file_changed_past_the_encoder_is_refused_by_the_reader_too() -> TestResult {
+    // The file sits in a folder the user's own programs can write: what the
+    // encoder refuses to write, the reader refuses to read.
+    let good = encoded(&sample())?;
+    let nan = f64::NAN.to_le_bytes();
+    let cases: [(&str, Vec<u8>, Vec<u8>); 4] = [
+        (
+            "a name holding a separator",
+            b"a.txt".to_vec(),
+            b"a\\txt".to_vec(),
+        ),
+        (
+            "a size that is not a number",
+            1234.0_f64.to_le_bytes().to_vec(),
+            nan.to_vec(),
+        ),
+        (
+            "a wall time that is not a number",
+            12.5_f64.to_le_bytes().to_vec(),
+            nan.to_vec(),
+        ),
+        (
+            "an entry count past the nodes",
+            [5_u64.to_le_bytes(), 12.5_f64.to_le_bytes()].concat(),
+            [6_u64.to_le_bytes(), 12.5_f64.to_le_bytes()].concat(),
+        ),
+    ];
+    for (what, from, to) in cases {
+        let bytes = patched(&good, &from, &to)?;
+        assert!(
+            matches!(decode(&bytes).err(), Some(ColumnsError::BadShape { .. })),
+            "{what}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn a_parent_that_does_not_precede_its_child_is_refused() -> TestResult {
     // A cycle (1 -> 5 -> 1) would hang the ingest's parent-chain walk.
@@ -356,6 +535,26 @@ fn names_kinds_flags_and_side_tables_out_of_range_are_refused() -> TestResult {
             Box::new(|o: &mut WalkOutput| {
                 o.size.pop();
             }),
+        ),
+        (
+            "a negative size",
+            Box::new(|o: &mut WalkOutput| set(&mut o.size, 2, -1.0)),
+        ),
+        (
+            "a size that is not a number",
+            Box::new(|o: &mut WalkOutput| set(&mut o.size, 2, f64::NAN)),
+        ),
+        (
+            "an infinite size",
+            Box::new(|o: &mut WalkOutput| set(&mut o.size, 2, f64::INFINITY)),
+        ),
+        (
+            "a negative allocation",
+            Box::new(|o: &mut WalkOutput| set(&mut o.alloc_bytes, 4, -0.5)),
+        ),
+        (
+            "an allocation that is not a number",
+            Box::new(|o: &mut WalkOutput| set(&mut o.alloc_bytes, 4, f64::NAN)),
         ),
     ];
     for (what, change) in cases {

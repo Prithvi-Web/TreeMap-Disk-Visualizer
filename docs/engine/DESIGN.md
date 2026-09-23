@@ -482,10 +482,17 @@ fixed, as built:
    2026; a file from another build is refused as that); a
    refusal is the magic `TMMFTERR` and the helper's sentence, because an
    elevated process's stderr never reaches the app. `mftTake` (tm-node)
-   checks the whole file before trusting it — above all `parent[i] < i`,
-   without which the ingest could loop — and hands over the same typed
-   arrays `scanTake` does, so the ingest, the store and the JSON are the
-   native engine's. The stats say `fastPath: "mft"`, `engine: "ntfs-mft"`.
+   checks the whole file before trusting it (`check_shape`, which the
+   encoder applies too, so the helper never writes a file the app would
+   refuse): above all `parent[i] < i`, without which the ingest could loop;
+   and — since the ingest joins every name onto its parent's path and the
+   app acts on that path — every name but the root's one file name (not
+   empty, `.` or `..`, no `/`, `\`, `:` or NUL), sizes and allocations
+   finite and not negative, and stats a walk of those nodes could have
+   counted, the omitted-entry counts within 2^53 − 1 (past it serde_json
+   hands JavaScript a number the ingest cannot add). It hands over the same
+   typed arrays `scanTake` does, so the ingest, the store and the JSON are
+   the native engine's. The stats say `fastPath: "mft"`, `engine: "ntfs-mft"`.
    The app deletes the file once read, on every path. One an earlier run
    left behind — the app quit while the helper, which Windows starts outside
    its process tree, still ran — lists every name under the folder it read,

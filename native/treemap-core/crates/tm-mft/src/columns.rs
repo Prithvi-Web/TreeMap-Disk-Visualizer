@@ -186,11 +186,38 @@ fn bad(reason: &'static str) -> ColumnsError {
     ColumnsError::BadShape { reason }
 }
 
+/// The bytes a node's name must not hold: joined onto its parent's path it
+/// would name something else — another file (`a\b`), a stream of a file
+/// (`a:b`), a path cut short (NUL). The listing never stages one
+/// (`tm_walk`'s `stage_record`).
+const NOT_IN_A_NAME: &[u8] = b"/\\:\0";
+/// The largest count JavaScript holds exactly (`Number.MAX_SAFE_INTEGER`):
+/// past it a count would cross napi as a number the ingest cannot add to.
+const MAX_SAFE_COUNT: u64 = (1 << 53) - 1;
+
+/// Whether `name`, joined onto its parent's path, names that entry and
+/// nothing else: not empty, not `.` or `..` (which a listing never reports
+/// as an entry), none of [`NOT_IN_A_NAME`].
+fn is_one_name(name: &[u8]) -> bool {
+    !name.is_empty()
+        && name != b"."
+        && name != b".."
+        && !name.iter().any(|b| NOT_IN_A_NAME.contains(b))
+}
+
+/// A size or an allocation a file system could report: a whole, finite,
+/// non-negative number of bytes (the listing clamps a negative one to 0).
+fn is_byte_count(v: f64) -> bool {
+    v.is_finite() && v >= 0.0
+}
+
 /// The shape the ingest relies on, checked on both sides of the file: at
 /// least a root; every column `n` long and `name_off` `n + 1`; the root its
 /// own parent and every other node's parent before it; name offsets from 0,
-/// never decreasing, ending at the names' length, each name UTF-8; known
-/// kinds and node flags; side tables inside the nodes, sorted by node.
+/// never decreasing, ending at the names' length, each name UTF-8 and, but
+/// the root's (the scan path's), one name; sizes and allocations finite and
+/// not negative; known kinds and node flags; side tables inside the nodes,
+/// sorted by node; and stats a walk of these nodes could have counted.
 pub fn check_shape(out: &WalkOutput) -> Result<(), ColumnsError> {
     let n = out.parent.len();
     if n == 0 {
@@ -215,6 +242,16 @@ pub fn check_shape(out: &WalkOutput) -> Result<(), ColumnsError> {
         }
     }
     check_names(out)?;
+    if !out
+        .size
+        .iter()
+        .chain(&out.alloc_bytes)
+        .all(|&v| is_byte_count(v))
+    {
+        return Err(bad(
+            "a size or allocation that is negative or not a finite number",
+        ));
+    }
     if out
         .kind
         .iter()
@@ -247,16 +284,45 @@ pub fn check_shape(out: &WalkOutput) -> Result<(), ColumnsError> {
     if !refused.iter().all(|&node| inside(node)) || !sorted(&refused) {
         return Err(bad("a refusal outside the nodes, or out of order"));
     }
+    check_stats(out)
+}
+
+/// The stats against the nodes: every node but the root an entry; no more
+/// directories listed, or dataless entries, than nodes; the omitted-entry
+/// counts within what JavaScript holds exactly; a finite, non-negative wall
+/// time; a CPU time that is NaN (no thread clock) or finite and non-negative.
+fn check_stats(out: &WalkOutput) -> Result<(), ColumnsError> {
+    let s = &out.stats;
+    let n = u64::try_from(out.parent.len()).map_err(|_| ColumnsError::TooLarge)?;
+    if s.entries != n.saturating_sub(1) {
+        return Err(bad("an entry count other than its nodes under the root"));
+    }
+    if s.dirs_listed > n || s.dataless > n {
+        return Err(bad(
+            "more directories listed, or entries without their data, than nodes",
+        ));
+    }
+    if s.denied_entries > MAX_SAFE_COUNT || s.unreadable_entries > MAX_SAFE_COUNT {
+        return Err(bad(
+            "a count of omitted entries past 2^53 - 1, which JavaScript cannot hold exactly",
+        ));
+    }
+    if !is_byte_count(s.wall_ms) {
+        return Err(bad("a wall time that is negative or not a finite number"));
+    }
+    if s.cpu_seconds.is_infinite() || s.cpu_seconds < 0.0 {
+        return Err(bad("a CPU time that is negative or infinite"));
+    }
     Ok(())
 }
 
 /// The name offsets and the names: from 0, never decreasing, ending at the
-/// names' length, each name UTF-8.
+/// names' length, each name UTF-8 and every name but the root's one name.
 fn check_names(out: &WalkOutput) -> Result<(), ColumnsError> {
     if out.name_off.first() != Some(&0) {
         return Err(bad("a first name offset that is not 0"));
     }
-    for pair in out.name_off.windows(2) {
+    for (node, pair) in out.name_off.windows(2).enumerate() {
         let (Some(&start), Some(&end)) = (pair.first(), pair.get(1)) else {
             return Err(bad("a name offset outside the names"));
         };
@@ -268,6 +334,11 @@ fn check_names(out: &WalkOutput) -> Result<(), ColumnsError> {
             .ok_or_else(|| bad("a name offset outside the names"))?;
         if std::str::from_utf8(name).is_err() {
             return Err(bad("a name that is not UTF-8"));
+        }
+        if node > 0 && !is_one_name(name) {
+            return Err(bad(
+                "a name that is not one file name: empty, `.` or `..`, or holding `/`, `\\`, `:` or NUL",
+            ));
         }
     }
     let last = out.name_off.last().copied().unwrap_or(0);

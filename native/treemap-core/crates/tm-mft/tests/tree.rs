@@ -643,30 +643,62 @@ fn records_below_16_are_never_entries() -> TestResult {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_directory_whose_name_holds_a_separator_is_refused_and_not_descended() -> TestResult {
+fn a_name_that_is_not_one_file_name_is_counted_unreadable_and_nothing_under_it_is_listed()
+-> TestResult {
+    // The listing's rule (tm-walk's `stage_record`), so the two walks agree:
+    // joined onto its folder's path, such a name names something else — for
+    // a file as much as a folder, since the app joins every name into a path
+    // it acts on. POSIX-namespace names may hold `\` and `:`; `c/d` and a
+    // name cut to nothing at a leading NUL come only from a damaged table.
     let mut back = dir(170, ROOT, "unused");
     back.names = vec![named(ROOT, 1, POSIX, "a\\b")];
     let mut slash = dir(172, ROOT, "unused");
     slash.names = vec![named(ROOT, 1, POSIX, "c/d")];
-    let mut named_file = file(174, ROOT, "unused", 1);
-    named_file.names = vec![named(ROOT, 1, POSIX, "e\\f.txt")];
+    let mut backslash_file = file(174, ROOT, "unused", 1);
+    backslash_file.names = vec![named(ROOT, 1, POSIX, "e\\f.txt")];
+    let mut stream = file(175, ROOT, "unused", 1);
+    stream.names = vec![named(ROOT, 1, POSIX, "g:h")];
+    let mut cut = file(176, ROOT, "unused", 1);
+    cut.names = vec![named(ROOT, 1, POSIX, "\0lead")];
     let out = build(&table([
         root(),
         back,
         file(171, 170, "under.txt", 1),
         slash,
         file(173, 172, "under2.txt", 1),
-        named_file,
+        backslash_file,
+        stream,
+        cut,
+        file(177, ROOT, "kept.txt", 1),
     ]))?;
-    for name in ["a\\b", "c/d"] {
-        assert!(refused(&out, node(&out, name)?), "{name}");
-    }
-    assert!(node(&out, "under.txt").is_err() && node(&out, "under2.txt").is_err());
-    assert_eq!(
-        at(&out.flags, node(&out, "e\\f.txt")?)?,
-        0,
-        "a file's name is never joined onto a path, so never refused"
-    );
+    let names: Vec<String> = (0..out.len()).map(|i| name_at(&out, i)).collect();
+    assert_eq!(names, ["root", "kept.txt"]);
+    assert_eq!(out.stats.unreadable_entries, 5);
+    assert!(out.refusals.is_empty());
+    assert_eq!(out.stats.dirs_listed, 1);
+    Ok(())
+}
+
+#[test]
+fn a_record_named_dot_or_dot_dot_is_skipped_as_the_listing_skips_its_own() -> TestResult {
+    // A listing never reports `.` or `..` as entries (tm-walk's
+    // `is_dot_entry`), so a record carrying either name — only a damaged
+    // table holds one — is skipped the same way, uncounted; joined onto a
+    // path, it would name the folder or its parent.
+    let mut dot = file(178, ROOT, "unused", 1);
+    dot.names = vec![named(ROOT, 1, POSIX, ".")];
+    let mut dot_dot = dir(179, ROOT, "unused");
+    dot_dot.names = vec![named(ROOT, 1, POSIX, "..")];
+    let out = build(&table([
+        root(),
+        dot,
+        dot_dot,
+        file(180, 179, "inside.txt", 1),
+        file(181, ROOT, "kept.txt", 1),
+    ]))?;
+    let names: Vec<String> = (0..out.len()).map(|i| name_at(&out, i)).collect();
+    assert_eq!(names, ["root", "kept.txt"]);
+    assert_eq!(out.stats.unreadable_entries, 0);
     assert_eq!(out.stats.dirs_listed, 1);
     Ok(())
 }

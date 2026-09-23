@@ -145,6 +145,10 @@ const NT_PREFIX: [u16; 4] = [BACKSLASH, QUESTION, QUESTION, BACKSLASH];
 const DOT: [u8; 2] = [b'.', 0];
 /// The UTF-16LE bytes of `..`.
 const DOT_DOT: [u8; 4] = [b'.', 0, b'.', 0];
+/// The units a listed name must not hold to be joined onto its folder's path
+/// as one name: the separators, the stream separator (`a:b` is stream `b` of
+/// file `a`) and NUL.
+const NOT_IN_A_NAME: [u16; 4] = [b'/' as u16, BACKSLASH, COLON, 0];
 
 /// A batch the kernel could not have written: the directory is unreadable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -502,8 +506,25 @@ pub trait ReparseSource {
     fn reparse_data(&self, dir: &Path, name: &[u16]) -> Result<Vec<u8>, u32>;
 }
 
+/// Whether a listed name, joined onto its folder's path, names that entry
+/// and nothing else: not empty, and none of [`NOT_IN_A_NAME`].
+fn is_one_name(name_utf16le: &[u8]) -> bool {
+    !name_utf16le.is_empty()
+        && name_utf16le
+            .chunks_exact(2)
+            .all(|pair| !NOT_IN_A_NAME.contains(&unit_of(pair)))
+}
+
 /// Stages one record into `out` as the legacy walker would record it (see
 /// the module docs), or counts it the way a failed `lstat` is counted.
+///
+/// A name that is not one name is counted unreadable and staged nowhere:
+/// joined onto `dir`, it would name something else — another file (`a\b`),
+/// a stream (`a:b`), the folder itself (a name cut to nothing at a leading
+/// NUL) — for the reparse read below and for every action on the entry
+/// later. NTFS's POSIX namespace allows `\` and `:` (a file made from
+/// Linux), so a listing can return one; the legacy walker's `lstat` of the
+/// joined path fails for it too.
 pub fn stage_record(
     rec: &Record<'_>,
     facts: DirFacts,
@@ -511,6 +532,10 @@ pub fn stage_record(
     reparse: &dyn ReparseSource,
     out: &mut Listing,
 ) {
+    if !is_one_name(rec.name) {
+        out.unreadable_entries = out.unreadable_entries.saturating_add(1);
+        return;
+    }
     let attrs = rec.attributes;
     let is_dir = attrs & FILE_ATTRIBUTE_DIRECTORY != 0;
     let is_reparse = attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0;

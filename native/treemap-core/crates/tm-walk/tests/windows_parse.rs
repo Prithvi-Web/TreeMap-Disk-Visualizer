@@ -653,6 +653,66 @@ fn a_name_is_cut_at_its_first_nul_unit_and_only_at_a_unit_boundary() -> TestResu
 }
 
 #[test]
+fn a_name_that_is_not_one_file_name_is_counted_unreadable_and_never_staged() -> TestResult {
+    // Joined onto its folder's path, `a\b` names another file, `e:f` names
+    // stream `f` of file `e`, and a name cut to nothing at a leading NUL
+    // names the folder itself: an action on the path would act on something
+    // else. NTFS's POSIX namespace allows `\` and `:` (a file made from
+    // Linux), so a listing can return them. The rule runs before a reparse
+    // point is read by its name — which would read another file's — so the
+    // link below, which the source cannot answer, is unreadable, not vanished.
+    let mut link = file("s\\l", 9);
+    link.attributes = FILE_ATTRIBUTE_REPARSE_POINT;
+    link.tag = IO_REPARSE_TAG_SYMLINK;
+    let entries = [
+        file("a\\b", 1),
+        directory("c\\d"),
+        file("e:f", 2),
+        directory("g:h"),
+        file("\0lead", 3),
+        link,
+        file("ok.txt", 4),
+    ];
+    let listing = staged(&entries, &FakeReparse::default(), false)?;
+    let map = by_name(&listing);
+    assert_eq!(
+        map.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["ok.txt"]
+    );
+    assert_eq!(listing.unreadable_entries, 6);
+    // A listing cuts a name at its first NUL and never holds `/`; the rule is
+    // the stager's all the same, whoever calls it.
+    for name in ["c/d", "x\0y"] {
+        let units = utf16le(name);
+        let rec = Record {
+            name: &units,
+            attributes: 0x20,
+            reparse_tag: 0,
+            end_of_file: 1,
+            allocation: Some(4_096),
+            last_write: FT_2024,
+            last_access: FT_2024,
+            file_id: Some(7),
+        };
+        let mut out = Listing::default();
+        let facts = DirFacts {
+            dev: SERIAL,
+            want_atime: false,
+        };
+        stage_record(
+            &rec,
+            facts,
+            Path::new("C:\\x"),
+            &FakeReparse::default(),
+            &mut out,
+        );
+        assert!(out.is_empty(), "{name:?}");
+        assert_eq!(out.unreadable_entries, 1, "{name:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn has_embedded_nul_finds_a_nul_anywhere_in_the_path() {
     assert!(!has_embedded_nul("C:\\Users\\x"));
     assert!(!has_embedded_nul(""));

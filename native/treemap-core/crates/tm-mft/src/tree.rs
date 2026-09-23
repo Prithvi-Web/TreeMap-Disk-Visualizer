@@ -30,7 +30,7 @@ use std::time::Instant;
 
 use tm_walk::platform::windows::{
     DirFacts, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, Record as ListedRecord,
-    ReparseSource, count_entry_error, filetime_ms, is_dataless, stage_record,
+    ReparseSource, count_entry_error, filetime_ms, is_dataless, is_dot_entry, stage_record,
 };
 use tm_walk::platform::{Listing, Meta, thread_cpu_seconds};
 use tm_walk::{
@@ -51,9 +51,6 @@ pub const FIRST_USER_RECORD: u64 = 16;
 /// when the listing reads a reparse point whose data is not there — the
 /// accounting used for a record flagged as one without a readable value.
 pub const ERROR_NOT_A_REPARSE_POINT: u32 = 4390;
-/// The bytes the Windows walk will not join onto a path as one component.
-const NAME_SEPARATORS: &[u8] = b"/\\";
-
 /// In-use base records by number, each with its extension records'
 /// attributes merged in, and the volume's serial number (the `dev` of every
 /// hard-link key, as `GetFileInformationByHandle`'s `dwVolumeSerialNumber`).
@@ -314,6 +311,12 @@ fn stage_child(
         .iter()
         .flat_map(|u| u.to_le_bytes())
         .collect();
+    // A listing never reports `.` or `..` as an entry, so a record a damaged
+    // table gives either name is skipped the same way; a name that is not one
+    // name otherwise is `stage_record`’s to count.
+    if is_dot_entry(&name) {
+        return false;
+    }
     let attributes = attributes_of(rec);
     let tag = if attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
         0
@@ -393,11 +396,6 @@ fn root_name(rec: &Record) -> String {
         .find(|n| n.namespace != NAMESPACE_DOS)
         .map(|n| utf8_lossy(until_nul(&n.name)))
         .unwrap_or_default()
-}
-
-/// True when joining `name` onto a path would make more than one component.
-fn name_is_a_path(name: &[u8]) -> bool {
-    name.iter().any(|b| NAME_SEPARATORS.contains(b))
 }
 
 /// The columns being built and what the walk would have counted.
@@ -576,17 +574,17 @@ pub fn build_tree(
                 out.dataless += 1;
             }
             if meta.kind == KIND_DIR {
-                // A name holding a separator would list somewhere else once
-                // joined (the walk's rule); a directory already listed or
-                // queued under another name (a corrupt table, or a cycle)
-                // would be listed twice or forever.
-                if name_is_a_path(name) || !queued.insert(record) {
+                // A directory already listed or queued under another name (a
+                // corrupt table, or a cycle) would be listed twice or forever,
+                // so it is refused. (A name holding a separator never gets
+                // here: `stage_record` counted it unreadable.)
+                if queued.insert(record) {
+                    queue.push_back((id, record));
+                } else {
                     out.refusals.push(DirRefusal {
                         node: id,
                         why: Refusal::Unreadable,
                     });
-                } else {
-                    queue.push_back((id, record));
                 }
             } else if meta.kind == KIND_FILE && !meta.withheld {
                 // `stage_record` never reports a link count on Windows, so
