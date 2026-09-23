@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { emptyTrashCommands } from '../src/services/trash';
-import { terminalCommands } from '../src/services/cleaner';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { launchTerminal, openCommand, runCommand, terminalCommands } from '../src/services/cleaner';
 
 /**
  * Empty Trash and Open Terminal Here both shell out per platform. These tests
@@ -60,12 +64,6 @@ test('macOS terminal: osascript primary with escaped AppleScript, open -a fallba
   assert.deepEqual(fallback, { cmd: 'open', args: ['-a', 'Terminal', HOSTILE] });
 });
 
-test('Windows terminal: wt.exe first, cmd.exe start fallback, path as its own argv entry', () => {
-  assert.deepEqual(terminalCommands(HOSTILE, 'win32'), [
-    { cmd: 'wt.exe', args: ['-d', HOSTILE] },
-    { cmd: 'cmd.exe', args: ['/c', 'start', '', '/D', HOSTILE, 'cmd.exe'] },
-  ]);
-});
 
 test('Linux terminal: emulators in preference order with their working-dir flags', () => {
   const cmds = terminalCommands(HOSTILE, 'linux');
@@ -80,13 +78,106 @@ test('Linux terminal: emulators in preference order with their working-dir flags
 
 test('every candidate on every platform carries the path only as argv data', () => {
   for (const platform of ['darwin', 'win32', 'linux'] as NodeJS.Platform[]) {
-    for (const { cmd, args } of terminalCommands(HOSTILE, platform)) {
+    for (const { cmd, args, cwd } of terminalCommands(HOSTILE, platform)) {
       assert.equal(typeof cmd, 'string');
       assert.ok(Array.isArray(args));
       if (cmd === 'osascript') continue; // path is inside the escaped literal, asserted above
+      if (platform === 'win32') {
+        // On Windows the path travels as the working directory only.
+        assert.equal(cwd, HOSTILE, `${cmd} starts in the folder`);
+        assert.ok(args.every((a) => !a.includes(HOSTILE)), `${cmd} carries no path`);
+        continue;
+      }
       // The path appears verbatim as (or inside) exactly one argv element.
       const carriers = args.filter((a) => a === HOSTILE || a.endsWith(HOSTILE));
       assert.equal(carriers.length, 1, `${platform}/${cmd} should carry the dir in one argv entry`);
     }
+  }
+});
+
+/* ---------------- Windows: nothing a program parses again ---------------- */
+
+// cmd.exe reads `&`, `|`, `^` and `%VAR%` in its whole command line, and
+// Windows Terminal splits its commands at `;` — whatever the quoting. libuv
+// quotes an argument only when it holds a space, a tab or a quote, so a name
+// like `x&second` reached cmd.exe as syntax (the pre-landing review of 23 Sep
+// 2026). Every character here is legal in a Windows name, and there is no
+// space, so nothing gets quoted.
+const WIN_HOSTILE = 'C:\\Work\\R&D\\x&second.exe;wt^%PATH%(1)!';
+
+test('Windows open: PowerShell opens the path from the environment, never from a command line', () => {
+  assert.deepEqual(openCommand(WIN_HOSTILE, false, 'win32'), {
+    cmd: 'powershell.exe',
+    args: ['-NoProfile', '-NonInteractive', '-Command', 'Invoke-Item -LiteralPath $env:TREEMAP_OPEN_TARGET'],
+    env: { TREEMAP_OPEN_TARGET: WIN_HOSTILE },
+  });
+});
+
+test('Windows reveal: explorer.exe, started directly, gets the path as its own argument', () => {
+  assert.deepEqual(openCommand(WIN_HOSTILE, true, 'win32'), { cmd: 'explorer.exe', args: ['/select,', WIN_HOSTILE] });
+});
+
+test('macOS and Linux open and reveal pass the path as argv data', () => {
+  assert.deepEqual(openCommand(HOSTILE, false, 'darwin'), { cmd: 'open', args: [HOSTILE] });
+  assert.deepEqual(openCommand(HOSTILE, true, 'darwin'), { cmd: 'open', args: ['-R', HOSTILE] });
+  assert.deepEqual(openCommand(HOSTILE, false, 'linux'), { cmd: 'xdg-open', args: [HOSTILE] });
+});
+
+test('Windows terminal: the folder is the new window\u2019s working directory, never an argument', () => {
+  assert.deepEqual(terminalCommands(WIN_HOSTILE, 'win32'), [
+    { cmd: 'wt.exe', args: ['-d', '.'], cwd: WIN_HOSTILE },
+    { cmd: 'cmd.exe', args: ['/c', 'start', '', 'cmd.exe'], cwd: WIN_HOSTILE },
+  ]);
+});
+
+test('no Windows command hands cmd.exe or Windows Terminal any part of the path', () => {
+  const commands = [openCommand(WIN_HOSTILE, false, 'win32'), openCommand(WIN_HOSTILE, true, 'win32'), ...terminalCommands(WIN_HOSTILE, 'win32')];
+  for (const { cmd, args } of commands) {
+    if (cmd !== 'cmd.exe' && cmd !== 'wt.exe' && cmd !== 'powershell.exe') continue;
+    for (const arg of args) {
+      assert.ok(!arg.includes('R&D') && !arg.includes('%PATH%') && !arg.includes('second'), `${cmd} got ${arg}`);
+    }
+  }
+});
+
+test('the Windows open script parses, and Invoke-Item takes -LiteralPath', { skip: process.platform !== 'win32' && 'PowerShell runs only on Windows' }, () => {
+  const { args } = openCommand('C:\\x', false, 'win32');
+  const script = args[args.length - 1];
+  const out = execFileSync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    '[void][scriptblock]::Create($env:TM_SCRIPT); (Get-Command Invoke-Item).Parameters.ContainsKey("LiteralPath")',
+  ], { encoding: 'utf8', env: { ...process.env, TM_SCRIPT: script } });
+  assert.equal(out.trim(), 'True');
+});
+
+/* ---------------- the plumbing, run for real ---------------- */
+
+test('a command gets its environment: the way a path reaches a Windows script', async () => {
+  const check = (env?: Record<string, string>) => runCommand({
+    cmd: process.execPath,
+    // Added to the environment, not in place of it: PowerShell needs the rest.
+    args: ['-e', 'process.exit(process.env.TREEMAP_OPEN_TARGET === "C:\\\\R&D\\\\x&second" && process.env.PATH ? 0 : 3)'],
+    ...(env ? { env } : {}),
+  });
+  await check({ TREEMAP_OPEN_TARGET: 'C:\\R&D\\x&second' });
+  await assert.rejects(check(), 'without the variable the child exits 3');
+});
+
+test('a terminal starts in its folder: the way a folder reaches a Windows terminal', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-terminal-cwd-'));
+  try {
+    const file = path.join(dir, 'started-in.txt');
+    await launchTerminal({
+      cmd: process.execPath,
+      // The child reports where it started into a file named by absolute
+      // path, so a launcher that dropped `cwd` fails here instead of leaving
+      // a file wherever the test runner stands.
+      args: ['-e', 'require("fs").writeFileSync(process.argv[1], process.cwd())', file],
+      cwd: dir,
+    });
+    for (let i = 0; i < 100 && !fs.existsSync(file); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.equal(fs.realpathSync(fs.readFileSync(file, 'utf8')), fs.realpathSync(dir));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

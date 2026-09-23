@@ -11,7 +11,9 @@ import { checkOpenHandles, describeConflicts } from './openHandleGuard';
  * native trash so the user can undo from Finder/Files/Explorer.
  *
  * All commands run through execFile (argv arrays, no shell) so paths with
- * quotes, spaces or $(...) can never be interpreted as shell syntax.
+ * quotes, spaces or $(...) can never be interpreted as shell syntax. On
+ * Windows that alone is not enough (WINDOWS_REPARSE below): there a path
+ * never reaches the command line of a program that parses it again.
  *
  * Since B2 this is also where the open-file guard runs. It sits here, in the
  * one pathway every deletion already goes through, rather than in each caller —
@@ -19,9 +21,33 @@ import { checkOpenHandles, describeConflicts } from './openHandleGuard';
  * route to keep in sync.
  */
 
-function run(cmd: string, args: string[], timeoutMs = 15000): Promise<void> {
+/** One command to run: an argv array, and what it needs besides. */
+export interface PlatformCommand {
+  cmd: string;
+  args: string[];
+  /** Variables added to the environment: how a path reaches a script as data. */
+  env?: Record<string, string>;
+  /** The working directory to start in: how a folder reaches a terminal as data. */
+  cwd?: string;
+}
+
+/*
+ * WINDOWS_REPARSE: on Windows a program receives one command line and splits
+ * it itself, so an argv array protects an argument only from Node, not from
+ * the program. cmd.exe reads `&`, `|`, `^` and `%VAR%` in its whole command
+ * line, and Windows Terminal splits its commands at `;` — and libuv quotes an
+ * argument only when it holds a space, a tab or a quote, so `start ""
+ * C:\Work\R&D\a.txt` ran `D\a.txt` as a second command, and a crafted name
+ * could start a program of its choosing (the pre-landing review of 23 Sep
+ * 2026). No path is ever put on the command line of either: a script reads it
+ * from the environment, a terminal starts in it.
+ */
+
+/** Runs one command to its end; rejects with what it wrote to stderr. */
+export function runCommand({ cmd, args, env: extraEnv }: PlatformCommand, timeoutMs = 15000): Promise<void> {
+  const env = extraEnv ? { ...process.env, ...extraEnv } : undefined;
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: timeoutMs, windowsHide: true }, (err, _stdout, stderr) => {
+    execFile(cmd, args, { timeout: timeoutMs, windowsHide: true, ...(env ? { env } : {}) }, (err, _stdout, stderr) => {
       if (err) {
         const detail = (stderr || err.message || 'command failed').trim();
         reject(new Error(detail));
@@ -30,6 +56,10 @@ function run(cmd: string, args: string[], timeoutMs = 15000): Promise<void> {
       }
     });
   });
+}
+
+function run(cmd: string, args: string[]): Promise<void> {
+  return runCommand({ cmd, args });
 }
 
 /** Escape a string for embedding inside an AppleScript double-quoted literal. */
@@ -139,13 +169,14 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
  *    runs before `activate` so a cold-started Terminal opens one window, not
  *    two. If Terminal automation was denied, `open -a Terminal <dir>` starts
  *    a window already cd'd there without any Apple events.
- *  - Windows: Windows Terminal first; the cmd.exe fallback passes the
- *    directory as its own /D argv entry (empty title guards spaced paths).
+ *  - Windows: Windows Terminal first, then cmd.exe `start`, each started in
+ *    the directory (`cwd`) and never given it as an argument, since both
+ *    parse their command line again (WINDOWS_REPARSE).
  *  - Linux: common emulators in order, each with its working-dir flag. xterm
  *    has none, so a fixed `sh -c` script reads the target from $1 — the path
  *    is never interpolated into shell text.
  */
-export function terminalCommands(dir: string, platform: NodeJS.Platform = process.platform): { cmd: string; args: string[] }[] {
+export function terminalCommands(dir: string, platform: NodeJS.Platform = process.platform): PlatformCommand[] {
   switch (platform) {
     case 'darwin': {
       const script =
@@ -159,9 +190,14 @@ export function terminalCommands(dir: string, platform: NodeJS.Platform = proces
       ];
     }
     case 'win32':
+      // The folder is the new window's working directory, never an argument:
+      // both programs parse their command line again (see WINDOWS_REPARSE).
+      // cmd.exe refuses a network share (UNC) as its working directory however
+      // it is given one, `start /D` included, and opens in the Windows folder;
+      // on a share only Windows Terminal starts in the folder.
       return [
-        { cmd: 'wt.exe', args: ['-d', dir] },
-        { cmd: 'cmd.exe', args: ['/c', 'start', '', '/D', dir, 'cmd.exe'] },
+        { cmd: 'wt.exe', args: ['-d', '.'], cwd: dir },
+        { cmd: 'cmd.exe', args: ['/c', 'start', '', 'cmd.exe'], cwd: dir },
       ];
     default:
       return [
@@ -179,9 +215,9 @@ export function terminalCommands(dir: string, platform: NodeJS.Platform = proces
  * alive after a grace period (or exited 0)", not "exited" — waiting for exit
  * would misread a perfectly good window as a timeout and open a second one.
  */
-function launchTerminal(cmd: string, args: string[]): Promise<void> {
+export function launchTerminal({ cmd, args, cwd }: PlatformCommand): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true });
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true, ...(cwd ? { cwd } : {}) });
     let settled = false;
     const settle = (fn: () => void): void => { if (!settled) { settled = true; fn(); } };
     child.once('error', (err) => settle(() => reject(err))); // ENOENT — not installed
@@ -200,15 +236,39 @@ function launchTerminal(cmd: string, args: string[]): Promise<void> {
  */
 export async function openTerminal(dirPath: string): Promise<void> {
   const errors: string[] = [];
-  for (const { cmd, args } of terminalCommands(dirPath)) {
+  for (const command of terminalCommands(dirPath)) {
     try {
-      await launchTerminal(cmd, args);
+      await launchTerminal(command);
       return;
     } catch (err) {
-      errors.push(`${cmd}: ${err instanceof Error ? err.message : String(err)}`);
+      errors.push(`${command.cmd}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   throw new Error(`No terminal emulator could be opened (${errors.join('; ')})`);
+}
+
+/**
+ * How to open `p` with its default handler, or with `reveal` highlight it in
+ * Finder/Explorer. Pure — exported so tests assert the argv per platform.
+ * On Windows opening goes through PowerShell's `Invoke-Item`, which reads the
+ * path from the environment (WINDOWS_REPARSE); explorer.exe, started
+ * directly, takes it as its own argument.
+ */
+export function openCommand(p: string, reveal: boolean, platform: NodeJS.Platform = process.platform): PlatformCommand {
+  switch (platform) {
+    case 'darwin':
+      return { cmd: 'open', args: reveal ? ['-R', p] : [p] };
+    case 'win32':
+      return reveal
+        ? { cmd: 'explorer.exe', args: ['/select,', p] }
+        : {
+          cmd: 'powershell.exe',
+          args: ['-NoProfile', '-NonInteractive', '-Command', 'Invoke-Item -LiteralPath $env:TREEMAP_OPEN_TARGET'],
+          env: { TREEMAP_OPEN_TARGET: p },
+        };
+    default:
+      return { cmd: 'xdg-open', args: [p] };
+  }
 }
 
 /**
@@ -218,24 +278,13 @@ export async function openTerminal(dirPath: string): Promise<void> {
 export async function openPath(p: string, reveal = false): Promise<void> {
   await fsp.lstat(p); // throws ENOENT for missing paths
 
-  switch (process.platform) {
-    case 'darwin':
-      await run('open', reveal ? ['-R', p] : [p]);
-      return;
-    case 'win32':
-      if (reveal) {
-        await run('explorer.exe', ['/select,', p]).catch(() => {
-          /* explorer returns nonzero exit codes even on success */
-        });
-      } else {
-        // `start` is a cmd builtin; empty title arg guards paths with spaces.
-        await run('cmd.exe', ['/c', 'start', '', p]).catch(() => {
-          /* same quirk as explorer */
-        });
-      }
-      return;
-    default:
-      await run('xdg-open', [p]);
-      return;
+  const command = openCommand(p, reveal);
+  const opened = runCommand(command);
+  if (command.cmd === 'explorer.exe') {
+    await opened.catch(() => {
+      /* explorer returns nonzero exit codes even on success */
+    });
+    return;
   }
+  await opened;
 }
