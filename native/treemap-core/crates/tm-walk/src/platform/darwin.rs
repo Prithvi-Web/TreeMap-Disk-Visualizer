@@ -106,7 +106,10 @@ impl Lister for DarwinLister {
         buf.listing.clear();
         if !self.per_entry_only {
             match list_bulk(&fd, want_atime, buf) {
-                Ok(BulkOutcome::Listed) => return Ok(FastPath::Bulk),
+                Ok(BulkOutcome::Listed) => {
+                    buf.listing.sort_by_name();
+                    return Ok(FastPath::Bulk);
+                }
                 Ok(BulkOutcome::Unsupported(_errno)) => {
                     buf.listing.clear();
                     // SAFETY: `fd` is an open directory; rewinding it has no other effect.
@@ -116,6 +119,7 @@ impl Lister for DarwinLister {
             }
         }
         per_entry::list(fd, want_atime, buf).map_err(refusal_from_errno)?;
+        buf.listing.sort_by_name();
         Ok(FastPath::PerEntry)
     }
 }

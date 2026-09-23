@@ -669,12 +669,8 @@ fn process_dir(
         shared.root_fast_path.store(path.code(), Ordering::Release);
     }
     shared.dirs_listed.fetch_add(1, Ordering::AcqRel);
-    // Numbered in the legacy walker's order: libuv's scandir sorts a listing
-    // with strcmp everywhere but Windows, where it keeps the file system's.
-    // Sorted here, on the worker, the ingest's own sort (kept for modules
-    // built before this) meets its best case: input already in order.
-    #[cfg(not(windows))]
-    buf.listing.sort_by_name();
+    // Numbered in the order the lister hands the entries over: the order is
+    // the lister's to decide (the POSIX listers sort; see Listing::sort_by_name).
     let listing = &buf.listing;
     // The root's node already holds its own times (stat_dir reads the root
     // itself), so only a subdirectory's parent-given copy can be stale.

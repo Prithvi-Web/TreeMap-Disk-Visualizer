@@ -532,6 +532,7 @@ mod os {
             let fd = open_dir(dir).map_err(refusal_from_errno)?;
             list_getdents(&fd, want_atime, buf, &self.statx_unavailable)
                 .map_err(refusal_from_errno)?;
+            buf.listing.sort_by_name();
             Ok(FastPath::Getdents)
         }
     }

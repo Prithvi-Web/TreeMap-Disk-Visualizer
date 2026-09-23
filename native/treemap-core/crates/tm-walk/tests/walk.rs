@@ -828,11 +828,12 @@ fn hardlink_refs_exist_only_for_shared_inodes() -> TestResult {
 }
 
 #[test]
-fn a_directorys_children_are_numbered_in_name_byte_order_except_on_windows() -> TestResult {
-    // The legacy walker lists with fs.readdir, and libuv's scandir sorts that
-    // listing with strcmp everywhere but Windows, where it keeps the file
-    // system's order. Numbering in that order leaves the ingest's own sort,
-    // kept for older modules, its best case: input already sorted.
+fn a_directorys_children_are_numbered_in_the_order_its_lister_hands_them_over_on_every_host()
+-> TestResult {
+    // The order is the lister's to decide (the POSIX listers sort as libuv
+    // does; Windows' keep the file system's). The walk core never re-orders:
+    // it once sorted by the host it ran on, and re-sorted the Windows-shaped
+    // listing tm-mft's tests walk on macOS and Linux.
     let listed: [&[u8]; 6] = [b"b", b"a2", b"C", b"a", b"\xC3\xA4", b"a-"];
     let mut tree = FakeTree::new("/fake");
     for (name, ino) in listed.iter().zip([10.0, 11.0, 12.0, 13.0, 14.0, 15.0]) {
@@ -847,14 +848,7 @@ fn a_directorys_children_are_numbered_in_name_byte_order_except_on_windows() -> 
             numbered.push(out.names.get(start..end).ok_or("names")?.to_vec());
         }
     }
-    let expected: Vec<Vec<u8>> = if cfg!(windows) {
-        listed.iter().map(|n| n.to_vec()).collect()
-    } else {
-        [&b"C"[..], b"a", b"a-", b"a2", b"b", b"\xC3\xA4"]
-            .iter()
-            .map(|n| n.to_vec())
-            .collect()
-    };
+    let expected: Vec<Vec<u8>> = listed.iter().map(|n| n.to_vec()).collect();
     assert_eq!(numbered, expected);
     Ok(())
 }

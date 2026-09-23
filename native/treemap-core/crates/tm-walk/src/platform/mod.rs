@@ -142,10 +142,15 @@ impl Listing {
     }
 
     /// Orders the entries by their raw name bytes, as `strcmp` would — the
-    /// order libuv's `scandir` gives the legacy walker everywhere but Windows.
-    /// Names within one directory are unique, so the unstable sort is exact.
-    /// Call it on a listing the lister has handed on: [`Listing::mount_points`]
-    /// holds indices into the entries, and by then it is empty.
+    /// order libuv's `scandir` gives the legacy walker on macOS and Linux, so
+    /// their listers call it last and the walk numbers entries in the legacy
+    /// walker's order, leaving the ingest's own sort (kept for modules built
+    /// before this) its best case. Windows' listers do not: there libuv keeps
+    /// the file system's order, and so does the legacy walker. The order is a
+    /// lister's, never the host's — a Windows-shaped listing walked on another
+    /// host (tm-mft's tests) keeps its own. Names within one directory are
+    /// unique, so the unstable sort is exact. Call it once
+    /// [`Listing::mount_points`], which holds indices into the entries, is empty.
     pub fn sort_by_name(&mut self) {
         let Self { names, entries, .. } = self;
         entries.sort_unstable_by(|a, b| {
