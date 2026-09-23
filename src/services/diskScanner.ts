@@ -6,7 +6,8 @@ import { saveSnapshot } from './snapshots';
 import { trackWrite } from '../utils/backgroundWrites';
 import { getIgnoreMatchers, getSettings } from './settings';
 import { CompiledIgnore, matchesAny } from '../utils/glob';
-import { readJsonFile, appDataDir } from './storage';
+import { readJsonFile, writeFileChunked } from './storage';
+import { streamTreeJson } from './scanStoreJson';
 import { isEphemeral } from './portableMode';
 import { IO_THREADS } from '../utils/ioThreads';
 import { neverDescend } from '../utils/mountBoundaries';
@@ -746,25 +747,44 @@ function reuseCachedListing(scan: ScanResult, store: ScanStore, dirId: number, d
   }
 }
 
-/** Persist the completed tree (compact JSON) so future fast rescans can reuse it. */
-async function saveMtimeCache(scan: ScanResult): Promise<void> {
-  // Size gate first: for store-backed scans, reading `scan.root` materializes
-  // an object tree, so it must only ever happen under the 300k-node cap.
+/** Tries at a whole cache when the tree keeps changing while it is written. */
+const MTIME_CACHE_ATTEMPTS = 3;
+
+/**
+ * Persist the completed tree (compact JSON) so future fast rescans can reuse
+ * it. A store-backed scan streams it (`streamTreeJson`): the bytes of
+ * `JSON.stringify(scan.root)` without building that tree or that string,
+ * which froze the app for ~150 ms as a 200,000-entry scan completed. A tree
+ * that changes while it is written (a delete, a watcher) is written again from
+ * the start, up to MTIME_CACHE_ATTEMPTS times; the file only ever changes by
+ * a rename of a whole document. Exported for the tests of that retry.
+ */
+export async function saveMtimeCache(scan: ScanResult): Promise<void> {
+  // The cap bounds the file (48 MB at 200k entries) and the rescan that parses it.
   if (scan.scanned > MTIME_CACHE_MAX_NODES) return;
-  const tree = scan.root;
-  if (!tree) return;
-  // A read-only portable session persists nothing. This writer builds its own
-  // path rather than going through writeJsonFile, so it needs the check of its
-  // own — a live portable run proved it was the one remaining leak onto the
-  // host after everything else had been redirected.
+  // A read-only portable session persists nothing. This cache once built its
+  // own path rather than going through storage, and a live portable run
+  // proved it was the one remaining leak onto the host after everything else
+  // had been redirected; writeFileChunked refuses such a session too.
   if (isEphemeral()) return;
+  const name = cacheFileName(scan.rootPath);
   try {
-    const dir = appDataDir();
-    await fsp.mkdir(dir, { recursive: true });
-    const file = path.join(dir, cacheFileName(scan.rootPath));
-    const tmp = file + '.tmp';
-    await fsp.writeFile(tmp, JSON.stringify(tree), 'utf8');
-    await fsp.rename(tmp, file);
+    const store = scan.store;
+    if (!store) {
+      // A bare object tree, with no store behind it, is already built: write it whole.
+      const tree = scan.root;
+      if (tree) {
+        await writeFileChunked(name, async (write) => {
+          await write(JSON.stringify(tree));
+          return true;
+        });
+      }
+      return;
+    }
+    for (let attempt = 0; attempt < MTIME_CACHE_ATTEMPTS; attempt++) {
+      if (await writeFileChunked(name, (write) => streamTreeJson(store, store.rootId, write))) return;
+    }
+    console.warn(`[treemap] mtime cache not saved: the tree changed while it was being written, ${MTIME_CACHE_ATTEMPTS} times`);
   } catch (err) {
     console.error('[treemap] mtime-cache save failed:', err);
   }

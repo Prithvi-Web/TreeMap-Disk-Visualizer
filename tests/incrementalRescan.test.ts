@@ -196,3 +196,121 @@ test('revalidated directories refresh their own mtime and atime from the disk', 
     await fsp.rm(root, { recursive: true, force: true });
   }
 });
+
+test('the fast-rescan cache is the finished tree, byte for byte', async () => {
+  const { settled } = await import('../src/utils/backgroundWrites');
+  const root = await makeTree('cache-bytes');
+  try {
+    const scan = await scanOnce(root, false);
+    assert.equal(scan.status, 'complete');
+    await settled();
+    assert.equal(await fsp.readFile(cacheFileFor(root), 'utf8'), JSON.stringify(scan.root));
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('finishing a scan never builds the whole tree as objects', async () => {
+  // Building `scan.root` for this cache froze the app for ~70 ms as a
+  // 200,000-entry scan completed, before anything could see that it had, and
+  // stringifying it for another ~80 ms (M3, 23 Sep 2026). The cache is now
+  // streamed from the store, so no whole-tree prune runs between a scan's
+  // last entry and its cache landing on disk.
+  const { PackedScanStore } = await import('../src/services/scanStore');
+  const { settled } = await import('../src/utils/backgroundWrites');
+  const root = await makeTree('no-materialize');
+  const proto = PackedScanStore.prototype;
+  const prune = proto.prune;
+  let unbounded = 0;
+  proto.prune = function (this: InstanceType<typeof PackedScanStore>, id: number, opts: { maxNodes: number }) {
+    if (opts.maxNodes >= Number.MAX_SAFE_INTEGER) unbounded++;
+    return prune.call(this, id, opts);
+  };
+  try {
+    const scan = await scanOnce(root, false);
+    assert.equal(scan.status, 'complete');
+    await settled();
+    assert.ok(fs.existsSync(cacheFileFor(root)), 'the cache is still written');
+    assert.equal(unbounded, 0, 'no whole-tree prune ran between the scan and its cache');
+  } finally {
+    proto.prune = prune;
+    await fsp.rm(root, { recursive: true, force: true });
+  }
+});
+
+/** A long name, so a few thousand files make a cache of several chunks. */
+const LONG = 'long-name-'.repeat(10);
+
+/**
+ * An in-memory tree of `files` files under root/d, in a store whose listings
+ * call `onListing` — the hook the retry tests use to change the tree while a
+ * chunk of its cache is being written, the one moment anything else can run.
+ */
+async function storeWithHook(rootPath: string, files: number, onListing: (store: InstanceType<typeof import('../src/services/scanStore').PackedScanStore>, id: number) => void) {
+  const { PackedScanStore } = await import('../src/services/scanStore');
+  class Hooked extends PackedScanStore {
+    override childIds(id: number): number[] {
+      onListing(this, id);
+      return super.childIds(id);
+    }
+  }
+  const store = new Hooked(rootPath, path.sep, { name: path.basename(rootPath), isDir: true, size: 0, modifiedAt: 1, isHidden: false });
+  const dir = store.addNode(store.rootId, { name: 'd', isDir: true, size: 0, modifiedAt: 2, isHidden: false });
+  for (let i = 0; i < files; i++) {
+    store.addNode(dir, { name: `${LONG}${i}.bin`, isDir: false, size: i, modifiedAt: 3, isHidden: false, extension: 'bin' });
+  }
+  store.finalize();
+  store.sumSizes();
+  return { store, victim: store.findByPath(path.join(rootPath, 'd', `${LONG}0.bin`)) };
+}
+
+test('a tree that changes while its cache is being written is written again, whole', async () => {
+  const { saveMtimeCache } = await import('../src/services/diskScanner');
+  const { TREE_JSON_CHUNK_CHARS } = await import('../src/services/scanStoreJson');
+  // Never created on disk: the tree lives in the store alone.
+  const rootPath = path.join(os.tmpdir(), 'treemap-cache-retry-once');
+  let armed = false;
+  let victim = -1;
+  const { store, victim: v } = await storeWithHook(rootPath, 3000, (s) => {
+    if (!armed) return;
+    armed = false;
+    // Lands while the first attempt's first chunk is being written, as a delete would.
+    setImmediate(() => s.setSize(victim, 12_345));
+  });
+  victim = v;
+  assert.notEqual(victim, -1);
+  armed = true;
+  await saveMtimeCache({ rootPath, scanned: 3002, store } as unknown as ScanResult);
+  assert.equal(armed, false, 'the change was scheduled');
+  assert.equal(store.size(victim), 12_345, 'and it landed');
+  const written = await fsp.readFile(cacheFileFor(rootPath), 'utf8');
+  assert.ok(written.length > 2 * TREE_JSON_CHUNK_CHARS, 'the first attempt needed several chunks');
+  assert.equal(written, JSON.stringify(store.prune(store.rootId, { maxNodes: Number.MAX_SAFE_INTEGER }).root),
+    'the cache is the tree after the change, never half of each');
+});
+
+test('a tree that never stops changing keeps the previous cache, and says why', async () => {
+  const { saveMtimeCache } = await import('../src/services/diskScanner');
+  const rootPath = path.join(os.tmpdir(), 'treemap-cache-retry-never');
+  let victim = -1;
+  const { store, victim: v } = await storeWithHook(rootPath, 3000, (s, id) => {
+    // Every attempt lists the root first: every attempt sees a change.
+    if (id === s.rootId && victim !== -1) setImmediate(() => s.setSize(victim, s.size(victim) + 1));
+  });
+  victim = v;
+  const file = cacheFileFor(rootPath);
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  await fsp.writeFile(file, 'the previous cache');
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args.join(' ')); };
+  try {
+    await saveMtimeCache({ rootPath, scanned: 3002, store } as unknown as ScanResult);
+  } finally {
+    console.warn = warn;
+  }
+  assert.equal(await fsp.readFile(file, 'utf8'), 'the previous cache');
+  assert.equal(fs.existsSync(`${file}.tmp`), false, 'no half-written file is left');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /changed while it was being written, 3 times/);
+});

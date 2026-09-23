@@ -8,6 +8,7 @@ import {
   Flag,
   NodeInput,
 } from '../src/services/scanStore';
+import { streamTreeJson } from '../src/services/scanStoreJson';
 
 /**
  * Differential fuzz: every random tree is built into ObjectScanStore (the
@@ -407,4 +408,169 @@ test('eviction semantics: dropping the store frees it for GC (no registry leaks)
     (k) => !['length', 'name', 'prototype'].includes(k),
   );
   assert.deepEqual(statics, [], 'PackedScanStore must hold no static state');
+});
+
+/* --------------------------- streamed tree JSON --------------------------- */
+
+/** The JSON a whole-tree prune stringifies to: what `scan.root` serialises as. */
+function wholeTreeJson(store: ScanStore): string {
+  return JSON.stringify(store.prune(store.rootId, { maxNodes: Number.MAX_SAFE_INTEGER }).root);
+}
+
+/** Everything `streamTreeJson` hands over, piece by piece. */
+async function streamed(store: ScanStore, chunkChars?: number): Promise<{ json: string; chunks: string[]; complete: boolean }> {
+  const chunks: string[] = [];
+  const complete = await streamTreeJson(store, store.rootId, async (chunk) => {
+    chunks.push(chunk);
+  }, { chunkChars });
+  return { json: chunks.join(''), chunks, complete };
+}
+
+test('streamTreeJson writes the whole-tree prune byte for byte, on both stores, at any chunk size', async () => {
+  for (let iter = 0; iter < 40; iter++) {
+    const { obj, packed } = buildPair(4000 + iter, iter, 1200);
+    for (const [label, store] of [['object', obj], ['packed', packed]] as const) {
+      const want = wholeTreeJson(store);
+      for (const chunkChars of [1, 97, 65_536]) {
+        const got = await streamed(store, chunkChars);
+        assert.equal(got.complete, true);
+        assert.equal(got.json, want, `seed ${4000 + iter}, ${label} store, chunkChars ${chunkChars}`);
+      }
+    }
+  }
+});
+
+test('streamTreeJson matches after removals, size changes and a container graft', async () => {
+  for (let iter = 0; iter < 10; iter++) {
+    const { obj, packed, rng } = buildPair(6000 + iter, iter, 900);
+    const paths: string[] = [];
+    obj.eachNode(obj.rootId, (id) => paths.push(obj.path(id)));
+    for (let i = 0; i < 30; i++) {
+      const p = paths[Math.floor(rng() * paths.length)];
+      const oId = obj.findByPath(p);
+      const pId = packed.findByPath(p);
+      if (oId === -1 || p === obj.rootPath) continue;
+      if (rng() < 0.5) {
+        obj.removeNode(oId);
+        packed.removeNode(pId);
+      } else {
+        obj.setSize(oId, 42);
+        packed.setSize(pId, 42);
+      }
+    }
+    const zip: NodeInput = { name: 'late.zip', isDir: false, size: 500, modifiedAt: 1, isHidden: false, extension: 'zip', container: 'zip' };
+    const oZip = obj.addNode(obj.rootId, zip);
+    const pZip = packed.addNode(packed.rootId, zip);
+    const at = obj.path(oZip);
+    const sep = obj.sep;
+    const kids: FileNode[] = [
+      {
+        name: 'inner', path: `${at}${sep}inner`, size: 90, type: 'dir', modifiedAt: 123, isHidden: false, virtual: true,
+        children: [
+          { name: 'a.txt', path: `${at}${sep}inner${sep}a.txt`, size: 90, type: 'file', modifiedAt: 123, isHidden: false, virtual: true, logicalSize: 400, extension: 'txt' },
+        ],
+      },
+      { name: 'empty', path: `${at}${sep}empty`, size: 0, type: 'dir', modifiedAt: 123, isHidden: false, virtual: true, children: [] },
+    ];
+    obj.ingestSubtree(oZip, kids);
+    packed.ingestSubtree(pZip, structuredClone(kids));
+    for (const store of [obj, packed]) {
+      assert.equal((await streamed(store, 257)).json, wholeTreeJson(store), `seed ${6000 + iter}, ${store.constructor.name}`);
+    }
+  }
+});
+
+test('streamTreeJson escapes every name as JSON.stringify does, under "/", "C:\\" and cloud roots', async () => {
+  const awkward = ['quote"d', 'back\\slash', 'brace}', '],"children":[', 'new\nline', 'nul\u0000byte', 'lone\ud800half', 'emoji😀', 'tab\t', 'é文'];
+  for (const [rootPath, sep] of [['/', '/'], ['C:\\', '\\'], ['cloud://gdrive', '/']] as const) {
+    const rootInput: NodeInput = { name: rootPath.split(sep).pop() || rootPath, isDir: true, size: 0, modifiedAt: 1, isHidden: false };
+    for (const store of [new ObjectScanStore(rootPath, sep, rootInput), new PackedScanStore(rootPath, sep, rootInput)]) {
+      const dir = store.addNode(store.rootId, { name: 'd"ir}', isDir: true, size: 0, modifiedAt: 2, isHidden: false });
+      store.addNode(store.rootId, { name: 'empty', isDir: true, size: 0, modifiedAt: 3, isHidden: true });
+      awkward.forEach((name, i) => store.addNode(dir, { name, isDir: false, size: i, modifiedAt: 4, isHidden: false }));
+      store.finalize();
+      store.sumSizes();
+      assert.equal((await streamed(store, 13)).json, wholeTreeJson(store), `${rootPath} on the ${store.constructor.name}`);
+    }
+  }
+});
+
+test('streamTreeJson streams a 5,000-deep chain, and it parses back whole', async () => {
+  // 5,000 levels are 10,000 levels of JSON nesting (an object and its
+  // children array each). JSON.stringify recurses and threw RangeError at
+  // that depth on Node 24, so the old cache writer never saved such a tree;
+  // this writer keeps its own stack, and JSON.parse and the cache reader
+  // (buildDirCache) are iterative. One-letter names keep the document small:
+  // every node carries its whole path, so a chain's JSON grows with the
+  // square of its depth (a 30,000-deep chain of longer names is gigabytes).
+  const DEPTH = 5_000;
+  const root: NodeInput = { name: 'r', isDir: true, size: 0, modifiedAt: 1, isHidden: false };
+  const packed = new PackedScanStore('/r', '/', root);
+  let parent = packed.rootId;
+  for (let i = 0; i < DEPTH; i++) {
+    parent = packed.addNode(parent, { name: 'a', isDir: true, size: 0, modifiedAt: 1, isHidden: false });
+  }
+  packed.addNode(parent, { name: 'leaf.bin', isDir: false, size: 7, modifiedAt: 1, isHidden: false, extension: 'bin' });
+  packed.finalize();
+  packed.sumSizes();
+
+  const got = await streamed(packed, 65_536);
+  assert.equal(got.complete, true);
+  let node = JSON.parse(got.json) as FileNode;
+  let depth = 0;
+  while (node.type === 'dir' && node.children?.length === 1) {
+    node = node.children[0];
+    depth++;
+  }
+  assert.equal(depth, DEPTH + 1, 'every level is there');
+  assert.equal(node.name, 'leaf.bin');
+  assert.equal(node.size, 7);
+  assert.equal(node.path, `/r${'/a'.repeat(DEPTH)}/leaf.bin`);
+});
+
+test('streamTreeJson stops at the first hand-off after the tree changes, and says so', async () => {
+  const { packed } = buildPair(4242, 0, 3000);
+  const victim = packed.childIds(packed.rootId)[0];
+  let writes = 0;
+  const complete = await streamTreeJson(packed, packed.rootId, async () => {
+    writes++;
+    // What a delete, a watcher or a container expansion does between two chunks.
+    if (writes === 2) packed.setSize(victim, 1);
+  }, { chunkChars: 256 });
+  assert.equal(complete, false, 'a document spanning two versions of the tree is refused');
+  assert.equal(writes, 2, 'and nothing more is written once the change is seen');
+
+  // The last piece is built before its write begins, so a change during that
+  // write leaves a whole document of the version it was built from. With
+  // one-character chunks every piece is a write of its own, the last included.
+  const { packed: small } = buildPair(4243, 0, 40);
+  const want = wholeTreeJson(small);
+  let writesInAll = 0;
+  await streamTreeJson(small, small.rootId, async () => {
+    writesInAll++;
+  }, { chunkChars: 1 });
+  const pieces: string[] = [];
+  const whole = await streamTreeJson(small, small.rootId, async (chunk) => {
+    pieces.push(chunk);
+    if (pieces.length === writesInAll) small.setSize(small.childIds(small.rootId)[0], 1);
+  }, { chunkChars: 1 });
+  assert.equal(whole, true, 'a change during the last write is after the document was built');
+  assert.equal(pieces.join(''), want);
+});
+
+test('streamTreeJson hands off at least every chunkChars characters', async () => {
+  const { packed } = buildPair(5151, 0, 20_000);
+  const chunkChars = 4096;
+  // One loop step adds at most a comma, one node's JSON and the opening of
+  // its children, or one closing bracket pair.
+  let longestNode = 0;
+  packed.eachNode(packed.rootId, (id) => {
+    longestNode = Math.max(longestNode, JSON.stringify(packed.materialize(id)).length);
+  });
+  const bound = chunkChars + longestNode + ',"children":['.length + 1;
+  const { chunks, json } = await streamed(packed, chunkChars);
+  assert.ok(chunks.length > json.length / bound, `${chunks.length} chunks for ${json.length} characters`);
+  for (const [i, c] of chunks.slice(0, -1).entries()) {
+    assert.ok(c.length >= chunkChars && c.length <= bound, `chunk ${i} is ${c.length} characters (bound ${bound})`);
+  }
 });

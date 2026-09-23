@@ -65,7 +65,7 @@ likelihood. Companion to [`CURRENT-STATE.md`](CURRENT-STATE.md) and
 | R29 | **RSS counts mapped file pages.** A column written through `mmap` stays resident on a machine with free RAM and fails the gate while harmless | MEDIUM | `write()` during the walk, read-only `mmap` afterwards, page-touch budget for queries (`DESIGN.md` §6.2) | Phase 4 measurement |
 | R30 | **The aggregate-mode budget is 4 MB under its 400 MB ceiling on paper** | MEDIUM | Two knobs (interner cap, transport prune) reserved; defaults chosen after measurement | Phase 4 |
 | R31 | **Name interning at 100M entries** needs a hash set that itself grows | LOW | Capped; beyond the cap names are stored raw | Phase 4 |
-| R32 | **The Node side still materialises object trees** (`scan.root` getter, the 300k-node mtime cache) | LOW (bounded) | Native scans do not write the JSON cache; the getter stays behind the 250k prune | Phase 4 |
+| R32 | **The Node side still materialises object trees** (`scan.root` getter; the 300k-node mtime cache did until 23 Sep 2026) | LOW (bounded) | The mtime cache is streamed from the store (`streamTreeJson`: no object tree, no whole string; measured 69 + 80 ms of event-loop freeze removed at a 200k scan's completion); the getter stays behind the 250k prune | Phase 4 |
 
 ## F. Build, distribution and maintenance
 

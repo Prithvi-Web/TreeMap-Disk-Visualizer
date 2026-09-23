@@ -294,7 +294,7 @@ class StoreSizeHeap {
 }
 
 /** Copy one store node to a childless FileNode (the copyNode equivalent). */
-function materializeBare(store: ScanStore, id: number, knownPath?: string): FileNode {
+export function materializeBare(store: ScanStore, id: number, knownPath?: string): FileNode {
   if (store.bareNode) return store.bareNode(id, knownPath);
   const bag: NodeBag = {
     name: store.name(id),
@@ -319,7 +319,7 @@ function materializeBare(store: ScanStore, id: number, knownPath?: string): File
 }
 
 /** Expanded containers drill in like dirs (pruneTree.isExpandable on ids). */
-function isExpandableId(store: ScanStore, id: number): boolean {
+export function isExpandableId(store: ScanStore, id: number): boolean {
   return (
     (store.isDir(id) || store.container(id) !== undefined) &&
     store.hasChildArray(id) &&

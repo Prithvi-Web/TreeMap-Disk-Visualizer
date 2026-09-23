@@ -204,3 +204,67 @@ export function writeJsonFile(name: string, data: unknown): Promise<void> {
   writeQueues.set(name, next);
   return next;
 }
+
+/**
+ * Atomically write a file of the app-data dir from chunks (tmp + rename),
+ * queued with every other write of the same name, for a document too big to
+ * build as one string. `produce` hands each chunk to `write` — awaited, so
+ * the event loop runs between chunks — and answers false to abandon the
+ * write, which removes the tmp file and leaves whatever was there before; a
+ * `produce` that throws does the same and rejects. Answers whether the file
+ * was replaced. A read-only portable session writes nothing, keeps nothing
+ * (unlike writeJsonFile, there is no whole document to hold in memory) and
+ * never calls `produce`.
+ */
+export function writeFileChunked(
+  name: string,
+  produce: (write: (chunk: string) => Promise<void>) => Promise<boolean>,
+): Promise<boolean> {
+  const prev = writeQueues.get(name) ?? Promise.resolve();
+  const next = prev
+    .catch(() => {
+      /* an earlier failed write must not poison the queue */
+    })
+    .then(async () => {
+      if (isEphemeral()) return false;
+      const dir = appDataDir();
+      await fsp.mkdir(dir, { recursive: true });
+      const file = path.join(dir, name);
+      // Named for tests/openHandleGuard's own-storage rule: the one path this
+      // may remove is the tmp file it created a moment ago in app-data.
+      const tmpPath = file + '.tmp';
+      const handle = await fsp.open(tmpPath, 'w');
+      let complete = false;
+      let failed = false;
+      let failure: unknown;
+      try {
+        complete = await produce(async (chunk) => {
+          await handle.write(chunk, null, 'utf8');
+        });
+      } catch (err) {
+        failed = true;
+        failure = err;
+      }
+      try {
+        await handle.close();
+      } catch (err) {
+        // A close that failed may not have flushed: it is never renamed into
+        // place. When the producer threw as well, its error is the one reported.
+        if (!failed) {
+          failed = true;
+          failure = err;
+        }
+      }
+      if (failed || !complete) {
+        await fsp.rm(tmpPath, { force: true });
+        if (failed) throw failure;
+        return false;
+      }
+      await fsp.rename(tmpPath, file);
+      return true;
+    });
+  // The queue holds a promise that never rejects: the caller handles `next`,
+  // and a derived promise nobody awaits must not surface as an unhandled rejection.
+  writeQueues.set(name, next.then(() => undefined, () => undefined));
+  return next;
+}
