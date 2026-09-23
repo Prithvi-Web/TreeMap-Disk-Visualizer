@@ -15,8 +15,9 @@ use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tm_walk::platform::{DirTimes, ListBuffer, Lister, Meta};
-use tm_walk::walk::Pacer;
+use tm_walk::climb::{START_WORKERS, start_for};
+use tm_walk::platform::{DirTimes, ListBuffer, Lister, Meta, performance_cores};
+use tm_walk::walk::{GovernorPacer, Pacer};
 use tm_walk::{
     DirRefusal, FLAG_REFUSED_DIR, FastPath, KIND_DIR, KIND_FILE, Refusal, WalkError, WalkHandle,
     WalkOptions, WalkOutput, start_with,
@@ -316,6 +317,8 @@ struct FakePacer {
     starts: AtomicU64,
     /// Panics with the message when the worker thread of this name starts.
     start_panic: Option<(String, String)>,
+    /// What `start_workers()` answers; `None` keeps the trait's default.
+    start: Option<u32>,
 }
 
 impl FakePacer {
@@ -325,6 +328,18 @@ impl FakePacer {
             throttles: AtomicU64::new(0),
             starts: AtomicU64::new(0),
             start_panic: None,
+            start: None,
+        })
+    }
+
+    /// A pacer that asks a climbing walk to start at `start` workers.
+    fn starting_at(limit: u32, start: u32) -> Arc<Self> {
+        Arc::new(Self {
+            limit: AtomicU32::new(limit),
+            throttles: AtomicU64::new(0),
+            starts: AtomicU64::new(0),
+            start_panic: None,
+            start: Some(start),
         })
     }
 
@@ -336,6 +351,7 @@ impl FakePacer {
             throttles: AtomicU64::new(0),
             starts: AtomicU64::new(0),
             start_panic: Some((thread.to_owned(), message.to_owned())),
+            start: None,
         })
     }
 }
@@ -363,6 +379,10 @@ impl Pacer for FakePacer {
 
     fn worker_limit(&self) -> u32 {
         self.limit.load(Ordering::SeqCst)
+    }
+
+    fn start_workers(&self) -> u32 {
+        self.start.unwrap_or(START_WORKERS)
     }
 }
 
@@ -623,6 +643,65 @@ fn a_worker_limit_of_one_runs_one_worker_even_for_the_climber() -> TestResult {
     assert_eq!(pacer.starts.load(Ordering::SeqCst), 1, "one thread started");
     assert_eq!(out.stats.workers_peak, 1);
     Ok(())
+}
+
+/// Sixteen directories of 20 ms each end inside the climber's first interval
+/// at two workers as at four, so the peak is the start count itself.
+fn short_walk_tree() -> FakeTree {
+    wide_tree(16, 2, Duration::from_millis(20))
+}
+
+#[test]
+fn a_climbing_walk_starts_at_the_pacers_start_count() -> TestResult {
+    let tree = Arc::new(short_walk_tree());
+    let pacer = FakePacer::starting_at(8, 4);
+    let handle = start_with(options(Path::new("/fake")), pacer.clone(), tree.clone())
+        .map_err(|e| e.to_string())?;
+    let out = handle.take().map_err(|e| e.to_string())?;
+    assert_eq!(tree.peak(), 4, "four listings in flight from the start");
+    assert_eq!(out.stats.workers_peak, 4);
+    assert_eq!(out.stats.climb_steps, 0, "the start is not a step");
+    Ok(())
+}
+
+#[test]
+fn an_eco_limit_caps_a_start_that_asks_for_more() -> TestResult {
+    let tree = Arc::new(short_walk_tree());
+    let pacer = FakePacer::starting_at(2, 4);
+    let handle = start_with(options(Path::new("/fake")), pacer.clone(), tree.clone())
+        .map_err(|e| e.to_string())?;
+    let out = handle.take().map_err(|e| e.to_string())?;
+    assert!(tree.peak() <= 2, "peak {} with a limit of 2", tree.peak());
+    assert!(
+        pacer.starts.load(Ordering::SeqCst) <= 2,
+        "no more threads than the limit: {}",
+        pacer.starts.load(Ordering::SeqCst)
+    );
+    assert!(out.stats.workers_peak <= 2);
+    Ok(())
+}
+
+#[test]
+fn the_governor_starts_turbo_at_the_performance_cores_and_nothing_else() {
+    use tm_governor::{Budget, FakeSampler, FakeSignals, Governor, Preset};
+    for preset in [Preset::Eco, Preset::Balanced, Preset::Turbo] {
+        let governor = Arc::new(Governor::start(
+            Budget {
+                preset,
+                cpu_percent: None,
+            },
+            false,
+            Box::new(FakeSampler::new(8)),
+            Box::new(FakeSignals::default()),
+        ));
+        let pacer = GovernorPacer::new(Arc::clone(&governor));
+        let expected = if preset == Preset::Turbo {
+            start_for(Preset::Turbo, performance_cores())
+        } else {
+            START_WORKERS
+        };
+        assert_eq!(pacer.start_workers(), expected, "{preset:?}");
+    }
 }
 
 #[test]

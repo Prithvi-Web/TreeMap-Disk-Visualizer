@@ -267,6 +267,21 @@ pub fn platform_probe(root: &Path) -> Probe {
     }
 }
 
+/// The machine's performance cores, where its cores come in more than one
+/// performance level (Apple silicon: `hw.perflevel0.logicalcpu` while
+/// `hw.nperflevels` is at least 2). `None` everywhere else, and wherever the
+/// OS does not say.
+pub fn performance_cores() -> Option<u32> {
+    #[cfg(target_os = "macos")]
+    {
+        darwin::performance_cores()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
 /// Milliseconds from a `timespec`, exactly as Node computes `mtimeMs`:
 /// `sec * 1e3 + nsec / 1e6`, no rounding (decision P3-6).
 pub fn time_ms(sec: i64, nsec: i64) -> f64 {

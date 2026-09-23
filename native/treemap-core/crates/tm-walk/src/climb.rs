@@ -2,16 +2,19 @@
 //! driver feeds it the clock and the entries counter; it answers with the
 //! count to run. Nothing here touches a thread or reads the time.
 //!
-//! It starts at [`START_WORKERS`], re-evaluates once per [`INTERVAL`] against
-//! entries per second, and keeps a step only when throughput improved by more
-//! than [`NOISE_FLOOR`]. A step that did not pay is reverted and probing stops
-//! for [`HOLD_INTERVALS`] intervals; then it probes again, in the other
-//! direction first. It never exceeds the ceiling the governor sets, and it
-//! counts every change it makes.
+//! It starts at the count [`start_for`] names (bounded by the ceiling),
+//! re-evaluates once per [`INTERVAL`] against entries per second, and keeps a
+//! step only when throughput improved by more than [`NOISE_FLOOR`]. A step that
+//! did not pay is reverted and probing stops for [`HOLD_INTERVALS`] intervals;
+//! then it probes again, in the other direction first. It never exceeds the
+//! ceiling the governor sets, and it counts every change it makes.
 
 use std::time::Duration;
 
-/// Workers at the start of every walk (bounded by the ceiling).
+use tm_governor::Preset;
+
+/// Workers at the start of a walk, unless [`start_for`] names another count
+/// (bounded by the ceiling either way).
 pub const START_WORKERS: u32 = 2;
 /// How often the climber re-evaluates.
 pub const INTERVAL: Duration = Duration::from_millis(250);
@@ -48,14 +51,42 @@ pub struct Climber {
     last_entries: u64,
 }
 
+/// The count a walk under `preset` starts with, given the machine's
+/// performance-core count when the platform names one.
+///
+/// Turbo starts at the performance cores: the walk is kernel time, and on an
+/// Apple M3 (4 performance + 4 efficiency cores, enum200k, warm) fixed counts
+/// of 1–8 workers peaked at exactly four and fell beyond it, while a walk that
+/// starts at [`START_WORKERS`] and climbs one worker per [`INTERVAL`] ends
+/// before it gets there (it peaked at 3). Eco and Balanced, and Turbo where
+/// the platform names no performance cores, start at [`START_WORKERS`] as
+/// before. The governor's limit caps every start.
+pub fn start_for(preset: Preset, performance_cores: Option<u32>) -> u32 {
+    match (preset, performance_cores) {
+        (Preset::Turbo, Some(cores)) if cores >= MIN_WORKERS => cores,
+        _ => START_WORKERS,
+    }
+}
+
 impl Climber {
-    /// A climber that may run up to `ceiling` workers (at least one).
+    /// A climber that may run up to `ceiling` workers (at least one), starting
+    /// at [`START_WORKERS`].
     pub fn new(ceiling: u32) -> Self {
+        Self::starting_at(ceiling, START_WORKERS)
+    }
+
+    /// A climber that may run up to `ceiling` workers (at least one), starting
+    /// at `start` bounded by the ceiling (and by one from below). Taking the
+    /// start is not a step. A start above [`START_WORKERS`] probes down first:
+    /// it is the top of the range the platform is known to reward, and on the
+    /// M3 the count above it cost 41 % more CPU per entry (7.6 → 10.7 s per
+    /// million) for about 2 % more walk throughput than the count below it.
+    pub fn starting_at(ceiling: u32, start: u32) -> Self {
         let ceiling = ceiling.max(MIN_WORKERS);
         Self {
-            workers: START_WORKERS.min(ceiling),
+            workers: start.clamp(MIN_WORKERS, ceiling),
             ceiling,
-            direction: 1,
+            direction: if start > START_WORKERS { -1 } else { 1 },
             phase: Phase::Warmup,
             steps: 0,
             last_at: Duration::ZERO,

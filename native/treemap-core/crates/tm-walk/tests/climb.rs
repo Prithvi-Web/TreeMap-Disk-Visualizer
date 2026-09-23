@@ -5,7 +5,8 @@
 
 use std::time::Duration;
 
-use tm_walk::climb::{Climber, HOLD_INTERVALS, INTERVAL, NOISE_FLOOR, START_WORKERS};
+use tm_governor::{Preset, profile};
+use tm_walk::climb::{Climber, HOLD_INTERVALS, INTERVAL, NOISE_FLOOR, START_WORKERS, start_for};
 
 /// Intervals the simulations run for.
 const TICKS: u32 = 40;
@@ -54,6 +55,157 @@ fn simulate(climber: &mut Climber, ticks: u32, rate_for: impl Fn(u32) -> u64) ->
 /// A world where each worker adds the same throughput, up to the ceiling.
 fn linear(workers: u32) -> u64 {
     u64::from(workers) * PER_WORKER
+}
+
+/// The machine the Turbo start was measured on: an Apple M3, four performance
+/// cores and four efficiency cores.
+const M3_PERFORMANCE_CORES: u32 = 4;
+/// Its logical cores: Turbo's worker limit there.
+const M3_CORES: u32 = 8;
+
+/// Entries per interval at a fixed worker count on that M3: the medians of
+/// five interleaved enum200k walks under Turbo (23 September 2026), times the
+/// 250 ms interval. The rate peaks at the four performance cores and falls
+/// beyond them (efficiency cores, and the kernel's metadata locks).
+fn measured_m3(workers: u32) -> u64 {
+    match workers {
+        0 => 0,
+        1 => 44_276,
+        2 => 77_977,
+        3 => 112_393,
+        4 => 134_598,
+        5 => 115_155,
+        6 => 106_921,
+        7 => 104_377,
+        _ => 103_854,
+    }
+}
+
+#[test]
+fn a_turbo_walk_starts_at_the_performance_cores() {
+    assert_eq!(
+        start_for(Preset::Turbo, Some(M3_PERFORMANCE_CORES)),
+        M3_PERFORMANCE_CORES
+    );
+    assert_eq!(start_for(Preset::Turbo, Some(6)), 6);
+}
+
+#[test]
+fn eco_and_balanced_start_where_they_always_did() {
+    for preset in [Preset::Eco, Preset::Balanced] {
+        assert_eq!(
+            start_for(preset, Some(M3_PERFORMANCE_CORES)),
+            START_WORKERS,
+            "{preset:?}"
+        );
+        assert_eq!(start_for(preset, None), START_WORKERS, "{preset:?}");
+    }
+}
+
+#[test]
+fn turbo_without_a_performance_core_count_starts_where_it_always_did() {
+    assert_eq!(start_for(Preset::Turbo, None), START_WORKERS);
+    assert_eq!(
+        start_for(Preset::Turbo, Some(0)),
+        START_WORKERS,
+        "a count of zero says nothing"
+    );
+}
+
+#[test]
+fn a_start_is_bounded_by_the_ceiling_and_is_not_a_step() {
+    for (ceiling, start, expected) in [(8, 4, 4), (2, 4, 2), (8, 0, 1), (0, 4, 1), (8, 9, 8)] {
+        let climber = Climber::starting_at(ceiling, start);
+        assert_eq!(
+            climber.workers(),
+            expected,
+            "ceiling {ceiling}, start {start}"
+        );
+        assert_eq!(climber.steps(), 0, "ceiling {ceiling}, start {start}");
+    }
+    assert_eq!(
+        Climber::new(8).workers(),
+        Climber::starting_at(8, START_WORKERS).workers()
+    );
+}
+
+#[test]
+fn eco_and_balanced_never_exceed_their_limit_whatever_start_they_are_given() {
+    let turbo_start = start_for(Preset::Turbo, Some(M3_PERFORMANCE_CORES));
+    for (preset, start) in [(Preset::Eco, turbo_start), (Preset::Balanced, M3_CORES)] {
+        let limit = profile(preset, M3_CORES, None).max_workers;
+        assert!(start > limit, "{preset:?}: the start must ask for more");
+        let mut climber = Climber::starting_at(limit, start);
+        assert!(
+            climber.workers() <= limit,
+            "{preset:?} starts within its limit"
+        );
+        let seen = simulate(&mut climber, TICKS, linear);
+        assert!(
+            seen.iter().all(|w| *w <= limit),
+            "{preset:?} never above {limit}: {seen:?}"
+        );
+        assert!(
+            seen.contains(&limit),
+            "{preset:?} still uses what it may: {seen:?}"
+        );
+    }
+}
+
+#[test]
+fn from_the_performance_cores_the_measured_m3_holds_its_peak() {
+    let start = start_for(Preset::Turbo, Some(M3_PERFORMANCE_CORES));
+    let mut climber = Climber::starting_at(M3_CORES, start);
+    assert_eq!(climber.workers(), M3_PERFORMANCE_CORES);
+    let seen = simulate(&mut climber, TICKS, measured_m3);
+    assert_eq!(
+        seen.get(..2),
+        Some(&[3, 4][..]),
+        "one probe down, reverted: {seen:?}"
+    );
+    let at_peak = seen.iter().filter(|w| **w == M3_PERFORMANCE_CORES).count();
+    assert!(
+        at_peak * 4 >= seen.len() * 3,
+        "at least three quarters of the time at the peak: {seen:?}"
+    );
+}
+
+#[test]
+fn a_start_above_the_default_probes_down_first_and_the_default_start_up() {
+    let mut high = Climber::starting_at(M3_CORES, M3_PERFORMANCE_CORES);
+    assert_eq!(
+        high.observe(INTERVAL, 1_000),
+        M3_PERFORMANCE_CORES - 1,
+        "above the performance cores is where the cost per entry was measured to rise"
+    );
+    let mut default = Climber::starting_at(M3_CORES, START_WORKERS);
+    assert_eq!(default.observe(INTERVAL, 1_000), START_WORKERS + 1);
+    let mut low = Climber::starting_at(M3_CORES, 1);
+    assert_eq!(
+        low.observe(INTERVAL, 1_000),
+        2,
+        "below the default it probes up"
+    );
+}
+
+#[test]
+fn a_two_interval_walk_gets_further_from_the_performance_cores() {
+    // enum200k lasts about two intervals: what each start gets done in them.
+    let done_in_two = |mut climber: Climber| -> u64 {
+        let first = measured_m3(climber.workers());
+        let now = INTERVAL;
+        let second = measured_m3(climber.observe(now, first));
+        first + second
+    };
+    let from_cores = done_in_two(Climber::starting_at(
+        M3_CORES,
+        start_for(Preset::Turbo, Some(M3_PERFORMANCE_CORES)),
+    ));
+    let from_two = done_in_two(Climber::new(M3_CORES));
+    assert!(
+        from_cores * 100 >= from_two * 125,
+        "{from_cores} entries from the performance cores, {from_two} from two workers"
+    );
 }
 
 #[test]

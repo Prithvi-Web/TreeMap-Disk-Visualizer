@@ -29,9 +29,9 @@ use std::time::{Duration, Instant};
 
 use tm_governor::{Governor, apply_to_current_thread, profile};
 
-use crate::climb::Climber;
+use crate::climb::{Climber, START_WORKERS, start_for};
 use crate::output::{DirRefusal, HardlinkRef, Refusal, WalkOutput, WalkStats};
-use crate::platform::{DirTimes, ListBuffer, Lister, Meta, thread_cpu_seconds};
+use crate::platform::{DirTimes, ListBuffer, Lister, Meta, performance_cores, thread_cpu_seconds};
 use crate::queue::{DirJob, Queue};
 use crate::{
     FLAG_DATALESS, FLAG_REFUSED_DIR, FastPath, KIND_DIR, KIND_FILE, WalkError, WalkOptions,
@@ -69,6 +69,11 @@ pub trait Pacer: Send + Sync {
     fn throttle(&self, cancelled: &dyn Fn() -> bool);
     /// Re-read between directories: the most workers that may run.
     fn worker_limit(&self) -> u32;
+    /// Read once, when a walk the hill-climber drives starts: the count it
+    /// starts at, before `worker_limit()` caps it.
+    fn start_workers(&self) -> u32 {
+        START_WORKERS
+    }
 }
 
 /// The real thing: `tm_governor::Governor`.
@@ -102,6 +107,11 @@ impl Pacer for GovernorPacer {
 
     fn worker_limit(&self) -> u32 {
         self.governor.worker_limit()
+    }
+
+    /// The preset in force decides; see [`start_for`].
+    fn start_workers(&self) -> u32 {
+        start_for(self.governor.snapshot().effective, performance_cores())
     }
 }
 
@@ -473,7 +483,7 @@ fn run_walk(shared: &Arc<Shared>, root_meta: Meta) -> Result<WalkOutput, WalkErr
             .unwrap_or(MAX_WORKERS)
             .min(MAX_WORKERS)
     });
-    let mut climber = Climber::new(limit());
+    let mut climber = Climber::starting_at(limit(), shared.pacer.start_workers());
     let mut target = fixed.map_or_else(|| climber.workers(), |count| count.min(limit()));
     shared.active_target.store(target, Ordering::Release);
 

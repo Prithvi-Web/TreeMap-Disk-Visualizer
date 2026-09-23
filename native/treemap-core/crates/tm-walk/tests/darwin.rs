@@ -1152,3 +1152,31 @@ fn measures_bulk_against_per_entry_on_five_thousand_entries() -> TestResult {
     assert!(bulk.is_finite() && slow.is_finite());
     Ok(())
 }
+
+/// `sysctl -n <name>` as a number, or `None` when the OS has no such name.
+fn sysctl_number(name: &str) -> Option<u32> {
+    let out = std::process::Command::new("/usr/sbin/sysctl")
+        .args(["-n", name])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+#[test]
+fn the_performance_cores_are_what_sysctl_reports_when_there_are_two_levels() {
+    let expected = match sysctl_number("hw.nperflevels") {
+        Some(levels) if levels >= 2 => sysctl_number("hw.perflevel0.logicalcpu"),
+        _ => None,
+    };
+    assert_eq!(tm_walk::platform::performance_cores(), expected);
+    if let Some(cores) = expected {
+        let all = std::thread::available_parallelism().map_or(0, std::num::NonZero::get);
+        assert!(
+            cores >= 1 && (cores as usize) < all,
+            "{cores} performance cores of {all}"
+        );
+    }
+}

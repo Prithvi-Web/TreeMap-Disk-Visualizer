@@ -568,6 +568,43 @@ fn os_error(errno: i32) -> std::io::Error {
     std::io::Error::from_raw_os_error(errno)
 }
 
+/// `hw.nperflevels` at or above this: the cores come in more than one kind.
+const ASYMMETRIC_LEVELS: u32 = 2;
+
+/// [`super::performance_cores`] on macOS: `hw.perflevel0.logicalcpu` (level 0
+/// is the fastest) when `hw.nperflevels` says there are at least two levels;
+/// `None` on a machine of one kind of core, or when either name is missing.
+pub fn performance_cores() -> Option<u32> {
+    let levels = sysctl_u32(c"hw.nperflevels")?;
+    if levels < ASYMMETRIC_LEVELS {
+        return None;
+    }
+    sysctl_u32(c"hw.perflevel0.logicalcpu").filter(|cores| *cores >= 1)
+}
+
+/// An `int` sysctl read by name, as `u32`; `None` when it is missing, is not
+/// an `int`, or is negative.
+fn sysctl_u32(name: &std::ffi::CStr) -> Option<u32> {
+    let mut value: libc::c_int = 0;
+    let mut len = size_of::<libc::c_int>();
+    // SAFETY: `name` is NUL-terminated; `value` is a writable `c_int` and `len`
+    // holds its size, so the kernel writes at most that many bytes; no new
+    // value is passed (null pointer, zero length).
+    let rc = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            (&raw mut value).cast::<c_void>(),
+            &raw mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 || len != size_of::<libc::c_int>() {
+        return None;
+    }
+    u32::try_from(value).ok()
+}
+
 // `TIMESPEC_BYTES` documents the layout the cursor assumes (two `i64`s).
 const _: () = assert!(TIMESPEC_BYTES == 2 * size_of::<i64>());
 // The device and socket kinds are named for readers of the constants above;
