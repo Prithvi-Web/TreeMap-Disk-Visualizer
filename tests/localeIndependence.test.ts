@@ -127,8 +127,8 @@ test('dates are English too, with the machine\'s clock and time zone: every date
 test('CI runs the whole suite under a Portuguese locale — on that leg only, through GITHUB_ENV — and the contributing guide says why', () => {
   const ci = read('.github', 'workflows', 'test.yml');
   assert.match(ci, /\n {10}- os: ubuntu-latest\n {12}name: Linux \(pt-BR locale\)\n {12}locale: pt_BR\.UTF-8\n {12}expect: pt-BR\n/, 'the leg exists and says which locale Node must resolve');
-  assert.match(ci, /if: matrix\.locale\n {8}run: \|\n {10}sudo locale-gen \$\{\{ matrix\.locale \}\}\n {10}echo "LC_ALL=\$\{\{ matrix\.locale \}\}" >> "\$GITHUB_ENV"\n {10}echo "LANG=\$\{\{ matrix\.locale \}\}" >> "\$GITHUB_ENV"\n/,
-    'the locale is generated (so no child bash or perl warns into the TAP) and exported to the later steps of this leg alone');
+  assert.match(ci, /if: \$\{\{ !cancelled\(\) && matrix\.locale \}\}\n {8}run: \|\n {10}sudo locale-gen \$\{\{ matrix\.locale \}\}\n {10}echo "LC_ALL=\$\{\{ matrix\.locale \}\}" >> "\$GITHUB_ENV"\n {10}echo "LANG=\$\{\{ matrix\.locale \}\}" >> "\$GITHUB_ENV"\n/,
+    'the locale is generated (so no child bash or perl warns into the TAP) and exported to the later steps of this leg alone — even after a Rust step failed, since the suite still runs then and must run in Portuguese');
   assert.match(ci, /echo "TREEMAP_EXPECT_LOCALE=\$\{\{ matrix\.expect \}\}" >> "\$GITHUB_ENV"/, 'the leg names the locale it expects, and the test below holds it to that');
   assert.doesNotMatch(ci, /\n {10}LC_ALL:/, "an env: entry that resolves to '' is not unset to ICU — Node reads LC_ALL='' as the root locale `und` — so the ordinary legs would stop testing a real machine");
   assert.doesNotMatch(ci, /\n {10}LANG:/, 'same for LANG');

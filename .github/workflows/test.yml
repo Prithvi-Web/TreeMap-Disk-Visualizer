@@ -59,6 +59,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
+        id: install
         run: npm ci
 
       # The native core (native/treemap-core, Rust) is built on every leg so a
@@ -67,22 +68,73 @@ jobs:
       # app falls back to the legacy engines with a stated reason when the
       # module is absent.
       - name: Set up Rust
+        # rustup comes from here; the VERSION does not. rustup reads
+        # native/treemap-core/rust-toolchain.toml for every cargo command run
+        # in that folder and installs that version on first use, so this job,
+        # the release job and a developer's machine all build with one Rust.
+        # Before the pin, `stable` here was 1.98.1 while the developer's machine
+        # had 1.97.0 — "passes locally" had never simulated CI.
+        if: ${{ !cancelled() }}
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache the Rust build
+        if: ${{ !cancelled() }}
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: native/treemap-core
 
-      - name: Check the native core (format, lints, tests)
+      # Three steps, not one, each appending to cargo-output.log for the
+      # annotator below. As one step, the first failure hid the rest: CI's Rust
+      # check had never once passed, and each red run showed only the first
+      # thing wrong — fmt, then a Linux-only lint, then "exit code 101" with no
+      # way to read further, because job logs need admin rights. Each step runs
+      # whatever happened before it (`!cancelled()`), and the tests run with
+      # --no-fail-fast, so one run reports every failure there is.
+      - name: Check the native core's format
+        id: fmt
+        if: ${{ !cancelled() }}
         shell: bash
         working-directory: native/treemap-core
         run: |
-          cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets -- -D warnings
-          cargo test --workspace
+          set -o pipefail
+          rustc --version 2>&1 | tee -a ../../cargo-output.log
+          cargo fmt --all -- --check 2>&1 | tee -a ../../cargo-output.log
 
+      - name: Lint the native core
+        id: clippy
+        if: ${{ !cancelled() }}
+        shell: bash
+        working-directory: native/treemap-core
+        run: |
+          set -o pipefail
+          cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tee -a ../../cargo-output.log
+
+      - name: Test the native core
+        id: cargotest
+        if: ${{ !cancelled() }}
+        # A test that hangs is a failure with a name, not a six-hour job: libtest
+        # prints "has been running for over 60 seconds" for it, and the
+        # annotator turns that line into a warning.
+        timeout-minutes: 20
+        shell: bash
+        working-directory: native/treemap-core
+        run: |
+          set -o pipefail
+          cargo test --workspace --no-fail-fast 2>&1 | tee -a ../../cargo-output.log
+
+      - name: Surface each failing Rust check as an annotation
+        # The only channel a Rust failure reaches anyone through (see
+        # scripts/cargo-annotate.js): the assertion, the signal a test binary
+        # died of, the lint and its line, the file rustfmt would change.
+        if: ${{ !cancelled() && (steps.fmt.outcome == 'failure' || steps.clippy.outcome == 'failure' || steps.cargotest.outcome == 'failure' || steps.cargotest.outcome == 'cancelled') }}
+        shell: bash
+        run: node scripts/cargo-annotate.js cargo-output.log native/treemap-core
+
+      # Everything below runs even when a Rust step failed: the Node suite is
+      # where the equivalence gate proves the Windows and Linux listings, and a
+      # lint failure is no reason to lose that. The job still fails.
       - name: Build the native module for this platform
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm run build:native
 
       - name: Run this leg as a Brazilian PC would
@@ -94,7 +146,7 @@ jobs:
         # locale exist on the runner: without it every child bash and perl the
         # suite spawns warns "setlocale: LC_ALL: cannot change locale", and
         # those lines would land in the TAP the annotator reads.
-        if: matrix.locale
+        if: ${{ !cancelled() && matrix.locale }}
         run: |
           sudo locale-gen ${{ matrix.locale }}
           echo "LC_ALL=${{ matrix.locale }}" >> "$GITHUB_ENV"
@@ -104,9 +156,11 @@ jobs:
           echo "TREEMAP_EXPECT_LOCALE=${{ matrix.expect }}" >> "$GITHUB_ENV"
 
       - name: Type-check
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm run typecheck
 
       - name: Run the test suite
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         # bash on every OS so the tee + pipefail combination means one thing.
         shell: bash
         run: |
@@ -152,6 +206,7 @@ jobs:
         # Not an assertion — a record. Reading what each OS actually detected is
         # how a capability that quietly regresses to "unavailable" gets noticed,
         # since an honest unavailable state passes every test by design.
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm run capabilities:report
         env:
           TREEMAP_DATA_DIR: ${{ runner.temp }}/treemap-test-data
