@@ -59,6 +59,8 @@ export interface WorkerJob {
   preset?: ScanPreset;
   /** Test hook: report these fields instead of the scan's own budget record, to prove the budget refusals. */
   pretendBudget?: Partial<ScanBudget>;
+  /** Test hook: report these fields instead of the probe this process ran, to prove the hand-over refusals. */
+  pretendProbe?: Partial<WorkerSuccess['probe']>;
   minSize?: number;
   threshold?: number;
   /** What the near-duplicate suite counts (the corpus's image count). */
@@ -232,7 +234,7 @@ if (require.main === module) {
   const job = readJob(process.argv[2]);
   main(job)
     .then((result) => {
-      const success: WorkerSuccess = { ...result, probe: { location: probeLocation(), builds: probeBuildCount() } };
+      const success: WorkerSuccess = { ...result, probe: { location: probeLocation(), builds: probeBuildCount(), ...job.pretendProbe } };
       fs.writeFileSync(job.outFile, JSON.stringify(success));
       cancelAllScans();
       process.exit(0);

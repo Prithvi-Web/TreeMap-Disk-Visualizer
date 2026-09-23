@@ -509,3 +509,23 @@ export function readResult(file: string): StoredResult {
   summary.reproducible = summary.reproducible && Number.isFinite(summary.spreadPct);
   return { ...parsed, summary };
 }
+
+/** What `--record` did: the baseline it wrote, or why it wrote none. */
+export type RecordOutcome = { recorded: string } | { refused: string };
+
+/**
+ * `--record`, whole: the result written as its baseline in `dir`, or the
+ * reason it may not be one (`recordRefusal`), or the conflict that keeps it
+ * from replacing a baseline measured under another condition. Any other
+ * failure throws: it is not a refusal, and must not print as one.
+ */
+export function recordOrRefuse(r: BenchResult, dir: string): RecordOutcome {
+  const refusal = recordRefusal(r);
+  if (refusal) return { refused: refusal };
+  try {
+    return { recorded: recordBaseline(r, dir) };
+  } catch (err: unknown) {
+    if (err instanceof BaselineConflictError) return { refused: err.message };
+    throw err;
+  }
+}

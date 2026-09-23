@@ -151,6 +151,18 @@ test('a measuring process handed a failed build reports that reason, reads no by
   assert.equal(child.builds, 0);
 });
 
+test('a measuring process handed a probe that is not there, or not a full path, says so and compiles nothing', { skip: process.platform !== 'darwin' && 'the usage probe is macOS’s' }, () => {
+  // A relative path to a file that is there (package.json, from the repo the
+  // child starts in) fails for being relative alone.
+  for (const handed of [path.join(os.tmpdir(), `treemap-no-such-probe-${process.pid}`), 'package.json']) {
+    const child = snapshotInFreshProcess({ ...standaloneEnv(), TREEMAP_BENCH_PROBE: handed });
+    assert.equal(child.bytesRead, null, handed);
+    assert.equal(child.bytesReadReason, `the probe the harness handed over (${handed}) is not there to run`);
+    assert.equal(child.location, null, handed);
+    assert.equal(child.builds, 0, 'a bad hand-off is reported, never covered over by a compile of its own');
+  }
+});
+
 test('with nothing handed over, a process builds its own probe, as a standalone run always has', () => {
   if (process.platform !== 'darwin') return;
   const child = snapshotInFreshProcess(standaloneEnv());

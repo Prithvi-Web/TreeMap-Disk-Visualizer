@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -119,6 +120,57 @@ test('the harness builds the usage probe once per invocation, before the first w
   await runEnumerate({ manifest, corpusName: 'test600', engine: 'walker', preset: 'turbo', runs: 1, cache: 'warm', label: 'suite test' });
   assert.equal(rusage.probeLocation(), probe, 'every series of the invocation hands over the same probe');
   assert.equal(rusage.probeBuildCount(), 1, 'one compile per invocation, not one per series or per run');
+});
+
+test('a measuring process that compiled its own usage probe is refused, and the refused series still removes its child directory', async () => {
+  const manifest = await small();
+  const calls: string[][] = [];
+  const removeDirs = (dirs: string[]): void => {
+    calls.push([...dirs]);
+    for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+  };
+  await assert.rejects(
+    runEnumerate({ manifest, corpusName: 'tiny', engine: 'walker', preset: 'turbo', runs: 1, cache: 'warm', label: 'suite test', pretendProbe: { builds: 1 }, removeDirs }),
+    (err: Error) => err.message === 'the measuring process compiled the usage probe itself (1 time(s)) right before its timed window; the harness builds it once, before the warm-up, so no child does foreign work inside a measured run',
+  );
+  assert.equal(calls.length, 1, 'removed once, however the series ended');
+  assert.equal(calls[0].length, 1, 'the warm-up, refused before any measured run');
+  assert.equal(fs.existsSync(calls[0][0]), false);
+});
+
+test('a measuring process that ran a usage probe other than the harness’s is refused', { skip: process.platform !== 'darwin' && 'the harness hands a usage probe over only on macOS' }, async () => {
+  const manifest = await small();
+  const elsewhere = path.join(CORPUS_DIR, 'another-probe');
+  await assert.rejects(
+    runEnumerate({ manifest, corpusName: 'tiny', engine: 'walker', preset: 'turbo', runs: 1, cache: 'warm', label: 'suite test', pretendProbe: { location: elsewhere } }),
+    (err: Error) => err.message.startsWith(`the measuring process ran the usage probe at ${elsewhere}, not the one the harness built (`),
+  );
+});
+
+/** The measuring process run on `job` directly, as the harness runs it, in a data directory of its own. */
+function runWorker(job: Record<string, unknown>): { status: number | null; stderr: string; wroteResult: boolean } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-worker-'));
+  try {
+    const outFile = path.join(dir, 'result.json');
+    const jobFile = path.join(dir, 'job.json');
+    fs.writeFileSync(jobFile, JSON.stringify({ ...job, outFile }));
+    const tsxCli = path.join(path.dirname(require.resolve('tsx/package.json')), 'dist', 'cli.mjs');
+    const r = spawnSync(process.execPath, [tsxCli, path.join(__dirname, '..', 'bench', 'lib', 'measureWorker.ts'), jobFile], { encoding: 'utf8', timeout: 120_000, env: { ...process.env, TREEMAP_DATA_DIR: dir } });
+    return { status: r.status, stderr: r.stderr, wroteResult: fs.existsSync(outFile) };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('the measuring process refuses a job with an unknown preset, or an enumerate job with none, before it measures anything', () => {
+  const unknown = runWorker({ suite: 'enumerate', root: CORPUS_DIR, engine: 'walker', preset: 'fastest' });
+  assert.notEqual(unknown.status, 0);
+  assert.match(unknown.stderr, /measureWorker: unknown preset fastest/);
+  assert.equal(unknown.wroteResult, false, 'nothing was measured');
+  const none = runWorker({ suite: 'enumerate', root: CORPUS_DIR, engine: 'walker' });
+  assert.notEqual(none.status, 0);
+  assert.match(none.stderr, /measureWorker: the enumerate suite scans under a named preset \(eco, balanced or turbo\), never the app's Automatic default, which no number can name/);
+  assert.equal(none.wroteResult, false, 'nothing was measured');
 });
 
 test('the duplicate suite drives the real finder and proves every planted group by bytes', async () => {

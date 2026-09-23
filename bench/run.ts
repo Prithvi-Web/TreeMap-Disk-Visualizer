@@ -23,7 +23,8 @@ import { benchTmpDir } from './lib/paths';
 
 const REPO = path.join(__dirname, '..');
 const RESULTS_DIR = process.env.TREEMAP_BENCH_OUT ?? path.join(REPO, 'bench', 'results');
-const BASELINES_DIR = path.join(REPO, 'bench', 'baselines');
+/** Where `--record` writes; a test points it at a temp folder, since git tracks bench/baselines. */
+const BASELINES_DIR = process.env.TREEMAP_BENCH_BASELINES ?? path.join(REPO, 'bench', 'baselines');
 
 const USAGE = [
   'npm run bench -- enumerate [--corpus=enum200k|enum1m|ci20k|smoke|dupes100k] [--engine=auto|native|gdu|walker] [--preset=eco|balanced|turbo] [--runs=3] [--cache=warm|cold] [--record] [--label=...]',
@@ -167,20 +168,12 @@ async function main(): Promise<void> {
     process.stdout.write(`  written: ${path.relative(REPO, file)}\n`);
     if (!r.correctness.ok) process.exitCode = 1;
     if (record) {
-      const refusal = report.recordRefusal(r);
-      if (refusal) {
-        process.stdout.write(`  NOT RECORDED as a baseline: ${refusal}\n`);
+      const outcome = report.recordOrRefuse(r, BASELINES_DIR);
+      if ('refused' in outcome) {
+        process.stdout.write(`  NOT RECORDED as a baseline: ${outcome.refused}\n`);
         process.exitCode = 1;
       } else {
-        try {
-          const b = report.recordBaseline(r, BASELINES_DIR);
-          process.stdout.write(`  baseline: ${path.relative(REPO, b)}\n`);
-        } catch (err: unknown) {
-          // A baseline measured under other conditions is refused like any other refusal; anything else is a real failure.
-          if (!(err instanceof report.BaselineConflictError)) throw err;
-          process.stdout.write(`  NOT RECORDED as a baseline: ${err.message}\n`);
-          process.exitCode = 1;
-        }
+        process.stdout.write(`  baseline: ${path.relative(REPO, outcome.recorded)}\n`);
       }
     }
   };

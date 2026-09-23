@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { summarize, compareToBaseline, describeBudget, printTable, readResult, recordRefusal, writeResult, baselineFileName, recordBaseline, PRE_GOVERNOR_BUDGET, REQUESTED_BUDGETS, type BenchResult, type BenchRun, type StoredResult } from '../bench/lib/report';
+import { summarize, compareToBaseline, describeBudget, printTable, readResult, recordOrRefuse, recordRefusal, writeResult, baselineFileName, recordBaseline, PRE_GOVERNOR_BUDGET, REQUESTED_BUDGETS, type BenchResult, type BenchRun, type StoredResult } from '../bench/lib/report';
 import { checkScanAgainstManifest, checkDuplicatesAgainstManifest } from '../bench/lib/verify';
 
 function run(wallMs: number, cpuSeconds = 0.5, entries = 200_000, extra: Partial<BenchRun> = {}): BenchRun {
@@ -200,6 +200,43 @@ test('the budget line says what was asked, what each run ran under, and what mov
   assert.equal(describeBudget(moved), `balanced requested, ran under eco/balanced/turbo — moved: ${refusal.slice('its budget moved: '.length)}`);
   assert.equal(describeBudget(preGovernor(result(1000, 2))), PRE_GOVERNOR_BUDGET);
   assert.equal(PRE_GOVERNOR_BUDGET, 'none (recorded before the governor)');
+});
+
+test('--record writes a recordable result as its baseline, and refuses, writing nothing, one that is not or one that conflicts', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-record-'));
+  try {
+    const good = result(1000, 2);
+    const written = recordOrRefuse(good, dir);
+    assert.deepEqual(written, { recorded: path.join(dir, baselineFileName(good)) });
+    assert.equal(readResult(path.join(dir, baselineFileName(good))).summary.wallMsMedian, 1000);
+
+    const one = result(1000, Number.POSITIVE_INFINITY);
+    one.runs = [run(1000)];
+    one.budget = { requested: 'turbo', effective: ['turbo'] };
+    one.summary = summarize(one.runs);
+    assert.deepEqual(recordOrRefuse(one, dir), { refused: 'its runs spread over a single run (the rule is under 5%)' });
+
+    // The same file name under another condition: refused, the baseline there untouched.
+    const cold = result(900, 2);
+    cold.cache = { state: 'cold', reason: 'test' };
+    const conflict = recordOrRefuse(cold, dir);
+    assert.ok('refused' in conflict && conflict.refused.startsWith(`refusing to replace ${path.join(dir, baselineFileName(good))}`), JSON.stringify(conflict));
+    assert.equal(readResult(path.join(dir, baselineFileName(good))).summary.wallMsMedian, 1000, 'the baseline there is untouched');
+    assert.deepEqual(fs.readdirSync(dir), [baselineFileName(good)]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--record lets every failure but a refusal through: a baseline folder that is a file throws', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-record-'));
+  try {
+    const notAFolder = path.join(dir, 'baselines');
+    fs.writeFileSync(notAFolder, '');
+    assert.throws(() => recordOrRefuse(result(1000, 2), notAFolder), (err: NodeJS.ErrnoException) => typeof err.code === 'string' && err.code.startsWith('E'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('the table says a single run has no spread instead of printing infinity', () => {

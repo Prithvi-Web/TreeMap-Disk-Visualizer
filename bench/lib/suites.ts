@@ -67,6 +67,8 @@ export interface EnumerateOptions extends CommonOptions {
   pretendEngine?: string;
   /** Test hook: make the child report these budget fields instead of its scan's own, to prove the budget refusals. */
   pretendBudget?: Partial<ScanBudget>;
+  /** Test hook: make the child report this usage probe instead of the one it ran, to prove the hand-over refusals. */
+  pretendProbe?: WorkerJob['pretendProbe'];
 }
 
 export interface DuplicatesOptions extends CommonOptions {
@@ -277,7 +279,7 @@ function scaleOf(entries: number, maxVnodes: number | null): string {
 export async function runEnumerate(opts: EnumerateOptions): Promise<BenchResult> {
   const machine = await describeMachine();
   const entries = opts.manifest.files + opts.manifest.dirs;
-  const s = await series({ suite: 'enumerate', root: opts.manifest.root, engine: opts.engine, preset: opts.preset, gduFind: opts.gduFind, pretendEngine: opts.pretendEngine, pretendBudget: opts.pretendBudget }, opts, machine, entries, '');
+  const s = await series({ suite: 'enumerate', root: opts.manifest.root, engine: opts.engine, preset: opts.preset, gduFind: opts.gduFind, pretendEngine: opts.pretendEngine, pretendBudget: opts.pretendBudget, pretendProbe: opts.pretendProbe }, opts, machine, entries, '');
   const perRun: ScanCounts[] = s.results.map((r) => r.counts);
   const notes: string[] = [];
   let ok = true;

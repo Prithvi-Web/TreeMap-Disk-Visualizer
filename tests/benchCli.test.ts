@@ -126,6 +126,23 @@ test('the smoke corpus runs the enumerate and duplicates commands end to end', (
   }
 });
 
+test('--record on a single run says why it recorded nothing, exits 1, and writes no baseline', () => {
+  // TREEMAP_BENCH_BASELINES keeps a test's --record out of bench/baselines, which git tracks.
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-cli-out-'));
+  const baselines = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-cli-baselines-'));
+  try {
+    const env = { ...process.env, TREEMAP_BENCH_OUT: out, TREEMAP_BENCH_BASELINES: baselines };
+    const r = spawnSync(process.execPath, [tsxCli, path.join(REPO, 'bench', 'run.ts'), 'enumerate', '--corpus=smoke', '--engine=walker', '--runs=1', '--record', '--label=cli test'], { cwd: REPO, encoding: 'utf8', timeout: 300_000, env });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /^ {2}NOT RECORDED as a baseline: its runs spread over a single run \(the rule is under 5%\)$/m);
+    assert.deepEqual(fs.readdirSync(baselines), [], 'no baseline written');
+    assert.equal(fs.readdirSync(out).filter((f) => f.startsWith('enumerate-')).length, 1, 'the result itself is still written');
+  } finally {
+    fs.rmSync(out, { recursive: true, force: true });
+    fs.rmSync(baselines, { recursive: true, force: true });
+  }
+});
+
 test('--preset is guarded: one of three presets for enumerate, never Automatic, and not an option of the suites that name none', () => {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-cli-guard-'));
   // One smoke run into a scratch directory: were the guard ever to lapse, the run it let through would be small and would write nothing into bench/results.
