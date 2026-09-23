@@ -51,6 +51,8 @@ export interface CommonOptions {
   label: string;
   cache?: RequestedCache;
   purge?: PurgeProcedure;
+  /** Test hook: removes the series' child data directories, all together, once the series is over. */
+  removeDirs?: (dirs: string[]) => void;
 }
 
 export interface EnumerateOptions extends CommonOptions {
@@ -80,22 +82,28 @@ export interface NearDupOptions extends CommonOptions {
 const tsxCli = (): string => path.join(path.dirname(require.resolve('tsx/package.json')), 'dist', 'cli.mjs');
 /**
  * A pause after every child exits. The first measured run after the warm-up
- * was the slow one on every series measured while building this: the kernel
- * is still tearing down the previous process (hundreds of MB of pages) when
- * the next one starts, and that teardown is not the engine's cost.
+ * was the slow one on every series measured while building this, put down at
+ * the time to the kernel tearing down the previous process. An A/B on 23 Sep
+ * 2026 found the pause itself changes nothing (enum200k walk 405.7 ms without
+ * it, 408.0 with it) and put the slow run on deleting the previous child's
+ * data directory instead (467.2 ms) — which is why no directory is removed
+ * until the series is over (`series`). The pause stays: it costs nothing
+ * measured.
  */
 const SETTLE_MS = 500;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const WORKER = path.join(__dirname, 'measureWorker.ts');
 
 /**
- * One measured pass in a fresh process with its own app-data directory; the
- * directory is removed once the child has exited. `probe` is this process's
- * usage-probe hand-off (`probeHandoff()`): it replaces whatever probe
- * variables this process inherited, so the child runs exactly the harness's.
+ * One measured pass in a fresh process with its own app-data directory,
+ * which is added to `dataDirs` and left in place: the series removes them all
+ * once it is over (`series`). `probe` is this process's usage-probe hand-off
+ * (`probeHandoff()`): it replaces whatever probe variables this process
+ * inherited, so the child runs exactly the harness's.
  */
-async function runChild(job: Omit<WorkerJob, 'outFile'>, probe: Readonly<Record<string, string>>): Promise<WorkerSuccess> {
+async function runChild(job: Omit<WorkerJob, 'outFile'>, probe: Readonly<Record<string, string>>, dataDirs: string[]): Promise<WorkerSuccess> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-data-'));
+  dataDirs.push(dataDir);
   const jobFile = path.join(dataDir, 'job.json');
   const outFile = path.join(dataDir, 'result.json');
   const { [PROBE_BINARY_ENV]: _inheritedBinary, [PROBE_FAILURE_ENV]: _inheritedFailure, ...inherited } = process.env;
@@ -124,9 +132,13 @@ async function runChild(job: Omit<WorkerJob, 'outFile'>, probe: Readonly<Record<
     if (!result.ok) throw new Error(result.error);
     return result;
   } finally {
-    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 3 });
     await sleep(SETTLE_MS);
   }
+}
+
+/** The default `removeDirs`: every child data directory, removed recursively. */
+function removeChildDirs(dirs: string[]): void {
+  for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
 }
 
 /**
@@ -182,30 +194,39 @@ async function series(job: Omit<WorkerJob, 'outFile'>, opts: CommonOptions & { e
   // The usage probe is built here, once per invocation (later series reuse it) and before the warm-up, so whatever its compile disturbs is behind the warm-up pass.
   const probe = probeHandoff();
 
+  // Every child's data directory stays until the series is over: deleting the
+  // previous one (it holds 48 MB of fast-rescan cache on enum200k) slowed the
+  // next run's walk ~60 ms, and a measured run must not pay for the harness's
+  // own cleanup. Removed together at the end, however the series ends.
+  const dataDirs: string[] = [];
   let warmedUp = false;
-  if (requested === 'warm') {
-    const warm = await runChild(job, probe);
-    assertProbeHandedOver(probe, warm);
-    if (opts.engine) assertRequestedEngine(opts.engine, warm.engine);
-    assertRequestedBudget(requestedBudget, warm.budget);
-    warmedUp = true;
-  }
+  try {
+    if (requested === 'warm') {
+      const warm = await runChild(job, probe, dataDirs);
+      assertProbeHandedOver(probe, warm);
+      if (opts.engine) assertRequestedEngine(opts.engine, warm.engine);
+      assertRequestedBudget(requestedBudget, warm.budget);
+      warmedUp = true;
+    }
 
-  for (let i = 0; i < opts.runs; i++) {
-    if (requested === 'cold') {
-      const result = await purge();
-      if (!result.ok) failedPurges.push({ run: i + 1, result });
+    for (let i = 0; i < opts.runs; i++) {
+      if (requested === 'cold') {
+        const result = await purge();
+        if (!result.ok) failedPurges.push({ run: i + 1, result });
+      }
+      const result = await runChild(job, probe, dataDirs);
+      assertProbeHandedOver(probe, result);
+      if (opts.engine) assertRequestedEngine(opts.engine, result.engine);
+      assertRequestedBudget(requestedBudget, result.budget);
+      if (result.engine === 'gdu-turbo') {
+        result.run.bytesRead = null;
+        result.run.bytesReadReason = 'gdu reads in child processes; the probe counts only the measuring process';
+      }
+      runs.push(result.run);
+      results.push(result);
     }
-    const result = await runChild(job, probe);
-    assertProbeHandedOver(probe, result);
-    if (opts.engine) assertRequestedEngine(opts.engine, result.engine);
-    assertRequestedBudget(requestedBudget, result.budget);
-    if (result.engine === 'gdu-turbo') {
-      result.run.bytesRead = null;
-      result.run.bytesReadReason = 'gdu reads in child processes; the probe counts only the measuring process';
-    }
-    runs.push(result.run);
-    results.push(result);
+  } finally {
+    (opts.removeDirs ?? removeChildDirs)(dataDirs);
   }
 
   let cache: CacheVerdict;

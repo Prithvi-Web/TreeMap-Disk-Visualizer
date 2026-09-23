@@ -88,6 +88,26 @@ test('a cold series is labelled cold only when every measured run was purged', a
   assert.equal(cold.cache.state, 'cold');
 });
 
+test('no child data directory is removed until the series has finished measuring', async () => {
+  // A child's data directory holds the app's fast-rescan cache (48 MB on
+  // enum200k). Deleting the previous run's, 500 ms before the next scan,
+  // slowed that scan's walk 405.7 -> 467.2 ms with 13% more kernel CPU (A/B,
+  // 5 runs each, native, Turbo, M3, 23 Sep 2026): every measured run paid for
+  // the harness's own cleanup. The series now removes them together, after
+  // its last measured run.
+  const manifest = await small();
+  const calls: Array<{ dirs: string[]; present: boolean[] }> = [];
+  const removeDirs = (dirs: string[]): void => {
+    calls.push({ dirs: [...dirs], present: dirs.map((d) => fs.existsSync(d)) });
+    for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+  };
+  await runEnumerate({ manifest, corpusName: 'tiny', engine: 'walker', preset: 'turbo', runs: 2, cache: 'warm', label: 'suite test', removeDirs });
+  assert.equal(calls.length, 1, 'removed once, when the series is over');
+  assert.equal(calls[0].dirs.length, 3, 'the warm-up and both measured runs');
+  assert.deepEqual(calls[0].present, [true, true, true], 'each child directory was still there until then');
+  assert.equal(new Set(calls[0].dirs).size, 3, 'one directory per child');
+});
+
 test('the harness builds the usage probe once per invocation, before the first warm-up, and no measuring process compiles one', async () => {
   if (process.platform !== 'darwin') return;
   const manifest = await small();
