@@ -373,6 +373,16 @@ test('the workflow: the annotator runs when a Rust step failed or timed out, and
   assert.match(step(ci, 'Install dependencies'), /\n {8}id: install\n/);
 });
 
+test('the workflow fetches gdu before the suite, so the gate’s gdu comparison runs instead of skipping', () => {
+  const ci = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'test.yml'), 'utf8');
+  const fetchAt = ci.indexOf('\n      - name: Fetch gdu for this platform\n');
+  const suiteAt = ci.indexOf('\n      - name: Run the test suite\n');
+
+  assert.ok(fetchAt > 0, 'a step fetches gdu');
+  assert.ok(fetchAt < suiteAt, 'before the suite runs');
+  assert.match(step(ci, 'Fetch gdu for this platform'), /\n {8}run: npm run fetch:gdu:dev\n/, 'into ./gdu/, where the app looks from source');
+});
+
 test('the toolchain is pinned to one exact version with the components the gate needs', () => {
   const pin = fs.readFileSync(path.join(__dirname, '..', 'native', 'treemap-core', 'rust-toolchain.toml'), 'utf8');
 

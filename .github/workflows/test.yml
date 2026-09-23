@@ -159,6 +159,16 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: npm run typecheck
 
+      - name: Fetch gdu for this platform
+        # The equivalence gate's (b) compares gdu — the app's bundled engine —
+        # with the walker, and skips when no gdu binary is found. Nothing in
+        # this workflow ever fetched one, so (b) had never run on any CI leg.
+        # `--dev` stages the host's binary where the app looks from source
+        # (./gdu/), verified against the pinned release's sha256sums.txt; a
+        # failed fetch fails this step rather than turning (b) into a skip.
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run fetch:gdu:dev
+
       - name: Run the test suite
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         # bash on every OS so the tee + pipefail combination means one thing.
