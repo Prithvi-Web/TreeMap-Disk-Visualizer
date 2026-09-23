@@ -100,13 +100,25 @@ test('in a folder that refuses new files, a program this user could still change
   }
 });
 
-/** `whoami /groups`, or '' where there is none (off Windows, or it failed). */
+/**
+ * A Windows tool by its full path. CI runs these tests under Git's bash,
+ * whose PATH puts Git's own tools first, and Node looks a bare name up in the
+ * current folder and then PATH, never System32 first: a bare `whoami` there
+ * is GNU's, which answers `/groups` with "extra operand" (the CI dry run of
+ * 23 Sep 2026, which found it likely that the first Windows run's elevation
+ * check read no groups for this reason: the next run will show).
+ */
+function system32(tool: string): string {
+  return path.win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', tool);
+}
+
+/** `whoami /groups`; off Windows ''; and when it fails, why, so the failure is read rather than taken for "no groups". */
 function windowsGroups(): string {
   if (process.platform !== 'win32') return '';
   try {
-    return execFileSync('whoami', ['/groups'], { encoding: 'utf8' });
-  } catch {
-    return '';
+    return execFileSync(system32('whoami.exe'), ['/groups'], { encoding: 'utf8' });
+  } catch (err) {
+    return `whoami /groups failed: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
 
@@ -143,7 +155,7 @@ test('a program the system owns, in a folder the system owns, may be started as 
 /** This user's security identifier (`whoami /user`), or null off Windows. */
 function currentUserSid(): string | null {
   if (process.platform !== 'win32') return null;
-  const row = execFileSync('whoami', ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8' }).trim();
+  const row = execFileSync(system32('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8' }).trim();
   const sid = row.split(',').pop()?.replace(/"/g, '').trim() ?? '';
   return /^S-1-\d+(-\d+)+$/.test(sid) ? sid : null;
 }
@@ -164,7 +176,7 @@ test('on Windows each door is tried in turn: a folder that refuses new files, th
   const helper = path.join(dir, 'tm-mft-helper.exe');
   fs.writeFileSync(helper, 'stand-in');
   const icacls = (...args: string[]): void => {
-    execFileSync('icacls', args, { encoding: 'utf8' });
+    execFileSync(system32('icacls.exe'), args, { encoding: 'utf8' });
   };
   try {
     icacls(dir, '/deny', `*${sid}:(WD)`);

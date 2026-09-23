@@ -127,7 +127,8 @@ test('a measuring process that compiled its own usage probe is refused, and the 
   const calls: string[][] = [];
   const removeDirs = (dirs: string[]): void => {
     calls.push([...dirs]);
-    for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+    // As the harness's own removal does: Windows can hold a just-exited child's files a moment longer.
+    for (const d of dirs) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3 });
   };
   await assert.rejects(
     runEnumerate({ manifest, corpusName: 'tiny', engine: 'walker', preset: 'turbo', runs: 1, cache: 'warm', label: 'suite test', pretendProbe: { builds: 1 }, removeDirs }),
