@@ -34,6 +34,10 @@ const annotate = require('../scripts/cargo-annotate') as {
  * suite was annotated. Three red runs in a row published nothing but "exit
  * code 101".
  *
+ * The fixtures are `.txt`, not `.log`: `*.log` is git-ignored here, and the
+ * first commit of this file shipped without them — green on this machine,
+ * where they sat on disk, and bound to fail on every CI leg.
+ *
  * Every fixture under tests/fixtures/cargo/ is REAL output from cargo 1.98.1
  * (the version CI was running), captured on macOS from a scratch workspace
  * with a deliberate format diff, a clippy error, failing tests in two
@@ -49,12 +53,12 @@ const annotate = require('../scripts/cargo-annotate') as {
  */
 const FIXTURES = path.join(__dirname, 'fixtures', 'cargo');
 const read = (name: string): string => fs.readFileSync(path.join(FIXTURES, name), 'utf8');
-const PLAIN = read('plain.log');
-const CI_ENV = read('ci-env.log');
-const CRASH = read('crash.log');
-const COMPILE_ERROR = read('compile-error.log');
-const HANG = read('hang.log');
-const CONTEXT = read('context.log');
+const PLAIN = read('plain.txt');
+const CI_ENV = read('ci-env.txt');
+const CRASH = read('crash.txt');
+const COMPILE_ERROR = read('compile-error.txt');
+const HANG = read('hang.txt');
+const CONTEXT = read('context.txt');
 const WS = 'native/treemap-core';
 
 const failure = (parsed: Parsed, name: string): TestFailure => {
@@ -386,7 +390,7 @@ test('the command line: a missing log is a warning and exit 0; a real log prints
   assert.equal(missing.status, 0);
   assert.match(missing.stdout, /^::warning title=Rust annotator::no .*no-such\.log/m);
 
-  const real = spawnSync(process.execPath, [script, path.join(FIXTURES, 'plain.log'), WS], { encoding: 'utf8', env: { ...process.env, GITHUB_STEP_SUMMARY: '' } });
+  const real = spawnSync(process.execPath, [script, path.join(FIXTURES, 'plain.txt'), WS], { encoding: 'utf8', env: { ...process.env, GITHUB_STEP_SUMMARY: '' } });
   assert.equal(real.status, 0);
   assert.match(real.stdout, /^::error file=native\/treemap-core\/crates\/alpha\/tests\/walk\.rs,line=6/m);
 });

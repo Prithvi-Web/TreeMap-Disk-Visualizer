@@ -1,0 +1,69 @@
+   Compiling alpha v0.1.0 (/home/runner/work/TreeMap-Disk-Visualizer/TreeMap-Disk-Visualizer/native/treemap-core/crates/alpha)
+   Compiling beta v0.1.0 (/home/runner/work/TreeMap-Disk-Visualizer/TreeMap-Disk-Visualizer/native/treemap-core/crates/beta)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/lib.rs (target/debug/deps/alpha-7c0c9240c6acaf16)
+
+running 1 test
+test tests::a_unit_test_that_passes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/walk.rs (target/debug/deps/walk-963a24c14995a20e)
+
+running 4 tests
+test a_test_that_passes ... ok
+test a_bound_that_fails ... FAILED
+test a_panic_with_a_message ... FAILED
+test an_equality_that_fails ... FAILED
+
+failures:
+
+---- a_bound_that_fails stdout ----
+
+thread 'a_bound_that_fails' (5641033) panicked at crates/alpha/tests/walk.rs:20:5:
+[balanced@19%] mean of the last half 0.3100 is outside ±0.05 of 0.19
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- a_panic_with_a_message stdout ----
+
+thread 'a_panic_with_a_message' (5641034) panicked at crates/alpha/tests/walk.rs:11:5:
+take() did not return within 300ms
+
+---- an_equality_that_fails stdout ----
+
+thread 'an_equality_that_fails' (5641036) panicked at crates/alpha/tests/walk.rs:6:5:
+assertion `left == right` failed: the sum is wrong: 2
+  left: 2
+ right: 3
+
+
+failures:
+    a_bound_that_fails
+    a_panic_with_a_message
+    an_equality_that_fails
+
+test result: FAILED. 1 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p alpha --test walk`
+     Running unittests src/lib.rs (target/debug/deps/beta-53d9dcbcf7f87d7c)
+
+running 1 test
+error: test failed, to rerun pass `-p beta --lib`
+
+Caused by:
+  process didn't exit successfully: `/home/runner/work/TreeMap-Disk-Visualizer/TreeMap-Disk-Visualizer/native/treemap-core/target/debug/deps/beta-53d9dcbcf7f87d7c` (signal: 6, SIGABRT: process abort signal)
+   Doc-tests alpha
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests beta
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: 2 targets failed:
+    `-p alpha --test walk`
+    `-p beta --lib`

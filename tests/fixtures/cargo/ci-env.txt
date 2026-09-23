@@ -1,0 +1,208 @@
+Diff in /home/runner/work/TreeMap-Disk-Visualizer/TreeMap-Disk-Visualizer/native/treemap-core/crates/alpha/src/lib.rs:1:
+ //! alpha
+-pub fn widen(x: i64) -> i64 { i64::from(x) }
++pub fn widen(x: i64) -> i64 {
++    i64::from(x)
++}
+ 
+ #[cfg(test)]
+ mod tests {
+Diff in /home/runner/work/TreeMap-Disk-Visualizer/TreeMap-Disk-Visualizer/native/treemap-core/crates/alpha/src/lib.rs:6:
+     #[test]
+-    fn a_unit_test_that_passes() { assert_eq!(super::widen(2), 2); }
++    fn a_unit_test_that_passes() {
++        assert_eq!(super::widen(2), 2);
++    }
+ }
+ 
+Diff in /home/runner/work/TreeMap-Disk-Visualizer/TreeMap-Disk-Visualizer/native/treemap-core/crates/alpha/tests/walk.rs:8:
+ 
+ #[test]
+ fn a_panic_with_a_message() {
+-    panic!("take() did not return within {:?}", Duration::from_millis(300));
++    panic!(
++        "take() did not return within {:?}",
++        Duration::from_millis(300)
++    );
+ }
+ 
+ #[test]
+Diff in /home/runner/work/TreeMap-Disk-Visualizer/TreeMap-Disk-Visualizer/native/treemap-core/crates/alpha/tests/walk.rs:15:
+ fn a_bound_that_fails() {
+     let share = 0.31_f64;
+-    assert!((share - 0.19).abs() <= 0.05, "[balanced@19%] mean of the last half {share:.4} is outside ±0.05 of 0.19");
++    assert!(
++        (share - 0.19).abs() <= 0.05,
++        "[balanced@19%] mean of the last half {share:.4} is outside ±0.05 of 0.19"
++    );
+ }
+ 
+ #[test]
+Diff in /home/runner/work/TreeMap-Disk-Visualizer/TreeMap-Disk-Visualizer/native/treemap-core/crates/beta/src/lib.rs:4:
+     #[test]
+     fn beta_fails_too() {
+         let v: Vec<u8> = Vec::new();
+-        assert!(!v.is_empty(), "a multi-line message\nsecond line\nthird line");
++        assert!(
++            !v.is_empty(),
++            "a multi-line message\nsecond line\nthird line"
++        );
+     }
+ }
+ 
+[1m[92m    Checking[0m alpha v0.1.0 (/home/runner/work/TreeMap-Disk-Visualizer/TreeMap-Disk-Visualizer/native/treemap-core/crates/alpha)
+[1m[92m    Checking[0m beta v0.1.0 (/home/runner/work/TreeMap-Disk-Visualizer/TreeMap-Disk-Visualizer/native/treemap-core/crates/beta)
+[1m[91merror[0m[1m: useless conversion to the same type: `i64`[0m
+ [1m[94m--> [0mcrates/alpha/src/lib.rs:2:31
+  [1m[94m|[0m
+[1m[94m2[0m [1m[94m|[0m pub fn widen(x: i64) -> i64 { i64::from(x) }
+  [1m[94m|[0m                               [1m[91m^^^^^^^^^^^^[0m [1m[91mhelp: consider removing `i64::from()`: `x`[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#useless_conversion
+  [1m[94m= [0m[1mnote[0m: `-D clippy::useless-conversion` implied by `-D warnings`
+  [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::useless_conversion)]`
+
+[1m[91merror[0m: could not compile `alpha` (lib) due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+[1m[91merror[0m: could not compile `alpha` (lib test) due to 1 previous error
+[1m[92m   Compiling[0m alpha v0.1.0 (/home/runner/work/TreeMap-Disk-Visualizer/TreeMap-Disk-Visualizer/native/treemap-core/crates/alpha)
+[1m[92m   Compiling[0m beta v0.1.0 (/home/runner/work/TreeMap-Disk-Visualizer/TreeMap-Disk-Visualizer/native/treemap-core/crates/beta)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.22s
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/alpha-ccf17815baf3d175)
+
+running 1 test
+test tests::a_unit_test_that_passes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/walk.rs (target/debug/deps/walk-c8cc14bcfd6204d6)
+
+running 4 tests
+test a_test_that_passes ... ok
+test a_bound_that_fails ... FAILED
+test a_panic_with_a_message ... FAILED
+test an_equality_that_fails ... FAILED
+
+failures:
+
+---- a_bound_that_fails stdout ----
+
+thread 'a_bound_that_fails' (5639266) panicked at crates/alpha/tests/walk.rs:17:5:
+[balanced@19%] mean of the last half 0.3100 is outside ±0.05 of 0.19
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/std/src/panicking.rs:679:5
+   1: core::panicking::panic_fmt
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/core/src/panicking.rs:80:14
+   2: walk::a_bound_that_fails
+             at ./tests/walk.rs:17:5
+   3: walk::a_bound_that_fails::{closure#0}
+             at ./tests/walk.rs:15:24
+   4: <walk::a_bound_that_fails::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/core/src/ops/function.rs:250:5
+   5: <fn() -> core::result::Result<(), alloc::string::String> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- a_panic_with_a_message stdout ----
+
+thread 'a_panic_with_a_message' (5639267) panicked at crates/alpha/tests/walk.rs:11:5:
+take() did not return within 300ms
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/std/src/panicking.rs:679:5
+   1: core::panicking::panic_fmt
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/core/src/panicking.rs:80:14
+   2: walk::a_panic_with_a_message
+             at ./tests/walk.rs:11:5
+   3: walk::a_panic_with_a_message::{closure#0}
+             at ./tests/walk.rs:10:28
+   4: <walk::a_panic_with_a_message::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/core/src/ops/function.rs:250:5
+   5: <fn() -> core::result::Result<(), alloc::string::String> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- an_equality_that_fails stdout ----
+
+thread 'an_equality_that_fails' (5639269) panicked at crates/alpha/tests/walk.rs:6:5:
+assertion `left == right` failed: the sum is wrong: 2
+  left: 2
+ right: 3
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/std/src/panicking.rs:679:5
+   1: core::panicking::panic_fmt
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/core/src/panicking.rs:80:14
+   2: core::panicking::assert_failed_inner
+   3: core::panicking::assert_failed::<i32, i32>
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/core/src/panicking.rs:394:5
+   4: walk::an_equality_that_fails
+             at ./tests/walk.rs:6:5
+   5: walk::an_equality_that_fails::{closure#0}
+             at ./tests/walk.rs:4:28
+   6: <walk::an_equality_that_fails::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/core/src/ops/function.rs:250:5
+   7: <fn() -> core::result::Result<(), alloc::string::String> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+
+failures:
+    a_bound_that_fails
+    a_panic_with_a_message
+    an_equality_that_fails
+
+test result: FAILED. 1 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+[1m[91merror[0m: test failed, to rerun pass `-p alpha --test walk`
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/beta-b72fd5c7a753602a)
+
+running 1 test
+test tests::beta_fails_too ... FAILED
+
+failures:
+
+---- tests::beta_fails_too stdout ----
+
+thread 'tests::beta_fails_too' (5639271) panicked at crates/beta/src/lib.rs:7:9:
+a multi-line message
+second line
+third line
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/std/src/panicking.rs:679:5
+   1: core::panicking::panic_fmt
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/core/src/panicking.rs:80:14
+   2: beta::tests::beta_fails_too
+             at ./src/lib.rs:7:9
+   3: beta::tests::beta_fails_too::{closure#0}
+             at ./src/lib.rs:5:24
+   4: <beta::tests::beta_fails_too::{closure#0} as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/core/src/ops/function.rs:250:5
+   5: <fn() -> core::result::Result<(), alloc::string::String> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+
+failures:
+    tests::beta_fails_too
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[91merror[0m: test failed, to rerun pass `-p beta --lib`
+[1m[92m   Doc-tests[0m alpha
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m beta
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[91merror[0m: 2 targets failed:
+    `-p alpha --test walk`
+    `-p beta --lib`

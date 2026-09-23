@@ -1,0 +1,35 @@
+   Compiling beta v0.1.0 (/home/runner/work/TreeMap-Disk-Visualizer/TreeMap-Disk-Visualizer/native/treemap-core/crates/beta)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.53s
+     Running unittests src/lib.rs (target/debug/deps/beta-53d9dcbcf7f87d7c)
+
+running 1 test
+test tests::a_report_then_a_worker_panic_then_the_assertion ... FAILED
+
+failures:
+
+---- tests::a_report_then_a_worker_panic_then_the_assertion stdout ----
+[balanced@19%] cores 3 target 0.19 mean 0.3100 mean_last_half 0.3050
+[balanced@19%] per-second means: 0.30 0.31 0.31
+
+thread 'tm-walk-worker-0' (5651545) panicked at crates/beta/src/lib.rs:10:23:
+fixture panic: directory 7
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'tests::a_report_then_a_worker_panic_then_the_assertion' (5651544) panicked at crates/beta/src/lib.rs:13:9:
+the walk ended with a worker panic
+
+
+failures:
+    tests::a_report_then_a_worker_panic_then_the_assertion
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p beta --lib`
+   Doc-tests beta
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: 1 target failed:
+    `-p beta --lib`

@@ -1,0 +1,31 @@
+   Compiling beta v0.1.0 (/home/runner/work/TreeMap-Disk-Visualizer/TreeMap-Disk-Visualizer/native/treemap-core/crates/beta)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running unittests src/lib.rs (target/debug/deps/beta-53d9dcbcf7f87d7c)
+
+running 1 test
+test tests::beta_hangs_past_a_minute has been running for over 60 seconds
+test tests::beta_hangs_past_a_minute ... FAILED
+
+failures:
+
+---- tests::beta_hangs_past_a_minute stdout ----
+
+thread 'tests::beta_hangs_past_a_minute' (5641766) panicked at crates/beta/src/lib.rs:7:9:
+it hung for 62 s and then failed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::beta_hangs_past_a_minute
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 62.01s
+
+error: test failed, to rerun pass `-p beta --lib`
+   Doc-tests beta
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: 1 target failed:
+    `-p beta --lib`
