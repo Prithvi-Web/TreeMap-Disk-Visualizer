@@ -119,9 +119,12 @@ test('a program the system owns, in a folder the system owns, may be started as 
   skip: (process.getuid?.() === 0 && 'root may write anywhere')
     || (elevatedOnWindows() && 'this process is an elevated administrator, who may add files to System32’s folders; the app asks from an unelevated one'),
 }, () => {
+  // Resolved to the real file: elevationRefusal rightly refuses a link, and
+  // /bin/sh is one on Ubuntu (to dash), as /usr/bin/true may be where the
+  // coreutils are a single program (the CI dry run of 23 Sep 2026).
   const system = process.platform === 'win32'
     ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-    : ['/usr/bin/true', '/bin/sh'].find((p) => fs.existsSync(p));
+    : ['/usr/bin/true', '/bin/sh'].filter((p) => fs.existsSync(p)).map((p) => fs.realpathSync(p)).find((p) => fs.lstatSync(p).isFile());
   assert.ok(system && fs.existsSync(system), `a system program to try (${system})`);
   assert.equal(elevationRefusal(system), null);
 });

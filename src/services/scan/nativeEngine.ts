@@ -480,8 +480,9 @@ async function settle(mod: ScanModule, handle: number): Promise<void> {
  * loop re-checks the gate, so neither path can be missed), then take the
  * columns, ingest them, finalize and sum. `scan.cpuSeconds` is the walk's
  * own thread CPU plus the ingest's `process.cpuUsage()` delta, or null where
- * the walk could not measure its own (a platform without a thread clock),
- * never zero.
+ * the walk could not measure its own (a platform without a thread clock) —
+ * never a zero standing in for "unknown", though a coarse clock (Windows
+ * counts 15.6 ms ticks) can measure a very short walk as 0.
  *
  * Throws what the walk threw: a root refusal carries Node's errno code so the
  * caller can tell the scan's own failure from one the legacy chain should

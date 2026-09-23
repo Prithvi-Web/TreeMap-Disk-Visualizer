@@ -1365,7 +1365,14 @@ test('real module: a forced native scan reports engine native, the platform’s 
     // on a platform whose listing is new this is the finding that matters.
     assert.equal(treeJson(native), treeJson(legacy), 'the native tree differs from the walker’s');
     assert.deepEqual(counters(native), counters(legacy), 'the native counters differ from the walker’s');
-    assert.ok(typeof stats.cpuSeconds === 'number' && stats.cpuSeconds > 0, `cpuSeconds ${stats.cpuSeconds}`);
+    // Measured, never null: Windows' thread and process clocks count 15.6 ms
+    // ticks, so a walk of a few dozen entries there can honestly measure 0
+    // (the CI dry run of 23 Sep 2026); elsewhere it cannot.
+    const coarseClock = process.platform === 'win32';
+    assert.ok(
+      typeof stats.cpuSeconds === 'number' && (stats.cpuSeconds > 0 || (coarseClock && stats.cpuSeconds === 0)),
+      `cpuSeconds ${stats.cpuSeconds}`,
+    );
     assert.equal(stats.placeholdersSkipped, 0, 'nothing in the fixture is dataless');
     t.diagnostic(`real module on ${total} entries: native ${stats.entriesPerSecond} entries/s (cpu ${stats.cpuSeconds?.toFixed(4)} s) vs walker ${buildScanStats(legacy).entriesPerSecond} entries/s`);
   } finally {

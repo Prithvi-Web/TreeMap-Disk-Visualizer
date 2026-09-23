@@ -45,11 +45,12 @@ test('the module is installed as a new file each time, never copied over the old
     const dest = path.join(dir, 'treemap_core.node');
     fs.writeFileSync(src, 'first build');
     helpers.installModule(src, dest);
-    const first = fs.statSync(dest).ino;
+    // bigint: an NTFS file id above 2^53 (a sequence number past 31) would round.
+    const first = fs.statSync(dest, { bigint: true }).ino;
     fs.writeFileSync(src, 'second build');
     helpers.installModule(src, dest);
     assert.equal(fs.readFileSync(dest, 'utf8'), 'second build');
-    assert.notEqual(fs.statSync(dest).ino, first, 'a new file replaced the old one: its inode changed');
+    assert.notEqual(fs.statSync(dest, { bigint: true }).ino, first, 'a new file replaced the old one: its inode changed');
     assert.deepEqual(fs.readdirSync(dir).sort(), ['libtm_node.dylib', 'treemap_core.node'], 'and no temporary file is left behind');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
