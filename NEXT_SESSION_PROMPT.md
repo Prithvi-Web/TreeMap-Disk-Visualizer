@@ -5,6 +5,60 @@ Copy everything below the line into a fresh session started in
 
 ---
 
+## RESUME HERE — the 10-hour run (started 23 September 2026, ~05:40 UTC)
+
+**The owner's instruction, verbatim:** *"Do not stop at all for 10 hrs straight. And complete as much as possible in these 10 hrs. Follow the roadmap and keep testing and coding is a flawless workflow. Where everything is tested and the CI is also tested after each step. use the ECC and Gstack combo to code for 10 hrs straight. and then use the strategic compact and before compacting take note of everything so then after the compact is completed... no time is wasted. I need this to be done completly flawlessly."*
+**Asked, not yet answered:** may I push to `main` myself during this run so CI runs after each step? Until the owner says yes: verify every step locally (full gate), commit, and ask the owner to push at check-ins. **Never `git push` without that yes.**
+
+**This block is the live state. Update it after every task.** Everything below the next `---` is the older hand-over and is background.
+
+### Done in this run (all committed; pushed up to `32d68ff`)
+- `c390653` + `84ce030` CI: three Rust steps (fmt / clippy / `cargo test --no-fail-fast`, 20-min timeout), each teeing `cargo-output.log`; `scripts/cargo-annotate.js` turns it into annotations; the Node suite still runs after a Rust failure. Fixtures are `.txt` (`*.log` is git-ignored — the first commit silently lacked them).
+- `4f47d5d` Rust pinned: `native/treemap-core/rust-toolchain.toml` = 1.98.1 (CI had floated on `stable` while this Mac had 1.97). Local cross targets for 1.98.1 installed.
+- `32d68ff` governor hold test runs on `FakeSignals::default()` (the owner typing mid-hold scaled the target by 0.7 and failed it).
+- CI run 35821154606 on `32d68ff`: **macOS fully green for the first time**. Linux 11 failures, Windows 18 (only 10 annotated each — the TAP annotator drops the rest unnamed).
+
+### Diagnosed from CI run 35821154606 (see the annotations)
+1. Stale pre-W4/W5 tests: Rust `tm-walk/tests/walk.rs` `start_and_probe_report_the_platform_as_unsupported` (`#[cfg(not(target_os = "macos"))]`, expects Unavailable; Linux gives Getdents, Windows ExtdDirInfo); Node `real module: scanProbe…` expects `unavailable` off macOS; five `real module` tests skip off macOS "until W4/W5"; `tests/nativeEquivalence.test.ts:258` skips (instead of failing) a forced native run that fell back off macOS.
+2. Linux relatime: a directory atime older than its ctime or than 24 h is bumped by the first listing; `freezeTimes` stamps 2023 atimes and `utimes` sets ctime = now, so every directory's atime moves on Linux. Fix: directories get ONE per-process anchor atime (now + 30 min) — stable under Linux relatime, APFS and NTFS's one-hour rule; mtimes stay 2023.
+3. gdu stand-in (`fakeGdu` in `tests/engineBudget.test.ts`) is `sh` + one `sleep` child: SIGSTOP stops the shell, not the sleep, and a SIGKILL orphans the sleep holding the pipes. Real gdu is one process. Fix: a loop of `sleep 0.01`.
+4. Windows `tests/nativeEngine.test.ts`: `62 !== 60` in five tests (hypothesis: `chmod 000` means nothing on Windows and CI is admin, so the "denied" subtree's 2 entries are listed); sparse expectation must follow `blocksAreMeaningful` (false on Windows); child order must follow `SORT_CHILDREN` (false on Windows).
+5. **Real Windows product issue (suspected, not yet proven):** `tests/incrementalRescan.test.ts` (2 failures) — the first scan now runs NATIVE (the test predates the native engine), the rescan runs on the walker; on Windows the native listing's directory mtimes come from the PARENT's NTFS index entry (lazily updated), the walker's from the directory itself, so the mtime cache never matches. Expect the same in the hidden Windows equivalence failures. Candidate fix: when a Windows directory is listed, take its times from the listing handle (`GetFileInformationByHandleEx(FileBasicInfo)` on the handle already open) — no extra open. Do NOT change those two tests to hide it.
+6. Nine failures not yet visible (1 Linux, 8 Windows): fix the TAP annotator to name everything past its cap.
+
+### In flight (update when each lands)
+- Agent "gate": items 2 + the time-stable floor + the `:258` escape → files `tests/fixtures/edgeCases.ts`, `tests/edgeCases.test.ts`, `tests/nativeEquivalence.test.ts`.
+- Agent "native tests": item 4 + item 1's Node parts → `tests/nativeEngine.test.ts`.
+- Me — DONE, uncommitted, verified: (A) the TAP annotator names every failure past its cap, before the counters (2 tests, 2 mutants red); (C) the gdu stand-in's work is a loop of 10 ms steps and the tests pause once the stand-in's work process exists (`whenWorking`) — both Linux failures reproduced on macOS first (466 ms held; evictor timeout), product mutant (no SIGSTOP) reddens both; (D) `start_and_probe_report_the_platform_as_unsupported` gated to `not(any(macos, linux, windows))`, and a live Linux/Windows probe-and-walk test added (clippy clean on all three targets; can only run on CI).
+
+- Me — DONE, uncommitted, verified: **item 5 fixed** — `DirTimes` / `Listing::own_times`: the Windows listing reports the listed directory's own times from the `BY_HANDLE_FILE_INFORMATION` `open_dir` already fetched; the walk records `(id, times)` in `Part::time_patches` (never for the root, whose times already come from stat_dir) and `merge` applies them after placement. Test `a_directorys_own_times_from_its_listing_replace_its_parents_copy` + 3 mutants red. `stat_path` shares the `own_times` helper. DESIGN §5.2 item 5 and the fast-rescan test's comment updated. Full Rust gate green: 153 passed, clippy clean on host/linux/windows (1.98.1). **Only CI can prove the Windows half.**
+
+- Me — DONE, uncommitted: `docs/superpowers/plans/2026-09-23-phase3-w6-mft.md` (the W6 plan: crate `tm-mft`, M1 parser → M2 run lists → M3 tree builder → M4 volume reader → M5 live proof on CI's admin Windows runner → M6 helper/cross-check/setting/prompt; W6-7 records the one intentional difference — the elevated reader sees what the unelevated walker is denied).
+
+### Committed since the push of 32d68ff (not yet pushed; verify with `git log origin/main..main`)
+`f7c433c` TAP annotator names what it drops · `1bc3a19` gdu stand-in pausable · `cc6a0e2` Windows directory times from the directory itself + stale unsupported test + live Linux/Windows probe test · `a129845` the W6 plan · `e3b6a2d` gate: relatime-stable directory atimes (one anchor per process, +30 min; `freezeTimes` refuses after 30 min), time-stable floor = the builder's inventory, the P3-9 escape removed, module-missing skips FAIL on CI (demonstrated both ways).
+In flight: agent "gate" (edgeCases/nativeEquivalence), agent "native tests" (nativeEngine.test.ts), agent "mft" (new crate `native/treemap-core/crates/tm-mft/**`, W6 M1–M3; may make items in tm-walk's windows.rs/lib.rs `pub`).
+
+### Uncommitted right now (verify with `git status`) and how to land it
+Mine (all individually verified): `scripts/tap-annotate.js`, `tests/tapAnnotate.test.ts`, `tests/engineBudget.test.ts`, `native/treemap-core/crates/tm-walk/{src/walk.rs,src/platform/mod.rs,src/platform/windows.rs,tests/walk.rs}`, `tests/incrementalRescan.test.ts` (comment only), `docs/engine/DESIGN.md` (§5.2 item 5), `docs/superpowers/plans/2026-09-23-phase3-w6-mft.md`, this file.
+The two agents' files: `tests/fixtures/edgeCases.ts`, `tests/edgeCases.test.ts`, `tests/nativeEquivalence.test.ts` (agent "gate"); `tests/nativeEngine.test.ts` (agent "native tests"). **Read each agent's report and verify its claims in the diff before committing** (the last Node agent died mid-report once; its work was on disk and correct, but every claim was re-proven by hand).
+Landing order: when both agents are done → `npm run build:native` → `npm run typecheck` → `node scripts/build-ui.js --check` → `npm test` (full; nobody editing) → the Rust gate (already green: 153 passed) → commits, one per concern: (1) ci: TAP annotator names what it drops; (2) test(gdu): the stand-in's work is pausable; (3) fix(walk/windows): directory times from the directory itself; (4) test: stale pre-W4/W5 tests + the live Linux/Windows probe test; (5) test(gate): relatime-stable directory atimes + the P3-9 escape removed; (6) test(native): Windows expectations; (7) docs: the W6 plan. Then ask the owner to push (or push, if they said yes) and arm the watcher: `Monitor` on `scratchpad/watch-ci.sh` after writing the new HEAD sha to `scratchpad/head.sha`.
+
+**Also committed:** `ea55633` native-engine tests run on Linux/Windows (the 62≠60 was a `path.join` backslash vs a `/` split; sparse and order follow the platform's own facts). **Full local gate at `ea55633`: npm test 2,806 / 2,800 pass / 0 fail / 6 skipped; Rust 153 passed; typecheck and UI check clean.** Ready to push — watch for: whether libuv leaves `blocks` at 0 on Windows (the forced-native test will say).
+
+### Found, queued (not yet done)
+- DONE `219db7f`: CI fetches gdu (`npm run fetch:gdu:dev`, SHA-256 against the pinned release's sums) before the suite, so (b) now runs on every leg — read what it reveals on Linux/Windows.
+- `tests/edgeCases.test.ts` "a skipped case is a real inability" skips entirely on Windows — review whether that is a true inability.
+
+### Queue after that (roadmap order)
+1. Full local gate → commit → ask for a push → read the CI legs (watcher: `scratchpad/watch-ci.sh`, 150 s wait / 75 s run cadence — anonymous API budget is 60/h).
+2. Item 5 (Windows directory times) once CI shows it; the Windows/Linux equivalence gate green.
+3. Phase 3 measurement on a quiet Mac (`npm run bench -- enumerate …`, governor baselines) — only when no agent or build is running.
+4. W6 (Windows MFT): write its plan first (`docs/superpowers/plans/…-phase3-w6-mft.md`); GitHub's Windows runners are admin, so CI can prove the live read.
+5. Phase 3 check-in (plain English, measured numbers) → Phase 4 (plan already written).
+
+---
+
 Work on TreeMap at `/Users/prithvivinay/Desktop/Claude Code/Treemap`
 (GitHub: `Prithvi-Web/TreeMap-Disk-Visualizer`), an Electron + Express +
 vanilla-JS disk-space visualizer, now gaining a native Rust scan engine under
