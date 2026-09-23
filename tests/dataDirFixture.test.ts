@@ -94,7 +94,8 @@ test('a test file leaves no folder behind when it ends: its app data, and a fold
     assert.match(path.basename(inTest), /^treemap-fixture-child-own-/);
     for (const made of [dir, inTest]) assert.equal(fs.existsSync(made), false, `${made} outlived the file that made it`);
   } finally {
-    fs.rmSync(work, { recursive: true, force: true });
+    // Retries as the fixture's own removal does: Windows can hold a file just written a moment longer.
+    fs.rmSync(work, { recursive: true, force: true, maxRetries: 3 });
   }
 });
 
