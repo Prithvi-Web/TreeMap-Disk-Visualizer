@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { fileTempDir } from './fixtures/dataDir';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -152,7 +153,7 @@ test('rules may share an id only when they agree about the group', () => {
 /* ───────────────────── Failure isolation and hot data ───────────────────── */
 
 function tempPacks(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-packs-'));
+  const dir = fileTempDir('tm-packs-');
   for (const name of PACK_NAMES) fs.copyFileSync(path.join(SHIPPED, `${name}.json`), path.join(dir, `${name}.json`));
   return dir;
 }
@@ -180,7 +181,7 @@ test('unreadable and unparseable packs each fail with a reason a person can act 
   fs.writeFileSync(path.join(dir, 'common.json'), '{ "schemaVersion": 1, ');
   assert.throws(() => loadRuleCatalogFrom(dir, process.platform), /is not valid JSON/);
 
-  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-nopacks-'));
+  const empty = fileTempDir('tm-nopacks-');
   assert.throws(() => loadRuleCatalogFrom(empty, process.platform), /could not be read from/);
 });
 

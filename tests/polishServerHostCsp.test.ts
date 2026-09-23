@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-polish-host-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -238,7 +238,7 @@ test('bindDecision: a non-loopback HOST without a token refuses; a token or an e
 
 test('npm start with HOST=0.0.0.0 and no TREEMAP_TOKEN exits 2 before binding anything', { timeout: 120_000 }, () => {
   const repo = path.join(__dirname, '..');
-  const env: NodeJS.ProcessEnv = { ...process.env, HOST: '0.0.0.0', PORT: '0', TREEMAP_DATA_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-polish-bind-')) };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOST: '0.0.0.0', PORT: '0', TREEMAP_DATA_DIR: fileTempDir('treemap-polish-bind-') };
   delete env.TREEMAP_TOKEN;
   delete env.TREEMAP_INSECURE_BIND;
   const tsx = path.join(repo, 'node_modules', 'tsx', 'dist', 'cli.mjs');

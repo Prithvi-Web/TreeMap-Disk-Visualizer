@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-polish-stats-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -83,7 +83,7 @@ async function listen(): Promise<{ port: number; close: () => Promise<void> }> {
 /* ───────────────────────────── refused ───────────────────────────── */
 
 test('a scan with nothing refused says so explicitly', async () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-polish-open-'));
+  const base = fileTempDir('treemap-polish-open-');
   fs.writeFileSync(path.join(base, 'a.txt'), 'a');
   const scan = await settled(base);
   assert.equal(scan.status, 'complete');
@@ -181,7 +181,7 @@ test('getScan refreshes the clock; peekScan does not', () => {
 });
 
 test('/stats publishes expiresAt about thirty minutes out, and reading keeps it there', async () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-polish-expires-'));
+  const base = fileTempDir('treemap-polish-expires-');
   fs.writeFileSync(path.join(base, 'a.txt'), 'a');
   const scan = await settled(base);
   scan.finishedAt = Date.now() - 25 * MIN; // pretend the scan settled a while ago

@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-polish-numbers-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -214,7 +214,7 @@ test('diskUsage reports used the way the statement does, and /api/system publish
 /* ───────────────────────────── duplicates ───────────────────────────── */
 
 test('the duplicate job says whether its reclaimable figure is an upper bound (APFS clones)', async () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-polish-dupes-'));
+  const base = fileTempDir('treemap-polish-dupes-');
   const payload = Buffer.alloc(8192, 3);
   fs.writeFileSync(path.join(base, 'a.dat'), payload);
   fs.writeFileSync(path.join(base, 'b.dat'), payload);

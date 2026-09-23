@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { fileTempDir } from './fixtures/dataDir';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -188,7 +189,7 @@ test('parseExifCaptureDate survives garbage without throwing', () => {
 
 /* ───────────────────────────── the route, live ───────────────────────────── */
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-dupeviewer-'));
+const tmp = fileTempDir('tm-dupeviewer-');
 const OLD_TXT = path.join(tmp, 'old.txt');
 const NEW_TXT = path.join(tmp, 'new.txt');
 const COMMA_TXT = path.join(tmp, 'we,ird.txt');

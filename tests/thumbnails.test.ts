@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { fileTempDir } from './fixtures/dataDir';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -27,7 +28,7 @@ try {
   sharpAvailable = false;
 }
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-thumb-'));
+const tmp = fileTempDir('tm-thumb-');
 const IMG = path.join(tmp, 'pic.png');
 const OTHER = path.join(tmp, 'pic2.png');
 

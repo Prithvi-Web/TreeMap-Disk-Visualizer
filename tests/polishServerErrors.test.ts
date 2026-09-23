@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-polish-errors-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -153,7 +153,7 @@ test('describeFsError turns an errno into a sentence a non-coder can act on', ()
 });
 
 test('a failed Move to Trash reports why in plain words', async () => {
-  const missing = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-polish-trash-')), 'already-gone.txt');
+  const missing = path.join(fileTempDir('treemap-polish-trash-'), 'already-gone.txt');
   const result = await moveToTrash([missing], { ignoreOpenHandles: true });
   assert.equal(result.deleted.length, 0);
   assert.equal(result.failed.length, 1);

@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { fileTempDir } from './fixtures/dataDir';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -27,7 +28,7 @@ import { FileNode } from '../src/models/types';
  *  - hammering an endpoint that walks a tree or spawns a process still does.
  */
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-lanes-'));
+const tmp = fileTempDir('tm-lanes-');
 fs.writeFileSync(path.join(tmp, 'a.txt'), 'x'.repeat(10));
 
 function tree(): FileNode {

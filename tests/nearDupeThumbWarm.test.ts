@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { fileTempDir } from './fixtures/dataDir';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -32,7 +33,7 @@ try {
   sharpAvailable = false;
 }
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-ndwarm-'));
+const tmp = fileTempDir('tm-ndwarm-');
 const A1 = path.join(tmp, 'same-a.png');
 const A2 = path.join(tmp, 'same-b.png');
 const LONE = path.join(tmp, 'lone.png');

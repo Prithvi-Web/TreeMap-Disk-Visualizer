@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { fileTempDir } from './fixtures/dataDir';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -33,7 +34,7 @@ import { FileNode } from '../src/models/types';
  * what it always was.
  */
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-preview-fd-'));
+const tmp = fileTempDir('tm-preview-fd-');
 const IMG = path.join(tmp, 'big.png');
 
 /**

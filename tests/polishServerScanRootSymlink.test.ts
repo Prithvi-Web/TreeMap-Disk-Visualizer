@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isolatedDataDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-polish-symlink-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -33,7 +33,7 @@ import { startScan, getScan } from '../src/services/diskScanner';
  * (/tmp vs /private/tmp on macOS) is accepted instead of refused.
  */
 
-const base = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-polish-symlink-'));
+const base = fileTempDir('treemap-polish-symlink-');
 const root = path.join(base, 'tree');
 const outside = path.join(base, 'outside');
 fs.mkdirSync(path.join(root, 'docs'), { recursive: true });

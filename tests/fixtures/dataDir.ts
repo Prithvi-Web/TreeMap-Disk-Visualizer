@@ -4,8 +4,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { pending, settled } from '../../src/utils/backgroundWrites';
 
-/** How long a cleanup waits for the app's own background saves before it removes the folder anyway. */
+/** How long a cleanup waits for the app's own background saves before it removes the folders anyway. */
 const SETTLE_LIMIT_MS = 10_000;
+
+/** The folders this test file made through the fixture, removed when its tests are done. */
+const madeForThisFile: string[] = [];
+
+// Registered once, as this module loads, before any test runs: so a folder
+// made inside a test is removed with the file's, on every Node version,
+// instead of by a hook whose owner depends on where it was called from.
+after(async () => {
+  for (const dir of madeForThisFile.splice(0)) {
+    for (const note of await cleanUpDataDir(dir)) console.warn(note);
+  }
+});
 
 /**
  * Points the app's data folder (TREEMAP_DATA_DIR) at a new folder under the
@@ -16,11 +28,18 @@ const SETTLE_LIMIT_MS = 10_000;
  * every run (41 after one full `npm test`, 23 Sep 2026).
  */
 export function isolatedDataDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = fileTempDir(prefix);
   process.env.TREEMAP_DATA_DIR = dir;
-  after(async () => {
-    for (const note of await cleanUpDataDir(dir)) console.warn(note);
-  });
+  return dir;
+}
+
+/**
+ * A new folder under the system temp folder, removed once this test file's
+ * tests are done — at the top of a file or inside one of its tests.
+ */
+export function fileTempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  madeForThisFile.push(dir);
   return dir;
 }
 
