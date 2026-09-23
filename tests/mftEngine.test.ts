@@ -666,6 +666,50 @@ test('after the prompt, a launch that fails, a helper that exits non-zero or a r
   }
 });
 
+test('an output an earlier run left behind is swept before a scan asks; a recent one, another name, or one a scan is reading is left', async () => {
+  // A TreeMap that quit while the elevated helper ran leaves its output (the
+  // helper is started outside the app’s process tree and finishes), listing
+  // every name under the scanned folder, and nothing removed it (the
+  // pre-landing review of 23 Sep 2026: the red team).
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const at = (name: string, ageMs: number) => {
+    const file = path.join(folder, name);
+    fs.writeFileSync(file, 'x');
+    const t = (READ_STARTED - ageMs) / 1000;
+    fs.utimesSync(file, t, t);
+    return file;
+  };
+  at('old-a1.tmmft', 2 * 60 * 60 * 1000);
+  at('recent-b2.tmmft', 5 * 60 * 1000);
+  at('notes.txt', 2 * 60 * 60 * 1000);
+  at('.hidden.tmmft', 2 * 60 * 60 * 1000);
+  // A link named as an output is not one the helper made: the sweep follows no link and removes none.
+  const link = path.join(folder, 'link-c3.tmmft');
+  fs.symlinkSync(path.join(folder, 'notes.txt'), link);
+  const linkTime = (READ_STARTED - 2 * 60 * 60 * 1000) / 1000;
+  fs.lutimesSync(link, linkTime, linkTime);
+  let keptWhileInUse: boolean | null = null;
+  // While the first scan’s helper has written its output (old-looking, on
+  // purpose), a second scan of another drive sweeps: the output in use stays.
+  const launcher: MftLauncher = async (request) => {
+    fs.writeFileSync(request.output, 'placeholder');
+    const t = (READ_STARTED - 3 * 60 * 60 * 1000) / 1000;
+    fs.utimesSync(request.output, t, t);
+    const r2 = recordFor('D:\\data');
+    await runMftWalk(r2.scan, r2.store, 'D:\\data', { launcher: fakeLauncher({ kind: 'declined', reason: 'no' }).launcher, module: fakeModule(flat(3)).module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
+    // Recorded, not asserted here: runMftWalk turns a launcher that throws into an outcome.
+    keptWhileInUse = fs.existsSync(request.output);
+    return { kind: 'declined', reason: 'no' };
+  };
+  const r = recordFor(ROOT);
+  const outcome = await runMftWalk(r.scan, r.store, ROOT, { launcher, module: fakeModule(flat(3)).module, helperPath: 'x.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED });
+  assert.deepEqual(outcome, { used: false, failed: false, reason: `the NTFS turbo mode (${MFT_NOT_VERIFIED}: no test has run its elevation prompt end to end) was not used: no, so the folders were listed instead` });
+  assert.equal(keptWhileInUse, true, 'the output a scan is reading is never swept');
+  assert.deepEqual(fs.readdirSync(folder).sort(), ['.hidden.tmmft', 'link-c3.tmmft', 'notes.txt', 'recent-b2.tmmft']);
+  fs.rmSync(folder, { recursive: true, force: true });
+});
+
 test('a drive the helper would refuse is refused before anyone is asked, by the helper’s own checks run unelevated', async () => {
   // A network drive, one Windows cannot type, or a volume that is not NTFS:
   // the prompt once came first, and the elevated helper then refused (the

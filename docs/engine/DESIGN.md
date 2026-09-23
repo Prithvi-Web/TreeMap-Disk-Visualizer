@@ -486,6 +486,13 @@ fixed, as built:
    without which the ingest could loop — and hands over the same typed
    arrays `scanTake` does, so the ingest, the store and the JSON are the
    native engine's. The stats say `fastPath: "mft"`, `engine: "ntfs-mft"`.
+   The app deletes the file once read, on every path. One an earlier run
+   left behind — the app quit while the helper, which Windows starts outside
+   its process tree, still ran — lists every name under the folder it read,
+   so the next scan through the mode removes it before it asks, once it is
+   an hour old and no scan of this app is reading it: regular files named as
+   the helper names them, never a link or anything else
+   (`sweepStaleOutputs`; the pre-landing review of 23 Sep 2026).
 4. **The cross-check is the gate at run time (W6-8, correction 9).** Up to
    1,000 entries, drawn uniformly without replacement from those the table
    says were last written at least 120 s before the helper was launched, are

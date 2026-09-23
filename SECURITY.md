@@ -65,7 +65,7 @@ Thumbnails for the near-duplicate strip are held in memory only. A portable buil
 
 One more file ships **with** the app rather than being written by it: `treemap_core.node`, the native scan core (Rust, built in CI, in the app bundle beside the gdu binary). It is never downloaded at run time and never compiled on your machine; the app loads it only when its version matches the app's, and when it is missing or refuses to load the built-in engines run instead and the dashboard says why. It reads the folders you scan and writes nothing anywhere except the app-data folder above.
 
-The Windows file-table mode adds two things, both named above: `tm-mft-helper.exe`, the helper that runs elevated, which the Windows build installs beside the native module (a copy of TreeMap without it, or one installed only for you, falls back to a normal scan and the scan says why) — and, while one of its scans runs, a single short-lived `<id>.tmmft` file in `TreeMap-mft` under the Windows temp folder, which TreeMap deletes as soon as it has read it.
+The Windows file-table mode adds two things, both named above: `tm-mft-helper.exe`, the helper that runs elevated, which the Windows build installs beside the native module (a copy of TreeMap without it, or one installed only for you, falls back to a normal scan and the scan says why) — and, while one of its scans runs, a single short-lived `<id>.tmmft` file in `TreeMap-mft` under the Windows temp folder, which TreeMap deletes as soon as it has read it. If TreeMap quits while the helper runs, the file the helper leaves is deleted by the next scan that uses the mode, once it is an hour old.
 
 ## Rate limiting
 

@@ -752,7 +752,44 @@ function removeQuietly(file: string): void {
   try {
     fs.rmSync(file, { force: true });
   } catch {
-    /* the app's own temp file; a later scan's folder sweep is not needed for correctness */
+    /* the app's own temp file; a later scan's sweep (sweepStaleOutputs) removes it once it is old */
+  }
+}
+
+/**
+ * How old a helper output must be before a scan that is not reading it
+ * removes it. The helper runs outside the app's process tree, so a TreeMap
+ * that quits while it runs leaves its output — every name under the scanned
+ * folder — behind; an output a scan reads lives for minutes.
+ */
+export const MFT_STALE_OUTPUT_MS = 60 * 60 * 1000;
+/** tm-mft's `is_output_name`: the only names the helper creates. */
+const MFT_OUTPUT_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*\.tmmft$/;
+/** The outputs this process's scans are waiting on or reading, never swept. */
+const mftOutputsInUse = new Set<string>();
+
+/**
+ * Removes the helper outputs in `folder` older than {@link MFT_STALE_OUTPUT_MS}
+ * that no scan is using: regular files named as the helper names them, and
+ * nothing else — not a link, not another file. Housekeeping: a file that will
+ * not go (one another process holds, say) is left for the next scan.
+ */
+function sweepStaleOutputs(folder: string, now: number): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(folder, { withFileTypes: true });
+  } catch {
+    return; /* checked a moment ago; the next scan sweeps again */
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() || !MFT_OUTPUT_NAME.test(entry.name)) continue;
+    const file = path.join(folder, entry.name);
+    if (mftOutputsInUse.has(file)) continue;
+    try {
+      if (now - fs.lstatSync(file).mtimeMs > MFT_STALE_OUTPUT_MS) fs.rmSync(file, { force: true });
+    } catch {
+      /* gone already, or held open: the next scan sweeps again */
+    }
   }
 }
 
@@ -770,7 +807,8 @@ function removeQuietly(file: string): void {
  * elevated process's stderr does not reach the app), and a divergence
  * (W6-8: the volume is switched off for the session, the entry and both
  * values in the reason) all return `used: false`, and the caller lists the
- * folders instead. The helper's output file is removed on every path.
+ * folders instead. The helper's output file is removed on every path, and
+ * one an earlier run left behind is swept before asking (sweepStaleOutputs).
  */
 export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: string, deps: MftDeps = {}): Promise<MftOutcome> {
   const notUsed = (why: string, failed: boolean): MftOutcome => ({
@@ -834,6 +872,10 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
     return notUsed(`the app's temp folder ${folder} is a link, a junction or not a folder, and the elevated helper writes nothing through one`, true);
   }
   const now = deps.now ?? Date.now;
+  // An output left by a TreeMap that quit mid-run lists every name under the
+  // folder it scanned, and nothing else removes it (the pre-landing review of
+  // 23 Sep 2026: the red team). The folder was just proven a real one.
+  sweepStaleOutputs(folder, now());
   // A scan cancelled on its way here is not asked about: the prompt would put
   // a question nobody is waiting on, and hold the one prompt slot meanwhile
   // (the TypeScript review of M6).
@@ -846,6 +888,7 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
   // Conservative for correction 9: the read starts no earlier than the launch.
   const readStarted = now();
   try {
+    mftOutputsInUse.add(output);
     let launched: MftLaunchOutcome | null = null;
     mftPromptStarted();
     try {
@@ -927,5 +970,6 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
     };
   } finally {
     removeQuietly(output);
+    mftOutputsInUse.delete(output);
   }
 }
