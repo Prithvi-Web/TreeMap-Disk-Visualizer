@@ -248,10 +248,20 @@ function render(text) {
   for (const e of asyncErrors.slice(0, 5)) {
     annotations.push(`::error title=Async error after a test::${escapeData(`${e.line}: ${e.text}`)}`);
   }
-  for (const f of failures.slice(0, Math.max(0, ANNOTATION_CAP - annotations.length))) {
+  const slots = Math.max(0, ANNOTATION_CAP - annotations.length);
+  for (const f of failures.slice(0, slots)) {
     const body = describe(f);
     annotations.push(
       `::error title=${escapeProp(`Failing test: ${f.name}`)}::${escapeData(body || 'no assertion was recorded for this failure')}`,
+    );
+  }
+  // Every failure past the cap is NAMED, before the counters: Windows CI once
+  // failed 18 tests and showed 10, and finding the other eight cost a whole
+  // round trip. A name is not the assertion, but it is where to look.
+  const omitted = failures.slice(slots);
+  if (omitted.length) {
+    annotations.push(
+      `::warning title=${escapeProp(`Not annotated: ${omitted.length} more failing tests (GitHub shows ${ANNOTATION_CAP} errors per step)`)}::${escapeData(omitted.map((f) => f.name).join('\n'))}`,
     );
   }
   for (const c of counts) annotations.push(`::warning title=Suite summary::${escapeData(c)}`);

@@ -357,3 +357,37 @@ test('the counter check does not apply to a hook failure, and that is expected',
   assert.equal(annotate.parseCounts(HOOK).find((c) => c.startsWith('# fail ')), '# fail 0');
   assert.equal(annotate.parseTap(HOOK).length, 1);
 });
+
+/* ────────────────── past the cap, nothing is dropped silently ────────────────── */
+
+test('past the ten-error cap, every failure that did not fit is named in a warning', () => {
+  // A real run did this: Windows CI failed 18 tests and the annotations showed
+  // 10 — the other eight were invisible to anyone without admin rights, and a
+  // whole extra CI round trip was spent finding them. The real "object
+  // comparison" block from the recorded TAP, repeated under twelve names.
+  const start = REAL.indexOf('not ok 3 - object comparison');
+  const end = REAL.indexOf('not ok 4 - an apostrophe in the message');
+  const block = REAL.slice(start, end);
+  const many = Array.from({ length: 12 }, (_, i) =>
+    block.replace('not ok 3 - object comparison', `not ok ${i + 1} - generated failure ${String(i).padStart(2, '0')}`),
+  ).join('');
+  const tap = `TAP version 13\n${many}1..12\n# tests 12\n# pass 0\n# fail 12\n`;
+
+  const { annotations } = annotate.render(tap);
+  const errors = annotations.filter((a) => a.startsWith('::error'));
+  const omitted = annotations.find((a) => a.includes('title=Not annotated'));
+
+  assert.equal(errors.length, 10);
+  assert.ok(omitted, 'a warning names the failures that did not fit');
+  assert.match(omitted!, /generated failure 10/);
+  assert.match(omitted!, /generated failure 11/);
+  assert.doesNotMatch(omitted!, /generated failure 09/, 'only the ones that did not fit');
+  const firstCount = annotations.findIndex((a) => a.includes('title=Suite summary'));
+  assert.ok(annotations.indexOf(omitted!) < firstCount, 'named before the counters, so GitHub’s warning cap drops a counter before a name');
+});
+
+test('within the cap there is no "not annotated" warning', () => {
+  const { annotations } = annotate.render(REAL);
+
+  assert.ok(!annotations.some((a) => a.includes('title=Not annotated')), annotations.join('\n'));
+});
