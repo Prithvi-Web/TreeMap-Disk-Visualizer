@@ -32,12 +32,12 @@
     "arch": "arm64",
     "osRelease": "27.0.0",
     "node": "v24.16.0",
-    "commit": "3848b8e88f44a7d4f1aeb10bff5c84a3111e998e",
+    "commit": "17eb13d0982610e3675056f5635a381c1a25f297",
     "dirty": false,
     "loadAvg": [
-      2.20556640625,
-      3.09912109375,
-      3.6689453125
+      2.41943359375,
+      2.23779296875,
+      2.12939453125
     ],
     "maxVnodes": 251127,
     "tier": "B",
@@ -59,106 +59,106 @@
   },
   "runs": [
     {
-      "wallMs": 506.222,
+      "wallMs": 479.43449999999996,
       "entries": 200000,
-      "cpuSeconds": 1.678140291,
-      "selfCpuSeconds": 1.6769990000000001,
-      "childCpuSeconds": 0.001141291,
-      "peakRssBytes": 159907840,
+      "cpuSeconds": 1.6012503740000001,
+      "selfCpuSeconds": 1.6000420000000002,
+      "childCpuSeconds": 0.001208374,
+      "peakRssBytes": 161546240,
       "bytesRead": 0,
       "bytesReadReason": "proc_pid_rusage(RUSAGE_INFO_V4).ri_diskio_bytesread via bench/probes/darwin-rusage.c",
-      "persistMs": 122.80783299999996,
-      "persistCpuSeconds": 0.16190979099999978,
+      "persistMs": 120.89541599999995,
+      "persistCpuSeconds": 0.14351108399999998,
       "loadAvg": [
-        2.20556640625,
-        3.09912109375,
-        3.6689453125
+        2.7060546875,
+        2.2998046875,
+        2.15185546875
       ]
     },
     {
-      "wallMs": 498.94487499999997,
+      "wallMs": 483.92820800000004,
       "entries": 200000,
-      "cpuSeconds": 1.6471212489999998,
-      "selfCpuSeconds": 1.6459359999999998,
-      "childCpuSeconds": 0.001185249,
-      "peakRssBytes": 161349632,
+      "cpuSeconds": 1.597836499,
+      "selfCpuSeconds": 1.596674,
+      "childCpuSeconds": 0.001162499,
+      "peakRssBytes": 177209344,
       "bytesRead": 0,
       "bytesReadReason": "proc_pid_rusage(RUSAGE_INFO_V4).ri_diskio_bytesread via bench/probes/darwin-rusage.c",
-      "persistMs": 120.53233399999999,
-      "persistCpuSeconds": 0.15154133400000017,
+      "persistMs": 119.84141700000009,
+      "persistCpuSeconds": 0.13984083399999997,
       "loadAvg": [
-        2.42919921875,
-        3.13037109375,
-        3.67626953125
+        2.7060546875,
+        2.2998046875,
+        2.15185546875
       ]
     },
     {
-      "wallMs": 488.6445,
+      "wallMs": 494.89595799999995,
       "entries": 200000,
-      "cpuSeconds": 1.629317416,
-      "selfCpuSeconds": 1.628174,
-      "childCpuSeconds": 0.001143416,
-      "peakRssBytes": 160202752,
+      "cpuSeconds": 1.6214175,
+      "selfCpuSeconds": 1.620148,
+      "childCpuSeconds": 0.0012695,
+      "peakRssBytes": 176291840,
       "bytesRead": 0,
       "bytesReadReason": "proc_pid_rusage(RUSAGE_INFO_V4).ri_diskio_bytesread via bench/probes/darwin-rusage.c",
-      "persistMs": 120.27125000000001,
-      "persistCpuSeconds": 0.1507246250000001,
+      "persistMs": 120.47479099999998,
+      "persistCpuSeconds": 0.14170641600000003,
       "loadAvg": [
-        2.42919921875,
-        3.13037109375,
-        3.67626953125
+        2.7060546875,
+        2.2998046875,
+        2.15185546875
       ]
     },
     {
-      "wallMs": 499.479375,
+      "wallMs": 485.093875,
       "entries": 200000,
-      "cpuSeconds": 1.662837124,
-      "selfCpuSeconds": 1.661705,
-      "childCpuSeconds": 0.001132124,
-      "peakRssBytes": 154615808,
+      "cpuSeconds": 1.61268875,
+      "selfCpuSeconds": 1.611502,
+      "childCpuSeconds": 0.00118675,
+      "peakRssBytes": 176766976,
       "bytesRead": 0,
       "bytesReadReason": "proc_pid_rusage(RUSAGE_INFO_V4).ri_diskio_bytesread via bench/probes/darwin-rusage.c",
-      "persistMs": 120.17870900000003,
-      "persistCpuSeconds": 0.14397033400000003,
+      "persistMs": 120.343167,
+      "persistCpuSeconds": 0.141165499,
       "loadAvg": [
-        2.42919921875,
-        3.13037109375,
-        3.67626953125
+        2.7060546875,
+        2.2998046875,
+        2.15185546875
       ]
     },
     {
-      "wallMs": 501.835667,
+      "wallMs": 493.221709,
       "entries": 200000,
-      "cpuSeconds": 1.6635105829999999,
-      "selfCpuSeconds": 1.662342,
-      "childCpuSeconds": 0.001168583,
-      "peakRssBytes": 163774464,
+      "cpuSeconds": 1.613554458,
+      "selfCpuSeconds": 1.612401,
+      "childCpuSeconds": 0.001153458,
+      "peakRssBytes": 179273728,
       "bytesRead": 0,
       "bytesReadReason": "proc_pid_rusage(RUSAGE_INFO_V4).ri_diskio_bytesread via bench/probes/darwin-rusage.c",
-      "persistMs": 120.81058299999995,
-      "persistCpuSeconds": 0.15182020800000004,
+      "persistMs": 121.35629199999994,
+      "persistCpuSeconds": 0.1425451249999999,
       "loadAvg": [
-        2.42919921875,
-        3.13037109375,
-        3.67626953125
+        2.8896484375,
+        2.34423828125,
+        2.16845703125
       ]
     }
   ],
   "summary": {
-    "wallMsMedian": 499.479375,
-    "entriesPerSecond": 400416.9341326656,
-    "cpuSecondsPerMillion": 8.314185619999998,
-    "peakRssBytes": 163774464,
+    "wallMsMedian": 485.093875,
+    "entriesPerSecond": 412291.33227048063,
+    "cpuSecondsPerMillion": 8.06344375,
+    "peakRssBytes": 179273728,
     "bytesReadMedian": 0,
-    "spreadPct": 3.5191643298584623,
-    "resolutionPct": 0.4809360897815868,
+    "spreadPct": 3.187312558832039,
+    "resolutionPct": 1.5919947911087429,
     "reproducible": true
   },
   "correctness": {
     "ok": true,
     "notes": []
   },
-  "recordedAt": "2026-09-23T10:12:25.822Z",
-  "commit": "3848b8e88f44a7d4f1aeb10bff5c84a3111e998e",
-  "label": "fixed harness at 3848b8e: no cleanup inside a series"
+  "recordedAt": "2026-09-23T18:21:55.119Z",
+  "commit": "17eb13d0982610e3675056f5635a381c1a25f297",
+  "label": "re-record at 17eb13d, quiet machine (load 2.42)"
 }

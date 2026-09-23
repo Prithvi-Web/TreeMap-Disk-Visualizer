@@ -313,7 +313,7 @@ The native engine (`tm-walk`, `getattrlistbulk` on this Mac) against the built-i
 
 | Corpus | Engine | Budget | Rate | Wall (median) | Spread | CPU s per million | Peak RSS | Bytes read |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| enum200k | native | Turbo | **400,417 entries/s** | 499.5 ms | ±3.5% | 8.31 | 156.2 MB | 0 |
+| enum200k | native | Turbo | **412,291 entries/s** (re-recorded at `17eb13d`) | 485.1 ms | ±3.2% | 8.06 | 179.3 MB | 0 |
 | enum1m | native | Turbo | 91,308 entries/s | 10,952 ms | ±1.6% | 12.88 | 389.8 MB | 2.33 GB (**mixed**) |
 | ci20k | walker | Turbo | 127,456 entries/s | 156.9 ms | ±1.9% | 22.66 | 95.5 MB | 0 |
 | enum200k | walker | Turbo | 131,203 entries/s | 1,524 ms | ±0.9% | 20.09 | 169.0 MB | 0 |
@@ -321,6 +321,8 @@ The native engine (`tm-walk`, `getattrlistbulk` on this Mac) against the built-i
 | ci20k | native | Turbo | 342,190 entries/s | 58.4 ms | ±22%: **not recorded** | 10.33 | 111.7 MB | 0 |
 | ci20k | native | Eco | 86,712 entries/s | 230.6 ms | ±23%: **not recorded** | 24.08 | 111.6 MB | 0 |
 | enum200k | native | Eco | 66,767 entries/s | 2,996 ms | ±16.8%: **not recorded** | 27.67 | 193.3 MB | 0 |
+
+The enum200k native Turbo row was re-recorded at `17eb13d` (23 Sep 2026, ~18:20 UTC, load 2.4–2.9, clean tree): the harness's own comparison with `54425de`'s 400,417 entries/s (499.5 ms) says **PASS, 2.9% faster**; its peak RSS reads 179.3 MB against 156.2 MB, one series each, not compared. An attempt at ~17:50 UTC on a busier machine spread 19.4% and was refused.
 
 Governor holds (60 s each, recorded at `b327796`): Eco 24.1 %, Balanced 49.9 %, Turbo 90.0 % of the machine, each within ±5 of its target.
 
