@@ -34,6 +34,11 @@
 //! is the run-time gate (W6-8): each path opened by this unelevated process
 //! with `FILE_READ_ATTRIBUTES` (the listing's own `stat_path`), its kind,
 //! size and last-write time compared with what the table said.
+//!
+//! `dataIsLocal` answers the duplicate pass, just before it reads a file,
+//! whether the file's data is on this disk — asked of its directory entry,
+//! never by opening it, since opening a cloud placeholder downloads it
+//! (RISKS R71).
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -741,6 +746,23 @@ fn system_directory_here() -> Option<String> {
 #[cfg(not(windows))]
 fn system_directory_here() -> Option<String> {
     None
+}
+
+/// `dataIsLocal(paths)`: for each path, 1 when its data is on this disk, 0
+/// when reading it would make a sync client download it, 2 when it could not
+/// be asked about (it vanished, say) — each asked of the directory entry,
+/// never by opening the file (`tm_walk::platform::data_is_local`).
+#[napi(js_name = "dataIsLocal", catch_unwind)]
+pub fn data_is_local(paths: Vec<String>) -> Uint8Array {
+    let answers: Vec<u8> = paths
+        .into_iter()
+        .map(|p| match tm_walk::platform::data_is_local(Path::new(&p)) {
+            Ok(true) => 1,
+            Ok(false) => 0,
+            Err(_) => 2,
+        })
+        .collect();
+    Uint8Array::new(answers)
 }
 
 /// The NTFS turbo mode's checks that need no administrator — the root's

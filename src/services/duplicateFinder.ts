@@ -3,6 +3,7 @@ import { createReadStream } from 'fs';
 import { ScanResult, DuplicateGroup, DuplicateJob, NotHashed } from '../models/types';
 import { Flag, storeOf } from './scanStore';
 import { peekScan } from './diskScanner';
+import { loadNative } from './scan/native';
 
 /**
  * DuplicateFinder — true (content-equal) duplicate detection over a completed
@@ -21,7 +22,11 @@ import { peekScan } from './diskScanner';
  * link, which a read follows (a Windows cloud placeholder is a reparse
  * point, recorded as a link by both engines) and which is no file of its
  * own. A hard link's later names carry size 0 in the store (the scan counted
- * the bytes once), so they never reach a bucket.
+ * the bytes once), so they never reach a bucket. And because a sync client
+ * can evict a file after its scan, the pass asks again just before it reads
+ * a bucket — of each file's directory entry, never by opening it (the native
+ * module's `dataIsLocal`, RISKS R71): a file whose data has left is counted
+ * with the placeholders, one that cannot be asked about is not read.
  */
 
 const PARTIAL_BYTES = 64 * 1024;
@@ -127,7 +132,6 @@ async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void
     if (bucket) bucket.push(id);
     else bySize.set(size, [id]);
   });
-  job.notHashed = notHashedReport(placeholders, placeholderBytes, (id) => store.size(id), (id) => store.path(id));
 
   const candidates: number[][] = [];
   for (const bucket of bySize.values()) {
@@ -137,8 +141,14 @@ async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void
 
   // Stage 2 — partial hash inside each size bucket.
   const partialGroups: number[][] = [];
-  for (const bucket of candidates) {
+  for (const candidate of candidates) {
     if (job.cancelled) return;
+    const bucket = stillLocal(candidate, (id) => store.path(id), (id) => {
+      placeholders.push(id);
+      placeholderBytes += store.size(id);
+    });
+    job.toHash -= candidate.length - bucket.length;
+    if (bucket.length < 2) continue;
     const byPartial = new Map<string, number[]>();
     const hashes = await mapConcurrent(bucket, HASH_CONCURRENCY, (id) =>
       hashFile(store.path(id), PARTIAL_BYTES).catch(() => null)
@@ -157,6 +167,8 @@ async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void
       // small, so the second pass is effectively free.
     }
   }
+
+  job.notHashed = notHashedReport(placeholders, placeholderBytes, (id) => store.size(id), (id) => store.path(id));
 
   // Stage 3 — full hash for groups that still match.
   const byFull = new Map<string, number[]>();
@@ -210,6 +222,29 @@ async function findDuplicates(scan: ScanResult, job: DuplicateJob): Promise<void
   }
   job.status = 'complete';
   job.finishedAt = Date.now();
+}
+
+/**
+ * The ids of `bucket` whose data is on this disk right now, asked of each
+ * file's directory entry through the native module; `gone` hears of each
+ * whose data has left since the scan. One that cannot be asked about is left
+ * out (no answer is not a yes). Without a module that can ask, the scan's
+ * flags alone decide, as before.
+ */
+function stillLocal(bucket: number[], pathOf: (id: number) => string, gone: (id: number) => void): number[] {
+  const outcome = loadNative();
+  const ask = outcome.available ? outcome.module.dataIsLocal : undefined;
+  if (typeof ask !== 'function') return bucket;
+  let answers: Uint8Array;
+  try {
+    answers = (ask as (paths: string[]) => Uint8Array)(bucket.map(pathOf));
+  } catch {
+    return [];
+  }
+  return bucket.filter((id, i) => {
+    if (answers[i] === 0) gone(id);
+    return answers[i] === 1;
+  });
 }
 
 /**

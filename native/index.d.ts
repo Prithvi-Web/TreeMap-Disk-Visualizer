@@ -316,6 +316,12 @@ export function systemDirectory(): string | null;
  * always null off Windows; otherwise the helper's own sentence.
  */
 export function mftPrecheck(root: string): string | null;
+/**
+ * For each path: 1 when its data is on this disk, 0 when reading it would make
+ * a sync client download it, 2 when it could not be asked about — each asked
+ * of the directory entry, never by opening the file (RISKS R71).
+ */
+export function dataIsLocal(paths: string[]): Uint8Array;
 
 /** What the master file table said about one entry, for `mftCrossCheck`. */
 export interface MftExpected {

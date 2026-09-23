@@ -29,6 +29,13 @@ use crate::{FLAG_DATALESS, FastPath, KIND_DIR, KIND_FILE, KIND_SYMLINK, Probe};
 /// `ATTR_CMN_ERROR` from `<sys/attr.h>`: a per-entry errno, packed right after
 /// the returned set when it is returned. Not in `libc` 0.2.189.
 pub const ATTR_CMN_ERROR: u32 = 0x2000_0000;
+/// [`super::data_is_local`] on macOS: `lstat`'s flags, never an open.
+pub fn data_is_local(path: &Path) -> std::io::Result<bool> {
+    use std::os::macos::fs::MetadataExt;
+    let meta = std::fs::symlink_metadata(path)?;
+    Ok(meta.st_flags() & SF_DATALESS == 0)
+}
+
 /// `SF_DATALESS` from `<sys/stat.h>`: the object's data is not present locally
 /// (a cloud placeholder). Not in `libc` 0.2.189.
 pub const SF_DATALESS: u32 = 0x4000_0000;

@@ -291,6 +291,29 @@ pub fn platform_probe(root: &Path) -> Probe {
     }
 }
 
+/// Whether `path`'s data is on this disk, asked of its directory entry and
+/// never by opening it — opening a cloud placeholder makes its sync client
+/// download it (RISKS R71). macOS reads `lstat`'s flags for `SF_DATALESS`;
+/// Windows the attributes and reparse tag `FindFirstFileExW` reports, through
+/// the walk's own `windows::is_dataless`; elsewhere no file system keeps data
+/// away, so an entry that exists is local. An error when the entry cannot be
+/// asked about: it vanished, or on Windows its name holds a character the
+/// search would read as a pattern.
+pub fn data_is_local(path: &Path) -> std::io::Result<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        darwin::data_is_local(path)
+    }
+    #[cfg(windows)]
+    {
+        windows::data_is_local(path)
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        std::fs::symlink_metadata(path).map(|_| true)
+    }
+}
+
 /// The machine's performance cores, where its cores come in more than one
 /// performance level (Apple silicon: `hw.perflevel0.logicalcpu` while
 /// `hw.nperflevels` is at least 2). `None` everywhere else, and wherever the

@@ -779,6 +779,50 @@ mod os {
         }
     }
 
+    /// [`crate::platform::data_is_local`] on Windows: the entry's attributes
+    /// and reparse tag from `FindFirstFileExW` on the path itself, never an
+    /// open. A name holding a character the search reads as a pattern (`*`,
+    /// `?`, and the DOS wildcards `<`, `>`, `"`) is refused rather than
+    /// answered for another file.
+    pub fn data_is_local(path: &Path) -> std::io::Result<bool> {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy())
+            .unwrap_or_default();
+        if name.contains(['*', '?', '<', '>', '"']) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "the name holds a character the directory search reads as a pattern",
+            ));
+        }
+        let wide_path = wide(path).map_err(os_error)?;
+        // SAFETY: all-zero is a valid WIN32_FIND_DATAW.
+        let mut data: WIN32_FIND_DATAW = unsafe { std::mem::zeroed() };
+        // SAFETY: `wide_path` is NUL-terminated; the pointer is a writable
+        // WIN32_FIND_DATAW, which is what FindExInfoBasic fills; no search
+        // filter is passed, as FindExSearchNameMatch requires.
+        let handle = unsafe {
+            FindFirstFileExW(
+                wide_path.as_ptr(),
+                FindExInfoBasic,
+                (&raw mut data).cast::<c_void>(),
+                FindExSearchNameMatch,
+                ptr::null(),
+                0,
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(os_error(last_error()));
+        }
+        let _search = FindHandle(handle);
+        let tag = if data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+            0
+        } else {
+            data.dwReserved0
+        };
+        Ok(!is_dataless(data.dwFileAttributes, tag))
+    }
+
     /// An open search handle, closed on drop.
     struct FindHandle(HANDLE);
 
@@ -1088,8 +1132,8 @@ mod os {
     }
 
     /// The fallback: `FindFirstFileExW` over `dir\*`, staging each record into
-    /// `buf.listing`; no allocation size and no file id, so every leaf is
-    /// withheld. The walk's two signals are paced by [`FIND_BATCH`].
+    /// `buf.listing`; no allocation size and no file id, so no leaf keys a
+    /// hard link (RISKS R55). The walk's two signals are paced by [`FIND_BATCH`].
     fn list_find(dir: &Path, facts: DirFacts, buf: &mut ListBuffer) -> Result<(), u32> {
         if buf.stopped() {
             // The walk discards the listing on cancel, so which error ends it is immaterial.
@@ -1316,4 +1360,4 @@ mod os {
 }
 
 #[cfg(windows)]
-pub use os::{FileReparse, WindowsLister, probe, stat_path, thread_cpu_seconds};
+pub use os::{FileReparse, WindowsLister, data_is_local, probe, stat_path, thread_cpu_seconds};
