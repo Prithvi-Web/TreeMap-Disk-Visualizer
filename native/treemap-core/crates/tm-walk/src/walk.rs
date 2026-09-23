@@ -809,7 +809,13 @@ fn process_dir(
                 .bytes
                 .fetch_add(whole_bytes(meta.size), Ordering::AcqRel);
             let counted = meta.nlink > 1;
-            if meta.kind == KIND_FILE && (counted || (meta.nlink == 0 && !meta.withheld)) {
+            // An id of 0 is no id (a FAT32 or exFAT volume gives none, and no
+            // listing reports 0 for a file): keyed, every such file would be
+            // one family (RISKS R55).
+            if meta.kind == KIND_FILE
+                && meta.ino != 0
+                && (counted || (meta.nlink == 0 && !meta.withheld))
+            {
                 part.link_keys.push(LinkKey {
                     dev: meta.dev.to_bits(),
                     ino: meta.ino,

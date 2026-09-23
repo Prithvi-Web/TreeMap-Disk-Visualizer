@@ -579,7 +579,12 @@ pub fn stage_record(
     } else {
         rec.allocation.map_or(0.0, |a| a.max(0) as f64)
     };
-    let withheld = kind != KIND_DIR && (rec.allocation.is_none() || rec.file_id.is_none());
+    // A missing allocation (never meaningful on Windows: libuv leaves blocks
+    // at 0) or file id (which only feeds the hard-link rule; the walk keys no
+    // id of 0) does not make the entry unreadable: a FAT32 or exFAT volume
+    // gives neither, and every file of it once counted as unreadable (the
+    // owner's decision on RISKS R55, 23 Sep 2026).
+    let withheld = false;
     let flags = if is_dataless(attrs, tag) {
         FLAG_DATALESS
     } else {

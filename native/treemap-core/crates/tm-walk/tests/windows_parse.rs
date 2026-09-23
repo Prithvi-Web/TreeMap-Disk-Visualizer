@@ -535,7 +535,10 @@ fn a_reparse_point_that_cannot_be_opened_is_counted_like_a_failed_lstat() -> Tes
 }
 
 #[test]
-fn a_record_without_an_id_or_an_allocation_is_withheld() -> TestResult {
+fn a_record_without_an_id_or_an_allocation_is_read_whole_with_no_id() -> TestResult {
+    // FindFirstFileExW (a FAT32 or exFAT volume) gives neither field. Neither
+    // makes the entry unreadable (RISKS R55): the allocation means nothing on
+    // Windows, and the id only keys hard links, which the walk never keys by 0.
     let raw = buffer(&[file("a.bin", 5)])?;
     let mut out = Listing::default();
     let facts = DirFacts {
@@ -559,14 +562,15 @@ fn a_record_without_an_id_or_an_allocation_is_withheld() -> TestResult {
     .map_err(|e| format!("{e:?}"))?;
     let map = by_name(&out);
     let a = entry(&map, "a.bin")?;
-    assert!(a.withheld, "FindFirstFileExW has neither field");
+    assert!(!a.withheld, "read, not withheld");
     assert_eq!(
         a.size.to_bits(),
         5.0_f64.to_bits(),
         "what it does have is kept"
     );
     assert_eq!(a.alloc.to_bits(), 0.0_f64.to_bits());
-    assert_eq!(a.ino, 0);
+    assert_eq!(a.ino, 0, "no id: never a hard-link key");
+    assert_eq!(out.unreadable_entries, 0);
     Ok(())
 }
 

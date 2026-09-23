@@ -863,6 +863,26 @@ fn hardlink_refs_exist_only_for_shared_inodes() -> TestResult {
 }
 
 #[test]
+fn files_without_a_file_id_are_never_one_hard_link_family() -> TestResult {
+    // A FAT32 or exFAT volume (the Windows fallback listing) gives no file
+    // id and no link count: every file carries 0. Once such entries are no
+    // longer withheld (RISKS R55), they must still never be keyed — as one
+    // "family" every file but the first would have lost its bytes.
+    let mut tree = FakeTree::new("/fake");
+    for (name, size) in [
+        (&b"a.bin"[..], 10.0),
+        (&b"b.bin"[..], 20.0),
+        (&b"c.bin"[..], 30.0),
+    ] {
+        tree.add_entry("", name, file_meta(size, 0, 0));
+    }
+    let (_, out) = run(tree, options(Path::new("/fake")), 1)?;
+    assert!(out.hardlinks.is_empty(), "{:?}", out.hardlinks);
+    assert_eq!(out.stats.unreadable_entries, 0);
+    Ok(())
+}
+
+#[test]
 fn two_counted_files_whose_inodes_differ_past_2_53_are_two_families() -> TestResult {
     // The POSIX half of the exact key: a link count above one makes a name a
     // family member on its own, and two such files stay two families however

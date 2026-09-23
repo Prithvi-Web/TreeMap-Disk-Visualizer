@@ -353,10 +353,18 @@ fn stage_child(
     if listing.len() == before {
         return false;
     }
-    if rec.std_info.is_none() {
+    // A record without `$STANDARD_INFORMATION` has no times, and a file
+    // without its unnamed stream no size: kept, with the unknown values, and
+    // counted withheld — which the listing's own rule no longer infers from
+    // a missing allocation (RISKS R55, 23 Sep 2026).
+    let no_times = rec.std_info.is_none();
+    let no_size = !rec.is_dir && rec.data_size.is_none();
+    if no_times || no_size {
         if let Some(entry) = listing.entries.last_mut() {
-            entry.meta.mtime_ms = f64::NAN;
-            entry.meta.atime_ms = f64::NAN;
+            if no_times {
+                entry.meta.mtime_ms = f64::NAN;
+                entry.meta.atime_ms = f64::NAN;
+            }
             entry.meta.withheld = true;
         }
     }
