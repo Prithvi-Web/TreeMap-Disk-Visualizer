@@ -28,6 +28,15 @@ interface Helpers {
   installModule(src: string, dest: string): void;
   helpersFor(platform: string): { crate: string; file: string }[];
   installAll(installs: { src: string; dest: string }[]): void;
+  buildAndInstall(opts: {
+    library: string;
+    helpers: { crate: string; file: string }[];
+    release: string;
+    dir: string;
+    runCargo(args: string[]): { ok: true } | { ok: false; code: number; message: string };
+    exists(file: string): boolean;
+    install(installs: { src: string; dest: string }[]): void;
+  }): { code: number; messages: string[]; installed: string[] };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -113,6 +122,68 @@ test('a rename that fails after another succeeded names what was installed and w
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+/** A cargo that records each run and fails the crates it is told to. */
+function fakeCargo(failing: string[] = [], code = 101) {
+  const runs: string[][] = [];
+  const runCargo = (args: string[]): { ok: true } | { ok: false; code: number; message: string } => {
+    runs.push(args);
+    const crate = args[args.indexOf('-p') + 1];
+    return failing.includes(crate) ? { ok: false, code, message: `build-native: cargo exited ${code}` } : { ok: true };
+  };
+  return { runs, runCargo };
+}
+
+const HELPER = { crate: 'tm-mft-helper', file: 'tm-mft-helper.exe' };
+const RELEASE = path.join('target', 'release');
+const PREBUILT = path.join('native', 'prebuilt', 'win32-x64');
+const MODULE_INSTALL = { src: path.join(RELEASE, 'tm_node.dll'), dest: path.join(PREBUILT, 'treemap_core.node') };
+const HELPER_INSTALL = { src: path.join(RELEASE, HELPER.file), dest: path.join(PREBUILT, HELPER.file) };
+
+test('the module and each helper are built in cargo runs of their own, the module first, and all that built is installed together', () => {
+  const cargo = fakeCargo();
+  const installs: { src: string; dest: string }[][] = [];
+  const r = helpers.buildAndInstall({ library: 'tm_node.dll', helpers: [HELPER], release: RELEASE, dir: PREBUILT, runCargo: cargo.runCargo, exists: () => true, install: (i) => { installs.push(i); } });
+  assert.deepEqual(cargo.runs, [['build', '--release', '-p', 'tm-node'], ['build', '--release', '-p', 'tm-mft-helper']]);
+  assert.equal(r.code, 0);
+  assert.deepEqual(installs, [[MODULE_INSTALL, HELPER_INSTALL]]);
+  assert.deepEqual(r.installed, [MODULE_INSTALL.dest, HELPER_INSTALL.dest]);
+});
+
+test('a helper that fails to build costs only itself: the module is installed, and the run still fails, naming the helper', () => {
+  // The CI dry run of 23 Sep 2026: one cargo run for both meant a helper's
+  // compile error installed nothing, and every native test on that leg would
+  // have failed behind it.
+  const cargo = fakeCargo(['tm-mft-helper']);
+  const installs: { src: string; dest: string }[][] = [];
+  const r = helpers.buildAndInstall({ library: 'tm_node.dll', helpers: [HELPER], release: RELEASE, dir: PREBUILT, runCargo: cargo.runCargo, exists: () => true, install: (i) => { installs.push(i); } });
+  assert.equal(r.code, 1, 'the run fails, so the error is seen');
+  assert.deepEqual(installs, [[MODULE_INSTALL]], 'the module is installed all the same');
+  assert.match(r.messages.join('\n'), /the module was installed, but tm-mft-helper did not build/);
+  assert.match(r.messages.join('\n'), /cargo exited 101/);
+});
+
+test('a module that fails to build installs nothing and builds no helper', () => {
+  const cargo = fakeCargo(['tm-node'], 101);
+  const installs: unknown[] = [];
+  const r = helpers.buildAndInstall({ library: 'tm_node.dll', helpers: [HELPER], release: RELEASE, dir: PREBUILT, runCargo: cargo.runCargo, exists: () => true, install: (i) => { installs.push(i); } });
+  assert.equal(r.code, 101, 'cargo’s own status');
+  assert.deepEqual(cargo.runs.length, 1, 'no helper is built after the module failed');
+  assert.deepEqual(installs, []);
+  assert.deepEqual(r.installed, []);
+  assert.match(r.messages.join('\n'), /nothing was copied/);
+});
+
+test('a file cargo said it built but did not write is not installed: the module installs nothing; a helper only itself', () => {
+  const noModule = helpers.buildAndInstall({ library: 'tm_node.dll', helpers: [HELPER], release: RELEASE, dir: PREBUILT, runCargo: fakeCargo().runCargo, exists: (f) => f !== MODULE_INSTALL.src, install: () => assert.fail('nothing may be installed') });
+  assert.equal(noModule.code, 1);
+  assert.match(noModule.messages.join('\n'), /tm_node\.dll does not exist; nothing was copied/);
+  const installs: { src: string; dest: string }[][] = [];
+  const noHelper = helpers.buildAndInstall({ library: 'tm_node.dll', helpers: [HELPER], release: RELEASE, dir: PREBUILT, runCargo: fakeCargo().runCargo, exists: (f) => f !== HELPER_INSTALL.src, install: (i) => { installs.push(i); } });
+  assert.equal(noHelper.code, 1);
+  assert.deepEqual(installs, [[MODULE_INSTALL]]);
+  assert.match(noHelper.messages.join('\n'), /tm-mft-helper did not build/);
 });
 
 test('the library cargo writes is named per platform, and a platform the workspace does not build for is refused by name', () => {

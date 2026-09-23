@@ -12,9 +12,10 @@
  *      (src/services/scan/native.ts) refuses a module whose version() is not
  *      nativeVersion, so a drift is caught here, before a module is built that
  *      would only be refused at run time;
- *   2. `cargo build --release -p tm-node` in the workspace — on Windows with
- *      `-p tm-mft-helper` too, the NTFS turbo mode's elevated helper — with
- *      cargo's own output on this terminal;
+ *   2. `cargo build --release -p tm-node` in the workspace, then — on Windows —
+ *      `cargo build --release -p tm-mft-helper` (the NTFS turbo mode's
+ *      elevated helper) in a run of its own, so a helper that fails to build
+ *      costs only itself (buildAndInstall); cargo's own output on this terminal;
  *   3. the library cargo wrote (libtm_node.dylib / libtm_node.so / tm_node.dll)
  *      is copied to native/prebuilt/<platform>-<arch>/treemap_core.node, the
  *      Windows helper to tm-mft-helper.exe beside it, and VERSION is written
@@ -118,51 +119,81 @@ function main() {
     process.exit(1);
   }
 
-  const helpers = helpersFor(process.platform);
-  const args = ['build', '--release', '-p', CRATE, ...helpers.flatMap((h) => ['-p', h.crate])];
+  const dir = prebuiltDir(REPO, process.platform, process.arch);
+  const result = buildAndInstall({
+    library,
+    helpers: helpersFor(process.platform),
+    release: path.join(targetDir(process.env, WORKSPACE), 'release'),
+    dir,
+    runCargo,
+    exists: fs.existsSync,
+    install: (installs) => {
+      fs.mkdirSync(dir, { recursive: true });
+      installAll(installs);
+    },
+  });
+  for (const message of result.messages) console.error(message);
+  const [moduleDest, ...helperDests] = result.installed;
+  if (moduleDest) {
+    fs.writeFileSync(path.join(dir, VERSION_FILE), `${pkg.nativeVersion}\n`);
+    for (const dest of helperDests) console.error(`build-native: ${path.basename(dest)}, ${fs.statSync(dest).size} bytes`);
+    console.error(`build-native: native version ${pkg.nativeVersion}, ${fs.statSync(moduleDest).size} bytes`);
+    console.log(moduleDest);
+  }
+  if (result.code !== 0) process.exit(result.code);
+}
+
+/** One cargo run in the workspace, cargo's own output on this terminal; never exits. */
+function runCargo(args) {
   console.error(`build-native: cargo ${args.join(' ')} in ${WORKSPACE}`);
   const r = spawnSync('cargo', args, { cwd: WORKSPACE, stdio: 'inherit' });
-  if (r.error && r.error.code === 'ENOENT') {
-    console.error(cargoMissingHint());
-    process.exit(1);
-  }
-  if (r.error) {
-    console.error(`build-native: could not run cargo: ${r.error.message}`);
-    process.exit(1);
-  }
-  if (r.status !== 0) {
-    console.error(`build-native: cargo exited ${r.status}; nothing was copied`);
-    process.exit(r.status || 1);
-  }
+  if (r.error && r.error.code === 'ENOENT') return { ok: false, code: 1, message: cargoMissingHint() };
+  if (r.error) return { ok: false, code: 1, message: `build-native: could not run cargo: ${r.error.message}` };
+  if (r.status !== 0) return { ok: false, code: r.status || 1, message: `build-native: cargo exited ${r.status}` };
+  return { ok: true };
+}
 
-  // Every file is checked, then staged beside its destination, before any is
-  // installed (installAll): a build that made the module but not a helper, or
-  // a copy that fails, installs nothing, and a rename that fails is reported
-  // with exactly what was and was not installed.
-  const release = path.join(targetDir(process.env, WORKSPACE), 'release');
-  const dir = prebuiltDir(REPO, process.platform, process.arch);
-  const installs = [
-    { src: path.join(release, library), dest: path.join(dir, MODULE_FILE) },
-    ...helpers.map((h) => ({ src: path.join(release, h.file), dest: path.join(dir, h.file) })),
-  ];
-  for (const { src } of installs) {
-    if (!fs.existsSync(src)) {
-      console.error(`build-native: cargo finished but ${src} does not exist; nothing was copied`);
-      process.exit(1);
-    }
+/**
+ * Builds and installs: the module in a cargo run of its own, then each helper
+ * in a run of its own, so a helper that fails to build costs only itself —
+ * the CI dry run of 23 Sep 2026: one run for both meant a helper's compile
+ * error installed nothing, and every native test on that leg would have
+ * failed behind it. A module that fails to build, or was not written, installs
+ * nothing; a helper that fails either way is left out, the module is
+ * installed, and the result still fails (exit 1) so the error is seen. Every
+ * file that built is then installed together (installAll). Runs nothing
+ * itself: `runCargo(args)` answers `{ ok }` or `{ ok: false, code, message }`,
+ * `exists(file)` and `install(installs)` are the file system's.
+ * @returns {{ code: number, messages: string[], installed: string[] }}
+ */
+function buildAndInstall({ library, helpers, release, dir, runCargo, exists, install }) {
+  const built = runCargo(['build', '--release', '-p', CRATE]);
+  if (!built.ok) return { code: built.code, messages: [`${built.message}; nothing was copied`], installed: [] };
+  const moduleInstall = { src: path.join(release, library), dest: path.join(dir, MODULE_FILE) };
+  if (!exists(moduleInstall.src)) {
+    return { code: 1, messages: [`build-native: cargo finished but ${moduleInstall.src} does not exist; nothing was copied`], installed: [] };
   }
-  fs.mkdirSync(dir, { recursive: true });
+  const installs = [moduleInstall];
+  const failed = [];
+  for (const helper of helpers) {
+    const run = runCargo(['build', '--release', '-p', helper.crate]);
+    const src = path.join(release, helper.file);
+    if (!run.ok) failed.push(`${helper.crate} did not build (${run.message})`);
+    else if (!exists(src)) failed.push(`${helper.crate} did not build (cargo finished but ${src} does not exist)`);
+    else installs.push({ src, dest: path.join(dir, helper.file) });
+  }
   try {
-    installAll(installs);
+    install(installs);
   } catch (err) {
-    console.error(err.message);
-    process.exit(1);
+    return { code: 1, messages: [err.message], installed: [] };
   }
-  const [moduleDest, ...helperDests] = installs.map((i) => i.dest);
-  fs.writeFileSync(path.join(dir, VERSION_FILE), `${pkg.nativeVersion}\n`);
-  for (const dest of helperDests) console.error(`build-native: ${path.basename(dest)}, ${fs.statSync(dest).size} bytes`);
-  console.error(`build-native: native version ${pkg.nativeVersion}, ${fs.statSync(moduleDest).size} bytes`);
-  console.log(moduleDest);
+  const installed = installs.map((i) => i.dest);
+  if (failed.length === 0) return { code: 0, messages: [], installed };
+  return {
+    code: 1,
+    messages: [`build-native: the module was installed, but ${failed.join('; ')}, so it was not; the app falls back where it needs it, and this run fails so the error is seen`],
+    installed,
+  };
 }
 
 /**
@@ -220,5 +251,5 @@ function installAll(installs) {
 if (require.main === module) {
   main();
 } else {
-  module.exports = { libraryFileName, prebuiltDir, targetDir, workspaceVersion, versionHandshake, cargoMissingHint, installModule, installAll, helpersFor };
+  module.exports = { libraryFileName, prebuiltDir, targetDir, workspaceVersion, versionHandshake, cargoMissingHint, installModule, installAll, helpersFor, buildAndInstall };
 }
