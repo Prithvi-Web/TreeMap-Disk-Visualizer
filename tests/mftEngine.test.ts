@@ -184,10 +184,11 @@ test('correction 9: a mismatch whose live re-read shows a write since the read i
   const { check, visits } = fakeChecker((p, want) => (p === changed ? { ...want, size: 1, mtimeMs: READ_STARTED + 5_000 } : undefined));
   const verdict = crossCheckMft(cols, pathOf(cols), READ_STARTED, check, seeded(2));
   assert.equal(verdict.ok, true, JSON.stringify(verdict));
-  if (visits.has(changed)) {
-    assert.equal(visits.get(changed), 2, 'drawn, re-read once, then set aside');
-    assert.ok(verdict.ok && verdict.recent === 1 && verdict.checked === MFT_CROSS_CHECK_SAMPLE, 'another entry took its place');
-  }
+  // Asserted, not assumed: a draw that missed the planted entry would leave
+  // the lines below checking nothing (the TypeScript review of M6).
+  assert.ok(visits.has(changed), 'this seed draws the planted entry');
+  assert.equal(visits.get(changed), 2, 'drawn, re-read once, then set aside');
+  assert.ok(verdict.ok && verdict.recent === 1 && verdict.checked === MFT_CROSS_CHECK_SAMPLE, 'another entry took its place');
   // Force the draw onto it: a table of the root and that one file.
   const lone = columns([{ name: 'data', parent: 0, kind: KIND_DIR }, { name: 'f7', parent: 0, size: 5 }]);
   const again = fakeChecker((p, want) => (p === changed ? { ...want, size: 1, mtimeMs: READ_STARTED + 5_000 } : undefined));
@@ -336,6 +337,49 @@ test('one scan asks at a time (W6-1): a scan that wants the mode while another w
   assert.equal(requests.length, 3, 'asked once the second prompt was over');
   answers[2]({ kind: 'failed', reason: 'done' });
   await fourth;
+  fs.rmSync(folder, { recursive: true, force: true });
+});
+
+test('a scan cancelled before the prompt is never asked about: nobody is asked, and the one prompt slot stays free', async () => {
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  const { launcher, requests } = fakeLauncher({ kind: 'exited', code: 0 });
+  const deps = { launcher, module: fakeModule(flat(3)).module, helperPath: 'C:\\app\\tm-mft-helper.exe', elevationRefusal: allowElevation, tempFolder: folder, now: () => READ_STARTED };
+  const cancelled = recordFor(ROOT);
+  cancelled.scan.cancelled = true;
+  const outcome = await runMftWalk(cancelled.scan, cancelled.store, ROOT, deps);
+  assert.equal(requests.length, 0, 'no prompt for a scan already cancelled');
+  assert.ok(!outcome.used && outcome.failed === false, JSON.stringify(outcome));
+  assert.match(outcome.reason, /the scan was cancelled/);
+  const next = recordFor(ROOT);
+  await runMftWalk(next.scan, next.store, ROOT, deps);
+  assert.equal(requests.length, 1, 'the next scan may ask');
+  fs.rmSync(folder, { recursive: true, force: true });
+});
+
+test('a clock that fails when the prompt ends cannot leave the prompt open, nor start a quiet period with no end', async () => {
+  resetMftSessionForTests();
+  const folder = tempFolder();
+  let asked = false;
+  const requests: MftLaunchRequest[] = [];
+  // A decline, so a decline time the clock could not give (NaN) is exercised too.
+  const launcher: MftLauncher = async (request) => {
+    requests.push(request);
+    asked = true;
+    return { kind: 'declined', reason: 'elevation was declined at the Windows prompt' };
+  };
+  const now = (): number => {
+    if (asked) throw new Error('the clock is gone');
+    return READ_STARTED;
+  };
+  const deps = { launcher, module: fakeModule(flat(3)).module, helperPath: 'C:\\app\\tm-mft-helper.exe', elevationRefusal: allowElevation, tempFolder: folder, now };
+  const r = recordFor(ROOT);
+  const outcome = await runMftWalk(r.scan, r.store, ROOT, deps);
+  assert.ok(!outcome.used, 'the scan still falls back with a reason');
+  asked = false;
+  const again = recordFor(ROOT);
+  await runMftWalk(again.scan, again.store, ROOT, deps);
+  assert.equal(requests.length, 2, 'the next scan may ask: the prompt was not left open, and a decline with no time starts no quiet period');
   fs.rmSync(folder, { recursive: true, force: true });
 });
 

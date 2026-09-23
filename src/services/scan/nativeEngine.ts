@@ -787,6 +787,10 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
     return notUsed(`the app's temp folder ${folder} is a link, a junction or not a folder, and the elevated helper writes nothing through one`, true);
   }
   const now = deps.now ?? Date.now;
+  // A scan cancelled on its way here is not asked about: the prompt would put
+  // a question nobody is waiting on, and hold the one prompt slot meanwhile
+  // (the TypeScript review of M6).
+  if (scan.cancelled) return notUsed('the scan was cancelled', false);
   // Nothing between this check and mftPromptStarted awaits, so two scans
   // cannot both pass it.
   const blocked = mftPromptBlocked(now());
@@ -802,7 +806,15 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
     } catch (err: unknown) {
       return notUsed(`the helper could not be started: ${describe(err)}`, true);
     } finally {
-      mftPromptEnded(launched?.kind === 'declined', now());
+      // The prompt is over whatever the clock says: a clock that throws here
+      // must not leave it marked open (the TypeScript review of M6).
+      let endedAt = Number.NaN;
+      try {
+        endedAt = now();
+      } catch {
+        /* no time for a decline: it starts no quiet period (mftPromptEnded) */
+      }
+      mftPromptEnded(launched?.kind === 'declined', endedAt);
     }
     if (scan.cancelled) return notUsed('the scan was cancelled', false);
     if (launched.kind === 'declined') return notUsed(`${launched.reason}, so the folders were listed instead`, false);

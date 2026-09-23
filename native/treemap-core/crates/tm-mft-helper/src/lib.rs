@@ -25,7 +25,7 @@
 use std::ffi::OsString;
 use std::fmt;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 pub use tm_mft::columns::OUTPUT_EXTENSION;
@@ -389,6 +389,22 @@ fn refused(message: String) -> Outcome {
     }
 }
 
+/// Writes `sentence` into `file` as a refusal record, over whatever the file
+/// held: the one channel the elevated helper has to the app that asked for it,
+/// whose stderr never arrives. Through the handle the helper already holds,
+/// never by path — once something has gone wrong, a path may lead somewhere
+/// else. Best effort: a file that cannot take even this leaves the app its
+/// own reason (a file too short to read), and the app removes the output
+/// either way (the Rust review of M6).
+pub fn record_refusal(file: &mut std::fs::File, sentence: &str) {
+    let record = encode_refusal(sentence);
+    let _ = file
+        .set_len(0)
+        .and_then(|()| file.seek(SeekFrom::Start(0)))
+        .and_then(|_| file.write_all(&record))
+        .and_then(|()| file.flush());
+}
+
 /// Creates the output file for a [`validate`]d `request`, new, with the
 /// app's temp folder held ([`HeldFolder`]) from before the file is made until
 /// it is found where the check said — the second half of [`run`], public so a
@@ -419,7 +435,7 @@ pub fn create_output(request: &Request, temp_folder: &Path) -> Result<std::fs::F
     }
     // CREATE_NEW / O_EXCL: an existing file, or a link planted at the name,
     // is refused rather than written through.
-    let file = OpenOptions::new()
+    let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&request.output)
@@ -430,19 +446,23 @@ pub fn create_output(request: &Request, temp_folder: &Path) -> Result<std::fs::F
             )
         })?;
     // The folder was checked a moment ago and has been held since; make sure
-    // the file is where the check said all the same.
-    match std::fs::canonicalize(&request.output) {
-        Ok(landed) if landed == request.output => Ok(file),
-        Ok(landed) => Err(format!(
+    // the file is where the check said all the same. From here the file
+    // exists, so a refusal is recorded in it: the app learns why rather than
+    // finding a file too short to read.
+    let refusal = match std::fs::canonicalize(&request.output) {
+        Ok(landed) if landed == request.output => return Ok(file),
+        Ok(landed) => format!(
             "the output file landed at {}, not at {}; nothing was read",
             quoted(&landed.to_string_lossy()),
             quoted(&shown)
-        )),
-        Err(e) => Err(format!(
+        ),
+        Err(e) => format!(
             "the output file {} could not be found after it was created: {e}",
             quoted(&shown)
-        )),
-    }
+        ),
+    };
+    record_refusal(&mut file, &refusal);
+    Err(refusal)
 }
 
 /// The whole run, in the order W6-2 needs: validate every argument; create
@@ -482,10 +502,13 @@ pub fn run(
         Err(sentence) => (encode_refusal(&sentence), refused(sentence)),
     };
     if let Err(e) = file.write_all(&bytes).and_then(|()| file.flush()) {
-        return refused(format!(
+        let sentence = format!(
             "the output file {} could not be written: {e}",
             quoted(&shown)
-        ));
+        );
+        // Over the half-written columns, so the app reads why, not garbage.
+        record_refusal(&mut file, &sentence);
+        return refused(sentence);
     }
     outcome
 }

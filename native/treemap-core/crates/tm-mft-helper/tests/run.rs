@@ -14,7 +14,7 @@ use std::path::Path;
 use common::{Scratch, plant_folder_link};
 use tm_mft::columns::{ColumnsFile, decode};
 use tm_mft_helper::{
-    APP_TEMP_FOLDER, EXIT_OK, EXIT_REFUSED, Request, create_output, run, validate,
+    APP_TEMP_FOLDER, EXIT_OK, EXIT_REFUSED, Request, create_output, record_refusal, run, validate,
 };
 use tm_walk::{FastPath, KIND_DIR, KIND_FILE, WalkOutput, WalkStats};
 
@@ -212,6 +212,37 @@ fn a_link_planted_at_the_output_name_is_not_followed() -> TestResult {
         std::fs::read(&target).map_err(|e| e.to_string())?,
         b"precious"
     );
+    Ok(())
+}
+
+#[test]
+fn a_refusal_recorded_over_a_half_written_file_is_all_the_file_holds() -> TestResult {
+    // The Rust review of M6: after the output file exists, a failed landing
+    // check or a failed write returned with the file empty or half written,
+    // so the app read "too short" instead of why. The refusal now goes into
+    // the file, through the handle the helper holds, over whatever was there.
+    use std::io::Write;
+    let scratch = Scratch::new("record")?;
+    let path = scratch.path("half.tmmft");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(&[0xAB; 4096]).map_err(|e| e.to_string())?;
+    record_refusal(
+        &mut file,
+        "the output file could not be written: the disk is full",
+    );
+    drop(file);
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    match decode(&bytes) {
+        Ok(ColumnsFile::Refusal(sentence)) => assert_eq!(
+            sentence,
+            "the output file could not be written: the disk is full"
+        ),
+        other => return Err(format!("not a refusal record: {other:?}")),
+    }
     Ok(())
 }
 

@@ -45,10 +45,15 @@ export function mftPromptStarted(): void {
   asking = true;
 }
 
-/** The prompt is over; `declined` when the person said no, at `now`. */
+/**
+ * The prompt is over; `declined` when the person said no, at `now`. The
+ * prompt is marked closed first, whatever else is true, and a decline with no
+ * usable time (a clock that failed: NaN) starts no quiet period — one with an
+ * unknowable end would refuse every later scan.
+ */
 export function mftPromptEnded(declined: boolean, now: number): void {
   asking = false;
-  if (declined) declinedAt = now;
+  if (declined && Number.isFinite(now)) declinedAt = now;
 }
 
 /** Test-only: no prompt open, no decline remembered. */

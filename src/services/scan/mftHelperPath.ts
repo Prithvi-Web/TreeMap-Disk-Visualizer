@@ -64,14 +64,14 @@ export function elevationRefusal(file: string): string | null {
 
   const folder = path.dirname(file);
   const tmpPath = path.join(folder, `.treemap-write-probe-${crypto.randomUUID()}.tmp`);
-  let probeMade = false;
+  let probe: number | null = null;
   try {
-    fs.closeSync(fs.openSync(tmpPath, 'wx'));
-    probeMade = true;
+    probe = fs.openSync(tmpPath, 'wx');
   } catch (err) {
     if (!refused(err)) return `the folder ${folder} could not be checked: ${describe(err)}`;
   }
-  if (probeMade) {
+  if (probe !== null) {
+    closeQuietly(probe);
     try {
       fs.rmSync(tmpPath, { force: true });
     } catch {
@@ -86,11 +86,28 @@ export function elevationRefusal(file: string): string | null {
   } catch (err) {
     if (!refused(err)) return `${file} could not be checked: ${describe(err)}`;
   }
+  let opened: number | null = null;
   try {
-    fs.closeSync(fs.openSync(file, 'r+'));
-    return `${file} could be changed by any program running as you`;
+    opened = fs.openSync(file, 'r+');
   } catch (err) {
     if (!refused(err)) return `${file} could not be checked: ${describe(err)}`;
   }
+  if (opened !== null) {
+    closeQuietly(opened);
+    return `${file} could be changed by any program running as you`;
+  }
   return null;
+}
+
+/**
+ * Closes a descriptor a probe opened. The answer is the open's: a close that
+ * then fails cannot turn "this user may write here" into "allowed" (the
+ * TypeScript review of M6).
+ */
+function closeQuietly(fd: number): void {
+  try {
+    fs.closeSync(fd);
+  } catch {
+    /* the open already answered */
+  }
 }
