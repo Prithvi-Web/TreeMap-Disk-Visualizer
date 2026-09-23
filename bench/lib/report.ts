@@ -295,15 +295,20 @@ export function compareToBaseline(current: StoredResult, baseline: StoredResult)
   const a = current.summary.resolutionPct;
   const b = baseline.summary.resolutionPct;
   if (!Number.isFinite(a) || !Number.isFinite(b)) {
-    // A single run was refused above as not reproducible, so the side named
-    // here has two: say so, rather than blame a single run.
-    const [which, side] = Number.isFinite(a) ? ['the baseline', baseline] : ['the current result', current];
-    const n = side.runs.length;
+    // A single run was refused above as not reproducible, so a side named
+    // here has two: say so, rather than blame a single run, and name both
+    // sides when neither resolves.
+    const runs = (r: StoredResult): string => `${r.runs.length} run${r.runs.length === 1 ? '' : 's'}`;
+    const short = !Number.isFinite(a) && !Number.isFinite(b)
+      ? `the current result has ${runs(current)} and the baseline ${baseline.runs.length}`
+      : Number.isFinite(a)
+        ? `the baseline has ${runs(baseline)}`
+        : `the current result has ${runs(current)}`;
     return {
       verdict: 'INCONCLUSIVE',
       deltaPct,
       band: Number.POSITIVE_INFINITY,
-      sentence: `${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(1)}% (${times}), but ${which} has ${n} run${n === 1 ? '' : 's'}, too few for a resolution (it takes at least three)`,
+      sentence: `${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(1)}% (${times}), but ${short}, too few for a resolution (it takes at least three)`,
     };
   }
   // Two medians each resolved to ±a and ±b differ by noise up to √(a²+b²).

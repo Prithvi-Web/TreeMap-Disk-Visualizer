@@ -517,6 +517,12 @@ test('an app temp folder that is a link or junction is refused before anyone is 
   const linked = path.join(base, MFT_TEMP_FOLDER);
   // A directory junction on Windows (no privilege needed: the review's attack); a symbolic link elsewhere.
   fs.symlinkSync(target, linked, 'junction');
+  // The engine's check reads lstat's one answer, not a directory: Node takes
+  // the type from one field of the mode, so a link (a junction, on Windows)
+  // is never also a directory. Asserted here on every CI leg, Windows too.
+  const unfollowed = fs.lstatSync(linked);
+  assert.equal(unfollowed.isSymbolicLink(), true, 'lstat reports the junction as a link');
+  assert.equal(unfollowed.isDirectory(), false, 'and so never as a directory');
   const { launcher, requests } = fakeLauncher({ kind: 'exited', code: 0 });
   const { module, calls } = fakeModule(flat(3));
   const { scan, store } = recordFor(ROOT);

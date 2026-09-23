@@ -883,8 +883,10 @@ export async function runMftWalk(scan: ScanResult, store: ScanStore, rootPath: s
   // send its elevated write wherever it points (the security review of M6), so
   // asking first would only raise a prompt whose yes cannot be used. lstat
   // does not follow a link, and Node sees a Windows junction as one, so a link
-  // or a junction is never a directory here: one test covers both. The helper
-  // also refuses any other reparse point, which Node cannot see.
+  // or a junction is never a directory here: Stats takes the type from one
+  // field of the mode, so one test covers both (tests/mftEngine.test.ts
+  // asserts it for a real junction on every CI leg). The helper also refuses
+  // any other reparse point, which Node cannot see.
   let unfollowed: fs.Stats;
   try {
     unfollowed = fs.lstatSync(folder);

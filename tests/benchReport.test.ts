@@ -189,6 +189,8 @@ test('a two-run result is compared in words that count its runs: it takes three 
   assert.equal(current.sentence, '+0.5% (1000.0 ms → 1005.0 ms), but the current result has 2 runs, too few for a resolution (it takes at least three)');
   const baseline = compareToBaseline(result(1000, 2), two);
   assert.equal(baseline.sentence, '-0.5% (1005.0 ms → 1000.0 ms), but the baseline has 2 runs, too few for a resolution (it takes at least three)');
+  const both = compareToBaseline(two, two);
+  assert.equal(both.sentence, '+0.0% (1005.0 ms → 1005.0 ms), but the current result has 2 runs and the baseline 2, too few for a resolution (it takes at least three)', 'both sides are named when neither resolves');
 });
 
 test('the budget line says what was asked, what each run ran under, and what moved; a result from before the governor says so', () => {
