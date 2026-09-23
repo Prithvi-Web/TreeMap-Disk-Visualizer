@@ -157,11 +157,12 @@ test('Settings has a "Scan engine" section: four labelled radios, Automatic chec
     assert.equal(/\bchecked\b/.test(input![1]), e === 'auto', `${e} is ${e === 'auto' ? '' : 'not '}the default`);
     const row = new RegExp(
       `id="scanEngine-${e}"[^>]*>\\s*<span class="budget-name">${escapeRe(LABELS[e])}</span>\\s*` +
-      `<span class="muted budget-help">${escapeRe(SENTENCES[e])}</span>`,
+      `<span class="muted budget-help"(?: id="scanEngineHelp-${e}")?>${escapeRe(SENTENCES[e])}</span>`,
     );
     assert.match(modal, row, `${LABELS[e]} carries its one plain sentence`);
     assert.match(modal, new RegExp(`<label[^>]*for="scanEngine-${e}"`), `${LABELS[e]} is a real label, so the sentence is clickable`);
   }
+  assert.match(modal, /<span class="muted budget-help" id="scanEngineHelp-gdu">/, 'the gdu sentence carries the id the script rewrites on Windows');
   const section = slice('Scan engine</div>', 'Disk-full forecast');
   assert.doesNotMatch(section.replace(/<[^>]+>/g, ' '), /\bdirector(y|ies)\b|governor|shim|throttle|duty|napi|Rust/i, 'plain words: folder, not directory; no engine jargon');
   assert.match(section, /next scan/, 'says when it takes effect');

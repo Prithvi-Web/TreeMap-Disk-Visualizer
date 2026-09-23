@@ -28,7 +28,8 @@ $('settingsBtn').addEventListener('click', async () => {
 
 /* ── Scan engine (Phase 3) ──
    Which engine reads the disk: Automatic (the native engine when this build
-   has it, else gdu, else the built-in walker) or one of them forced. A dial
+   has it, else gdu — never on Windows — else the built-in walker) or one of
+   them forced. A dial
    like the budget below — saved the moment it is picked, through the one
    api() wrapper to PUT /api/settings with the single key { engine } — and it
    applies from the next scan.
@@ -37,6 +38,10 @@ $('settingsBtn').addEventListener('click', async () => {
    server refuses the value, so a stored one is shown as Automatic. */
 const SCAN_ENGINES = ['auto', 'native', 'gdu', 'walker', 'ntfs-mft'];
 const SCAN_ENGINE_LABELS = { auto: 'Automatic', native: 'Native', gdu: 'gdu', walker: 'Built-in walker', 'ntfs-mft': 'NTFS turbo' };
+/** The gdu row's sentence. On Windows gdu is never used (it reads every file id
+    as 0, RISKS R59), so there the row says so instead of promising it. */
+const SCAN_ENGINE_GDU_HELP = 'the bundled gdu helper, one process per top-level folder';
+const SCAN_ENGINE_GDU_HELP_WINDOWS = 'not used on Windows, where gdu cannot tell two names for one file apart and would count such a file twice: scans there use the built-in walker';
 
 function scanEngineInputs() {
   return SCAN_ENGINES.map((e) => $(`scanEngine-${e}`)).filter(Boolean);
@@ -57,6 +62,8 @@ function renderScanEngine(engine) {
   const onWindows = scanEngineOnWindows();
   const turboRow = $('scanEngineRow-ntfs-mft');
   if (turboRow) turboRow.hidden = !onWindows;
+  const gduHelp = $('scanEngineHelp-gdu');
+  if (gduHelp) gduHelp.textContent = onWindows ? SCAN_ENGINE_GDU_HELP_WINDOWS : SCAN_ENGINE_GDU_HELP;
   const offered = onWindows ? SCAN_ENGINES : SCAN_ENGINES.filter((e) => e !== 'ntfs-mft');
   const chosen = offered.includes(engine) ? engine : 'auto';
   for (const input of scanEngineInputs()) input.checked = input.value === chosen;

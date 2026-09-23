@@ -251,6 +251,11 @@ type Radio = {
   addEventListener(type: string, fn: () => void): void;
 };
 type Row = { id: string; hidden: boolean };
+type Help = { id: string; textContent: string };
+
+const GDU_SENTENCE = 'the bundled gdu helper, one process per top-level folder';
+/** On Windows gdu is never used (RISKS R59: it reads every file id as 0), and its row says so instead of promising it. */
+const GDU_WINDOWS_SENTENCE = 'not used on Windows, where gdu cannot tell two names for one file apart and would count such a file twice: scans there use the built-in walker';
 
 function makeDom() {
   const els: Record<string, Radio | Row> = {};
@@ -265,6 +270,9 @@ function makeDom() {
   // The markup ships the row hidden; only the script may lift that.
   const row: Row = { id: 'scanEngineRow-ntfs-mft', hidden: true };
   els[row.id] = row;
+  // The markup ships the gdu row's own sentence.
+  const gduHelp: Help = { id: 'scanEngineHelp-gdu', textContent: GDU_SENTENCE };
+  els[gduHelp.id] = gduHelp as unknown as Row;
   const checked = () => radios.filter((r) => r.checked).map((r) => r.value);
   /** What a click on a radio does: the browser checks it, then fires change. */
   const pick = async (e: string) => {
@@ -274,7 +282,7 @@ function makeDom() {
     fn();
     await new Promise((resolve) => setTimeout(resolve, 0));
   };
-  return { $: (id: string) => els[id] ?? null, radios, row, checked, pick };
+  return { $: (id: string) => els[id] ?? null, radios, row, gduHelp, checked, pick };
 }
 
 type ApiCall = { url: string; options?: { method?: string; body?: string } };
@@ -336,6 +344,19 @@ test('the NTFS turbo row is shown only once the page knows it is on Windows, and
   state.system = { platform: 'darwin' };
   rt.renderScanEngine('auto');
   assert.equal(rt.dom.row.hidden, true, 'hidden again for any other platform');
+});
+
+test('on Windows the gdu row says it is not used there, and why; anywhere else it keeps its own sentence', () => {
+  for (const [what, state] of NOT_WINDOWS) {
+    const rt = engineRuntime({ state });
+    rt.dom.gduHelp.textContent = GDU_WINDOWS_SENTENCE; // as if an earlier render had said it: this one must put it back
+    rt.renderScanEngine('auto');
+    assert.equal(rt.dom.gduHelp.textContent, GDU_SENTENCE, what);
+  }
+  const rt = engineRuntime({ state: { system: { platform: 'win32' } } });
+  rt.renderScanEngine('gdu');
+  assert.equal(rt.dom.gduHelp.textContent, GDU_WINDOWS_SENTENCE);
+  assert.deepEqual(rt.dom.checked(), ['gdu'], 'a gdu choice stored on Windows still shows as the choice');
 });
 
 test('on Windows, picking NTFS turbo PUTs exactly { engine: "ntfs-mft" } and the radio stays on it', async () => {
