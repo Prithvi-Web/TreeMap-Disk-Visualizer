@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { skipOrFailOnCi } from './fixtures/ciSkip';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -105,7 +106,7 @@ test('gdu and the walker report identical bytes and hardlinks on the same tree',
   // counted twice there; the scan chain never hands a Windows scan to gdu.
   if (process.platform === 'win32') return t.skip('gdu keys no hard links on Windows (RISKS R59); the scan chain never uses it there');
   const bin = await findGduBinary();
-  if (!bin) return t.skip('gdu not available on this machine');
+  if (!bin) return skipOrFailOnCi(t, 'gdu not available on this machine');
 
   const dir = await makeTree();
   try {
@@ -157,7 +158,7 @@ function isGduTemp(name: string): boolean {
 
 test('gduScan removes its temp files even when a shard fails', async (t) => {
   const bin = await findGduBinary();
-  if (!bin) return t.skip('gdu not available on this machine');
+  if (!bin) return skipOrFailOnCi(t, 'gdu not available on this machine');
 
   const before = (await fsp.readdir(os.tmpdir())).filter(isGduTemp);
   const scan = createScanRecord('/definitely/not/a/real/path');
@@ -168,7 +169,7 @@ test('gduScan removes its temp files even when a shard fails', async (t) => {
 
 test('a cancelled scan stops sharding instead of walking the whole tree', async (t) => {
   const bin = await findGduBinary();
-  if (!bin) return t.skip('gdu not available on this machine');
+  if (!bin) return skipOrFailOnCi(t, 'gdu not available on this machine');
 
   const dir = await makeTree();
   try {
@@ -182,7 +183,7 @@ test('a cancelled scan stops sharding instead of walking the whole tree', async 
 
 test('gduScan keeps empty dirs as children: [] so the empty-folder finder works', async (t) => {
   const bin = await findGduBinary();
-  if (!bin) return t.skip('gdu not available on this machine');
+  if (!bin) return skipOrFailOnCi(t, 'gdu not available on this machine');
 
   const dir = await makeTree();
   try {
@@ -198,7 +199,7 @@ test('gduScan keeps empty dirs as children: [] so the empty-folder finder works'
 
 test('gduScan records files sitting directly under the scan root', async (t) => {
   const bin = await findGduBinary();
-  if (!bin) return t.skip('gdu not available on this machine');
+  if (!bin) return skipOrFailOnCi(t, 'gdu not available on this machine');
 
   const dir = await makeTree();
   try {

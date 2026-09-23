@@ -1,4 +1,5 @@
 import { test, after } from 'node:test';
+import { skipOrFailOnCi } from './fixtures/ciSkip';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -57,7 +58,7 @@ async function scanAs(platform: NodeJS.Platform): Promise<ScanResult> {
 }
 
 test('with no native module a Windows scan is the walker’s, never gdu’s, and says why', { skip: process.platform === 'win32' && 'the calibration needs a platform where gdu is wanted' }, async (t) => {
-  if (!(await findGduBinary())) return t.skip('no gdu binary on this machine, so nothing would choose it');
+  if (!(await findGduBinary())) return skipOrFailOnCi(t, 'no gdu binary on this machine, so nothing would choose it');
   const here = await scanAs(process.platform);
   assert.equal(here.engine, 'gdu-turbo', `calibration: this machine picks gdu (${here.engineReason})`);
   const windows = await scanAs('win32');

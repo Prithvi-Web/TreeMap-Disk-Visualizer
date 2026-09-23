@@ -1,4 +1,5 @@
 import { test, after, type TestContext } from 'node:test';
+import { skipOrFailOnCi } from './fixtures/ciSkip';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -108,18 +109,6 @@ async function edgeTree(): Promise<Tree> {
 after(async () => {
   if (edgeBuild) await (await edgeBuild).cleanup();
 });
-
-/**
- * On CI the native module is built on every leg before the suite runs, so a
- * module that cannot walk there is a broken build, not a developer's machine
- * without Rust: the gate fails instead of skipping. A skip would leave the
- * Node step green with the native engine never compared — the gap a review of
- * this file found once W4 and W5 had landed. Off CI it skips, with the reason.
- */
-function skipOrFailOnCi(t: { skip(message?: string): void }, reason: string): void {
-  if (process.env.CI) assert.fail(`on CI the native module is built on every leg, so this is a failure, not a skip: ${reason}`);
-  t.skip(reason);
-}
 
 /* ---------------------------- the child runs ---------------------------- */
 
@@ -298,7 +287,7 @@ for (const name of ['smoke', 'ci20k'] as const) {
     assertWalker(walker, tree);
     const gdu = await runChild({ engine: 'gdu', tree });
     if (gdu.unavailable) {
-      t.skip(`${name}: ${gdu.unavailable}`);
+      skipOrFailOnCi(t, `${name}: ${gdu.unavailable}`);
       return;
     }
     assert.equal(gdu.engine, 'gdu-turbo', `gdu was forced on ${name} but the scan ran on ${gdu.engine}`);

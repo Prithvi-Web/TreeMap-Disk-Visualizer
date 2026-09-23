@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { skipOrFailOnCi } from './fixtures/ciSkip';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -149,7 +150,7 @@ test('the real module answers for a real file, a folder and a missing path', (t)
   // macOS, FindFirstFileExW on Windows, existence on Linux.
   realNative();
   const outcome = loadNative();
-  if (!outcome.available) return t.skip(`no native module: ${outcome.reason}`);
+  if (!outcome.available) return skipOrFailOnCi(t, `no native module: ${outcome.reason}`);
   const ask = outcome.module.dataIsLocal;
   assert.equal(typeof ask, 'function', 'this build has dataIsLocal');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-data-local-'));

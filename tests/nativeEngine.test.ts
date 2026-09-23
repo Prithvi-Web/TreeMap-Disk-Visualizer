@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { skipOrFailOnCi } from './fixtures/ciSkip';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -1426,7 +1427,7 @@ function loadReal(t: TestContext): { core: Core; path: string } | null {
   const override = process.env.TREEMAP_NATIVE_MODULE;
   const file = override ?? PREBUILT_MODULE;
   if (!fs.existsSync(file)) {
-    t.skip(`no native module at ${file}; build it with node scripts/build-native.js (CI builds it on every leg)`);
+    skipOrFailOnCi(t, `no native module at ${file}; build it with node scripts/build-native.js`);
     return null;
   }
   resetNativeForTests();

@@ -1,4 +1,5 @@
 import { test, after } from 'node:test';
+import { skipOrFailOnCi } from './fixtures/ciSkip';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -155,7 +156,7 @@ test('when the native engine scans instead, as on any Windows machine, the modeâ
   // because it went only into the reasons the legacy engines give. Here the
   // decision is Windows' and the module is this machine's own.
   const prebuilt = path.join(__dirname, '..', 'native', 'prebuilt', `${os.platform()}-${os.arch()}`, 'treemap_core.node');
-  if (!fs.existsSync(prebuilt)) return t.skip('no native module built for this machine');
+  if (!fs.existsSync(prebuilt)) return skipOrFailOnCi(t, 'no native module built for this machine');
   const calls = standIn({ used: true, reason: 'must not run' });
   resetNativeForTests();
   setNativeLoadOverrideForTests({ path: prebuilt });
