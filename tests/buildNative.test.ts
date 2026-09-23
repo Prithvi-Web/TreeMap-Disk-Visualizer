@@ -27,6 +27,7 @@ interface Helpers {
   cargoMissingHint(): string;
   installModule(src: string, dest: string): void;
   helpersFor(platform: string): { crate: string; file: string }[];
+  installAll(installs: { src: string; dest: string }[]): void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -69,6 +70,48 @@ test('after npm run build:native the helper sits where the app looks for it firs
   const [first] = mftHelperCandidates();
   assert.equal(path.basename(first), MFT_HELPER_FILE);
   assert.ok(fs.existsSync(first), `${first} exists — run npm run build:native`);
+});
+
+test('a copy that fails installs nothing: every file is staged before any is installed, and no temporary is left', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-install-'));
+  try {
+    const moduleSrc = path.join(dir, 'libtm_node.dylib');
+    fs.writeFileSync(moduleSrc, 'new module');
+    const moduleDest = path.join(dir, 'treemap_core.node');
+    fs.writeFileSync(moduleDest, 'old module');
+    const notAFile = path.join(dir, 'helper-src');
+    fs.mkdirSync(notAFile); // copying a folder as a file fails
+    assert.throws(
+      () => helpers.installAll([{ src: moduleSrc, dest: moduleDest }, { src: notAFile, dest: path.join(dir, 'tm-mft-helper.exe') }]),
+      /copying the built files failed, so none was installed/,
+    );
+    assert.equal(fs.readFileSync(moduleDest, 'utf8'), 'old module', 'the module was not replaced');
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['helper-src', 'libtm_node.dylib', 'treemap_core.node'], 'no temporary is left');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a rename that fails after another succeeded names what was installed and what was not, and leaves no temporary', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-install-'));
+  try {
+    const moduleSrc = path.join(dir, 'libtm_node.dylib');
+    const helperSrc = path.join(dir, 'tm_mft_helper_built');
+    fs.writeFileSync(moduleSrc, 'new module');
+    fs.writeFileSync(helperSrc, 'new helper');
+    const moduleDest = path.join(dir, 'treemap_core.node');
+    const helperDest = path.join(dir, 'tm-mft-helper.exe');
+    fs.mkdirSync(helperDest);
+    fs.writeFileSync(path.join(helperDest, 'in-use'), 'x'); // a non-empty folder where the helper goes: its rename fails
+    assert.throws(
+      () => helpers.installAll([{ src: moduleSrc, dest: moduleDest }, { src: helperSrc, dest: helperDest }]),
+      /installing tm-mft-helper\.exe failed .*; installed: treemap_core\.node; not installed: tm-mft-helper\.exe/,
+    );
+    assert.equal(fs.readFileSync(moduleDest, 'utf8'), 'new module', 'the rename before it stands, and is named');
+    assert.deepEqual(fs.readdirSync(dir).filter((name) => name.endsWith('.tmp')), [], 'no temporary is left');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('the library cargo writes is named per platform, and a platform the workspace does not build for is refused by name', () => {

@@ -135,8 +135,10 @@ function main() {
     process.exit(r.status || 1);
   }
 
-  // Every file is checked before any is installed, so a build that made the
-  // module but not a helper never leaves a new module beside an old helper.
+  // Every file is checked, then staged beside its destination, before any is
+  // installed (installAll): a build that made the module but not a helper, or
+  // a copy that fails, installs nothing, and a rename that fails is reported
+  // with exactly what was and was not installed.
   const release = path.join(targetDir(process.env, WORKSPACE), 'release');
   const dir = prebuiltDir(REPO, process.platform, process.arch);
   const installs = [
@@ -150,7 +152,12 @@ function main() {
     }
   }
   fs.mkdirSync(dir, { recursive: true });
-  for (const { src, dest } of installs) installModule(src, dest);
+  try {
+    installAll(installs);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
   const [moduleDest, ...helperDests] = installs.map((i) => i.dest);
   fs.writeFileSync(path.join(dir, VERSION_FILE), `${pkg.nativeVersion}\n`);
   for (const dest of helperDests) console.error(`build-native: ${path.basename(dest)}, ${fs.statSync(dest).size} bytes`);
@@ -169,18 +176,49 @@ function main() {
  * rename also means no process ever loads a half-copied module.
  */
 function installModule(src, dest) {
-  const tmp = `${dest}.${process.pid}.tmp`;
-  fs.copyFileSync(src, tmp);
+  installAll([{ src, dest }]);
+}
+
+/**
+ * Installs each `{ src, dest }` as `installModule` does, in two steps so a
+ * failure leaves as little as it can (the TypeScript review of M6): every
+ * file is first copied to a temporary name beside its destination — a copy
+ * that fails removes every temporary and installs nothing — and only then is
+ * each renamed over its destination. A rename is not undone, so one that
+ * fails after another succeeded (the file held open by a running TreeMap or
+ * an antivirus scan) throws naming what was installed and what was not,
+ * with the temporaries it left removed.
+ */
+function installAll(installs) {
+  const staged = [];
   try {
-    fs.renameSync(tmp, dest);
+    for (const { src, dest } of installs) {
+      const tmp = `${dest}.${process.pid}.tmp`;
+      staged.push({ tmp, dest });
+      fs.copyFileSync(src, tmp);
+    }
   } catch (err) {
-    fs.rmSync(tmp, { force: true });
-    throw err;
+    for (const { tmp } of staged) fs.rmSync(tmp, { force: true });
+    throw new Error(`build-native: copying the built files failed, so none was installed: ${err.message}`);
   }
+  const installed = [];
+  staged.forEach(({ tmp, dest }, i) => {
+    try {
+      fs.renameSync(tmp, dest);
+      installed.push(path.basename(dest));
+    } catch (err) {
+      const left = staged.slice(i);
+      for (const rest of left) fs.rmSync(rest.tmp, { force: true });
+      throw new Error(
+        `build-native: installing ${path.basename(dest)} failed (${err.message}); installed: ${installed.join(', ') || 'nothing'}; ` +
+          `not installed: ${left.map((rest) => path.basename(rest.dest)).join(', ')} — close whatever is using them and run npm run build:native again`,
+      );
+    }
+  });
 }
 
 if (require.main === module) {
   main();
 } else {
-  module.exports = { libraryFileName, prebuiltDir, targetDir, workspaceVersion, versionHandshake, cargoMissingHint, installModule, helpersFor };
+  module.exports = { libraryFileName, prebuiltDir, targetDir, workspaceVersion, versionHandshake, cargoMissingHint, installModule, installAll, helpersFor };
 }
