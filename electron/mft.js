@@ -25,8 +25,9 @@
  * administrators own the helper and its folder (TRUSTED_OWNER_SIDS).
  *
  * Pure: no `electron` import. main.js injects dialog.showMessageBox,
- * child_process.spawn, the PowerShell path, its folder and the target check,
- * and src/services/scan/nativeEngine.ts receives the launcher through
+ * child_process.spawn, the call that asks the kernel for its system folder
+ * and the target check (launcherForSystemFolder), and
+ * src/services/scan/nativeEngine.ts receives the launcher through
  * setMftLauncher, so plain Node tests (tests/electronMft.test.ts) drive every
  * branch with fakes.
  *
@@ -174,6 +175,12 @@ function elevationScript({ helperPath, volume, root, output }, workingDirectory)
 const declined = (reason) => ({ kind: 'declined', reason });
 const failed = (reason) => ({ kind: 'failed', reason });
 const messageOf = (err) => (err && err.message ? err.message : String(err));
+/**
+ * A full path on a drive (`C:\…`). `path.win32.isAbsolute` also takes
+ * `\Windows\System32`, which Windows reads on whichever drive is current: a
+ * USB stick, when TreeMap was started from one.
+ */
+const onADrive = (p) => typeof p === 'string' && /^[A-Za-z]:\\/.test(p);
 
 /** Why a request cannot be launched, or null when it can. Paths never contain NUL. */
 function requestProblem(request) {
@@ -267,10 +274,11 @@ function runElevated(spawn, powershell, workingDirectory, request) {
 }
 
 /**
- * On Windows `powershell` and `workingDirectory` must be full paths and
- * `refuseTarget` a function (a TypeError otherwise): main.js passes
- * powershell.exe under the system folder the kernel reports, that folder, and
- * the check that refuses a program the user's own processes could change.
+ * On Windows `powershell` and `workingDirectory` must be full paths on a
+ * drive and `refuseTarget` a function (a TypeError otherwise):
+ * launcherForSystemFolder passes powershell.exe under the system folder the
+ * kernel reports, that folder, and main.js the check that refuses a program
+ * the user's own processes could change.
  * @param {{
  *   showMessageBox: (options: object) => Promise<{ response: number } | undefined>,
  *   spawn: Function,
@@ -286,11 +294,11 @@ function createMftLauncher({ showMessageBox, spawn, platform = process.platform,
     throw new TypeError('createMftLauncher needs showMessageBox and spawn functions');
   }
   if (platform === 'win32') {
-    if (typeof powershell !== 'string' || !path.win32.isAbsolute(powershell)) {
-      throw new TypeError('createMftLauncher needs the full path of powershell.exe: by name, Windows would look in the app’s own folder first');
+    if (!onADrive(powershell)) {
+      throw new TypeError('createMftLauncher needs the full path of powershell.exe, drive and all: by name, Windows would look in the app’s own folder first, and with no drive on whichever drive is current');
     }
-    if (typeof workingDirectory !== 'string' || !path.win32.isAbsolute(workingDirectory)) {
-      throw new TypeError('createMftLauncher needs the full path of the folder PowerShell and the helper start in');
+    if (!onADrive(workingDirectory)) {
+      throw new TypeError('createMftLauncher needs the full path, drive and all, of the folder PowerShell and the helper start in');
     }
     if (typeof refuseTarget !== 'function') {
       throw new TypeError('createMftLauncher needs refuseTarget, the check that nothing a program running as the user could change is started as administrator');
@@ -318,8 +326,45 @@ function createMftLauncher({ showMessageBox, spawn, platform = process.platform,
   };
 }
 
+/**
+ * The launcher main.js registers on Windows. The system folder is asked of
+ * the kernel once, here (`readSystemDirectory`: nativeEngine's
+ * windowsSystemDirectory), and PowerShell is started by its full path under
+ * it, from it. When the kernel gives no full path on a drive, a launcher still
+ * exists and refuses every scan with that reason: with none registered, the
+ * scan engine would say the desktop app is missing.
+ * @param {{
+ *   readSystemDirectory: () => string | null,
+ *   showMessageBox: (options: object) => Promise<{ response: number } | undefined>,
+ *   spawn: Function,
+ *   platform?: string,
+ *   refuseTarget?: (file: string) => string | null,
+ * }} deps
+ * @returns {(request: { helperPath: string, volume: string, root: string, output: string }) => Promise<object>}
+ */
+function launcherForSystemFolder({ readSystemDirectory, ...deps } = {}) {
+  if (typeof readSystemDirectory !== 'function') {
+    throw new TypeError('launcherForSystemFolder needs readSystemDirectory, the call that asks the kernel for its system folder');
+  }
+  const refusing = (reason) => async () => failed(`${reason}, so PowerShell could not be started by its full path`);
+  let system;
+  try {
+    system = readSystemDirectory();
+  } catch (err) {
+    return refusing(`Windows' system folder could not be read (${messageOf(err)})`);
+  }
+  if (system === null || system === undefined) return refusing("Windows' system folder could not be read");
+  if (!onADrive(system)) return refusing(`Windows reported its system folder as ${JSON.stringify(system)}, not a full path on a drive`);
+  return createMftLauncher({
+    ...deps,
+    powershell: path.win32.join(system, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    workingDirectory: system,
+  });
+}
+
 module.exports = {
   createMftLauncher,
+  launcherForSystemFolder,
   quoteWindowsArg,
   psSingleQuote,
   encodeCommand,

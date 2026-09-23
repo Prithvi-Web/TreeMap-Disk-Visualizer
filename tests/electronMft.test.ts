@@ -45,6 +45,13 @@ interface MftModule {
     workingDirectory?: string;
     refuseTarget?: (file: string) => string | null;
   }): (request: MftRequest) => Promise<Outcome>;
+  launcherForSystemFolder(deps: {
+    readSystemDirectory: () => string | null;
+    showMessageBox: ShowMessageBox;
+    spawn: Spawn;
+    platform?: string;
+    refuseTarget?: (file: string) => string | null;
+  }): (request: MftRequest) => Promise<Outcome>;
   quoteWindowsArg(arg: string): string;
   psSingleQuote(text: string): string;
   encodeCommand(script: string): string;
@@ -289,8 +296,10 @@ test('on Windows a launcher is refused when it is made without a full PowerShell
   assert.doesNotThrow(() => createMftLauncher({ ...base, ...SAFE }));
   for (const [label, over] of [
     ['PowerShell by name, which Windows would look up in the app’s own folder first', { powershell: 'powershell.exe' }],
+    ['PowerShell on whichever drive is current, which a USB stick can be', { powershell: '\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' }],
     ['no PowerShell at all', { powershell: undefined }],
     ['a relative working folder', { workingDirectory: 'System32' }],
+    ['a working folder on whichever drive is current', { workingDirectory: '\\Windows\\System32' }],
     ['no working folder', { workingDirectory: undefined }],
     ['no target check', { refuseTarget: undefined }],
   ] as const) {
@@ -330,6 +339,67 @@ test('a target check that throws refuses, as a check that answered no would: not
   assert.deepEqual(outcome, { kind: 'failed', reason: `nothing was started as administrator: ${PWSH} could not be checked: EBUSY: the probe could not be made` });
   assert.equal(dialog.shown.length, 0);
   assert.equal(ps.calls.length, 0);
+});
+
+/* ───────────────────────────── the launcher main.js registers ───────────────────────────── */
+
+test('the registered launcher starts PowerShell by its full path under the system folder the kernel reports, from that folder', async () => {
+  const { launcherForSystemFolder } = loadMft();
+  const dialog = fakeDialog(CONTINUE);
+  const ps = fakeSpawn(exitsWith(0));
+  const checked: string[] = [];
+  let reads = 0;
+  const launch = launcherForSystemFolder({
+    readSystemDirectory: () => {
+      reads += 1;
+      return SYSTEM;
+    },
+    showMessageBox: dialog.showMessageBox,
+    spawn: ps.spawn,
+    platform: 'win32',
+    refuseTarget: (file) => {
+      checked.push(file);
+      return null;
+    },
+  });
+  assert.deepEqual(await launch(REQUEST), { kind: 'exited', code: 0 });
+  assert.deepEqual(await launch(REQUEST), { kind: 'exited', code: 0 });
+  assert.equal(reads, 1, 'the folder is asked for once, when the launcher is made');
+  assert.deepEqual(
+    ps.calls.map((call) => [call.command, call.options.cwd]),
+    [
+      [PWSH, SYSTEM],
+      [PWSH, SYSTEM],
+    ],
+  );
+  assert.deepEqual(checked, [PWSH, HELPER, PWSH, HELPER], 'what is started is what was checked');
+});
+
+test('without a full path from the kernel, the registered launcher refuses every scan and says why, asking and starting nothing', async () => {
+  const { launcherForSystemFolder } = loadMft();
+  const unusable = (reported: string): string =>
+    `Windows reported its system folder as ${JSON.stringify(reported)}, not a full path on a drive, so PowerShell could not be started by its full path`;
+  const cases: Array<[string, () => string | null, string]> = [
+    ['no answer', () => null, "Windows' system folder could not be read, so PowerShell could not be started by its full path"],
+    [
+      'a call that throws',
+      () => {
+        throw new Error('the native module panicked');
+      },
+      "Windows' system folder could not be read (the native module panicked), so PowerShell could not be started by its full path",
+    ],
+    ['an empty answer', () => '', unusable('')],
+    ['a relative answer', () => 'System32', unusable('System32')],
+    ['an answer on whichever drive is current', () => '\\Windows\\System32', unusable('\\Windows\\System32')],
+  ];
+  for (const [label, readSystemDirectory, reason] of cases) {
+    const dialog = fakeDialog(CONTINUE);
+    const ps = fakeSpawn(exitsWith(0));
+    const launch = launcherForSystemFolder({ readSystemDirectory, showMessageBox: dialog.showMessageBox, spawn: ps.spawn, platform: 'win32', refuseTarget: () => null });
+    assert.deepEqual(await launch(REQUEST), { kind: 'failed', reason }, label);
+    assert.equal(dialog.shown.length, 0, `${label}: nothing asked`);
+    assert.equal(ps.calls.length, 0, `${label}: nothing started`);
+  }
 });
 
 test('the script checks who owns the helper and its folder, by security identifier, before it asks Windows to start it', async () => {

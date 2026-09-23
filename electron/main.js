@@ -52,7 +52,7 @@ const desktop = require('./lib/desktop');
 const guards = require('./lib/guards');
 const windowState = require('./lib/windowState');
 const { buildMenuTemplate } = require('./lib/menu');
-const { createMftLauncher } = require('./mft');
+const { launcherForSystemFolder } = require('./mft');
 
 /** Must match the NSIS shortcut's appId (package.json build.appId) or Windows drops our toasts. */
 const APP_USER_MODEL_ID = 'com.prithviweb.treemap';
@@ -376,16 +376,10 @@ function registerMftLauncher() {
     const scanDir = path.join(__dirname, '..', 'dist', 'services', 'scan');
     const { setMftLauncher, windowsSystemDirectory } = require(path.join(scanDir, 'nativeEngine.js'));
     const { elevationRefusal } = require(path.join(scanDir, 'mftHelperPath.js'));
-    const system = windowsSystemDirectory();
-    if (!system) {
-      setMftLauncher(async () => ({ kind: 'failed', reason: "Windows' system folder could not be read, so PowerShell could not be started by its full path" }));
-      return;
-    }
-    setMftLauncher(createMftLauncher({
+    setMftLauncher(launcherForSystemFolder({
+      readSystemDirectory: windowsSystemDirectory,
       showMessageBox: messageBox,
       spawn: require('child_process').spawn,
-      powershell: path.win32.join(system, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-      workingDirectory: system,
       refuseTarget: elevationRefusal,
     }));
   } catch (err) {
