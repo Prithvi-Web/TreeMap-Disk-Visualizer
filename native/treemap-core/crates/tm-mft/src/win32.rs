@@ -11,13 +11,14 @@
 //! volume opened, read-only (W6-2) and unbuffered, and nothing is read before
 //! `FSCTL_GET_NTFS_VOLUME_DATA` has answered. Every answer's check is a
 //! function here ([`device_path`], [`check_drive_type`],
-//! [`check_file_system`], [`check_same_volume`], [`open_error`]...).
+//! [`check_file_system`], [`check_same_volume`], [`open_error`],
+//! [`check_read`]...).
 //!
 //! The `cfg(windows)` layer is the `os` module: one [`VolumeApi`] method per
 //! call, and [`crate::volume::Volume::read_at`] as one positional read into a
-//! sector-aligned buffer. The volume and the root are opened through
-//! `std::fs::OpenOptions`, so the only `unsafe` blocks are the five calls
-//! the standard library does not make.
+//! sector-aligned buffer, its count checked by [`check_read`]. The volume and
+//! the root are opened through `std::fs::OpenOptions`, so the only `unsafe`
+//! blocks are the five calls the standard library does not make.
 
 use std::path::Path;
 use std::time::Instant;
@@ -214,6 +215,23 @@ pub fn aligned_window(raw: &mut Vec<u8>, len: usize, align: usize) -> Option<&mu
     raw.get_mut(start..start.checked_add(len)?)
 }
 
+/// Refuses a volume read that returned `got` bytes where `wanted` were asked
+/// for at `offset`. A read that bypasses the cache is whole or it failed; a
+/// short one is the volume's end, and continuing from a misaligned position
+/// would fail anyway. The Windows reader hands every read's count to this
+/// function, so the reader's one guard against a short read is portable and
+/// tested on every platform, not only where a volume can be opened.
+pub fn check_read(offset: u64, wanted: usize, got: usize) -> Result<(), MftError> {
+    if got == wanted {
+        return Ok(());
+    }
+    Err(MftError::ShortRead {
+        offset,
+        wanted: u64::try_from(wanted).unwrap_or(u64::MAX),
+        got: u64::try_from(got).unwrap_or(u64::MAX),
+    })
+}
+
 /// The scan root's subtree from its volume's master file table, through
 /// `api`: every check in the module docs' order, then
 /// [`crate::volume::read_mft`]. The stats' times run from the first call.
@@ -298,7 +316,7 @@ mod os {
 
     use super::{
         IO_ALIGN, OpenedVolume, RootIdentity, VolumeApi, VolumeInformation, aligned_window,
-        file_reference, open_error, read_volume_with, text_until_nul,
+        check_read, file_reference, open_error, read_volume_with, text_until_nul,
     };
     use crate::volume::{MftError, VOLUME_DATA_BYTES, Volume};
 
@@ -503,16 +521,7 @@ mod os {
                 .file
                 .seek_read(window, offset)
                 .map_err(|e| io_error("ReadFile on the volume", &e))?;
-            // A read that bypasses the cache is whole or it failed; a short
-            // one is the volume's end, and continuing from a misaligned
-            // position would fail anyway.
-            if got != wanted {
-                return Err(MftError::ShortRead {
-                    offset,
-                    wanted: u64::try_from(wanted).unwrap_or(u64::MAX),
-                    got: u64::try_from(got).unwrap_or(u64::MAX),
-                });
-            }
+            check_read(offset, wanted, got)?;
             buf.copy_from_slice(window);
             Ok(())
         }

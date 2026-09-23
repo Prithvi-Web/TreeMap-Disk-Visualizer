@@ -25,8 +25,8 @@ use common::{
 use tm_mft::volume::{MAX_CLUSTER_BYTES, UPCASE_BYTES, VOLUME_DATA_BYTES};
 use tm_mft::win32::{
     DRIVE_NO_ROOT_DIR, DRIVE_REMOTE, DRIVE_UNKNOWN, IO_ALIGN, aligned_window, check_drive_type,
-    check_file_system, check_root, check_same_volume, device_path, file_reference, open_error,
-    root_name, text_until_nul,
+    check_file_system, check_read, check_root, check_same_volume, device_path, file_reference,
+    open_error, root_name, text_until_nul,
 };
 use tm_mft::{
     BuildError, Chunk, ExtentError, Geometry, MAX_CHUNK_BYTES, MftError, MftExtents, OpenedVolume,
@@ -1167,7 +1167,13 @@ fn the_root_is_the_record_and_the_sequence_the_handle_named() -> TestResult {
 }
 
 #[test]
-fn a_short_read_refuses_the_scan() -> TestResult {
+fn an_error_from_the_volume_is_passed_on_unchanged() -> TestResult {
+    // The ShortRead here is the one the test image builds when its bytes run
+    // out, so all this shows is that the reader stops and passes a volume's
+    // error on as it came. What refuses a short read in the product is
+    // `check_read`, tested with the other checks of the Win32 boundary (the
+    // pre-landing review of 23 Sep 2026: this test was named for a guard it
+    // never reached).
     let spec = standard();
     let mut image = spec.image()?;
     image.bytes.truncate(101 * 4096);
@@ -1645,6 +1651,33 @@ fn every_read_lands_in_a_buffer_aligned_for_a_read_past_the_cache() -> TestResul
     assert!(aligned_window(&mut raw, 16, 0).is_none());
     assert!(aligned_window(&mut raw, usize::MAX, IO_ALIGN).is_none());
     Ok(())
+}
+
+#[test]
+fn a_read_that_returns_less_than_it_asked_for_is_refused_with_its_counts() {
+    // The one guard against a short read: the Windows reader hands it every
+    // read's count, and until the pre-landing review of 23 Sep 2026 it sat
+    // inline there, where no test on any platform could reach it.
+    for n in [512, 4096, 131_072, 1 << 20] {
+        assert_eq!(check_read(409_600, n, n), Ok(()), "{n} of {n}");
+    }
+    assert_eq!(
+        check_read(409_600, 131_072, 4096),
+        Err(MftError::ShortRead {
+            offset: 409_600,
+            wanted: 131_072,
+            got: 4096,
+        })
+    );
+    // Past the volume's end nothing comes back at all.
+    assert_eq!(
+        check_read(1 << 40, 65_536, 0),
+        Err(MftError::ShortRead {
+            offset: 1 << 40,
+            wanted: 65_536,
+            got: 0,
+        })
+    );
 }
 
 /// Which arm of `MftError`'s `Display` renders `error` (`NotNtfs` has two).
