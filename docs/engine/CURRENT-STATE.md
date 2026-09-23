@@ -322,7 +322,7 @@ The native engine (`tm-walk`, `getattrlistbulk` on this Mac) against the built-i
 | ci20k | native | Eco | 86,712 entries/s | 230.6 ms | ±23%: **not recorded** | 24.08 | 111.6 MB | 0 |
 | enum200k | native | Eco | 66,767 entries/s | 2,996 ms | ±16.8%: **not recorded** | 27.67 | 193.3 MB | 0 |
 
-The enum200k native Turbo row was re-recorded at `17eb13d` (23 Sep 2026, ~18:20 UTC, load 2.4–2.9, clean tree): the harness's own comparison with `54425de`'s 400,417 entries/s (499.5 ms) says **PASS, 2.9% faster**; its peak RSS reads 179.3 MB against 156.2 MB, one series each, not compared. An attempt at ~17:50 UTC on a busier machine spread 19.4% and was refused.
+The enum200k native Turbo row was re-recorded at `17eb13d` (23 Sep 2026, ~18:20 UTC, load 2.4–2.9, clean tree): the harness's own comparison with `54425de`'s 400,417 entries/s (499.5 ms) says **PASS, 2.9% faster**; its peak RSS reads 179.3 MB against 156.2 MB, one series each, not compared. An attempt at ~17:50 UTC on a busier machine spread 19.4% and was refused. enum200k native **Eco** tried again at `b5e6f4b` (~18:30 UTC, load 2.3–2.5): 66,569 entries/s, ±11.3%, refused like the first (±16.8%): Eco runs at Background QoS on the efficiency cores, where whatever else the Mac is doing moves its runs more than the 5% rule allows.
 
 Governor holds (60 s each, recorded at `b327796`): Eco 24.1 %, Balanced 49.9 %, Turbo 90.0 % of the machine, each within ±5 of its target.
 
