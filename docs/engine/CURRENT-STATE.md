@@ -305,6 +305,36 @@ What the rows say, against the prompt's Section 5 targets on this Tier B machine
 * **Duplicates**: recall 1 and precision 1 by byte comparison on every run; 100–107 CPU seconds per million files (SHA-256 over a 64 KiB head for every same-size candidate), with the corpus data resident in the page cache (1.3 MB read).
 * **Near-duplicates**: the legacy dHash engine **fails the precision bar at every threshold** on the labelled corpus — 0.18 at its default 10, 0.55 at 6 and 4, 0.70 at 2, and 0.98 only at 0 where recall falls to 0.15 — because different gradient-dominated originals collide within 10 bits of dHash and the transitive union-find joins them. Its 7,800 images decode in 21 s (2.7 ms each through sharp's shrink-on-load), so at this image size decoding is not the bottleneck the prompt expects; precision is.
 
+**A correction to every row above** (found 23 September 2026): this harness deleted each measuring child's data directory as soon as it exited, 500 ms before the next measured run, and that deletion slowed the next scan (enum200k: walk 405.7 → 467.2 ms, 13% more kernel CPU; the harness alone A/B'd at 559.7 against 498.6 ms). The rows above read slow by up to that much wherever a run wrote a large app-data file; `3848b8e` removes the directories after the series instead.
+
+### 11.2 Measured by the Phase 3 harness (23 September 2026, this machine, `npm run bench`)
+
+The native engine (`tm-walk`, `getattrlistbulk` on this Mac) against the built-in walker, recorded at `54425de` from a clean tree with the fixed harness (`3661331`, `3848b8e`). Warm cache unless marked; load 2.2–3.6 (7.0 during the last walker enum1m runs); each series' spread is the full range over the median.
+
+| Corpus | Engine | Budget | Rate | Wall (median) | Spread | CPU s per million | Peak RSS | Bytes read |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| enum200k | native | Turbo | **400,417 entries/s** | 499.5 ms | ±3.5% | 8.31 | 156.2 MB | 0 |
+| enum1m | native | Turbo | 91,308 entries/s | 10,952 ms | ±1.6% | 12.88 | 389.8 MB | 2.33 GB (**mixed**) |
+| ci20k | walker | Turbo | 127,456 entries/s | 156.9 ms | ±1.9% | 22.66 | 95.5 MB | 0 |
+| enum200k | walker | Turbo | 131,203 entries/s | 1,524 ms | ±0.9% | 20.09 | 169.0 MB | 0 |
+| enum1m | walker | Turbo | 82,497 entries/s | 12,122 ms | ±1.3% | 36.22 | 366.2 MB | 2.50 GB (**mixed**) |
+| ci20k | native | Turbo | 342,190 entries/s | 58.4 ms | ±22%: **not recorded** | 10.33 | 111.7 MB | 0 |
+| ci20k | native | Eco | 86,712 entries/s | 230.6 ms | ±23%: **not recorded** | 24.08 | 111.6 MB | 0 |
+| enum200k | native | Eco | 66,767 entries/s | 2,996 ms | ±16.8%: **not recorded** | 27.67 | 193.3 MB | 0 |
+
+Governor holds (60 s each, recorded at `b327796`): Eco 24.1 %, Balanced 49.9 %, Turbo 90.0 % of the machine, each within ±5 of its target.
+
+Where one native enum200k Turbo scan's half-second goes (stage diagnostic in a fresh process, after the commits named): the Rust walk ≈ 405 ms, on four workers — this M3's performance cores, where a fixed-count sweep peaked (`52dafce`); noticing that the walk ended ≈ 5 ms (was 19–77 ms at a 100 ms poll, `a51e152`); the ingest into the store 63 → 51 ms measured over repeated ingests in one process (`1934aa3`, `d947961`; a fresh process's first ingest measured 78 ms before them), `finalize` 12 ms, `sumSizes` 2 ms; completion ≈ 1 ms (was ≈ 80 ms, rebuilding the whole tree for the fast-rescan cache, `2a50111`). The walk is at its kernel floor for this design: single-threaded, `examples/attr_cost.rs` measures ≈ 4.6 kernel CPU-s per million entries, 43 % of it opening and closing each directory and the rest the listing call itself; no single attribute costs more than the run-to-run noise, and opening each directory relative to its parent (`openat`) measured −1.9 %, inside its 3–6 % spread.
+
+Against Section 5 on this Tier B machine:
+
+* **Warm Turbo, 400k–700k entries/s: met at its floor** on enum200k (the walk alone runs at ≈ 490k). At 1M entries the tree exceeds the kernel's metadata cache and the label is `mixed`; the native engine is 11 % faster than the walker there, both bound by 2.3–2.5 GB of catalog reads per scan.
+* **Warm Eco, 150k–250k: missed** (67k–87k, and not reproducible to 5 %). Eco runs its workers at Background QoS, which macOS schedules on the efficiency cores.
+* **CPU ≤ 3.0 s per million at Turbo: missed** (8.31). One open plus one listing per directory costs ≈ 4.6 s per million in the kernel before any worker, ingest or store work — the floor of this design, not a tuning gap.
+* **CPU ≤ 2.0 s per million at Eco: missed, and out of reach at Background QoS on Apple silicon.** The same single-threaded walk measured 4.8–5.1 kernel CPU-s per million at default QoS and 27.4–30.4 under `taskpolicy -b`: CPU-seconds on the efficiency cores are not comparable to CPU-seconds on the performance cores, and energy — what Eco is for — needs `sudo powermetrics` to measure. The Eco figure predates this session (`ad975e4`'s ci20k Eco baseline: 25.1).
+* **Cold NVMe, Turbo, 100k–250k: not measured.** A cold run purges with `sudo -n purge`, which this session cannot run.
+* **Correctness:** native and legacy are byte-identical on the equivalence tests on this Mac; the Linux and Windows legs run on CI.
+
 ## 12. This machine's ceilings (measured today)
 
 * `kern.maxvnodes = 251,127`. macOS keeps at most that many vnodes cached, so
