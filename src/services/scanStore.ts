@@ -184,6 +184,36 @@ export interface ScanStore {
 /* --------------------- shared FileNode emission --------------------- */
 
 /**
+ * A finalized store's columns as the native build (tm-store, Phase 4 S2)
+ * hands them over, for `PackedScanStore.adoptColumns`: nodes numbered
+ * breadth-first (`parent[id] < id`, each node's children one consecutive id
+ * range), every per-node column `capacity` rows long so nodes the watcher adds
+ * later fit without a copy, `nameOff` one row longer, and `names` holding
+ * `namesLen` bytes of UTF-8 plus spare room. `ext` indexes `extDict` (0 = none,
+ * 0xffff = the id's text is in `extOverflow`); `container` and `cloudProv` use
+ * the store's own numbering.
+ */
+export interface StoreColumns {
+  n: number;
+  capacity: number;
+  parent: Int32Array;
+  size: Float64Array;
+  mtime: Float64Array;
+  atime: Float64Array | null;
+  flags: Uint16Array;
+  ext: Uint16Array;
+  container: Uint8Array;
+  cloudProv: Uint8Array;
+  nameOff: Uint32Array;
+  names: Uint8Array;
+  namesLen: number;
+  childStart: Uint32Array;
+  childCnt: Uint32Array;
+  extDict: string[];
+  extOverflow: Array<[number, string]>;
+}
+
+/**
  * Every field of one node, gathered for emission. `path` is already
  * reconstructed; children/pruned are appended by the prune walk afterwards.
  */
@@ -1009,6 +1039,86 @@ export class PackedScanStore implements ScanStore {
     this.childStart = childStart;
     this.childCnt = childCnt;
     this.cap = n;
+    this.firstChild = null;
+    this.lastChild = null;
+    this.nextSibling = null;
+    this.finalized = true;
+  }
+
+  /**
+   * Take a finalized tree's columns as this store's own, in place: every typed
+   * array is kept, none copied (a 100M-node tree must not exist twice), and
+   * the store is finalized, so later nodes go through the same growth and
+   * per-parent overflow as after `finalize()`. Only a store holding just its
+   * root — as the scanner makes it before a walk — may adopt, and only
+   * columns that fit together; each check is O(1) or O(overflow), because the
+   * build that made them (tm-store) proves their structure itself.
+   */
+  adoptColumns(cols: StoreColumns): void {
+    if (this.n !== 1 || this.finalized) {
+      throw new Error('PackedScanStore.adoptColumns: only a store holding just its root may adopt columns');
+    }
+    const { n, capacity } = cols;
+    if (!Number.isInteger(n) || n < 1) throw new Error(`PackedScanStore.adoptColumns: n must be at least 1, got ${n}`);
+    if (!Number.isInteger(capacity) || capacity < n) {
+      throw new Error(`PackedScanStore.adoptColumns: capacity ${capacity} is less than the ${n} rows`);
+    }
+    const perNode: Array<[string, { length: number }]> = [
+      ['parent', cols.parent], ['size', cols.size], ['mtime', cols.mtime], ['flags', cols.flags],
+      ['ext', cols.ext], ['container', cols.container], ['cloudProv', cols.cloudProv],
+      ['childStart', cols.childStart], ['childCnt', cols.childCnt],
+    ];
+    if (cols.atime) perNode.push(['atime', cols.atime]);
+    for (const [name, column] of perNode) {
+      if (column.length !== capacity) {
+        throw new Error(`PackedScanStore.adoptColumns: ${name} has ${column.length} rows, not the capacity ${capacity}`);
+      }
+    }
+    if (cols.nameOff.length !== capacity + 1) {
+      throw new Error(`PackedScanStore.adoptColumns: nameOff has ${cols.nameOff.length} rows, not capacity + 1 = ${capacity + 1}`);
+    }
+    if (!Number.isInteger(cols.namesLen) || cols.namesLen < 0 || cols.namesLen > cols.names.length) {
+      throw new Error(`PackedScanStore.adoptColumns: namesLen ${cols.namesLen} does not fit the ${cols.names.length}-byte names buffer`);
+    }
+    if (cols.nameOff[n] !== cols.namesLen) {
+      throw new Error(`PackedScanStore.adoptColumns: nameOff[${n}] is ${cols.nameOff[n]}, not namesLen ${cols.namesLen}`);
+    }
+    if (cols.parent[0] !== -1) throw new Error(`PackedScanStore.adoptColumns: the root's parent is ${cols.parent[0]}, not -1`);
+    if (cols.extDict.length === 0 || cols.extDict[0] !== '' || cols.extDict.length > 0xffff) {
+      throw new Error('PackedScanStore.adoptColumns: extDict must start with the empty "no extension" entry and hold at most 65,535 entries');
+    }
+    const overflow = new Map<number, string>();
+    for (const [id, text] of cols.extOverflow) {
+      if (!Number.isInteger(id) || id < 0 || id >= n || cols.ext[id] !== 0xffff) {
+        throw new Error(`PackedScanStore.adoptColumns: extOverflow names node ${id}, whose ext is not the overflow mark`);
+      }
+      overflow.set(id, text);
+    }
+    this.version++;
+    this.n = n;
+    this.cap = capacity;
+    this.parentArr = cols.parent;
+    this.sizeArr = cols.size;
+    this.mtimeArr = cols.mtime;
+    this.atimeArr = cols.atime;
+    this.flagsArr = cols.flags;
+    this.extArr = cols.ext;
+    this.containerArr = cols.container;
+    this.cloudProvArr = cols.cloudProv;
+    this.nameOff = cols.nameOff;
+    this.nameBytes = cols.names;
+    this.namePoolLen = cols.namesLen;
+    this.childStart = cols.childStart;
+    this.childCnt = cols.childCnt;
+    this.extDict = cols.extDict;
+    // No answer depends on this lookup — an id only ever turns back into its
+    // text — but without it every extension the watcher adds later would take
+    // a second dictionary entry beside the adopted one.
+    this.extLookup = new Map(cols.extDict.map((text, id) => [text, id] as [string, number]));
+    this.extLookup.delete('');
+    this.extOverflow = overflow.size > 0 ? overflow : null;
+    this.logicalMap = new Map();
+    this.cloudIdMap = new Map();
     this.firstChild = null;
     this.lastChild = null;
     this.nextSibling = null;
