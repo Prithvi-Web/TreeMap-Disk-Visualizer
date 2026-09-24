@@ -1,5 +1,7 @@
 # Phase 4 S1 (`tm-store`) — six-lens review, as far as it ran (24 Sep 2026)
 
+**Resolved 24 Sep 2026 (workflow `tm-store-s1-fixes`, run wf_1581a8ae-639):** every CONFIRMED finding below is fixed test-first, each with a mutant proven red (85 in the harness, 4 more after the fix round's own review, which confirmed 6 findings in the fixes and saw them repaired). The UNVERIFIED memory findings are S2's measurements (the plan's S2 task list); the REFUTED ones stand refuted, except that duplicate side-table rows are now refused as a by-product of the strict-order check.
+
 The review workflow `review-tm-store-s1` (run wf_55558a5e-6e9) was interrupted when the session ended, after 93 of 99 agents. Each finding was to be judged by three skeptics; **CONFIRMED** = at least 2 of 3 said real, **REFUTED** = fewer than 2 of 3, **UNVERIFIED** = fewer than 3 votes came back (judge it yourself before acting). Lenses that reported: adversary, contract, equivalence, rust, scale, tests; lenses started: equivalence, rust, tests, contract, scale, adversary.
 
 ## CONFIRMED · high · tests: cloud_candidates can hold walk indices instead of store ids and all tests stay green

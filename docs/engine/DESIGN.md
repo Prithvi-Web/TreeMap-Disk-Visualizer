@@ -78,8 +78,10 @@ native/
     crates/
       tm-walk/                  platform listing (darwin bulk, windows ex-dir-info, linux getdents+statx),
                                 work-stealing walk, refusal accounting, placeholder flags
-      tm-store/                 columnar arena, name interner, mmap spill, BFS finalize, aggregation,
-                                aggregate-only mode
+      tm-store/                 the finalized store in PackedScanStore's own layout, with its BFS ids
+                                (Phase 4 S1); mmap spill and aggregate-only mode to come (S3, S4).
+                                Corrected 24 September 2026: no name interner — the Phase 4 plan's
+                                decision P4-1 withdrew name deduplication (see §6)
       tm-hash/                  BLAKE3 sample + full digests, per-device read scheduling, byte compare
       tm-imghash/               EXIF thumbnail parse, tiny-decode input, pHash/dHash/colour hash, MIH index
       tm-governor/              presets, closed loop, QoS/io-policy/nice per platform, thermal, battery
@@ -248,6 +250,20 @@ names:       one blob, components deduplicated through a hash-set interner durin
 + 0.3 (hard-link table) ≈ **37.5 bytes per entry**, against 49.7 measured for
 `PackedScanStore` today (which stores names without dedup and sizes as
 `Float64`).
+
+**Corrected 24 September 2026 (Phase 4 S1, as built; decision P4-1 of
+`docs/superpowers/plans/2026-09-18-phase4-storage.md`):** the store keeps
+`PackedScanStore`'s layout column for column, not the tightened one above:
+`parent` i32 (−1 at the root); `size`, `mtime` and `atime` f64 (milliseconds,
+rounded as `Math.round` rounds, so no seconds column and no nanosecond side
+table); `flags` u16 with `PackedScanStore`'s ten bits (no refused, vanished or
+withheld bits: refusals are counters); `ext` u16; `container` and `cloudProv`
+u8; `nameOff` u32 over one pool of names, with no deduplication and no varint
+header; and `childStart` / `childCnt` u32 for every node, not only folders. A
+later hard-link name is stored as size 0 with `HardlinkDup`, not in a side
+table. That is 38 bytes per node plus the name bytes, and 8 more when any node
+has an access time: above the 37.5 budgeted here, so §7's first row does not
+hold for it. Phase 4's S2 and S5 measure it.
 
 ### 6.1 Three storage modes
 

@@ -337,6 +337,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tm-store"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "tm-walk",
+]
+
+[[package]]
 name = "tm-walk"
 version = "0.1.0"
 dependencies = [
