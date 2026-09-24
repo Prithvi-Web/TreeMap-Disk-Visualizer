@@ -62,6 +62,11 @@ pub const THERMAL_SERIOUS_SCALE: f64 = 0.5;
 /// How far below the target the share must sit before a worker is added
 /// (share of all cores).
 pub const SHARE_MARGIN: f64 = 0.05;
+/// The machine's busy share (all processes, this one included) at or above
+/// which it counts as full: nearly every core was running something. A share
+/// short of target then is the machine's doing, not the duty's, so the loop
+/// holds its duty and adds no worker (see [`Controller::step`]).
+pub const MACHINE_FULL_SHARE: f64 = 0.95;
 
 /// The machine's thermal pressure, as the OS reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -94,7 +99,8 @@ pub struct Sample {
     /// CPU seconds this process consumed during the tick.
     pub own_cpu_s: f64,
     /// The whole machine's busy share during the tick, when the OS exposes it.
-    /// Carried for the snapshot; the loop holds this process's share, not the machine's.
+    /// The loop holds this process's share, not the machine's; the machine's
+    /// only tells it when a shortfall cannot be closed ([`MACHINE_FULL_SHARE`]).
     pub machine_busy_share: Option<f64>,
     /// The thermal state at the end of the tick.
     pub thermal: Thermal,
@@ -132,6 +138,9 @@ pub struct Controller {
     saturated_ticks: u32,
     last_thermal: Thermal,
     last_interacting: Option<bool>,
+    /// Whether the machine's latest busy share was full. macOS publishes the
+    /// counters about once a second, so a tick without a reading keeps the last.
+    machine_full: bool,
     last: Decision,
 }
 
@@ -153,6 +162,7 @@ impl Controller {
             saturated_ticks: 0,
             last_thermal: Thermal::Unknown,
             last_interacting: None,
+            machine_full: false,
             last: Decision {
                 target_share: target,
                 workers: max,
@@ -192,9 +202,19 @@ impl Controller {
     }
 
     /// Runs one tick of the loop on `sample` and returns the new decision.
+    ///
+    /// A share short of target on a full machine ([`MACHINE_FULL_SHARE`]) holds
+    /// the duty, the integral and the smoothed share where they are: the other work, not the duty,
+    /// is what keeps the share down, and winding up against it only stores a
+    /// burst that lands the moment that work stops (the macOS CI leg of 24 Sep
+    /// 2026 held 21.7% for a 10% target that way). A share over target acts as
+    /// always, full machine or not.
     pub fn step(&mut self, sample: &Sample) -> Decision {
         self.last_thermal = sample.thermal;
         self.last_interacting = sample.interacting;
+        if let Some(machine) = sample.machine_busy_share {
+            self.machine_full = machine.is_finite() && machine >= MACHINE_FULL_SHARE;
+        }
         let share = measured_share(sample, self.cores);
         let (target, paused) = self.scaled_target();
         if paused {
@@ -213,14 +233,30 @@ impl Controller {
             None => share,
             Some(previous) => SHARE_EMA_ALPHA * share + (1.0 - SHARE_EMA_ALPHA) * previous,
         };
-        self.smoothed_share = Some(smoothed);
+        // Held when this tick's own share fell short on a machine with no idle CPU: the
+        // other work left no room. It is this tick's share, not the smoothed one, that
+        // decides: the machine's busy share counts this process too, and a loop coming back
+        // from a pause fills the machine itself while its smoothed share still lags.
+        let held_by_machine = share < target && self.machine_full;
+        // A share the full machine kept down measures the other work, not the duty, so it
+        // is not folded into the smoothed share either: the loop picks up where it left off
+        // when the machine frees up, with no lagging shortfall for the proportional term to
+        // answer with a burst.
+        if !held_by_machine {
+            self.smoothed_share = Some(smoothed);
+        }
         let error = target - smoothed;
-        let duty = (self.integral + KP_PER_TICK * error).clamp(DUTY_MIN, DUTY_MAX);
-        // Anti-windup by clamping: the integral lives in the duty's own range, so it can
-        // neither wind up past full duty nor freeze above the floor while the proportional
-        // term pins the output there (a frozen integral resurfaces as a jump the moment the
-        // error shrinks or a worker change rescales it).
-        self.integral = (self.integral + KI_PER_TICK * error).clamp(DUTY_MIN, DUTY_MAX);
+        let duty = if held_by_machine {
+            self.last.duty
+        } else {
+            let duty = (self.integral + KP_PER_TICK * error).clamp(DUTY_MIN, DUTY_MAX);
+            // Anti-windup by clamping: the integral lives in the duty's own range, so it can
+            // neither wind up past full duty nor freeze above the floor while the proportional
+            // term pins the output there (a frozen integral resurfaces as a jump the moment
+            // the error shrinks or a worker change rescales it).
+            self.integral = (self.integral + KI_PER_TICK * error).clamp(DUTY_MIN, DUTY_MAX);
+            duty
+        };
         let duty = self.rebalance_workers(duty, smoothed, target);
         self.last = Decision {
             target_share: target,
@@ -261,8 +297,10 @@ impl Controller {
         } else {
             0
         };
-        let wants_more =
-            self.workers < max && duty >= WORKER_ADD_DUTY && smoothed < target - SHARE_MARGIN;
+        let wants_more = self.workers < max
+            && duty >= WORKER_ADD_DUTY
+            && smoothed < target - SHARE_MARGIN
+            && !self.machine_full;
         self.saturated_ticks = if wants_more {
             self.saturated_ticks + 1
         } else {

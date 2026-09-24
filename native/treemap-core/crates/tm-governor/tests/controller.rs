@@ -599,3 +599,162 @@ fn recovery_after_a_long_overshoot_is_prompt() {
         controller.decision()
     );
 }
+
+/// One scripted tick of `share` on eight cores, with the machine reading `machine`.
+fn on_eight(share: f64, machine: Option<f64>) -> Sample {
+    Sample {
+        interval_s: TICK_S,
+        own_cpu_s: share * TICK_S * 8.0,
+        machine_busy_share: machine,
+        thermal: Thermal::Nominal,
+        on_battery: None,
+        interacting: None,
+    }
+}
+
+/// Balanced at 25% of eight cores: four workers at the feed-forward duty 0.5, clear of both
+/// worker-change duties.
+fn quarter_of_eight() -> Controller {
+    Controller::new(profile(Preset::Balanced, 8, Some(25)), 8)
+}
+
+#[test]
+fn a_full_machine_does_not_wind_the_duty_up() {
+    // Every core busy with other work: the scan gets nothing, whatever its duty. Raising the
+    // duty then cannot get it more CPU; it only stores up a burst that lands the moment the
+    // other work stops (the macOS CI leg of 24 Sep 2026: a 10% hold measured 21.7% after its
+    // workers had been starved, both at full duty on three cores). So the loop holds its duty.
+    let mut controller = quarter_of_eight();
+    let start = controller.decision();
+    assert!(approx(start.duty, 0.5) && start.workers == 4, "{start:?}");
+    for tick in 0..60 {
+        let held = controller.step(&on_eight(0.0, Some(1.0)));
+        assert!(
+            approx(held.duty, 0.5) && held.workers == 4,
+            "tick {tick}: starved on a full machine, the duty and workers hold: {held:?}"
+        );
+    }
+    // The other work stops: from here the share follows the duty again (the simulated
+    // engine), and the machine has room. The first ticks show whether the loop had wound up:
+    // it must not burst past the target on the way back.
+    let mut engine = SimulatedEngine::new(8);
+    let mut decision = controller.decision();
+    let mut shares = Vec::new();
+    for _ in 0..40 {
+        let (share, sample) = engine.sample(&decision);
+        shares.push(share);
+        decision = controller.step(&Sample {
+            machine_busy_share: Some(share),
+            ..sample
+        });
+    }
+    let burst = shares.iter().take(20).fold(0.0_f64, |a, &b| a.max(b));
+    // Measured: 0.278 at most (the engine's noise is ±0.02); holding only the duty, with the
+    // starved shares folded into the smoothed one, gave 0.377; the loop without the rule
+    // winds up to full duty, 0.5.
+    assert!(
+        burst <= 0.30,
+        "the largest share after release is {burst:.3}, past the 0.25 target: {shares:?}"
+    );
+}
+
+#[test]
+fn without_a_machine_reading_the_loop_still_winds_up() {
+    // Where the OS publishes no machine counters the loop cannot tell starvation from work it
+    // has not been given, and keeps the old rule: a share short of target raises the duty.
+    let mut controller = quarter_of_eight();
+    let mut last = controller.decision();
+    for _ in 0..30 {
+        last = controller.step(&on_eight(0.0, None));
+    }
+    assert!(
+        last.duty >= 0.98,
+        "short of target with no reading, the duty climbs: {last:?}"
+    );
+}
+
+#[test]
+fn a_full_reading_holds_until_a_fresh_one_says_otherwise() {
+    // macOS publishes the machine's counters about once a second, so most ticks carry no
+    // reading: the last one stands until the next.
+    let mut controller = quarter_of_eight();
+    controller.step(&on_eight(0.0, Some(1.0)));
+    for tick in 0..20 {
+        let held = controller.step(&on_eight(0.0, None));
+        assert!(
+            approx(held.duty, 0.5),
+            "tick {tick}: the full reading still stands: {held:?}"
+        );
+    }
+    let mut last = controller.decision();
+    for _ in 0..30 {
+        last = controller.step(&on_eight(0.0, Some(0.2)));
+    }
+    assert!(
+        last.duty >= 0.98,
+        "a fresh reading with room lets the duty climb: {last:?}"
+    );
+}
+
+#[test]
+fn over_target_on_a_full_machine_still_backs_off() {
+    // Holding applies only to a shortfall: a scan over its budget comes down however busy
+    // the machine is.
+    let mut controller = quarter_of_eight();
+    let mut last = controller.decision();
+    for _ in 0..10 {
+        last = controller.step(&on_eight(0.6, Some(1.0)));
+    }
+    assert!(last.duty < 0.3, "over target, the duty falls: {last:?}");
+}
+
+#[test]
+fn a_full_machine_adds_no_worker() {
+    // Eco on eight cores: two workers at duty 1.0. Over target long enough, it sheds one;
+    // starved with room, its duty climbs back to full; then, with the machine full, twenty
+    // more ticks at full duty must not add the worker back — another thread on a full
+    // machine is only more contention.
+    let mut controller = Controller::new(profile(Preset::Eco, 8, None), 8);
+    let mut last = controller.decision();
+    for _ in 0..40 {
+        last = controller.step(&on_eight(0.5, Some(0.6)));
+    }
+    assert_eq!(last.workers, 1, "shed one worker: {last:?}");
+    // Under WORKER_CHANGE_TICKS at full duty, so no worker is added yet.
+    for _ in 0..40 {
+        last = controller.step(&on_eight(0.0, Some(0.2)));
+        if last.duty >= 0.98 {
+            break;
+        }
+    }
+    assert!(
+        last.duty >= 0.98 && last.workers == 1,
+        "back at full duty: {last:?}"
+    );
+    for tick in 0..40 {
+        last = controller.step(&on_eight(0.0, Some(1.0)));
+        assert_eq!(
+            last.workers, 1,
+            "tick {tick}: no worker added on a full machine: {last:?}"
+        );
+    }
+}
+
+#[test]
+fn a_machine_is_full_from_ninety_five_percent() {
+    // MACHINE_FULL_SHARE is the line: at 95% busy the machine has no room for the scan; at
+    // 94% it has a little, and a starved loop may still ask for it.
+    for (machine, holds) in [(0.95, true), (0.94, false)] {
+        let mut controller = quarter_of_eight();
+        let mut last = controller.decision();
+        for _ in 0..10 {
+            last = controller.step(&on_eight(0.0, Some(machine)));
+        }
+        assert_eq!(
+            approx(last.duty, 0.5),
+            holds,
+            "machine {machine}: the duty {} hold: {last:?}",
+            if holds { "must" } else { "must not" }
+        );
+    }
+}
