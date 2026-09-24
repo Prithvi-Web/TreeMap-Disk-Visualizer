@@ -1,0 +1,99 @@
+{
+  "suite": "governor",
+  "corpus": {
+    "name": "scan-hold-eco-enum200k",
+    "params": {
+      "corpus": {
+        "entries": 200000,
+        "fanout": 12,
+        "depth": 8,
+        "flat": 10000,
+        "sizeMedian": 1024,
+        "sizeSigma": 1.2,
+        "sizeMax": 2097152,
+        "duplicateRate": 0,
+        "hardlinkRate": 0.01,
+        "sparseRate": 0.001,
+        "seed": 2
+      },
+      "preset": "eco",
+      "seconds": 60
+    },
+    "dirs": 24000,
+    "files": 176000,
+    "scale": "200k entries: fits this machine's vnode cache (kern.maxvnodes 251,127)"
+  },
+  "engine": "native-scan",
+  "engineDescription": "the app's own native scan of the corpus, started again as each one settles, as the governor's load; the share is the measuring process's own CPU time over the machine's cores, sampled every 100 ms",
+  "entriesUnit": "samples",
+  "machine": {
+    "cpuModel": "Apple M3",
+    "cores": 8,
+    "perfCores": 4,
+    "effCores": 4,
+    "memoryBytes": 17179869184,
+    "platform": "darwin",
+    "arch": "arm64",
+    "osRelease": "27.0.0",
+    "node": "v24.16.0",
+    "commit": "77152a5fe4662b900748070b83d62f33f4323934",
+    "dirty": false,
+    "loadAvg": [
+      2.451171875,
+      3.24560546875,
+      3.02294921875
+    ],
+    "maxVnodes": 251127,
+    "tier": "B",
+    "tierReason": "8 cores and 16.0 GiB: neither the A clause (>= 8 cores and >= 32.0 GiB, or an Apple Pro/Max/Ultra part) nor the C clause (<= 4 cores or <= 8.0 GiB) applies"
+  },
+  "cache": {
+    "state": "unknown",
+    "reason": "the corpus is scanned back to back: the first walk may read it cold, every later one warm"
+  },
+  "budget": {
+    "requested": "eco",
+    "effective": [
+      "eco"
+    ]
+  },
+  "runs": [
+    {
+      "wallMs": 61606.114083,
+      "entries": 612,
+      "cpuSeconds": 106.665544541,
+      "selfCpuSeconds": 106.663449,
+      "childCpuSeconds": 0.002095541,
+      "peakRssBytes": 387039232,
+      "bytesRead": 80855040,
+      "bytesReadReason": "proc_pid_rusage(RUSAGE_INFO_V4).ri_diskio_bytesread via bench/probes/darwin-rusage.c",
+      "persistMs": 0.0025419999947189353,
+      "persistCpuSeconds": 0.002152916999997632,
+      "loadAvg": [
+        2.5234375,
+        3.146484375,
+        2.99951171875
+      ]
+    }
+  ],
+  "summary": {
+    "wallMsMedian": 61606.114083,
+    "entriesPerSecond": 9.934078932092218,
+    "cpuSecondsPerMillion": 174290.10545915033,
+    "peakRssBytes": 387039232,
+    "bytesReadMedian": 80855040,
+    "spreadPct": 25.10355507205318,
+    "resolutionPct": null,
+    "reproducible": true
+  },
+  "correctness": {
+    "ok": true,
+    "notes": [
+      "18 scans of enum200k back to back for 61.6 s (60 s asked; the last scan runs to its end) under Eco: the last half of 612 samples averaged 22.2% of the machine (p95 25.1%, highest 25.7%) against Eco's 25% ceiling and its 5-point band — within budget",
+      "series (every 10th sample, % of the machine): 1.5 12.2 18.2 22.6 22.5 12.9 13.7 24.7 25.1 24.4 24.0 25.0 25.1 24.5 24.3 13.5 13.5 25.0 25.0 24.5 24.9 24.7 14.5 24.6 25.0 24.0 22.2 23.5 13.4 24.7 24.9 24.8 14.2 24.4 24.6 24.6 25.6 24.4 19.8 22.0 24.8 16.0 13.4 24.4 24.9 24.6 24.9 24.8 13.7 24.4 24.6 24.5 23.1 24.7 20.1 13.4 24.7 24.4 12.7 24.7 24.9 20.2"
+    ]
+  },
+  "recordedAt": "2026-09-24T02:42:02.321Z",
+  "commit": "77152a5fe4662b900748070b83d62f33f4323934",
+  "label": "phase3 gate: live scan as the load, at 77152a5, load 2.45"
+}
