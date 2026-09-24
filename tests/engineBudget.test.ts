@@ -45,7 +45,7 @@ import {
   workerCap,
 } from '../src/services/engineBudget';
 import { allScans, cancelScan, createScanRecord, evictExpiredScans, getScan, startScan } from '../src/services/diskScanner';
-import { gduScanIntoStore, runGdu, trackShard } from '../src/services/gduScanner';
+import { gduScanIntoStore, runGdu, trackShard, type ShardControls } from '../src/services/gduScanner';
 import { startScheduler, stopScheduler } from '../src/services/scheduler';
 import { loadMain } from './fixtures/desktop/electronStub';
 import type { ScanResult } from '../src/models/types';
@@ -378,9 +378,8 @@ test('child priority is 10 under Eco, 5 under Balanced, 0 under Turbo', () => {
   applyEngineBudgetSetting({ preset: 'auto', cpuPercent: null });
 });
 
-/** A gdu stand-in: waits, then writes one valid gdu document for the folder it was given. */
 /**
- * A stand-in for gdu that works for about `holdMs` and then writes a
+ * A stand-in for gdu that works for up to `holdMs` and then writes a
  * one-file result. Real gdu is ONE process, so a SIGSTOP freezes all of its
  * work and a SIGKILL ends all of it. The work here is therefore a loop of
  * 10 ms steps: a SIGSTOP stops the loop between steps, and a SIGKILL leaves
@@ -388,6 +387,13 @@ test('child priority is 10 under Eco, 5 under Balanced, 0 under Turbo', () => {
  * the SIGSTOP never reached — on Linux its work finished during the pause
  * (458 ms held of 700) and, killed, it orphaned a `sleep 5` that kept the
  * pipes open past the evictor's two seconds.
+ *
+ * What a test needs to see is written to files beside the output, so it is
+ * waited for, never sampled: `<out>.started` before the first step, one line
+ * in `<out>.ticks` per step, and the loop ends early once `<out>.release`
+ * exists. Sampling for a child `sleep` missed the whole 300 ms of work on a
+ * busy CI runner (the pt-BR Linux leg of 24 Sep 2026: "started no work
+ * within 5000 ms", the pause landing after the stand-in had finished).
  */
 async function fakeGdu(dir: string, holdMs: number): Promise<string> {
   const bin = path.join(dir, 'fake-gdu.sh');
@@ -396,26 +402,37 @@ async function fakeGdu(dir: string, holdMs: number): Promise<string> {
     'out=""',
     'while [ $# -gt 1 ]; do if [ "$1" = "-o" ]; then out="$2"; fi; shift; done',
     'target="$1"',
+    ': > "$out.started"',
     'i=0',
-    `while [ $i -lt ${Math.max(1, Math.ceil(holdMs / 10))} ]; do sleep 0.01; i=$((i + 1)); done`,
+    `while [ $i -lt ${Math.max(1, Math.ceil(holdMs / 10))} ] && [ ! -e "$out.release" ]; do sleep 0.01; echo . >> "$out.ticks"; i=$((i + 1)); done`,
     'printf \'[1,2,{"progname":"gdu","progver":"v5.36.1","timestamp":1},[{"name":"%s","mtime":1},{"name":"a.txt","asize":5,"dsize":4096,"mtime":1}]]\' "$target" > "$out"',
   ].join('\n'), { mode: 0o755 });
   return bin;
 }
 
+/** How long a test waits for a stand-in's file before it calls the stand-in stuck: a hang guard, not a measurement. */
+const STAND_IN_DEADLINE_MS = 60_000;
+
 /**
- * Resolves once the stand-in has a child process, i.e. once its work is
- * under way. A pause must land mid-work to test anything: at spawn it lands
- * before the shell has started, and a stand-in whose work outlives a SIGSTOP
- * then passes by luck — which is how the old one (one `sleep` child) passed on
- * macOS, whose shell starts slowly, and failed on Linux, whose `dash` does not.
+ * Resolves once the stand-in writing `out` has started its work (its
+ * `.started` marker exists). A pause must land mid-work to test anything.
  */
-async function whenWorking(pid: number, limitMs = 5000): Promise<void> {
+async function whenWorking(out: string): Promise<void> {
   const t0 = Date.now();
-  while (spawnSync('pgrep', ['-P', String(pid)], { encoding: 'utf8' }).stdout.trim() === '') {
-    assert.ok(Date.now() - t0 < limitMs, `the stand-in (pid ${pid}) started no work within ${limitMs} ms`);
-    await new Promise((r) => setTimeout(r, 2));
+  while (!fs.existsSync(`${out}.started`)) {
+    assert.ok(Date.now() - t0 < STAND_IN_DEADLINE_MS, `the stand-in for ${out} never started its work`);
+    await new Promise((r) => setTimeout(r, 5));
   }
+}
+
+/** The stand-in's steps so far. */
+function ticksOf(out: string): number {
+  return fs.existsSync(`${out}.ticks`) ? fs.readFileSync(`${out}.ticks`, 'utf8').length : 0;
+}
+
+/** The OS's state letter for `pid` (`T` = stopped), or '' once it has gone. */
+function processState(pid: number): string {
+  return spawnSync('ps', ['-o', 'state=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim();
 }
 
 test('gdu shards are started with os.setPriority(pid, 10) under Eco, through the scanner’s own onSpawn hook', { skip: isWindows && 'the stand-in is a shell script' }, async () => {
@@ -585,32 +602,41 @@ test('a gdu scan is paused by stopping its shard, and on Windows the refusal is 
 
 test('a shard’s controls really stop the process: SIGSTOP shows as a stopped state, and the shard finishes after SIGCONT', { skip: isWindows && 'no SIGSTOP on Windows' }, async () => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'treemap-gdu-stop-'));
-  const bin = await fakeGdu(root, 300);
+  // Work that only the test ends: a pause cannot land after it has finished.
+  const bin = await fakeGdu(root, STAND_IN_DEADLINE_MS);
+  const out = path.join(root, 'shard.json');
+  let pid = 0;
+  let controls: ShardControls | undefined;
   try {
-    const out = path.join(root, 'shard.json');
-    let pid = 0;
-    let stateWhileStopped = '';
-    const t0 = Date.now();
-    await runGdu(bin, root, out, {
-      onSpawn: (child, shard) => {
+    const shard = runGdu(bin, root, out, {
+      onSpawn: (child, shardControls) => {
         pid = child.pid ?? 0;
-        // Paused mid-work, as a user pauses a scan (see whenWorking).
-        void whenWorking(pid).then(() => {
-          shard.pause();
-          setTimeout(() => {
-            const ps = spawnSync('ps', ['-o', 'state=', '-p', String(pid)], { encoding: 'utf8' });
-            stateWhileStopped = ps.stdout.trim();
-            shard.resume();
-          }, 400);
-        });
+        controls = shardControls;
       },
-    });
-    const took = Date.now() - t0;
-    assert.ok(pid > 0);
-    assert.match(stateWhileStopped, /^T/, `the process state while paused should read T (stopped), got "${stateWhileStopped}"`);
-    assert.ok(took >= 650, `the shard was held for the pause: ${took} ms`);
-    assert.ok(fs.existsSync(out), 'and then finished its work');
+    }).then(() => 'finished', (err: Error) => err);
+    await whenWorking(out); // paused mid-work, as a user pauses a scan
+    assert.ok(pid > 0 && controls);
+    controls.pause();
+    const t0 = Date.now();
+    let state = processState(pid);
+    while (!state.startsWith('T') && Date.now() - t0 < STAND_IN_DEADLINE_MS) {
+      await sleep(5);
+      state = processState(pid);
+    }
+    assert.match(state, /^T/, `the process state while paused should read T (stopped), got "${state}"`);
+    // Stopped means no work: not one step while the pause lasts.
+    const before = ticksOf(out);
+    await sleep(400);
+    assert.equal(ticksOf(out), before, 'the stand-in took no step while stopped');
+    assert.match(processState(pid), /^T/, 'and is still stopped');
+    controls.resume();
+    await fsp.writeFile(`${out}.release`, '');
+    const outcome = await Promise.race([shard, sleep(STAND_IN_DEADLINE_MS).then(() => 'still running')]);
+    assert.equal(outcome, 'finished', 'the shard finished after SIGCONT');
+    assert.ok(ticksOf(out) >= before, 'its steps are all there');
+    assert.ok(fs.existsSync(out), 'and then wrote its result');
   } finally {
+    if (pid > 0 && processState(pid) !== '') process.kill(pid, 'SIGKILL'); // a red run must not leave a stopped stand-in behind
     await fsp.rm(root, { recursive: true, force: true });
   }
 });
@@ -635,10 +661,10 @@ test('the six-hour evictor kills a paused gdu shard instead of leaving it stoppe
       },
     }).then(() => 'finished', (err: Error) => err);
     while (!child) await sleep(5);
-    await whenWorking(child.pid ?? 0); // mid-work, as in the pause test above
+    await whenWorking(path.join(root, 'shard.json')); // mid-work, as in the pause test above
     assert.equal(pauseScan(scan).paused, true);
     await sleep(150);
-    const state = spawnSync('ps', ['-o', 'state=', '-p', String(child.pid)], { encoding: 'utf8' }).stdout.trim();
+    const state = processState(child.pid ?? 0);
     assert.match(state, /^T/, `the shard is stopped before the eviction, got "${state}"`);
 
     scan.createdAt = Date.now() - 7 * 60 * 60 * 1000; // past the six-hour hard cap
