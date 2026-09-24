@@ -87,13 +87,15 @@ fn mean(values: &[f64]) -> f64 {
 fn print_report(label: &str, report: &HoldReport, cores: u32) {
     println!(
         "[{label}] cores {cores} target {:.2} mean {:.4} mean_last_half {:.4} p95_abs_error {:.4} \
-         workers_final {} duty_final {:.3} within_band {} samples {} machine_idle_last_half {}",
+         workers_final {} duty_final {:.3} allowed_last_half {:.4} within_band {} samples {} \
+         machine_idle_last_half {}",
         report.target,
         report.mean,
         report.mean_last_half,
         report.p95_abs_error,
         report.workers_final,
         report.duty_final,
+        report.allowed_last_half,
         report.within_band,
         report.samples.len(),
         idle_text(report)
@@ -186,16 +188,18 @@ fn assert_gate(label: &str, report: &HoldReport, cores: u32, seconds: u32) {
         report.within_band,
         "[{label}] the report must agree with the band it computed"
     );
-    // No worker can deliver more of the machine than its duty allows, so the governor's
-    // final duty and worker count must explain the share that was measured. A throttle
-    // that never sleeps ends at the duty floor with one worker while the share stays up.
-    let explained = f64::from(report.workers_final) * report.duty_final / f64::from(cores.max(1));
+    // No worker can deliver more of the machine than its duty allows, so the workers and
+    // duties the governor had in force over the second half must explain the share
+    // measured over the same half. A throttle that never sleeps ends at the duty floor
+    // with one worker while the share stays up. (A final snapshot cannot stand in for the
+    // half: on the CI legs of 24 Sep 2026 the loop cut its duty on the last tick, and 1
+    // worker at 0.352 on 3 cores "explained" 0.117 of a 0.194 share it had allowed.)
     assert!(
-        explained >= report.mean_last_half - DUTY_EXPLAINS_SHARE_SLACK,
-        "[{label}] {} workers at duty {:.3} on {cores} cores explain at most {explained:.3}, \
-         not the {:.3} that was measured: the throttle is not throttling",
-        report.workers_final,
-        report.duty_final,
+        report.allowed_last_half >= report.mean_last_half - DUTY_EXPLAINS_SHARE_SLACK,
+        "[{label}] the workers and duties in force over the second half allowed at most \
+         {:.3} of {cores} cores, not the {:.3} that was measured: the throttle is not \
+         throttling",
+        report.allowed_last_half,
         report.mean_last_half
     );
 }

@@ -162,6 +162,13 @@ pub struct HoldReport {
     pub workers_final: u32,
     /// The governor's duty when the hold ended.
     pub duty_final: f64,
+    /// The most of the machine the governor's own decisions allowed over the second
+    /// half: the mean, over its samples, of the workers in force times the duty,
+    /// over the cores. No worker runs more than its duty, so the measured share can
+    /// only pass this by the ledger's bounded credit. A single final snapshot could
+    /// not stand in for it: a loop that cut its duty on the last tick made a CI run
+    /// look as though the throttle had let the share run past the duty (24 Sep 2026).
+    pub allowed_last_half: f64,
     /// The share of the whole machine that sat idle over the second half, from the
     /// busy shares the OS published then (see [`machine_idle_last_half`]); `None`
     /// when it published none or exposes none. A hold under its target on a
@@ -185,6 +192,7 @@ pub fn hold(governor: &Governor, seconds: f64, sampler: &mut dyn CpuSampler) -> 
     let count = sample_count(seconds);
     let mut samples = Vec::with_capacity(count);
     let mut machine_busy = Vec::with_capacity(count);
+    let mut allowed = Vec::with_capacity(count);
     let mut last_cpu = sampler.own_cpu_seconds();
     let mut last_at = Instant::now();
     let mut next = last_at + HOLD_SAMPLE_PERIOD;
@@ -198,13 +206,31 @@ pub fn hold(governor: &Governor, seconds: f64, sampler: &mut dyn CpuSampler) -> 
         last_at = now;
         samples.push(share);
         machine_busy.push(sampler.machine_busy_share());
+        let decision = governor.snapshot();
+        allowed.push(allowed_share(
+            decision.workers,
+            threads,
+            decision.duty,
+            cores,
+        ));
     }
     load.stop();
     let closing = governor.snapshot();
     HoldReport {
         machine_idle_last_half: machine_idle_last_half(&machine_busy),
-        ..summarise(target, samples, closing.workers, closing.duty)
+        ..summarise(target, samples, &allowed, closing.workers, closing.duty)
     }
+}
+
+/// The share of all cores the governor's decision allows the load: the workers in
+/// force (its limit, at most the threads started) times the duty, over the cores.
+fn allowed_share(limit: u32, threads: u32, duty: f64, cores: u32) -> f64 {
+    let duty = if duty.is_finite() {
+        duty.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    f64::from(limit.min(threads)) * duty / f64::from(cores.max(1))
 }
 
 /// Samples in `seconds` of holding; a NaN or negative duration means none.
@@ -239,9 +265,16 @@ fn percentile_abs_error(samples: &[f64], target: f64) -> f64 {
     errors.get(rank.saturating_sub(1)).copied().unwrap_or(0.0)
 }
 
-fn summarise(target: f64, samples: Vec<f64>, workers_final: u32, duty_final: f64) -> HoldReport {
+fn summarise(
+    target: f64,
+    samples: Vec<f64>,
+    allowed: &[f64],
+    workers_final: u32,
+    duty_final: f64,
+) -> HoldReport {
     let mean_all = mean(samples.iter());
     let mean_last_half = mean(samples.iter().skip(samples.len() / 2));
+    let allowed_last_half = mean(allowed.iter().skip(allowed.len() / 2));
     let p95_abs_error = percentile_abs_error(&samples, target);
     HoldReport {
         target,
@@ -252,6 +285,7 @@ fn summarise(target: f64, samples: Vec<f64>, workers_final: u32, duty_final: f64
         within_band: (mean_last_half - target).abs() <= HOLD_BAND,
         workers_final,
         duty_final,
+        allowed_last_half,
         machine_idle_last_half: None,
     }
 }
@@ -270,5 +304,35 @@ pub fn machine_idle_last_half(busy: &[Option<f64>]) -> Option<f64> {
         None
     } else {
         Some((1.0 - mean(published.iter())).clamp(0.0, 1.0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{allowed_share, summarise};
+
+    #[test]
+    fn the_allowed_share_is_the_second_half_s_mean_not_the_last_value() {
+        // The second half here averages 0.3; its last value is 0.2. The gate compares the
+        // measured half with this mean, so a report that carried the last value would
+        // call a throttle that held its duty a throttle that did not.
+        let allowed = [0.9, 0.9, 0.9, 0.9, 0.4, 0.2, 0.4, 0.2];
+        let report = summarise(0.25, vec![0.25; 8], &allowed, 1, 0.1);
+        assert!((report.allowed_last_half - 0.3).abs() < 1e-12, "{report:?}");
+        assert!((summarise(0.25, Vec::new(), &[], 1, 0.1).allowed_last_half).abs() < 1e-12);
+    }
+
+    #[test]
+    fn the_allowed_share_counts_the_workers_in_force_at_their_duty() {
+        // Four workers allowed but three started: three run. The duty is clamped into
+        // 0..=1, and a duty that is not a number allows everything rather than nothing.
+        assert!((allowed_share(4, 3, 0.5, 6) - 0.25).abs() < 1e-12);
+        assert!((allowed_share(2, 8, 0.5, 4) - 0.25).abs() < 1e-12);
+        assert!((allowed_share(2, 2, 1.5, 4) - 0.5).abs() < 1e-12);
+        assert!((allowed_share(2, 2, f64::NAN, 4) - 0.5).abs() < 1e-12);
+        assert!(
+            (allowed_share(1, 1, 0.5, 0) - 0.5).abs() < 1e-12,
+            "no cores counts as one"
+        );
     }
 }

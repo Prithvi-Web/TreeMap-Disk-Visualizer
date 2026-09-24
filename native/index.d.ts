@@ -110,6 +110,8 @@ export interface NativeHoldReport {
   withinBand: boolean;
   workersFinal: number;
   dutyFinal: number;
+  /** The most of the machine the governor's own decisions allowed over the second half: the mean, over its samples, of the workers in force times the duty, over the cores. The measured share passes it only by the ledger's bounded credit. */
+  allowedLastHalf: number;
   /** The share of the whole machine that sat idle over the second half, from the busy shares the OS published then; null when it published none. A hold under its target on a machine with no idle CPU measured the machine, not the governor. */
   machineIdleLastHalf: number | null;
 }
@@ -170,6 +172,41 @@ export interface ScanStartOptions {
   maxWorkers?: number;
   /** Bytes per worker listing buffer; omitted or 0 is the crate's default (256 KiB). */
   bufferBytes?: number;
+  /**
+   * List a scripted tree instead of the disk (tm-walk's `SyntheticLister`):
+   * nothing is created, opened or read, and `root` must lie inside the app's
+   * synthetic temp folder, `<temp>/TreeMap-synthetic/`, where `<temp>` is
+   * Rust's `std::env::temp_dir()` (on Windows TMP, then TEMP, then
+   * USERPROFILE) or its resolved path. Omitted or null lists the disk.
+   */
+  synthetic?: SyntheticSource | null;
+}
+
+/**
+ * A synthetic tree: one seed lists one tree at any worker count. Every field
+ * but `entries` defaults to the developer shape of the Phase 4 design (§S.8).
+ * Shares cross to Rust as whole parts per million, `sizeSigma` as whole
+ * thousandths.
+ */
+export interface SyntheticSource {
+  /** Entries under the root, as the walk counts them (the root is not one); at most 4,294,967,294. */
+  entries: number;
+  /** Names, sizes, times and hard-link pairs are drawn from it; the shape is not. Default 0. */
+  seed?: number;
+  /** The most subfolders one folder holds. Default 16. */
+  fanOut?: number;
+  /** Folder levels below the root, fewer only when there are fewer folders; at most 256. Default 12. */
+  depth?: number;
+  /** The share of entries that are folders, 0 to 1, rounded down to whole folders. Default 0.15. */
+  folderShare?: number;
+  /** Bytes in every name, at most 255; refused when too short to number the entries. Default 18. */
+  nameLength?: number;
+  /** The median file size in bytes (sizes are log-normal); at most 2^53. Default 4096. */
+  sizeMedian?: number;
+  /** The spread of the sizes' natural log, 0 to 10. Default 2. */
+  sizeSigma?: number;
+  /** The share of files that are one of a hard-linked pair in two folders, 0 to 1, rounded down to whole pairs. Default 0.01. */
+  linkShare?: number;
 }
 
 /** What `scanPoll()` reports: the atomics the walk keeps, read without blocking. */
@@ -263,6 +300,10 @@ export function scanProbe(root: string): NativeProbe;
  * Throws, in plain English, when the root is not a directory or cannot be
  * read (prefixed with Node's errno spelling, e.g. `ENOENT: …`), when this
  * platform has no native listing yet, or when `opts` has the wrong shape.
+ * With `opts.synthetic` it also throws for a root outside the app's synthetic
+ * temp folder and for a tree that cannot be built (folders that do not fit
+ * the fan-out and depth, names too short to number the entries); such a walk
+ * reports `fastPath: 'unavailable'`, since no platform listing ran.
  */
 export function scanStart(root: string, opts: ScanStartOptions): number;
 

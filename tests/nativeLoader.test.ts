@@ -6,6 +6,10 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import type { TestContext } from 'node:test';
 import type * as NativeCore from '../native/index';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-nativeLoader-data-');
+
 import { loadNative, nativeCandidates, resetNativeForTests } from '../src/services/scan/native';
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')) as { nativeVersion: string };
@@ -134,7 +138,7 @@ const SMOKE_BAND = 0.1;
 const DUTY_MIN = 0.05;
 const MECHANISM_NAMES = ['battery', 'interaction', 'ioPolicy', 'machineCpu', 'priority', 'qos', 'thermal'];
 const THERMAL_STATES = ['nominal', 'fair', 'serious', 'critical', 'unknown'];
-const HOLD_REPORT_KEYS = ['dutyFinal', 'machineIdleLastHalf', 'mean', 'meanLastHalf', 'p95AbsError', 'samples', 'target', 'withinBand', 'workersFinal'];
+const HOLD_REPORT_KEYS = ['allowedLastHalf', 'dutyFinal', 'machineIdleLastHalf', 'mean', 'meanLastHalf', 'p95AbsError', 'samples', 'target', 'withinBand', 'workersFinal'];
 
 type Built = { path: string; viaScript: boolean } | { skip: string } | { failed: string };
 let built: Built | null = null;
@@ -309,6 +313,7 @@ test(`governorHold(${SMOKE_PERCENT}, ${SMOKE_SECONDS}) measures about twenty sam
   assert.equal(typeof report.withinBand, 'boolean');
   assert.ok(Number.isInteger(report.workersFinal) && report.workersFinal >= 1, `workersFinal ${report.workersFinal}`);
   assert.ok(report.dutyFinal >= DUTY_MIN && report.dutyFinal <= 1, `dutyFinal ${report.dutyFinal}`);
+  assert.ok(Number.isFinite(report.allowedLastHalf) && report.allowedLastHalf > 0 && report.allowedLastHalf <= 1, `allowedLastHalf ${report.allowedLastHalf} is a share the running load was allowed`);
   const idle = report.machineIdleLastHalf;
   assert.ok(idle === null || (Number.isFinite(idle) && idle >= 0 && idle <= 1), `machineIdleLastHalf ${idle} is a share of the machine, or null where the OS published none`);
   const after = governorSnapshot();
