@@ -30,7 +30,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import { performance } from 'node:perf_hooks';
-import { startScan, cancelAllScans } from '../../src/services/diskScanner';
+import { startScan, cancelAllScans, evictExpiredScans } from '../../src/services/diskScanner';
 import { findGduBinary, type FindOptions } from '../../src/services/gduScanner';
 import { nativeScanModule } from '../../src/services/scan/nativeEngine';
 import { getDuplicateJob } from '../../src/services/duplicateFinder';
@@ -48,7 +48,7 @@ export type EngineChoice = 'auto' | 'native' | 'gdu' | 'walker';
 export const ENGINE_CHOICES: readonly EngineChoice[] = ['auto', 'native', 'gdu', 'walker'];
 
 export interface WorkerJob {
-  suite: 'enumerate' | 'duplicates' | 'neardup';
+  suite: 'enumerate' | 'duplicates' | 'neardup' | 'scanhold';
   root: string;
   engine: EngineChoice;
   outFile: string;
@@ -65,6 +65,8 @@ export interface WorkerJob {
   threshold?: number;
   /** What the near-duplicate suite counts (the corpus's image count). */
   entries?: number;
+  /** How long a scan hold scans for, in seconds. */
+  seconds?: number;
 }
 
 export interface WorkerSuccess {
@@ -83,6 +85,8 @@ export interface WorkerSuccess {
   truncated?: boolean;
   /** The usage probe this process ran (`null` where none ran) and how many times it compiled one — 0 when the parent's hand-off took. */
   probe: { location: string | null; builds: number };
+  /** A scan hold's series: this process's share of the machine in percent, one sample every `sampleMs`, and the scans it ran. */
+  hold?: { samples: number[]; scans: number; sampleMs: number };
 }
 export interface WorkerFailure { ok: false; error: string }
 /** What a pass measured; the entry point adds the probe it measured with. */
@@ -92,6 +96,12 @@ export type WorkerResult = WorkerSuccess | WorkerFailure;
 /** Tight enough that the wall clock carries no visible polling floor (the app's own waiter polls at 250 ms). */
 const POLL_MS = 1;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+/** A scan hold samples this process's share at the governor's own tick. */
+const HOLD_SAMPLE_MS = 100;
+/** Far enough ahead that every settled scan's retention has passed: a hold keeps none of its scans in memory. */
+const EVICT_ALL_SETTLED_MS = 24 * 60 * 60 * 1000;
+const MICROSECONDS_PER_SECOND = 1_000_000;
+const PERCENT = 100;
 
 async function settledScan(scan: ScanResult): Promise<ScanResult> {
   while (scan.status === 'running') await sleep(POLL_MS);
@@ -162,6 +172,8 @@ async function main(job: WorkerJob): Promise<MeasuredPass> {
   if (job.preset) await applyPreset(job.preset);
   const budgetOf = (scan: ScanResult): ScanBudget => ({ ...scan.budget, ...job.pretendBudget });
 
+  if (job.suite === 'scanhold') return scanHold(job, budgetOf);
+
   if (job.suite === 'enumerate') {
     const timed = await measured((scan: ScanResult) => scan.scanned, async () => settledScan(await startScan(job.root)));
     const scan = timed.value;
@@ -215,17 +227,64 @@ async function main(job: WorkerJob): Promise<MeasuredPass> {
   };
 }
 
+/**
+ * Phase 3's governor gate with a live scan as the load: the app's own scan,
+ * started and settled again and again for `job.seconds`, under the preset
+ * the job set, while this process samples its own CPU share of the machine
+ * (all threads: the native walk runs on this process's). Each scan's
+ * persistence settles before the next starts, and each settled scan is
+ * dropped from memory at once, as its retention would drop it.
+ */
+async function scanHold(job: WorkerJob, budgetOf: (scan: ScanResult) => ScanBudget): Promise<MeasuredPass> {
+  const cores = os.cpus().length;
+  const samples: number[] = [];
+  let scans = 0;
+  // Held in an object: an assignment inside the timed callback is invisible to the narrowing below.
+  const last: { value: { scan: ScanResult; counts: WorkerSuccess['counts'] } | null } = { value: null };
+  const timed = await measured(() => samples.length, async () => {
+    let cpuMark = process.cpuUsage();
+    let wallMark = performance.now();
+    const sampler = setInterval(() => {
+      const now = performance.now();
+      const cpu = process.cpuUsage(cpuMark);
+      const wallSeconds = (now - wallMark) / 1000;
+      if (wallSeconds > 0) samples.push(((cpu.user + cpu.system) / MICROSECONDS_PER_SECOND / (wallSeconds * cores)) * PERCENT);
+      cpuMark = process.cpuUsage();
+      wallMark = now;
+    }, HOLD_SAMPLE_MS);
+    try {
+      const endAt = performance.now() + (job.seconds ?? 0) * 1000;
+      while (performance.now() < endAt) {
+        const scan = await settledScan(await startScan(job.root));
+        scans++;
+        last.value = { scan, counts: counts(scan) };
+        await settled();
+        evictExpiredScans(Date.now() + EVICT_ALL_SETTLED_MS);
+      }
+    } finally {
+      clearInterval(sampler);
+    }
+    return samples;
+  });
+  if (!last.value) throw new Error('measureWorker: no scan completed during the hold');
+  const { scan, counts: lastCounts } = last.value;
+  return { ok: true, engine: job.pretendEngine ?? scan.engine ?? 'unset', counts: lastCounts, run: timed.run, budget: budgetOf(scan), hold: { samples, scans, sampleMs: HOLD_SAMPLE_MS } };
+}
+
 function readJob(file: string | undefined): WorkerJob {
   if (!file) throw new Error('measureWorker: a job file is required');
   const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (typeof parsed !== 'object' || parsed === null) throw new Error('measureWorker: the job is not an object');
   const j = parsed as Record<string, unknown>;
-  if (!['enumerate', 'duplicates', 'neardup'].includes(String(j.suite))) throw new Error(`measureWorker: unknown suite ${String(j.suite)}`);
+  if (!['enumerate', 'duplicates', 'neardup', 'scanhold'].includes(String(j.suite))) throw new Error(`measureWorker: unknown suite ${String(j.suite)}`);
   if (typeof j.root !== 'string' || typeof j.outFile !== 'string') throw new Error('measureWorker: root and outFile are required');
   if (!(ENGINE_CHOICES as readonly string[]).includes(String(j.engine))) throw new Error(`measureWorker: unknown engine ${String(j.engine)}`);
   if (j.preset !== undefined && !(SCAN_PRESETS as readonly unknown[]).includes(j.preset)) throw new Error(`measureWorker: unknown preset ${String(j.preset)}`);
-  if (j.suite === 'enumerate' && j.preset === undefined) {
-    throw new Error("measureWorker: the enumerate suite scans under a named preset (eco, balanced or turbo), never the app's Automatic default, which no number can name");
+  if ((j.suite === 'enumerate' || j.suite === 'scanhold') && j.preset === undefined) {
+    throw new Error(`measureWorker: the ${String(j.suite)} suite scans under a named preset (eco, balanced or turbo), never the app's Automatic default, which no number can name`);
+  }
+  if (j.suite === 'scanhold' && !(Number.isInteger(j.seconds) && Number(j.seconds) >= 1)) {
+    throw new Error(`measureWorker: a scan hold needs whole seconds of at least 1, got ${String(j.seconds)}`);
   }
   return parsed as WorkerJob;
 }

@@ -33,6 +33,8 @@ const USAGE = [
   'npm run bench -- neardup [--originals=600] [--runs=1] [--threshold=10] [--cache=warm|cold] [--record] [--label=...]',
   'npm run bench -- all [--small] [--runs=3] [--originals=600] [--record] [--label=...]',
   'npm run bench -- governor [--preset=eco|balanced|turbo] [--seconds=60] [--record] [--label=...]',
+  'npm run bench -- scanhold [--corpus=enum200k|enum1m|ci20k|smoke|dupes100k] [--preset=eco|balanced|turbo] [--seconds=60] [--record] [--label=...]',
+  '      the governor with a live scan as its load: native scans of the corpus back to back, the budget held from below (at most the ceiling and its band)',
   'npm run bench -- compare <result.json> <baseline.json>      exit 0 PASS · 1 FAIL · 2 INCONCLUSIVE · 3 NOT COMPARABLE',
   'npm run bench -- clean                                       removes every corpus and probe under the temp directory',
 ];
@@ -64,6 +66,7 @@ const OPTIONS_BY_COMMAND: Record<string, readonly string[]> = {
   neardup: ['originals', 'runs', 'threshold', 'cache', 'label'],
   all: ['runs', 'originals', 'label'],
   governor: ['preset', 'seconds', 'label'],
+  scanhold: ['corpus', 'preset', 'seconds', 'label'],
   compare: [],
   clean: [],
   help: [],
@@ -221,6 +224,16 @@ async function main(): Promise<void> {
       const seconds = intOption(p, 'seconds', DEFAULT_HOLD_SECONDS, HOLD_SECONDS_RANGE.min, HOLD_SECONDS_RANGE.max);
       process.stdout.write(`\ngovernor: holding the ${preset} ceiling for ${seconds} s on this machine, load ${(os.loadavg()[0] ?? 0).toFixed(2)}\n`);
       finish(await governor.runGovernor({ preset, seconds, label }));
+      break;
+    }
+    case 'scanhold': {
+      const governor = await import('./lib/governorSuite');
+      const corpusName = oneOf(p, 'corpus', 'enum200k', CORPUS_NAMES);
+      const preset = oneOf(p, 'preset', DEFAULT_PRESET, governor.GOVERNOR_PRESETS);
+      const seconds = intOption(p, 'seconds', DEFAULT_HOLD_SECONDS, HOLD_SECONDS_RANGE.min, HOLD_SECONDS_RANGE.max);
+      const manifest = await corpus.ensureCorpus(corpusName, corpus.CORPORA[corpusName]);
+      process.stdout.write(`\nscanhold: native scans of ${corpusName} back to back under ${preset} for ${seconds} s on this machine, load ${(os.loadavg()[0] ?? 0).toFixed(2)}\n`);
+      finish(await suites.runScanHold({ manifest, corpusName, preset, seconds, label }));
       break;
     }
     default:

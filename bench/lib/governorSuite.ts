@@ -243,3 +243,43 @@ function peakRssBytes(): number {
 function loadAvg(): number[] | null {
   return process.platform === 'win32' ? null : os.loadavg();
 }
+
+/** What a scan hold's samples say against a preset's ceiling. */
+export interface ScanHoldVerdict {
+  samples: number;
+  mean: number;
+  meanLastHalf: number;
+  p95: number;
+  max: number;
+  ceiling: number;
+  limit: number;
+  withinBudget: boolean;
+}
+
+/**
+ * A scan hold's samples (percent of the machine) against a preset's ceiling.
+ * A live scan waits on the disk and may never reach its ceiling, so where the
+ * synthetic hold must sit AT the ceiling, a scan must stay UNDER it: the last
+ * half of the samples — the first half is the governor settling, as the
+ * synthetic hold's rule has it — may average at most the ceiling plus
+ * GOVERNOR_BAND_POINTS. The p95 is by nearest rank. No samples is no evidence.
+ */
+export function scanHoldVerdict(samples: readonly number[], ceilingPercent: number): ScanHoldVerdict {
+  const n = samples.length;
+  const limit = ceilingPercent + GOVERNOR_BAND_POINTS;
+  if (n === 0) return { samples: 0, mean: 0, meanLastHalf: 0, p95: 0, max: 0, ceiling: ceilingPercent, limit, withinBudget: false };
+  const sum = (xs: readonly number[]): number => xs.reduce((a, b) => a + b, 0);
+  const lastHalf = samples.slice(Math.floor(n / 2));
+  const meanLastHalf = sum(lastHalf) / lastHalf.length;
+  const sorted = [...samples].sort((a, b) => a - b);
+  return {
+    samples: n,
+    mean: sum(samples) / n,
+    meanLastHalf,
+    p95: sorted[Math.max(0, Math.ceil(0.95 * n) - 1)],
+    max: sorted[n - 1],
+    ceiling: ceilingPercent,
+    limit,
+    withinBudget: meanLastHalf <= limit,
+  };
+}

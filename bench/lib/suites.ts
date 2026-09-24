@@ -24,6 +24,7 @@ import { describeMachine, type MachineRecord } from './machine';
 import type { EngineChoice, WorkerJob, WorkerResult, WorkerSuccess } from './measureWorker';
 import { summarize, type BenchBudget, type BenchResult, type BenchRun, type EntriesUnit, type RequestedBudget, type ScanPreset, type SuiteName } from './report';
 import { PROBE_BINARY_ENV, PROBE_FAILURE_ENV, probeHandoff } from './rusage';
+import { GOVERNOR_BAND_POINTS, PRESET_CEILING_PERCENT, SERIES_STRIDE, scanHoldVerdict, type ScanHoldVerdict } from './governorSuite';
 import { checkDuplicatesAgainstManifest, checkRunsAgree, checkScanAgainstManifest, type ScanCounts } from './verify';
 
 export type { EngineChoice } from './measureWorker';
@@ -344,4 +345,72 @@ export async function runNearDup(opts: NearDupOptions): Promise<BenchResult> {
   const result = build('neardup', 'dhash-pairwise', 'images', { name: opts.corpusName, params: opts.manifest.params, images, scale: `${images.toLocaleString('en-US')} images — the prompt's corpus is 200k` }, machine, s, { ok, notes }, opts.label);
   // The threshold decides which pairs join a cluster: a condition of every comparison (report.ts).
   return { ...result, threshold: opts.threshold };
+}
+
+export interface ScanHoldOptions {
+  manifest: CorpusManifest;
+  corpusName: string;
+  preset: ScanPreset;
+  seconds: number;
+  label: string;
+  /** Test hook: removes the hold's child data directory once it is over. */
+  removeDirs?: (dirs: string[]) => void;
+}
+
+const SCAN_HOLD_ENGINE = 'native-scan';
+const SCAN_HOLD_DESCRIPTION = "the app's own native scan of the corpus, started again as each one settles, as the governor's load; the share is the measuring process's own CPU time over the machine's cores, sampled every 100 ms";
+const PRESET_NAME: Readonly<Record<ScanPreset, string>> = { eco: 'Eco', balanced: 'Balanced', turbo: 'Turbo' };
+
+/**
+ * Phase 3's governor gate with a live scan as the load (the Phase 3 plan's
+ * "the three 60 s holds with a live scan as the load"): one measuring process
+ * scans the corpus with the native engine again and again for `seconds` under
+ * the preset, sampling its own share of the machine; the verdict is
+ * `scanHoldVerdict` — a scan must stay under its ceiling (and the band), not
+ * reach it. A governor result like the synthetic hold's, under its own engine
+ * id, so the two are never compared with each other.
+ */
+export async function runScanHold(opts: ScanHoldOptions): Promise<BenchResult> {
+  const machine = await describeMachine();
+  const probe = probeHandoff();
+  const dataDirs: string[] = [];
+  try {
+    const result = await runChild({ suite: 'scanhold', root: opts.manifest.root, engine: 'native', preset: opts.preset, seconds: opts.seconds }, probe, dataDirs);
+    assertProbeHandedOver(probe, result);
+    assertRequestedEngine('native', result.engine);
+    assertRequestedBudget(opts.preset, result.budget);
+    if (!result.hold) throw new Error('the measuring process reported no hold series');
+    const verdict = scanHoldVerdict(result.hold.samples, PRESET_CEILING_PERCENT[opts.preset]);
+    const run: BenchRun = { ...result.run, entries: result.hold.samples.length };
+    const entries = opts.manifest.files + opts.manifest.dirs;
+    return {
+      suite: 'governor',
+      corpus: { name: `scan-hold-${opts.preset}-${opts.corpusName}`, params: { corpus: opts.manifest.params, preset: opts.preset, seconds: opts.seconds }, dirs: opts.manifest.dirs, files: opts.manifest.files, scale: scaleOf(entries, machine.maxVnodes) },
+      engine: SCAN_HOLD_ENGINE,
+      engineDescription: SCAN_HOLD_DESCRIPTION,
+      entriesUnit: 'samples',
+      machine,
+      cache: { state: 'unknown', reason: 'the corpus is scanned back to back: the first walk may read it cold, every later one warm' },
+      budget: { requested: opts.preset, effective: [result.budget.effective] },
+      runs: [run],
+      // One run is the whole series, as for the synthetic hold: its spread is the p95 share, and it is reproducible when the budget held.
+      summary: { ...summarize([run]), spreadPct: verdict.p95, reproducible: verdict.withinBudget },
+      correctness: { ok: verdict.withinBudget, notes: scanHoldNotes(opts, result.hold, verdict, run.wallMs) },
+      recordedAt: new Date().toISOString(),
+      commit: machine.commit,
+      label: opts.label,
+    };
+  } finally {
+    (opts.removeDirs ?? removeChildDirs)(dataDirs);
+  }
+}
+
+/** The hold ran `wallMs`: at least the seconds asked, since the scan under way then runs to its end. */
+function scanHoldNotes(opts: ScanHoldOptions, hold: NonNullable<WorkerSuccess['hold']>, v: ScanHoldVerdict, wallMs: number): string[] {
+  const preset = PRESET_NAME[opts.preset];
+  const scans = `${hold.scans} scan${hold.scans === 1 ? '' : 's'}`;
+  return [
+    `${scans} of ${opts.corpusName} back to back for ${(wallMs / 1000).toFixed(1)} s (${opts.seconds} s asked; the last scan runs to its end) under ${preset}: the last half of ${v.samples} samples averaged ${v.meanLastHalf.toFixed(1)}% of the machine (p95 ${v.p95.toFixed(1)}%, highest ${v.max.toFixed(1)}%) against ${preset}'s ${v.ceiling}% ceiling and its ${GOVERNOR_BAND_POINTS}-point band — ${v.withinBudget ? 'within' : 'over'} budget`,
+    `series (every ${SERIES_STRIDE}th sample, % of the machine): ${hold.samples.filter((_, i) => i % SERIES_STRIDE === 0).map((s) => s.toFixed(1)).join(' ')}`,
+  ];
 }
