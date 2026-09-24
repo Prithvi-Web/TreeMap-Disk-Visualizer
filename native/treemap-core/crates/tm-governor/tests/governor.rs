@@ -8,9 +8,14 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tm_governor::governor::{THROTTLE_SLEEP_CAP, throttle_sleep};
+use tm_governor::controller::{DUTY_MAX, DUTY_MIN, WORKER_CHANGE_TICKS};
+use tm_governor::governor::{
+    THROTTLE_CREDIT_CAP, THROTTLE_MIN_SLEEP, THROTTLE_SLEEP_CAP, ledger_charge, ledger_settle,
+    throttle_sleep,
+};
 use tm_governor::{
-    Budget, FakeSampler, FakeSignals, Governor, Preset, Signals, SyntheticLoad, Thermal,
+    Budget, FakeSampler, FakeSignals, Governor, Preset, Signals, Snapshot, SyntheticLoad, Thermal,
+    profile,
 };
 
 /// Held by every test in this file, so they run one at a time. These tests measure sleeps
@@ -30,10 +35,16 @@ const CORES: u32 = 8;
 const TICK: Duration = Duration::from_millis(100);
 /// How long a condition may take to appear before a test gives up.
 const SETTLE: Duration = Duration::from_secs(3);
+/// Ticks, beyond a worker change's, the loop may take to settle after a step in the share.
+const SETTLE_TICKS: u64 = 10;
+/// How long a test waits for ticks before it calls the tick thread stopped: a guard
+/// against hanging, not a measurement.
+const TICK_THREAD_ALIVE: Duration = Duration::from_secs(60);
 /// Polling interval for `wait_until`.
 const POLL: Duration = Duration::from_millis(10);
-/// CPU seconds per 100 ms tick that read as half of eight cores.
-const HALF_MACHINE_CPU_PER_TICK_S: f64 = 0.4;
+/// CPU seconds per tick that read as the whole machine even for a tick a busy machine ran
+/// minutes late: the share is clamped to one.
+const SATURATED_CPU_PER_TICK_S: f64 = 1_000.0;
 /// CPU seconds per 100 ms tick that read as a fifth of eight cores.
 const FIFTH_MACHINE_CPU_PER_TICK_S: f64 = 0.16;
 /// The unit of work between two `throttle()` calls in the cadence measurement.
@@ -134,6 +145,11 @@ fn throttle_sleeps_in_proportion_to_the_duty() {
     const UNITS: u32 = 50;
     let _serial = serial();
     let spin_total = SPIN * UNITS;
+    // The ledger keeps back less than one minimum sleep per call, which is all that
+    // separates what the duty law owes from what is slept, credit aside.
+    let ledger_slack = (THROTTLE_MIN_SLEEP * (UNITS + 1)).as_secs_f64();
+    // A charge is rounded to the nanosecond.
+    let rounding = f64::from(UNITS) * 1e-9;
     let mut sampler = idle_sampler();
     let governor = Governor::start(
         budget(Preset::Eco),
@@ -144,49 +160,165 @@ fn throttle_sleeps_in_proportion_to_the_duty() {
     assert!(wait_until(SETTLE, || governor.snapshot().ticks >= 3));
     let full = governor.snapshot();
     assert!(
-        full.duty > 0.95,
+        approx(full.duty, DUTY_MAX),
         "an idle process is not throttled: {full:?}"
     );
+    // What throttle() did is counted, not read off the wall clock: Eco puts this thread at
+    // the lowest priority, where a busy machine stretches the work and even the calls (the
+    // macOS CI leg of 24 Sep 2026: 262 ms for 100 ms of work at full duty; with every core of
+    // this Mac busy, 0.5 to 2.4 s, and single calls of up to 89 ms that slept nothing).
     governor.throttle();
+    let before = governor.throttle_totals();
     let unthrottled = cadence(&governor, UNITS);
+    let full_duty = governor.throttle_totals().since(before);
     assert!(
-        unthrottled < spin_total * 2,
-        "at full duty throttle() never sleeps: {unthrottled:?} for {spin_total:?} of work"
+        full_duty.worked >= spin_total,
+        "throttle() saw the work between its calls: {:?} of {spin_total:?}",
+        full_duty.worked
+    );
+    assert_eq!(
+        (full_duty.owed, full_duty.requested, full_duty.slept),
+        (Duration::ZERO, Duration::ZERO, Duration::ZERO),
+        "at full duty throttle() owes and sleeps nothing ({UNITS} units took {unthrottled:?})"
     );
 
-    // The process now reads as half the machine, twice Eco's quarter: the loop must cut the
-    // duty all the way to the floor, where it stays while the measurement runs.
-    sampler.push_cpu(HALF_MACHINE_CPU_PER_TICK_S);
+    // The process now reads as more than the whole machine however late a busy machine runs
+    // a tick (half of it, as this test once read, is under Eco's quarter for any tick run
+    // twice as late), so the loop cuts the duty to the floor; after WORKER_CHANGE_TICKS
+    // ticks there it drops to Eco's fewest workers, which doubles the duty for one tick
+    // (measured: that tick inside the measurement left 1.816 s owed where 1.900 s was due).
+    // At the floor with the fewest workers nothing can move, and the measurement runs.
+    sampler.push_cpu(SATURATED_CPU_PER_TICK_S);
+    // Counted in ticks, not seconds: a busy machine runs the ticks late, and every late
+    // tick is time the wall clock would charge to the loop.
+    let fewest = profile(Preset::Eco, CORES, None).min_workers;
+    let settled = |s: &Snapshot| approx(s.duty, DUTY_MIN) && s.workers == fewest;
+    let pushed_at = governor.snapshot().ticks;
+    let within_ticks = u64::from(WORKER_CHANGE_TICKS) + SETTLE_TICKS;
     assert!(
-        wait_until(SETTLE, || governor.snapshot().duty <= 0.06),
-        "the duty falls to the floor when the share is over target: {:?}",
+        wait_until(TICK_THREAD_ALIVE, || {
+            let now = governor.snapshot();
+            settled(&now) || now.ticks >= pushed_at + within_ticks
+        }),
+        "the tick thread stopped ticking: {:?}",
         governor.snapshot()
+    );
+    let now = governor.snapshot();
+    assert!(
+        settled(&now),
+        "within {within_ticks} ticks of the share going over target the duty falls to the \
+         floor and the workers to the fewest: {now:?}"
     );
     governor.throttle();
     let duty = governor.snapshot().duty;
+    let owed_per_work = (1.0 - duty) / duty;
+    let before = governor.throttle_totals();
     let throttled = cadence(&governor, UNITS);
-    let ideal = spin_total.as_secs_f64() / duty;
-    let ratio = throttled.as_secs_f64() / ideal;
+    let at_the_floor = governor.throttle_totals().since(before);
+    let after_the_floor = governor.snapshot();
     assert!(
-        throttled >= unthrottled * 3,
-        "throttled {throttled:?} should be well over unthrottled {unthrottled:?} at duty {duty}"
+        settled(&after_the_floor),
+        "the loop stayed settled through the measurement: {after_the_floor:?}"
     );
+    let worked = at_the_floor.worked.as_secs_f64();
+    let owed = at_the_floor.owed.as_secs_f64();
+    let requested = at_the_floor.requested.as_secs_f64();
+    let slept = at_the_floor.slept.as_secs_f64();
+    // The duty law, exactly: every unit was at least SPIN of work, and a unit a busy
+    // machine stretched owes more, up to the cap on one call.
+    let owed_for_the_spins = spin_total.as_secs_f64() * owed_per_work;
     assert!(
-        (0.6..=1.6).contains(&ratio),
-        "{UNITS} units of {SPIN:?} at duty {duty:.3} should take about {ideal:.3}s, took {throttled:?} (ratio {ratio:.2})"
+        owed >= owed_for_the_spins - rounding && owed <= worked * owed_per_work + rounding,
+        "at duty {duty:.3}, {worked:.3}s of work (at least {spin_total:?}) owes between \
+         {owed_for_the_spins:.3}s and {:.3}s of sleep, not {owed:.3}s",
+        worked * owed_per_work
+    );
+    // It never asks the OS for more than was owed: the ledger only takes away (a sleep that
+    // ran long leaves a credit). What the OS then does to a sleep is the OS's.
+    assert!(
+        requested <= owed + THROTTLE_MIN_SLEEP.as_secs_f64(),
+        "at duty {duty:.3} throttle() owed {owed:.3}s of sleep and asked for {requested:.3}s"
+    );
+    // And what is owed is slept — an OS that sleeps longer than asked only adds — less the
+    // credit an over-long sleep just before may carry in (measured: 162 ms short, after the
+    // second-long sleep that follows the drop to the floor).
+    let carried_credit = THROTTLE_CREDIT_CAP.as_secs_f64();
+    assert!(
+        slept >= owed - carried_credit - ledger_slack,
+        "at duty {duty:.3} throttle() owed {owed:.3}s of sleep and slept {slept:.3}s \
+         ({UNITS} units took {throttled:?})"
     );
 
-    // One call never sleeps past the cap, however long the unit of work was: uncapped, a
-    // 1.2 s unit at duty 0.05 would owe 22.8 s. The OS may still overrun the capped second.
+    // One call never owes more than the cap, however long the unit of work was: uncapped,
+    // a 1.2 s unit at duty 0.05 would owe 22.8 s. It sleeps that second, less any credit;
+    // the OS may overrun it.
     thread::sleep(THROTTLE_CAP + Duration::from_millis(200));
-    let started = Instant::now();
+    let before = governor.throttle_totals();
     governor.throttle();
-    let slept = started.elapsed();
+    let long_unit = governor.throttle_totals().since(before);
+    assert_eq!(
+        long_unit.owed, THROTTLE_SLEEP_CAP,
+        "a long unit of work ({:?}) at duty {duty} owes the capped second",
+        long_unit.worked
+    );
     assert!(
-        slept >= Duration::from_millis(500) && slept <= THROTTLE_CAP * 3,
-        "a long unit of work at duty {duty} sleeps about the capped second, not {slept:?}"
+        long_unit.requested <= THROTTLE_SLEEP_CAP
+            && long_unit.requested >= THROTTLE_SLEEP_CAP.saturating_sub(THROTTLE_CREDIT_CAP),
+        "one call asks for the capped second, less any credit, and never more: {:?}",
+        long_unit.requested
+    );
+    assert!(
+        long_unit.slept >= THROTTLE_SLEEP_CAP.saturating_sub(THROTTLE_CREDIT_CAP),
+        "a long unit of work at duty {duty} sleeps the capped second, less any credit, not {:?}",
+        long_unit.slept
     );
     governor.stop();
+}
+
+#[test]
+fn the_ledger_sleeps_once_a_minimum_is_owed_and_forgives_credit_past_its_cap() {
+    let ms = |m: i64| m * 1_000_000;
+    let micros = |m: i64| m * 1_000;
+    assert_eq!(
+        ledger_charge(0, Duration::from_micros(500)),
+        (micros(500), Duration::ZERO),
+        "less than the minimum is saved up"
+    );
+    assert_eq!(
+        ledger_charge(micros(500), Duration::from_micros(600)),
+        (micros(1_100), Duration::from_micros(1_100)),
+        "once it reaches the minimum, all of it is slept"
+    );
+    assert_eq!(
+        ledger_charge(-ms(30), Duration::from_millis(38)),
+        (ms(8), Duration::from_millis(8)),
+        "credit is spent before anything is slept"
+    );
+    assert_eq!(
+        ledger_charge(-ms(50), Duration::from_millis(38)),
+        (-ms(12), Duration::ZERO),
+        "a credit larger than the charge skips the sleep"
+    );
+    assert_eq!(
+        ledger_charge(ms(900), Duration::from_millis(500)),
+        (ms(1_000), THROTTLE_SLEEP_CAP),
+        "the balance never passes the cap"
+    );
+    assert_eq!(
+        ledger_settle(ms(38), Duration::from_millis(38)),
+        0,
+        "an exact sleep"
+    );
+    assert_eq!(
+        ledger_settle(ms(38), Duration::from_millis(40)),
+        -ms(2),
+        "a sleep that ran long leaves a credit"
+    );
+    assert_eq!(
+        ledger_settle(ms(38), Duration::from_millis(500)),
+        -ms(250),
+        "credit past its cap is forgiven"
+    );
 }
 
 #[test]

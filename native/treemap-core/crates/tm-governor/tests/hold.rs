@@ -10,6 +10,9 @@
 //!
 //! Every run prints the series it measured; nothing in the report is assumed.
 
+use std::thread;
+use std::time::{Duration, Instant};
+
 use tm_governor::{Budget, FakeSignals, Governor, HoldReport, Preset, hold, platform_sampler};
 
 /// The band the mean of the last half must sit in, either side of the target.
@@ -24,6 +27,16 @@ const SHORT_HOLD_PERCENT: u8 = 19;
 const GATE_HOLD_S: u32 = 60;
 /// Samples printed per row of the full series.
 const SERIES_ROW: usize = 20;
+/// Holds the default test may run. A hold under the band on a machine that had no idle
+/// CPU over its last half measured the machine, not the governor, and is measured again
+/// (the Windows CI leg of 24 Sep 2026 held 11% of a 19% target with both of its workers
+/// at full duty); one that ends that way every time fails, saying so.
+const HOLD_ATTEMPTS: u32 = 3;
+/// How long the default test waits, before holding again, for the machine to have room:
+/// on that CI leg the busy spell outlasted one hold and failed the next test binary too.
+const ROOM_DEADLINE: Duration = Duration::from_secs(60);
+/// How often it asks how busy the machine is while it waits.
+const ROOM_POLL: Duration = Duration::from_millis(250);
 /// Slack on the law that a worker cannot deliver more share than its duty allows: the band's
 /// own half-width. The ledger's bounded credit adds under one point over the window, and the
 /// loop only ever errs the other way (a worker that gets less CPU than its duty allows makes
@@ -74,7 +87,7 @@ fn mean(values: &[f64]) -> f64 {
 fn print_report(label: &str, report: &HoldReport, cores: u32) {
     println!(
         "[{label}] cores {cores} target {:.2} mean {:.4} mean_last_half {:.4} p95_abs_error {:.4} \
-         workers_final {} duty_final {:.3} within_band {} samples {}",
+         workers_final {} duty_final {:.3} within_band {} samples {} machine_idle_last_half {}",
         report.target,
         report.mean,
         report.mean_last_half,
@@ -82,7 +95,8 @@ fn print_report(label: &str, report: &HoldReport, cores: u32) {
         report.workers_final,
         report.duty_final,
         report.within_band,
-        report.samples.len()
+        report.samples.len(),
+        idle_text(report)
     );
     let per_second: Vec<String> = report
         .samples
@@ -95,6 +109,48 @@ fn print_report(label: &str, report: &HoldReport, cores: u32) {
         let starts_at_s = (row * SERIES_ROW) as f64 / SAMPLES_PER_SECOND as f64;
         println!("[{label}] t={starts_at_s:>5.1}s {}", cells.join(" "));
     }
+}
+
+fn idle_text(report: &HoldReport) -> String {
+    report
+        .machine_idle_last_half
+        .map_or_else(|| "unknown".to_owned(), |idle| format!("{idle:.4}"))
+}
+
+/// Whether a hold under the band had nothing to hold with: over its last half the whole
+/// machine sat idle for no more than the band, so there was no CPU the governor left untaken.
+fn machine_had_nothing_to_give(report: &HoldReport) -> bool {
+    report.mean_last_half < report.target - BAND
+        && report
+            .machine_idle_last_half
+            .is_some_and(|idle| idle <= BAND)
+}
+
+/// Waits until the whole machine sits idle for more than `needed` of its time, so a hold
+/// could reach its target without taking anything from anyone, or until the deadline;
+/// says which.
+fn wait_for_room(label: &str, needed: f64) {
+    let mut sampler = platform_sampler();
+    let started = Instant::now();
+    let mut last_idle = None;
+    while started.elapsed() < ROOM_DEADLINE {
+        thread::sleep(ROOM_POLL);
+        if let Some(busy) = sampler.machine_busy_share() {
+            let idle = 1.0 - busy;
+            last_idle = Some(idle);
+            if idle > needed {
+                println!(
+                    "[{label}] the machine was idle for {idle:.3} of its time after {:.1} s of waiting",
+                    started.elapsed().as_secs_f64()
+                );
+                return;
+            }
+        }
+    }
+    println!(
+        "[{label}] the machine was never idle for more than {needed:.2} in {ROOM_DEADLINE:?} \
+         (last reading {last_idle:?}); holding anyway"
+    );
 }
 
 fn assert_gate(label: &str, report: &HoldReport, cores: u32, seconds: u32) {
@@ -113,9 +169,18 @@ fn assert_gate(label: &str, report: &HoldReport, cores: u32, seconds: u32) {
     );
     assert!(
         (report.mean_last_half - report.target).abs() <= BAND,
-        "[{label}] mean of the last half {:.4} is outside ±{BAND} of {:.2}",
+        "[{label}] mean of the last half {:.4} is outside ±{BAND} of {:.2}{}",
         report.mean_last_half,
-        report.target
+        report.target,
+        if machine_had_nothing_to_give(report) {
+            format!(
+                " — on a machine idle for {} of its time, so this measured the machine: \
+                 nothing was left for the governor to take",
+                idle_text(report)
+            )
+        } else {
+            format!(" (the machine was idle for {} of it)", idle_text(report))
+        }
     );
     assert!(
         report.within_band,
@@ -138,18 +203,30 @@ fn assert_gate(label: &str, report: &HoldReport, cores: u32, seconds: u32) {
 #[test]
 fn holds_nineteen_percent_of_this_machine_for_ten_seconds() {
     let label = "balanced@19%";
-    let (report, cores) = run_gate(
-        label,
-        Preset::Balanced,
-        Some(SHORT_HOLD_PERCENT),
-        SHORT_HOLD_S,
-    );
-    assert!(
-        (report.target - f64::from(SHORT_HOLD_PERCENT) / 100.0).abs() < 1e-9,
-        "the target is the override: {}",
-        report.target
-    );
-    assert_gate(label, &report, cores, SHORT_HOLD_S);
+    for attempt in 1..=HOLD_ATTEMPTS {
+        let (report, cores) = run_gate(
+            label,
+            Preset::Balanced,
+            Some(SHORT_HOLD_PERCENT),
+            SHORT_HOLD_S,
+        );
+        assert!(
+            (report.target - f64::from(SHORT_HOLD_PERCENT) / 100.0).abs() < 1e-9,
+            "the target is the override: {}",
+            report.target
+        );
+        if attempt < HOLD_ATTEMPTS && machine_had_nothing_to_give(&report) {
+            println!(
+                "[{label}] attempt {attempt} of {HOLD_ATTEMPTS}: the machine was idle for {} of \
+                 the last half, so the hold measured the machine; holding again once it has room",
+                idle_text(&report)
+            );
+            wait_for_room(label, report.target + BAND);
+            continue;
+        }
+        assert_gate(label, &report, cores, SHORT_HOLD_S);
+        return;
+    }
 }
 
 #[test]

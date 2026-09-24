@@ -124,6 +124,13 @@ impl Governor {
 
 pub struct HoldReport { pub target: f64, pub samples: Vec<f64>, pub mean: f64, pub mean_last_half: f64, pub p95_abs_error: f64, pub within_band: bool /* |mean_last_half − target| ≤ 0.05 */, pub workers_final: u32, pub duty_final: f64 }
 pub fn hold(governor: &Governor, seconds: f64, sampler: &mut dyn CpuSampler) -> HoldReport;   // spins `worker_limit()` threads that call throttle(); samples the share every 100 ms independently of the governor's own sampler
+// Amended 24 Sep 2026, after three governor tests failed CI by reading the wall clock:
+// HoldReport gains `machine_idle_last_half: Option<f64>` (the whole machine's idle share over
+// the second half; a hold under target on a machine with no idle CPU measured the machine),
+// Governor gains `throttle_totals() -> ThrottleTotals { worked, owed, requested, slept }`
+// (this thread's, counted where they happen; `since(earlier)` for a span), and the sleep
+// ledger's two steps are pure and public: `ledger_charge(ledger_ns, owed)`,
+// `ledger_settle(ledger_ns, slept)`.
 ```
 
 ```ts

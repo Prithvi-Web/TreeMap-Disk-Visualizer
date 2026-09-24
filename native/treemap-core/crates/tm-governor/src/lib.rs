@@ -22,7 +22,7 @@ pub mod signals;
 
 pub use controller::{Controller, Decision, Sample, Thermal};
 pub use enforce::{Capabilities, EnforceReport, Mechanism, apply_to_current_thread, capabilities};
-pub use governor::{Governor, Snapshot};
+pub use governor::{Governor, Snapshot, ThrottleTotals};
 pub use loadgen::{HoldReport, SyntheticLoad, hold};
 pub use preset::{Budget, IoClass, Preset, PresetProfile, QosClass, profile};
 pub use sample::{CpuSampler, FakeSampler, platform_sampler};

@@ -35,6 +35,15 @@ const EXPECTED_BUSY_SHARE: f64 = 1000.0 / 1700.0;
 const MACHINE_SHARE_DEADLINE: Duration = Duration::from_millis(2500);
 /// How often the live test asks again while waiting.
 const MACHINE_SHARE_POLL: Duration = Duration::from_millis(10);
+/// The CPU time the live test spins for, as the sampler reports it.
+const SPIN_CPU_S: f64 = 0.010;
+/// One stretch of spinning between two readings of the sampler.
+const SPIN_STEP: Duration = Duration::from_millis(5);
+/// How long the live test may spin before a sampler that never grows fails it.
+const SPIN_DEADLINE: Duration = Duration::from_secs(10);
+/// The CPU time an OS may charge late, per core: Windows charges it in whole
+/// 15.6 ms clock ticks.
+const CHARGE_GRANULARITY_S: f64 = 0.016;
 
 /// Burn CPU on the calling thread for `wall` without sleeping.
 fn spin_for(wall: Duration) {
@@ -313,16 +322,26 @@ fn the_platform_sampler_reports_this_machines_cores_and_advances() {
         "cores must be what std sees"
     );
 
+    // Spin until the sampler shows the CPU time, however long the machine keeps this thread
+    // waiting: a spin is wall time, and a busy machine can give it none (the Windows CI leg
+    // of 24 Sep 2026: a 50 ms spin read 0.046875 -> 0.046875).
     let before = sampler.own_cpu_seconds();
-    spin_for(Duration::from_millis(50));
-    let after = sampler.own_cpu_seconds();
+    let spun_from = Instant::now();
+    let mut after = before;
+    while after - before < SPIN_CPU_S && spun_from.elapsed() < SPIN_DEADLINE {
+        spin_for(SPIN_STEP);
+        after = sampler.own_cpu_seconds();
+    }
+    let spun = spun_from.elapsed().as_secs_f64();
     assert!(
-        after > before,
-        "own CPU must grow after a spin: {before} -> {after}"
+        after - before >= SPIN_CPU_S,
+        "own CPU must grow while this thread spins: {before} -> {after} after {spun:.3} s"
     );
+    // Seconds, not a larger unit: no process uses more than every core for the whole time.
+    let most = f64::from(expected_cores) * (spun + CHARGE_GRANULARITY_S);
     assert!(
-        after - before >= 0.010,
-        "a 50 ms spin must show at least 10 ms of CPU even on a busy machine, saw {}",
+        after - before <= most,
+        "{:.3} CPU seconds in {spun:.3} s on {expected_cores} cores is more than the machine has",
         after - before
     );
 

@@ -148,14 +148,44 @@ impl PauseState {
     }
 }
 
+/// What `throttle()` has seen and done on one thread for one governor, counted where it
+/// happens: the wall clock cannot tell a sleep from a thread the OS left waiting.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ThrottleTotals {
+    /// The work it owed sleep for: from the end of each call to the start of the next.
+    pub worked: Duration,
+    /// The sleep the duty law charged that work, one call's charge capped at
+    /// [`THROTTLE_SLEEP_CAP`] ([`throttle_sleep`]).
+    pub owed: Duration,
+    /// The sleeps it asked the OS for: what was owed, less the credit a sleep that ran
+    /// long left — never more than was owed.
+    pub requested: Duration,
+    /// The sleeps as long as they actually lasted.
+    pub slept: Duration,
+}
+
+impl ThrottleTotals {
+    /// What happened between an `earlier` reading and this one.
+    #[must_use]
+    pub fn since(self, earlier: Self) -> Self {
+        Self {
+            worked: self.worked.saturating_sub(earlier.worked),
+            owed: self.owed.saturating_sub(earlier.owed),
+            requested: self.requested.saturating_sub(earlier.requested),
+            slept: self.slept.saturating_sub(earlier.slept),
+        }
+    }
+}
+
 /// Per-thread throttle bookkeeping: which governor, when the last call ended,
-/// which profile generation this thread has applied, and the sleep ledger.
+/// which profile generation this thread has applied, the sleep ledger, and the totals.
 struct ThrottleState {
     governor_id: u64,
     last_call_ended: Instant,
     applied_generation: u64,
     /// Sleep owed (positive) or credit from sleeps that overran (negative), in nanoseconds.
     ledger_ns: i64,
+    totals: ThrottleTotals,
 }
 
 thread_local! {
@@ -276,6 +306,7 @@ impl Governor {
                         last_call_ended: Instant::now(),
                         applied_generation: generation,
                         ledger_ns: 0,
+                        totals: ThrottleTotals::default(),
                     });
                     (None, true)
                 }
@@ -291,13 +322,22 @@ impl Governor {
             return;
         }
         if let Some(work) = work {
-            sleep_from_ledger(throttle_sleep(work, inner.duty()));
+            sleep_from_ledger(work, throttle_sleep(work, inner.duty()));
         }
         THROTTLE.with(|cell| {
             if let Some(state) = cell.borrow_mut().as_mut() {
                 state.last_call_ended = Instant::now();
             }
         });
+    }
+
+    /// What `throttle()` has seen and done on the calling thread for this governor; all
+    /// zero on a thread that has not called it. For diagnostics and tests.
+    pub fn throttle_totals(&self) -> ThrottleTotals {
+        THROTTLE.with(|cell| match cell.borrow().as_ref() {
+            Some(state) if state.governor_id == self.inner.id => state.totals,
+            _ => ThrottleTotals::default(),
+        })
     }
 
     /// How many handles to this governor exist (this one included): each
@@ -513,34 +553,57 @@ pub fn throttle_sleep(work: Duration, duty: f64) -> Duration {
 /// [`THROTTLE_MIN_SLEEP`], and counts the time actually slept. A sleep that overruns (macOS
 /// stretches a Utility thread's 3 ms sleep to about 17 ms and a Background thread's to about
 /// 160 ms; Windows rounds up to its 15.6 ms timer) leaves a credit that skips the following
-/// sleeps, so the duty holds on average whatever the OS does to one sleep. The ledger is
-/// bounded by [`THROTTLE_SLEEP_CAP`] above and [`THROTTLE_CREDIT_CAP`] below.
-fn sleep_from_ledger(owed: Duration) {
-    let cap = nanos(THROTTLE_SLEEP_CAP);
-    let credit_cap = nanos(THROTTLE_CREDIT_CAP);
+/// sleeps, so the duty holds on average whatever the OS does to one sleep. The ledger's two
+/// steps are [`ledger_charge`] and [`ledger_settle`].
+fn sleep_from_ledger(work: Duration, owed: Duration) {
     let due = THROTTLE.with(|cell| {
         let mut slot = cell.borrow_mut();
         let Some(state) = slot.as_mut() else {
             return Duration::ZERO;
         };
-        state.ledger_ns = state.ledger_ns.saturating_add(nanos(owed)).min(cap);
-        if state.ledger_ns >= nanos(THROTTLE_MIN_SLEEP) {
-            duration(state.ledger_ns)
-        } else {
-            Duration::ZERO
-        }
+        state.totals.worked = state.totals.worked.saturating_add(work);
+        state.totals.owed = state.totals.owed.saturating_add(owed);
+        let (ledger_ns, due) = ledger_charge(state.ledger_ns, owed);
+        state.ledger_ns = ledger_ns;
+        state.totals.requested = state.totals.requested.saturating_add(due);
+        due
     });
     if due.is_zero() {
         return;
     }
     let started = Instant::now();
     thread::sleep(due);
-    let slept = nanos(started.elapsed());
+    let lasted = started.elapsed();
     THROTTLE.with(|cell| {
         if let Some(state) = cell.borrow_mut().as_mut() {
-            state.ledger_ns = state.ledger_ns.saturating_sub(slept).max(-credit_cap);
+            state.ledger_ns = ledger_settle(state.ledger_ns, lasted);
+            state.totals.slept = state.totals.slept.saturating_add(lasted);
         }
     });
+}
+
+/// The ledger (nanoseconds: sleep owed, or credit when negative) after a call is charged
+/// `owed`, and what to sleep now: all of it once it reaches [`THROTTLE_MIN_SLEEP`] (a
+/// wakeup costs more than a shorter sleep is worth), nothing before. The balance never
+/// passes [`THROTTLE_SLEEP_CAP`].
+pub fn ledger_charge(ledger_ns: i64, owed: Duration) -> (i64, Duration) {
+    let ledger_ns = ledger_ns
+        .saturating_add(nanos(owed))
+        .min(nanos(THROTTLE_SLEEP_CAP));
+    if ledger_ns >= nanos(THROTTLE_MIN_SLEEP) {
+        (ledger_ns, duration(ledger_ns))
+    } else {
+        (ledger_ns, Duration::ZERO)
+    }
+}
+
+/// The ledger after a sleep that lasted `slept`: a sleep that ran long leaves a credit,
+/// at most [`THROTTLE_CREDIT_CAP`] — past that it is forgiven, and the loop makes up the
+/// small shortfall that causes.
+pub fn ledger_settle(ledger_ns: i64, slept: Duration) -> i64 {
+    ledger_ns
+        .saturating_sub(nanos(slept))
+        .max(-nanos(THROTTLE_CREDIT_CAP))
 }
 
 fn nanos(duration: Duration) -> i64 {

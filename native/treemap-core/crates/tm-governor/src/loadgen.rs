@@ -144,6 +144,11 @@ pub struct HoldReport {
     pub workers_final: u32,
     /// The governor's duty when the hold ended.
     pub duty_final: f64,
+    /// The share of the whole machine that sat idle over the second half, from the
+    /// busy shares the OS published then (see [`machine_idle_last_half`]); `None`
+    /// when it published none or exposes none. A hold under its target on a
+    /// machine with no idle CPU measured the machine, not the governor.
+    pub machine_idle_last_half: Option<f64>,
 }
 
 /// Runs a synthetic load on `governor` for `seconds` and measures the share
@@ -161,6 +166,7 @@ pub fn hold(governor: &Governor, seconds: f64, sampler: &mut dyn CpuSampler) -> 
 
     let count = sample_count(seconds);
     let mut samples = Vec::with_capacity(count);
+    let mut machine_busy = Vec::with_capacity(count);
     let mut last_cpu = sampler.own_cpu_seconds();
     let mut last_at = Instant::now();
     let mut next = last_at + HOLD_SAMPLE_PERIOD;
@@ -173,10 +179,14 @@ pub fn hold(governor: &Governor, seconds: f64, sampler: &mut dyn CpuSampler) -> 
         last_cpu = cpu;
         last_at = now;
         samples.push(share);
+        machine_busy.push(sampler.machine_busy_share());
     }
     load.stop();
     let closing = governor.snapshot();
-    summarise(target, samples, closing.workers, closing.duty)
+    HoldReport {
+        machine_idle_last_half: machine_idle_last_half(&machine_busy),
+        ..summarise(target, samples, closing.workers, closing.duty)
+    }
 }
 
 /// Samples in `seconds` of holding; a NaN or negative duration means none.
@@ -224,5 +234,23 @@ fn summarise(target: f64, samples: Vec<f64>, workers_final: u32, duty_final: f64
         within_band: (mean_last_half - target).abs() <= HOLD_BAND,
         workers_final,
         duty_final,
+        machine_idle_last_half: None,
+    }
+}
+
+/// The idle share of the whole machine over the second half of a hold: one
+/// minus the mean of the busy shares published at those samples. A sample the
+/// OS published nothing for (macOS publishes about once a second) and a reading
+/// that is not a number count for nothing; `None` when no reading is left.
+pub fn machine_idle_last_half(busy: &[Option<f64>]) -> Option<f64> {
+    let published: Vec<f64> = busy
+        .iter()
+        .skip(busy.len() / 2)
+        .filter_map(|reading| reading.filter(|share| share.is_finite()))
+        .collect();
+    if published.is_empty() {
+        None
+    } else {
+        Some((1.0 - mean(published.iter())).clamp(0.0, 1.0))
     }
 }

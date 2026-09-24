@@ -110,6 +110,8 @@ export interface NativeHoldReport {
   withinBand: boolean;
   workersFinal: number;
   dutyFinal: number;
+  /** The share of the whole machine that sat idle over the second half, from the busy shares the OS published then; null when it published none. A hold under its target on a machine with no idle CPU measured the machine, not the governor. */
+  machineIdleLastHalf: number | null;
 }
 
 /** The crate's version; must equal `package.json`'s `nativeVersion` for the loader to accept the module. */
