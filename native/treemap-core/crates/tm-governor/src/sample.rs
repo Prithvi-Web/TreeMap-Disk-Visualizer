@@ -8,6 +8,7 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
+use std::time::Instant;
 
 /// Reads CPU time. The governor's tick thread owns one of these.
 pub trait CpuSampler: Send {
@@ -138,6 +139,13 @@ pub fn proc_stat_busy_share(before: &str, after: &str) -> Option<f64> {
 /// up the last entry repeats, so a single push is a steady rate. Clones share
 /// the script, so a test can keep scripting a sampler it has already handed to
 /// a governor.
+///
+/// A scripted amount per reading is a share only over the nominal tick: a tick
+/// a busy machine runs late reads low, and one it catches up with a few
+/// milliseconds later reads high (the macOS CI legs of 23 and 24 Sep 2026 moved
+/// the duty that way). [`hold_share`](Self::hold_share) instead measures each
+/// reading's CPU against the wall time since the previous reading, so the
+/// governor sees exactly the held share however its ticks are spaced.
 #[derive(Debug, Clone)]
 pub struct FakeSampler {
     shared: Arc<Mutex<FakeState>>,
@@ -150,6 +158,14 @@ struct FakeState {
     script: VecDeque<f64>,
     last_step_s: f64,
     machine: Option<f64>,
+    held: Option<HeldShare>,
+}
+
+/// A share of every core that each reading adds over the wall time since the previous one.
+#[derive(Debug)]
+struct HeldShare {
+    share: f64,
+    last_read: Option<Instant>,
 }
 
 impl FakeSampler {
@@ -163,14 +179,29 @@ impl FakeSampler {
                 script: VecDeque::new(),
                 last_step_s: 0.0,
                 machine: None,
+                held: None,
             })),
         }
     }
 
     /// Scripts `seconds` of CPU time for the next reading (and, once the script
     /// runs out, for every reading after it).
+    /// Ends a [`hold_share`](Self::hold_share).
     pub fn push_cpu(&mut self, seconds: f64) {
-        self.state().script.push_back(seconds);
+        let mut state = self.state();
+        state.held = None;
+        state.script.push_back(seconds);
+    }
+
+    /// Makes every later reading add `share` of all cores over the wall time since
+    /// the previous reading (the first reading after this call adds nothing), so
+    /// the share the governor measures is `share` however late or early its tick
+    /// runs. A later [`push_cpu`](Self::push_cpu) returns the sampler to its script.
+    pub fn hold_share(&mut self, share: f64) {
+        self.state().held = Some(HeldShare {
+            share,
+            last_read: None,
+        });
     }
 
     /// Sets the machine busy share every reading reports; `None` means the
@@ -187,6 +218,19 @@ impl FakeSampler {
 impl CpuSampler for FakeSampler {
     fn own_cpu_seconds(&mut self) -> f64 {
         let mut state = self.state();
+        let cores = f64::from(state.cores.max(1));
+        let held = state.held.as_mut().map(|held| {
+            let now = Instant::now();
+            let added = held.last_read.map_or(0.0, |previous| {
+                held.share * cores * now.duration_since(previous).as_secs_f64()
+            });
+            held.last_read = Some(now);
+            added
+        });
+        if let Some(added) = held {
+            state.total_cpu_s += added;
+            return state.total_cpu_s;
+        }
         if let Some(step) = state.script.pop_front() {
             state.last_step_s = step;
         }

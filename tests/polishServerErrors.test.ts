@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-polish-errors-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -177,23 +178,45 @@ test('describeScanError maps the disk\'s answer to the sentence the status line 
 });
 
 test('a root removed while it is being scanned settles as an error, never as a complete scan', async () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-polish-vanish-'));
-  const root = path.join(base, 'drive');
-  // Enough entries that the walk is still running when the root goes away.
-  for (let d = 0; d < 40; d++) {
-    const dir = path.join(root, `d${d}`);
-    fs.mkdirSync(dir, { recursive: true });
-    for (let f = 0; f < 25; f++) fs.writeFileSync(path.join(dir, `f${f}.txt`), 'x');
+  // The root goes away in ONE step — a rename — so a scan can see only two
+  // worlds: the whole tree, or no root. (`rmSync` deletes the children first
+  // and the root last, so a scan could honestly see some folders go and the
+  // root survive its check.) A scan then settles in one of two honest ways:
+  //  - error: the root was gone when the scan checked for it (the case under test);
+  //  - complete with every file: the walk and the check had both finished
+  //    before the rename. The macOS CI leg of 24 Sep 2026 did exactly that — a
+  //    loaded runner descheduled the poll loop until the walk was done, the
+  //    check's lstat ran on a pool thread ahead of the removal — and the old
+  //    test read it as a failure. That attempt proves nothing either way, so it
+  //    is counted and run again; it cannot repeat forever unnoticed.
+  // A complete scan with any file missing cannot come from an atomic removal:
+  // that one fails at once.
+  const FILES = 1000;
+  const ATTEMPTS = 5;
+  const outcomes: string[] = [];
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-polish-vanish-'));
+    const root = path.join(base, 'drive');
+    const gone = path.join(base, 'moved-away');
+    for (let d = 0; d < 40; d++) {
+      const dir = path.join(root, `d${d}`);
+      fs.mkdirSync(dir, { recursive: true });
+      for (let f = 0; f < FILES / 40; f++) fs.writeFileSync(path.join(dir, `f${f}.txt`), 'x');
+    }
+    const scan = await startScan(root);
+    fs.renameSync(root, gone);
+    await waitFor(() => getScan(scan.scanId)?.status !== 'running', `scan ${scan.scanId} settling`);
+    const done = getScan(scan.scanId)!;
+    fs.rmSync(base, { recursive: true, force: true });
+    outcomes.push(`${done.status}, ${done.fileCount} files`);
+    if (done.status === 'complete') {
+      assert.equal(done.fileCount, FILES, `a complete scan of a root removed in one step saw part of it: ${outcomes.join('; ')}`);
+      continue;
+    }
+    assert.equal(done.status, 'error', `a scan of a folder that no longer exists is not complete (${outcomes.join('; ')})`);
+    assert.match(done.error ?? '', /disappeared while TreeMap was scanning/);
+    assert.doesNotMatch(done.error ?? '', /ENOENT/);
+    return;
   }
-  const scan = await startScan(root);
-  fs.rmSync(root, { recursive: true, force: true });
-  const deadline = Date.now() + 15_000;
-  while (getScan(scan.scanId)?.status === 'running' && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  const done = getScan(scan.scanId)!;
-  assert.equal(done.status, 'error', `a scan of a folder that no longer exists is not complete (fileCount ${done.fileCount})`);
-  assert.match(done.error ?? '', /disappeared while TreeMap was scanning/);
-  assert.doesNotMatch(done.error ?? '', /ENOENT/);
-  fs.rmSync(base, { recursive: true, force: true });
+  assert.fail(`in ${ATTEMPTS} attempts the scan always finished before its root went away, so nothing was tested: ${outcomes.join('; ')}`);
 });

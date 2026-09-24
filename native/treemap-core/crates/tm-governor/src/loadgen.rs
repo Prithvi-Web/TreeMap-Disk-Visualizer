@@ -38,7 +38,8 @@ const WORKER_THREAD_NAME: &str = "tm-governor-load";
 #[derive(Debug)]
 pub struct SyntheticLoad {
     stop: Arc<AtomicBool>,
-    units: Arc<AtomicU64>,
+    /// Units done, one counter per worker index.
+    units: Arc<[AtomicU64]>,
     workers: Vec<JoinHandle<()>>,
 }
 
@@ -47,7 +48,7 @@ impl SyntheticLoad {
     /// spawn is left out; [`threads`](Self::threads) says how many run.
     pub fn start(governor: &Governor, threads: u32) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
-        let units = Arc::new(AtomicU64::new(0));
+        let units: Arc<[AtomicU64]> = (0..threads).map(|_| AtomicU64::new(0)).collect();
         let workers = (0..threads)
             .filter_map(|index| {
                 let governor = governor.clone();
@@ -55,7 +56,11 @@ impl SyntheticLoad {
                 let units = Arc::clone(&units);
                 thread::Builder::new()
                     .name(format!("{WORKER_THREAD_NAME}-{index}"))
-                    .spawn(move || work(&governor, index, &stop, &units))
+                    .spawn(move || {
+                        if let Some(mine) = usize::try_from(index).ok().and_then(|i| units.get(i)) {
+                            work(&governor, index, &stop, mine);
+                        }
+                    })
                     .ok()
             })
             .collect();
@@ -73,7 +78,20 @@ impl SyntheticLoad {
 
     /// How many [`SPIN_UNIT`]s of work all workers have completed so far.
     pub fn units_done(&self) -> u64 {
-        self.units.load(Ordering::Relaxed)
+        self.units
+            .iter()
+            .map(|units| units.load(Ordering::Relaxed))
+            .fold(0, u64::saturating_add)
+    }
+
+    /// The units each worker has completed so far, by worker index (a worker the OS
+    /// refused to spawn stays at zero): a test can then count which workers ran
+    /// rather than infer it from a total over time.
+    pub fn units_by_worker(&self) -> Vec<u64> {
+        self.units
+            .iter()
+            .map(|units| units.load(Ordering::Relaxed))
+            .collect()
     }
 
     /// Stops the workers and waits for them. A worker parked in a paused

@@ -10,19 +10,20 @@ use std::time::{Duration, Instant};
 
 use tm_governor::controller::{DUTY_MAX, DUTY_MIN, WORKER_CHANGE_TICKS};
 use tm_governor::governor::{
-    THROTTLE_CREDIT_CAP, THROTTLE_MIN_SLEEP, THROTTLE_SLEEP_CAP, ledger_charge, ledger_settle,
-    throttle_sleep,
+    SHARE_WINDOW_TICKS, THROTTLE_CREDIT_CAP, THROTTLE_MIN_SLEEP, THROTTLE_SLEEP_CAP, ledger_charge,
+    ledger_settle, throttle_sleep,
 };
 use tm_governor::{
-    Budget, FakeSampler, FakeSignals, Governor, Preset, Signals, Snapshot, SyntheticLoad, Thermal,
-    profile,
+    Budget, CpuSampler, FakeSampler, FakeSignals, Governor, Preset, Signals, Snapshot,
+    SyntheticLoad, Thermal, profile,
 };
 
-/// Held by every test in this file, so they run one at a time. These tests measure sleeps
-/// and shares against a fake sampler that reports a fixed CPU time per tick; beside the tests
-/// that burn CPU (the synthetic load, the cadence spins), a starved tick thread catches up
-/// with ticks a few milliseconds apart, the fake then reads as many times the budget, and the
-/// duty falls mid-measurement (the macOS CI leg of 23 Sep 2026: from about 0.4 to 0.25).
+/// Held by every test in this file, so they run one at a time: beside a test that burns CPU
+/// (the synthetic load, the cadence spins) another test's tick thread starves. A fake that
+/// scripts a CPU time per reading then reads a late tick as less CPU and a catch-up tick a few
+/// milliseconds later as many times the budget, and the duty moves mid-measurement (the macOS
+/// CI legs of 23 and 24 Sep 2026: 0.4 fell to 0.25, then rose to 0.6), so a test that needs an
+/// exact share holds it against the wall clock instead ([`FakeSampler::hold_share`]).
 static SERIAL: Mutex<()> = Mutex::new(());
 
 fn serial() -> MutexGuard<'static, ()> {
@@ -45,8 +46,8 @@ const POLL: Duration = Duration::from_millis(10);
 /// CPU seconds per tick that read as the whole machine even for a tick a busy machine ran
 /// minutes late: the share is clamped to one.
 const SATURATED_CPU_PER_TICK_S: f64 = 1_000.0;
-/// CPU seconds per 100 ms tick that read as a fifth of eight cores.
-const FIFTH_MACHINE_CPU_PER_TICK_S: f64 = 0.16;
+/// A fifth of the machine, as a share a [`FakeSampler`] holds.
+const FIFTH_OF_THE_MACHINE: f64 = 0.2;
 /// The unit of work between two `throttle()` calls in the cadence measurement.
 const SPIN: Duration = Duration::from_millis(2);
 /// The longest a single `throttle()` may sleep.
@@ -548,11 +549,21 @@ fn snapshot_reports_the_effective_preset_the_last_second_share_and_the_mechanism
         fresh.mechanisms
     );
 
-    sampler.push_cpu(FIFTH_MACHINE_CPU_PER_TICK_S);
-    assert!(wait_until(SETTLE, || governor.snapshot().ticks >= 15));
+    // Held against the wall clock, so a tick a busy machine runs late reads the same fifth;
+    // the window is read once every share in it was measured under the hold (the first
+    // reading after the switch covers time before it).
+    sampler.hold_share(FIFTH_OF_THE_MACHINE);
+    let switched_at = governor.snapshot().ticks;
+    let window = u64::try_from(SHARE_WINDOW_TICKS).unwrap_or(u64::MAX);
+    assert!(
+        wait_until(TICK_THREAD_ALIVE, || governor.snapshot().ticks
+            > switched_at + 1 + window),
+        "the tick thread stopped ticking: {:?}",
+        governor.snapshot()
+    );
     let s = governor.snapshot();
     assert!(
-        (s.share_1s - 0.20).abs() <= 0.05,
+        (s.share_1s - FIFTH_OF_THE_MACHINE).abs() <= 0.05,
         "share_1s tracks the sampler: {s:?}"
     );
     assert_eq!(s.thermal, Thermal::Nominal);
@@ -667,52 +678,163 @@ fn a_missing_machine_share_keeps_the_last_measured_one() {
 
 #[test]
 fn throttle_honours_the_duty_on_average_despite_stretched_sleeps() {
-    // A short sleep takes longer than asked (macOS stretches a 4 ms sleep to ~6 ms; Windows
-    // rounds to its 15.6 ms timer). `throttle()` must keep a ledger — sleep what is owed,
-    // count what was actually slept — so the duty holds on average and Turbo's 1 ms sleeps
-    // do not turn into 15 ms ones. The fake reports exactly the target from the first tick,
-    // so the loop rests at the feed-forward duty 0.4 (Balanced at 20% of eight cores).
+    // A short sleep takes longer than asked (macOS stretches a 4 ms sleep to ~6 ms and a
+    // starved thread's by far more; Windows rounds to its 15.6 ms timer). `throttle()` must
+    // keep a ledger — charge what the duty owes, sleep it once it is worth a wakeup, credit
+    // what the OS over-slept — so the duty holds on average and Turbo's 1 ms sleeps do not
+    // turn into 15 ms ones. Every call is checked against the governor's own counters
+    // (`ThrottleTotals`) and a replay of the ledger's two steps: the test counts what
+    // throttle() did and never times it, so a busy machine's clock cannot fail it (a test
+    // that timed 200 units failed 8 of 8 here with every core busy, and its duty check 6 of
+    // 6 with the test process at background priority, where a late tick read as less CPU).
+    //
+    // Balanced at 25% of eight cores rests at the feed-forward duty 0.5 with four workers:
+    // clear of both worker-change duties (0.4 and 0.98), so the count cannot move under it.
     const UNIT: Duration = Duration::from_millis(2);
     const UNITS: u32 = 200;
+    const TARGET: f64 = 0.25;
+    const FEED_FORWARD_DUTY: f64 = 0.5;
     let _serial = serial();
     let mut sampler = FakeSampler::new(CORES);
-    sampler.push_cpu(FIFTH_MACHINE_CPU_PER_TICK_S);
+    sampler.hold_share(TARGET);
     let governor = Governor::start(
         Budget {
             preset: Preset::Balanced,
-            cpu_percent: Some(20),
+            cpu_percent: Some(25),
         },
         false,
         Box::new(sampler),
         SharedSignals::quiet().boxed(),
     );
-    assert!(wait_until(SETTLE, || governor.snapshot().ticks >= 5));
-    let duty_before = governor.snapshot().duty;
     assert!(
-        (duty_before - 0.4).abs() < 0.1,
-        "the loop rests near the feed-forward duty: {duty_before}"
+        wait_until(TICK_THREAD_ALIVE, || governor.snapshot().ticks >= 5),
+        "the tick thread stopped ticking"
     );
 
+    // A thread's first call starts its ledger and owes nothing.
     governor.throttle();
-    let started = Instant::now();
-    // Each unit is owed work / duty at the duty its own throttle() call reads, which the loop
-    // may move between two calls: summed per call, never the midpoint of two readings.
-    let mut expected = 0.0;
-    let mut lowest = f64::INFINITY;
-    for _ in 0..UNITS {
+    let mut ledger_ns: i64 = 0;
+    let mut owed_total = Duration::ZERO;
+    let mut slept_total = Duration::ZERO;
+    let mut forgiven = Duration::ZERO;
+    let mut largest_overrun = Duration::ZERO;
+    let mut sleeping_calls = 0_u32;
+    let mut duties = Vec::new();
+    for call in 0..UNITS {
         spin_for(UNIT);
-        let duty = governor.snapshot().duty;
-        lowest = lowest.min(duty);
-        expected += UNIT.as_secs_f64() / duty;
+        let before = governor.throttle_totals();
         governor.throttle();
+        let did = governor.throttle_totals().since(before);
+        // The duty this call charged at, read back from its own charge (owed = work ×
+        // (1 − duty) / duty) rather than from a snapshot a tick may have overtaken.
+        if did.owed < THROTTLE_SLEEP_CAP {
+            let worked = did.worked.as_secs_f64();
+            let duty = worked / (worked + did.owed.as_secs_f64());
+            assert!(
+                (DUTY_MIN - 1e-6..=DUTY_MAX + 1e-6).contains(&duty),
+                "call {call}: charged {:?} for {:?} of work, a duty of {duty}",
+                did.owed,
+                did.worked
+            );
+            duties.push(duty);
+        }
+        let (charged, due) = ledger_charge(ledger_ns, did.owed);
+        assert_eq!(
+            did.requested, due,
+            "call {call}: the sleep asked for is the ledger's (balance {ledger_ns} ns, owed {:?})",
+            did.owed
+        );
+        ledger_ns = charged;
+        if due.is_zero() {
+            assert_eq!(
+                did.slept,
+                Duration::ZERO,
+                "call {call}: nothing asked, nothing slept"
+            );
+        } else {
+            assert!(
+                did.slept >= due,
+                "call {call}: a sleep never ends early: asked {due:?}, slept {:?}",
+                did.slept
+            );
+            sleeping_calls += 1;
+            largest_overrun = largest_overrun.max(did.slept.saturating_sub(due));
+            let unforgiven = ledger_ns.saturating_sub(nanos(did.slept));
+            ledger_ns = ledger_settle(ledger_ns, did.slept);
+            forgiven += Duration::from_nanos(
+                u64::try_from(ledger_ns.saturating_sub(unforgiven)).unwrap_or(0),
+            );
+        }
+        owed_total += did.owed;
+        slept_total += did.slept;
     }
-    let took = started.elapsed().as_secs_f64();
-    let ratio = took / expected;
-    assert!(
-        (0.85..=1.15).contains(&ratio),
-        "{UNITS} units of {UNIT:?} at the duties in force (from {duty_before:.3}, lowest {lowest:.3}) should take {expected:.3}s, took {took:.3}s (ratio {ratio:.3})"
-    );
     governor.stop();
+    // The fake holds exactly the target, so the calls charge at the feed-forward duty; the
+    // median ignores the odd tick a starved tick thread measured over a stretched interval.
+    duties.sort_by(f64::total_cmp);
+    let median = duties.get(duties.len() / 2).copied();
+    assert!(
+        median.is_some_and(|duty| (duty - FEED_FORWARD_DUTY).abs() < 0.02),
+        "the calls charge at the duty in force, {FEED_FORWARD_DUTY}: median {median:?} of {} calls",
+        duties.len()
+    );
+    // A credit skips the sleeps after it (with the test process at background priority, 6 of
+    // 200 calls slept, each for ~160 ms), so the count of sleeping calls says nothing on its
+    // own; the loop must still have slept.
+    assert!(sleeping_calls >= 1, "the loop really slept");
+    // What it owed and did not sleep is the ledger's last balance, which is below one wakeup
+    // (anything larger would have been slept): the loop never under-sleeps on average.
+    assert!(
+        slept_total + THROTTLE_MIN_SLEEP > owed_total,
+        "slept {slept_total:?} of {owed_total:?} owed: the duty was not honoured"
+    );
+    // Over-sleeps do not add up: in total the loop sleeps what it owed, plus at most the one
+    // largest over-run still standing as credit and any credit past the cap it forgave.
+    assert!(
+        slept_total <= owed_total + largest_overrun + forgiven,
+        "slept {slept_total:?} for {owed_total:?} owed (largest over-run {largest_overrun:?}, \
+         forgiven {forgiven:?}): over-sleeps accumulated instead of being credited"
+    );
+}
+
+/// A duration as the ledger's signed nanoseconds.
+fn nanos(duration: Duration) -> i64 {
+    i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX)
+}
+
+#[test]
+fn a_held_share_reads_as_that_share_over_any_interval() {
+    // A scripted amount per reading reads low over a late tick and high over a catch-up
+    // tick; a held share is measured against the wall time between the two readings, so the
+    // instants around each reading bound it exactly, however the scheduler spaced them.
+    let mut sampler = FakeSampler::new(CORES);
+    sampler.hold_share(FIFTH_OF_THE_MACHINE);
+    let before_first = Instant::now();
+    let first = sampler.own_cpu_seconds();
+    let after_first = Instant::now();
+    thread::sleep(Duration::from_millis(30));
+    let before_second = Instant::now();
+    let second = sampler.own_cpu_seconds();
+    let after_second = Instant::now();
+    assert!(
+        approx(first, 0.0),
+        "the first reading after the switch adds nothing: {first}"
+    );
+    let per_second = FIFTH_OF_THE_MACHINE * f64::from(CORES);
+    let added = second - first;
+    let least = per_second * before_second.duration_since(after_first).as_secs_f64();
+    let most = per_second * after_second.duration_since(before_first).as_secs_f64();
+    assert!(
+        least <= added && added <= most,
+        "a fifth of {CORES} cores over the time between the readings: {least}..={most}, read {added}"
+    );
+    sampler.push_cpu(0.5);
+    let third = sampler.own_cpu_seconds();
+    assert!(
+        approx(third - second, 0.5),
+        "push_cpu ends the hold: {}",
+        third - second
+    );
 }
 
 #[test]
@@ -755,34 +877,47 @@ fn the_owed_sleep_is_proportional_capped_and_never_negative() {
 
 #[test]
 fn the_synthetic_load_obeys_the_worker_limit_live() {
-    // Eco on a one-core machine allows one worker, and a fake that reports exactly the
-    // target keeps its duty at the feed-forward 0.25. Four synthetic threads must therefore
-    // complete about a quarter of the ten-millisecond units one unthrottled thread would,
-    // not four times as many: only the thread inside the limit may spin.
-    const RUN: Duration = Duration::from_secs(2);
+    // Eco on a one-core machine allows one worker, and a fake holding exactly the target keeps
+    // its duty at the feed-forward 0.25. Of four synthetic threads only the one inside the
+    // limit may spin: counted per thread, so a busy machine that slows the allowed worker
+    // cannot fail the check, and a thread outside the limit cannot hide inside a total (a
+    // total over two wall-clock seconds failed 5 of 5 with the test process at background
+    // priority, where a late tick read as less CPU and the duty climbed).
+    const UNITS_TO_SEE: u64 = 20;
     let _serial = serial();
     let mut sampler = FakeSampler::new(1);
-    sampler.push_cpu(0.025);
+    sampler.hold_share(0.25);
     let governor = Governor::start(
         budget(Preset::Eco),
         false,
         Box::new(sampler),
         SharedSignals::quiet().boxed(),
     );
-    assert!(wait_until(SETTLE, || governor.snapshot().ticks >= 3));
+    assert!(
+        wait_until(TICK_THREAD_ALIVE, || governor.snapshot().ticks >= 3),
+        "the tick thread stopped ticking"
+    );
     assert_eq!(governor.worker_limit(), 1, "{:?}", governor.snapshot());
     let load = SyntheticLoad::start(&governor, 4);
-    thread::sleep(RUN);
-    let units = load.units_done();
+    assert_eq!(load.threads(), 4, "the OS started every synthetic thread");
+    let ran = wait_until(TICK_THREAD_ALIVE, || load.units_done() >= UNITS_TO_SEE);
+    let by_worker = load.units_by_worker();
+    let limit_after = governor.worker_limit();
     load.stop();
     governor.stop();
-    let one_unthrottled_thread = RUN.as_millis() / 10;
-    let allowed = u64::try_from(one_unthrottled_thread / 2).unwrap_or(u64::MAX);
-    assert!(
-        units < allowed,
-        "one worker at duty 0.25 does about {} units in {RUN:?}; {units} means threads outside \
-         the limit were spinning",
-        one_unthrottled_thread / 4
+    assert!(ran, "the one allowed worker does run: {by_worker:?}");
+    assert_eq!(
+        limit_after, 1,
+        "the limit is still one worker: the check below counts against it"
     );
-    assert!(units > 5, "the one allowed worker does run: {units} units");
+    assert!(
+        by_worker
+            .first()
+            .is_some_and(|&units| units >= UNITS_TO_SEE),
+        "worker 0 is inside the limit and did the work: {by_worker:?}"
+    );
+    assert!(
+        by_worker.iter().skip(1).all(|&units| units == 0),
+        "threads outside the limit never spun: {by_worker:?}"
+    );
 }
