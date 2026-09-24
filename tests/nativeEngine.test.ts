@@ -1132,6 +1132,30 @@ test('a root that disappears under a native walk is the scan’s own error, in t
   }
 });
 
+test('a root renamed away at the native walk’s last poll is the scan’s own error: the walk ends clean, so only the look at the root after it can see the root gone', async () => {
+  // The fake lists the tree at scanStart and ends this walk with no error, so
+  // after the rename every call the walk makes still succeeds. The check that
+  // runs after the walk (assertRootStillThere in diskScanner.ts) is the only
+  // code left that can find the root missing.
+  const { root, total, locked } = await buildEdgeFixture('treemap-native-renamed-');
+  const gone = `${root}-gone`;
+  try {
+    const steps = 2;
+    const fake = useFakeNative({ steps, onPoll: (n) => { if (n === steps) fs.renameSync(root, gone); } });
+    const scan = await scanWith('auto', root);
+    assert.deepEqual(fake.calls.log, ['start', 'poll', 'poll:done', 'take'], 'the poll that renamed the root reported the walk done, and the walk was taken, which frees its handle');
+    assert.equal(scan.scanned, total, 'the walk counted every entry before the root went');
+    assert.equal(scan.status, 'error', 'a root that was gone when the walk ended settled as a finished scan');
+    assert.match(scan.error ?? '', /disappeared while TreeMap was scanning/);
+    assert.doesNotMatch(scan.error ?? '', /ENOENT/, 'the disk’s own words reached the user');
+    assert.equal(scan.engine, 'native', 'the engine whose walk it was');
+    assert.equal(scan.fallbackReason, null, 'a missing root is not a native failure for the walker to retry');
+  } finally {
+    if (fs.existsSync(gone)) await fsp.rename(gone, root);
+    await unlockAndRemove(root, locked);
+  }
+});
+
 test('the poll loop waits 1, 2, 4, 8 ms, then NATIVE_POLL_MS and never longer, and takes a finished walk at the poll that sees it end', async () => {
   // The poll that updates progress is also how a walk's end is noticed. At a
   // 100 ms cadence a finished walk sat unnoticed 20-40 ms on a 200,000-entry
@@ -1928,6 +1952,13 @@ test('real module: a forced native scan reports engine native, the platform’s 
  * src/services/scan/nativeEngine.ts; section 3c above), which leaves out time
  * in which the machine was saturated. The engine assertion below names the
  * fallback reason should it recur.
+ *
+ * The scan runs at Balanced, not Eco. Eco runs at macOS Background QoS, which
+ * a saturated machine may give no CPU at all, and since the owner's rule of
+ * 24 Sep 2026 a starved walk waits instead of falling back: with ten busy
+ * loops and agents compiling, the resumed Eco walk did not settle within the
+ * 120 s hang guard. What this test is about — the pause reaching the walk and
+ * the count standing still — is the same at every preset.
  */
 test('real module: pausing a native scan reaches the walk before pauseScan returns, stops `scanned` within one 256-entry check per worker and holds it still across the engine’s polls, and resuming finishes it with every entry counted', async (t) => {
   const real = loadReal(t);
@@ -1938,7 +1969,7 @@ test('real module: pausing a native scan reaches the walk before pauseScan retur
   const { root, total } = await buildWideTree(dirs, filesPerDir, 'treemap-native-pause-real-');
   let scanId: string | null = null;
   try {
-    await updateSettings({ engine: 'native', engineBudget: { preset: 'eco', cpuPercent: null } });
+    await updateSettings({ engine: 'native', engineBudget: { preset: 'balanced', cpuPercent: null } });
     const scan = await startScan(root);
     scanId = scan.scanId;
     assert.equal(scan.status, 'running');
@@ -1988,7 +2019,7 @@ test('real module: pausing a native scan reaches the walk before pauseScan retur
       inFlightWork * msPerEntry <= PAUSE_PROMISE_MS,
       `finishing the largest listing and counting one check’s worth, ${stats.workersPeak} worker(s) over, is ${inFlightWork} entries at ${(msPerEntry * 1_000).toFixed(2)} µs of walk CPU each: ${(inFlightWork * msPerEntry).toFixed(1)} ms of CPU against ${PAUSE_PROMISE_MS} ms`,
     );
-    t.diagnostic(`real module, ${total} entries under Eco: ${buildScanStats(done).entriesPerSecond} entries/s; paused at ${atPause}, at most ${seen.maxPausedEntries} over ${seen.pausedPolls} polls, ${seen.entriesAtStandstillPoll} from poll ${STANDSTILL_FROM_POLL} on (${stats.workersPeak} worker(s)); in-flight work ${(inFlightWork * msPerEntry).toFixed(2)} ms of walk CPU`);
+    t.diagnostic(`real module, ${total} entries under Balanced: ${buildScanStats(done).entriesPerSecond} entries/s; paused at ${atPause}, at most ${seen.maxPausedEntries} over ${seen.pausedPolls} polls, ${seen.entriesAtStandstillPoll} from poll ${STANDSTILL_FROM_POLL} on (${stats.workersPeak} worker(s)); in-flight work ${(inFlightWork * msPerEntry).toFixed(2)} ms of walk CPU`);
   } finally {
     // A failure above can leave the scan paused, its engine polling it on a
     // timer that would keep this process alive for good: cancel it, and the
