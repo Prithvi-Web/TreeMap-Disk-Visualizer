@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 import { waitFor } from './fixtures/waitFor';
+import { renameWhenFree } from './fixtures/renameWhenFree';
 isolatedDataDir('treemap-polish-errors-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -179,7 +180,10 @@ test('describeScanError maps the disk\'s answer to the sentence the status line 
 
 test('a root removed while it is being scanned settles as an error, never as a complete scan', async () => {
   // The root goes away in ONE step — a rename — so a scan can see only two
-  // worlds: the whole tree, or no root. (`rmSync` deletes the children first
+  // worlds: the whole tree, or no root. Windows refuses to rename a folder
+  // while the scan holds a handle inside it, so the rename is retried until it
+  // goes through (renameWhenFree): still one step, and still before the scan's
+  // root check, which cannot finish while the retries hold the event loop. (`rmSync` deletes the children first
   // and the root last, so a scan could honestly see some folders go and the
   // root survive its check.) A scan then settles in one of two honest ways:
   //  - error: the root was gone when the scan checked for it (the case under test);
@@ -204,7 +208,7 @@ test('a root removed while it is being scanned settles as an error, never as a c
       for (let f = 0; f < FILES / 40; f++) fs.writeFileSync(path.join(dir, `f${f}.txt`), 'x');
     }
     const scan = await startScan(root);
-    fs.renameSync(root, gone);
+    renameWhenFree(root, gone);
     await waitFor(() => getScan(scan.scanId)?.status !== 'running', `scan ${scan.scanId} settling`);
     const done = getScan(scan.scanId)!;
     fs.rmSync(base, { recursive: true, force: true });

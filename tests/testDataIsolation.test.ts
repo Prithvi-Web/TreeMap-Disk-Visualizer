@@ -24,7 +24,7 @@ const runner = require('../scripts/run-tests.js') as {
 };
 
 test('npm test gives a run with no data folder one of its own under the temp folder, and removes it afterwards', () => {
-  const outer = { PATH: process.env.PATH, HOME: '/Users/someone' };
+  const outer: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: '/Users/someone' };
   const { env, cleanup } = runner.testEnvironment(outer);
   const dir = env.TREEMAP_DATA_DIR;
   assert.ok(dir, 'the run has a data folder');
