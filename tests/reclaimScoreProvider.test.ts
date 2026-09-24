@@ -7,10 +7,12 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-reclaimprov-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
+import { peekScan } from '../src/services/diskScanner';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { clearFactCache, computeFacts } from '../src/services/facts';
 import type { ReclaimScoreFactValue } from '../src/services/facts';
@@ -137,12 +139,17 @@ async function scannedFixture(port: number) {
   const started = await req(port, 'POST', '/api/scan', { path: root });
   assert.equal(started.status, 202, `scan refused: ${JSON.stringify(started.body)}`);
   const scanId = started.body.scanId as string;
-  for (let i = 0; i < 400; i++) {
-    const stats = await req(port, 'GET', `/api/scan/${scanId}/stats`);
-    if (stats.body.status === 'complete') break;
-    assert.notEqual(stats.body.status, 'error', 'fixture scan failed');
-    await new Promise((r) => setTimeout(r, 25));
-  }
+  // Waited on in-process, from the scan record itself, rather than by polling
+  // GET /api/scan/:id/stats. That route is in the rate limiter's strict lane
+  // (20 burst, 10/s), so a 25 ms poll drained the bucket the test's own
+  // POST /api/facts needed next — a 429 under load. And the poll gave up after
+  // 400 rounds with nothing asserting the scan had finished, so a scan slowed
+  // past them by a busy machine fell through still running, and every score
+  // read "still running". The limit here is a hang guard; the assertion after
+  // it is what says the scan finished.
+  await waitFor(() => peekScan(scanId)?.status !== 'running', 'the fixture scan settling');
+  const settled = peekScan(scanId);
+  assert.equal(settled?.status, 'complete', `fixture scan failed: ${settled?.error}`);
   clearFactCache();
   clearScanInputs();
   return {

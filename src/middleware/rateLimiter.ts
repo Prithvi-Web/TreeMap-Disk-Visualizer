@@ -95,9 +95,17 @@ const META_PATHS = new Set([
  * long job's caller hits them on a timer for its whole duration; the RESULT
  * endpoints deliberately do not, because the result is the real payload.
  * Budgets are a handful of `findByPath` lookups, not a walk.
+ *
+ * Scan stats is the scan's status poll: AGENTS.md and the 202 from
+ * `POST /api/scan?wait=true` both tell a caller to poll it until `status` is
+ * "complete", and it answers from the in-memory record in constant work
+ * (`requireScan`, then `buildScanStats` copying counters, the refused-folder
+ * examples capped at five). In the strict lane a caller doing what the docs
+ * say spent the tokens its next `DELETE /api/files` or offload needed.
  */
 const META_PATTERNS = [
   /^\/scan\/[^/]+\/progress$/,
+  /^\/scan\/[^/]+\/stats$/,
   /^\/scan\/[^/]+\/budgets$/,
   /^\/scan\/[^/]+\/budget-gauges$/,
   /^\/index\/[^/]+\/progress$/,

@@ -6,7 +6,17 @@ import { promises as fsp } from 'node:fs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { startScan, getScan } from '../src/services/diskScanner';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
+// A finished scan saves a snapshot and an mtime cache, and reads the settings
+// (engine, budget, "don't scan" patterns) that choose how it runs. Without
+// this, every run of this file read the owner's own settings and wrote into
+// their real app-data folder, snapshots.json included (checked 24 Sep 2026:
+// 409 files there named this file's temp folders).
+isolatedDataDir('treemap-sparse-data-');
+
+import { startScan, peekScan } from '../src/services/diskScanner';
 import { sparseLine } from '../src/services/missingGigabytes';
 import { ScanResult } from '../src/models/types';
 
@@ -45,14 +55,20 @@ async function tree(): Promise<string> {
   return dir;
 }
 
+/**
+ * Scans `dir` and answers the finished record. The wait reads the record in
+ * this process without counting as a use of it (peekScan), and its limit is a
+ * hang guard, never a measurement: the old 10 s deadline (400 polls of 25 ms)
+ * failed a scan that was still working with every core busy (24 Sep 2026).
+ * A scan that settles in error fails here, with its own error.
+ */
 async function scanned(dir: string): Promise<ScanResult> {
   const { scanId } = await startScan(dir, {});
-  for (let i = 0; i < 400; i++) {
-    const s = getScan(scanId)!;
-    if (s.status === 'complete' || s.status === 'error') return s;
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  throw new Error('scan did not finish');
+  await waitFor(() => peekScan(scanId)?.status !== 'running', `the scan of ${dir} settling`, 25);
+  const scan = peekScan(scanId);
+  assert.ok(scan, `scan ${scanId} is no longer on record`);
+  assert.equal(scan.status, 'complete', `the scan of ${dir} did not complete: ${String(scan.error)}`);
+  return scan;
 }
 
 test('a file that claims more than it occupies is counted, and a symlink is not', skipWin, async () => {

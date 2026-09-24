@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-polish-symlink-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -13,7 +14,7 @@ import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { resetIdempotencyCache } from '../src/middleware/idempotency';
 import { insideAnyScanRoot } from '../src/middleware/pathGuard';
-import { startScan, getScan } from '../src/services/diskScanner';
+import { startScan, peekScan } from '../src/services/diskScanner';
 
 /**
  * "Nothing outside a scanned root can be touched" has to survive a symlink.
@@ -79,13 +80,18 @@ function req(port: number, method: string, url: string, body?: unknown): Promise
   });
 }
 
+/**
+ * Scans `dir` in this process and waits for the record to settle. The wait is
+ * a hang guard, not a deadline: with every core busy a 15 s one failed two of
+ * these tests on a scan that was only slow. The record is read with peekScan,
+ * which does not count as a use of the scan, and no HTTP is involved, so no
+ * rate-limit token is spent waiting.
+ */
 async function scanned(dir: string): Promise<void> {
-  const scan = await startScan(dir);
-  const deadline = Date.now() + 15_000;
-  while (getScan(scan.scanId)?.status === 'running' && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  assert.equal(getScan(scan.scanId)?.status, 'complete', 'the fixture scan must complete');
+  const { scanId } = await startScan(dir);
+  await waitFor(() => peekScan(scanId)?.status !== 'running', `the fixture scan of ${dir} settling`, 20);
+  const settled = peekScan(scanId);
+  assert.equal(settled?.status, 'complete', `the fixture scan must complete: ${settled?.error ?? 'no error recorded'}`);
 }
 
 async function listen(): Promise<{ port: number; close: () => Promise<void> }> {

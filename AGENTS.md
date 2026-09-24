@@ -295,7 +295,11 @@ read-what-you-saw) permission to act.
   (`403 { code: "VIRTUAL_PATH" }`); act on the archive itself.
 - **Uniform errors.** Every failure is `{ "error": string, "code": string }`
   with a stable code. Rate limit: 10 req/s sustained per client (bursts to
-  20), then `429 { code: "RATE_LIMITED" }`.
+  20), then `429 { code: "RATE_LIMITED" }`. Status polls
+  (`GET /api/scan/{scanId}/stats`, the `/progress` endpoints) and other cheap
+  metadata reads have their own, larger allowance, so polling a scan does not
+  spend the one your next delete or offload needs; `GET /api/capabilities`
+  publishes every lane under `rateLimit.lanes`.
 
 ## Safety rails for agents: dry runs, policy, audit, idempotency
 

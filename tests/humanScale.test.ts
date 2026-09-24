@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -6,11 +6,13 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-humanscale-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
+import { peekScan } from '../src/services/diskScanner';
 import { clearFactCache, computeFacts, factProviderIds, getFactProvider } from '../src/services/facts';
 import {
   humanScaleProvider,
@@ -37,14 +39,32 @@ import {
 
 /* ------------------------------ harness ------------------------------ */
 
+/**
+ * Servers a test opened and has not closed yet. Most tests open theirs before
+ * the fixture scan and close it in a `finally` that only begins after the
+ * fixture returns, so a failed fixture scan used to leave the server
+ * listening and the file then never exited. The `after` hook closes those.
+ */
+const openServers = new Set<http.Server>();
+
+function closeServer(server: http.Server): Promise<void> {
+  openServers.delete(server);
+  return new Promise<void>((r) => server.close(() => r()));
+}
+
+after(async () => {
+  await Promise.all([...openServers].map(closeServer));
+});
+
 async function listen() {
   resetRateLimiter();
   const app = createApp(path.join(__dirname, '..', 'public'));
   const server = http.createServer(app);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  openServers.add(server);
   return {
     port: (server.address() as { port: number }).port,
-    close: () => new Promise<void>((r) => server.close(() => r())),
+    close: () => closeServer(server),
   };
 }
 
@@ -76,17 +96,34 @@ function req(port: number, method: string, url: string, body?: unknown): Promise
   });
 }
 
-/** Run a scan over `root` and wait for it to complete. */
+/**
+ * Run a scan over `root` and wait for it to complete.
+ *
+ * The wait reads the scan record in this process (peekScan, which does not
+ * count as a use of the scan) instead of polling `GET /api/scan/:id/stats`.
+ * The old loop polled that route every 25 ms while it sat in the rate
+ * limiter's strict "api" lane (20 burst, then 10/s), so a slow scan drained
+ * the bucket, the 429 bodies carried no `status`, and after 400 polls the loop
+ * fell through with the scan still running and nothing asserted. The provider
+ * answers a running scan with an unavailable batch and no values, so with
+ * every core busy seven tests here failed on `available: false` or a missing
+ * value — never on the arithmetic. The wait now spends no rate-limit tokens:
+ * each test's own requests (one scan POST, or the settings test's three PUTs)
+ * fit the bucket that listen() resets.
+ */
 async function scanned(port: number, root: string): Promise<string> {
   const started = await req(port, 'POST', '/api/scan', { path: root });
   assert.equal(started.status, 202, `scan refused: ${JSON.stringify(started.body)}`);
   const scanId = started.body.scanId as string;
-  for (let i = 0; i < 400; i++) {
-    const stats = await req(port, 'GET', `/api/scan/${scanId}/stats`);
-    if (stats.body.status === 'complete') break;
-    assert.notEqual(stats.body.status, 'error', 'fixture scan failed');
-    await new Promise((r) => setTimeout(r, 25));
-  }
+  // A hang guard, not a measurement: with every core busy these scans were
+  // still running after the old loop's ~10 s of polling.
+  await waitFor(() => peekScan(scanId)?.status !== 'running', `the fixture scan of ${root} settling`);
+  const scan = peekScan(scanId);
+  assert.equal(
+    scan?.status,
+    'complete',
+    `fixture scan failed: ${scan ? `it is ${scan.status}, not complete: ${scan.error ?? 'no error recorded'}` : 'the scan record is gone'}`,
+  );
   return scanId;
 }
 
@@ -154,7 +191,15 @@ async function scannedMediaFixture(port: number) {
     fs.writeFileSync(path.join(capped30, `same_${i}.jpg`), Buffer.alloc(1000));
   }
 
-  const scanId = await scanned(port, root);
+  let scanId: string;
+  try {
+    scanId = await scanned(port, root);
+  } catch (err) {
+    // The caller's `finally` only exists once this returns, so a failed scan
+    // would otherwise leave the fixture on disk.
+    fs.rmSync(root, { recursive: true, force: true });
+    throw err;
+  }
   return {
     root,
     scanId,

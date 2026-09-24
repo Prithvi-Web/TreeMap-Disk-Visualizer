@@ -70,12 +70,30 @@ export const NATIVE_POLL_FIRST_MS = 1;
 export const NATIVE_CANCEL_DEADLINE_MS = 5_000;
 /**
  * How long a native walk may show nothing new — no entry, no heartbeat, and
- * neither the scan's pause gate nor a governor hold holding it — before it is
- * a stall the legacy chain retries. The same bound as the legacy walker's
- * `READDIR_DEADLINE_MS` per directory (src/services/diskScanner.ts): a dead
- * network mount costs a bounded time, not the whole scan.
+ * neither the scan's pause gate nor a governor hold holding it — while the
+ * machine has CPU to spare, before it is a stall the legacy chain retries.
+ * Time in which the machine was saturated (MACHINE_SATURATED_SHARE) is not
+ * counted: a walk the OS is not scheduling is waiting its turn, not stuck —
+ * an Eco scan runs at macOS Background QoS on the efficiency cores and can go
+ * unscheduled for longer than this while every core is busy. A walk that
+ * shows nothing new while cores sit idle is blocked (a dead network mount),
+ * and costs a bounded time, not the whole scan. The same bound as the legacy
+ * walker's `READDIR_DEADLINE_MS` per directory (src/services/diskScanner.ts).
  */
 export const NATIVE_STALL_MS = 30_000;
+/**
+ * The busy share at or above which the machine counts as saturated: its cores
+ * were running something nearly all the time, so a walk that showed nothing
+ * new then may simply not have been given a turn. That time does not count
+ * toward NATIVE_STALL_MS.
+ */
+export const MACHINE_SATURATED_SHARE = 0.9;
+/**
+ * The shortest span the machine's busy share is weighed over while a walk
+ * shows nothing new. The OS moves the counters `os.cpus()` reads about a
+ * hundred times a second, so the share over one 10 ms poll would be noise.
+ */
+export const MACHINE_WINDOW_MS = 1_000;
 /** What `fastPath` says when the native listing was probed and refused (P3-9). */
 export const FAST_PATH_UNAVAILABLE = 'unavailable';
 /** The scan surface a module must export to walk a folder. */
@@ -396,12 +414,108 @@ function withErrno(err: unknown, rootPath: string): Error {
   return e;
 }
 
-/** The deadlines the walk loop reads, the clock it reads them by, and how it waits between polls. */
+/**
+ * The machine's CPU time since boot, summed over its cores, in its source's own
+ * unit: milliseconds from `os.cpus()`, clock ticks from Linux's `/proc/stat`.
+ * Only two readings from one source are ever compared, as a share.
+ */
+export interface MachineTicks {
+  /** Time the cores spent running something. */
+  busy: number;
+  /** Time they spent idle (on Linux, waiting for I/O included). */
+  idle: number;
+  /** How many cores the reading summed. */
+  cores: number;
+}
+
+/** `cpus` summed into one reading; null when no core is listed or a counter is not a number. */
+export function machineTicksOf(cpus: readonly os.CpuInfo[]): MachineTicks | null {
+  if (cpus.length === 0) return null;
+  let busy = 0;
+  let idle = 0;
+  for (const { times } of cpus) {
+    busy += times.user + times.nice + times.sys + times.irq;
+    idle += times.idle;
+  }
+  return Number.isFinite(busy) && Number.isFinite(idle) ? { busy, idle, cores: cpus.length } : null;
+}
+
+/**
+ * The machine's CPU time from Linux's `/proc/stat`, in its own ticks: the
+ * aggregate `cpu` line's user, nice, system, irq, softirq and steal are busy,
+ * idle and iowait are idle (guest time already sits inside user and nice), and
+ * the `cpuN` lines are the cores. Null for text without such a line. Linux
+ * accounts an idle core whose task waits on a disk as iowait — the very state
+ * of a walk stuck on a dead network mount — and `os.cpus()` leaves iowait out
+ * of both its counts, so on a one-core machine that wait would read as a
+ * saturated machine and keep the wedged walk waiting forever. The governor's
+ * own Linux sampler counts it as idle the same way (tm-governor `sample.rs`).
+ */
+export function machineTicksFromProcStat(text: string): MachineTicks | null {
+  const lines = text.split('\n');
+  const total = lines.find((line) => /^cpu\s/.test(line));
+  if (!total) return null;
+  const fields = total.trim().split(/\s+/).slice(1).map(Number);
+  if (fields.length < 5 || fields.some((n) => !Number.isFinite(n))) return null;
+  const [user, nice, system, idle, iowait, irq = 0, softirq = 0, steal = 0] = fields;
+  const cores = lines.filter((line) => /^cpu\d+\s/.test(line)).length;
+  if (cores === 0) return null;
+  return { busy: user + nice + system + irq + softirq + steal, idle: idle + iowait, cores };
+}
+
+/** What `platformMachineTicks` reads, so a test can be any platform. */
+export interface MachineTicksDeps {
+  platform: NodeJS.Platform;
+  readProcStat: () => string;
+  cpus: () => os.CpuInfo[];
+}
+
+const HOST_MACHINE: MachineTicksDeps = {
+  platform: process.platform,
+  readProcStat: () => fs.readFileSync('/proc/stat', 'utf8'),
+  cpus: () => os.cpus(),
+};
+
+/**
+ * This machine's CPU counters: `/proc/stat` on Linux (see
+ * machineTicksFromProcStat) and nothing when it cannot be read — never
+ * `os.cpus()` there, whose counts are milliseconds, so two readings of a window
+ * are always in one unit — and `os.cpus()` everywhere else, where an idle core
+ * is idle whatever its tasks wait on.
+ */
+export function platformMachineTicks(deps: MachineTicksDeps = HOST_MACHINE): MachineTicks | null {
+  if (deps.platform !== 'linux') return machineTicksOf(deps.cpus());
+  try {
+    return machineTicksFromProcStat(deps.readProcStat());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The machine's busy share between two readings, or null when they cannot be
+ * compared: either is missing, a core came or went, a counter went backwards,
+ * or no time was counted between them.
+ */
+function machineBusyShare(before: MachineTicks | null, after: MachineTicks | null): number | null {
+  if (!before || !after || before.cores !== after.cores) return null;
+  const busy = after.busy - before.busy;
+  const idle = after.idle - before.idle;
+  if (busy < 0 || idle < 0 || busy + idle <= 0) return null;
+  return busy / (busy + idle);
+}
+
+/**
+ * The deadlines the walk loop reads, the clock it reads them by, how it waits
+ * between polls, and how it reads the machine's CPU counters (only while a
+ * walk shows nothing new).
+ */
 interface WalkTiming {
   cancelDeadlineMs: number;
   stallMs: number;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
+  machineTicks: () => MachineTicks | null;
 }
 
 const WALL_CLOCK: WalkTiming = {
@@ -409,12 +523,69 @@ const WALL_CLOCK: WalkTiming = {
   stallMs: NATIVE_STALL_MS,
   now: () => Date.now(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  machineTicks: () => platformMachineTicks(),
 };
 let timing: WalkTiming = WALL_CLOCK;
 
-/** Test-only: shorter deadlines, a clock and waits of the test's own; null restores the constants and the wall clock. */
+/**
+ * Test-only: shorter deadlines, a clock, waits and a machine of the test's
+ * own; null restores the constants, the wall clock and the real counters. A
+ * test that brings its own clock but no machine gets one that never gives a
+ * reading, so every window counts: the real counters weighed over fake
+ * windows would make the outcome depend on whatever else the host is running.
+ */
 export function setNativeWalkTimingForTests(over: Partial<WalkTiming> | null): void {
-  timing = over ? { ...WALL_CLOCK, ...over } : WALL_CLOCK;
+  if (!over) {
+    timing = WALL_CLOCK;
+    return;
+  }
+  const blind: Partial<WalkTiming> = over.now && !over.machineTicks ? { machineTicks: () => null } : {};
+  timing = { ...WALL_CLOCK, ...blind, ...over };
+}
+
+/**
+ * How long a walk showing nothing new has been stuck, as the stall rule counts
+ * it (see NATIVE_STALL_MS), and the window of machine time now being weighed.
+ */
+interface StallClock {
+  /** Time counted toward NATIVE_STALL_MS. */
+  countedMs: number;
+  /** Counted windows the machine's share was read for, and those it could not be. */
+  spareWindows: number;
+  blindWindows: number;
+  /** When the open window started, and the machine's reading then. */
+  windowAt: number;
+  windowTicks: MachineTicks | null;
+}
+
+/**
+ * The stall clock after a poll at `now` that showed nothing new, the walk
+ * having last shown something at `since`. The machine is read only here —
+ * never on a poll that saw progress — and at most once a MACHINE_WINDOW_MS.
+ */
+function stallStep(clock: StallClock | null, since: number, now: number): StallClock {
+  if (!clock) {
+    // The first poll to see nothing new. The gap since the last poll that saw
+    // something is one poll interval, and no reading covers it (a healthy
+    // walk never reads the machine), so it counts, as all time used to.
+    return { countedMs: now - since, spareWindows: 0, blindWindows: 0, windowAt: now, windowTicks: timing.machineTicks() };
+  }
+  const span = now - clock.windowAt;
+  if (span < MACHINE_WINDOW_MS) return clock;
+  const ticks = timing.machineTicks();
+  const share = machineBusyShare(clock.windowTicks, ticks);
+  // A saturated machine may simply not be giving the walk a turn: that window
+  // adds nothing. A window with CPU to spare adds all of it, and so does one
+  // with no usable reading — an unreadable machine must never keep a wedged
+  // walk waiting forever.
+  const saturated = share !== null && share >= MACHINE_SATURATED_SHARE;
+  return {
+    countedMs: clock.countedMs + (saturated ? 0 : span),
+    spareWindows: clock.spareWindows + (share !== null && !saturated ? 1 : 0),
+    blindWindows: clock.blindWindows + (share === null ? 1 : 0),
+    windowAt: now,
+    windowTicks: ticks,
+  };
 }
 
 /**
@@ -490,9 +661,11 @@ async function settle(mod: ScanModule, handle: number): Promise<void> {
  *
  * Throws what the walk threw: a root refusal carries Node's errno code so the
  * caller can tell the scan's own failure from one the legacy chain should
- * retry. A walk that shows nothing new for NATIVE_STALL_MS — no entry, no
- * heartbeat, no pause holding it — is settled and thrown as a stall, which
- * the caller turns into a fallback. A module that throws mid-walk has its
+ * retry. A walk that shows nothing new — no entry, no heartbeat, no pause
+ * holding it — for NATIVE_STALL_MS of time in which the machine had CPU to
+ * spare is settled and thrown as a stall, which the caller turns into a
+ * fallback; time in which the machine was saturated is left out, since the
+ * walk may only be waiting for a turn. A module that throws mid-walk has its
  * handle settled first, so nothing is leaked behind the error.
  */
 export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath: string, module?: ScanModule): Promise<void> {
@@ -517,10 +690,12 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
   // for the length of its listing; `heartbeat` — batches the OS has answered,
   // across every worker — advances through it. A walk the scan's pause gate
   // or a governor hold (critical heat, governorPause) is holding is not
-  // stalled: it was told to wait.
+  // stalled: it was told to wait. Nor is one the machine had no CPU for: see
+  // `stallStep`.
   let lastProgressAt = timing.now();
   let lastEntries = -1;
   let lastHeartbeat = -1;
+  let stall: StallClock | null = null;
   try {
     let interval = NATIVE_POLL_FIRST_MS;
     for (;;) {
@@ -538,12 +713,18 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
       const moved = progress.entries !== lastEntries || progress.heartbeat !== lastHeartbeat;
       lastEntries = progress.entries;
       lastHeartbeat = progress.heartbeat;
-      if (moved || paused || nativePaused || governorHeld()) lastProgressAt = now;
-      if (now - lastProgressAt > timing.stallMs) {
-        // The same net as the legacy walker's READDIR_DEADLINE_MS: a wedged
-        // mount is a bounded cost and a fallback, not a scan that never ends.
-        await settleOnce();
-        throw new Error(`the native walk made no progress for ${timing.stallMs / 1000} s at ${scan.currentPath ?? rootPath}`);
+      if (moved || paused || nativePaused || governorHeld()) {
+        lastProgressAt = now;
+        stall = null;
+      } else {
+        stall = stallStep(stall, lastProgressAt, now);
+        if (stall.countedMs > timing.stallMs) {
+          // The same net as the legacy walker's READDIR_DEADLINE_MS: a wedged
+          // mount is a bounded cost and a fallback, not a scan that never ends.
+          await settleOnce();
+          const spare = stall.spareWindows > 0 && stall.blindWindows === 0 ? ' while the machine had CPU to spare' : '';
+          throw new Error(`the native walk made no progress for ${timing.stallMs / 1000} s at ${scan.currentPath ?? rootPath}${spare}`);
+        }
       }
       await timing.sleep(interval);
       interval = Math.min(NATIVE_POLL_MS, interval * 2);

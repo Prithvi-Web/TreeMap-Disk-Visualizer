@@ -19,6 +19,8 @@ import { planProtection, getCapsuleIndex, protectItems, capFor, planEviction, ge
 import { initPortableMode, resetPortableMode } from '../src/services/portableMode';
 import { planCartCommit, commitCart, undoCartRun, normalizeRunId, MAX_CART_PATHS } from '../src/services/cartCommit';
 import { updateSettings } from '../src/services/settings';
+import { peekScan } from '../src/services/diskScanner';
+import { waitFor } from './fixtures/waitFor';
 
 const INDEX = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
@@ -185,20 +187,23 @@ const SPARSE_SKIP = process.platform === 'win32'
  * a rolled-back restore reports its own error instead of "the file never came
  * back", which is the same correction commit 21dbbca applied to the watcher
  * test.
+ *
+ * The wait is a hang guard (HANG_GUARD_MS), not a deadline. It used to be
+ * 20 s, a size picked on an idle machine: with every core busy a restore takes
+ * as long as it takes, and a limit that fails it proves nothing a longer one
+ * would not. Whether the restore WORKED is the status assertion after it.
  */
 async function undoAndWait(runId: string): Promise<{ entryCount: number }> {
   const job = await undoCartRun(runId);
-  const deadline = Date.now() + 20_000;
-  for (;;) {
+  await waitFor(() => {
     const live = getCapsuleJob(job.jobId);
     assert.ok(live, 'the restore job record must exist');
-    if (live.status !== 'running') {
-      assert.equal(live.status, 'complete', live.error ?? 'the restore finished without error');
-      return { entryCount: job.entryCount };
-    }
-    assert.ok(Date.now() < deadline, 'the restore did not finish within 20s');
-    await new Promise((r) => setTimeout(r, 25));
-  }
+    return live.status !== 'running';
+  }, `restore job ${job.jobId} finishing`, 25);
+  const live = getCapsuleJob(job.jobId);
+  assert.ok(live, 'the restore job record must exist');
+  assert.equal(live.status, 'complete', live.error ?? 'the restore finished without error');
+  return { entryCount: job.entryCount };
 }
 
 /**
@@ -458,11 +463,25 @@ test('a retried commit with the same Idempotency-Key cannot run twice', async ()
     // Scan it first, so the paths are inside a scanned root.
     const started = await req(port, 'POST', '/api/scan', { path: dir });
     assert.equal(started.status, 202);
-    for (let i = 0; i < 100; i++) {
-      const s = await req(port, 'GET', `/api/scan/${started.body.scanId}/stats`);
-      if (s.body.status !== 'running') break;
-      await new Promise((r) => setTimeout(r, 50));
-    }
+    // Waited for in this process, not by polling /stats over HTTP. That poll
+    // was this test's own drain: while /stats sat in the strict 'api' lane,
+    // 20 polls a second against a refill of 10 emptied the bucket whenever a
+    // busy machine slowed the scan; the 429's body read as "not running" and
+    // ended the loop, and the commit below got the next 429 (4 and 10 busy
+    // loops, 24 Sep 2026). The loop also gave up after 100 polls without a
+    // word, leaving the scan running under the rest of the test.
+    //
+    // Off the wire, this test spends three 'api' tokens of the 20 listen()
+    // restores (the scan and the two commits), so it needs nothing another
+    // test left behind.
+    const scanId: string = started.body.scanId;
+    await waitFor(() => {
+      const live = peekScan(scanId);
+      assert.ok(live, `scan ${scanId} is registered in this process`);
+      return live.status !== 'running';
+    }, `scan ${scanId} settling`);
+    const scan = peekScan(scanId);
+    assert.equal(scan?.status, 'complete', `the fixture scan must complete: ${scan?.error ?? scan?.status}`);
     const body = { paths: [path.join(dir, 'f0.bin')], dryRun: true };
     const key = { 'Idempotency-Key': 'cart-test-key-1' };
 

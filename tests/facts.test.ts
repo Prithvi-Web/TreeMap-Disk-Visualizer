@@ -11,6 +11,8 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
+import { peekScan } from '../src/services/diskScanner';
+import { waitFor } from './fixtures/waitFor';
 import {
   clearFactCache,
   computeFacts,
@@ -89,12 +91,13 @@ async function scannedFixture(port: number) {
   const started = await req(port, 'POST', '/api/scan', { path: root });
   assert.equal(started.status, 202, `scan refused: ${JSON.stringify(started.body)}`);
   const scanId = started.body.scanId as string;
-  for (let i = 0; i < 200; i++) {
-    const stats = await req(port, 'GET', `/api/scan/${scanId}/stats`);
-    if (stats.body.status === 'complete') break;
-    assert.notEqual(stats.body.status, 'error', 'fixture scan failed');
-    await new Promise((r) => setTimeout(r, 25));
-  }
+  // The scan runs in this process, so its own record says when it settles.
+  // Polling GET /stats for that instead spent the "api" rate-limit lane (20
+  // burst, 10/s) that every asserted request in these tests draws on: under
+  // CPU load a slow scan drained it, and the test's next request came back 429.
+  await waitFor(() => peekScan(scanId)?.status !== 'running', 'the fixture scan settling');
+  const settled = peekScan(scanId);
+  assert.equal(settled?.status, 'complete', `fixture scan failed: ${settled?.error}`);
   return { root, scanId, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 
@@ -481,15 +484,18 @@ test('cached facts expire, and expiry evicts them from the cache', async () => {
   try {
     clearFactCache();
     const signal = new AbortController().signal;
-    await computeFacts('scan-t', ['/a'], ['ttl'], signal);
+    await computeFacts('scan-t', ['/a', '/b'], ['ttl'], signal);
     assert.equal(calls, 1);
-    assert.equal(factCacheSize(), 1);
+    assert.equal(factCacheSize(), 2);
 
     await new Promise((r) => setTimeout(r, 20));
 
     const again = await computeFacts('scan-t', ['/a'], ['ttl'], signal);
     assert.equal(calls, 2, 'an expired fact is recomputed, not served stale');
     assert.deepEqual(again.ttl.values['/a'], { calls: 2 });
+    // '/b' is not asked for again, so only the sweep can remove it. Re-asking
+    // '/a' alone overwrites its own entry, which leaves the count at 1 with the
+    // sweep's expiry deleted too (checked on a copy of the registry).
     assert.equal(factCacheSize(), 1, 'and the expired entry was swept, not merely ignored');
   } finally {
     restore();

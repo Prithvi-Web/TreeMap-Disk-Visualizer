@@ -1,10 +1,11 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { skipOrFailOnCi } from './fixtures/ciSkip';
+import { HANG_GUARD_MS } from './fixtures/waitFor';
 import { planCorpus, createCorpus, type CorpusManifest } from '../bench/lib/corpus';
 import { GOVERNOR_BAND_POINTS, PRESET_CEILING_PERCENT, scanHoldVerdict } from '../bench/lib/governorSuite';
 import { runScanHold } from '../bench/lib/suites';
@@ -40,6 +41,22 @@ function small(): Promise<CorpusManifest> {
 
 const repeat = (n: number, v: number): number[] => Array.from({ length: n }, () => v);
 
+/**
+ * Every wait on real work here is a hang guard, never a measurement. Eco runs
+ * the walk's threads at background QoS, so with every core busy a hold's scan
+ * waits for a turn, and since the native stall rule leaves saturated time out
+ * it no longer falls back after 30 s. The whole command (tsx, the smoke corpus
+ * built or reused, the hold, its last scan run to its end) keeps the longer
+ * guard it always had.
+ */
+const COMMAND_HANG_GUARD_MS = 300_000;
+
+/** The child ran to its own exit: a kill by the hang guard fails by name, not as an exit code of null. */
+function ranToExit(r: SpawnSyncReturns<string>, what: string, guardMs: number): SpawnSyncReturns<string> {
+  assert.equal(r.error, undefined, `${what} did not run to its own exit (hang guard ${guardMs} ms): ${String(r.error)}`);
+  return r;
+}
+
 test('the verdict is the last half of the samples against the ceiling plus the band, from below as well', () => {
   const eco = PRESET_CEILING_PERCENT.eco;
   assert.equal(eco, 25);
@@ -71,7 +88,7 @@ test('the verdict is the last half of the samples against the ceiling plus the b
   assert.equal(none.withinBudget, false, 'no samples is no evidence');
 });
 
-test('a scan hold runs native scans of the corpus back to back in a measuring process and says what it held', async (t) => {
+test('a scan hold runs native scans of the corpus back to back in a measuring process and says what it held', { timeout: HANG_GUARD_MS }, async (t) => {
   const surface = nativeScanModule();
   if (!surface.available) {
     skipOrFailOnCi(t, `the native module is not built here: ${surface.reason}`);
@@ -97,7 +114,7 @@ test('a scan hold runs native scans of the corpus back to back in a measuring pr
 });
 
 test('the scanhold command is in the usage, and its options are guarded', () => {
-  const run = (...args: string[]) => spawnSync(process.execPath, [tsxCli, path.join(REPO, 'bench', 'run.ts'), ...args], { cwd: REPO, encoding: 'utf8', timeout: 120_000 });
+  const run = (...args: string[]) => ranToExit(spawnSync(process.execPath, [tsxCli, path.join(REPO, 'bench', 'run.ts'), ...args], { cwd: REPO, encoding: 'utf8', timeout: HANG_GUARD_MS }), `bench ${args.join(' ')}`, HANG_GUARD_MS);
   const help = run('--help');
   assert.equal(help.status, 0, help.stderr);
   assert.ok(help.stdout.includes('npm run bench -- scanhold [--corpus=enum200k|enum1m|ci20k|smoke|dupes100k] [--preset=eco|balanced|turbo] [--seconds=60] [--record] [--label=...]'), help.stdout);
@@ -121,7 +138,7 @@ test('the scanhold command runs end to end on the smoke corpus and writes its re
   const out = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-bench-scanhold-out-'));
   try {
     const env = { ...process.env, TREEMAP_BENCH_OUT: out };
-    const r = spawnSync(process.execPath, [tsxCli, path.join(REPO, 'bench', 'run.ts'), 'scanhold', '--corpus=smoke', '--preset=eco', '--seconds=2', '--label=cli test'], { cwd: REPO, encoding: 'utf8', timeout: 300_000, env });
+    const r = ranToExit(spawnSync(process.execPath, [tsxCli, path.join(REPO, 'bench', 'run.ts'), 'scanhold', '--corpus=smoke', '--preset=eco', '--seconds=2', '--label=cli test'], { cwd: REPO, encoding: 'utf8', timeout: COMMAND_HANG_GUARD_MS, env }), 'bench scanhold on the smoke corpus', COMMAND_HANG_GUARD_MS);
     assert.doesNotMatch(r.stderr, /^bench: /m, `the command ran to a result, not a crash: ${r.stderr}`);
     assert.ok(r.status === 0 || r.status === 1, `exit ${r.status}: ${r.stdout}${r.stderr}`);
     assert.match(r.stdout, /governor\s+scan-hold-eco-smoke\s+native-scan/);

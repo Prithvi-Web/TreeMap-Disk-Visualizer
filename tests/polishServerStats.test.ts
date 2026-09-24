@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-polish-stats-data-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -50,13 +51,20 @@ function record(overrides: Partial<ScanResult>): ScanResult {
   };
 }
 
+/**
+ * Starts a scan of `dir`, waits for it to settle and insists it completed.
+ * The wait reads the record in this process with peekScan, which is not a
+ * client use and so leaves the retention clock alone. Its limit is the shared
+ * hang guard, never a measurement: with every core of this Mac busy, a scan
+ * of a few files outlived the 15 s this helper used to allow (24 Sep 2026).
+ */
 async function settled(dir: string): Promise<ScanResult> {
-  const scan = await startScan(dir);
-  const deadline = Date.now() + 15_000;
-  while (getScan(scan.scanId)?.status === 'running' && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  return getScan(scan.scanId)!;
+  const { scanId } = await startScan(dir);
+  await waitFor(() => peekScan(scanId)?.status !== 'running', `the scan of ${dir} settling`);
+  const scan = peekScan(scanId);
+  assert.ok(scan, `scan ${scanId} is still registered once it settles`);
+  assert.equal(scan.status, 'complete', `the scan of ${dir} completes: ${scan.error ?? 'it recorded no error'}`);
+  return scan;
 }
 
 function getJson(port: number, url: string): Promise<{ status: number; body: any }> {
@@ -186,15 +194,29 @@ test('/stats publishes expiresAt about thirty minutes out, and reading keeps it 
   const scan = await settled(base);
   scan.finishedAt = Date.now() - 25 * MIN; // pretend the scan settled a while ago
   scan.lastUsedAt = undefined;
+  // Every instant compared below comes from the record, or from the clock
+  // readings taken either side of the request, so no check depends on how
+  // long a busy machine takes to get from one line to the next.
+  const untouchedExpiresAt = scan.finishedAt + SCAN_TTL_MS; // five minutes from now
+  assert.equal(scanExpiresAt(scan), untouchedExpiresAt, 'unread, it expires thirty minutes after it settled');
+  assert.equal(scanExpired(scan, untouchedExpiresAt + 1 * MIN), true, 'unread, it would be gone six minutes from now');
   const { port, close } = await listen();
   try {
     const before = Date.now();
     const r = await getJson(port, `/api/scan/${scan.scanId}/stats`);
+    const after = Date.now();
     assert.equal(r.status, 200);
     assert.equal(typeof r.body.expiresAt, 'number');
-    assert.ok(r.body.expiresAt >= before + SCAN_TTL_MS - 1000, 'the read itself pushed the expiry out to now + 30 min');
-    assert.ok(r.body.expiresAt <= Date.now() + SCAN_TTL_MS + 1000);
-    assert.equal(scanExpired(scan, Date.now() + 6 * MIN), false, 'what would have expired in five minutes now survives');
+    // The read stamps the record while the request is being answered, so the
+    // stamp lies between `before` and `after` however long that took.
+    const stamp = scan.lastUsedAt;
+    assert.ok(stamp !== undefined && stamp >= before && stamp <= after,
+      `the read stamped the scan while it was answered: ${stamp} is not within ${before}..${after}`);
+    assert.equal(r.body.expiresAt, stamp + SCAN_TTL_MS, 'the read itself pushed the expiry out to now + 30 min');
+    assert.equal(r.body.expiresAt, scanExpiresAt(scan), 'the route publishes the record\'s own expiry');
+    assert.equal(scanExpired(scan, untouchedExpiresAt + 1 * MIN), false, 'what would have expired in five minutes now survives');
+    assert.equal(scanExpired(scan, r.body.expiresAt), false, 'it is kept up to the published instant');
+    assert.equal(scanExpired(scan, r.body.expiresAt + 1), true, 'and gone the moment after it');
   } finally {
     await close();
   }

@@ -221,6 +221,64 @@ test('the metadata lane is an allowlist: anything unrecognised is guarded strict
   assert.equal(L.laneName('GET', '/api/index/abc/result'), 'api');
 });
 
+/**
+ * The scan-status poll. AGENTS.md tells an agent to poll
+ * `GET /api/scan/{scanId}/stats` until `status` is "complete", and the 202 from
+ * `POST /api/scan?wait=true` points there too. The handler is `requireScan` (a
+ * map lookup) plus `buildScanStats` (counters copied off the record, the
+ * refused-folder examples capped at five): constant work, no I/O. In the
+ * strict lane an agent that did what the docs say spent the 20 tokens its
+ * next `DELETE /api/files` or offload needed; the load sweep of 24 Sep 2026
+ * saw the same thing drain the test suite's own requests into 429s.
+ */
+test('a scan-status poll is metadata; writes to it and the tree walks beside it stay strict', () => {
+  const L = rateLimitLanes;
+  assert.equal(L.laneName('GET', '/api/scan/abc/stats'), 'meta');
+  assert.equal(L.laneName('GET', '/scan/abc/stats'), 'meta', 'the mounted spelling agrees');
+  assert.equal(L.laneName('GET', '/api/scan/abc/stats?x=1'), 'meta', 'a query string is not part of the decision');
+
+  // A write is never a cheap read, even on a path whose GET is one.
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    assert.equal(L.laneName(method, '/api/scan/abc/stats'), 'api', `${method} /api/scan/:id/stats`);
+  }
+
+  // The per-scan endpoints that walk the tree, stat files or stream a report
+  // are the real payload and stay strict.
+  for (const walk of ['tree', 'treemap', 'subtree?path=/x', 'result', 'export?format=csv', 'calendar']) {
+    assert.equal(L.laneName('GET', `/api/scan/abc/${walk}`), 'api', `GET /api/scan/:id/${walk}`);
+  }
+  assert.equal(L.laneName('POST', '/api/scan/abc/nodes'), 'api');
+  assert.equal(L.laneName('POST', '/api/scan/abc/cancel'), 'api');
+
+  // The membership is exactly one id segment then `stats`, nothing looser.
+  assert.equal(L.laneName('GET', '/api/scan/abc/stats/extra'), 'api');
+  assert.equal(L.laneName('GET', '/api/scan/abc/statsx'), 'api');
+  assert.equal(L.laneName('GET', '/api/scan/a/b/stats'), 'api');
+  assert.equal(L.laneName('GET', '/api/scan//stats'), 'api');
+});
+
+test('an agent polling scan status does not spend the strict allowance its writes need', async () => {
+  const s = await listen();
+  try {
+    // Five strict bursts' worth of status polls, all in one tick.
+    const polls = await Promise.all(
+      Array.from({ length: 100 }, () => req(s.port, 'GET', `/api/scan/${s.scanId}/stats`, FLOOD_AGENT)),
+    );
+    assert.deepEqual(polls.filter((r) => r.status !== 200).map((r) => r.status), [],
+      'every status poll is answered');
+
+    // The strict lane's whole burst is still there afterwards. Counted, not
+    // timed: a bucket starts full, and nothing above drew from it.
+    const strict = await Promise.all(
+      Array.from({ length: 20 }, () => req(s.port, 'GET', `/api/fs/list?path=${encodeURIComponent(tmp)}`)),
+    );
+    assert.equal(strict.filter((r) => r.status === 429).length, 0,
+      'polling scan status must not spend the strict lane an agent’s next real call needs');
+  } finally {
+    await s.close();
+  }
+});
+
 test('the published rate-limit manifest is generated from the lanes themselves', async () => {
   const s = await listen();
   try {

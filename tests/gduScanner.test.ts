@@ -6,8 +6,9 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { findGduBinary, runGdu, gduScan } from '../src/services/gduScanner';
-import { startScan, getScan, createScanRecord } from '../src/services/diskScanner';
+import { startScan, peekScan, createScanRecord } from '../src/services/diskScanner';
 import { FileNode, ScanResult } from '../src/models/types';
+import { waitFor } from './fixtures/waitFor';
 
 /**
  * The gdu engine is strictly best-effort: every failure mode here must end in
@@ -21,22 +22,29 @@ function countNodes(n: FileNode): number {
 }
 
 /**
- * Wait for a scan to finish — with a deadline.
+ * Wait for a scan to settle, then require that it completed.
  *
  * `node:test` has no default per-test timeout, so an unbounded poll does not
  * fail when a scan never settles: it HANGS THE WHOLE JOB, and CI reports
- * nothing at all rather than a failing test. `incrementalRescan.test.ts`
- * already does this correctly; this is the same loop.
+ * nothing at all rather than a failing test. The limit is waitFor's
+ * HANG_GUARD_MS, a guard against that hang and never a measurement: the old
+ * 30 s deadline failed this file with every core of the Mac busy (the load
+ * sweep of 24 Sep 2026) on a scan that was yielding to the load, not hung.
+ *
+ * It reads the record with peekScan, which does not count as a use of the
+ * scan, so waiting does not restart its retention clock. A settled record is
+ * 'complete' or 'error'; the scan's own error goes in the message.
  */
 async function settle(scanId: string): Promise<ScanResult> {
-  const t0 = Date.now();
-  for (;;) {
-    const s = getScan(scanId);
+  await waitFor(() => {
+    const s = peekScan(scanId);
     assert.ok(s, 'scan record must exist');
-    if (s.status !== 'running') return s;
-    assert.ok(Date.now() - t0 < 30_000, `scan ${scanId} never settled — timed out after 30s`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
+    return s.status !== 'running';
+  }, `scan ${scanId} settling`, 25);
+  const s = peekScan(scanId);
+  assert.ok(s, 'scan record must exist');
+  assert.equal(s.status, 'complete', `scan ${scanId} did not complete: ${s.error}`);
+  return s;
 }
 
 /** A tree with a hard link, a symlink, a nested dir and an empty dir. */

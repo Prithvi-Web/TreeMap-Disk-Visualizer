@@ -7,6 +7,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { startScan, getScan, mtimesMatch } from '../src/services/diskScanner';
 import { FileNode, ScanResult } from '../src/models/types';
+import { settled, pending } from '../src/utils/backgroundWrites';
+import { HANG_GUARD_MS, waitFor } from './fixtures/waitFor';
 
 /**
  * Fast (incremental) rescan correctness. The original substitution reused an
@@ -33,25 +35,46 @@ function cacheFileFor(rootPath: string): string {
   return path.join(process.env.TREEMAP_DATA_DIR!, `mtime-cache-${h}.json`);
 }
 
+/**
+ * A scan is done when its record leaves 'running'. The wait is a hang guard,
+ * not a measurement: with ten busy loops on this Mac's eight cores, four of
+ * these four-file scans outlasted the 10 s deadline this used to have.
+ */
 async function settle(scanId: string): Promise<ScanResult> {
-  const t0 = Date.now();
-  for (;;) {
+  await waitFor(() => {
     const s = getScan(scanId);
     assert.ok(s, 'scan record must exist');
-    if (s.status !== 'running') return s;
-    assert.ok(Date.now() - t0 < 10_000, 'scan timed out');
-    await new Promise((r) => setTimeout(r, 25));
+    return s.status !== 'running';
+  }, `scan ${scanId} settling`, 25);
+  return getScan(scanId)!;
+}
+
+/**
+ * The mtime cache and the snapshot are written fire-and-forget once a scan
+ * settles, each registered with backgroundWrites — so this awaits the writes
+ * themselves. A write that never finishes fails here, named, instead of
+ * hanging the run.
+ */
+async function writesSettled(): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const hung = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`background writes did not settle within ${HANG_GUARD_MS} ms; still running: ${pending().join(', ') || '(none)'}`)),
+      HANG_GUARD_MS,
+    );
+  });
+  try {
+    await Promise.race([settled(), hung]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 /** The mtime cache is written fire-and-forget after completion — wait for it. */
 async function waitForCache(rootPath: string): Promise<void> {
+  await writesSettled();
   const file = cacheFileFor(rootPath);
-  const t0 = Date.now();
-  while (!fs.existsSync(file)) {
-    assert.ok(Date.now() - t0 < 5_000, `cache file never appeared: ${file}`);
-    await new Promise((r) => setTimeout(r, 25));
-  }
+  assert.ok(fs.existsSync(file), `cache file never appeared: ${file}`);
 }
 
 async function scanOnce(root: string, incremental: boolean): Promise<ScanResult> {
@@ -200,12 +223,11 @@ test('revalidated directories refresh their own mtime and atime from the disk', 
 });
 
 test('the fast-rescan cache is the finished tree, byte for byte', async () => {
-  const { settled } = await import('../src/utils/backgroundWrites');
   const root = await makeTree('cache-bytes');
   try {
     const scan = await scanOnce(root, false);
     assert.equal(scan.status, 'complete');
-    await settled();
+    await writesSettled();
     assert.equal(await fsp.readFile(cacheFileFor(root), 'utf8'), JSON.stringify(scan.root));
   } finally {
     await fsp.rm(root, { recursive: true, force: true });
@@ -219,7 +241,6 @@ test('finishing a scan never builds the whole tree as objects', async () => {
   // streamed from the store, so no whole-tree prune runs between a scan's
   // last entry and its cache landing on disk.
   const { PackedScanStore } = await import('../src/services/scanStore');
-  const { settled } = await import('../src/utils/backgroundWrites');
   const root = await makeTree('no-materialize');
   const proto = PackedScanStore.prototype;
   const prune = proto.prune;
@@ -231,7 +252,7 @@ test('finishing a scan never builds the whole tree as objects', async () => {
   try {
     const scan = await scanOnce(root, false);
     assert.equal(scan.status, 'complete');
-    await settled();
+    await writesSettled();
     assert.ok(fs.existsSync(cacheFileFor(root)), 'the cache is still written');
     assert.equal(unbounded, 0, 'no whole-tree prune ran between the scan and its cache');
   } finally {

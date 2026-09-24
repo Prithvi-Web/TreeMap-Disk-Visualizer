@@ -8,6 +8,7 @@ import path from 'node:path';
 
 // Isolate notes.json (and everything else) from the user's real app data.
 import { isolatedDataDir } from './fixtures/dataDir';
+import { waitFor } from './fixtures/waitFor';
 isolatedDataDir('treemap-notes-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
@@ -25,6 +26,7 @@ import { collectCleanupSuggestions } from '../src/services/cleanupRules';
 import { savePolicies, simulatePolicy } from '../src/services/autopilot';
 import { initPortableMode, resetPortableMode } from '../src/services/portableMode';
 import { createApp } from '../src/server';
+import { peekScan } from '../src/services/diskScanner';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { FileNode } from '../src/models/types';
 import { CompiledIgnore } from '../src/utils/glob';
@@ -75,6 +77,30 @@ async function listen() {
     port: (server.address() as { port: number }).port,
     close: () => new Promise<void>((r) => server.close(() => r())),
   };
+}
+
+/**
+ * Scans `root` through POST /api/scan and returns the scan's id once the scan
+ * has completed. The scan runs in this process, so its own record says when it
+ * settles; peekScan reads it without counting as a use of the scan. Polling
+ * GET /api/scan/:id/result for that instead spent the strict "api" rate-limit
+ * lane (20 burst, 10/s) that the test's own next requests draw on, against a
+ * 10 s deadline: with every core of this Mac busy the fixture scan outlived it
+ * and two tests failed "fixture scan never completed" (24 Sep 2026). The wait's
+ * limit is a hang guard; the assertion after it is what proves completion.
+ */
+async function scannedFixture(port: number, root: string): Promise<string> {
+  const started = await req(port, 'POST', '/api/scan', { path: root });
+  assert.equal(started.status, 202, `scan refused: ${JSON.stringify(started.body)}`);
+  const scanId = started.body.scanId as string;
+  await waitFor(() => peekScan(scanId)?.status !== 'running', `the fixture scan ${scanId} settling`);
+  const settled = peekScan(scanId);
+  assert.equal(
+    settled?.status,
+    'complete',
+    `the fixture scan never completed: ${settled ? `it ended '${settled.status}': ${settled.error}` : 'it is not registered'}`,
+  );
+  return scanId;
 }
 
 /** Remove every note so tests cannot see each other's state. */
@@ -258,17 +284,8 @@ test('GET /api/cleanup/suggestions honours a suppressing note end to end', async
   try {
     await writeBin(path.join(fx, 'work', 'node_modules', 'dep', 'a.bin'), 8192);
 
-    const scan = await req(port, 'POST', '/api/scan', { path: fx });
-    assert.ok(scan.status === 200 || scan.status === 202, JSON.stringify(scan.body));
-    const scanId = scan.body.scanId;
     // The scan runs in the background; suggestions answer 202 until it lands.
-    const deadline = Date.now() + 10_000;
-    for (;;) {
-      const r = await req(port, 'GET', `/api/scan/${scanId}/result`);
-      if (r.status === 200) break;
-      assert.ok(Date.now() < deadline, 'the fixture scan never completed');
-      await new Promise((res) => setTimeout(res, 50));
-    }
+    const scanId = await scannedFixture(port, fx);
 
     const before = await req(port, 'GET', `/api/cleanup/suggestions?scanId=${scanId}`);
     assert.equal(before.status, 200);
@@ -570,15 +587,7 @@ test('a corrupt notes.json fails CLOSED — automation refuses rather than runni
     // unsuppressed list.
     const { port, close } = await listen();
     try {
-      const scan = await req(port, 'POST', '/api/scan', { path: fx });
-      const scanId = scan.body.scanId;
-      const deadline = Date.now() + 10_000;
-      for (;;) {
-        const r = await req(port, 'GET', `/api/scan/${scanId}/result`);
-        if (r.status === 200) break;
-        assert.ok(Date.now() < deadline, 'fixture scan never completed');
-        await new Promise((res) => setTimeout(res, 50));
-      }
+      const scanId = await scannedFixture(port, fx);
       const sug = await req(port, 'GET', `/api/cleanup/suggestions?scanId=${scanId}`);
       assert.equal(sug.status, 200);
       assert.equal(sug.body.available, false, 'degraded, not silently unsuppressed');
@@ -603,15 +612,7 @@ test('the agent summary respects notes — teeth for a wire the review found unt
   const { port, close } = await listen();
   try {
     await writeBin(path.join(fx, 'work', 'node_modules', 'dep', 'a.bin'), 8192);
-    const scan = await req(port, 'POST', '/api/scan', { path: fx });
-    const scanId = scan.body.scanId;
-    const deadline = Date.now() + 10_000;
-    for (;;) {
-      const r = await req(port, 'GET', `/api/scan/${scanId}/result`);
-      if (r.status === 200) break;
-      assert.ok(Date.now() < deadline, 'fixture scan never completed');
-      await new Promise((res) => setTimeout(res, 50));
-    }
+    const scanId = await scannedFixture(port, fx);
     const before = await req(port, 'GET', `/api/agent/summary?scanId=${scanId}`);
     assert.equal(before.status, 200);
     const bytesBefore = before.body.cleanup?.reclaimableBytes ?? before.body.reclaimableBytes;
@@ -619,6 +620,7 @@ test('the agent summary respects notes — teeth for a wire the review found unt
 
     await setNote(path.join(fx, 'work'), 'client work');
     const after = await req(port, 'GET', `/api/agent/summary?scanId=${scanId}`);
+    assert.equal(after.status, 200, JSON.stringify(after.body));
     const bytesAfter = after.body.cleanup?.reclaimableBytes ?? after.body.reclaimableBytes;
     assert.equal(bytesAfter, 0, 'a noted folder is not advertised to agents either');
   } finally {

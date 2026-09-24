@@ -11,6 +11,8 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
+import { peekScan } from '../src/services/diskScanner';
+import { waitFor } from './fixtures/waitFor';
 
 /**
  * Saved queries and the query HTTP surface (v4 §2.2, §2.3).
@@ -58,26 +60,44 @@ function req(port: number, method: string, url: string, body?: unknown): Promise
   });
 }
 
-/** Scan a small fixture and return its id. */
+/** Scan a small fixture, wait until the scan has completed, and return its id. */
 async function scannedFixture(port: number) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-query-fixture-'));
-  fs.writeFileSync(path.join(root, 'big.mp4'), Buffer.alloc(200_000));
-  fs.writeFileSync(path.join(root, 'small.txt'), Buffer.alloc(40));
-  fs.mkdirSync(path.join(root, 'node_modules'));
-  fs.writeFileSync(path.join(root, 'node_modules', 'huge.mp4'), Buffer.alloc(300_000));
-  fs.mkdirSync(path.join(root, 'sub'));
-  fs.writeFileSync(path.join(root, 'sub', 'clip.mov'), Buffer.alloc(150_000));
+  const cleanup = () => fs.rmSync(root, { recursive: true, force: true });
+  try {
+    fs.writeFileSync(path.join(root, 'big.mp4'), Buffer.alloc(200_000));
+    fs.writeFileSync(path.join(root, 'small.txt'), Buffer.alloc(40));
+    fs.mkdirSync(path.join(root, 'node_modules'));
+    fs.writeFileSync(path.join(root, 'node_modules', 'huge.mp4'), Buffer.alloc(300_000));
+    fs.mkdirSync(path.join(root, 'sub'));
+    fs.writeFileSync(path.join(root, 'sub', 'clip.mov'), Buffer.alloc(150_000));
 
-  const started = await req(port, 'POST', '/api/scan', { path: root });
-  assert.equal(started.status, 202, JSON.stringify(started.body));
-  const scanId = started.body.scanId as string;
-  for (let i = 0; i < 200; i++) {
-    const stats = await req(port, 'GET', `/api/scan/${scanId}/stats`);
-    if (stats.body.status === 'complete') break;
-    await new Promise((r) => setTimeout(r, 25));
+    const started = await req(port, 'POST', '/api/scan', { path: root });
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    const scanId = started.body.scanId as string;
+    // The scan runs in this process, so its own record says when it settles
+    // (peekScan, so waiting is not a use that restarts its retention clock).
+    // This used to poll GET /stats 200 times, 25 ms apart, and then carry on
+    // whether or not the scan had finished: with every core busy the scan
+    // outlived those 5 s, and the test's queries came back 409 or 429 (the
+    // polls had been spending the same strict lane the queries draw on).
+    await waitFor(() => peekScan(scanId)?.status !== 'running', `fixture scan ${scanId} settling`);
+    const settled = peekScan(scanId);
+    assert.ok(settled, `fixture scan ${scanId} left the scan registry before it settled`);
+    assert.equal(settled.status, 'complete', `fixture scan ${scanId} is ${settled.status}, not complete: ${settled.error ?? 'no error recorded'}`);
+    return { root, scanId, cleanup };
+  } catch (err) {
+    cleanup();
+    throw err;
   }
-  return { root, scanId, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
+
+/**
+ * A test creates its fixture inside its `try`, so a fixture that fails still
+ * reaches `close()`: a server left listening kept this file's process alive
+ * after its tests had failed, and the failure became a hang.
+ */
+type Fixture = Awaited<ReturnType<typeof scannedFixture>>;
 
 /* ============================ validate ============================ */
 
@@ -156,8 +176,9 @@ test('GET /api/query/fields serves the grammar rather than duplicating it', asyn
 
 test('POST /api/query returns the right files from a real scan', async () => {
   const { port, close } = await listen();
-  const fixture = await scannedFixture(port);
+  let fixture: Fixture | undefined;
   try {
+    fixture = await scannedFixture(port);
     const r = await req(port, 'POST', '/api/query', { scanId: fixture.scanId, q: 'ext:mp4' });
     assert.equal(r.status, 200);
     assert.equal(r.body.ok, true);
@@ -174,15 +195,16 @@ test('POST /api/query returns the right files from a real scan', async () => {
       ['big.mp4', 'clip.mov', 'huge.mp4'],
     );
   } finally {
-    fixture.cleanup();
+    fixture?.cleanup();
     await close();
   }
 });
 
 test('results are sorted and paged deterministically', async () => {
   const { port, close } = await listen();
-  const fixture = await scannedFixture(port);
+  let fixture: Fixture | undefined;
   try {
+    fixture = await scannedFixture(port);
     const all = await req(port, 'POST', '/api/query', { scanId: fixture.scanId, q: 'type:file', sort: 'size' });
     const sizes = all.body.hits.map((h: { size: number }) => h.size);
     assert.deepEqual(sizes, [...sizes].sort((a, b) => b - a), 'sorted biggest first');
@@ -196,15 +218,16 @@ test('results are sorted and paged deterministically', async () => {
     assert.equal(page1.body.total, all.body.total, 'total is the whole result, not the page');
     assert.equal(page1.body.truncated, true, 'and a partial page says so');
   } finally {
-    fixture.cleanup();
+    fixture?.cleanup();
     await close();
   }
 });
 
 test('a query needing an unavailable signal is DEGRADED, not silently empty', async () => {
   const { port, close } = await listen();
-  const fixture = await scannedFixture(port);
+  let fixture: Fixture | undefined;
   try {
+    fixture = await scannedFixture(port);
     // §2.2's point: an empty list alone reads as "nothing matched", which is a
     // different and wrong claim from "this machine cannot answer that".
     //
@@ -226,15 +249,16 @@ test('a query needing an unavailable signal is DEGRADED, not silently empty', as
     const plain = await req(port, 'POST', '/api/query', { scanId: fixture.scanId, q: 'ext:mp4' });
     assert.deepEqual(plain.body.degraded, []);
   } finally {
-    fixture.cleanup();
+    fixture?.cleanup();
     await close();
   }
 });
 
 test('score: is a real filter now, not a stated dead end', async () => {
   const { port, close } = await listen();
-  const fixture = await scannedFixture(port);
+  let fixture: Fixture | undefined;
   try {
+    fixture = await scannedFixture(port);
     // Phase 2 shipped the `score` field with an honest "not built yet" and a
     // degraded marker. Phase 3 makes it answerable, and the marker has to go
     // with it — a response that still said "reclaim scores are not built yet"
@@ -264,15 +288,16 @@ test('score: is a real filter now, not a stated dead end', async () => {
     assert.ok(paths.some((p: string) => p.endsWith('node_modules')),
       `a regenerable folder should clear a middling threshold; got ${JSON.stringify(paths)}`);
   } finally {
-    fixture.cleanup();
+    fixture?.cleanup();
     await close();
   }
 });
 
 test('the query route refuses bad input rather than guessing', async () => {
   const { port, close } = await listen();
-  const fixture = await scannedFixture(port);
+  let fixture: Fixture | undefined;
   try {
+    fixture = await scannedFixture(port);
     const noQuery = await req(port, 'POST', '/api/query', { scanId: fixture.scanId });
     assert.equal(noQuery.status, 400);
     assert.equal(noQuery.body.code, 'QUERY_REQUIRED');
@@ -289,7 +314,7 @@ test('the query route refuses bad input rather than guessing', async () => {
     assert.equal(badQuery.status, 400);
     assert.equal(badQuery.body.code, 'QUERY_PARSE_ERROR');
   } finally {
-    fixture.cleanup();
+    fixture?.cleanup();
     await close();
   }
 });
@@ -380,14 +405,22 @@ test('a colour is accepted only in a form that is safe to put in CSS', async () 
 test('pinned views sort first, then newest', async () => {
   const { port, close } = await listen();
   try {
+    // Every request here is checked: the clearing DELETEs (one per view the
+    // earlier tests left) and the POSTs all draw on the strict 'api' lane, and
+    // a refused one must fail by name rather than as a short list later.
     for (const q of (await req(port, 'GET', '/api/queries')).body.queries) {
-      await req(port, 'DELETE', `/api/queries/${q.id}`);
+      const cleared = await req(port, 'DELETE', `/api/queries/${q.id}`);
+      assert.equal(cleared.status, 200, `clearing "${q.name}": ${JSON.stringify(cleared.body)}`);
     }
-    await req(port, 'POST', '/api/queries', { name: 'first', q: 'size>1gb' });
+    const saved = async (body: object) => {
+      const r = await req(port, 'POST', '/api/queries', body);
+      assert.equal(r.status, 201, `saving ${JSON.stringify(body)}: ${JSON.stringify(r.body)}`);
+    };
+    await saved({ name: 'first', q: 'size>1gb' });
     await new Promise((r) => setTimeout(r, 5));
-    await req(port, 'POST', '/api/queries', { name: 'second', q: 'size>2gb' });
+    await saved({ name: 'second', q: 'size>2gb' });
     await new Promise((r) => setTimeout(r, 5));
-    await req(port, 'POST', '/api/queries', { name: 'pinned', q: 'size>3gb', pinned: true });
+    await saved({ name: 'pinned', q: 'size>3gb', pinned: true });
 
     const listed = (await req(port, 'GET', '/api/queries')).body.queries as { name: string }[];
     assert.equal(listed[0].name, 'pinned', 'pinned first — this is the chip strip order');

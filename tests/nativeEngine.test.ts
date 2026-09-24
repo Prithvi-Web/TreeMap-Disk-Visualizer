@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import { skipOrFailOnCi } from './fixtures/ciSkip';
+import { HANG_GUARD_MS, waitFor } from './fixtures/waitFor';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -31,6 +32,8 @@ import {
   KIND_DIR,
   KIND_FILE,
   KIND_SYMLINK,
+  MACHINE_SATURATED_SHARE,
+  MACHINE_WINDOW_MS,
   NATIVE_CANCEL_DEADLINE_MS,
   NATIVE_POLL_MS,
   NATIVE_STALL_MS,
@@ -40,15 +43,19 @@ import {
   SCAN_FUNCTIONS,
   columnPathOf,
   ingestColumns,
+  machineTicksOf,
+  machineTicksFromProcStat,
+  platformMachineTicks,
   nativeEligibility,
   nativeScanModule,
   runNativeWalk,
   setNativeWalkTimingForTests,
+  type MachineTicks,
 } from '../src/services/scan/nativeEngine';
 import { statToInput } from '../src/services/scan/nodeInput';
 import { PackedScanStore, storeOf, type ScanStore } from '../src/services/scanStore';
 import { platform } from '../src/platform';
-import { cancelScan, createScanRecord, getScan, startScan } from '../src/services/diskScanner';
+import { cancelScan, createScanRecord, getScan, peekScan, startScan } from '../src/services/diskScanner';
 import { buildScanStats } from '../src/api/scanRoutes';
 import { getSettings, updateSettings } from '../src/services/settings';
 import { neverDescendPaths } from '../src/utils/mountBoundaries';
@@ -81,9 +88,11 @@ import type { EngineSetting, ScanResult } from '../src/models/types';
  *     cancel is settled by polling to done and abandoned at a deadline when
  *     the walk never answers (N2); a walk that shows nothing new — no entry,
  *     no heartbeat, and neither the scan's pause gate nor a governor hold
- *     holding it — for NATIVE_STALL_MS is a stall the legacy chain retries
- *     (N3); and a module that throws mid-walk has its handle settled before
- *     the error propagates (N4).
+ *     holding it — for NATIVE_STALL_MS of time in which the machine had CPU
+ *     to spare is a stall the legacy chain retries (N3), while time in which
+ *     the machine was saturated is left out, because a walk the OS is not
+ *     scheduling is waiting, not stuck (section 3c); and a module that throws
+ *     mid-walk has its handle settled before the error propagates (N4).
  *
  * The fake-module tests run against a fake injected through the loader's own
  * seam, exactly as tests/engineBudget.test.ts does; the real-module tests are
@@ -526,7 +535,12 @@ function recordFor(root: string): { scan: ScanResult; store: PackedScanStore } {
  * ends, and the caller asserts 'settled' — a failure, not a hang.
  */
 async function bounded(walk: Promise<void>, fake: { handles: Map<number, FakeHandle> }, ms = 10_000): Promise<'settled' | 'timed out'> {
-  const outcome = await Promise.race([walk.then(() => 'settled' as const, () => 'settled' as const), sleep(ms).then(() => 'timed out' as const)]);
+  // The guard's timer is cleared once the walk settles: left pending, a
+  // HANG_GUARD_MS guard would hold the test process open for two minutes.
+  let guard: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<'timed out'>((resolve) => { guard = setTimeout(() => resolve('timed out'), ms); });
+  const outcome = await Promise.race([walk.then(() => 'settled' as const, () => 'settled' as const), timedOut]);
+  clearTimeout(guard);
   if (outcome === 'timed out') {
     fake.handles.clear();
     await walk.catch(() => undefined);
@@ -1396,6 +1410,293 @@ test('a native walk that stalls falls back to the walker with the stall as the r
   }
 });
 
+/* ═══════════════════ 3c. a walk starved of CPU is not a stall ═══════════════════ */
+
+/*
+ * The owner's decision (24 Sep 2026): switch engines only when a scan is truly
+ * stuck — a dead network drive — and let a scan that is only waiting for CPU
+ * keep going. With every core busy, an Eco scan (macOS Background QoS, on the
+ * efficiency cores) can go unscheduled for longer than NATIVE_STALL_MS and was
+ * abandoned for the legacy engines. So the stall clock counts only time in
+ * which the machine had CPU to spare, weighed from its tick counters over
+ * windows of MACHINE_WINDOW_MS. Every test here drives a fake clock and a fake
+ * machine through the walk's timing seam: each outcome is a count of polls and
+ * readings, never a measured time.
+ */
+
+const MACHINE_CORES = 8;
+
+/**
+ * A fake clock with a fake machine behind it. Each `tick` moves the clock on
+ * by `stepMs` and adds that much time to every core's counters, `share` of it
+ * busy, so the busy share the walk measures over a window is exactly the share
+ * the test set for the ticks inside it. `reads` counts the walk's readings.
+ */
+function machineClock(stepMs = POLL_SECOND_MS) {
+  let now = 0;
+  let busy = 0;
+  let idle = 0;
+  const machine = {
+    share: 0,
+    reads: 0,
+    now: (): number => now,
+    tick: (): void => {
+      now += stepMs;
+      const busyMs = Math.round(machine.share * stepMs);
+      busy += busyMs * MACHINE_CORES;
+      idle += (stepMs - busyMs) * MACHINE_CORES;
+    },
+    ticks: (): MachineTicks => {
+      machine.reads++;
+      return { busy, idle, cores: MACHINE_CORES };
+    },
+  };
+  return machine;
+}
+
+/**
+ * At poll `poll`, freezes the fake walk when the poll is within `from`..`to`
+ * (1-based, inclusive) and lets it run otherwise. A frozen walk's workers get
+ * no CPU, so its count and heartbeat stand still, as a real walk's do while
+ * the OS schedules none of its threads. Nothing pauses it: the scan's pause
+ * gate and the governor stay open.
+ */
+function freeze(fake: { handles: Map<number, FakeHandle> }, poll: number, from: number, to: number): void {
+  for (const h of fake.handles.values()) h.paused = poll >= from && poll <= to;
+}
+
+test('a walk starved of CPU is not a stall: nothing new for over ten times the threshold on a saturated machine, and it finishes on the native engine once it gets the CPU', async () => {
+  const { root, total, locked } = await buildEdgeFixture('treemap-native-starved-');
+  const machine = machineClock();
+  machine.share = MACHINE_SATURATED_SHARE; // at the threshold is saturated
+  try {
+    setNativeWalkTimingForTests({ stallMs: 2_500, cancelDeadlineMs: 1_500, now: machine.now, machineTicks: machine.ticks });
+    const { scan, store } = recordFor(root);
+    // Polls 2-27 see nothing new: 26 fake seconds, over ten times the 2.5 s threshold.
+    const fake = useFakeNative({ steps: 4, onPoll: (n) => { machine.tick(); freeze(fake, n, 2, 27); } });
+    const walk = runNativeWalk(scan, store, root, fake.module);
+    assert.equal(await bounded(walk, fake, HANG_GUARD_MS), 'settled', 'the starved walk never ended');
+    await walk;
+    assert.equal(fake.calls.cancel, 0, 'a walk waiting for CPU on a saturated machine was cancelled as a stall');
+    assert.equal(fake.calls.log.filter((c) => c.startsWith('poll')).length, 30, 'one poll that moved, 26 that saw nothing new, then three to the end');
+    assert.equal(fake.calls.take, 1);
+    assert.equal(scan.scanned, total);
+    assert.equal(machine.reads, 26, 'read at the first poll that saw nothing new and at the end of each one-second window after it, and never while the walk moved');
+  } finally {
+    setNativeWalkTimingForTests(null);
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('on a machine with CPU to spare, a walk that shows nothing new is a stall once the threshold of that time has passed, and not one poll sooner', async () => {
+  const { root, locked } = await buildEdgeFixture('treemap-native-stall-idle-');
+  const machine = machineClock();
+  machine.share = 0.1;
+  try {
+    setNativeWalkTimingForTests({ stallMs: 5_500, cancelDeadlineMs: 1_500, now: machine.now, machineTicks: machine.ticks });
+    const { scan, store } = recordFor(root);
+    const fake = useFakeNative({ wedged: true, onPoll: machine.tick });
+    const walk = runNativeWalk(scan, store, root, fake.module);
+    assert.equal(await bounded(walk, fake, HANG_GUARD_MS), 'settled', 'the wedged walk on an idle machine was never ended: no stall was detected');
+    await assert.rejects(walk, (err: unknown) => {
+      assert.equal((err as Error).message, `the native walk made no progress for 5.5 s at ${path.join(root, 'wedged-mount')} while the machine had CPU to spare`);
+      return true;
+    });
+    const log = fake.calls.log;
+    assert.deepEqual(log.slice(0, log.indexOf('cancel')), ['start', ...Array<string>(7).fill('poll')], 'the baseline poll; the second, 1 s later, counts that second; then five one-second windows: 5 s at the sixth poll is within 5.5 s, 6 s at the seventh is past it');
+    assert.equal(machine.reads, 6, 'read when the walk first showed nothing new, and at the end of each of the five windows');
+    assert.equal(fake.calls.cancel, 1);
+  } finally {
+    setNativeWalkTimingForTests(null);
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('the stall clock leaves out exactly the windows in which the machine was saturated, and adds up the rest', async () => {
+  assert.equal(MACHINE_SATURATED_SHARE, 0.9, 'the shares below sit on either side of 0.9');
+  const { root, locked } = await buildEdgeFixture('treemap-native-stall-mixed-');
+  const machine = machineClock();
+  // The busy share of each fake second, keyed by the poll that ends it; every other second is idle.
+  const shareOf: Record<number, number> = { 3: 0.9, 4: 0.89, 5: 1, 6: 0.95, 7: 0 };
+  try {
+    setNativeWalkTimingForTests({ stallMs: 2_500, cancelDeadlineMs: 1_500, now: machine.now, machineTicks: machine.ticks });
+    const { scan, store } = recordFor(root);
+    const fake = useFakeNative({ wedged: true, onPoll: (n) => { machine.share = shareOf[n] ?? 0; machine.tick(); } });
+    const walk = runNativeWalk(scan, store, root, fake.module);
+    assert.equal(await bounded(walk, fake, HANG_GUARD_MS), 'settled', 'the wedged walk was never ended: no stall was detected');
+    await assert.rejects(walk, (err: unknown) => {
+      assert.equal((err as Error).message, `the native walk made no progress for 2.5 s at ${path.join(root, 'wedged-mount')} while the machine had CPU to spare`);
+      return true;
+    });
+    const log = fake.calls.log;
+    assert.deepEqual(log.slice(0, log.indexOf('cancel')), ['start', ...Array<string>(7).fill('poll')], 'counted: the second before the first window, the 0.89 window (poll 4) and the idle one (poll 7) — 3 s, past 2.5 s; left out: 0.9 (poll 3), 1 (poll 5) and 0.95 (poll 6)');
+  } finally {
+    setNativeWalkTimingForTests(null);
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('a machine that gives no usable reading counts every window, as the rule did before the machine was weighed, and the sentence then claims nothing about its CPU', async () => {
+  assert.equal(machineTicksOf([]), null, 'os.cpus() can list no cores at all');
+  const { root, locked } = await buildEdgeFixture('treemap-native-stall-unread-');
+  // What each reader's window would weigh, were it believed (busy / (busy + idle)
+  // over one window). 'no cores' gives no reading at all. Three would read as a
+  // saturated machine and keep the wedged walk waiting forever: every counter
+  // backwards (-8000 / -8100 = 0.99), the idle counter backwards
+  // (8000 / 7900 = 1.01) and a core count that changed (8000 / 8000 = 1). Two
+  // would read as spare CPU: the busy counter backwards (-100 / 7900, below 0)
+  // and no time counted (0 / 0, NaN, which is not >= 0.9). Those two stall on
+  // time either way, but would put the wrong ' while the machine had CPU to
+  // spare' clause in the sentence: the exact message below is what catches them.
+  // Four of them trip exactly one clause of the product's check (machineBusyShare):
+  // the busy counter `busy < 0`, the idle counter `idle < 0`, the core count
+  // the cores comparison, and no time `busy + idle <= 0`, so dropping any one
+  // clause fails this test. Every counter backwards trips three at once.
+  const readers: Array<[string, (k: number) => MachineTicks | null]> = [
+    ['no cores', () => machineTicksOf([])],
+    ['every counter went backwards', (k) => ({ busy: 1e9 - k * 8_000, idle: 1e9 - k * 100, cores: MACHINE_CORES })],
+    ['the busy counter went backwards', (k) => ({ busy: 1e9 - k * 100, idle: k * 8_000, cores: MACHINE_CORES })],
+    ['the idle counter went backwards', (k) => ({ busy: k * 8_000, idle: 1e9 - k * 100, cores: MACHINE_CORES })],
+    ['a core came or went', (k) => ({ busy: k * 8_000, idle: 0, cores: k % 2 === 0 ? MACHINE_CORES : MACHINE_CORES - 1 })],
+    ['no time was counted between two readings', () => ({ busy: 5_000, idle: 5_000, cores: MACHINE_CORES })],
+  ];
+  try {
+    for (const [what, read] of readers) {
+      const clock = fakeClock();
+      let k = 0;
+      setNativeWalkTimingForTests({ stallMs: 2_500, cancelDeadlineMs: 1_500, now: clock.now, machineTicks: () => read(++k) });
+      const { scan, store } = recordFor(root);
+      const fake = useFakeNative({ wedged: true, onPoll: clock.tick });
+      const walk = runNativeWalk(scan, store, root, fake.module);
+      assert.equal(await bounded(walk, fake, HANG_GUARD_MS), 'settled', `${what}: the wedged walk was never ended`);
+      await assert.rejects(walk, (err: unknown) => {
+        assert.equal((err as Error).message, `the native walk made no progress for 2.5 s at ${path.join(root, 'wedged-mount')}`, what);
+        return true;
+      });
+      const log = fake.calls.log;
+      assert.deepEqual(log.slice(0, log.indexOf('cancel')), ['start', 'poll', 'poll', 'poll', 'poll'], `${what}: every second counted, so the stall comes where it always did`);
+      assert.equal(k, 3, `${what}: read at the first poll that saw nothing new (poll 2) and at the end of each of the two one-second windows after it (polls 3 and 4), never at the baseline poll that moved`);
+    }
+  } finally {
+    setNativeWalkTimingForTests(null);
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('the machine is read only while the walk shows nothing new, and at most once a window however often the walk is polled', async () => {
+  assert.equal(MACHINE_WINDOW_MS, 1_000, 'the reads counted below assume one-second windows');
+  const { root, total, locked } = await buildEdgeFixture('treemap-native-starved-often-');
+  const machine = machineClock(250); // four polls to a fake second
+  machine.share = 1;
+  try {
+    setNativeWalkTimingForTests({ stallMs: 2_500, cancelDeadlineMs: 1_500, now: machine.now, machineTicks: machine.ticks });
+    const { scan, store } = recordFor(root);
+    // Polls 1-4 move; 5-24 (five fake seconds) see nothing new; from 25 the walk runs to its end.
+    const fake = useFakeNative({ steps: 8, onPoll: (n) => { machine.tick(); freeze(fake, n, 5, 24); } });
+    await runNativeWalk(scan, store, root, fake.module);
+    assert.equal(fake.calls.cancel, 0);
+    assert.equal(fake.calls.take, 1);
+    assert.equal(scan.scanned, total);
+    assert.equal(machine.reads, 5, 'twenty polls saw nothing new: read at the first (poll 5), then at the four that closed a one-second window (polls 9, 13, 17 and 21), and never while the walk moved');
+  } finally {
+    setNativeWalkTimingForTests(null);
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('a stall with any window the machine could not be read for claims nothing about its CPU, though other windows had room', async () => {
+  // Readings: good, none, good, good. The windows they close: (good, none) and
+  // (none, good) are blind, (good, good) had room. Every second counts; the
+  // sentence names spare CPU only when every counted window was read and had room.
+  const { root, locked } = await buildEdgeFixture('treemap-native-stall-mixed-read-');
+  const clock = fakeClock();
+  let k = 0;
+  const read = (): MachineTicks | null => {
+    k++;
+    return k === 2 ? null : { busy: k * 100, idle: k * 7_900, cores: MACHINE_CORES };
+  };
+  try {
+    setNativeWalkTimingForTests({ stallMs: 3_500, cancelDeadlineMs: 1_500, now: clock.now, machineTicks: read });
+    const { scan, store } = recordFor(root);
+    const fake = useFakeNative({ wedged: true, onPoll: clock.tick });
+    const walk = runNativeWalk(scan, store, root, fake.module);
+    assert.equal(await bounded(walk, fake, HANG_GUARD_MS), 'settled', 'the wedged walk was never ended');
+    await assert.rejects(walk, (err: unknown) => {
+      assert.equal((err as Error).message, `the native walk made no progress for 3.5 s at ${path.join(root, 'wedged-mount')}`);
+      return true;
+    });
+    assert.equal(k, 4, 'read at poll 2 and at the end of the three windows closed by polls 3, 4 and 5');
+  } finally {
+    setNativeWalkTimingForTests(null);
+    await unlockAndRemove(root, locked);
+  }
+});
+
+test('on Linux the machine is read from /proc/stat, where a core waiting on a stuck disk (iowait) is idle, not busy', () => {
+  // os.cpus() leaves iowait out of both its busy and idle counts, and iowait is
+  // how Linux accounts an idle core whose task waits on a dead network mount.
+  // In a one-core container with the walk blocked, that core's time is nearly
+  // all iowait: read through os.cpus() the window is a sliver of busy over a
+  // sliver of idle — saturated — and the wedged walk would wait forever.
+  const stat = (user: number, iowait: number): string => [
+    `cpu  ${user} 0 100 50 ${iowait} 5 5 0 0 0`,
+    `cpu0 ${user} 0 100 50 ${iowait} 5 5 0 0 0`,
+    'intr 12345',
+    'ctxt 678',
+  ].join('\n');
+  assert.deepEqual(machineTicksFromProcStat(stat(200, 9_000)), { busy: 310, idle: 9_050, cores: 1 });
+  const before = machineTicksFromProcStat(stat(200, 9_000));
+  const after = machineTicksFromProcStat(stat(210, 9_990));
+  assert.ok(before && after);
+  const share = (after.busy - before.busy) / (after.busy - before.busy + after.idle - before.idle);
+  assert.ok(share < MACHINE_SATURATED_SHARE, `a core waiting on I/O has room: busy share ${share}`);
+  // steal (a hypervisor running someone else) and softirq are busy; guest time is
+  // already inside user and nice, so it is not added twice.
+  assert.deepEqual(machineTicksFromProcStat('cpu  10 1 2 30 4 5 6 7 100 100\ncpu0 10 1 2 30 4 5 6 7 100 100\ncpu1 0 0 0 0 0 0 0 0 0 0'), { busy: 31, idle: 34, cores: 2 });
+  // No total line; a counter that is not a number; no iowait column (a kernel
+  // before 2.5.41), with a core line beside it; no core lines at all.
+  for (const bad of ['', 'intr 1', 'cpu  1 2 x 4 5\ncpu0 1 2 x 4 5', 'cpu  1 2 3 4\ncpu0 1 2 3 4', 'cpu  1 2 3 4 5']) {
+    assert.equal(machineTicksFromProcStat(bad), null, `no reading from ${JSON.stringify(bad)}`);
+  }
+});
+
+test('this machine reads through the platform reader: every core counted, the counters only moving forward', () => {
+  const first = platformMachineTicks();
+  const second = platformMachineTicks();
+  assert.ok(first && second, `${process.platform} gives a reading`);
+  assert.equal(first.cores, os.cpus().length, 'every core the OS lists');
+  assert.ok(first.busy > 0 && first.idle > 0, `busy ${first.busy}, idle ${first.idle}`);
+  assert.ok(second.busy >= first.busy && second.idle >= first.idle, 'the counters only move forward');
+});
+
+test('the platform reader takes /proc/stat on Linux — never os.cpus(), whose units differ — and os.cpus() elsewhere', () => {
+  const cpus = (): os.CpuInfo[] => [{ model: 'fake', speed: 1, times: { user: 1, nice: 0, sys: 0, idle: 9, irq: 0 } }];
+  const procStat = (): string => 'cpu  5 0 0 95 0 0 0 0 0 0\ncpu0 5 0 0 95 0 0 0 0 0 0';
+  assert.deepEqual(platformMachineTicks({ platform: 'linux', readProcStat: procStat, cpus }), { busy: 5, idle: 95, cores: 1 });
+  assert.equal(platformMachineTicks({ platform: 'linux', readProcStat: () => { throw new Error('ENOENT'); }, cpus }), null, 'no /proc: no reading, so every window counts');
+  assert.equal(platformMachineTicks({ platform: 'linux', readProcStat: () => 'garbage', cpus }), null);
+  for (const platform of ['darwin', 'win32'] as const) {
+    assert.deepEqual(platformMachineTicks({ platform, readProcStat: () => { throw new Error('not read'); }, cpus }), { busy: 1, idle: 9, cores: 1 }, platform);
+  }
+});
+
+test('machineTicksOf sums every core — user, nice, sys and irq are busy time, idle is idle — and this machine’s own counters read that way and never run backwards', () => {
+  const core = (user: number, nice: number, sys: number, idle: number, irq: number): os.CpuInfo => ({ model: 'fake', speed: 1, times: { user, nice, sys, idle, irq } });
+  assert.deepEqual(machineTicksOf([core(1, 2, 3, 4, 5), core(10, 20, 30, 40, 50)]), { busy: 121, idle: 44, cores: 2 });
+  assert.equal(machineTicksOf([core(1, 2, 3, 4, 5), core(Number.NaN, 0, 0, 0, 0)]), null, 'a counter that is not a number is no reading');
+  const cpus = os.cpus();
+  const first = machineTicksOf(cpus);
+  if (cpus.length === 0) {
+    assert.equal(first, null, 'no cores listed is no reading, and the stall rule then counts every window');
+    return;
+  }
+  const second = machineTicksOf(os.cpus());
+  assert.ok(first && second, 'this machine lists its cores, so it gives a reading');
+  assert.equal(first.cores, cpus.length);
+  assert.ok(first.busy > 0 && first.idle >= 0, `busy ${first.busy}, idle ${first.idle}`);
+  assert.ok(second.busy >= first.busy && second.idle >= first.idle, 'the counters only move forward');
+});
+
 test('a module that throws mid-walk does not leak the handle: the walk is cancelled and settled before the error propagates', async () => {
   const { root, locked } = await buildEdgeFixture('treemap-native-midthrow-');
   try {
@@ -1454,6 +1755,79 @@ function loadReal(t: TestContext): { core: Core; path: string } | null {
   const surface = nativeScanModule();
   if (!surface.available) assert.fail(surface.reason);
   return { core: r.module as unknown as Core, path: file };
+}
+
+/** The most entries a walker thread counts between two looks at the pause flag (native/index.d.ts, scanPause; tm-walk's CHECK_EVERY). */
+const PAUSE_CHECK_ENTRIES = 256;
+/**
+ * The master prompt's §8.5 promise: a scan is pausable within this long. Its
+ * wall-clock form is tested in tm-walk, on a scripted tree (see the pause test
+ * below); here it is only the budget of a CPU sanity bound.
+ */
+const PAUSE_PROMISE_MS = 200;
+/**
+ * The engine's paused poll from which the walk's count must stand still: as
+ * many polls as fit, NATIVE_POLL_MS apart, in the 200 ms the old form of this
+ * test slept before it sampled `scanned`.
+ */
+const STANDSTILL_FROM_POLL = Math.ceil(PAUSE_PROMISE_MS / NATIVE_POLL_MS);
+/** The engine's own polls of a paused walk watched before resuming: as many as fit, NATIVE_POLL_MS apart, in the half-second this test once timed. */
+const PAUSED_POLLS = Math.ceil(500 / NATIVE_POLL_MS);
+
+/**
+ * The real module behind a pass-through, installed through the loader's own
+ * seam as useFakeNative installs its fake. Every call reaches the real module
+ * unchanged; the pass-through only records what the engine asked of it: the
+ * walk's count read the instant a pause was applied, each poll of the handle
+ * while it was paused (and the count at paused poll STANDSTILL_FROM_POLL), and
+ * the walk's own stats at the take.
+ */
+function watchRealModule(real: { core: Core; path: string }) {
+  const core = real.core;
+  const seen = {
+    pausesApplied: 0,
+    entriesAtPause: -1,
+    paused: false,
+    pausedPolls: 0,
+    entriesAtStandstillPoll: -1,
+    maxPausedEntries: -1,
+    lastPausedEntries: -1,
+    doneWhilePaused: false,
+    stats: null as WalkResult['stats'] | null,
+  };
+  const module: Record<string, unknown> = {};
+  for (const name of Object.getOwnPropertyNames(core)) module[name] = (core as unknown as Record<string, unknown>)[name];
+  module.scanPause = (h: number): void => {
+    core.scanPause(h);
+    seen.pausesApplied++;
+    seen.entriesAtPause = core.scanPoll(h).entries;
+    seen.paused = true;
+  };
+  module.scanResume = (h: number): void => {
+    seen.paused = false;
+    core.scanResume(h);
+  };
+  module.scanPoll = (h: number): NativeProgress => {
+    const progress = core.scanPoll(h);
+    if (seen.paused) {
+      seen.pausedPolls++;
+      if (seen.pausedPolls === STANDSTILL_FROM_POLL) seen.entriesAtStandstillPoll = progress.entries;
+      seen.maxPausedEntries = Math.max(seen.maxPausedEntries, progress.entries);
+      seen.lastPausedEntries = progress.entries;
+      if (progress.done) seen.doneWhilePaused = true;
+    }
+    return progress;
+  };
+  module.scanTake = (h: number): WalkResult => {
+    const cols = core.scanTake(h);
+    seen.stats = cols.stats;
+    return cols;
+  };
+  resetNativeForTests();
+  setNativeLoadOptionsForTests({ path: real.path, requireModule: () => module });
+  const outcome = loadNative({ path: real.path, requireModule: () => module });
+  assert.equal(outcome.available, true, 'the pass-through must pass the loader’s handshake');
+  return seen;
 }
 
 test('real module: scanProbe names the platform’s own listing with a reason on a folder, and unavailable on a file', (t) => {
@@ -1517,29 +1891,109 @@ test('real module: a forced native scan reports engine native, the platform’s 
   }
 });
 
-test('real module: pausing a native scan stops `scanned` within 200 ms, and resuming finishes it with every entry counted', async (t) => {
+/*
+ * Pausing a real native scan, watched through the engine's own polls of the
+ * handle instead of sleeps. The test holds:
+ *
+ *  - Node's share of the pause is none. startScan returns with the walk
+ *    started and its pause gate registered, and pauseScan applies the pause to
+ *    the native handle before it returns: no poll, no timer turn, in between.
+ *  - The walk stops, and stays stopped. Once the flag is set a thread may
+ *    still finish the listing it is in and count at most PAUSE_CHECK_ENTRIES
+ *    of its entries before its next look, so the count may grow after the
+ *    pause by at most workersPeak x PAUSE_CHECK_ENTRIES entries. From paused
+ *    poll STANDSTILL_FROM_POLL (about where the old form of this test, after
+ *    sleeping 200 ms, took its sample) to the last paused poll, PAUSED_POLLS
+ *    or more (about where it looked again 300 ms later), the count does not
+ *    move at all: 'scanned kept moving while paused'. The paused walk never
+ *    reports done.
+ *  - Resumed, the scan completes on the native engine with every entry
+ *    counted.
+ *
+ * The §8.5 promise itself, that the count stops within 200 ms of wall time,
+ * is not asserted here. tm-walk tests it against REACT_WITHIN on a scripted
+ * tree, not a disk:
+ * pause_stops_the_count_within_200ms_and_resume_continues_without_relisting
+ * (native/treemap-core/crates/tm-walk/tests/walk.rs).
+ * The 200 ms below is only a CPU sanity bound: the in-flight work, priced at
+ * the walk's average CPU per entry, must fit in it. That is arithmetic on the
+ * walk's own stats, not a measured pause.
+ *
+ * With every core busy on 24 Sep 2026, the old form failed at its
+ * `assert.equal(done.engine, 'native')` (HEAD line 1539) after 36 s, not at
+ * the standstill. The recorded failure names only that assertion; 36 s is
+ * consistent with the resumed Eco walk showing nothing new for NATIVE_STALL_MS
+ * (30 s) and being abandoned as a stall, the scan finishing elsewhere. The
+ * product fixed that with the machine-weighted stall clock (stallStep in
+ * src/services/scan/nativeEngine.ts; section 3c above), which leaves out time
+ * in which the machine was saturated. The engine assertion below names the
+ * fallback reason should it recur.
+ */
+test('real module: pausing a native scan reaches the walk before pauseScan returns, stops `scanned` within one 256-entry check per worker and holds it still across the engine’s polls, and resuming finishes it with every entry counted', async (t) => {
   const real = loadReal(t);
   if (!real) return;
-  const { root, total } = await buildWideTree(400, 50, 'treemap-native-pause-real-');
+  const seen = watchRealModule(real);
+  const dirs = 400;
+  const filesPerDir = 50;
+  const { root, total } = await buildWideTree(dirs, filesPerDir, 'treemap-native-pause-real-');
+  let scanId: string | null = null;
   try {
     await updateSettings({ engine: 'native', engineBudget: { preset: 'eco', cpuPercent: null } });
     const scan = await startScan(root);
+    scanId = scan.scanId;
     assert.equal(scan.status, 'running');
+    assert.equal(scan.engine, 'native', 'startScan returns with the native walk started');
     const outcome = pauseScan(scan);
     assert.deepEqual({ paused: outcome.paused, supported: outcome.supported }, { paused: true, supported: true });
-    await sleep(200);
+    assert.equal(seen.pausesApplied, 1, 'the pause reached the native walk before pauseScan returned');
+    const atPause = seen.entriesAtPause;
+    await waitFor(() => seen.pausedPolls >= PAUSED_POLLS || scan.status !== 'running', `${PAUSED_POLLS} polls of the paused walk`);
     const halted = scan.scanned;
-    await sleep(300);
-    assert.equal(scan.scanned, halted, 'scanned kept moving while paused');
     assert.equal(scan.status, 'running', 'paused is still running, not finished');
+    assert.equal(seen.doneWhilePaused, false, 'the paused walk never reported done');
+    assert.ok(seen.entriesAtStandstillPoll >= 0, `the count was read at paused poll ${STANDSTILL_FROM_POLL}`);
+    assert.equal(
+      seen.lastPausedEntries,
+      seen.entriesAtStandstillPoll,
+      `scanned kept moving while paused: ${seen.entriesAtStandstillPoll} entries at paused poll ${STANDSTILL_FROM_POLL}, ${seen.lastPausedEntries} at paused poll ${seen.pausedPolls}`,
+    );
+    assert.equal(halted, 1 + seen.lastPausedEntries, '`scanned` is the paused walk’s own count, as last polled');
     assert.ok(halted < total, `it really was paused mid-way (${halted} of ${total})`);
     assert.equal(resumeScan(scan).paused, false);
-    const done = await settle(scan.scanId);
-    assert.equal(done.status, 'complete', done.error);
-    assert.equal(done.engine, 'native');
+    await waitFor(() => peekScan(scan.scanId)?.status !== 'running', 'the resumed native scan settling');
+    const done = peekScan(scan.scanId);
+    assert.ok(done, 'the scan record must exist');
+    assert.equal(done.status, 'complete', `the resumed scan is ${done.status}, not complete: ${done.error ?? 'no error recorded'}`);
+    assert.equal(done.engine, 'native', `the resumed scan fell back: ${done.fallbackReason}`);
     assert.equal(done.scanned, total, 'every folder and file was counted once');
-    t.diagnostic(`real module, ${total} entries under Eco: ${buildScanStats(done).entriesPerSecond} entries/s`);
+
+    // The walk's own account, handed over at the take.
+    const stats = seen.stats;
+    assert.ok(stats, 'the engine took the walk');
+    assert.equal(stats.entries, total - 1);
+    assert.ok(Number.isInteger(stats.workersPeak) && stats.workersPeak >= 1, `workersPeak ${stats.workersPeak}`);
+    const inFlight = stats.workersPeak * PAUSE_CHECK_ENTRIES;
+    assert.ok(
+      seen.maxPausedEntries - atPause <= inFlight,
+      `after the pause the walk counted ${seen.maxPausedEntries - atPause} more entries (${atPause} at the pause, ${seen.maxPausedEntries} at most in ${seen.pausedPolls} polls); ${stats.workersPeak} worker(s) may count ${inFlight}`,
+    );
+    // A CPU sanity bound only, not the §8.5 wall-clock promise (tm-walk's
+    // pause test holds that): the in-flight work, priced at the walk's average
+    // CPU per entry, fits in PAUSE_PROMISE_MS of CPU.
+    const cpuSeconds = stats.cpuSeconds;
+    assert.equal(typeof cpuSeconds, 'number', 'the walk measured its own CPU');
+    const msPerEntry = ((cpuSeconds as number) * 1_000) / stats.entries;
+    const inFlightWork = stats.workersPeak * (Math.max(dirs, filesPerDir) + PAUSE_CHECK_ENTRIES);
+    assert.ok(
+      inFlightWork * msPerEntry <= PAUSE_PROMISE_MS,
+      `finishing the largest listing and counting one check’s worth, ${stats.workersPeak} worker(s) over, is ${inFlightWork} entries at ${(msPerEntry * 1_000).toFixed(2)} µs of walk CPU each: ${(inFlightWork * msPerEntry).toFixed(1)} ms of CPU against ${PAUSE_PROMISE_MS} ms`,
+    );
+    t.diagnostic(`real module, ${total} entries under Eco: ${buildScanStats(done).entriesPerSecond} entries/s; paused at ${atPause}, at most ${seen.maxPausedEntries} over ${seen.pausedPolls} polls, ${seen.entriesAtStandstillPoll} from poll ${STANDSTILL_FROM_POLL} on (${stats.workersPeak} worker(s)); in-flight work ${(inFlightWork * msPerEntry).toFixed(2)} ms of walk CPU`);
   } finally {
+    // A failure above can leave the scan paused, its engine polling it on a
+    // timer that would keep this process alive for good: cancel it, and the
+    // engine's next poll ends the walk and frees its handle.
+    if (scanId !== null && peekScan(scanId)?.status === 'running') cancelScan(scanId);
     await updateSettings({ engine: 'auto', engineBudget: { preset: 'auto', cpuPercent: null } });
     await fsp.rm(root, { recursive: true, force: true });
   }
@@ -1583,28 +2037,44 @@ test('real module: scanTake never blocks — a walk still running is refused and
     // In a child process: the behaviour this replaces was a synchronous join
     // of the driver thread on the caller's thread, which on a paused walk
     // never returns and no JavaScript timer can interrupt. A take that blocks
-    // is therefore a child killed at the timeout and a failed assertion here,
-    // never a hung test run. Only the pause holds the walk; a 10 000-entry
-    // fixture on one worker is far from done when the pause lands.
+    // is therefore a child killed at the hang guard and a failed assertion
+    // here, never a hung test run. Only the pause holds the walk; a
+    // 10 000-entry fixture on one worker is far from done when the pause
+    // lands. The resumed walk is polled to done with no deadline of its own:
+    // with every core busy the child once exited 1 after 22 s (24 Sep 2026),
+    // its 20 s spent, the take that followed refused as still running — and
+    // that read as a blocked take.
+    // The child writes each step before it takes it, straight to the pipe, so
+    // a child the guard kills names the step it never finished.
     const script = `
+      const say = (line) => require('fs').writeSync(1, line + '\\n');
       const m = require(process.env.TM_MODULE);
       const out = {};
       const h = m.scanStart(process.env.TM_ROOT, { neverDescend: [], wantAtime: false, maxWorkers: 1 });
       m.scanPause(h);
       out.doneAfterPause = m.scanPoll(h).done;
+      say('step: the take of the paused walk');
       try { m.scanTake(h); out.pausedTake = 'returned columns'; } catch (e) { out.pausedTake = e.message; }
       out.doneAfterRefusal = m.scanPoll(h).done;
       m.scanResume(h);
-      const until = Date.now() + 20_000;
+      say('step: polling the resumed walk to done');
       const nap = new Int32Array(new SharedArrayBuffer(4));
-      while (!m.scanPoll(h).done && Date.now() < until) Atomics.wait(nap, 0, 0, 5);
+      while (!m.scanPoll(h).done) Atomics.wait(nap, 0, 0, 5);
+      say('step: the take of the done walk');
       out.entries = m.scanTake(h).parent.length;
       try { m.scanTake(h); out.secondTake = 'returned columns'; } catch (e) { out.secondTake = e.message; }
-      console.log(JSON.stringify(out));
+      say(JSON.stringify(out));
     `;
-    const r = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 30_000, env: { ...process.env, TM_MODULE: real.path, TM_ROOT: root } });
-    assert.equal(r.status, 0, `the child did not finish (status ${r.status}, signal ${r.signal}): a take of a running walk blocked instead of refusing\n${r.stderr}`);
-    const out = JSON.parse(r.stdout.trim().split('\n').pop() ?? '{}') as { doneAfterPause: boolean; pausedTake: string; doneAfterRefusal: boolean; entries: number; secondTake: string };
+    const r = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: HANG_GUARD_MS, env: { ...process.env, TM_MODULE: real.path, TM_ROOT: root } });
+    const lines = (r.stdout ?? '').trim().split('\n');
+    const reached = lines.filter((line) => line.startsWith('step: ')).pop()?.slice('step: '.length) ?? 'the start and pause of the walk';
+    const blame: Record<string, string> = {
+      'the take of the paused walk': 'a take of a running walk blocked instead of refusing',
+      'polling the resumed walk to done': 'the resumed walk never reported done',
+      'the take of the done walk': 'the take of a done walk did not hand over its columns',
+    };
+    assert.equal(r.status, 0, `the child did not finish (status ${r.status}, signal ${r.signal}${r.signal ? `, the ${HANG_GUARD_MS / 1000} s hang guard` : ''}) at ${reached}: ${blame[reached] ?? 'the walk did not start and pause'}\n${r.stderr}`);
+    const out = JSON.parse(lines.pop() ?? '{}') as { doneAfterPause: boolean; pausedTake: string; doneAfterRefusal: boolean; entries: number; secondTake: string };
     assert.equal(out.doneAfterPause, false, 'the pause landed before the walk was done, so the pause is what held it');
     assert.equal(out.pausedTake, STILL_RUNNING);
     assert.equal(out.doneAfterRefusal, false, 'the refusal kept the handle: a poll still answers for it');

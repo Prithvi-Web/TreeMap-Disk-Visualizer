@@ -13,7 +13,9 @@ process.env.TREEMAP_NO_GDU = '1';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildMcpServer } from '../src/mcp/server';
+import { peekScan } from '../src/services/diskScanner';
 import { formatBytes } from '../src/utils/formatBytes';
+import { waitFor } from './fixtures/waitFor';
 
 /**
  * The MCP server, exercised over a real client↔server handshake (in-memory
@@ -67,6 +69,54 @@ async function call(name: string, args: Record<string, unknown>): Promise<ToolRe
   return (await client.callTool({ name, arguments: args })) as ToolReply;
 }
 
+/**
+ * How long one scan_path or find_duplicates call waits before it answers
+ * "running". It is not a deadline on the work. Each tool's description says
+ * what to do with a "running" answer (call scan_path again with the scanId,
+ * find_duplicates again with the same arguments); `settle` does that, and only
+ * waitFor's HANG_GUARD_MS calls the work hung. A single 30 s call used to be
+ * the deadline: with every core of this Mac busy, the second scan of
+ * 'compare_scans of two identical scans…' was still running after it, and
+ * compare_scans refused the scan (the load sweep of 24 Sep 2026).
+ */
+const CALL_WAIT_MS = 1_000;
+
+/**
+ * Calls `name` until its answer is no longer "running", as an agent would,
+ * and returns that answer; `next` turns a "running" answer into the next
+ * call's arguments. Every "running" answer must have waited out the whole
+ * waitMs it was given, or an agent would poll in a hot loop. That check is
+ * one-sided and uses the clock the tool's own deadline uses: a busy machine
+ * only makes a call longer, so load cannot fail it.
+ */
+async function settle(
+  name: string,
+  args: Record<string, unknown>,
+  next: (running: Record<string, any>) => Record<string, unknown>,
+): Promise<Record<string, any>> {
+  let asking = args;
+  let answer: Record<string, any> | undefined;
+  await waitFor(async () => {
+    const askedAt = Date.now();
+    const r = await call(name, { ...asking, waitMs: CALL_WAIT_MS });
+    assert.ok(!r.isError, `${name}: ${JSON.stringify(r.content)}`);
+    answer = r.structuredContent!;
+    if (answer.status !== 'running') return true;
+    const waited = Date.now() - askedAt;
+    assert.ok(waited >= CALL_WAIT_MS, `${name} answered "running" after ${waited} ms of the ${CALL_WAIT_MS} ms it was given`);
+    asking = next(answer);
+    return false;
+  }, `${name} settling`);
+  return answer!;
+}
+
+/** scan_path until the scan settles: start one at `target`, then keep waiting on its scanId. */
+async function scanToEnd(target: string): Promise<Record<string, any>> {
+  const s = await settle('scan_path', { path: target }, (running) => ({ scanId: running.scanId }));
+  assert.equal(s.status, 'complete', `scan ${s.scanId} settled as ${s.status}: ${peekScan(String(s.scanId))?.error}`);
+  return s;
+}
+
 test('handshake lists exactly the ten documented tools', async () => {
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name).sort();
@@ -85,9 +135,7 @@ test('handshake lists exactly the ten documented tools', async () => {
 });
 
 test('scan_path scans a real tree and reports exact totals', async () => {
-  const r = await call('scan_path', { path: fixtureRoot, waitMs: 30_000 });
-  assert.ok(!r.isError, JSON.stringify(r.content));
-  const s = r.structuredContent!;
+  const s = await scanToEnd(fixtureRoot);
   assert.equal(s.status, 'complete');
   assert.equal(s.rootPath, fixtureRoot);
   // big.bin, small.txt, sub/mid.bin, dup-a.bin, dup-b.bin, proj/package.json,
@@ -122,9 +170,7 @@ test('get_largest folders reports recursive sizes', async () => {
 });
 
 test('find_duplicates finds the identical pair and its reclaimable bytes', async () => {
-  const r = await call('find_duplicates', { scanId, minSizeBytes: 1, waitMs: 30_000 });
-  assert.ok(!r.isError);
-  const s = r.structuredContent!;
+  const s = await settle('find_duplicates', { scanId, minSizeBytes: 1 }, () => ({ scanId, minSizeBytes: 1 }));
   assert.equal(s.status, 'complete');
   const dupGroup = s.groups.find((g: { count: number; size: number }) => g.size === DUP);
   assert.ok(dupGroup, 'the 512 KB duplicate pair is reported');
@@ -174,10 +220,11 @@ test('forecast answers honestly with thin history', async () => {
 });
 
 test('compare_scans of two identical scans reports zero drift', async () => {
-  const second = await call('scan_path', { path: fixtureRoot, waitMs: 30_000 });
-  const secondId = second.structuredContent!.scanId as string;
+  const second = await scanToEnd(fixtureRoot);
+  const secondId = second.scanId as string;
+  assert.notEqual(secondId, scanId, 'a scan_path with a path is a new scan: this compares two scans, not one with itself');
   const r = await call('compare_scans', { scanIdA: scanId, scanIdB: secondId });
-  assert.ok(!r.isError);
+  assert.ok(!r.isError, JSON.stringify(r.content));
   const s = r.structuredContent!;
   assert.equal(s.totalDelta, 0);
   assert.deepEqual(s.entries, []);

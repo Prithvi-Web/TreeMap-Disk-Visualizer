@@ -12,6 +12,9 @@ import express from 'express';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
 import { idempotency, resetIdempotencyCache } from '../src/middleware/idempotency';
+import { allScans, peekScan } from '../src/services/diskScanner';
+import { pending } from '../src/utils/backgroundWrites';
+import { waitFor } from './fixtures/waitFor';
 
 /**
  * The agent-safety rails: dryRun acts on nothing (proven against the real
@@ -77,13 +80,16 @@ async function scanFixture(port: number): Promise<string> {
   const started = await req(port, 'POST', '/api/scan', { path: fixture });
   assert.equal(started.status, 202, JSON.stringify(started.body));
   const scanId = started.body.scanId as string;
-  for (let i = 0; i < 100; i++) {
-    const stats = await req(port, 'GET', `/api/scan/${scanId}/stats`);
-    if (stats.body.status === 'complete') return scanId;
-    if (stats.body.status === 'error') assert.fail('scan failed');
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  assert.fail('scan did not complete in time');
+  const scan = peekScan(scanId);
+  assert.ok(scan, 'the scan is registered');
+  // Watches the record in-process. A look at /stats costs a token from the
+  // "api" lane that the asserted requests after it draw on too, and a fixed
+  // 100 looks 100 ms apart gave up after 10 s on a loaded machine.
+  await waitFor(() => scan.status !== 'running', 'the fixture scan settling');
+  const stats = await req(port, 'GET', `/api/scan/${scanId}/stats`);
+  if (stats.body.status === 'error') assert.fail('scan failed');
+  assert.equal(stats.body.status, 'complete', JSON.stringify(stats.body));
+  return scanId;
 }
 
 /* ------------------------------- dryRun ------------------------------- */
@@ -275,6 +281,14 @@ test('idempotency works end-to-end on the real DELETE /api/files route', async (
     assert.deepEqual(second.body, first.body);
   } finally {
     await close();
+    // A finished scan saves its cache and snapshot into DATA_DIR after it has
+    // answered: a scan still running when the folder goes makes it again as
+    // it finishes, and a save caught mid-write fails and prints "[treemap]
+    // snapshot save failed". So every scan this file started settles first
+    // (the policy test never waits for its allowlisted one), then the saves
+    // they registered (trackWrite).
+    await waitFor(() => allScans().every((s) => s.status !== 'running'), 'every scan this file started settling');
+    await waitFor(() => pending().length === 0, 'the background saves landing');
     fs.rmSync(fixture, { recursive: true, force: true });
     // maxRetries: Windows briefly holds locks on just-closed SQLite WAL and
   // watcher handles, and a bare rmSync throws EBUSY into the after() hook —
