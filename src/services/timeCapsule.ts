@@ -797,7 +797,7 @@ export async function planProtection(
  */
 export async function protectAndTrash(
   requests: ProtectionRequest[],
-  context: { runId?: string; policyId?: string } = {},
+  context: { runId?: string; policyId?: string; unattended?: boolean } = {},
 ): Promise<ProtectAndTrashResult> {
   // Nowhere to keep a copy means nothing gets protected, and the caller must be
   // told before anything is deleted — not after.
@@ -821,7 +821,7 @@ export async function protectAndTrash(
   let failedToTrash: { path: string; reason: string }[] = [];
   if (paths.length > 0) {
     try {
-      const result = await moveToTrash(paths);
+      const result = await moveToTrash(paths, { unattended: context.unattended === true });
       trashed = result.deleted;
       failedToTrash = result.failed;
     } catch (err) {

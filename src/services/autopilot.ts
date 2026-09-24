@@ -691,7 +691,9 @@ export async function runPolicy(policy: AutopilotPolicy, opts: RunOptions = {}):
   run.capsuleRunId = run.id;
   const result = await protectAndTrash(
     selected.map((c) => ({ path: c.path, reason: c.reason })),
-    { runId: run.id, policyId: policy.id },
+    // Nobody is watching: an open-file check that could not run stops the
+    // delete instead of waving it through (cleaner.ts, `unattended`).
+    { runId: run.id, policyId: policy.id, unattended: true },
   );
 
   const trashed = new Set(result.trashed);

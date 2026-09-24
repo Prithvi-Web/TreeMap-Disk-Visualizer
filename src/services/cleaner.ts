@@ -5,6 +5,7 @@ import { CleanResult } from '../models/types';
 import { AppError } from '../middleware/errorHandler';
 import { describeFsError } from '../utils/errno';
 import { checkOpenHandles, describeConflicts } from './openHandleGuard';
+import { capabilityState } from '../platform/capabilities';
 
 /**
  * Cleaner — moves files to the system trash and opens paths in the OS.
@@ -141,6 +142,26 @@ export interface TrashOptions {
    * the warning.
    */
   ignoreOpenHandles?: boolean;
+  /**
+   * Nobody is watching this delete (Autopilot). An open-file check that could
+   * not run — the mechanism exists here, but this attempt failed, as `lsof`
+   * does when it outruns its limit on a loaded machine — then refuses the
+   * delete, where a person's delete would go ahead on the unknown answer after
+   * being shown it.
+   */
+  unattended?: boolean;
+}
+
+/** The step that moves one path to the Trash; a test replaces it (setTrashStepForTests). */
+let trashStep: (p: string) => Promise<void> = trashOne;
+
+/**
+ * Test-only: run `step` in place of the real Trash step, so a test can drive
+ * every delete path without anything reaching the machine's Trash; null
+ * restores the real one.
+ */
+export function setTrashStepForTests(step: ((p: string) => Promise<void>) | null): void {
+  trashStep = step ?? trashOne;
 }
 
 /**
@@ -159,6 +180,17 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
         conflicts: report.conflicts,
       });
     }
+    // An unattended delete never trashes what the check could not look at.
+    // Only where the mechanism exists here and this attempt failed: where it
+    // can never run, refusing would stop every delete for good, and the rule
+    // above (go ahead on an unknown answer) stands for both.
+    if (opts.unattended && !report.checked && (await capabilityState('openHandleGuard')).available) {
+      throw new AppError(
+        409,
+        'OPEN_HANDLE_UNCHECKED',
+        `${report.reason ?? 'TreeMap couldn’t check whether these files are in use.'} Nobody was watching this run, so nothing was moved to the Trash; the next run will check again.`,
+      );
+    }
   }
 
   const deleted: string[] = [];
@@ -168,7 +200,7 @@ export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Pro
   // flaky, and trash batches are small (UI sends chunks).
   for (const p of paths) {
     try {
-      await trashOne(p);
+      await trashStep(p);
       deleted.push(p);
     } catch (err) {
       // The page prints `reason` in a toast, so it gets a sentence; the raw

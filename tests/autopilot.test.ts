@@ -32,6 +32,7 @@ import { protectItems } from '../src/services/timeCapsule';
 import { readJsonFile, writeJsonFile } from '../src/services/storage';
 import { AutopilotPolicy, AutopilotRun, CleanupSuggestionGroup } from '../src/models/types';
 import { AppError } from '../src/middleware/errorHandler';
+import { setTrashStepForTests } from '../src/services/cleaner';
 
 /**
  * B1 — Autopilot.
@@ -43,8 +44,10 @@ import { AppError } from '../src/middleware/errorHandler';
  *
  * Nothing in this file trashes anything. The one test that drives a live run
  * all the way through does so against a file held open by another process, so
- * B2 refuses the delete — the whole path executes and the Trash is never
- * touched.
+ * B2 refuses the delete — or, when `lsof` outruns its limit on a loaded
+ * machine, the unattended run refuses what it could not check (24 Sep 2026:
+ * before that rule, such a run trashed the held file). Its Trash step is also
+ * replaced by a recorder, so nothing here can reach the machine's Trash.
  */
 
 const mkTmp = (): Promise<string> => fsp.mkdtemp(path.join(os.tmpdir(), 'tm-b1-'));
@@ -441,6 +444,10 @@ test('a live run routes through the open-file guard and deletes nothing when it 
   // with B2 stopping the delete, so the Trash is never touched.
   const dir = await mkTmp();
   let release: (() => void) | null = null;
+  const trashed: string[] = [];
+  setTrashStepForTests(async (p) => {
+    trashed.push(p);
+  });
   try {
     const held = await writeFile(path.join(dir, 'proj', 'node_modules', 'dep', 'held.bin'), 8192);
     release = await holdOpenElsewhere(held);
@@ -458,7 +465,9 @@ test('a live run routes through the open-file guard and deletes nothing when it 
     assert.equal(result.status, 'blocked');
     assert.ok(result.skipped.length > 0, 'and it says what it left and why');
     assert.ok(fs.existsSync(held), 'the open file is exactly where it was');
+    assert.deepEqual(trashed, [], 'the Trash step was never reached');
   } finally {
+    setTrashStepForTests(null);
     release?.();
     await savePolicies([]);
     await fsp.rm(dir, { recursive: true, force: true });
