@@ -195,24 +195,62 @@ async function degradedProviders(needed: Set<string>): Promise<Map<string, strin
  * file, so it can never contribute a match: it sinks whatever it is ANDed
  * with, and beside an `or` it is dead weight. A query shown to a person says
  * so in `degraded`; an Autopilot policy reports no `degraded` on its runs, so
- * it refuses these at save time instead (autopilot.ts `normalizeMatch`).
+ * it refuses these at save time instead (autopilot.ts `normalizePolicy`).
+ *
+ * `used:never` is half of one: no reader records that a file was never
+ * opened, so the term is unknown or false for every file and can never match
+ * — while its negation, "has a last-opened date", is decided wherever one is
+ * recorded. So it is refused only where it would have to be true.
  */
-const UNANSWERABLE: Partial<Record<Term['kind'], { field: string; why: string; instead: string }>> = {
+export interface Unanswerable {
+  /** As a person would write it, quoted: `"dupe:"`. */
+  named: string;
+  /** Completes "uses <named>, which …". */
+  which: string;
+  instead: string;
+  /** True when only a term that must be true is dead; its negation answers. */
+  negationAnswers: boolean;
+}
+
+const UNANSWERABLE: Partial<Record<Term['kind'], Unanswerable>> = {
   dupe: {
-    field: 'dupe',
-    why: 'it cannot tell which files are duplicates',
+    named: '"dupe:"',
+    which: 'TreeMap cannot answer yet — it cannot tell which files are duplicates — so the condition never matches a file, and neither does its opposite',
     instead: 'Use the Duplicates view to clear duplicates by hand.',
+    negationAnswers: false,
+  },
+  usedNever: {
+    named: '"used:never"',
+    which: 'nothing on this computer can confirm — a missing last-opened date means openings are not recorded, not that a file was never opened — so the condition never matches a file',
+    instead: 'To find files not opened in a year, use "used>1y".',
+    negationAnswers: true,
   },
 };
 
-/** The unanswerable fields a query uses, each once, in the order they appear. */
-export function unanswerableFields(ast: Ast): { field: string; why: string; instead: string }[] {
-  const found = new Map<string, { field: string; why: string; instead: string }>();
-  eachTerm(ast, (term) => {
-    const entry = UNANSWERABLE[term.kind];
-    if (entry && !found.has(entry.field)) found.set(entry.field, entry);
-  });
-  return [...found.values()];
+/** The unanswerable fields a query uses where they would have to be true, each once, in the order they appear. */
+export function unanswerableFields(ast: Ast): Unanswerable[] {
+  const found = new Set<Unanswerable>();
+  const walk = (node: Ast, negated: boolean): void => {
+    switch (node.kind) {
+      case 'term': {
+        const entry = UNANSWERABLE[node.term.kind];
+        if (entry && !(negated && entry.negationAnswers)) found.add(entry);
+        return;
+      }
+      case 'not': walk(node.operand, !negated); return;
+      case 'and':
+      case 'or': walk(node.left, negated); walk(node.right, negated); return;
+    }
+  };
+  walk(ast, false);
+  return [...found];
+}
+
+/** Does the query use `used:never` anywhere, negated or not? */
+function usesUsedNever(ast: Ast): boolean {
+  let found = false;
+  eachTerm(ast, (term) => { if (term.kind === 'usedNever') found = true; });
+  return found;
 }
 
 /* -------------------------------- execution -------------------------------- */
@@ -248,6 +286,9 @@ export async function executeAgainstScan(
   const now = Date.now();
   const needed = factsNeeded(ast);
   const degraded = await degradedProviders(needed);
+  if (usesUsedNever(ast)) {
+    degraded.set('usedNever', 'Nothing on this computer records that a file was never opened — a missing last-opened date means openings are not recorded there — so "used:never" matches no file. "-used:never" matches files that have a last-opened date, and "used>1y" finds files not opened in a year.');
+  }
 
   // An empty box means "no filter", not "match nothing" — the original parser
   // reports the empty query as matching nothing, which is right for a

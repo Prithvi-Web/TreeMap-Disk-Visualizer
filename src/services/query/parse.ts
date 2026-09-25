@@ -50,7 +50,7 @@ export const FIELDS: Record<string, FieldSpec> = {
   in: { kind: 'subtree', ops: EQUALITY, help: 'Inside this folder, e.g. in:~/Downloads' },
   modified: { kind: 'date', ops: COMPARISONS, help: 'When last changed, e.g. modified<2023-01-01 or modified>90d' },
   created: { kind: 'date', ops: COMPARISONS, help: 'When created, e.g. created<2y' },
-  used: { kind: 'date', ops: COMPARISONS, values: ['never'], help: 'When last opened, e.g. used>1y or used:never' },
+  used: { kind: 'date', ops: COMPARISONS, values: ['never'], help: 'When last opened, e.g. used>1y. used:never never matches yet: a missing date means openings are not recorded, not that none happened' },
   dupe: { kind: 'bool', ops: EQUALITY, values: ['yes', 'no'], help: 'Has an identical twin: dupe:yes or dupe:no' },
   elsewhere: { kind: 'enum', ops: EQUALITY, values: ['proven', 'likely', 'none', 'unknown'], help: 'Whether a copy exists elsewhere' },
   git: { kind: 'enum', ops: EQUALITY, values: ['pushed', 'dirty', 'none'], help: 'Git state of the project it is in' },

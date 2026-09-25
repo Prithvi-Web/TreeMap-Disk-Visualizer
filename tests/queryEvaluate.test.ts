@@ -222,11 +222,17 @@ test('used: reads the fact, not the modification time', () => {
   assert.equal(hit('used>1y', old, { lastUsedMs: NOW - 500 * DAY }), true);
 });
 
-test('used:never means fetched-and-unknown, not never-asked', () => {
-  // null is "we looked, this machine records nothing".
-  assert.equal(hit('used:never', {}, { lastUsedMs: null }), true);
-  // A real date is not "never".
+test('used:never never matches a missing date: nothing records "never opened"', () => {
+  // null is "we looked, and this machine does not record openings" (a noatime
+  // mount, NTFS last-access tracking off): every reader returns it with
+  // source 'none', never as a record that the file went unopened. It once
+  // matched here, which made a used:never Autopilot policy on such a disk
+  // select every file under its folder. Unknown is not a yes.
+  assert.equal(hit('used:never', {}, { lastUsedMs: null }), false);
+  assert.equal(evaluateMaybe(ast('used:never'), { node: node(), facts: { lastUsedMs: null }, now: NOW }, HOME), 'maybe');
+  // A real date is not "never", and that one IS decided.
   assert.equal(hit('used:never', {}, { lastUsedMs: NOW }), false);
+  assert.equal(hit('-used:never', {}, { lastUsedMs: NOW }), true);
   // undefined is "we did not ask" — claiming it was never opened would be
   // inventing a fact out of our own omission.
   assert.equal(hit('used:never', {}, {}), false);
@@ -413,6 +419,9 @@ test('created: is MAYBE until it has been stat\'d, so pass one keeps the node', 
     true,
   );
   // A stat that failed or was capped yields null — fetched and unknown — which
-  // is a definite non-match, and the executor reports the count in `degraded`.
-  assert.equal(evaluateMaybe(ast('created<2y'), { node: node(), facts: { createdMs: null }, now: NOW }, HOME), false);
+  // is still unknown (not a match either way), and the executor reports the
+  // count in `degraded`. It was decided false here once, and `-created<2y`
+  // then matched every file whose creation time could not be read
+  // (tests/queryUnknown.test.ts).
+  assert.equal(evaluateMaybe(ast('created<2y'), { node: node(), facts: { createdMs: null }, now: NOW }, HOME), 'maybe');
 });

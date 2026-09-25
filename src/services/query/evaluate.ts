@@ -52,7 +52,8 @@ export type CloudState = 'placeholder' | 'synced' | 'local-only';
  *
  * `undefined` and `null` mean different things and the distinction is load
  * bearing: `undefined` is "not fetched", `null` is "fetched, and genuinely
- * unknown". `used:never` matches the second and not the first.
+ * unknown". Neither decides a term: `used:never` included, since a null
+ * last-opened date means openings are not recorded, not that none happened.
  */
 export interface EvalFacts {
   lastUsedMs?: number | null;
@@ -222,9 +223,12 @@ export function matchTerm(term: Term, ctx: EvalContext, home: string): boolean {
     }
 
     case 'usedNever':
-      // Fetched and genuinely unknown. `undefined` — never fetched — is not a
-      // match: we do not know that it was never opened, only that we did not ask.
-      return facts.lastUsedMs === null;
+      // Decided only by a recorded date (termDecidable), and a recorded date
+      // means it was opened. No reader records "never opened": a missing date
+      // (null) means only that this machine does not record openings — a
+      // noatime mount, NTFS last-access tracking off — so it stays unknown,
+      // or a used:never policy there would select every file in its folder.
+      return false;
 
     case 'elsewhere': return facts.elsewhere !== undefined && term.values.includes(facts.elsewhere);
     case 'git': return facts.git !== undefined && term.values.includes(facts.git);
@@ -282,10 +286,13 @@ export type Maybe = true | false | 'maybe';
  */
 function termDecidable(term: Term, ctx: EvalContext): boolean {
   switch (term.kind) {
-    case 'usedNever': return ctx.facts.lastUsedMs !== undefined;
+    case 'usedNever': return ctx.facts.lastUsedMs != null;
     case 'date':
       if (term.field === 'modified') return true;
-      return term.field === 'used' ? ctx.facts.lastUsedMs !== undefined : ctx.facts.createdMs !== undefined;
+      // `null` is fetched and unrecorded (noatime, no birth time, a failed or
+      // capped stat): as unknown as never fetched, or `-used<90d` would match
+      // every file whose opening nobody records. `used:never` neither.
+      return (term.field === 'used' ? ctx.facts.lastUsedMs : ctx.facts.createdMs) != null;
     case 'elsewhere': return ctx.facts.elsewhere !== undefined;
     case 'git': return ctx.facts.git !== undefined;
     case 'backup': return ctx.facts.backup !== undefined;

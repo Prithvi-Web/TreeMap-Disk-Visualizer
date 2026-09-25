@@ -233,7 +233,12 @@ OpenAPI 3 spec).
      definite match is returned, so `-dupe:yes` matches nothing rather than
      everything, and an unknown can shrink a result but never grow one —
      `degraded` then counts the files left undecided (`undecided`), so "could
-     not tell" never reads as "did not match".
+     not tell" never reads as "did not match". `used:never` is the case to
+     know: no reader records that a file was never opened — a missing
+     last-opened date means openings are not recorded there — so it matches
+     no file, says so in `degraded`, and is refused in a policy where it
+     would have to be true (`-used:never`, "has a last-opened date", is
+     answered).
      `POST /api/query/validate` parses without running (it never
      touches a scan); `GET /api/query/fields` serves the grammar so nothing
      duplicates it. `GET`/`POST`/`DELETE /api/queries` are saved views — a

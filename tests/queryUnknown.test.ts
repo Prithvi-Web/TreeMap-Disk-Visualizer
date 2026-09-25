@@ -449,3 +449,62 @@ test('an approved -dupe:yes policy deletes nothing, and nothing reaches the Tras
     await savePolicies([]);
   }
 });
+
+test('a date that was looked up but not recorded is unknown too: "-used<90d" and "-created<30d" never match it', () => {
+  // `null` is "fetched, and nothing recorded it" — a noatime mount, NTFS
+  // last-access tracking off, a filesystem with no birth time, a stat that
+  // failed or was past the cap. AGENTS.md: a null lastUsedMs is never a zero.
+  // Deciding such a term false let `-` turn it into a match, so "not opened in
+  // the last 90 days" selected every file whose opening nobody records — on a
+  // noatime mount, every file under an Autopilot policy's folder.
+  const unrecorded: EvalFacts = { lastUsedMs: null, createdMs: null };
+  for (const q of ['used<90d', 'used>90d', '-used<90d', '-used>90d', 'created<30d', '-created<30d', '-created>2025-01-01']) {
+    assert.equal(evaluateMaybe(ast(q), { node: node(), facts: unrecorded, now: NOW }, HOME), 'maybe', `${q} is unknown for an unrecorded date`);
+    assert.equal(evaluate(ast(q), { node: node(), facts: unrecorded, now: NOW }, HOME), false, `${q} does not match an unrecorded date`);
+  }
+  // A recorded date still decides, both ways, negated or not.
+  const recorded: EvalFacts = { lastUsedMs: NOW - 200 * DAY, createdMs: NOW - 10 * DAY };
+  assert.equal(evaluate(ast('-used<90d'), { node: node(), facts: recorded, now: NOW }, HOME), true, 'opened 200 days ago is not within 90 days');
+  assert.equal(evaluate(ast('-created<30d'), { node: node(), facts: recorded, now: NOW }, HOME), false, 'created 10 days ago is within 30 days');
+  // `used:never` too: an unrecorded date is not a record of "never opened".
+  for (const q of ['used:never', '-used:never', 'type:file used:never', 'size>=0 -used:never']) {
+    assert.equal(evaluateMaybe(ast(q), { node: node(), facts: unrecorded, now: NOW }, HOME), 'maybe', `${q} is unknown for an unrecorded date`);
+  }
+  assert.equal(evaluate(ast('-used:never'), { node: node(), facts: recorded, now: NOW }, HOME), true, 'a recorded date means it was opened');
+  assert.equal(evaluate(ast('used:never'), { node: node(), facts: recorded, now: NOW }, HOME), false);
+});
+
+test('on a real scan, used:never matches nothing and says why', async () => {
+  const out = await run('used:never');
+  assert.equal(out.total, 0, `used:never matched ${out.hits.map((h) => h.name).join(', ')}`);
+  assert.equal(out.degraded.find((d) => d.provider === 'usedNever')?.reason,
+    'Nothing on this computer records that a file was never opened — a missing last-opened date means openings are not recorded there — so "used:never" matches no file. "-used:never" matches files that have a last-opened date, and "used>1y" finds files not opened in a year.');
+  assert.equal((await run('used>1y')).degraded.find((d) => d.provider === 'usedNever'), undefined, 'only a query that uses it is told');
+});
+
+test('a policy built on used:never is refused, and its negation is not', () => {
+  const dir = policyFolder();
+  for (const q of ['used:never', 'ext:log used:never', 'ext:log or used:never', '-(-used:never)', '-(ext:jpg -used:never)']) {
+    assert.throws(
+      () => normalizePolicy({ name: 'Never opened', path: dir, match: { kind: 'query', q } }),
+      (err: unknown) => {
+        assert.ok(err instanceof AppError, `"${q}" threw ${String(err)}`);
+        assert.equal(err.code, 'POLICY_QUERY_UNANSWERABLE', q);
+        assert.match(err.message, /^The policy "Never opened" uses "used:never", which nothing on this computer can confirm/, q);
+        assert.match(err.message, /"used>1y"/, `${q}: and it says what to use instead`);
+        return true;
+      },
+      `"${q}" must be refused`,
+    );
+  }
+  // Negated, it is decided wherever a date is recorded: "has been opened".
+  for (const q of ['-used:never', 'ext:log -used:never', '-(used:never)', '-(ext:jpg or used:never)']) {
+    const p = normalizePolicy({ name: 'x', path: dir, match: { kind: 'query', q } });
+    assert.equal(p.match.kind === 'query' && p.match.q, q, `"${q}" is accepted`);
+  }
+  // Both fields at once: one refusal names both.
+  assert.throws(
+    () => normalizePolicy({ name: 'Both', path: dir, match: { kind: 'query', q: 'dupe:yes used:never' } }),
+    (err: unknown) => err instanceof AppError && /uses "dupe:", which .* it also uses "used:never", which /.test(err.message) && /Remove "dupe:" and "used:never" from the query/.test(err.message),
+  );
+});

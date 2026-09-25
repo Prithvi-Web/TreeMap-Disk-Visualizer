@@ -177,11 +177,10 @@ function refuseUnanswerable(policyName: string, q: string): void {
   if (!parsed.ok) return;
   const unanswerable = unanswerableFields(parsed.ast);
   if (unanswerable.length === 0) return;
-  const named = unanswerable.map((u) => `"${u.field}:"`).join(' and ');
+  const named = unanswerable.map((u) => u.named).join(' and ');
   throw new AppError(400, 'POLICY_QUERY_UNANSWERABLE',
-    `The policy "${policyName}" uses ${named}, which TreeMap cannot answer yet — ${unanswerable.map((u) => u.why).join('; ')} — ` +
-    `so the condition never matches a file, and neither does its opposite. A policy built on it would never do ` +
-    `what it says. Remove ${named} from the query. ${unanswerable.map((u) => u.instead).join(' ')}`);
+    `The policy "${policyName}" uses ${unanswerable.map((u) => `${u.named}, which ${u.which}`).join('; it also uses ')}. ` +
+    `A policy built on it would never do what it says. Remove ${named} from the query. ${unanswerable.map((u) => u.instead).join(' ')}`);
 }
 
 function normalizeMatch(raw: unknown): AutopilotMatch {
