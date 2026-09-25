@@ -19,10 +19,28 @@ for every file, so this session did **not** touch Phase 4's code or
 `NEXT_SESSION_PROMPT.md`. Wave 1 is still the Mac's to commit, exactly as the
 resume prompt says. Nothing here needs to be merged before it.
 
-The two open questions in the Mac's LATEST block could not be read from here,
-so they were not answered.
+The Mac's LATEST block and the wave 1 status record reached `main` after this
+container was cloned (`178a8c1`, `a9307a8`; neither touches a file this
+branch changes), so its open questions became readable only at the end. The
+owner's instruction for them was to take the recommendation:
+* **(1) Clean or leave ~720 test snapshots in the owner's real History, and
+  an 8 KB `node_modules` folder a test sent to the real Trash.** They are on
+  the Mac, out of reach from here, and this session never touches real app
+  data or the Trash. The LATEST block gives no recommendation. The owner's
+  to do, or to hand to the next Mac session.
+* **(2) Q3: §5.3's "10M in memory ≤ 700 MB" is not reachable with P4-1's
+  layout.** Recommended, and so taken: the row is met by spill, and memory
+  mode goes up to 5M. The Phase 4 plan is not edited from here, because its
+  T0 edits are uncommitted on the Mac. Record it there when T0 is committed.
+* **(3) Q1, the note says "decided on precedent, tell the owner".** The wave 1
+  status record's T0 repair says the opposite: it reads Q1 as "pending the
+  owner", because no record shows the owner deciding it, and §3.1 reserves
+  the `unlink` exception to the owner. So this is told to the owner, not
+  taken as decided: Q1 (unlink in `<appData>/scan-spill`, or the
+  `ftruncate(0)` fallback) is the owner's answer to give, as are Q5 and the
+  confirmation of Q2, Q4 and Q7.
 
-## What this session did instead (all local commits on `claude/happy-hopper-6f1ybp`, nothing pushed)
+## What this session did instead (on `claude/happy-hopper-6f1ybp`, pushed on 25 Sep 2026 with the owner's go-ahead)
 
 _Kept current after every commit; see the table below._
 
@@ -57,10 +75,14 @@ simulated.
 | `db0db03` | fix(autopilot): Preview judges a saved policy as Save does, one id per policy, and the spec names every refusal | 4 mutants; sim 3,079 / 0; pt-BR 3,080 / 0 |
 | `fbb1e7d` | fix(test): the gdu temp-folder test watches a temp folder of its own, not the shared one | the race reproduced (3 of 6 runs red), 0 of 6 after; 1 mutant; sim 3,079 / 0 |
 | `d7f98f1` | fix(query): -used:never is not warned about, is no policy alone, and a missing creation date is counted once | 5 mutants; sim 3,080 / 0 (first simulated as `aaa592d`, red only on the gdu race above); pt-BR 3,081 / 0 |
+| `1413c04` | fix(scan): a scan cancelled while it re-checks its root stays cancelled | CI's macOS failure reproduced every time through a seam; 1 mutant; sim 3,081 / 0; pt-BR 3,082 / 0 |
 
 After the last code commit come five documentation commits: the Phase 5, 6,
-7 and 8 plans, then this note. That puts the branch 24 commits ahead of
-`06fd687`: 19 of code and tests, 5 of documents. Each commit was simulated
+7 and 8 plans, then this note. `1413c04`, the fix for the race CI's macOS
+leg found after the push, and this note's update follow them. That puts the
+branch 26 commits ahead of `06fd687`: 20 of code and tests, 6 of documents.
+`main` has since gained two documentation commits of the Mac's
+(`178a8c1`, `a9307a8`), and neither touches a file this branch changes. Each commit was simulated
 green on Linux before the branch moved to it. Each run of commits then ended
 with a pt-BR run on its tip; the last of those was on `d7f98f1`, 3,081
 passed and 0 failed.
@@ -106,6 +128,21 @@ fixes are four new commits (`22d5dc3`, `466be02`, `db0db03`, `d7f98f1`),
 each test-first with its mutants. `fbb1e7d` fixes a test race the
 simulation hit on the way (another test file's gdu temp folder read as a
 leak), reproduced before it was fixed.
+
+## CI on GitHub
+
+The branch was pushed on 25 Sep 2026 and the Tests workflow started on it by
+hand (a branch push alone does not run it). [Run
+36160887514](https://github.com/Prithvi-Web/TreeMap-Disk-Visualizer/actions/runs/36160887514)
+on `7f124b4`: Linux, Linux pt-BR and Windows green; macOS 3,109 passed, 1
+failed, 12 skipped. The failure was a real race, not a flake: "a cancelled
+real scan writes no snapshot and no rescan cache" saw `cancelScan` answer
+true and the record end `'complete'`. Every engine awaits one last look at
+the scan's root after its cancellation check and before it settles, so a
+cancel landing in that await was overwritten, the partial tree published
+and the rescan cache written. It predates this branch. Reproduced every
+time through a new test seam, and fixed test-first in `1413c04`: nothing
+settles a record that is no longer running.
 
 ## The Linux CI simulation
 
@@ -237,10 +274,10 @@ Phase 8 (UI, docs, CI):
 
 ## How to bring this home
 
-The owner pushes; the agent never does. Once the owner allows this session to
-push `claude/happy-hopper-6f1ybp`, fetch it in GitHub Desktop and merge it
-into `main` after wave 1 is committed on the Mac. Merge rather than rebase,
-then run the Mac's `ci-sim.sh` on the result.
+The branch `claude/happy-hopper-6f1ybp` is on GitHub, pushed with the owner's
+go-ahead. From the Mac, once wave 1 is committed there, fetch it in GitHub
+Desktop and merge it into `main`. Merge rather than rebase, then run the
+Mac's `ci-sim.sh` on the result.
 
 The branch changes 45 files (`git diff --name-only 06fd687..claude/happy-hopper-6f1ybp`),
 none of them a Phase 4 storage module. Wave 1 was never visible from here,
