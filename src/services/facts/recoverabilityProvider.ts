@@ -140,7 +140,7 @@ export const recoverabilityProvider: FactProvider<RecoverabilityFact> = {
         const logicalSize = id === -1 ? 0 : store!.size(id);
         const residency = await cloudResidency(p, logicalSize);
         if (residency.provider !== null) {
-          cloudByPath.set(p, { kind: 'cloud', syncRoot: residency.syncRoot, provider: residency.provider, state: residency.state, resident: residency.resident });
+          cloudByPath.set(p, { kind: 'cloud', syncRoot: residency.syncRoot, provider: residency.provider, state: residency.state, ...(residency.resident === null ? {} : { resident: residency.resident }) });
         }
       } catch (err) {
         // The client's state could not be read. Named for this file, as a git

@@ -19,6 +19,24 @@ import { loadNative } from './scan/native';
  * out (no answer is not a yes). Without a module that can ask, the scan's
  * flags alone decide, as before.
  */
+/**
+ * Is one path's data on this disk right now? `true` or `false` as the file's
+ * directory entry answers, asked the same way `stillLocal` asks; `null` when
+ * nothing could answer (no module that can ask, the ask failed, the entry is
+ * gone or unreadable). Never by opening the file.
+ */
+export function isLocalNow(filePath: string): boolean | null {
+  const outcome = loadNative();
+  const ask = outcome.available ? outcome.module.dataIsLocal : undefined;
+  if (typeof ask !== 'function') return null;
+  try {
+    const answer = (ask as (paths: string[]) => Uint8Array)([filePath])[0];
+    return answer === 1 ? true : answer === 0 ? false : null;
+  } catch {
+    return null;
+  }
+}
+
 export function stillLocal(bucket: number[], pathOf: (id: number) => string, gone?: (id: number) => void): number[] {
   const outcome = loadNative();
   const ask = outcome.available ? outcome.module.dataIsLocal : undefined;

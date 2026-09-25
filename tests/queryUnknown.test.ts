@@ -23,6 +23,20 @@ import type { Ast } from '../src/services/query/types';
 import { waitFor } from './fixtures/waitFor';
 import { recoverabilityProvider } from '../src/services/facts/recoverabilityProvider';
 import { platform } from '../src/platform';
+import { resetNativeForTests, setNativeLoadOverrideForTests } from '../src/services/scan/native';
+
+/** A native module whose `dataIsLocal` answers each path by its base name; `null` for no module that can ask. */
+function localityStandIn(answer: ((name: string) => number) | null): void {
+  resetNativeForTests();
+  const mod: Record<string, unknown> = { version: () => '0.0.0-test' };
+  if (answer) mod.dataIsLocal = (paths: string[]) => Uint8Array.from(paths.map((p) => answer(path.basename(p))));
+  setNativeLoadOverrideForTests({ path: '/stand-in/treemap_core.node', expectedVersion: '0.0.0-test', requireModule: () => mod });
+}
+
+function realLocality(): void {
+  setNativeLoadOverrideForTests(null);
+  resetNativeForTests();
+}
 
 /**
  * An unknown is not a "no" (v4 §2.2, three-valued logic).
@@ -549,22 +563,47 @@ test('a file on this disk in a sync folder is not a placeholder, and whether it 
   assert.deepEqual(cases.map(([q]) => [q, at(q)]), cases);
 });
 
-test('through the recoverability provider: a resident file is resident, and a resolver that fails is unknown for that file', async () => {
+test('through the recoverability provider: resident only when the disk says so, and a resolver that fails is unknown for that file', async () => {
   const dir = fileTempDir('treemap-query-unknown-cloud-');
   fs.mkdirSync(path.join(dir, 'Dropbox'));
   const here = path.join(dir, 'Dropbox', 'resident.txt');
+  const gone = path.join(dir, 'Dropbox', 'never-existed.bin');
+  const unsure = path.join(dir, 'Dropbox', 'unsure.txt');
   const elsewhere = path.join(dir, 'outside.txt');
   fs.writeFileSync(here, 'on this disk\n');
+  fs.writeFileSync(unsure, 'on this disk, but nothing could say so\n');
   fs.writeFileSync(elsewhere, 'in no sync folder\n');
   const signal = new AbortController().signal;
 
-  const read = await recoverabilityProvider.compute('no-such-scan', [here, elsewhere], signal);
-  const fact = read.values.get(here);
-  assert.ok(fact, `the file in the sync folder has a fact: ${JSON.stringify([...read.values])}`);
-  assert.deepEqual([fact.cloud?.state, fact.cloud?.resident], ['unknown', true], 'read, and resident');
-  assert.equal(cloudStateOf(fact), 'resident');
-  const outside = read.values.get(elsewhere);
-  if (outside) assert.equal(cloudStateOf(outside), null, 'outside every sync folder');
+  // The placeholder reader answers null for an ordinary local file, and also
+  // when it could not look (a failed lstat, a failed PowerShell call), so
+  // "not a placeholder" alone is no proof the bytes are here. The file's
+  // directory entry is asked, as every reader of file contents asks
+  // (dataLocality.ts): 1 here, 2 for a path that is gone or an answer that
+  // could not be had.
+  localityStandIn((name) => (name === 'resident.txt' ? 1 : 2));
+  try {
+    const read = await recoverabilityProvider.compute('no-such-scan', [here, gone, unsure, elsewhere], signal);
+    const fact = read.values.get(here);
+    assert.ok(fact, `the file in the sync folder has a fact: ${JSON.stringify([...read.values])}`);
+    assert.deepEqual([fact.cloud?.state, fact.cloud?.resident], ['unknown', true], 'read, and resident');
+    assert.equal(cloudStateOf(fact), 'resident');
+    for (const [label, p] of [['a path that is gone', gone], ['a file nothing could vouch for', unsure]] as const) {
+      const f = read.values.get(p);
+      assert.ok(f, `${label} has a fact`);
+      assert.deepEqual([f.cloud?.state, f.cloud && 'resident' in f.cloud], ['unknown', false], `${label}: in a sync folder, and not claimed resident`);
+      assert.equal(cloudStateOf(f), undefined, `${label} is unknown`);
+    }
+    const outside = read.values.get(elsewhere);
+    assert.ok(outside === undefined || cloudStateOf(outside) === null, `outside every sync folder, or nothing to say at all: ${JSON.stringify(outside)}`);
+
+    // No module that can ask: nothing is claimed resident.
+    localityStandIn(null);
+    const blind = await recoverabilityProvider.compute('no-such-scan', [here], signal);
+    assert.equal(blind.values.get(here) && cloudStateOf(blind.values.get(here)!), undefined, 'without a way to ask, unknown');
+  } finally {
+    realLocality();
+  }
 
   // The resolver throwing is not "outside every sync folder": the provider
   // names the failure for that file, and the query reads it as unknown.
@@ -589,13 +628,21 @@ test('on a real scan, -cloud:placeholder still finds a file on this disk in a sy
   fs.writeFileSync(path.join(dir, 'Dropbox', 'resident.txt'), 'on this disk\n');
   const scan = await startScan(dir);
   await waitFor(() => peekScan(scan.scanId)?.status !== 'running', 'the sync-folder scan settling');
-  const out = await executeAgainstScan(scan.scanId, ast('type:file -cloud:placeholder'), {
-    limit: 100, offset: 0, sort: 'path', signal: new AbortController().signal,
-  });
-  assert.ok(!('error' in out), JSON.stringify(out));
-  assert.deepEqual((out as QueryOutcome).hits.map((h) => h.name), ['resident.txt'], 'known not to be a placeholder');
-  const local = await executeAgainstScan(scan.scanId, ast('type:file -cloud:local-only'), {
-    limit: 100, offset: 0, sort: 'path', signal: new AbortController().signal,
-  });
-  assert.deepEqual((local as QueryOutcome).hits, [], 'but whether it is uploaded nobody could tell');
+  // The scan ran on whatever engine this machine has; the question of where
+  // the file's bytes are is answered by a stand-in, so the result does not
+  // depend on whether the native module was built here.
+  localityStandIn(() => 1);
+  try {
+    const out = await executeAgainstScan(scan.scanId, ast('type:file -cloud:placeholder'), {
+      limit: 100, offset: 0, sort: 'path', signal: new AbortController().signal,
+    });
+    assert.ok(!('error' in out), JSON.stringify(out));
+    assert.deepEqual((out as QueryOutcome).hits.map((h) => h.name), ['resident.txt'], 'known not to be a placeholder');
+    const local = await executeAgainstScan(scan.scanId, ast('type:file -cloud:local-only'), {
+      limit: 100, offset: 0, sort: 'path', signal: new AbortController().signal,
+    });
+    assert.deepEqual((local as QueryOutcome).hits, [], 'but whether it is uploaded nobody could tell');
+  } finally {
+    realLocality();
+  }
 });

@@ -57,9 +57,10 @@ export interface CloudRecoverability {
   provider: string | null;
   state: 'placeholder' | 'synced-local' | 'local-only' | 'unknown';
   /**
-   * Whether the file's bytes are on this disk, as the platform reads them:
-   * false for a placeholder, true for a file that is here — including one whose
-   * `state` is 'unknown' because nobody can tell whether it is uploaded yet.
+   * Whether the file's bytes are on this disk: false for a placeholder, true
+   * for a file its directory entry says is here — including one whose `state`
+   * is 'unknown' because nobody can tell whether it is uploaded yet. Absent
+   * when nothing could say (no module that can ask, an entry that is gone).
    */
   resident?: boolean;
 }

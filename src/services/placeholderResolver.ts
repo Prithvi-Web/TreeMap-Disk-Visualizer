@@ -1,5 +1,6 @@
 import { platform } from '../platform';
 import type { PlaceholderInfo } from '../platform/types';
+import { isLocalNow } from './dataLocality';
 
 /**
  * PlaceholderResolver (A3) — telling "in the cloud" from "on this disk".
@@ -222,20 +223,28 @@ export async function cloudResidency(filePath: string, logicalSize: number): Pro
   syncRoot: string | null;
   provider: CloudProvider | null;
   state: 'placeholder' | 'synced-local' | 'local-only' | 'unknown';
-  /** In a sync folder: are the bytes on this disk? False for a placeholder; read even where the upload state is not. */
-  resident: boolean;
+  /**
+   * In a sync folder: are the bytes on this disk? False for a placeholder;
+   * known even where the upload state is not. Null when nothing could say.
+   */
+  resident: boolean | null;
 }> {
   const provider = providerForPath(filePath);
   const syncRoot = syncRootFor(filePath);
-  if (provider === null) return { syncRoot: null, provider: null, state: 'unknown', resident: false };
+  if (provider === null) return { syncRoot: null, provider: null, state: 'unknown', resident: null };
 
-  // No verdict is the platform's "not a placeholder": the file is fully here.
   const verdict = await resolve(filePath, logicalSize);
-  if (!verdict) return { syncRoot, provider, state: 'unknown', resident: true };
 
   // Evicted: the bytes are in the account and not here. The strongest possible
   // evidence that a remote copy exists, because the local copy does not.
-  if (verdict.evicted) return { syncRoot, provider, state: 'placeholder', resident: false };
+  if (verdict?.evicted) return { syncRoot, provider, state: 'placeholder', resident: false };
+
+  // No verdict is the reader's "not a placeholder" — and also what it answers
+  // when it could not look (a failed lstat, a failed PowerShell call), so it is
+  // no proof the bytes are here. The file's directory entry is asked, as every
+  // reader of file contents asks (dataLocality.ts), and "here" is claimed only
+  // on its yes.
+  const resident = isLocalNow(filePath);
 
   // Resident in a sync folder. Uploaded, or merely not uploaded yet — and the
   // local state alone cannot always tell. Reported as unknown rather than
@@ -243,5 +252,5 @@ export async function cloudResidency(filePath: string, logicalSize: number): Pro
   // becomes a "proven, safe to delete" and the other becomes a false alarm.
   // What IS known — the bytes are here, so it is no placeholder — is carried
   // as `resident`.
-  return { syncRoot, provider, state: 'unknown', resident: true };
+  return { syncRoot, provider, state: 'unknown', resident };
 }
