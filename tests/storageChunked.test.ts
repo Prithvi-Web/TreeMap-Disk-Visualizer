@@ -151,7 +151,9 @@ test('two writes of one name queue: they never interleave, and the later one win
 
 const NO_CHMOD = process.platform === 'win32'
   ? 'chmod cannot make a directory read-only on Windows — the read-only medium case is POSIX-shaped'
-  : false;
+  : process.getuid?.() === 0
+    ? 'root may write anywhere: chmod cannot make a directory read-only for root'
+    : false;
 
 test('a read-only portable session writes nothing and never asks the producer', { skip: NO_CHMOD }, async () => {
   const { initPortableMode, resetPortableMode, PORTABLE_DATA_DIRNAME } = await import('../src/services/portableMode');

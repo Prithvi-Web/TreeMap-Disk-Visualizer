@@ -87,7 +87,9 @@ test('a portable session writes beside the executable, never to this computer', 
 
 const NO_CHMOD = process.platform === 'win32'
   ? 'chmod cannot make a directory read-only on Windows — the read-only medium case is POSIX-shaped'
-  : false;
+  : process.getuid?.() === 0
+    ? 'root may write anywhere: chmod cannot make a directory read-only for root'
+    : false;
 
 test('a read-only drive persists NOTHING — it never falls back to the host', { skip: NO_CHMOD }, () => {
   // The single most important test in this file. Falling through to the normal

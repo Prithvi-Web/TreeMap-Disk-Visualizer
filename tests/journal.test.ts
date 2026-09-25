@@ -320,7 +320,9 @@ test('sentences read like the feature promises, from the entry fields alone', ()
 
 const NO_CHMOD = process.platform === 'win32'
   ? 'chmod cannot make a directory read-only on Windows — the read-only medium case is POSIX-shaped'
-  : false;
+  : process.getuid?.() === 0
+    ? 'root may write anywhere: chmod cannot make a directory read-only for root'
+    : false;
 
 test('a read-only portable session keeps the journal in memory only', { skip: NO_CHMOD }, async () => {
   const roBase = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-journal-ro-'));
