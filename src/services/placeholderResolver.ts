@@ -222,21 +222,26 @@ export async function cloudResidency(filePath: string, logicalSize: number): Pro
   syncRoot: string | null;
   provider: CloudProvider | null;
   state: 'placeholder' | 'synced-local' | 'local-only' | 'unknown';
+  /** In a sync folder: are the bytes on this disk? False for a placeholder; read even where the upload state is not. */
+  resident: boolean;
 }> {
   const provider = providerForPath(filePath);
   const syncRoot = syncRootFor(filePath);
-  if (provider === null) return { syncRoot: null, provider: null, state: 'unknown' };
+  if (provider === null) return { syncRoot: null, provider: null, state: 'unknown', resident: false };
 
+  // No verdict is the platform's "not a placeholder": the file is fully here.
   const verdict = await resolve(filePath, logicalSize);
-  if (!verdict) return { syncRoot, provider, state: 'unknown' };
+  if (!verdict) return { syncRoot, provider, state: 'unknown', resident: true };
 
   // Evicted: the bytes are in the account and not here. The strongest possible
   // evidence that a remote copy exists, because the local copy does not.
-  if (verdict.evicted) return { syncRoot, provider, state: 'placeholder' };
+  if (verdict.evicted) return { syncRoot, provider, state: 'placeholder', resident: false };
 
   // Resident in a sync folder. Uploaded, or merely not uploaded yet — and the
   // local state alone cannot always tell. Reported as unknown rather than
   // guessed at in either direction, because one direction ('synced-local')
   // becomes a "proven, safe to delete" and the other becomes a false alarm.
-  return { syncRoot, provider, state: 'unknown' };
+  // What IS known — the bytes are here, so it is no placeholder — is carried
+  // as `resident`.
+  return { syncRoot, provider, state: 'unknown', resident: true };
 }

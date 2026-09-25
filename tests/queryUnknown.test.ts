@@ -12,7 +12,7 @@ process.env.TREEMAP_NO_GDU = '1';
 
 import { parse } from '../src/services/query/parse';
 import { evaluate, evaluateMaybe, type EvalFacts, type EvalNode } from '../src/services/query/evaluate';
-import { executeAgainstScan, type QueryOutcome } from '../src/services/query/execute';
+import { executeAgainstScan, gitStateOf, cloudStateOf, type QueryOutcome } from '../src/services/query/execute';
 import { startScan, peekScan } from '../src/services/diskScanner';
 import { normalizePolicy, savePolicies, listPolicies, simulatePolicy, runPolicy } from '../src/services/autopilot';
 import { readJsonFile, writeJsonFile } from '../src/services/storage';
@@ -21,6 +21,8 @@ import { AppError } from '../src/middleware/errorHandler';
 import type { AutopilotPolicy, AutopilotRun } from '../src/models/types';
 import type { Ast } from '../src/services/query/types';
 import { waitFor } from './fixtures/waitFor';
+import { recoverabilityProvider } from '../src/services/facts/recoverabilityProvider';
+import { platform } from '../src/platform';
 
 /**
  * An unknown is not a "no" (v4 §2.2, three-valued logic).
@@ -507,4 +509,93 @@ test('a policy built on used:never is refused, and its negation is not', () => {
     () => normalizePolicy({ name: 'Both', path: dir, match: { kind: 'query', q: 'dupe:yes used:never' } }),
     (err: unknown) => err instanceof AppError && /uses "dupe:", which .* it also uses "used:never", which /.test(err.message) && /Remove "dupe:" and "used:never" from the query/.test(err.message),
   );
+});
+
+test('git and sync state a signal could not read are unknown, never "none" or "not in a sync folder"', () => {
+  // The recoverability provider says so itself: a repo whose git call failed
+  // has `git: null` AND an `unavailable` entry for git, and gitVerdict calls
+  // that 'unknown'. Mapping it to 'none' let `git:none` ("in no pushed
+  // project") and `-git:dirty` match files inside a repository nobody could
+  // read — the policy shape "clear what version control does not hold".
+  const base = { elsewhere: 'unknown' as const, why: [], backup: null };
+  const gitFailed = { ...base, git: null, cloud: null, unavailable: [{ signal: 'git' as const, reason: 'git status timed out' }] };
+  const noRepo = { ...base, git: null, cloud: null, unavailable: [] };
+  assert.equal(gitStateOf(gitFailed), undefined, 'a git call that failed is unknown');
+  assert.equal(gitStateOf(noRepo), 'none', 'no repository at all is still "none"');
+  const cloudUnread = { ...base, git: null, cloud: null, unavailable: [{ signal: 'cloud' as const, reason: 'client state unreadable' }] };
+  const cloudUnknown = { ...base, git: null, cloud: { kind: 'cloud', provider: 'icloud', state: 'unknown' }, unavailable: [] } as unknown as Parameters<typeof cloudStateOf>[0];
+  const cloudResident = { ...base, git: null, cloud: { kind: 'cloud', provider: 'dropbox', state: 'unknown', resident: true }, unavailable: [] } as unknown as Parameters<typeof cloudStateOf>[0];
+  assert.equal(cloudStateOf(cloudUnread), undefined, 'a sync client that could not be read is unknown');
+  assert.equal(cloudStateOf(cloudUnknown), undefined, 'a sync state the client calls unknown is unknown');
+  assert.equal(cloudStateOf(cloudResident), 'resident', 'on this disk, uploaded or not: a state of its own');
+  assert.equal(cloudStateOf(noRepo), null, 'outside every sync folder is still "not in a sync folder"');
+  // And through the evaluator: neither the term nor its opposite matches.
+  for (const q of ['git:none', '-git:dirty', '-git:pushed', 'cloud:local-only', '-cloud:local-only', '-cloud:synced']) {
+    const facts: EvalFacts = { git: gitStateOf(gitFailed), cloud: cloudStateOf(cloudUnknown) };
+    assert.equal(evaluate(ast(q), { node: node(), facts, now: NOW }, HOME), false, `${q} does not match what could not be read`);
+  }
+});
+
+test('a file on this disk in a sync folder is not a placeholder, and whether it is uploaded stays unknown', () => {
+  // The resolver reads a file in a sync folder as either evicted (a
+  // placeholder) or here; whether "here" is uploaded it cannot tell. So
+  // cloud:placeholder is a definite no for it, and synced/local-only unknown.
+  const at = (q: string) => evaluateMaybe(ast(q), { node: node(), facts: { cloud: 'resident' }, now: NOW }, HOME);
+  const cases: [string, boolean | 'maybe'][] = [
+    ['cloud:placeholder', false], ['-cloud:placeholder', true],
+    ['cloud:local-only', 'maybe'], ['-cloud:local-only', 'maybe'], ['cloud:synced', 'maybe'], ['-cloud:synced', 'maybe'],
+    ['cloud:placeholder,local-only', 'maybe'], ['cloud:synced,local-only', true], ['-cloud:synced,local-only', false],
+  ];
+  assert.deepEqual(cases.map(([q]) => [q, at(q)]), cases);
+});
+
+test('through the recoverability provider: a resident file is resident, and a resolver that fails is unknown for that file', async () => {
+  const dir = fileTempDir('treemap-query-unknown-cloud-');
+  fs.mkdirSync(path.join(dir, 'Dropbox'));
+  const here = path.join(dir, 'Dropbox', 'resident.txt');
+  const elsewhere = path.join(dir, 'outside.txt');
+  fs.writeFileSync(here, 'on this disk\n');
+  fs.writeFileSync(elsewhere, 'in no sync folder\n');
+  const signal = new AbortController().signal;
+
+  const read = await recoverabilityProvider.compute('no-such-scan', [here, elsewhere], signal);
+  const fact = read.values.get(here);
+  assert.ok(fact, `the file in the sync folder has a fact: ${JSON.stringify([...read.values])}`);
+  assert.deepEqual([fact.cloud?.state, fact.cloud?.resident], ['unknown', true], 'read, and resident');
+  assert.equal(cloudStateOf(fact), 'resident');
+  const outside = read.values.get(elsewhere);
+  if (outside) assert.equal(cloudStateOf(outside), null, 'outside every sync folder');
+
+  // The resolver throwing is not "outside every sync folder": the provider
+  // names the failure for that file, and the query reads it as unknown.
+  const p = platform();
+  const real = p.getPlaceholderInfo;
+  p.getPlaceholderInfo = async () => { throw new Error('the sync client could not be read'); };
+  try {
+    const failed = await recoverabilityProvider.compute('no-such-scan', [here], signal);
+    const f = failed.values.get(here);
+    assert.ok(f, 'a failure is reported, not skipped');
+    assert.equal(f.cloud, null);
+    assert.ok(f.unavailable.some((u) => u.signal === 'cloud' && /could not be read/.test(u.reason)), `the failure is named: ${JSON.stringify(f.unavailable)}`);
+    assert.equal(cloudStateOf(f), undefined, 'unknown, never "not in a sync folder"');
+  } finally {
+    p.getPlaceholderInfo = real;
+  }
+});
+
+test('on a real scan, -cloud:placeholder still finds a file on this disk in a sync folder', async () => {
+  const dir = fileTempDir('treemap-query-unknown-sync-');
+  fs.mkdirSync(path.join(dir, 'Dropbox'));
+  fs.writeFileSync(path.join(dir, 'Dropbox', 'resident.txt'), 'on this disk\n');
+  const scan = await startScan(dir);
+  await waitFor(() => peekScan(scan.scanId)?.status !== 'running', 'the sync-folder scan settling');
+  const out = await executeAgainstScan(scan.scanId, ast('type:file -cloud:placeholder'), {
+    limit: 100, offset: 0, sort: 'path', signal: new AbortController().signal,
+  });
+  assert.ok(!('error' in out), JSON.stringify(out));
+  assert.deepEqual((out as QueryOutcome).hits.map((h) => h.name), ['resident.txt'], 'known not to be a placeholder');
+  const local = await executeAgainstScan(scan.scanId, ast('type:file -cloud:local-only'), {
+    limit: 100, offset: 0, sort: 'path', signal: new AbortController().signal,
+  });
+  assert.deepEqual((local as QueryOutcome).hits, [], 'but whether it is uploaded nobody could tell');
 });

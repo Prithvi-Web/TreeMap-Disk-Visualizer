@@ -5,7 +5,7 @@ import { getScan } from '../diskScanner';
 import { storeOf } from '../scanStore';
 import { computeFacts } from '../facts';
 import { capabilityState } from '../../platform/capabilities';
-import { evaluateMaybe, isEmptyQuery, type EvalFacts, type EvalNode } from './evaluate';
+import { evaluateMaybe, isEmptyQuery, type CloudState, type EvalFacts, type EvalNode } from './evaluate';
 import { eachTerm, factsNeeded } from './parse';
 import type { Ast, Term } from './types';
 import type { RecoverabilityFact } from '../recoverabilityTypes';
@@ -76,21 +76,29 @@ export interface ExecuteOptions {
 /* ------------------------------ fact plumbing ------------------------------ */
 
 /** Map a recoverability fact onto the enum values the grammar exposes. */
-export function gitStateOf(fact: RecoverabilityFact): 'pushed' | 'dirty' | 'none' {
+export function gitStateOf(fact: RecoverabilityFact): 'pushed' | 'dirty' | 'none' | undefined {
   const git = fact.git;
+  // A git call that failed leaves `git` null AND says so in `unavailable`:
+  // unknown, as gitVerdict calls it — never "none", or `git:none` would match
+  // files inside a repository nobody could read.
+  if (!git && fact.unavailable.some((u) => u.signal === 'git')) return undefined;
   if (!git || !git.hasRemote) return 'none';
   if (git.fullyPushed && git.pathTracked) return 'pushed';
   return 'dirty';
 }
 
-export function cloudStateOf(fact: RecoverabilityFact): 'placeholder' | 'synced' | 'local-only' | null {
+export function cloudStateOf(fact: RecoverabilityFact): CloudState | null | undefined {
   const cloud = fact.cloud;
-  if (!cloud) return null;
+  // null is "outside every sync folder"; a client that could not be read, or
+  // that calls the file's state unknown, is undefined: unknown, so neither
+  // `cloud:local-only` nor `-cloud:local-only` matches it. One the platform
+  // reads as here is 'resident': no placeholder, upload state unknown.
+  if (!cloud) return fact.unavailable.some((u) => u.signal === 'cloud') ? undefined : null;
   switch (cloud.state) {
     case 'placeholder': return 'placeholder';
     case 'synced-local': return 'synced';
     case 'local-only': return 'local-only';
-    default: return null;
+    default: return cloud.resident === true ? 'resident' : undefined;
   }
 }
 

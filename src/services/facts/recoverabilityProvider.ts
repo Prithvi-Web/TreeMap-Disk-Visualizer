@@ -127,6 +127,7 @@ export const recoverabilityProvider: FactProvider<RecoverabilityFact> = {
     /* ---------------- (c) cloud — per path, local state only ---------------- */
 
     const cloudByPath = new Map<string, CloudRecoverability>();
+    const cloudUnavailableByPath = new Map<string, string>();
     const scan = getScan(scanId);
     // A scan still running has no settled sizes; reading them would feed the
     // cloud check a number that changes underneath it.
@@ -139,11 +140,13 @@ export const recoverabilityProvider: FactProvider<RecoverabilityFact> = {
         const logicalSize = id === -1 ? 0 : store!.size(id);
         const residency = await cloudResidency(p, logicalSize);
         if (residency.provider !== null) {
-          cloudByPath.set(p, { kind: 'cloud', syncRoot: residency.syncRoot, provider: residency.provider, state: residency.state });
+          cloudByPath.set(p, { kind: 'cloud', syncRoot: residency.syncRoot, provider: residency.provider, state: residency.state, resident: residency.resident });
         }
-      } catch {
-        // Not in a sync folder, or the client's state was unreadable. Absent
-        // rather than guessed — the composite treats that as unknown.
+      } catch (err) {
+        // The client's state could not be read. Named for this file, as a git
+        // failure is for its repo: an absent cloud signal alone would read as
+        // "in no sync folder", which is a claim, and this is an unknown.
+        cloudUnavailableByPath.set(p, `The sync state of this file could not be read (${err instanceof Error ? err.message : String(err)}).`);
       }
     }
 
@@ -160,6 +163,8 @@ export const recoverabilityProvider: FactProvider<RecoverabilityFact> = {
       const unavailable = [...unavailableBase];
       const repoProblem = gitUnavailableByPath.get(p);
       if (repoProblem) unavailable.push({ signal: 'git', reason: repoProblem });
+      const cloudProblem = cloudUnavailableByPath.get(p);
+      if (cloudProblem) unavailable.push({ signal: 'cloud', reason: cloudProblem });
 
       // Nothing at all to say about this path, and nothing prevented us from
       // saying it — that is a genuine "no information", counted as skipped so

@@ -56,6 +56,12 @@ export interface CloudRecoverability {
   syncRoot: string | null;
   provider: string | null;
   state: 'placeholder' | 'synced-local' | 'local-only' | 'unknown';
+  /**
+   * Whether the file's bytes are on this disk, as the platform reads them:
+   * false for a placeholder, true for a file that is here — including one whose
+   * `state` is 'unknown' because nobody can tell whether it is uploaded yet.
+   */
+  resident?: boolean;
 }
 
 /* ------------------------------ composite ------------------------------ */

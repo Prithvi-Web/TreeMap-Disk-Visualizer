@@ -45,7 +45,11 @@ export interface EvalNode {
 
 export type GitState = 'pushed' | 'dirty' | 'none';
 export type BackupState = 'yes' | 'no' | 'unknown';
-export type CloudState = 'placeholder' | 'synced' | 'local-only';
+/**
+ * 'resident' is the evaluator's own: in a sync folder and on this disk, so no
+ * placeholder, while synced or local-only is what nobody could tell.
+ */
+export type CloudState = 'placeholder' | 'synced' | 'local-only' | 'resident';
 
 /**
  * Facts for one node.
@@ -233,7 +237,9 @@ export function matchTerm(term: Term, ctx: EvalContext, home: string): boolean {
     case 'elsewhere': return facts.elsewhere !== undefined && term.values.includes(facts.elsewhere);
     case 'git': return facts.git !== undefined && term.values.includes(facts.git);
     case 'backup': return facts.backup !== undefined && term.values.includes(facts.backup);
-    case 'cloud': return facts.cloud !== undefined && facts.cloud !== null && term.values.includes(facts.cloud);
+    case 'cloud':
+      if (facts.cloud === 'resident') return term.values.includes('synced'); // decided only when synced and local-only agree
+      return facts.cloud !== undefined && facts.cloud !== null && term.values.includes(facts.cloud);
     case 'score': return facts.score !== undefined && compare(facts.score, term.op, term.value);
     case 'dupe': return facts.dupe !== undefined && facts.dupe === term.value;
   }
@@ -296,7 +302,11 @@ function termDecidable(term: Term, ctx: EvalContext): boolean {
     case 'elsewhere': return ctx.facts.elsewhere !== undefined;
     case 'git': return ctx.facts.git !== undefined;
     case 'backup': return ctx.facts.backup !== undefined;
-    case 'cloud': return ctx.facts.cloud !== undefined;
+    case 'cloud':
+      // 'resident' is one of synced or local-only, unknown which: decided
+      // only when the term names both or neither.
+      if (ctx.facts.cloud === 'resident') return term.values.includes('synced') === term.values.includes('local-only');
+      return ctx.facts.cloud !== undefined;
     case 'score': return ctx.facts.score !== undefined;
     case 'dupe': return ctx.facts.dupe !== undefined;
     // A non-directory is decidable (never empty); a directory needs its count.
