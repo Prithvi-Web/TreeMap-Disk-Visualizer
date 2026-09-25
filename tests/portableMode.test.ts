@@ -45,7 +45,7 @@ test('an ordinary install is never portable, and changes nothing', () => {
   const e = env();
   assert.equal(portableSignal(e, base), 'off');
   resetPortableMode();
-  const status = initPortableMode(e);
+  const status = initPortableMode(e, base);
   assert.equal(status.portable, false);
   assert.equal(e.TREEMAP_DATA_DIR, undefined, 'a normal install must not be redirected');
   assert.equal(status.hostUntouched, false, 'and it makes no no-trace claim');
@@ -72,12 +72,13 @@ test('being on removable media is deliberately NOT a signal', () => {
 
 test('a portable session writes beside the executable, never to this computer', () => {
   const base = tmp();
-  fs.writeFileSync(path.join(base, PORTABLE_MARKER), 'x');
-  const e = env();
   resetPortableMode();
-  // executableBaseDir() reads process.execPath, so drive the marker path
-  // directly through the same decision the boot hook makes.
-  const status = initPortableMode({ ...e, TREEMAP_PORTABLE: '1', TREEMAP_DATA_DIR: path.join(base, PORTABLE_DATA_DIRNAME) } as NodeJS.ProcessEnv);
+  // The folder the app runs from is left to the default here — the one the
+  // boot hook uses — and the data folder is named explicitly, so nothing is
+  // created beside the Node running this test. (The marker path, where the
+  // folder is derived, is the "marker beside the app" test below.)
+  const status = initPortableMode({ TREEMAP_PORTABLE: '1', TREEMAP_DATA_DIR: path.join(base, PORTABLE_DATA_DIRNAME) } as NodeJS.ProcessEnv);
+  assert.equal(status.baseDir, executableBaseDir(), 'by default the app decides from the folder it runs from');
   assert.equal(status.portable, true);
   assert.equal(status.hostUntouched, true);
   assert.equal(status.dataDir, path.join(base, PORTABLE_DATA_DIRNAME));
@@ -122,17 +123,54 @@ test('when nothing can be written, TREEMAP_DATA_DIR is left unset rather than po
   fs.mkdirSync(readOnly);
   fs.chmodSync(readOnly, 0o500);
   try {
-    // No explicit TREEMAP_DATA_DIR: the code must derive one, fail to create
-    // it, and then NOT quietly leave the variable unset-but-defaulting-to-host.
+    // No explicit TREEMAP_DATA_DIR: the code must derive one beside the app,
+    // fail to create it, and then NOT point the variable anywhere. (This test
+    // once derived from process.execPath and returned early whenever that
+    // folder was writable — every developer machine and CI runner — so it
+    // asserted nothing; the app's folder is now handed in.)
     const e = env({ TREEMAP_PORTABLE: '1' });
     resetPortableMode();
-    const status = initPortableMode(e);
-    if (status.writable) return; // the runner's exe dir happens to be writable
+    const status = initPortableMode(e, readOnly);
+    assert.equal(status.baseDir, readOnly, 'the folder handed in is the one decided on');
+    assert.equal(status.writable, false, 'the fixture really is read-only');
     assert.equal(e.TREEMAP_DATA_DIR, undefined);
     assert.equal(status.dataDir, null, 'null means "nothing is persisted", not "use the default"');
+    assert.ok(!fs.existsSync(path.join(readOnly, PORTABLE_DATA_DIRNAME)), 'and nothing was created beside the app');
   } finally {
     fs.chmodSync(readOnly, 0o700);
   }
+});
+
+test('where the data folder cannot be made on any OS, nothing is pointed anywhere — no chmod, so Windows and root run it too', () => {
+  // A regular file standing where the app's folder should be: making
+  // <file>/TreeMap-Data fails with ENOTDIR everywhere, as in cartCommit's
+  // read-only capsule test, where chmod cannot refuse Windows or root.
+  const base = tmp();
+  const blocker = path.join(base, 'not-a-directory');
+  fs.writeFileSync(blocker, 'x');
+  const e = env({ TREEMAP_PORTABLE: '1' });
+  resetPortableMode();
+  const status = initPortableMode(e, blocker);
+  assert.equal(status.writable, false, 'the folder really cannot be made');
+  assert.equal(e.TREEMAP_DATA_DIR, undefined, 'never pointed at the host, nor anywhere else');
+  assert.equal(status.dataDir, null);
+  assert.equal(status.hostUntouched, true);
+  assert.ok(status.reason, 'and it says why');
+});
+
+test('a marker beside the app puts the data folder beside it and points the app there', () => {
+  const base = tmp();
+  fs.writeFileSync(path.join(base, PORTABLE_MARKER), 'x');
+  const e = env();
+  resetPortableMode();
+  const status = initPortableMode(e, base);
+  assert.equal(status.signal, 'marker-file', 'the marker is looked for in the folder handed in');
+  assert.equal(status.portable, true);
+  assert.equal(status.writable, true);
+  assert.equal(status.dataDir, path.join(base, PORTABLE_DATA_DIRNAME));
+  assert.equal(e.TREEMAP_DATA_DIR, path.join(base, PORTABLE_DATA_DIRNAME), 'every writer now resolves beside the app');
+  assert.ok(fs.statSync(path.join(base, PORTABLE_DATA_DIRNAME)).isDirectory(), 'the folder exists, proven by writing');
+  assert.deepEqual(fs.readdirSync(path.join(base, PORTABLE_DATA_DIRNAME)), [], 'and the write probe left nothing in it');
 });
 
 test('every writer in the app resolves through the one redirected helper', () => {
