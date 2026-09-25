@@ -29080,9 +29080,13 @@ function renderNearDupes() {
     return;
   }
   const clusters = n.clusters;
+  // Images the pass could not confirm were on this disk were never compared,
+  // and the job says how many: a hole in the answer, never a finding.
+  const leftOut = n.reason
+    ? `<div class="nd-note">${icon('alert', 14)} ${escapeHtml(n.reason)}</div>` : '';
   if (!clusters.length) {
-    $('ndSummary').textContent = 'No near-duplicate images found.';
-    body.innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No similar images above the match threshold — your image library looks tidy.</div></div>`;
+    $('ndSummary').textContent = n.reason ? 'No near-duplicate images found among the images compared.' : 'No near-duplicate images found.';
+    body.innerHTML = leftOut || `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No similar images above the match threshold — your image library looks tidy.</div></div>`;
     updateNdToolbar();
     return;
   }
@@ -29092,7 +29096,7 @@ function renderNearDupes() {
     (n.clusterCount > clusters.length ? ` <span class="num">(top ${clusters.length} shown)</span>` : ''), state.near.loadedFor);
   const note = n.truncated
     ? `<div class="nd-note">${icon('alert', 14)} Only the largest images were compared — some smaller images may not be grouped.</div>` : '';
-  body.innerHTML = note + '<div class="nd-list"></div>';
+  body.innerHTML = note + leftOut + '<div class="nd-list"></div>';
   ndAppendClusters();
   updateNdToolbar();
 }

@@ -1,5 +1,6 @@
-import { ScanStore } from './scanStore';
-import { DHash, IMAGE_EXT, detectDecoder, hamming, hashImage, loadSharp } from './perceptualDupes';
+import { Flag, ScanStore } from './scanStore';
+import { DHash, IMAGE_EXT, detectDecoder, hamming, hashImage, loadSharp, openingImage } from './perceptualDupes';
+import { stillLocal } from './dataLocality';
 
 /**
  * dupeViewer — the facts behind the Duplicates view's side-by-side panel
@@ -18,6 +19,12 @@ import { DHash, IMAGE_EXT, detectDecoder, hamming, hashImage, loadSharp } from '
  *  - **Absent facts are null WITH a reason.** No sharp → "image decoding
  *    unavailable". No EXIF → "no capture date recorded". A text file → "not
  *    an image". Nothing is ever guessed, least of all a date.
+ *
+ * And nothing is opened that would make a sync client download it (the
+ * master prompt §3.2, RISKS R1 and R71), by the exact duplicate finder's own
+ * rule: a cloud placeholder or a link is never opened, and every other image
+ * is asked about just before it is — of its directory entry, never the file
+ * (dataLocality.ts). One that is not opened says why, in the same fields.
  */
 
 /** An older file must beat the newest by MORE than this to unseat it. */
@@ -206,6 +213,10 @@ const REASON_UNDECODABLE = 'image could not be decoded';
 const REASON_NO_EXIF = 'no capture date recorded';
 const REASON_IS_REFERENCE = 'this file is the comparison reference';
 const REASON_NO_REFERENCE = 'the recommended file could not be fingerprinted, so there is no comparison';
+const REASON_ONLINE_ONLY = 'not opened: this file is online-only, and opening it would download it';
+const REASON_LINK = 'not opened: this is a link, and TreeMap never follows one';
+const REASON_LEFT_DISK = "not opened: this file's data has left the disk since the scan (it is online-only now), and opening it would download it";
+const REASON_UNCONFIRMED = "not opened: TreeMap could not confirm this file's data is on the disk, and opening it could download it";
 
 /**
  * Everything the side-by-side panel shows, for `ids` (already resolved file
@@ -224,6 +235,28 @@ export async function buildDuplicateDetail(scanId: string, store: ScanStore, ids
   const maxMtime = Math.max(...meta.map((f) => f.modifiedAt));
   const maxSize = Math.max(...meta.map((f) => f.size));
 
+  // Which images must not be opened, and why. The scan's flags settle a
+  // placeholder or a link; every other image is asked about once, as one
+  // batch, just before anything opens it (positions in `meta` stand in for
+  // ids — the question needs only a path). A file that is not an image is
+  // never opened, so it is never asked about either.
+  const notOpened = new Map<number, string>();
+  const toAsk: number[] = [];
+  ids.forEach((id, i) => {
+    const ext = meta[i]!.ext;
+    if (!ext || !IMAGE_EXT.has(ext)) return;
+    if (store.flag(id, Flag.CloudPlaceholder)) notOpened.set(i, REASON_ONLINE_ONLY);
+    else if (store.flag(id, Flag.Symlink)) notOpened.set(i, REASON_LINK);
+    else toAsk.push(i);
+  });
+  if (toAsk.length > 0) {
+    const gone = new Set<number>();
+    const local = new Set(stillLocal(toAsk, (i) => meta[i]!.path, (i) => gone.add(i)));
+    for (const i of toAsk) {
+      if (!local.has(i)) notOpened.set(i, gone.has(i) ? REASON_LEFT_DISK : REASON_UNCONFIRMED);
+    }
+  }
+
   const sharp = loadSharp();
   const decoder = await detectDecoder();
 
@@ -239,7 +272,7 @@ export async function buildDuplicateDetail(scanId: string, store: ScanStore, ids
   }
 
   const facts: ImageFacts[] = await Promise.all(
-    meta.map(async (f): Promise<ImageFacts> => {
+    meta.map(async (f, i): Promise<ImageFacts> => {
       const none = (reason: string): ImageFacts => ({
         width: null, height: null, dimensionsReason: reason,
         captureDate: null, captureDateReason: reason,
@@ -247,6 +280,8 @@ export async function buildDuplicateDetail(scanId: string, store: ScanStore, ids
       });
       const isImage = !!f.ext && IMAGE_EXT.has(f.ext);
       if (!isImage) return none(REASON_NOT_IMAGE);
+      const why = notOpened.get(i);
+      if (why) return none(why);
 
       const out = none(REASON_NO_DECODER);
       if (!sharp && decoder === 'ffmpeg') {
@@ -259,7 +294,7 @@ export async function buildDuplicateDetail(scanId: string, store: ScanStore, ids
       if (sharp) {
         try {
           // metadata() reads the header only — cheap even for huge files.
-          const m = await sharp(f.path, { failOn: 'none' }).metadata();
+          const m = await sharp(openingImage(f.path), { failOn: 'none' }).metadata();
           if (typeof m.width === 'number' && typeof m.height === 'number') {
             out.width = m.width;
             out.height = m.height;
