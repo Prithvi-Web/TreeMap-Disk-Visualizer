@@ -12,3 +12,6 @@ workspace = true
 [dependencies]
 thiserror = { workspace = true }
 tm-walk = { path = "../tm-walk" }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

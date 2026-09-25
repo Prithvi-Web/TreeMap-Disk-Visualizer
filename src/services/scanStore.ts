@@ -757,6 +757,8 @@ export class PackedScanStore implements ScanStore {
   private n = 0;
   private cap = 0;
   private finalized = false;
+  /** Set by release(): every accessor then throws (see live()). */
+  private released = false;
 
   private parentArr!: Int32Array;
   private sizeArr!: Float64Array;
@@ -803,6 +805,7 @@ export class PackedScanStore implements ScanStore {
   }
 
   get count(): number {
+    this.live();
     return this.n;
   }
 
@@ -927,7 +930,17 @@ export class PackedScanStore implements ScanStore {
   }
 
   private check(id: number): void {
+    this.live();
     if (id < 0 || id >= this.n) throw new RangeError(`PackedScanStore: no node ${id}`);
+  }
+
+  /**
+   * Throws once release() has run. A typed array whose memory is gone does
+   * not throw when read — a detached array reads `undefined` — so this check,
+   * made by every accessor, is what makes a stale store fail loudly.
+   */
+  private live(): void {
+    if (this.released) throw new Error('PackedScanStore: this store was released; its columns are gone');
   }
 
   /* ---------- build ---------- */
@@ -953,6 +966,7 @@ export class PackedScanStore implements ScanStore {
   }
 
   finalize(): void {
+    this.live();
     if (this.finalized) return;
     const n = this.n;
     const first = this.firstChild as Int32Array;
@@ -1055,6 +1069,7 @@ export class PackedScanStore implements ScanStore {
    * build that made them (tm-store) proves their structure itself.
    */
   adoptColumns(cols: StoreColumns): void {
+    this.live();
     if (this.n !== 1 || this.finalized) {
       throw new Error('PackedScanStore.adoptColumns: only a store holding just its root may adopt columns');
     }
@@ -1125,6 +1140,43 @@ export class PackedScanStore implements ScanStore {
     this.finalized = true;
   }
 
+  /**
+   * Gives up the store's columns (Phase 4, design §S.1.6): every column and
+   * side table is dropped, so the memory behind them can be reclaimed once
+   * nothing else holds them, and every accessor throws from then on.
+   * Releasing again does nothing.
+   */
+  release(): void {
+    if (this.released) return;
+    this.released = true;
+    this.version++;
+    this.n = 0;
+    this.cap = 0;
+    this.parentArr = new Int32Array(0);
+    this.sizeArr = new Float64Array(0);
+    this.mtimeArr = new Float64Array(0);
+    this.atimeArr = null;
+    this.flagsArr = new Uint16Array(0);
+    this.extArr = new Uint16Array(0);
+    this.containerArr = new Uint8Array(0);
+    this.cloudProvArr = new Uint8Array(0);
+    this.nameOff = new Uint32Array(0);
+    this.nameBytes = new Uint8Array(0);
+    this.namePoolLen = 0;
+    this.firstChild = null;
+    this.lastChild = null;
+    this.nextSibling = null;
+    this.childStart = new Uint32Array(0);
+    this.childCnt = new Uint32Array(0);
+    this.extraChildren = new Map();
+    this.removedUnder = new Map();
+    this.logicalMap = new Map();
+    this.cloudIdMap = new Map();
+    this.extDict = [''];
+    this.extLookup = new Map();
+    this.extOverflow = null;
+  }
+
   sumSizes(): void {
     this.version++;
     this.requireFinal();
@@ -1147,6 +1199,7 @@ export class PackedScanStore implements ScanStore {
   }
 
   private requireFinal(): void {
+    this.live();
     if (!this.finalized) throw new Error('PackedScanStore: finalize() first');
   }
 

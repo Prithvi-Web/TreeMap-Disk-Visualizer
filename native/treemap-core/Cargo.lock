@@ -340,6 +340,7 @@ dependencies = [
 name = "tm-store"
 version = "0.2.0"
 dependencies = [
+ "libc",
  "thiserror",
  "tm-walk",
 ]

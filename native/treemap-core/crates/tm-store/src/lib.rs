@@ -29,7 +29,7 @@ pub mod derive;
 pub mod finalize;
 
 pub use build::{BuildOptions, Counters, Store, StoreMode, build};
-pub use column::Column;
+pub use column::{AnonTally, Column, ColumnError, Zeroable, anon_tally};
 pub use derive::ContainerRule;
 
 /// The store's flag bits: `Flag` in `src/services/scanStore.ts`, bit for bit.

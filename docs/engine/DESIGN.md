@@ -283,7 +283,9 @@ hold for it. Phase 4's S2 and S5 measure it.
   `VirtualFree` (`MEM_RELEASE`). Measured on this Mac
   (plan §S.3): `munmap` returned memory at once, while libmalloc kept 1 GB of
   freed blocks resident for more than 23 s. So a scan's peak is its largest
-  stage, not the sum of its stages.
+  stage, not the sum of its stages. **Built 25 September 2026 (T5):**
+  `tm_store::Column::Anon` and `PackedScanStore.release()`; no producer uses
+  them until T7 and T17.
 * **A row costs 46 B plus its name** (`parent` 4, `size`, `mtime` and `atime`
   8 each, `flags` and `ext` 2 each, `container` and `cloudProv` 1 each,
   `nameOff`, `childStart` and `childCnt` 4 each): 64 B at a mean name of
