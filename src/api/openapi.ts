@@ -753,6 +753,14 @@ const schemas: Json = {
       budgets: arr(obj({ path: str(), maxBytes: int() }, ['path', 'maxBytes'])),
       forecastThresholdDays: num(),
       watchIdleMinutes: num(),
+      timeCapsuleRetentionDays: int(
+        'How long the Time Capsule keeps a copy of what a cart commit deleted, in days: 1-365, default 30. '
+          + 'Read live, so lowering it can retire copies captured under the old value at the next sweep.',
+      ),
+      timeCapsuleMaxPercent: int(
+        'The Time Capsule\'s ceiling, as a percentage of its volume\'s usable space: 1-90, default 10. '
+          + 'Anything too large to fit is left undeleted and named in skipped[], never deleted unprotected.',
+      ),
       cloud: opaque('Per-provider OAuth app credentials (gdrive / dropbox / onedrive)'),
       reclaimWeights: obj(
         {
@@ -786,7 +794,7 @@ const schemas: Json = {
           + 'Not verified on this build.',
       },
     },
-    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'cloud', 'reclaimWeights', 'cleanupGoalBytes', 'humanScaleUnits', 'tourDone', 'engineBudget', 'engine'],
+    ['ignore', 'schedules', 'budgets', 'forecastThresholdDays', 'watchIdleMinutes', 'timeCapsuleRetentionDays', 'timeCapsuleMaxPercent', 'cloud', 'reclaimWeights', 'cleanupGoalBytes', 'humanScaleUnits', 'tourDone', 'engineBudget', 'engine'],
   ),
 };
 
