@@ -17,6 +17,7 @@ import {
   type StatementLine,
 } from '../src/services/missingGigabytes';
 import type { LogicalVolumeInfo, VolumeTopology } from '../src/platform/types';
+import { mapLsblk } from '../src/platform/linux/topology';
 import type { ScanResult } from '../src/models/types';
 import { createApp } from '../src/server';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';
@@ -476,6 +477,30 @@ test('a path on no known volume is an error, not a statement against nothing', a
     () => buildStatement(scanFixture({ rootPath: '/nowhere' }), sourcesFixture({ volumes: [], devs: {} })),
     /no mounted volume contains/,
   );
+});
+
+test('a scan on a filesystem made directly on the whole disk resolves to that disk, and the statement balances', async () => {
+  // Recorded on a Linux cloud container (see tests/platformCrossOs.test.ts for
+  // the fixture's provenance): `/` is ext4 on the bare /dev/vda, no partition
+  // table. Before the whole-disk rule, the topology held no volume at all and
+  // every scan there was "no mounted volume contains …".
+  const doc = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'fixtures', 'lsblk-v2.39.3-whole-disk.json'), 'utf8'),
+  ) as Parameters<typeof mapLsblk>[0];
+  const volumes = mapLsblk(doc).logicalVolumes;
+  // The device id as the kernel numbers it: vda is 254:0.
+  const devs: Record<string, number> = { '/': 65024 };
+  const src = sourcesFixture({ platform: 'linux', volumes, devs, totalBytes: 270_553_174_016, usedBytes: 12_534_636_544 });
+
+  const resolved = await resolveScanVolume(volumes, '/home/user/project', src.devOf);
+  assert.ok(resolved, 'a path under / must resolve to the whole-disk volume mounted there');
+  assert.equal(resolved.primary.id, '/dev/vda', 'the disk itself is the volume');
+  assert.equal(resolved.primary.mountPoint, '/', 'mounted at /');
+  assert.deepEqual(resolved.onSameDevice.map((v) => v.id), ['/dev/vda'], 'and nothing else shares its device');
+
+  const s = await buildStatement(scanFixture({ rootPath: '/home/user/project', store: storeOfSize(GB) }), src);
+  assert.equal(s.volume.mountPoint, '/', 'the statement is drawn up against /');
+  assertBalances(s);
 });
 
 /* ═══════════════════ 4. Whole-volume vs a folder inside it ═══════════════════ */

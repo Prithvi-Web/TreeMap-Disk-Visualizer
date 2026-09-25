@@ -76,6 +76,24 @@ export function mapLsblk(doc: LsblkDoc): VolumeTopology {
   const physicalDisks: PhysicalDiskInfo[] = [];
   const logicalVolumes: LogicalVolumeInfo[] = [];
 
+  const pushVolume = (node: LsblkNode, id: string, backingDisks: string[]): void => {
+    const total = bytesOf(node.fssize) ?? bytesOf(node.size);
+    logicalVolumes.push({
+      id,
+      name: node.name ?? null,
+      mountPoint: mountOf(node),
+      filesystem: node.fstype ?? null,
+      sizeBytes: total,
+      freeBytes: bytesOf(node.fsavail),
+      // FSUSED is the kernel's own statvfs-derived figure. It is NOT
+      // fssize − fsavail: fsavail excludes ext4's root reserve, and that
+      // subtraction would book the reserve as data. Absent column → null.
+      usedBytes: bytesOf(node.fsused),
+      physicalDiskIds: backingDisks,
+      kind: kindOf(node.type ?? ''),
+    });
+  };
+
   const walk = (node: LsblkNode, backingDisks: string[]): void => {
     const id = node.path ?? node.name;
     if (!id) return;
@@ -90,32 +108,22 @@ export function mapLsblk(doc: LsblkDoc): VolumeTopology {
         // detected, never inferred from the device name.
         rotational: typeof node.rota === 'boolean' ? node.rota : null,
       });
+      // A filesystem made directly on the whole disk, with no partition table
+      // (a cloud VM's data disk, a container's root disk), is mounted from the
+      // disk node itself. It is a volume too, backed by this one disk — without
+      // it a scan there lives on no volume at all. A disk with no mount point of
+      // its own (partitioned, blank, a RAID or LVM member) stays hardware only.
+      // Its `kind` is kindOf's pass-through of the lsblk type: 'disk'.
+      if (mountOf(node) !== null) pushVolume(node, id, [id]);
       for (const child of node.children ?? []) walk(child, [id]);
       return;
     }
 
     // Anything mountable is a logical volume as far as A5 is concerned:
     // partitions, LVM logical volumes, md arrays, LUKS mappings.
-    const mountPoint = mountOf(node);
-    const isContainerOnly = (node.children ?? []).length > 0 && mountPoint === null;
+    const isContainerOnly = (node.children ?? []).length > 0 && mountOf(node) === null;
 
-    if (!isContainerOnly) {
-      const total = bytesOf(node.fssize) ?? bytesOf(node.size);
-      logicalVolumes.push({
-        id,
-        name: node.name ?? null,
-        mountPoint,
-        filesystem: node.fstype ?? null,
-        sizeBytes: total,
-        freeBytes: bytesOf(node.fsavail),
-        // FSUSED is the kernel's own statvfs-derived figure. It is NOT
-        // fssize − fsavail: fsavail excludes ext4's root reserve, and that
-        // subtraction would book the reserve as data. Absent column → null.
-        usedBytes: bytesOf(node.fsused),
-        physicalDiskIds: backingDisks,
-        kind: kindOf(type),
-      });
-    }
+    if (!isContainerOnly) pushVolume(node, id, backingDisks);
 
     // An md array or LVM group spans several disks, so children inherit the
     // union of everything above them — that union is what makes "which physical
