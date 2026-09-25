@@ -52,6 +52,10 @@
                first-run preview. -->
           <button class="btn" id="cleanPromoteBtn" title="Turn this rule into a scheduled Autopilot policy — you approve its first run before it deletes anything"><span data-icon="sparkles"></span>Make this an Autopilot policy</button>
         </div>
+        <!-- Why a rule set could not become a policy, beside the button that
+             was pressed — promoteRuleToPolicy writes it, and it stays until
+             the rules change or the pane is reopened. -->
+        <div class="muted" id="cleanPromoteWhy" role="status" aria-live="polite" style="margin:2px 0 6px;" hidden></div>
         <div id="cleanResults"></div>
       </div>
       <div id="cleanPaneSmart" class="pane-fade" style="display:none;">

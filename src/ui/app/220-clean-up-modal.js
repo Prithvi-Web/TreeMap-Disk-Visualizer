@@ -654,6 +654,7 @@ function setCleanRuleSource(src) {
     b.setAttribute('aria-selected', String(b.dataset.rulesrc === cleanRuleSource)));
   $('cleanRuleSimple').style.display = cleanRuleSource === 'simple' ? '' : 'none';
   $('cleanRuleQuery').style.display = cleanRuleSource === 'query' ? '' : 'none';
+  $('cleanPromoteWhy').hidden = true; // a refusal about the other source's rules
   if (cleanRuleSource === 'query') void fillCleanSavedViews();
 }
 
@@ -696,6 +697,8 @@ $('cleanSavedView').addEventListener('change', showCleanSavedViewQuery);
  * delete anything, exactly like one typed from scratch.
  */
 function promoteRuleToPolicy() {
+  const why = $('cleanPromoteWhy');
+  why.hidden = true; why.textContent = '';
   if (!state.root) { toast('Scan a folder first — a policy needs somewhere to work', 'error'); return; }
   let match;
   let name;
@@ -712,6 +715,17 @@ function promoteRuleToPolicy() {
       // flag is not part of AutopilotMatch — so saying so is better than
       // silently promoting a rule that means something different.
       toast('Set an age, size or extension rule first — the duplicates-only rule cannot run unattended', 'error', 8000);
+      return;
+    }
+    if ($('ruleDupOn').checked) {
+      // Find ANDs the duplicate rule with the others, and no policy can: the
+      // custom kind has no duplicate flag and the query field `dupe:` is not
+      // wired yet. Promoting the rest would build a policy WIDER than what was
+      // just shown — an unattended deleter of everything the other rules match.
+      // So it is refused here, before the editor opens, rather than dropped.
+      why.textContent = 'The “Duplicates only” rule cannot be carried into an Autopilot policy: a policy has no way to check for duplicates, so it would trash everything your other rules match, duplicate or not. Untick Duplicates only to make a policy from the other rules.';
+      why.hidden = false;
+      toast(why.textContent, 'error', 10000);
       return;
     }
     match = { kind: 'custom' };
@@ -738,6 +752,7 @@ function promoteRuleToPolicy() {
   toast('Pre-filled — nothing is scheduled until you save it, and its first run is always a preview you approve.', 'success', 9000);
 }
 $('cleanPromoteBtn').addEventListener('click', promoteRuleToPolicy);
+$('ruleDupOn').addEventListener('change', () => { $('cleanPromoteWhy').hidden = true; });
 
 /** Run a saved view as a Clean Up rule, through the one query engine (§4.5). */
 async function findBySavedView() {

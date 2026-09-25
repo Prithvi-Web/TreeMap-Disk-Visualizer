@@ -170,6 +170,8 @@ function normalizeMatch(raw: unknown): AutopilotMatch {
     return { kind: 'suggestion', groupIds };
   }
   if (m.kind === 'custom') {
+    // Clean Up's duplicate rule has no policy equivalent; dropping it would save a policy wider than the one sent.
+    if (m.dup !== undefined && m.dup !== false) throw new AppError(400, 'POLICY_MATCH_INVALID', 'The duplicates rule cannot be part of a policy — a policy has no way to check for duplicates, so it would match everything the other rules match');
     const maxAgeMs = Number(m.maxAgeMs);
     const minBytes = Number(m.minBytes);
     const exts = Array.isArray(m.exts)
