@@ -246,6 +246,16 @@ export async function savePolicies(raw: unknown): Promise<AutopilotPolicy[]> {
   if (!Array.isArray(raw)) throw new AppError(400, 'BAD_POLICIES', '"policies" must be an array');
   if (raw.length > 50) throw new AppError(400, 'TOO_MANY_POLICIES', 'At most 50 policies');
 
+  // Two entries sharing an id: the second would inherit the first one's
+  // approval and pass as unchanged.
+  const ids = new Set<string>();
+  for (const entry of raw) {
+    const id = (entry as { id?: unknown })?.id;
+    if (typeof id !== 'string' || !id) continue;
+    if (ids.has(id)) throw new AppError(400, 'DUPLICATE_POLICY_ID', `Two policies in the list share the id "${id.slice(0, 80)}"`);
+    ids.add(id);
+  }
+
   const store = await loadStore();
   const byId = new Map(store.policies.map((p) => [p.id, p]));
   const next: AutopilotPolicy[] = [];

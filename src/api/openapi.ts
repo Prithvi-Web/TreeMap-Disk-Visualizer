@@ -2729,7 +2729,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     requestBody: { required: true, content: { 'application/json': { schema: obj({ policies: arr(ref('AutopilotPolicy')) }, ['policies']) } } },
     responses: {
       '200': jsonResponse('Saved, re-validated', obj({ policies: arr(ref('AutopilotPolicy')) }, ['policies'])),
-      '400': errorResponse('POLICY_MATCH_EMPTY, POLICY_MATCH_INVALID (an unknown match kind, or a custom rule carrying the duplicates flag, which no policy can honour), POLICY_PATH_TOO_BROAD, POLICY_PATH_REQUIRED, POLICY_QUERY_INVALID (the query does not parse), POLICY_QUERY_UNANSWERABLE (a new or changed query uses a field this build cannot answer, e.g. dupe:), BAD_POLICIES ("policies" is not a list), TOO_MANY_POLICIES (more than 50) — refused rather than saved in a shape that would misbehave'),
+      '400': errorResponse('POLICY_MATCH_EMPTY, POLICY_MATCH_INVALID (an unknown match kind, or a custom rule carrying the duplicates flag, which no policy can honour), POLICY_PATH_TOO_BROAD, POLICY_PATH_REQUIRED, PATH_INVALID and PATH_BLOCKED (the folder fails the scan-path check), POLICY_QUERY_INVALID (the query does not parse), POLICY_QUERY_UNANSWERABLE (a new or changed query uses a field this build cannot answer, e.g. dupe:), NOTHING_TO_UPDATE (no "policies" in the body), BAD_POLICIES ("policies" is not a list), TOO_MANY_POLICIES (more than 50), DUPLICATE_POLICY_ID (two entries share an id) — refused rather than saved in a shape that would misbehave'),
     },
   },
   {
@@ -2753,6 +2753,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     requestBody: { required: true, content: { 'application/json': { schema: obj({ policyId: str('A saved policy'), policy: ref('AutopilotPolicy') }) } } },
     responses: {
       '200': jsonResponse('The projection', opaque('items[], bytesMatched, bytesWouldDelete, skipped[], capBytes, wouldBlockReason?')),
+      '400': errorResponse('POLICY_REQUIRED (neither "policyId" nor "policy"); for a "policy", every refusal a save would give it, judged against the stored policy of the same id as a save judges it: POLICY_MATCH_EMPTY, POLICY_MATCH_INVALID, POLICY_PATH_TOO_BROAD, POLICY_PATH_REQUIRED, PATH_INVALID, PATH_BLOCKED, POLICY_QUERY_INVALID, POLICY_QUERY_UNANSWERABLE'),
       '404': errorResponse('POLICY_NOT_FOUND'),
     },
   },

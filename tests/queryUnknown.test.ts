@@ -388,12 +388,14 @@ test('a dupe: policy an earlier build saved never blocks saving the others; chan
     assert.deepEqual((await stored()).map((p) => p[0]), ['old'], 'another policy deleted');
 
     const before = await stored();
-    for (const [what, edit] of [
-      ['its query changed', { ...old, match: { kind: 'query', q: '-dupe:yes ext:png' } }],
-      ['its folder changed', { ...old, path: path.join(dir, 'keep') }],
-      ['a new one', { name: 'New photos', path: dir, match: { kind: 'query', q: 'dupe:yes' } }],
+    // As the page sends them: an edit replaces the policy it edits; a new
+    // policy is added beside the old one.
+    for (const [what, edit, list] of [
+      ['its query changed', { ...old, match: { kind: 'query', q: '-dupe:yes ext:png' } }, (e: object) => [e]],
+      ['its folder changed', { ...old, path: path.join(dir, 'keep') }, (e: object) => [e]],
+      ['a new one', { name: 'New photos', path: dir, match: { kind: 'query', q: 'dupe:yes' } }, (e: object) => [old, e]],
     ] as const) {
-      await assert.rejects(savePolicies([old, edit]), (err: unknown) => {
+      await assert.rejects(savePolicies(list(edit)), (err: unknown) => {
         assert.ok(err instanceof AppError, `${what}: ${String(err)}`);
         assert.equal(err.code, 'POLICY_QUERY_UNANSWERABLE', what);
         assert.match(err.message, new RegExp(`^The policy "${edit.name}" uses "dupe:"`), `${what}: the refusal names the policy and the field`);
