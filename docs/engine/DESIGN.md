@@ -437,8 +437,9 @@ anonymous mapping (§6).
   merge alone was measured at 147–168 B/node (the runs behind that range are
   not recorded under `bench/baselines/`), which is 1,470–1,680 MB at 10M by
   arithmetic. Proposed to the owner on 24 September 2026: the row is met by spill,
-  with every row kept on disk (543 MB above), and `T_mem` at 5M. **The
-  owner's answer is pending** (plan §S.11 Q3).
+  with every row kept on disk (543 MB above), and `T_mem` at 5M. **Decided by
+  the owner on 25 September 2026: the proposal is taken** (plan §S.11 Q3).
+  The 543 MB is a budget until T22 measures it.
 * **Electron** replaces B0 with its own baseline E0, which is not measured.
   Memory mode at 5M then needs E0 ≤ 227 MB; T9 lowers Electron's `T_mem` by
   1M rows for every 64 MB above that.
