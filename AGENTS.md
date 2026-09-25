@@ -238,7 +238,8 @@ OpenAPI 3 spec).
      last-opened date means openings are not recorded there — so it matches
      no file, says so in `degraded`, and is refused in a policy where it
      would have to be true (`-used:never`, "has a last-opened date", is
-     answered).
+     answered — though alone it is no condition, nearly every file having a
+     date, and a policy of it alone is refused as `POLICY_MATCH_EMPTY`).
      `POST /api/query/validate` parses without running (it never
      touches a scan); `GET /api/query/fields` serves the grammar so nothing
      duplicates it. `GET`/`POST`/`DELETE /api/queries` are saved views — a

@@ -6,7 +6,7 @@ import { storeOf } from '../scanStore';
 import { computeFacts } from '../facts';
 import { capabilityState } from '../../platform/capabilities';
 import { evaluateMaybe, isEmptyQuery, type CloudState, type EvalFacts, type EvalNode } from './evaluate';
-import { eachTerm, factsNeeded } from './parse';
+import { factsNeeded } from './parse';
 import type { Ast, Term } from './types';
 import type { RecoverabilityFact } from '../recoverabilityTypes';
 import type { LastUsedInfo } from '../../platform/types';
@@ -254,11 +254,13 @@ export function unanswerableFields(ast: Ast): Unanswerable[] {
   return [...found];
 }
 
-/** Does the query use `used:never` anywhere, negated or not? */
-function usesUsedNever(ast: Ast): boolean {
-  let found = false;
-  eachTerm(ast, (term) => { if (term.kind === 'usedNever') found = true; });
-  return found;
+/**
+ * Is the whole query "has a last-opened date" and nothing else? Where access
+ * times are kept that is nearly every file, so as a policy it is the "no
+ * conditions" case, whatever it spells.
+ */
+export function isOnlyHasBeenOpened(ast: Ast): boolean {
+  return ast.kind === 'not' && ast.operand.kind === 'term' && ast.operand.term.kind === 'usedNever';
 }
 
 /* -------------------------------- execution -------------------------------- */
@@ -294,7 +296,7 @@ export async function executeAgainstScan(
   const now = Date.now();
   const needed = factsNeeded(ast);
   const degraded = await degradedProviders(needed);
-  if (usesUsedNever(ast)) {
+  if (unanswerableFields(ast).some((u) => u === UNANSWERABLE.usedNever)) {
     degraded.set('usedNever', 'Nothing on this computer records that a file was never opened — a missing last-opened date means openings are not recorded there — so "used:never" matches no file. "-used:never" matches files that have a last-opened date, and "used>1y" finds files not opened in a year.');
   }
 
@@ -309,8 +311,12 @@ export async function executeAgainstScan(
   let statsSpent = 0;
   let statsCapped = 0;
   let statsFailed = 0;
+  // Set when the last createdOf call could not read a date (capped or
+  // failed): that file is already counted in `created`/`createdUnreadable`.
+  let statGap = false;
   const createdOf = (p: string): number | null => {
-    if (statsSpent >= STAT_CAP) { statsCapped++; return null; }
+    statGap = false;
+    if (statsSpent >= STAT_CAP) { statsCapped++; statGap = true; return null; }
     statsSpent++;
     try {
       const st = fs.statSync(p);
@@ -320,6 +326,7 @@ export async function executeAgainstScan(
       // Unreadable — a permission the process lacks. Counted, and reported, so
       // it does not become a silent "this file does not match your query".
       statsFailed++;
+      statGap = true;
       return null;
     }
   };
@@ -384,12 +391,14 @@ export async function executeAgainstScan(
     if (opts.signal.aborted) { aborted = true; break; }
     const facts = factsByPath.get(node.path) ?? {};
     // The only place a stat happens: candidates, once each.
+    statGap = false;
     if (wantsCreated) facts.createdMs = createdOf(node.path);
     // Still three-valued: a fact the lookup could not supply is unknown, and
     // unknown is not a match — under `-` too, or `-dupe:yes` is every file.
-    // Counted, so "could not tell" is never read as "did not match".
+    // Counted, so "could not tell" is never read as "did not match" — once:
+    // a date the stat could not read is already counted with its reason.
     const verdict = evaluateMaybe(ast, { node, facts, now }, home);
-    if (verdict === 'maybe') undecided++;
+    if (verdict === 'maybe' && !statGap) undecided++;
     if (verdict !== true) continue;
     hits.push({ path: node.path, name: node.name, size: node.size, isDir: node.isDir, mtimeMs: node.mtimeMs });
   }
@@ -401,7 +410,7 @@ export async function executeAgainstScan(
     degraded.set('created', `Creation dates were read for ${formatCount(statsSpent)} items; ${formatCount(statsCapped)} more were skipped. No scan records creation times, so each one costs a separate read.`);
   }
   if (statsFailed > 0) {
-    degraded.set('createdUnreadable', `${formatCount(statsFailed)} item${statsFailed === 1 ? '' : 's'} could not be read to find a creation date, so they are not in these results.`);
+    degraded.set('createdUnreadable', `${formatCount(statsFailed)} item${statsFailed === 1 ? '' : 's'} could not be read to find a creation date, so ${statsFailed === 1 ? 'it is' : 'they are'} not in these results.`);
   }
   if (undecided > 0) {
     const one = undecided === 1;

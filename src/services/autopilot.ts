@@ -11,7 +11,7 @@ import { collectCleanupSuggestions } from './cleanupRules';
 import { matchCustomRules } from './scanQueries';
 import { parse } from './query/parse';
 import { isEmptyQuery } from './query/evaluate';
-import { executeAgainstScan, unanswerableFields } from './query/execute';
+import { executeAgainstScan, isOnlyHasBeenOpened, unanswerableFields } from './query/execute';
 import { getIgnoreMatchers } from './settings';
 import { startScan, getScan } from './diskScanner';
 import { storeOf } from './scanStore';
@@ -229,6 +229,9 @@ function normalizeMatch(raw: unknown): AutopilotMatch {
     // never what anyone meant and unattended would be a disaster.
     if (isEmptyQuery(parsed.ast)) {
       throw new AppError(400, 'POLICY_MATCH_EMPTY', 'That query has no conditions — it would match every file in the folder');
+    }
+    if (isOnlyHasBeenOpened(parsed.ast)) {
+      throw new AppError(400, 'POLICY_MATCH_EMPTY', '"-used:never" alone matches every file that has a last-opened date — nearly every file where access times are kept — so it would clear the folder. Add a real condition, such as "used>1y".');
     }
     return { kind: 'query', q };
   }

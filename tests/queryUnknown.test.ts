@@ -288,6 +288,23 @@ test('on a real scan, a file the looked-up facts decide against is not counted a
   assert.equal(out.degraded.find((d) => d.provider === 'undecided'), undefined, 'and a no is not an unknown');
 });
 
+test('a creation date that could not be read is counted once, not again as undecided', { skip: noBirthtime }, async () => {
+  const root = fileTempDir('treemap-query-unknown-stat-');
+  fs.writeFileSync(path.join(root, 'kept.txt'), 'here\n');
+  fs.writeFileSync(path.join(root, 'gone.txt'), 'deleted after the scan\n');
+  const scan = await startScan(root);
+  await waitFor(() => peekScan(scan.scanId)?.status !== 'running', 'the stat-gap scan settling');
+  fs.rmSync(path.join(root, 'gone.txt'));
+  const out = await executeAgainstScan(scan.scanId, ast('type:file created<2000-01-01'), {
+    limit: 100, offset: 0, sort: 'path', signal: new AbortController().signal,
+  });
+  assert.ok(!('error' in out), JSON.stringify(out));
+  const degraded = (out as QueryOutcome).degraded;
+  assert.equal(degraded.find((d) => d.provider === 'createdUnreadable')?.reason,
+    '1 item could not be read to find a creation date, so it is not in these results.', 'the file that is gone is reported once');
+  assert.equal(degraded.find((d) => d.provider === 'undecided'), undefined, `and not a second time: ${JSON.stringify(degraded)}`);
+});
+
 test('on a real scan, an unknown beside or leaves exactly the known side', async () => {
   const known = await pathsOf('size>0');
   assert.ok(known.length > 0 && known.length < (await pathsOf('size>=0')).length, 'size>0 must split the fixture');
@@ -498,6 +515,11 @@ test('on a real scan, used:never matches nothing and says why', async () => {
   assert.equal(out.degraded.find((d) => d.provider === 'usedNever')?.reason,
     'Nothing on this computer records that a file was never opened — a missing last-opened date means openings are not recorded there — so "used:never" matches no file. "-used:never" matches files that have a last-opened date, and "used>1y" finds files not opened in a year.');
   assert.equal((await run('used>1y')).degraded.find((d) => d.provider === 'usedNever'), undefined, 'only a query that uses it is told');
+  // …where it would have to be true. "-used:never" is answered wherever a
+  // date is recorded, and the Clean Up box shows any degraded entry as an
+  // error: warning there cried wolf over a query that worked.
+  assert.equal((await run('-used:never')).degraded.find((d) => d.provider === 'usedNever'), undefined, '-used:never is not warned about');
+  assert.ok((await run('size>1gb or used:never')).degraded.some((d) => d.provider === 'usedNever'), 'used:never beside an or still is');
 });
 
 test('a policy built on used:never is refused, and its negation is not', () => {
@@ -516,9 +538,19 @@ test('a policy built on used:never is refused, and its negation is not', () => {
     );
   }
   // Negated, it is decided wherever a date is recorded: "has been opened".
-  for (const q of ['-used:never', 'ext:log -used:never', '-(used:never)', '-(ext:jpg or used:never)']) {
+  for (const q of ['ext:log -used:never', '-(ext:jpg or used:never)']) {
     const p = normalizePolicy({ name: 'x', path: dir, match: { kind: 'query', q } });
     assert.equal(p.match.kind === 'query' && p.match.q, q, `"${q}" is accepted`);
+  }
+  // Alone, though, it is no condition: every file with a last-opened date —
+  // which, where access times are kept, is nearly every file — so it is the
+  // "no conditions" refusal, not a policy.
+  for (const q of ['-used:never', '-(used:never)']) {
+    assert.throws(
+      () => normalizePolicy({ name: 'x', path: dir, match: { kind: 'query', q } }),
+      (err: unknown) => err instanceof AppError && err.code === 'POLICY_MATCH_EMPTY' && /-used:never/.test(err.message),
+      `"${q}" alone is refused as matching nearly every file`,
+    );
   }
   // Both fields at once: one refusal names both.
   assert.throws(
