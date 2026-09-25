@@ -359,6 +359,52 @@ function pictureEntries(total: number): ScanResult {
   return scan;
 }
 
+test('an image deleted since the scan is not an image nobody could vouch for', needsSharp, async () => {
+  // Nothing updates a scan when its files are trashed (DELETE /api/files
+  // leaves the tree as it was), and the native ask answers "could not tell"
+  // for a path that is gone. Reading that as "could be online-only" told a
+  // person who had just trashed duplicates that images "could download".
+  const b = await scanned();
+  const gone = b.store.addNode(b.store.rootId, {
+    name: 'trashed.png', isDir: false, size: 20_000, modifiedAt: 8_000, isHidden: false, extension: 'png',
+  });
+  assert.equal(fs.existsSync(b.store.path(gone)), false, 'the trashed image is only in the scan');
+  standIn((name) => (name === 'local-a.png' || name === 'local-b.png' || name === 'broken.png' ? 1 : name === 'trashed.png' ? 2 : 0));
+  try {
+    const { result: job, opens } = await watchingOpens(() => finished(getNearDupeJob(b.scan, 4)));
+    assert.deepEqual(clustered(job), [['local-a.png', 'local-b.png']]);
+    assert.equal(opens['trashed.png'], undefined, 'the deleted image was never opened');
+    assert.deepEqual([job.available, job.reason], [true, undefined], 'and it is not reported as one nobody could vouch for');
+  } finally {
+    realNative();
+  }
+});
+
+const NO_CHMOD = process.platform === 'win32'
+  ? 'Windows has no POSIX folder permissions'
+  : process.getuid?.() === 0 ? 'root may search any folder: chmod cannot hide an entry from root' : false;
+
+test('an entry the pass cannot look at is not taken for deleted', { skip: NO_CHMOD }, async () => {
+  // Only a definite "no such entry" says an image is gone; a folder the
+  // process may not search hides an image that may well be there.
+  const b = await scanned();
+  const locked = path.join(b.store.rootPath, 'locked');
+  fs.mkdirSync(locked);
+  fs.writeFileSync(path.join(locked, 'hidden.png'), Buffer.alloc(20_000, 1));
+  const dirId = b.store.addNode(b.store.rootId, { name: 'locked', isDir: true, size: 0, modifiedAt: 0, isHidden: false });
+  b.store.addNode(dirId, { name: 'hidden.png', isDir: false, size: 20_000, modifiedAt: 8_000, isHidden: false, extension: 'png' });
+  standIn((name) => (name === 'local-a.png' || name === 'local-b.png' || name === 'broken.png' ? 1 : name === 'hidden.png' ? 2 : 0));
+  fs.chmodSync(locked, 0o000);
+  try {
+    assert.throws(() => fs.lstatSync(path.join(locked, 'hidden.png')), /EACCES/, 'the fixture really hides the entry');
+    const { result: job } = await watchingOpens(() => finished(getNearDupeJob(b.scan, 4)));
+    assert.deepEqual([job.available, job.reason], [true, NOT_COMPARED_ONE], 'one image nobody could vouch for, not a deleted one');
+  } finally {
+    fs.chmodSync(locked, 0o755);
+    realNative();
+  }
+});
+
 test('the near-duplicate pass asks in chunks, and the event loop turns between them', async () => {
   // One synchronous native call for every candidate (up to 8,000; one
   // directory lookup each) would hold the server's event loop — progress

@@ -1,4 +1,5 @@
 import { execFile } from 'child_process';
+import { promises as fsp } from 'fs';
 import { promisify } from 'util';
 import { ScanResult, NearDupeCluster, NearDupeJob } from '../models/types';
 import { storeOf, Flag } from './scanStore';
@@ -166,10 +167,19 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
     if (at > 0) await new Promise<void>((resolve) => setImmediate(resolve));
     if (job.cancelled) return;
     const chunk = candidates.slice(at, at + LOCALITY_CHUNK).map((c) => c.id);
-    let gone = 0;
-    const kept = stillLocal(chunk, (id) => store.path(id), () => { gone++; });
-    for (const id of kept) local.add(id);
-    unconfirmed += chunk.length - kept.length - gone;
+    const settled = new Set<number>();
+    for (const id of stillLocal(chunk, (i) => store.path(i), (i) => { settled.add(i); })) {
+      local.add(id);
+      settled.add(id);
+    }
+    // No answer is not a yes. It is not "could be online-only" either when
+    // the entry is simply gone: nothing updates a scan when its files are
+    // trashed, and the ask answers "could not tell" for a missing path.
+    for (const id of chunk) {
+      if (settled.has(id)) continue;
+      if (await deletedSinceScan(store.path(id))) continue;
+      unconfirmed++;
+    }
   }
   if (unconfirmed > 0 && local.size === 0) {
     job.available = false;
@@ -264,6 +274,17 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
   job.truncated = truncated; // reflects the MAX_IMAGES cap only
   job.status = 'complete';
   job.finishedAt = Date.now();
+}
+
+/** Is the directory entry gone? Only a definite "no such entry" counts; any other failure is not an answer. */
+async function deletedSinceScan(filePath: string): Promise<boolean> {
+  try {
+    await fsp.lstat(filePath);
+    return false;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR';
+  }
 }
 
 function finishEmpty(job: NearDupeJob): void {
