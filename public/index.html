@@ -8343,9 +8343,10 @@ function quietRescanFailed(e) {
 }
 
 /**
- * Build the ScanStats shape from a /result response, whose counters sit at the
- * top level rather than under `stats`. Keeps the SSE path and the watchdog
- * fallback painting from identical data.
+ * Build what it can of the ScanStats shape from a /result response, whose
+ * counters sit at the top level rather than under `stats`. Only for when the
+ * stats request itself fails: /result carries no engine reason, budget,
+ * refused folders or expiry, so this shape is the lesser of the two.
  */
 function statsFromResult(r) {
   return {
@@ -8376,7 +8377,12 @@ function statsFromResult(r) {
  */
 async function scanStatsFor(scanId, result) {
   try {
-    return statsFromResult({ ...result, ...await api(`/api/scan/${scanId}/stats`) });
+    // buildScanStats plus the record's id and status: exactly the `stats` a
+    // complete frame carries, so a recovered scan paints from the same keys.
+    // Copying a fixed list of them dropped the engine's reason and fallback,
+    // the budget, the refused folders and the expiry after a stalled stream.
+    const { scanId: _scanId, status: _status, ...stats } = await api(`/api/scan/${scanId}/stats`);
+    return stats;
   } catch {
     return statsFromResult(result);
   }

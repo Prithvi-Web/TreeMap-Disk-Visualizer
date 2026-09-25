@@ -196,6 +196,31 @@ test('the counters the result payload does not carry are fetched, not invented',
   assert.equal(stats.durationMs, 123);
 });
 
+test('a recovered scan paints from the stats a complete frame carries, key for key', async () => {
+  // What the complete frame's `stats` is: buildScanStats of the record, here a
+  // native scan that fell back, ran under a budget and was refused a folder.
+  const frame = buildScanStats({
+    scanId: 'a-scan', rootPath: '/root', status: 'complete',
+    scanned: 308, fileCount: 286, dirCount: 22,
+    engine: 'walker', ioThreads: 16, startedAt: 1_000, finishedAt: 1_123,
+    budget: { preset: 'eco', effective: 'eco', source: 'native' },
+    engineReason: 'the fast engine could not list this folder',
+    fallbackReason: 'native: the listing was refused',
+    fastPath: 'readdir', deniedDirs: 1, deniedExamples: ['/root/locked'],
+  } as unknown as ScanResult);
+  const stats = await scanStatsFor(async () => ({ scanId: 'a-scan', status: 'complete', ...frame }))('a-scan', RESULT_PAYLOAD);
+  // The engine row's reason and fallback, the budget the scan ran under, the
+  // refused-folder notice and the expiry warning all read keys /result never
+  // had; a fixed sixteen-key copy dropped every one of them after a stalled
+  // stream, while the ordinary path (the complete frame) kept them.
+  assert.equal(stats.engineReason, 'the fast engine could not list this folder');
+  assert.equal(stats.fallbackReason, 'native: the listing was refused');
+  assert.deepEqual(stats.budget, { preset: 'eco', effective: 'eco', source: 'native' });
+  assert.deepEqual(stats.refused, { dirs: 1, examples: ['/root/locked'] });
+  assert.equal(stats.expiresAt, frame.expiresAt);
+  assert.deepEqual(stats, frame, 'and nothing else is added or dropped (no scanId, no status)');
+});
+
 test('a failed stats request costs the extra counters, never the completed scan', async () => {
   const stats = await scanStatsFor(async () => { throw new Error('gone'); })('a-scan', RESULT_PAYLOAD);
   assert.equal(stats.fileCount, 286, 'the result payload still answers what it knows');
