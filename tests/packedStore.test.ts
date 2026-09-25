@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-packedStore-data-');
+
 import { FileNode } from '../src/models/types';
 import { ObjectScanStore, PackedScanStore, ScanStore, Flag, NodeInput } from '../src/services/scanStore';
 import { streamTreeJson } from '../src/services/scanStoreJson';

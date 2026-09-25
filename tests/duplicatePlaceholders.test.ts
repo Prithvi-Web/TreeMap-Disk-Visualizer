@@ -4,6 +4,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-duplicatePlaceholders-data-');
+
 import { createScanRecord } from '../src/services/diskScanner';
 import { getDuplicateJob, observeHashOpensForTests } from '../src/services/duplicateFinder';
 import { PackedScanStore } from '../src/services/scanStore';

@@ -1,10 +1,13 @@
 import { test } from 'node:test';
-import { fileTempDir } from './fixtures/dataDir';
+import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+isolatedDataDir('treemap-dupeViewer-data-');
+
 import { createApp } from '../src/server';
 import { createScanRecord } from '../src/services/diskScanner';
 import { resetRateLimiter } from '../src/middleware/rateLimiter';

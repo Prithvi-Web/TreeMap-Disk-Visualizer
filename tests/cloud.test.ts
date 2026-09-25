@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'crypto';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-cloud-data-');
+
 import { gdriveFilesToTree, dropboxEntriesToTree, onedriveItemsToTree, retryDelayMs } from '../src/services/cloud/providers';
 import { makePkce } from '../src/services/cloud/oauth';
 

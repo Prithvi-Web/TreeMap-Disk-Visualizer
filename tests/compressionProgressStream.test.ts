@@ -5,6 +5,10 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-compressionProgressStream-data-');
+
 import {
   MediaProbe, MediaTools, activeEncodeSseCount, cancelAllEncodeJobs, drainEncodeClients,
   resetEncodeJobs, setMediaTools, startEncodeJob,

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { cleanUpDataDir, fileTempDir, isolatedDataDir, removeTempDir } from './fixtures/dataDir';
 import { resetBackgroundWrites, trackWrite } from '../src/utils/backgroundWrites';
+isolatedDataDir('treemap-dataDirFixture-data-');
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 

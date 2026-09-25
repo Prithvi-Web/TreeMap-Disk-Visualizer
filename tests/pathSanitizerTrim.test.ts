@@ -4,6 +4,9 @@ import fs, { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-pathSanitizerTrim-data-');
+
 import { sanitizePath, PathRejectedError } from '../src/utils/pathSanitizer';
 
 /**

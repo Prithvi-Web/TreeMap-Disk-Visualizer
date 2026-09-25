@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-compressionAdvisor-data-');
+
 import {
   MediaProbe, MediaTools, encodeOne, encoderFor, estimateFor, expectedRatio,
   isWorthEncoding, setMediaTools, shortlistFromScan, verifyEncode, MIN_CANDIDATE_BYTES,

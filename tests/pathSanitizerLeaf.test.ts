@@ -2,6 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-pathSanitizerLeaf-data-');
+
 import { PathRejectedError, sanitizePath } from '../src/utils/pathSanitizer';
 
 /**

@@ -4,6 +4,10 @@ import http from 'node:http';
 import express from 'express';
 import path from 'node:path';
 import os from 'node:os';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-pathGuardQuery-data-');
+
 import { guardQueryPath } from '../src/middleware/pathGuard';
 import { errorHandler } from '../src/middleware/errorHandler';
 import { createApp } from '../src/server';

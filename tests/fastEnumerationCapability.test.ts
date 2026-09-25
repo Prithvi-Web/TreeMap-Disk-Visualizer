@@ -15,6 +15,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-fastEnumerationCapability-data-');
+
 import { fastEnumerationState } from '../src/platform/fastEnumeration';
 import { resetNativeForTests, setNativeLoadOverrideForTests, SCAN_FUNCTIONS } from '../src/services/scan/native';
 import type { ScanModuleOutcome } from '../src/services/scan/native';

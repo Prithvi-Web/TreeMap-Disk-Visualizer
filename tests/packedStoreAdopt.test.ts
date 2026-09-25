@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-packedStoreAdopt-data-');
+
 import { Flag, NodeInput, PackedScanStore, StoreColumns } from '../src/services/scanStore';
 import { buildPair, compareStores, comparePrunes, mutateBoth } from './fixtures/storeFuzz';
 

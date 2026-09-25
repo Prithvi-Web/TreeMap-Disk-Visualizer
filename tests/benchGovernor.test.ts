@@ -4,6 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-benchGovernor-data-');
+
 import { PRESET_CEILING_PERCENT, SERIES_STRIDE, runGovernor, type HoldReport } from '../bench/lib/governorSuite';
 import { compareToBaseline, isBenchResult, printTable, readResult, writeResult } from '../bench/lib/report';
 import type { NativeOutcome } from '../src/services/scan/native';

@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-storageCorrupt-data-');
+
 /**
  * What happens to a store this app cannot parse.
  *
@@ -29,7 +32,9 @@ function withDataDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const prior = process.env.TREEMAP_DATA_DIR;
   process.env.TREEMAP_DATA_DIR = dir;
   return fn(dir).finally(() => {
-    process.env.TREEMAP_DATA_DIR = prior;
+    // Assigned undefined, process.env holds the string "undefined".
+    if (prior === undefined) delete process.env.TREEMAP_DATA_DIR;
+    else process.env.TREEMAP_DATA_DIR = prior;
     fs.rmSync(dir, { recursive: true, force: true });
   });
 }

@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-querySql-data-');
+
 import { parse } from '../src/services/query/parse';
 import { toSql } from '../src/services/query/toSql';
 import { evaluate, type EvalNode } from '../src/services/query/evaluate';

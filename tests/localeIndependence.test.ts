@@ -4,6 +4,10 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-localeIndependence-data-');
+
 import { formatCount as serverFormatCount, machineHourCycle, UI_LOCALE } from '../src/utils/formatCount';
 import { lift } from './fixtures/liftFrontend';
 

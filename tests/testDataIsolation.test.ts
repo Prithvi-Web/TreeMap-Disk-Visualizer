@@ -78,3 +78,121 @@ test('the test child runs with the run\'s data folder, which is gone once the ch
   }), /spawn failed/);
   assert.ok(thrownDir && !fs.existsSync(thrownDir), 'removed even when the child could not start');
 });
+
+/**
+ * Test files that load the app's code and deliberately leave TREEMAP_DATA_DIR
+ * unset for a test, each with the reason. Such a file saves and restores the
+ * variable around that test itself.
+ */
+const DEFAULT_DATA_DIR_ALLOWED: Readonly<Record<string, string>> = {};
+
+/** A static import, a require or a dynamic import of the app's own code. */
+const LOADS_APP_CODE = /(?:\bfrom\s+|\brequire\(\s*|\bimport\(\s*)['"]\.\.\/src\//;
+/**
+ * A line that starts in column 0 with the fixture's call (alone, as
+ * `const X = isolatedDataDir(`, or as `if (!process.env.TREEMAP_DATA_DIR)
+ * isolatedDataDir(`) or with an assignment to the variable itself. An
+ * assignment inside a helper is indented, so it does not count: it points the
+ * folder away for that helper's test only.
+ */
+const POINTS_DATA_DIR = /^(?:(?:const|let)\s+\w+\s*=\s*|if\s*\(\s*!process\.env\.TREEMAP_DATA_DIR\s*\)\s*)?isolatedDataDir\(|^process\.env\.TREEMAP_DATA_DIR\s*=(?!=)/;
+/** Block comments at the start of a line that close on that line; the indent before them is kept. */
+const LEADING_BLOCK_COMMENTS = /^(\s*)(?:\/\*.*?\*\/\s*)+/;
+/**
+ * A line that, with those removed, starts with a comment token: `//`, `/*`
+ * or a doc comment's `*`. Text inside strings, and a line inside a block
+ * comment that does not start with `*`, are not told apart from code.
+ */
+const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*)/;
+
+function hasCodeLine(source: string, pattern: RegExp): boolean {
+  return source.split('\n').some((line) => {
+    const code = line.replace(LEADING_BLOCK_COMMENTS, '$1');
+    return !COMMENT_LINE.test(code) && pattern.test(code);
+  });
+}
+
+const loadsAppCode = (source: string): boolean => hasCodeLine(source, LOADS_APP_CODE);
+const pointsDataDirAway = (source: string): boolean => hasCodeLine(source, POINTS_DATA_DIR);
+
+test('only a statement at the top of a file points its data folder away; an assignment inside a helper does not', () => {
+  for (const topLevel of [
+    "isolatedDataDir('treemap-x-data-');",
+    "const DATA_DIR = isolatedDataDir('treemap-x-data-');",
+    "if (!process.env.TREEMAP_DATA_DIR) isolatedDataDir('treemap-x-route-');",
+    'process.env.TREEMAP_DATA_DIR = DATA_DIR;',
+    "/* for the whole file */ isolatedDataDir('treemap-x-data-');",
+  ]) assert.equal(pointsDataDirAway(topLevel), true, topLevel);
+
+  // storageCorrupt.test.ts's helper before 24 Sep 2026, the only assignment
+  // in that file: it pointed the folder away for one test, then assigned
+  // `prior` back, which stores the string "undefined" when prior is unset.
+  const helperOnly = [
+    'function withDataDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {',
+    "  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-corrupt-'));",
+    '  const prior = process.env.TREEMAP_DATA_DIR;',
+    '  process.env.TREEMAP_DATA_DIR = dir;',
+    '  return fn(dir).finally(() => {',
+    '    process.env.TREEMAP_DATA_DIR = prior;',
+    '  });',
+    '}',
+  ].join('\n');
+  for (const notTopLevel of [
+    helperOnly,
+    "  isolatedDataDir('treemap-x-data-');",
+    "  /* for this test */ isolatedDataDir('treemap-x-data-');",
+    'process.env.TREEMAP_DATA_DIR === DATA_DIR;',
+    "// isolatedDataDir('treemap-x-data-');",
+    // A child's source held in a string, as dataDirFixture.test.ts writes one.
+    "      \"const dir = isolatedDataDir('treemap-fixture-child-data-');\",",
+  ]) assert.equal(pointsDataDirAway(notTopLevel), false, notTopLevel);
+});
+
+// The app's folder, spelled so that the examples below, which are strings,
+// do not make this file one that loads the app's code in the guard's eyes.
+const SRC = '../' + 'src/';
+
+test('code after a block comment closed on the same line is code; a comment is not', () => {
+  assert.equal(loadsAppCode(`/* the store */ import { writeJsonFile } from '${SRC}services/storage';`), true);
+  for (const comment of [
+    `// import { writeJsonFile } from '${SRC}services/storage';`,
+    `/* import { writeJsonFile } from '${SRC}services/storage'; */`,
+    ` * import { writeJsonFile } from '${SRC}services/storage';`,
+  ]) assert.equal(loadsAppCode(comment), false, comment);
+});
+
+test('the pattern for loading the app\'s code sees each form a test file loads it in', () => {
+  for (const line of [
+    `import { estimateCost } from '${SRC}services/costIntelligence';`,
+    `} from '${SRC}services/compressionAdvisor';`,
+    `const { getTrashInfo } = await import('${SRC}services/trash');`,
+    `const storage = require('${SRC}services/storage');`,
+  ]) assert.equal(loadsAppCode(line), true, line);
+});
+
+test('every test file that loads the app\'s code points its data folder away from the owner\'s, or says why it does not', () => {
+  // `npm test` sets TREEMAP_DATA_DIR for the whole run, but `npx tsx --test
+  // tests/x.test.ts` does not: a file that never points the variable
+  // anywhere saves every scan it runs into the owner's real app data.
+  const files = fs.readdirSync(__dirname).filter((name) => name.endsWith('.test.ts')).sort();
+  const loadsApp = files.filter((name) => loadsAppCode(fs.readFileSync(path.join(__dirname, name), 'utf8')));
+  // One file for each form the tests load the app's code in, so a pattern
+  // that loses a form fails here rather than dropping those files from view.
+  // No test file loads it with require() (24 Sep 2026); the test above holds
+  // that form.
+  for (const [name, form] of [
+    ['apiContract.test.ts', 'a one-line static import'],
+    ['costIntelligence.test.ts', 'a static import across lines, and nothing else'],
+    ['trashInfo.test.ts', 'a dynamic import(), and nothing else'],
+  ]) assert.ok(loadsApp.includes(name), `the pattern misses ${name}, which loads the app's code with ${form}`);
+
+  const unpointed = loadsApp.filter((name) =>
+    !pointsDataDirAway(fs.readFileSync(path.join(__dirname, name), 'utf8'))
+    && !Object.hasOwn(DEFAULT_DATA_DIR_ALLOWED, name));
+  assert.deepEqual(unpointed, [], `these files load the app's code without isolatedDataDir( or an assignment to process.env.TREEMAP_DATA_DIR at the top of the file: ${unpointed.join(', ')}`);
+
+  for (const [name, reason] of Object.entries(DEFAULT_DATA_DIR_ALLOWED)) {
+    assert.ok(reason.trim().length > 0, `${name} is allowed the default data folder without a reason`);
+    assert.ok(loadsApp.includes(name), `${name} is allowed the default data folder but does not load the app's code`);
+  }
+});

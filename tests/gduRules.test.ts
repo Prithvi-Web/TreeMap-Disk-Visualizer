@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-gduRules-data-');
+
 import { gduArgs } from '../src/services/gduScanner';
 import { gduRuleFor } from '../src/services/diskScanner';
 

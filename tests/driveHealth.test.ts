@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-driveHealth-data-');
+
 import { buildOutlook, projectWearExhaustion, getDriveHealth } from '../src/services/driveHealthMonitor';
 import { SmartInfo } from '../src/platform/types';
 import { ForecastResult } from '../src/models/types';

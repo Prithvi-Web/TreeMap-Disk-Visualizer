@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-snapshotTrees-data-');
+
 import { FileNode } from '../src/models/types';
 import { buildSnapshotTree, inflateSnapshotTree, closestSnapshot } from '../src/services/snapshots';
 

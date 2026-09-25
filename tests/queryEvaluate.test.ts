@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-queryEvaluate-data-');
+
 import { parse } from '../src/services/query/parse';
 import {
   evaluate, evaluateMaybe, isEmptyQuery, isInsidePrefix, matchesDate,

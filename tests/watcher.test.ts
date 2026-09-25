@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-watcher-data-');
+
 import { FileNode, WatchEvent } from '../src/models/types';
 import { mergePending, capFrame, topLevelDirs } from '../src/services/watcher';
 import path from 'node:path';

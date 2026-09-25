@@ -2,6 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import path from 'node:path';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-scanProgress-data-');
+
 import { createApp } from '../src/server';
 import { createScanRecord } from '../src/services/diskScanner';
 import { FileNode, ScanEvent } from '../src/models/types';

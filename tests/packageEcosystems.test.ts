@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-packageEcosystems-data-');
+
 import { scanPackageEcosystems, brokenVenvInterpreter, PackageEntry } from '../src/services/packageEcosystemScanner';
 import { loadRuleCatalogFrom } from '../src/services/rulePacks';
 import { compileIgnoreList } from '../src/utils/glob';

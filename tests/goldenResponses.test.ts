@@ -4,6 +4,10 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { buildGoldenTree, captureGolden } from './fixtures/goldenHarness';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+const FILE_DATA_DIR = isolatedDataDir('treemap-goldenResponses-data-');
+
 import { createApp } from '../src/server';
 
 /**
@@ -53,7 +57,10 @@ test('every API response is byte-identical to the pre-rewrite baseline', { skip:
     }
   } finally {
     delete process.env.TREEMAP_NO_GDU;
-    delete process.env.TREEMAP_DATA_DIR;
+    // Back to this file's own folder, not unset: the harness does not wait
+    // for the scan's background saves, and one that runs after this line
+    // resolves the data folder again.
+    process.env.TREEMAP_DATA_DIR = FILE_DATA_DIR;
     await fsp.rm(dataDir, { recursive: true, force: true });
     await fsp.rm(treeRoot, { recursive: true, force: true });
   }

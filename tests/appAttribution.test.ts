@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-appAttribution-data-');
+
 import { FileNode } from '../src/models/types';
 import { attributeTree, builtinNames, AttributionContext } from '../src/services/appAttribution';
 

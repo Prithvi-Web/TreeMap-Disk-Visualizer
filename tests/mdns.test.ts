@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-mdns-data-');
+
 import { buildAnnouncement, buildQuery, decodeName, decodeTxt, encodeName, encodeTxt, parseResponse, SERVICE_TYPE } from '../src/services/fleet/mdns';
 
 /**

@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-storageChunked-data-');
+
 /**
  * `writeFileChunked`: a file of the app-data directory written from chunks,
  * for a document too big to build as one string (the fast-rescan cache of a

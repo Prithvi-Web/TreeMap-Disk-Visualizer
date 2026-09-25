@@ -5,6 +5,10 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-gduScanner-data-');
+
 import { findGduBinary, runGdu, gduScan } from '../src/services/gduScanner';
 import { startScan, peekScan, createScanRecord } from '../src/services/diskScanner';
 import { FileNode, ScanResult } from '../src/models/types';

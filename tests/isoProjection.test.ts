@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-isoProjection-data-');
+
 import { squarify } from '../src/utils/treemap';
 import { lift, INDEX } from './fixtures/liftFrontend';
 

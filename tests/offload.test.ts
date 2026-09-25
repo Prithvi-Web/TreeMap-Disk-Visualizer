@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-offload-data-');
+
 import { FileNode, OffloadEntry } from '../src/models/types';
 import { planOffload, destNameFor, trimManifest } from '../src/services/offload';
 // Moved to a shared util in B3 so Offload and Time Capsule copy and verify

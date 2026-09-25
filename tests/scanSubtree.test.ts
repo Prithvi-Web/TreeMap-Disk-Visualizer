@@ -2,6 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import path from 'node:path';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-scanSubtree-data-');
+
 import { createApp } from '../src/server';
 import { PRUNE_MAX_NODES } from '../src/api/scanRoutes';
 import { createScanRecord } from '../src/services/diskScanner';

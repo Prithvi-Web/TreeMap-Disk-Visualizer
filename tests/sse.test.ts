@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Response } from 'express';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-sse-data-');
+
 import { sseSend } from '../src/utils/sse';
 
 /**

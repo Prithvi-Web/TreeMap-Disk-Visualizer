@@ -2,6 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-cleanupRules-data-');
+
 import { collectCleanupSuggestions } from '../src/services/cleanupRules';
 import { CleanupSuggestionGroup, FileNode } from '../src/models/types';
 import { compileIgnoreList, CompiledIgnore } from '../src/utils/glob';

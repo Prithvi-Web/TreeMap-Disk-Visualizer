@@ -5,6 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import type { Response } from 'express';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-compressionShutdown-data-');
+
 import {
   MediaProbe, MediaTools, activeEncodeSseCount, cancelAllEncodeJobs, drainEncodeClients,
   getEncodeJob, registerEncodeClient, resetEncodeJobs, setMediaTools, startEncodeJob,

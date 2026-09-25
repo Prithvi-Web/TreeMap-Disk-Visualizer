@@ -2,6 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-apiContract-data-');
+
 import { VolumeTopology } from '../src/platform/types';
 import { estimateCost } from '../src/services/costIntelligence';
 import { buildScanStats } from '../src/api/scanRoutes';

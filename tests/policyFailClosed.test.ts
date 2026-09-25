@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-policyFailClosed-data-');
+
 /**
  * `agent-policy.json` is the user's guard rail on what agents and the HTTP API
  * may scan and destroy, and every enforcement short-circuits on an EMPTY
@@ -27,7 +30,9 @@ function withPolicy<T>(contents: string | null, fn: () => Promise<T>): Promise<T
   process.env.TREEMAP_DATA_DIR = dir;
   if (contents !== null) fs.writeFileSync(path.join(dir, 'agent-policy.json'), contents);
   return fn().finally(() => {
-    process.env.TREEMAP_DATA_DIR = prior;
+    // Assigned undefined, process.env holds the string "undefined".
+    if (prior === undefined) delete process.env.TREEMAP_DATA_DIR;
+    else process.env.TREEMAP_DATA_DIR = prior;
     fs.rmSync(dir, { recursive: true, force: true });
   });
 }

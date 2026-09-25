@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-nodeInput-data-');
+
 import { statToInput } from '../src/services/scan/nodeInput';
 import { detectContainerKind } from '../src/utils/containerKind';
 import type { ContainerKind } from '../src/models/types';

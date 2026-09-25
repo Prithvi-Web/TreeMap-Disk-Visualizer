@@ -5,6 +5,9 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-platform-data-');
+
 import { platform, platformNameOf } from '../src/platform';
 import { getCapabilities, invalidateCapabilities } from '../src/platform/capabilities';
 import { parseLsofRecords, resolveZombies, openHandlesFor } from '../src/platform/macos/lsofGuard';

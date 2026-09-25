@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import type { Response } from 'express';
 import Excel from 'exceljs';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-reportXlsx-data-');
+
 import { reportRows, streamXlsx } from '../src/services/reportExport';
 import { FileNode, ScanResult } from '../src/models/types';
 

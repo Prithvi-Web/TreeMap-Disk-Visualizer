@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-hardlinkKey-data-');
+
 import { hardlinkKey, type BigLstat } from '../src/services/diskScanner';
 
 /**

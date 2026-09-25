@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-platformCommands-data-');
+
 import { emptyTrashCommands } from '../src/services/trash';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';

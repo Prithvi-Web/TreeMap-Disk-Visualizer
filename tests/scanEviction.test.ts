@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-scanEviction-data-');
+
 import { scanExpired } from '../src/services/diskScanner';
 import { ScanResult } from '../src/models/types';
 

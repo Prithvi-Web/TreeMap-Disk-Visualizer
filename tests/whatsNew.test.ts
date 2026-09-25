@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-whatsNew-data-');
+
 import { diffSnapshots } from '../src/services/snapshots';
 import { Snapshot } from '../src/models/types';
 

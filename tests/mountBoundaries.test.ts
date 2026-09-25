@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-mountBoundaries-data-');
+
 import { neverDescend } from '../src/utils/mountBoundaries';
 
 /**

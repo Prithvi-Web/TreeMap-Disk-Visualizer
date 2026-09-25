@@ -6,6 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { skipOrFailOnCi } from './fixtures/ciSkip';
 import { HANG_GUARD_MS } from './fixtures/waitFor';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-benchScanHold-data-');
+
 import { planCorpus, createCorpus, type CorpusManifest } from '../bench/lib/corpus';
 import { GOVERNOR_BAND_POINTS, PRESET_CEILING_PERCENT, scanHoldVerdict } from '../bench/lib/governorSuite';
 import { runScanHold } from '../bench/lib/suites';

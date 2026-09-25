@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-portableMode-data-');
+
 import {
   PORTABLE_DATA_DIRNAME, PORTABLE_MARKER, degradedCapabilities, executableBaseDir,
   externalMountParents, hostDataDir, initPortableMode, listExternalVolumes,

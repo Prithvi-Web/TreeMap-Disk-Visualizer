@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-subtreeCount-data-');
+
 import { ObjectScanStore, PackedScanStore, NodeInput, ScanStore } from '../src/services/scanStore';
 import { buildCountTable } from '../src/services/facts/subtreeCountProvider';
 

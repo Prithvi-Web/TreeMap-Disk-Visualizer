@@ -6,6 +6,9 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-openHandleGuard-data-');
+
 import { checkOpenHandles, describeConflicts } from '../src/services/openHandleGuard';
 import { moveToTrash } from '../src/services/cleaner';
 import { AppError } from '../src/middleware/errorHandler';

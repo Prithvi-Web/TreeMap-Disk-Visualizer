@@ -5,6 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import Module from 'node:module';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-desktopPolish-data-');
+
 import { formatBytes } from '../src/utils/formatBytes';
 import { loadMain, DEFAULT_DISPLAY, FakeNotification, FakeTray, FakeWindow } from './fixtures/desktop/electronStub';
 

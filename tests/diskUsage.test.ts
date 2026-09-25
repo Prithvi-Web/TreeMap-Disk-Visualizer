@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-diskUsage-data-');
+
 import { diskUsage, fromStatfs, fromDf, windowsDiskUsageCommand } from '../src/services/diskUsage';
 
 /**

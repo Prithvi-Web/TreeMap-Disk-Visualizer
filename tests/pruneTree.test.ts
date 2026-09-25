@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-pruneTree-data-');
+
 import { FileNode } from '../src/models/types';
 import { pruneTree } from '../src/utils/pruneTree';
 

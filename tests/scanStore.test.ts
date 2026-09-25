@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-scanStore-data-');
+
 import { FileNode } from '../src/models/types';
 import { pruneTree } from '../src/utils/pruneTree';
 import { ObjectScanStore, ScanStore, Flag, NodeInput, emitFileNode, pruneStore } from '../src/services/scanStore';

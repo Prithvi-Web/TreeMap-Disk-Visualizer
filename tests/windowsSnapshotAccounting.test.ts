@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-windowsSnapshotAccounting-data-');
+
 import { STORAGE_SCRIPT, mapShadowStorage, parseInstallDate } from '../src/platform/windows/vss';
 import { ELEVATE_HOW, NEEDS_ADMIN, measureWindowsSnapshots, windowsSnapshotsFrom } from '../src/services/snapshotAccounting';
 import { CommandFailedError, CommandUnavailableError, runText } from '../src/platform/exec';

@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-containers-data-');
+
 import { parseZipCentralDirectory, TarWalker } from '../src/utils/archive';
 import { entriesToChildren, parseBsdtarListing } from '../src/services/containerScanner';
 import { detectContainerKind } from '../src/utils/containerKind';

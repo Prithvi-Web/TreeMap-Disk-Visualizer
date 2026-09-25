@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-queryParse-data-');
+
 import { parse, parseSize, parseDateValue, tokenize, FIELD_NAMES, factsNeeded, MAX_QUERY_TOKENS } from '../src/services/query/parse';
 import { toSql } from '../src/services/query/toSql';
 import { matchesDate } from '../src/services/query/evaluate';

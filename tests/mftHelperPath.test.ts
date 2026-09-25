@@ -6,6 +6,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-mftHelperPath-data-');
+
 import { elevationRefusal, unpackedPath } from '../src/services/scan/mftHelperPath';
 import { MFT_HELPER_FILE, mftHelperCandidates } from '../src/services/scan/nativeEngine';
 

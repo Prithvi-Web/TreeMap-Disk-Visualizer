@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-canonicalTree-data-');
+
 import { PackedScanStore, type NodeInput } from '../src/services/scanStore';
 import type { ScanResult } from '../src/models/types';
 import { COUNTER_NAMES, canonicalDigest, canonicalLines, countersOf, firstDifference } from './fixtures/canonicalTree';

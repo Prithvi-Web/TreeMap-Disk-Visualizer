@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-forecast-data-');
+
 import { Snapshot } from '../src/models/types';
 import { computeForecast, fitGrowth } from '../src/services/forecast';
 

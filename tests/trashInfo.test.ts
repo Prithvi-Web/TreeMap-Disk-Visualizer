@@ -5,6 +5,9 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-trashInfo-data-');
+
 /**
  * The Trash sweep, and what it reports when it cannot read.
  *

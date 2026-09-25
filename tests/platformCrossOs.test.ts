@@ -4,6 +4,9 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-platformCrossOs-data-');
+
 import { readOpenDescriptors, openHandlesFor, zombieHandles } from '../src/platform/linux/procFdGuard';
 import { mapLsblk, mapZpool } from '../src/platform/linux/topology';
 import { parseSubvolumeList } from '../src/platform/linux/btrfs';

@@ -5,6 +5,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+
+import { isolatedDataDir } from './fixtures/dataDir';
+isolatedDataDir('treemap-provenance-data-');
+
 import { readProvenance } from '../src/services/provenanceTracker';
 
 /**
