@@ -13,6 +13,9 @@
 //! * [`climb`] is the hill-climber that picks the worker count, as a pure state
 //!   machine driven by a clock and an entries counter.
 //! * [`output`] is the product: columns, side tables and measured stats.
+//! * [`platform::synthetic`] is a scripted listing that reads nothing from
+//!   disk ([`WalkOptions::synthetic`]), for measuring the walk and the store
+//!   at sizes no disk here holds (Phase 4, P4-8).
 //!
 //! The facts recorded are the legacy walker's facts (`docs/engine/CURRENT-STATE.md`
 //! §3): symlinks are leaves with the link's own length and are never followed;
@@ -37,6 +40,7 @@ pub mod walk;
 
 pub use links::{IdFamily, LinkKey, hardlink_families};
 pub use output::{DirRefusal, HardlinkRef, Refusal, WalkOutput, WalkStats};
+pub use platform::synthetic::{SyntheticLister, SyntheticSpec, synthetic_temp_folder};
 pub use platform::{Entry, ListBuffer, Lister, Listing, Meta};
 pub use walk::{GovernorPacer, Pacer, Progress, WalkHandle, panic_text, start_with};
 
@@ -71,11 +75,15 @@ pub struct WalkOptions {
     pub max_workers: usize,
     /// Bytes per worker listing buffer (0 = [`DEFAULT_BUFFER_BYTES`]; never below [`MIN_BUFFER_BYTES`]).
     pub buffer_bytes: usize,
+    /// When set, [`start`] lists this scripted tree instead of the disk, and
+    /// only for a root inside the app's synthetic temp folder
+    /// ([`platform::synthetic::synthetic_fences`]).
+    pub synthetic: Option<SyntheticSpec>,
 }
 
 impl WalkOptions {
     /// Options for `root` with the defaults: no never-descend list, no atime,
-    /// the hill-climber, the default buffer.
+    /// the hill-climber, the default buffer, the disk.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
@@ -83,6 +91,7 @@ impl WalkOptions {
             want_atime: false,
             max_workers: 0,
             buffer_bytes: DEFAULT_BUFFER_BYTES,
+            synthetic: None,
         }
     }
 }
@@ -198,8 +207,19 @@ pub fn probe_with(lister: &dyn Lister, root: &Path) -> Probe {
 /// Starts a walk on the crate's own threads, governed by `governor`. Returns
 /// as soon as the root has been checked; the walk itself runs behind the handle.
 pub fn start(opts: WalkOptions, governor: Arc<Governor>) -> Result<WalkHandle, WalkError> {
-    let lister = platform::platform_lister()?;
+    let lister = lister_for(&opts)?;
     start_with(opts, Arc::new(GovernorPacer::new(governor)), lister)
+}
+
+/// The lister [`start`] walks `opts` with: the scripted one when
+/// `opts.synthetic` is set (refused, as [`WalkError::OptionsRefused`], for a
+/// root outside the app's synthetic temp folder or a tree that cannot be
+/// built), this platform's otherwise.
+pub fn lister_for(opts: &WalkOptions) -> Result<Arc<dyn Lister>, WalkError> {
+    match &opts.synthetic {
+        Some(spec) => Ok(Arc::new(SyntheticLister::new(spec, &opts.root)?)),
+        None => platform::platform_lister(),
+    }
 }
 
 /// Why a walk could not start, or how it ended other than with an output.
@@ -215,6 +235,10 @@ pub enum WalkError {
     Cancelled,
     /// Something this crate could not recover from; the text says what.
     Internal(String),
+    /// The options were refused before anything was listed: a synthetic root
+    /// outside the app's synthetic temp folder, or a synthetic tree that
+    /// cannot be built. The text says which.
+    OptionsRefused(String),
 }
 
 impl fmt::Display for WalkError {
@@ -222,7 +246,9 @@ impl fmt::Display for WalkError {
         match self {
             Self::RootNotDirectory => f.write_str("the root is not a directory"),
             Self::RootRefused(why) => write!(f, "the root could not be walked: {why}"),
-            Self::Unsupported(reason) | Self::Internal(reason) => f.write_str(reason),
+            Self::Unsupported(reason) | Self::Internal(reason) | Self::OptionsRefused(reason) => {
+                f.write_str(reason)
+            }
             Self::Cancelled => f.write_str("the walk was cancelled"),
         }
     }

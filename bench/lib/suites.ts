@@ -18,11 +18,11 @@ import { spawn } from 'node:child_process';
 import type { FindOptions } from '../../src/services/gduScanner';
 import type { ScanBudget } from '../../src/models/types';
 import { cacheState, defaultPurge, type CacheVerdict, type PurgeProcedure, type PurgeResult, type RequestedCache } from './cache';
-import type { CorpusManifest } from './corpus';
+import type { CorpusManifest, SyntheticManifest } from './corpus';
 import { scoreClusters, type ImageManifest } from './images';
 import { describeMachine, type MachineRecord } from './machine';
 import type { EngineChoice, WorkerJob, WorkerResult, WorkerSuccess } from './measureWorker';
-import { summarize, type BenchBudget, type BenchResult, type BenchRun, type EntriesUnit, type RequestedBudget, type ScanPreset, type SuiteName } from './report';
+import { summarize, type BenchBudget, type BenchResult, type BenchRun, type BenchSource, type EntriesUnit, type RequestedBudget, type ScanPreset, type SuiteName } from './report';
 import { PROBE_BINARY_ENV, PROBE_FAILURE_ENV, probeHandoff } from './rusage';
 import { GOVERNOR_BAND_POINTS, PRESET_CEILING_PERCENT, SERIES_STRIDE, scanHoldVerdict, type ScanHoldVerdict } from './governorSuite';
 import { checkDuplicatesAgainstManifest, checkRunsAgree, checkScanAgainstManifest, type ScanCounts } from './verify';
@@ -248,9 +248,18 @@ async function series(job: Omit<WorkerJob, 'outFile'>, opts: CommonOptions & { e
   return { runs, results, cache, budget: { requested: requestedBudget, effective: results.map((r) => r.budget.effective) } };
 }
 
-function build(suite: SuiteName, engine: string, unit: EntriesUnit, corpus: BenchResult['corpus'], machine: MachineRecord, s: Series, correctness: BenchResult['correctness'], label: string): BenchResult {
+/**
+ * Where a manifest's entries come from (report.ts rule 8): a synthetic
+ * preset names itself; every corpus this harness builds is on disk.
+ */
+export function manifestSource(manifest: CorpusManifest | SyntheticManifest): BenchSource {
+  return 'source' in manifest && manifest.source === 'synthetic' ? 'synthetic' : 'file-system';
+}
+
+function build(suite: SuiteName, engine: string, unit: EntriesUnit, corpus: BenchResult['corpus'], machine: MachineRecord, s: Series, correctness: BenchResult['correctness'], label: string, source: BenchSource): BenchResult {
   return {
     suite,
+    source,
     corpus,
     engine,
     engineDescription: ENGINE_DESCRIPTIONS[engine] ?? 'an engine this harness has no description for',
@@ -291,7 +300,7 @@ export async function runEnumerate(opts: EnumerateOptions): Promise<BenchResult>
   const agree = checkRunsAgree(perRun);
   if (!agree.ok) { ok = false; notes.push(...agree.notes); }
   const engine = s.results[0]?.engine ?? 'unset';
-  return build('enumerate', engine, 'entries', { name: opts.corpusName, params: opts.manifest.params, dirs: opts.manifest.dirs, files: opts.manifest.files, scale: scaleOf(entries, machine.maxVnodes) }, machine, s, { ok, notes }, opts.label);
+  return build('enumerate', engine, 'entries', { name: opts.corpusName, params: opts.manifest.params, dirs: opts.manifest.dirs, files: opts.manifest.files, scale: scaleOf(entries, machine.maxVnodes) }, machine, s, { ok, notes }, opts.label, manifestSource(opts.manifest));
 }
 
 export async function runDuplicates(opts: DuplicatesOptions): Promise<BenchResult> {
@@ -314,7 +323,7 @@ export async function runDuplicates(opts: DuplicatesOptions): Promise<BenchResul
       ` ${check.falsePositives} false positives by byte comparison; ${check.sharedStorageGroups} hard-link families reported; ${check.missedGroups} missed`;
     notes.push(line, ...check.notes.map((n) => `run ${i + 1}: ${n}`));
   });
-  const result = build('duplicates', 'sha256-staged', 'files', { name: opts.corpusName, params: opts.manifest.params, dirs: opts.manifest.dirs, files: opts.manifest.files, scale: `${opts.manifest.files.toLocaleString('en-US')} files, ${(opts.manifest.logicalBytes / 1e9).toFixed(2)} GB logical — the prompt's corpus is 1M files / 500 GB` }, machine, s, { ok, notes }, opts.label);
+  const result = build('duplicates', 'sha256-staged', 'files', { name: opts.corpusName, params: opts.manifest.params, dirs: opts.manifest.dirs, files: opts.manifest.files, scale: `${opts.manifest.files.toLocaleString('en-US')} files, ${(opts.manifest.logicalBytes / 1e9).toFixed(2)} GB logical — the prompt's corpus is 1M files / 500 GB` }, machine, s, { ok, notes }, opts.label, manifestSource(opts.manifest));
   // The size floor decides which files are hashed at all: a condition of every comparison (report.ts).
   return { ...result, minSize: opts.minSize };
 }
@@ -342,7 +351,7 @@ export async function runNearDup(opts: NearDupOptions): Promise<BenchResult> {
       `run ${i + 1}: precision ${score.precision.toFixed(4)} over ${score.pairs} same-cluster pairs (the bar is ${NEAR_DUP_PRECISION_FLOOR}); recall by transform: ${recallLines.join(', ')}`,
     );
   });
-  const result = build('neardup', 'dhash-pairwise', 'images', { name: opts.corpusName, params: opts.manifest.params, images, scale: `${images.toLocaleString('en-US')} images — the prompt's corpus is 200k` }, machine, s, { ok, notes }, opts.label);
+  const result = build('neardup', 'dhash-pairwise', 'images', { name: opts.corpusName, params: opts.manifest.params, images, scale: `${images.toLocaleString('en-US')} images — the prompt's corpus is 200k` }, machine, s, { ok, notes }, opts.label, 'file-system');
   // The threshold decides which pairs join a cluster: a condition of every comparison (report.ts).
   return { ...result, threshold: opts.threshold };
 }
@@ -385,6 +394,7 @@ export async function runScanHold(opts: ScanHoldOptions): Promise<BenchResult> {
     const entries = opts.manifest.files + opts.manifest.dirs;
     return {
       suite: 'governor',
+      source: manifestSource(opts.manifest),
       corpus: { name: `scan-hold-${opts.preset}-${opts.corpusName}`, params: { corpus: opts.manifest.params, preset: opts.preset, seconds: opts.seconds }, dirs: opts.manifest.dirs, files: opts.manifest.files, scale: scaleOf(entries, machine.maxVnodes) },
       engine: SCAN_HOLD_ENGINE,
       engineDescription: SCAN_HOLD_DESCRIPTION,

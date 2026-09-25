@@ -16,6 +16,11 @@
  * `ensureCorpus` keeps every corpus under `os.tmpdir()/treemap-bench/` beside
  * a `manifest.json` (the tree itself is `tree/`, so the manifest never counts
  * as a scanned file) and refuses to remove anything outside that directory.
+ *
+ * The synthetic presets (`SYNTHETIC_CORPORA`, Phase 4 P4-8) are the other
+ * kind: the native walk lists a scripted tree (tm-walk's `SyntheticLister`)
+ * instead of a disk, so they create nothing, and `syntheticManifest` states
+ * their counts by the walk's own arithmetic.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -650,4 +655,115 @@ export async function ensureCorpus(name: string, params: CorpusParams): Promise<
   const manifest = await createCorpus(treeRoot, plan, { name });
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   return manifest;
+}
+
+/* ---------------- synthetic sources ---------------- */
+
+/**
+ * A synthetic tree as the native module's `scanStart(root, { synthetic })`
+ * takes it (native/index.d.ts, `SyntheticSource`), every field given.
+ */
+export interface SyntheticParams {
+  entries: number;          // under the root, as the walk counts them (the root is not one)
+  seed: number;             // names, sizes, times and hard-link pairs are drawn from it; the shape is not
+  fanOut: number;           // max subfolders per folder
+  depth: number;            // folder levels below the root
+  folderShare: number;      // 0..1, rounded down to whole folders
+  nameLength: number;       // bytes in every name
+  sizeMedian: number;       // bytes, log-normal median
+  sizeSigma: number;        // log-normal sigma (natural log), 0..10
+  linkShare: number;        // 0..1 of the files, in hard-linked pairs; a pair's two names share a folder only when one folder holds over half the files
+}
+
+/** What a synthetic preset names: a scripted tree, never a directory on disk. */
+export interface SyntheticManifest {
+  name: string;
+  source: 'synthetic';
+  params: SyntheticParams;
+  /** Inside the app's synthetic temp folder, where the walk accepts it; never created. */
+  root: string;
+  /** Folders, the root included, as CorpusManifest counts them. */
+  dirs: number;
+  files: number;
+  /** File names that are one of a hard-linked pair. */
+  hardlinkNames: number;
+}
+
+export type SyntheticName = 'synthetic10m' | 'synthetic100m';
+export const SYNTHETIC_NAMES: readonly SyntheticName[] = ['synthetic10m', 'synthetic100m'];
+
+/**
+ * The developer shape of the Phase 4 design (§S.8): 15% folders, 18-byte
+ * names, log-normal sizes, κ = 1% hard-linked with the pairs across folders.
+ * The fan-out, depth, median and sigma are tm-walk's `SyntheticSpec::developer`.
+ */
+const DEVELOPER_SHAPE = { fanOut: 16, depth: 12, folderShare: 0.15, nameLength: 18, sizeMedian: 4096, sizeSigma: 2, linkShare: 0.01 } as const;
+
+export const SYNTHETIC_CORPORA: Readonly<Record<SyntheticName, Readonly<SyntheticParams>>> = Object.freeze({
+  /** The 10M row: memory mode's honest over-ceiling number, and spill (§S.8 run 1). */
+  synthetic10m: Object.freeze({ entries: 10_000_000, seed: 10, ...DEVELOPER_SHAPE }),
+  /** The 100M gate: spill and aggregate (§S.8 run 2). */
+  synthetic100m: Object.freeze({ entries: 100_000_000, seed: 100, ...DEVELOPER_SHAPE }),
+});
+
+/** The walk's id ceiling: tm-walk's `MAX_SYNTHETIC_ENTRIES`. */
+const MAX_SYNTHETIC_ENTRIES = 4_294_967_294;
+const SYNTHETIC_MAX_DEPTH = 256;
+const NAME_MAX = 255;
+const SIGMA_MAX = 10;
+const PER_MILLION = 1_000_000;
+
+/**
+ * Throws, naming the field, for a field outside its range. That is all it
+ * checks: whether the folders fit the fan-out and depth, and whether the names
+ * are long enough to number the entries, only the walk works out, and
+ * scanStart throws for those.
+ */
+function validateSyntheticParams(p: SyntheticParams): void {
+  const whole = (field: string, value: number, min: number, max: number): void => {
+    if (!Number.isInteger(value) || value < min || value > max) throw new RangeError(`${field} must be an integer from ${min} to ${max}, got ${value}`);
+  };
+  const share = (field: string, value: number, max: number): void => {
+    if (!(Number.isFinite(value) && value >= 0 && value <= max)) throw new RangeError(`${field} must be a number from 0 to ${max}, got ${value}`);
+  };
+  whole('entries', p.entries, 0, MAX_SYNTHETIC_ENTRIES);
+  whole('seed', p.seed, 0, Number.MAX_SAFE_INTEGER);
+  whole('fanOut', p.fanOut, 0, 0xffff_ffff);
+  whole('depth', p.depth, 0, SYNTHETIC_MAX_DEPTH);
+  whole('nameLength', p.nameLength, 1, NAME_MAX);
+  whole('sizeMedian', p.sizeMedian, 0, Number.MAX_SAFE_INTEGER + 1);
+  share('folderShare', p.folderShare, 1);
+  share('sizeSigma', p.sizeSigma, SIGMA_MAX);
+  share('linkShare', p.linkShare, 1);
+}
+
+/**
+ * The counts tm-walk's `SyntheticLister` lists for `params`, by its own
+ * arithmetic: shares cross as whole parts per million (rounded, as scanStart
+ * rounds them); `entries × folderPpm / 10⁶` folders rounded down; whole
+ * hard-linked pairs of `files × linkPpm / 10⁶`, rounded down. Exact in BigInt.
+ * Only the ranges are checked (validateSyntheticParams), so a tree the walk
+ * refuses still gets counts here.
+ */
+export function syntheticCounts(params: SyntheticParams): { dirs: number; files: number; hardlinkNames: number } {
+  validateSyntheticParams(params);
+  const million = BigInt(PER_MILLION);
+  const folders = (BigInt(params.entries) * BigInt(Math.round(params.folderShare * PER_MILLION))) / million;
+  const files = BigInt(params.entries) - folders;
+  const pairs = (files * BigInt(Math.round(params.linkShare * PER_MILLION))) / (2n * million);
+  return { dirs: Number(folders) + 1, files: Number(files), hardlinkNames: Number(2n * pairs) };
+}
+
+/**
+ * A synthetic preset's manifest: its root, `<fence>/<name>`, and its counts.
+ * `fence` is the app's synthetic temp folder as the native module names it
+ * (`syntheticTempFolder()`, native/index.d.ts): only Rust's own temp-folder
+ * rule names it, and os.tmpdir() does not follow that rule (it reads TMP and
+ * TEMP when TMPDIR is unset; Rust does not). Pure arithmetic: nothing is
+ * created or read.
+ */
+export function syntheticManifest(name: SyntheticName, fence: string): SyntheticManifest {
+  const params = SYNTHETIC_CORPORA[name];
+  const counts = syntheticCounts(params);
+  return { name, source: 'synthetic', params, root: path.join(fence, name), ...counts };
 }

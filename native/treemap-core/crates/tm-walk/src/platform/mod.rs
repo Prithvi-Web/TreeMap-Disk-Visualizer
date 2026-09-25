@@ -2,10 +2,12 @@
 //! reusable [`ListBuffer`] with its entries and say which path did it, or say
 //! why the directory was refused. macOS is [`darwin`] (with [`per_entry`] as
 //! its fallback), Windows is [`windows`], Linux is [`linux`]; every other
-//! platform is `unsupported`. The parsers of the two cross platforms are
-//! portable and compiled everywhere so their synthetic-buffer tests run here;
-//! only their calls are behind `cfg`. The walk core never calls the OS
-//! directly, so a fake `Lister` drives it in tests on every platform.
+//! platform is `unsupported`. [`synthetic`] is a scripted tree on every
+//! platform, listed from a seed without touching a disk. The parsers of the
+//! two cross platforms are portable and compiled everywhere so their
+//! synthetic-buffer tests run here; only their calls are behind `cfg`. The
+//! walk core never calls the OS directly, so a fake `Lister` drives it in
+//! tests on every platform.
 
 use std::ops::Range;
 use std::path::Path;
@@ -20,6 +22,7 @@ pub mod darwin;
 pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod per_entry;
+pub mod synthetic;
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 pub mod unsupported;
 pub mod windows;

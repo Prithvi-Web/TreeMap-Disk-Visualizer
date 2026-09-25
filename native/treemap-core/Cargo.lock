@@ -295,7 +295,7 @@ dependencies = [
 
 [[package]]
 name = "tm-governor"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "objc2",
@@ -307,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "tm-mft"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "tm-governor",
  "tm-walk",
@@ -316,7 +316,7 @@ dependencies = [
 
 [[package]]
 name = "tm-mft-helper"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "tm-mft",
  "tm-walk",
@@ -324,7 +324,7 @@ dependencies = [
 
 [[package]]
 name = "tm-node"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "napi",
  "napi-build",
@@ -338,7 +338,7 @@ dependencies = [
 
 [[package]]
 name = "tm-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "thiserror",
  "tm-walk",
@@ -346,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "tm-walk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "tm-governor",

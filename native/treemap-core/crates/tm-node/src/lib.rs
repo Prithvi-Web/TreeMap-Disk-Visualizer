@@ -22,7 +22,8 @@
 //! poll has reported `done`; a walk still running is refused, never joined on
 //! Node's thread — moves the columns into typed arrays without copying and frees
 //! the handle. The walk obeys the same process-wide governor `governorConfigure`
-//! drives.
+//! drives. With `scanStart`'s `synthetic` option the walk lists a scripted tree
+//! (Phase 4, P4-8) under the folder `syntheticTempFolder` names.
 //!
 //! The Windows MFT turbo mode (M6) adds four exports. `mftPrecheck` runs the
 //! helper's checks that need no administrator (the root's drive is local,
@@ -56,7 +57,9 @@ use tm_governor::{
     Budget, Governor, HoldReport, Preset, capabilities, hold, platform_sampler, platform_signals,
 };
 use tm_mft::columns::{ColumnsFile, OUTPUT_EXTENSION, decode as decode_columns, is_output_name};
-use tm_walk::{Progress, Refusal, WalkError, WalkHandle, WalkOptions, WalkOutput, WalkStats};
+use tm_walk::{
+    Progress, Refusal, SyntheticSpec, WalkError, WalkHandle, WalkOptions, WalkOutput, WalkStats,
+};
 
 /// The budget the governor starts with before the app configures it: Automatic,
 /// Balanced that yields to battery and heat, which is also the app's default setting.
@@ -333,7 +336,13 @@ impl<'task> ScopedTask<'task> for HoldTask {
 /* ------------------------------ the native walker (Phase 3) ------------------------------ */
 
 /// The shape `scanStart` accepts, for the refusal message.
-const START_SHAPE: &str = "scanStart needs options like { neverDescend: string[], wantAtime: boolean, maxWorkers?: number, bufferBytes?: number }";
+const START_SHAPE: &str = "scanStart needs options like { neverDescend: string[], wantAtime: boolean, maxWorkers?: number, bufferBytes?: number, synthetic?: { entries: number, seed?: number, fanOut?: number, depth?: number, folderShare?: 0..1, nameLength?: number, sizeMedian?: number, sizeSigma?: 0..10, linkShare?: 0..1 } }";
+/// The widest spread `synthetic.sizeSigma` takes (the natural log's).
+const SIZE_SIGMA_MAX: f64 = 10.0;
+/// Thousandths in one: `sizeSigma` crosses as whole thousandths.
+const MILLI: f64 = 1000.0;
+/// Parts per million in one: the shares cross as whole parts per million.
+const PER_MILLION: f64 = 1_000_000.0;
 
 /// What `scanStart` takes, checked at the boundary: unknown keys are refused so a
 /// misspelled option can never be silently ignored.
@@ -352,6 +361,75 @@ struct StartOptions {
     /// Bytes per worker listing buffer; absent, null or 0 is the crate's default.
     #[serde(default)]
     buffer_bytes: Option<u32>,
+    /// A scripted tree to list instead of the disk (`tm_walk::SyntheticSpec`);
+    /// absent or null lists the disk.
+    #[serde(default)]
+    synthetic: Option<SyntheticOptions>,
+}
+
+/// `scanStart`'s `synthetic` option: the entry count, and the rest of the
+/// developer shape (`SyntheticSpec::developer`) unless given. Shares are
+/// numbers from 0 to 1 and the spread a number from 0 to 10; they cross to
+/// Rust as whole parts per million and thousandths.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SyntheticOptions {
+    /// Entries under the root.
+    entries: u64,
+    #[serde(default)]
+    seed: Option<u64>,
+    #[serde(default)]
+    fan_out: Option<u32>,
+    #[serde(default)]
+    depth: Option<u32>,
+    #[serde(default)]
+    folder_share: Option<f64>,
+    #[serde(default)]
+    name_length: Option<u32>,
+    #[serde(default)]
+    size_median: Option<u64>,
+    #[serde(default)]
+    size_sigma: Option<f64>,
+    #[serde(default)]
+    link_share: Option<f64>,
+}
+
+/// `value` from 0 to `max` in whole units of `1 / unit`, or the refusal naming
+/// the option.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the value is checked finite and within 0..=max first, and max × unit is at most 1,000,000, so the rounded product is positive and fits a u32"
+)]
+fn whole_units(name: &str, value: f64, max: f64, unit: f64) -> Result<u32> {
+    if !value.is_finite() || !(0.0..=max).contains(&value) {
+        return Err(refuse(format!(
+            "synthetic.{name} must be a number from 0 to {max}; got {value}"
+        )));
+    }
+    Ok((value * unit).round() as u32)
+}
+
+/// The spec `synthetic` asks for: the developer shape with the options given
+/// laid over it. Whether the tree can be built, and where, is `tm-walk`'s to
+/// refuse (`WalkError::OptionsRefused`).
+fn synthetic_spec(options: &SyntheticOptions) -> Result<SyntheticSpec> {
+    let base = SyntheticSpec::developer(options.entries, options.seed.unwrap_or(0));
+    let share = |name, value: Option<f64>, fallback| {
+        value.map_or(Ok(fallback), |v| whole_units(name, v, 1.0, PER_MILLION))
+    };
+    Ok(SyntheticSpec {
+        fan_out: options.fan_out.unwrap_or(base.fan_out),
+        depth: options.depth.unwrap_or(base.depth),
+        folder_ppm: share("folderShare", options.folder_share, base.folder_ppm)?,
+        name_len: options.name_length.unwrap_or(base.name_len),
+        size_median: options.size_median.unwrap_or(base.size_median),
+        size_sigma_milli: options.size_sigma.map_or(Ok(base.size_sigma_milli), |v| {
+            whole_units("sizeSigma", v, SIZE_SIGMA_MAX, MILLI)
+        })?,
+        link_ppm: share("linkShare", options.link_share, base.link_ppm)?,
+        ..base
+    })
 }
 
 /// A walk that has ended: the last progress it reported and its outcome.
@@ -408,18 +486,18 @@ fn walk_error_text(err: &WalkError) -> String {
         WalkError::RootRefused(Refusal::Unreadable) => {
             "EIO: the root could not be read by the native engine".to_owned()
         }
-        WalkError::Unsupported(reason) => reason.clone(),
+        WalkError::Unsupported(reason) | WalkError::OptionsRefused(reason) => reason.clone(),
         WalkError::Cancelled => "the native scan was cancelled".to_owned(),
         WalkError::Internal(reason) => format!("the native engine failed: {reason}"),
     }
 }
 
-/// [`walk_error_text`] as the JavaScript error: a root that is not a folder is the
-/// caller's mistake, everything else a failure.
+/// [`walk_error_text`] as the JavaScript error: a root that is not a folder and
+/// options the walk refused are the caller's mistake, everything else a failure.
 fn walk_error(err: &WalkError) -> Error {
     let text = walk_error_text(err);
     match err {
-        WalkError::RootNotDirectory => refuse(text),
+        WalkError::RootNotDirectory | WalkError::OptionsRefused(_) => refuse(text),
         WalkError::RootRefused(_)
         | WalkError::Unsupported(_)
         | WalkError::Cancelled
@@ -556,13 +634,16 @@ pub fn scan_probe(root: String) -> Value {
 /// Starts a walk of `root` on `tm-walk`'s own threads, governed by the process-wide
 /// governor, and returns its handle. Refuses options of the wrong shape, a root
 /// that is not a folder or cannot be read (with Node's errno spelling in front),
-/// and a platform without a native listing, each in plain English.
+/// and a platform without a native listing, each in plain English. With
+/// `synthetic` the walk lists a scripted tree and reads no disk; `tm-walk`
+/// refuses it for a root outside the app's synthetic temp folder.
 #[napi(js_name = "scanStart", catch_unwind)]
 pub fn scan_start(root: String, opts: Option<Value>) -> Result<u32> {
     let raw = opts.unwrap_or_else(|| Value::Object(serde_json::Map::new()));
     let received = raw.to_string();
     let options: StartOptions = serde_json::from_value(raw)
         .map_err(|err| refuse(format!("{START_SHAPE}; got {received}: {err}")))?;
+    let synthetic = options.synthetic.as_ref().map(synthetic_spec).transpose()?;
     let walk_options = WalkOptions {
         root: PathBuf::from(root),
         never_descend: options
@@ -577,6 +658,7 @@ pub fn scan_start(root: String, opts: Option<Value>) -> Result<u32> {
         buffer_bytes: options
             .buffer_bytes
             .map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX)),
+        synthetic,
     };
     let governor = Arc::new(shared().governor.clone());
     let handle = tm_walk::start(walk_options, governor).map_err(|err| walk_error(&err))?;
@@ -584,6 +666,24 @@ pub fn scan_start(root: String, opts: Option<Value>) -> Result<u32> {
     let id = table.next.fetch_add(1, Ordering::AcqRel);
     lock(&table.slots).insert(id, Slot::Running(handle));
     Ok(id)
+}
+
+/// The app's synthetic temp folder as the walk names it
+/// (`tm_walk::synthetic_temp_folder`): a `synthetic` root given to `scanStart`
+/// must lie strictly inside it. Node's `os.tmpdir()` does not follow Rust's
+/// rule, so Node asks here. Nothing is created. Throws when the path is not
+/// UTF-8, since a root under it could not be passed back as a string.
+#[napi(js_name = "syntheticTempFolder", catch_unwind)]
+pub fn synthetic_temp_folder() -> Result<String> {
+    tm_walk::synthetic_temp_folder()
+        .into_os_string()
+        .into_string()
+        .map_err(|raw| {
+            failure(format!(
+                "the synthetic temp folder {} is not UTF-8, so no root under it can be passed to scanStart",
+                PathBuf::from(raw).display()
+            ))
+        })
 }
 
 /// The walk's progress right now: `{ done, error, entries, dirs, files, bytes,

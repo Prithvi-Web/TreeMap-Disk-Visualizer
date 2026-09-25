@@ -29,6 +29,12 @@
  *    scan's `budget.effective`), never the request copied. A result written
  *    before the governor existed has no budget and reads as exactly that; it
  *    is not rewritten, and it compares only with another like it.
+ * 8. A result says where its entries came from (`source`). A synthetic
+ *    listing (tm-walk's `SyntheticLister`, Phase 4 P4-8) reads no disk, so its
+ *    wall clock is not a file-system throughput: it is labelled `synthetic`
+ *    in every report and never compared with a file-system run. A result
+ *    without the field was written before it existed, and every such result
+ *    listed a file system.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -61,6 +67,10 @@ export interface BenchBudget {
   requested: RequestedBudget;
   effective: string[];
 }
+
+/** Where a result's entries came from: a file system an engine listed, or a synthetic listing that reads no disk (rule 8). */
+export type BenchSource = 'file-system' | 'synthetic';
+export const SOURCES: readonly BenchSource[] = ['file-system', 'synthetic'];
 
 /** The effective preset of a run that measured nothing (a governor hold that never ran). */
 export const NO_BUDGET = 'none';
@@ -123,6 +133,8 @@ export interface BenchResult {
   minSize?: number;
   /** The near-duplicate suite's `--threshold` — which pairs join a cluster. Absent on the other suites and on results written before it was recorded. */
   threshold?: number;
+  /** Where the entries came from (rule 8). Absent on results written before it was recorded, which read as `file-system` (`sourceOf`). */
+  source?: BenchSource;
 }
 
 /**
@@ -224,6 +236,9 @@ export function describeBudget(r: StoredResult): string {
 /** The budget as a comparison's condition: the preset asked for, or the word for a result from before the governor. */
 const budgetCondition = (r: StoredResult): string => r.budget?.requested ?? PRE_GOVERNOR_BUDGET;
 
+/** Where a result's entries came from; a result written before the field listed a file system (rule 8). */
+export const sourceOf = (r: StoredResult): BenchSource => r.source ?? 'file-system';
+
 /** How a suite option reads as a condition when the result does not carry it (another suite, or written before it was recorded). */
 export const OPTION_NOT_RECORDED = 'not recorded';
 const optionCondition = (value: number | undefined): string => (value === undefined ? OPTION_NOT_RECORDED : String(value));
@@ -235,6 +250,7 @@ function comparabilityDifferences(current: StoredResult, baseline: StoredResult)
     if (a !== b) out.push(`${label} (${String(a)} vs ${String(b)})`);
   };
   same('suite', current.suite, baseline.suite);
+  same('source', sourceOf(current), sourceOf(baseline));
   same('corpus', current.corpus.name, baseline.corpus.name);
   same('corpus parameters', JSON.stringify(current.corpus.params), JSON.stringify(baseline.corpus.params));
   same('engine', current.engine, baseline.engine);
@@ -286,6 +302,10 @@ export function compareToBaseline(current: StoredResult, baseline: StoredResult)
   const cur = current.summary.wallMsMedian;
   const deltaPct = ((cur - base) / base) * 100;
   const times = `${formatMs(base)} → ${formatMs(cur)}`;
+  if (sourceOf(current) !== sourceOf(baseline)) {
+    const which = sourceOf(current) === 'synthetic' ? 'the current result' : 'the baseline';
+    return { verdict: 'NOT COMPARABLE', deltaPct, band: Number.NaN, sentence: `${which} is a synthetic listing, which reads no disk, so its wall clock is not a file-system throughput and is never compared with a file-system run` };
+  }
   const differences = comparabilityDifferences(current, baseline);
   if (differences.length > 0) {
     return { verdict: 'NOT COMPARABLE', deltaPct, band: Number.NaN, sentence: `the two results differ in ${differences.join('; ')}, so their wall clocks measure different things` };
@@ -362,7 +382,7 @@ export function printTable(results: readonly StoredResult[]): string {
     const measured = r.summary.wallMsMedian > 0;
     return [
       r.suite,
-      r.corpus.name,
+      sourceOf(r) === 'synthetic' ? `${r.corpus.name} (synthetic)` : r.corpus.name,
       r.engine,
       r.cache.state,
       budgetCell(r),
@@ -485,6 +505,8 @@ export function isBenchResult(value: unknown): value is StoredResult {
   }
   if (!isRecord(v.correctness) || typeof v.correctness.ok !== 'boolean' || !Array.isArray(v.correctness.notes)) return false;
   if (!isOptionalCount(v.minSize) || !isOptionalCount(v.threshold)) return false;
+  // Rule 8: no source is a result from before the field; a source is one the harness knows.
+  if (v.source !== undefined && !(SOURCES as readonly unknown[]).includes(v.source)) return false;
   if (!isRecord(v.summary)) return false;
   const s = v.summary;
   if (typeof s.wallMsMedian !== 'number' || !Number.isFinite(s.wallMsMedian) || s.wallMsMedian < 0) return false;

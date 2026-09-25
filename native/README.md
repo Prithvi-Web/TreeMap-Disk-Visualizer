@@ -104,7 +104,8 @@ strings, `Option` as `null`, shares as fractions of the whole machine (0..1).
 | `governorPause()` / `governorResume()` | block and release the workers; a thermal pause is the governor's own and stays |
 | `governorHold(targetPercent, seconds)` | test-only: holds a percent of the machine with a synthetic load and resolves with the Rust `HoldReport` in shares, `machineIdleLastHalf` included (the whole machine's idle share over the second half, `null` where the OS published none: a hold under its target on a machine with no idle CPU measured the machine, not the governor) |
 | `scanProbe(root)` | `{ fastPath, reason }`: opens and lists `root` once with this platform's listing (`bulk` on macOS; `unavailable` with the reason on a file, a root that cannot be read, or a platform whose listing is not built yet); never throws |
-| `scanStart(root, opts)` | starts a walk on `tm-walk`'s own threads, governed by the same process-wide governor, and returns a handle; `opts` is `{ neverDescend: string[], wantAtime: boolean, maxWorkers?: number, bufferBytes?: number }` (0 or absent lets the hill-climber decide); refuses a root that is not a folder or cannot be read with Node's errno spelling in front (`ENOENT: …`), and a platform without a listing |
+| `scanStart(root, opts)` | starts a walk on `tm-walk`'s own threads, governed by the same process-wide governor, and returns a handle; `opts` is `{ neverDescend: string[], wantAtime: boolean, maxWorkers?: number, bufferBytes?: number, synthetic?: SyntheticSource }` (0 or absent lets the hill-climber decide); refuses a root that is not a folder or cannot be read with Node's errno spelling in front (`ENOENT: …`), and a platform without a listing; with `synthetic` it lists a scripted tree instead of the disk (see "The synthetic source" below) |
+| `syntheticTempFolder()` | the app's synthetic temp folder as the walk names it (`TreeMap-synthetic` in Rust's `std::env::temp_dir()`), inside which a `synthetic` root must lie; nothing is created |
 | `scanPoll(handle)` | `{ done, error, entries, dirs, files, bytes, currentPath }` from the walk's atomics — no callback, no `ThreadsafeFunction` (decision P3-1); once done, how the walk ended is in `error` |
 | `scanPause(handle)` / `scanResume(handle)` | stop the workers at their next check (between directories and every 256 entries inside one) and let them go on; nothing is re-listed |
 | `scanCancel(handle)` | ends the walk; `scanTake` then throws the cancellation and frees the handle |
@@ -148,6 +149,46 @@ hold began: the target asked for, scaled by 0.7 while the user is interacting
 (Eco and Balanced) and by 0.5 under serious heat. The bench refuses a report
 whose target is not the one it asked for, so run the gate on a quiet machine
 you are not touching.
+
+## The synthetic source (Phase 4, P4-8)
+
+`scanStart(root, { …, synthetic: { entries, … } })` walks a scripted tree
+instead of the disk: `tm-walk`'s `SyntheticLister`
+(`crates/tm-walk/src/platform/synthetic.rs`) answers each listing from the
+spec and the folder's path alone, so it creates, opens and reads nothing, and
+one seed lists one tree at any worker count. It exists to measure the walk
+and the store at sizes no disk here holds (the 100M-entry gate).
+
+* **Where.** `root` must lie strictly inside `<temp>/TreeMap-synthetic/`, by
+  plain names (no `..`), where `<temp>` is Rust's `std::env::temp_dir()`
+  (TMPDIR; on Windows TMP, then TEMP, then USERPROFILE) or its resolved path.
+  Anything else is refused before a thread starts. Nothing is created there.
+  Node asks `syntheticTempFolder()` for the folder: `os.tmpdir()` does not
+  follow Rust's rule (with TMPDIR unset it reads TMP and TEMP, where Rust
+  takes the per-user temp folder on macOS and `/tmp` on Linux).
+* **The shape.** `entries` under the root (the root is not one, as the walk
+  counts); `folderShare` of them, rounded down, are folders, filling `depth`
+  levels with at most `fanOut` subfolders each; the files are spread evenly
+  over every folder. Every name is `nameLength` bytes. Sizes are log-normal
+  around `sizeMedian` with `sizeSigma`, drawn with integer sums and IEEE
+  754's exactly rounded `+ − × ÷ √` only, so no platform's maths library
+  enters a draw; allocated bytes are the size rounded up to 4,096.
+  `linkShare` of the files, in whole pairs, are hard-linked. A pair's two
+  names are half the files apart in file order, so they are in different
+  folders unless one folder holds more than half the files: never with two
+  or more subfolders; with none, every pair shares the root, and with one
+  subfolder and an odd file count, one pair does. Every field but `entries`
+  defaults to the developer shape of the Phase 4 design (§S.8): 16, 12,
+  0.15, 18, 4096, 2 and 0.01.
+* **Refusals.** A tree whose folders do not fit the fan-out and depth, names
+  too short to number the entries, a share outside 0..1, a sigma outside
+  0..10, more than 4,294,967,294 entries: each throws a sentence
+  (`WalkError::OptionsRefused`), never a smaller tree.
+* **Stats.** Such a walk reports `fastPath: 'unavailable'`, since no platform
+  listing ran. The bench labels its results `source: synthetic` and
+  `bench compare` refuses to set one beside a file-system run
+  (`bench/lib/report.ts`, rule 8); the presets are `synthetic10m` and
+  `synthetic100m` in `bench/lib/corpus.ts`.
 
 ## Threads
 

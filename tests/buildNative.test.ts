@@ -240,7 +240,7 @@ test('the workspace version is read from [workspace.package], not from a crate',
   assert.equal(helpers.workspaceVersion(toml), '0.1.0');
   assert.equal(helpers.workspaceVersion('[package]\nversion = "9.9.9"\n'), null, 'no workspace version is null, never a guess');
   assert.equal(helpers.workspaceVersion(''), null);
-  assert.equal(helpers.workspaceVersion(fs.readFileSync(path.join(REPO, 'native', 'treemap-core', 'Cargo.toml'), 'utf8')), '0.1.0', 'the real workspace');
+  assert.equal(helpers.workspaceVersion(fs.readFileSync(path.join(REPO, 'native', 'treemap-core', 'Cargo.toml'), 'utf8')), '0.2.0', 'the real workspace');
 });
 
 test('the version handshake: package.json nativeVersion and the crate version must agree, and both are named when they do not', () => {

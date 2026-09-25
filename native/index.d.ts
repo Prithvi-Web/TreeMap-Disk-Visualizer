@@ -174,10 +174,9 @@ export interface ScanStartOptions {
   bufferBytes?: number;
   /**
    * List a scripted tree instead of the disk (tm-walk's `SyntheticLister`):
-   * nothing is created, opened or read, and `root` must lie inside the app's
-   * synthetic temp folder, `<temp>/TreeMap-synthetic/`, where `<temp>` is
-   * Rust's `std::env::temp_dir()` (on Windows TMP, then TEMP, then
-   * USERPROFILE) or its resolved path. Omitted or null lists the disk.
+   * nothing is created, opened or read, and `root` must lie strictly inside
+   * the app's synthetic temp folder, the one `syntheticTempFolder()` names
+   * (or that folder by its resolved path). Omitted or null lists the disk.
    */
   synthetic?: SyntheticSource | null;
 }
@@ -205,7 +204,14 @@ export interface SyntheticSource {
   sizeMedian?: number;
   /** The spread of the sizes' natural log, 0 to 10. Default 2. */
   sizeSigma?: number;
-  /** The share of files that are one of a hard-linked pair in two folders, 0 to 1, rounded down to whole pairs. Default 0.01. */
+  /**
+   * The share of files that are one of a hard-linked pair, 0 to 1, rounded
+   * down to whole pairs. Default 0.01. A pair's two names are half the files
+   * apart in file order, so they are in different folders unless one folder
+   * holds more than half the files: never with two or more subfolders; with
+   * none, every pair shares the root, and with one subfolder and an odd file
+   * count, one pair does.
+   */
   linkShare?: number;
 }
 
@@ -306,6 +312,17 @@ export function scanProbe(root: string): NativeProbe;
  * reports `fastPath: 'unavailable'`, since no platform listing ran.
  */
 export function scanStart(root: string, opts: ScanStartOptions): number;
+
+/**
+ * The app's synthetic temp folder as the walk names it: `TreeMap-synthetic`
+ * in Rust's `std::env::temp_dir()`. A `synthetic` root must lie strictly
+ * inside it. Ask here rather than build it from `os.tmpdir()`, which does not
+ * follow Rust's rule: with TMPDIR unset, Node reads TMP and TEMP while Rust
+ * takes the per-user temp folder on macOS and `/tmp` on Linux (on Windows,
+ * Node reads TEMP first and Rust TMP). Nothing is created. Throws when the
+ * path is not UTF-8.
+ */
+export function syntheticTempFolder(): string;
 
 /** The walk's progress right now; throws when `handle` is unknown (taken, or never started). */
 export function scanPoll(handle: number): NativeProgress;
