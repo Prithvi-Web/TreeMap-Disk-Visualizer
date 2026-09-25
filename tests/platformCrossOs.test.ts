@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { promises as fsp } from 'node:fs';
+import { promises as fsp, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -184,26 +184,49 @@ test('linux: a genuinely unlinked inode IS reported as a zombie', { skip: WIN_NO
 
 /* ════════════════════════ Linux: lsblk topology ════════════════════════ */
 
+/** A partitioned laptop disk: the disk node is only hardware, its partitions are the volumes. */
+const LAPTOP_LSBLK: Parameters<typeof mapLsblk>[0] = {
+  blockdevices: [
+    {
+      name: 'nvme0n1',
+      path: '/dev/nvme0n1',
+      type: 'disk',
+      size: 512_110_190_592,
+      rota: false,
+      model: 'Samsung SSD 980',
+      children: [
+        { name: 'nvme0n1p1', path: '/dev/nvme0n1p1', type: 'part', fstype: 'vfat', mountpoints: ['/boot/efi'], size: 536_870_912 },
+        {
+          name: 'nvme0n1p2', path: '/dev/nvme0n1p2', type: 'part', fstype: 'ext4', mountpoints: ['/'],
+          size: 511_000_000_000, fssize: 502_000_000_000, fsavail: 300_000_000_000, fsused: 180_000_000_000,
+        },
+      ],
+    },
+  ],
+};
+
+/**
+ * REAL `lsblk --json --bytes -O` output (util-linux 2.39.3) — the exact argv
+ * `volumeTopology()` runs — recorded on a Linux cloud container on 25 Sep
+ * 2026, then trimmed to two of its seven devices, each entry left exactly as
+ * lsblk wrote it. The root filesystem is ext4 made directly on the whole disk
+ * `/dev/vda`, with no partition table (findmnt: `/ /dev/vda ext4`); `zram0` is
+ * a disk that is neither partitioned nor mounted. (The five left out were
+ * small read-only whole-disk mounts of the container's own tools, shaped like
+ * `/dev/vda`.)
+ *
+ * Two things in it a hand-written fixture would have got wrong: FSTYPE is null
+ * on every device, because the container has no udev database (/run/udev is
+ * absent) for lsblk to read it from; and FSSIZE − FSAVAIL on `/` is ~243 GB
+ * while FSUSED is ~12.5 GB, because the mount carries a large root reserve
+ * (`resv_strict,resuid=65534`) — the FSUSED rule's worst case, measured.
+ */
+const WHOLE_DISK_LSBLK = JSON.parse(
+  readFileSync(path.join(__dirname, 'fixtures', 'lsblk-v2.39.3-whole-disk.json'), 'utf8'),
+) as Parameters<typeof mapLsblk>[0];
+
 test('linux: mapLsblk maps a plain single-disk laptop to a clean 1:1 view', () => {
-  const topo = mapLsblk({
-    blockdevices: [
-      {
-        name: 'nvme0n1',
-        path: '/dev/nvme0n1',
-        type: 'disk',
-        size: 512_110_190_592,
-        rota: false,
-        model: 'Samsung SSD 980',
-        children: [
-          { name: 'nvme0n1p1', path: '/dev/nvme0n1p1', type: 'part', fstype: 'vfat', mountpoints: ['/boot/efi'], size: 536_870_912 },
-          {
-            name: 'nvme0n1p2', path: '/dev/nvme0n1p2', type: 'part', fstype: 'ext4', mountpoints: ['/'],
-            size: 511_000_000_000, fssize: 502_000_000_000, fsavail: 300_000_000_000, fsused: 180_000_000_000,
-          },
-        ],
-      },
-    ],
-  });
+  const topo = mapLsblk(LAPTOP_LSBLK);
   assert.equal(topo.physicalDisks.length, 1);
   assert.equal(topo.physicalDisks[0].rotational, false, 'rotational comes from the kernel, not a guess');
   assert.equal(topo.logicalVolumes.length, 2);
@@ -213,6 +236,99 @@ test('linux: mapLsblk maps a plain single-disk laptop to a clean 1:1 view', () =
   // would book ext4's root reserve (~2% here) as the user's data.
   assert.equal(topo.logicalVolumes[1].usedBytes, 180_000_000_000);
   assert.equal(topo.logicalVolumes[0].usedBytes, null, 'no FSUSED column → unknown, never zero');
+});
+
+test('linux: a partitioned disk maps exactly as before — the disk is hardware, its partitions the volumes', () => {
+  // Pinned whole, so a whole-disk rule that leaks onto a partitioned disk (the
+  // disk node listed as a volume too, or its partitions re-backed) shows here.
+  const topo = mapLsblk(LAPTOP_LSBLK);
+  assert.deepEqual(
+    topo.physicalDisks,
+    [{ id: '/dev/nvme0n1', name: 'Samsung SSD 980', sizeBytes: 512_110_190_592, rotational: false }],
+    'one physical disk, exactly as lsblk describes it',
+  );
+  assert.deepEqual(
+    topo.logicalVolumes,
+    [
+      {
+        id: '/dev/nvme0n1p1', name: 'nvme0n1p1', mountPoint: '/boot/efi', filesystem: 'vfat',
+        sizeBytes: 536_870_912, freeBytes: null, usedBytes: null, physicalDiskIds: ['/dev/nvme0n1'], kind: 'partition',
+      },
+      {
+        id: '/dev/nvme0n1p2', name: 'nvme0n1p2', mountPoint: '/', filesystem: 'ext4',
+        sizeBytes: 502_000_000_000, freeBytes: 300_000_000_000, usedBytes: 180_000_000_000,
+        physicalDiskIds: ['/dev/nvme0n1'], kind: 'partition',
+      },
+    ],
+    'the two partitions and nothing else — the unmounted disk node is not a volume',
+  );
+});
+
+test('linux: a filesystem made directly on the whole disk is a volume on that disk (recorded: /dev/vda mounted at /)', () => {
+  const topo = mapLsblk(WHOLE_DISK_LSBLK);
+  const root = topo.logicalVolumes.find((v) => v.mountPoint === '/');
+  assert.ok(root, 'the mounted whole disk must be a logical volume, or a scan of / lives on no volume at all');
+  assert.deepEqual(
+    root,
+    {
+      id: '/dev/vda',
+      name: 'vda',
+      mountPoint: '/',
+      // lsblk reported no FSTYPE (no udev database in the container), so the
+      // honest answer is unknown — never a guess from the mount table.
+      filesystem: null,
+      sizeBytes: 270_553_174_016, // FSSIZE, not the 274_877_906_944-byte disk
+      freeBytes: 27_246_252_032,
+      usedBytes: 12_534_636_544, // FSUSED — FSSIZE − FSAVAIL would claim ~243 GB
+      physicalDiskIds: ['/dev/vda'],
+      kind: 'disk',
+    },
+    'the same lsblk columns a partition reads, backed by its own disk',
+  );
+  assert.deepEqual(
+    topo.physicalDisks.filter((d) => d.id === '/dev/vda'),
+    [{ id: '/dev/vda', name: null, sizeBytes: 274_877_906_944, rotational: true }],
+    'and the disk is still listed exactly once as hardware',
+  );
+  assert.deepEqual(
+    topo.physicalDisks.map((d) => d.id),
+    ['/dev/zram0', '/dev/vda'],
+    'every disk once, in lsblk order — none duplicated by also being a volume',
+  );
+  assert.deepEqual(
+    topo.logicalVolumes.map((v) => [v.id, v.mountPoint, v.physicalDiskIds]),
+    [['/dev/vda', '/', ['/dev/vda']]],
+    'the mounted whole disk is one volume on itself; the unmounted zram0 is none',
+  );
+});
+
+test('linux: a disk that is neither partitioned nor mounted is hardware only, never a volume', () => {
+  // Recorded: zram0 has no children and no mount point.
+  const recorded = mapLsblk(WHOLE_DISK_LSBLK);
+  assert.ok(recorded.physicalDisks.some((d) => d.id === '/dev/zram0'), 'zram0 is a disk in the recording');
+  assert.ok(!recorded.logicalVolumes.some((v) => v.id === '/dev/zram0'), 'an unmounted, unpartitioned disk holds no volume');
+
+  // Beside a mounted whole-disk data volume, whose FSTYPE lsblk did report —
+  // a cloud VM's extra disk formatted without a partition table.
+  const topo = mapLsblk({
+    blockdevices: [
+      {
+        name: 'sdb', path: '/dev/sdb', type: 'disk', size: 107_374_182_400, rota: false, fstype: 'xfs',
+        mountpoints: ['/data'], fssize: 107_321_753_600, fsavail: 90_000_000_000, fsused: 17_321_753_600,
+      },
+      { name: 'sdc', path: '/dev/sdc', type: 'disk', size: 53_687_091_200, rota: false, mountpoints: [null] },
+    ],
+  });
+  assert.deepEqual(
+    topo.physicalDisks.map((d) => d.id),
+    ['/dev/sdb', '/dev/sdc'],
+    'both are hardware',
+  );
+  assert.deepEqual(
+    topo.logicalVolumes.map((v) => [v.id, v.mountPoint, v.filesystem, v.usedBytes, v.physicalDiskIds]),
+    [['/dev/sdb', '/data', 'xfs', 17_321_753_600, ['/dev/sdb']]],
+    'only the mounted disk is a volume, carrying the FSTYPE lsblk reported; the blank disk is not',
+  );
 });
 
 test('linux: an LVM volume spanning two disks names both', () => {

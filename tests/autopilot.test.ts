@@ -33,6 +33,10 @@ import { readJsonFile, writeJsonFile } from '../src/services/storage';
 import { AutopilotPolicy, AutopilotRun, CleanupSuggestionGroup } from '../src/models/types';
 import { AppError } from '../src/middleware/errorHandler';
 import { setTrashStepForTests } from '../src/services/cleaner';
+import { buildOpenApiDocument } from '../src/api/openapi';
+import http from 'node:http';
+import { createApp } from '../src/server';
+import { resetRateLimiter } from '../src/middleware/rateLimiter';
 
 /**
  * B1 — Autopilot.
@@ -98,6 +102,121 @@ test('a custom rule with nothing set is refused — it would match every file', 
     () => normalizePolicy({ path: os.tmpdir(), match: { kind: 'custom' } }),
     (err: unknown) => err instanceof AppError && err.code === 'POLICY_MATCH_EMPTY',
   );
+});
+
+test('a custom rule carrying the Clean Up duplicate flag is refused, not saved without it', () => {
+  // `dup` is a Clean Up rule (GET /api/cleanup/rules?dup=1) with no policy
+  // equivalent. Dropping it quietly would store a policy WIDER than the rule
+  // that was sent: every file older than 90 days, duplicate or not.
+  assert.throws(
+    () => normalizePolicy({ path: os.tmpdir(), match: { kind: 'custom', maxAgeMs: 90 * 86_400_000, dup: true } }),
+    (err: unknown) => err instanceof AppError && err.code === 'POLICY_MATCH_INVALID' && /duplicate/i.test(err.message),
+  );
+  // An explicit false narrows nothing, so dropping it changes nothing either.
+  const p = normalizePolicy({ path: os.tmpdir(), match: { kind: 'custom', maxAgeMs: 90 * 86_400_000, dup: false } });
+  assert.deepEqual(p.match, { kind: 'custom', maxAgeMs: 90 * 86_400_000 });
+});
+
+/** One JSON request to a fresh app on an ephemeral port. */
+async function call(method: string, url: string, body: unknown): Promise<{ status: number; body: { code?: string; error?: string } }> {
+  resetRateLimiter();
+  const server = http.createServer(createApp(path.join(__dirname, '..', 'public')));
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const port = (server.address() as { port: number }).port;
+    const payload = JSON.stringify(body);
+    return await new Promise((resolve, reject) => {
+      const r = http.request({ host: '127.0.0.1', port, path: url, method, headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } }, (res) => {
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => { buf += c; });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: buf ? JSON.parse(buf) : {} }));
+      });
+      r.on('error', reject);
+      r.end(payload);
+    });
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
+
+test('every refusal PUT /api/autopilot/policies and POST /api/autopilot/simulate give is named in the published spec', async () => {
+  // A client generated from GET /api/openapi.json learns a route's error codes
+  // from its description. The duplicate-flag refusal above reuses
+  // POLICY_MATCH_INVALID, which the spec had never listed, and the same save
+  // gave several more it did not name. Each case here provokes one, over HTTP.
+  const tmp = os.tmpdir();
+  const ok = { kind: 'custom', maxAgeMs: 86_400_000 };
+  const blocked = process.platform === 'win32' ? 'C:\\Windows\\System32' : '/dev';
+  const policyCases: Array<[string, unknown]> = [
+    ['POLICY_PATH_REQUIRED', { match: ok }],
+    ['PATH_INVALID', { path: `${tmp}/a\u0000b`, match: ok }],
+    ['PATH_BLOCKED', { path: blocked, match: ok }],
+    ['POLICY_PATH_TOO_BROAD', { path: path.parse(tmp).root, match: ok }],
+    ['POLICY_MATCH_EMPTY', { path: tmp, match: { kind: 'suggestion', groupIds: [] } }],
+    ['POLICY_MATCH_INVALID', { path: tmp, match: { ...ok, dup: true } }],
+    ['POLICY_QUERY_INVALID', { path: tmp, match: { kind: 'query', q: 'nosuchfield:1' } }],
+    ['POLICY_QUERY_UNANSWERABLE', { path: tmp, match: { kind: 'query', q: 'dupe:yes' } }],
+  ];
+  const routes: Record<string, Array<[string, unknown]>> = {
+    'put /api/autopilot/policies': [
+      ['NOTHING_TO_UPDATE', {}],
+      ['BAD_POLICIES', { policies: 'not a list' }],
+      ['TOO_MANY_POLICIES', { policies: Array.from({ length: 51 }, () => ({ path: tmp, match: ok })) }],
+      ['DUPLICATE_POLICY_ID', { policies: [{ id: 'same', path: tmp, match: ok }, { id: 'same', name: 'Another', path: tmp, match: ok }] }],
+      ...policyCases.map(([code, policy]): [string, unknown] => [code, { policies: [policy] }]),
+    ],
+    'post /api/autopilot/simulate': [
+      ['POLICY_REQUIRED', {}],
+      ...policyCases.map(([code, policy]): [string, unknown] => [code, { policy }]),
+    ],
+  };
+  const doc = buildOpenApiDocument() as {
+    paths: Record<string, Record<string, { responses: Record<string, { description: string }> }>>;
+  };
+  for (const [route, cases] of Object.entries(routes)) {
+    const [method, url] = route.split(' ') as [string, string];
+    const documented = doc.paths[url]?.[method]?.responses['400']?.description ?? '';
+    for (const [code, body] of cases) {
+      const got = await call(method.toUpperCase(), url, body);
+      assert.deepEqual([got.status, got.body.code], [400, code], `${route}: the case for ${code} provokes exactly that refusal (${got.body.error})`);
+      assert.match(documented, new RegExp(`\\b${code}\\b`), `the spec's 400 for ${route} names ${code}`);
+    }
+  }
+  assert.deepEqual(await listPolicies(), [], 'no refused save stored anything');
+});
+
+test('the editor\'s Preview judges a saved policy as Save does', async () => {
+  // Preview sends the policy being edited, id and all. A policy an earlier
+  // build saved with a condition this build cannot answer is accepted by Save
+  // while it stays unchanged; Preview refused it, so the one button meant to
+  // show what it does said it could not be saved.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-autopilot-preview-'));
+  const old: AutopilotPolicy = {
+    id: 'legacy', name: 'Old duplicates', path: dir, match: { kind: 'query', q: 'dupe:yes ext:jpg' },
+    maxBytesPerRun: null, maxBytesPerWeek: null, cooldownDays: 7, dryRunFirst: true, requireConfirmationAbove: null, enabled: false,
+  };
+  await writeJsonFile('autopilot.json', { version: 1, policies: [old], runs: [] });
+  try {
+    const same = await call('POST', '/api/autopilot/simulate', { policy: old });
+    assert.equal(same.status, 200, `unchanged, it previews: ${JSON.stringify(same.body)}`);
+    const changed = await call('POST', '/api/autopilot/simulate', { policy: { ...old, match: { kind: 'query', q: 'dupe:yes ext:png' } } });
+    assert.deepEqual([changed.status, changed.body.code], [400, 'POLICY_QUERY_UNANSWERABLE'], 'changed, it is refused as Save would refuse it');
+    const fresh = await call('POST', '/api/autopilot/simulate', { policy: { ...old, id: undefined } });
+    assert.deepEqual([fresh.status, fresh.body.code], [400, 'POLICY_QUERY_UNANSWERABLE'], 'and so is a new one');
+  } finally {
+    await savePolicies([]);
+  }
+});
+
+test('two policies in one list may not share an id', async () => {
+  // The second would inherit the first one's approval and pass as unchanged.
+  const tmp = os.tmpdir();
+  await assert.rejects(
+    savePolicies([{ id: 'same', name: 'One', path: tmp, match: { kind: 'custom', maxAgeMs: 1 } }, { id: 'same', name: 'Two', path: tmp, match: { kind: 'custom', minBytes: 1 } }]),
+    (err: unknown) => err instanceof AppError && err.code === 'DUPLICATE_POLICY_ID' && /"same"/.test(err.message),
+  );
+  assert.deepEqual(await listPolicies(), [], 'nothing was stored');
 });
 
 test('a suggestion match with no groups is refused', () => {

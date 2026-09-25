@@ -208,7 +208,13 @@ OpenAPI 3 spec).
      `match: { kind: 'query', q }`, parsed by this same parser on save and
      resolved by this same evaluator on every run. A query that does not parse
      cannot be saved as a policy, and neither can one with no conditions: it
-     would select every file under the policy's folder, unattended. A query
+     would select every file under the policy's folder, unattended. Nor can
+     one that uses a field this build cannot answer at all — `dupe:` today,
+     refused with `400 POLICY_QUERY_UNANSWERABLE` naming the policy and the
+     field — because that term is unknown for every file and the policy would
+     never do what its text says. (One an earlier build saved is not refused
+     while it stays unchanged: it selects nothing, and refusing it would block
+     every save of the list it rides in.) A query
      policy also never trashes a directory — `type:dir` is a fair thing to ask
      a query, and a different blast radius for something running while nobody
      is watching.
@@ -222,7 +228,19 @@ OpenAPI 3 spec).
      silent substring search** — `400 QUERY_PARSE_ERROR` carries `offset`,
      `length` and `expected`. `degraded[]` names any signal this machine cannot
      supply, so an empty result reads as "unknown" rather than "nothing
-     matched". `POST /api/query/validate` parses without running (it never
+     matched". A term whose signal is missing is **unknown, not false**, and
+     stays unknown through `-`, `or` and parentheses (Kleene logic): only a
+     definite match is returned, so `-dupe:yes` matches nothing rather than
+     everything, and an unknown can shrink a result but never grow one —
+     `degraded` then counts the files left undecided (`undecided`), so "could
+     not tell" never reads as "did not match". `used:never` is the case to
+     know: no reader records that a file was never opened — a missing
+     last-opened date means openings are not recorded there — so it matches
+     no file, says so in `degraded`, and is refused in a policy where it
+     would have to be true (`-used:never`, "has a last-opened date", is
+     answered — though alone it is no condition, nearly every file having a
+     date, and a policy of it alone is refused as `POLICY_MATCH_EMPTY`).
+     `POST /api/query/validate` parses without running (it never
      touches a scan); `GET /api/query/fields` serves the grammar so nothing
      duplicates it. `GET`/`POST`/`DELETE /api/queries` are saved views — a
      query that does not parse is refused rather than stored.

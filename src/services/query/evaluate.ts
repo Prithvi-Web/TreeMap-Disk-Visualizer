@@ -12,16 +12,22 @@ import type { Ast, CompareOp, Term } from './types';
  *
  * ── Absent is not false ──
  *
- * In the final answer, a term whose fact this machine cannot supply evaluates
- * to **false** — and the executor separately reports that provider as
- * degraded. Both halves are required by §2.2: a `backup:yes` query on a
- * machine with no backups must return an empty list *with a visible warning*,
- * not an empty list that reads as "nothing matched".
+ * A term whose fact this machine cannot supply is **unknown**, not false, and
+ * the whole query is evaluated in Kleene's three-valued logic: an unknown
+ * stays unknown under `-`, `unknown and false` is false, `unknown or true` is
+ * true, and only a definite true at the top matches. The executor separately
+ * reports the provider as degraded. Both halves are required by §2.2: a
+ * `backup:yes` query on a machine with no backups must return an empty list
+ * *with a visible warning*, not an empty list that reads as "nothing matched".
  *
- * But "not fetched yet" is a third state, and conflating it with false would
- * be a silent wrong answer rather than a slow one. `evaluateMaybe` at the
- * bottom of this file handles that with Kleene logic, which is what lets the
- * executor narrow to candidates first and pay for facts only on those.
+ * Reading unknown as plain false is the bug this rules out. It is harmless
+ * until something negates it: `-dupe:yes` — with nothing able to say any file
+ * is a duplicate — became "every file in the scan", and an Autopilot policy
+ * built from it selected everything under its folder. Kept three-valued, an
+ * unknown can make a result smaller, never larger.
+ *
+ * "Not fetched yet" is the same unknown, which is what lets the executor
+ * narrow to candidates first and pay for facts only on those.
  */
 
 /** One node, as the evaluator sees it. */
@@ -39,14 +45,19 @@ export interface EvalNode {
 
 export type GitState = 'pushed' | 'dirty' | 'none';
 export type BackupState = 'yes' | 'no' | 'unknown';
-export type CloudState = 'placeholder' | 'synced' | 'local-only';
+/**
+ * 'resident' is the evaluator's own: in a sync folder and on this disk, so no
+ * placeholder, while synced or local-only is what nobody could tell.
+ */
+export type CloudState = 'placeholder' | 'synced' | 'local-only' | 'resident';
 
 /**
  * Facts for one node.
  *
  * `undefined` and `null` mean different things and the distinction is load
  * bearing: `undefined` is "not fetched", `null` is "fetched, and genuinely
- * unknown". `used:never` matches the second and not the first.
+ * unknown". Neither decides a term: `used:never` included, since a null
+ * last-opened date means openings are not recorded, not that none happened.
  */
 export interface EvalFacts {
   lastUsedMs?: number | null;
@@ -216,27 +227,35 @@ export function matchTerm(term: Term, ctx: EvalContext, home: string): boolean {
     }
 
     case 'usedNever':
-      // Fetched and genuinely unknown. `undefined` — never fetched — is not a
-      // match: we do not know that it was never opened, only that we did not ask.
-      return facts.lastUsedMs === null;
+      // Decided only by a recorded date (termDecidable), and a recorded date
+      // means it was opened. No reader records "never opened": a missing date
+      // (null) means only that this machine does not record openings — a
+      // noatime mount, NTFS last-access tracking off — so it stays unknown,
+      // or a used:never policy there would select every file in its folder.
+      return false;
 
     case 'elsewhere': return facts.elsewhere !== undefined && term.values.includes(facts.elsewhere);
     case 'git': return facts.git !== undefined && term.values.includes(facts.git);
     case 'backup': return facts.backup !== undefined && term.values.includes(facts.backup);
-    case 'cloud': return facts.cloud !== undefined && facts.cloud !== null && term.values.includes(facts.cloud);
+    case 'cloud':
+      if (facts.cloud === 'resident') return term.values.includes('synced'); // decided only when synced and local-only agree
+      return facts.cloud !== undefined && facts.cloud !== null && term.values.includes(facts.cloud);
     case 'score': return facts.score !== undefined && compare(facts.score, term.op, term.value);
     case 'dupe': return facts.dupe !== undefined && facts.dupe === term.value;
   }
 }
 
-/** Evaluate a whole AST against one node. */
+/**
+ * Does this node DEFINITELY match the query?
+ *
+ * The three-valued answer, collapsed only at the top: `'maybe'` — a fact that
+ * was not or could not be supplied — is not a match. Collapsing any lower is
+ * the bug the header describes, because `-` would then turn "unknown" into
+ * "yes". One evaluator, so the candidate pass and the final pass cannot
+ * disagree about what unknown means.
+ */
 export function evaluate(ast: Ast, ctx: EvalContext, home: string): boolean {
-  switch (ast.kind) {
-    case 'term': return matchTerm(ast.term, ctx, home);
-    case 'not': return !evaluate(ast.operand, ctx, home);
-    case 'and': return evaluate(ast.left, ctx, home) && evaluate(ast.right, ctx, home);
-    case 'or': return evaluate(ast.left, ctx, home) || evaluate(ast.right, ctx, home);
-  }
+  return evaluateMaybe(ast, ctx, home) === true;
 }
 
 /**
@@ -253,7 +272,10 @@ export function isEmptyQuery(ast: Ast): boolean {
 
 /* --------------------------- three-valued evaluation --------------------------- */
 
-/** Kleene truth: a fact that has not been fetched yet is `'maybe'`, not false. */
+/**
+ * Kleene truth: a fact that has not been fetched yet, or that this machine
+ * could not supply, is `'maybe'`, not false.
+ */
 export type Maybe = true | false | 'maybe';
 
 /**
@@ -270,14 +292,21 @@ export type Maybe = true | false | 'maybe';
  */
 function termDecidable(term: Term, ctx: EvalContext): boolean {
   switch (term.kind) {
-    case 'usedNever': return ctx.facts.lastUsedMs !== undefined;
+    case 'usedNever': return ctx.facts.lastUsedMs != null;
     case 'date':
       if (term.field === 'modified') return true;
-      return term.field === 'used' ? ctx.facts.lastUsedMs !== undefined : ctx.facts.createdMs !== undefined;
+      // `null` is fetched and unrecorded (noatime, no birth time, a failed or
+      // capped stat): as unknown as never fetched, or `-used<90d` would match
+      // every file whose opening nobody records. `used:never` neither.
+      return (term.field === 'used' ? ctx.facts.lastUsedMs : ctx.facts.createdMs) != null;
     case 'elsewhere': return ctx.facts.elsewhere !== undefined;
     case 'git': return ctx.facts.git !== undefined;
     case 'backup': return ctx.facts.backup !== undefined;
-    case 'cloud': return ctx.facts.cloud !== undefined;
+    case 'cloud':
+      // 'resident' is one of synced or local-only, unknown which: decided
+      // only when the term names both or neither.
+      if (ctx.facts.cloud === 'resident') return term.values.includes('synced') === term.values.includes('local-only');
+      return ctx.facts.cloud !== undefined;
     case 'score': return ctx.facts.score !== undefined;
     case 'dupe': return ctx.facts.dupe !== undefined;
     // A non-directory is decidable (never empty); a directory needs its count.
@@ -291,11 +320,13 @@ function termDecidable(term: Term, ctx: EvalContext): boolean {
  *
  * This is what makes a two-pass executor possible, and correct. Pass one runs
  * with no facts at all and keeps everything that is not definitely false; only
- * those candidates pay for a fact lookup; pass two evaluates them properly.
+ * those candidates pay for a fact lookup; pass two evaluates them properly —
+ * through `evaluate`, which is this function required to say a definite true,
+ * so a fact that stayed missing after the lookup is still `'maybe'` there.
  *
- * The alternative — running the ordinary evaluator with facts absent — would
- * read every unfetched fact as false and discard the very rows the query is
- * about, which is a silent wrong answer rather than a slow one.
+ * The alternative — reading an unfetched fact as false — would discard the
+ * very rows the query is about in pass one, and in pass two would let `-`
+ * turn "we cannot tell" into "yes".
  *
  * Kleene's rules, and each matters here:
  *   AND  false if either is false, true only if both are true

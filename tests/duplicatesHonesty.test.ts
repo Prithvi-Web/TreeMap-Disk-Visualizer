@@ -177,3 +177,79 @@ test('a cloud scan does not inherit the previous local scan’s trash line', () 
   assert.match(cloud, /dupTrashOutcome = null/, 'the measured line belongs to the scan that produced it');
   assert.match(cloud, /renderDupNote\(\)/, 'and the panel is repainted so it actually goes');
 });
+
+/* ── the near-duplicate view: images not compared ── */
+
+interface NearState {
+  available: boolean;
+  reason?: string;
+  clusters: unknown[];
+  clusterCount: number;
+  totalReclaimable: number;
+  truncated: boolean;
+}
+
+/** The body of a named function in the built page, by brace matching. */
+function source(name: string): string {
+  const start = INDEX.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `${name} is in the built page`);
+  let depth = 0;
+  for (let i = INDEX.indexOf('{', start); i < INDEX.length; i++) {
+    if (INDEX[i] === '{') depth++;
+    else if (INDEX[i] === '}' && --depth === 0) return INDEX.slice(start, i + 1);
+  }
+  return assert.fail(`${name} never closes`);
+}
+
+/** Run the page's own renderNearDupes over `near`; what the summary line and the body show. */
+function renderNear(near: NearState): { summary: string; body: string; appended: number } {
+  const els: Record<string, { textContent: string; innerHTML: string }> = {
+    ndSummary: { textContent: '', innerHTML: '' },
+    ndBody: { textContent: '', innerHTML: '' },
+  };
+  let appended = 0;
+  const run = new Function(
+    '$', 'state', 'icon', 'FxNum', 'formatCount', 'formatBytes', 'ndAppendClusters', 'updateNdToolbar',
+    `let ndSentinelObserver = null;\n${source('escapeHtml')}\n${source('renderNearDupes')}\nrenderNearDupes();`,
+  );
+  run(
+    (id: string) => els[id] ?? assert.fail(`renderNearDupes touched #${id}`),
+    { near: { ...near, loadedFor: 'k' } },
+    (name: string) => `[${name}]`,
+    { rollHtml: (el: { innerHTML: string }, html: string) => { el.innerHTML = html; } },
+    String,
+    (n: number) => `${n} B`,
+    () => { appended++; },
+    () => {},
+  );
+  return { summary: els.ndSummary!.textContent + els.ndSummary!.innerHTML, body: els.ndBody!.innerHTML, appended };
+}
+
+const LEFT_OUT = '3 images were not compared: TreeMap could not confirm their data is on this disk, and opening one could download it.';
+const none: NearState = { available: true, clusters: [], clusterCount: 0, totalReclaimable: 0, truncated: false };
+
+test('near-duplicates: images the pass could not vouch for are named, and an empty result is not called tidy', () => {
+  // The job leaves out any image it could not confirm is on this disk (opening
+  // it could download it) and says how many in `reason`. "Your image library
+  // looks tidy" over a result with a hole in it is the claim nobody checked.
+  const empty = renderNear({ ...none, reason: LEFT_OUT });
+  assert.ok(empty.body.includes(LEFT_OUT), `the reason is shown: ${empty.body}`);
+  assert.doesNotMatch(empty.body, /tidy/, 'and the library is not called tidy');
+  assert.match(empty.summary, /among the images compared/, `the summary says what was searched: ${empty.summary}`);
+
+  const found = renderNear({ ...none, reason: LEFT_OUT, clusters: [{}], clusterCount: 1, totalReclaimable: 10 });
+  assert.ok(found.body.includes(LEFT_OUT), `a result with groups names what it left out too: ${found.body}`);
+  assert.equal(found.appended, 1, 'and still lists the groups');
+
+  // Unchanged when nothing was left out.
+  const tidy = renderNear(none);
+  assert.match(tidy.body, /tidy/, 'with every image compared, an empty result is a finding');
+  assert.equal(tidy.summary, 'No near-duplicate images found.');
+  assert.ok(!renderNear({ ...none, clusters: [{}], clusterCount: 1 }).body.includes('not compared'), 'and no note is invented');
+});
+
+test('near-duplicates: the reason is shown as text, never as markup', () => {
+  const r = renderNear({ ...none, reason: '<img src=x onerror=alert(1)> were not compared' });
+  assert.ok(r.body.includes('&lt;img src=x onerror=alert(1)&gt; were not compared'), `escaped: ${r.body}`);
+  assert.ok(!r.body.includes('<img'), 'no element is made from it');
+});

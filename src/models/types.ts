@@ -488,8 +488,9 @@ export interface NearDupeJob {
   threshold: number;
   /** Image decoder actually used, or 'none' when none was available. */
   decoder: 'sharp' | 'ffmpeg' | 'none';
-  /** False when no image decoder could be loaded — the UI shows a hint instead of clusters. */
+  /** False when no image decoder could be loaded, or no image could be confirmed on this disk — the UI shows the reason instead of clusters. */
   available: boolean;
+  /** Why it is unavailable; while available, how many images were not compared because nobody could confirm their data is on this disk. */
   reason?: string;
   /** Hashing progress for the UI. */
   hashed: number;

@@ -17,9 +17,11 @@ import {
   createScanRecord,
   getScan,
   scanExpired,
+  setRootCheckForTests,
   startScan,
   SCAN_CANCELLED_MESSAGE,
 } from '../src/services/diskScanner';
+import { waitFor } from './fixtures/waitFor';
 
 const ROOT = path.sep === '\\' ? 'C:\\root' : '/root';
 
@@ -182,6 +184,48 @@ test('a cancelled real scan writes no snapshot and no rescan cache', async () =>
       [],
       'a partial walk must never poison the fast-rescan cache or Trends',
     );
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('a cancel that lands while the scan re-checks its root leaves it cancelled, on every engine', async () => {
+  // Every engine checks `cancelled`, then awaits one last look at the root
+  // (a root deleted mid-scan is the scan's own error), then marks the record
+  // complete. A cancel landing inside that await settled the record as
+  // cancelled and was then overwritten: 'complete', the tree published, the
+  // rescan cache written. Seen on CI's macOS leg, 25 Sep 2026, by the timed
+  // test above. Here the root check itself delivers the cancel, so the
+  // window is hit every time rather than now and then.
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-cancel-window-'));
+  const dataDir = process.env.TREEMAP_DATA_DIR!;
+  try {
+    for (let i = 0; i < 5; i++) fs.writeFileSync(path.join(fixture, `f${i}.bin`), Buffer.alloc(1024, i));
+    const before = fs.existsSync(dataDir) ? fs.readdirSync(dataDir) : [];
+    let checks = 0;
+    let cancelledInside: boolean | null = null;
+    let scanId = '';
+    setRootCheckForTests(async () => {
+      checks++;
+      cancelledInside = cancelScan(scanId);
+    });
+    process.env.TREEMAP_NO_GDU = '1';
+    try {
+      const scan = await startScan(fixture, {});
+      scanId = scan.scanId;
+      await waitFor(() => checks > 0 || getScan(scanId)?.status !== 'running', 'the scan reaching its root check');
+    } finally {
+      delete process.env.TREEMAP_NO_GDU;
+      setRootCheckForTests(null);
+    }
+    assert.equal(checks, 1, 'the root was checked once, as the scan finished');
+    assert.equal(cancelledInside, true, 'the cancel found the scan still running');
+    const settled = getScan(scanId)!;
+    assert.deepEqual([settled.status, settled.error, settled.store], ['error', SCAN_CANCELLED_MESSAGE, undefined],
+      'and it stays cancelled: no tree is published');
+    const added = (fs.existsSync(dataDir) ? fs.readdirSync(dataDir) : []).filter((n) => !before.includes(n));
+    assert.deepEqual(added.filter((n) => n.startsWith('mtime-cache-') || n === 'snapshots.json'), [],
+      'nor is a rescan cache or a snapshot written');
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
   }

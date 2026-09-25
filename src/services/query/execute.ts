@@ -5,9 +5,9 @@ import { getScan } from '../diskScanner';
 import { storeOf } from '../scanStore';
 import { computeFacts } from '../facts';
 import { capabilityState } from '../../platform/capabilities';
-import { evaluate, evaluateMaybe, isEmptyQuery, type EvalFacts, type EvalNode } from './evaluate';
+import { evaluateMaybe, isEmptyQuery, type CloudState, type EvalFacts, type EvalNode } from './evaluate';
 import { factsNeeded } from './parse';
-import type { Ast } from './types';
+import type { Ast, Term } from './types';
 import type { RecoverabilityFact } from '../recoverabilityTypes';
 import type { LastUsedInfo } from '../../platform/types';
 import type { ReclaimScoreFactValue } from '../facts';
@@ -76,21 +76,29 @@ export interface ExecuteOptions {
 /* ------------------------------ fact plumbing ------------------------------ */
 
 /** Map a recoverability fact onto the enum values the grammar exposes. */
-export function gitStateOf(fact: RecoverabilityFact): 'pushed' | 'dirty' | 'none' {
+export function gitStateOf(fact: RecoverabilityFact): 'pushed' | 'dirty' | 'none' | undefined {
   const git = fact.git;
+  // A git call that failed leaves `git` null AND says so in `unavailable`:
+  // unknown, as gitVerdict calls it — never "none", or `git:none` would match
+  // files inside a repository nobody could read.
+  if (!git && fact.unavailable.some((u) => u.signal === 'git')) return undefined;
   if (!git || !git.hasRemote) return 'none';
   if (git.fullyPushed && git.pathTracked) return 'pushed';
   return 'dirty';
 }
 
-export function cloudStateOf(fact: RecoverabilityFact): 'placeholder' | 'synced' | 'local-only' | null {
+export function cloudStateOf(fact: RecoverabilityFact): CloudState | null | undefined {
   const cloud = fact.cloud;
-  if (!cloud) return null;
+  // null is "outside every sync folder"; a client that could not be read, or
+  // that calls the file's state unknown, is undefined: unknown, so neither
+  // `cloud:local-only` nor `-cloud:local-only` matches it. One the platform
+  // reads as here is 'resident': no placeholder, upload state unknown.
+  if (!cloud) return fact.unavailable.some((u) => u.signal === 'cloud') ? undefined : null;
   switch (cloud.state) {
     case 'placeholder': return 'placeholder';
     case 'synced-local': return 'synced';
     case 'local-only': return 'local-only';
-    default: return null;
+    default: return cloud.resident === true ? 'resident' : undefined;
   }
 }
 
@@ -179,10 +187,80 @@ async function degradedProviders(needed: Set<string>): Promise<Map<string, strin
   if (needed.has('duplicates')) {
     // Truthful: there is no wiring from the duplicate job into the query
     // evaluator yet. The earlier wording promised that running the Duplicates
-    // view would make this filter work, which it does not.
-    degraded.set('duplicates', 'TreeMap cannot filter by duplicates yet, so "dupe:" matches nothing. Use the Duplicates view for now.');
+    // view would make this filter work, which it does not. "Neither" is now
+    // true as well: `-dupe:yes` used to match every file.
+    degraded.set('duplicates', 'TreeMap cannot filter by duplicates yet, so neither "dupe:" nor "-dupe:" matches any file. Use the Duplicates view for now.');
   }
   return degraded;
+}
+
+/**
+ * Fields the grammar accepts that this build has no source for at all — on
+ * any machine, for any file.
+ *
+ * Different in kind from a degraded provider, which some machines can answer.
+ * Under three-valued logic a term on one of these fields is unknown for every
+ * file, so it can never contribute a match: it sinks whatever it is ANDed
+ * with, and beside an `or` it is dead weight. A query shown to a person says
+ * so in `degraded`; an Autopilot policy reports no `degraded` on its runs, so
+ * it refuses these at save time instead (autopilot.ts `normalizePolicy`).
+ *
+ * `used:never` is half of one: no reader records that a file was never
+ * opened, so the term is unknown or false for every file and can never match
+ * — while its negation, "has a last-opened date", is decided wherever one is
+ * recorded. So it is refused only where it would have to be true.
+ */
+export interface Unanswerable {
+  /** As a person would write it, quoted: `"dupe:"`. */
+  named: string;
+  /** Completes "uses <named>, which …". */
+  which: string;
+  instead: string;
+  /** True when only a term that must be true is dead; its negation answers. */
+  negationAnswers: boolean;
+}
+
+const UNANSWERABLE: Partial<Record<Term['kind'], Unanswerable>> = {
+  dupe: {
+    named: '"dupe:"',
+    which: 'TreeMap cannot answer yet — it cannot tell which files are duplicates — so the condition never matches a file, and neither does its opposite',
+    instead: 'Use the Duplicates view to clear duplicates by hand.',
+    negationAnswers: false,
+  },
+  usedNever: {
+    named: '"used:never"',
+    which: 'nothing on this computer can confirm — a missing last-opened date means openings are not recorded, not that a file was never opened — so the condition never matches a file',
+    instead: 'To find files not opened in a year, use "used>1y".',
+    negationAnswers: true,
+  },
+};
+
+/** The unanswerable fields a query uses where they would have to be true, each once, in the order they appear. */
+export function unanswerableFields(ast: Ast): Unanswerable[] {
+  const found = new Set<Unanswerable>();
+  const walk = (node: Ast, negated: boolean): void => {
+    switch (node.kind) {
+      case 'term': {
+        const entry = UNANSWERABLE[node.term.kind];
+        if (entry && !(negated && entry.negationAnswers)) found.add(entry);
+        return;
+      }
+      case 'not': walk(node.operand, !negated); return;
+      case 'and':
+      case 'or': walk(node.left, negated); walk(node.right, negated); return;
+    }
+  };
+  walk(ast, false);
+  return [...found];
+}
+
+/**
+ * Is the whole query "has a last-opened date" and nothing else? Where access
+ * times are kept that is nearly every file, so as a policy it is the "no
+ * conditions" case, whatever it spells.
+ */
+export function isOnlyHasBeenOpened(ast: Ast): boolean {
+  return ast.kind === 'not' && ast.operand.kind === 'term' && ast.operand.term.kind === 'usedNever';
 }
 
 /* -------------------------------- execution -------------------------------- */
@@ -218,6 +296,9 @@ export async function executeAgainstScan(
   const now = Date.now();
   const needed = factsNeeded(ast);
   const degraded = await degradedProviders(needed);
+  if (unanswerableFields(ast).some((u) => u === UNANSWERABLE.usedNever)) {
+    degraded.set('usedNever', 'Nothing on this computer records that a file was never opened — a missing last-opened date means openings are not recorded there — so "used:never" matches no file. "-used:never" matches files that have a last-opened date, and "used>1y" finds files not opened in a year.');
+  }
 
   // An empty box means "no filter", not "match nothing" — the original parser
   // reports the empty query as matching nothing, which is right for a
@@ -230,8 +311,12 @@ export async function executeAgainstScan(
   let statsSpent = 0;
   let statsCapped = 0;
   let statsFailed = 0;
+  // Set when the last createdOf call could not read a date (capped or
+  // failed): that file is already counted in `created`/`createdUnreadable`.
+  let statGap = false;
   const createdOf = (p: string): number | null => {
-    if (statsSpent >= STAT_CAP) { statsCapped++; return null; }
+    statGap = false;
+    if (statsSpent >= STAT_CAP) { statsCapped++; statGap = true; return null; }
     statsSpent++;
     try {
       const st = fs.statSync(p);
@@ -241,6 +326,7 @@ export async function executeAgainstScan(
       // Unreadable — a permission the process lacks. Counted, and reported, so
       // it does not become a silent "this file does not match your query".
       statsFailed++;
+      statGap = true;
       return null;
     }
   };
@@ -300,12 +386,20 @@ export async function executeAgainstScan(
   }
 
   const hits: QueryHit[] = [];
+  let undecided = 0;
   for (const node of candidates) {
     if (opts.signal.aborted) { aborted = true; break; }
     const facts = factsByPath.get(node.path) ?? {};
     // The only place a stat happens: candidates, once each.
+    statGap = false;
     if (wantsCreated) facts.createdMs = createdOf(node.path);
-    if (!evaluate(ast, { node, facts, now }, home)) continue;
+    // Still three-valued: a fact the lookup could not supply is unknown, and
+    // unknown is not a match — under `-` too, or `-dupe:yes` is every file.
+    // Counted, so "could not tell" is never read as "did not match" — once:
+    // a date the stat could not read is already counted with its reason.
+    const verdict = evaluateMaybe(ast, { node, facts, now }, home);
+    if (verdict === 'maybe' && !statGap) undecided++;
+    if (verdict !== true) continue;
     hits.push({ path: node.path, name: node.name, size: node.size, isDir: node.isDir, mtimeMs: node.mtimeMs });
   }
 
@@ -316,7 +410,11 @@ export async function executeAgainstScan(
     degraded.set('created', `Creation dates were read for ${formatCount(statsSpent)} items; ${formatCount(statsCapped)} more were skipped. No scan records creation times, so each one costs a separate read.`);
   }
   if (statsFailed > 0) {
-    degraded.set('createdUnreadable', `${formatCount(statsFailed)} item${statsFailed === 1 ? '' : 's'} could not be read to find a creation date, so they are not in these results.`);
+    degraded.set('createdUnreadable', `${formatCount(statsFailed)} item${statsFailed === 1 ? '' : 's'} could not be read to find a creation date, so ${statsFailed === 1 ? 'it is' : 'they are'} not in these results.`);
+  }
+  if (undecided > 0) {
+    const one = undecided === 1;
+    degraded.set('undecided', `${formatCount(undecided)} item${one ? '' : 's'} could not be decided — a fact this query needs was not available for ${one ? 'it' : 'them'} — so ${one ? 'it is' : 'they are'} not in these results.`);
   }
   if (aborted) {
     // A half-finished walk must never be handed back as a confident total.

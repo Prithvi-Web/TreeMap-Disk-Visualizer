@@ -1,7 +1,9 @@
 import { execFile } from 'child_process';
+import { promises as fsp } from 'fs';
 import { promisify } from 'util';
 import { ScanResult, NearDupeCluster, NearDupeJob } from '../models/types';
 import { storeOf, Flag } from './scanStore';
+import { stillLocal } from './dataLocality';
 
 /** The fields a candidate image needs once the cap has landed. */
 interface CandidateImage {
@@ -27,6 +29,11 @@ import { peekScan } from './diskScanner';
  * `ffmpeg` shell-out, else the feature reports itself unavailable rather than
  * crashing. Hashing + O(n²) clustering run as a background job per scanId,
  * polled exactly like the exact-duplicate finder.
+ *
+ * Nothing is decoded that would make a sync client download it (the master
+ * prompt §3.2, RISKS R1 and R71), by the exact finder's rule: a cloud
+ * placeholder or a link is never a candidate, and a candidate is asked about
+ * again just before the decodes begin.
  */
 
 /** Image types we fingerprint. Exported so the duplicate viewer (§8.2) asks
@@ -38,11 +45,34 @@ export const IMAGE_EXT = new Set([
 const MIN_IMAGE_BYTES = 4 * 1024;
 /** Bound the O(n²) clustering; largest images are kept when over the cap. */
 const MAX_IMAGES = 8000;
+/** Paths per locality ask: one synchronous native call each, with the event loop let through between them. */
+const LOCALITY_CHUNK = 256;
 
 /** dHash stored as two 32-bit halves so Hamming distance avoids slow BigInt.
  * Bit i of the 64 (0–63) lives in `lo` for i<32, else in `hi` at i−32, and
  * corresponds to row ⌊i/8⌋, col i%8 of the 8×8 comparison grid. */
 export type DHash = [hi: number, lo: number];
+
+/** Test-only: told of every image path this pass or the duplicate viewer hands to a decoder, before it is handed over. */
+let imageOpenObserver: ((file: string) => void) | null = null;
+
+/** Test-only: watch what this pass and the duplicate viewer open (null stops watching). */
+export function observeImageOpensForTests(observer: ((file: string) => void) | null): void {
+  imageOpenObserver = observer;
+}
+
+/**
+ * `filePath`, on its way to a decoder. This pass and the duplicate viewer
+ * hand an image path to sharp or ffmpeg only wrapped in this — the
+ * fingerprint (hashImage) and the viewer's header read — so a test hears of
+ * each of their opens before it happens, one whose decode then fails
+ * included. (makeThumbnail, the thumbnail cache's renderer, is not one of
+ * them.)
+ */
+export function openingImage(filePath: string): string {
+  imageOpenObserver?.(filePath);
+  return filePath;
+}
 
 const jobs = new Map<string, NearDupeJob>();
 
@@ -123,7 +153,46 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
     candidates.length = MAX_IMAGES;
     truncated = true;
   }
-  const images: CandidateImage[] = candidates.map(({ id, size }) => ({
+  // Decoding an online-only file downloads it, and a sync client can evict a
+  // file after its scan (RISKS R71), so just before any decode each kept
+  // image is asked about again — of its directory entry, never the file —
+  // a chunk at a time, so a long list never holds the event loop. One whose
+  // data has left is left out as a placeholder is. One nobody could vouch
+  // for is left out too (no answer is not a yes), and that is a gap in the
+  // answer, so the job says how many; with none compared at all it is
+  // unavailable, since an empty list would read as "none found".
+  const local = new Set<number>();
+  let unconfirmed = 0;
+  for (let at = 0; at < candidates.length; at += LOCALITY_CHUNK) {
+    if (at > 0) await new Promise<void>((resolve) => setImmediate(resolve));
+    if (job.cancelled) return;
+    const chunk = candidates.slice(at, at + LOCALITY_CHUNK).map((c) => c.id);
+    const settled = new Set<number>();
+    for (const id of stillLocal(chunk, (i) => store.path(i), (i) => { settled.add(i); })) {
+      local.add(id);
+      settled.add(id);
+    }
+    // No answer is not a yes. It is not "could be online-only" either when
+    // the entry is simply gone: nothing updates a scan when its files are
+    // trashed, and the ask answers "could not tell" for a missing path.
+    for (const id of chunk) {
+      if (settled.has(id)) continue;
+      if (await deletedSinceScan(store.path(id))) continue;
+      unconfirmed++;
+    }
+  }
+  if (unconfirmed > 0 && local.size === 0) {
+    job.available = false;
+    job.reason = 'No image was compared: TreeMap could not confirm that the images are on this disk, and opening one that is online-only would download it. Near-duplicates are unknown here, not none.';
+    finishEmpty(job);
+    return;
+  }
+  if (unconfirmed > 0) {
+    job.reason = unconfirmed === 1
+      ? '1 image was not compared: TreeMap could not confirm its data is on this disk, and opening it could download it.'
+      : `${unconfirmed} images were not compared: TreeMap could not confirm their data is on this disk, and opening one could download it.`;
+  }
+  const images: CandidateImage[] = candidates.filter((c) => local.has(c.id)).map(({ id, size }) => ({
     name: store.name(id),
     path: store.path(id),
     size,
@@ -205,6 +274,17 @@ async function runJob(scan: ScanResult, job: NearDupeJob): Promise<void> {
   job.truncated = truncated; // reflects the MAX_IMAGES cap only
   job.status = 'complete';
   job.finishedAt = Date.now();
+}
+
+/** Is the directory entry gone? Only a definite "no such entry" counts; any other failure is not an answer. */
+async function deletedSinceScan(filePath: string): Promise<boolean> {
+  try {
+    await fsp.lstat(filePath);
+    return false;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR';
+  }
 }
 
 function finishEmpty(job: NearDupeJob): void {
@@ -314,7 +394,7 @@ export async function hashImage(filePath: string, decoder: NearDupeJob['decoder'
     if (decoder === 'sharp') {
       const sharp = loadSharp();
       if (!sharp) return null;
-      gray = await sharp(filePath, { failOn: 'none', animated: false })
+      gray = await sharp(openingImage(filePath), { failOn: 'none', animated: false })
         .greyscale()
         .resize(9, 8, { fit: 'fill' })
         .raw()
@@ -333,7 +413,7 @@ export async function hashImage(filePath: string, decoder: NearDupeJob['decoder'
 async function ffmpegGray(filePath: string): Promise<Buffer> {
   const { stdout } = await exec(
     'ffmpeg',
-    ['-v', 'error', '-i', filePath, '-frames:v', '1', '-vf', 'scale=9:8', '-f', 'rawvideo', '-pix_fmt', 'gray', '-'],
+    ['-v', 'error', '-i', openingImage(filePath), '-frames:v', '1', '-vf', 'scale=9:8', '-f', 'rawvideo', '-pix_fmt', 'gray', '-'],
     { timeout: 15000, maxBuffer: 1024, encoding: 'buffer' }
   );
   return stdout as Buffer;

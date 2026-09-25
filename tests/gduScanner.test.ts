@@ -146,37 +146,45 @@ test('gdu and the walker report identical bytes and hardlinks on the same tree',
 });
 
 /**
- * Is this one of `gduScan`'s own temp directories?
- *
- * `gduScanner.ts` creates them with `mkdtemp(tmpdir()/'treemap-gdu-')`, so the
- * name is that prefix plus exactly the six characters `mkdtemp` appends —
- * never another hyphen.
- *
- * The precision matters because the test below asserts that nothing survived,
- * and the whole suite shares one `os.tmpdir()`. A `startsWith('treemap-gdu-')`
- * filter also claimed `treemap-gdu-precision-XXXXXX`, which
- * `incrementalRescan.test.ts` creates for a completely unrelated fixture, and
- * the two files run concurrently — so whether this test passed depended on
- * which one happened to be mid-flight. It failed exactly that way once in this
- * session, reporting another test's fixture as a leaked temp directory.
- *
- * The bug class is the one this repo keeps finding: something unrecognised
- * read as a fact about our own code. Here it costs a red CI run rather than
- * data, but the shape is identical.
+ * Run `fn` with `os.tmpdir()` answering `dir`. Node reads TMPDIR (TEMP and TMP
+ * on Windows) on every call, so the scan below makes its temp folder there.
  */
-function isGduTemp(name: string): boolean {
-  return /^treemap-gdu-[A-Za-z0-9]{6}$/.test(name);
+async function withTempDir<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+  const keys = process.platform === 'win32' ? ['TEMP', 'TMP'] : ['TMPDIR'];
+  const saved = keys.map((k) => [k, process.env[k]] as const);
+  for (const k of keys) process.env[k] = dir;
+  try {
+    assert.equal(path.resolve(os.tmpdir()), path.resolve(dir), 'os.tmpdir() answers the folder handed in');
+    return await fn();
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 }
 
 test('gduScan removes its temp files even when a shard fails', async (t) => {
   const bin = await findGduBinary();
   if (!bin) return skipOrFailOnCi(t, 'gdu not available on this machine');
 
-  const before = (await fsp.readdir(os.tmpdir())).filter(isGduTemp);
-  const scan = createScanRecord('/definitely/not/a/real/path');
-  await assert.rejects(() => gduScan(scan, bin, () => undefined));
-  const after = (await fsp.readdir(os.tmpdir())).filter(isGduTemp);
-  assert.deepEqual(after, before, "no directory of gduScan's own may survive a failure");
+  // A temp folder of this test's own. The shared one is not a fact about this
+  // scan: every test file that scans with gdu makes its own treemap-gdu-XXXXXX
+  // there while it runs, concurrently with this one, and one that appeared
+  // between two listings of the shared folder read as this scan's leak (seen
+  // 25 Sep 2026 on the Linux CI simulation).
+  const own = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-gdu-test-'));
+  try {
+    const scan = createScanRecord('/definitely/not/a/real/path');
+    const made: string[] = [];
+    await withTempDir(own, async () => {
+      await assert.rejects(() => gduScan(scan, bin, () => undefined));
+      made.push(...fs.readdirSync(own));
+    });
+    assert.deepEqual(made, [], "no directory of gduScan's own may survive a failure");
+  } finally {
+    fs.rmSync(own, { recursive: true, force: true });
+  }
 });
 
 test('a cancelled scan stops sharding instead of walking the whole tree', async (t) => {

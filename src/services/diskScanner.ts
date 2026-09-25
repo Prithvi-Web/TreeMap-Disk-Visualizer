@@ -155,6 +155,14 @@ async function assertRootStillThere(rootPath: string): Promise<void> {
   }
 }
 
+/** The last look at the root before a scan settles; replaceable in tests, to land a cancel inside it. */
+let rootCheck: (rootPath: string) => Promise<void> = assertRootStillThere;
+
+/** Test seam: `fn` stands in for the root check every engine awaits before it settles; null puts the real one back. */
+export function setRootCheckForTests(fn: ((rootPath: string) => Promise<void>) | null): void {
+  rootCheck = fn ?? assertRootStillThere;
+}
+
 /** Retention after a scan settles — or after it was last read, whichever is later. */
 export const SCAN_TTL_MS = 30 * 60 * 1000;
 /**
@@ -299,10 +307,12 @@ export const SCAN_CANCELLED_MESSAGE = 'Scan stopped by user';
  *    'running' forever: the SSE timer in scanRoutes only ends on
  *    `status !== 'running'`, so the stream would keep beating and the UI would
  *    keep spinning. Settling first makes every one of those returns a no-op.
- *    It is race-free because each engine runs from its cancellation check to
- *    `status = 'complete'` without an await in between — a scan that beat us
- *    to the line really did complete, and `status !== 'running'` below leaves
- *    it alone rather than rewriting a finished scan as an error.
+ *    It is race-free because settleComplete, the one place any engine marks a
+ *    scan complete, does nothing to a record that is no longer running: a
+ *    cancel that lands in an engine's last await (the root check) stays a
+ *    cancel. A scan that beat us to the line really did complete, and
+ *    `status !== 'running'` below leaves it alone rather than rewriting a
+ *    finished scan as an error.
  *
  * 2. **`finishedAt` is not optional.** `scanExpired` falls back to `createdAt`
  *    when it is missing, so cancelling a walk that started more than the
@@ -492,6 +502,11 @@ export function keepsScan(scan: Pick<ScanResult, 'engine'>): boolean {
 }
 
 function settleComplete(scan: ScanResult, store: ScanStore): void {
+  // Every engine awaits one last look at the root after its cancellation
+  // check, and a cancel can land inside that await: the record is then
+  // settled as cancelled, and the finished walk must not overwrite it,
+  // publish its tree or write the rescan cache and history.
+  if (scan.status !== 'running') return;
   scan.store = store;
   scan.status = 'complete';
   scan.finishedAt = Date.now();
@@ -696,7 +711,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
         if (scan.cancelled) return;
         if (outcome.used) {
           scan.engineReason = outcome.reason;
-          await assertRootStillThere(scan.rootPath);
+          await rootCheck(scan.rootPath);
           settleComplete(scan, store);
           return;
         }
@@ -724,7 +739,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
       try {
         await runNativeWalk(scan, store, rootPath, native.module);
         if (scan.cancelled) return;
-        await assertRootStillThere(scan.rootPath);
+        await rootCheck(scan.rootPath);
         settleComplete(scan, store);
         return;
       } catch (err) {
@@ -753,7 +768,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
           scan.engineReason = legacyReason('gdu', [...why, 'a gdu binary is available and the scan is a full walk with no ignore list']);
           const store = await gduScanIntoStore(scan, bin, cloudProviderFor);
           if (scan.cancelled) return;
-          await assertRootStillThere(scan.rootPath);
+          await rootCheck(scan.rootPath);
           settleComplete(scan, store);
           return;
         }
@@ -934,7 +949,7 @@ async function walk(scan: ScanResult, rootIsDir: boolean, ignore: CompiledIgnore
     await drainQueue(scan, store, [{ id: store.rootId, path: scan.rootPath, cached: null, revalidate: false }], ignore, cache, new Set<string>());
   }
   if (scan.cancelled) return;
-  await assertRootStillThere(scan.rootPath); // ENOENT here is the scan's own error, not a partial result
+  await rootCheck(scan.rootPath); // ENOENT here is the scan's own error, not a partial result
 
   store.finalize();
   store.sumSizes();

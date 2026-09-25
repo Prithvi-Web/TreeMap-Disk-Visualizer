@@ -174,6 +174,9 @@ test('the cache key separates path, mtime, size and dimension', () => {
   // Rounded, because lstat hands back a float and sub-millisecond drift is not
   // a content change.
   assert.equal(a, thumbnailCacheKey('/a/b.png', 1000.4, 50, 256));
+  // The exact key: SHA-1 of the four parts joined by NUL, which no path can
+  // hold. Pinned so the key's text can change form without changing value.
+  assert.equal(a, '364b7ee2abc0d1d24eff58dc3219632624ff1b06', 'path, mtime, size and dimension joined by NUL');
 });
 
 test('concurrent requests for one image share a single decode', { skip: !sharpAvailable }, async () => {

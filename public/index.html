@@ -4187,6 +4187,10 @@ button.fx-bar-row:focus-visible { outline: 2px solid var(--accent); outline-offs
                first-run preview. -->
           <button class="btn" id="cleanPromoteBtn" title="Turn this rule into a scheduled Autopilot policy — you approve its first run before it deletes anything"><span data-icon="sparkles"></span>Make this an Autopilot policy</button>
         </div>
+        <!-- Why a rule set could not become a policy, beside the button that
+             was pressed — promoteRuleToPolicy writes it, and it stays until
+             the rules change or the pane is reopened. -->
+        <div class="muted" id="cleanPromoteWhy" role="status" aria-live="polite" style="margin:2px 0 6px;" hidden></div>
         <div id="cleanResults"></div>
       </div>
       <div id="cleanPaneSmart" class="pane-fade" style="display:none;">
@@ -8343,9 +8347,10 @@ function quietRescanFailed(e) {
 }
 
 /**
- * Build the ScanStats shape from a /result response, whose counters sit at the
- * top level rather than under `stats`. Keeps the SSE path and the watchdog
- * fallback painting from identical data.
+ * Build what it can of the ScanStats shape from a /result response, whose
+ * counters sit at the top level rather than under `stats`. Only for when the
+ * stats request itself fails: /result carries no engine reason, budget,
+ * refused folders or expiry, so this shape is the lesser of the two.
  */
 function statsFromResult(r) {
   return {
@@ -8376,7 +8381,12 @@ function statsFromResult(r) {
  */
 async function scanStatsFor(scanId, result) {
   try {
-    return statsFromResult({ ...result, ...await api(`/api/scan/${scanId}/stats`) });
+    // buildScanStats plus the record's id and status: exactly the `stats` a
+    // complete frame carries, so a recovered scan paints from the same keys.
+    // Copying a fixed list of them dropped the engine's reason and fallback,
+    // the budget, the refused folders and the expiry after a stalled stream.
+    const { scanId: _scanId, status: _status, ...stats } = await api(`/api/scan/${scanId}/stats`);
+    return stats;
   } catch {
     return statsFromResult(result);
   }
@@ -29070,9 +29080,13 @@ function renderNearDupes() {
     return;
   }
   const clusters = n.clusters;
+  // Images the pass could not confirm were on this disk were never compared,
+  // and the job says how many: a hole in the answer, never a finding.
+  const leftOut = n.reason
+    ? `<div class="nd-note">${icon('alert', 14)} ${escapeHtml(n.reason)}</div>` : '';
   if (!clusters.length) {
-    $('ndSummary').textContent = 'No near-duplicate images found.';
-    body.innerHTML = `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No similar images above the match threshold — your image library looks tidy.</div></div>`;
+    $('ndSummary').textContent = n.reason ? 'No near-duplicate images found among the images compared.' : 'No near-duplicate images found.';
+    body.innerHTML = leftOut || `<div class="card glass"><div class="muted" style="display:flex;align-items:center;gap:8px;">${icon('checkCircle', 15)} No similar images above the match threshold — your image library looks tidy.</div></div>`;
     updateNdToolbar();
     return;
   }
@@ -29082,7 +29096,7 @@ function renderNearDupes() {
     (n.clusterCount > clusters.length ? ` <span class="num">(top ${clusters.length} shown)</span>` : ''), state.near.loadedFor);
   const note = n.truncated
     ? `<div class="nd-note">${icon('alert', 14)} Only the largest images were compared — some smaller images may not be grouped.</div>` : '';
-  body.innerHTML = note + '<div class="nd-list"></div>';
+  body.innerHTML = note + leftOut + '<div class="nd-list"></div>';
   ndAppendClusters();
   updateNdToolbar();
 }
@@ -30483,6 +30497,7 @@ function setCleanRuleSource(src) {
     b.setAttribute('aria-selected', String(b.dataset.rulesrc === cleanRuleSource)));
   $('cleanRuleSimple').style.display = cleanRuleSource === 'simple' ? '' : 'none';
   $('cleanRuleQuery').style.display = cleanRuleSource === 'query' ? '' : 'none';
+  $('cleanPromoteWhy').hidden = true; // a refusal about the other source's rules
   if (cleanRuleSource === 'query') void fillCleanSavedViews();
 }
 
@@ -30525,6 +30540,8 @@ $('cleanSavedView').addEventListener('change', showCleanSavedViewQuery);
  * delete anything, exactly like one typed from scratch.
  */
 function promoteRuleToPolicy() {
+  const why = $('cleanPromoteWhy');
+  why.hidden = true; why.textContent = '';
   if (!state.root) { toast('Scan a folder first — a policy needs somewhere to work', 'error'); return; }
   let match;
   let name;
@@ -30541,6 +30558,17 @@ function promoteRuleToPolicy() {
       // flag is not part of AutopilotMatch — so saying so is better than
       // silently promoting a rule that means something different.
       toast('Set an age, size or extension rule first — the duplicates-only rule cannot run unattended', 'error', 8000);
+      return;
+    }
+    if ($('ruleDupOn').checked) {
+      // Find ANDs the duplicate rule with the others, and no policy can: the
+      // custom kind has no duplicate flag and the query field `dupe:` is not
+      // wired yet. Promoting the rest would build a policy WIDER than what was
+      // just shown — an unattended deleter of everything the other rules match.
+      // So it is refused here, before the editor opens, rather than dropped.
+      why.textContent = 'The “Duplicates only” rule cannot be carried into an Autopilot policy: a policy has no way to check for duplicates, so it would trash everything your other rules match, duplicate or not. Untick Duplicates only to make a policy from the other rules.';
+      why.hidden = false;
+      toast(why.textContent, 'error', 10000);
       return;
     }
     match = { kind: 'custom' };
@@ -30567,6 +30595,7 @@ function promoteRuleToPolicy() {
   toast('Pre-filled — nothing is scheduled until you save it, and its first run is always a preview you approve.', 'success', 9000);
 }
 $('cleanPromoteBtn').addEventListener('click', promoteRuleToPolicy);
+$('ruleDupOn').addEventListener('change', () => { $('cleanPromoteWhy').hidden = true; });
 
 /** Run a saved view as a Clean Up rule, through the one query engine (§4.5). */
 async function findBySavedView() {

@@ -87,8 +87,10 @@ autopilotRouter.post('/autopilot/simulate', async (req: Request, res: Response) 
     if (!policy) throw new AppError(404, 'POLICY_NOT_FOUND', 'No such policy');
   } else if (body.policy !== undefined) {
     // Validated exactly as a saved one would be, so a preview cannot describe
-    // something that could never be saved.
-    policy = normalizePolicy(body.policy);
+    // something that could never be saved — and judged against the stored
+    // policy it edits, as Save judges it, so an unchanged one is not refused.
+    const id = (body.policy as { id?: unknown } | null)?.id;
+    policy = normalizePolicy(body.policy, typeof id === 'string' && id ? await getPolicy(id) : undefined);
   } else {
     throw new AppError(400, 'POLICY_REQUIRED', 'Body must include "policyId" or "policy"');
   }

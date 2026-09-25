@@ -175,10 +175,11 @@ let cached: PortableStatus | null = null;
  *
  * MUST run before anything reads `appDataDir()`. It sets the same environment
  * variable the tests and dev launch configs already use, so there is exactly
- * one redirection mechanism rather than a second parallel one.
+ * one redirection mechanism rather than a second parallel one. `baseDir` is
+ * the folder the app runs from (`executableBaseDir()`); a test hands in its
+ * own, so it never creates a data folder beside the Node it runs under.
  */
-export function initPortableMode(env: NodeJS.ProcessEnv = process.env): PortableStatus {
-  const baseDir = executableBaseDir();
+export function initPortableMode(env: NodeJS.ProcessEnv = process.env, baseDir = executableBaseDir()): PortableStatus {
   const host = hostDataDir();
   const signal = portableSignal(env, baseDir);
 

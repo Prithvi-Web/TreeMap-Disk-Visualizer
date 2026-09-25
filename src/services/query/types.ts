@@ -76,7 +76,7 @@ export interface DateTerm {
   raw: string;
 }
 
-/** `used:never` — no last-opened date exists at all. */
+/** `used:never` — recorded as never opened. No reader records that, so it never matches: a missing date is "not recorded", unknown. */
 export interface UsedNeverTerm { kind: 'usedNever' }
 
 export interface TypeTerm { kind: 'type'; value: 'file' | 'dir' }
