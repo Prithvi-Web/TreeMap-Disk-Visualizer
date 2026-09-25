@@ -11,7 +11,7 @@ import { collectCleanupSuggestions } from './cleanupRules';
 import { matchCustomRules } from './scanQueries';
 import { parse } from './query/parse';
 import { isEmptyQuery } from './query/evaluate';
-import { executeAgainstScan } from './query/execute';
+import { executeAgainstScan, unanswerableFields } from './query/execute';
 import { getIgnoreMatchers } from './settings';
 import { startScan, getScan } from './diskScanner';
 import { storeOf } from './scanStore';
@@ -139,7 +139,7 @@ export function normalizePolicy(raw: unknown, existing?: AutopilotPolicy): Autop
     ? p.name.trim().slice(0, 120)
     : 'Untitled policy';
 
-  return {
+  const policy: AutopilotPolicy = {
     id: typeof p.id === 'string' && p.id ? p.id : crypto.randomUUID(),
     name,
     path: policyPath,
@@ -156,6 +156,32 @@ export function normalizePolicy(raw: unknown, existing?: AutopilotPolicy): Autop
     ...(existing?.approvedAt ? { approvedAt: existing.approvedAt } : {}),
     ...(existing?.lastRunAt ? { lastRunAt: existing.lastRunAt } : {}),
   };
+  // Refused where a person is writing it: a new policy, or a changed folder or
+  // query. Not an unchanged one an earlier build saved: the UI re-sends the
+  // whole list for every edit, so refusing it there would block renaming,
+  // switching off or deleting any other policy. It selects nothing where it
+  // stands (the evaluator never matches an unknown).
+  if (match.kind === 'query' && (!existing || !sameScope(existing, policy))) refuseUnanswerable(name, match.q);
+  return policy;
+}
+
+/**
+ * A condition this build can never answer (`dupe:` today) is unknown for every
+ * file, so it only ever sinks the branch it is in or sits beside an `or` doing
+ * nothing: the policy would never do what its text says. The query box says so
+ * in `degraded`; a policy's runs report no `degraded`, so saving is the only
+ * point at which a person would find out.
+ */
+function refuseUnanswerable(policyName: string, q: string): void {
+  const parsed = parse(q);
+  if (!parsed.ok) return;
+  const unanswerable = unanswerableFields(parsed.ast);
+  if (unanswerable.length === 0) return;
+  const named = unanswerable.map((u) => `"${u.field}:"`).join(' and ');
+  throw new AppError(400, 'POLICY_QUERY_UNANSWERABLE',
+    `The policy "${policyName}" uses ${named}, which TreeMap cannot answer yet — ${unanswerable.map((u) => u.why).join('; ')} — ` +
+    `so the condition never matches a file, and neither does its opposite. A policy built on it would never do ` +
+    `what it says. Remove ${named} from the query. ${unanswerable.map((u) => u.instead).join(' ')}`);
 }
 
 function normalizeMatch(raw: unknown): AutopilotMatch {

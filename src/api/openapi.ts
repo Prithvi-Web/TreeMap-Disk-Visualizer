@@ -2721,7 +2721,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
     requestBody: { required: true, content: { 'application/json': { schema: obj({ policies: arr(ref('AutopilotPolicy')) }, ['policies']) } } },
     responses: {
       '200': jsonResponse('Saved, re-validated', obj({ policies: arr(ref('AutopilotPolicy')) }, ['policies'])),
-      '400': errorResponse('POLICY_MATCH_EMPTY, POLICY_MATCH_INVALID (an unknown match kind, or a custom rule carrying the duplicates flag, which no policy can honour), POLICY_PATH_TOO_BROAD, POLICY_PATH_REQUIRED, POLICY_QUERY_INVALID (the query does not parse), BAD_POLICIES ("policies" is not a list), TOO_MANY_POLICIES (more than 50) — refused rather than saved in a shape that would misbehave'),
+      '400': errorResponse('POLICY_MATCH_EMPTY, POLICY_MATCH_INVALID (an unknown match kind, or a custom rule carrying the duplicates flag, which no policy can honour), POLICY_PATH_TOO_BROAD, POLICY_PATH_REQUIRED, POLICY_QUERY_INVALID (the query does not parse), POLICY_QUERY_UNANSWERABLE (a new or changed query uses a field this build cannot answer, e.g. dupe:), BAD_POLICIES ("policies" is not a list), TOO_MANY_POLICIES (more than 50) — refused rather than saved in a shape that would misbehave'),
     },
   },
   {

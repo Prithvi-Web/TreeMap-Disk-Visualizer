@@ -12,16 +12,22 @@ import type { Ast, CompareOp, Term } from './types';
  *
  * ── Absent is not false ──
  *
- * In the final answer, a term whose fact this machine cannot supply evaluates
- * to **false** — and the executor separately reports that provider as
- * degraded. Both halves are required by §2.2: a `backup:yes` query on a
- * machine with no backups must return an empty list *with a visible warning*,
- * not an empty list that reads as "nothing matched".
+ * A term whose fact this machine cannot supply is **unknown**, not false, and
+ * the whole query is evaluated in Kleene's three-valued logic: an unknown
+ * stays unknown under `-`, `unknown and false` is false, `unknown or true` is
+ * true, and only a definite true at the top matches. The executor separately
+ * reports the provider as degraded. Both halves are required by §2.2: a
+ * `backup:yes` query on a machine with no backups must return an empty list
+ * *with a visible warning*, not an empty list that reads as "nothing matched".
  *
- * But "not fetched yet" is a third state, and conflating it with false would
- * be a silent wrong answer rather than a slow one. `evaluateMaybe` at the
- * bottom of this file handles that with Kleene logic, which is what lets the
- * executor narrow to candidates first and pay for facts only on those.
+ * Reading unknown as plain false is the bug this rules out. It is harmless
+ * until something negates it: `-dupe:yes` — with nothing able to say any file
+ * is a duplicate — became "every file in the scan", and an Autopilot policy
+ * built from it selected everything under its folder. Kept three-valued, an
+ * unknown can make a result smaller, never larger.
+ *
+ * "Not fetched yet" is the same unknown, which is what lets the executor
+ * narrow to candidates first and pay for facts only on those.
  */
 
 /** One node, as the evaluator sees it. */
@@ -229,14 +235,17 @@ export function matchTerm(term: Term, ctx: EvalContext, home: string): boolean {
   }
 }
 
-/** Evaluate a whole AST against one node. */
+/**
+ * Does this node DEFINITELY match the query?
+ *
+ * The three-valued answer, collapsed only at the top: `'maybe'` — a fact that
+ * was not or could not be supplied — is not a match. Collapsing any lower is
+ * the bug the header describes, because `-` would then turn "unknown" into
+ * "yes". One evaluator, so the candidate pass and the final pass cannot
+ * disagree about what unknown means.
+ */
 export function evaluate(ast: Ast, ctx: EvalContext, home: string): boolean {
-  switch (ast.kind) {
-    case 'term': return matchTerm(ast.term, ctx, home);
-    case 'not': return !evaluate(ast.operand, ctx, home);
-    case 'and': return evaluate(ast.left, ctx, home) && evaluate(ast.right, ctx, home);
-    case 'or': return evaluate(ast.left, ctx, home) || evaluate(ast.right, ctx, home);
-  }
+  return evaluateMaybe(ast, ctx, home) === true;
 }
 
 /**
@@ -253,7 +262,10 @@ export function isEmptyQuery(ast: Ast): boolean {
 
 /* --------------------------- three-valued evaluation --------------------------- */
 
-/** Kleene truth: a fact that has not been fetched yet is `'maybe'`, not false. */
+/**
+ * Kleene truth: a fact that has not been fetched yet, or that this machine
+ * could not supply, is `'maybe'`, not false.
+ */
 export type Maybe = true | false | 'maybe';
 
 /**
@@ -291,11 +303,13 @@ function termDecidable(term: Term, ctx: EvalContext): boolean {
  *
  * This is what makes a two-pass executor possible, and correct. Pass one runs
  * with no facts at all and keeps everything that is not definitely false; only
- * those candidates pay for a fact lookup; pass two evaluates them properly.
+ * those candidates pay for a fact lookup; pass two evaluates them properly —
+ * through `evaluate`, which is this function required to say a definite true,
+ * so a fact that stayed missing after the lookup is still `'maybe'` there.
  *
- * The alternative — running the ordinary evaluator with facts absent — would
- * read every unfetched fact as false and discard the very rows the query is
- * about, which is a silent wrong answer rather than a slow one.
+ * The alternative — reading an unfetched fact as false — would discard the
+ * very rows the query is about in pass one, and in pass two would let `-`
+ * turn "we cannot tell" into "yes".
  *
  * Kleene's rules, and each matters here:
  *   AND  false if either is false, true only if both are true

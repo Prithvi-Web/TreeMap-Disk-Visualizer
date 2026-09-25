@@ -129,6 +129,7 @@ test('every refusal PUT /api/autopilot/policies gives is named in the published 
     ['POLICY_MATCH_EMPTY', [{ path: tmp, match: { kind: 'suggestion', groupIds: [] } }]],
     ['POLICY_MATCH_INVALID', [{ path: tmp, match: { ...ok, dup: true } }]],
     ['POLICY_QUERY_INVALID', [{ path: tmp, match: { kind: 'query', q: 'nosuchfield:1' } }]],
+    ['POLICY_QUERY_UNANSWERABLE', [{ path: tmp, match: { kind: 'query', q: 'dupe:yes' } }]],
   ];
   const route = (buildOpenApiDocument() as {
     paths: Record<string, Record<string, { responses: Record<string, { description: string }> }>>;

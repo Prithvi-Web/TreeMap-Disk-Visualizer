@@ -5,9 +5,9 @@ import { getScan } from '../diskScanner';
 import { storeOf } from '../scanStore';
 import { computeFacts } from '../facts';
 import { capabilityState } from '../../platform/capabilities';
-import { evaluate, evaluateMaybe, isEmptyQuery, type EvalFacts, type EvalNode } from './evaluate';
-import { factsNeeded } from './parse';
-import type { Ast } from './types';
+import { evaluateMaybe, isEmptyQuery, type EvalFacts, type EvalNode } from './evaluate';
+import { eachTerm, factsNeeded } from './parse';
+import type { Ast, Term } from './types';
 import type { RecoverabilityFact } from '../recoverabilityTypes';
 import type { LastUsedInfo } from '../../platform/types';
 import type { ReclaimScoreFactValue } from '../facts';
@@ -179,10 +179,40 @@ async function degradedProviders(needed: Set<string>): Promise<Map<string, strin
   if (needed.has('duplicates')) {
     // Truthful: there is no wiring from the duplicate job into the query
     // evaluator yet. The earlier wording promised that running the Duplicates
-    // view would make this filter work, which it does not.
-    degraded.set('duplicates', 'TreeMap cannot filter by duplicates yet, so "dupe:" matches nothing. Use the Duplicates view for now.');
+    // view would make this filter work, which it does not. "Neither" is now
+    // true as well: `-dupe:yes` used to match every file.
+    degraded.set('duplicates', 'TreeMap cannot filter by duplicates yet, so neither "dupe:" nor "-dupe:" matches any file. Use the Duplicates view for now.');
   }
   return degraded;
+}
+
+/**
+ * Fields the grammar accepts that this build has no source for at all — on
+ * any machine, for any file.
+ *
+ * Different in kind from a degraded provider, which some machines can answer.
+ * Under three-valued logic a term on one of these fields is unknown for every
+ * file, so it can never contribute a match: it sinks whatever it is ANDed
+ * with, and beside an `or` it is dead weight. A query shown to a person says
+ * so in `degraded`; an Autopilot policy reports no `degraded` on its runs, so
+ * it refuses these at save time instead (autopilot.ts `normalizeMatch`).
+ */
+const UNANSWERABLE: Partial<Record<Term['kind'], { field: string; why: string; instead: string }>> = {
+  dupe: {
+    field: 'dupe',
+    why: 'it cannot tell which files are duplicates',
+    instead: 'Use the Duplicates view to clear duplicates by hand.',
+  },
+};
+
+/** The unanswerable fields a query uses, each once, in the order they appear. */
+export function unanswerableFields(ast: Ast): { field: string; why: string; instead: string }[] {
+  const found = new Map<string, { field: string; why: string; instead: string }>();
+  eachTerm(ast, (term) => {
+    const entry = UNANSWERABLE[term.kind];
+    if (entry && !found.has(entry.field)) found.set(entry.field, entry);
+  });
+  return [...found.values()];
 }
 
 /* -------------------------------- execution -------------------------------- */
@@ -300,12 +330,18 @@ export async function executeAgainstScan(
   }
 
   const hits: QueryHit[] = [];
+  let undecided = 0;
   for (const node of candidates) {
     if (opts.signal.aborted) { aborted = true; break; }
     const facts = factsByPath.get(node.path) ?? {};
     // The only place a stat happens: candidates, once each.
     if (wantsCreated) facts.createdMs = createdOf(node.path);
-    if (!evaluate(ast, { node, facts, now }, home)) continue;
+    // Still three-valued: a fact the lookup could not supply is unknown, and
+    // unknown is not a match — under `-` too, or `-dupe:yes` is every file.
+    // Counted, so "could not tell" is never read as "did not match".
+    const verdict = evaluateMaybe(ast, { node, facts, now }, home);
+    if (verdict === 'maybe') undecided++;
+    if (verdict !== true) continue;
     hits.push({ path: node.path, name: node.name, size: node.size, isDir: node.isDir, mtimeMs: node.mtimeMs });
   }
 
@@ -317,6 +353,10 @@ export async function executeAgainstScan(
   }
   if (statsFailed > 0) {
     degraded.set('createdUnreadable', `${formatCount(statsFailed)} item${statsFailed === 1 ? '' : 's'} could not be read to find a creation date, so they are not in these results.`);
+  }
+  if (undecided > 0) {
+    const one = undecided === 1;
+    degraded.set('undecided', `${formatCount(undecided)} item${one ? '' : 's'} could not be decided — a fact this query needs was not available for ${one ? 'it' : 'them'} — so ${one ? 'it is' : 'they are'} not in these results.`);
   }
   if (aborted) {
     // A half-finished walk must never be handed back as a confident total.
