@@ -9,9 +9,10 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-duplicatePlaceholders-data-');
 
 import { createScanRecord } from '../src/services/diskScanner';
-import { getDuplicateJob, observeHashOpensForTests } from '../src/services/duplicateFinder';
+import { getDuplicateJob, observeHashOpensForTests, observeNotHashedHeldForTests } from '../src/services/duplicateFinder';
 import { PackedScanStore } from '../src/services/scanStore';
 import { loadNative, resetNativeForTests, setNativeLoadOverrideForTests } from '../src/services/scan/native';
+import { waitFor } from './fixtures/waitFor';
 import type { DuplicateJob, ScanResult } from '../src/models/types';
 
 /**
@@ -54,8 +55,7 @@ function built(): Built {
 }
 
 async function finished(job: DuplicateJob): Promise<DuplicateJob> {
-  const deadline = Date.now() + 15_000;
-  while (job.status === 'running' && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+  await waitFor(() => job.status !== 'running', 'the duplicate job finishing');
   assert.equal(job.status, 'complete', job.error);
   return job;
 }
@@ -86,6 +86,149 @@ test('what would have to download is reported: how many, how much, and the large
     }, 'placeholders at or above the size the pass looks at; a link is not a file of its own, and a placeholder below the minimum would not have been read anyway');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Path order as the duplicate finder compares paths: JavaScript's `<`, which
+ * compares UTF-16 code units. It is the same on every machine (no locale is
+ * read), and it is the order the report already sorted its list by.
+ */
+const byPath = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/** A scan of an empty folder whose store holds only these cloud placeholders, added in this order. */
+function placeholders(files: { name: string; size: number }[]): Built {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-not-hashed-'));
+  const scan = createScanRecord(dir);
+  const store = new PackedScanStore(dir, path.sep, { name: path.basename(dir), isDir: true, size: 0, modifiedAt: 0, isHidden: false });
+  for (const { name, size } of files) {
+    store.addNode(store.rootId, { name, isDir: false, size, modifiedAt: 1, isHidden: false, cloudPlaceholder: true });
+  }
+  store.finalize();
+  store.sumSizes();
+  scan.store = store;
+  scan.status = 'complete';
+  return { scan, dir };
+}
+
+test('the placeholders named among equal sizes are the smallest paths, whatever the store numbered them', async () => {
+  // 22 names, added in reverse path order, so the lowest ids hold the
+  // largest paths. The names also tell `<` apart from the other ways paths
+  // get ordered: 'Z' before 'f' (a locale's collation puts it after), and
+  // U+1F600 before U+FF5E (UTF-8 bytes and code points put it after).
+  const names = ['Z.dat', ...Array.from({ length: 17 }, (_, i) => `f${String(i).padStart(2, '0')}.dat`), 'zz.dat', '\u{1F600}.dat', '\uFF5E.dat', '\uFF5E\uFF5E.dat'];
+  const size = PAYLOAD.length;
+  const { scan, dir } = placeholders([...names].sort(byPath).reverse().map((name) => ({ name, size })));
+  try {
+    const paths = names.map((name) => path.join(dir, name));
+    const expected = [...paths].sort(byPath).slice(0, 20);
+    const store = scan.store as PackedScanStore;
+    const lowestIds = [...paths].sort((a, b) => store.findByPath(a) - store.findByPath(b)).slice(0, 20);
+    const inLocaleOrder = [...paths].sort((a, b) => a.localeCompare(b)).slice(0, 20);
+    const inByteOrder = [...paths].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))).slice(0, 20);
+    for (const [other, which] of [[lowestIds, 'the 20 lowest ids'], [inLocaleOrder, 'localeCompare'], [inByteOrder, 'UTF-8 byte order']] as const) {
+      assert.ok(expected.some((p) => !other.includes(p)), `the fixture tells path order apart from ${which}`);
+    }
+
+    const job = await finished(getDuplicateJob(scan, 1024));
+    assert.equal(job.notHashed?.files, names.length);
+    assert.equal(job.notHashed?.bytes, names.length * size);
+    assert.deepEqual(job.notHashed?.largest, expected.map((p) => ({ path: p, size })));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('bigger placeholders are named first, and a tie at the twentieth place goes to the smaller paths', async () => {
+  const big = ['y0.dat', 'y1.dat', 'y2.dat'].map((name) => ({ name, size: 2 * PAYLOAD.length }));
+  const tied = Array.from({ length: 22 }, (_, i) => ({ name: `m${String(i).padStart(2, '0')}.dat`, size: PAYLOAD.length }));
+  // The tied ones first and in reverse path order, so ids favour their largest paths.
+  const { scan, dir } = placeholders([...[...tied].reverse(), ...big]);
+  try {
+    const job = await finished(getDuplicateJob(scan, 1024));
+    assert.deepEqual(
+      job.notHashed?.largest,
+      [...big, ...tied.slice(0, 17)].map(({ name, size }) => ({ path: path.join(dir, name), size })),
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a placeholder too small to be named never has its path built', async () => {
+  const big = Array.from({ length: 20 }, (_, i) => ({ name: `big${String(i).padStart(2, '0')}.dat`, size: 2 * PAYLOAD.length }));
+  const small = Array.from({ length: 5 }, (_, i) => ({ name: `a-small${i}.dat`, size: PAYLOAD.length }));
+  const { scan, dir } = placeholders([...small, ...big]);
+  const store = scan.store as PackedScanStore;
+  const built = store.path.bind(store);
+  const asked: string[] = [];
+  store.path = (id: number) => {
+    const p = built(id);
+    asked.push(path.basename(p));
+    return p;
+  };
+  try {
+    const job = await finished(getDuplicateJob(scan, 1024));
+    assert.equal(job.notHashed?.files, 25);
+    assert.deepEqual(job.notHashed?.largest.map((l) => path.basename(l.path)), big.map((b) => b.name));
+    assert.deepEqual(asked.filter((name) => name.startsWith('a-small')), [], 'the five small ones were never needed');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the twenty biggest placeholders are named, biggest first, when the walk meets them smallest first', async () => {
+  // Every size differs, so no tie decides anything: only which twenty are
+  // biggest does, and the walk meets the smallest first.
+  for (const count of [21, 25, 40]) {
+    const files = Array.from({ length: count }, (_, i) => ({ name: `p${String(i).padStart(2, '0')}.dat`, size: (i + 1) * PAYLOAD.length }));
+    const { scan, dir } = placeholders(files);
+    try {
+      const expected = [...files].reverse().slice(0, 20);
+      const store = scan.store as PackedScanStore;
+      const walked: number[] = [];
+      store.eachFile(store.rootId, (id) => walked.push(store.size(id)));
+      assert.deepEqual(walked, files.map((f) => f.size), `with ${count}, the walk meets them in the order they were added`);
+
+      const job = await finished(getDuplicateJob(scan, 1024));
+      assert.equal(job.notHashed?.files, count);
+      assert.equal(job.notHashed?.bytes, files.reduce((sum, f) => sum + f.size, 0));
+      assert.deepEqual(job.notHashed?.largest, expected.map(({ name, size }) => ({ path: path.join(dir, name), size })), `with ${count}`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+test('a tie at the twentieth place is decided holding no more than twenty names at once', async () => {
+  // Each tied placeholder's path is built to compare it; a name that cannot
+  // make the list is dropped as soon as it is compared, not kept to the end.
+  // The walk meets the tied ones smallest path last, then smallest path first,
+  // so in the second a name arrives that loses to every name already held.
+  const big = ['y0.dat', 'y1.dat', 'y2.dat'].map((name) => ({ name, size: 2 * PAYLOAD.length }));
+  const tied = Array.from({ length: 100 }, (_, i) => ({ name: `m${String(i).padStart(3, '0')}.dat`, size: PAYLOAD.length }));
+  for (const walkOrder of [[...tied].reverse(), tied]) {
+    const { scan, dir } = placeholders([...walkOrder, ...big]);
+    const held: number[] = [];
+    observeNotHashedHeldForTests((n) => held.push(n));
+    try {
+      const store = scan.store as PackedScanStore;
+      const walked: string[] = [];
+      store.eachFile(store.rootId, (id) => walked.push(store.name(id)));
+      assert.deepEqual(walked, [...walkOrder, ...big].map((f) => f.name), 'the walk meets them in the order they were added');
+
+      const job = await finished(getDuplicateJob(scan, 1024));
+      assert.equal(job.notHashed?.files, big.length + tied.length);
+      assert.deepEqual(
+        job.notHashed?.largest,
+        [...big, ...tied.slice(0, 17)].map(({ name, size }) => ({ path: path.join(dir, name), size })),
+      );
+      assert.equal(held.length, big.length + tied.length, 'each placeholder at or above the twentieth size was considered once');
+      assert.equal(Math.max(...held), 20, 'and no more than twenty names were held at once');
+    } finally {
+      observeNotHashedHeldForTests(null);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }
 });
 

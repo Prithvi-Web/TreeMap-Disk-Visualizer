@@ -45,6 +45,14 @@ export function observeHashOpensForTests(observer: ((file: string) => void) | nu
   hashOpenObserver = observer;
 }
 
+/** Test-only: told, after each placeholder `notHashed` considers naming, how many names it holds. */
+let notHashedHeldObserver: ((held: number) => void) | null = null;
+
+/** Test-only: watch how many names the `notHashed` list holds (null stops watching). */
+export function observeNotHashedHeldForTests(observer: ((held: number) => void) | null): void {
+  notHashedHeldObserver = observer;
+}
+
 const jobs = new Map<string, DuplicateJob>();
 
 export function cancelAllDuplicateJobs(): void {
@@ -249,16 +257,50 @@ function stillLocal(bucket: number[], pathOf: (id: number) => string, gone: (id:
 
 /**
  * What `notHashed` says about `ids`: how many, how much, and the largest
- * `NOT_HASHED_LISTED` by name, biggest first (ties by path, so the list
- * does not depend on the order the scan found them).
+ * `NOT_HASHED_LISTED` by name, biggest first. Equal sizes go to the smaller
+ * path, compared with `<` (UTF-16 code units, no locale), both for which
+ * make the list and for their order in it, so neither depends on how the
+ * store numbered them. With more than `NOT_HASHED_LISTED` ids, paths are
+ * built only for those at least as big as the `NOT_HASHED_LISTED`-th largest,
+ * and a name is dropped as soon as it cannot make the list, so no more than
+ * `NOT_HASHED_LISTED` are held at once however many share that size.
  */
 function notHashedReport(ids: number[], bytes: number, sizeOf: (id: number) => number, pathOf: (id: number) => string): NotHashed {
-  const largest = [...ids]
-    .sort((a, b) => sizeOf(b) - sizeOf(a) || a - b)
-    .slice(0, NOT_HASHED_LISTED)
-    .map((id) => ({ path: pathOf(id), size: sizeOf(id) }))
-    .sort((a, b) => b.size - a.size || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const bySize = [...ids].sort((a, b) => sizeOf(b) - sizeOf(a));
+  const floor = bySize.length > NOT_HASHED_LISTED ? sizeOf(bySize[NOT_HASHED_LISTED - 1]) : -Infinity;
+  const largest: Named[] = [];
+  for (const id of bySize) {
+    const size = sizeOf(id);
+    if (size < floor) break; // bySize is biggest first, so every id after this one is below the floor too
+    keepIfNamed(largest, { path: pathOf(id), size });
+    notHashedHeldObserver?.(largest.length);
+  }
   return { files: ids.length, bytes, largest };
+}
+
+type Named = NotHashed['largest'][number];
+
+/** Whether `a` is named before `b`: the bigger first, then the smaller path by `<`. */
+function namedBefore(a: Named, b: Named): boolean {
+  return a.size > b.size || (a.size === b.size && a.path < b.path);
+}
+
+/**
+ * Puts `entry` where it belongs in `list`, which is in `namedBefore` order and
+ * holds at most `NOT_HASHED_LISTED`: the last is dropped to make room, and an
+ * entry that would come after all of a full list is not kept.
+ */
+function keepIfNamed(list: Named[], entry: Named): void {
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (namedBefore(list[mid], entry)) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo >= NOT_HASHED_LISTED) return;
+  if (list.length === NOT_HASHED_LISTED) list.pop();
+  list.splice(lo, 0, entry);
 }
 
 /** SHA-256 of a file — the whole file, or just the first `limit` bytes. */
