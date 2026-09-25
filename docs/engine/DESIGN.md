@@ -79,9 +79,10 @@ native/
       tm-walk/                  platform listing (darwin bulk, windows ex-dir-info, linux getdents+statx),
                                 work-stealing walk, refusal accounting, placeholder flags
       tm-store/                 the finalized store in PackedScanStore's own layout, with its BFS ids
-                                (Phase 4 S1); mmap spill and aggregate-only mode to come (S3, S4).
+                                (Phase 4 S1); spill and aggregate-only mode to come (S3, S4).
                                 Corrected 24 September 2026: no name interner — the Phase 4 plan's
-                                decision P4-1 withdrew name deduplication (see §6)
+                                decision P4-1 withdrew name deduplication (see §6). Amended the same
+                                day (design, not built): the spill is never mapped (§6.2)
       tm-hash/                  BLAKE3 sample + full digests, per-device read scheduling, byte compare
       tm-imghash/               EXIF thumbnail parse, tiny-decode input, pHash/dHash/colour hash, MIH index
       tm-governor/              presets, closed loop, QoS/io-policy/nice per platform, thermal, battery
@@ -115,7 +116,7 @@ answerable from the UI.
 
 * The core owns a thread pool sized by the governor (§8), never libuv's. Every napi entry point that can take longer than a millisecond is an `AsyncTask` or returns a promise resolved from the core's threads.
 * Progress crosses the boundary through **shared atomic counters** read by a synchronous, sub-microsecond napi getter; the existing SSE endpoint keeps polling at 150 ms and keeps its frame shape. No per-file callback exists. **Amended 18 September 2026 (P3-1):** there is no `ThreadsafeFunction` at all — the SSE loop already polls, so Node polls `scanPoll(handle)` at its 150 ms cadence for the counters, the current path (sampled at most every 50 ms on the Rust side) and completion; one fewer cross-thread mechanism to get wrong. **Amended 23 September 2026:** still polling, never a callback, but every 10 ms after a 1, 2, 4, 8 ms ramp (`NATIVE_POLL_MS`), not at the stream's cadence — the same poll notices completion, and at 100 ms a finished walk sat unnoticed 20–40 ms on a 200,000-entry scan and ~28 ms on a 100 ms one (measured on the M3). The SSE endpoint still reads the record every 150 ms.
-* `NativeScanStore` reads the arena through typed-array views over napi external buffers — zero copy — so every existing consumer (`collectLargestFiles`, the treemap routes, missing gigabytes, duplicates) runs unchanged against `ScanStore`. **Corrected 23 September 2026 (before Phase 4):** zero copy holds only in plain Node (web mode). Measured 23 September 2026 with a throwaway napi probe calling `napi_create_external_arraybuffer`: Node 24.16 answers `napi_ok` (0); the installed TreeMap app's Electron 31.7.7, run as Node (`ELECTRON_RUN_AS_NODE=1`; its RunAsNode fuse is on), answers `napi_no_external_buffers_allowed` (22). The same day, handing the walk's 9.7 MB of columns for enum200k to plain Node grew `process.memoryUsage().arrayBuffers` by 0 MB against a 50 MB control that it counted — zero copy, measured — while in Electron that counter saw neither the hand-over nor the control (Electron allocates ArrayBuffers outside Node's allocator), so Electron's copy must be measured another way (RSS, time). The desktop app runs in Electron 31, whose V8 memory cage refuses an ArrayBuffer over memory it does not own (`napi_no_external_buffers_allowed`, Electron 21 onwards); napi-rs 3.4.0 then allocates a V8-owned buffer and copies each column into it (its own source, `bindgen_runtime/js_values/arraybuffer.rs`, and `env.rs`: "electron doesn't support external buffers"). So in Electron the hand-over is one copy per column, and a memory-mapped spill (§6.2) cannot be viewed from JavaScript at all. Phase 4's S2 measures the hand-over inside Electron before building on it; S3's spill needs a store read through native calls in Electron (RISKS R72).
+* `NativeScanStore` reads the arena through typed-array views over napi external buffers — zero copy — so every existing consumer (`collectLargestFiles`, the treemap routes, missing gigabytes, duplicates) runs unchanged against `ScanStore`. **Corrected 23 September 2026 (before Phase 4):** zero copy holds only in plain Node (web mode). Measured 23 September 2026 with a throwaway napi probe calling `napi_create_external_arraybuffer`: Node 24.16 answers `napi_ok` (0); the installed TreeMap app's Electron 31.7.7, run as Node (`ELECTRON_RUN_AS_NODE=1`; its RunAsNode fuse is on), answers `napi_no_external_buffers_allowed` (22). The same day, handing the walk's 9.7 MB of columns for enum200k to plain Node grew `process.memoryUsage().arrayBuffers` by 0 MB against a 50 MB control that it counted — zero copy, measured — while in Electron that counter saw neither the hand-over nor the control (Electron allocates ArrayBuffers outside Node's allocator), so Electron's copy must be measured another way (RSS, time). The desktop app runs in Electron 31, whose V8 memory cage refuses an ArrayBuffer over memory it does not own (`napi_no_external_buffers_allowed`, Electron 21 onwards); napi-rs 3.4.0 then allocates a V8-owned buffer and copies each column into it (its own source, `bindgen_runtime/js_values/arraybuffer.rs`, and `env.rs`: "electron doesn't support external buffers"). So in Electron the hand-over is one copy per column, and a memory-mapped spill (§6.2) cannot be viewed from JavaScript at all. Phase 4's S2 measures the hand-over inside Electron before building on it; S3's spill needs a store read through native calls in Electron (RISKS R72). **Amended 24 September 2026 (P4-12, §6; not built):** the main thread sees only `PackedScanStore`, and a `NativeScanStore` exists only in worker threads. Every consumer runs unchanged in memory mode only; in spill the main thread reads the disk through `AsyncTask`s in both runtimes, and duplicates are off there (§6.1).
 
 ## 5. The walker (Phase 3)
 
@@ -265,6 +266,34 @@ table. That is 38 bytes per node plus the name bytes, and 8 more when any node
 has an access time: above the 37.5 budgeted here, so §7's first row does not
 hold for it. Phase 4's S2 and S5 measure it.
 
+**Amended 24 September 2026 (the Phase 4 design, plan §S of
+`docs/superpowers/plans/2026-09-18-phase4-storage.md`; not built):**
+
+* **Ids come in one block per listing (P4-1a).** The walk reserves one
+  contiguous id range per listed folder under a commit lock, so ids are no
+  longer breadth-first. The layout above does not change. Four invariants
+  hold by construction, and a debug-build checker runs in every test build:
+  the root is id 0; each folder's children are one consecutive range, in
+  store child order; `parent[id] < id`; names are laid out in id order. The
+  plan's §S.2 argues that no output depends on the numbering (every folder
+  total is bit-identical under `sumSizes`, the hard-link winner is the same
+  member, every route resolves by path); T2's renumbering battery tests it.
+* **Every large column is an anonymous mapping (P4-11):** `mmap(MAP_ANON)` on
+  POSIX, freed with `munmap`, and `VirtualAlloc` on Windows, freed with
+  `VirtualFree` (`MEM_RELEASE`). Measured on this Mac
+  (plan §S.3): `munmap` returned memory at once, while libmalloc kept 1 GB of
+  freed blocks resident for more than 23 s. So a scan's peak is its largest
+  stage, not the sum of its stages.
+* **A row costs 46 B plus its name** (`parent` 4, `size`, `mtime` and `atime`
+  8 each, `flags` and `ext` 2 each, `container` and `cloudProv` 1 each,
+  `nameOff`, `childStart` and `childCnt` 4 each): 64 B at a mean name of
+  18 B, budget until measured. The S1 review measured 62.2–68.0 B/node for
+  S1's store on real trees, whose mean names were 13.1–20.9 B
+  (`docs/superpowers/plans/2026-09-24-phase4-s1-review-findings.md`).
+* **The main thread sees only `PackedScanStore` (P4-12).** In spill and
+  aggregate it holds a summary store and reads the rest through `AsyncTask`s;
+  a `NativeScanStore` exists only in worker threads (plan §S.5.7).
+
 ### 6.1 Three storage modes
 
 | Mode | When | What is kept | What it disables |
@@ -280,6 +309,47 @@ measured or, if it is, excludes its own files from the totals, and refuses to
 spill when free space is under 3× the projection — switching to `aggregate`
 and saying so.
 
+**Amended 24 September 2026 (the Phase 4 design, plan §S.0, §S.1 and
+§S.5–§S.7; not built).** The table above is replaced by this one:
+
+| Mode | When | What is kept | What it disables |
+| --- | --- | --- | --- |
+| `memory` | the projection (the previous scan of the same root, `fileCount + dirCount` × 1.25) is at most `T_mem`, or there is no projection | every row, in anonymous mappings | nothing |
+| `spill` | the projection is above `T_mem` and the spill plan allows it, or a memory walk reaches `capRows` = 1.25 × `T_mem` with spill as its overflow target | every row, written with `write()` into files unlinked at creation and read with `pread()` through a bounded page cache; nothing is mapped | Live mode and container expansion, because the store is read-only (pending the owner, plan §S.11 Q5); duplicates, near-duplicates, compare, empty folders, the custom-rule duplicate option, per-file CSV/XLSX export, folder offload and Photos expansion, until each is ported to native code. The whole-tree features whose JavaScript state is bounded run in a worker thread (the FullPassRunner, plan §S.5.7) |
+| `aggregate` | the spill plan refuses, spill fails during the walk (`ENOSPC`, `EIO`, falling free space), a guarded memory walk passes `M_agg`, or the owner selects it | no row per entry: the folders and files above the β thresholds (plan §S.6.1), the top 32 children of shallow folders, and the dashboard answers, each exact or flagged `exact: false`; each kept folder says what it omitted | everything spill disables, plus the FullPassRunner's features; `/nodes` and the facts answer `notKept` for a path not kept |
+
+`T_mem` defaults to 5M entries and `M_agg` to about 153 MB of rows (about
+2.4M rows): budgets until measured, which T9 measures and sets per runtime.
+The volume's used-inode count is only a hint, because it counts inodes, not
+names, and the whole volume, not the scanned folder. Every memory walk
+carries a byte guard and converts during the walk, never at the end (P4-4a).
+No legacy engine takes over in spill or aggregate or above `T_mem` (P4-14,
+pending the owner).
+
+Spill files cannot outlive the scan (P4-5a). Each is created in
+`<appData>/scan-spill/` and unlinked at once (Linux `O_TMPFILE`; macOS
+`mkstemp`, then `unlink` only if the path's `(dev, ino)` still matches the
+open descriptor; Windows `FILE_FLAG_DELETE_ON_CLOSE`), so the kernel frees it
+when its last descriptor closes, after a crash too. A boot sweep removes what
+a crash inside the macOS create→unlink window leaves, through one confined
+remover. Having no names, the files cannot be listed by a walk, so a scan
+never counts them, even when app-data is inside the scanned root; `scan-spill`
+is not on the never-descend list, and Missing Gigabytes gains a line for
+their bytes. **24 September 2026, pending the owner (plan §S.11 Q1):** the
+`unlink` needs the owner's exception to the master prompt's §3.1 ("never an
+`unlink`, ever, anywhere in new code"). That §3.1 is about the user's files
+is an engineering reading, not a decision. If the owner declines, spill uses
+no `unlink` at all: a fixed pool of named spill files, reused, whose bytes
+are freed with `ftruncate(0)` on release, on quit and at boot, so a crash
+leaves the bytes until the next launch.
+
+Spill is allowed only when free space is at least 3 × the bytes needed plus
+1 GiB, app-data can be written, and its file system is local (`smbfs`, `nfs`,
+`afpfs`, `webdav` and `fuse` are refused). After every 256 MiB written it
+needs free space of at least 2 × the projected remainder plus max(1 GiB, 2 %
+of the volume); a shortfall, `ENOSPC` or `EIO` converts the scan to
+`aggregate`, and the notice says why.
+
 ### 6.2 Why `write()` then `mmap`, not `mmap` while writing
 
 Resident-set size counts file-backed pages **mapped into the process**. A
@@ -288,6 +358,30 @@ memory, so a 3.7 GB index on a 16 GB machine would sit in RSS and fail the
 gate while doing no harm. Appending with `write()` keeps only the write
 buffers in RSS (the page cache holds the rest, outside the process), and the
 read-only mapping afterwards is resident only where a query touched it.
+
+**Amended 24 September 2026 (P4-5a; not built): nothing is mapped, for
+writing or for reading.** Measured on this Mac by the design's probes (plan
+§S.4; run under load average 6.5–7.4, so the time is an upper bound): a mapped
+1 GB sweep added 1,024 MB to maxRSS, and only `munmap` removed it; a `pread`
+sweep held maxRSS at 5.5 MB and ran 3.5× faster cold. A whole-tree pass over a
+read-only mapping therefore leaves the whole column resident, the gate failure
+this section set out to avoid. Spill columns are appended with `write()` and
+read with `pread()` into a bounded anonymous page cache (64 KiB pages, LRU;
+32 MB, budget until measured). Electron is a second reason: it refuses an
+ArrayBuffer over memory V8 does not own (RISKS R72), so JavaScript could not
+view a mapping in the desktop app; in spill and aggregate JavaScript receives
+only small arrays it owns. This departs from the master prompt's §9.3, whose
+first bullet backs the columns with memory-mapped files; its aim ("Peak RSS
+stays bounded while the logical index is as large as the disk allows") is
+what the measurement says a mapping does not give.
+
+The boot sweep departs from §9.3 too (P4-5a, plan §S.5.3; not built). §9.3's
+third bullet asks for "a startup sweep with an age check"; the designed sweep
+removes a file in `scan-spill/` when the process named by the `<pid>` in its
+name is not alive, and has no age limit. So a file left by a crash is kept,
+however old, while a live process has reused its pid, until that process
+exits. Only a crash inside the macOS create→unlink window, or a power loss on
+Windows, leaves such a file (plan §S.5.3).
 
 ## 7. The memory budget at 100M entries (the Phase 0 gate)
 
@@ -314,6 +408,54 @@ which is too thin: the interner cap and the transport prune are the two knobs,
 and Phase 4 measures before choosing their defaults. On-disk footprint at
 100M in `spill`: 100M × 37.5 B ≈ **3.75 GB**, so the 3× free-space check asks
 for ~11 GB.
+
+**Amended 24 September 2026 (the Phase 4 design, plan §S.3; not built).
+Every figure below is a budget until measured unless it says measured.** The
+table above rested on 37.5 B per entry and a name interner; S1's store is
+46 B plus the name (§6), and no interner is built. The design's peak RSS per
+scan, in the Node bench child:
+
+| | Memory 5M | Memory 10M (forced) | Spill 10M | Spill 100M | Aggregate 10M | Aggregate 100M |
+| --- | --- | --- | --- | --- | --- | --- |
+| Peak RSS | 614 MB | 937 MB | 543 MB | 543 MB | 336 MB | 364 MB (worst case) |
+| Ceiling (master prompt §5.3) | 700 MB (the plan's 5M gate) | 700 MB | 700 MB (the "10M full index", every row on disk) | 1,500 MB | 400 MB | 400 MB |
+| Margin | 86 MB | −237 MB: not offered | 157 MB | 957 MB | 64 MB | 36 MB (77 MB typical) |
+
+What goes into them: the bench child's baseline B0 = 141 MB, **measured**
+(the largest of the ci20k native runs, 120–141 MB,
+`bench/baselines/enumerate-native-ci20k-darwin-arm64-tierB-budget-eco.json`);
+a store row of 64 B (§6); about 200 B per queued folder, **measured** (218 MB
+for 1.05M queued), capped by `Q_MAX` (P4-13); the transport, 150 MB (this
+section's budget above, not measured); and, in the large modes, the aggregate
+state (52 MB), the spill write buffers and logs (40 MB) and, in spill, the
+FullPassRunner (176 MB, of which the worker isolate's 40 MB is not measured).
+The peak is the largest stage, not the sum, because every large block is an
+anonymous mapping (§6).
+
+* **The 10M "full index in memory ≤ 700 MB" row is not met by memory mode.**
+  The store alone is about 646 MB at 10M with 1 % headroom, and the walk's
+  merge alone was measured at 147–168 B/node (the runs behind that range are
+  not recorded under `bench/baselines/`), which is 1,470–1,680 MB at 10M by
+  arithmetic. Proposed to the owner on 24 September 2026: the row is met by spill,
+  with every row kept on disk (543 MB above), and `T_mem` at 5M. **The
+  owner's answer is pending** (plan §S.11 Q3).
+* **Electron** replaces B0 with its own baseline E0, which is not measured.
+  Memory mode at 5M then needs E0 ≤ 227 MB; T9 lowers Electron's `T_mem` by
+  1M rows for every 64 MB above that.
+* A single folder of more than about 1.2M entries breaks aggregate's worst
+  case (RISKS R75).
+
+**On disk,** spill writes 68 B per entry (`nameOff` is a u64 there) and about
+32 B per folder of block table and patch log: 0.73 GB at 10M and 7.3 GB at
+100M on POSIX. On Windows every file's hard-link key goes to disk too (0.8 GB
+at 10M, 8.0 GB at 100M with one sort copy), about 15 GB in all at 100M. The
+spill plan asks for 3 × the sum plus 1 GiB: about 3.3 GB at 10M and 23 GB at
+100M on POSIX, 5.7 GB and 47 GB on Windows (arithmetic from plan §S.3's rows,
+whose own "3× asks" line differs on POSIX; see the note under it). Aggregate
+writes only the key log past its 32 MiB resident run, under the same 3× rule:
+about 0.24 GB at 100M on POSIX and 24 GB on Windows before the reserve; when
+it cannot, the scan is refused and told how many bytes it needs (P4-16). This
+replaces the ~11 GB above.
 
 ## 8. The governor (Phase 2, built first)
 
@@ -631,6 +773,15 @@ assertion.
 8. **A folder that is no longer a folder when it is opened** — replaced by a file between its parent's listing and its own — is counted as vanished by the native walker (`ENOTDIR` → `REFUSAL_VANISHED`, "gone, or no longer a directory, by the time it was listed") and as unreadable by the legacy walker, whose `classifyFsError` treats only `ENOENT` as a race. Only the `vanishedDirs` and `unreadableDirs` counters differ, and only in that race; the equivalence corpora are static, so the gate never meets it and no normalisation is needed. Per entry the two agree: both count an `ENOTDIR` from an entry's stat as unreadable (the pre-CI review of `linux.rs`, 23 September 2026, checked against `diskScanner.ts`). Aligning the legacy walker would move `classifyFsError`, which serves both levels, and with it the per-entry count on every native platform path, so it is left as a choice for a phase that touches the walker.
 9. **On Windows, a file whose other names are all outside the scan keeps its listing's copy of its size and times.** NTFS refreshes a name's copy only when the file is opened through that name, and the listing reports no link count, so a file hard-linked from outside the scanned root and written through that other name since is listed with the older values under the name inside it, where the legacy walker's `lstat` opens the file and reads the new ones. A family whose names are inside the scan is found by its file ids and read from the file (`refresh_families`); a lone name cannot be told from an ordinary file without opening every file, which is what the listing exists to avoid. The equivalence corpora make every link inside the scan, so the gate does not meet it.
 10. **The native engine marks every entry whose data is not on the disk a cloud placeholder** — the walk's own flag: macOS `SF_DATALESS`; Windows' recall attributes and cloud reparse tags, on a file both engines record as a link — wherever it lives, with a provider only when the path names one. The walker cannot read that flag and still guesses: a file with a size, nothing allocated and a path under a known cloud folder. So a native scan shows more placeholders (with the badge, on the cloud line of Missing Gigabytes, and never opened by the duplicate pass — RISKS R1) than a walker scan of the same tree, never fewer; the equivalence corpora hold no dataless file, and a test builds one by hand (`nativeEngine.test.ts`, 23 Sep 2026).
+
+**Added 24 September 2026 from the Phase 4 design (plan §S.2); items 11–14 are designed, not built:**
+
+11. **`notHashedReport` breaks ties by path, in every mode (T1).** It lists the 20 largest placeholders the duplicate pass left unread; which of several equal-size placeholders at the cut make the list must not depend on how the store numbered them, because block numbering (§6) follows the walk's schedule.
+12. **Spill and aggregate folder totals and tallies are exact integer sums** (u128, rounded to a double once). Memory mode keeps `sumSizes`' float fold. The two agree whenever every partial sum is below 2^53 bytes (about 9 PB).
+13. **Aggregate tree views leave rows out and say so.** A folder whose children were not all kept carries `omitted: {files, folders, bytes}`, an additive `FileNode` field present only in aggregate (plan §S.11 Q4, an engineering decision the owner may overrule), and `/nodes` and the facts answer `notKept` for a path not kept.
+14. **Spill and aggregate evaluate the cloud rule in Rust,** from the same table the Node regexes are built from, pinned to the old regex by a differential test (plan §S.11 Q7, an engineering decision the owner may overrule). Memory mode keeps the Node pass.
+
+The spill folder is not added to the never-descend list, so there is no walker difference there: its files have no names, and no walk can list them (§6.1).
 
 ## 17. Phase plan → commits
 
