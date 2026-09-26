@@ -2,13 +2,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { MftExpected, MftLiveCheck, NativeProbe, NativeProgress, ScanStartOptions, WalkResult } from '../../../native/index';
+import type { MftExpected, MftLiveCheck, NativeProbe, NativeProgress, NativeStore, ScanStartOptions, WalkResult } from '../../../native/index';
 import { loadNative, nativeScanModule, type ScanModule } from './native';
 import { MFT_FLUSH_MARGIN_MS, crossCheckMft } from './mftCrossCheck';
 import { elevationRefusal, unpackedPath } from './mftHelperPath';
 import { mftPromptBlocked, mftPromptEnded, mftPromptStarted, resetMftPromptForTests } from './mftPrompt';
 import { statToInput } from './nodeInput';
-import { Flag, ScanStore, joinPath } from '../scanStore';
+import { Flag, PackedScanStore, ScanStore, joinPath } from '../scanStore';
+import { adoptNativeStore, memoryStoreOptions } from './nativeMemory';
 import { cloudProviderFor } from '../cloudFolders';
 import { noteRefused } from '../scanRefusals';
 import { neverDescendPaths } from '../../utils/mountBoundaries';
@@ -668,9 +669,22 @@ async function settle(mod: ScanModule, handle: number): Promise<void> {
  * walk may only be waiting for a turn. A module that throws mid-walk has its
  * handle settled first, so nothing is leaked behind the error.
  */
-export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath: string, module?: ScanModule): Promise<void> {
+/**
+ * Where a native scan's rows go: `'columns'`, the walk's own columns, which
+ * `ingestColumns` builds into the store (today's path), or `'memory'`, tm-store's
+ * memory sink, whose finished store the scanner's store adopts in place
+ * (Phase 4 T8c, `nativeMemory.ts`; behind this until T10).
+ */
+export type NativeStorage = 'columns' | 'memory';
+
+export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath: string, module?: ScanModule, storage: NativeStorage = 'columns'): Promise<void> {
   const mod = module ?? mustScanModule();
-  const handle = mod.scanStart(rootPath, { neverDescend: neverDescendPaths(), wantAtime: true });
+  const memory = storage === 'memory' ? memoryTarget(store, mod) : null;
+  const handle = mod.scanStart(rootPath, {
+    neverDescend: neverDescendPaths(),
+    wantAtime: true,
+    ...(memory ? { storage: 'memory' as const, store: memoryStoreOptions(memory.store) } : {}),
+  });
   let nativePaused = false;
   const setPaused = (want: boolean): void => {
     if (want === nativePaused) return;
@@ -741,6 +755,20 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
     await settleOnce();
     return;
   }
+  if (memory) {
+    let taken: NativeStore;
+    try {
+      taken = await memory.storeTake(handle);
+    } catch (err: unknown) {
+      throw withErrno(err, rootPath);
+    }
+    const cpuBefore = process.cpuUsage();
+    adoptNativeStore(scan, memory.store, taken);
+    memory.store.sumSizes();
+    noteCpu(scan, taken.stats.cpuSeconds, process.cpuUsage(cpuBefore));
+    scan.currentPath = rootPath;
+    return;
+  }
   let cols: WalkResult;
   try {
     cols = mod.scanTake(handle);
@@ -751,12 +779,23 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
   ingestColumns(scan, store, cols, rootPath);
   store.finalize();
   store.sumSizes();
-  const ingest = process.cpuUsage(cpuBefore);
-  const walkCpu = cols.stats.cpuSeconds;
-  scan.cpuSeconds = typeof walkCpu === 'number' && Number.isFinite(walkCpu)
-    ? walkCpu + (ingest.user + ingest.system) / 1e6
-    : null;
+  noteCpu(scan, cols.stats.cpuSeconds, process.cpuUsage(cpuBefore));
   scan.currentPath = rootPath;
+}
+
+/** `scan.cpuSeconds`: the walk's own thread CPU and Node's part after it, or null where the walk could not measure its own. */
+function noteCpu(scan: ScanResult, walkCpu: number | null, node: NodeJS.CpuUsage): void {
+  scan.cpuSeconds = typeof walkCpu === 'number' && Number.isFinite(walkCpu)
+    ? walkCpu + (node.user + node.system) / 1e6
+    : null;
+}
+
+/** The memory path's store and take, refused — before any walk starts — where they cannot be had. */
+function memoryTarget(store: ScanStore, mod: ScanModule): { store: PackedScanStore; storeTake: (handle: number) => Promise<NativeStore> } {
+  if (!(store instanceof PackedScanStore)) throw new Error('the native memory path adopts into a PackedScanStore; this scan has another store');
+  const take = mod.storeTake;
+  if (typeof take !== 'function') throw new Error('the native module has no storeTake(), so it cannot hand over a memory-mode store; rebuild it with npm run build:native');
+  return { store, storeTake: (handle) => take.call(mod, handle) };
 }
 
 function mustScanModule(): ScanModule {

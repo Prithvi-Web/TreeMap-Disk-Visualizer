@@ -9,7 +9,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import type { NativeProbe, NativeProgress, ScanStartOptions, WalkResult } from '../../../native/index';
+import type { NativeProbe, NativeProgress, NativeStore, ScanStartOptions, WalkResult } from '../../../native/index';
 
 export interface NativeModule {
   version(): string;
@@ -148,6 +148,8 @@ export interface ScanModule extends NativeModule {
   scanResume(handle: number): void;
   scanCancel(handle: number): void;
   scanTake(handle: number): WalkResult;
+  /** A memory-mode scan's store (native contract 0.3.0; the memory path, behind a flag until T10). */
+  storeTake?(handle: number): Promise<NativeStore>;
 }
 
 export type ScanModuleOutcome =

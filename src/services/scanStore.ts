@@ -718,6 +718,11 @@ export class ObjectScanStore implements ScanStore {
 
 const CONTAINER_KINDS: readonly ContainerKind[] = ['zip', 'tar', 'tgz', 'iso', 'dmg', 'photos', 'docker'];
 const CONTAINER_ID: Record<string, number> = { zip: 1, tar: 2, tgz: 3, iso: 4, dmg: 5, photos: 6, docker: 7 };
+
+/** The container column's number for `kind` (the native store's `ContainerRule.kind` too). */
+export function containerKindId(kind: ContainerKind): number {
+  return CONTAINER_ID[kind] ?? 0;
+}
 const CLOUD_PROVIDERS: readonly CloudProviderName[] = ['icloud', 'onedrive', 'dropbox'];
 const CLOUD_ID: Record<string, number> = { icloud: 1, onedrive: 2, dropbox: 3 };
 
