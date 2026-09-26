@@ -1,22 +1,24 @@
 /**
  * memoryPathWorker — one T9 measurement, in a process of its own
- * (`memoryPath.ts` starts it under tsx with this machine's Node or the app's
- * binary run as Node). A fresh process makes a peak this measurement's own.
+ * (`memoryPath.ts` compiles it and starts it with this machine's Node or the
+ * app's binary run as Node). A fresh process makes a peak this measurement's
+ * own.
  *
  * The job arrives as a JSON file (argv[2]) and the result leaves as a JSON
  * file (`job.outFile`); stdout stays free for diagnostics. After each stage
  * it records the process's peak resident set (`getrusage` maxRSS), its
  * current memory, and on macOS its peak physical footprint (the harness's
- * probe). The app's modules are imported inside the job, so the first stage,
- * `loaded`, is the baseline with them in memory.
+ * probe). The app's server modules are loaded inside the job before anything
+ * else, so the first stage, `loaded`, is the server's own baseline.
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
+import { performance } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
+import type { Response } from 'express';
 import type * as NativeCore from '../../native/index';
 import { peakFootprint, snapshotUsage } from './rusage';
-import { FIRST_PRUNE_NODES, longestDelayMs, type MemoryPathJob, type MemoryPathResult, type StageUsage } from './memoryPath';
+import { busyWhile, type MemoryPathJob, type MemoryPathResult, type StageUsage } from './memoryPath';
 
 type Job = MemoryPathJob & { module: string; outFile: string };
 
@@ -24,6 +26,8 @@ const job = JSON.parse(fs.readFileSync(process.argv[2] ?? '', 'utf8')) as Job;
 const started = performance.now();
 const stages: StageUsage[] = [];
 const runtime = { node: process.versions.node, electron: process.versions.electron ?? null };
+/** A TypeScript loader registers `.ts` with `require`; the packaged app has none. */
+const typescriptLoader = '.ts' in require.extensions;
 let footprintSource = 'no stage was measured';
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 /** How often the walk is polled: the app's own cadence (NATIVE_POLL_MS). */
@@ -53,8 +57,24 @@ async function loadCore(): Promise<typeof NativeCore | string> {
   return loaded.available ? (loaded.module as unknown as typeof NativeCore) : loaded.reason;
 }
 
-/** The memory path over a synthetic tree or one on disk, as `runNativeWalk`'s memory branch drives it. */
+/**
+ * The app's server modules, loaded as the server loads them — none started,
+ * nothing listening — so every stage counts them, as the app's own process
+ * does. Whether they are in memory.
+ */
+async function loadApp(): Promise<boolean> {
+  await import('../../src/server');
+  return Object.keys(require.cache).some((file) => file.endsWith(path.join('src', 'server.js')));
+}
+
+/**
+ * The memory path over a synthetic tree or one on disk, as `runNativeWalk`'s
+ * memory branch drives it, then the first tree sent as the app sends it.
+ */
 async function walk(source: Extract<MemoryPathJob, { kind: 'synthetic' | 'disk' }>): Promise<MemoryPathResult> {
+  const serverLoaded = await loadApp();
+  const { PRUNE_MAX_NODES, buildScanStats } = await import('../../src/api/scanRoutes');
+  const { sseSend } = await import('../../src/utils/sse');
   const { adoptNativeStore, memoryStoreOptions } = await import('../../src/services/scan/nativeMemory');
   const { rootName } = await import('../../src/services/scan/nativeEngine');
   const { PackedScanStore } = await import('../../src/services/scanStore');
@@ -79,25 +99,31 @@ async function walk(source: Extract<MemoryPathJob, { kind: 'synthetic' | 'disk' 
   const error = core.scanPoll(handle).error;
   if (error) return { ok: false, runtime, error };
   await measure('walked');
-  const delay = monitorEventLoopDelay({ resolution: 1 });
-  delay.enable();
-  const taken = await core.storeTake(handle);
-  delay.disable();
+  const { value: taken, busyMs: handOverBusyMs } = await busyWhile(() => core.storeTake(handle));
   await measure('handed-over');
   const scan = createScanRecord(root);
   adoptNativeStore(scan, store, taken);
   store.sumSizes();
   await measure('adopted');
-  const json = JSON.stringify(store.prune(store.rootId, { maxNodes: FIRST_PRUNE_NODES }).root);
+  // The SSE stream's `finish`: the pruned tree and the stats in one frame,
+  // written to a socket that has not flushed it yet — which holds it as UTF-8.
+  const socket = { frame: null as Buffer | null, write(chunk: string): boolean { this.frame = Buffer.from(chunk, 'utf8'); return true; } };
+  const { root: tree } = store.prune(store.rootId, { maxNodes: PRUNE_MAX_NODES });
+  if (!sseSend(socket as unknown as Response, { type: 'complete', root: tree, stats: buildScanStats(scan) })) {
+    return { ok: false, runtime, error: 'the first tree did not fit one SSE frame: the app would have sent its error instead' };
+  }
   await measure('pruned');
   return {
     ok: true,
     runtime,
     stages,
     footprintSource,
+    typescriptLoader,
+    serverLoaded,
     counts: { scanned: scan.scanned ?? 0, dirs: scan.dirCount ?? 0, files: scan.fileCount ?? 0 },
-    handOverBlockMs: longestDelayMs(delay),
-    prunedJsonBytes: json.length,
+    handOverBusyMs,
+    frameBytes: socket.frame?.length ?? 0,
+    frameHead: socket.frame?.subarray(0, 64).toString('utf8') ?? '',
   };
 }
 
@@ -111,6 +137,7 @@ const FILES_PER_FOLDER = 1_000;
  * a cloud candidate; half the folders are named like a OneDrive folder.
  */
 async function candidates(files: number): Promise<MemoryPathResult> {
+  const serverLoaded = await loadApp();
   const { adoptNativeStore } = await import('../../src/services/scan/nativeMemory');
   const { PackedScanStore, Flag } = await import('../../src/services/scanStore');
   const { statToInput } = await import('../../src/services/scan/nodeInput');
@@ -201,7 +228,7 @@ async function candidates(files: number): Promise<MemoryPathResult> {
   adoptNativeStore(scan, store, taken);
   const ms = performance.now() - before;
   await measure('adopted');
-  return { ok: true, runtime, stages, footprintSource, passes: { textCandidates: files, cloudCandidates: files, ms } };
+  return { ok: true, runtime, stages, footprintSource, typescriptLoader, serverLoaded, passes: { textCandidates: files, cloudCandidates: files, ms } };
 }
 
 /** The addon loaded in a worker thread, as the full-pass runner will load it (§S.5.7), and its version read there. */
@@ -213,7 +240,7 @@ async function workerProbe(): Promise<MemoryPathResult> {
       worker.once('message', resolve);
       worker.once('error', reject);
     });
-    return { ok: true, runtime, stages, footprintSource, workerVersion: String(version) };
+    return { ok: true, runtime, stages, footprintSource, typescriptLoader, workerVersion: String(version) };
   } finally {
     await worker.terminate();
   }

@@ -1,30 +1,33 @@
 /**
  * The memory path's measurements (Phase 4 T9; design §S.3). No product code:
  * each measurement runs in a fresh process of its own — this machine's Node,
- * or the installed app's own Electron binary run as Node — and drives the
- * native engine's memory path exactly as `runNativeWalk` does (walk and seal,
- * `storeTake`, `adoptNativeStore` with Node's passes, the first prune and its
- * JSON), reporting the process's peak resident memory and physical footprint
- * after each stage. A store where every file is a candidate measures Node's
- * passes alone; a probe loads the addon in a worker thread, as the full-pass
- * runner will (§S.5.7). The numbers set each runtime's `T_mem` and `M_agg`.
+ * or the installed app's own Electron binary run as Node — with the app's
+ * server modules loaded, and drives the native engine's memory path exactly as
+ * `runNativeWalk` does (walk and seal, `storeTake`, `adoptNativeStore` with
+ * Node's passes), then sends the first tree as the app sends it (the SSE
+ * `complete` frame at `PRUNE_MAX_NODES`), reporting the process's peak
+ * resident memory and physical footprint after each stage. A store where every
+ * file is a candidate measures Node's passes alone; a probe loads the addon in
+ * a worker thread, as the full-pass runner will (§S.5.7). The numbers set each
+ * runtime's `T_mem` and `M_agg`.
  *
- * The app's binary is used read-only (`ELECTRON_RUN_AS_NODE=1` starts no app
- * and opens no app data); every process has a data folder of its own, removed
- * when it is done.
+ * The measuring process runs JavaScript compiled as the app's build compiles
+ * it (`tsc` with the app's settings, into a folder of the harness's own), so
+ * no TypeScript loader sits in the memory it measures. The app's binary is
+ * used read-only (`ELECTRON_RUN_AS_NODE=1` starts no app and opens no app
+ * data); every process has a data folder of its own, removed when it is done.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { PROBE_BINARY_ENV, PROBE_FAILURE_ENV, probeHandoff } from './rusage';
 
 /** The stages a walk is measured after, in order. */
 export const MEMORY_PATH_STAGES = ['loaded', 'walked', 'handed-over', 'adopted', 'pruned'] as const;
 /** The installed app's binary, run as Node for the Electron runtime (macOS). */
 export const ELECTRON_BINARY = '/Applications/TreeMap.app/Contents/MacOS/TreeMap';
-/** The rows the first prune keeps: the transport's pruned tree (§S.3). */
-export const FIRST_PRUNE_NODES = 250_000;
 
 export type MemoryPathRuntime = 'node' | 'electron';
 
@@ -66,28 +69,80 @@ export type MemoryPathResult =
     stages: StageUsage[];
     /** Why a stage's footprint is null, or where it came from. */
     footprintSource: string;
+    /** Whether a TypeScript loader was in the process: never, since it runs compiled JavaScript. */
+    typescriptLoader: boolean;
+    /** Whether the app's server modules were in memory from the first stage on. */
+    serverLoaded?: boolean;
     counts?: { scanned: number; dirs: number; files: number };
     /**
-     * The longest the JavaScript thread was held while `storeTake` ran
-     * (`monitorEventLoopDelay`, 1 ms resolution): where Electron refuses
-     * external buffers, napi-rs copies the columns there (RISKS R92).
+     * How long the JavaScript thread was busy while `storeTake` ran
+     * (`busyWhile`): where Electron refuses external buffers, napi-rs copies
+     * the columns there, inside one callback (RISKS R92).
      */
-    handOverBlockMs?: number;
-    prunedJsonBytes?: number;
+    handOverBusyMs?: number;
+    /** The SSE `complete` frame's bytes, as the app's `sseSend` wrote it and a socket encodes it. */
+    frameBytes?: number;
+    /** The frame's first bytes, which name the event. */
+    frameHead?: string;
     passes?: { textCandidates: number; cloudCandidates: number; ms: number };
     workerVersion?: string;
   }
   | { ok: false; runtime?: MemoryPathRuntimeInfo; error: string };
 
-/** A `monitorEventLoopDelay` histogram's longest delay in ms: it records nanoseconds, and one with no sample reads 0. */
-export function longestDelayMs(histogram: { max: number }): number {
-  return histogram.max / 1e6;
+/**
+ * `work`'s value, and how long the JavaScript thread was busy while it ran:
+ * the event loop's active time over the window. A block inside the callback
+ * that settles `work` counts whole — a delay probe would miss it, switched off
+ * by the very continuation that follows the block.
+ */
+export async function busyWhile<T>(work: () => Promise<T>): Promise<{ value: T; busyMs: number }> {
+  const before = performance.eventLoopUtilization();
+  const value = await work();
+  return { value, busyMs: performance.eventLoopUtilization(before).active };
 }
 
-const WORKER = path.join(__dirname, 'memoryPathWorker.ts');
+const REPO = path.join(__dirname, '..', '..');
 
-function tsxCli(): string {
-  return path.join(path.dirname(require.resolve('tsx/package.json')), 'dist', 'cli.mjs');
+/**
+ * The worker, and the app's `src/` it drives, compiled as the app's build
+ * compiles them — `tsc` with the app's own settings, every file of `src/` —
+ * into `outDir`, laid out as the repository is: `src/` one level below a
+ * `package.json`, so the paths the app counts up from its own files
+ * (`../../package.json`, the native loader's root) land where they land in the
+ * app's `dist/`. (The rule packs `scripts/copy-assets.js` copies are read on
+ * first use, which nothing measured makes.) Returns the compiled worker's path.
+ */
+function compileWorker(outDir: string): string {
+  const tsconfig = path.join(outDir, 'tsconfig.json');
+  fs.writeFileSync(tsconfig, JSON.stringify({
+    extends: path.join(REPO, 'tsconfig.json'),
+    compilerOptions: { rootDir: REPO, outDir, sourceMap: false, noEmit: false },
+    files: [path.join(REPO, 'bench', 'lib', 'memoryPathWorker.ts')],
+    include: [path.join(REPO, 'src', '**', '*.ts')],
+  }));
+  const tsc = path.join(path.dirname(require.resolve('typescript/package.json')), 'bin', 'tsc');
+  const r = spawnSync(process.execPath, [tsc, '-p', tsconfig], { encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`the measuring worker did not compile: ${`${r.stdout}${r.stderr}`.trim().slice(-2_000)}`);
+  fs.copyFileSync(path.join(REPO, 'package.json'), path.join(outDir, 'package.json'));
+  return path.join(outDir, 'bench', 'lib', 'memoryPathWorker.js');
+}
+
+let compiled: string | undefined;
+
+/**
+ * The compiled worker, built once per process into a folder removed when the
+ * process exits: inside the repository (under the ignored `bench/results/`),
+ * so the compiled app finds the repository's `node_modules` as `dist/` does.
+ */
+function compiledWorker(): string {
+  if (compiled === undefined) {
+    const results = path.join(REPO, 'bench', 'results');
+    fs.mkdirSync(results, { recursive: true });
+    const outDir = fs.mkdtempSync(path.join(results, '.memory-path-js-'));
+    process.once('exit', () => fs.rmSync(outDir, { recursive: true, force: true }));
+    compiled = compileWorker(outDir);
+  }
+  return compiled;
 }
 
 /** The binary a runtime runs; the Electron runtime is refused, naming where it looked, when the app is not installed there. */
@@ -107,12 +162,14 @@ function executable(runtime: MemoryPathRuntime): string {
  */
 export async function runMemoryPathWorker(job: MemoryPathJob & { module: string; runtime: MemoryPathRuntime }): Promise<MemoryPathResult> {
   const binary = executable(job.runtime);
+  const worker = compiledWorker();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-memory-path-'));
   try {
     const jobFile = path.join(dataDir, 'job.json');
     const outFile = path.join(dataDir, 'result.json');
     fs.writeFileSync(jobFile, JSON.stringify({ ...job, outFile }));
-    const { [PROBE_BINARY_ENV]: _binary, [PROBE_FAILURE_ENV]: _failure, ELECTRON_RUN_AS_NODE: _asNode, ...inherited } = process.env;
+    // The app runs with neither: NODE_OPTIONS could carry a loader into the process measured.
+    const { [PROBE_BINARY_ENV]: _binary, [PROBE_FAILURE_ENV]: _failure, ELECTRON_RUN_AS_NODE: _asNode, NODE_OPTIONS: _options, ...inherited } = process.env;
     const env: NodeJS.ProcessEnv = {
       ...inherited,
       ...probeHandoff(),
@@ -121,7 +178,7 @@ export async function runMemoryPathWorker(job: MemoryPathJob & { module: string;
     };
     const stderr = await new Promise<string>((resolve, reject) => {
       let err = '';
-      const child = spawn(binary, [tsxCli(), WORKER, jobFile], { env, stdio: ['ignore', 'ignore', 'pipe'] });
+      const child = spawn(binary, [worker, jobFile], { env, stdio: ['ignore', 'ignore', 'pipe'] });
       child.stderr.on('data', (chunk: Buffer) => { err += chunk.toString(); });
       child.on('error', reject);
       child.on('close', () => resolve(err));
@@ -215,6 +272,7 @@ export function formatMeasurement(m: MemoryPathMeasurement): string {
   const footprint = last?.peakFootprintBytes == null ? '' : ` · footprint ${(last.peakFootprintBytes / MB).toFixed(0)}`;
   const extra = m.result.passes ? ` · passes ${m.result.passes.ms.toFixed(0)} ms`
     : m.result.workerVersion ? ` · worker loaded ${m.result.workerVersion}`
-      : m.result.handOverBlockMs !== undefined ? ` · hand-over block ${m.result.handOverBlockMs.toFixed(1)} ms` : '';
+      : m.result.handOverBusyMs !== undefined
+        ? ` · hand-over busy ${m.result.handOverBusyMs.toFixed(1)} ms · frame ${((m.result.frameBytes ?? 0) / MB).toFixed(1)} MB` : '';
   return `${head} peak MB: ${stages || '—'}${footprint}${extra}`;
 }

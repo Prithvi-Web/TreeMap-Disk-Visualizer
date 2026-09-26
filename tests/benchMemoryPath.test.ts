@@ -10,17 +10,19 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-benchMemoryPath-data-');
 
 import { skipOrFailOnCi } from './fixtures/ciSkip';
-import { ELECTRON_BINARY, MEMORY_PATH_STAGES, longestDelayMs, parseSizes, runMemoryPathWorker, type MemoryPathRecord } from '../bench/lib/memoryPath';
+import { ELECTRON_BINARY, MEMORY_PATH_STAGES, busyWhile, parseSizes, runMemoryPathWorker, type MemoryPathRecord } from '../bench/lib/memoryPath';
 
 /**
  * Phase 4 T9's harness (no product code): each measurement runs in a fresh
- * process — plain Node, or the installed app's own binary run as Node — and
- * drives the native memory path stage by stage (walk and seal, hand-over,
- * adoption with Node's passes, first prune), reporting the process's peak
- * resident memory after each; a store where every file is a candidate
- * measures Node's passes alone; a probe loads the addon in a worker thread.
- * These tests hold the harness to its contract on small trees; the
- * measurements themselves are T9's record, not a test.
+ * process — plain Node, or the installed app's own binary run as Node — on
+ * JavaScript compiled as the app's build compiles it, with the app's server
+ * modules loaded, and drives the native memory path stage by stage (walk and
+ * seal, hand-over, adoption with Node's passes, the first tree sent as the
+ * app sends it), reporting the process's peak resident memory after each; a
+ * store where every file is a candidate measures Node's passes alone; a probe
+ * loads the addon in a worker thread. These tests hold the harness to its
+ * contract on small trees; the measurements themselves are T9's record, not a
+ * test.
  */
 
 const REPO = path.join(__dirname, '..');
@@ -44,14 +46,17 @@ test('a synthetic walk is measured stage by stage in a process of its own, the p
   }
   assert.equal(result.counts?.scanned, entries + 1, 'every entry and the root');
   assert.equal((result.counts?.dirs ?? 0) + (result.counts?.files ?? 0), entries + 1, 'every row a folder or a file');
-  assert.ok((result.prunedJsonBytes ?? 0) > 0, 'the first prune was serialised');
+  assert.ok((result.frameBytes ?? 0) > 0, 'the first tree was sent');
+  assert.match(result.frameHead ?? '', /^data: \{"type":"complete","root":\{/, 'as the SSE complete frame the app writes');
   const walked = result.stages.find((s) => s.stage === 'walked');
   const handedOver = result.stages.find((s) => s.stage === 'handed-over');
   assert.ok(walked && handedOver);
-  const block = result.handOverBlockMs;
-  assert.ok(typeof block === 'number' && Number.isFinite(block) && block >= 0, 'the hand-over\'s longest block of the JavaScript thread is measured');
-  // The block is timed inside the hand-over, and the hand-over between the two stages: 1 ms is the probe's resolution.
-  assert.ok(block <= handedOver.ms - walked.ms + 1, `a ${block} ms block is no longer than the hand-over it was timed in`);
+  const busy = result.handOverBusyMs;
+  assert.ok(typeof busy === 'number' && Number.isFinite(busy) && busy >= 0, 'the JavaScript thread\'s busy time during the hand-over is measured');
+  // Timed inside the hand-over, which lies between the two stages' readings: 1 ms for the clocks' rounding.
+  assert.ok(busy <= handedOver.ms - walked.ms + 1, `${busy} ms busy inside a hand-over of ${handedOver.ms - walked.ms} ms`);
+  assert.equal(result.typescriptLoader, false, 'the measuring process runs compiled JavaScript, as the packaged app does');
+  assert.equal(result.serverLoaded, true, 'the app\'s server modules are in memory from the first stage on');
   assert.equal(result.runtime.electron, null, 'plain Node');
   assert.equal(result.runtime.node, process.versions.node);
 });
@@ -99,9 +104,19 @@ function bench(env: NodeJS.ProcessEnv, ...args: string[]): { status: number | nu
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
-test('the hand-over\'s block is read in milliseconds from a histogram that records nanoseconds', () => {
-  assert.equal(longestDelayMs({ max: 2_500_000 }), 2.5);
-  assert.equal(longestDelayMs({ max: 0 }), 0, 'a histogram that took no sample');
+test('the hand-over\'s busy time counts, whole, a block inside the callback that settles it', async () => {
+  const BLOCK_MS = 30;
+  const cell = new Int32Array(new SharedArrayBuffer(4));
+  const { value, busyMs } = await busyWhile(() => new Promise<string>((resolve) => {
+    setTimeout(() => {
+      // Holds this thread as napi-rs's copy inside `resolve` holds it: a wait, not a spin.
+      Atomics.wait(cell, 0, 0, BLOCK_MS);
+      resolve('settled');
+    }, 1);
+  }));
+  assert.equal(value, 'settled');
+  // 1 ms for the two monotonic clocks' rounding; a slower or busier machine only adds.
+  assert.ok(busyMs >= BLOCK_MS - 1, `${busyMs} ms busy across a ${BLOCK_MS} ms block`);
 });
 
 test('sizes are whole counts with an optional k or m, and anything else is refused by name', () => {
@@ -135,7 +150,7 @@ test('bench memory-path measures its matrix and writes one result naming every m
     const record = JSON.parse(fs.readFileSync(path.join(out, files[0]), 'utf8')) as MemoryPathRecord;
     assert.deepEqual(record.measurements.map((m) => [m.runtime, m.job.kind]), [['node', 'synthetic'], ['node', 'candidates'], ['node', 'worker-probe']]);
     for (const m of record.measurements) assert.ok(m.result.ok, m.result.ok ? '' : m.result.error);
-    assert.match(r.stdout, /node\s+synthetic 20,000 .* · hand-over block \d+\.\d ms/);
+    assert.match(r.stdout, /node\s+synthetic 20,000 .* · hand-over busy \d+\.\d ms · frame \d+\.\d MB/);
   } finally {
     fs.rmSync(out, { recursive: true, force: true });
   }
