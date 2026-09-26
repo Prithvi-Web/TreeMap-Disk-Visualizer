@@ -8,7 +8,9 @@ use std::hint::black_box;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tm_governor::sample::{CpuTicks, fold_reading, parse_proc_stat, proc_stat_busy_share};
+use tm_governor::sample::{
+    CpuTicks, fold_reading, parse_proc_stat, proc_stat_busy_share, thread_cpu_seconds,
+};
 use tm_governor::signals::{
     THERMAL_CRITICAL_C, THERMAL_FAIR_C, THERMAL_SERIOUS_C, ac_from_estimate,
     on_battery_from_status, thermal_from_millidegrees, thermal_from_zone_text,
@@ -44,6 +46,9 @@ const SPIN_DEADLINE: Duration = Duration::from_secs(10);
 /// The CPU time an OS may charge late, per core: Windows charges it in whole
 /// 15.6 ms clock ticks.
 const CHARGE_GRANULARITY_S: f64 = 0.016;
+/// The CPU time the thread-clock test has a second thread spin for, as that thread's own
+/// clock reports it.
+const OTHER_THREAD_CPU_S: f64 = 0.05;
 
 /// Burn CPU on the calling thread for `wall` without sleeping.
 fn spin_for(wall: Duration) {
@@ -382,6 +387,59 @@ fn the_platform_sampler_reports_this_machines_cores_and_advances() {
         sampler.cores(),
         caps.machine_cpu.mechanism
     );
+}
+
+#[test]
+fn a_thread_s_cpu_clock_counts_that_thread_and_no_other() {
+    // A second thread spins until its own clock shows the work (counted, not timed: a busy
+    // machine can hold a spin up for any length of wall time) while this one only waits for
+    // it. The spinner's clock must grow by what it spun, this thread's must not move with it,
+    // and the process's clock, which counts every thread, must include it. A clock that read
+    // the whole process would move here too; one that never moved would fail the spinner.
+    let mut process = platform_sampler();
+    let process_before = process.own_cpu_seconds();
+    let mine_before = thread_cpu_seconds();
+    let spinner = thread::spawn(|| {
+        let start = thread_cpu_seconds();
+        let spun_from = Instant::now();
+        let mut now = start;
+        while now
+            .zip(start)
+            .is_some_and(|(now, start)| now - start < OTHER_THREAD_CPU_S)
+            && spun_from.elapsed() < SPIN_DEADLINE
+        {
+            spin_for(SPIN_STEP);
+            now = thread_cpu_seconds();
+        }
+        now.zip(start).map(|(now, start)| now - start)
+    });
+    let spinner_used = spinner.join().ok().flatten();
+    let mine_used = thread_cpu_seconds()
+        .zip(mine_before)
+        .map(|(now, before)| now - before);
+    let process_used = process.own_cpu_seconds() - process_before;
+    println!(
+        "live thread clocks: the spinner's grew {spinner_used:?} s, the waiting thread's {mine_used:?} s, the process's {process_used:.4} s"
+    );
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    assert!(
+        spinner_used.is_some() && mine_used.is_some(),
+        "this OS has a per-thread CPU clock, and it did not answer"
+    );
+    if let (Some(spinner_used), Some(mine_used)) = (spinner_used, mine_used) {
+        assert!(
+            spinner_used >= OTHER_THREAD_CPU_S,
+            "a spinning thread's clock grows with its work: {spinner_used} s after spinning for {SPIN_DEADLINE:?}"
+        );
+        assert!(
+            mine_used <= CHARGE_GRANULARITY_S,
+            "a waiting thread's clock does not move while another thread spins: it grew {mine_used} s while the other grew {spinner_used} s"
+        );
+        assert!(
+            process_used + CHARGE_GRANULARITY_S >= spinner_used,
+            "the process's CPU ({process_used} s) includes the spinning thread's ({spinner_used} s)"
+        );
+    }
 }
 
 #[test]

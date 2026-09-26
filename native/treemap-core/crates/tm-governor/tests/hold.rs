@@ -13,7 +13,11 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tm_governor::{Budget, FakeSignals, Governor, HoldReport, Preset, hold, platform_sampler};
+use tm_governor::governor::{THROTTLE_CREDIT_CAP, THROTTLE_MIN_SLEEP, TICK};
+use tm_governor::loadgen::{HOLD_SAMPLE_PERIOD, SPIN_UNIT};
+use tm_governor::{
+    Budget, FakeSignals, Governor, HoldReport, Preset, hold, platform_sampler, profile,
+};
 
 /// The band the mean of the last half must sit in, either side of the target.
 const BAND: f64 = 0.05;
@@ -37,18 +41,84 @@ const HOLD_ATTEMPTS: u32 = 3;
 const ROOM_DEADLINE: Duration = Duration::from_secs(60);
 /// How often it asks how busy the machine is while it waits.
 const ROOM_POLL: Duration = Duration::from_millis(250);
-/// Slack on the law that a worker cannot deliver more share than its duty allows: the band's
-/// own half-width. The ledger's bounded credit adds under one point over the window, and the
-/// loop only ever errs the other way (a worker that gets less CPU than its duty allows makes
-/// the duty rise), so the slack is measurement noise, not a model allowance.
-const DUTY_EXPLAINS_SHARE_SLACK: f64 = BAND;
+/// How far off the sampling period an interval must be for the report to list it: a fifth.
+const IRREGULAR_INTERVAL_S: f64 = 0.02;
 
-fn run_gate(
-    label: &str,
-    preset: Preset,
-    cpu_percent: Option<u8>,
-    seconds: u32,
-) -> (HoldReport, u32) {
+/// The credit a sleep that overran before the second half can carry into it: the ledger's cap.
+const CREDIT_ALLOWANCE: Duration = Duration::from_millis(250);
+/// What the ledger owes at the end of the half but has not slept, being below one wakeup.
+const OWED_REMAINDER_ALLOWANCE: Duration = Duration::from_millis(1);
+/// A duty read at a sample up to one tick after the loop changed it: one tick at full duty.
+const DUTY_AGE_ALLOWANCE: Duration = Duration::from_millis(100);
+/// The unit of work a worker's own clock reading trails its CPU by.
+const CLOCK_LAG_ALLOWANCE: Duration = Duration::from_millis(10);
+/// What the OS may charge a thread's clock late at the half's first reading: Windows charges
+/// thread time in whole 15.6 ms clock ticks (`GetThreadTimes`); macOS and Linux keep the
+/// thread clock to the nanosecond.
+#[cfg(windows)]
+const CHARGE_ALLOWANCE: Duration = Duration::from_millis(16);
+#[cfg(not(windows))]
+const CHARGE_ALLOWANCE: Duration = Duration::ZERO;
+
+/// What one worker may run past the duties in force over the second half while the throttle
+/// does exactly its job, in CPU time: the five parts above. Nothing else enters the duty law,
+/// because it reads the workers' own clocks over the half's wall time: no other thread's CPU
+/// and no sampling interval is in it. The parts are this law's own numbers, not the crate's
+/// constants: [`assert_the_allowance_covers_the_throttle`] holds the crate to them, so a
+/// larger cap or a longer tick is a change to this law too, made on purpose, never a silent
+/// widening of it.
+fn per_worker_allowance() -> Duration {
+    CREDIT_ALLOWANCE
+        + OWED_REMAINDER_ALLOWANCE
+        + DUTY_AGE_ALLOWANCE
+        + CLOCK_LAG_ALLOWANCE
+        + CHARGE_ALLOWANCE
+}
+
+/// Every started worker's allowance, as a share of all cores over the second half's wall time.
+fn duty_law_slack(report: &HoldReport, cores: u32, threads: u32) -> f64 {
+    let half_wall_s: f64 = report
+        .intervals
+        .iter()
+        .skip(report.intervals.len() / 2)
+        .sum();
+    f64::from(threads) * per_worker_allowance().as_secs_f64()
+        / (half_wall_s * f64::from(cores.max(1)))
+}
+
+/// The allowance is only an allowance if the throttle keeps within it.
+fn assert_the_allowance_covers_the_throttle(label: &str) {
+    let parts = [
+        (
+            "the ledger's credit cap",
+            THROTTLE_CREDIT_CAP,
+            CREDIT_ALLOWANCE,
+        ),
+        (
+            "the smallest sleep",
+            THROTTLE_MIN_SLEEP,
+            OWED_REMAINDER_ALLOWANCE,
+        ),
+        ("the tick", TICK, DUTY_AGE_ALLOWANCE),
+        ("the unit of work", SPIN_UNIT, CLOCK_LAG_ALLOWANCE),
+    ];
+    for (part, crate_value, allowed) in parts {
+        assert!(
+            crate_value <= allowed,
+            "[{label}] the duty law allows each worker {allowed:?} for {part}, but the crate's is \
+             {crate_value:?}: widen the allowance here, deliberately, before the crate"
+        );
+    }
+}
+
+/// A hold's report, the machine it measured and the workers its load started.
+struct Gate {
+    report: HoldReport,
+    cores: u32,
+    threads: u32,
+}
+
+fn run_gate(label: &str, preset: Preset, cpu_percent: Option<u8>, seconds: u32) -> Gate {
     let governor = Governor::start(
         Budget {
             preset,
@@ -72,8 +142,15 @@ fn run_gate(
     let report = hold(&governor, f64::from(seconds), sampler.as_mut());
     governor.stop();
     let cores = sampler.cores();
-    print_report(label, &report, cores);
-    (report, cores)
+    // As many workers as hold() starts: the profile's most (auto is off, so the preset is
+    // the one asked for).
+    let threads = profile(preset, cores, cpu_percent).max_workers;
+    print_report(label, &report, cores, threads);
+    Gate {
+        report,
+        cores,
+        threads,
+    }
 }
 
 fn mean(values: &[f64]) -> f64 {
@@ -84,11 +161,11 @@ fn mean(values: &[f64]) -> f64 {
     }
 }
 
-fn print_report(label: &str, report: &HoldReport, cores: u32) {
+fn print_report(label: &str, report: &HoldReport, cores: u32, threads: u32) {
     println!(
         "[{label}] cores {cores} target {:.2} mean {:.4} mean_last_half {:.4} p95_abs_error {:.4} \
-         workers_final {} duty_final {:.3} allowed_last_half {:.4} within_band {} samples {} \
-         machine_idle_last_half {}",
+         workers_final {} duty_final {:.3} allowed_last_half {:.4} workers_last_half {} \
+         duty_law_slack {:.4} within_band {} samples {} machine_idle_last_half {}",
         report.target,
         report.mean,
         report.mean_last_half,
@@ -96,9 +173,31 @@ fn print_report(label: &str, report: &HoldReport, cores: u32) {
         report.workers_final,
         report.duty_final,
         report.allowed_last_half,
+        workers_text(report),
+        duty_law_slack(report, cores, threads),
         report.within_band,
         report.samples.len(),
         idle_text(report)
+    );
+    // A sample is a share of its own interval, and the intervals are equal only on a machine
+    // with room: a late wakeup lengthens one and the schedule then catches up with short ones,
+    // down to microseconds, in which the sampling thread itself runs throughout.
+    let period_s = HOLD_SAMPLE_PERIOD.as_secs_f64();
+    let irregular: Vec<String> = report
+        .intervals
+        .iter()
+        .enumerate()
+        .filter(|(_, interval)| (*interval - period_s).abs() > IRREGULAR_INTERVAL_S)
+        .map(|(sample, interval)| format!("#{sample} {:.1}", interval * 1e3))
+        .collect();
+    println!(
+        "[{label}] intervals off the {:.0} ms period (ms): {}",
+        period_s * 1e3,
+        if irregular.is_empty() {
+            "none".to_owned()
+        } else {
+            irregular.join(" ")
+        }
     );
     let per_second: Vec<String> = report
         .samples
@@ -117,6 +216,13 @@ fn idle_text(report: &HoldReport) -> String {
     report
         .machine_idle_last_half
         .map_or_else(|| "unknown".to_owned(), |idle| format!("{idle:.4}"))
+}
+
+fn workers_text(report: &HoldReport) -> String {
+    report.workers_last_half.map_or_else(
+        || "unmeasured (no per-thread CPU clock answered)".to_owned(),
+        |workers| format!("{workers:.4}"),
+    )
 }
 
 /// Whether a hold under the band had nothing to hold with: over its last half the whole
@@ -155,7 +261,13 @@ fn wait_for_room(label: &str, needed: f64) {
     );
 }
 
-fn assert_gate(label: &str, report: &HoldReport, cores: u32, seconds: u32) {
+fn assert_gate(label: &str, gate: &Gate, seconds: u32) {
+    let Gate {
+        report,
+        cores,
+        threads,
+    } = gate;
+    let (cores, threads) = (*cores, *threads);
     let expected_samples = usize::try_from(seconds).unwrap_or(0) * SAMPLES_PER_SECOND;
     let n = report.samples.len();
     assert!(
@@ -168,6 +280,33 @@ fn assert_gate(label: &str, report: &HoldReport, cores: u32, seconds: u32) {
             .iter()
             .all(|s| s.is_finite() && (0.0..=1.0).contains(s)),
         "[{label}] every sample is a share"
+    );
+    // No worker can run more than its duty allows, so the workers' own CPU over the second
+    // half, counted by their thread clocks over the half's wall time, must stay within what
+    // the workers and duties in force over the same half allowed, plus each worker's
+    // allowance. A throttle that never sleeps ends at the duty floor with one worker while
+    // that worker keeps a whole core. (A final snapshot cannot stand in for the half: on the
+    // CI legs of 24 Sep 2026 the loop cut its duty on the last tick, and 1 worker at 0.352 on
+    // 3 cores "explained" 0.117 of a 0.194 share it had allowed. Nor can the process share:
+    // it counts the sampling thread and the tick as well, and its per-sample mean weighs a
+    // sample the schedule caught up with in microseconds, in which the sampling thread ran
+    // throughout, as much as a full one. The macOS CI leg of 26 Sep 2026 failed the law on
+    // that mean, 0.229 against 0.176 allowed, with catch-up samples reading 0.44 to 1.00;
+    // on a Mac whose cores were kept busy the mean overstated the process's share over the
+    // half by 0.05.) Checked before the band: a throttle that does not throttle also moves
+    // the share out of the band, and this names the cause.
+    assert_the_allowance_covers_the_throttle(label);
+    let slack = duty_law_slack(report, cores, threads);
+    assert!(
+        report
+            .workers_last_half
+            .is_some_and(|workers| workers <= report.allowed_last_half + slack),
+        "[{label}] the workers' own CPU over the second half came to {} of {cores} cores, but \
+         the workers and duties in force allowed at most {:.4} (+{slack:.4}: each of {threads} \
+         workers' ledger credit, a duty up to a tick old, one unit of clock lag): the throttle \
+         is not throttling",
+        workers_text(report),
+        report.allowed_last_half,
     );
     assert!(
         (report.mean_last_half - report.target).abs() <= BAND,
@@ -188,47 +327,34 @@ fn assert_gate(label: &str, report: &HoldReport, cores: u32, seconds: u32) {
         report.within_band,
         "[{label}] the report must agree with the band it computed"
     );
-    // No worker can deliver more of the machine than its duty allows, so the workers and
-    // duties the governor had in force over the second half must explain the share
-    // measured over the same half. A throttle that never sleeps ends at the duty floor
-    // with one worker while the share stays up. (A final snapshot cannot stand in for the
-    // half: on the CI legs of 24 Sep 2026 the loop cut its duty on the last tick, and 1
-    // worker at 0.352 on 3 cores "explained" 0.117 of a 0.194 share it had allowed.)
-    assert!(
-        report.allowed_last_half >= report.mean_last_half - DUTY_EXPLAINS_SHARE_SLACK,
-        "[{label}] the workers and duties in force over the second half allowed at most \
-         {:.3} of {cores} cores, not the {:.3} that was measured: the throttle is not \
-         throttling",
-        report.allowed_last_half,
-        report.mean_last_half
-    );
 }
 
 #[test]
 fn holds_nineteen_percent_of_this_machine_for_ten_seconds() {
     let label = "balanced@19%";
     for attempt in 1..=HOLD_ATTEMPTS {
-        let (report, cores) = run_gate(
+        let gate = run_gate(
             label,
             Preset::Balanced,
             Some(SHORT_HOLD_PERCENT),
             SHORT_HOLD_S,
         );
+        let report = &gate.report;
         assert!(
             (report.target - f64::from(SHORT_HOLD_PERCENT) / 100.0).abs() < 1e-9,
             "the target is the override: {}",
             report.target
         );
-        if attempt < HOLD_ATTEMPTS && machine_had_nothing_to_give(&report) {
+        if attempt < HOLD_ATTEMPTS && machine_had_nothing_to_give(report) {
             println!(
                 "[{label}] attempt {attempt} of {HOLD_ATTEMPTS}: the machine was idle for {} of \
                  the last half, so the hold measured the machine; holding again once it has room",
-                idle_text(&report)
+                idle_text(report)
             );
             wait_for_room(label, report.target + BAND);
             continue;
         }
-        assert_gate(label, &report, cores, SHORT_HOLD_S);
+        assert_gate(label, &gate, SHORT_HOLD_S);
         return;
     }
 }
@@ -236,20 +362,20 @@ fn holds_nineteen_percent_of_this_machine_for_ten_seconds() {
 #[test]
 #[ignore = "Phase 2 gate: one minute at Eco; run with --ignored --test-threads=1 --nocapture"]
 fn holds_eco_for_sixty_seconds() {
-    let (report, cores) = run_gate("eco", Preset::Eco, None, GATE_HOLD_S);
-    assert_gate("eco", &report, cores, GATE_HOLD_S);
+    let gate = run_gate("eco", Preset::Eco, None, GATE_HOLD_S);
+    assert_gate("eco", &gate, GATE_HOLD_S);
 }
 
 #[test]
 #[ignore = "Phase 2 gate: one minute at Balanced; run with --ignored --test-threads=1 --nocapture"]
 fn holds_balanced_for_sixty_seconds() {
-    let (report, cores) = run_gate("balanced", Preset::Balanced, None, GATE_HOLD_S);
-    assert_gate("balanced", &report, cores, GATE_HOLD_S);
+    let gate = run_gate("balanced", Preset::Balanced, None, GATE_HOLD_S);
+    assert_gate("balanced", &gate, GATE_HOLD_S);
 }
 
 #[test]
 #[ignore = "Phase 2 gate: one minute at Turbo; run with --ignored --test-threads=1 --nocapture"]
 fn holds_turbo_for_sixty_seconds() {
-    let (report, cores) = run_gate("turbo", Preset::Turbo, None, GATE_HOLD_S);
-    assert_gate("turbo", &report, cores, GATE_HOLD_S);
+    let gate = run_gate("turbo", Preset::Turbo, None, GATE_HOLD_S);
+    assert_gate("turbo", &gate, GATE_HOLD_S);
 }

@@ -34,6 +34,31 @@ pub fn logical_cores() -> u32 {
     thread::available_parallelism().map_or(1, |n| u32::try_from(n.get()).unwrap_or(u32::MAX))
 }
 
+/// The CPU time (user plus system) the calling thread alone has used so far, in seconds,
+/// from the OS's per-thread CPU clock; `None` where the OS has none or the call fails.
+/// What every other thread of the process uses is not in it.
+pub fn thread_cpu_seconds() -> Option<f64> {
+    platform::thread_cpu_seconds()
+}
+
+/// The calling thread's CPU clock (`CLOCK_THREAD_CPUTIME_ID`), which macOS and Linux keep
+/// to the nanosecond for the thread that asks, or `None` when the call fails.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn clock_thread_cpu_seconds() -> Option<f64> {
+    const NANOSECONDS_PER_SECOND: f64 = 1_000_000_000.0;
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: CLOCK_THREAD_CPUTIME_ID is a valid clock on macOS and Linux, and the pointer
+    // refers to a live, writable timespec owned by this frame.
+    let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &raw mut now) };
+    if rc != 0 {
+        return None;
+    }
+    Some(now.tv_sec as f64 + now.tv_nsec as f64 / NANOSECONDS_PER_SECOND)
+}
+
 /// CPU ticks split into busy and idle. Either cumulative counters read from
 /// the OS or the difference between two such readings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -273,9 +298,18 @@ fn rusage_cpu_seconds() -> Option<f64> {
 
 #[cfg(target_os = "macos")]
 pub(crate) mod platform {
-    //! macOS: `getrusage` for the process, `host_statistics64` for the machine.
+    //! macOS: `getrusage` for the process, `CLOCK_THREAD_CPUTIME_ID` for one thread,
+    //! `host_statistics64` for the machine.
 
-    use super::{CpuSampler, CpuTicks, busy_share_of, logical_cores, rusage_cpu_seconds};
+    use super::{
+        CpuSampler, CpuTicks, busy_share_of, clock_thread_cpu_seconds, logical_cores,
+        rusage_cpu_seconds,
+    };
+
+    /// The calling thread's CPU time from its own clock.
+    pub fn thread_cpu_seconds() -> Option<f64> {
+        clock_thread_cpu_seconds()
+    }
 
     // Declared here rather than taken from libc, whose copies are deprecated in
     // favour of the mach2 crate; the signatures are those of <mach/mach_host.h>,
@@ -414,11 +448,18 @@ pub(crate) mod platform {
 
 #[cfg(target_os = "linux")]
 pub(crate) mod platform {
-    //! Linux: `getrusage` for the process, `/proc/stat` for the machine.
+    //! Linux: `getrusage` for the process, `CLOCK_THREAD_CPUTIME_ID` for one thread,
+    //! `/proc/stat` for the machine.
 
     use super::{
-        CpuSampler, CpuTicks, fold_reading, logical_cores, parse_proc_stat, rusage_cpu_seconds,
+        CpuSampler, CpuTicks, clock_thread_cpu_seconds, fold_reading, logical_cores,
+        parse_proc_stat, rusage_cpu_seconds,
     };
+
+    /// The calling thread's CPU time from its own clock.
+    pub fn thread_cpu_seconds() -> Option<f64> {
+        clock_thread_cpu_seconds()
+    }
 
     /// Where the kernel publishes the aggregate CPU counters.
     pub const PROC_STAT_PATH: &str = "/proc/stat";
@@ -471,11 +512,12 @@ pub(crate) mod platform {
 
 #[cfg(windows)]
 pub(crate) mod platform {
-    //! Windows: `GetProcessTimes` for the process, `GetSystemTimes` for the machine.
+    //! Windows: `GetProcessTimes` for the process, `GetThreadTimes` for one thread,
+    //! `GetSystemTimes` for the machine.
 
     use windows_sys::Win32::Foundation::FILETIME;
     use windows_sys::Win32::System::Threading::{
-        GetCurrentProcess, GetProcessTimes, GetSystemTimes,
+        GetCurrentProcess, GetCurrentThread, GetProcessTimes, GetSystemTimes, GetThreadTimes,
     };
 
     use super::{CpuSampler, CpuTicks, fold_reading, logical_cores};
@@ -507,6 +549,32 @@ pub(crate) mod platform {
         let ok = unsafe {
             GetProcessTimes(
                 GetCurrentProcess(),
+                &raw mut creation,
+                &raw mut exit,
+                &raw mut kernel,
+                &raw mut user,
+            )
+        };
+        if ok == 0 {
+            return None;
+        }
+        let units = filetime_units(kernel).checked_add(filetime_units(user))?;
+        Some(units as f64 / FILETIME_UNITS_PER_SECOND)
+    }
+
+    /// The calling thread's kernel plus user time in seconds, or `None` when
+    /// `GetThreadTimes` fails. Windows charges it in whole clock ticks (15.6 ms).
+    pub fn thread_cpu_seconds() -> Option<f64> {
+        let mut creation = zero_filetime();
+        let mut exit = zero_filetime();
+        let mut kernel = zero_filetime();
+        let mut user = zero_filetime();
+        // SAFETY: GetCurrentThread returns a pseudo-handle that is always valid
+        // for the calling thread; the four out-pointers refer to live, writable
+        // FILETIMEs owned by this frame.
+        let ok = unsafe {
+            GetThreadTimes(
+                GetCurrentThread(),
                 &raw mut creation,
                 &raw mut exit,
                 &raw mut kernel,
@@ -584,6 +652,11 @@ pub(crate) mod platform {
     //! Any other OS: nothing is measured, and nothing is invented.
 
     use super::{CpuSampler, logical_cores};
+
+    /// No per-thread CPU clock is read here.
+    pub fn thread_cpu_seconds() -> Option<f64> {
+        None
+    }
 
     /// A sampler that reports no CPU time and no machine share.
     pub struct PlatformSampler {
