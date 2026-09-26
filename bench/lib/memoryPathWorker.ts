@@ -18,6 +18,7 @@ import { Writable } from 'node:stream';
 import { Worker } from 'node:worker_threads';
 import type { Response } from 'express';
 import type * as NativeCore from '../../native/index';
+import type { ScanModule } from '../../src/services/scan/native';
 import { peakFootprint, snapshotUsage } from './rusage';
 import { busyWhile, type MemoryPathJob, type MemoryPathResult, type StageUsage } from './memoryPath';
 
@@ -94,7 +95,7 @@ function readerSocket(): { stream: Writable; bytes: () => number; head: () => st
 async function walk(source: Extract<MemoryPathJob, { kind: 'synthetic' | 'disk' }>): Promise<MemoryPathResult> {
   const serverLoaded = await loadApp();
   const { sendFinalEvent } = await import('../../src/api/scanRoutes');
-  const { adoptNativeStore, memoryStoreOptions } = await import('../../src/services/scan/nativeMemory');
+  const { adoptNativeStore, memoryStoreOptions, takeNativeStore } = await import('../../src/services/scan/nativeMemory');
   const { rootName } = await import('../../src/services/scan/nativeEngine');
   const { PackedScanStore } = await import('../../src/services/scanStore');
   const { statToInput } = await import('../../src/services/scan/nodeInput');
@@ -118,7 +119,9 @@ async function walk(source: Extract<MemoryPathJob, { kind: 'synthetic' | 'disk' 
   const error = core.scanPoll(handle).error;
   if (error) return { ok: false, runtime, error };
   await measure('walked');
-  const { value: taken, busyMs: handOverBusyMs } = await busyWhile(() => core.storeTake(handle));
+  // Taken as the app takes it: as it is where external buffers are allowed,
+  // filled off the JavaScript thread where they are not (Electron, T9c).
+  const { value: taken, busyMs: handOverBusyMs } = await busyWhile(() => takeNativeStore(core as unknown as ScanModule, handle));
   await measure('handed-over');
   const scan = createScanRecord(root);
   adoptNativeStore(scan, store, taken);

@@ -32,7 +32,7 @@ pub mod finalize;
 pub mod memory;
 mod row;
 
-pub use build::{BuildOptions, Counters, Store, StoreMode, build};
+pub use build::{BuildOptions, Counters, Store, StoreMode, StoreShape, build};
 pub use column::{AnonTally, Column, ColumnError, Zeroable, anon_tally};
 pub use derive::ContainerRule;
 pub use memory::MemorySink;

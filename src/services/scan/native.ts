@@ -9,7 +9,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import type { NativeProbe, NativeProgress, NativeStore, ScanStartOptions, WalkResult } from '../../../native/index';
+import type { NativeProbe, NativeProgress, NativeStore, NativeStoreArrays, NativeStoreShape, ScanStartOptions, WalkResult } from '../../../native/index';
 
 export interface NativeModule {
   version(): string;
@@ -150,6 +150,12 @@ export interface ScanModule extends NativeModule {
   scanTake(handle: number): WalkResult;
   /** A memory-mode scan's store (native contract 0.3.0; the memory path, behind a flag until T10). */
   storeTake?(handle: number): Promise<NativeStore>;
+  /** Whether this runtime lets an array be the addon's own memory (0.4.0, Phase 4 T9c). */
+  externalBuffersAllowed?(): boolean;
+  /** The lengths of the arrays `storeTakeInto` fills (0.4.0). */
+  storeShape?(handle: number): NativeStoreShape;
+  /** A memory-mode scan's store, copied into JavaScript's arrays off the JavaScript thread (0.4.0). */
+  storeTakeInto?(handle: number, into: NativeStoreArrays): Promise<NativeStore>;
 }
 
 export type ScanModuleOutcome =

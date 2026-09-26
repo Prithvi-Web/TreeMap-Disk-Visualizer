@@ -1484,6 +1484,63 @@ fn the_sinks_store_needs_no_collector() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn the_sealed_stores_shape_is_read_without_taking_it_and_is_the_stores_own() -> TestResult {
+    let fixture = posix_fixture()?;
+    let sink = Arc::new(
+        MemorySink::new(&fixture.build, ROOM_ROWS, ROOM_NAMES).map_err(|e| e.to_string())?,
+    );
+    assert!(
+        sink.sealed_shape().is_err(),
+        "no shape before the walk seals"
+    );
+    let mut opts = walk_options(&fixture, 2, DEFAULT_Q_MAX, &sink);
+    opts.collect = false;
+    let lister = lister_of(&fixture, &opts)?;
+    let handle = start_with_sinks(opts, Arc::new(OpenPacer), lister, vec![sink.clone()])
+        .map_err(|e| e.to_string())?;
+    take_within(handle)?.map_err(|e| e.to_string())?;
+    let shape = sink.sealed_shape().map_err(|e| e.to_string())?;
+    assert_eq!(
+        sink.sealed_shape().map_err(|e| e.to_string())?,
+        shape,
+        "reading it takes nothing"
+    );
+    let store = sink.take_store().map_err(|e| e.to_string())?;
+    assert_eq!(shape, store.shape());
+    assert_eq!((shape.n, shape.capacity), (store.n, store.capacity));
+    assert_eq!(
+        shape.names_len,
+        store.name_off.as_slice().last().copied().unwrap_or(0)
+    );
+    assert_eq!(
+        shape.names_room,
+        store.names.capacity(),
+        "the names' room, the headroom's names after the rows'"
+    );
+    assert!(shape.names_room > shape.names_len as usize);
+    assert_eq!(shape.atime, store.atime.is_some());
+    assert_eq!(
+        (
+            shape.ext_overflow,
+            shape.cloud_candidates,
+            shape.text_candidates,
+            shape.sparse_terms
+        ),
+        (
+            store.ext_overflow.len(),
+            store.cloud_candidates.len(),
+            store.text_candidates.len(),
+            store.sparse_terms.len()
+        )
+    );
+    assert!(
+        sink.sealed_shape().is_err(),
+        "no shape once the store is taken"
+    );
+    Ok(())
+}
+
 /// A sink whose finish fails, after the memory sink has sealed.
 struct FailsToFinish;
 

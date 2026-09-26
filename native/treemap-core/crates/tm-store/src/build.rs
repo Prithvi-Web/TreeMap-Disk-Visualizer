@@ -157,6 +157,49 @@ pub struct Store {
     pub walk_stats: WalkStats,
 }
 
+/// The lengths of the arrays a [`Store`] crosses to JavaScript in: every per-node column
+/// `capacity` rows (`name_off` one more), `names` its room, each list its own length. The
+/// addon hands them to JavaScript so it can make the arrays a store is filled into where a
+/// runtime refuses external buffers (Phase 4 T9c).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct StoreShape {
+    /// Rows in use, the root's included.
+    pub n: u32,
+    /// Rows each per-node array holds: `n` and the headroom.
+    pub capacity: u32,
+    /// Bytes the names array holds: the names in use and the room after them.
+    pub names_room: usize,
+    /// Bytes of names in use.
+    pub names_len: u32,
+    /// Whether the store has an access-time column.
+    pub atime: bool,
+    /// Rows whose extension is past the dictionary.
+    pub ext_overflow: usize,
+    /// Rows Node applies the cloud rule to.
+    pub cloud_candidates: usize,
+    /// Rows whose extension and container Node decides.
+    pub text_candidates: usize,
+    /// The sparse terms.
+    pub sparse_terms: usize,
+}
+
+impl Store {
+    /// The lengths of the arrays this store crosses to JavaScript in (see [`StoreShape`]).
+    pub fn shape(&self) -> StoreShape {
+        StoreShape {
+            n: self.n,
+            capacity: self.capacity,
+            names_room: self.names.capacity().max(self.names.len()),
+            names_len: self.name_off.as_slice().last().copied().unwrap_or(0),
+            atime: self.atime.is_some(),
+            ext_overflow: self.ext_overflow.len(),
+            cloud_candidates: self.cloud_candidates.len(),
+            text_candidates: self.text_candidates.len(),
+            sparse_terms: self.sparse_terms.len(),
+        }
+    }
+}
+
 /// Builds the store from a walk, deriving every fact as the Node ingest does.
 pub fn build(walk: WalkOutput, opts: &BuildOptions) -> Result<Store, StoreError> {
     check_options(opts)?;

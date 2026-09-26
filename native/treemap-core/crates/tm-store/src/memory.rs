@@ -56,7 +56,8 @@ use tm_walk::{
 };
 
 use crate::build::{
-    BuildOptions, Counters, NAME_BYTES_PER_HEADROOM_ROW, Store, StoreMode, check_options,
+    BuildOptions, Counters, NAME_BYTES_PER_HEADROOM_ROW, Store, StoreMode, StoreShape,
+    check_options,
 };
 use crate::column::{AnonRows, Column, ColumnError};
 use crate::derive::ContainerRule;
@@ -290,6 +291,20 @@ impl MemorySink {
                 "no store: the walk has not finished with an output, or its store was taken".into(),
             )
         })
+    }
+
+    /// The sealed store's [`StoreShape`], the store kept for [`MemorySink::take_store`]; fails
+    /// as it does, before the walk has sealed and once the store has been taken.
+    pub fn sealed_shape(&self) -> Result<StoreShape, StoreError> {
+        lock(&self.sealed)
+            .as_ref()
+            .map(Store::shape)
+            .ok_or_else(|| {
+                StoreError::Sink(
+                    "no store: the walk has not finished with an output, or its store was taken"
+                        .into(),
+                )
+            })
     }
 
     /// The store the walk wrote, at its finish (`ending`: what it measured, and its

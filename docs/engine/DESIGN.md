@@ -510,6 +510,13 @@ is sent from the store in chunks, byte for byte today's (RISKS R93).
 The send adds about 40–50 MB in plain Node and nothing measurable in
 Electron, whose peak is now its hand-over (RISKS R92, plan T9c).
 
+**After T9c (26 September 2026, T9's harness, not recorded).** Where external
+buffers are refused, the store is filled into arrays JavaScript made, on
+libuv's pool. At 5M in Electron:
+- the JavaScript thread is busy 7.5 ms during the hand-over, from 32.6–34.9 ms;
+- about 5 of those ms are a garbage collection V8 runs for the arrays arriving;
+- the peak is 547 MB, from 555 (RISKS R92).
+
 **On disk,** spill writes 68 B per entry (`nameOff` is a u64 there) and about
 32 B per folder of block table and patch log: 0.73 GB at 10M and 7.3 GB at
 100M on POSIX. On Windows every file's hard-link key goes to disk too (0.8 GB

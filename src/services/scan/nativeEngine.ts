@@ -9,7 +9,7 @@ import { elevationRefusal, unpackedPath } from './mftHelperPath';
 import { mftPromptBlocked, mftPromptEnded, mftPromptStarted, resetMftPromptForTests } from './mftPrompt';
 import { statToInput } from './nodeInput';
 import { Flag, PackedScanStore, ScanStore, joinPath } from '../scanStore';
-import { adoptNativeStore, memoryStoreOptions } from './nativeMemory';
+import { adoptNativeStore, memoryStoreOptions, takeNativeStore } from './nativeMemory';
 import { cloudProviderFor } from '../cloudFolders';
 import { noteRefused } from '../scanRefusals';
 import { neverDescendPaths } from '../../utils/mountBoundaries';
@@ -795,7 +795,7 @@ function memoryTarget(store: ScanStore, mod: ScanModule): { store: PackedScanSto
   if (!(store instanceof PackedScanStore)) throw new Error('the native memory path adopts into a PackedScanStore; this scan has another store');
   const take = mod.storeTake;
   if (typeof take !== 'function') throw new Error('the native module has no storeTake(), so it cannot hand over a memory-mode store; rebuild it with npm run build:native');
-  return { store, storeTake: (handle) => take.call(mod, handle) };
+  return { store, storeTake: (handle) => takeNativeStore(mod, handle) };
 }
 
 function mustScanModule(): ScanModule {

@@ -1,10 +1,11 @@
-import type { NativeStore, StoreStartOptions } from '../../../native/index';
+import type { NativeStore, NativeStoreArrays, NativeStoreShape, StoreStartOptions } from '../../../native/index';
 import { CONTAINER_RULES } from '../../utils/containerKind';
 import { statToInput } from './nodeInput';
 import { Flag, PackedScanStore, containerKindId } from '../scanStore';
 import { cloudProviderFor } from '../cloudFolders';
 import { noteRefused } from '../scanRefusals';
 import { platform } from '../../platform';
+import type { ScanModule } from './native';
 import type { ScanResult } from '../../models/types';
 
 /**
@@ -70,6 +71,47 @@ export function memoryStoreOptions(store: PackedScanStore): StoreStartOptions {
     capRows: MEMORY_CAP_ROWS,
     nameBytes: MEMORY_NAME_BYTES,
   };
+}
+
+/** Arrays as long as `shape` says, for `storeTakeInto` to fill: zeros until it does. */
+export function allocateStoreArrays(shape: NativeStoreShape): NativeStoreArrays {
+  const rows = shape.capacity;
+  return {
+    parent: new Int32Array(rows),
+    size: new Float64Array(rows),
+    mtime: new Float64Array(rows),
+    ...(shape.atime ? { atime: new Float64Array(rows) } : {}),
+    flags: new Uint16Array(rows),
+    ext: new Uint16Array(rows),
+    container: new Uint8Array(rows),
+    cloudProv: new Uint8Array(rows),
+    nameOff: new Uint32Array(rows + 1),
+    names: new Uint8Array(shape.namesRoom),
+    childStart: new Uint32Array(rows),
+    childCnt: new Uint32Array(rows),
+    extOverflowIds: new Uint32Array(shape.extOverflow),
+    cloudCandidates: new Uint32Array(shape.cloudCandidates),
+    textCandidates: new Uint32Array(shape.textCandidates),
+    sparseTermIds: new Uint32Array(shape.sparseTerms),
+    sparseTermBytes: new Float64Array(shape.sparseTerms),
+  };
+}
+
+/**
+ * A finished memory-mode scan's store. Where this runtime lets an array be
+ * the store's own memory — plain Node — it is taken as it is (`storeTake`:
+ * nothing copied). Where it does not — the app's Electron, whose memory cage
+ * refuses external buffers — it is copied into arrays made here, on libuv's
+ * pool (`storeTakeInto`, Phase 4 T9c), where `storeTake` would have napi-rs
+ * copy every column on this thread (RISKS R92).
+ */
+export async function takeNativeStore(mod: ScanModule, handle: number): Promise<NativeStore> {
+  const { externalBuffersAllowed, storeShape, storeTakeInto, storeTake } = mod;
+  if (externalBuffersAllowed?.call(mod) === false && storeShape && storeTakeInto) {
+    return storeTakeInto.call(mod, handle, allocateStoreArrays(storeShape.call(mod, handle)));
+  }
+  if (!storeTake) throw new Error('the native module has no storeTake(), so it cannot hand over a memory-mode store; rebuild it with npm run build:native');
+  return storeTake.call(mod, handle);
 }
 
 /**

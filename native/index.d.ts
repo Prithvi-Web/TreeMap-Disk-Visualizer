@@ -442,6 +442,55 @@ export interface NativeStore {
   sparseTermBytes: Float64Array;
   counters: NativeStoreCounters;
   stats: WalkStats;
+  /** How `storeTakeInto` copied the store; absent from `storeTake`, which copies nothing of its own. */
+  handOver?: NativeHandOver;
+}
+
+/** The bytes `storeTakeInto` copied, on each side of the JavaScript thread: none on it, by design. */
+export interface NativeHandOver {
+  bytesOffThread: number;
+  bytesOnJsThread: number;
+}
+
+/**
+ * The lengths of the arrays `storeTakeInto` fills (Phase 4 T9c): every
+ * per-node array `capacity` rows long (`nameOff` one more), `names`
+ * `namesRoom` bytes, `atime` only when asked for, each list its count.
+ */
+export interface NativeStoreShape {
+  n: number;
+  capacity: number;
+  namesRoom: number;
+  namesLen: number;
+  /** Whether an `atime` array is wanted: the store has access times. */
+  atime: boolean;
+  extOverflow: number;
+  cloudCandidates: number;
+  textCandidates: number;
+  /** `sparseTermIds`' and `sparseTermBytes`' length. */
+  sparseTerms: number;
+}
+
+/** Arrays JavaScript made for `storeTakeInto` to fill, as long as `storeShape` says. */
+export interface NativeStoreArrays {
+  parent: Int32Array;
+  size: Float64Array;
+  mtime: Float64Array;
+  /** Given exactly when the shape asks for it. */
+  atime?: Float64Array;
+  flags: Uint16Array;
+  ext: Uint16Array;
+  container: Uint8Array;
+  cloudProv: Uint8Array;
+  nameOff: Uint32Array;
+  names: Uint8Array;
+  childStart: Uint32Array;
+  childCnt: Uint32Array;
+  extOverflowIds: Uint32Array;
+  cloudCandidates: Uint32Array;
+  textCandidates: Uint32Array;
+  sparseTermIds: Uint32Array;
+  sparseTermBytes: Float64Array;
 }
 
 /**
@@ -452,6 +501,30 @@ export interface NativeStore {
  * `storage: 'memory'`, and an unknown handle.
  */
 export function storeTake(handle: number): Promise<NativeStore>;
+
+/**
+ * Whether this runtime lets a typed array be memory the addon owns (N-API's
+ * external buffers): plain Node does, Electron's memory cage does not — there
+ * `storeTake`'s arrays are copies made on the JavaScript thread, and
+ * `storeTakeInto` is the hand-over to use (Phase 4 T9c).
+ */
+export function externalBuffersAllowed(): boolean;
+
+/**
+ * The lengths of the arrays `storeTakeInto` fills, once a poll has reported
+ * `done`; refused as `storeTake` refuses.
+ */
+export function storeShape(handle: number): NativeStoreShape;
+
+/**
+ * A memory-mode scan's store copied into `into` — arrays made as long as
+ * `storeShape` says — on libuv's pool, each column dropped right after its
+ * copy, and the handle freed. Resolves the `NativeStore` `storeTake` would,
+ * holding `into`'s own arrays, with `handOver`. Refuses, keeping the handle,
+ * as `storeTake` refuses and when an array is not the shape's length. Nothing
+ * may read or write the arrays until it settles.
+ */
+export function storeTakeInto(handle: number, into: NativeStoreArrays): Promise<NativeStore>;
 
 /* ------------------------------ the Windows MFT turbo mode (W6, M6) ------------------------------ */
 

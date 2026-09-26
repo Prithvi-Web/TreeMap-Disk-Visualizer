@@ -823,7 +823,7 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
     - through HTTP, the stream's frame and `/result`, a reader that stops reading mid-frame (exactly one frame), and past the limit.
 
     17 mutants red; the one that first survived (a failure counted as a drain) led to the failing-socket test. The goldens hold. **Measured** (T9's harness, not recorded; the recorded re-measure is T10's first step), the send now adds +39 MB in plain Node at 1M and +49 MB at 5M (peaks 248 and 538 MB, from 890 and 1,156), and nothing in Electron, whose peak is now its hand-over (208 and 555 MB, from 621 and 878). Both runtimes meet 700 MB at 5M.
-- [ ] **T9c. Electron's hand-over off the JavaScript thread** (added 26 Sep 2026 by T9's measurements; RISKS R92; §S.1.6). Where external buffers are refused, `storeTake`:
+- [x] **T9c. Electron's hand-over off the JavaScript thread** (added 26 Sep 2026 by T9's measurements; RISKS R92; §S.1.6). Where external buffers are refused, `storeTake`:
   - allocates each column's array on the JavaScript thread;
   - fills it on libuv's pool, through the pointer `napi_get_typedarray_info` gives;
   - drops the Rust column once it is filled.
@@ -833,6 +833,33 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
     - the arrays equal the external hand-over's, column by column;
     - the bytes copied on the JavaScript thread, counted by the addon, are zero.
   - **Green gate:** T9's harness in the installed binary records the busy time and the transient (one column).
+  - **Designed 26 Sep 2026.** Three new calls (native contract 0.4.0):
+    - `externalBuffersAllowed()` asks N-API for an external buffer and reports whether it got one: plain Node yes, Electron no.
+    - `storeShape(handle)` gives each array's length from the sealed store, with `storeTake`'s refusals.
+    - `storeTakeInto(handle, arrays)` checks every array's kind and length before it takes the scan's slot, so a wrong one is refused and the scan stays. On libuv's pool it copies each column's rows into its array and drops the column right after (napi-rs's typed arrays hold a reference, so JavaScript's arrays live through the copy). It resolves the same `NativeStore`, holding JavaScript's own arrays, with `handOver: { bytesOffThread, bytesOnJsThread }`, counted against the thread that called it.
+
+    `takeNativeStore` (`nativeMemory.ts`) fills where external buffers are refused and takes as before elsewhere. `runNativeWalk` and T9's harness go through it.
+  - **Built 26 Sep 2026.** The pieces:
+    - tm-store: `StoreShape`, `Store::shape` and `MemorySink::sealed_shape`.
+    - tm-node: `externalBuffersAllowed`, `storeShape`, `storeTakeInto` and `NativeStore.handOver`.
+    - Native contract 0.4.0.
+    - `allocateStoreArrays` and `takeNativeStore`, which `runNativeWalk` and T9's harness now use.
+
+    **Tests** (`tests/nativeStoreFill.test.ts`, 7, plus a tm-store test):
+    - two one-worker walks of one seeded tree give byte-identical arrays taken and filled, with and without access times;
+    - the fill copies 0 bytes on the JavaScript thread;
+    - a wrong length is refused by the task and a wrong kind while napi-rs reads the argument, the scan kept either way;
+    - `storeShape`'s refusals; plain Node allows external buffers;
+    - the chooser;
+    - in the installed app's binary run as Node, external buffers are refused, and the fill equals napi-rs's copy with 0 bytes on the JavaScript thread.
+
+    9 mutants red (3 TypeScript, 6 Rust with a rebuild each).
+
+    **Measured** (T9's harness, not recorded): Electron's JavaScript thread is busy 6.6 ms at 1M and 7.5 ms at 5M during the hand-over, from 7.3–8.4 and 32.6–34.9. Of the 7.5 ms at 5M:
+    - the fill's own steps take about 2 ms: the probe 0.03, the shape 0.01, allocating the arrays 1.3, the call 0.06, the resolve 0.8;
+    - the rest is a full garbage collection V8 runs because some 320 MB of arrays arrive in a heap that holds the server (4.8 ms, seen with `--trace-gc`). It does not grow with the store, and the old path paid it too, on top of the copy.
+
+    Electron's 5M peak is 547 MB, from 555.
 - [ ] **T10. Switch production memory mode to the stream path** (`numbering = Blocks`). `ingestColumns`, `take()` and `build()` stay as oracles.
   - **First (added by T9, 26 Sep 2026):** after T9b and T9c, T9's harness measures again in both runtimes and sets each runtime's `T_mem`, and `nativeMemory.ts`' provisional sizes follow it.
   - **Green gate:** full `npm test` under 4 and 10 busy loops; commit **S2**; the owner pushes; CI green on all four legs before T11.
