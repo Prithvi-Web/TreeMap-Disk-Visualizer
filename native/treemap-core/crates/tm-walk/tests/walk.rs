@@ -1628,7 +1628,9 @@ mod live {
         WalkOptions, probe, start,
     };
 
-    use super::{REACT_WITHIN, TestResult, index_by_path, node, rel_paths, wait_done};
+    use super::{
+        REACT_WITHIN, SETTLE, TestResult, index_by_path, node, rel_paths, wait_done, wait_until,
+    };
 
     const A_BYTES: usize = 1_234;
     const B_BYTES: usize = 4_096;
@@ -2039,22 +2041,44 @@ mod live {
     #[test]
     fn cancel_returns_within_200ms_on_five_thousand_entries() -> TestResult {
         let fx = five_thousand("cancel")?;
-        let handle = start(WalkOptions::new(&fx.root), governor()).map_err(|e| e.to_string())?;
-        // Hold the workers so the cancel has something to interrupt.
+        // Hold the workers so the cancel has something to interrupt — and so the
+        // walk cannot finish first, however late this thread runs: with the
+        // governor paused a worker completes at most the one folder it holds,
+        // then parks in `throttle()`, and 51 folders need more than the workers.
+        // (Pausing the walk after `start` raced it: a descheduled test thread let
+        // all 5,050 entries finish before the pause landed.)
+        let gov = governor();
+        gov.pause();
+        let handle =
+            start(WalkOptions::new(&fx.root), Arc::clone(&gov)).map_err(|e| e.to_string())?;
         handle.pause();
-        thread::sleep(Duration::from_millis(30));
+        gov.resume();
+        // A worker let out of `throttle()` takes its next folder and parks in the
+        // walk's pause: counted, not timed.
+        if !wait_until(SETTLE, || handle.counts().paused_workers > 0) {
+            return Err("no worker parked in the walk's pause".to_owned());
+        }
         let asked = Instant::now();
         handle.cancel();
-        let result = handle.take();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(handle.take());
+        });
+        let outcome = rx.recv_timeout(SETTLE);
         let took = asked.elapsed();
-        assert!(took <= REACT_WITHIN, "cancel took {took:?}");
-        match result {
-            Err(WalkError::Cancelled) => Ok(()),
-            Ok(out) => Err(format!(
+        match outcome {
+            Ok(Err(WalkError::Cancelled)) => {
+                assert!(took <= REACT_WITHIN, "cancel took {took:?}");
+                Ok(())
+            }
+            Ok(Ok(out)) => Err(format!(
                 "the walk completed ({} entries) before the cancel landed",
                 out.stats.entries
             )),
-            Err(other) => Err(format!("expected Cancelled, got {other:?}")),
+            Ok(Err(other)) => Err(format!("expected Cancelled, got {other:?}")),
+            Err(_) => Err(format!(
+                "take() did not return within {SETTLE:?}: the cancel never reached the paused walk"
+            )),
         }
     }
 
