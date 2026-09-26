@@ -229,6 +229,22 @@ export function probeHandoff(): Record<string, string> {
   return probe.kind === 'ready' ? { [PROBE_BINARY_ENV]: probe.binary } : { [PROBE_FAILURE_ENV]: probe.reason };
 }
 
+/**
+ * This process's peak physical footprint so far, in bytes — macOS's
+ * `ri_lifetime_max_phys_footprint`, read through the harness's probe — or
+ * `null` with the reason where there is no probe or no such figure.
+ */
+export function peakFootprint(): { bytes: number | null; reason: string } {
+  if (process.platform !== 'darwin') return { bytes: null, reason: `no physical footprint is read on ${process.platform}` };
+  const probe = darwinProbeState();
+  if (probe.kind === 'failed') return { bytes: null, reason: probe.reason };
+  try {
+    return { bytes: readDarwinProbe(probe.binary).peakFootprint, reason: 'proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c' };
+  } catch (error: unknown) {
+    return { bytes: null, reason: `darwin-rusage failed: ${errorMessage(error)}` };
+  }
+}
+
 let probeDir: string | undefined;
 
 /** Where this process's probe binary lives, once built or handed over; `null` before the first snapshot or when the build failed. */

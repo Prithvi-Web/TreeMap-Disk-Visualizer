@@ -35,6 +35,8 @@ const USAGE = [
   'npm run bench -- governor [--preset=eco|balanced|turbo] [--seconds=60] [--record] [--label=...]',
   'npm run bench -- scanhold [--corpus=enum200k|enum1m|ci20k|smoke|dupes100k] [--preset=eco|balanced|turbo] [--seconds=60] [--record] [--label=...]',
   '      the governor with a live scan as its load: native scans of the corpus back to back, the budget held from below (at most the ceiling and its band)',
+  'npm run bench -- memory-path [--runtime=node|electron|both] [--sizes=1m,2m,3m,5m] [--corpus=enum1m] [--candidates=1m,5m] [--record] [--label=...]',
+  "      Phase 4 T9: the native memory path's peak memory, stage by stage, each measurement in a fresh process — this machine's Node or the installed app's binary run as Node",
   'npm run bench -- compare <result.json> <baseline.json>      exit 0 PASS · 1 FAIL · 2 INCONCLUSIVE · 3 NOT COMPARABLE',
   'npm run bench -- clean                                       removes every corpus and probe under the temp directory',
 ];
@@ -67,6 +69,7 @@ const OPTIONS_BY_COMMAND: Record<string, readonly string[]> = {
   all: ['runs', 'originals', 'label'],
   governor: ['preset', 'seconds', 'label'],
   scanhold: ['corpus', 'preset', 'seconds', 'label'],
+  'memory-path': ['runtime', 'sizes', 'corpus', 'candidates', 'label'],
   compare: [],
   clean: [],
   help: [],
@@ -120,6 +123,49 @@ function dirSize(dir: string): number {
   return total;
 }
 
+/** `memory-path` (Phase 4 T9): the matrix, printed as it goes, written to the results folder, and recorded on --record when every measurement succeeded. */
+async function memoryPath(p: Parsed): Promise<void> {
+  const mp = await import('./lib/memoryPath');
+  const { describeMachine } = await import('./lib/machine');
+  const runtime = oneOf(p, 'runtime', 'both', ['node', 'electron', 'both'] as const);
+  const sizes = mp.parseSizes(p.options.get('sizes') ?? '1m,2m,3m,5m', 'sizes');
+  const candidates = mp.parseSizes(p.options.get('candidates') ?? '1m,5m', 'candidates');
+  const corpusName = p.options.get('corpus');
+  let corpusRoot: string | undefined;
+  if (corpusName !== undefined) {
+    const name = oneOf(p, 'corpus', 'enum1m', CORPUS_NAMES);
+    const corpus = await import('./lib/corpus');
+    corpusRoot = (await corpus.ensureCorpus(name, corpus.CORPORA[name])).root;
+  }
+  const module = process.env.TREEMAP_NATIVE_MODULE ?? path.join(REPO, 'native', 'prebuilt', `${process.platform}-${process.arch}`, 'treemap_core.node');
+  process.stdout.write(`memory path: ${runtime}, sizes ${sizes.join(', ')}, candidates ${candidates.join(', ')}${corpusRoot ? `, corpus ${corpusName}` : ''}, load ${(os.loadavg()[0] ?? 0).toFixed(2)}\n`);
+  const measurements = await mp.runMemoryPathMatrix({
+    runtimes: runtime === 'both' ? ['node', 'electron'] : [runtime],
+    sizes, seed: 7, corpusRoot, candidates, module,
+    onMeasured: (m) => process.stdout.write(`${mp.formatMeasurement(m)}\n`),
+  });
+  const record: import('./lib/memoryPath').MemoryPathRecord = {
+    kind: 'memory-path', recordedAt: new Date().toISOString(), label: p.options.get('label') ?? 'memory-path',
+    machine: await describeMachine(), module, measurements,
+  };
+  fs.mkdirSync(RESULTS_DIR, { recursive: true });
+  const file = path.join(RESULTS_DIR, `memory-path-${record.recordedAt.replace(/[:.]/g, '-')}.json`);
+  fs.writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
+  process.stdout.write(`  written: ${path.relative(REPO, file)}\n`);
+  const failed = measurements.filter((m) => !m.result.ok).length;
+  if (failed > 0) process.exitCode = 1;
+  if (!p.flags.has('record')) return;
+  if (failed > 0 || record.machine.dirty) {
+    process.stdout.write(`  NOT RECORDED as a baseline: ${failed > 0 ? `${failed} measurement(s) failed` : 'the tree is dirty'}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  fs.mkdirSync(BASELINES_DIR, { recursive: true });
+  const baseline = path.join(BASELINES_DIR, `memory-path-${process.platform}-${process.arch}.json`);
+  fs.writeFileSync(baseline, `${JSON.stringify(record, null, 2)}\n`);
+  process.stdout.write(`  baseline: ${path.relative(REPO, baseline)}\n`);
+}
+
 async function main(): Promise<void> {
   const [, , command = 'help', ...rest] = process.argv;
   if (command === 'help' || command === '--help') {
@@ -148,6 +194,11 @@ async function main(): Promise<void> {
       fs.rmSync(t, { recursive: true, force: true, maxRetries: 3 });
       process.stdout.write(`removed ${t} (${(size / 1024 / 1024 / 1024).toFixed(2)} GB on disk)\n`);
     }
+    return;
+  }
+
+  if (command === 'memory-path') {
+    await memoryPath(p);
     return;
   }
 
