@@ -1,20 +1,27 @@
 //! Block numbering (P4-1a; design §S.1.2): a worker lists and orders a whole
 //! folder, stages its rows, then — under one commit lock — reserves the ids
 //! `first..first + k` for its `k` children and the bytes their names take,
-//! hands the rows to every [`ListingSink`], and only then queues the child
+//! hands the rows to every [`ListingSink`] that takes them under the lock,
+//! releases the lock, hands them to every sink that writes in place
+//! ([`ListingSink::writes_in_place`]), and only then queues the child
 //! folders, numbered `first + i`. So I1–I4 ([`crate::invariants`]) hold by
 //! construction: a folder's id was reserved in its parent's block before its
 //! job was queued, its children's block after it was listed, and ids and name
-//! bytes are reserved together, in one order.
+//! bytes are reserved together, in one order. A reservation past the id
+//! ceiling or the name ceiling ([`crate::WalkOptions::name_ceiling`]) faults
+//! the walk instead.
 //!
 //! A listing a cancel interrupts is never committed: the cancel is read again
 //! as the lock is taken, and a worker that finds the walk cancelled there
 //! reserves nothing and hands nothing on. A listing of more than
 //! [`BIG_LISTING`] entries goes through a semaphore, one at a time, reserves
 //! its whole block at once and is staged and handed on in chunks of
-//! [`CHUNK_BYTES`]; the worker's listing buffer then shrinks back. A worker
-//! waiting on the lock or the semaphore beats the heartbeat, so a long wait
-//! is never taken for a stalled walk, and gives up once the walk is cancelled.
+//! [`CHUNK_BYTES`], to every sink under the lock (in-place sinks too: the
+//! semaphore already lets one big listing through at a time, and a chunk's
+//! stage is refilled for the next); the worker's listing buffer then shrinks
+//! back. A worker waiting on the lock or the semaphore beats the heartbeat, so
+//! a long wait is never taken for a stalled walk, and gives up once the walk
+//! is cancelled.
 //!
 //! **One big listing resident at a time (T6b; R89).** A lister reads a folder
 //! until its listing is complete or holds [`BIG_LISTING`] entries
@@ -38,7 +45,8 @@ use crate::platform::{Entry, ListBuffer, Listed, Listing, push_stored, read_rest
 use crate::queue::{DirJob, RangeBuilder, queueable};
 use crate::sink::{Block, ListingSink};
 use crate::walk::{
-    CHECK_EVERY, Counted, Shared, ceiling_fault, name_is_a_path, panic_text, whole_bytes,
+    CHECK_EVERY, Counted, Shared, ceiling_fault, name_ceiling_fault, name_is_a_path, panic_text,
+    whole_bytes,
 };
 use crate::{BIG_LISTING, CHUNK_BYTES, FLAG_DATALESS, KIND_DIR};
 
@@ -68,6 +76,10 @@ struct Reserved {
 pub(crate) struct CommitLock {
     token: Mutex<Option<Reserved>>,
     returned: Condvar,
+    /// Where the root's entries' names start: the root's own name's length.
+    names_from: u64,
+    /// See [`crate::WalkOptions::name_ceiling`].
+    name_ceiling: u64,
 }
 
 /// The token, held: it goes back when the guard drops, however the holder ends.
@@ -77,13 +89,16 @@ struct CommitGuard<'a> {
 }
 
 impl CommitLock {
-    /// The lock, its name bytes starting after the root's own name.
-    pub(crate) fn new(root_name_bytes: u64) -> Self {
+    /// The lock, its name bytes starting after the root's own name, and the
+    /// root's entries' names limited to `name_ceiling` bytes.
+    pub(crate) fn new(root_name_bytes: u64, name_ceiling: u64) -> Self {
         Self {
             token: Mutex::new(Some(Reserved {
                 next_name: root_name_bytes,
             })),
             returned: Condvar::new(),
+            names_from: root_name_bytes,
+            name_ceiling,
         }
     }
 
@@ -317,11 +332,44 @@ impl Stage {
     }
 }
 
+/// Which of the walk's sinks a hand-over goes to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Sinks {
+    /// Every sink.
+    All,
+    /// The sinks that take their calls under the commit lock, the collector
+    /// among them.
+    UnderLock,
+    /// The sinks that write in place ([`ListingSink::writes_in_place`]).
+    InPlace,
+}
+
+impl Sinks {
+    fn include(self, sink: &dyn ListingSink) -> bool {
+        match self {
+            Self::All => true,
+            Self::UnderLock => !sink.writes_in_place(),
+            Self::InPlace => sink.writes_in_place(),
+        }
+    }
+}
+
 /// Calls `call` on every sink, the collector first; a sink's panic becomes
 /// the walk's fault and cancels it (false).
 pub(crate) fn to_sinks(shared: &Shared, call: impl Fn(&dyn ListingSink)) -> bool {
+    to_some_sinks(shared, Sinks::All, call)
+}
+
+/// [`to_sinks`] for the sinks `which` names, in the same order.
+fn to_some_sinks(shared: &Shared, which: Sinks, call: impl Fn(&dyn ListingSink)) -> bool {
     for sink in &shared.sinks {
-        if let Err(payload) = catch_unwind(AssertUnwindSafe(|| call(sink.as_ref()))) {
+        let sink = sink.as_ref();
+        let called = catch_unwind(AssertUnwindSafe(|| {
+            if which.include(sink) {
+                call(sink);
+            }
+        }));
+        if let Err(payload) = called {
             shared.record_fault(format!(
                 "a listing sink panicked: {}",
                 panic_text(&*payload)
@@ -334,7 +382,8 @@ pub(crate) fn to_sinks(shared: &Shared, call: impl Fn(&dyn ListingSink)) -> bool
 }
 
 /// Reserves `k` ids and `bytes` name bytes under the held lock: the first id
-/// and the first name byte, or `None` after recording the ceiling fault.
+/// and the first name byte, or `None` after recording the fault of the
+/// ceiling it would pass (the id ceiling's first, when it would pass both).
 fn reserve(shared: &Shared, guard: &mut CommitGuard<'_>, k: u32, bytes: u64) -> Option<(u32, u64)> {
     let first = shared.next_id.load(Ordering::Acquire);
     let end = if k == 0 {
@@ -349,23 +398,35 @@ fn reserve(shared: &Shared, guard: &mut CommitGuard<'_>, k: u32, bytes: u64) -> 
         shared.cancel();
         return None;
     };
+    let lock = guard.lock;
+    let names_after = held
+        .next_name
+        .saturating_sub(lock.names_from)
+        .checked_add(bytes)
+        .filter(|&total| total <= lock.name_ceiling);
+    if names_after.is_none() {
+        // A sink with a fixed name pool would have no room for these names.
+        shared.record_fault(name_ceiling_fault(lock.name_ceiling));
+        shared.cancel();
+        return None;
+    }
     shared.next_id.store(end, Ordering::Release);
     let name_base = held.next_name;
     held.next_name = name_base.saturating_add(bytes);
     Some((first, name_base))
 }
 
-/// Hands one staged chunk to every sink, then the refusal of each child
-/// folder whose name holds a separator; false when a sink panicked.
-fn deliver(shared: &Shared, block: &Block<'_>) -> bool {
-    if !to_sinks(shared, |sink| sink.commit(block)) {
+/// Hands one staged chunk to the sinks `which` names, then the refusal of each
+/// child folder whose name holds a separator; false when a sink panicked.
+fn deliver(shared: &Shared, block: &Block<'_>, which: Sinks) -> bool {
+    if !to_some_sinks(shared, which, |sink| sink.commit(block)) {
         return false;
     }
     let first = block.first.saturating_add(block.offset);
     for (id, row) in (first..).zip(block.rows) {
         if row.meta.kind == KIND_DIR
             && name_is_a_path(block.name(row))
-            && !to_sinks(shared, |sink| sink.refused(id, Refusal::Unreadable))
+            && !to_some_sinks(shared, which, |sink| sink.refused(id, Refusal::Unreadable))
         {
             return false;
         }
@@ -384,7 +445,9 @@ fn id_count(shared: &Shared, listing: &Listing) -> Option<u32> {
 }
 
 /// Commits a listing of at most [`BIG_LISTING`] entries: staged whole outside
-/// the lock, then reserved and handed on under it. The first child's id.
+/// the lock, then reserved and handed on under it, then — the lock released —
+/// handed to the sinks that write in place. The first child's id, returned
+/// once every sink has the block, so the caller queues its subfolders after.
 fn commit_whole(shared: &Shared, listing: &Listing, stage: &mut Stage, folder: u32) -> Option<u32> {
     stage.fill(shared, listing, 0, usize::MAX)?;
     let k = id_count(shared, listing)?;
@@ -402,13 +465,20 @@ fn commit_whole(shared: &Shared, listing: &Listing, stage: &mut Stage, folder: u
         names: &stage.names,
         own_times: listing.own_times.filter(|_| folder != 0),
     };
-    deliver(shared, &block).then_some(first)
+    if !deliver(shared, &block, Sinks::UnderLock) {
+        return None;
+    }
+    // The block's ids and name bytes are its own now, so the sinks that write
+    // in place take it without the lock, beside other workers' blocks.
+    drop(guard);
+    deliver(shared, &block, Sinks::InPlace).then_some(first)
 }
 
 /// Commits a big listing: its whole block reserved at once, then staged and
-/// handed on in chunks of [`CHUNK_BYTES`], all under the lock so the sinks
-/// see its chunks together and in id order. A cancel between two chunks stops
-/// the hand-over; the walk then ends and every sink is aborted.
+/// handed on in chunks of [`CHUNK_BYTES`], all under the lock, to every sink
+/// (in-place ones too), so the sinks see its chunks together and in id order.
+/// A cancel between two chunks stops the hand-over; the walk then ends and
+/// every sink is aborted.
 fn commit_in_chunks(
     shared: &Shared,
     listing: &Listing,
@@ -440,7 +510,7 @@ fn commit_in_chunks(
             names: &stage.names,
             own_times: listing.own_times.filter(|_| folder != 0 && at == 0),
         };
-        if !deliver(shared, &block) {
+        if !deliver(shared, &block, Sinks::All) {
             return None;
         }
         at = end;

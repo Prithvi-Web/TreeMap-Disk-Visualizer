@@ -1,9 +1,15 @@
 //! One column of the store, and the anonymous mappings large columns live in.
+//!
+//! A column the memory sink fills during the walk is reserved whole
+//! (`AnonRows::reserve`) and written from several threads at once through one narrow
+//! unsafe API, `AnonRows::with_rows_mut`, each thread at the rows its block reserved;
+//! `AnonRows::settle` then makes it a column of `n` rows. All three are the crate's own.
 
 use std::alloc::{Layout, handle_alloc_error};
 use std::cell::Cell;
 use std::fmt;
 use std::marker::PhantomData;
+use std::ops::Range;
 use std::ptr::NonNull;
 
 /// One column: its rows, and room for the store's headroom after them.
@@ -129,6 +135,25 @@ pub enum ColumnError {
         /// The OS's error number (`errno`, or `GetLastError` on Windows).
         code: i32,
     },
+    /// Rows asked for that are not all in the column's room.
+    #[error("rows {start}..{end} are not in the column's room for {room}")]
+    RowsPastRoom {
+        /// The first row asked for.
+        start: usize,
+        /// One past the last row asked for.
+        end: usize,
+        /// The rows the column has room for.
+        room: usize,
+    },
+    /// The OS refused to commit the pages of rows reserved for later (Windows: the
+    /// machine's commit limit is reached).
+    #[error("the OS refused to commit {bytes} bytes of reserved memory (OS error {code})")]
+    CommitFailed {
+        /// The bytes asked for.
+        bytes: usize,
+        /// The OS's error number (`GetLastError`).
+        code: i32,
+    },
 }
 
 /// Rows in an anonymous mapping that nothing else uses: `capacity` rows of room, the first
@@ -137,9 +162,14 @@ pub struct AnonRows<T: Zeroable> {
     /// The mapping's first byte; dangling, with nothing mapped, when `bytes` is 0.
     start: NonNull<T>,
     len: usize,
+    /// The rows of room: every one of them mapped, and committed unless `lazy`.
     capacity: usize,
-    /// `capacity` rows of bytes: what was mapped, and what is released.
+    /// The bytes mapped: what is released. At least `capacity` rows of them, and more
+    /// once [`AnonRows::settle`] has narrowed the room.
     bytes: usize,
+    /// Whether the room's pages are committed only as rows are handed out (Windows, for
+    /// a column made by [`AnonRows::reserve`]); always false elsewhere.
+    lazy: bool,
     rows: PhantomData<T>,
 }
 
@@ -148,13 +178,7 @@ impl<T: Zeroable> AnonRows<T> {
         if len > capacity {
             return Err(ColumnError::LenPastCapacity { len, capacity });
         }
-        let bytes = capacity
-            .checked_mul(size_of::<T>())
-            .filter(|&bytes| isize::try_from(bytes).is_ok())
-            .ok_or(ColumnError::TooLarge {
-                rows: capacity,
-                row_bytes: size_of::<T>(),
-            })?;
+        let bytes = Self::bytes_for(capacity)?;
         let start = if bytes == 0 {
             NonNull::dangling()
         } else {
@@ -165,8 +189,121 @@ impl<T: Zeroable> AnonRows<T> {
             len,
             capacity,
             bytes,
+            lazy: false,
             rows: PhantomData,
         })
+    }
+
+    /// Room for `capacity` rows, none of them the column's yet, backed by memory only
+    /// as rows are written. POSIX maps anonymous pages lazily anyway: a page is resident
+    /// once written. Windows would charge the machine's commit limit for every page of a
+    /// committed region at once, written or not, so there the address space is reserved
+    /// and [`AnonRows::with_rows_mut`] commits the pages of the rows it hands out.
+    pub(crate) fn reserve(capacity: usize) -> Result<Self, ColumnError> {
+        let bytes = Self::bytes_for(capacity)?;
+        let start = if bytes == 0 {
+            NonNull::dangling()
+        } else {
+            reserve_zeroed(bytes)?.cast::<T>()
+        };
+        Ok(Self {
+            start,
+            len: 0,
+            capacity,
+            bytes,
+            lazy: cfg!(windows) && bytes > 0,
+            rows: PhantomData,
+        })
+    }
+
+    /// The bytes `rows` rows take, or `TooLarge` past what one slice may span.
+    fn bytes_for(rows: usize) -> Result<usize, ColumnError> {
+        rows.checked_mul(size_of::<T>())
+            .filter(|&bytes| isize::try_from(bytes).is_ok())
+            .ok_or(ColumnError::TooLarge {
+                rows,
+                row_bytes: size_of::<T>(),
+            })
+    }
+
+    /// Hands `write` the rows `rows` of the room to read and write, through a shared
+    /// reference: the one way the memory sink's workers write their blocks side by side.
+    /// Refused, with nothing handed out, when the rows are not all in the room, or (on
+    /// Windows) when the OS will not commit their pages.
+    ///
+    /// # Safety
+    ///
+    /// While `write` runs, no other thread reads or writes any of `rows`, and nothing holds
+    /// a slice of this column's rows (`as_slice`, `as_mut_slice`, `with_headroom`). A
+    /// thread that reads these rows later does so after this call returns, in
+    /// happens-before order (through a lock, a queue or a join).
+    pub(crate) unsafe fn with_rows_mut<R>(
+        &self,
+        rows: Range<usize>,
+        write: impl FnOnce(&mut [T]) -> R,
+    ) -> Result<R, ColumnError> {
+        let Range { start, end } = rows;
+        if start > end || end > self.capacity {
+            return Err(ColumnError::RowsPastRoom {
+                start,
+                end,
+                room: self.capacity,
+            });
+        }
+        if start == end {
+            return Ok(write(&mut []));
+        }
+        // SAFETY: `start < end <= capacity`, so the offset stays inside the mapping, which
+        // spans `capacity` rows (at most `isize::MAX` bytes, checked when it was made).
+        let first = unsafe { self.start.as_ptr().add(start) };
+        self.commit(first.cast::<u8>(), (end - start) * size_of::<T>())?;
+        // SAFETY: the rows `start..end` lie inside the mapping, are aligned for `T` (the
+        // mapping starts on a page, `Zeroable` promises `T`'s alignment divides it, and the
+        // offset is a whole number of rows) and are committed (just above, where it is
+        // lazy). Each is a valid `T`: the OS zero-filled them, zero bytes are a `T`
+        // (`Zeroable`), and anything written since was written as a `T`. The caller
+        // promises that nobody else reads or writes them while `write` runs, so this is the
+        // only reference to them, and the slice cannot outlive the call.
+        let rows = unsafe { std::slice::from_raw_parts_mut(first, end - start) };
+        Ok(write(rows))
+    }
+
+    /// Commits the pages holding `bytes` bytes from `first`, where the room is committed
+    /// lazily; nothing to do elsewhere.
+    fn commit(&self, first: *mut u8, bytes: usize) -> Result<(), ColumnError> {
+        if !self.lazy || bytes == 0 {
+            return Ok(());
+        }
+        // SAFETY: the callers pass a range inside the room, which lies inside the region
+        // `reserve` made and nothing has released: this value owns it until it drops.
+        unsafe { sys::commit(first, bytes) }
+            .map_err(|code| ColumnError::CommitFailed { bytes, code })
+    }
+
+    /// Makes the first `len` rows the column's rows and the first `room` its room: rows
+    /// past `room` are never lent again, though they stay mapped until the column is
+    /// dropped. Where the room is committed lazily, its pages are committed through `room`
+    /// first, so every row lent afterwards reads as a `T`: written, or zero.
+    pub(crate) fn settle(&mut self, len: usize, room: usize) -> Result<(), ColumnError> {
+        if room > self.capacity {
+            return Err(ColumnError::RowsPastRoom {
+                start: 0,
+                end: room,
+                room: self.capacity,
+            });
+        }
+        if len > room {
+            return Err(ColumnError::LenPastCapacity {
+                len,
+                capacity: room,
+            });
+        }
+        self.commit(self.start.as_ptr().cast::<u8>(), room * size_of::<T>())?;
+        self.len = len;
+        self.capacity = room;
+        // Every row of the room is committed now.
+        self.lazy = false;
+        Ok(())
     }
 
     fn as_slice(&self) -> &[T] {
@@ -174,10 +311,13 @@ impl<T: Zeroable> AnonRows<T> {
         // `Zeroable` promises the alignment divides every page size, while a dangling
         // pointer is aligned by construction. The mapping spans `capacity` rows, at most
         // `isize::MAX` bytes (checked in `new`), and `len <= capacity`; with `bytes` 0 the
-        // slice spans no bytes. Each row is a valid `T`: the OS zero-filled the pages, zero
-        // bytes are a `T` (`Zeroable`), and anything written since was written as a `T`.
-        // `&self` keeps `as_mut_slice` from lending the rows until this borrow ends, and
-        // nothing else points into the mapping.
+        // slice spans no bytes. The rows are committed: all `capacity` of them unless the
+        // column is `lazy`, and a lazy column has no rows (`reserve` makes it with `len`
+        // 0, and `settle`, the one place `len` grows, commits the room and ends the
+        // laziness). Each row is a valid `T`: the OS zero-filled the pages, zero bytes are
+        // a `T` (`Zeroable`), and anything written since was written as a `T`. `&self`
+        // keeps `as_mut_slice` from lending the rows until this borrow ends, and
+        // `with_rows_mut`'s callers promise to hold none of its slices meanwhile.
         unsafe { std::slice::from_raw_parts(self.start.as_ptr(), self.len) }
     }
 
@@ -187,9 +327,12 @@ impl<T: Zeroable> AnonRows<T> {
     }
 
     fn with_headroom(&self) -> &[T] {
-        // SAFETY: as in `as_slice`, for all `capacity` rows the mapping spans; the rows past
-        // `len` were never written, so they are the zeros the OS filled them with.
-        unsafe { std::slice::from_raw_parts(self.start.as_ptr(), self.capacity) }
+        // A lazy column's room is not all committed yet: it has no rows to show.
+        let rows = if self.lazy { 0 } else { self.capacity };
+        // SAFETY: as in `as_slice`, for `rows` rows: all `capacity` rows the mapping spans,
+        // each committed and a valid `T` (zero-filled by the OS, or written as a `T`), when
+        // the column is not lazy, and none when it is.
+        unsafe { std::slice::from_raw_parts(self.start.as_ptr(), rows) }
     }
 }
 
@@ -234,8 +377,12 @@ impl<T: Zeroable> Drop for AnonRows<T> {
 // thread (`munmap`, `VirtualFree`).
 unsafe impl<T: Zeroable + Send> Send for AnonRows<T> {}
 
-// SAFETY: a shared `AnonRows` lends only `&[T]`, which threads may share when `T: Sync`.
-unsafe impl<T: Zeroable + Sync> Sync for AnonRows<T> {}
+// SAFETY: a shared `AnonRows` lends `&[T]`, which threads may share when `T: Sync`, and,
+// through the unsafe `with_rows_mut`, `&mut [T]` over rows whose callers promise no other
+// thread touches them meanwhile and orders every later read after the write; a value
+// written on one thread and read on another has then moved between them, which `T: Send`
+// allows.
+unsafe impl<T: Zeroable + Send + Sync> Sync for AnonRows<T> {}
 
 /// What one thread has mapped and released for anonymous columns since it started.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -293,6 +440,14 @@ fn map_zeroed(bytes: usize) -> Result<NonNull<u8>, ColumnError> {
     Ok(start)
 }
 
+/// [`map_zeroed`], with the pages backed only as they are committed: on Windows the
+/// address space alone is reserved (see [`AnonRows::reserve`]). Counted as a mapping.
+fn reserve_zeroed(bytes: usize) -> Result<NonNull<u8>, ColumnError> {
+    let start = sys::reserve(bytes).map_err(|code| ColumnError::MapFailed { bytes, code })?;
+    tally(bytes, false);
+    Ok(start)
+}
+
 /// Releases a mapping `map_zeroed` made. A release the OS refuses stays out of the tally.
 ///
 /// # Safety
@@ -312,89 +467,272 @@ fn last_error() -> i32 {
 }
 
 #[cfg(unix)]
-mod sys {
-    //! POSIX: `mmap(MAP_ANONYMOUS | MAP_PRIVATE)` and `munmap`.
-
-    use std::ptr::{self, NonNull};
-
-    /// A new private anonymous mapping of `bytes`, or the error number.
-    pub(super) fn map(bytes: usize) -> Result<NonNull<u8>, i32> {
-        // SAFETY: with a null hint and without `MAP_FIXED`, `mmap` places the mapping in
-        // address space nothing uses, so it changes no memory anything else can reach; an
-        // anonymous mapping takes the descriptor -1 and the offset 0.
-        let start = unsafe {
-            libc::mmap(
-                ptr::null_mut(),
-                bytes,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1,
-                0,
-            )
-        };
-        if start == libc::MAP_FAILED {
-            return Err(super::last_error());
-        }
-        // Without `MAP_FIXED` the kernel does not place a mapping at address 0.
-        NonNull::new(start.cast::<u8>()).ok_or(libc::ENOMEM)
-    }
-
-    /// Releases the mapping; whether the OS did.
-    ///
-    /// # Safety
-    ///
-    /// `start` and `bytes` are a mapping `map` made that has not been released, and nothing
-    /// reads or writes it any more.
-    pub(super) unsafe fn unmap(start: NonNull<u8>, bytes: usize) -> bool {
-        // SAFETY: the caller hands over a whole live mapping that nothing uses.
-        unsafe { libc::munmap(start.as_ptr().cast(), bytes) == 0 }
-    }
-}
+#[path = "column/sys_unix.rs"]
+mod sys;
 
 #[cfg(windows)]
-mod sys {
-    //! Windows: `VirtualAlloc(MEM_RESERVE | MEM_COMMIT)` and `VirtualFree(MEM_RELEASE)`.
+#[path = "column/sys_windows.rs"]
+mod sys;
 
-    use std::ffi::c_void;
-    use std::ptr::{self, NonNull};
+#[cfg(test)]
+mod tests {
+    //! The writer API the memory sink writes its columns through: rows handed out by
+    //! range from a shared reference, refused past the room, and settled into a column.
 
-    // Declared here rather than taken from windows-sys, whose `Win32_System_Memory` feature no
-    // crate in this workspace enables; the signatures are those of <memoryapi.h>, as
-    // windows-sys 0.61 declares them, and the constants those of <winnt.h>.
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn VirtualAlloc(
-            address: *const c_void,
-            size: usize,
-            allocation_type: u32,
-            protect: u32,
-        ) -> *mut c_void;
-        fn VirtualFree(address: *mut c_void, size: usize, free_type: u32) -> i32;
+    use super::*;
+
+    type TestResult = Result<(), ColumnError>;
+
+    /// A row value that is not zero, for row `i`.
+    fn value(i: usize) -> u32 {
+        u32::try_from(i % 1_000 + 1).unwrap_or(1)
     }
 
-    const MEM_COMMIT: u32 = 0x1000;
-    const MEM_RESERVE: u32 = 0x2000;
-    const MEM_RELEASE: u32 = 0x8000;
-    const PAGE_READWRITE: u32 = 0x04;
-
-    /// A new region of `bytes`, reserved and committed, or the error number.
-    pub(super) fn map(bytes: usize) -> Result<NonNull<u8>, i32> {
-        // SAFETY: with a null address `VirtualAlloc` reserves and commits a new region where
-        // the system chooses, so it changes no memory anything else can reach.
-        let start =
-            unsafe { VirtualAlloc(ptr::null(), bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) };
-        NonNull::new(start.cast::<u8>()).ok_or_else(super::last_error)
+    #[test]
+    fn written_rows_read_back_and_every_other_row_reads_zero_once_settled() -> TestResult {
+        let mut rows = AnonRows::<u32>::reserve(10_000)?;
+        assert_eq!(
+            (rows.len, rows.capacity),
+            (0, 10_000),
+            "no rows yet, all room"
+        );
+        // SAFETY: nothing else reads or writes the column: this thread owns it.
+        unsafe {
+            rows.with_rows_mut(3_000..3_500, |written| {
+                for (i, row) in (3_000..).zip(written.iter_mut()) {
+                    *row = value(i);
+                }
+            })?;
+        }
+        rows.settle(4_000, 6_000)?;
+        assert_eq!(rows.as_slice().len(), 4_000);
+        for (i, &row) in rows.as_slice().iter().enumerate() {
+            let expected = if (3_000..3_500).contains(&i) {
+                value(i)
+            } else {
+                0
+            };
+            assert_eq!(row, expected, "row {i}");
+        }
+        assert_eq!(rows.capacity, 6_000, "the room is what was settled");
+        assert_eq!(rows.with_headroom().len(), 6_000);
+        assert!(
+            rows.with_headroom()
+                .get(4_000..)
+                .is_some_and(|h| h.iter().all(|&r| r == 0)),
+            "the headroom reads as zero"
+        );
+        Ok(())
     }
 
-    /// Releases the region; whether the OS did.
-    ///
-    /// # Safety
-    ///
-    /// `start` is the base of a region `map` made that has not been released, and nothing
-    /// reads or writes it any more.
-    pub(super) unsafe fn unmap(start: NonNull<u8>, _bytes: usize) -> bool {
-        // SAFETY: the caller hands over the base address `VirtualAlloc` returned for a live
-        // region that nothing uses; `MEM_RELEASE` frees the whole region and takes the size 0.
-        unsafe { VirtualFree(start.as_ptr().cast(), 0, MEM_RELEASE) != 0 }
+    #[test]
+    fn rows_past_the_room_are_refused_and_left_unwritten() -> TestResult {
+        let mut rows = AnonRows::<u16>::reserve(100)?;
+        let mut called = false;
+        // SAFETY: this thread owns the column.
+        let past = unsafe { rows.with_rows_mut(90..101, |_| called = true) };
+        assert_eq!(
+            past.err(),
+            Some(ColumnError::RowsPastRoom {
+                start: 90,
+                end: 101,
+                room: 100
+            })
+        );
+        assert!(!called, "nothing is handed out for rows past the room");
+        // SAFETY: this thread owns the column.
+        let backwards = unsafe { rows.with_rows_mut(Range { start: 50, end: 40 }, |_| ()) };
+        assert!(backwards.is_err(), "a range that runs backwards is refused");
+        // An empty range at the end of the room is no row past it.
+        // SAFETY: this thread owns the column.
+        let empty = unsafe { rows.with_rows_mut(100..100, |none| none.len()) }?;
+        assert_eq!(empty, 0);
+
+        // Settled, the room is the new capacity: rows past it are refused.
+        rows.settle(10, 20)?;
+        // SAFETY: this thread owns the column.
+        let after = unsafe { rows.with_rows_mut(15..21, |_| ()) };
+        assert_eq!(
+            after.err(),
+            Some(ColumnError::RowsPastRoom {
+                start: 15,
+                end: 21,
+                room: 20
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_settle_past_the_room_is_refused_and_changes_nothing() -> TestResult {
+        let mut rows = AnonRows::<f64>::reserve(64)?;
+        assert_eq!(
+            rows.settle(65, 65).err(),
+            Some(ColumnError::RowsPastRoom {
+                start: 0,
+                end: 65,
+                room: 64
+            })
+        );
+        assert_eq!(
+            rows.settle(33, 32).err(),
+            Some(ColumnError::LenPastCapacity {
+                len: 33,
+                capacity: 32
+            })
+        );
+        assert_eq!((rows.len, rows.capacity), (0, 64));
+        Ok(())
+    }
+
+    #[test]
+    fn threads_write_their_own_rows_side_by_side() -> Result<(), String> {
+        const THREADS: usize = 8;
+        const EACH: usize = 25_000;
+        let mut rows = AnonRows::<u32>::reserve(THREADS * EACH).map_err(|e| e.to_string())?;
+        let shared = &rows;
+        let outcomes: Vec<Result<(), String>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..THREADS)
+                .map(|t| {
+                    scope.spawn(move || {
+                        let mine = t * EACH..(t + 1) * EACH;
+                        // SAFETY: each thread writes its own `EACH` rows, which no other
+                        // thread touches; the rows are read after `scope` joins every thread.
+                        unsafe {
+                            shared.with_rows_mut(mine.clone(), |written| {
+                                for (i, row) in mine.zip(written.iter_mut()) {
+                                    *row = value(i);
+                                }
+                            })
+                        }
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| match handle.join() {
+                    Ok(written) => written.map_err(|e| e.to_string()),
+                    Err(_) => Err("a writer thread panicked".to_owned()),
+                })
+                .collect()
+        });
+        for outcome in outcomes {
+            outcome?;
+        }
+        rows.settle(THREADS * EACH, THREADS * EACH)
+            .map_err(|e| e.to_string())?;
+        assert!(
+            rows.as_slice()
+                .iter()
+                .enumerate()
+                .all(|(i, &row)| row == value(i)),
+            "every thread's rows read back"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_reservation_is_counted_as_a_mapping_and_released_whole() -> TestResult {
+        let before = anon_tally();
+        let mut rows = AnonRows::<u32>::reserve(1_000)?;
+        rows.settle(10, 20)?;
+        drop(rows);
+        let after = anon_tally();
+        assert_eq!(after.maps - before.maps, 1);
+        assert_eq!(after.unmaps - before.unmaps, 1);
+        assert_eq!(after.bytes_mapped - before.bytes_mapped, 4_000);
+        assert_eq!(
+            after.bytes_unmapped - before.bytes_unmapped,
+            4_000,
+            "the whole reservation is released, not the settled room"
+        );
+        Ok(())
+    }
+
+    /// Windows commits a reserved column's pages as its rows are handed out, and at the
+    /// settle through its room; the rest stays reserved, charging no commit.
+    #[cfg(windows)]
+    #[test]
+    fn a_reserved_column_commits_only_the_pages_it_hands_out_and_its_room() -> TestResult {
+        use std::ffi::c_void;
+
+        #[repr(C)]
+        struct Info {
+            _base_address: *mut c_void,
+            _allocation_base: *mut c_void,
+            _allocation_protect: u32,
+            #[cfg(not(target_arch = "x86"))]
+            _partition_id: u16,
+            region_size: usize,
+            state: u32,
+            _protect: u32,
+            _kind: u32,
+        }
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn VirtualQuery(address: *const c_void, buffer: *mut Info, length: usize) -> usize;
+        }
+        const MEM_COMMIT_STATE: u32 = 0x1000;
+        const MEM_RESERVE_STATE: u32 = 0x2000;
+        fn state(address: *const u8) -> Option<u32> {
+            let mut info = Info {
+                _base_address: std::ptr::null_mut(),
+                _allocation_base: std::ptr::null_mut(),
+                _allocation_protect: 0,
+                #[cfg(not(target_arch = "x86"))]
+                _partition_id: 0,
+                region_size: 0,
+                state: 0,
+                _protect: 0,
+                _kind: 0,
+            };
+            // SAFETY: `VirtualQuery` reads no memory at `address`; it writes at most
+            // `size_of::<Info>()` bytes into `info`, whose fields are integers and pointers.
+            let written = unsafe { VirtualQuery(address.cast(), &raw mut info, size_of::<Info>()) };
+            (written == size_of::<Info>()).then_some(info.state)
+        }
+        const PAGE: usize = 4096;
+        // 64 pages of bytes; rows 10 pages in, one page long, handed out.
+        let mut rows = AnonRows::<u8>::reserve(64 * PAGE)?;
+        let base = rows.start.as_ptr().cast_const();
+        // SAFETY: the offsets are inside the reservation of 64 pages.
+        let at = |page: usize| unsafe { base.add(page * PAGE) };
+        assert_eq!(
+            state(at(10)),
+            Some(MEM_RESERVE_STATE),
+            "reserved, not committed"
+        );
+        // SAFETY: this thread owns the column.
+        unsafe {
+            rows.with_rows_mut(10 * PAGE..11 * PAGE, |page| page.fill(7))?;
+        }
+        assert_eq!(state(at(10)), Some(MEM_COMMIT_STATE), "the page handed out");
+        assert_eq!(state(at(11)), Some(MEM_RESERVE_STATE), "the next page");
+        assert_eq!(state(at(9)), Some(MEM_RESERVE_STATE), "the page before");
+        // Rows in a page already committed and written are handed out again (two blocks
+        // can share a page): committing it again keeps what was written there.
+        let again = 10 * PAGE + 100..10 * PAGE + 200;
+        // SAFETY: this thread owns the column.
+        unsafe {
+            rows.with_rows_mut(again.clone(), |some| some.fill(9))?;
+        }
+        rows.settle(20 * PAGE, 30 * PAGE)?;
+        assert_eq!(
+            state(at(0)),
+            Some(MEM_COMMIT_STATE),
+            "the rows are committed"
+        );
+        assert_eq!(state(at(29)), Some(MEM_COMMIT_STATE), "and the room");
+        assert_eq!(state(at(30)), Some(MEM_RESERVE_STATE), "not past the room");
+        assert!(rows.as_slice().iter().enumerate().all(|(i, &b)| {
+            b == if again.contains(&i) {
+                9
+            } else if (10 * PAGE..11 * PAGE).contains(&i) {
+                7
+            } else {
+                0
+            }
+        }));
+        Ok(())
     }
 }

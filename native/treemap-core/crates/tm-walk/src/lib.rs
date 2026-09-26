@@ -81,6 +81,9 @@ pub const CHUNK_BYTES: usize = 4 * 1024 * 1024;
 /// [`WalkOptions::id_ceiling`]'s default: ids are `u32` and the root holds 0,
 /// so a walk numbers at most `u32::MAX - 1` entries.
 pub const ID_CEILING: u32 = u32::MAX;
+/// [`WalkOptions::name_ceiling`]'s default: no ceiling of the walk's own (the
+/// collector's merge still refuses names past the 4 GiB its `u32` offsets reach).
+pub const NAME_CEILING: u64 = u64::MAX;
 
 /// How a walk numbers the entries it lists.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -135,14 +138,23 @@ pub struct WalkOptions {
     pub q_max: usize,
     /// The id the counter stops at: ids `0..id_ceiling` are handed out and a
     /// walk that needs more faults ([`ID_CEILING`] by default, the most a `u32`
-    /// column numbers). Tests lower it to reach the fault with a small tree.
+    /// column numbers). Tests lower it to reach the fault with a small tree; a
+    /// sink with a fixed number of rows lowers it to them.
     pub id_ceiling: u32,
+    /// Under [`Numbering::Blocks`], the most bytes the names of the root's
+    /// entries may take in all, as they are stored (the root's own name not
+    /// counted): a listing whose names would take them past it is not
+    /// committed, and the walk faults, as it does at the id ceiling
+    /// ([`NAME_CEILING`] by default: none). A sink with a fixed name pool
+    /// lowers it to the pool. [`Numbering::Discovery`] reserves no names and
+    /// ignores it.
+    pub name_ceiling: u64,
 }
 
 impl WalkOptions {
     /// Options for `root` with the defaults: no never-descend list, no atime,
     /// the hill-climber, the default buffer, the disk, discovery numbering,
-    /// [`DEFAULT_Q_MAX`] and [`ID_CEILING`].
+    /// [`DEFAULT_Q_MAX`], [`ID_CEILING`] and [`NAME_CEILING`].
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
@@ -160,6 +172,7 @@ impl WalkOptions {
             },
             q_max: DEFAULT_Q_MAX,
             id_ceiling: ID_CEILING,
+            name_ceiling: NAME_CEILING,
         }
     }
 }

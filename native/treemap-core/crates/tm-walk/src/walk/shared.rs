@@ -191,7 +191,7 @@ impl Shared {
             id_ceiling: opts.id_ceiling,
             sinks,
             collect,
-            commit: CommitLock::new(root_name_bytes),
+            commit: CommitLock::new(root_name_bytes, opts.name_ceiling),
             big: BigListings::default(),
             resident: Resident::default(),
             blocks: AtomicU64::new(0),

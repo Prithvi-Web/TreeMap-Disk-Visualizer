@@ -21,16 +21,21 @@
 //! * [`derive`](mod@derive): the per-node rules, pure.
 //! * [`finalize`]: the store's ids.
 //! * [`build`](mod@build): the columns, the counters and the candidates.
+//! * [`memory`]: the same store written while the walk runs, at the ids its blocks
+//!   reserved ([`MemorySink`], Phase 4 T7a), each row by `build`'s own rules.
 //! * [`column`](mod@column): one column's storage.
 
 pub mod build;
 pub mod column;
 pub mod derive;
 pub mod finalize;
+pub mod memory;
+mod row;
 
 pub use build::{BuildOptions, Counters, Store, StoreMode, build};
 pub use column::{AnonTally, Column, ColumnError, Zeroable, anon_tally};
 pub use derive::ContainerRule;
+pub use memory::MemorySink;
 
 /// The store's flag bits: `Flag` in `src/services/scanStore.ts`, bit for bit.
 pub mod flag {
@@ -93,4 +98,7 @@ pub enum StoreError {
     /// A storage mode this build does not make yet.
     #[error("the {0:?} store is not built by this version")]
     ModeNotBuilt(StoreMode),
+    /// The memory sink cannot make or seal a store; the text says why.
+    #[error("the memory sink: {0}")]
+    Sink(String),
 }

@@ -1,29 +1,18 @@
-//! The store built from a walk: the Node ingest (`ingestColumns`), rule for rule.
+//! The store built from a walk: the Node ingest (`ingestColumns`), rule for rule. Each
+//! row's rules are the kernel in the crate's `row` module, which the memory sink
+//! ([`crate::MemorySink`]) runs too.
 
-use std::collections::HashMap;
-
-use tm_walk::{
-    DirRefusal, FLAG_DATALESS, HardlinkRef, KIND_DIR, KIND_SYMLINK, Refusal, WalkOutput, WalkStats,
-};
+use tm_walk::{DirRefusal, HardlinkRef, Refusal, WalkOutput, WalkStats};
 
 use crate::column::Column;
-use crate::derive::{
-    ContainerRule, container_kind, decided_here, extension, is_hidden, rule_problem, store_atime,
-    store_mtime,
-};
+use crate::derive::{ContainerRule, rule_problem};
 use crate::finalize::breadth_first;
-use crate::{EXT_NONE, EXT_OVERFLOW, StoreError, flag};
+use crate::row::{ExtInterner, RowInput, RowRules, ShortfallSum, derive_row};
+use crate::{EXT_NONE, StoreError, flag};
 
 /// Name bytes reserved per headroom row, so a node added after the build (a container
 /// expanded, a file the watcher saw) finds room for its name as well as its row.
 pub const NAME_BYTES_PER_HEADROOM_ROW: usize = 64;
-
-/// The most entries the extension dictionary holds, "none" included; later extensions
-/// go to [`Store::ext_overflow`] (`internExt` in `scanStore.ts`).
-const EXT_DICT_LIMIT: usize = 0xffff;
-
-/// 2^53: a double holds every whole number below it, and not every one above it.
-const WHOLE_NUMBERS_EXACT_BELOW: f64 = 9_007_199_254_740_992.0;
 
 /// Where the store's columns live.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -114,7 +103,7 @@ pub struct Store {
     pub atime: Option<Column<f64>>,
     /// [`flag`] bits.
     pub flags: Column<u16>,
-    /// An index into [`Store::ext_dict`], [`EXT_NONE`] or [`EXT_OVERFLOW`].
+    /// An index into [`Store::ext_dict`], [`EXT_NONE`] or [`EXT_OVERFLOW`](crate::EXT_OVERFLOW).
     pub ext: Column<u16>,
     /// The container kind (`CONTAINER_ID`), 0 for none.
     pub container: Column<u8>,
@@ -166,18 +155,7 @@ pub struct Store {
 
 /// Builds the store from a walk, deriving every fact as the Node ingest does.
 pub fn build(walk: WalkOutput, opts: &BuildOptions) -> Result<Store, StoreError> {
-    if opts.mode != StoreMode::Memory {
-        return Err(StoreError::ModeNotBuilt(opts.mode));
-    }
-    for (index, rule) in opts.container_rules.iter().enumerate() {
-        if let Some(why) = rule_problem(rule) {
-            return Err(StoreError::BadContainerRule {
-                index,
-                text: rule.text.clone(),
-                why,
-            });
-        }
-    }
+    check_options(opts)?;
     check_lengths(&walk)?;
     let n = walk.len();
     let rows = n as u64 + u64::from(opts.headroom_rows);
@@ -196,6 +174,7 @@ pub fn build(walk: WalkOutput, opts: &BuildOptions) -> Result<Store, StoreError>
     )?;
     let headroom = opts.headroom_rows as usize;
     let keep_sparse_terms = !sparse_sums_are_exact(&walk, opts.blocks_are_meaningful);
+    let rules = opts.row_rules();
 
     let reserve = |len: usize| len + headroom;
     let mut size = Vec::with_capacity(reserve(n));
@@ -222,55 +201,35 @@ pub fn build(walk: WalkOutput, opts: &BuildOptions) -> Result<Store, StoreError>
     for (sid, &w) in (0u32..).zip(order.walk_index.iter()) {
         let id = sid as usize;
         let wi = w as usize;
-        let kind = column_at(&walk.kind, wi)?;
         let is_root = id == 0;
-        let is_dir = kind == KIND_DIR;
-        if is_root && !is_dir {
-            return Err(StoreError::Malformed("the root is not a folder".into()));
-        }
         let name: &[u8] = if is_root {
             opts.root_name.as_bytes()
         } else {
             walk.name(wi)
                 .ok_or_else(|| StoreError::Malformed(format!("node {w} has no name")))?
         };
-        let walk_flags = column_at(&walk.flags, wi)?;
-        let dataless = walk_flags & FLAG_DATALESS != 0;
-
-        let mut bits = 0u16;
-        if is_dir {
-            bits |= flag::DIR | flag::HAS_CHILD_ARRAY;
-        }
-        if is_hidden(name) {
-            bits |= flag::HIDDEN;
-        }
-        let mut bytes = if is_dir {
-            0.0
-        } else {
-            column_at(&walk.size, wi)?
+        let input = RowInput {
+            name,
+            is_root,
+            kind: column_at(&walk.kind, wi)?,
+            walk_flags: column_at(&walk.flags, wi)?,
+            size: column_at(&walk.size, wi)?,
+            alloc: column_at(&walk.alloc_bytes, wi)?,
+            mtime_ms: column_at(&walk.mtime_ms, wi)?,
+            atime_ms: column_at(&walk.atime_ms, wi)?,
         };
-        let mut alloc_delta = 0.0;
-        let mut family = None;
-        // Claiming bytes with none allocated: the walker's guess at a placeholder, which
-        // Node decides by the path unless the walk flagged the file itself.
-        let mut unallocated = false;
-        if kind == KIND_SYMLINK {
-            bits |= flag::SYMLINK;
-        } else if !is_dir {
-            let alloc = column_at(&walk.alloc_bytes, wi)?;
-            unallocated = bytes > 0.0 && alloc == 0.0;
-            if opts.blocks_are_meaningful && bytes > 0.0 {
-                alloc_delta = alloc - bytes;
-            }
-            family = family_of(&walk.hardlinks, w);
-        }
-        let placeholder = dataless && !is_dir;
-        if placeholder {
-            bits |= flag::CLOUD_PLACEHOLDER;
-        }
-        if placeholder || unallocated {
+        let row = derive_row(&input, &rules)?;
+        let mut bits = row.bits;
+
+        if row.cloud_candidate() {
             cloud_candidates.push(sid);
         }
+        // The first name of a family in store order keeps the bytes (P4-2a).
+        let mut duplicate = false;
+        let family = row
+            .linkable()
+            .then(|| family_of(&walk.hardlinks, w))
+            .flatten();
         if let Some(family) = family {
             let Some(seen) = seen_families.get_mut(family as usize) else {
                 return Err(StoreError::Malformed(format!(
@@ -278,31 +237,13 @@ pub fn build(walk: WalkOutput, opts: &BuildOptions) -> Result<Store, StoreError>
                     walk.hardlinks.len()
                 )));
             };
-            if *seen {
-                bits |= flag::HARDLINK_DUP;
-                counters.hardlinked_files += 1;
-                counters.hardlinked_bytes += bytes;
-                bytes = 0.0;
-            }
+            duplicate = *seen;
             *seen = true;
         }
-        if placeholder {
-            counters.cloud_files += 1;
-            counters.cloud_bytes += bytes;
-        }
-        let duplicate = bits & flag::HARDLINK_DUP != 0;
-        if alloc_delta != 0.0 && !duplicate && !placeholder && !unallocated {
-            if alloc_delta < 0.0 {
-                counters.sparse_files += 1;
-                counters.sparse_bytes -= alloc_delta;
-                if keep_sparse_terms {
-                    sparse_terms.push((sid, -alloc_delta));
-                }
-            } else {
-                counters.slack_bytes += alloc_delta;
-            }
-        }
-        if is_dir && !is_root && name == b".git" {
+        let terms = keep_sparse_terms.then_some(&mut sparse_terms);
+        let settled = row.pending.settle(duplicate, sid, &mut counters, terms);
+        bits |= settled.dup_bit;
+        if row.marks_parent_git_repo {
             let parent = order
                 .parent
                 .get(id)
@@ -312,14 +253,8 @@ pub fn build(walk: WalkOutput, opts: &BuildOptions) -> Result<Store, StoreError>
             *parent |= flag::GIT_REPO;
         }
 
-        let walk_mtime = column_at(&walk.mtime_ms, wi)?;
-        mtime.push(if is_root && !walk_mtime.is_finite() {
-            opts.root_mtime_ms
-        } else {
-            store_mtime(walk_mtime)
-        });
-        if let Some(accessed) = store_atime(column_at(&walk.atime_ms, wi)?) {
-            bits |= flag::HAS_ACCESSED;
+        mtime.push(row.mtime);
+        if let Some(accessed) = row.atime {
             let column = atime.get_or_insert_with(|| {
                 let mut zeros = Vec::with_capacity(reserve(n));
                 zeros.resize(id, 0.0);
@@ -330,14 +265,12 @@ pub fn build(walk: WalkOutput, opts: &BuildOptions) -> Result<Store, StoreError>
             column.push(0.0);
         }
 
-        if decided_here(name) {
-            let extension_id = if is_dir {
-                EXT_NONE
-            } else {
-                extension(name).map_or(EXT_NONE, |raw| interner.intern(raw, sid))
-            };
-            ext.push(extension_id);
-            container.push(container_kind(name, is_dir, &opts.container_rules));
+        if row.decided {
+            ext.push(
+                row.extension
+                    .map_or(EXT_NONE, |raw| interner.intern(raw, sid)),
+            );
+            container.push(row.container);
         } else {
             text_candidates.push(sid);
             ext.push(EXT_NONE);
@@ -352,13 +285,13 @@ pub fn build(walk: WalkOutput, opts: &BuildOptions) -> Result<Store, StoreError>
             }
         }
         if !is_root {
-            if is_dir {
+            if row.is_dir() {
                 counters.dirs += 1;
             } else {
                 counters.files += 1;
             }
         }
-        size.push(bytes);
+        size.push(settled.bytes);
         flags.push(bits);
         names.extend_from_slice(name);
         let end = u32::try_from(names.len()).map_err(|_| StoreError::NamesTooLong {
@@ -463,28 +396,45 @@ fn refusal_of(refusals: &[DirRefusal], node: u32) -> Option<Refusal> {
 }
 
 /// Whether `sparseBytes` comes out the same in any order, whatever Node decides about its
-/// guesses. Each of its terms is a row's shortfall (its size less its allocation): a file
-/// counted here, or a guess Node counts. When every positive shortfall is a whole number
-/// and they total below 2^53, every partial sum of any of them is a whole number below
-/// 2^53, which a double holds exactly. The running total below is exact while it stays
-/// below 2^53, and once it reaches 2^53 it stays at or above it, because every shortfall
-/// added is positive; so it ends below 2^53 exactly when the true total does. Where blocks
-/// mean nothing there are no terms.
+/// guesses ([`ShortfallSum`] says why). Where blocks mean nothing there are no terms.
 fn sparse_sums_are_exact(walk: &WalkOutput, blocks_are_meaningful: bool) -> bool {
     if !blocks_are_meaningful {
         return true;
     }
-    let mut total = 0.0;
+    let mut sum = ShortfallSum::default();
     for (&size, &alloc) in walk.size.iter().zip(&walk.alloc_bytes) {
-        let shortfall = size - alloc;
-        if shortfall > 0.0 {
-            if shortfall.fract() != 0.0 {
-                return false;
-            }
-            total += shortfall;
+        sum.add(size, alloc);
+    }
+    sum.is_exact()
+}
+
+/// Options a store can be made with: a mode this version makes, and container rules the
+/// rules can apply as `detectContainerKind` would.
+pub(crate) fn check_options(opts: &BuildOptions) -> Result<(), StoreError> {
+    if opts.mode != StoreMode::Memory {
+        return Err(StoreError::ModeNotBuilt(opts.mode));
+    }
+    for (index, rule) in opts.container_rules.iter().enumerate() {
+        if let Some(why) = rule_problem(rule) {
+            return Err(StoreError::BadContainerRule {
+                index,
+                text: rule.text.clone(),
+                why,
+            });
         }
     }
-    total < WHOLE_NUMBERS_EXACT_BELOW
+    Ok(())
+}
+
+impl BuildOptions {
+    /// What the per-row rules read of these options.
+    pub(crate) fn row_rules(&self) -> RowRules<'_> {
+        RowRules {
+            root_mtime_ms: self.root_mtime_ms,
+            blocks_are_meaningful: self.blocks_are_meaningful,
+            container_rules: &self.container_rules,
+        }
+    }
 }
 
 // `#[inline]`: without the hint LLVM left this a call in `build`'s per-node loop (fat LTO,
@@ -495,50 +445,4 @@ fn column_at<T: Copy>(column: &[T], index: usize) -> Result<T, StoreError> {
         .get(index)
         .copied()
         .ok_or_else(|| StoreError::Malformed(format!("no row {index}")))
-}
-
-/// The extension dictionary as `internExt` builds it: lower-cased, first seen first,
-/// "none" at 0, and every extension past the limit kept per node instead.
-struct ExtInterner {
-    dict: Vec<String>,
-    lookup: HashMap<Vec<u8>, u16>,
-    overflow: Vec<(u32, String)>,
-    lowered: Vec<u8>,
-}
-
-impl ExtInterner {
-    fn new() -> Self {
-        Self {
-            dict: vec![String::new()],
-            lookup: HashMap::new(),
-            overflow: Vec::new(),
-            lowered: Vec::new(),
-        }
-    }
-
-    /// The column value for the raw ASCII extension `raw` of node `id`.
-    fn intern(&mut self, raw: &[u8], id: u32) -> u16 {
-        self.lowered.clear();
-        self.lowered.extend(raw.iter().map(u8::to_ascii_lowercase));
-        if let Some(&known) = self.lookup.get(self.lowered.as_slice()) {
-            return known;
-        }
-        // ASCII, so the conversion is exact.
-        let text = String::from_utf8_lossy(&self.lowered).into_owned();
-        match u16::try_from(self.dict.len()) {
-            Ok(next) if usize::from(next) < EXT_DICT_LIMIT => {
-                self.dict.push(text);
-                self.lookup.insert(self.lowered.clone(), next);
-                next
-            }
-            _ => {
-                self.overflow.push((id, text));
-                EXT_OVERFLOW
-            }
-        }
-    }
-
-    fn finish(self) -> (Vec<String>, Vec<(u32, String)>) {
-        (self.dict, self.overflow)
-    }
 }

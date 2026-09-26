@@ -63,7 +63,22 @@ const ID_CEILING_FAULT: &str = "the walk exceeded 4,294,967,294 entries";
 /// ceiling, "the walk exceeded 4,294,967,294 entries"): the walk numbered the
 /// most entries it could, `ceiling - 1`, and needed another.
 pub(crate) fn ceiling_fault(ceiling: u32) -> String {
-    let digits = ceiling.saturating_sub(1).to_string();
+    format!(
+        "the walk exceeded {} entries",
+        grouped(u64::from(ceiling.saturating_sub(1)))
+    )
+}
+
+/// The fault recorded when a block-numbered walk's names would pass
+/// `ceiling` bytes ([`crate::WalkOptions::name_ceiling`]): "the walk's names
+/// exceeded 1,000 bytes".
+pub(crate) fn name_ceiling_fault(ceiling: u64) -> String {
+    format!("the walk's names exceeded {} bytes", grouped(ceiling))
+}
+
+/// `value` with its thousands apart: 1234567 as "1,234,567".
+fn grouped(value: u64) -> String {
+    let digits = value.to_string();
     let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, digit) in digits.chars().enumerate() {
         if i > 0 && (digits.len() - i) % 3 == 0 {
@@ -71,7 +86,7 @@ pub(crate) fn ceiling_fault(ceiling: u32) -> String {
         }
         grouped.push(digit);
     }
-    format!("the walk exceeded {grouped} entries")
+    grouped
 }
 /// The bytes a directory name must not hold to be joined onto its parent as
 /// one component: `/` everywhere, `\` too on Windows.
@@ -609,6 +624,19 @@ mod tests {
         assert_eq!(
             ceiling_fault(1_000_001),
             "the walk exceeded 1,000,000 entries"
+        );
+    }
+
+    #[test]
+    fn the_name_ceiling_fault_names_the_ceiling_in_bytes() {
+        assert_eq!(name_ceiling_fault(0), "the walk's names exceeded 0 bytes");
+        assert_eq!(
+            name_ceiling_fault(1_234),
+            "the walk's names exceeded 1,234 bytes"
+        );
+        assert_eq!(
+            name_ceiling_fault(u64::MAX),
+            "the walk's names exceeded 18,446,744,073,709,551,615 bytes"
         );
     }
 

@@ -4,13 +4,33 @@
 //! sink — the oracle every later sink is held to, and what
 //! [`crate::WalkHandle::take`] returns under [`crate::Numbering::Blocks`].
 //!
-//! The walk makes every call but `abort` under its commit lock, so a sink sees
-//! one call at a time: the root's row first, then the blocks in id order, and
-//! a refused folder whenever it is refused — not in id order (see
-//! [`ListingSink::refused`]). A walk that ends with an
-//! output calls nothing more; one that ends without one — cancelled, faulted,
-//! or its root refused — calls `abort` once on every sink, after every other
-//! call, and a sink panic is the walk's fault.
+//! A sink sees the root's row first, before any block. Then there are two
+//! kinds of sink ([`ListingSink::writes_in_place`]):
+//!
+//! * **Under the lock** (the default, and the collector): the walk makes every
+//!   call but `abort` under its commit lock, so the sink sees one call at a
+//!   time — the blocks in id order, and a refused folder whenever it is
+//!   refused, not in id order (see [`ListingSink::refused`]).
+//! * **In place**: the sink takes each whole listing after the commit lock is
+//!   released and before the listing's subfolders are queued, so several
+//!   workers' blocks reach it at once and in no particular order. A big
+//!   listing's chunks it takes under the lock, in order, from the one worker
+//!   that lists it (the big-listing semaphore already lets one through at a
+//!   time). What the walk guarantees such a sink instead of the lock:
+//!   - no two blocks share an id or a name byte: each reserved its ids and
+//!     name bytes under the lock for itself alone;
+//!   - the fields of a folder's own row that its listing decides (its child
+//!     range, its `.git` child, its own times) are the concern of the one
+//!     worker that lists the folder, which is handed the folder only after
+//!     the block holding its row was handed to every sink: that block's
+//!     commit happens before the listing's, through the queue's mutex;
+//!   - `refused` for a folder comes after the block holding its row was
+//!     handed over, by the same happens-before, possibly beside commits.
+//!
+//! A walk that ends with an output calls nothing more; one that ends without
+//! one — cancelled, faulted, or its root refused — calls `abort` once on every
+//! sink, after every other call (every worker has stopped by then), and a sink
+//! panic is the walk's fault.
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -78,6 +98,14 @@ pub trait ListingSink: Send + Sync {
     fn refused(&self, folder: u32, why: Refusal);
     /// The walk ended without an output: drop what was built. The last call.
     fn abort(&self);
+    /// Whether this sink writes each block where its ids say, outside the
+    /// commit lock, beside other workers' blocks (see the module docs for
+    /// what the walk guarantees such a sink). False, the default, keeps every
+    /// call under the lock. Asked at every hand-over, so it must always give
+    /// the same answer.
+    fn writes_in_place(&self) -> bool {
+        false
+    }
 }
 
 /// What [`CollectSink`] has gathered so far.
