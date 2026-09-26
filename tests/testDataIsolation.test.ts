@@ -196,3 +196,37 @@ test('every test file that loads the app\'s code points its data folder away fro
     assert.ok(loadsApp.includes(name), `${name} is allowed the default data folder but does not load the app's code`);
   }
 });
+
+/** A removal of the data folder through its environment variable, by `fs.rmSync`, `fs.rm` or `fsp.rm`. */
+const REMOVES_DATA_DIR = /\b(?:fsp?\.)?rm(?:Sync)?\(\s*process\.env\.TREEMAP_DATA_DIR\b/;
+
+test('no test file removes its data folder itself: the fixture does, once the app\'s saves have settled, with the retries Windows needs', () => {
+  // CI run 36223131426 (d26c9e4), Windows: agentErgonomics.test.ts removed its
+  // data folder with a bare rmSync as its last test ended — "ENOTEMPTY:
+  // directory not empty". The folder held the snapshots and caches the file's
+  // earlier scans had just saved, and Windows keeps a deleted file (and so its
+  // folder) until the last handle on it lets go. tests/fixtures/dataDir.ts
+  // removes every folder isolatedDataDir made once the file's tests are done,
+  // after the app's background saves settle, with retries; a test file's own
+  // bare removal races both.
+  const self = path.basename(__filename);
+  const files = fs.readdirSync(__dirname).filter((name) => name.endsWith('.test.ts') && name !== self).sort();
+  const removing = files.filter((name) => hasCodeLine(fs.readFileSync(path.join(__dirname, name), 'utf8'), REMOVES_DATA_DIR));
+  assert.deepEqual(removing, [], `these files remove process.env.TREEMAP_DATA_DIR themselves instead of leaving it to tests/fixtures/dataDir.ts: ${removing.join(', ')}`);
+});
+
+test('the pattern for a removal of the data folder sees each form one takes, and nothing else', () => {
+  for (const line of [
+    'fs.rmSync(process.env.TREEMAP_DATA_DIR!, { recursive: true, force: true });',
+    '  fs.rmSync(process.env.TREEMAP_DATA_DIR as string, { recursive: true, force: true });',
+    '  fs.rmSync(process.env.TREEMAP_DATA_DIR!, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });',
+    'await fsp.rm(process.env.TREEMAP_DATA_DIR!, { recursive: true, force: true });',
+    'await fs.promises.rm(process.env.TREEMAP_DATA_DIR!, { recursive: true });',
+  ]) assert.equal(hasCodeLine(line, REMOVES_DATA_DIR), true, line);
+  for (const line of [
+    '// fs.rmSync(process.env.TREEMAP_DATA_DIR!, { recursive: true, force: true });',
+    'fs.rmSync(dir, { recursive: true, force: true });',
+    'const was = process.env.TREEMAP_DATA_DIR;',
+    'process.env.TREEMAP_DATA_DIR = fs.mkdtempSync(prefix);',
+  ]) assert.equal(hasCodeLine(line, REMOVES_DATA_DIR), false, line);
+});

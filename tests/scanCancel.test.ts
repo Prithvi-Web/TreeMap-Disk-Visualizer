@@ -399,9 +399,3 @@ test('runGdu hands back the child it spawned, which is what makes the kill possi
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
-
-// Windows CI needs the retries: a just-closed sqlite/journal handle can hold a
-// file for a few ms after the process that owned it has gone.
-after(() => {
-  fs.rmSync(process.env.TREEMAP_DATA_DIR!, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-});

@@ -662,7 +662,3 @@ test('a run whose copies the capsule no longer holds cannot be silently half-und
     (err: unknown) => err instanceof AppError && err.code === 'CAPSULE_EMPTY',
   );
 });
-
-test.after(() => {
-  fs.rmSync(process.env.TREEMAP_DATA_DIR!, { recursive: true, force: true });
-});

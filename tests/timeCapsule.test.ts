@@ -511,9 +511,6 @@ test('every capture records a verifiable fingerprint and a real file count', asy
   }
 });
 
-test.after(() => {
-  fs.rmSync(process.env.TREEMAP_DATA_DIR!, { recursive: true, force: true });
-});
 
 /* ══════════════════ Timestamps survive the round trip ══════════════════ */
 

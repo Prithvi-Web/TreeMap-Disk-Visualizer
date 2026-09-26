@@ -94,7 +94,6 @@ before(async () => {
 after(async () => {
   cancelAllScans();
   await fixture.cleanup();
-  fs.rmSync(process.env.TREEMAP_DATA_DIR as string, { recursive: true, force: true });
 });
 
 /** The case, or a skip carrying the fixture's reason; the test body never sees an unbuilt case. */

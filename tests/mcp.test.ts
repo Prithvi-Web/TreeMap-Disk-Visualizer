@@ -56,7 +56,6 @@ before(async () => {
 after(async () => {
   await client.close();
   fs.rmSync(fixtureRoot, { recursive: true, force: true });
-  fs.rmSync(process.env.TREEMAP_DATA_DIR!, { recursive: true, force: true });
 });
 
 interface ToolReply {

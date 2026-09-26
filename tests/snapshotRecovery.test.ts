@@ -252,7 +252,3 @@ test('candidates come back newest first, and unconfirmed ones say so', async () 
       'and carries no size it could not have measured');
   }
 });
-
-test.after(() => {
-  fs.rmSync(process.env.TREEMAP_DATA_DIR!, { recursive: true, force: true });
-});

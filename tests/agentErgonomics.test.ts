@@ -224,10 +224,13 @@ test('agent summary answers 202 while the scan is still running and 404 for unkn
     assert.equal(missing.body.code, 'SCAN_NOT_FOUND');
   } finally {
     // The node_modules scan is still walking: stopped here, or it would save
-    // its snapshot into the data folder after the file had removed it.
+    // its snapshot into the data folder after the fixture had removed it.
+    // The data folder itself is the fixture's to remove (tests/fixtures/
+    // dataDir.ts), after the app's background saves settle, with the retries
+    // Windows needs: removed here with a bare rmSync it failed on Windows CI
+    // (ENOTEMPTY, run 36223131426) while a just-saved snapshot was still held.
     cancelAllScans();
     await close();
     fs.rmSync(fixture, { recursive: true, force: true });
-    fs.rmSync(process.env.TREEMAP_DATA_DIR!, { recursive: true, force: true });
   }
 });
