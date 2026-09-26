@@ -126,12 +126,33 @@ pub struct WalkOutput {
 }
 
 impl WalkOutput {
+    /// The output of a walk that kept no columns of its own
+    /// ([`crate::WalkOptions::collect`] off): its sinks hold the rows, and
+    /// only what it measured is here.
+    pub fn without_columns(stats: WalkStats) -> Self {
+        Self {
+            parent: Vec::new(),
+            name_off: Vec::new(),
+            names: Vec::new(),
+            kind: Vec::new(),
+            flags: Vec::new(),
+            size: Vec::new(),
+            alloc_bytes: Vec::new(),
+            mtime_ms: Vec::new(),
+            atime_ms: Vec::new(),
+            hardlinks: Vec::new(),
+            refusals: Vec::new(),
+            stats,
+        }
+    }
+
     /// Number of nodes, the root included.
     pub fn len(&self) -> usize {
         self.parent.len()
     }
 
-    /// True when there is not even a root (never, for a walk that produced output).
+    /// True when there is not even a root: only a walk that kept no columns
+    /// of its own ([`WalkOutput::without_columns`]).
     pub fn is_empty(&self) -> bool {
         self.parent.is_empty()
     }

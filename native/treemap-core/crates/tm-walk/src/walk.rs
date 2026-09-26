@@ -31,7 +31,7 @@ use crate::climb::Climber;
 use crate::output::{WalkOutput, WalkStats};
 use crate::platform::{ListBuffer, Lister, Meta, push_stored, thread_cpu_seconds};
 use crate::queue::DirJob;
-use crate::sink::ListingSink;
+use crate::sink::{Finishing, ListingSink};
 use crate::{FastPath, KIND_DIR, Numbering, WalkError, WalkOptions};
 
 mod discovery;
@@ -312,6 +312,12 @@ pub fn start_with_sinks(
             ),
         ));
     }
+    if opts.numbering == Numbering::Blocks && !opts.collect && sinks.is_empty() {
+        return Err(WalkError::OptionsRefused(
+            "a block-numbered walk that does not collect needs a sink: it would keep nothing"
+                .to_owned(),
+        ));
+    }
     let root_meta = match catch_unwind(AssertUnwindSafe(|| {
         lister.stat_dir(&opts.root, opts.want_atime)
     })) {
@@ -461,12 +467,17 @@ fn run_walk(shared: &Arc<Shared>, root_meta: Meta) -> Result<WalkOutput, WalkErr
     let worker_cpu: f64 = parts.iter().map(|p| p.cpu_seconds).sum();
     let total = usize::try_from(shared.next_id.load(Ordering::Acquire))
         .map_err(|_| WalkError::Internal("too many nodes for this platform".to_owned()))?;
-    let mut merged = match &shared.collect {
-        None => merge(&parts, total)?,
-        Some(collect) => collected(collect, total)?,
+    // A block-numbered walk that does not collect keeps no columns: its sinks
+    // hold it (`WalkOptions::collect`).
+    let mut merged = match (&shared.collect, shared.numbering) {
+        (Some(collect), _) => Some(collected(collect, total)?),
+        (None, Numbering::Discovery) => Some(merge(&parts, total)?),
+        (None, Numbering::Blocks) => None,
     };
     drop(parts);
-    refresh_families(shared, &mut merged)?;
+    if let Some(merged) = merged.as_mut() {
+        refresh_families(shared, merged)?;
+    }
     let stats = WalkStats {
         dirs_listed: shared.dirs_listed.load(Ordering::Acquire),
         entries: shared.entries.load(Ordering::Acquire),
@@ -479,20 +490,40 @@ fn run_walk(shared: &Arc<Shared>, root_meta: Meta) -> Result<WalkOutput, WalkErr
         unreadable_entries: shared.unreadable_entries.load(Ordering::Acquire),
         dataless: shared.dataless.load(Ordering::Acquire),
     };
-    Ok(WalkOutput {
-        parent: merged.parent,
-        name_off: merged.name_off,
-        names: merged.names,
-        kind: merged.kind,
-        flags: merged.flags,
-        size: merged.size,
-        alloc_bytes: merged.alloc,
-        mtime_ms: merged.mtime,
-        atime_ms: merged.atime,
-        hardlinks: merged.hardlinks,
-        refusals: merged.refusals,
-        stats,
+    finish_sinks(shared, &stats)?;
+    Ok(match merged {
+        None => WalkOutput::without_columns(stats),
+        Some(merged) => WalkOutput {
+            parent: merged.parent,
+            name_off: merged.name_off,
+            names: merged.names,
+            kind: merged.kind,
+            flags: merged.flags,
+            size: merged.size,
+            alloc_bytes: merged.alloc,
+            mtime_ms: merged.mtime,
+            atime_ms: merged.atime,
+            hardlinks: merged.hardlinks,
+            refusals: merged.refusals,
+            stats,
+        },
     })
+}
+
+/// [`ListingSink::finish`] on every sink, in order, on this (the driver)
+/// thread: the walk has an output and every worker has stopped. A cancel
+/// meanwhile ends the walk cancelled, and a failure with its reason; either
+/// way no later sink is finished, and the driver aborts them all.
+fn finish_sinks(shared: &Shared, stats: &WalkStats) -> Result<(), WalkError> {
+    let ending = Finishing { shared, stats };
+    for sink in &shared.sinks {
+        let finished = sink.finish(&ending);
+        if shared.is_cancelled() {
+            return Err(WalkError::Cancelled);
+        }
+        finished.map_err(WalkError::Internal)?;
+    }
+    Ok(())
 }
 
 /// Spawns workers lazily up to `target`; a worker above the current target

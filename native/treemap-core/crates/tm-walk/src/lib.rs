@@ -46,7 +46,7 @@ pub use output::{DirRefusal, HardlinkRef, Refusal, WalkOutput, WalkStats};
 pub use platform::synthetic::{SyntheticLister, SyntheticSpec, synthetic_temp_folder};
 pub use platform::{Entry, ListBuffer, Listed, Lister, Listing, Meta};
 pub use queue::RANGE_BYTES;
-pub use sink::{Block, ListingSink};
+pub use sink::{Block, Finishing, ListingSink};
 pub use walk::{
     GovernorPacer, Pacer, Progress, WalkCounts, WalkHandle, panic_text, start_with,
     start_with_sinks,
@@ -149,12 +149,19 @@ pub struct WalkOptions {
     /// lowers it to the pool. [`Numbering::Discovery`] reserves no names and
     /// ignores it.
     pub name_ceiling: u64,
+    /// Under [`Numbering::Blocks`], whether the walk's own collector keeps
+    /// every row for [`WalkHandle::take`] (the default). Off, `take()` gives
+    /// the stats and no columns, and the walk's sinks hold it: a sink that is
+    /// the store (the memory mode, T8) must not be held twice. A walk that
+    /// collects nothing and has no sink keeps nothing, and is refused.
+    /// [`Numbering::Discovery`] always collects.
+    pub collect: bool,
 }
 
 impl WalkOptions {
     /// Options for `root` with the defaults: no never-descend list, no atime,
     /// the hill-climber, the default buffer, the disk, discovery numbering,
-    /// [`DEFAULT_Q_MAX`], [`ID_CEILING`] and [`NAME_CEILING`].
+    /// [`DEFAULT_Q_MAX`], [`ID_CEILING`], [`NAME_CEILING`] and the collector.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
@@ -173,6 +180,7 @@ impl WalkOptions {
             q_max: DEFAULT_Q_MAX,
             id_ceiling: ID_CEILING,
             name_ceiling: NAME_CEILING,
+            collect: true,
         }
     }
 }

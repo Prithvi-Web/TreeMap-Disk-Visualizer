@@ -3,29 +3,19 @@
 //! copy of the file's facts, and NTFS refreshes a name's copy only when the file is
 //! opened through that name, so the copies can be stale. The walk's `refresh_families`
 //! reads the file once, through the family's lowest-numbered member, for its collector;
-//! the seal reads it the same way, and derives every member again from what it read.
+//! the seal reads it the same way — through the walk's own lister, from its root, on its
+//! driver thread (T8a: [`Finishing`]) — and derives every member again from what it read.
+//! A volume can hold tens of thousands of families (`C:\Windows\WinSxS`), so each read
+//! first checks for a cancel and moves the heartbeat, as the walk's refresh does (R90).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tm_walk::platform::Lister;
-use tm_walk::{IdFamily, KIND_FILE, Meta, reread_family};
+use tm_walk::{Finishing, IdFamily, KIND_FILE, Meta, reread_family};
 
 use super::{MemorySink, Side};
 use crate::row::{RowInput, RowRules, derive_row};
 use crate::{StoreError, flag};
-
-/// What the seal needs to re-read a family as the walk does: the walk's lister and root,
-/// and whether the walk read access times.
-#[derive(Clone, Copy)]
-pub struct Reread<'a> {
-    /// The lister the walk listed through.
-    pub lister: &'a dyn Lister,
-    /// The walk's root: every row's path is its stored names joined under it.
-    pub root: &'a Path,
-    /// Whether the walk asked for access times.
-    pub want_atime: bool,
-}
 
 /// The columns a re-read reads a member's path from, and those it writes again.
 pub(super) struct Rows<'c> {
@@ -43,7 +33,7 @@ impl MemorySink {
     /// member of a family whose read reached its own file again from what it read.
     pub(super) fn reread_families(
         &self,
-        reread: &Reread<'_>,
+        ending: &Finishing<'_>,
         families: &[IdFamily],
         side: &mut Side,
         mut rows: Rows<'_>,
@@ -51,7 +41,13 @@ impl MemorySink {
         let rules = self.rules();
         let mut changes = Changes::default();
         for family in families {
-            let Some(meta) = read_family(reread, &rows, family) else {
+            if ending.cancelled() {
+                return Err(StoreError::Sink(
+                    "the walk was cancelled while its hard-link families were read".into(),
+                ));
+            }
+            ending.beat();
+            let Some(meta) = read_family(ending, &rows, family) else {
                 continue;
             };
             for &node in &family.members {
@@ -92,10 +88,10 @@ impl Changes {
 
 /// The facts of `family`'s file, read through its lowest-numbered member as the walk
 /// reads them; `None` when that read does not reach the family's own file.
-fn read_family(reread: &Reread<'_>, rows: &Rows<'_>, family: &IdFamily) -> Option<Meta> {
+fn read_family(ending: &Finishing<'_>, rows: &Rows<'_>, family: &IdFamily) -> Option<Meta> {
     let &first = family.members.first()?;
-    let path = row_path(reread.root, rows, first)?;
-    reread_family(reread.lister, &path, reread.want_atime, family)
+    let path = row_path(ending.root(), rows, first)?;
+    reread_family(ending.lister(), &path, ending.want_atime(), family)
 }
 
 /// Derives member `node` — a file — again from its file's own size and times (`meta`) with

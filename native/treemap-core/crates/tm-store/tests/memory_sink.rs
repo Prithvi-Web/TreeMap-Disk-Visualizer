@@ -31,15 +31,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use tm_store::{
-    AnonTally, BuildOptions, Counters, EXT_NONE, EXT_OVERFLOW, MemorySink, Reread, Store,
-    StoreError, StoreMode, anon_tally, build, flag,
+    AnonTally, BuildOptions, Counters, EXT_NONE, EXT_OVERFLOW, MemorySink, Store, StoreError,
+    StoreMode, anon_tally, build, flag,
 };
 use tm_walk::invariants::check_walk_columns;
 use tm_walk::platform::{ListBuffer, Lister, Meta};
 use tm_walk::walk::{MAX_WORKERS, Pacer};
 use tm_walk::{
-    BIG_LISTING, Block, DEFAULT_Q_MAX, FastPath, ListingSink, Numbering, Refusal, SyntheticSpec,
-    WalkError, WalkHandle, WalkOptions, WalkOutput, lister_for, start_with_sinks,
+    BIG_LISTING, Block, DEFAULT_Q_MAX, FastPath, Finishing, ListingSink, Numbering, Refusal,
+    SyntheticSpec, WalkError, WalkHandle, WalkOptions, WalkOutput, lister_for, start_with_sinks,
     synthetic_temp_folder,
 };
 
@@ -620,22 +620,12 @@ fn walk_both_in(fixture: &Fixture, workers: u32, q_max: usize, rows: u32) -> Res
         Arc::new(MemorySink::new(&fixture.build, rows, ROOM_NAMES).map_err(|e| e.to_string())?);
     let opts = walk_options(fixture, workers, q_max, &sink);
     let lister = lister_of(fixture, &opts)?;
-    let handle = start_with_sinks(
-        opts,
-        Arc::new(OpenPacer),
-        Arc::clone(&lister),
-        vec![sink.clone()],
-    )
-    .map_err(|e| e.to_string())?;
+    let handle = start_with_sinks(opts, Arc::new(OpenPacer), lister, vec![sink.clone()])
+        .map_err(|e| e.to_string())?;
     let out = handle.take().map_err(|e| format!("the walk: {e}"))?;
-    let reread = Reread {
-        lister: &*lister,
-        root: &fixture.root,
-        want_atime: fixture.want_atime,
-    };
     let mem = sink
-        .seal(out.stats.clone(), &reread)
-        .map_err(|e| format!("the seal: {e}"))?;
+        .take_store()
+        .map_err(|e| format!("the sealed store: {e}"))?;
     let bfs = build(out, &fixture.build).map_err(|e| format!("build: {e}"))?;
     Ok(Both { mem, bfs })
 }
@@ -1266,6 +1256,10 @@ impl ListingSink for Reversing {
     fn writes_in_place(&self) -> bool {
         true
     }
+
+    fn finish(&self, ending: &Finishing<'_>) -> Result<(), String> {
+        self.inner.finish(ending)
+    }
 }
 
 /// The reversed tree, holding the listings of `a/denied` and `b/denied` until both have
@@ -1327,27 +1321,15 @@ fn lists_gathered_out_of_id_order_come_out_ascending() -> TestResult {
         shared: Arc::clone(&shared),
     });
     let opts = walk_options(&fixture, 2, DEFAULT_Q_MAX, &sink);
-    let handle = start_with_sinks(
-        opts,
-        Arc::new(OpenPacer),
-        Arc::clone(&lister) as Arc<dyn Lister>,
-        vec![reversing],
-    )
-    .map_err(|e| e.to_string())?;
+    let handle = start_with_sinks(opts, Arc::new(OpenPacer), lister, vec![reversing])
+        .map_err(|e| e.to_string())?;
     let out = take_within(handle)?.map_err(|e| e.to_string())?;
     assert_eq!(
         shared.committed.load(Ordering::SeqCst),
         2,
         "a's and b's blocks both reached the sink"
     );
-    let reread = Reread {
-        lister: &*lister,
-        root: &fixture.root,
-        want_atime: fixture.want_atime,
-    };
-    let mem = sink
-        .seal(out.stats.clone(), &reread)
-        .map_err(|e| e.to_string())?;
+    let mem = sink.take_store().map_err(|e| e.to_string())?;
     let bfs = build(out, &build_opts).map_err(|e| e.to_string())?;
     let ascending = |ids: &[u32]| ids.windows(2).all(|w| w.first() < w.get(1));
     let overflow: Vec<u32> = mem.ext_overflow.iter().map(|&(id, _)| id).collect();
@@ -1370,6 +1352,195 @@ fn lists_gathered_out_of_id_order_come_out_ascending() -> TestResult {
     );
     assert_eq!(terms.len(), 2, "sparse terms: {terms:?}");
     compare(&Both { mem, bfs }, &fixture)
+}
+
+// ---------------------------------------------------------------------------
+// The seal on the walk's driver thread (T8a)
+// ---------------------------------------------------------------------------
+
+/// A scripted tree whose file reads — a hard-link family's re-read: the walk itself
+/// stats only the root — are held one by one: read `k` waits until `k` reads are let go.
+struct HeldReads {
+    tree: Arc<ScriptedTree>,
+    root: PathBuf,
+    reads: AtomicU64,
+    let_go: AtomicU64,
+}
+
+impl HeldReads {
+    fn new(tree: ScriptedTree, root: &str) -> Self {
+        Self {
+            tree: Arc::new(tree),
+            root: PathBuf::from(root),
+            reads: AtomicU64::new(0),
+            let_go: AtomicU64::new(0),
+        }
+    }
+}
+
+impl Lister for HeldReads {
+    fn stat_dir(&self, path: &Path, want_atime: bool) -> Result<Meta, Refusal> {
+        if path != self.root {
+            let read = self.reads.fetch_add(1, Ordering::SeqCst) + 1;
+            let _ = wait_until(|| self.let_go.load(Ordering::SeqCst) >= read);
+        }
+        self.tree.stat_dir(path, want_atime)
+    }
+
+    fn list(
+        &self,
+        dir: &Path,
+        want_atime: bool,
+        buf: &mut ListBuffer,
+    ) -> Result<FastPath, Refusal> {
+        self.tree.list(dir, want_atime, buf)
+    }
+}
+
+/// The Windows tree walked into a sink alone (`collect` off, so only the seal re-reads
+/// its families) through `lister`.
+fn start_windows_alone(lister: Arc<HeldReads>) -> Result<(WalkHandle, Arc<MemorySink>), String> {
+    let fixture = windows_fixture()?;
+    let sink = Arc::new(
+        MemorySink::new(&fixture.build, ROOM_ROWS, ROOM_NAMES).map_err(|e| e.to_string())?,
+    );
+    let mut opts = walk_options(&fixture, 2, DEFAULT_Q_MAX, &sink);
+    opts.collect = false;
+    let handle = start_with_sinks(opts, Arc::new(OpenPacer), lister, vec![sink.clone()])
+        .map_err(|e| e.to_string())?;
+    Ok((handle, sink))
+}
+
+#[test]
+fn a_cancel_while_the_seal_reads_families_ends_the_walk_between_two_reads() -> TestResult {
+    let lister = Arc::new(HeldReads::new(windows_tree()?, WINDOWS_ROOT));
+    let (handle, sink) = start_windows_alone(Arc::clone(&lister))?;
+    if !wait_until(|| lister.reads.load(Ordering::SeqCst) == 1) {
+        return Err("the seal never read a family".to_owned());
+    }
+    handle.cancel();
+    lister.let_go.store(u64::MAX, Ordering::SeqCst);
+    let taken = take_within(handle)?;
+    assert!(
+        matches!(taken, Err(WalkError::Cancelled)),
+        "cancelled: {:?}",
+        taken.map(|out| out.len())
+    );
+    assert_eq!(
+        lister.reads.load(Ordering::SeqCst),
+        1,
+        "the seal stopped before its next read"
+    );
+    assert!(
+        matches!(sink.take_store(), Err(StoreError::Sink(_))),
+        "a cancelled walk's sink has no store"
+    );
+    Ok(())
+}
+
+#[test]
+fn every_family_the_seal_reads_moves_the_heartbeat() -> TestResult {
+    let lister = Arc::new(HeldReads::new(windows_tree()?, WINDOWS_ROOT));
+    let (handle, sink) = start_windows_alone(Arc::clone(&lister))?;
+    if !wait_until(|| lister.reads.load(Ordering::SeqCst) == 1) {
+        return Err("the seal never read a family".to_owned());
+    }
+    // Every worker has stopped, so only the seal moves the heartbeat now.
+    let first = handle.progress().heartbeat;
+    lister.let_go.store(1, Ordering::SeqCst);
+    if !wait_until(|| lister.reads.load(Ordering::SeqCst) == 2) {
+        return Err("the seal never read a second family".to_owned());
+    }
+    let second = handle.progress().heartbeat;
+    assert!(
+        second > first,
+        "the heartbeat stood still: {first} then {second}"
+    );
+    lister.let_go.store(u64::MAX, Ordering::SeqCst);
+    take_within(handle)?.map_err(|e| e.to_string())?;
+    sink.take_store().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn the_sinks_store_needs_no_collector() -> TestResult {
+    let fixtures = [windows_fixture()?, posix_fixture()?];
+    for fixture in &fixtures {
+        let sink = Arc::new(
+            MemorySink::new(&fixture.build, ROOM_ROWS, ROOM_NAMES).map_err(|e| e.to_string())?,
+        );
+        let mut opts = walk_options(fixture, 2, DEFAULT_Q_MAX, &sink);
+        opts.collect = false;
+        let lister = lister_of(fixture, &opts)?;
+        let handle = start_with_sinks(opts, Arc::new(OpenPacer), lister, vec![sink.clone()])
+            .map_err(|e| e.to_string())?;
+        let out = take_within(handle)?.map_err(|e| e.to_string())?;
+        assert!(out.is_empty(), "{}: the walk kept no columns", fixture.name);
+        let mem = sink.take_store().map_err(|e| e.to_string())?;
+        // The oracle: `build(take())` of a walk that collects.
+        let bfs = walk_both(fixture, 2, DEFAULT_Q_MAX)?.bfs;
+        compare(&Both { mem, bfs }, fixture).map_err(|e| format!("{}: {e}", fixture.name))?;
+    }
+    Ok(())
+}
+
+/// A sink whose finish fails, after the memory sink has sealed.
+struct FailsToFinish;
+
+/// Its reason.
+const FAILS_TO_FINISH: &str = "a later sink could not finish";
+
+impl ListingSink for FailsToFinish {
+    fn root(&self, _name: &[u8], _meta: &Meta) {}
+    fn commit(&self, _block: &Block<'_>) {}
+    fn refused(&self, _folder: u32, _why: Refusal) {}
+    fn abort(&self) {}
+    fn finish(&self, _ending: &Finishing<'_>) -> Result<(), String> {
+        Err(FAILS_TO_FINISH.to_owned())
+    }
+}
+
+#[test]
+fn a_sealed_store_is_released_when_a_later_sink_fails_to_finish() -> TestResult {
+    let fixture = posix_fixture()?;
+    let before = anon_tally();
+    let sink = Arc::new(
+        MemorySink::new(&fixture.build, ROOM_ROWS, ROOM_NAMES).map_err(|e| e.to_string())?,
+    );
+    let made = since(before, anon_tally());
+    let watch = Arc::new(AbortWatch::new(Arc::clone(&sink)));
+    let opts = walk_options(&fixture, 2, DEFAULT_Q_MAX, &sink);
+    let lister = lister_of(&fixture, &opts)?;
+    let handle = start_with_sinks(
+        opts,
+        Arc::new(OpenPacer),
+        lister,
+        vec![watch.clone(), Arc::new(FailsToFinish)],
+    )
+    .map_err(|e| e.to_string())?;
+    match take_within(handle)? {
+        Err(WalkError::Internal(why)) if why == FAILS_TO_FINISH => {}
+        other => {
+            return Err(format!(
+                "the later sink's reason: {:?}",
+                other.map(|o| o.len())
+            ));
+        }
+    }
+    assert_eq!(watch.aborts.load(Ordering::SeqCst), 1, "aborted once");
+    // Every column the sink made went into the sealed store (the walk reads access
+    // times, so none was dropped at the seal), and the abort releases them all.
+    let released = (*lock(&watch.released)).ok_or("no abort measured")?;
+    assert_eq!(
+        (released.unmaps, released.bytes_unmapped),
+        (made.maps, made.bytes_mapped),
+        "the sealed store's mappings are released by the abort"
+    );
+    assert!(
+        matches!(sink.take_store(), Err(StoreError::Sink(_))),
+        "an aborted sink has no store"
+    );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1442,6 +1613,10 @@ impl ListingSink for AbortWatch {
 
     fn writes_in_place(&self) -> bool {
         self.inner.writes_in_place()
+    }
+
+    fn finish(&self, ending: &Finishing<'_>) -> Result<(), String> {
+        self.inner.finish(ending)
     }
 }
 
@@ -1565,33 +1740,12 @@ fn every_mapping_is_released_when_the_walk_ends_without_an_output() -> TestResul
             (made.maps, made.bytes_mapped),
             "{what}: every mapping the sink made is released by the abort"
         );
-        let reread = Reread {
-            lister: &*lister,
-            root: Path::new(MIXED_ROOT),
-            want_atime: false,
-        };
         assert!(
-            matches!(sink.seal(no_stats(), &reread), Err(StoreError::Sink(_))),
-            "{what}: an aborted sink has nothing to seal"
+            matches!(sink.take_store(), Err(StoreError::Sink(_))),
+            "{what}: an aborted sink has no store"
         );
     }
     Ok(())
-}
-
-/// Stats to seal with where the walk gave none.
-fn no_stats() -> tm_walk::WalkStats {
-    tm_walk::WalkStats {
-        dirs_listed: 0,
-        entries: 0,
-        wall_ms: 0.0,
-        cpu_seconds: f64::NAN,
-        fast_path: FastPath::Unavailable,
-        workers_peak: 0,
-        climb_steps: 0,
-        denied_entries: 0,
-        unreadable_entries: 0,
-        dataless: 0,
-    }
 }
 
 /// Walks the mixed tree into `sink`, its ceilings set when `limited`.
@@ -1641,25 +1795,26 @@ fn a_sink_with_less_room_faults_the_walk_at_its_ceilings() -> TestResult {
 #[test]
 fn a_sink_the_walk_outgrows_writes_nothing_past_its_room() -> TestResult {
     let build_opts = options("mixed", 0.0, true, 16);
+    let roomy =
+        Arc::new(MemorySink::new(&build_opts, ROOM_ROWS, ROOM_NAMES).map_err(|e| e.to_string())?);
+    let whole = walk_mixed_into(&roomy, false)?.map_err(|e| e.to_string())?;
+    assert!(whole.len() > 100, "the tree outgrows the small sinks below");
     for (what, rows, names) in [
         ("rows", 40 + 16, 1 << 20),
         ("names", 10_000, 5 + 16 * 64 + 100),
     ] {
         let sink = Arc::new(MemorySink::new(&build_opts, rows, names).map_err(|e| e.to_string())?);
         // The walk is not told the sink's ceilings: it lists everything, and the sink
-        // refuses what it has no room for rather than write past its mappings.
-        let out = walk_mixed_into(&sink, false)?.map_err(|e| e.to_string())?;
-        assert!(out.len() > 100, "{what}: the tree outgrows the sink");
-        let tree = mixed_tree()?;
-        let reread = Reread {
-            lister: &tree,
-            root: Path::new(MIXED_ROOT),
-            want_atime: false,
-        };
-        match sink.seal(out.stats, &reread) {
-            Err(StoreError::Sink(why)) if why.contains("not in the column's room") => {}
-            other => return Err(format!("{what}: {:?}", other.map(|s| s.n))),
+        // refuses what it has no room for rather than write past its mappings, so the walk
+        // ends at the sink's finish with the sink's reason.
+        match walk_mixed_into(&sink, false)? {
+            Err(WalkError::Internal(why)) if why.contains("not in the column's room") => {}
+            other => return Err(format!("{what}: {:?}", other.map(|o| o.len()))),
         }
+        assert!(
+            matches!(sink.take_store(), Err(StoreError::Sink(_))),
+            "{what}: no store"
+        );
     }
     Ok(())
 }

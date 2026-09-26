@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use tm_store::{BuildOptions, Column, MemorySink, Reread, Store, StoreMode, Zeroable, build};
+use tm_store::{BuildOptions, Column, MemorySink, Store, StoreMode, Zeroable, build};
 use tm_walk::walk::{MAX_WORKERS, Pacer};
 use tm_walk::{Numbering, SyntheticSpec, WalkOptions, lister_for, start_with_sinks};
 
@@ -109,30 +109,17 @@ fn walk(entries: u64, cap_rows: u32, name_bytes: u64) -> Result<(Store, Store), 
     let build_opts = options();
     let sink =
         Arc::new(MemorySink::new(&build_opts, cap_rows, name_bytes).map_err(|e| e.to_string())?);
-    let root = tm_walk::synthetic_temp_folder().join("tm-store-bytes");
-    let mut opts = WalkOptions::new(root.clone());
+    let mut opts = WalkOptions::new(tm_walk::synthetic_temp_folder().join("tm-store-bytes"));
     opts.numbering = Numbering::Blocks;
     opts.max_workers = 8;
     opts.synthetic = Some(SyntheticSpec::developer(entries, 3));
     opts.id_ceiling = sink.id_ceiling();
     opts.name_ceiling = sink.name_ceiling();
     let lister = lister_for(&opts).map_err(|e| e.to_string())?;
-    let handle = start_with_sinks(
-        opts,
-        Arc::new(OpenPacer),
-        Arc::clone(&lister),
-        vec![sink.clone()],
-    )
-    .map_err(|e| e.to_string())?;
-    let out = handle.take().map_err(|e| e.to_string())?;
-    let reread = Reread {
-        lister: &*lister,
-        root: &root,
-        want_atime: false,
-    };
-    let mem = sink
-        .seal(out.stats.clone(), &reread)
+    let handle = start_with_sinks(opts, Arc::new(OpenPacer), lister, vec![sink.clone()])
         .map_err(|e| e.to_string())?;
+    let out = handle.take().map_err(|e| e.to_string())?;
+    let mem = sink.take_store().map_err(|e| e.to_string())?;
     let bfs = build(out, &build_opts).map_err(|e| e.to_string())?;
     Ok((mem, bfs))
 }

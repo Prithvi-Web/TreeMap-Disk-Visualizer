@@ -27,18 +27,25 @@
 //!   - `refused` for a folder comes after the block holding its row was
 //!     handed over, by the same happens-before, possibly beside commits.
 //!
-//! A walk that ends with an output calls nothing more; one that ends without
-//! one — cancelled, faulted, or its root refused — calls `abort` once on every
-//! sink, after every other call (every worker has stopped by then), and a sink
-//! panic is the walk's fault.
+//! A walk that ends with an output then calls [`ListingSink::finish`] on every
+//! sink, in order, on its driver thread, once every worker has stopped and
+//! before it reports done (T8a): what a sink does to its rows once they are
+//! all in — the memory sink's seal — runs where a cancel reaches it and where
+//! it can move the heartbeat ([`Finishing`]). A cancel meanwhile, or a sink
+//! whose `finish` fails, ends the walk without an output, and no later sink is
+//! finished. A walk that ends without an output — cancelled, faulted, or its
+//! root refused — calls `abort` once on every sink, after every other call
+//! (every worker has stopped by then), and a sink panic is the walk's fault.
 
+use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::WalkError;
 use crate::links::link_key;
-use crate::output::{DirRefusal, Refusal};
-use crate::platform::{DirTimes, Entry, Meta};
-use crate::walk::{Merged, Part, merge};
+use crate::output::{DirRefusal, Refusal, WalkStats};
+use crate::platform::{DirTimes, Entry, Lister, Meta};
+use crate::walk::{Merged, Part, Shared, merge};
 
 /// One listing's children, or one chunk of them, as a commit hands them on.
 ///
@@ -105,6 +112,57 @@ pub trait ListingSink: Send + Sync {
     /// the same answer.
     fn writes_in_place(&self) -> bool {
         false
+    }
+    /// Every row is in: the walk has an output, every worker has stopped, and
+    /// the walk reports done only once this returns — on the walk's driver
+    /// thread, the sinks in order. A long `finish` checks
+    /// [`Finishing::cancelled`] and moves the heartbeat
+    /// ([`Finishing::beat`]) as it goes. An `Err` ends the walk without an
+    /// output, with its sentence as the reason. The default does nothing.
+    fn finish(&self, _ending: &Finishing<'_>) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// What a sink may use while it finishes ([`ListingSink::finish`]): the
+/// walk's lister, root and access-time choice, what it measured, whether it
+/// was cancelled, and its heartbeat.
+pub struct Finishing<'a> {
+    pub(crate) shared: &'a Shared,
+    pub(crate) stats: &'a WalkStats,
+}
+
+impl Finishing<'_> {
+    /// The lister the walk listed through.
+    pub fn lister(&self) -> &dyn Lister {
+        &*self.shared.lister
+    }
+
+    /// The walk's root, as given.
+    pub fn root(&self) -> &Path {
+        &self.shared.root
+    }
+
+    /// Whether the walk read access times.
+    pub fn want_atime(&self) -> bool {
+        self.shared.want_atime
+    }
+
+    /// What the walk measured about itself.
+    pub fn stats(&self) -> &WalkStats {
+        self.stats
+    }
+
+    /// Whether the walk was cancelled: a sink that sees it may stop, and
+    /// the walk ends without an output whatever the sink returns.
+    pub fn cancelled(&self) -> bool {
+        self.shared.is_cancelled()
+    }
+
+    /// Moves the walk's heartbeat once, so a long finish is never mistaken
+    /// for a stalled walk.
+    pub fn beat(&self) {
+        self.shared.heartbeat.fetch_add(1, Ordering::AcqRel);
     }
 }
 

@@ -105,7 +105,7 @@ impl Drop for Counted<'_> {
 
 /// Everything the workers, the driver and the handle share.
 pub(crate) struct Shared {
-    pub(super) root: PathBuf,
+    pub(crate) root: PathBuf,
     pub(crate) want_atime: bool,
     pub(crate) never_descend: HashSet<PathBuf>,
     pub(super) max_workers: usize,
@@ -177,12 +177,15 @@ impl Shared {
         let (queue, collect, sinks) = match opts.numbering {
             Numbering::Discovery => (Queue::new(), None, Vec::new()),
             Numbering::Blocks => {
-                let collect = Arc::new(CollectSink::default());
-                let mut sinks: Vec<Arc<dyn ListingSink>> = vec![collect.clone()];
+                let collect = opts.collect.then(|| Arc::new(CollectSink::default()));
+                let mut sinks: Vec<Arc<dyn ListingSink>> = Vec::new();
+                if let Some(collect) = &collect {
+                    sinks.push(collect.clone());
+                }
                 sinks.extend(extra);
                 // A deque for every worker index the walk can start (T6c).
                 let workers = usize::try_from(MAX_WORKERS).unwrap_or(1);
-                (Queue::per_worker(opts.q_max, workers), Some(collect), sinks)
+                (Queue::per_worker(opts.q_max, workers), collect, sinks)
             }
         };
         let root_name_bytes = u64::try_from(stored_root_name(&opts.root).len()).unwrap_or(0);

@@ -1,6 +1,8 @@
 //! The memory sink (Phase 4, T7a; design §S.1.3): the finalized store's columns, written
 //! while the walk runs, at the ids each listing's block reserved, then sealed into a
-//! [`Store`] of `n` rows.
+//! [`Store`] of `n` rows on the walk's driver thread as the walk finishes with an output
+//! ([`ListingSink::finish`], T8a: the seal sees a cancel and moves the heartbeat), and
+//! handed over by [`MemorySink::take_store`].
 //!
 //! The columns are `PackedScanStore`'s (decision P4-1) in anonymous mappings reserved for
 //! `cap_rows` rows, the headroom among them, and a name pool reserved likewise (decision
@@ -50,7 +52,7 @@ use std::sync::{
 };
 
 use tm_walk::{
-    Block, HardlinkRef, IdFamily, LinkKey, ListingSink, Meta, Refusal, WalkStats, hardlink_families,
+    Block, Finishing, HardlinkRef, IdFamily, LinkKey, ListingSink, Meta, Refusal, hardlink_families,
 };
 
 use crate::build::{
@@ -66,7 +68,6 @@ mod refresh;
 mod write;
 
 use order::Places;
-pub use refresh::Reread;
 use refresh::Rows;
 use write::write_rows;
 
@@ -103,6 +104,8 @@ pub struct MemorySink {
     end: AtomicU32,
     /// The first thing the sink could not do; the seal reports it.
     broken: Mutex<Option<String>>,
+    /// The store sealed at the walk's finish, until it is taken.
+    sealed: Mutex<Option<Store>>,
 }
 
 /// The P4-1 columns, reserved.
@@ -257,6 +260,7 @@ impl MemorySink {
             written: AtomicU64::new(0),
             end: AtomicU32::new(0),
             broken: Mutex::new(None),
+            sealed: Mutex::new(None),
         })
     }
 
@@ -276,12 +280,25 @@ impl MemorySink {
         u64::from(self.pool_bytes).saturating_sub(set_aside)
     }
 
-    /// The store the walk wrote, once it has ended with an output (`walk_stats` is what
-    /// it measured), re-reading the hard-link families found by file id through `reread`
-    /// as the walk re-reads them. Fails when the sink was aborted or sealed before, when a
-    /// block could not be written (the first reason given), and when the rows written are
-    /// not every id below the root once.
-    pub fn seal(&self, walk_stats: WalkStats, reread: &Reread<'_>) -> Result<Store, StoreError> {
+    /// The store the walk wrote, sealed when the walk finished with an output
+    /// ([`ListingSink::finish`]), handed over once. Fails while the walk has not finished
+    /// with an output — it is running, or it ended without one and the sink was aborted —
+    /// and once the store has been taken.
+    pub fn take_store(&self) -> Result<Store, StoreError> {
+        lock(&self.sealed).take().ok_or_else(|| {
+            StoreError::Sink(
+                "no store: the walk has not finished with an output, or its store was taken".into(),
+            )
+        })
+    }
+
+    /// The store the walk wrote, at its finish (`ending`: what it measured, and its
+    /// lister, root and signals), re-reading the hard-link families found by file id as
+    /// the walk re-reads them. Fails when the sink was aborted or sealed before, when a
+    /// block could not be written (the first reason given), when the rows written are not
+    /// every id below the root once, and when the walk is cancelled meanwhile.
+    fn seal(&self, ending: &Finishing<'_>) -> Result<Store, StoreError> {
+        ending.beat();
         let taken = write(&self.columns).take();
         let columns =
             taken.ok_or_else(|| StoreError::Sink("it was aborted or sealed already".into()))?;
@@ -290,7 +307,7 @@ impl MemorySink {
         }
         let mut side = mem::take(&mut *lock(&self.side));
         let interner = mem::replace(&mut *lock(&self.interner), ExtInterner::new());
-        self.seal_columns(columns, &mut side, interner, walk_stats, reread)
+        self.seal_columns(columns, &mut side, interner, ending)
     }
 
     fn seal_columns(
@@ -298,8 +315,7 @@ impl MemorySink {
         mut cols: Columns,
         side: &mut Side,
         interner: ExtInterner,
-        walk_stats: WalkStats,
-        reread: &Reread<'_>,
+        ending: &Finishing<'_>,
     ) -> Result<Store, StoreError> {
         let (n, rows, room) = self.written_rows()?;
         cols.name_off
@@ -328,7 +344,7 @@ impl MemorySink {
             None
         };
         self.reread_families(
-            reread,
+            ending,
             &id_families,
             side,
             Rows {
@@ -403,7 +419,7 @@ impl MemorySink {
             text_candidates: mem::take(&mut side.text_candidates),
             sparse_terms,
             counters: mem::take(&mut side.counters),
-            walk_stats,
+            walk_stats: ending.stats().clone(),
         })
     }
 
@@ -631,15 +647,24 @@ impl ListingSink for MemorySink {
         }
     }
 
-    /// Releases every mapping, and forgets what the blocks gathered.
+    /// Releases every mapping — a sealed store's too — and forgets what the blocks
+    /// gathered.
     fn abort(&self) {
         drop(write(&self.columns).take());
+        drop(lock(&self.sealed).take());
         *lock(&self.side) = Side::default();
         *lock(&self.interner) = ExtInterner::new();
     }
 
     fn writes_in_place(&self) -> bool {
         true
+    }
+
+    /// Seals the store on the walk's driver thread, for [`MemorySink::take_store`].
+    fn finish(&self, ending: &Finishing<'_>) -> Result<(), String> {
+        let store = self.seal(ending).map_err(|e| e.to_string())?;
+        *lock(&self.sealed) = Some(store);
+        Ok(())
     }
 }
 
