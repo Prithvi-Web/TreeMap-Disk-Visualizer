@@ -1002,12 +1002,13 @@ fn a_family_refresh_takes_only_its_own_file() -> TestResult {
     // The refresh reads each family's file through a path rebuilt from the
     // names, and a folder on the way swapped for a link since the listing
     // would lead elsewhere. Only a read that reaches a file with the family's
-    // own id counts; another file, or a folder that somehow shares the id,
-    // leaves every member what its listing said (the pre-landing review of
-    // 23 Sep 2026).
+    // own id on the family's own device counts; another file, a folder that
+    // somehow shares the id, or a file with the id on another volume leaves
+    // every member what its listing said (the pre-landing review of 23 Sep
+    // 2026).
     let mut tree = FakeTree::new("/fake");
     tree.fast_path = FastPath::ExtdDirInfo;
-    for dir in ["a", "b", "c", "d"] {
+    for dir in ["a", "b", "c", "d", "e", "f"] {
         tree.add_dir("", dir);
     }
     let listed = |size: f64, ino: u128| Meta {
@@ -1032,9 +1033,27 @@ fn a_family_refresh_takes_only_its_own_file() -> TestResult {
             ..dir_meta()
         },
     );
+    tree.add_entry("e", b"r", listed(7.0, 99));
+    tree.add_entry("f", b"s", listed(7.0, 99));
+    tree.file_stats.insert(
+        Path::new("/fake").join("e").join("r"),
+        Meta {
+            dev: 16_777_235.0,
+            mtime_ms: 9_000.0,
+            ..file_meta(42.0, 99, 2)
+        },
+    );
     let (_, out) = run(tree, options(Path::new("/fake")), 1)?;
     let index = index_by_path(&out)?;
-    for (member, size) in [("a/x", 5.0), ("b/y", 5.0), ("c/p", 6.0), ("d/q", 6.0)] {
+    let members = [
+        ("a/x", 5.0),
+        ("b/y", 5.0),
+        ("c/p", 6.0),
+        ("d/q", 6.0),
+        ("e/r", 7.0),
+        ("f/s", 7.0),
+    ];
+    for (member, size) in members {
         let i = *index.get(member).ok_or(member)?;
         assert_eq!(out.size.get(i), Some(&size), "{member}: the listing's size");
         assert_eq!(
@@ -1043,7 +1062,7 @@ fn a_family_refresh_takes_only_its_own_file() -> TestResult {
             "{member}: the listing's mtime"
         );
     }
-    assert_eq!(out.hardlinks.len(), 4, "still two families of two");
+    assert_eq!(out.hardlinks.len(), 6, "still three families of two");
     Ok(())
 }
 

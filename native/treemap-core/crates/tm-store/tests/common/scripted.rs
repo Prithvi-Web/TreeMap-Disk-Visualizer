@@ -248,6 +248,12 @@ impl Builder {
         self.next_ino
     }
 
+    /// What reading the file with id `ino` answers (a hard-link family's re-read): its
+    /// own facts, or the refusal.
+    pub fn reads(&mut self, ino: u128, read: Result<Meta, Refusal>) {
+        self.files.insert(ino, read);
+    }
+
     pub fn listing(&mut self, key: &str) -> Result<&mut Listed, String> {
         match self.folders.get_mut(key) {
             Some(Folder::Listed(listed)) => Ok(listed),

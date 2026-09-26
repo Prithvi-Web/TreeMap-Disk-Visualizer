@@ -8,11 +8,11 @@ use std::sync::atomic::Ordering;
 
 use super::Shared;
 use crate::invariants::check_walk_columns;
-use crate::links::{IdFamily, LinkKey, hardlink_families};
+use crate::links::{IdFamily, LinkKey, hardlink_families, reread_family};
 use crate::output::{DirRefusal, HardlinkRef};
 use crate::platform::{DirTimes, Meta};
 use crate::sink::CollectSink;
-use crate::{FLAG_REFUSED_DIR, KIND_FILE, WalkError};
+use crate::{FLAG_REFUSED_DIR, WalkError};
 
 /// One worker's columns, in its own discovery order, keyed by global id.
 #[derive(Default)]
@@ -101,12 +101,9 @@ pub(super) fn refresh_families(shared: &Shared, merged: &mut Merged) -> Result<(
         let Some(path) = node_path(&shared.root, merged, first) else {
             continue;
         };
-        let Ok(meta) = shared.lister.stat_dir(&path, shared.want_atime) else {
+        let Some(meta) = reread_family(&*shared.lister, &path, shared.want_atime, family) else {
             continue;
         };
-        if meta.kind != KIND_FILE || meta.dev.to_bits() != family.dev || meta.ino != family.ino {
-            continue;
-        }
         for &node in &family.members {
             let i = node as usize;
             if let Some(size) = merged.size.get_mut(i) {
@@ -296,8 +293,8 @@ pub(crate) fn merge(parts: &[Part], total: usize) -> Result<Merged, WalkError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::KIND_DIR;
     use crate::sink::ListingSink;
+    use crate::{KIND_DIR, KIND_FILE};
 
     /// A part holding one node per `(id, parent)`.
     fn part_with(nodes: &[(u32, u32)]) -> Part {

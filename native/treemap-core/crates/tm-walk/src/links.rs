@@ -10,7 +10,9 @@
 //! and on Windows the family refresh gave both the first one's size. Here
 //! the key is the id itself, and what leaves the walk is a family number.
 
-use crate::platform::Meta;
+use std::path::Path;
+
+use crate::platform::{Lister, Meta};
 use crate::{HardlinkRef, KIND_FILE};
 
 /// The link key of the file `meta` describes, numbered `node`, when its name
@@ -57,6 +59,23 @@ pub struct IdFamily {
     pub ino: u128,
     /// The members' nodes, ascending.
     pub members: Vec<u32>,
+}
+
+/// The facts of `family`'s file itself, read through `path` — one member's name — as the
+/// walk's family refresh reads them. `None` when the read fails and when it reaches
+/// anything but a file with the family's id on the family's device — a folder on the way
+/// swapped for a link since the listing may lead elsewhere, and a handle whose id cannot
+/// be matched against the listing's (ReFS: 64 bits against 128) matches nothing — so the
+/// family keeps what its listings said.
+pub fn reread_family(
+    lister: &dyn Lister,
+    path: &Path,
+    want_atime: bool,
+    family: &IdFamily,
+) -> Option<Meta> {
+    let meta = lister.stat_dir(path, want_atime).ok()?;
+    (meta.kind == KIND_FILE && meta.dev.to_bits() == family.dev && meta.ino == family.ino)
+        .then_some(meta)
 }
 
 /// Groups names into hard-link families by exact identity. A name whose

@@ -31,12 +31,17 @@
 //! sink, its texts the same; and the counters' byte sums are added block by block, which
 //! gives `build`'s sums exactly while every partial sum is a whole number below 2^53.
 //!
-//! **Hard links (T7a).** Families come from the walk's own link keys
-//! ([`tm_walk::link_key`], [`hardlink_families`]), settled at the seal, and the member that
-//! keeps the bytes is the one with the smallest id: the first in commit order. `build`
-//! keeps them at the first breadth-first (P4-2a); T7b brings that winner, the link log and
-//! the Windows families' re-read, and `sparse_terms` in breadth-first order. Folder
-//! totals stay Node's (`sumSizes`), as the seal of design §S.1.5 says.
+//! **Hard links (T7b).** Families come from the walk's own link keys
+//! ([`tm_walk::link_key`], [`hardlink_families`]), settled at the seal. The member that
+//! keeps the bytes is `build`'s (P4-2a): the first breadth-first, placed from the sealed
+//! store's own child ranges (`order.rs`: a queue of the folders alone, and per child range
+//! a binary search over the rows that need a place; design §S.1.5), which also puts the
+//! cloud candidates and the sparse terms in `build`'s order. A family found by file id
+//! alone (listings with no link count, Windows) is re-read as the walk re-reads it, and its
+//! members are derived again from the file's own facts (`refresh.rs`). The link log's
+//! resident cap and disk runs come with the spill files (T13), and position paths with the
+//! large modes (T12). Folder totals stay Node's (`sumSizes`), as the seal of design §S.1.5
+//! says.
 
 use std::mem;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -44,7 +49,9 @@ use std::sync::{
     Mutex, MutexGuard, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
 
-use tm_walk::{Block, LinkKey, ListingSink, Meta, Refusal, WalkStats, hardlink_families};
+use tm_walk::{
+    Block, HardlinkRef, IdFamily, LinkKey, ListingSink, Meta, Refusal, WalkStats, hardlink_families,
+};
 
 use crate::build::{
     BuildOptions, Counters, NAME_BYTES_PER_HEADROOM_ROW, Store, StoreMode, check_options,
@@ -54,8 +61,13 @@ use crate::derive::ContainerRule;
 use crate::row::{ExtInterner, Pending, RowInput, RowRules, ShortfallSum, derive_row};
 use crate::{EXT_NONE, StoreError};
 
+mod order;
+mod refresh;
 mod write;
 
+use order::Places;
+pub use refresh::Reread;
+use refresh::Rows;
 use write::write_rows;
 
 /// A [`ListingSink`] that writes the finalized store's columns while the walk runs (see
@@ -179,6 +191,11 @@ struct Keyed {
     /// Its link key; `node` is its id.
     key: LinkKey,
     pending: Pending,
+    /// The listing's allocated bytes: with the file's own size and times and `pending`'s
+    /// flag, what the Windows families' re-read derives the row from again (`refresh.rs`).
+    /// The row is a file: `link_key` keys nothing else. (Beside the key and `pending` it
+    /// fills what was padding: a keyed row takes 64 bytes as before.)
+    alloc: f64,
 }
 
 /// One row's column values, before its block writes them.
@@ -260,10 +277,11 @@ impl MemorySink {
     }
 
     /// The store the walk wrote, once it has ended with an output (`walk_stats` is what
-    /// it measured). Fails when the sink was aborted or sealed before, when a block
-    /// could not be written (the first reason given), and when the rows written are not
-    /// every id below the root once.
-    pub fn seal(&self, walk_stats: WalkStats) -> Result<Store, StoreError> {
+    /// it measured), re-reading the hard-link families found by file id through `reread`
+    /// as the walk re-reads them. Fails when the sink was aborted or sealed before, when a
+    /// block could not be written (the first reason given), and when the rows written are
+    /// not every id below the root once.
+    pub fn seal(&self, walk_stats: WalkStats, reread: &Reread<'_>) -> Result<Store, StoreError> {
         let taken = write(&self.columns).take();
         let columns =
             taken.ok_or_else(|| StoreError::Sink("it was aborted or sealed already".into()))?;
@@ -272,7 +290,7 @@ impl MemorySink {
         }
         let mut side = mem::take(&mut *lock(&self.side));
         let interner = mem::replace(&mut *lock(&self.interner), ExtInterner::new());
-        self.seal_columns(columns, &mut side, interner, walk_stats)
+        self.seal_columns(columns, &mut side, interner, walk_stats, reread)
     }
 
     fn seal_columns(
@@ -281,7 +299,119 @@ impl MemorySink {
         side: &mut Side,
         interner: ExtInterner,
         walk_stats: WalkStats,
+        reread: &Reread<'_>,
     ) -> Result<Store, StoreError> {
+        let (n, rows, room) = self.written_rows()?;
+        cols.name_off
+            .settle(rows + 1, room + 1)
+            .map_err(|e| column_error(&e))?;
+        let name_off = Column::Anon(cols.name_off);
+        let names_end = name_off.as_slice().last().map_or(0, |&end| end as usize);
+        let names_room = names_end + self.headroom_rows as usize * NAME_BYTES_PER_HEADROOM_ROW;
+        cols.names
+            .settle(names_end, names_room)
+            .map_err(|e| column_error(&e))?;
+        let names = Column::Anon(cols.names);
+        let parent = settled(cols.parent, rows, room)?;
+        let mut size = settled(cols.size, rows, room)?;
+        let mut mtime = settled(cols.mtime, rows, room)?;
+        let mut flags = settled(cols.flags, rows, room)?;
+        let child_start = settled(cols.child_start, rows, room)?;
+        let child_cnt = settled(cols.child_cnt, rows, room)?;
+
+        let (members, id_families) = link_families(&mut side.keyed);
+        // The access times are kept only where a row has one, and a re-read can give a
+        // row the first one or take the last one away.
+        let mut atime = if self.accessed.load(Ordering::Acquire) > 0 || !id_families.is_empty() {
+            Some(settled(cols.atime, rows, room)?)
+        } else {
+            None
+        };
+        self.reread_families(
+            reread,
+            &id_families,
+            side,
+            Rows {
+                parent: parent.as_slice(),
+                name_off: name_off.as_slice(),
+                names: names.as_slice(),
+                mtime: mtime.as_mut_slice(),
+                atime: atime.as_mut().map(Column::as_mut_slice),
+                flags: flags.as_mut_slice(),
+            },
+        )?;
+        // Every size is final now, so the keyed rows' shortfalls join the others'.
+        for keyed in &side.keyed {
+            side.shortfall.add(keyed.pending.bytes, keyed.alloc);
+        }
+
+        // Where a row stands breadth-first — the id `build` gives it — decides a hard-link
+        // family's winner and the order of the cloud candidates and the sparse terms (T7b).
+        let wanted = side
+            .keyed
+            .iter()
+            .map(|keyed| keyed.key.node)
+            .chain(side.cloud_candidates.iter().copied())
+            .chain(side.sparse_terms.iter().map(|&(id, _)| id))
+            .collect();
+        let places = Places::of(child_start.as_slice(), child_cnt.as_slice(), wanted)?;
+        self.settle_links(
+            side,
+            &members,
+            size.as_mut_slice(),
+            flags.as_mut_slice(),
+            &places,
+        )?;
+
+        let exact = !self.blocks_are_meaningful || side.shortfall.is_exact();
+        let sparse_terms = if exact {
+            if side.counters.sparse_files > 0 {
+                vec![(0, side.counters.sparse_bytes)]
+            } else {
+                Vec::new()
+            }
+        } else {
+            places.sort(mem::take(&mut side.sparse_terms), |&(id, _)| id)?
+        };
+        // Dropped, so unmapped, when no row has an access time.
+        let atime = atime.filter(|_| self.accessed.load(Ordering::Acquire) > 0);
+        let (ext_dict, mut ext_overflow) = interner.finish();
+        ext_overflow.sort_unstable_by_key(|&(id, _)| id);
+        let cloud_candidates = places.sort(mem::take(&mut side.cloud_candidates), |&id| id)?;
+        side.text_candidates.sort_unstable();
+        side.counters.denied_dirs.sort_unstable();
+        Ok(Store {
+            mode: StoreMode::Memory,
+            n,
+            capacity: u32::try_from(room)
+                .map_err(|_| StoreError::TooManyRows { rows: room as u64 })?,
+            parent,
+            size,
+            mtime,
+            atime,
+            flags,
+            ext: settled(cols.ext, rows, room)?,
+            container: settled(cols.container, rows, room)?,
+            cloud_prov: settled(cols.cloud_prov, rows, room)?,
+            name_off,
+            names,
+            child_start,
+            child_cnt,
+            ext_dict,
+            ext_overflow,
+            cloud_candidates,
+            text_candidates: mem::take(&mut side.text_candidates),
+            sparse_terms,
+            counters: mem::take(&mut side.counters),
+            walk_stats,
+        })
+    }
+
+    /// How many rows the walk wrote (`n`, and as a length) and the room the store keeps
+    /// them in, headroom included. Fails when the root's row never came, when the rows
+    /// written below the root are not every id its blocks reserved, and when the headroom
+    /// does not fit in the rows reserved.
+    fn written_rows(&self) -> Result<(u32, usize, usize), StoreError> {
         if self.walk_root.get().is_none() {
             return Err(StoreError::Sink("the root's row never came".into()));
         }
@@ -301,92 +431,39 @@ impl MemorySink {
                 self.headroom_rows, self.cap_rows
             )));
         }
-        cols.name_off
-            .settle(rows + 1, room + 1)
-            .map_err(|e| column_error(&e))?;
-        let name_off = Column::Anon(cols.name_off);
-        let names_end = name_off.as_slice().last().map_or(0, |&end| end as usize);
-        let names_room = names_end + self.headroom_rows as usize * NAME_BYTES_PER_HEADROOM_ROW;
-        cols.names
-            .settle(names_end, names_room)
-            .map_err(|e| column_error(&e))?;
-        let mut size = settled(cols.size, rows, room)?;
-        let mut flags = settled(cols.flags, rows, room)?;
-        self.settle_links(side, size.as_mut_slice(), flags.as_mut_slice())?;
-
-        let exact = !self.blocks_are_meaningful || side.shortfall.is_exact();
-        let sparse_terms = if exact {
-            if side.counters.sparse_files > 0 {
-                vec![(0, side.counters.sparse_bytes)]
-            } else {
-                Vec::new()
-            }
-        } else {
-            let mut terms = mem::take(&mut side.sparse_terms);
-            terms.sort_unstable_by_key(|&(id, _)| id);
-            terms
-        };
-        let atime = if self.accessed.load(Ordering::Acquire) > 0 {
-            Some(settled(cols.atime, rows, room)?)
-        } else {
-            // Dropped, so unmapped: no row has an access time.
-            None
-        };
-        let (ext_dict, mut ext_overflow) = interner.finish();
-        ext_overflow.sort_unstable_by_key(|&(id, _)| id);
-        side.cloud_candidates.sort_unstable();
-        side.text_candidates.sort_unstable();
-        side.counters.denied_dirs.sort_unstable();
-        Ok(Store {
-            mode: StoreMode::Memory,
-            n,
-            capacity: u32::try_from(room)
-                .map_err(|_| StoreError::TooManyRows { rows: room as u64 })?,
-            parent: settled(cols.parent, rows, room)?,
-            size,
-            mtime: settled(cols.mtime, rows, room)?,
-            atime,
-            flags,
-            ext: settled(cols.ext, rows, room)?,
-            container: settled(cols.container, rows, room)?,
-            cloud_prov: settled(cols.cloud_prov, rows, room)?,
-            name_off,
-            names: Column::Anon(cols.names),
-            child_start: settled(cols.child_start, rows, room)?,
-            child_cnt: settled(cols.child_cnt, rows, room)?,
-            ext_dict,
-            ext_overflow,
-            cloud_candidates: mem::take(&mut side.cloud_candidates),
-            text_candidates: mem::take(&mut side.text_candidates),
-            sparse_terms,
-            counters: mem::take(&mut side.counters),
-            walk_stats,
-        })
+        Ok((n, rows, room))
     }
 
-    /// Settles the rows that may share their file with another name (T7a: the member of a
-    /// family with the smallest id keeps the bytes), adding their tallies.
+    /// Settles the rows that may share their file with another name, adding their tallies.
+    /// A family's winner is the member `build` meets first — the least breadth-first place
+    /// (T7b) — and keeps the bytes; every other member is a duplicate.
     fn settle_links(
         &self,
         side: &mut Side,
+        members: &[HardlinkRef],
         size: &mut [f64],
         flags: &mut [u16],
+        places: &Places,
     ) -> Result<(), StoreError> {
-        let mut keys: Vec<LinkKey> = side.keyed.iter().map(|keyed| keyed.key).collect();
-        let (members, _) = hardlink_families(&mut keys);
-        drop(keys);
-        // `members` is sorted by id, so a family's first member met is its smallest id.
-        let mut met = vec![false; members.len()];
-        let mut later = Vec::new();
-        for member in &members {
-            let seen = met.get_mut(member.family as usize).ok_or_else(|| {
+        let mut winners: Vec<Option<(u32, u32)>> = vec![None; members.len()];
+        for member in members {
+            let rank = places.of_row(member.node)?;
+            let winner = winners.get_mut(member.family as usize).ok_or_else(|| {
                 StoreError::Sink(format!("family {} is past its members", member.family))
             })?;
-            if mem::replace(seen, true) {
-                later.push(member.node);
+            if winner.is_none_or(|(least, _)| rank < least) {
+                *winner = Some((rank, member.node));
             }
         }
-        side.keyed.sort_unstable_by_key(|keyed| keyed.key.node);
+        // `members` is sorted by id, so `later` is too.
+        let later: Vec<u32> = members
+            .iter()
+            .filter(|member| {
+                let winner = winners.get(member.family as usize).copied().flatten();
+                winner.map(|(_, node)| node) != Some(member.node)
+            })
+            .map(|member| member.node)
+            .collect();
         let keep_terms = self.blocks_are_meaningful;
         for keyed in &side.keyed {
             let id = keyed.key.node;
@@ -493,6 +570,15 @@ impl MemorySink {
     }
 }
 
+/// The hard-link families among `keyed`, which it sorts by id: one ref per member, by id,
+/// with its family's number, and the families found by file id alone, which the walk
+/// re-reads.
+fn link_families(keyed: &mut [Keyed]) -> (Vec<HardlinkRef>, Vec<IdFamily>) {
+    keyed.sort_unstable_by_key(|keyed| keyed.key.node);
+    let mut keys: Vec<LinkKey> = keyed.iter().map(|keyed| keyed.key).collect();
+    hardlink_families(&mut keys)
+}
+
 /// `rows` as a column of `len` rows with room for `room`.
 fn settled<T: crate::Zeroable>(
     mut rows: AnonRows<T>,
@@ -554,5 +640,16 @@ impl ListingSink for MemorySink {
 
     fn writes_in_place(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// On Windows every file is keyed, so a keyed row is what the link log costs per file:
+    /// the re-read's allocation fills padding the key and `pending` leave (T7b).
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn a_keyed_row_takes_64_bytes() {
+        assert_eq!(std::mem::size_of::<super::Keyed>(), 64);
     }
 }

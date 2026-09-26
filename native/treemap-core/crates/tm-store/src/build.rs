@@ -121,7 +121,9 @@ pub struct Store {
     pub ext_dict: Vec<String>,
     /// `(id, extension)` for extensions past the dictionary's limit.
     pub ext_overflow: Vec<(u32, String)>,
-    /// Ids, ascending, of the nodes Node applies the cloud rule to (decision P4-3):
+    /// Ids of the nodes Node applies the cloud rule to (decision P4-3), in breadth-first
+    /// order — the ingest's order: ascending here, where the ids are breadth-first, and not
+    /// in a block-numbered store ([`MemorySink`](crate::MemorySink)'s):
     /// placeholders the walk flagged ([`flag::CLOUD_PLACEHOLDER`] already set and counted;
     /// Node looks up the provider), and files the walker would have to guess about — more
     /// than 0 bytes claimed, none allocated, not a symlink — judged on the walk's bytes, so a
@@ -131,17 +133,19 @@ pub struct Store {
     /// hard-link name (`sparseFiles` += 1, and its size a `sparseBytes` term, see
     /// [`Store::sparse_terms`]). The counters here include neither. Every `cloudBytes` term
     /// is a candidate's store size (0 for a later hard-link name), so Node has the
-    /// ingest's `cloudBytes` by summing, from 0 in id order, the sizes of the candidates
-    /// that end up placeholders, the walk's own included.
+    /// ingest's `cloudBytes` by summing, from 0 in this list's order, the sizes of the
+    /// candidates that end up placeholders, the walk's own included.
     pub cloud_candidates: Vec<u32>,
     /// Ids, ascending, of the nodes whose names have a non-ASCII byte and a dot: Node sets
     /// their extension and container kind with `statToInput`'s own rules (see
     /// [`crate::derive::decided_here`]); here both are left at none.
     pub text_candidates: Vec<u32>,
-    /// `sparseBytes` in the ingest's order: `(id, bytes)`, ascending ids. `ingestColumns`
-    /// keeps one running sum in id order, the guesses Node decides among the files counted
-    /// here, and a float sum depends on its order; so Node's total is, from 0 in id order,
-    /// each term here and the size of each guess it counts sparse. A term is a file counted
+    /// `sparseBytes` in the ingest's order: `(id, bytes)` in breadth-first order (ascending
+    /// ids here, as for [`Store::cloud_candidates`]). `ingestColumns` keeps one running sum
+    /// in that order, the guesses Node decides among the files counted here, and a float
+    /// sum depends on its order; so Node's total is, from 0 in breadth-first order, each
+    /// term here and the size of each guess it counts sparse (in a block-numbered store the
+    /// two lists interleave by breadth-first place, not by id). A term is a file counted
     /// here and the bytes it does not take, except when every row's shortfall (its size
     /// less its allocation, where positive) is a whole number and they total below 2^53:
     /// then every partial sum of any of them is exact, the order cannot show, and the

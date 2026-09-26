@@ -9,21 +9,20 @@
 //! image (design §S.2). Every column is compared through φ — names, parents, sizes,
 //! times, the access-time column's presence, flags, containers, providers, extensions by
 //! their TEXT (the dictionaries' ids may differ, Lemma 4), child ranges — and so are `n`,
-//! the capacity, the counters and the candidate lists (as φ-mapped sets, each list
-//! ascending). The sink's store must also hold I1–I4 itself.
-//!
-//! **Left out, and why (T7b builds them):** the hard-link winner. The sink keeps a
-//! family's bytes at its member with the smallest id (the first in commit order), where
-//! `build` keeps them at the first breadth-first (P4-2a), so the `HARDLINK_DUP` flag, the
-//! two hard-link counters and `sparse_terms` (whose terms `build` keeps in breadth-first
-//! order) are not compared, and a family's members' sizes are compared as a set. Where the
-//! walk re-reads a family found by file id (Windows-shaped listings, which report no link
-//! counts), the members' sizes and times are the walk's re-read in `build(take())` and the
-//! listings' own in the sink, which does not re-read them yet: left out on such trees.
+//! the capacity, every counter, the cloud candidates and `sparse_terms` (in breadth-first
+//! order: `build`'s ids are breadth-first, so through φ the sink's lists must be `build`'s
+//! own, in the same order), and the text candidates and denied folders (as φ-mapped sets,
+//! each list ascending). The hard-link winner is `build`'s: the member of a family that
+//! comes first breadth-first keeps the bytes (P4-2a; T7b), so the `HARDLINK_DUP` flag and
+//! every member's size are compared row by row. Where the walk re-reads a family found
+//! by file id (Windows-shaped listings, which report no link counts), the seal re-reads it
+//! the same way, so every member's size, times, access-time bit and cloud candidacy are
+//! compared too (T7b; the `refresh` trees change each of them). Nothing is left out. The
+//! sink's store must also hold I1–I4.
 //!
 //! Every test counts; a wait is a hang guard only, never what a passing test depends on.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::panic::panic_any;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -32,23 +31,24 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use tm_store::{
-    AnonTally, BuildOptions, Counters, EXT_NONE, EXT_OVERFLOW, MemorySink, Store, StoreError,
-    StoreMode, anon_tally, build, flag,
+    AnonTally, BuildOptions, Counters, EXT_NONE, EXT_OVERFLOW, MemorySink, Reread, Store,
+    StoreError, StoreMode, anon_tally, build, flag,
 };
 use tm_walk::invariants::check_walk_columns;
 use tm_walk::platform::{ListBuffer, Lister, Meta};
 use tm_walk::walk::{MAX_WORKERS, Pacer};
 use tm_walk::{
-    BIG_LISTING, Block, DEFAULT_Q_MAX, FastPath, HardlinkRef, ListingSink, Numbering, Refusal,
-    SyntheticSpec, WalkError, WalkHandle, WalkOptions, WalkOutput, lister_for, start_with_sinks,
+    BIG_LISTING, Block, DEFAULT_Q_MAX, FastPath, ListingSink, Numbering, Refusal, SyntheticSpec,
+    WalkError, WalkHandle, WalkOptions, WalkOutput, lister_for, start_with_sinks,
     synthetic_temp_folder,
 };
 
 mod common;
 
 use common::scripted::{
-    Builder, EMOJI, Folder, INVALID, Listed, POSIX_ROOT, ScriptedTree, WIDE_ROOT, WINDOWS_ROOT,
-    container_rules, file_meta, folder_meta, posix_tree, wide_tree, windows_tree,
+    BLOCK, Builder, EMOJI, Folder, INVALID, Listed, POSIX_ROOT, ScriptedTree, WIDE_ROOT,
+    WINDOWS_ROOT, container_rules, dataless, file_meta, folder_meta, posix_tree, wide_tree,
+    windows_tree,
 };
 
 type TestResult = Result<(), String>;
@@ -84,9 +84,6 @@ struct Fixture {
     want_atime: bool,
     never_descend: Vec<PathBuf>,
     build: BuildOptions,
-    /// Whether the walk re-reads hard-link families found by file id: listings that
-    /// report no link counts (Windows-shaped).
-    refreshes_families: bool,
 }
 
 /// What Node would pass: POSIX sorts children and has blocks, Windows neither.
@@ -109,7 +106,6 @@ fn scripted(
     want_atime: bool,
     build: BuildOptions,
 ) -> Fixture {
-    let refreshes_families = !build.sort_children;
     Fixture {
         name,
         root: PathBuf::from(root),
@@ -117,7 +113,6 @@ fn scripted(
         want_atime,
         never_descend: Vec::new(),
         build,
-        refreshes_families,
     }
 }
 
@@ -291,6 +286,154 @@ fn own_times_drop_tree() -> Result<ScriptedTree, String> {
     ))
 }
 
+/// One family of [`refresh_tree`]: its member in the root, its member in `ok`, the
+/// root member's listed size (the other lists one more), the listings' allocation, the
+/// size the re-read finds, whether its listings flag a placeholder, and whether the walk
+/// can re-read it.
+struct RefreshFamily {
+    first: &'static [u8],
+    second: &'static [u8],
+    listed: f64,
+    alloc: f64,
+    read: f64,
+    placeholder: bool,
+    reread: bool,
+}
+
+const REFRESH_GAINS_ROOT: &str = "/t7b/refresh-gains";
+const REFRESH_LOSES_ROOT: &str = "/t7b/refresh-loses";
+
+/// Windows-shaped hard-link families (no link counts) whose re-read changes more than a
+/// size (T7b). Each family has a member in the root and one in `ok`, and the file itself
+/// is read with other times and, for most, another size. What a member is then derived
+/// from changes with it: whether it is a cloud candidate (bytes claimed with none
+/// allocated — by the listing's allocation, which the re-read does not replace: `b` gains
+/// the candidacy, `c` loses it, `f` keeps it only by its listing), a placeholder's counted
+/// bytes (`p`, whose listing flag the re-read does not replace), and whether it has an
+/// access time. Every other row has none, so the store's access-time column exists by the
+/// re-read alone when `gains`; when not, only the families' listings have access times and
+/// the re-read takes them all away, and with them the column.
+///
+/// Family `a` is never re-read: the member read is the lowest-numbered, `q\xF9.bin` in the
+/// root, whose stored name `q\u{FFFD}.bin` is also `q\xF8.bin`'s, listed before it; so the
+/// read reaches that file and counts for nothing (the walk's `refresh_families`), while a
+/// read through its other member would reach its own file.
+fn refresh_tree(root: &str, gains: bool) -> Result<ScriptedTree, String> {
+    let mut b = Builder::with_root();
+    let ino = b.ino();
+    b.put("", b"q\xF8.bin", unaccessed(file_meta(1.0, BLOCK, ino, 0)))?;
+    let ino = b.ino();
+    let ok = b.folder(
+        "",
+        b"ok",
+        unaccessed(folder_meta(ino)),
+        Folder::Listed(Listed::default()),
+    )?;
+    let families = [
+        RefreshFamily {
+            first: b"q\xF9.bin",
+            second: b"a.bin",
+            listed: 20.0,
+            alloc: BLOCK,
+            read: 25.0,
+            placeholder: false,
+            reread: false,
+        },
+        RefreshFamily {
+            first: b"b.bin",
+            second: b"b.bin",
+            listed: 0.0,
+            alloc: 0.0,
+            read: 5.0,
+            placeholder: false,
+            reread: true,
+        },
+        RefreshFamily {
+            first: b"c.bin",
+            second: b"c.bin",
+            listed: 8.0,
+            alloc: 0.0,
+            read: 0.0,
+            placeholder: false,
+            reread: true,
+        },
+        RefreshFamily {
+            first: b"f.bin",
+            second: b"f.bin",
+            listed: 9.0,
+            alloc: 0.0,
+            read: 10.0,
+            placeholder: false,
+            reread: true,
+        },
+        RefreshFamily {
+            first: b"p.bin",
+            second: b"p.bin",
+            listed: 30.0,
+            alloc: 0.0,
+            read: 33.0,
+            placeholder: true,
+            reread: true,
+        },
+    ];
+    for (k, family) in families.into_iter().enumerate() {
+        let ino = b.ino();
+        let step = f64::from(u8::try_from(k).map_err(|e| e.to_string())?);
+        let listing = |size: f64| {
+            let meta = file_meta(size, family.alloc, ino, 0);
+            let meta = if family.placeholder {
+                dataless(meta)
+            } else {
+                meta
+            };
+            // Only a family the walk re-reads has access times in its listings, and only
+            // when the re-read takes them away.
+            if family.reread && !gains {
+                meta
+            } else {
+                unaccessed(meta)
+            }
+        };
+        b.put("", family.first, listing(family.listed))?;
+        b.put(&ok, family.second, listing(family.listed + 1.0))?;
+        let file = Meta {
+            mtime_ms: 7_000.5 + step,
+            atime_ms: if gains { 7_100.25 + step } else { f64::NAN },
+            ..file_meta(family.read, BLOCK, ino, 2)
+        };
+        b.reads(ino, Ok(file));
+    }
+    let root_meta = Meta {
+        nlink: 0,
+        ..unaccessed(folder_meta(1))
+    };
+    Ok(b.finish(root, root_meta, false, FastPath::ExtdDirInfo))
+}
+
+const SPARSE_LINK_ROOT: &str = "/t7b/sparse-link";
+/// 2^53 + 8,192 bytes: past every whole number a double holds exactly.
+const PAST_EXACT: f64 = 9_007_199_254_749_184.0;
+
+/// A sparse file with two names (link counts of two, in two folders) whose unallocated
+/// bytes pass 2^53, so `sparseBytes` depends on the order of its terms and the store keeps
+/// them; every other row is whole and small. A row that may share its file feeds the sum
+/// once its size is final, at the seal (T7b), and here only those rows make it inexact.
+/// A second sparse file, in `two`, is a second term: breadth-first it comes after the
+/// first name's (in `one`), and a walk that lists `two` first numbers it before.
+fn sparse_link_tree() -> Result<ScriptedTree, String> {
+    let mut b = Builder::with_root();
+    let one = b.dir("", b"one")?;
+    let two = b.dir("", b"two")?;
+    let ino = b.ino();
+    b.put(&one, b"disk.img", file_meta(PAST_EXACT, BLOCK, ino, 2))?;
+    b.put(&two, b"disk.img", file_meta(PAST_EXACT, BLOCK, ino, 2))?;
+    let ino = b.ino();
+    b.put(&two, b"sparse.bin", file_meta(100_000.0, BLOCK, ino, 1))?;
+    b.file(&one, b"notes.txt", 10.0)?;
+    b.file("", b"readme.txt", 5.0)?;
+    Ok(b.finish(SPARSE_LINK_ROOT, folder_meta(1), true, FastPath::Bulk))
+}
+
 /// The scripted trees: tm-store's digest-lock trees and tm-walk's block-test shapes.
 fn scripted_fixtures() -> Result<Vec<Fixture>, String> {
     let mut mixed = scripted(
@@ -353,6 +496,27 @@ fn scripted_fixtures() -> Result<Vec<Fixture>, String> {
             true,
             options("own-times-drop", 0.0, false, 0),
         ),
+        scripted(
+            "scripted-refresh-gains",
+            REFRESH_GAINS_ROOT,
+            refresh_tree(REFRESH_GAINS_ROOT, true)?,
+            true,
+            options("refresh-gains", 0.0, false, 0),
+        ),
+        scripted(
+            "scripted-refresh-loses",
+            REFRESH_LOSES_ROOT,
+            refresh_tree(REFRESH_LOSES_ROOT, false)?,
+            true,
+            options("refresh-loses", 0.0, false, 0),
+        ),
+        scripted(
+            "scripted-sparse-link",
+            SPARSE_LINK_ROOT,
+            sparse_link_tree()?,
+            false,
+            options("sparse-link", 0.0, true, 16),
+        ),
     ])
 }
 
@@ -367,7 +531,6 @@ fn synthetic(name: &'static str, spec: SyntheticSpec, want_atime: bool) -> Fixtu
         want_atime,
         never_descend: Vec::new(),
         build: options(SYNTHETIC_ROOT, 0.0, true, 4_096),
-        refreshes_families: false,
     }
 }
 
@@ -425,9 +588,6 @@ struct Both {
     mem: Store,
     /// `build(take())` of the same walk.
     bfs: Store,
-    /// The walk's hard-link table: its nodes are the sink's ids (block numbering numbers
-    /// the collector's rows and the sink's alike).
-    families: Vec<HardlinkRef>,
 }
 
 /// Block-numbered options for `fixture` at `workers` and `q_max`, with ceilings `sink`
@@ -460,15 +620,24 @@ fn walk_both_in(fixture: &Fixture, workers: u32, q_max: usize, rows: u32) -> Res
         Arc::new(MemorySink::new(&fixture.build, rows, ROOM_NAMES).map_err(|e| e.to_string())?);
     let opts = walk_options(fixture, workers, q_max, &sink);
     let lister = lister_of(fixture, &opts)?;
-    let handle = start_with_sinks(opts, Arc::new(OpenPacer), lister, vec![sink.clone()])
-        .map_err(|e| e.to_string())?;
+    let handle = start_with_sinks(
+        opts,
+        Arc::new(OpenPacer),
+        Arc::clone(&lister),
+        vec![sink.clone()],
+    )
+    .map_err(|e| e.to_string())?;
     let out = handle.take().map_err(|e| format!("the walk: {e}"))?;
+    let reread = Reread {
+        lister: &*lister,
+        root: &fixture.root,
+        want_atime: fixture.want_atime,
+    };
     let mem = sink
-        .seal(out.stats.clone())
+        .seal(out.stats.clone(), &reread)
         .map_err(|e| format!("the seal: {e}"))?;
-    let families = out.hardlinks.clone();
     let bfs = build(out, &fixture.build).map_err(|e| format!("build: {e}"))?;
-    Ok(Both { mem, bfs, families })
+    Ok(Both { mem, bfs })
 }
 
 fn walk_both(fixture: &Fixture, workers: u32, q_max: usize) -> Result<Both, String> {
@@ -607,15 +776,15 @@ fn through_phi(list: &[u32], map: &[u32], what: &str) -> Result<Vec<u32>, String
     Ok(mapped)
 }
 
-/// The counters, the hard-link ones aside (T7b).
+/// The counters, every one.
 fn compare_counters(mem: &Counters, bfs: &Counters, map: &[u32]) -> Result<(), String> {
     // Every field by name: a field added to `Counters` fails to compile here until it is
     // compared, or left out with the reason.
     let Counters {
         dirs,
         files,
-        hardlinked_files: _,
-        hardlinked_bytes: _,
+        hardlinked_files,
+        hardlinked_bytes,
         cloud_files,
         cloud_bytes,
         sparse_files,
@@ -628,6 +797,7 @@ fn compare_counters(mem: &Counters, bfs: &Counters, map: &[u32]) -> Result<(), S
     let counts = [
         ("dirs", *dirs, bfs.dirs),
         ("files", *files, bfs.files),
+        ("hardlinkedFiles", *hardlinked_files, bfs.hardlinked_files),
         ("cloudFiles", *cloud_files, bfs.cloud_files),
         ("sparseFiles", *sparse_files, bfs.sparse_files),
         ("vanishedDirs", *vanished_dirs, bfs.vanished_dirs),
@@ -641,6 +811,7 @@ fn compare_counters(mem: &Counters, bfs: &Counters, map: &[u32]) -> Result<(), S
     // Whole numbers below 2^53 in every tree here, so their sums are exact in any order
     // (Lemma 5): compared bit for bit.
     let sums = [
+        ("hardlinkedBytes", *hardlinked_bytes, bfs.hardlinked_bytes),
         ("cloudBytes", *cloud_bytes, bfs.cloud_bytes),
         ("sparseBytes", *sparse_bytes, bfs.sparse_bytes),
         ("slackBytes", *slack_bytes, bfs.slack_bytes),
@@ -668,8 +839,6 @@ fn compare(both: &Both, fixture: &Fixture) -> TestResult {
         ));
     }
     let map = phi(mem, bfs)?;
-    let family: HashMap<u32, u32> = both.families.iter().map(|r| (r.node, r.family)).collect();
-    let mut family_sizes: HashMap<u32, (Vec<u64>, Vec<u64>)> = HashMap::new();
     match (&mem.atime, &bfs.atime) {
         (Some(_), Some(_)) | (None, None) => {}
         (mine, theirs) => {
@@ -691,7 +860,7 @@ fn compare(both: &Both, fixture: &Fixture) -> TestResult {
             return Err(at("the name"));
         }
         let bytes = |store: &Store, id: usize| get(store.flags.as_slice(), id, "flags");
-        if bytes(mem, x)? & !flag::HARDLINK_DUP != bytes(bfs, y)? & !flag::HARDLINK_DUP {
+        if bytes(mem, x)? != bytes(bfs, y)? {
             return Err(at(&format!(
                 "flags {:#x} in the sink, {:#x} in build",
                 bytes(mem, x)?,
@@ -715,26 +884,13 @@ fn compare(both: &Both, fixture: &Fixture) -> TestResult {
                 ext_text(bfs, y)?
             )));
         }
-        let node = u32::try_from(x).map_err(|e| e.to_string())?;
-        let in_family = family.get(&node);
-        if in_family.is_some() && fixture.refreshes_families {
-            continue;
-        }
         let size = |store: &Store, id: usize| get(store.size.as_slice(), id, "size");
-        match in_family {
-            Some(&f) => {
-                let sizes = family_sizes.entry(f).or_default();
-                sizes.0.push(size(mem, x)?.to_bits());
-                sizes.1.push(size(bfs, y)?.to_bits());
-            }
-            None if size(mem, x)?.to_bits() != size(bfs, y)?.to_bits() => {
-                return Err(at(&format!(
-                    "size {} in the sink, {} in build",
-                    size(mem, x)?,
-                    size(bfs, y)?
-                )));
-            }
-            None => {}
+        if size(mem, x)?.to_bits() != size(bfs, y)?.to_bits() {
+            return Err(at(&format!(
+                "size {} in the sink, {} in build",
+                size(mem, x)?,
+                size(bfs, y)?
+            )));
         }
         let mtime = |store: &Store, id: usize| get(store.mtime.as_slice(), id, "mtime");
         if mtime(mem, x)?.to_bits() != mtime(bfs, y)?.to_bits() {
@@ -754,29 +910,35 @@ fn compare(both: &Both, fixture: &Fixture) -> TestResult {
             }
         }
     }
-    for (f, (mut mine, mut theirs)) in family_sizes {
-        mine.sort_unstable();
-        theirs.sort_unstable();
-        if mine != theirs {
-            return Err(format!("hard-link family {f}'s sizes differ"));
-        }
+    // In breadth-first order: through φ, `build`'s own lists in the same order.
+    let cloud = mem
+        .cloud_candidates
+        .iter()
+        .map(|&x| get(&map, x as usize, "cloud candidates"))
+        .collect::<Result<Vec<u32>, String>>()?;
+    if cloud != bfs.cloud_candidates {
+        return Err(format!(
+            "the cloud candidates through φ, {cloud:?}, are not build's, {:?}",
+            bfs.cloud_candidates
+        ));
     }
-    let lists: [(&str, &[u32], &[u32]); 2] = [
-        (
-            "cloud candidates",
-            &mem.cloud_candidates,
-            &bfs.cloud_candidates,
-        ),
-        (
-            "text candidates",
-            &mem.text_candidates,
-            &bfs.text_candidates,
-        ),
-    ];
-    for (what, mine, theirs) in lists {
-        if through_phi(mine, &map, what)? != theirs {
-            return Err(format!("the {what} differ through φ"));
-        }
+    let terms = mem
+        .sparse_terms
+        .iter()
+        .map(|&(x, bytes)| get(&map, x as usize, "sparse terms").map(|y| (y, bytes.to_bits())))
+        .collect::<Result<Vec<(u32, u64)>, String>>()?;
+    let build_terms: Vec<(u32, u64)> = bfs
+        .sparse_terms
+        .iter()
+        .map(|&(y, bytes)| (y, bytes.to_bits()))
+        .collect();
+    if terms != build_terms {
+        return Err(format!(
+            "the sparse terms through φ, {terms:?}, are not build's, {build_terms:?}"
+        ));
+    }
+    if through_phi(&mem.text_candidates, &map, "text candidates")? != bfs.text_candidates {
+        return Err("the text candidates differ through φ".to_owned());
     }
     compare_counters(&mem.counters, &bfs.counters, &map)?;
     if bfs.ext_overflow.is_empty() {
@@ -1151,7 +1313,6 @@ fn lists_gathered_out_of_id_order_come_out_ascending() -> TestResult {
         want_atime: false,
         never_descend: Vec::new(),
         build: build_opts.clone(),
-        refreshes_families: false,
     };
     let sink =
         Arc::new(MemorySink::new(&build_opts, ROOM_ROWS, ROOM_NAMES).map_err(|e| e.to_string())?);
@@ -1166,31 +1327,49 @@ fn lists_gathered_out_of_id_order_come_out_ascending() -> TestResult {
         shared: Arc::clone(&shared),
     });
     let opts = walk_options(&fixture, 2, DEFAULT_Q_MAX, &sink);
-    let handle = start_with_sinks(opts, Arc::new(OpenPacer), lister, vec![reversing])
-        .map_err(|e| e.to_string())?;
+    let handle = start_with_sinks(
+        opts,
+        Arc::new(OpenPacer),
+        Arc::clone(&lister) as Arc<dyn Lister>,
+        vec![reversing],
+    )
+    .map_err(|e| e.to_string())?;
     let out = take_within(handle)?.map_err(|e| e.to_string())?;
     assert_eq!(
         shared.committed.load(Ordering::SeqCst),
         2,
         "a's and b's blocks both reached the sink"
     );
-    let mem = sink.seal(out.stats.clone()).map_err(|e| e.to_string())?;
-    let families = out.hardlinks.clone();
+    let reread = Reread {
+        lister: &*lister,
+        root: &fixture.root,
+        want_atime: fixture.want_atime,
+    };
+    let mem = sink
+        .seal(out.stats.clone(), &reread)
+        .map_err(|e| e.to_string())?;
     let bfs = build(out, &build_opts).map_err(|e| e.to_string())?;
     let ascending = |ids: &[u32]| ids.windows(2).all(|w| w.first() < w.get(1));
     let overflow: Vec<u32> = mem.ext_overflow.iter().map(|&(id, _)| id).collect();
     let terms: Vec<u32> = mem.sparse_terms.iter().map(|&(id, _)| id).collect();
     for (what, ids, count) in [
-        ("cloud candidates", &mem.cloud_candidates, 2),
         ("text candidates", &mem.text_candidates, 2),
         ("denied folders", &mem.counters.denied_dirs, 2),
         ("overflowed extensions", &overflow, 12),
-        ("sparse terms", &terms, 2),
     ] {
         assert_eq!(ids.len(), count, "{what}: {ids:?}");
         assert!(ascending(ids), "{what} are not ascending: {ids:?}");
     }
-    compare(&Both { mem, bfs, families }, &fixture)
+    // The cloud candidates and the sparse terms come in breadth-first order (T7b), which
+    // `compare` holds to `build`'s own lists through φ.
+    assert_eq!(
+        mem.cloud_candidates.len(),
+        2,
+        "cloud candidates: {:?}",
+        mem.cloud_candidates
+    );
+    assert_eq!(terms.len(), 2, "sparse terms: {terms:?}");
+    compare(&Both { mem, bfs }, &fixture)
 }
 
 // ---------------------------------------------------------------------------
@@ -1386,8 +1565,13 @@ fn every_mapping_is_released_when_the_walk_ends_without_an_output() -> TestResul
             (made.maps, made.bytes_mapped),
             "{what}: every mapping the sink made is released by the abort"
         );
+        let reread = Reread {
+            lister: &*lister,
+            root: Path::new(MIXED_ROOT),
+            want_atime: false,
+        };
         assert!(
-            matches!(sink.seal(no_stats()), Err(StoreError::Sink(_))),
+            matches!(sink.seal(no_stats(), &reread), Err(StoreError::Sink(_))),
             "{what}: an aborted sink has nothing to seal"
         );
     }
@@ -1466,7 +1650,13 @@ fn a_sink_the_walk_outgrows_writes_nothing_past_its_room() -> TestResult {
         // refuses what it has no room for rather than write past its mappings.
         let out = walk_mixed_into(&sink, false)?.map_err(|e| e.to_string())?;
         assert!(out.len() > 100, "{what}: the tree outgrows the sink");
-        match sink.seal(out.stats) {
+        let tree = mixed_tree()?;
+        let reread = Reread {
+            lister: &tree,
+            root: Path::new(MIXED_ROOT),
+            want_atime: false,
+        };
+        match sink.seal(out.stats, &reread) {
             Err(StoreError::Sink(why)) if why.contains("not in the column's room") => {}
             other => return Err(format!("{what}: {:?}", other.map(|s| s.n))),
         }

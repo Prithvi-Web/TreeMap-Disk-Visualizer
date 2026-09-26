@@ -83,7 +83,6 @@ impl MemorySink {
                 &rules,
             )
             .map_err(|e| e.to_string())?;
-            gathered.shortfall.add(meta.size, meta.alloc);
             if derived.is_dir() {
                 gathered.counters.dirs += 1;
             } else {
@@ -104,12 +103,15 @@ impl MemorySink {
                 None
             };
             let (bits, bytes) = if let Some(key) = key {
+                // Its size, and so its shortfall, may still change: the seal feeds it.
                 gathered.keyed.push(Keyed {
                     key,
                     pending: derived.pending,
+                    alloc: meta.alloc,
                 });
                 (derived.bits, derived.pending.bytes)
             } else {
+                gathered.shortfall.add(meta.size, meta.alloc);
                 let settled = derived.pending.settle(
                     false,
                     id,

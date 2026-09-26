@@ -41,7 +41,7 @@ mod queue;
 pub mod sink;
 pub mod walk;
 
-pub use links::{IdFamily, LinkKey, hardlink_families, link_key};
+pub use links::{IdFamily, LinkKey, hardlink_families, link_key, reread_family};
 pub use output::{DirRefusal, HardlinkRef, Refusal, WalkOutput, WalkStats};
 pub use platform::synthetic::{SyntheticLister, SyntheticSpec, synthetic_temp_folder};
 pub use platform::{Entry, ListBuffer, Listed, Lister, Listing, Meta};

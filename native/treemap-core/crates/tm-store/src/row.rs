@@ -99,7 +99,7 @@ impl Row<'_> {
     /// ([`Store::cloud_candidates`](crate::Store::cloud_candidates)): a placeholder the
     /// walk flagged, or a file claiming bytes with none allocated.
     pub(crate) fn cloud_candidate(&self) -> bool {
-        self.pending.placeholder || self.pending.unallocated
+        self.pending.cloud_candidate()
     }
 }
 
@@ -209,6 +209,18 @@ pub(crate) fn row_times(
 }
 
 impl Pending {
+    /// Whether Node applies the cloud rule to the row ([`Row::cloud_candidate`]).
+    pub(crate) fn cloud_candidate(&self) -> bool {
+        self.placeholder || self.unallocated
+    }
+
+    /// The walk flag bits a file's derivation read: [`derive_row`] reads `FLAG_DATALESS`
+    /// alone, and for a file it is exactly `placeholder`. What a file's row is derived
+    /// again from, without keeping the listing's bits (`memory/refresh.rs`).
+    pub(crate) fn file_walk_flags(&self) -> u8 {
+        if self.placeholder { FLAG_DATALESS } else { 0 }
+    }
+
     /// Settles the row once the dedup is decided, adding its tallies to `counters` as
     /// the ingest keeps them: a `duplicate` (a later name of a hard-linked file) keeps
     /// no bytes and counts as one; a placeholder counts its bytes (0 for a duplicate);

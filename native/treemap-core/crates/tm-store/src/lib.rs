@@ -35,7 +35,7 @@ mod row;
 pub use build::{BuildOptions, Counters, Store, StoreMode, build};
 pub use column::{AnonTally, Column, ColumnError, Zeroable, anon_tally};
 pub use derive::ContainerRule;
-pub use memory::MemorySink;
+pub use memory::{MemorySink, Reread};
 
 /// The store's flag bits: `Flag` in `src/services/scanStore.ts`, bit for bit.
 pub mod flag {
