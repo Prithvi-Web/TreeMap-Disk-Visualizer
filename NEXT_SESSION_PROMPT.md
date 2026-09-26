@@ -14,7 +14,22 @@ Copy everything below the line into a fresh session started in
 
 **This block is the live state. Update it after every task.** Everything below the next `---` is the older hand-over and is background. (Rewritten ~10:45 UTC; the earlier, longer version of this block is in git history — `git log -p NEXT_SESSION_PROMPT.md`.)
 
-### LATEST (26 Sep 2026, ~22:50 UTC, session 38ea1b2d) — RESUME HERE
+### LATEST (26 Sep 2026, ~23:15 UTC, session 38ea1b2d) — RESUME HERE
+
+**Newest (26 Sep, ~23:15 UTC): T9b is BUILT and committed, `c577f06`** (RISKS R93 fixed).
+- `src/services/treeFrame.ts` `sendPrunedTree`:
+  - `prunedExpansion` uses `pruneStore`'s own heap;
+  - each node is `materializeBare` → `JSON.stringify`, with `children`/`pruned` spliced in;
+  - a counting pass first, so today's refusal holds exactly past V8's longest string;
+  - 64 KiB chunks, written synchronously while the socket takes them and waiting for `drain` when it pushes back.
+- The routes:
+  - the progress stream's last frame goes through `sendFinalEvent`, with a re-entry guard that clears its timer first;
+  - `/result` streams, with no ETag/Content-Length (DESIGN §16 items 15 and 16);
+  - T9's harness measures this path.
+- **Measured:** the send adds +49 MB at 5M in Node (peak 538 MB, from 1,156) and nothing in Electron (555 MB, from 878). Both runtimes now meet 700 MB at 5M.
+- Tests: `tests/treeFrame.test.ts` (14; 17 mutants red). The goldens hold. `scanProgress`'s two oversized-tree tests now lower the limit instead of a `toJSON` trick (assertions unchanged, red under both refusal mutants); `backgroundWrites` registers `sendFinalEvent`.
+- Gates: default 3,215 / 3,201 / 0 / 14, pt-BR 3,215 / 3,203 / 0 / 12.
+- **Local `main` adds `b08395f`, `1afc943`, `a19fc7a`, `c577f06` and this handoff. The owner is asked to push; the watcher's base is `6f97bae`.**
 
 **State (26 Sep, ~22:50 UTC).**
 - **Remote `main` = `6f97bae`.** The owner pushed twice today.
@@ -41,9 +56,7 @@ Copy everything below the line into a fresh session started in
 - **T11** (cloud rule table) is BUILT and parked: 44/44 mutants, TS 12 tests + Rust 9, reviewed by ecc:rust-reviewer and ecc:typescript-reviewer. Commit it only after T10's CI is green (§S.9 order). Its worktree is the T11 agent's under `.claude/worktrees/` (detached at `785cd44`); backup `$S/t11.patch` + `$S/t11-untracked.tgz` (copies in `treemap-scratch-tools/session-38ea1b2d/`). Merge note: its `digest_lock.rs` change is 3 lines in `options()`; docs to write at its commit: the plan's T11 "Built" note, `docs/engine/CURRENT-STATE.md:124` (cites `cloudFolders.ts:15-20`, now the table at 48-54 and the gate at 103-105), and that the provider-number map exists only in test code (T8/T12/T14 need a production one). Its 840 KB oracle file `tm-store/tests/fixtures/cloud-oracle.tsv` is deliberate (20,000 generated paths).
 **Next, in order:**
 1. Read every CI leg of the owner's next push; fix anything red, test-first.
-2. **T9b**: the SSE `complete` frame and `/result`'s tree written from the store in chunks, byte for byte today's, honouring backpressure.
-   - Keep `pruneStore`'s key order: `emitFileNode`'s fields, then `children`, or `pruned: true`.
-   - Keep the refusal above V8's string limit, which needs the frame's exact length before its first byte.
+2. ~~T9b~~: done, `c577f06`.
 3. **T9c**: Electron's hand-over. JS allocates each column; an AsyncTask fills it through `napi_get_typedarray_info` and unmaps the Rust column; the bytes copied on the JS thread are counted as zero.
 4. T9's harness re-measures and sets `T_mem` per runtime (T10's first step).
 5. T10: the scanner passes `storage: 'memory'`; full npm test under 4 and 10 busy loops; the golden leg; push; CI green.
