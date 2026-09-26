@@ -7,9 +7,10 @@
 use std::collections::BTreeMap;
 
 use tm_walk::platform::linux::{
-    DIRENT64_HEADER_BYTES, DT_DIR, DT_LNK, DT_REG, DT_UNKNOWN, Dirent, S_IFDIR, S_IFLNK, S_IFREG,
-    STATX_ATIME, STATX_BLOCKS, STATX_INO, STATX_MODE, STATX_MTIME, STATX_NLINK, STATX_SIZE,
-    STATX_TYPE, STATX_WANTED, StatxFacts, dev_parts, makedev, meta_from_statx, parse_dirents,
+    DIRENT64_HEADER_BYTES, DT_DIR, DT_LNK, DT_REG, DT_UNKNOWN, Dirent, DirentsAt, S_IFDIR, S_IFLNK,
+    S_IFREG, STATX_ATIME, STATX_BLOCKS, STATX_INO, STATX_MODE, STATX_MTIME, STATX_NLINK,
+    STATX_SIZE, STATX_TYPE, STATX_WANTED, StatxFacts, dev_parts, dirent_at, is_dot, makedev,
+    meta_from_statx, parse_dirents,
 };
 use tm_walk::platform::time_ms;
 use tm_walk::{KIND_DIR, KIND_FILE, KIND_SYMLINK};
@@ -91,6 +92,40 @@ fn walks_records_by_reclen_and_skips_dot_and_dotdot() -> TestResult {
         Some(&(1_005, DT_REG))
     );
     assert_eq!(map.len(), 5);
+    Ok(())
+}
+
+#[test]
+fn a_batch_read_record_by_record_gives_what_parse_dirents_visits() -> TestResult {
+    // T6b: a listing read in parts goes on from any record of its batch.
+    let raw = buffer(&[
+        (2, DT_DIR, b"."),
+        (1, DT_DIR, b".."),
+        (1_001, DT_DIR, b"sub"),
+        (1_002, DT_REG, b"a.bin"),
+        (1_003, DT_LNK, b"link"),
+    ])?;
+    let mut stepped = Vec::new();
+    let mut at = DirentsAt::default();
+    let mut records = 0;
+    while let Some((d, next)) = dirent_at(&raw, at).map_err(|e| format!("{e:?}"))? {
+        assert!(next.pos > at.pos, "each record moves on");
+        assert_eq!(next.index, at.index + 1);
+        records += 1;
+        if !is_dot(d.name) {
+            stepped.push((d.name.to_vec(), d.ino, d.d_type));
+        }
+        at = next;
+    }
+    assert_eq!(records, 5, "the dots included");
+    assert_eq!(at.pos, raw.len(), "the steps end where the batch ends");
+    let mut visited = Vec::new();
+    let count = parse_dirents(&raw, &mut |d: &Dirent<'_>| {
+        visited.push((d.name.to_vec(), d.ino, d.d_type));
+    })
+    .map_err(|e| format!("{e:?}"))?;
+    assert_eq!(count, 3);
+    assert_eq!(stepped, visited);
     Ok(())
 }
 

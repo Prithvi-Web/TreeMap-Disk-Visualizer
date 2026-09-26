@@ -117,6 +117,19 @@ struct Tree {
     /// the check at the start, call 1 the driver's re-check at the end.
     stat_calls: AtomicU64,
     stat_panic_on: Option<u64>,
+    /// Entries a batch hands over: a listing answers in batches, as an OS
+    /// listing does, and one read in parts stops wherever it holds its limit
+    /// (T6b). 1,000 by default, which does not divide `BIG_LISTING`.
+    batch: usize,
+    /// A failure in batch `.1` (from 0) of folder `.0`'s listing.
+    fail_at: Vec<(PathBuf, usize, Refusal)>,
+    /// Whether a batch beats the heartbeat. Off unless a test turns it on, so
+    /// that elsewhere a heartbeat can come only from a waiting worker.
+    beats: bool,
+    /// Listings opened: a listing holds its folder open until it ends.
+    opens: AtomicU64,
+    /// Listings closed, however they ended.
+    closes: Arc<AtomicU64>,
 }
 
 impl Tree {
@@ -136,7 +149,17 @@ impl Tree {
             asked: Mutex::new(Vec::new()),
             stat_calls: AtomicU64::new(0),
             stat_panic_on: None,
+            batch: 1_000,
+            fail_at: Vec::new(),
+            beats: false,
+            opens: AtomicU64::new(0),
+            closes: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// Listings open right now: opened and not yet closed.
+    fn open_now(&self) -> u64 {
+        self.opens.load(Ordering::SeqCst) - self.closes.load(Ordering::SeqCst)
     }
 
     fn abs(&self, rel: &str) -> PathBuf {
@@ -205,6 +228,96 @@ impl Tree {
         }
         key
     }
+
+    /// A listing's start, for `list` and `list_until` alike: the folder
+    /// recorded, the scripted panic, the buffer cleared; then the folder's key
+    /// and its open listing, or its refusal.
+    #[expect(clippy::panic, reason = "the scripted listing panics on purpose")]
+    fn start(&self, dir: &Path, buf: &mut ListBuffer) -> Result<TreeCursor, Refusal> {
+        let key = self.key(dir);
+        lock(&self.listed).push((key.clone(), buf.listing.entries.capacity()));
+        lock(&self.asked).push(dir.to_path_buf());
+        if self.panic_at.as_ref() == Some(&key) {
+            panic_any(format!("fixture panic listing {}", key.display()));
+        }
+        buf.close_cursor();
+        buf.listing.clear();
+        match self.folders.get(&key) {
+            Some(Ok(_)) => {}
+            Some(Err(why)) => return Err(*why),
+            None => return Err(Refusal::Vanished),
+        }
+        self.opens.fetch_add(1, Ordering::SeqCst);
+        Ok(TreeCursor {
+            key,
+            at: 0,
+            _open: Opened(Arc::clone(&self.closes)),
+        })
+    }
+
+    /// Hands the listing's entries over from `cursor` on, a batch at a time,
+    /// until it is done or holds `limit` entries (then kept as `buf`'s cursor).
+    fn read_on(
+        &self,
+        mut cursor: TreeCursor,
+        buf: &mut ListBuffer,
+        limit: usize,
+    ) -> Result<tm_walk::Listed, Refusal> {
+        let Some(Ok(entries)) = self.folders.get(&cursor.key) else {
+            return Err(Refusal::Vanished);
+        };
+        let batch = self.batch.max(1);
+        while let Some((name, meta)) = entries.get(cursor.at) {
+            if buf.listing.len() >= limit.max(1) {
+                buf.keep_cursor(cursor);
+                return Ok(tm_walk::Listed::More);
+            }
+            if cursor.at % batch == 0 {
+                let index = cursor.at / batch;
+                if let Some((_, _, why)) = self
+                    .fail_at
+                    .iter()
+                    .find(|(key, at, _)| *key == cursor.key && *at == index)
+                {
+                    return Err(*why);
+                }
+                if self.beats {
+                    buf.beat();
+                }
+                if buf.stopped() {
+                    return Err(Refusal::Unreadable);
+                }
+            }
+            buf.listing.push(name, *meta);
+            cursor.at += 1;
+        }
+        if let Some((at, gate)) = &self.gate
+            && *at == cursor.key
+        {
+            gate.pass();
+        }
+        if self.sorted {
+            buf.listing.sort_by_name();
+        }
+        Ok(tm_walk::Listed::Complete(FastPath::Bulk))
+    }
+}
+
+/// A scripted listing's open folder: counted closed when dropped.
+struct Opened(Arc<AtomicU64>);
+
+impl Drop for Opened {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// Where a scripted listing that stopped early goes on from.
+struct TreeCursor {
+    key: PathBuf,
+    /// The next entry to hand over.
+    at: usize,
+    _open: Opened,
 }
 
 impl Lister for Tree {
@@ -222,37 +335,33 @@ impl Lister for Tree {
         }
     }
 
-    #[expect(clippy::panic, reason = "the scripted listing panics on purpose")]
     fn list(
         &self,
         dir: &Path,
         _want_atime: bool,
         buf: &mut ListBuffer,
     ) -> Result<FastPath, Refusal> {
-        let key = self.key(dir);
-        lock(&self.listed).push((key.clone(), buf.listing.entries.capacity()));
-        lock(&self.asked).push(dir.to_path_buf());
-        if self.panic_at.as_ref() == Some(&key) {
-            panic_any(format!("fixture panic listing {}", key.display()));
+        let cursor = self.start(dir, buf)?;
+        match self.read_on(cursor, buf, usize::MAX)? {
+            tm_walk::Listed::Complete(path) => Ok(path),
+            tm_walk::Listed::More => Err(Refusal::Unreadable),
         }
-        buf.listing.clear();
-        let entries = match self.folders.get(&key) {
-            Some(Ok(entries)) => entries,
-            Some(Err(why)) => return Err(*why),
-            None => return Err(Refusal::Vanished),
-        };
-        for (name, meta) in entries {
-            buf.listing.push(name, *meta);
-        }
-        if let Some((at, gate)) = &self.gate
-            && *at == key
-        {
-            gate.pass();
-        }
-        if self.sorted {
-            buf.listing.sort_by_name();
-        }
-        Ok(FastPath::Bulk)
+    }
+
+    fn list_until(
+        &self,
+        dir: &Path,
+        _want_atime: bool,
+        buf: &mut ListBuffer,
+        limit: usize,
+    ) -> Result<tm_walk::Listed, Refusal> {
+        let cursor = self.start(dir, buf)?;
+        self.read_on(cursor, buf, limit)
+    }
+
+    fn list_more(&self, buf: &mut ListBuffer, limit: usize) -> Result<tm_walk::Listed, Refusal> {
+        let cursor = buf.take_cursor::<TreeCursor>().ok_or(Refusal::Unreadable)?;
+        self.read_on(cursor, buf, limit)
     }
 }
 
@@ -379,12 +488,12 @@ fn finish(handle: WalkHandle) -> Result<(WalkOutput, WalkCounts), String> {
 }
 
 fn walk_with(
-    tree: Arc<Tree>,
+    lister: Arc<dyn Lister>,
     opts: WalkOptions,
     sinks: Vec<Arc<dyn ListingSink>>,
 ) -> Result<(WalkOutput, WalkCounts), String> {
     let workers = u32::try_from(opts.max_workers.max(1)).unwrap_or(1);
-    let handle = start_with_sinks(opts, Arc::new(Workers(workers)), tree, sinks)
+    let handle = start_with_sinks(opts, Arc::new(Workers(workers)), lister, sinks)
         .map_err(|e| e.to_string())?;
     finish(handle)
 }
@@ -1789,6 +1898,389 @@ fn with_several_workers_the_ranges_stay_within_the_folders_waiting_and_the_model
                 bytes <= ranges * per_range,
                 "{at}: {bytes} bytes held by {ranges} range(s) of at most {per_range}"
             );
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// T6b: listings read in batches, one big listing resident at a time (R89)
+// ---------------------------------------------------------------------------
+
+/// A root with `count` folders of `BIG_LISTING + extra` files each (named
+/// after their folder), and a small one.
+fn big_folders(count: usize, extra: usize) -> Tree {
+    let mut t = Tree::new(true);
+    for d in 0..count {
+        let rel = t.dir("", &format!("big{d}"));
+        for f in 0..(BIG_LISTING + extra) {
+            t.file(&rel, &format!("big{d}-{f:06}"), 1.0);
+        }
+    }
+    let small = t.dir("", "small");
+    t.file(&small, "one.txt", 1.0);
+    t
+}
+
+/// A sink that holds the first commit of a big listing at `gate`.
+fn holding_the_first_big_commit(gate: &Arc<Gate>, not_the_root: bool) -> Arc<Recorder> {
+    Arc::new(Recorder {
+        gate: Some((
+            Box::new(move |block| {
+                (!not_the_root || block.folder != 0)
+                    && usize::try_from(block.len).is_ok_and(|len| len > BIG_LISTING)
+            }),
+            gate.clone(),
+        )),
+        ..Recorder::default()
+    })
+}
+
+/// Walks with `workers` while the first big listing is held inside the
+/// semaphore until `waiters` others wait at it — each with the first part of
+/// its listing in hand — then lets it go; the output and the counts.
+fn walk_with_waiters(
+    lister: Arc<dyn Lister>,
+    opts: WalkOptions,
+    workers: u32,
+    waiters: u32,
+    not_the_root: bool,
+) -> Result<(WalkOutput, WalkCounts), String> {
+    let gate = Arc::new(Gate::default());
+    let recorder = holding_the_first_big_commit(&gate, not_the_root);
+    let handle = start_with_sinks(opts, Arc::new(Workers(workers)), lister, vec![recorder])
+        .map_err(|e| e.to_string())?;
+    if !wait_until(|| gate.reached()) {
+        return Err("no big listing was committed".to_owned());
+    }
+    let waited = wait_until(|| handle.counts().big_waiting == waiters);
+    gate.open();
+    let finished = finish(handle)?;
+    if !waited {
+        return Err(format!("{waiters} big listing(s) never waited together"));
+    }
+    Ok(finished)
+}
+
+#[test]
+fn several_big_folders_are_resident_one_at_a_time() -> TestResult {
+    const BIG: u32 = 4;
+    const EXTRA: usize = 3_000;
+    for workers in [2_u32, 8, 64] {
+        let tree = Arc::new(big_folders(BIG as usize, EXTRA));
+        let waiters = (BIG - 1).min(workers - 1);
+        let opts = options(&tree, Numbering::Blocks, workers);
+        let (out, counts) = walk_with_waiters(tree, opts, workers, waiters, false)?;
+        let at = format!("{workers} worker(s)");
+        let largest = BIG_LISTING + EXTRA;
+        assert_eq!(out.len(), 1 + BIG as usize * (1 + largest) + 2, "{at}");
+        check_walk_columns(&out.parent, &out.name_off, &out.names, true)
+            .map_err(|b| format!("{at}: {b}"))?;
+        assert_eq!(
+            counts.big_resident_peak, 1,
+            "{at}: one listing of more than BIG_LISTING entries at a time"
+        );
+        // Outside the semaphore a listing stops at BIG_LISTING entries, even
+        // inside a batch (1,000 entries here, which do not divide it).
+        let bound = largest + (workers as usize - 1) * BIG_LISTING;
+        let peak = usize::try_from(counts.resident_entries_peak).unwrap_or(usize::MAX);
+        assert!(peak <= bound, "{at}: {peak} entries resident, past {bound}");
+        assert!(
+            peak >= largest + waiters as usize * BIG_LISTING,
+            "{at}: {peak} entries resident; the waiters held theirs"
+        );
+        assert_eq!(
+            counts.big_listings,
+            u64::from(BIG),
+            "{at}: each big folder through the semaphore once"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn several_big_synthetic_folders_are_resident_one_at_a_time() -> TestResult {
+    // Three folders of 20,000 files under a root of 3 + 20,000 entries.
+    let spec = SyntheticSpec {
+        entries: 80_003,
+        fan_out: 3,
+        depth: 1,
+        folder_ppm: 38,
+        ..SyntheticSpec::developer(0, 11)
+    };
+    let root = synthetic_temp_folder().join(format!("tm-walk-t6b-{}", std::process::id()));
+    let largest = 20_003;
+    for workers in [2_u32, 8, 64] {
+        let mut opts = WalkOptions::new(&root);
+        opts.numbering = Numbering::Blocks;
+        opts.max_workers = usize::try_from(workers).unwrap_or(1);
+        opts.synthetic = Some(spec.clone());
+        let lister = lister_for(&opts).map_err(|e| e.to_string())?;
+        let waiters = 2_u32.min(workers - 1);
+        let (out, counts) = walk_with_waiters(lister, opts, workers, waiters, true)?;
+        let at = format!("{workers} worker(s)");
+        assert_eq!(out.len(), 80_004, "{at}");
+        check_walk_columns(&out.parent, &out.name_off, &out.names, true)
+            .map_err(|b| format!("{at}: {b}"))?;
+        assert_eq!(
+            counts.big_resident_peak, 1,
+            "{at}: one listing of more than BIG_LISTING entries at a time"
+        );
+        let bound = largest + (workers as usize - 1) * BIG_LISTING;
+        let peak = usize::try_from(counts.resident_entries_peak).unwrap_or(usize::MAX);
+        assert!(peak <= bound, "{at}: {peak} entries resident, past {bound}");
+        // The listing held at its commit is a folder's (the root's is not held).
+        assert!(
+            peak >= 20_000 + waiters as usize * BIG_LISTING,
+            "{at}: {peak} entries resident; the waiters held theirs"
+        );
+        assert_eq!(
+            counts.big_listings, 4,
+            "{at}: the root and its three folders"
+        );
+    }
+    Ok(())
+}
+
+/// Folders that fail in their first batch, their second, and past the
+/// semaphore (a big one), each with a subfolder, and one that lists.
+fn failing_folders() -> (Tree, [&'static str; 3]) {
+    let failing = ["fails-first", "fails-second", "fails-past-the-limit"];
+    let mut t = Tree::new(true);
+    for (name, files) in [
+        ("fails-first", 3_000),
+        ("fails-second", 3_000),
+        ("fails-past-the-limit", BIG_LISTING + 3_000),
+        ("lists", 3_000),
+    ] {
+        let rel = t.dir("", name);
+        let inner = t.dir(&rel, "inner");
+        t.file(&inner, "deep.txt", 1.0);
+        for f in 0..files {
+            t.file(&rel, &format!("f{f:06}"), 1.0);
+        }
+    }
+    (t, failing)
+}
+
+#[test]
+fn a_failure_in_a_later_batch_refuses_the_folder_as_a_failure_to_open_it_does() -> TestResult {
+    for numbering in [Numbering::Discovery, Numbering::Blocks] {
+        for workers in [1_u32, 8] {
+            let at = format!("{numbering:?}, {workers} worker(s)");
+            // Batches of 1,000: the big folder's listing stops at 16,384
+            // (inside batch 16) and fails in batch 17, past the semaphore.
+            let (mut failing, names) = failing_folders();
+            failing.fail_at = vec![
+                (failing.abs(names[0]), 0, Refusal::Denied),
+                (failing.abs(names[1]), 1, Refusal::Denied),
+                (failing.abs(names[2]), 17, Refusal::Denied),
+            ];
+            let failing = Arc::new(failing);
+            let (mut refused, _) = failing_folders();
+            for name in names {
+                refused.refuse(name, Refusal::Denied);
+            }
+            let refused = Arc::new(refused);
+            let (out, _) = walk_with(
+                failing.clone(),
+                options(&failing, numbering, workers),
+                Vec::new(),
+            )?;
+            let (expected, _) = walk_with(
+                refused.clone(),
+                options(&refused, numbering, workers),
+                Vec::new(),
+            )?;
+            assert!(
+                by_path(&out)? == by_path(&expected)?,
+                "{at}: refused otherwise than at its open"
+            );
+            assert_eq!(
+                out.stats.dirs_listed, expected.stats.dirs_listed,
+                "{at}: folders listed"
+            );
+            let whys: Vec<Refusal> = out.refusals.iter().map(|r| r.why).collect();
+            assert_eq!(whys, [Refusal::Denied; 3], "{at}: why each was refused");
+            if numbering == Numbering::Blocks && workers == 1 {
+                // The big listing that failed past the semaphore was let go
+                // before it was left: the next listing finds the buffer
+                // shrunk back, as after a big listing committed.
+                let listed = failing.listed();
+                let room = listed
+                    .iter()
+                    .skip_while(|(p, _)| !p.ends_with(names[2]))
+                    .nth(1)
+                    .map(|(_, room)| *room)
+                    .ok_or("nothing was listed after the big folder")?;
+                assert!(
+                    room <= BIG_LISTING,
+                    "{at}: the buffer kept room for {room} entries"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A pacer that holds every worker at `throttle` once it is armed, and counts
+/// the workers it holds.
+struct HoldingPacer {
+    workers: u32,
+    armed: AtomicBool,
+    held: AtomicU64,
+    gate: Gate,
+}
+
+impl Pacer for HoldingPacer {
+    fn on_worker_start(&self) {}
+    fn throttle(&self, _cancelled: &dyn Fn() -> bool) {
+        if self.armed.load(Ordering::SeqCst) {
+            self.held.fetch_add(1, Ordering::SeqCst);
+            self.gate.pass();
+        }
+    }
+    fn worker_limit(&self) -> u32 {
+        self.workers
+    }
+}
+
+#[test]
+fn a_cancel_while_waiting_at_the_semaphore_commits_nothing_of_the_part_listed_and_closes_it()
+-> TestResult {
+    let commit_gate = Arc::new(Gate::default());
+    let tree = Arc::new(big_folders(2, 3_000));
+    let recorder = holding_the_first_big_commit(&commit_gate, false);
+    let pacer = Arc::new(HoldingPacer {
+        workers: 2,
+        armed: AtomicBool::new(false),
+        held: AtomicU64::new(0),
+        gate: Gate::default(),
+    });
+    let handle = start_with_sinks(
+        options(&tree, Numbering::Blocks, 2),
+        pacer.clone(),
+        tree.clone(),
+        vec![recorder.clone()],
+    )
+    .map_err(|e| e.to_string())?;
+    if !wait_until(|| commit_gate.reached()) {
+        return Err("no big listing was committed".to_owned());
+    }
+    if !wait_until(|| handle.counts().big_waiting == 1) {
+        return Err("the second big listing never waited at the semaphore".to_owned());
+    }
+    // The waiter holds its listing's first 16,384 entries, still open.
+    let open_while_waiting = tree.open_now();
+    pacer.armed.store(true, Ordering::SeqCst);
+    handle.cancel();
+    // It leaves the semaphore and is held at its next throttle, its buffer
+    // still alive: a cursor it had kept would still be open here.
+    let left = wait_until(|| pacer.held.load(Ordering::SeqCst) == 1);
+    let open_after_the_cancel = tree.open_now();
+    commit_gate.open();
+    pacer.gate.open();
+    match take_within(handle)? {
+        Err(WalkError::Cancelled) => {}
+        other => return Err(format!("expected Cancelled, got {other:?}")),
+    }
+    let committed: HashSet<String> = recorder
+        .commits()
+        .iter()
+        .flat_map(|c| c.names.iter())
+        .filter_map(|n| {
+            let name = String::from_utf8_lossy(n);
+            name.split_once('-').map(|(folder, _)| folder.to_owned())
+        })
+        .filter(|folder| folder.starts_with("big"))
+        .collect();
+    assert_eq!(
+        committed.len(),
+        1,
+        "only the held listing's chunk was committed: {committed:?}"
+    );
+    assert_eq!(open_while_waiting, 1, "the waiter's listing is open");
+    assert!(left, "the waiter never came back from its listing");
+    assert_eq!(open_after_the_cancel, 0, "the waiter's listing was closed");
+    Ok(())
+}
+
+/// A lister that lists each folder whole, as every lister did before T6b:
+/// the tree's `list` behind `Lister`'s default `list_until` and `list_more`.
+struct Whole(Arc<Tree>);
+
+impl Lister for Whole {
+    fn stat_dir(&self, path: &Path, want_atime: bool) -> Result<Meta, Refusal> {
+        self.0.stat_dir(path, want_atime)
+    }
+
+    fn list(
+        &self,
+        dir: &Path,
+        want_atime: bool,
+        buf: &mut ListBuffer,
+    ) -> Result<FastPath, Refusal> {
+        self.0.list(dir, want_atime, buf)
+    }
+}
+
+/// The mixed tree and a folder of `BIG_LISTING` + 50 files, answering in
+/// batches of `batch` entries.
+fn mixed_and_big(batch: usize) -> Arc<Tree> {
+    let mut t = mixed_tree(true);
+    t.batch = batch;
+    let big = t.dir("", "big");
+    for f in 0..(BIG_LISTING + 50) {
+        t.file(&big, &format!("x{f:06}"), 1.0);
+    }
+    Arc::new(t)
+}
+
+/// What a walk of [`mixed_and_big`] through `lister` gave: the output by
+/// path, the folders in the order they were listed, and the listings that
+/// went through the big-listing semaphore.
+type BatchWalk = (BTreeMap<String, Facts>, Vec<PathBuf>, u64);
+
+fn batch_walk(
+    tree: &Arc<Tree>,
+    lister: Arc<dyn Lister>,
+    numbering: Numbering,
+    workers: u32,
+) -> Result<BatchWalk, String> {
+    let (out, counts) = walk_with(lister, mixed_options(tree, numbering, workers), Vec::new())?;
+    let listed = tree.listed().into_iter().map(|(p, _)| p).collect();
+    Ok((by_path(&out)?, listed, counts.big_listings))
+}
+
+#[test]
+fn listings_read_in_batches_walk_what_whole_listings_walk() -> TestResult {
+    for numbering in [Numbering::Discovery, Numbering::Blocks] {
+        for workers in [1_u32, 8] {
+            let at = format!("{numbering:?}, {workers} worker(s)");
+            // The reference: every folder listed whole, as before T6b. A big
+            // listing still goes through the semaphore under block numbering.
+            let tree = mixed_and_big(usize::MAX);
+            let (whole, whole_order, whole_big) =
+                batch_walk(&tree, Arc::new(Whole(tree.clone())), numbering, workers)?;
+            let big = u64::from(numbering == Numbering::Blocks);
+            assert_eq!(whole_big, big, "{at}: the big folder listed whole");
+            // Read in parts at BIG_LISTING, whatever the batch.
+            for batch in [usize::MAX, 1_000, 7] {
+                let tree = mixed_and_big(batch);
+                let (facts, order, big_listings) =
+                    batch_walk(&tree, tree.clone(), numbering, workers)?;
+                assert!(
+                    facts == whole,
+                    "{at}: batches of {batch} walked another tree"
+                );
+                assert_eq!(big_listings, big, "{at}: batches of {batch}");
+                if workers == 1 {
+                    assert_eq!(
+                        order, whole_order,
+                        "{at}: batches of {batch} listed in another order"
+                    );
+                }
+            }
         }
     }
     Ok(())

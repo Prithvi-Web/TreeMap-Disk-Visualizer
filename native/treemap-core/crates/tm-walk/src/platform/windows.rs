@@ -241,75 +241,108 @@ fn read_i64(buf: &[u8], off: usize) -> Option<i64> {
 /// `visit`. Returns how many were visited; a length or offset the kernel
 /// could not have written is an error. An empty buffer holds no record.
 pub fn parse_records(buf: &[u8], visit: &mut dyn FnMut(&Record<'_>)) -> Result<usize, ParseError> {
-    let mut pos = 0_usize;
     let mut visited = 0_usize;
-    let mut index = 0_usize;
     if buf.is_empty() {
         return Ok(0);
     }
+    let mut at = RecordAt::default();
     loop {
-        let rec = buf
-            .get(pos..)
-            .filter(|r| r.len() >= RECORD_HEADER_BYTES)
-            .ok_or_else(|| fail(index, "the record is shorter than its header"))?;
-        let next = read_u32(rec, 0)
-            .and_then(|n| usize::try_from(n).ok())
-            .ok_or_else(|| fail(index, "the next-entry offset is not addressable"))?;
-        let name_len = read_u32(rec, OFF_NAME_LENGTH)
-            .and_then(|n| usize::try_from(n).ok())
-            .ok_or_else(|| fail(index, "the name length is not addressable"))?;
-        if name_len % 2 != 0 {
-            return Err(fail(
-                index,
-                "the name length is not a whole number of UTF-16 units",
-            ));
-        }
-        let name_end = RECORD_HEADER_BYTES
-            .checked_add(name_len)
-            .ok_or_else(|| fail(index, "the name length overflows"))?;
-        let name = rec
-            .get(RECORD_HEADER_BYTES..name_end)
-            .ok_or_else(|| fail(index, "the name extends beyond the buffer"))?;
-        if next != 0 && name_end > next {
-            return Err(fail(index, "the name extends beyond the record"));
-        }
-        // A NUL unit ends the name, as a NUL ends the name in a macOS record;
-        // units, not bytes: a zero byte can belong to a unit such as U+0100.
-        let name = name
-            .chunks_exact(2)
-            .position(|unit| unit == [0, 0])
-            .and_then(|nul| name.get(..nul.saturating_mul(2)))
-            .unwrap_or(name);
-        let unreadable = || fail(index, "the record header is not addressable");
-        let record = Record {
-            name,
-            attributes: read_u32(rec, OFF_ATTRIBUTES).ok_or_else(unreadable)?,
-            reparse_tag: read_u32(rec, OFF_REPARSE_TAG).ok_or_else(unreadable)?,
-            end_of_file: read_i64(rec, OFF_END_OF_FILE).ok_or_else(unreadable)?,
-            allocation: Some(read_i64(rec, OFF_ALLOCATION).ok_or_else(unreadable)?),
-            last_write: read_i64(rec, OFF_LAST_WRITE).ok_or_else(unreadable)?,
-            last_access: read_i64(rec, OFF_LAST_ACCESS).ok_or_else(unreadable)?,
-            file_id: Some(read_u128(rec, OFF_FILE_ID).ok_or_else(unreadable)?),
-        };
-        if !is_dot_entry(name) {
+        let (record, next) = record_at(buf, at)?;
+        if !is_dot_entry(record.name) {
             visit(&record);
             visited = visited.saturating_add(1);
         }
-        if next == 0 {
-            return Ok(visited);
+        match after(buf, at, next)? {
+            Some(following) => at = following,
+            None => return Ok(visited),
         }
-        if next < RECORD_HEADER_BYTES {
-            return Err(fail(
-                index,
-                "the next-entry offset does not advance past the header",
-            ));
-        }
-        pos = pos
-            .checked_add(next)
-            .filter(|p| *p < buf.len())
-            .ok_or_else(|| fail(index, "the next-entry offset lies beyond the buffer"))?;
-        index = index.saturating_add(1);
     }
+}
+
+/// Where a record of a `FILE_ID_EXTD_DIR_INFO` batch starts, and its index in
+/// the batch (for errors): a place a listing read in parts goes on from (T6b).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RecordAt {
+    /// The record's offset in the batch.
+    pub pos: usize,
+    /// The record's index in the batch.
+    pub index: usize,
+}
+
+/// The record at `at` in `buf` (non-empty) and its `NextEntryOffset`: one
+/// step of [`parse_records`], `.` and `..` included; [`after`] then says where
+/// the next record starts. A length the kernel could not have written is an
+/// error.
+pub fn record_at(buf: &[u8], at: RecordAt) -> Result<(Record<'_>, usize), ParseError> {
+    let RecordAt { pos, index } = at;
+    let rec = buf
+        .get(pos..)
+        .filter(|r| r.len() >= RECORD_HEADER_BYTES)
+        .ok_or_else(|| fail(index, "the record is shorter than its header"))?;
+    let next = read_u32(rec, 0)
+        .and_then(|n| usize::try_from(n).ok())
+        .ok_or_else(|| fail(index, "the next-entry offset is not addressable"))?;
+    let name_len = read_u32(rec, OFF_NAME_LENGTH)
+        .and_then(|n| usize::try_from(n).ok())
+        .ok_or_else(|| fail(index, "the name length is not addressable"))?;
+    if name_len % 2 != 0 {
+        return Err(fail(
+            index,
+            "the name length is not a whole number of UTF-16 units",
+        ));
+    }
+    let name_end = RECORD_HEADER_BYTES
+        .checked_add(name_len)
+        .ok_or_else(|| fail(index, "the name length overflows"))?;
+    let name = rec
+        .get(RECORD_HEADER_BYTES..name_end)
+        .ok_or_else(|| fail(index, "the name extends beyond the buffer"))?;
+    if next != 0 && name_end > next {
+        return Err(fail(index, "the name extends beyond the record"));
+    }
+    // A NUL unit ends the name, as a NUL ends the name in a macOS record;
+    // units, not bytes: a zero byte can belong to a unit such as U+0100.
+    let name = name
+        .chunks_exact(2)
+        .position(|unit| unit == [0, 0])
+        .and_then(|nul| name.get(..nul.saturating_mul(2)))
+        .unwrap_or(name);
+    let unreadable = || fail(index, "the record header is not addressable");
+    let record = Record {
+        name,
+        attributes: read_u32(rec, OFF_ATTRIBUTES).ok_or_else(unreadable)?,
+        reparse_tag: read_u32(rec, OFF_REPARSE_TAG).ok_or_else(unreadable)?,
+        end_of_file: read_i64(rec, OFF_END_OF_FILE).ok_or_else(unreadable)?,
+        allocation: Some(read_i64(rec, OFF_ALLOCATION).ok_or_else(unreadable)?),
+        last_write: read_i64(rec, OFF_LAST_WRITE).ok_or_else(unreadable)?,
+        last_access: read_i64(rec, OFF_LAST_ACCESS).ok_or_else(unreadable)?,
+        file_id: Some(read_u128(rec, OFF_FILE_ID).ok_or_else(unreadable)?),
+    };
+    Ok((record, next))
+}
+
+/// Where the record after the one at `at`, whose `NextEntryOffset` is `next`,
+/// starts; `None` when that one was the batch's last. An offset the kernel
+/// could not have written is an error.
+pub fn after(buf: &[u8], at: RecordAt, next: usize) -> Result<Option<RecordAt>, ParseError> {
+    let RecordAt { pos, index } = at;
+    if next == 0 {
+        return Ok(None);
+    }
+    if next < RECORD_HEADER_BYTES {
+        return Err(fail(
+            index,
+            "the next-entry offset does not advance past the header",
+        ));
+    }
+    let pos = pos
+        .checked_add(next)
+        .filter(|p| *p < buf.len())
+        .ok_or_else(|| fail(index, "the next-entry offset lies beyond the buffer"))?;
+    Ok(Some(RecordAt {
+        pos,
+        index: index.saturating_add(1),
+    }))
 }
 
 /// libuv's `uv__filetime_to_timespec`: ticks since 1601 become seconds and
@@ -715,649 +748,7 @@ const _: () = {
 };
 
 #[cfg(windows)]
-mod os {
-    use std::ffi::{OsString, c_void};
-    use std::os::windows::ffi::OsStringExt;
-    use std::path::{Path, PathBuf};
-    use std::ptr;
-
-    use windows_sys::Win32::Foundation::{
-        CloseHandle, FILETIME, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
-    };
-    use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_ATTRIBUTE_TAG_INFO,
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY,
-        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        FIND_FIRST_EX_LARGE_FETCH, FileAttributeTagInfo, FileIdExtdDirectoryInfo,
-        FileIdExtdDirectoryRestartInfo, FindClose, FindExInfoBasic, FindExSearchNameMatch,
-        FindFirstFileExW, FindNextFileW, GetFileInformationByHandle, GetFileInformationByHandleEx,
-        OPEN_EXISTING, WIN32_FIND_DATAW,
-    };
-    use windows_sys::Win32::System::IO::DeviceIoControl;
-    use windows_sys::Win32::System::Ioctl::FSCTL_GET_REPARSE_POINT;
-    use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
-
-    use super::{
-        DirFacts, ERROR_CANT_ACCESS_FILE, ERROR_DIRECTORY, ERROR_FILE_NOT_FOUND,
-        ERROR_INVALID_DATA, ERROR_INVALID_NAME, ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES,
-        ERROR_NOT_SUPPORTED, ERROR_OPERATION_ABORTED, FILE_ATTRIBUTE_DIRECTORY,
-        FILE_ATTRIBUTE_REPARSE_POINT, FLAG_DATALESS, KIND_DIR, KIND_FILE, KIND_SYMLINK, LinkClass,
-        Record, ReparseSource, filetime_ms, has_embedded_nul, is_dataless, is_dot_entry,
-        link_class, parse_records, prefixed_path, refusal_from_win32, reparse_target_len,
-        stage_record,
-    };
-    use crate::output::Refusal;
-    use crate::platform::{DirTimes, ListBuffer, Lister, Listing, Meta};
-    use crate::{FastPath, Probe};
-
-    /// The probe's own listing buffer.
-    const PROBE_BUFFER_BYTES: usize = 64 * 1024;
-    /// `MAXIMUM_REPARSE_DATA_BUFFER_SIZE`: what `FSCTL_GET_REPARSE_POINT` can return.
-    const REPARSE_BUFFER_BYTES: usize = 16 * 1024;
-    /// How every directory and reparse point is opened: as a backup operator
-    /// would, and never through a reparse point.
-    const OPEN_FLAGS: u32 = FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT;
-    /// Every sharing mode: a listing must never block a writer or a delete.
-    const SHARE_ALL: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-    /// FILETIME ticks per second, as a double.
-    const TICKS_PER_SECOND_F64: f64 = 1e7;
-    /// Records per batch of the `FindNextFileW` fallback, which answers one
-    /// record per call: the walk's stop flag is checked before each batch and
-    /// its heartbeat bumped after it, as `list_extd` does per call, and the
-    /// last, partial batch beats when the search ends. The same cadence as
-    /// macOS's per-entry fallback.
-    const FIND_BATCH: usize = 256;
-
-    /// An open file or directory handle, closed on drop.
-    struct Handle(HANDLE);
-
-    impl Drop for Handle {
-        fn drop(&mut self) {
-            // SAFETY: `self.0` came from a successful CreateFileW (so it is not
-            // INVALID_HANDLE_VALUE) and is closed exactly once, here.
-            unsafe { CloseHandle(self.0) };
-        }
-    }
-
-    /// [`crate::platform::data_is_local`] on Windows: the entry's attributes
-    /// and reparse tag from `FindFirstFileExW` on the path itself, never an
-    /// open. A name holding a character the search reads as a pattern (`*`,
-    /// `?`, and the DOS wildcards `<`, `>`, `"`) is refused rather than
-    /// answered for another file.
-    pub fn data_is_local(path: &Path) -> std::io::Result<bool> {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy())
-            .unwrap_or_default();
-        if name.contains(['*', '?', '<', '>', '"']) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "the name holds a character the directory search reads as a pattern",
-            ));
-        }
-        let wide_path = wide(path).map_err(os_error)?;
-        // SAFETY: all-zero is a valid WIN32_FIND_DATAW.
-        let mut data: WIN32_FIND_DATAW = unsafe { std::mem::zeroed() };
-        // SAFETY: `wide_path` is NUL-terminated; the pointer is a writable
-        // WIN32_FIND_DATAW, which is what FindExInfoBasic fills; no search
-        // filter is passed, as FindExSearchNameMatch requires.
-        let handle = unsafe {
-            FindFirstFileExW(
-                wide_path.as_ptr(),
-                FindExInfoBasic,
-                (&raw mut data).cast::<c_void>(),
-                FindExSearchNameMatch,
-                ptr::null(),
-                0,
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(os_error(last_error()));
-        }
-        let _search = FindHandle(handle);
-        let tag = if data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
-            0
-        } else {
-            data.dwReserved0
-        };
-        Ok(!is_dataless(data.dwFileAttributes, tag))
-    }
-
-    /// An open search handle, closed on drop.
-    struct FindHandle(HANDLE);
-
-    impl Drop for FindHandle {
-        fn drop(&mut self) {
-            // SAFETY: `self.0` came from a successful FindFirstFileExW and is
-            // closed exactly once, here.
-            unsafe { FindClose(self.0) };
-        }
-    }
-
-    fn last_error() -> u32 {
-        // SAFETY: GetLastError reads the calling thread's error slot; no preconditions.
-        unsafe { GetLastError() }
-    }
-
-    fn os_error(code: u32) -> std::io::Error {
-        std::io::Error::from_raw_os_error(i32::try_from(code).unwrap_or(i32::MAX))
-    }
-
-    /// `path` as a NUL-terminated UTF-16 `\\?\` path, or `ERROR_INVALID_NAME`
-    /// when the path holds a NUL of its own: passed on, that NUL would end the
-    /// string early and the call would silently open a truncated path.
-    fn wide(path: &Path) -> Result<Vec<u16>, u32> {
-        let text = path.to_string_lossy();
-        if has_embedded_nul(&text) {
-            return Err(ERROR_INVALID_NAME);
-        }
-        Ok(prefixed_path(&text)
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect())
-    }
-
-    fn join_wide(dir: &Path, name: &[u16]) -> PathBuf {
-        dir.join(OsString::from_wide(name))
-    }
-
-    fn struct_size<T>() -> u32 {
-        u32::try_from(std::mem::size_of::<T>()).unwrap_or(u32::MAX)
-    }
-
-    #[expect(
-        clippy::cast_possible_wrap,
-        reason = "a FILETIME is a signed 64-bit tick count split in two words"
-    )]
-    fn ticks(t: FILETIME) -> i64 {
-        ((u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime)) as i64
-    }
-
-    fn size_of_parts(high: u32, low: u32) -> u64 {
-        (u64::from(high) << 32) | u64::from(low)
-    }
-
-    /// Opens `path` itself (never through a final reparse point unless
-    /// `flags` says so) for `access`, sharing everything.
-    fn open(path: &Path, access: u32, flags: u32) -> Result<Handle, u32> {
-        let name = wide(path)?;
-        // SAFETY: `name` is NUL-terminated and outlives the call; no security
-        // attributes and no template handle are passed; OPEN_EXISTING creates nothing.
-        let handle = unsafe {
-            CreateFileW(
-                name.as_ptr(),
-                access,
-                SHARE_ALL,
-                ptr::null(),
-                OPEN_EXISTING,
-                flags,
-                ptr::null_mut(),
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(last_error());
-        }
-        Ok(Handle(handle))
-    }
-
-    fn by_handle_info(handle: &Handle) -> Result<BY_HANDLE_FILE_INFORMATION, u32> {
-        // SAFETY: all-zero is a valid BY_HANDLE_FILE_INFORMATION (plain integers).
-        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-        // SAFETY: `handle` is open and `info` is a writable struct of the type the call fills.
-        let ok = unsafe { GetFileInformationByHandle(handle.0, &raw mut info) };
-        if ok == 0 {
-            return Err(last_error());
-        }
-        Ok(info)
-    }
-
-    fn reparse_tag_of(handle: &Handle) -> Result<u32, u32> {
-        // SAFETY: all-zero is a valid FILE_ATTRIBUTE_TAG_INFO.
-        let mut info: FILE_ATTRIBUTE_TAG_INFO = unsafe { std::mem::zeroed() };
-        // SAFETY: `handle` is open; the pointer and size describe a writable
-        // FILE_ATTRIBUTE_TAG_INFO owned by this frame, the class the call fills.
-        let ok = unsafe {
-            GetFileInformationByHandleEx(
-                handle.0,
-                FileAttributeTagInfo,
-                (&raw mut info).cast::<c_void>(),
-                struct_size::<FILE_ATTRIBUTE_TAG_INFO>(),
-            )
-        };
-        if ok == 0 {
-            return Err(last_error());
-        }
-        Ok(info.ReparseTag)
-    }
-
-    /// The `REPARSE_DATA_BUFFER` behind `handle`, exactly the bytes returned.
-    fn read_reparse(handle: &Handle) -> Result<Vec<u8>, u32> {
-        let mut buf = vec![0_u8; REPARSE_BUFFER_BYTES];
-        let mut returned = 0_u32;
-        // SAFETY: `handle` is open; no input buffer is passed; the output
-        // pointer and size describe `buf`, writable for its whole length;
-        // `returned` is a live u32 owned by this frame; no overlapped I/O.
-        let ok = unsafe {
-            DeviceIoControl(
-                handle.0,
-                FSCTL_GET_REPARSE_POINT,
-                ptr::null(),
-                0,
-                buf.as_mut_ptr().cast::<c_void>(),
-                u32::try_from(buf.len()).unwrap_or(u32::MAX),
-                &raw mut returned,
-                ptr::null_mut(),
-            )
-        };
-        if ok == 0 {
-            return Err(last_error());
-        }
-        buf.truncate(usize::try_from(returned).unwrap_or(0));
-        Ok(buf)
-    }
-
-    /// The reparse source for real entries: opens `dir\name` itself and reads its data.
-    #[derive(Debug, Clone, Copy, Default)]
-    pub struct FileReparse;
-
-    impl ReparseSource for FileReparse {
-        fn reparse_data(&self, dir: &Path, name: &[u16]) -> Result<Vec<u8>, u32> {
-            let handle = open(&join_wide(dir, name), FILE_READ_ATTRIBUTES, OPEN_FLAGS)?;
-            read_reparse(&handle)
-        }
-    }
-
-    /// `path` itself as Node's `lstat` reports it: kind by libuv's rule (a
-    /// readable link is a symbolic link sized by its target; any other reparse
-    /// point is the object behind it), sizes, times, `dev`, `ino` and the link
-    /// count from `BY_HANDLE_FILE_INFORMATION`. That structure has no
-    /// allocation size, so a file is marked withheld; the walk only ever asks
-    /// about the root, which must be a directory.
-    pub fn stat_path(path: &Path, want_atime: bool) -> Result<Meta, u32> {
-        let handle = open(path, FILE_READ_ATTRIBUTES, OPEN_FLAGS)?;
-        let info = by_handle_info(&handle)?;
-        let attrs = info.dwFileAttributes;
-        let is_dir = attrs & FILE_ATTRIBUTE_DIRECTORY != 0;
-        let mut kind = if is_dir { KIND_DIR } else { KIND_FILE };
-        let mut size = if is_dir {
-            0.0
-        } else {
-            size_of_parts(info.nFileSizeHigh, info.nFileSizeLow) as f64
-        };
-        let mut tag = 0;
-        if attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            tag = reparse_tag_of(&handle)?;
-            let class = link_class(tag);
-            match class {
-                LinkClass::Link | LinkClass::Alias => {
-                    match reparse_target_len(&read_reparse(&handle)?) {
-                        Some(len) => {
-                            kind = KIND_SYMLINK;
-                            size = len as f64;
-                        }
-                        None if class == LinkClass::Alias => return Err(ERROR_CANT_ACCESS_FILE),
-                        None => {}
-                    }
-                }
-                LinkClass::Unfollowable => return Err(ERROR_CANT_ACCESS_FILE),
-                LinkClass::Followed => {}
-            }
-        }
-        let flags = if is_dataless(attrs, tag) {
-            FLAG_DATALESS
-        } else {
-            0
-        };
-        let times = own_times(&info, want_atime);
-        Ok(Meta {
-            kind,
-            flags,
-            size,
-            alloc: 0.0,
-            mtime_ms: times.mtime_ms,
-            atime_ms: times.atime_ms,
-            dev: f64::from(info.dwVolumeSerialNumber),
-            ino: u128::from(size_of_parts(info.nFileIndexHigh, info.nFileIndexLow)),
-            nlink: if is_dir { 0 } else { info.nNumberOfLinks },
-            withheld: kind != KIND_DIR,
-        })
-    }
-
-    /// A handle's own last-write and last-access times, as libuv's `lstat`
-    /// computes them: the directory's own record, not its parent's index copy.
-    fn own_times(info: &BY_HANDLE_FILE_INFORMATION, want_atime: bool) -> DirTimes {
-        DirTimes {
-            mtime_ms: filetime_ms(ticks(info.ftLastWriteTime)),
-            atime_ms: if want_atime {
-                filetime_ms(ticks(info.ftLastAccessTime))
-            } else {
-                f64::NAN
-            },
-        }
-    }
-
-    /// Opens `dir` to list it. The listing types every reparse point as a
-    /// link and never enqueues one, so a reparse point found here is either
-    /// the root or a replacement since the parent was listed: a real link is
-    /// refused as not a directory, a cloud placeholder (or any other tag with
-    /// a filter behind it) is reopened through its filter exactly as `readdir`
-    /// opens it, and a tag Windows cannot follow is refused as `lstat` would be.
-    fn open_dir(dir: &Path) -> Result<(Handle, BY_HANDLE_FILE_INFORMATION), u32> {
-        let handle = open(dir, FILE_LIST_DIRECTORY, OPEN_FLAGS)?;
-        let info = by_handle_info(&handle)?;
-        if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
-            return Err(ERROR_DIRECTORY);
-        }
-        if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
-            return Ok((handle, info));
-        }
-        let class = link_class(reparse_tag_of(&handle)?);
-        let follow = match class {
-            LinkClass::Followed => true,
-            LinkClass::Unfollowable => false,
-            LinkClass::Link | LinkClass::Alias => {
-                if reparse_target_len(&read_reparse(&handle)?).is_some() {
-                    return Err(ERROR_DIRECTORY);
-                }
-                class == LinkClass::Link
-            }
-        };
-        if !follow {
-            return Err(ERROR_CANT_ACCESS_FILE);
-        }
-        drop(handle);
-        let followed = open(dir, FILE_LIST_DIRECTORY, FILE_FLAG_BACKUP_SEMANTICS)?;
-        let info = by_handle_info(&followed)?;
-        Ok((followed, info))
-    }
-
-    /// How a bulk listing ended other than with an error.
-    enum Outcome {
-        /// Every batch was parsed into the listing.
-        Listed,
-        /// The very first call was refused with `ERROR_INVALID_PARAMETER` or
-        /// `ERROR_NOT_SUPPORTED`: this volume has no file ids; nothing was read.
-        Unsupported(u32),
-    }
-
-    /// The `FileIdExtdDirectoryInfo` loop over `handle` into `buf.raw`, staging
-    /// every batch; the walk's stop flag is checked before each call and its
-    /// heartbeat bumped after each answer.
-    fn list_extd(
-        handle: &Handle,
-        dir: &Path,
-        facts: DirFacts,
-        buf: &mut ListBuffer,
-    ) -> Result<Outcome, u32> {
-        let size = u32::try_from(buf.raw.len()).unwrap_or(u32::MAX);
-        let mut class = FileIdExtdDirectoryRestartInfo;
-        let mut first = true;
-        loop {
-            if buf.stopped() {
-                // The walk discards the listing on cancel, so which error ends it is immaterial.
-                return Err(ERROR_OPERATION_ABORTED);
-            }
-            // SAFETY: `handle` is an open directory; the pointer and `size`
-            // describe `buf.raw`, writable for its whole length; the class is a
-            // directory-listing class the call fills in place.
-            let ok = unsafe {
-                GetFileInformationByHandleEx(
-                    handle.0,
-                    class,
-                    buf.raw.as_mut_ptr().cast::<c_void>(),
-                    size,
-                )
-            };
-            if ok == 0 {
-                let code = last_error();
-                if code == ERROR_NO_MORE_FILES {
-                    // The end is an answer too: even an empty volume root beats once.
-                    buf.beat();
-                    return Ok(Outcome::Listed);
-                }
-                if first && (code == ERROR_INVALID_PARAMETER || code == ERROR_NOT_SUPPORTED) {
-                    return Ok(Outcome::Unsupported(code));
-                }
-                return Err(code);
-            }
-            buf.beat();
-            first = false;
-            class = FileIdExtdDirectoryInfo;
-            let listing = &mut buf.listing;
-            parse_records(&buf.raw, &mut |rec: &Record<'_>| {
-                stage_record(rec, facts, dir, &FileReparse, listing);
-            })
-            .map_err(|_| ERROR_INVALID_DATA)?;
-        }
-    }
-
-    /// The fallback: `FindFirstFileExW` over `dir\*`, staging each record into
-    /// `buf.listing`; no allocation size and no file id, so no leaf keys a
-    /// hard link (RISKS R55). The walk's two signals are paced by [`FIND_BATCH`].
-    fn list_find(dir: &Path, facts: DirFacts, buf: &mut ListBuffer) -> Result<(), u32> {
-        if buf.stopped() {
-            // The walk discards the listing on cancel, so which error ends it is immaterial.
-            return Err(ERROR_OPERATION_ABORTED);
-        }
-        let pattern = wide(&dir.join("*"))?;
-        // SAFETY: all-zero is a valid WIN32_FIND_DATAW.
-        let mut data: WIN32_FIND_DATAW = unsafe { std::mem::zeroed() };
-        // SAFETY: `pattern` is NUL-terminated; the pointer is a writable
-        // WIN32_FIND_DATAW, which is what FindExInfoBasic fills; no search
-        // filter is passed, as FindExSearchNameMatch requires.
-        let handle = unsafe {
-            FindFirstFileExW(
-                pattern.as_ptr(),
-                FindExInfoBasic,
-                (&raw mut data).cast::<c_void>(),
-                FindExSearchNameMatch,
-                ptr::null(),
-                FIND_FIRST_EX_LARGE_FETCH,
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            let code = last_error();
-            // A volume root with nothing in it has no `.` either; that answer beats too.
-            return if code == ERROR_FILE_NOT_FOUND {
-                buf.beat();
-                Ok(())
-            } else {
-                Err(code)
-            };
-        }
-        let find = FindHandle(handle);
-        let mut name = Vec::new();
-        let mut in_batch = 0_usize;
-        loop {
-            stage_find(&data, &mut name, facts, dir, &mut buf.listing);
-            in_batch += 1;
-            if in_batch == FIND_BATCH {
-                buf.beat();
-                in_batch = 0;
-                if buf.stopped() {
-                    // As above: the walk discards a cancelled listing.
-                    return Err(ERROR_OPERATION_ABORTED);
-                }
-            }
-            // SAFETY: `find` is an open search handle and `data` a writable WIN32_FIND_DATAW.
-            let ok = unsafe { FindNextFileW(find.0, &raw mut data) };
-            if ok == 0 {
-                let code = last_error();
-                return if code == ERROR_NO_MORE_FILES {
-                    // The end is an answer too: the last, partial batch beats here.
-                    buf.beat();
-                    Ok(())
-                } else {
-                    Err(code)
-                };
-            }
-        }
-    }
-
-    fn stage_find(
-        data: &WIN32_FIND_DATAW,
-        name: &mut Vec<u8>,
-        facts: DirFacts,
-        dir: &Path,
-        out: &mut Listing,
-    ) {
-        let len = data
-            .cFileName
-            .iter()
-            .position(|u| *u == 0)
-            .unwrap_or(data.cFileName.len());
-        name.clear();
-        name.extend(
-            data.cFileName
-                .iter()
-                .take(len)
-                .flat_map(|u| u.to_le_bytes()),
-        );
-        if is_dot_entry(name) {
-            return;
-        }
-        let record = Record {
-            name,
-            attributes: data.dwFileAttributes,
-            reparse_tag: data.dwReserved0,
-            end_of_file: i64::try_from(size_of_parts(data.nFileSizeHigh, data.nFileSizeLow))
-                .unwrap_or(i64::MAX),
-            allocation: None,
-            last_write: ticks(data.ftLastWriteTime),
-            last_access: ticks(data.ftLastAccessTime),
-            file_id: None,
-        };
-        stage_record(&record, facts, dir, &FileReparse, out);
-    }
-
-    /// The Windows lister: `FileIdExtdDirectoryInfo` first, `FindFirstFileExW`
-    /// where a volume refuses it.
-    #[derive(Debug, Clone, Copy, Default)]
-    pub struct WindowsLister;
-
-    impl WindowsLister {
-        /// The lister.
-        pub fn new() -> Self {
-            Self
-        }
-    }
-
-    impl Lister for WindowsLister {
-        fn stat_dir(&self, path: &Path, want_atime: bool) -> Result<Meta, Refusal> {
-            stat_path(path, want_atime).map_err(refusal_from_win32)
-        }
-
-        fn list(
-            &self,
-            dir: &Path,
-            want_atime: bool,
-            buf: &mut ListBuffer,
-        ) -> Result<FastPath, Refusal> {
-            buf.listing.clear();
-            let (handle, info) = open_dir(dir).map_err(refusal_from_win32)?;
-            let facts = DirFacts {
-                dev: info.dwVolumeSerialNumber,
-                want_atime,
-            };
-            // The directory's own times, from the handle this listing opened:
-            // its parent's index holds a lazily updated copy (see DirTimes).
-            let times = own_times(&info, want_atime);
-            let path = match list_extd(&handle, dir, facts, buf) {
-                Ok(Outcome::Listed) => FastPath::ExtdDirInfo,
-                Ok(Outcome::Unsupported(_code)) => {
-                    drop(handle);
-                    buf.listing.clear();
-                    list_find(dir, facts, buf).map_err(refusal_from_win32)?;
-                    FastPath::PerEntry
-                }
-                Err(code) => return Err(refusal_from_win32(code)),
-            };
-            buf.listing.own_times = Some(times);
-            Ok(path)
-        }
-    }
-
-    /// [`crate::probe`] on Windows: reads the root's own facts, opens it, and
-    /// lists it once with `FileIdExtdDirectoryInfo`.
-    pub fn probe(root: &Path) -> Probe {
-        let unavailable = |reason: String| Probe {
-            fast_path: FastPath::Unavailable,
-            reason,
-        };
-        match stat_path(root, false) {
-            Err(code) => {
-                return unavailable(format!("the root could not be read: {}", os_error(code)));
-            }
-            Ok(meta) if meta.kind != KIND_DIR => {
-                return unavailable("the root is not a directory".to_owned());
-            }
-            Ok(_) => {}
-        }
-        let (handle, info) = match open_dir(root) {
-            Ok(opened) => opened,
-            Err(code) => {
-                return unavailable(format!(
-                    "the root directory could not be opened: {}",
-                    os_error(code)
-                ));
-            }
-        };
-        let facts = DirFacts {
-            dev: info.dwVolumeSerialNumber,
-            want_atime: false,
-        };
-        let mut buf = ListBuffer::new(PROBE_BUFFER_BYTES);
-        match list_extd(&handle, root, facts, &mut buf) {
-            Ok(Outcome::Listed) => Probe {
-                fast_path: FastPath::ExtdDirInfo,
-                reason: format!(
-                    "FileIdExtdDirectoryInfo listed the root directory ({} entries)",
-                    buf.listing.len()
-                ),
-            },
-            Ok(Outcome::Unsupported(code)) => Probe {
-                fast_path: FastPath::PerEntry,
-                reason: format!(
-                    "FileIdExtdDirectoryInfo refused the root with {}; FindFirstFileExW is used, which reports no file ids or allocation sizes on this volume",
-                    os_error(code)
-                ),
-            },
-            Err(code) => unavailable(format!(
-                "FileIdExtdDirectoryInfo failed on the root: {}",
-                os_error(code)
-            )),
-        }
-    }
-
-    /// The calling thread's own CPU time in seconds from `GetThreadTimes`
-    /// (kernel plus user); NaN when the call fails.
-    pub fn thread_cpu_seconds() -> f64 {
-        // SAFETY: all-zero is a valid FILETIME.
-        let mut creation: FILETIME = unsafe { std::mem::zeroed() };
-        // SAFETY: as above.
-        let mut exit: FILETIME = unsafe { std::mem::zeroed() };
-        // SAFETY: as above.
-        let mut kernel: FILETIME = unsafe { std::mem::zeroed() };
-        // SAFETY: as above.
-        let mut user: FILETIME = unsafe { std::mem::zeroed() };
-        // SAFETY: GetCurrentThread's pseudo-handle is always valid for the
-        // calling thread; the four pointers are live, writable FILETIMEs owned
-        // by this frame. The call only reads the thread.
-        let ok = unsafe {
-            GetThreadTimes(
-                GetCurrentThread(),
-                &raw mut creation,
-                &raw mut exit,
-                &raw mut kernel,
-                &raw mut user,
-            )
-        };
-        if ok == 0 {
-            return f64::NAN;
-        }
-        (ticks(kernel).saturating_add(ticks(user))) as f64 / TICKS_PER_SECOND_F64
-    }
-}
+mod os;
 
 #[cfg(windows)]
 pub use os::{FileReparse, WindowsLister, data_is_local, probe, stat_path, thread_cpu_seconds};

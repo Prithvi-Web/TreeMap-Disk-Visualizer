@@ -18,9 +18,10 @@ use tm_walk::platform::windows::{
     FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, FILE_ATTRIBUTE_RECALL_ON_OPEN,
     FILE_ATTRIBUTE_REPARSE_POINT, FILETIME_UNIX_EPOCH, IO_REPARSE_TAG_APPEXECLINK,
     IO_REPARSE_TAG_CLOUD, IO_REPARSE_TAG_LX_SYMLINK, IO_REPARSE_TAG_MOUNT_POINT,
-    IO_REPARSE_TAG_SYMLINK, IO_REPARSE_TAG_WOF, RECORD_HEADER_BYTES, Record, ReparseSource,
-    filetime_ms, filetime_to_timespec, has_embedded_nul, is_dataless, parse_records, prefixed_path,
-    refusal_from_win32, reparse_target_len, stage_record,
+    IO_REPARSE_TAG_SYMLINK, IO_REPARSE_TAG_WOF, RECORD_HEADER_BYTES, Record, RecordAt,
+    ReparseSource, after, filetime_ms, filetime_to_timespec, has_embedded_nul, is_dataless,
+    is_dot_entry, parse_records, prefixed_path, record_at, refusal_from_win32, reparse_target_len,
+    stage_record,
 };
 use tm_walk::platform::{ListBuffer, Lister, Listing, Meta, time_ms};
 use tm_walk::walk::Pacer;
@@ -733,6 +734,40 @@ fn has_embedded_nul_finds_a_nul_anywhere_in_the_path() {
         !has_embedded_nul("C:\\Users\\\u{100}"),
         "a code point whose UTF-16 unit has a zero byte is not a NUL"
     );
+}
+
+#[test]
+fn a_batch_read_record_by_record_gives_what_parse_records_visits() -> TestResult {
+    // T6b: a listing read in parts goes on from any record of its batch.
+    let raw = buffer(&[file("a.bin", 1), file("b.bin", 2), file("c.bin", 3)])?;
+    let mut stepped = Vec::new();
+    let mut at = RecordAt::default();
+    loop {
+        let (record, next) = record_at(&raw, at).map_err(|e| format!("{e:?}"))?;
+        if !is_dot_entry(record.name) {
+            stepped.push((record.name_string(), record.end_of_file));
+        }
+        match after(&raw, at, next).map_err(|e| format!("{e:?}"))? {
+            Some(following) => {
+                assert!(following.pos > at.pos, "each record moves on");
+                assert_eq!(following.index, at.index + 1);
+                at = following;
+            }
+            None => break,
+        }
+    }
+    assert_eq!(
+        at.index, 2,
+        "the batch's three records, the last one ends it"
+    );
+    let mut visited = Vec::new();
+    let count = parse_records(&raw, &mut |rec: &Record<'_>| {
+        visited.push((rec.name_string(), rec.end_of_file));
+    })
+    .map_err(|e| format!("{e:?}"))?;
+    assert_eq!(count, 3);
+    assert_eq!(stepped, visited);
+    Ok(())
 }
 
 #[test]

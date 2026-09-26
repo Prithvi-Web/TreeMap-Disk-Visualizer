@@ -102,52 +102,80 @@ fn read_u64(buf: &[u8], off: usize) -> Option<u64> {
 /// record but `.` and `..` to `visit`. Returns how many were visited; a
 /// length the kernel could not have written is an error.
 pub fn parse_dirents(buf: &[u8], visit: &mut dyn FnMut(&Dirent<'_>)) -> Result<usize, ParseError> {
-    let mut pos = 0_usize;
+    let mut at = DirentsAt::default();
     let mut visited = 0_usize;
-    let mut index = 0_usize;
-    while pos < buf.len() {
-        let rec = buf
-            .get(pos..)
-            .filter(|r| r.len() >= DIRENT64_HEADER_BYTES)
-            .ok_or_else(|| fail(index, "the record is shorter than its header"))?;
-        let reclen = usize::from(
-            read_u16(rec, OFF_RECLEN)
-                .ok_or_else(|| fail(index, "the record length is not addressable"))?,
-        );
-        if reclen <= DIRENT64_HEADER_BYTES {
-            return Err(fail(
-                index,
-                "the record length does not advance past the header",
-            ));
-        }
-        let record = rec
-            .get(..reclen)
-            .ok_or_else(|| fail(index, "the record extends beyond the buffer"))?;
-        let name_area = record
-            .get(DIRENT64_HEADER_BYTES..)
-            .ok_or_else(|| fail(index, "the record has no name"))?;
-        let nul = name_area
-            .iter()
-            .position(|b| *b == 0)
-            .ok_or_else(|| fail(index, "the name is not NUL-terminated within the record"))?;
-        let name = name_area
-            .get(..nul)
-            .ok_or_else(|| fail(index, "the name range is not addressable"))?;
-        let ino = read_u64(record, 0).ok_or_else(|| fail(index, "the inode is not addressable"))?;
-        let d_type = record
-            .get(OFF_TYPE)
-            .copied()
-            .ok_or_else(|| fail(index, "the type is not addressable"))?;
-        if name != b"." && name != b".." {
-            visit(&Dirent { ino, d_type, name });
+    while let Some((dirent, next)) = dirent_at(buf, at)? {
+        if !is_dot(dirent.name) {
+            visit(&dirent);
             visited = visited.saturating_add(1);
         }
-        pos = pos
-            .checked_add(reclen)
-            .ok_or_else(|| fail(index, "the record length overflows"))?;
-        index = index.saturating_add(1);
+        at = next;
     }
     Ok(visited)
+}
+
+/// Where the next record of a `getdents64` batch starts, and its index in the
+/// batch (for errors): a place a listing read in parts goes on from (T6b).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DirentsAt {
+    /// The record's offset in the batch.
+    pub pos: usize,
+    /// The record's index in the batch.
+    pub index: usize,
+}
+
+/// True for `.` and `..`, which are never listed.
+pub fn is_dot(name: &[u8]) -> bool {
+    name == b"." || name == b".."
+}
+
+/// The record at `at` in `buf` and where the one after it starts, or `None`
+/// at the end of the batch: one step of [`parse_dirents`], `.` and `..`
+/// included. A length the kernel could not have written is an error.
+pub fn dirent_at(buf: &[u8], at: DirentsAt) -> Result<Option<(Dirent<'_>, DirentsAt)>, ParseError> {
+    let DirentsAt { pos, index } = at;
+    if pos >= buf.len() {
+        return Ok(None);
+    }
+    let rec = buf
+        .get(pos..)
+        .filter(|r| r.len() >= DIRENT64_HEADER_BYTES)
+        .ok_or_else(|| fail(index, "the record is shorter than its header"))?;
+    let reclen = usize::from(
+        read_u16(rec, OFF_RECLEN)
+            .ok_or_else(|| fail(index, "the record length is not addressable"))?,
+    );
+    if reclen <= DIRENT64_HEADER_BYTES {
+        return Err(fail(
+            index,
+            "the record length does not advance past the header",
+        ));
+    }
+    let record = rec
+        .get(..reclen)
+        .ok_or_else(|| fail(index, "the record extends beyond the buffer"))?;
+    let name_area = record
+        .get(DIRENT64_HEADER_BYTES..)
+        .ok_or_else(|| fail(index, "the record has no name"))?;
+    let nul = name_area
+        .iter()
+        .position(|b| *b == 0)
+        .ok_or_else(|| fail(index, "the name is not NUL-terminated within the record"))?;
+    let name = name_area
+        .get(..nul)
+        .ok_or_else(|| fail(index, "the name range is not addressable"))?;
+    let ino = read_u64(record, 0).ok_or_else(|| fail(index, "the inode is not addressable"))?;
+    let d_type = record
+        .get(OFF_TYPE)
+        .copied()
+        .ok_or_else(|| fail(index, "the type is not addressable"))?;
+    let next = DirentsAt {
+        pos: pos
+            .checked_add(reclen)
+            .ok_or_else(|| fail(index, "the record length overflows"))?,
+        index: index.saturating_add(1),
+    };
+    Ok(Some((Dirent { ino, d_type, name }, next)))
 }
 
 /// glibc's `gnu_dev_makedev`: what Node's `stat.dev` holds for the major and
@@ -315,10 +343,11 @@ mod os {
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use super::{Dirent, StatxFacts, dev_parts, meta_from_statx, parse_dirents};
+    use super::{DirentsAt, StatxFacts, dev_parts, dirent_at, is_dot, meta_from_statx};
     use crate::output::Refusal;
     use crate::platform::{
-        ListBuffer, Lister, Listing, Meta, last_errno, refusal_from_errno, retry_eintr,
+        ListBuffer, Listed, Lister, Listing, Meta, last_errno, list_whole, refusal_from_errno,
+        retry_eintr,
     };
     use crate::{DEFAULT_BUFFER_BYTES, FastPath, KIND_DIR, Probe};
 
@@ -438,9 +467,81 @@ mod os {
         buf: &mut ListBuffer,
         statx_unavailable: &AtomicBool,
     ) -> Result<(), i32> {
+        match getdents_step(fd, want_atime, buf, statx_unavailable, None, usize::MAX)? {
+            Step::Done => Ok(()),
+            // No listing holds `usize::MAX` entries.
+            Step::Stopped(_) => Err(libc::EIO),
+        }
+    }
+
+    /// The unread rest of the batch `getdents64` last wrote into `buf.raw`:
+    /// the bytes it filled and the next record to parse.
+    #[derive(Clone, Copy, Debug)]
+    struct BatchRest {
+        filled: usize,
+        at: DirentsAt,
+    }
+
+    /// How a step of the listing ended other than with an errno.
+    enum Step {
+        /// The listing is complete.
+        Done,
+        /// The listing holds its limit: the unread rest of the last batch, if any.
+        Stopped(Option<BatchRest>),
+    }
+
+    /// Where a Linux listing that stopped early goes on from (T6b); dropping
+    /// it closes the directory.
+    #[derive(Debug)]
+    struct LinuxCursor {
+        fd: OwnedFd,
+        want_atime: bool,
+        rest: Option<BatchRest>,
+    }
+
+    /// [`list_getdents`] from `rest` on (the unread rest of the last batch),
+    /// until the listing is complete or holds `limit` entries.
+    fn getdents_step(
+        fd: &OwnedFd,
+        want_atime: bool,
+        buf: &mut ListBuffer,
+        statx_unavailable: &AtomicBool,
+        mut rest: Option<BatchRest>,
+        limit: usize,
+    ) -> Result<Step, i32> {
+        let limit = limit.max(1);
         let dirfd = fd.as_raw_fd();
         let mut name_c: Vec<u8> = Vec::new();
         loop {
+            if let Some(BatchRest { filled, mut at }) = rest.take() {
+                let ListBuffer { raw, listing, .. } = &mut *buf;
+                let batch = raw.get(..filled).ok_or(libc::EIO)?;
+                loop {
+                    if listing.len() >= limit && at.pos < batch.len() {
+                        return Ok(Step::Stopped(Some(BatchRest { filled, at })));
+                    }
+                    let Some((d, next)) = dirent_at(batch, at).map_err(|_| libc::EIO)? else {
+                        break;
+                    };
+                    at = next;
+                    if is_dot(d.name) {
+                        continue;
+                    }
+                    name_c.clear();
+                    name_c.extend_from_slice(d.name);
+                    name_c.push(0);
+                    let name = name_c.as_ptr().cast::<libc::c_char>();
+                    match stat_entry(dirfd, name, want_atime, statx_unavailable) {
+                        Ok(facts) => {
+                            listing.push(d.name, meta_from_statx(&facts, want_atime, d.d_type));
+                        }
+                        Err(errno) => count_entry_error(errno, listing),
+                    }
+                }
+            }
+            if buf.listing.len() >= limit {
+                return Ok(Step::Stopped(None));
+            }
             if buf.stopped() {
                 // The walk discards the listing on cancel, so which errno ends it is immaterial.
                 return Err(libc::ECANCELED);
@@ -462,24 +563,13 @@ mod os {
             // so even an empty directory beats once.
             buf.beat();
             if n == 0 {
-                return Ok(());
+                return Ok(Step::Done);
             }
             let filled = usize::try_from(n).map_err(|_| libc::EIO)?;
-            let batch = buf.raw.get(..filled).ok_or(libc::EIO)?;
-            let listing = &mut buf.listing;
-            parse_dirents(batch, &mut |d: &Dirent<'_>| {
-                name_c.clear();
-                name_c.extend_from_slice(d.name);
-                name_c.push(0);
-                let name = name_c.as_ptr().cast::<libc::c_char>();
-                match stat_entry(dirfd, name, want_atime, statx_unavailable) {
-                    Ok(facts) => {
-                        listing.push(d.name, meta_from_statx(&facts, want_atime, d.d_type));
-                    }
-                    Err(errno) => count_entry_error(errno, listing),
-                }
-            })
-            .map_err(|_| libc::EIO)?;
+            rest = Some(BatchRest {
+                filled,
+                at: DirentsAt::default(),
+            });
         }
     }
 
@@ -528,12 +618,57 @@ mod os {
             want_atime: bool,
             buf: &mut ListBuffer,
         ) -> Result<FastPath, Refusal> {
+            list_whole(self, dir, want_atime, buf)
+        }
+
+        fn list_until(
+            &self,
+            dir: &Path,
+            want_atime: bool,
+            buf: &mut ListBuffer,
+            limit: usize,
+        ) -> Result<Listed, Refusal> {
+            buf.close_cursor();
             buf.listing.clear();
             let fd = open_dir(dir).map_err(refusal_from_errno)?;
-            list_getdents(&fd, want_atime, buf, &self.statx_unavailable)
-                .map_err(refusal_from_errno)?;
-            buf.listing.sort_by_name();
-            Ok(FastPath::Getdents)
+            self.read_on(fd, want_atime, buf, None, limit)
+        }
+
+        fn list_more(&self, buf: &mut ListBuffer, limit: usize) -> Result<Listed, Refusal> {
+            let cursor = buf
+                .take_cursor::<LinuxCursor>()
+                .ok_or(Refusal::Unreadable)?;
+            self.read_on(cursor.fd, cursor.want_atime, buf, cursor.rest, limit)
+        }
+    }
+
+    impl LinuxLister {
+        /// Lists on from `rest`, keeping the cursor on a stop; sorted once complete.
+        fn read_on(
+            &self,
+            fd: OwnedFd,
+            want_atime: bool,
+            buf: &mut ListBuffer,
+            rest: Option<BatchRest>,
+            limit: usize,
+        ) -> Result<Listed, Refusal> {
+            match getdents_step(&fd, want_atime, buf, &self.statx_unavailable, rest, limit)
+                .map_err(refusal_from_errno)?
+            {
+                Step::Done => {
+                    drop(fd);
+                    buf.listing.sort_by_name();
+                    Ok(Listed::Complete(FastPath::Getdents))
+                }
+                Step::Stopped(rest) => {
+                    buf.keep_cursor(LinuxCursor {
+                        fd,
+                        want_atime,
+                        rest,
+                    });
+                    Ok(Listed::More)
+                }
+            }
         }
     }
 

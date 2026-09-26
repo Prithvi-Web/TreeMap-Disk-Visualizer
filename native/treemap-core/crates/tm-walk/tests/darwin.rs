@@ -17,8 +17,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use tm_walk::platform::darwin::{
-    ATTR_CMN_ERROR, DarwinLister, SF_DATALESS, TypeFallback, VDIR, VFIFO, VLNK, VREG, open_dir,
-    parse_batch,
+    ATTR_CMN_ERROR, BatchRest, DarwinLister, SF_DATALESS, TypeFallback, VDIR, VFIFO, VLNK, VREG,
+    open_dir, parse_batch, parse_part,
 };
 use tm_walk::platform::per_entry::{PER_ENTRY_BATCH, fstatat_meta, lstat_meta};
 use tm_walk::platform::{ListBuffer, Lister, Listing, Meta, refusal_from_errno, time_ms};
@@ -343,6 +343,74 @@ fn an_error_field_of_zero_is_no_error() -> TestResult {
     let listing = parsed(&[regular(b"ok.bin", 4)], true)?;
     assert_eq!(listing.entries.len(), 1);
     assert_eq!(listing.denied_entries + listing.unreadable_entries, 0);
+    Ok(())
+}
+
+/// A listing's names in order, with each entry's facts by their bits.
+fn in_order(listing: &Listing) -> Vec<(Vec<u8>, u8, u64, u64, u64, u128)> {
+    listing
+        .entries
+        .iter()
+        .map(|e| {
+            (
+                listing.name(e).to_vec(),
+                e.meta.kind,
+                e.meta.size.to_bits(),
+                e.meta.mtime_ms.to_bits(),
+                e.meta.atime_ms.to_bits(),
+                e.meta.ino,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_batch_parsed_in_parts_is_the_batch_parsed_whole() -> TestResult {
+    // T6b: a listing that holds its limit stops before an entry, keeping the
+    // batch's rest, and goes on from there. A denied entry lists nothing and
+    // counts, whichever part reads it.
+    let mut denied = regular(b"denied.bin", 1);
+    denied.error = u32::try_from(libc::EACCES).map_err(|e| e.to_string())?;
+    let entries = [
+        regular(b"a.bin", 1),
+        regular(b"b.bin", 2),
+        denied,
+        regular(b"c.bin", 3),
+        regular(b"d.bin", 4),
+    ];
+    let raw = buffer(&entries)?;
+    let whole = parsed(&entries, false)?;
+    for limit in 1..=entries.len() {
+        let mut out = Listing::default();
+        let batch = BatchRest {
+            pos: 0,
+            index: 0,
+            count: entries.len(),
+        };
+        let rest = parse_part(&raw, batch, false, &mut out, &mut never_asked, limit)
+            .map_err(|e| format!("{limit}: {e:?}"))?;
+        if let Some(rest) = rest {
+            assert_eq!(out.len(), limit, "{limit}: stopped at its limit");
+            assert!(rest.index < entries.len(), "{limit}: with entries left");
+            let done = parse_part(&raw, rest, false, &mut out, &mut never_asked, usize::MAX)
+                .map_err(|e| format!("{limit}: {e:?}"))?;
+            assert_eq!(done, None, "{limit}: read to the batch's end");
+        } else {
+            assert!(
+                out.len() <= limit,
+                "{limit}: the batch ended at or before its limit"
+            );
+        }
+        assert_eq!(
+            in_order(&out),
+            in_order(&whole),
+            "{limit}: the entries in order"
+        );
+        assert_eq!(
+            out.denied_entries, 1,
+            "{limit}: the denied entry counted once"
+        );
+    }
     Ok(())
 }
 

@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use tm_governor::{Governor, apply_to_current_thread, profile};
 
 use super::{SAMPLE_INTERVAL, child_path, lock, panic_text, stored_root_name};
-use crate::blocks::{BigListings, CommitLock};
+use crate::blocks::{BigListings, CommitLock, Resident};
 use crate::climb::{START_WORKERS, start_for};
 use crate::output::{Refusal, WalkOutput};
 use crate::platform::{Lister, performance_cores};
@@ -152,6 +152,8 @@ pub(crate) struct Shared {
     pub(crate) commit: CommitLock,
     /// The big-listing semaphore (block numbering).
     pub(crate) big: BigListings,
+    /// The listing entries resident in the workers' buffers (block numbering).
+    pub(crate) resident: Resident,
     /// Blocks reserved (block numbering): one per listing committed.
     pub(crate) blocks: AtomicU64,
     /// Workers parked by a pause right now.
@@ -189,6 +191,7 @@ impl Shared {
             collect,
             commit: CommitLock::new(root_name_bytes),
             big: BigListings::default(),
+            resident: Resident::default(),
             blocks: AtomicU64::new(0),
             parked: AtomicU32::new(0),
             root: opts.root,

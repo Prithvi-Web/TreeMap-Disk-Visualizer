@@ -9,6 +9,7 @@ use std::ffi::{CStr, CString};
 use std::os::fd::{IntoRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
+use std::ptr::NonNull;
 
 use super::darwin::SF_DATALESS;
 use super::{ListBuffer, Listing, Meta, last_errno, time_ms};
@@ -105,69 +106,107 @@ pub fn meta_from_stat(st: &libc::stat, want_atime: bool) -> Meta {
 /// by [`PER_ENTRY_BATCH`]. Takes the descriptor: the stream owns it and closes it.
 pub fn list(fd: OwnedFd, want_atime: bool, buf: &mut ListBuffer) -> Result<(), i32> {
     buf.listing.clear();
-    let raw = fd.into_raw_fd();
-    // SAFETY: `raw` is an open directory descriptor this function now owns; on
-    // success the stream owns it and `closedir` releases it.
-    let dir = unsafe { libc::fdopendir(raw) };
-    if dir.is_null() {
-        let errno = last_errno();
-        // SAFETY: fdopendir failed, so the descriptor is still ours to close.
-        unsafe { libc::close(raw) };
-        return Err(errno);
-    }
-    let result = read_all(dir, want_atime, buf);
-    // SAFETY: `dir` came from fdopendir and has not been closed.
-    unsafe { libc::closedir(dir) };
-    result
+    let mut stream = Stream::open(fd)?;
+    stream.read_until(want_atime, buf, usize::MAX).map(drop)
 }
 
-fn read_all(dir: *mut libc::DIR, want_atime: bool, buf: &mut ListBuffer) -> Result<(), i32> {
-    // SAFETY: `dir` is an open stream.
-    let dirfd = unsafe { libc::dirfd(dir) };
-    let mut in_batch = 0_usize;
-    loop {
-        if in_batch == PER_ENTRY_BATCH {
-            buf.beat();
-            in_batch = 0;
-        }
-        if in_batch == 0 && buf.stopped() {
-            // The walk discards the listing on cancel, so which errno ends it is immaterial.
-            return Err(libc::ECANCELED);
-        }
-        let ent = super::retry_eintr(|| {
-            clear_errno();
-            // SAFETY: `dir` is an open stream; readdir returns null at the end
-            // (errno untouched) or on error (errno set), otherwise a pointer into
-            // the stream's own buffer that stays valid until the next call on it.
-            let ent = unsafe { libc::readdir(dir) };
-            if ent.is_null() {
-                let errno = last_errno();
-                if errno != 0 {
-                    return Err(errno);
-                }
+/// A `readdir` stream over an open directory that can be read in parts
+/// (T6b): it keeps its place, and its count of answers since the last beat,
+/// between calls, and is closed when dropped.
+#[derive(Debug)]
+pub struct Stream {
+    dir: NonNull<libc::DIR>,
+    /// `readdir` answers since the last beat.
+    in_batch: usize,
+}
+
+// SAFETY: a `DIR` stream belongs to no thread: `readdir` keeps its state in
+// the stream (see the module docs). A `Stream` reaches it only through
+// `&mut self`, so one thread at a time, and closes it once, in `drop`.
+unsafe impl Send for Stream {}
+
+impl Stream {
+    /// A stream over the directory `fd` refers to. Takes the descriptor: the
+    /// stream owns it and closes it.
+    pub fn open(fd: OwnedFd) -> Result<Self, i32> {
+        let raw = fd.into_raw_fd();
+        // SAFETY: `raw` is an open directory descriptor this function now
+        // owns; on success the stream owns it and `closedir` releases it.
+        let dir = unsafe { libc::fdopendir(raw) };
+        let Some(dir) = NonNull::new(dir) else {
+            let errno = last_errno();
+            // SAFETY: fdopendir failed, so the descriptor is still ours to close.
+            unsafe { libc::close(raw) };
+            return Err(errno);
+        };
+        Ok(Self { dir, in_batch: 0 })
+    }
+
+    /// Reads on into `buf.listing` until the stream ends (true) or the
+    /// listing holds `limit` entries (false; the stream keeps its place).
+    pub fn read_until(
+        &mut self,
+        want_atime: bool,
+        buf: &mut ListBuffer,
+        limit: usize,
+    ) -> Result<bool, i32> {
+        let dir = self.dir.as_ptr();
+        // SAFETY: `dir` is an open stream.
+        let dirfd = unsafe { libc::dirfd(dir) };
+        loop {
+            if buf.listing.len() >= limit.max(1) {
+                return Ok(false);
             }
-            Ok(ent)
-        })?;
-        if ent.is_null() {
-            // The end is an answer too: the last, partial batch beats here.
-            buf.beat();
-            return Ok(());
+            if self.in_batch == PER_ENTRY_BATCH {
+                buf.beat();
+                self.in_batch = 0;
+            }
+            if self.in_batch == 0 && buf.stopped() {
+                // The walk discards the listing on cancel, so which errno ends it is immaterial.
+                return Err(libc::ECANCELED);
+            }
+            let ent = super::retry_eintr(|| {
+                clear_errno();
+                // SAFETY: `dir` is an open stream; readdir returns null at the end
+                // (errno untouched) or on error (errno set), otherwise a pointer into
+                // the stream's own buffer that stays valid until the next call on it.
+                let ent = unsafe { libc::readdir(dir) };
+                if ent.is_null() {
+                    let errno = last_errno();
+                    if errno != 0 {
+                        return Err(errno);
+                    }
+                }
+                Ok(ent)
+            })?;
+            if ent.is_null() {
+                // The end is an answer too: the last, partial batch beats here.
+                buf.beat();
+                return Ok(true);
+            }
+            self.in_batch += 1;
+            let out = &mut buf.listing;
+            // SAFETY: `ent` is non-null; taking the field's address creates no
+            // reference to the record, which may be shorter than `dirent`.
+            let name_ptr = unsafe { (&raw const (*ent).d_name).cast::<libc::c_char>() };
+            // SAFETY: readdir NUL-terminates `d_name` within the record.
+            let name = unsafe { CStr::from_ptr(name_ptr) };
+            let bytes = name.to_bytes();
+            if bytes == b"." || bytes == b".." {
+                continue;
+            }
+            match fstatat_meta(dirfd, name, want_atime) {
+                Ok(meta) => out.push(bytes, meta),
+                Err(errno) => count_entry_error(errno, out),
+            }
         }
-        in_batch += 1;
-        let out = &mut buf.listing;
-        // SAFETY: `ent` is non-null; taking the field's address creates no
-        // reference to the record, which may be shorter than `dirent`.
-        let name_ptr = unsafe { (&raw const (*ent).d_name).cast::<libc::c_char>() };
-        // SAFETY: readdir NUL-terminates `d_name` within the record.
-        let name = unsafe { CStr::from_ptr(name_ptr) };
-        let bytes = name.to_bytes();
-        if bytes == b"." || bytes == b".." {
-            continue;
-        }
-        match fstatat_meta(dirfd, name, want_atime) {
-            Ok(meta) => out.push(bytes, meta),
-            Err(errno) => count_entry_error(errno, out),
-        }
+    }
+}
+
+impl Drop for Stream {
+    fn drop(&mut self) {
+        // SAFETY: `dir` came from fdopendir and is closed exactly once, here.
+        unsafe { libc::closedir(self.dir.as_ptr()) };
     }
 }
 

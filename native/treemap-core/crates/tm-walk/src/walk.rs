@@ -148,6 +148,15 @@ pub struct WalkCounts {
     pub big_waiting: u32,
     /// The most workers past the big-listing semaphore at once.
     pub big_peak: u32,
+    /// The most listings of more than [`crate::BIG_LISTING`] entries resident
+    /// in the workers' buffers at once (block numbering; T6b, R89): 1 where
+    /// the lister reads in batches ([`crate::Lister::list_until`]), however
+    /// many workers there are and big folders they meet.
+    pub big_resident_peak: u32,
+    /// The most listing entries resident in the workers' buffers at once
+    /// (block numbering), counted as each lister call returns: at most the
+    /// largest listing plus `BIG_LISTING` for every other worker.
+    pub resident_entries_peak: u64,
     /// Workers parked by a pause right now: between two folders, or inside
     /// one at a [`CHECK_EVERY`] check.
     pub paused_workers: u32,
@@ -158,6 +167,7 @@ impl WalkHandle {
     pub fn counts(&self) -> WalkCounts {
         let s = &*self.shared;
         let (big_listings, big_waiting, big_peak) = s.big.counts();
+        let (resident_entries_peak, big_resident_peak) = s.resident.peaks();
         WalkCounts {
             queue_peak: u64::try_from(s.queue.peak_len()).unwrap_or(u64::MAX),
             ranges_peak: u64::try_from(s.queue.peak_ranges()).unwrap_or(u64::MAX),
@@ -166,6 +176,8 @@ impl WalkHandle {
             big_listings,
             big_waiting,
             big_peak,
+            big_resident_peak,
+            resident_entries_peak,
             paused_workers: s.parked.load(Ordering::Acquire),
         }
     }

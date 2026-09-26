@@ -44,7 +44,7 @@ pub mod walk;
 pub use links::{IdFamily, LinkKey, hardlink_families, link_key};
 pub use output::{DirRefusal, HardlinkRef, Refusal, WalkOutput, WalkStats};
 pub use platform::synthetic::{SyntheticLister, SyntheticSpec, synthetic_temp_folder};
-pub use platform::{Entry, ListBuffer, Lister, Listing, Meta};
+pub use platform::{Entry, ListBuffer, Listed, Lister, Listing, Meta};
 pub use queue::RANGE_BYTES;
 pub use sink::{Block, ListingSink};
 pub use walk::{

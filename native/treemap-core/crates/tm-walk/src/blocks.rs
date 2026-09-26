@@ -15,14 +15,26 @@
 //! [`CHUNK_BYTES`]; the worker's listing buffer then shrinks back. A worker
 //! waiting on the lock or the semaphore beats the heartbeat, so a long wait
 //! is never taken for a stalled walk, and gives up once the walk is cancelled.
+//!
+//! **One big listing resident at a time (T6b; R89).** A lister reads a folder
+//! until its listing is complete or holds [`BIG_LISTING`] entries
+//! ([`crate::Lister::list_until`]); a listing it stopped early waits for the
+//! semaphore with those entries in hand and is read to its end only past it,
+//! and the semaphore is left only once the listing is let go (committed,
+//! counted, and the buffer shrunk back). So the listers that read in batches
+//! (every platform's, and the synthetic one) hold at most `BIG_LISTING`
+//! entries each outside the semaphore and one listing of any size inside it.
+//! A lister that lists a folder whole ([`crate::Lister`]'s default) is not
+//! bounded: its listing is resident before the walk knows it is big, as under
+//! T6.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use crate::output::Refusal;
-use crate::platform::{Entry, ListBuffer, Listing, push_stored, stored_len};
+use crate::platform::{Entry, ListBuffer, Listed, Listing, push_stored, read_rest, stored_len};
 use crate::queue::{DirJob, RangeBuilder, queueable};
 use crate::sink::{Block, ListingSink};
 use crate::walk::{
@@ -180,6 +192,82 @@ impl Drop for BigPermit<'_> {
         state.inside = state.inside.saturating_sub(1);
         drop(state);
         self.big.freed.notify_one();
+    }
+}
+
+/// The listing entries in the workers' buffers (block numbering; T6b, R89):
+/// counted each time a lister answers, given back once the walk is done with
+/// the listing. A listing only grows while it is read, so its largest size
+/// is counted when its last batch returns.
+#[derive(Default)]
+pub(crate) struct Resident {
+    /// Entries held now, across workers.
+    entries: AtomicU64,
+    /// The most held at once.
+    entries_peak: AtomicU64,
+    /// Listings of more than [`BIG_LISTING`] entries held now.
+    big: AtomicU32,
+    /// The most held at once.
+    big_peak: AtomicU32,
+}
+
+impl Resident {
+    /// `(the most entries held at once, the most listings of more than
+    /// BIG_LISTING entries held at once)`.
+    pub(crate) fn peaks(&self) -> (u64, u32) {
+        (
+            self.entries_peak.load(Ordering::Acquire),
+            self.big_peak.load(Ordering::Acquire),
+        )
+    }
+}
+
+/// One worker's listing as [`Resident`] counts it: given back when the guard
+/// drops, however the listing ends.
+struct Held<'a> {
+    resident: &'a Resident,
+    entries: u64,
+    big: bool,
+}
+
+impl<'a> Held<'a> {
+    fn new(resident: &'a Resident) -> Self {
+        Self {
+            resident,
+            entries: 0,
+            big: false,
+        }
+    }
+
+    /// The listing now holds `len` entries.
+    fn note(&mut self, len: usize) {
+        let len = u64::try_from(len).unwrap_or(u64::MAX);
+        if len > self.entries {
+            let more = len - self.entries;
+            let now = self
+                .resident
+                .entries
+                .fetch_add(more, Ordering::AcqRel)
+                .saturating_add(more);
+            self.resident.entries_peak.fetch_max(now, Ordering::AcqRel);
+            self.entries = len;
+        }
+        if !self.big && len > u64::try_from(BIG_LISTING).unwrap_or(u64::MAX) {
+            self.big = true;
+            let now = self.resident.big.fetch_add(1, Ordering::AcqRel) + 1;
+            self.resident.big_peak.fetch_max(now, Ordering::AcqRel);
+        }
+    }
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        self.resident
+            .entries
+            .fetch_sub(self.entries, Ordering::AcqRel);
+        if self.big {
+            self.resident.big.fetch_sub(1, Ordering::AcqRel);
+        }
     }
 }
 
@@ -415,9 +503,46 @@ pub(crate) fn process_listing(
     job: &DirJob,
 ) {
     shared.sample_path(&job.path);
-    let path = match shared.lister.list(&job.path, shared.want_atime, buf) {
+    let mut held = Held::new(&shared.resident);
+    let first = shared
+        .lister
+        .list_until(&job.path, shared.want_atime, buf, BIG_LISTING);
+    held.note(buf.listing.len());
+    let mut permit = None;
+    let listed = match first {
+        Ok(Listed::Complete(path)) if buf.listing.len() <= BIG_LISTING => Ok(path),
+        Ok(answer) => {
+            // A big listing: past the semaphore one at a time, entered with
+            // the first batches in hand and before the rest is read (R89).
+            let Some(entered) = shared.big.enter(shared) else {
+                // Cancelled while waiting: nothing of it is committed, and
+                // its cursor is closed now, not when the buffer is next used.
+                buf.close_cursor();
+                return;
+            };
+            permit = Some(entered);
+            match answer {
+                Listed::Complete(path) => Ok(path),
+                Listed::More => {
+                    let rest = read_rest(shared.lister.as_ref(), buf);
+                    held.note(buf.listing.len());
+                    rest
+                }
+            }
+        }
+        Err(why) => Err(why),
+    };
+    let big = permit.is_some();
+    let path = match listed {
         Ok(path) => path,
         Err(why) => {
+            // Refused in whichever batch it failed, as a whole listing is; a
+            // big one is let go before the semaphore is (R89).
+            if big {
+                buf.listing.shrink_to(KEEP_ENTRIES, KEEP_NAME_BYTES);
+            }
+            drop(held);
+            drop(permit);
             refuse(shared, job, why);
             return;
         }
@@ -432,26 +557,20 @@ pub(crate) fn process_listing(
     shared
         .unreadable_entries
         .fetch_add(buf.listing.unreadable_entries, Ordering::AcqRel);
-    let big = buf.listing.len() > BIG_LISTING;
-    let permit = if big {
-        let Some(permit) = shared.big.enter(shared) else {
-            return;
-        };
-        Some(permit)
-    } else {
-        None
-    };
     buf.listing.order_as_stored();
     let committed = if big {
         commit_in_chunks(shared, &buf.listing, stage, job.id)
     } else {
         commit_whole(shared, &buf.listing, stage, job.id)
     };
-    drop(permit);
     if let Some(first) = committed {
         account(shared, &buf.listing, first, job);
     }
     if big {
         buf.listing.shrink_to(KEEP_ENTRIES, KEEP_NAME_BYTES);
     }
+    // The semaphore is left only once a big listing is let go, so the next
+    // one is read in only then (R89); T6 left it after the hand-over.
+    drop(held);
+    drop(permit);
 }

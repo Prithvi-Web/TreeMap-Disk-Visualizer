@@ -10,11 +10,11 @@ use std::sync::atomic::Ordering;
 
 use tm_governor::{Budget, FakeSampler, FakeSignals, Governor, Preset};
 use tm_walk::platform::synthetic::{SYNTHETIC_BATCH, synthetic_fences};
-use tm_walk::platform::{ListBuffer, Lister};
+use tm_walk::platform::{ListBuffer, Listed, Lister};
 use tm_walk::walk::Pacer;
 use tm_walk::{
-    KIND_DIR, KIND_FILE, SyntheticLister, SyntheticSpec, WalkError, WalkOptions, WalkOutput,
-    lister_for, start, start_with, synthetic_temp_folder,
+    FastPath, KIND_DIR, KIND_FILE, SyntheticLister, SyntheticSpec, WalkError, WalkOptions,
+    WalkOutput, lister_for, start, start_with, synthetic_temp_folder,
 };
 
 type TestResult = Result<(), String>;
@@ -237,8 +237,12 @@ fn snapshot(lister: &SyntheticLister, dir: &Path, want_atime: bool) -> Result<Sn
     lister
         .list(dir, want_atime, &mut buf)
         .map_err(|why| format!("{}: {why}", dir.display()))?;
-    Ok(buf
-        .listing
+    Ok(entries_of(&buf))
+}
+
+/// The listing in `buf`, every value as bits.
+fn entries_of(buf: &ListBuffer) -> Snapshot {
+    buf.listing
         .entries
         .iter()
         .map(|entry| {
@@ -254,7 +258,7 @@ fn snapshot(lister: &SyntheticLister, dir: &Path, want_atime: bool) -> Result<Sn
                 m.nlink,
             )
         })
-        .collect())
+        .collect()
 }
 
 fn refused(result: Result<SyntheticLister, WalkError>, what: &str, needle: &str) -> TestResult {
@@ -889,5 +893,68 @@ fn a_big_listing_beats_the_heartbeat_and_a_stopped_one_lists_nothing() -> TestRe
     let stopped = lister.list(&at, false, &mut buf);
     assert!(stopped.is_err(), "a stopped listing answered {stopped:?}");
     assert_eq!(buf.listing.len(), 0, "nothing listed after the stop");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// A listing read in parts (T6b; R89)
+// ---------------------------------------------------------------------------
+
+/// The limits a listing in parts is read to: 2, inside the root's four
+/// subfolders; `SYNTHETIC_BATCH`, on a batch boundary; then 999 more each
+/// time, between boundaries.
+fn part_limits() -> impl Iterator<Item = usize> {
+    [2, SYNTHETIC_BATCH]
+        .into_iter()
+        .chain((1..).map(|k| SYNTHETIC_BATCH + k * 999))
+}
+
+#[test]
+fn a_synthetic_listing_read_in_parts_is_the_listing_read_whole() -> TestResult {
+    // Four subfolders, and 8,000 of the 40,000 files in each of the five folders.
+    let spec = SyntheticSpec {
+        entries: 40_004,
+        fan_out: 4,
+        depth: 1,
+        folder_ppm: 100,
+        ..SyntheticSpec::developer(0, 5)
+    };
+    let at = root("parts");
+    let lister = SyntheticLister::new(&spec, &at).map_err(|e| e.to_string())?;
+    let mut whole = ListBuffer::new(0);
+    lister
+        .list(&at, true, &mut whole)
+        .map_err(|why| format!("whole: {why}"))?;
+    assert_eq!(whole.listing.len(), 8_004, "the root's listing");
+
+    let mut parts = ListBuffer::new(0);
+    let mut limits = part_limits();
+    let mut limit = limits.next().ok_or("no limit")?;
+    let mut answer = lister
+        .list_until(&at, true, &mut parts, limit)
+        .map_err(|why| format!("first part: {why}"))?;
+    let mut stops = 0;
+    while answer == Listed::More {
+        assert_eq!(parts.listing.len(), limit, "a part stops at its limit");
+        assert!(parts.has_cursor(), "a stopped listing keeps its cursor");
+        stops += 1;
+        limit = limits.next().ok_or("out of limits")?;
+        answer = lister
+            .list_more(&mut parts, limit)
+            .map_err(|why| format!("part {stops}: {why}"))?;
+    }
+    assert_eq!(answer, Listed::Complete(FastPath::Unavailable));
+    // At 2, 4,096, 5,095, 6,094 and 7,093 entries; then complete at 8,004.
+    assert_eq!(stops, 5, "the listing was read in parts");
+    assert!(!parts.has_cursor(), "a complete listing leaves no cursor");
+    assert!(
+        entries_of(&parts) == entries_of(&whole),
+        "listed in parts, the entries, their facts or their order differ"
+    );
+    assert_eq!(
+        parts.heartbeat.load(Ordering::Acquire),
+        whole.heartbeat.load(Ordering::Acquire),
+        "one beat per batch, read whole or in parts"
+    );
     Ok(())
 }

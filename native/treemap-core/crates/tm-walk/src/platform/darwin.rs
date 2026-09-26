@@ -22,9 +22,15 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use super::per_entry;
-use super::{ListBuffer, Lister, Listing, Meta, last_errno, refusal_from_errno, time_ms};
+use super::{
+    ListBuffer, Listed, Lister, Listing, Meta, last_errno, list_whole, refusal_from_errno,
+};
 use crate::output::Refusal;
-use crate::{FLAG_DATALESS, FastPath, KIND_DIR, KIND_FILE, KIND_SYMLINK, Probe};
+use crate::{FastPath, KIND_DIR, Probe};
+
+mod parse;
+
+pub use parse::{ParseError, TypeFallback, parse_batch, parse_part};
 
 /// `ATTR_CMN_ERROR` from `<sys/attr.h>`: a per-entry errno, packed right after
 /// the returned set when it is returned. Not in `libc` 0.2.189.
@@ -98,6 +104,70 @@ impl DarwinLister {
     }
 }
 
+/// Where a macOS listing that stopped early goes on from (T6b): the open
+/// directory and the unread rest of its last bulk batch, or the per-entry
+/// stream. Dropping it closes the directory.
+#[derive(Debug)]
+enum DarwinCursor {
+    Bulk {
+        fd: OwnedFd,
+        want_atime: bool,
+        rest: Option<BatchRest>,
+    },
+    PerEntry {
+        stream: per_entry::Stream,
+        want_atime: bool,
+    },
+}
+
+impl DarwinLister {
+    /// What a bulk step answers: complete and sorted once, or `More` with the
+    /// directory and the batch's rest kept as the cursor.
+    fn bulk_answer(
+        step: Result<BulkStep, i32>,
+        fd: OwnedFd,
+        want_atime: bool,
+        buf: &mut ListBuffer,
+    ) -> Result<Listed, Refusal> {
+        match step {
+            Ok(BulkStep::Done) => {
+                drop(fd);
+                buf.listing.sort_by_name();
+                Ok(Listed::Complete(FastPath::Bulk))
+            }
+            Ok(BulkStep::Stopped(rest)) => {
+                buf.keep_cursor(DarwinCursor::Bulk {
+                    fd,
+                    want_atime,
+                    rest,
+                });
+                Ok(Listed::More)
+            }
+            Ok(BulkStep::Unsupported(errno)) | Err(errno) => Err(refusal_from_errno(errno)),
+        }
+    }
+
+    /// Per-entry listing on through `stream`, keeping it on a stop; sorted
+    /// once complete.
+    fn per_entry_on(
+        mut stream: per_entry::Stream,
+        want_atime: bool,
+        buf: &mut ListBuffer,
+        limit: usize,
+    ) -> Result<Listed, Refusal> {
+        if stream
+            .read_until(want_atime, buf, limit)
+            .map_err(refusal_from_errno)?
+        {
+            drop(stream);
+            buf.listing.sort_by_name();
+            return Ok(Listed::Complete(FastPath::PerEntry));
+        }
+        buf.keep_cursor(DarwinCursor::PerEntry { stream, want_atime });
+        Ok(Listed::More)
+    }
+}
+
 impl Lister for DarwinLister {
     fn stat_dir(&self, path: &Path, want_atime: bool) -> Result<Meta, Refusal> {
         per_entry::lstat_meta(path, want_atime).map_err(refusal_from_errno)
@@ -109,25 +179,49 @@ impl Lister for DarwinLister {
         want_atime: bool,
         buf: &mut ListBuffer,
     ) -> Result<FastPath, Refusal> {
+        list_whole(self, dir, want_atime, buf)
+    }
+
+    fn list_until(
+        &self,
+        dir: &Path,
+        want_atime: bool,
+        buf: &mut ListBuffer,
+        limit: usize,
+    ) -> Result<Listed, Refusal> {
+        buf.close_cursor();
         let fd = open_dir(dir).map_err(refusal_from_errno)?;
         buf.listing.clear();
         if !self.per_entry_only {
-            match list_bulk(&fd, want_atime, buf) {
-                Ok(BulkOutcome::Listed) => {
-                    buf.listing.sort_by_name();
-                    return Ok(FastPath::Bulk);
-                }
-                Ok(BulkOutcome::Unsupported(_errno)) => {
+            match bulk_step(&fd, want_atime, buf, None, true, limit) {
+                Ok(BulkStep::Unsupported(_errno)) => {
                     buf.listing.clear();
                     // SAFETY: `fd` is an open directory; rewinding it has no other effect.
                     unsafe { libc::lseek(fd.as_raw_fd(), 0, libc::SEEK_SET) };
                 }
-                Err(errno) => return Err(refusal_from_errno(errno)),
+                step => return Self::bulk_answer(step, fd, want_atime, buf),
             }
         }
-        per_entry::list(fd, want_atime, buf).map_err(refusal_from_errno)?;
-        buf.listing.sort_by_name();
-        Ok(FastPath::PerEntry)
+        buf.listing.clear();
+        let stream = per_entry::Stream::open(fd).map_err(refusal_from_errno)?;
+        Self::per_entry_on(stream, want_atime, buf, limit)
+    }
+
+    fn list_more(&self, buf: &mut ListBuffer, limit: usize) -> Result<Listed, Refusal> {
+        match buf.take_cursor::<DarwinCursor>() {
+            Some(DarwinCursor::Bulk {
+                fd,
+                want_atime,
+                rest,
+            }) => {
+                let step = bulk_step(&fd, want_atime, buf, rest, false, limit);
+                Self::bulk_answer(step, fd, want_atime, buf)
+            }
+            Some(DarwinCursor::PerEntry { stream, want_atime }) => {
+                Self::per_entry_on(stream, want_atime, buf, limit)
+            }
+            None => Err(Refusal::Unreadable),
+        }
     }
 }
 
@@ -160,6 +254,53 @@ enum BulkOutcome {
 
 /// The `getattrlistbulk` loop over `fd` into `buf.raw`, parsing every batch.
 fn list_bulk(fd: &OwnedFd, want_atime: bool, buf: &mut ListBuffer) -> Result<BulkOutcome, i32> {
+    match bulk_step(fd, want_atime, buf, None, true, usize::MAX)? {
+        BulkStep::Done => Ok(BulkOutcome::Listed),
+        BulkStep::Unsupported(errno) => Ok(BulkOutcome::Unsupported(errno)),
+        // No listing holds `usize::MAX` entries.
+        BulkStep::Stopped(_) => Err(libc::EIO),
+    }
+}
+
+/// The unread rest of the batch `getattrlistbulk` last wrote into
+/// `ListBuffer::raw`: where its next entry starts, that entry's index in the
+/// batch, and how many entries the batch holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BatchRest {
+    /// The next entry's offset in the buffer.
+    pub pos: usize,
+    /// The next entry's index in the batch.
+    pub index: usize,
+    /// The entries the batch holds.
+    pub count: usize,
+}
+
+/// How a bulk listing's step ended other than with an errno.
+#[derive(Clone, Copy, Debug)]
+enum BulkStep {
+    /// Every batch was parsed into the listing; mount points re-read.
+    Done,
+    /// The listing holds its limit: the unread rest of the last batch, if any.
+    Stopped(Option<BatchRest>),
+    /// The very first call was refused with `ENOTSUP` or `EINVAL`: this volume
+    /// does not do bulk listing; nothing was read.
+    Unsupported(i32),
+}
+
+/// The `getattrlistbulk` loop over `fd` into `buf.raw`, parsing every batch —
+/// from `rest` on, the unread rest of the last one — until the listing is
+/// complete or holds `limit` entries (T6b). `first` holds until the call
+/// has answered once in this listing: only that very first call may refuse
+/// bulk listing for the volume.
+fn bulk_step(
+    fd: &OwnedFd,
+    want_atime: bool,
+    buf: &mut ListBuffer,
+    mut rest: Option<BatchRest>,
+    mut first: bool,
+    limit: usize,
+) -> Result<BulkStep, i32> {
+    let limit = limit.max(1);
     let atime = if want_atime {
         libc::ATTR_CMN_ACCTIME
     } else {
@@ -174,8 +315,24 @@ fn list_bulk(fd: &OwnedFd, want_atime: bool, buf: &mut ListBuffer) -> Result<Bul
         fileattr: FILE_ATTRS,
         forkattr: 0,
     };
-    let mut first = true;
     loop {
+        if let Some(from) = rest.take() {
+            let left = parse_part(
+                &buf.raw,
+                from,
+                want_atime,
+                &mut buf.listing,
+                &mut |name| stat_at(fd, name, want_atime),
+                limit,
+            )
+            .map_err(|_| libc::EIO)?;
+            if left.is_some() {
+                return Ok(BulkStep::Stopped(left));
+            }
+        }
+        if buf.listing.len() >= limit {
+            return Ok(BulkStep::Stopped(None));
+        }
         if buf.stopped() {
             // The walk discards the listing on cancel, so which errno ends it is immaterial.
             return Err(libc::ECANCELED);
@@ -197,7 +354,7 @@ fn list_bulk(fd: &OwnedFd, want_atime: bool, buf: &mut ListBuffer) -> Result<Bul
         let n = match answer {
             Ok(n) => n,
             Err(errno) if first && (errno == libc::ENOTSUP || errno == libc::EINVAL) => {
-                return Ok(BulkOutcome::Unsupported(errno));
+                return Ok(BulkStep::Unsupported(errno));
             }
             Err(errno) => return Err(errno),
         };
@@ -205,15 +362,17 @@ fn list_bulk(fd: &OwnedFd, want_atime: bool, buf: &mut ListBuffer) -> Result<Bul
         // even an empty directory beats once.
         buf.beat();
         if n == 0 {
+            // Once, after the last batch.
             restat_mount_points(fd, want_atime, &mut buf.listing);
-            return Ok(BulkOutcome::Listed);
+            return Ok(BulkStep::Done);
         }
         first = false;
         let count = usize::try_from(n).map_err(|_| libc::EIO)?;
-        parse_batch(&buf.raw, count, want_atime, &mut buf.listing, &mut |name| {
-            stat_at(fd, name, want_atime)
-        })
-        .map_err(|_| libc::EIO)?;
+        rest = Some(BatchRest {
+            pos: 0,
+            index: 0,
+            count,
+        });
     }
 }
 
@@ -244,290 +403,6 @@ fn restat_mount_points(fd: &OwnedFd, want_atime: bool, listing: &mut Listing) {
             entry.meta = meta;
         }
     }
-}
-
-/// A batch the kernel could not have written: the directory is unreadable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ParseError {
-    /// Which entry of the batch was malformed.
-    pub entry: usize,
-    /// What was wrong with it.
-    pub reason: &'static str,
-}
-
-/// The stat behind an entry whose type the file system withheld: `fstatat`
-/// through the directory descriptor on the live path, a script in tests.
-/// `None` when that stat failed too.
-pub type TypeFallback<'a> = dyn FnMut(&[u8]) -> Option<Meta> + 'a;
-
-/// Parses `count` entries from `raw` (as `getattrlistbulk` left them) into `out`.
-/// Per-entry problems become counters; a malformed length is an error. An
-/// entry whose type was withheld is asked about through `type_fallback`.
-pub fn parse_batch(
-    raw: &[u8],
-    count: usize,
-    want_atime: bool,
-    out: &mut Listing,
-    type_fallback: &mut TypeFallback<'_>,
-) -> Result<(), ParseError> {
-    let mut pos = 0_usize;
-    for index in 0..count {
-        let len = read_u32(raw, pos).ok_or(ParseError {
-            entry: index,
-            reason: "the entry length lies beyond the buffer",
-        })? as usize;
-        if len < HEADER_BYTES {
-            return Err(ParseError {
-                entry: index,
-                reason: "the entry is shorter than its header",
-            });
-        }
-        let end = pos
-            .checked_add(len)
-            .filter(|end| *end <= raw.len())
-            .ok_or(ParseError {
-                entry: index,
-                reason: "the entry extends beyond the buffer",
-            })?;
-        let entry = raw.get(pos..end).ok_or(ParseError {
-            entry: index,
-            reason: "the entry range is not addressable",
-        })?;
-        match parse_entry(entry, want_atime, out, type_fallback) {
-            Ok(()) | Err(Problem::Vanished) => {}
-            Err(Problem::Denied) => out.denied_entries = out.denied_entries.saturating_add(1),
-            Err(Problem::Unreadable) => {
-                out.unreadable_entries = out.unreadable_entries.saturating_add(1);
-            }
-        }
-        pos = end;
-    }
-    Ok(())
-}
-
-/// Why one entry was omitted.
-enum Problem {
-    Denied,
-    Vanished,
-    Unreadable,
-}
-
-fn problem_from_errno(errno: u32) -> Problem {
-    match i32::try_from(errno) {
-        Ok(libc::EACCES | libc::EPERM) => Problem::Denied,
-        Ok(libc::ENOENT) => Problem::Vanished,
-        _ => Problem::Unreadable,
-    }
-}
-
-fn read_u32(buf: &[u8], pos: usize) -> Option<u32> {
-    let bytes = buf.get(pos..pos.checked_add(4)?)?;
-    Some(u32::from_ne_bytes(bytes.try_into().ok()?))
-}
-
-/// A bounds-checked reader over one entry.
-struct Cursor<'a> {
-    buf: &'a [u8],
-    pos: usize,
-}
-
-impl Cursor<'_> {
-    fn take(&mut self, n: usize) -> Result<&[u8], Problem> {
-        let end = self.pos.checked_add(n).ok_or(Problem::Unreadable)?;
-        let bytes = self.buf.get(self.pos..end).ok_or(Problem::Unreadable)?;
-        self.pos = end;
-        Ok(bytes)
-    }
-
-    fn u32(&mut self) -> Result<u32, Problem> {
-        let bytes = self.take(4)?;
-        Ok(u32::from_ne_bytes(
-            bytes.try_into().map_err(|_| Problem::Unreadable)?,
-        ))
-    }
-
-    fn i32(&mut self) -> Result<i32, Problem> {
-        let bytes = self.take(4)?;
-        Ok(i32::from_ne_bytes(
-            bytes.try_into().map_err(|_| Problem::Unreadable)?,
-        ))
-    }
-
-    fn u64(&mut self) -> Result<u64, Problem> {
-        let bytes = self.take(8)?;
-        Ok(u64::from_ne_bytes(
-            bytes.try_into().map_err(|_| Problem::Unreadable)?,
-        ))
-    }
-
-    fn i64(&mut self) -> Result<i64, Problem> {
-        let bytes = self.take(8)?;
-        Ok(i64::from_ne_bytes(
-            bytes.try_into().map_err(|_| Problem::Unreadable)?,
-        ))
-    }
-
-    /// A `timespec`: seconds then nanoseconds, both 64-bit, 4-byte aligned.
-    fn timespec(&mut self) -> Result<(i64, i64), Problem> {
-        let sec = self.i64()?;
-        let nsec = self.i64()?;
-        Ok((sec, nsec))
-    }
-}
-
-/// One entry, through its own returned set.
-fn parse_entry(
-    entry: &[u8],
-    want_atime: bool,
-    out: &mut Listing,
-    type_fallback: &mut TypeFallback<'_>,
-) -> Result<(), Problem> {
-    let mut cur = Cursor { buf: entry, pos: 4 };
-    let common = cur.u32()?;
-    let _vol = cur.u32()?;
-    let dir = cur.u32()?;
-    let file = cur.u32()?;
-    let _fork = cur.u32()?;
-    if common & ATTR_CMN_ERROR != 0 {
-        let errno = cur.u32()?;
-        if errno != 0 {
-            return Err(problem_from_errno(errno));
-        }
-    }
-    if common & libc::ATTR_CMN_NAME == 0 {
-        return Err(Problem::Unreadable);
-    }
-    let ref_pos = cur.pos;
-    let offset = cur.i32()?;
-    let length = cur.u32()? as usize;
-    let start = ref_pos
-        .checked_add(usize::try_from(offset).map_err(|_| Problem::Unreadable)?)
-        .ok_or(Problem::Unreadable)?;
-    let end = start.checked_add(length).ok_or(Problem::Unreadable)?;
-    let name_raw = entry.get(start..end).ok_or(Problem::Unreadable)?;
-    let name = name_raw
-        .iter()
-        .position(|b| *b == 0)
-        .and_then(|nul| name_raw.get(..nul))
-        .unwrap_or(name_raw);
-    if name.is_empty() {
-        return Err(Problem::Unreadable);
-    }
-    if common & libc::ATTR_CMN_OBJTYPE == 0 {
-        // Without the type a directory would be recorded as a leaf and its
-        // whole subtree silently lost: one stat through the directory
-        // descriptor says what the entry is, and every fact is taken from it.
-        // Only when that stat fails too does the entry stay a withheld leaf.
-        if let Some(meta) = type_fallback(name) {
-            out.push(name, meta);
-            return Ok(());
-        }
-    }
-
-    let mut withheld = false;
-    let dev = if common & libc::ATTR_CMN_DEVID != 0 {
-        f64::from(cur.i32()?)
-    } else {
-        withheld = true;
-        0.0
-    };
-    let objtype = if common & libc::ATTR_CMN_OBJTYPE != 0 {
-        cur.u32()?
-    } else {
-        withheld = true;
-        VNON
-    };
-    let mtime_ms = if common & libc::ATTR_CMN_MODTIME != 0 {
-        let (sec, nsec) = cur.timespec()?;
-        time_ms(sec, nsec)
-    } else {
-        withheld = true;
-        f64::NAN
-    };
-    let atime_ms = if common & libc::ATTR_CMN_ACCTIME != 0 {
-        let (sec, nsec) = cur.timespec()?;
-        if want_atime {
-            time_ms(sec, nsec)
-        } else {
-            f64::NAN
-        }
-    } else {
-        f64::NAN
-    };
-    let st_flags = if common & libc::ATTR_CMN_FLAGS != 0 {
-        cur.u32()?
-    } else {
-        withheld = true;
-        0
-    };
-    let ino = if common & libc::ATTR_CMN_FILEID != 0 {
-        u128::from(cur.u64()?)
-    } else {
-        withheld = true;
-        0
-    };
-
-    // The directory group sits between the common and the file group.
-    let mountstatus = if dir & libc::ATTR_DIR_MOUNTSTATUS != 0 {
-        cur.u32()?
-    } else {
-        0
-    };
-    let kind = match objtype {
-        VDIR => KIND_DIR,
-        VLNK => KIND_SYMLINK,
-        _ => KIND_FILE,
-    };
-    // Only a regular file or a symlink has a data fork whose absence means
-    // something was withheld; a directory, a socket, a fifo or a device has none.
-    let needs_file_group = matches!(objtype, VREG | VLNK);
-    let nlink = if file & libc::ATTR_FILE_LINKCOUNT != 0 {
-        cur.u32()?
-    } else {
-        withheld |= needs_file_group;
-        0
-    };
-    let alloc = if file & libc::ATTR_FILE_ALLOCSIZE != 0 {
-        cur.i64()? as f64
-    } else {
-        withheld |= needs_file_group;
-        0.0
-    };
-    let size = if file & libc::ATTR_FILE_DATALENGTH != 0 {
-        cur.i64()? as f64
-    } else {
-        withheld |= needs_file_group;
-        0.0
-    };
-    let (size, alloc) = if kind == KIND_DIR {
-        (0.0, 0.0)
-    } else {
-        (size, alloc)
-    };
-    let flags = if st_flags & SF_DATALESS != 0 {
-        FLAG_DATALESS
-    } else {
-        0
-    };
-    out.push(
-        name,
-        Meta {
-            kind,
-            flags,
-            size,
-            alloc,
-            mtime_ms,
-            atime_ms,
-            dev,
-            ino,
-            nlink,
-            withheld,
-        },
-    );
-    if kind == KIND_DIR && mountstatus & libc::DIR_MNTSTATUS_MNTPOINT != 0 {
-        out.mount_points.push(out.entries.len().saturating_sub(1));
-    }
-    Ok(())
 }
 
 /// [`crate::probe`] on macOS: reads the root's own metadata, opens it, and

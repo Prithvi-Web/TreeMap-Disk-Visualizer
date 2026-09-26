@@ -9,6 +9,7 @@
 //! walk core never calls the OS directly, so a fake `Lister` drives it in
 //! tests on every platform.
 
+use std::any::Any;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
@@ -275,7 +276,9 @@ pub fn push_stored(out: &mut Vec<u8>, raw: &[u8]) {
 /// reused for every directory, and the staged [`Listing`].
 #[derive(Debug)]
 pub struct ListBuffer {
-    /// The bulk listing buffer (`getattrlistbulk` writes into it).
+    /// The bulk listing buffer (`getattrlistbulk` writes into it). While a
+    /// listing a lister stopped early is open ([`Listed::More`]), it holds the
+    /// unread rest of that listing's last batch: nothing else may write it.
     pub raw: Vec<u8>,
     /// The staged entries of the current directory.
     pub listing: Listing,
@@ -288,6 +291,9 @@ pub struct ListBuffer {
     /// returned, which the entry count alone cannot (entries are counted only
     /// once a directory's listing is complete).
     pub heartbeat: Arc<AtomicU64>,
+    /// Where a listing a lister stopped early goes on from (its open
+    /// descriptor or handle and its place): see [`ListBuffer::keep_cursor`].
+    cursor: Option<Box<dyn Any + Send>>,
 }
 
 impl ListBuffer {
@@ -319,6 +325,7 @@ impl ListBuffer {
             listing: Listing::default(),
             stop,
             heartbeat,
+            cursor: None,
         }
     }
 
@@ -331,6 +338,43 @@ impl ListBuffer {
     pub fn beat(&self) {
         self.heartbeat.fetch_add(1, Ordering::AcqRel);
     }
+
+    /// Keeps `cursor`, where the listing now in the buffer goes on from, for
+    /// the lister's [`Lister::list_more`]. Whatever ends the listing closes
+    /// it: the lister taking it back and finishing, [`ListBuffer::close_cursor`],
+    /// the buffer's next listing, or the buffer's drop.
+    pub fn keep_cursor<C: Any + Send>(&mut self, cursor: C) {
+        self.cursor = Some(Box::new(cursor));
+    }
+
+    /// The cursor kept for the listing in the buffer, when it is a `C`; a
+    /// cursor of any other kind is closed.
+    pub fn take_cursor<C: Any + Send>(&mut self) -> Option<C> {
+        let cursor = self.cursor.take()?;
+        cursor.downcast::<C>().ok().map(|cursor| *cursor)
+    }
+
+    /// Ends the listing in the buffer, if a lister stopped it early: its cursor
+    /// (descriptor, handle) is closed now.
+    pub fn close_cursor(&mut self) {
+        self.cursor = None;
+    }
+
+    /// True while the listing in the buffer can be read on.
+    pub fn has_cursor(&self) -> bool {
+        self.cursor.is_some()
+    }
+}
+
+/// How far a listing got: what [`Lister::list_until`] and
+/// [`Lister::list_more`] answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Listed {
+    /// The listing is complete, listed through this path.
+    Complete(FastPath),
+    /// The listing holds as many entries as it was allowed and more remain;
+    /// its cursor is kept in the buffer for [`Lister::list_more`].
+    More,
 }
 
 /// A platform's listing. Implemented for macOS in [`darwin`], Windows in
@@ -344,6 +388,80 @@ pub trait Lister: Send + Sync {
     /// did it, or the refusal.
     fn list(&self, dir: &Path, want_atime: bool, buf: &mut ListBuffer)
     -> Result<FastPath, Refusal>;
+
+    /// Lists `dir` into `buf.listing` (cleared first, and any earlier cursor
+    /// closed) until the listing is complete, or holds `limit` entries (at
+    /// least one: 0 counts as 1) with more to read (T6b; R89). A lister that
+    /// reads in batches never holds more than `limit` when it answers: it
+    /// stops inside a batch if it must, keeping the batch's unread rest (in
+    /// `buf.raw`) and its open descriptor or handle as the listing's cursor
+    /// ([`ListBuffer::keep_cursor`]), and answers [`Listed::More`].
+    ///
+    /// Everything a listing does per batch happens as in [`Lister::list`]: a
+    /// batch beats the heartbeat, a cancel is seen between batches, a failure
+    /// in any batch refuses the folder. What it does once complete (sorting by
+    /// name, re-reading mount points, a directory's own times) happens once,
+    /// after its last batch.
+    ///
+    /// The default lists the whole folder at once through [`Lister::list`]:
+    /// such a lister never answers `More`, so its listings are not bounded.
+    fn list_until(
+        &self,
+        dir: &Path,
+        want_atime: bool,
+        buf: &mut ListBuffer,
+        limit: usize,
+    ) -> Result<Listed, Refusal> {
+        // The whole listing, whatever the limit.
+        let _ = limit;
+        buf.close_cursor();
+        self.list(dir, want_atime, buf).map(Listed::Complete)
+    }
+
+    /// Reads on in the listing [`Lister::list_until`] left `More`, from its
+    /// cursor, until it is complete or holds `limit` entries with more to
+    /// read. A buffer without this lister's cursor is refused as unreadable.
+    /// The default, whose `list_until` never answers `More`, always refuses.
+    fn list_more(&self, buf: &mut ListBuffer, limit: usize) -> Result<Listed, Refusal> {
+        // No listing of this lister's is ever left open.
+        let _ = limit;
+        buf.close_cursor();
+        Err(Refusal::Unreadable)
+    }
+}
+
+/// [`Lister::list`] for a lister that reads in batches: [`Lister::list_until`]
+/// without a limit, read on to the end should it answer `More`.
+pub fn list_whole<L: Lister + ?Sized>(
+    lister: &L,
+    dir: &Path,
+    want_atime: bool,
+    buf: &mut ListBuffer,
+) -> Result<FastPath, Refusal> {
+    match lister.list_until(dir, want_atime, buf, usize::MAX)? {
+        Listed::Complete(path) => Ok(path),
+        Listed::More => read_rest(lister, buf),
+    }
+}
+
+/// Reads on in the listing `lister` left `More` until it is complete. A
+/// lister answering `More` without reading anything would never finish: its
+/// listing is refused as unreadable instead.
+pub fn read_rest<L: Lister + ?Sized>(
+    lister: &L,
+    buf: &mut ListBuffer,
+) -> Result<FastPath, Refusal> {
+    loop {
+        let before = buf.listing.len();
+        match lister.list_more(buf, usize::MAX)? {
+            Listed::Complete(path) => return Ok(path),
+            Listed::More if buf.listing.len() > before => {}
+            Listed::More => {
+                buf.close_cursor();
+                return Err(Refusal::Unreadable);
+            }
+        }
+    }
 }
 
 /// The lister for this platform, or [`WalkError::Unsupported`] naming the platform.
