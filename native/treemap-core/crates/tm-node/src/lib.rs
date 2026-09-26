@@ -23,7 +23,10 @@
 //! Node's thread — moves the columns into typed arrays without copying and frees
 //! the handle. The walk obeys the same process-wide governor `governorConfigure`
 //! drives. With `scanStart`'s `synthetic` option the walk lists a scripted tree
-//! (Phase 4, P4-8) under the folder `syntheticTempFolder` names.
+//! (Phase 4, P4-8) under the folder `syntheticTempFolder` names. With
+//! `storage: "memory"` the walk feeds a memory sink instead of keeping columns,
+//! and `storeTake` — an [`AsyncTask`] — hands its sealed store over (the
+//! [`store`] module, Phase 4 T8b).
 //!
 //! The Windows MFT turbo mode (M6) adds four exports. `mftPrecheck` runs the
 //! helper's checks that need no administrator (the root's drive is local,
@@ -57,9 +60,14 @@ use tm_governor::{
     Budget, Governor, HoldReport, Preset, capabilities, hold, platform_sampler, platform_signals,
 };
 use tm_mft::columns::{ColumnsFile, OUTPUT_EXTENSION, decode as decode_columns, is_output_name};
+use tm_store::MemorySink;
+use tm_walk::walk::GovernorPacer;
 use tm_walk::{
-    Progress, Refusal, SyntheticSpec, WalkError, WalkHandle, WalkOptions, WalkOutput, WalkStats,
+    ListingSink, Progress, Refusal, SyntheticSpec, WalkError, WalkHandle, WalkOptions, WalkOutput,
+    WalkStats,
 };
+
+pub mod store;
 
 /// The budget the governor starts with before the app configures it: Automatic,
 /// Balanced that yields to battery and heat, which is also the app's default setting.
@@ -336,7 +344,7 @@ impl<'task> ScopedTask<'task> for HoldTask {
 /* ------------------------------ the native walker (Phase 3) ------------------------------ */
 
 /// The shape `scanStart` accepts, for the refusal message.
-const START_SHAPE: &str = "scanStart needs options like { neverDescend: string[], wantAtime: boolean, maxWorkers?: number, bufferBytes?: number, synthetic?: { entries: number, seed?: number, fanOut?: number, depth?: number, folderShare?: 0..1, nameLength?: number, sizeMedian?: number, sizeSigma?: 0..10, linkShare?: 0..1 } }";
+const START_SHAPE: &str = "scanStart needs options like { neverDescend: string[], wantAtime: boolean, maxWorkers?: number, bufferBytes?: number, synthetic?: { entries: number, seed?: number, fanOut?: number, depth?: number, folderShare?: 0..1, nameLength?: number, sizeMedian?: number, sizeSigma?: 0..10, linkShare?: 0..1 }, storage?: 'memory', store?: { rootName: string, rootMtimeMs: number, blocksAreMeaningful: boolean, sortChildren: boolean, containerRules: { text: string, wholeName: boolean, folders: boolean, kind: number }[], headroomRows: number, capRows: number, nameBytes: number } }";
 /// The widest spread `synthetic.sizeSigma` takes (the natural log's).
 const SIZE_SIGMA_MAX: f64 = 10.0;
 /// Thousandths in one: `sizeSigma` crosses as whole thousandths.
@@ -365,6 +373,13 @@ struct StartOptions {
     /// absent or null lists the disk.
     #[serde(default)]
     synthetic: Option<SyntheticOptions>,
+    /// `"memory"`: the walk feeds a memory sink, whose store `storeTake` hands
+    /// over (the `store` module); absent or null, `scanTake` takes the columns.
+    #[serde(default)]
+    storage: Option<String>,
+    /// How the memory sink builds the store; with `storage: "memory"` only.
+    #[serde(default)]
+    store: Option<store::StoreOptions>,
 }
 
 /// `scanStart`'s `synthetic` option: the entry count, and the rest of the
@@ -432,18 +447,22 @@ fn synthetic_spec(options: &SyntheticOptions) -> Result<SyntheticSpec> {
     })
 }
 
-/// A walk that has ended: the last progress it reported and its outcome.
+/// A walk that has ended: the last progress it reported, its outcome, and a
+/// memory-mode scan's sink.
 struct Finished {
     progress: Progress,
     result: std::result::Result<WalkOutput, WalkError>,
+    sink: Option<Arc<MemorySink>>,
 }
 
-/// One walk as the table holds it: running behind its handle, or finished. The
-/// poll that first sees `done` takes the handle so that a failure is reported by
+/// One walk as the table holds it: running behind its handle, or finished,
+/// with a memory-mode scan's sink (the `store` module) — which goes wherever
+/// the slot goes, so a slot removed releases the store it holds. The poll that
+/// first sees `done` takes the handle so that a failure is reported by
 /// `scanPoll` and thrown by `scanTake`; `scanTake` removes the slot either way,
 /// but only once the walk is done — a running one is refused and stays.
 enum Slot {
-    Running(WalkHandle),
+    Running(WalkHandle, Option<Arc<MemorySink>>),
     Finished(Box<Finished>),
 }
 
@@ -662,11 +681,27 @@ pub fn scan_start(root: String, opts: Option<Value>) -> Result<u32> {
         synthetic,
         ..WalkOptions::new(PathBuf::from(root))
     };
+    let sink = store::memory_sink(options.storage.as_deref(), options.store.as_ref())?;
     let governor = Arc::new(shared().governor.clone());
-    let handle = tm_walk::start(walk_options, governor).map_err(|err| walk_error(&err))?;
+    let handle = match &sink {
+        None => tm_walk::start(walk_options, governor).map_err(|err| walk_error(&err))?,
+        Some(sink) => {
+            let mut walk_options = walk_options;
+            store::feed_only(&mut walk_options, sink);
+            let lister = tm_walk::lister_for(&walk_options).map_err(|err| walk_error(&err))?;
+            let sinks: Vec<Arc<dyn ListingSink>> = vec![sink.clone()];
+            tm_walk::start_with_sinks(
+                walk_options,
+                Arc::new(GovernorPacer::new(governor)),
+                lister,
+                sinks,
+            )
+            .map_err(|err| walk_error(&err))?
+        }
+    };
     let table = scans();
     let id = table.next.fetch_add(1, Ordering::AcqRel);
-    lock(&table.slots).insert(id, Slot::Running(handle));
+    lock(&table.slots).insert(id, Slot::Running(handle, sink));
     Ok(id)
 }
 
@@ -698,7 +733,7 @@ pub fn scan_poll(handle: u32) -> Result<Value> {
         .remove(&handle)
         .ok_or_else(|| unknown_handle(handle))?;
     let (progress, error) = match slot {
-        Slot::Running(walk) => {
+        Slot::Running(walk, sink) => {
             let progress = walk.progress();
             if progress.done {
                 let result = walk.take();
@@ -708,11 +743,12 @@ pub fn scan_poll(handle: u32) -> Result<Value> {
                     Slot::Finished(Box::new(Finished {
                         progress: progress.clone(),
                         result,
+                        sink,
                     })),
                 );
                 (progress, error)
             } else {
-                slots.insert(handle, Slot::Running(walk));
+                slots.insert(handle, Slot::Running(walk, sink));
                 (progress, None)
             }
         }
@@ -733,7 +769,7 @@ fn with_running(handle: u32, act: impl FnOnce(&WalkHandle)) -> Result<()> {
     let slots = lock(&scans().slots);
     match slots.get(&handle) {
         None => Err(unknown_handle(handle)),
-        Some(Slot::Running(walk)) => {
+        Some(Slot::Running(walk, _)) => {
             act(walk);
             Ok(())
         }
@@ -778,7 +814,7 @@ pub fn scan_take(handle: u32) -> Result<WalkResult> {
         let slot = slots
             .remove(&handle)
             .ok_or_else(|| unknown_handle(handle))?;
-        if let Slot::Running(walk) = &slot
+        if let Slot::Running(walk, _) = &slot
             && !walk.progress().done
         {
             slots.insert(handle, slot);
@@ -786,12 +822,17 @@ pub fn scan_take(handle: u32) -> Result<WalkResult> {
         }
         slot
     };
-    let result = match slot {
+    let (result, sink) = match slot {
         // Done: the driver has finished, so the join returns at once.
-        Slot::Running(walk) => walk.take(),
-        Slot::Finished(finished) => finished.result,
+        Slot::Running(walk, sink) => (walk.take(), sink),
+        Slot::Finished(finished) => (finished.result, finished.sink),
     };
     let output = result.map_err(|err| walk_error(&err))?;
+    // A memory-mode scan is freed here too, and its store with its sink: its rows
+    // are `storeTake`'s, and a take that frees it is how Node settles a walk.
+    if sink.is_some() {
+        return Err(refuse(store::IN_THE_STORE));
+    }
     Ok(columns(output))
 }
 

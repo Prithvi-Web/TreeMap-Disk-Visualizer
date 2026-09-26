@@ -179,6 +179,47 @@ export interface ScanStartOptions {
    * (or that folder by its resolved path). Omitted or null lists the disk.
    */
   synthetic?: SyntheticSource | null;
+  /**
+   * `'memory'` (Phase 4, T8b; behind a flag until T10): the walk numbers its
+   * entries in blocks, keeps no columns of its own, and feeds tm-store's
+   * memory sink, which seals the finalized store on the walk's own thread as
+   * the walk finishes. `storeTake()` hands the store over; `scanTake()` frees
+   * such a scan and throws. Omitted or null: the columns `scanTake()` returns.
+   */
+  storage?: 'memory' | null;
+  /** What the memory sink builds with: required with `storage: 'memory'` and refused without it. */
+  store?: StoreStartOptions | null;
+}
+
+/** How the memory sink builds the store (tm-store's `BuildOptions`, and the sink's room). */
+export interface StoreStartOptions {
+  /** The root's name as the store shows it: Node's `rootName(rootPath)`. */
+  rootName: string;
+  /** Node's own stat of the root, kept where the walk withholds the root's time. */
+  rootMtimeMs: number;
+  /** Whether allocated bytes mean anything here: the sparse and slack tallies. */
+  blocksAreMeaningful: boolean;
+  /** Whether each folder's children are ordered by their names' bytes (false on Windows, where the listing's order stands). */
+  sortChildren: boolean;
+  /** `detectContainerKind`'s rules, in its order. */
+  containerRules: NativeContainerRule[];
+  /** Rows kept free after the scan's rows, for the watcher's additions. */
+  headroomRows: number;
+  /** Rows the sink reserves, the headroom among them: a walk with more entries fails with the ceiling's sentence. */
+  capRows: number;
+  /** Name bytes the sink reserves, the root's and the headroom's among them. */
+  nameBytes: number;
+}
+
+/** One rule of `detectContainerKind`, as data. */
+export interface NativeContainerRule {
+  /** Lower-case ASCII with a dot: what a name must equal (`wholeName`) or end with, ignoring ASCII case. */
+  text: string;
+  wholeName: boolean;
+  /** Whether the rule is for folders, or for everything else. */
+  folders: boolean;
+  /** The store's container number (1–7). */
+  kind: number;
 }
 
 /**
@@ -345,6 +386,72 @@ export function scanCancel(handle: number): void;
  * can never freeze the app; cancel it and poll to `done` first, or leave it.
  */
 export function scanTake(handle: number): WalkResult;
+
+/** The store's tallies, before Node's passes over the candidates (tm-store's `Counters`). */
+export interface NativeStoreCounters {
+  dirs: number;
+  files: number;
+  hardlinkedFiles: number;
+  hardlinkedBytes: number;
+  cloudFiles: number;
+  cloudBytes: number;
+  sparseFiles: number;
+  sparseBytes: number;
+  slackBytes: number;
+  /** Store ids of the folders the OS would not let the walk list, ascending. */
+  deniedDirs: number[];
+  vanishedDirs: number;
+  unreadableDirs: number;
+}
+
+/**
+ * A memory-mode scan's store (`storeTake`): `PackedScanStore.adoptColumns`'
+ * columns — every per-node column `capacity` rows long, the headroom rows
+ * zero; `nameOff` one row longer; `names` with `namesLen` bytes in use —
+ * over the Rust store's own memory in plain Node (freed when JavaScript drops
+ * the arrays) and copied where Electron refuses that. Ids are the walk's
+ * blocks': `parent[id] < id`, each folder's children one range, not
+ * breadth-first. The candidate lists and the sparse terms are in
+ * breadth-first order, the ingest's.
+ */
+export interface NativeStore {
+  n: number;
+  capacity: number;
+  parent: Int32Array;
+  size: Float64Array;
+  mtime: Float64Array;
+  /** Absent when no row has an access time. */
+  atime?: Float64Array;
+  flags: Uint16Array;
+  ext: Uint16Array;
+  container: Uint8Array;
+  cloudProv: Uint8Array;
+  nameOff: Uint32Array;
+  names: Uint8Array;
+  namesLen: number;
+  childStart: Uint32Array;
+  childCnt: Uint32Array;
+  extDict: string[];
+  /** Ids whose extension is past the dictionary, ascending, and each one's text. */
+  extOverflowIds: Uint32Array;
+  extOverflowTexts: string[];
+  cloudCandidates: Uint32Array;
+  /** Ascending. */
+  textCandidates: Uint32Array;
+  sparseTermIds: Uint32Array;
+  sparseTermBytes: Float64Array;
+  counters: NativeStoreCounters;
+  stats: WalkStats;
+}
+
+/**
+ * A memory-mode scan's store, once a poll has reported `done`, and the handle
+ * freed — off the calling thread. Rejects with the walk's own sentence when it
+ * failed or was cancelled (the handle is freed either way), and refuses —
+ * keeping the handle — a walk still running, a scan that was not started with
+ * `storage: 'memory'`, and an unknown handle.
+ */
+export function storeTake(handle: number): Promise<NativeStore>;
 
 /* ------------------------------ the Windows MFT turbo mode (W6, M6) ------------------------------ */
 

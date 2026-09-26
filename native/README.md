@@ -109,7 +109,8 @@ strings, `Option` as `null`, shares as fractions of the whole machine (0..1).
 | `scanPoll(handle)` | `{ done, error, entries, dirs, files, bytes, currentPath }` from the walk's atomics — no callback, no `ThreadsafeFunction` (decision P3-1); once done, how the walk ended is in `error` |
 | `scanPause(handle)` / `scanResume(handle)` | stop the workers at their next check (between directories and every 256 entries inside one) and let them go on; nothing is re-listed |
 | `scanCancel(handle)` | ends the walk; `scanTake` then throws the cancellation and frees the handle |
-| `scanTake(handle)` | the columns (`WalkResult` in `native/index.d.ts`): typed arrays created from the Rust vectors without copying, the hard-link and refusal side tables, and the stats; frees the handle; throws in plain English when the walk failed or was cancelled (freeing it too) or when the handle is unknown |
+| `scanTake(handle)` | the columns (`WalkResult` in `native/index.d.ts`): typed arrays created from the Rust vectors without copying, the hard-link and refusal side tables, and the stats; frees the handle; throws in plain English when the walk failed or was cancelled (freeing it too) or when the handle is unknown; a memory-mode scan it frees and throws for, since its rows are in its store |
+| `storeTake(handle)` | a memory-mode scan's store (`NativeStore`), as a promise, off the calling thread: `PackedScanStore.adoptColumns`' columns at capacity length — the store's own mappings in plain Node, copied where Electron refuses that — the candidate lists and sparse terms in breadth-first order, the counters and the stats; frees the handle; rejects with the walk's sentence when it failed or was cancelled, and refuses (keeping the handle) a walk still running, a scan without `storage: 'memory'` and an unknown handle (see "The memory mode" below) |
 
 The governor is one per process, started lazily on the first call with this
 machine's sampler and signals, at the Automatic budget (the app's default);
@@ -189,6 +190,21 @@ and the store at sizes no disk here holds (the 100M-entry gate).
   `bench compare` refuses to set one beside a file-system run
   (`bench/lib/report.ts`, rule 8); the presets are `synthetic10m` and
   `synthetic100m` in `bench/lib/corpus.ts`.
+
+## The memory mode (Phase 4, T8b)
+
+`scanStart(root, { …, storage: 'memory', store: { … } })` (behind a flag in
+the app until T10) numbers the walk's entries in blocks, keeps no columns of
+the walk's own, and feeds tm-store's `MemorySink`, which writes the finalized
+store's columns while the walk runs and seals them on the walk's own thread
+as it finishes (`ListingSink::finish`: the seal sees a cancel and moves the
+heartbeat). `store` is tm-store's `BuildOptions` — `rootName`,
+`rootMtimeMs`, `blocksAreMeaningful`, `sortChildren`, `containerRules`,
+`headroomRows` — and the sink's room, `capRows` and `nameBytes`: a walk with
+more entries fails with the ceiling's sentence. `storeTake` hands the store
+over; the sink travels with the scan's slot, so a scan freed any way releases
+its store. The store's ids are the walk's blocks' (`parent[id] < id`, each
+folder's children one range), not breadth-first.
 
 ## Threads
 

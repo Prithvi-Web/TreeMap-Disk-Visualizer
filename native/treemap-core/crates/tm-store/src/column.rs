@@ -334,6 +334,17 @@ impl<T: Zeroable> AnonRows<T> {
         // the column is not lazy, and none when it is.
         unsafe { std::slice::from_raw_parts(self.start.as_ptr(), rows) }
     }
+
+    /// The start of the rows and the headroom after them, and how many there are — every
+    /// row the mapping spans, or none while the column is lazy — for lending the mapping
+    /// to an owner outside Rust (the napi hand-over, T8b). Taking them is safe; using them
+    /// is the owner's promise: it keeps the column alive while it holds them, reads and
+    /// writes only whole `T`s below the count, and leaves the column itself unused
+    /// meanwhile.
+    pub fn room_mut(&mut self) -> (NonNull<T>, usize) {
+        let rows = if self.lazy { 0 } else { self.capacity };
+        (self.start, rows)
+    }
 }
 
 impl<T: Zeroable> Clone for AnonRows<T> {

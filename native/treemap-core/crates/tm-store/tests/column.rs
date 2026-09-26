@@ -410,3 +410,39 @@ fn a_cloned_anon_column_is_a_mapping_of_its_own_with_the_same_rows() -> TestResu
     assert_eq!(Column::Owned(original.as_slice().to_vec()), original);
     Ok(())
 }
+
+#[test]
+fn an_anon_columns_room_can_be_lent_whole_and_written_through() -> TestResult {
+    let _turn = turn();
+    let mut column = Column::<u32>::anon(ROWS, CAPACITY)?;
+    for (i, value) in column.as_mut_slice().iter_mut().enumerate() {
+        *value = row(i);
+    }
+    let Column::Anon(rows) = &mut column else {
+        return Err("an anon column".into());
+    };
+    let (start, count) = rows.room_mut();
+    assert_eq!(
+        count, CAPACITY,
+        "every row the mapping spans, the headroom included"
+    );
+    let last = CAPACITY.checked_sub(1).ok_or("a column with room")?;
+    // SAFETY: `start` and `count` came from the column, which is alive and not otherwise
+    // borrowed while they are used, and `last` is below `count`: what a foreign owner of
+    // the lent rows does.
+    let first = unsafe {
+        start.as_ptr().add(last).write(77);
+        start.as_ptr().read()
+    };
+    assert_eq!(first, row::<u32>(0), "the rows are the column's own");
+    let all = column
+        .with_headroom()
+        .ok_or("an anon column shows its headroom")?;
+    assert_eq!(
+        all.get(last),
+        Some(&77),
+        "a write through the lent room lands in the column"
+    );
+    assert_eq!(column.len(), ROWS, "lending the room changes no row count");
+    Ok(())
+}
