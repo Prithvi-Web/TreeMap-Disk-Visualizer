@@ -207,13 +207,19 @@ test('a cancel that lands while the scan re-checks its root leaves it cancelled,
     let scanId = '';
     setRootCheckForTests(async () => {
       checks++;
+      // The walk can reach this check before startScan has answered: a native
+      // walk of five files can be done by its first poll, and then nothing in
+      // the engine yields until here (seen on CI's macOS leg, 26 Sep 2026: the
+      // cancel went to scan id ''). The engine awaits this check, so holding it
+      // until this test knows its scan keeps the window open for the cancel.
+      await waitFor(() => scanId !== '', 'this test learning which scan it started');
       cancelledInside = cancelScan(scanId);
     });
     process.env.TREEMAP_NO_GDU = '1';
     try {
       const scan = await startScan(fixture, {});
       scanId = scan.scanId;
-      await waitFor(() => checks > 0 || getScan(scanId)?.status !== 'running', 'the scan reaching its root check');
+      await waitFor(() => cancelledInside !== null || getScan(scanId)?.status !== 'running', 'the root check cancelling the scan');
     } finally {
       delete process.env.TREEMAP_NO_GDU;
       setRootCheckForTests(null);
