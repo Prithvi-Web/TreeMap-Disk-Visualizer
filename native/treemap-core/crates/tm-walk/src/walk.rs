@@ -126,8 +126,20 @@ impl std::fmt::Debug for WalkHandle {
 /// apart from [`WalkStats`], whose shape is tm-mft's wire format too.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WalkCounts {
-    /// The most jobs the queue held at once.
+    /// The most folders waiting in the queue at once. Not bounded by
+    /// [`crate::WalkOptions::q_max`]: a folder with more subfolders than that
+    /// queues them all (T6, R88), and each waits in its listing's range at the
+    /// cost of its name and 8 bytes ([`WalkCounts::queue_bytes_peak`]).
     pub queue_peak: u64,
+    /// The most ranges queued at once: one per listing with subfolders still
+    /// to walk (and the root's own job before it is taken). With one worker
+    /// at most `q_max` plus the depth below the root, less one; with more,
+    /// see the queue's module docs.
+    pub ranges_peak: u64,
+    /// The most bytes the queued ranges held at once, measured from their
+    /// allocations' lengths: [`crate::RANGE_BYTES`] and the parent's path per
+    /// range, and per folder its name and 8 bytes, until its range drains.
+    pub queue_bytes_peak: u64,
     /// Blocks reserved (block numbering): one per listing committed.
     pub blocks: u64,
     /// Listings that went through the big-listing semaphore.
@@ -148,6 +160,8 @@ impl WalkHandle {
         let (big_listings, big_waiting, big_peak) = s.big.counts();
         WalkCounts {
             queue_peak: u64::try_from(s.queue.peak_len()).unwrap_or(u64::MAX),
+            ranges_peak: u64::try_from(s.queue.peak_ranges()).unwrap_or(u64::MAX),
+            queue_bytes_peak: u64::try_from(s.queue.peak_bytes()).unwrap_or(u64::MAX),
             blocks: s.blocks.load(Ordering::Acquire),
             big_listings,
             big_waiting,
@@ -482,7 +496,6 @@ fn worker(shared: &Arc<Shared>, index: u32) -> Part {
         Arc::clone(&shared.cancelled),
         Arc::clone(&shared.heartbeat),
     );
-    let mut pending: Vec<DirJob> = Vec::new();
     let mut stage = Stage::default();
     let may_run = || index < shared.effective_target();
     while let Some(job) = shared.queue.next_job(&may_run) {
@@ -494,8 +507,8 @@ fn worker(shared: &Arc<Shared>, index: u32) -> Part {
         // still hand the job back, or `in_flight` never reaches zero and the
         // queue never closes: the panic becomes the walk's fault instead.
         let listed = catch_unwind(AssertUnwindSafe(|| match shared.numbering {
-            Numbering::Discovery => process_dir(shared, &mut part, &mut buf, &mut pending, &job),
-            Numbering::Blocks => process_listing(shared, &mut buf, &mut stage, &mut pending, &job),
+            Numbering::Discovery => process_dir(shared, &mut part, &mut buf, &job),
+            Numbering::Blocks => process_listing(shared, &mut buf, &mut stage, &job),
         }));
         if let Err(payload) = listed {
             shared.record_panic(&*payload);

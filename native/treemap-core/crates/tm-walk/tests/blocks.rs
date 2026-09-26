@@ -17,8 +17,8 @@ use tm_walk::platform::{ListBuffer, Lister, Meta};
 use tm_walk::walk::Pacer;
 use tm_walk::{
     BIG_LISTING, Block, CHUNK_BYTES, FastPath, KIND_DIR, KIND_FILE, ListingSink, Numbering,
-    Refusal, SyntheticSpec, WalkCounts, WalkError, WalkHandle, WalkOptions, WalkOutput, lister_for,
-    start_with, start_with_sinks, synthetic_temp_folder,
+    RANGE_BYTES, Refusal, SyntheticSpec, WalkCounts, WalkError, WalkHandle, WalkOptions,
+    WalkOutput, lister_for, start_with, start_with_sinks, synthetic_temp_folder,
 };
 
 type TestResult = Result<(), String>;
@@ -110,6 +110,9 @@ struct Tree {
     panic_at: Option<PathBuf>,
     /// Every folder listed, in order, with the entries' room its buffer had.
     listed: Mutex<Vec<(PathBuf, usize)>>,
+    /// Every path `list` was asked for, byte for byte as the walk joined it
+    /// (`listed` holds each one's key, which compares by component).
+    asked: Mutex<Vec<PathBuf>>,
     /// `stat_dir` calls so far, and the one (zero-based) that panics: call 0 is
     /// the check at the start, call 1 the driver's re-check at the end.
     stat_calls: AtomicU64,
@@ -130,6 +133,7 @@ impl Tree {
             gate: None,
             panic_at: None,
             listed: Mutex::new(Vec::new()),
+            asked: Mutex::new(Vec::new()),
             stat_calls: AtomicU64::new(0),
             stat_panic_on: None,
         }
@@ -227,6 +231,7 @@ impl Lister for Tree {
     ) -> Result<FastPath, Refusal> {
         let key = self.key(dir);
         lock(&self.listed).push((key.clone(), buf.listing.entries.capacity()));
+        lock(&self.asked).push(dir.to_path_buf());
         if self.panic_at.as_ref() == Some(&key) {
             panic_any(format!("fixture panic listing {}", key.display()));
         }
@@ -1331,5 +1336,460 @@ fn a_listing_buffer_shrinks_back_after_a_big_listing() -> TestResult {
         after <= BIG_LISTING,
         "the buffer kept room for {after} entries"
     );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// T6b: range jobs (R88)
+// ---------------------------------------------------------------------------
+
+/// A folder's path as the walk joins it (tm-walk's `child_path`): the OS
+/// bytes on Unix, their lossy spelling elsewhere.
+fn joined(dir: &Path, name: &[u8]) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        dir.join(std::ffi::OsStr::from_bytes(name))
+    }
+    #[cfg(not(unix))]
+    {
+        dir.join(&*String::from_utf8_lossy(name))
+    }
+}
+
+/// True when a name holds a separator: the walk refuses such a folder and
+/// never queues it.
+fn holds_a_separator(name: &[u8]) -> bool {
+    name.iter()
+        .any(|&b| b == b'/' || (cfg!(windows) && b == b'\\'))
+}
+
+/// `dir`'s subfolders the walk queues, in the order it queues them: the
+/// lister's order (by raw name where the lister sorts), re-sorted by stored
+/// name under block numbering; a name that is a path and a never-descend path
+/// left out. Each with its OS name and its joined path.
+fn queued_children(
+    tree: &Tree,
+    dir: &Path,
+    numbering: Numbering,
+    never: &[PathBuf],
+) -> Vec<(Vec<u8>, PathBuf)> {
+    let Some(Ok(listed)) = tree.folders.get(&tree.key(dir)) else {
+        return Vec::new();
+    };
+    let mut entries = listed.clone();
+    if tree.sorted {
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        if numbering == Numbering::Blocks {
+            // Stable: names stored alike keep their raw order.
+            entries.sort_by(|a, b| {
+                String::from_utf8_lossy(&a.0)
+                    .as_bytes()
+                    .cmp(String::from_utf8_lossy(&b.0).as_bytes())
+            });
+        }
+    }
+    entries
+        .into_iter()
+        .filter(|(name, meta)| meta.kind == KIND_DIR && !holds_a_separator(name))
+        .map(|(name, _)| {
+            let path = joined(dir, &name);
+            (name, path)
+        })
+        .filter(|(_, path)| !never.contains(path))
+        .collect()
+}
+
+/// T6's per-folder queue, kept here as the oracle of the range queue that
+/// replaced it: with one worker, the folders' paths (as T6 joined them) in
+/// the order they are listed, and the most that waited at once. The oldest
+/// folder goes first while fewer than `q_max` wait and the newest from then
+/// on (block numbering; discovery numbering's queue is first-in first-out
+/// however long it grows), and a listing's subfolders are queued together,
+/// after it.
+fn t6_schedule(
+    tree: &Tree,
+    numbering: Numbering,
+    q_max: usize,
+    never: &[PathBuf],
+) -> (Vec<PathBuf>, usize) {
+    let lifo_from = match numbering {
+        Numbering::Blocks => q_max,
+        Numbering::Discovery => usize::MAX,
+    };
+    let mut queue = VecDeque::from([tree.root.clone()]);
+    let mut peak = queue.len();
+    let mut order = Vec::new();
+    loop {
+        let next = if queue.len() >= lifo_from {
+            queue.pop_back()
+        } else {
+            queue.pop_front()
+        };
+        let Some(dir) = next else {
+            break;
+        };
+        order.push(dir.clone());
+        queue.extend(
+            queued_children(tree, &dir, numbering, never)
+                .into_iter()
+                .map(|(_, path)| path),
+        );
+        peak = peak.max(queue.len());
+    }
+    (order, peak)
+}
+
+/// Each path's bytes: `OsString` compares byte for byte where `PathBuf` does
+/// not (`/t6/` equals `/t6` as a path).
+fn os_strings(paths: &[PathBuf]) -> Vec<std::ffi::OsString> {
+    paths.iter().map(|p| p.as_os_str().to_owned()).collect()
+}
+
+/// The root's `wide` subfolders, each above `deep` levels of folders two wide.
+fn wide_then_deep(wide: u32, deep: u32) -> Tree {
+    let mut t = Tree::new(true);
+    for w in 0..wide {
+        let mut level = vec![t.dir("", &format!("w{w:03}"))];
+        for d in 0..deep {
+            let mut next = Vec::new();
+            for parent in &level {
+                t.file(parent, "f.bin", 1.0);
+                for k in 0..2 {
+                    next.push(t.dir(parent, &format!("d{d}k{k}")));
+                }
+            }
+            level = next;
+        }
+    }
+    t
+}
+
+/// A tree drawn from `seed`: five levels, the root with one to four
+/// subfolders and every folder below with none to four, and up to two files.
+fn seeded_tree(seed: u64) -> Tree {
+    let mut t = Tree::new(true);
+    let mut state = seed;
+    let mut draw = |n: u64| {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (state >> 33) % n
+    };
+    let mut level = vec![String::new()];
+    for depth in 0..5 {
+        let mut next = Vec::new();
+        for parent in &level {
+            for f in 0..draw(3) {
+                t.file(parent, &format!("f{f}"), 1.0);
+            }
+            let kids = if depth == 0 { 1 + draw(4) } else { draw(5) };
+            for k in 0..kids {
+                next.push(t.dir(parent, &format!("n{depth}-{k}")));
+            }
+        }
+        level = next;
+    }
+    t
+}
+
+/// A walked shape: what it is, the tree, `q_max`, and its never-descend
+/// folders (relative to the root).
+type Shape = (&'static str, Tree, usize, &'static [&'static str]);
+
+/// The shapes the schedule tests walk: both regimes of the queue, the walk's
+/// filters (refusals, a name that is a path, never-descend, names that are
+/// not UTF-8), sorted listings and listings in their own order.
+fn schedule_shapes() -> Vec<Shape> {
+    vec![
+        (
+            "complete, fan 4, depth 6, q 16",
+            complete_tree(4, 6),
+            16,
+            &[],
+        ),
+        ("complete, fan 2, depth 6, q 1", complete_tree(2, 6), 1, &[]),
+        ("mixed, sorted, q 4", mixed_tree(true), 4, &["never"]),
+        ("mixed, own order, q 2", mixed_tree(false), 2, &["never"]),
+        ("wide then deep, q 16", wide_then_deep(40, 3), 16, &[]),
+        ("seeded, q 8", seeded_tree(7), 8, &[]),
+    ]
+}
+
+#[test]
+fn at_one_worker_folders_are_listed_in_t6s_order() -> TestResult {
+    for numbering in [Numbering::Discovery, Numbering::Blocks] {
+        for (what, tree, q_max, never) in schedule_shapes() {
+            let tree = Arc::new(tree);
+            let never: Vec<PathBuf> = never.iter().map(|rel| tree.abs(rel)).collect();
+            let mut opts = options(&tree, numbering, 1);
+            opts.q_max = q_max;
+            opts.never_descend.clone_from(&never);
+            let (_, counts) = walk_with(tree.clone(), opts, Vec::new())?;
+            let (expected, peak) = t6_schedule(&tree, numbering, q_max, &never);
+            let at = format!("{what}, {numbering:?}");
+            assert!(expected.len() > 20, "{at}: a shape worth walking");
+            let listed: Vec<PathBuf> = tree.listed().into_iter().map(|(p, _)| p).collect();
+            let keys: Vec<PathBuf> = expected.iter().map(|p| tree.key(p)).collect();
+            assert_eq!(listed, keys, "{at}: the listing order");
+            // Byte for byte, as `PathBuf`'s own equality compares components:
+            // the root as given, each subfolder its parent joined with its OS name.
+            let asked = lock(&tree.asked).clone();
+            assert_eq!(
+                os_strings(&asked),
+                os_strings(&expected),
+                "{at}: every folder listed by the path T6 joined for it"
+            );
+            assert_eq!(
+                usize::try_from(counts.queue_peak).ok(),
+                Some(peak),
+                "{at}: the most folders waiting at once"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// One listing's subfolders as the replay below holds them.
+struct ReplayRange {
+    paths: Vec<PathBuf>,
+    front: usize,
+    back: usize,
+    bytes: usize,
+}
+
+/// What the replay of a schedule over ranges saw.
+struct Replay {
+    order: Vec<PathBuf>,
+    ranges_peak: usize,
+    bytes_peak: usize,
+}
+
+/// T6's schedule with one worker, replayed over ranges as the queue now holds
+/// them: one per listing with subfolders to walk (the root's job alone
+/// first), the front range's first folder taken below `q_max` and the back
+/// range's last from it on, a drained range dropped. A range's bytes are
+/// tm-walk's accounting: `RANGE_BYTES`, the parent's path, and per folder its
+/// name and 8 bytes.
+fn replay_over_ranges(
+    tree: &Tree,
+    numbering: Numbering,
+    q_max: usize,
+    never: &[PathBuf],
+) -> Replay {
+    let lifo_from = match numbering {
+        Numbering::Blocks => q_max,
+        Numbering::Discovery => usize::MAX,
+    };
+    let root_bytes = RANGE_BYTES + tree.root.as_os_str().len() + 8;
+    let mut ranges = VecDeque::from([ReplayRange {
+        paths: vec![tree.root.clone()],
+        front: 0,
+        back: 1,
+        bytes: root_bytes,
+    }]);
+    let (mut waiting, mut bytes) = (1, root_bytes);
+    let mut replay = Replay {
+        order: Vec::new(),
+        ranges_peak: 1,
+        bytes_peak: bytes,
+    };
+    loop {
+        let from_back = waiting >= lifo_from;
+        let Some(range) = (if from_back {
+            ranges.back_mut()
+        } else {
+            ranges.front_mut()
+        }) else {
+            break;
+        };
+        let at = if from_back {
+            range.back -= 1;
+            range.back
+        } else {
+            range.front += 1;
+            range.front - 1
+        };
+        let dir = range.paths.get(at).cloned().unwrap_or_default();
+        if range.front == range.back {
+            bytes -= range.bytes;
+            if from_back {
+                ranges.pop_back();
+            } else {
+                ranges.pop_front();
+            }
+        }
+        waiting -= 1;
+        let kids = queued_children(tree, &dir, numbering, never);
+        replay.order.push(dir.clone());
+        if kids.is_empty() {
+            continue;
+        }
+        let names: usize = kids.iter().map(|(name, _)| name.len()).sum();
+        let range_bytes = RANGE_BYTES + dir.as_os_str().len() + names + 8 * kids.len();
+        waiting += kids.len();
+        bytes += range_bytes;
+        ranges.push_back(ReplayRange {
+            back: kids.len(),
+            paths: kids.into_iter().map(|(_, path)| path).collect(),
+            front: 0,
+            bytes: range_bytes,
+        });
+        replay.ranges_peak = replay.ranges_peak.max(ranges.len());
+        replay.bytes_peak = replay.bytes_peak.max(bytes);
+    }
+    replay
+}
+
+/// The deepest folder's depth below the root.
+fn folder_depth(tree: &Tree) -> usize {
+    tree.folders
+        .keys()
+        .filter_map(|key| key.strip_prefix(&tree.root).ok())
+        .map(|rest| rest.components().count())
+        .max()
+        .unwrap_or(0)
+}
+
+#[test]
+fn at_one_worker_the_ranges_and_their_bytes_are_those_of_t6s_schedule() -> TestResult {
+    for numbering in [Numbering::Discovery, Numbering::Blocks] {
+        for (what, tree, q_max, never) in schedule_shapes() {
+            let tree = Arc::new(tree);
+            let never: Vec<PathBuf> = never.iter().map(|rel| tree.abs(rel)).collect();
+            let mut opts = options(&tree, numbering, 1);
+            opts.q_max = q_max;
+            opts.never_descend.clone_from(&never);
+            let (_, counts) = walk_with(tree.clone(), opts, Vec::new())?;
+            let at = format!("{what}, {numbering:?}");
+            let replay = replay_over_ranges(&tree, numbering, q_max, &never);
+            let (t6_order, _) = t6_schedule(&tree, numbering, q_max, &never);
+            assert_eq!(
+                os_strings(&replay.order),
+                os_strings(&t6_order),
+                "{at}: the replay follows T6"
+            );
+            assert_eq!(
+                usize::try_from(counts.ranges_peak).ok(),
+                Some(replay.ranges_peak),
+                "{at}: the most ranges queued at once"
+            );
+            assert_eq!(
+                usize::try_from(counts.queue_bytes_peak).ok(),
+                Some(replay.bytes_peak),
+                "{at}: the most bytes they held"
+            );
+            if numbering == Numbering::Blocks {
+                // One worker: at most q_max − 1 ranges were queued when fewer
+                // than q_max folders last waited, and every range pushed since
+                // is one deeper than the one below it, so at most D of them.
+                let bound = q_max + folder_depth(&tree) - 1;
+                assert!(
+                    replay.ranges_peak <= bound,
+                    "{at}: {} ranges, past q_max + D - 1 = {bound}",
+                    replay.ranges_peak
+                );
+                if q_max == 1 && what.starts_with("complete") {
+                    assert_eq!(replay.ranges_peak, bound, "{at}: the bound is reached");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// How many subfolders the wide folder holds: far more than `q_max`, and
+/// more than `BIG_LISTING`, so its listing is a big one too.
+const WIDE: usize = 20_000;
+/// Every wide subfolder's name, 18 bytes like the design's typical name.
+fn wide_name(k: usize) -> String {
+    format!("folder-{k:011}")
+}
+
+#[test]
+fn a_folder_of_far_more_subfolders_than_q_max_waits_as_one_range_of_its_names() -> TestResult {
+    const NAME: usize = 18;
+    for numbering in [Numbering::Discovery, Numbering::Blocks] {
+        for workers in WORKERS {
+            let mut t = Tree::new(true);
+            for k in 0..WIDE {
+                let name = wide_name(k);
+                assert_eq!(name.len(), NAME);
+                t.dir("", &name);
+            }
+            let tree = Arc::new(t);
+            let mut opts = options(&tree, numbering, workers);
+            opts.q_max = 16;
+            let (out, counts) = walk_with(tree.clone(), opts, Vec::new())?;
+            let at = format!("{numbering:?}, {workers} worker(s)");
+            assert_eq!(out.len(), WIDE + 1, "{at}");
+            assert_eq!(
+                usize::try_from(counts.queue_peak).ok(),
+                Some(WIDE),
+                "{at}: every subfolder waits, as under T6"
+            );
+            assert_eq!(counts.ranges_peak, 1, "{at}: in one range");
+            let parent = tree.root.as_os_str().len();
+            let folders = WIDE * (NAME + 8);
+            let peak = usize::try_from(counts.queue_bytes_peak).unwrap_or(usize::MAX);
+            assert!(
+                peak <= folders + RANGE_BYTES + parent,
+                "{at}: {peak} bytes, past the names, 8 bytes each and one range's own"
+            );
+            assert_eq!(
+                peak,
+                folders + RANGE_BYTES + parent,
+                "{at}: measured exactly"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `n` choose `k`, saturating.
+fn choose(n: usize, k: usize) -> usize {
+    let k = k.min(n.saturating_sub(k));
+    let mut acc: u128 = 1;
+    for i in 0..k {
+        acc = acc * u128::try_from(n - i).unwrap_or(u128::MAX) / u128::try_from(i + 1).unwrap_or(1);
+    }
+    usize::try_from(acc).unwrap_or(usize::MAX)
+}
+
+#[test]
+fn with_several_workers_the_ranges_stay_within_the_folders_waiting_and_the_models_bound()
+-> TestResult {
+    let (fan, depth, q_max) = (4_u32, 6_u32, 16_usize);
+    for numbering in [Numbering::Discovery, Numbering::Blocks] {
+        for workers in WORKERS {
+            let tree = Arc::new(complete_tree(fan, depth));
+            let mut opts = options(&tree, numbering, workers);
+            opts.q_max = q_max;
+            let (_, counts) = walk_with(tree.clone(), opts, Vec::new())?;
+            let at = format!("{numbering:?}, {workers} worker(s)");
+            let ranges = usize::try_from(counts.ranges_peak).unwrap_or(usize::MAX);
+            let folders = usize::try_from(counts.queue_peak).unwrap_or(usize::MAX);
+            assert!(
+                (1..=folders).contains(&ranges),
+                "{at}: {ranges} ranges for {folders} folders; each range holds a folder"
+            );
+            if numbering == Numbering::Blocks {
+                // The exhaustive model's worst case (tight at one and two
+                // workers): q_max − 1 + C(D + W − 1, W).
+                let d = usize::try_from(depth).unwrap_or(0);
+                let w = usize::try_from(workers).unwrap_or(0);
+                let bound = (q_max - 1).saturating_add(choose(d + w - 1, w));
+                assert!(ranges <= bound, "{at}: {ranges} ranges, past {bound}");
+            }
+            // A range here holds four names of two bytes under a parent path
+            // of at most "/t6" and five "/sN" components.
+            let per_range = RANGE_BYTES + tree.root.as_os_str().len() + 5 * 3 + 4 * (2 + 8);
+            let bytes = usize::try_from(counts.queue_bytes_peak).unwrap_or(usize::MAX);
+            assert!(
+                bytes <= ranges * per_range,
+                "{at}: {bytes} bytes held by {ranges} range(s) of at most {per_range}"
+            );
+        }
+    }
     Ok(())
 }

@@ -23,11 +23,10 @@ use std::time::Duration;
 
 use crate::output::Refusal;
 use crate::platform::{Entry, ListBuffer, Listing, push_stored, stored_len};
-use crate::queue::DirJob;
+use crate::queue::{DirJob, RangeBuilder, queueable};
 use crate::sink::{Block, ListingSink};
 use crate::walk::{
-    CHECK_EVERY, Counted, Shared, ceiling_fault, child_path, name_is_a_path, panic_text,
-    whole_bytes,
+    CHECK_EVERY, Counted, Shared, ceiling_fault, name_is_a_path, panic_text, whole_bytes,
 };
 use crate::{BIG_LISTING, CHUNK_BYTES, FLAG_DATALESS, KIND_DIR};
 
@@ -363,14 +362,10 @@ fn commit_in_chunks(
 }
 
 /// Counts a committed listing's entries and queues its child folders,
-/// numbered from `first` in the order they were committed.
-fn account(
-    shared: &Shared,
-    listing: &Listing,
-    first: u32,
-    job: &DirJob,
-    pending: &mut Vec<DirJob>,
-) {
+/// numbered from `first` in the order they were committed, as one range.
+fn account(shared: &Shared, listing: &Listing, first: u32, job: &DirJob) {
+    let (folders, name_bytes) = queueable(listing);
+    let mut range = RangeBuilder::new(&job.path, Some(first), folders, name_bytes);
     for (id, entry) in (first..).zip(&listing.entries) {
         let meta = &entry.meta;
         let name = listing.name(entry);
@@ -383,11 +378,8 @@ fn account(
         }
         if meta.kind == KIND_DIR {
             shared.dirs.fetch_add(1, Ordering::AcqRel);
-            if !name_is_a_path(name) {
-                let child = child_path(&job.path, name);
-                if !shared.never_descend.contains(&child) {
-                    pending.push(DirJob { id, path: child });
-                }
+            if !name_is_a_path(name) && shared.may_descend(&job.path, name) {
+                range.push(id, name);
             }
         } else {
             shared.files.fetch_add(1, Ordering::AcqRel);
@@ -396,6 +388,7 @@ fn account(
                 .fetch_add(whole_bytes(meta.size), Ordering::AcqRel);
         }
     }
+    shared.queue.push_ranges(range.finish());
 }
 
 /// A listing that failed: the root's ends the walk, as in a discovery walk;
@@ -419,7 +412,6 @@ pub(crate) fn process_listing(
     shared: &Shared,
     buf: &mut ListBuffer,
     stage: &mut Stage,
-    pending: &mut Vec<DirJob>,
     job: &DirJob,
 ) {
     shared.sample_path(&job.path);
@@ -457,8 +449,7 @@ pub(crate) fn process_listing(
     };
     drop(permit);
     if let Some(first) = committed {
-        account(shared, &buf.listing, first, job, pending);
-        shared.queue.push_all(pending);
+        account(shared, &buf.listing, first, job);
     }
     if big {
         buf.listing.shrink_to(KEEP_ENTRIES, KEEP_NAME_BYTES);

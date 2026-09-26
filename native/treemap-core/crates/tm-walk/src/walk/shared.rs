@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use tm_governor::{Governor, apply_to_current_thread, profile};
 
-use super::{SAMPLE_INTERVAL, lock, panic_text, stored_root_name};
+use super::{SAMPLE_INTERVAL, child_path, lock, panic_text, stored_root_name};
 use crate::blocks::{BigListings, CommitLock};
 use crate::climb::{START_WORKERS, start_for};
 use crate::output::{Refusal, WalkOutput};
@@ -298,6 +298,13 @@ impl Shared {
 
     pub(super) fn root_refusal(&self) -> Option<Refusal> {
         Refusal::from_code(self.root_refused.load(Ordering::Acquire))
+    }
+
+    /// Whether the walk goes on into `dir`'s subfolder `name`: not when the
+    /// joined path is a never-descend path. The path is joined only when
+    /// there is such a path to compare it with.
+    pub(crate) fn may_descend(&self, dir: &Path, name: &[u8]) -> bool {
+        self.never_descend.is_empty() || !self.never_descend.contains(&child_path(dir, name))
     }
 }
 

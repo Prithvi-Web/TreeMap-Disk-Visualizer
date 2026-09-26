@@ -45,6 +45,7 @@ pub use links::{IdFamily, LinkKey, hardlink_families, link_key};
 pub use output::{DirRefusal, HardlinkRef, Refusal, WalkOutput, WalkStats};
 pub use platform::synthetic::{SyntheticLister, SyntheticSpec, synthetic_temp_folder};
 pub use platform::{Entry, ListBuffer, Lister, Listing, Meta};
+pub use queue::RANGE_BYTES;
 pub use sink::{Block, ListingSink};
 pub use walk::{
     GovernorPacer, Pacer, Progress, WalkCounts, WalkHandle, panic_text, start_with,
@@ -118,13 +119,17 @@ pub struct WalkOptions {
     pub synthetic: Option<SyntheticSpec>,
     /// How the entries are numbered; [`Numbering::Discovery`] by default.
     pub numbering: Numbering,
-    /// Under [`Numbering::Blocks`], the queue hands out the oldest job while
-    /// it holds fewer than `q_max` jobs and the newest once it holds `q_max`
-    /// or more (P4-13): breadth-first while the backlog is small, depth-first
-    /// once it is not. Depth-first slows the backlog's growth to one descent
-    /// per worker; it cannot cap it at `q_max` — a folder with more subfolders
-    /// than `q_max` queues them all ([`WalkCounts::queue_peak`] says how far it
-    /// went). [`Numbering::Discovery`] ignores it.
+    /// Under [`Numbering::Blocks`], the queue hands out the oldest folder
+    /// while fewer than `q_max` folders wait and the newest once `q_max` or
+    /// more do (P4-13): breadth-first while the backlog is small, depth-first
+    /// once it is not. It caps neither the folders waiting — a folder with
+    /// more subfolders than `q_max` queues them all ([`WalkCounts::queue_peak`]
+    /// says how far it went) — nor, with several workers, the listings they
+    /// wait in ([`WalkCounts::ranges_peak`]; with one worker those are at most
+    /// `q_max` plus the depth below the root, less one). What it bounds is
+    /// their cost: a waiting folder is its name and 8 bytes in its listing's
+    /// range ([`WalkCounts::queue_bytes_peak`], T6b). [`Numbering::Discovery`]
+    /// ignores it.
     pub q_max: usize,
     /// The id the counter stops at: ids `0..id_ceiling` are handed out and a
     /// walk that needs more faults ([`ID_CEILING`] by default, the most a `u32`

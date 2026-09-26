@@ -4,11 +4,11 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use super::{CHECK_EVERY, Part, Shared, ceiling_fault, child_path, name_is_a_path, whole_bytes};
+use super::{CHECK_EVERY, Part, Shared, ceiling_fault, name_is_a_path, whole_bytes};
 use crate::links::link_key;
 use crate::output::{DirRefusal, Refusal};
 use crate::platform::ListBuffer;
-use crate::queue::DirJob;
+use crate::queue::{DirJob, RangeBuilder, queueable};
 use crate::{FLAG_DATALESS, KIND_DIR};
 
 /// The next node id, or `None` once the counter has reached its ceiling: it
@@ -28,14 +28,9 @@ fn take_id_below(next_id: &AtomicU32, ceiling: u32) -> Option<u32> {
         .ok()
 }
 
-/// Lists one directory and records what it holds.
-pub(super) fn process_dir(
-    shared: &Shared,
-    part: &mut Part,
-    buf: &mut ListBuffer,
-    pending: &mut Vec<DirJob>,
-    job: &DirJob,
-) {
+/// Lists one directory and records what it holds; its subfolders to walk are
+/// queued together, as one range, once the listing is recorded.
+pub(super) fn process_dir(shared: &Shared, part: &mut Part, buf: &mut ListBuffer, job: &DirJob) {
     shared.sample_path(&job.path);
     let path = match shared.lister.list(&job.path, shared.want_atime, buf) {
         Ok(path) => path,
@@ -67,9 +62,10 @@ pub(super) fn process_dir(
     shared
         .unreadable_entries
         .fetch_add(listing.unreadable_entries, Ordering::AcqRel);
+    let (folders, name_bytes) = queueable(listing);
+    let mut range = RangeBuilder::new(&job.path, None, folders, name_bytes);
     for (k, entry) in listing.entries.iter().enumerate() {
         if k > 0 && k % CHECK_EVERY == 0 && shared.wait_while_paused() {
-            pending.clear();
             return;
         }
         let meta = &entry.meta;
@@ -79,7 +75,6 @@ pub(super) fn process_dir(
             // node's, so the walk ends here as a fault.
             shared.record_fault(ceiling_fault(shared.id_ceiling));
             shared.cancel();
-            pending.clear();
             return;
         };
         part.push(id, job.id, name, meta);
@@ -100,11 +95,8 @@ pub(super) fn process_dir(
                     node: id,
                     why: Refusal::Unreadable,
                 });
-            } else {
-                let child = child_path(&job.path, name);
-                if !shared.never_descend.contains(&child) {
-                    pending.push(DirJob { id, path: child });
-                }
+            } else if shared.may_descend(&job.path, name) {
+                range.push(id, name);
             }
         } else {
             shared.files.fetch_add(1, Ordering::AcqRel);
@@ -116,7 +108,7 @@ pub(super) fn process_dir(
             }
         }
     }
-    shared.queue.push_all(pending);
+    shared.queue.push_ranges(range.finish());
 }
 
 #[cfg(test)]
@@ -179,15 +171,15 @@ mod tests {
         shared.next_id.store(u32::MAX, Ordering::Release);
         let mut part = Part::default();
         let mut buf = ListBuffer::new(MIN_BUFFER_BYTES);
-        let mut pending = Vec::new();
         let job = DirJob {
             id: 0,
             path: PathBuf::from("/fake"),
         };
-        process_dir(&shared, &mut part, &mut buf, &mut pending, &job);
+        process_dir(&shared, &mut part, &mut buf, &job);
         assert_eq!(lock(&shared.fault).as_deref(), Some(ID_CEILING_FAULT));
         assert!(shared.is_cancelled());
-        assert!(pending.is_empty());
+        // T6b: the listing queues its subfolders itself; nothing was queued.
+        assert_eq!(shared.queue.peak_len(), 0);
         assert!(part.ids.is_empty(), "nothing is numbered past the ceiling");
         assert_eq!(shared.entries.load(Ordering::Acquire), 0);
     }
