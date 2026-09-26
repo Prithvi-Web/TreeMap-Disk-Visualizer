@@ -69,6 +69,57 @@ test('the module is installed as a new file each time, never copied over the old
   }
 });
 
+test('a file whose destination already holds the same bytes is left in place, never replaced for nothing', () => {
+  // Windows refuses to replace a module another process has loaded. The
+  // suite's own rebuild (nativeLoader.test.ts) failed with EPERM on the
+  // rename while other test files held the module, although the rebuilt
+  // bytes were the ones already installed (CI run 36210179393, 26 Sep 2026).
+  // An unchanged build changes nothing.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-install-'));
+  try {
+    const src = path.join(dir, 'libtm_node.dylib');
+    const dest = path.join(dir, 'treemap_core.node');
+    fs.writeFileSync(src, 'build A');
+    helpers.installAll([{ src, dest }]);
+    const first = fs.statSync(dest, { bigint: true }).ino;
+    helpers.installAll([{ src, dest }]);
+    assert.equal(fs.statSync(dest, { bigint: true }).ino, first, 'the same bytes: the installed file was left alone');
+    fs.writeFileSync(src, 'build B'); // the same length, other bytes
+    helpers.installAll([{ src, dest }]);
+    assert.equal(fs.readFileSync(dest, 'utf8'), 'build B');
+    assert.notEqual(fs.statSync(dest, { bigint: true }).ino, first, 'other bytes of the same length: a new file');
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['libtm_node.dylib', 'treemap_core.node'], 'and no temporary is left behind');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a file left in place counts as installed when a later rename fails', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-install-'));
+  try {
+    const moduleSrc = path.join(dir, 'libtm_node.dylib');
+    const moduleDest = path.join(dir, 'treemap_core.node');
+    fs.writeFileSync(moduleSrc, 'same module');
+    fs.writeFileSync(moduleDest, 'same module');
+    const helperSrc = path.join(dir, 'tm_mft_helper_built');
+    fs.writeFileSync(helperSrc, 'new helper');
+    const helperDest = path.join(dir, 'tm-mft-helper.exe');
+    fs.mkdirSync(helperDest);
+    fs.writeFileSync(path.join(helperDest, 'in-use'), 'x'); // a non-empty folder where the helper goes: its rename fails
+    assert.throws(
+      () => helpers.installAll([{ src: moduleSrc, dest: moduleDest }, { src: helperSrc, dest: helperDest }]),
+      (err: Error & { installed?: string[] }) => {
+        assert.match(err.message, /installing tm-mft-helper\.exe failed .*; installed: treemap_core\.node; not installed: tm-mft-helper\.exe/);
+        assert.deepEqual(err.installed, [moduleDest], 'the module already in place is the one VERSION goes beside');
+        return true;
+      },
+    );
+    assert.deepEqual(fs.readdirSync(dir).filter((name) => name.endsWith('.tmp')), [], 'no temporary is left');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('on Windows the NTFS turbo helper is built beside the module, under the name the app looks for; it is built nowhere else', () => {
   assert.deepEqual(helpers.helpersFor('win32'), [{ crate: 'tm-mft-helper', file: MFT_HELPER_FILE }]);
   for (const p of ['darwin', 'linux', 'freebsd']) assert.deepEqual(helpers.helpersFor(p), [], p);

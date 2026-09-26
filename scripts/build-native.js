@@ -218,37 +218,60 @@ function buildAndInstall({ library, helpers, release, dir, runCargo, exists, ins
  * an antivirus scan) throws naming what was installed and what was not,
  * with the temporaries it left removed; the error's `installed` holds the
  * destinations installed before it.
+ *
+ * A destination that already holds exactly the built bytes is left in place
+ * and counts as installed: nothing would change, and Windows refuses to
+ * replace a module another process has loaded — the suite's own rebuild
+ * failed so, with EPERM, while other test files held the module it would
+ * have replaced with the same bytes (CI run 36210179393, 26 Sep 2026).
  */
 function installAll(installs) {
+  const plan = installs.map(({ src, dest }) => ({ dest, src, tmp: `${dest}.${process.pid}.tmp`, current: holdsBytesOf(dest, src) }));
   const staged = [];
   try {
-    for (const { src, dest } of installs) {
-      const tmp = `${dest}.${process.pid}.tmp`;
-      staged.push({ tmp, dest });
-      fs.copyFileSync(src, tmp);
+    for (const step of plan) {
+      if (step.current) continue;
+      staged.push(step);
+      fs.copyFileSync(step.src, step.tmp);
     }
   } catch (err) {
     for (const { tmp } of staged) fs.rmSync(tmp, { force: true });
     throw new Error(`build-native: copying the built files failed, so none was installed: ${err.message}`);
   }
   const installed = [];
-  staged.forEach(({ tmp, dest }, i) => {
+  plan.forEach((step, i) => {
+    if (step.current) {
+      installed.push(step.dest);
+      return;
+    }
     try {
-      fs.renameSync(tmp, dest);
-      installed.push(dest);
+      fs.renameSync(step.tmp, step.dest);
+      installed.push(step.dest);
     } catch (err) {
-      const left = staged.slice(i);
+      const left = plan.slice(i).filter((rest) => !rest.current);
       for (const rest of left) fs.rmSync(rest.tmp, { force: true });
       const named = installed.map((done) => path.basename(done)).join(', ') || 'nothing';
       throw Object.assign(
         new Error(
-          `build-native: installing ${path.basename(dest)} failed (${err.message}); installed: ${named}; ` +
+          `build-native: installing ${path.basename(step.dest)} failed (${err.message}); installed: ${named}; ` +
             `not installed: ${left.map((rest) => path.basename(rest.dest)).join(', ')} — close whatever is using them and run npm run build:native again`,
         ),
         { installed },
       );
     }
   });
+}
+
+/** Whether `dest` is a file holding exactly the bytes of `src`. */
+function holdsBytesOf(dest, src) {
+  let stat;
+  try {
+    stat = fs.statSync(dest);
+  } catch {
+    return false; // nothing installed there yet
+  }
+  if (!stat.isFile() || stat.size !== fs.statSync(src).size) return false;
+  return fs.readFileSync(dest).equals(fs.readFileSync(src));
 }
 
 if (require.main === module) {
