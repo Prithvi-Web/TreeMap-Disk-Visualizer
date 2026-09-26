@@ -213,3 +213,41 @@ test('adopting keeps the columns it was given: no copy of any array', () => {
   assert.equal(cols.parent[added], 0);
   assert.equal(cols.mtime[added], 7);
 });
+
+test('what Node decides about an adopted node lands in the store: its extension, container and cloud provider', () => {
+  const built = new PackedScanStore('/r', '/', { name: 'r', isDir: true, size: 0, modifiedAt: 1_000, isHidden: false });
+  const plain = built.addNode(0, { name: 'café.TAR.GZ', isDir: false, size: 9, modifiedAt: 1_000, isHidden: false });
+  const placeholder = built.addNode(0, { name: 'photo.heic', isDir: false, size: 3, modifiedAt: 1_000, isHidden: false, extension: 'heic' });
+  built.finalize();
+  const store = freshStore('/r', '/', rootInputOf(built));
+  store.adoptColumns(columnsOf(built, 4, 16));
+  assert.equal(store.extension(plain), undefined, 'the native build leaves a text candidate\'s extension to Node');
+
+  let version = store.version;
+  const moved = (what: string): void => {
+    assert.ok(store.version > version, `${what} changes the version`);
+    version = store.version;
+  };
+  store.setExtension(plain, 'gz');
+  moved('setExtension');
+  store.setContainer(plain, 'tgz');
+  moved('setContainer');
+  store.setCloudProvider(placeholder, 'icloud');
+  moved('setCloudProvider');
+  assert.equal(store.extension(plain), 'gz');
+  assert.equal(store.container(plain), 'tgz');
+  assert.equal(store.cloudProvider(placeholder), 'icloud');
+  assert.equal(store.extension(placeholder), 'heic', 'an adopted extension stays');
+
+  const json = JSON.stringify(store.prune(0, { maxNodes: 10 }).root);
+  assert.match(json, /"extension":"gz","container":"tgz"/, 'emitted in the walker\'s field order');
+  assert.match(json, /"cloudProvider":"icloud"/);
+
+  store.setExtension(plain, undefined);
+  store.setContainer(plain, undefined);
+  store.setCloudProvider(placeholder, undefined);
+  assert.equal(store.extension(plain), undefined);
+  assert.equal(store.container(plain), undefined);
+  assert.equal(store.cloudProvider(placeholder), undefined);
+  assert.throws(() => store.setExtension(store.count, 'x'), /out of range|no node/i, 'a row past the store is refused');
+});

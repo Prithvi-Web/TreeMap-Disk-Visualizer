@@ -1347,6 +1347,29 @@ export class PackedScanStore implements ScanStore {
     else this.flagsArr[id] &= ~f;
   }
 
+  /**
+   * What Node decides about a node the native build left to it (Phase 4,
+   * P4-3; the memory mode's passes): a text candidate's extension and
+   * container kind, and a cloud candidate's provider.
+   */
+  setExtension(id: number, extension: string | undefined): void {
+    this.version++;
+    this.check(id);
+    this.extArr[id] = this.internExt(extension, id);
+  }
+
+  setContainer(id: number, kind: ContainerKind | undefined): void {
+    this.version++;
+    this.check(id);
+    this.containerArr[id] = kind ? (CONTAINER_ID[kind] ?? 0) : 0;
+  }
+
+  setCloudProvider(id: number, provider: CloudProviderName | undefined): void {
+    this.version++;
+    this.check(id);
+    this.cloudProvArr[id] = provider ? (CLOUD_ID[provider] ?? 0) : 0;
+  }
+
   addToSize(id: number, delta: number): void {
     this.version++;
     this.check(id);

@@ -6,7 +6,7 @@ isolatedDataDir('treemap-containers-data-');
 
 import { parseZipCentralDirectory, TarWalker } from '../src/utils/archive';
 import { entriesToChildren, parseBsdtarListing } from '../src/services/containerScanner';
-import { detectContainerKind } from '../src/utils/containerKind';
+import { CONTAINER_RULES, detectContainerKind } from '../src/utils/containerKind';
 
 /** Container drill-down: parser and grafting tests on hand-crafted bytes. */
 
@@ -171,4 +171,38 @@ test('detectContainerKind maps names to reader kinds', () => {
   assert.equal(detectContainerKind('Photos Library.photoslibrary', false), undefined);
   assert.equal(detectContainerKind('notes.txt', false), undefined);
   assert.equal(detectContainerKind('regular-folder', true), undefined);
+});
+
+test('the container rules are data the native store reads too: detectContainerKind\'s rules, in its order', () => {
+  // The native build (tm-store) decides an ASCII name's container from this same
+  // table, handed over at scanStart; its ContainerRule refuses a text that is
+  // not lower-case ASCII with a dot.
+  assert.deepEqual(CONTAINER_RULES.map((r) => [r.text, r.wholeName, r.folders, r.kind]), [
+    ['.photoslibrary', false, true, 'photos'],
+    ['docker.raw', true, false, 'docker'],
+    ['docker.qcow2', true, false, 'docker'],
+    ['ext4.vhdx', true, false, 'docker'],
+    ['docker_data.vhdx', true, false, 'docker'],
+    ['.tar.gz', false, false, 'tgz'],
+    ['.tgz', false, false, 'tgz'],
+    ['.zip', false, false, 'zip'],
+    ['.jar', false, false, 'zip'],
+    ['.tar', false, false, 'tar'],
+    ['.iso', false, false, 'iso'],
+    ['.dmg', false, false, 'dmg'],
+  ]);
+  for (const rule of CONTAINER_RULES) {
+    assert.match(rule.text, /^[\x21-\x7e]*\.[\x21-\x7e]*$/, `${rule.text} is ASCII with a dot`);
+    assert.equal(rule.text, rule.text.toLowerCase(), `${rule.text} is lower-case`);
+  }
+});
+
+test('detectContainerKind answers with the first rule a name meets, whatever its case', () => {
+  for (const rule of CONTAINER_RULES) {
+    const name = rule.wholeName ? rule.text.toUpperCase() : `Some Name${rule.text.toUpperCase()}`;
+    assert.equal(detectContainerKind(name, rule.folders), rule.kind, name);
+    assert.equal(detectContainerKind(name, !rule.folders), undefined, `${name} as a ${rule.folders ? 'file' : 'folder'}`);
+  }
+  assert.equal(detectContainerKind('archive.tar.gz', false), 'tgz', 'the .tar.gz rule comes before .tar');
+  assert.equal(detectContainerKind('my docker.raw', false), undefined, 'a whole-name rule needs the whole name');
 });
