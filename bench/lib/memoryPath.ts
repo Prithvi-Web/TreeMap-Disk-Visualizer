@@ -103,6 +103,30 @@ export async function busyWhile<T>(work: () => Promise<T>): Promise<{ value: T; 
 
 const REPO = path.join(__dirname, '..', '..');
 
+/** The tsconfig `compileWorker` compiles with. */
+export interface WorkerTsconfig {
+  extends: string;
+  compilerOptions: { rootDir: string; outDir: string; sourceMap: false; noEmit: false };
+  files: string[];
+  include: string[];
+}
+
+/**
+ * The tsconfig that compiles the worker and every file of the app's `src/` in `repo`
+ * into `outDir`, every path written with `/`: TypeScript splits an `include` pattern
+ * on `/` alone, so a pattern with Windows' separators matches nothing, and the compile
+ * loses `src/types`' declarations. `p` is the platform's path module.
+ */
+export function workerTsconfig(repo: string, outDir: string, p: path.PlatformPath = path): WorkerTsconfig {
+  const slashed = (...parts: string[]): string => p.join(...parts).split(p.sep).join('/');
+  return {
+    extends: slashed(repo, 'tsconfig.json'),
+    compilerOptions: { rootDir: slashed(repo), outDir: slashed(outDir), sourceMap: false, noEmit: false },
+    files: [slashed(repo, 'bench', 'lib', 'memoryPathWorker.ts')],
+    include: [slashed(repo, 'src', '**', '*.ts')],
+  };
+}
+
 /**
  * The worker, and the app's `src/` it drives, compiled as the app's build
  * compiles them — `tsc` with the app's own settings, every file of `src/` —
@@ -114,12 +138,7 @@ const REPO = path.join(__dirname, '..', '..');
  */
 function compileWorker(outDir: string): string {
   const tsconfig = path.join(outDir, 'tsconfig.json');
-  fs.writeFileSync(tsconfig, JSON.stringify({
-    extends: path.join(REPO, 'tsconfig.json'),
-    compilerOptions: { rootDir: REPO, outDir, sourceMap: false, noEmit: false },
-    files: [path.join(REPO, 'bench', 'lib', 'memoryPathWorker.ts')],
-    include: [path.join(REPO, 'src', '**', '*.ts')],
-  }));
+  fs.writeFileSync(tsconfig, JSON.stringify(workerTsconfig(REPO, outDir)));
   const tsc = path.join(path.dirname(require.resolve('typescript/package.json')), 'bin', 'tsc');
   const r = spawnSync(process.execPath, [tsc, '-p', tsconfig], { encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`the measuring worker did not compile: ${`${r.stdout}${r.stderr}`.trim().slice(-2_000)}`);

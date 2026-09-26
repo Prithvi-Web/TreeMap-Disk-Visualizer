@@ -10,7 +10,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-benchMemoryPath-data-');
 
 import { skipOrFailOnCi } from './fixtures/ciSkip';
-import { ELECTRON_BINARY, MEMORY_PATH_STAGES, busyWhile, memoryPathBaselinePath, parseSizes, runMemoryPathWorker, type MemoryPathRecord } from '../bench/lib/memoryPath';
+import { ELECTRON_BINARY, MEMORY_PATH_STAGES, busyWhile, memoryPathBaselinePath, parseSizes, runMemoryPathWorker, workerTsconfig, type MemoryPathRecord } from '../bench/lib/memoryPath';
 
 /**
  * Phase 4 T9's harness (no product code): each measurement runs in a fresh
@@ -117,6 +117,18 @@ test('the hand-over\'s busy time counts, whole, a block inside the callback that
   assert.equal(value, 'settled');
   // 1 ms for the two monotonic clocks' rounding; a slower or busier machine only adds.
   assert.ok(busyMs >= BLOCK_MS - 1, `${busyMs} ms busy across a ${BLOCK_MS} ms block`);
+});
+
+test('the measuring worker\'s tsconfig writes every path with forward slashes, which TypeScript\'s include patterns need on Windows', () => {
+  // TypeScript splits an `include` pattern on `/` alone: with Windows' separators the
+  // pattern matched nothing there, and the compile lost src/types' declarations.
+  const repo = 'D:\\a\\TreeMap\\TreeMap';
+  const config = workerTsconfig(repo, path.win32.join(repo, 'bench', 'results', '.memory-path-js-x'), path.win32);
+  assert.deepEqual(config.include, ['D:/a/TreeMap/TreeMap/src/**/*.ts']);
+  assert.deepEqual(config.files, ['D:/a/TreeMap/TreeMap/bench/lib/memoryPathWorker.ts']);
+  for (const value of [config.extends, config.compilerOptions.rootDir, config.compilerOptions.outDir, ...config.files, ...config.include]) {
+    assert.ok(!value.includes('\\'), `${value} keeps a backslash`);
+  }
 });
 
 test('a memory-path record is kept in a folder of its own, away from the comparable baselines every reader of the top folder expects', () => {
