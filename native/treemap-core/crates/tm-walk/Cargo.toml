@@ -9,6 +9,12 @@ license.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Test-only (Phase 4, T6): `WalkOptions::new` picks `Numbering::Blocks`, so the
+# whole tm-walk suite runs unchanged under block numbering:
+# `cargo test -p tm-walk --features blocks-by-default`. Nothing ships with it.
+blocks-by-default = []
+
 [dependencies]
 tm-governor = { path = "../tm-governor" }
 

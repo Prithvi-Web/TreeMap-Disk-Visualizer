@@ -20,7 +20,7 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ffi::OsStr;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -29,13 +29,19 @@ use std::time::{Duration, Instant};
 
 use tm_governor::{Governor, apply_to_current_thread, profile};
 
+use crate::blocks::{BigListings, CommitLock, Stage, process_listing, to_sinks};
 use crate::climb::{Climber, START_WORKERS, start_for};
-use crate::links::{IdFamily, LinkKey, hardlink_families};
+use crate::invariants::check_walk_columns;
+use crate::links::{IdFamily, LinkKey, hardlink_families, link_key};
 use crate::output::{DirRefusal, HardlinkRef, Refusal, WalkOutput, WalkStats};
-use crate::platform::{DirTimes, ListBuffer, Lister, Meta, performance_cores, thread_cpu_seconds};
+use crate::platform::{
+    DirTimes, ListBuffer, Lister, Meta, performance_cores, push_stored, thread_cpu_seconds,
+};
 use crate::queue::{DirJob, Queue};
+use crate::sink::{CollectSink, ListingSink};
 use crate::{
-    FLAG_DATALESS, FLAG_REFUSED_DIR, FastPath, KIND_DIR, KIND_FILE, WalkError, WalkOptions,
+    FLAG_DATALESS, FLAG_REFUSED_DIR, FastPath, KIND_DIR, KIND_FILE, Numbering, WalkError,
+    WalkOptions,
 };
 
 /// The `current_path` sample is refreshed at most this often.
@@ -55,7 +61,23 @@ const NEVER: u64 = u64::MAX;
 const NO_REFUSAL: u8 = 0;
 /// The fault recorded when the id counter reaches its ceiling: ids are `u32`
 /// and the root holds 0, so `u32::MAX - 1` entries is the most a walk can number.
+#[cfg(test)]
 const ID_CEILING_FAULT: &str = "the walk exceeded 4,294,967,294 entries";
+
+/// The fault recorded when the id counter reaches `ceiling` (at the default
+/// ceiling, "the walk exceeded 4,294,967,294 entries"): the walk numbered the
+/// most entries it could, `ceiling - 1`, and needed another.
+pub(crate) fn ceiling_fault(ceiling: u32) -> String {
+    let digits = ceiling.saturating_sub(1).to_string();
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    format!("the walk exceeded {grouped} entries")
+}
 /// The bytes a directory name must not hold to be joined onto its parent as
 /// one component: `/` everywhere, `\` too on Windows.
 const NAME_SEPARATORS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
@@ -137,48 +159,113 @@ pub struct Progress {
     pub done: bool,
 }
 
+/// One more in a count of waiting workers for as long as it lives: the count
+/// is given back however its holder stops waiting — the wait ending, a
+/// cancel's early return, or a panic unwinding through it.
+pub(crate) struct Counted<'a>(&'a AtomicU32);
+
+impl<'a> Counted<'a> {
+    /// Counts one more in `count` until the guard drops.
+    pub(crate) fn new(count: &'a AtomicU32) -> Self {
+        count.fetch_add(1, Ordering::AcqRel);
+        Self(count)
+    }
+}
+
+impl Drop for Counted<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// Everything the workers, the driver and the handle share.
-struct Shared {
+pub(crate) struct Shared {
     root: PathBuf,
-    want_atime: bool,
-    never_descend: HashSet<PathBuf>,
+    pub(crate) want_atime: bool,
+    pub(crate) never_descend: HashSet<PathBuf>,
     max_workers: usize,
     buffer_bytes: usize,
     pacer: Arc<dyn Pacer>,
-    lister: Arc<dyn Lister>,
-    queue: Queue,
-    next_id: AtomicU32,
-    entries: AtomicU64,
-    dirs: AtomicU64,
-    files: AtomicU64,
-    bytes: AtomicU64,
-    dirs_listed: AtomicU64,
-    denied_entries: AtomicU64,
-    unreadable_entries: AtomicU64,
-    dataless: AtomicU64,
+    pub(crate) lister: Arc<dyn Lister>,
+    pub(crate) queue: Queue,
+    pub(crate) next_id: AtomicU32,
+    pub(crate) entries: AtomicU64,
+    pub(crate) dirs: AtomicU64,
+    pub(crate) files: AtomicU64,
+    pub(crate) bytes: AtomicU64,
+    pub(crate) dirs_listed: AtomicU64,
+    pub(crate) denied_entries: AtomicU64,
+    pub(crate) unreadable_entries: AtomicU64,
+    pub(crate) dataless: AtomicU64,
     active_target: AtomicU32,
     paused: AtomicBool,
     /// Shared with every worker's [`ListBuffer`], so a listing stops between batches.
     cancelled: Arc<AtomicBool>,
     /// Shared with every worker's [`ListBuffer`]; see [`Progress::heartbeat`].
-    heartbeat: Arc<AtomicU64>,
+    pub(crate) heartbeat: Arc<AtomicU64>,
     done: AtomicBool,
     pause_lock: Mutex<()>,
     pause_changed: Condvar,
     started: Instant,
     last_sample_ms: AtomicU64,
     current_path: Mutex<Option<String>>,
-    root_fast_path: AtomicU8,
-    root_refused: AtomicU8,
+    pub(crate) root_fast_path: AtomicU8,
+    pub(crate) root_refused: AtomicU8,
     /// The first fault that ended the walk, as the sentence `take()` returns:
     /// a worker's panic, or the id ceiling. Set once; later faults are dropped.
     fault: Mutex<Option<String>>,
     result: Mutex<Option<Result<WalkOutput, WalkError>>>,
+    numbering: Numbering,
+    /// See [`WalkOptions::id_ceiling`].
+    pub(crate) id_ceiling: u32,
+    /// Every sink a block-numbered walk commits to, its collector first;
+    /// empty under discovery numbering.
+    pub(crate) sinks: Vec<Arc<dyn ListingSink>>,
+    /// The collector whose rows `take()` returns under block numbering.
+    collect: Option<Arc<CollectSink>>,
+    /// The commit lock (block numbering).
+    pub(crate) commit: CommitLock,
+    /// The big-listing semaphore (block numbering).
+    pub(crate) big: BigListings,
+    /// Blocks reserved (block numbering): one per listing committed.
+    pub(crate) blocks: AtomicU64,
+    /// Workers parked by a pause right now.
+    parked: AtomicU32,
 }
 
 impl Shared {
+    #[cfg(test)]
     fn new(opts: WalkOptions, pacer: Arc<dyn Pacer>, lister: Arc<dyn Lister>) -> Self {
+        Self::with_sinks(opts, pacer, lister, Vec::new())
+    }
+
+    /// Under block numbering the walk's own collector goes first among the
+    /// sinks; under discovery numbering there are none.
+    fn with_sinks(
+        opts: WalkOptions,
+        pacer: Arc<dyn Pacer>,
+        lister: Arc<dyn Lister>,
+        extra: Vec<Arc<dyn ListingSink>>,
+    ) -> Self {
+        let (queue, collect, sinks) = match opts.numbering {
+            Numbering::Discovery => (Queue::new(), None, Vec::new()),
+            Numbering::Blocks => {
+                let collect = Arc::new(CollectSink::default());
+                let mut sinks: Vec<Arc<dyn ListingSink>> = vec![collect.clone()];
+                sinks.extend(extra);
+                (Queue::hybrid(opts.q_max), Some(collect), sinks)
+            }
+        };
+        let root_name_bytes = u64::try_from(stored_root_name(&opts.root).len()).unwrap_or(0);
         Self {
+            numbering: opts.numbering,
+            id_ceiling: opts.id_ceiling,
+            sinks,
+            collect,
+            commit: CommitLock::new(root_name_bytes),
+            big: BigListings::default(),
+            blocks: AtomicU64::new(0),
+            parked: AtomicU32::new(0),
             root: opts.root,
             want_atime: opts.want_atime,
             never_descend: opts.never_descend.into_iter().collect(),
@@ -186,7 +273,7 @@ impl Shared {
             buffer_bytes: opts.buffer_bytes,
             pacer,
             lister,
-            queue: Queue::new(),
+            queue,
             next_id: AtomicU32::new(1),
             entries: AtomicU64::new(0),
             dirs: AtomicU64::new(0),
@@ -215,7 +302,7 @@ impl Shared {
 
     /// Keeps `text` as the walk's fault unless one was recorded already: the
     /// first fault is the one that ended the walk, the rest are its consequences.
-    fn record_fault(&self, text: String) {
+    pub(crate) fn record_fault(&self, text: String) {
         let mut fault = lock(&self.fault);
         if fault.is_none() {
             *fault = Some(text);
@@ -236,16 +323,17 @@ impl Shared {
             .max(1)
     }
 
-    fn is_cancelled(&self) -> bool {
+    pub(crate) fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
     }
 
     /// Blocks while paused; returns true when the walk was cancelled meanwhile.
-    fn wait_while_paused(&self) -> bool {
+    pub(crate) fn wait_while_paused(&self) -> bool {
         if !self.paused.load(Ordering::Acquire) {
             return self.is_cancelled();
         }
         let mut guard = lock(&self.pause_lock);
+        let parked = Counted::new(&self.parked);
         while self.paused.load(Ordering::Acquire) && !self.is_cancelled() {
             let (next, _) = self
                 .pause_changed
@@ -253,18 +341,19 @@ impl Shared {
                 .unwrap_or_else(PoisonError::into_inner);
             guard = next;
         }
+        drop(parked);
         drop(guard);
         self.is_cancelled()
     }
 
-    fn cancel(&self) {
+    pub(crate) fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
         self.queue.close();
         self.pause_changed.notify_all();
     }
 
     /// Records `path` as the current one, at most every [`SAMPLE_INTERVAL`].
-    fn sample_path(&self, path: &Path) {
+    pub(crate) fn sample_path(&self, path: &Path) {
         let now = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let last = self.last_sample_ms.load(Ordering::Relaxed);
         let due = last == NEVER
@@ -289,7 +378,7 @@ impl Shared {
 
 /// One worker's columns, in its own discovery order, keyed by global id.
 #[derive(Default)]
-struct Part {
+pub(crate) struct Part {
     ids: Vec<u32>,
     parent: Vec<u32>,
     names: Vec<u8>,
@@ -304,18 +393,18 @@ struct Part {
     /// listing reported a link count above one, and those whose listing
     /// reported none (`nlink == 0`, Windows), each keyed by its exact id and
     /// resolved into families at the merge ([`hardlink_families`]).
-    link_keys: Vec<LinkKey>,
-    refusals: Vec<DirRefusal>,
+    pub(crate) link_keys: Vec<LinkKey>,
+    pub(crate) refusals: Vec<DirRefusal>,
     /// Directories whose own listing reported their own times (Windows), which
     /// replace the copy their parent's listing gave; applied at the merge.
-    time_patches: Vec<(u32, DirTimes)>,
+    pub(crate) time_patches: Vec<(u32, DirTimes)>,
     cpu_seconds: f64,
 }
 
 impl Part {
     /// Appends a node. The name goes into the arena as valid UTF-8: the OS
     /// bytes when they are, U+FFFD per maximal invalid subpart otherwise.
-    fn push(&mut self, id: u32, parent: u32, name: &[u8], meta: &Meta) {
+    pub(crate) fn push(&mut self, id: u32, parent: u32, name: &[u8], meta: &Meta) {
         let text = String::from_utf8_lossy(name);
         self.ids.push(id);
         self.parent.push(parent);
@@ -355,7 +444,40 @@ impl std::fmt::Debug for WalkHandle {
     }
 }
 
+/// What a walk counted of its own machinery, for tests and measurements. Kept
+/// apart from [`WalkStats`], whose shape is tm-mft's wire format too.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WalkCounts {
+    /// The most jobs the queue held at once.
+    pub queue_peak: u64,
+    /// Blocks reserved (block numbering): one per listing committed.
+    pub blocks: u64,
+    /// Listings that went through the big-listing semaphore.
+    pub big_listings: u64,
+    /// Workers waiting on the big-listing semaphore right now.
+    pub big_waiting: u32,
+    /// The most workers past the big-listing semaphore at once.
+    pub big_peak: u32,
+    /// Workers parked by a pause right now: between two folders, or inside
+    /// one at a [`CHECK_EVERY`] check.
+    pub paused_workers: u32,
+}
+
 impl WalkHandle {
+    /// What the walk has counted of its own machinery so far.
+    pub fn counts(&self) -> WalkCounts {
+        let s = &*self.shared;
+        let (big_listings, big_waiting, big_peak) = s.big.counts();
+        WalkCounts {
+            queue_peak: u64::try_from(s.queue.peak_len()).unwrap_or(u64::MAX),
+            blocks: s.blocks.load(Ordering::Acquire),
+            big_listings,
+            big_waiting,
+            big_peak,
+            paused_workers: s.parked.load(Ordering::Acquire),
+        }
+    }
+
     /// The counters right now.
     pub fn progress(&self) -> Progress {
         let s = &*self.shared;
@@ -443,18 +565,53 @@ pub fn start_with(
     pacer: Arc<dyn Pacer>,
     lister: Arc<dyn Lister>,
 ) -> Result<WalkHandle, WalkError> {
-    let root_meta = lister
-        .stat_dir(&opts.root, opts.want_atime)
-        .map_err(WalkError::RootRefused)?;
-    if root_meta.kind != KIND_DIR {
-        return Err(WalkError::RootNotDirectory);
+    start_with_sinks(opts, pacer, lister, Vec::new())
+}
+
+/// [`start_with`], handing every commit of a block-numbered walk to `sinks`
+/// too, after the walk's own collector (see [`crate::sink`]). Every sink that
+/// is handed over ends with an output or with `abort()`: a walk that cannot
+/// start — its root refused or not a folder, sinks under discovery numbering
+/// (which never commits, so they are refused) — aborts them before it returns.
+pub fn start_with_sinks(
+    opts: WalkOptions,
+    pacer: Arc<dyn Pacer>,
+    lister: Arc<dyn Lister>,
+    sinks: Vec<Arc<dyn ListingSink>>,
+) -> Result<WalkHandle, WalkError> {
+    let aborting = |sinks: &[Arc<dyn ListingSink>], err: WalkError| {
+        abort_all(sinks);
+        err
+    };
+    if opts.numbering == Numbering::Discovery && !sinks.is_empty() {
+        return Err(aborting(
+            &sinks,
+            WalkError::OptionsRefused(
+                "listing sinks are fed only by block numbering; discovery numbering never commits a block"
+                    .to_owned(),
+            ),
+        ));
     }
-    let shared = Arc::new(Shared::new(opts, pacer, lister));
+    let root_meta = match catch_unwind(AssertUnwindSafe(|| {
+        lister.stat_dir(&opts.root, opts.want_atime)
+    })) {
+        Ok(Ok(meta)) => meta,
+        Ok(Err(why)) => return Err(aborting(&sinks, WalkError::RootRefused(why))),
+        Err(payload) => {
+            abort_all(&sinks);
+            resume_unwind(payload);
+        }
+    };
+    if root_meta.kind != KIND_DIR {
+        return Err(aborting(&sinks, WalkError::RootNotDirectory));
+    }
+    let shared = Arc::new(Shared::with_sinks(opts, pacer, lister, sinks));
     let for_driver = Arc::clone(&shared);
     let driver = thread::Builder::new()
         .name("tm-walk-driver".to_owned())
         .spawn(move || drive(&for_driver, root_meta))
         .map_err(|e| {
+            abort_all(&shared.sinks);
             WalkError::Internal(format!("could not start the walk's driver thread: {e}"))
         })?;
     Ok(WalkHandle {
@@ -464,15 +621,50 @@ pub fn start_with(
     })
 }
 
+/// `abort()` on every sink, once each; a sink that panics in it cannot change
+/// how the walk ended, so its panic is dropped and the others still abort.
+fn abort_all(sinks: &[Arc<dyn ListingSink>]) {
+    for sink in sinks {
+        let _ = catch_unwind(AssertUnwindSafe(|| sink.abort()));
+    }
+}
+
 fn drive(shared: &Arc<Shared>, root_meta: Meta) {
-    let outcome = run_walk(shared, root_meta);
-    *lock(&shared.result) = Some(outcome);
-    shared.done.store(true, Ordering::Release);
+    if shared.sinks.is_empty() {
+        let outcome = run_walk(shared, root_meta);
+        *lock(&shared.result) = Some(outcome);
+        shared.done.store(true, Ordering::Release);
+        return;
+    }
+    // A walk that ends without an output aborts every sink, and so does a
+    // panic on this thread, which then goes on to `take()` as it always did.
+    match catch_unwind(AssertUnwindSafe(|| run_walk(shared, root_meta))) {
+        Ok(outcome) => {
+            if outcome.is_err() {
+                abort_all(&shared.sinks);
+            }
+            *lock(&shared.result) = Some(outcome);
+            shared.done.store(true, Ordering::Release);
+        }
+        Err(payload) => {
+            abort_all(&shared.sinks);
+            resume_unwind(payload);
+        }
+    }
 }
 
 fn run_walk(shared: &Arc<Shared>, root_meta: Meta) -> Result<WalkOutput, WalkError> {
     let mut root_part = Part::default();
-    root_part.push(0, 0, &root_name(&shared.root), &root_meta);
+    match shared.numbering {
+        Numbering::Discovery => root_part.push(0, 0, &root_name(&shared.root), &root_meta),
+        Numbering::Blocks => {
+            let name = stored_root_name(&shared.root);
+            if !to_sinks(shared, |sink| sink.root(&name, &root_meta)) {
+                let fault = lock(&shared.fault).take();
+                return Err(WalkError::Internal(fault.unwrap_or_default()));
+            }
+        }
+    }
     shared.queue.push(DirJob {
         id: 0,
         path: shared.root.clone(),
@@ -549,7 +741,10 @@ fn run_walk(shared: &Arc<Shared>, root_meta: Meta) -> Result<WalkOutput, WalkErr
     let worker_cpu: f64 = parts.iter().map(|p| p.cpu_seconds).sum();
     let total = usize::try_from(shared.next_id.load(Ordering::Acquire))
         .map_err(|_| WalkError::Internal("too many nodes for this platform".to_owned()))?;
-    let mut merged = merge(&parts, total)?;
+    let mut merged = match &shared.collect {
+        None => merge(&parts, total)?,
+        Some(collect) => collected(collect, total)?,
+    };
     drop(parts);
     refresh_families(shared, &mut merged)?;
     let stats = WalkStats {
@@ -578,6 +773,18 @@ fn run_walk(shared: &Arc<Shared>, root_meta: Meta) -> Result<WalkOutput, WalkErr
         refusals: merged.refusals,
         stats,
     })
+}
+
+/// What a block-numbered walk's collector gathered, in id order. Every test
+/// build holds it to I1–I4 first: the store adopts these columns without
+/// checking them (`PackedScanStore.adoptColumns` trusts its producer).
+fn collected(collect: &CollectSink, total: usize) -> Result<Merged, WalkError> {
+    let merged = collect.merge(total)?;
+    if cfg!(debug_assertions) {
+        check_walk_columns(&merged.parent, &merged.name_off, &merged.names, false)
+            .map_err(|broken| WalkError::Internal(format!("block numbering: {broken}")))?;
+    }
+    Ok(merged)
 }
 
 /// Gives every member of each hard-link family found by file id the size and
@@ -685,6 +892,7 @@ fn worker(shared: &Arc<Shared>, index: u32) -> Part {
         Arc::clone(&shared.heartbeat),
     );
     let mut pending: Vec<DirJob> = Vec::new();
+    let mut stage = Stage::default();
     let may_run = || index < shared.effective_target();
     while let Some(job) = shared.queue.next_job(&may_run) {
         if shared.wait_while_paused() {
@@ -694,8 +902,9 @@ fn worker(shared: &Arc<Shared>, index: u32) -> Part {
         // A panic inside the listing (an overflow check, a platform bug) must
         // still hand the job back, or `in_flight` never reaches zero and the
         // queue never closes: the panic becomes the walk's fault instead.
-        let listed = catch_unwind(AssertUnwindSafe(|| {
-            process_dir(shared, &mut part, &mut buf, &mut pending, &job);
+        let listed = catch_unwind(AssertUnwindSafe(|| match shared.numbering {
+            Numbering::Discovery => process_dir(shared, &mut part, &mut buf, &mut pending, &job),
+            Numbering::Blocks => process_listing(shared, &mut buf, &mut stage, &mut pending, &job),
         }));
         if let Err(payload) = listed {
             shared.record_panic(&*payload);
@@ -712,16 +921,25 @@ fn worker(shared: &Arc<Shared>, index: u32) -> Part {
 
 /// The next node id, or `None` once the counter has reached its ceiling: it
 /// never wraps, so no two nodes are numbered alike.
+#[cfg(test)]
 fn take_id(next_id: &AtomicU32) -> Option<u32> {
+    take_id_below(next_id, crate::ID_CEILING)
+}
+
+/// The next node id below `ceiling`, or `None` once the counter has reached
+/// it: ids `0..ceiling` are handed out, and none twice.
+fn take_id_below(next_id: &AtomicU32, ceiling: u32) -> Option<u32> {
     next_id
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| id.checked_add(1))
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |id| {
+            (id < ceiling).then(|| id + 1)
+        })
         .ok()
 }
 
 /// True when a name the OS returned holds a separator, so that joining it
 /// onto its parent would make several components and list somewhere else
 /// (such names are creatable on NTFS through WSL).
-fn name_is_a_path(name: &[u8]) -> bool {
+pub(crate) fn name_is_a_path(name: &[u8]) -> bool {
     name.iter().any(|byte| NAME_SEPARATORS.contains(byte))
 }
 
@@ -771,10 +989,10 @@ fn process_dir(
         }
         let meta = &entry.meta;
         let name = listing.name(entry);
-        let Some(id) = take_id(&shared.next_id) else {
+        let Some(id) = take_id_below(&shared.next_id, shared.id_ceiling) else {
             // The columns are full: a wrapped id would overwrite an earlier
             // node's, so the walk ends here as a fault.
-            shared.record_fault(ID_CEILING_FAULT.to_owned());
+            shared.record_fault(ceiling_fault(shared.id_ceiling));
             shared.cancel();
             pending.clear();
             return;
@@ -808,20 +1026,8 @@ fn process_dir(
             shared
                 .bytes
                 .fetch_add(whole_bytes(meta.size), Ordering::AcqRel);
-            let counted = meta.nlink > 1;
-            // An id of 0 is no id (a FAT32 or exFAT volume gives none, and no
-            // listing reports 0 for a file): keyed, every such file would be
-            // one family (RISKS R55).
-            if meta.kind == KIND_FILE
-                && meta.ino != 0
-                && (counted || (meta.nlink == 0 && !meta.withheld))
-            {
-                part.link_keys.push(LinkKey {
-                    dev: meta.dev.to_bits(),
-                    ino: meta.ino,
-                    node: id,
-                    counted,
-                });
+            if let Some(key) = link_key(meta, id) {
+                part.link_keys.push(key);
             }
         }
     }
@@ -834,7 +1040,7 @@ fn process_dir(
     clippy::cast_sign_loss,
     reason = "sizes come from an i64 the OS reported; anything else is treated as zero"
 )]
-fn whole_bytes(size: f64) -> u64 {
+pub(crate) fn whole_bytes(size: f64) -> u64 {
     if size.is_finite() && size >= 0.0 {
         size as u64
     } else {
@@ -843,19 +1049,26 @@ fn whole_bytes(size: f64) -> u64 {
 }
 
 #[cfg(unix)]
-fn child_path(dir: &Path, name: &[u8]) -> PathBuf {
+pub(crate) fn child_path(dir: &Path, name: &[u8]) -> PathBuf {
     use std::os::unix::ffi::OsStrExt;
     dir.join(OsStr::from_bytes(name))
 }
 
 #[cfg(not(unix))]
-fn child_path(dir: &Path, name: &[u8]) -> PathBuf {
+pub(crate) fn child_path(dir: &Path, name: &[u8]) -> PathBuf {
     dir.join(&*String::from_utf8_lossy(name))
 }
 
 /// The root's own name: its last component, or the whole path when it has none.
 fn root_name(root: &Path) -> Cow<'_, [u8]> {
     os_bytes(root.file_name().unwrap_or(root.as_os_str()))
+}
+
+/// [`root_name`] as it is stored: valid UTF-8.
+fn stored_root_name(root: &Path) -> Vec<u8> {
+    let mut out = Vec::new();
+    push_stored(&mut out, &root_name(root));
+    out
 }
 
 #[cfg(unix)]
@@ -869,10 +1082,10 @@ fn os_bytes(os: &OsStr) -> Cow<'_, [u8]> {
     Cow::Owned(os.to_string_lossy().into_owned().into_bytes())
 }
 
-struct Merged {
-    parent: Vec<u32>,
-    name_off: Vec<u32>,
-    names: Vec<u8>,
+pub(crate) struct Merged {
+    pub(crate) parent: Vec<u32>,
+    pub(crate) name_off: Vec<u32>,
+    pub(crate) names: Vec<u8>,
     kind: Vec<u8>,
     flags: Vec<u8>,
     size: Vec<f64>,
@@ -911,7 +1124,7 @@ fn claim(placed: &mut [bool], i: usize, id: u32) -> Result<(), WalkError> {
 }
 
 /// Merges every part's columns into id order and lays the names out in one arena.
-fn merge(parts: &[Part], total: usize) -> Result<Merged, WalkError> {
+pub(crate) fn merge(parts: &[Part], total: usize) -> Result<Merged, WalkError> {
     let mut placed = vec![false; total];
     let mut parent = vec![0_u32; total];
     let mut kind = vec![0_u8; total];
@@ -1121,6 +1334,105 @@ mod tests {
         assert!(pending.is_empty());
         assert!(part.ids.is_empty(), "nothing is numbered past the ceiling");
         assert_eq!(shared.entries.load(Ordering::Acquire), 0);
+    }
+
+    /// One block's rows named `names`, and their names back to back.
+    fn block_rows(names: &[&str], kind: u8) -> (Vec<crate::Entry>, Vec<u8>) {
+        let mut stored = Vec::new();
+        let mut rows = Vec::new();
+        for name in names {
+            let start = stored.len();
+            stored.extend_from_slice(name.as_bytes());
+            rows.push(crate::Entry {
+                name: start..stored.len(),
+                meta: Meta::unknown(kind),
+            });
+        }
+        (rows, stored)
+    }
+
+    /// Commits `names` to `sink` as folder `folder`'s block from id `first`.
+    fn commit_block(sink: &CollectSink, folder: u32, first: u32, name_base: u64, names: &[&str]) {
+        let (rows, stored) = block_rows(names, KIND_FILE);
+        sink.commit(&crate::Block {
+            folder,
+            first,
+            len: u32::try_from(rows.len()).unwrap_or(u32::MAX),
+            name_base,
+            offset: 0,
+            rows: &rows,
+            names: &stored,
+            own_times: None,
+        });
+    }
+
+    #[test]
+    fn a_collected_walk_that_breaks_i2_is_refused_in_every_test_build() -> Result<(), String> {
+        let well_formed = CollectSink::default();
+        well_formed.root(b"r", &Meta::unknown(KIND_DIR));
+        commit_block(&well_formed, 0, 1, 1, &["a", "b"]);
+        commit_block(&well_formed, 1, 3, 3, &["x"]);
+        let merged = collected(&well_formed, 4).map_err(|e| e.to_string())?;
+        assert_eq!(merged.parent, vec![0, 0, 0, 1]);
+
+        // The collector's own checks pass (names start where the last ended,
+        // every id once), but the root's children are 1, 2 and then 4.
+        let split = CollectSink::default();
+        split.root(b"r", &Meta::unknown(KIND_DIR));
+        commit_block(&split, 0, 1, 1, &["a", "b"]);
+        commit_block(&split, 1, 3, 3, &["x"]);
+        commit_block(&split, 0, 4, 4, &["c"]);
+        match collected(&split, 5) {
+            Err(WalkError::Internal(text)) if text.contains("I2 broken: folder 0") => Ok(()),
+            other => Err(format!(
+                "expected I2 named, got {:?}",
+                other.map(|m| m.parent)
+            )),
+        }
+    }
+
+    #[test]
+    fn a_counted_guard_gives_its_count_back_however_its_holder_ends() {
+        let count = AtomicU32::new(0);
+        // A holder that panics: the unwinding drop gives the count back.
+        let unwound = catch_unwind(AssertUnwindSafe(|| {
+            let _waiting = Counted::new(&count);
+            if count.load(Ordering::Acquire) == 1 {
+                resume_unwind(Box::new("a waiting holder that panics"));
+            }
+        }));
+        assert!(unwound.is_err(), "the holder panicked");
+        assert_eq!(count.load(Ordering::Acquire), 0, "given back by the unwind");
+        // Holders that overlap and end one after the other.
+        {
+            let _first = Counted::new(&count);
+            {
+                let _second = Counted::new(&count);
+                assert_eq!(count.load(Ordering::Acquire), 2);
+            }
+            assert_eq!(count.load(Ordering::Acquire), 1);
+        }
+        assert_eq!(count.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn the_ceiling_fault_names_the_most_entries_the_ceiling_allows() {
+        assert_eq!(ceiling_fault(u32::MAX), ID_CEILING_FAULT);
+        assert_eq!(ceiling_fault(10), "the walk exceeded 9 entries");
+        assert_eq!(ceiling_fault(1_235), "the walk exceeded 1,234 entries");
+        assert_eq!(
+            ceiling_fault(1_000_001),
+            "the walk exceeded 1,000,000 entries"
+        );
+    }
+
+    #[test]
+    fn a_lowered_ceiling_stops_the_counter_there() {
+        let next_id = AtomicU32::new(8);
+        assert_eq!(take_id_below(&next_id, 10), Some(8));
+        assert_eq!(take_id_below(&next_id, 10), Some(9));
+        assert_eq!(take_id_below(&next_id, 10), None, "ids 0..10 only");
+        assert_eq!(next_id.load(Ordering::Acquire), 10);
     }
 
     #[test]

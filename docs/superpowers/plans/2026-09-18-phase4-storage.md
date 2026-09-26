@@ -9,7 +9,7 @@
 | Plan written | 18 Sep 2026 | this file |
 | S1 `tm-store`: the finalized store built in Rust, in the packed store's own layout | **done 24 Sep 2026**, commit `2415d6c`, committed after Phase 3's CI went green (run 36069755180): 41 tests, 89 mutants red, clippy on three targets, rustdoc `-D warnings`. The six-lens review's 29 CONFIRMED findings are all fixed (index mix-ups pinned with walks whose order differs from the store's; cloud × hard-link order; side tables refused unless strictly ascending, then binary-searched; `sparse_terms` so Node sums `sparseBytes` in the ingest's order past 2^53), and a second review of the fix round confirmed 6 more, repaired | `native/treemap-core/crates/tm-store/`; `docs/superpowers/plans/2026-09-24-phase4-s1-review-findings.md` |
 | S2 `PackedScanStore.fromColumns` + the native engine reads the Rust store through views (no ingest copy) | **Node side done 24 Sep 2026**, commit `38469ee`: `PackedScanStore.adoptColumns` (the `fromColumns` above) adopts a finalized tree's columns in place, held to the object-store oracle on 96 random trees; 20 mutants, 19 red, the survivor explained in the code. The rest of S2 is T1–T10 (§S.9); T10 commits S2 | `src/services/scanStore.ts`; `tests/packedStoreAdopt.test.ts`; `tests/fixtures/storeFuzz.ts` |
-| S3–S5 as designed (§S below) | **designed 24 Sep 2026.** T0 (documents only) is written; its gate (§S.9) is the owner's answers to Q1–Q5 and Q7 (§S.11): ~~Q1, Q3 and Q5 wait for the owner~~ Q1 and Q5 wait for the owner (Q3 decided by the owner 25 Sep 2026: the 10M row is met by spill, memory mode up to 5M), and Q2, Q4 and Q7 are engineering decisions awaiting the owner's confirmation. T1–T5 built 25 Sep 2026; T6–T23 are not built | §S below |
+| S3–S5 as designed (§S below) | **designed 24 Sep 2026.** T0 (documents only) is written; its gate (§S.9) is the owner's answers to Q1–Q5 and Q7 (§S.11): ~~Q1, Q3 and Q5 wait for the owner~~ Q1 and Q5 wait for the owner (Q3 decided by the owner 25 Sep 2026: the 10M row is met by spill, memory mode up to 5M), and Q2, Q4 and Q7 are engineering decisions awaiting the owner's confirmation. T1–T6 built 25–26 Sep 2026; T6b and T7–T23 are not built | §S below |
 | S3 spill mode: columns written with `write()` ~~then mapped~~ and read with `pread()` (P4-5a), the free-space and same-volume rules, cleanup | not started: T11–T17 (T17 commits S3); the FullPassRunner is S3b, T18 | |
 | S4 aggregate-only mode: ~~directory rows~~ rows kept by the β rule (P4-7a), running totals, top-K, the notice naming what is off | not started: T12 (the AggregateState, which spill runs too), T19 (commits S4), T20 (Windows large mode) | |
 | S5 the synthetic-source gate: 100M entries from a scripted lister through the walk and the store, peak RSS measured by the harness | not started: T3 (the `SyntheticLister`, moved forward), T21 (bench plumbing), T22 (the gate) | |
@@ -249,7 +249,7 @@ Spill is allowed as the overflow target when `free ≥ 3 × (1.25 × T_mem × 68
 
    Child `DirJob`s get `first + i` and are pushed afterwards (walk.rs:828). In memory mode the lock only reserves; the worker then writes its rows into the anonymous columns at the reserved offsets, **outside the lock** and in parallel with other workers. The ranges are disjoint, and each is argued in a `// SAFETY:` note.
 5. Listings of more than 16,384 entries go through a semaphore, one at a time. Such a listing reserves its whole id block at once, then derives and appends it in 4 MiB chunks. The worker's `ListBuffer` shrinks after it (platform/mod.rs:123-132 keeps its capacity today).
-6. The queue is FIFO until it holds `Q_MAX` jobs, then LIFO (queue.rs:49-61, 74). This caps the backlog of queued folders, which was **measured** at about 200 B each and 218 MB for 1.05M queued. In the sink modes it also caps the set of open folders (§S.6.1).
+6. The queue is FIFO until it holds `Q_MAX` jobs, then LIFO (queue.rs:49-61, 74). ~~This caps the backlog of queued folders~~, which was **measured** at about 200 B each and 218 MB for 1.05M queued. ~~In the sink modes it also caps the set of open folders (§S.6.1).~~ **Corrected 26 Sep 2026 (T6, built):** it does not cap them. A folder with more subfolders than `Q_MAX` queues every one of them (a listing's children are queued together; the `-dirheavy` preset's 1M-subfolder folder is about 200 MB of jobs), and the switch to LIFO overshoots `Q_MAX` by up to W·D·f (workers × depth × subfolders per folder; an exhaustive model of 85 small shapes reached at most 0.83 of it; with one worker at most D·f). T6b restores a bound (range jobs).
 7. The heartbeat is bumped while a worker waits on the lock, on a writer or on the big-listing semaphore. The seal bumps it too. Node's 30 s stall rule (nativeEngine.ts:657-671) never mistakes a slow disk for a stall.
 8. Cancel, a fault or a refused root (walk.rs:527-547) calls `abort()` on every sink: anonymous columns are unmapped, and spill descriptors close, so their unlinked files vanish. A listing interrupted by a cancel is never committed.
 
@@ -386,11 +386,11 @@ Because every large allocation is an anonymous mapping (P4-11), a stage's memory
 
 | Component | Memory | Spill | Aggregate |
 | --- | --- | --- | --- |
-| Queue (`Q_MAX` × 200 B, **measured** per job) | 13 | 1 | 1 |
+| Queue (`Q_MAX` × 200 B, **measured** per job; **not an upper bound, T6, 26 Sep 2026:** add the widest listing's subfolders and W·D·f until T6b) | 13 | 1 | 1 |
 | Listing buffers: 8 × (256 KiB + ≤ 16,384 entries × 98 B) | 15 | 15 | 15 |
 | Derive staging: 8 × 1 MiB | 8 | 8 | 8 |
 | Big-listing reserve: one listing over 16,384 entries; the gate's 1M-entry folder is 98 MB of listing plus a 4 MiB chunk | 102 worst | 102 worst | 102 worst |
-| Open frontier: accumulators of about 112 B, ≤ (`Q_MAX` + 8) × depth 20 | – | 2 (9 worst) | 2 (9 worst) |
+| Open frontier: accumulators of about 112 B, ≤ (`Q_MAX` + 8) × depth 20 (**not an upper bound, T6, 26 Sep 2026:** see the queue row; T6b) | – | 2 (9 worst) | 2 (9 worst) |
 | AggregateState: folder heap 19, file heap 19, shallow keep 6, extension table 8 | – | 52 | 52 |
 | Link-key log, resident run (at most 32 MiB, then disk) | 2 (5M), 4 (10M) | 4 (10M), 32 (100M) | 4 (10M), 32 (100M) |
 | Text-candidate ids or suffix queue | 4–8 | 4 | 4 |
@@ -421,7 +421,7 @@ Because every large allocation is an anonymous mapping (P4-11), a stage's memory
   - Aggregate's 36 MB worst-case margin shrinks by `E0 − B0`. The knobs are `R_dir` and `R_file` (−19 MB per halving) and the extension overflow cap.
 - **The guarded memory walk** (overflow to aggregate): it stays ≤ 400 by construction of `M_agg` (§S.1.4).
 - **Windows.** The link-key log reaches its 32 MiB run at about 0.8M files. Beyond that it goes to disk, so the resident figures above hold. Windows memory mode at 5M has its own `T_mem` (T9).
-- **What the gate can break.** The worst column assumes the big-listing semaphore and one 1M-entry folder. Two such folders listed at the same time cannot happen (the semaphore). A single folder of more than about 1.2M entries breaks aggregate's worst case and is a recorded risk.
+- **What the gate can break.** The worst column assumes the big-listing semaphore and one 1M-entry folder. ~~Two such folders listed at the same time cannot happen (the semaphore).~~ **Corrected 26 Sep 2026 (T6, built):** they can. A lister fills its whole buffer before the walk knows the listing is big, so the semaphore serialises only the reserve, stage and hand-over that follow; up to one big listing per worker can be resident at once. T6b bounds it with listers that stop at a batch size. A single folder of more than about 1.2M entries breaks aggregate's worst case and is a recorded risk.
 
 **Disk (spill and aggregate; the 3× rule applies to the sum, plus a 1 GiB reserve).**
 
@@ -530,7 +530,7 @@ During the walk, after every 256 MiB written, spill needs free ≥ 2 × the proj
   - recursive file and folder counts;
   - its keyed bytes (the most a hard-link correction can remove).
 
-  On close it is offered to the heaps and folded into its parent. With the sink-mode `Q_MAX` of 4,096, the open set is at most (`Q_MAX` + 8) × depth (§S.3).
+  On close it is offered to the heaps and folded into its parent. With the sink-mode `Q_MAX` of 4,096, the open set is at most (`Q_MAX` + 8) × depth (§S.3). **Corrected 26 Sep 2026 (T6):** not so — a wide folder's subfolders are all queued, and LIFO overshoots by up to W·D·f; T6b restores a bound.
 - **β heaps, the correctness-first rule.** They keep the top `R_dir + 1` = 150,001 folder totals and the top `R_file + 1` = 200,001 file sizes, as records with names and position paths.
   - At the seal, β_d is the smallest total held in a full folder heap, or −∞ when the heap is not full. β_f is the same for files.
   - **Kept:** every folder with total > β_d; every file with size > max(β_d, β_f); the root.
@@ -685,13 +685,13 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
     - reading after release throws from the explicit check.
   - **Mutants:** back it with a `Vec` (the allocator test goes red); remove the released check.
   - **Green gate:** cargo test; clippy ×3; `// SAFETY:` on every unsafe block.
-- [ ] **T6. tm-walk: the commit lock and block numbering**, behind `WalkOptions.numbering = Discovery | Blocks` (default `Discovery` until T10). Also: the lossy re-sort; the hybrid queue; the big-listing semaphore with chunked commit; `ListBuffer` shrinking; the `ListingSink` trait; `CollectSink`; the I1–I4 checker.
+- [x] **T6. tm-walk: the commit lock and block numbering**, behind `WalkOptions.numbering = Discovery | Blocks` (default `Discovery` until T10). Also: the lossy re-sort; the hybrid queue; the big-listing semaphore with chunked commit; `ListBuffer` shrinking; the `ListingSink` trait; `CollectSink`; the I1–I4 checker.
   - **Tests first,** with scripted listers × workers {1, 2, 8, 64}:
     - I1–I4 hold;
     - one block per listing;
     - `'a'+F8` against `'a😀'` ends in tm-store's order;
     - Windows order is untouched;
-    - peak queue length ≤ `Q_MAX` on the dirheavy tree (counted);
+    - ~~peak queue length ≤ `Q_MAX` on the dirheavy tree (counted);~~ **as built (26 Sep 2026):** the peak is counted and bounded where a bound holds — with one worker above `Q_MAX` and at most `Q_MAX + D·f`, at 1–64 workers at most `Q_MAX + W·(D+1)·f`, and a folder with more subfolders than `Q_MAX` queues them all (a test pins it); T6b bounds the queue;
     - a lowered id ceiling faults;
     - a cancel mid-listing commits nothing;
     - abort is called on cancel, fault and refused root;
@@ -699,6 +699,12 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
     - `CollectSink` under φ equals `take()`.
   - **Mutants:** per-entry ids (I2 red); the re-sort skipped; FIFO kept past `Q_MAX`; a commit before the loop ends.
   - **Green gate:** every tm-walk test under both numberings; the T4 lock unchanged; clippy ×3.
+  - **Built 25–26 Sep 2026:** `Numbering { Discovery, Blocks }` (Discovery the default and byte-identical), a token commit lock that reserves one id block and name range per listing (waiters beat the heartbeat and see a cancel), the listing-keyed lossy re-sort (`Listing::sorted_by_name`), `Queue::hybrid`, the big-listing semaphore with 4 MiB chunked hand-over and `ListBuffer` shrinking, `ListingSink` + `CollectSink` (every sink call under the commit lock), the O(n) I1–I4 checker (`check_walk_columns`, run in every debug-build block walk), `WalkHandle::counts()`, abort exactly once per sink on every ending without an output. T4's digest lock holds unchanged under both numberings at 1 and 8 workers. 46/46 mutants red (43, then 3 more for the review round's fixes); reviewed by ecc:rust-reviewer (no critical or high; its notes fixed: the parked and waiting counts are given back by guards however a wait ends, and the order of refusals is documented). CI runs the whole tm-walk suite under Blocks (`--features blocks-by-default`) until T10 makes Blocks the default.
+- [ ] **T6b. Bound what T6 could not** (found by T6, 26 Sep 2026; must land before T12, whose budget depends on both bounds):
+  - **Range jobs:** a folder's subfolders are queued as one job per contiguous range of the folder's block, split as workers take from it, so the queue and the open set become O(workers × depth) whatever the fan-out. The cost (review of T6): a range job must re-derive each remaining child's name from the parent's committed block, so the parent's names stay resident (or re-readable) until the range drains — measure it against the jobs it replaces.
+  - **Listers that stop at a batch size:** `Lister::list` becomes resumable (a partial listing plus a continuation; macOS `getattrlistbulk`, Linux `getdents64` and Windows `FileIdExtdDirectoryInfo` each expose a cursor), and the big-listing gate is consulted between batches, so at most one big listing is resident.
+  - **Tests first:** the `-dirheavy` shape's peak queue and resident listing bytes counted within the new bounds at 1, 2, 8 and 64 workers; T4's lock unchanged. **Mutants:** a range expanded eagerly; the batch limit ignored.
+  - **Green gate:** cargo test; clippy ×3.
 - [ ] **T7. MemorySink + P1 + counters.** Workers write outside the lock at reserved offsets. The link log uses disk runs past 32 MiB. The winner comes from `(depth, position path)`. S1's counters and the `sparse_terms` fallback in breadth-first order.
   - **Tests first:**
     - against `build(take())`, every column is equal after φ on scripted and synthetic trees up to 1M, counters included;

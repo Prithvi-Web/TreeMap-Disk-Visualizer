@@ -121,6 +121,11 @@ pub struct Listing {
     /// directory itself (Windows); `None` where the parent's listing already
     /// reported each entry's own attributes (macOS, Linux).
     pub own_times: Option<DirTimes>,
+    /// True once [`Listing::sort_by_name`] ordered the entries, as the POSIX
+    /// listers and the synthetic one do; a Windows listing keeps its own order
+    /// and leaves it false. Block numbering re-sorts only such a listing, by
+    /// the names as they are stored ([`Listing::order_as_stored`]).
+    pub sorted_by_name: bool,
 }
 
 impl Listing {
@@ -132,6 +137,40 @@ impl Listing {
         self.denied_entries = 0;
         self.unreadable_entries = 0;
         self.own_times = None;
+        self.sorted_by_name = false;
+    }
+
+    /// Forgets the previous directory and gives back what a big one left
+    /// behind: at most `entries` entries' and `name_bytes` names' worth of room
+    /// is kept, so one huge folder does not pin its listing's memory in a
+    /// worker for the rest of the walk.
+    pub fn shrink_to(&mut self, entries: usize, name_bytes: usize) {
+        self.clear();
+        self.entries.shrink_to(entries);
+        self.names.shrink_to(name_bytes);
+    }
+
+    /// Puts a listing [`Listing::sort_by_name`] ordered by its raw bytes into
+    /// the order of its names as they are stored (U+FFFD for each maximal
+    /// invalid subpart): the order `tm-store`'s `breadth_first` and the Node
+    /// ingest give each folder's children. The two orders differ only where a
+    /// name is not UTF-8 (`a` + 0xF8 sorts after `a😀` raw and before it
+    /// stored), so a listing whose every name is UTF-8 is left as it is; the
+    /// sort is stable, so names stored alike keep their raw order. A listing in
+    /// its own order (Windows) is never touched.
+    pub fn order_as_stored(&mut self) {
+        if !self.sorted_by_name {
+            return;
+        }
+        let Self { names, entries, .. } = self;
+        let name_of = |entry: &Entry| names.get(entry.name.clone()).unwrap_or(&[]);
+        if entries
+            .iter()
+            .all(|entry| std::str::from_utf8(name_of(entry)).is_ok())
+        {
+            return;
+        }
+        entries.sort_by(|a, b| stored_cmp(name_of(a), name_of(b)));
     }
 
     /// Appends one entry.
@@ -160,12 +199,18 @@ impl Listing {
     /// unique, so the unstable sort is exact. Call it once
     /// [`Listing::mount_points`], which holds indices into the entries, is empty.
     pub fn sort_by_name(&mut self) {
-        let Self { names, entries, .. } = self;
+        let Self {
+            names,
+            entries,
+            sorted_by_name,
+            ..
+        } = self;
         entries.sort_unstable_by(|a, b| {
             let a = names.get(a.name.clone()).unwrap_or(&[]);
             let b = names.get(b.name.clone()).unwrap_or(&[]);
             a.cmp(b)
         });
+        *sorted_by_name = true;
     }
 
     /// How many entries were listed.
@@ -176,6 +221,53 @@ impl Listing {
     /// True when the directory had no entries.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+}
+
+/// U+FFFD as UTF-8: what a name's stored form holds for each maximal invalid subpart.
+const REPLACEMENT: &[u8] = "\u{FFFD}".as_bytes();
+
+/// The bytes of `raw`'s stored form, in order, without building it: each
+/// chunk's valid part, then U+FFFD when the chunk ends in an invalid subpart —
+/// exactly `String::from_utf8_lossy`'s output, which reads the same chunks.
+fn stored_bytes(raw: &[u8]) -> impl Iterator<Item = u8> + '_ {
+    raw.utf8_chunks().flat_map(|chunk| {
+        let replaced: &[u8] = if chunk.invalid().is_empty() {
+            &[]
+        } else {
+            REPLACEMENT
+        };
+        chunk.valid().bytes().chain(replaced.iter().copied())
+    })
+}
+
+/// How `a` and `b` compare as stored: their `String::from_utf8_lossy` forms
+/// byte by byte, without allocating either.
+pub fn stored_cmp(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
+    stored_bytes(a).cmp(stored_bytes(b))
+}
+
+/// How many bytes `raw` takes as stored.
+pub fn stored_len(raw: &[u8]) -> usize {
+    raw.utf8_chunks()
+        .map(|chunk| {
+            let replaced = if chunk.invalid().is_empty() {
+                0
+            } else {
+                REPLACEMENT.len()
+            };
+            chunk.valid().len() + replaced
+        })
+        .sum()
+}
+
+/// Appends `raw`'s stored form to `out`.
+pub fn push_stored(out: &mut Vec<u8>, raw: &[u8]) {
+    for chunk in raw.utf8_chunks() {
+        out.extend_from_slice(chunk.valid().as_bytes());
+        if !chunk.invalid().is_empty() {
+            out.extend_from_slice(REPLACEMENT);
+        }
     }
 }
 
@@ -393,5 +485,143 @@ pub fn thread_cpu_seconds() -> f64 {
     #[cfg(not(any(unix, windows)))]
     {
         f64::NAN
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Names whose stored forms test every way a chunk can end: empty, valid,
+    /// a lone invalid byte, a truncated sequence, surrogates, past U+10FFFF,
+    /// an invalid byte before an ASCII separator, and two raw names stored alike.
+    const CORPUS: &[&[u8]] = &[
+        b"",
+        b"a",
+        b"A",
+        b"a-",
+        b"a\xF8",
+        "a\u{1F600}".as_bytes(),
+        b"\xF0\x9F\x98",
+        b"\xF0\x9F\x98\x80",
+        b"x\xF8.txt",
+        b"x\xF9.txt",
+        b"\xE2/",
+        b"\xFF\xFE",
+        b"ab\xC3",
+        b"\xC3\xA4",
+        b"\xED\xA0\x80",
+        b"\xF4\x90\x80\x80",
+        "\u{FFFD}".as_bytes(),
+    ];
+
+    fn lossy(raw: &[u8]) -> Vec<u8> {
+        String::from_utf8_lossy(raw).into_owned().into_bytes()
+    }
+
+    fn listing(names: &[&[u8]]) -> Listing {
+        let mut listing = Listing::default();
+        for name in names {
+            listing.push(name, Meta::unknown(crate::KIND_FILE));
+        }
+        listing
+    }
+
+    fn order(listing: &Listing) -> Vec<Vec<u8>> {
+        listing
+            .entries
+            .iter()
+            .map(|entry| listing.name(entry).to_vec())
+            .collect()
+    }
+
+    #[test]
+    fn a_stored_name_is_exactly_what_from_utf8_lossy_makes() {
+        for &a in CORPUS {
+            let mut out = Vec::new();
+            push_stored(&mut out, a);
+            assert_eq!(out, lossy(a), "{a:?}");
+            assert_eq!(stored_len(a), lossy(a).len(), "{a:?}");
+            for &b in CORPUS {
+                assert_eq!(stored_cmp(a, b), lossy(a).cmp(&lossy(b)), "{a:?} vs {b:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_name_sorted_listing_is_reordered_by_its_stored_names_only_when_one_is_not_utf8() {
+        let emoji = "a\u{1F600}".as_bytes();
+        let mut mixed = listing(&[b"b", b"a\xF8", emoji, b"x\xF9.txt", b"x\xF8.txt"]);
+        mixed.sort_by_name();
+        assert_eq!(
+            order(&mixed),
+            [emoji, b"a\xF8", b"b", b"x\xF8.txt", b"x\xF9.txt"],
+            "raw bytes first"
+        );
+        mixed.order_as_stored();
+        assert_eq!(
+            order(&mixed),
+            [b"a\xF8", emoji, b"b", b"x\xF8.txt", b"x\xF9.txt"],
+            "stored: a\u{FFFD} before a\u{1F600}; the two stored alike keep their raw order"
+        );
+
+        let mut own_order = listing(&[b"b", emoji, b"a\xF8"]);
+        own_order.order_as_stored();
+        assert_eq!(
+            order(&own_order),
+            [b"b", emoji, b"a\xF8"],
+            "a listing in its own order (Windows) is never touched"
+        );
+    }
+
+    #[test]
+    fn the_stored_order_keeps_the_raw_order_of_names_stored_alike_in_a_big_listing() {
+        // Fifty groups of twenty raw names stored alike (`gNN` and one lone
+        // continuation byte, each stored `gNN` U+FFFD), each group's valid
+        // `gNNé` after it raw and before it stored: the re-sort must move every
+        // `é` name and keep each group in its raw order. Small slices and runs
+        // already in order sort stably even unstably, so it takes a listing
+        // this size, out of order, to tell the two apart.
+        let mut names: Vec<Vec<u8>> = Vec::new();
+        for group in 0..50_u8 {
+            for byte in 0x80..0x94_u8 {
+                names.push([format!("g{group:02}").as_bytes(), &[byte]].concat());
+            }
+            names.push(format!("g{group:02}\u{e9}").into_bytes());
+        }
+        let refs: Vec<&[u8]> = names.iter().map(Vec::as_slice).collect();
+        let mut big = listing(&refs);
+        big.sort_by_name();
+        let mut expected = order(&big);
+        // The oracle: the raw order, stable-sorted by `from_utf8_lossy`.
+        expected.sort_by_key(|name| lossy(name));
+        big.order_as_stored();
+        assert_eq!(order(&big), expected);
+    }
+
+    #[test]
+    fn clearing_a_listing_forgets_that_it_was_sorted() {
+        let mut listed = listing(&[b"b", b"a"]);
+        listed.sort_by_name();
+        assert!(listed.sorted_by_name);
+        listed.clear();
+        assert!(
+            !listed.sorted_by_name,
+            "the next folder's order is its lister's to say"
+        );
+    }
+
+    #[test]
+    fn shrinking_a_listing_gives_back_what_a_big_folder_took() {
+        let names: Vec<Vec<u8>> = (0..5_000)
+            .map(|i| format!("n{i:05}").into_bytes())
+            .collect();
+        let refs: Vec<&[u8]> = names.iter().map(Vec::as_slice).collect();
+        let mut big = listing(&refs);
+        assert!(big.entries.capacity() >= 5_000);
+        big.shrink_to(100, 1_000);
+        assert!(big.is_empty(), "forgotten");
+        assert_eq!(big.entries.capacity(), 100);
+        assert_eq!(big.names.capacity(), 1_000);
     }
 }

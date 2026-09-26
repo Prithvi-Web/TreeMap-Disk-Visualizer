@@ -121,6 +121,10 @@ jobs:
         run: |
           set -o pipefail
           cargo test --workspace --no-fail-fast 2>&1 | tee -a ../../cargo-output.log
+          # Until Phase 4's T10 makes block numbering the walk's default, the
+          # whole tm-walk suite also runs under it (a test-only feature that
+          # adds no package).
+          cargo test -p tm-walk --no-fail-fast --features blocks-by-default 2>&1 | tee -a ../../cargo-output.log
 
       - name: Surface each failing Rust check as an annotation
         # The only channel a Rust failure reaches anyone through (see

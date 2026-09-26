@@ -31,18 +31,25 @@ use std::sync::Arc;
 
 use tm_governor::Governor;
 
+mod blocks;
 pub mod climb;
+pub mod invariants;
 pub mod links;
 pub mod output;
 pub mod platform;
 mod queue;
+pub mod sink;
 pub mod walk;
 
-pub use links::{IdFamily, LinkKey, hardlink_families};
+pub use links::{IdFamily, LinkKey, hardlink_families, link_key};
 pub use output::{DirRefusal, HardlinkRef, Refusal, WalkOutput, WalkStats};
 pub use platform::synthetic::{SyntheticLister, SyntheticSpec, synthetic_temp_folder};
 pub use platform::{Entry, ListBuffer, Lister, Listing, Meta};
-pub use walk::{GovernorPacer, Pacer, Progress, WalkHandle, panic_text, start_with};
+pub use sink::{Block, ListingSink};
+pub use walk::{
+    GovernorPacer, Pacer, Progress, WalkCounts, WalkHandle, panic_text, start_with,
+    start_with_sinks,
+};
 
 /// A regular file, socket, fifo or device: a leaf with its lstat size.
 pub const KIND_FILE: u8 = 0;
@@ -60,6 +67,36 @@ pub const DEFAULT_BUFFER_BYTES: usize = 256 * 1024;
 pub const MIN_BUFFER_BYTES: usize = 4096;
 /// The most a worker's listing buffer may be: a caller's larger request is clamped, never allocated.
 pub const MAX_BUFFER_BYTES: usize = 16 * 1024 * 1024;
+/// [`WalkOptions::q_max`]'s default: memory mode's `Q_MAX` (P4-13). The large
+/// modes will pass 4,096.
+pub const DEFAULT_Q_MAX: usize = 65_536;
+/// Under [`Numbering::Blocks`], a listing of more entries than this goes
+/// through the big-listing semaphore, one at a time, and is committed in
+/// chunks of [`CHUNK_BYTES`] (design §S.1.2 step 5).
+pub const BIG_LISTING: usize = 16_384;
+/// The staged bytes (stored names and rows) a big listing's chunk reaches
+/// before it is handed to the sinks.
+pub const CHUNK_BYTES: usize = 4 * 1024 * 1024;
+/// [`WalkOptions::id_ceiling`]'s default: ids are `u32` and the root holds 0,
+/// so a walk numbers at most `u32::MAX - 1` entries.
+pub const ID_CEILING: u32 = u32::MAX;
+
+/// How a walk numbers the entries it lists.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Numbering {
+    /// Phase 3's numbering, and the default until T10: one atomic counter
+    /// hands every entry its id as it is discovered, so the ids of one
+    /// listing interleave with other workers' and `build` renumbers
+    /// breadth-first. The queue is first-in first-out, as it always was.
+    #[default]
+    Discovery,
+    /// One contiguous block of ids per listing (P4-1a): a worker lists and
+    /// orders a whole folder, then reserves `first..first + k` for its `k`
+    /// children under one commit lock and hands the rows to every
+    /// [`ListingSink`], so invariants I1–I4 ([`invariants`]) hold by
+    /// construction. The queue is the hybrid one ([`WalkOptions::q_max`]).
+    Blocks,
+}
 
 /// What to walk and how.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,11 +116,26 @@ pub struct WalkOptions {
     /// only for a root inside the app's synthetic temp folder
     /// ([`platform::synthetic::synthetic_fences`]).
     pub synthetic: Option<SyntheticSpec>,
+    /// How the entries are numbered; [`Numbering::Discovery`] by default.
+    pub numbering: Numbering,
+    /// Under [`Numbering::Blocks`], the queue hands out the oldest job while
+    /// it holds fewer than `q_max` jobs and the newest once it holds `q_max`
+    /// or more (P4-13): breadth-first while the backlog is small, depth-first
+    /// once it is not. Depth-first slows the backlog's growth to one descent
+    /// per worker; it cannot cap it at `q_max` — a folder with more subfolders
+    /// than `q_max` queues them all ([`WalkCounts::queue_peak`] says how far it
+    /// went). [`Numbering::Discovery`] ignores it.
+    pub q_max: usize,
+    /// The id the counter stops at: ids `0..id_ceiling` are handed out and a
+    /// walk that needs more faults ([`ID_CEILING`] by default, the most a `u32`
+    /// column numbers). Tests lower it to reach the fault with a small tree.
+    pub id_ceiling: u32,
 }
 
 impl WalkOptions {
     /// Options for `root` with the defaults: no never-descend list, no atime,
-    /// the hill-climber, the default buffer, the disk.
+    /// the hill-climber, the default buffer, the disk, discovery numbering,
+    /// [`DEFAULT_Q_MAX`] and [`ID_CEILING`].
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
@@ -92,6 +144,15 @@ impl WalkOptions {
             max_workers: 0,
             buffer_bytes: DEFAULT_BUFFER_BYTES,
             synthetic: None,
+            // The test-only feature runs every existing walk under block
+            // numbering (tm-walk's Cargo.toml); nothing ships with it.
+            numbering: if cfg!(feature = "blocks-by-default") {
+                Numbering::Blocks
+            } else {
+                Numbering::Discovery
+            },
+            q_max: DEFAULT_Q_MAX,
+            id_ceiling: ID_CEILING,
         }
     }
 }

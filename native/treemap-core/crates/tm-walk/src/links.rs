@@ -10,7 +10,24 @@
 //! and on Windows the family refresh gave both the first one's size. Here
 //! the key is the id itself, and what leaves the walk is a family number.
 
-use crate::HardlinkRef;
+use crate::platform::Meta;
+use crate::{HardlinkRef, KIND_FILE};
+
+/// The link key of the file `meta` describes, numbered `node`, when its name
+/// may share the file with another name: its listing reported a link count
+/// above one, or none at all (Windows) while its attributes were read. An id
+/// of 0 is no id (a FAT32 or exFAT volume gives none, and no listing reports 0
+/// for a file): keyed, every such file would be one family (RISKS R55).
+pub fn link_key(meta: &Meta, node: u32) -> Option<LinkKey> {
+    let counted = meta.nlink > 1;
+    (meta.kind == KIND_FILE && meta.ino != 0 && (counted || (meta.nlink == 0 && !meta.withheld)))
+        .then(|| LinkKey {
+            dev: meta.dev.to_bits(),
+            ino: meta.ino,
+            node,
+            counted,
+        })
+}
 
 /// One name the walk may have to join to others: its file's device (the
 /// bits of the listing's double, exact for every device id a platform

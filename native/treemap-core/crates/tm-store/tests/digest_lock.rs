@@ -46,10 +46,11 @@ use std::sync::{Arc, OnceLock};
 
 use tm_store::derive::ContainerRule;
 use tm_store::{BuildOptions, Counters, Store, StoreMode, build, flag};
+use tm_walk::invariants::check_walk_columns;
 use tm_walk::platform::{DirTimes, ListBuffer, Lister, Meta};
 use tm_walk::walk::{MAX_WORKERS, Pacer};
 use tm_walk::{
-    FLAG_DATALESS, FastPath, KIND_DIR, KIND_FILE, KIND_SYMLINK, Refusal, SyntheticSpec,
+    FLAG_DATALESS, FastPath, KIND_DIR, KIND_FILE, KIND_SYMLINK, Numbering, Refusal, SyntheticSpec,
     WalkOptions, WalkStats, lister_for, start_with, synthetic_temp_folder,
 };
 
@@ -1118,12 +1119,23 @@ impl Pacer for OpenPacer {
     }
 }
 
-/// `build(take())` of `fixture` walked by exactly `workers` workers.
-fn walk_and_build(fixture: &Fixture, workers: usize) -> Result<Store, String> {
+/// Both ways a walk numbers what it lists (T6): what `build` makes of a walk must not
+/// depend on which.
+const NUMBERINGS: [Numbering; 2] = [Numbering::Discovery, Numbering::Blocks];
+
+/// `build(take())` of `fixture` walked by exactly `workers` workers, numbered by
+/// `numbering`. A block-numbered walk is first held to I1–I4, its children in stored
+/// name order wherever the build sorts them (design §S.2, test 8).
+fn walk_and_build(
+    fixture: &Fixture,
+    workers: usize,
+    numbering: Numbering,
+) -> Result<Store, String> {
     let mut opts = WalkOptions::new(fixture.root.clone());
     opts.never_descend.clone_from(&fixture.never_descend);
     opts.want_atime = fixture.want_atime;
     opts.max_workers = workers;
+    opts.numbering = numbering;
     let lister: Arc<dyn Lister> = match &fixture.source {
         Source::Scripted(tree) => Arc::clone(tree) as Arc<dyn Lister>,
         Source::Synthetic(spec) => {
@@ -1133,29 +1145,43 @@ fn walk_and_build(fixture: &Fixture, workers: usize) -> Result<Store, String> {
     };
     let handle = start_with(opts, Arc::new(OpenPacer), lister).map_err(|e| e.to_string())?;
     let output = handle.take().map_err(|e| e.to_string())?;
+    if numbering == Numbering::Blocks {
+        check_walk_columns(
+            &output.parent,
+            &output.name_off,
+            &output.names,
+            fixture.build.sort_children,
+        )
+        .map_err(|broken| format!("the block-numbered walk: {broken}"))?;
+    }
     build(output, &fixture.build).map_err(|e| e.to_string())
 }
 
-/// One fixture's digests at 1 worker and at 8, or why a run failed.
+/// One fixture's digests at 1 worker and at 8, numbered on discovery and in blocks, or
+/// why a run failed.
 struct Run {
     fixture: &'static str,
     one: Result<Digest, String>,
     eight: Result<Digest, String>,
+    blocks_one: Result<Digest, String>,
+    blocks_eight: Result<Digest, String>,
 }
 
 /// Every fixture, walked and built once for all the tests here.
 fn runs() -> Result<&'static [Run], Failure> {
     static RUNS: OnceLock<Result<Vec<Run>, String>> = OnceLock::new();
     RUNS.get_or_init(|| {
-        let digests = |fixture: &Fixture, workers| {
-            walk_and_build(fixture, workers).map(|store| digest(&store))
+        let digests = |fixture: &Fixture, workers, numbering| {
+            walk_and_build(fixture, workers, numbering).map(|store| digest(&store))
         };
         fixtures().map(|all| {
             all.iter()
                 .map(|fixture| Run {
                     fixture: fixture.name,
-                    one: digests(fixture, 1),
-                    eight: digests(fixture, 8),
+                    one: digests(fixture, 1, Numbering::Discovery),
+                    eight: digests(fixture, 8, Numbering::Discovery),
+                    blocks_one: digests(fixture, 1, Numbering::Blocks),
+                    blocks_eight: digests(fixture, 8, Numbering::Blocks),
                 })
                 .collect()
         })
@@ -1348,6 +1374,36 @@ fn every_store_equals_its_recorded_digests() -> TestResult {
     )))
 }
 
+/// T6: a walk that numbers each listing as one block under a commit lock builds the
+/// recorded store too, at 1 worker and at 8 — `build(Blocks output)` equals
+/// `build(Discovery output)` column for column, since both equal the table.
+#[test]
+fn block_numbering_builds_the_recorded_store_at_one_worker_and_eight() -> TestResult {
+    let mut problems = Vec::new();
+    for run in runs()? {
+        for (workers, digest) in [(1, &run.blocks_one), (8, &run.blocks_eight)] {
+            match digest {
+                Ok(now) => problems.extend(
+                    against_recorded(run.fixture, now)
+                        .into_iter()
+                        .map(|moved| format!("blocks at {workers} worker(s): {moved}")),
+                ),
+                Err(why) => problems.push(format!(
+                    "{} in blocks at {workers} worker(s): {why}",
+                    run.fixture
+                )),
+            }
+        }
+    }
+    if problems.is_empty() {
+        return Ok(());
+    }
+    Err(Failure(format!(
+        "block numbering changed what build makes:\n  {}",
+        problems.join("\n  ")
+    )))
+}
+
 // ---------------------------------------------------------------------------
 // The fixtures hold what they claim
 // ---------------------------------------------------------------------------
@@ -1438,15 +1494,18 @@ fn the_cross_folder_family_keeps_its_bytes_at_its_first_member_breadth_first() -
     assert_eq!(smallest_utf16, Some(&SMALLEST_PATH), "in UTF-16 order");
 
     let fixture = posix_fixture()?;
-    for workers in [1, 8] {
-        let store = walk_and_build(&fixture, workers)?;
+    for (workers, numbering) in [1, 8].into_iter().flat_map(|w| NUMBERINGS.map(|n| (w, n))) {
+        let store = walk_and_build(&fixture, workers, numbering)?;
         for path in FAMILY {
             let id = store_id(&store, path)
                 .ok_or_else(|| format!("{} is not in the store", joined(path)))?;
             let duplicate =
                 store.flags.as_slice().get(id).copied().unwrap_or(0) & flag::HARDLINK_DUP != 0;
             let keeps = path == STORE_FIRST;
-            let at = format!("{} walked by {workers} worker(s)", joined(path));
+            let at = format!(
+                "{} walked by {workers} worker(s), {numbering:?} numbering",
+                joined(path)
+            );
             assert_eq!(duplicate, !keeps, "{at}: the duplicate flag");
             let bytes = if keeps { FAMILY_BYTES } else { 0.0 };
             assert_eq!(size_at(&store, id), bytes.to_string(), "{at}: the size");
@@ -1465,8 +1524,16 @@ fn stored_names_order_each_folder_and_names_stored_alike_keep_the_listing_order(
         lossy(INVALID).as_slice() < EMOJI,
         "the stored names sort a\u{FFFD} first"
     );
-    let store = walk_and_build(&posix_fixture()?, 1)?;
-    let root: Vec<&[u8]> = children(&store, 0).map(|id| name_at(&store, id)).collect();
+    for numbering in NUMBERINGS {
+        stored_order_holds(&walk_and_build(&posix_fixture()?, 1, numbering)?)
+            .map_err(|why| format!("{numbering:?} numbering: {why}"))?;
+    }
+    Ok(())
+}
+
+/// The store's own order in the root and in `pair`, and two names stored alike.
+fn stored_order_holds(store: &Store) -> Result<(), String> {
+    let root: Vec<&[u8]> = children(store, 0).map(|id| name_at(store, id)).collect();
     let stored = lossy(INVALID);
     let at = |name: &[u8]| root.iter().position(|&n| n == name);
     let (Some(invalid), Some(emoji)) = (at(&stored), at(EMOJI)) else {
@@ -1474,10 +1541,8 @@ fn stored_names_order_each_folder_and_names_stored_alike_keep_the_listing_order(
     };
     assert!(invalid < emoji, "a\u{FFFD} is before a😀 in the store");
 
-    let pair = store_id(&store, &[b"pair"]).ok_or("no folder pair")?;
-    let sizes: Vec<String> = children(&store, pair)
-        .map(|id| size_at(&store, id))
-        .collect();
+    let pair = store_id(store, &[b"pair"]).ok_or("no folder pair")?;
+    let sizes: Vec<String> = children(store, pair).map(|id| size_at(store, id)).collect();
     assert_eq!(
         sizes,
         ["5", "6"],
@@ -1485,9 +1550,9 @@ fn stored_names_order_each_folder_and_names_stored_alike_keep_the_listing_order(
     );
 
     let alike = "x\u{FFFD}.txt".as_bytes();
-    let sizes: Vec<String> = children(&store, 0)
-        .filter(|&id| name_at(&store, id) == alike)
-        .map(|id| size_at(&store, id))
+    let sizes: Vec<String> = children(store, 0)
+        .filter(|&id| name_at(store, id) == alike)
+        .map(|id| size_at(store, id))
         .collect();
     assert_eq!(sizes, ["1", "2"], "x\\xF8.txt (1 byte), then x\\xF9.txt");
     Ok(())

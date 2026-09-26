@@ -644,8 +644,9 @@ pub fn scan_start(root: String, opts: Option<Value>) -> Result<u32> {
     let options: StartOptions = serde_json::from_value(raw)
         .map_err(|err| refuse(format!("{START_SHAPE}; got {received}: {err}")))?;
     let synthetic = options.synthetic.as_ref().map(synthetic_spec).transpose()?;
+    // Discovery numbering, the queue and the id ceiling stay at their defaults
+    // until T10 switches this path to block numbering.
     let walk_options = WalkOptions {
-        root: PathBuf::from(root),
         never_descend: options
             .never_descend
             .into_iter()
@@ -659,6 +660,7 @@ pub fn scan_start(root: String, opts: Option<Value>) -> Result<u32> {
             .buffer_bytes
             .map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX)),
         synthetic,
+        ..WalkOptions::new(PathBuf::from(root))
     };
     let governor = Arc::new(shared().governor.clone());
     let handle = tm_walk::start(walk_options, governor).map_err(|err| walk_error(&err))?;
