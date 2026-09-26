@@ -778,7 +778,7 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
       - two tasks come before T10: **T9b** (the first tree sent from the store in chunks, byte for byte today's) and **T9c** (Electron's hand-over off the JavaScript thread, R92);
       - after them, T9's harness measures again and sets each runtime's `T_mem`. That is T10's first gate.
     - **`M_agg`**, by §S.1.4, with B0 and E0 measured and the rest at their budgets (W 36 MB worst, AggregateState 52, frontier 2, link log 4): **154 MB in Node (2.28M rows at 70.7 B) and 179 MB in Electron (2.58M rows at 72.8 B)**. The guard must count the measured bytes a row, not 64. Aggregate's serve stage carries the same transport, so its 400 MB ceiling also waits for T9b (R74).
-- [ ] **T9b. Send the first tree without building it** (added 26 Sep 2026 by T9's measurements; RISKS R93). The SSE `complete` frame and `/api/scan/:id/result`'s tree are written from the store in chunks:
+- [x] **T9b. Send the first tree without building it** (added 26 Sep 2026 by T9's measurements; RISKS R93). The SSE `complete` frame and `/api/scan/:id/result`'s tree are written from the store in chunks:
   - the prune's selection is kept as ids (O(`PRUNE_MAX_NODES`));
   - each node's JSON goes out in order, into chunks written with the socket's backpressure honoured;
   - there is no pruned object tree, no whole-frame string and no whole-frame buffer.
@@ -791,6 +791,38 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
     - `/result`'s body likewise.
   - **Mutants:** a node's key order; a separator; the backpressure wait removed.
   - **Green gate:** targeted tests and goldens; T9's harness shows the sent stage within a stated bound of the adopted stage in both runtimes.
+  - **Designed 26 Sep 2026, from a scratch prototype** (`$S/bd/proto.js`, not committed).
+    - **Byte-identical by construction.** The prototype's frame equalled `sseSend`'s at 20k, 1M and 5M. Each node is `materializeBare` → `JSON.stringify`, with `,"children":[`, `,"pruned":true}` or `,"children":[]}` spliced before its closing brace, exactly where `pruneStore` adds those keys.
+    - **The expansion is `pruneStore`'s own.** The same heap (made generic over its jobs) is fed the same jobs, without building a node: the ids popped are the folders expanded.
+    - **Two passes.** The first counts the frame's length, so today's refusal holds exactly: the frame is refused when `'data: ' + JSON + '\n\n'` would pass V8's longest string (`buffer.constants.MAX_STRING_LENGTH`). The second writes 64 KiB chunks.
+    - **Backpressure.** The chunks are written synchronously while the socket accepts them, so the frame is still one instant of the store whenever the reader keeps up. It waits for `drain` only when the socket pushes back; a closed socket ends the send.
+    - **Measured at 5M** (added over the adopted stage, reader keeping up / reader stalled):
+
+      | | Node | Electron |
+      | --- | --- | --- |
+      | Today | +585 / +576 MB | +238 / +320 MB |
+      | Holding the frame as chunks | +186 / +282 MB | +2 / +105 MB |
+      | Two passes | +43 / +207 MB | 0 / +16 MB |
+
+      The time is about today's (410–530 ms against 450–590). Honouring backpressure removes the stalled case's queue.
+    - **Intentional differences.**
+      - A pruned tree too deep for `JSON.stringify`'s recursion is sent, where today's frame was refused as too large.
+      - `/result` streams its body: it carries no ETag and no Content-Length, where `res.json` gave both. A body past the string limit still fails as today, before any byte is written.
+    - **Not in T9b.** The index route (`/api/index/tree`) and `/subtree` can still build 250,000 nodes today's way when an API caller asks; the UI asks for 25,000 and 20,000.
+  - **Built 26 Sep 2026.** The pieces:
+    - `src/services/treeFrame.ts`: `sendPrunedTree`, `jsonAroundTree` and `TREE_MARK`; `treeFrameMaxChars` is V8's longest string, with a test-only override.
+    - `scanStore.ts`: `prunedExpansion`, with `pruneStore`'s heap made generic over its jobs.
+    - `scanRoutes.ts`: `sendFinalEvent`. The progress stream's last frame guards against re-entry and clears its timer before it sends. `/result` streams, and past the limit throws the `RangeError` `res.json` threw.
+    - T9's harness now measures this path: `sendFinalEvent` writing to a `Writable` whose reader keeps up.
+
+    **Tests** (`tests/treeFrame.test.ts`, 14):
+    - byte-identity with today's `sseSend` frame on 12 fuzz trees (POSIX, Windows, `cloud://`) at seven budgets, before and after watcher edits, in both stores;
+    - names JSON must escape, virtual and container nodes, empty folders, a folder wider than the budget, `/` and `C:\`;
+    - a 200-deep chain byte for byte, and a 5,000-deep one level by level (today's serialization stops near 950 levels in Electron and 3,100 in Node 24);
+    - the refusal at its exact boundary; one turn while the socket takes every chunk; nothing written while it pushes back; a close or failure while it waits ends the send;
+    - through HTTP, the stream's frame and `/result`, a reader that stops reading mid-frame (exactly one frame), and past the limit.
+
+    17 mutants red; the one that first survived (a failure counted as a drain) led to the failing-socket test. The goldens hold. **Measured** (T9's harness, not recorded; the recorded re-measure is T10's first step), the send now adds +39 MB in plain Node at 1M and +49 MB at 5M (peaks 248 and 538 MB, from 890 and 1,156), and nothing in Electron, whose peak is now its hand-over (208 and 555 MB, from 621 and 878). Both runtimes meet 700 MB at 5M.
 - [ ] **T9c. Electron's hand-over off the JavaScript thread** (added 26 Sep 2026 by T9's measurements; RISKS R92; §S.1.6). Where external buffers are refused, `storeTake`:
   - allocates each column's array on the JavaScript thread;
   - fills it on libuv's pool, through the pointer `napi_get_typedarray_info` gives;

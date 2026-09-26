@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { Writable } from 'node:stream';
 import { Worker } from 'node:worker_threads';
 import type { Response } from 'express';
 import type * as NativeCore from '../../native/index';
@@ -68,13 +69,31 @@ async function loadApp(): Promise<boolean> {
 }
 
 /**
+ * A socket whose reader keeps up, as a local client's does: it takes each
+ * chunk on the next turn, and pushes back past 16 KiB (a socket's own mark).
+ * It counts the bytes and keeps the first 64 characters.
+ */
+function readerSocket(): { stream: Writable; bytes: () => number; head: () => string } {
+  let bytes = 0;
+  let head = '';
+  const stream = new Writable({
+    highWaterMark: 16 * 1024,
+    write(chunk: Buffer, _encoding, done): void {
+      if (head.length < 64) head += chunk.subarray(0, 64 - head.length).toString('utf8');
+      bytes += chunk.length;
+      setImmediate(done);
+    },
+  });
+  return { stream, bytes: () => bytes, head: () => head };
+}
+
+/**
  * The memory path over a synthetic tree or one on disk, as `runNativeWalk`'s
  * memory branch drives it, then the first tree sent as the app sends it.
  */
 async function walk(source: Extract<MemoryPathJob, { kind: 'synthetic' | 'disk' }>): Promise<MemoryPathResult> {
   const serverLoaded = await loadApp();
-  const { PRUNE_MAX_NODES, buildScanStats } = await import('../../src/api/scanRoutes');
-  const { sseSend } = await import('../../src/utils/sse');
+  const { sendFinalEvent } = await import('../../src/api/scanRoutes');
   const { adoptNativeStore, memoryStoreOptions } = await import('../../src/services/scan/nativeMemory');
   const { rootName } = await import('../../src/services/scan/nativeEngine');
   const { PackedScanStore } = await import('../../src/services/scanStore');
@@ -105,13 +124,13 @@ async function walk(source: Extract<MemoryPathJob, { kind: 'synthetic' | 'disk' 
   adoptNativeStore(scan, store, taken);
   store.sumSizes();
   await measure('adopted');
-  // The SSE stream's `finish`: the pruned tree and the stats in one frame,
-  // written to a socket that has not flushed it yet — which holds it as UTF-8.
-  const socket = { frame: null as Buffer | null, write(chunk: string): boolean { this.frame = Buffer.from(chunk, 'utf8'); return true; } };
-  const { root: tree } = store.prune(store.rootId, { maxNodes: PRUNE_MAX_NODES });
-  if (!sseSend(socket as unknown as Response, { type: 'complete', root: tree, stats: buildScanStats(scan) })) {
-    return { ok: false, runtime, error: 'the first tree did not fit one SSE frame: the app would have sent its error instead' };
-  }
+  // The progress stream's last frame, as the app sends it (`sendFinalEvent`:
+  // the pruned tree from the store in chunks, Phase 4 T9b), to a socket whose
+  // reader keeps up.
+  scan.status = 'complete';
+  scan.store = store;
+  const socket = readerSocket();
+  await sendFinalEvent(socket.stream as unknown as Response, scan);
   await measure('pruned');
   return {
     ok: true,
@@ -122,8 +141,8 @@ async function walk(source: Extract<MemoryPathJob, { kind: 'synthetic' | 'disk' 
     serverLoaded,
     counts: { scanned: scan.scanned ?? 0, dirs: scan.dirCount ?? 0, files: scan.fileCount ?? 0 },
     handOverBusyMs,
-    frameBytes: socket.frame?.length ?? 0,
-    frameHead: socket.frame?.subarray(0, 64).toString('utf8') ?? '',
+    frameBytes: socket.bytes(),
+    frameHead: socket.head(),
   };
 }
 

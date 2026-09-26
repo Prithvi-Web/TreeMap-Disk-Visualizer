@@ -80,7 +80,7 @@ export type MemoryPathResult =
      * the columns there, inside one callback (RISKS R92).
      */
     handOverBusyMs?: number;
-    /** The SSE `complete` frame's bytes, as the app's `sseSend` wrote it and a socket encodes it. */
+    /** The progress stream's last frame's bytes, as the app sends it (`sendFinalEvent`) and the socket takes it. */
     frameBytes?: number;
     /** The frame's first bytes, which name the event. */
     frameHead?: string;

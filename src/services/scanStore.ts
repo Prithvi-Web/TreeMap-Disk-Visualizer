@@ -281,14 +281,20 @@ interface StoreJob {
   copy: FileNode;
 }
 
-class StoreSizeHeap {
-  private a: StoreJob[] = [];
+/** A folder waiting to be expanded, by size: all the heap compares. */
+interface SizedJob {
+  srcId: number;
+  srcSize: number;
+}
+
+class StoreSizeHeap<J extends SizedJob = StoreJob> {
+  private a: J[] = [];
 
   get size(): number {
     return this.a.length;
   }
 
-  push(job: StoreJob): void {
+  push(job: J): void {
     const a = this.a;
     a.push(job);
     let i = a.length - 1;
@@ -300,11 +306,11 @@ class StoreSizeHeap {
     }
   }
 
-  pop(): StoreJob | undefined {
+  pop(): J | undefined {
     const a = this.a;
     if (a.length === 0) return undefined;
     const top = a[0];
-    const last = a.pop() as StoreJob;
+    const last = a.pop() as J;
     if (a.length > 0) {
       a[0] = last;
       let i = 0;
@@ -394,6 +400,32 @@ export function pruneStore(store: ScanStore, id: number, options: PruneOptions):
   }
 
   return { root: rootCopy, nodes, prunedDirs };
+}
+
+/**
+ * The folders `pruneStore(store, id, options)` expands — gives its children —
+ * found without building a node: the same heap, fed the same folders in the
+ * same order, so the same ones are popped. Every other folder in its tree is
+ * `pruned`, or `children: []` when it is empty (`treeFrame.ts` writes the
+ * tree's JSON from this).
+ */
+export function prunedExpansion(store: ScanStore, id: number, options: PruneOptions): Set<number> {
+  const maxNodes = Math.max(1, options.maxNodes);
+  const expanded = new Set<number>();
+  const heap = new StoreSizeHeap<SizedJob>();
+  let nodes = 1;
+  const defer = (srcId: number): void => {
+    if (isExpandableId(store, srcId)) heap.push({ srcId, srcSize: store.size(srcId) });
+  };
+  defer(id);
+  while (heap.size > 0 && nodes < maxNodes) {
+    const { srcId } = heap.pop() as SizedJob;
+    expanded.add(srcId);
+    const kidIds = store.childIds(srcId);
+    nodes += kidIds.length;
+    for (const kid of kidIds) defer(kid);
+  }
+  return expanded;
 }
 
 /* ------------------- ObjectScanStore (reference) ------------------- */

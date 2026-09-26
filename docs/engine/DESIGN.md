@@ -500,6 +500,16 @@ What the table says:
   three. `T_mem` stays at 5M until T9b and T9c are built and T9 measures
   again (plan §S.11 Q17).
 
+**After T9b (26 September 2026, T9's harness, not recorded).** The first tree
+is sent from the store in chunks, byte for byte today's (RISKS R93).
+
+| | Node 1M | Node 5M | Electron 1M | Electron 5M |
+| --- | --- | --- | --- | --- |
+| **The first tree sent** | **248** | **538** | **208** | **555** |
+
+The send adds about 40–50 MB in plain Node and nothing measurable in
+Electron, whose peak is now its hand-over (RISKS R92, plan T9c).
+
 **On disk,** spill writes 68 B per entry (`nameOff` is a u64 there) and about
 32 B per folder of block table and patch log: 0.73 GB at 10M and 7.3 GB at
 100M on POSIX. On Windows every file's hard-link key goes to disk too (0.8 GB
@@ -835,6 +845,13 @@ assertion.
 12. **Spill and aggregate folder totals and tallies are exact integer sums** (u128, rounded to a double once). Memory mode keeps `sumSizes`' float fold. The two agree whenever every partial sum is below 2^53 bytes (about 9 PB).
 13. **Aggregate tree views leave rows out and say so.** A folder whose children were not all kept carries `omitted: {files, folders, bytes}`, an additive `FileNode` field present only in aggregate (plan §S.11 Q4, an engineering decision the owner may overrule), and `/nodes` and the facts answer `notKept` for a path not kept.
 14. **Spill and aggregate evaluate the cloud rule in Rust,** from the same table the Node regexes are built from, pinned to the old regex by a differential test (plan §S.11 Q7, an engineering decision the owner may overrule). Memory mode keeps the Node pass.
+
+**Added 26 September 2026 by Phase 4 T9b (built):**
+
+15. **A first tree too deep for `JSON.stringify` is sent.**
+    - Before: the progress stream's `complete` frame was one string built by a recursive `JSON.stringify`, which stops near 950 levels in the app's Electron and near 3,100 in Node 24. A deeper pruned tree was refused as "too large to display" — misleading, since such a tree is deep, not large.
+    - Now: the tree is written from the store with a stack of its own, so it goes out. The UI indexes the tree it receives with a stack of its own too (`indexTree`), and `JSON.parse` takes a 5,000-deep tree in both runtimes.
+16. **`/api/scan/:id/result` streams its body.** It carries no `ETag` and no `Content-Length`, where `res.json` gave both. A body past V8's longest string still fails as before, with the same 500, before any byte is written.
 
 The spill folder is not added to the never-descend list, so there is no walker difference there: its files have no names, and no walk can list them (§6.1).
 

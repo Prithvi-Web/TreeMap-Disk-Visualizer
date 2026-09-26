@@ -9,33 +9,40 @@ isolatedDataDir('treemap-scanProgress-data-');
 import { createApp } from '../src/server';
 import { createScanRecord } from '../src/services/diskScanner';
 import { FileNode, ScanEvent } from '../src/models/types';
+import { setTreeFrameMaxCharsForTests } from '../src/services/treeFrame';
 
 /**
  * Progress-stream failure modes.
  *
- * A finished tree is handed to the UI as one `complete` SSE frame, which means
- * one JSON.stringify of every node. Past roughly 3.5M nodes the result exceeds
- * V8's ~512 MB cap on a single string and stringify throws RangeError. That
- * throw lands in a setInterval callback, where Express cannot catch it, so it
- * killed the whole process.
+ * A finished tree is handed to the UI as one `complete` SSE frame. It used to
+ * be one JSON.stringify of every node: past roughly 3.5M nodes the result
+ * exceeded V8's ~512 MB cap on a single string and stringify threw RangeError,
+ * in a setInterval callback where Express cannot catch it — it killed the
+ * whole process. Since Phase 4 T9b the frame is written from the store in
+ * chunks and counted before its first byte, and a frame longer than V8's
+ * longest string is refused with the same error instead.
  *
- * A root whose `toJSON` throws the identical RangeError reproduces this in
- * milliseconds instead of requiring a real 4-million-file disk.
+ * Lowering that limit (setTreeFrameMaxCharsForTests) reproduces this in
+ * milliseconds instead of requiring a real 4-million-file disk. (These tests
+ * used to make a root's `toJSON` throw the RangeError the one-string frame
+ * hit; the frame no longer calls it.)
  */
 
-function unserializableRoot(): FileNode {
+/** A root the stream can send, until the limit is lowered below its frame. */
+function tooBigRoot(rootPath: string): FileNode {
   return {
     name: 'root',
-    path: '/too-big',
+    path: rootPath,
     size: 1,
     type: 'dir',
     modifiedAt: 0,
     isHidden: false,
-    toJSON(): never {
-      throw new RangeError('Invalid string length');
-    },
-  } as unknown as FileNode;
+    children: [{ name: 'a.bin', path: `${rootPath}/a.bin`, size: 1, type: 'file', modifiedAt: 0, isHidden: false }],
+  };
 }
+
+/** Frames longer than this are refused: shorter than any `complete` frame here. */
+const TOO_LONG = 64;
 
 async function listen(): Promise<{ port: number; close: () => Promise<void> }> {
   const app = createApp(path.join(__dirname, '..', 'public'));
@@ -82,7 +89,9 @@ function collectEvents(
   });
 }
 
-test('a tree too large to serialize closes the stream with an error instead of crashing', async () => {
+test('a tree too large to serialize closes the stream with an error instead of crashing', async (t) => {
+  setTreeFrameMaxCharsForTests(TOO_LONG);
+  t.after(() => setTreeFrameMaxCharsForTests(null));
   const scan = createScanRecord('/too-big');
   scan.scanned = 4_235_109;
   scan.fileCount = 4_000_000;
@@ -95,7 +104,7 @@ test('a tree too large to serialize closes the stream with an error instead of c
     const events = await collectEvents(port, scan.scanId, (event) => {
       if (event.type === 'progress') {
         scan.status = 'complete';
-        scan.root = unserializableRoot();
+        scan.root = tooBigRoot('/too-big');
       }
     });
 
@@ -109,13 +118,15 @@ test('a tree too large to serialize closes the stream with an error instead of c
   }
 });
 
-test('an oversized tree is reported the same way when the scan finished before the stream opened', async () => {
+test('an oversized tree is reported the same way when the scan finished before the stream opened', async (t) => {
+  setTreeFrameMaxCharsForTests(TOO_LONG);
+  t.after(() => setTreeFrameMaxCharsForTests(null));
   const scan = createScanRecord('/too-big-already');
   scan.scanned = 9_000_000;
   scan.fileCount = 8_000_000;
   scan.dirCount = 1_000_000;
   scan.status = 'complete';
-  scan.root = unserializableRoot();
+  scan.root = tooBigRoot('/too-big-already');
 
   const { port, close } = await listen();
   try {

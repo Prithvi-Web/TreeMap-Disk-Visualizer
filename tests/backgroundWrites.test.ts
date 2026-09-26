@@ -44,6 +44,8 @@ const SRC = path.join(__dirname, '..', 'src');
  * mid-flight. Each entry is a claim, and the reason is the argument for it.
  */
 const NOT_A_RACE: Record<string, string> = {
+  'api/scanRoutes.ts::sendFinalEvent':
+    'the progress stream sending its own last frame (Phase 4 T9b): it writes the response that asked for it, and no stored state',
   'api/indexRoutes.ts::buildIndex':
     'a long job with a jobId and a progress endpoint — callers already poll it, so it is never silent',
   'services/offload.ts::runOffload': 'long job, progress endpoint',

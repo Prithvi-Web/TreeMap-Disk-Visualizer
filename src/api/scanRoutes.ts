@@ -14,6 +14,7 @@ import { budgetGauges } from '../services/budgetGauges';
 import { getPolicy, assertScanAllowed } from '../services/policy';
 import { streamCsv, streamPdf, streamXlsx } from '../services/reportExport';
 import { sseSend as sseWrite } from '../utils/sse';
+import { TREE_MARK, jsonAroundTree, sendPrunedTree } from '../services/treeFrame';
 import { scanBudget } from '../services/engineBudget';
 import { ScanResult, ScanEvent, ScanStats, BudgetStatus } from '../models/types';
 
@@ -225,6 +226,33 @@ scanRouter.post('/scan/:scanId/cancel', (req: Request, res: Response) => {
   res.json({ scanId: scan.scanId, cancelled, status: scan.status });
 });
 
+/**
+ * The progress stream's last frame. For a finished scan it is the pruned tree
+ * and the stats as one `complete` event: pruned, because the full tree may be
+ * far larger than the UI can hold; the counters ride along because a pruned
+ * tree cannot be counted client-side, and making the client fetch them would
+ * put three full server-side tree walks in front of the headline paint. The
+ * tree is sent from the store in chunks (`sendPrunedTree`, Phase 4 T9b), and
+ * where the frame would be longer than one string can be, the `error` event
+ * says the scan is too large instead, as before. A scan that did not finish
+ * gets its own error. It never throws — nothing sits above a timer's callback
+ * to catch it — so a failure part-way only ends the stream.
+ */
+export async function sendFinalEvent(res: Response, scan: ScanResult): Promise<void> {
+  try {
+    if (scan.status === 'complete' && (scan.store || scan.root)) {
+      const store = storeOf(scan);
+      const [before, after] = jsonAroundTree({ type: 'complete', root: TREE_MARK, stats: buildScanStats(scan) });
+      const outcome = await sendPrunedTree(res, store, store.rootId, PRUNE_MAX_NODES, `data: ${before}`, `${after}\n\n`);
+      if (outcome === 'refused') sseSend(res, { type: 'error', message: treeTooLargeMessage(scan) });
+    } else {
+      sseSend(res, { type: 'error', message: scan.error ?? 'Scan failed' });
+    }
+  } catch (err) {
+    console.warn(`[treemap] the progress stream's last frame failed part-way: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 /** GET /api/scan/:scanId/progress — Server-Sent Events stream. */
 scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
@@ -240,23 +268,12 @@ scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
   let lastScanned = -1;
   let lastBeat = Date.now();
 
+  let finishing = false;
   const finish = (): void => {
-    if (scan.status === 'complete' && (scan.store || scan.root)) {
-      // Pruned: the full tree may be far larger than the UI can hold. The
-      // sseSend guard below stays as a backstop — pruning should mean it never
-      // trips, but a timer throw would take the app down, so we keep the net.
-      const sseStore = storeOf(scan);
-      const { root } = sseStore.prune(sseStore.rootId, { maxNodes: PRUNE_MAX_NODES });
-      // Counters ride along: a pruned tree can't be counted client-side, and
-      // making the client fetch them instead puts three full server-side tree
-      // walks in front of the headline paint.
-      if (!sseSend(res, { type: 'complete', root, stats: buildScanStats(scan) })) {
-        sseSend(res, { type: 'error', message: treeTooLargeMessage(scan) });
-      }
-    } else {
-      sseSend(res, { type: 'error', message: scan.error ?? 'Scan failed' });
-    }
-    closeClient(client);
+    if (finishing) return;
+    finishing = true;
+    clearInterval(timer);
+    void sendFinalEvent(res, scan).finally(() => closeClient(client));
   };
 
   const timer = setInterval(() => {
@@ -295,7 +312,7 @@ scanRouter.get('/scan/:scanId/progress', (req: Request, res: Response) => {
 });
 
 /** GET /api/scan/:scanId/result -> FileNode tree, or 202 while running. */
-scanRouter.get('/scan/:scanId/result', (req: Request, res: Response) => {
+scanRouter.get('/scan/:scanId/result', async (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
   if (scan.status === 'running') {
     res.status(202).json({
@@ -310,14 +327,10 @@ scanRouter.get('/scan/:scanId/result', (req: Request, res: Response) => {
   }
   // Pruned to the same budget as the SSE 'complete' event — this is the
   // frontend's fallback path when the stream stalls, so it must hand over a
-  // tree of the same shape, not a 600 MB one that cannot be serialized.
-  const pruned = scan.store || scan.root
-    ? (() => {
-        const store = storeOf(scan);
-        return store.prune(store.rootId, { maxNodes: PRUNE_MAX_NODES }).root;
-      })()
-    : undefined;
-  res.json({
+  // tree of the same shape, not a 600 MB one that cannot be serialized. The
+  // tree is sent from the store in chunks, as the stream's is (T9b).
+  const hasTree = Boolean(scan.store || scan.root);
+  const body = {
     status: 'complete',
     scanId: scan.scanId,
     rootPath: scan.rootPath,
@@ -332,8 +345,19 @@ scanRouter.get('/scan/:scanId/result', (req: Request, res: Response) => {
     cloudBytes: scan.cloudBytes ?? 0,
     startedAt: scan.startedAt,
     finishedAt: scan.finishedAt,
-    root: pruned,
-  });
+    root: hasTree ? TREE_MARK : undefined,
+  };
+  if (!hasTree) {
+    res.json(body);
+    return;
+  }
+  const store = storeOf(scan);
+  const [before, after] = jsonAroundTree(body);
+  res.type('application/json');
+  const outcome = await sendPrunedTree(res, store, store.rootId, PRUNE_MAX_NODES, before, after);
+  // Longer than one string can be: res.json threw building it, before a byte went out.
+  if (outcome === 'refused') throw new RangeError('Invalid string length');
+  if (outcome === 'sent') res.end();
 });
 
 /**
