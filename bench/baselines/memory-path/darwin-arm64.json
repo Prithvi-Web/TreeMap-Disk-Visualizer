@@ -1,0 +1,1057 @@
+{
+  "kind": "memory-path",
+  "recordedAt": "2026-09-26T22:10:36.351Z",
+  "label": "t9-s2",
+  "machine": {
+    "cpuModel": "Apple M3",
+    "cores": 8,
+    "perfCores": 4,
+    "effCores": 4,
+    "memoryBytes": 17179869184,
+    "platform": "darwin",
+    "arch": "arm64",
+    "osRelease": "27.0.0",
+    "node": "v24.16.0",
+    "commit": "1e05b05bfb9eb15c7f869f40094574a4c9d483ba",
+    "dirty": false,
+    "loadAvg": [
+      4.5068359375,
+      4.10986328125,
+      3.70654296875
+    ],
+    "maxVnodes": 251127,
+    "tier": "B",
+    "tierReason": "8 cores and 16.0 GiB: neither the A clause (>= 8 cores and >= 32.0 GiB, or an Apple Pro/Max/Ultra part) nor the C clause (<= 4 cores or <= 8.0 GiB) applies"
+  },
+  "module": "/Users/prithvivinay/Desktop/Claude Code/Treemap/native/prebuilt/darwin-arm64/treemap_core.node",
+  "measurements": [
+    {
+      "runtime": "node",
+      "job": {
+        "kind": "synthetic",
+        "entries": 1000000,
+        "seed": 7
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "24.16.0",
+          "electron": null
+        },
+        "stages": [
+          {
+            "stage": "loaded",
+            "ms": 512.858041,
+            "peakRssBytes": 137953280,
+            "rssBytes": 138149888,
+            "heapUsedBytes": 41153368,
+            "externalBytes": 3119112,
+            "arrayBuffersBytes": 589472,
+            "peakFootprintBytes": 105875360
+          },
+          {
+            "stage": "walked",
+            "ms": 836.832125,
+            "peakRssBytes": 216727552,
+            "rssBytes": 216711168,
+            "heapUsedBytes": 37669472,
+            "externalBytes": 3063398,
+            "arrayBuffersBytes": 533718,
+            "peakFootprintBytes": 183732800
+          },
+          {
+            "stage": "handed-over",
+            "ms": 842.742166,
+            "peakRssBytes": 217006080,
+            "rssBytes": 217202688,
+            "heapUsedBytes": 37844200,
+            "externalBytes": 73938814,
+            "arrayBuffersBytes": 534060,
+            "peakFootprintBytes": 184191648
+          },
+          {
+            "stage": "adopted",
+            "ms": 853.282458,
+            "peakRssBytes": 217251840,
+            "rssBytes": 217251840,
+            "heapUsedBytes": 39104600,
+            "externalBytes": 73941204,
+            "arrayBuffersBytes": 534402,
+            "peakFootprintBytes": 184191648
+          },
+          {
+            "stage": "pruned",
+            "ms": 1340.585958,
+            "peakRssBytes": 933511168,
+            "rssBytes": 933543936,
+            "heapUsedBytes": 445906584,
+            "externalBytes": 164377165,
+            "arrayBuffersBytes": 90970363,
+            "peakFootprintBytes": 925817720
+          }
+        ],
+        "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
+        "typescriptLoader": false,
+        "serverLoaded": true,
+        "counts": {
+          "scanned": 1000001,
+          "dirs": 150001,
+          "files": 850000
+        },
+        "handOverBusyMs": 0.3932920381469671,
+        "frameBytes": 90496040,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-1000000-125"
+      }
+    },
+    {
+      "runtime": "node",
+      "job": {
+        "kind": "synthetic",
+        "entries": 2000000,
+        "seed": 7
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "24.16.0",
+          "electron": null
+        },
+        "stages": [
+          {
+            "stage": "loaded",
+            "ms": 218.526417,
+            "peakRssBytes": 138395648,
+            "rssBytes": 138592256,
+            "heapUsedBytes": 41143480,
+            "externalBytes": 3119105,
+            "arrayBuffersBytes": 589465,
+            "peakFootprintBytes": 106055200
+          },
+          {
+            "stage": "walked",
+            "ms": 814.806875,
+            "peakRssBytes": 290848768,
+            "rssBytes": 290848768,
+            "heapUsedBytes": 37726888,
+            "externalBytes": 3063392,
+            "arrayBuffersBytes": 533712,
+            "peakFootprintBytes": 256231640
+          },
+          {
+            "stage": "handed-over",
+            "ms": 820.13875,
+            "peakRssBytes": 291160064,
+            "rssBytes": 291340288,
+            "heapUsedBytes": 37900576,
+            "externalBytes": 137938796,
+            "arrayBuffersBytes": 534042,
+            "peakFootprintBytes": 256231640
+          },
+          {
+            "stage": "adopted",
+            "ms": 836.279,
+            "peakRssBytes": 291422208,
+            "rssBytes": 291422208,
+            "heapUsedBytes": 39160656,
+            "externalBytes": 137941174,
+            "arrayBuffersBytes": 534372,
+            "peakFootprintBytes": 256231640
+          },
+          {
+            "stage": "pruned",
+            "ms": 1284.2905,
+            "peakRssBytes": 1026244608,
+            "rssBytes": 1026277376,
+            "heapUsedBytes": 443616904,
+            "externalBytes": 226842414,
+            "arrayBuffersBytes": 89435612,
+            "peakFootprintBytes": 998710688
+          }
+        ],
+        "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
+        "typescriptLoader": false,
+        "serverLoaded": true,
+        "counts": {
+          "scanned": 2000001,
+          "dirs": 300001,
+          "files": 1700000
+        },
+        "handOverBusyMs": 0.498041033744812,
+        "frameBytes": 88961296,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-2000000-126"
+      }
+    },
+    {
+      "runtime": "node",
+      "job": {
+        "kind": "synthetic",
+        "entries": 3000000,
+        "seed": 7
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "24.16.0",
+          "electron": null
+        },
+        "stages": [
+          {
+            "stage": "loaded",
+            "ms": 216.089708,
+            "peakRssBytes": 138248192,
+            "rssBytes": 138444800,
+            "heapUsedBytes": 40967448,
+            "externalBytes": 3124134,
+            "arrayBuffersBytes": 594494,
+            "peakFootprintBytes": 105809320
+          },
+          {
+            "stage": "walked",
+            "ms": 1123.171708,
+            "peakRssBytes": 368230400,
+            "rssBytes": 368214016,
+            "heapUsedBytes": 41365016,
+            "externalBytes": 3183897,
+            "arrayBuffersBytes": 654217,
+            "peakFootprintBytes": 313689776
+          },
+          {
+            "stage": "handed-over",
+            "ms": 1131.13275,
+            "peakRssBytes": 368558080,
+            "rssBytes": 368771072,
+            "heapUsedBytes": 41540920,
+            "externalBytes": 202059303,
+            "arrayBuffersBytes": 654549,
+            "peakFootprintBytes": 314902720
+          },
+          {
+            "stage": "adopted",
+            "ms": 1151.755208,
+            "peakRssBytes": 369180672,
+            "rssBytes": 369180672,
+            "heapUsedBytes": 38733128,
+            "externalBytes": 201940847,
+            "arrayBuffersBytes": 534045,
+            "peakFootprintBytes": 314919104
+          },
+          {
+            "stage": "pruned",
+            "ms": 1587.3717920000001,
+            "peakRssBytes": 1079459840,
+            "rssBytes": 1079492608,
+            "heapUsedBytes": 439040512,
+            "externalBytes": 289838745,
+            "arrayBuffersBytes": 88431943,
+            "peakFootprintBytes": 1049662648
+          }
+        ],
+        "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
+        "typescriptLoader": false,
+        "serverLoaded": true,
+        "counts": {
+          "scanned": 3000001,
+          "dirs": 450001,
+          "files": 2550000
+        },
+        "handOverBusyMs": 0.6939589977264404,
+        "frameBytes": 87957625,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-3000000-130"
+      }
+    },
+    {
+      "runtime": "node",
+      "job": {
+        "kind": "synthetic",
+        "entries": 5000000,
+        "seed": 7
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "24.16.0",
+          "electron": null
+        },
+        "stages": [
+          {
+            "stage": "loaded",
+            "ms": 217.432416,
+            "peakRssBytes": 138264576,
+            "rssBytes": 138412032,
+            "heapUsedBytes": 41019824,
+            "externalBytes": 3124134,
+            "arrayBuffersBytes": 594494,
+            "peakFootprintBytes": 106121120
+          },
+          {
+            "stage": "walked",
+            "ms": 1778.4947080000002,
+            "peakRssBytes": 499548160,
+            "rssBytes": 499630080,
+            "heapUsedBytes": 41532984,
+            "externalBytes": 3183896,
+            "arrayBuffersBytes": 654216,
+            "peakFootprintBytes": 442026248
+          },
+          {
+            "stage": "handed-over",
+            "ms": 1786.0748330000001,
+            "peakRssBytes": 499957760,
+            "rssBytes": 500170752,
+            "heapUsedBytes": 41708904,
+            "externalBytes": 330059302,
+            "arrayBuffersBytes": 654548,
+            "peakFootprintBytes": 442616168
+          },
+          {
+            "stage": "adopted",
+            "ms": 1823.4274580000001,
+            "peakRssBytes": 500760576,
+            "rssBytes": 500760576,
+            "heapUsedBytes": 38718984,
+            "externalBytes": 329940847,
+            "arrayBuffersBytes": 534045,
+            "peakFootprintBytes": 443304704
+          },
+          {
+            "stage": "pruned",
+            "ms": 2272.18325,
+            "peakRssBytes": 1211744256,
+            "rssBytes": 1211760640,
+            "heapUsedBytes": 436755856,
+            "externalBytes": 415171894,
+            "arrayBuffersBytes": 85765092,
+            "peakFootprintBytes": 1178720016
+          }
+        ],
+        "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
+        "typescriptLoader": false,
+        "serverLoaded": true,
+        "counts": {
+          "scanned": 5000001,
+          "dirs": 750001,
+          "files": 4250000
+        },
+        "handOverBusyMs": 0.7141250371932983,
+        "frameBytes": 85290774,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-5000000-132"
+      }
+    },
+    {
+      "runtime": "node",
+      "job": {
+        "kind": "disk",
+        "root": "/private/var/folders/7x/ylnd1hdx1c329mnm7v9ch9rw0000gn/T/treemap-bench/enum1m-51b43aad/tree"
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "24.16.0",
+          "electron": null
+        },
+        "stages": [
+          {
+            "stage": "loaded",
+            "ms": 214.947041,
+            "peakRssBytes": 138297344,
+            "rssBytes": 138510336,
+            "heapUsedBytes": 40975408,
+            "externalBytes": 3124134,
+            "arrayBuffersBytes": 594494,
+            "peakFootprintBytes": 106170152
+          },
+          {
+            "stage": "walked",
+            "ms": 19589.435041,
+            "peakRssBytes": 199196672,
+            "rssBytes": 199163904,
+            "heapUsedBytes": 44348984,
+            "externalBytes": 3183906,
+            "arrayBuffersBytes": 654226,
+            "peakFootprintBytes": 165824488
+          },
+          {
+            "stage": "handed-over",
+            "ms": 19594.362708,
+            "peakRssBytes": 199507968,
+            "rssBytes": 199524352,
+            "heapUsedBytes": 44524696,
+            "externalBytes": 62840534,
+            "arrayBuffersBytes": 654576,
+            "peakFootprintBytes": 166316104
+          },
+          {
+            "stage": "adopted",
+            "ms": 19609.109666,
+            "peakRssBytes": 200556544,
+            "rssBytes": 200556544,
+            "heapUsedBytes": 38905848,
+            "externalBytes": 62721903,
+            "arrayBuffersBytes": 533897,
+            "peakFootprintBytes": 167315936
+          },
+          {
+            "stage": "pruned",
+            "ms": 19803.930458,
+            "peakRssBytes": 586432512,
+            "rssBytes": 586465280,
+            "heapUsedBytes": 265787816,
+            "externalBytes": 123710761,
+            "arrayBuffersBytes": 61522755,
+            "peakFootprintBytes": 568205008
+          }
+        ],
+        "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
+        "typescriptLoader": false,
+        "serverLoaded": true,
+        "counts": {
+          "scanned": 1000000,
+          "dirs": 120000,
+          "files": 880000
+        },
+        "handOverBusyMs": 0.19587504863739014,
+        "frameBytes": 61048429,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"tree\",\"path\":\"/private/"
+      }
+    },
+    {
+      "runtime": "node",
+      "job": {
+        "kind": "candidates",
+        "entries": 1000000
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "24.16.0",
+          "electron": null
+        },
+        "stages": [
+          {
+            "stage": "loaded",
+            "ms": 308.577625,
+            "peakRssBytes": 126222336,
+            "rssBytes": 126500864,
+            "heapUsedBytes": 45977960,
+            "externalBytes": 3003947,
+            "arrayBuffersBytes": 474307,
+            "peakFootprintBytes": 89992328
+          },
+          {
+            "stage": "built",
+            "ms": 463.09762500000005,
+            "peakRssBytes": 212762624,
+            "rssBytes": 212959232,
+            "heapUsedBytes": 37512016,
+            "externalBytes": 64981238,
+            "arrayBuffersBytes": 62451558,
+            "peakFootprintBytes": 181176560
+          },
+          {
+            "stage": "adopted",
+            "ms": 1022.597667,
+            "peakRssBytes": 232259584,
+            "rssBytes": 232275968,
+            "heapUsedBytes": 80719392,
+            "externalBytes": 64983286,
+            "arrayBuffersBytes": 62451558,
+            "peakFootprintBytes": 200723056
+          }
+        ],
+        "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
+        "typescriptLoader": false,
+        "serverLoaded": true,
+        "passes": {
+          "textCandidates": 1000000,
+          "cloudCandidates": 1000000,
+          "ms": 554.5715829999999
+        }
+      }
+    },
+    {
+      "runtime": "node",
+      "job": {
+        "kind": "candidates",
+        "entries": 5000000
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "24.16.0",
+          "electron": null
+        },
+        "stages": [
+          {
+            "stage": "loaded",
+            "ms": 212.86525,
+            "peakRssBytes": 137674752,
+            "rssBytes": 137871360,
+            "heapUsedBytes": 40891376,
+            "externalBytes": 3124134,
+            "arrayBuffersBytes": 594494,
+            "peakFootprintBytes": 105891528
+          },
+          {
+            "stage": "built",
+            "ms": 928.113209,
+            "peakRssBytes": 377323520,
+            "rssBytes": 377323520,
+            "heapUsedBytes": 37884704,
+            "externalBytes": 317183232,
+            "arrayBuffersBytes": 314653552,
+            "peakFootprintBytes": 345671992
+          },
+          {
+            "stage": "adopted",
+            "ms": 3778.259,
+            "peakRssBytes": 527319040,
+            "rssBytes": 527351808,
+            "heapUsedBytes": 128138104,
+            "externalBytes": 317185281,
+            "arrayBuffersBytes": 314653553,
+            "peakFootprintBytes": 502690232
+          }
+        ],
+        "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
+        "typescriptLoader": false,
+        "serverLoaded": true,
+        "passes": {
+          "textCandidates": 5000000,
+          "cloudCandidates": 5000000,
+          "ms": 2845.282625
+        }
+      }
+    },
+    {
+      "runtime": "node",
+      "job": {
+        "kind": "worker-probe"
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "24.16.0",
+          "electron": null
+        },
+        "stages": [],
+        "footprintSource": "no stage was measured",
+        "typescriptLoader": false,
+        "workerVersion": "0.3.0"
+      }
+    },
+    {
+      "runtime": "electron",
+      "job": {
+        "kind": "synthetic",
+        "entries": 1000000,
+        "seed": 7
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "20.18.0",
+          "electron": "31.7.7"
+        },
+        "stages": [
+          {
+            "stage": "loaded",
+            "ms": 218.91979199999997,
+            "peakRssBytes": 110362624,
+            "rssBytes": 110411776,
+            "heapUsedBytes": 33006616,
+            "externalBytes": 2675807,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 62948384
+          },
+          {
+            "stage": "walked",
+            "ms": 609.6106669999999,
+            "peakRssBytes": 190578688,
+            "rssBytes": 188563456,
+            "heapUsedBytes": 28596236,
+            "externalBytes": 2735256,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 132990272
+          },
+          {
+            "stage": "handed-over",
+            "ms": 622.231458,
+            "peakRssBytes": 219561984,
+            "rssBytes": 198164480,
+            "heapUsedBytes": 28474948,
+            "externalBytes": 73610331,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 159941952
+          },
+          {
+            "stage": "adopted",
+            "ms": 633.1976669999999,
+            "peakRssBytes": 219561984,
+            "rssBytes": 198524928,
+            "heapUsedBytes": 27591712,
+            "externalBytes": 73612721,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 159941952
+          },
+          {
+            "stage": "pruned",
+            "ms": 1301.3785,
+            "peakRssBytes": 651018240,
+            "rssBytes": 470106112,
+            "heapUsedBytes": 130935360,
+            "externalBytes": 164049024,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 591234632
+          }
+        ],
+        "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
+        "typescriptLoader": false,
+        "serverLoaded": true,
+        "counts": {
+          "scanned": 1000001,
+          "dirs": 150001,
+          "files": 850000
+        },
+        "handOverBusyMs": 7.310582995414734,
+        "frameBytes": 90496040,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-1000000-217"
+      }
+    },
+    {
+      "runtime": "electron",
+      "job": {
+        "kind": "synthetic",
+        "entries": 2000000,
+        "seed": 7
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "20.18.0",
+          "electron": "31.7.7"
+        },
+        "stages": [
+          {
+            "stage": "loaded",
+            "ms": 211.606708,
+            "peakRssBytes": 110477312,
+            "rssBytes": 110526464,
+            "heapUsedBytes": 32950524,
+            "externalBytes": 2675800,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 63095912
+          },
+          {
+            "stage": "walked",
+            "ms": 985.797208,
+            "peakRssBytes": 266764288,
+            "rssBytes": 262766592,
+            "heapUsedBytes": 28607020,
+            "externalBytes": 2735251,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 199263672
+          },
+          {
+            "stage": "handed-over",
+            "ms": 1003.436291,
+            "peakRssBytes": 312786944,
+            "rssBytes": 273612800,
+            "heapUsedBytes": 27098880,
+            "externalBytes": 137610325,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 242730400
+          },
+          {
+            "stage": "adopted",
+            "ms": 1018.3693329999999,
+            "peakRssBytes": 312786944,
+            "rssBytes": 273743872,
+            "heapUsedBytes": 27631088,
+            "externalBytes": 137612703,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 242730400
+          },
+          {
+            "stage": "pruned",
+            "ms": 1625.594,
+            "peakRssBytes": 721305600,
+            "rssBytes": 543703040,
+            "heapUsedBytes": 128949876,
+            "externalBytes": 226514273,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 650348176
+          }
+        ],
+        "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
+        "typescriptLoader": false,
+        "serverLoaded": true,
+        "counts": {
+          "scanned": 2000001,
+          "dirs": 300001,
+          "files": 1700000
+        },
+        "handOverBusyMs": 13.557708978652954,
+        "frameBytes": 88961296,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-2000000-220"
+      }
+    },
+    {
+      "runtime": "electron",
+      "job": {
+        "kind": "synthetic",
+        "entries": 3000000,
+        "seed": 7
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "20.18.0",
+          "electron": "31.7.7"
+        },
+        "stages": [
+          {
+            "stage": "loaded",
+            "ms": 219.40570900000003,
+            "peakRssBytes": 112328704,
+            "rssBytes": 112394240,
+            "heapUsedBytes": 28628336,
+            "externalBytes": 2675800,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 64603216
+          },
+          {
+            "stage": "walked",
+            "ms": 1400.658209,
+            "peakRssBytes": 344227840,
+            "rssBytes": 336822272,
+            "heapUsedBytes": 28919616,
+            "externalBytes": 2735561,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 266470816
+          },
+          {
+            "stage": "handed-over",
+            "ms": 1427.5715,
+            "peakRssBytes": 406470656,
+            "rssBytes": 349257728,
+            "heapUsedBytes": 27061228,
+            "externalBytes": 201610326,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 324404688
+          },
+          {
+            "stage": "adopted",
+            "ms": 1448.44275,
+            "peakRssBytes": 406470656,
+            "rssBytes": 349388800,
+            "heapUsedBytes": 27593476,
+            "externalBytes": 201612706,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 324404688
+          },
+          {
+            "stage": "pruned",
+            "ms": 2032.998667,
+            "peakRssBytes": 786939904,
+            "rssBytes": 611401728,
+            "heapUsedBytes": 124958188,
+            "externalBytes": 289505427,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 705283776
+          }
+        ],
+        "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
+        "typescriptLoader": false,
+        "serverLoaded": true,
+        "counts": {
+          "scanned": 3000001,
+          "dirs": 450001,
+          "files": 2550000
+        },
+        "handOverBusyMs": 22.7772079706192,
+        "frameBytes": 87957625,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-3000000-221"
+      }
+    },
+    {
+      "runtime": "electron",
+      "job": {
+        "kind": "synthetic",
+        "entries": 5000000,
+        "seed": 7
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "20.18.0",
+          "electron": "31.7.7"
+        },
+        "stages": [
+          {
+            "stage": "loaded",
+            "ms": 215.821708,
+            "peakRssBytes": 111984640,
+            "rssBytes": 112050176,
+            "heapUsedBytes": 28691860,
+            "externalBytes": 2675800,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 64472168
+          },
+          {
+            "stage": "walked",
+            "ms": 2192.842125,
+            "peakRssBytes": 481902592,
+            "rssBytes": 472711168,
+            "heapUsedBytes": 29087440,
+            "externalBytes": 2735562,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 394692024
+          },
+          {
+            "stage": "handed-over",
+            "ms": 2230.630333,
+            "peakRssBytes": 580124672,
+            "rssBytes": 486916096,
+            "heapUsedBytes": 27107972,
+            "externalBytes": 329610326,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 488457824
+          },
+          {
+            "stage": "adopted",
+            "ms": 2263.784,
+            "peakRssBytes": 580124672,
+            "rssBytes": 487129088,
+            "heapUsedBytes": 27127360,
+            "externalBytes": 329612540,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 488457824
+          },
+          {
+            "stage": "pruned",
+            "ms": 2897.47,
+            "peakRssBytes": 920977408,
+            "rssBytes": 750845952,
+            "heapUsedBytes": 121392228,
+            "externalBytes": 414836863,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 828442400
+          }
+        ],
+        "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
+        "typescriptLoader": false,
+        "serverLoaded": true,
+        "counts": {
+          "scanned": 5000001,
+          "dirs": 750001,
+          "files": 4250000
+        },
+        "handOverBusyMs": 32.64054191112518,
+        "frameBytes": 85290774,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-5000000-222"
+      }
+    },
+    {
+      "runtime": "electron",
+      "job": {
+        "kind": "disk",
+        "root": "/private/var/folders/7x/ylnd1hdx1c329mnm7v9ch9rw0000gn/T/treemap-bench/enum1m-51b43aad/tree"
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "20.18.0",
+          "electron": "31.7.7"
+        },
+        "stages": [
+          {
+            "stage": "loaded",
+            "ms": 213.954,
+            "peakRssBytes": 110215168,
+            "rssBytes": 110297088,
+            "heapUsedBytes": 33685040,
+            "externalBytes": 2675800,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 62948480
+          },
+          {
+            "stage": "walked",
+            "ms": 19900.817458,
+            "peakRssBytes": 171573248,
+            "rssBytes": 169885696,
+            "heapUsedBytes": 30636948,
+            "externalBytes": 2735261,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 121472392
+          },
+          {
+            "stage": "handed-over",
+            "ms": 19911.701958,
+            "peakRssBytes": 189775872,
+            "rssBytes": 180404224,
+            "heapUsedBytes": 28665468,
+            "externalBytes": 62391539,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 136775048
+          },
+          {
+            "stage": "adopted",
+            "ms": 19925.638042000002,
+            "peakRssBytes": 189775872,
+            "rssBytes": 180797440,
+            "heapUsedBytes": 27409324,
+            "externalBytes": 62393937,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 136775048
+          },
+          {
+            "stage": "pruned",
+            "ms": 20186.710583,
+            "peakRssBytes": 445153280,
+            "rssBytes": 384761856,
+            "heapUsedBytes": 167656228,
+            "externalBytes": 123382621,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 391923200
+          }
+        ],
+        "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
+        "typescriptLoader": false,
+        "serverLoaded": true,
+        "counts": {
+          "scanned": 1000000,
+          "dirs": 120000,
+          "files": 880000
+        },
+        "handOverBusyMs": 7.114874958992004,
+        "frameBytes": 61048429,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"tree\",\"path\":\"/private/"
+      }
+    },
+    {
+      "runtime": "electron",
+      "job": {
+        "kind": "candidates",
+        "entries": 1000000
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "20.18.0",
+          "electron": "31.7.7"
+        },
+        "stages": [
+          {
+            "stage": "loaded",
+            "ms": 303.934583,
+            "peakRssBytes": 111722496,
+            "rssBytes": 111869952,
+            "heapUsedBytes": 29225456,
+            "externalBytes": 2795998,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 64865408
+          },
+          {
+            "stage": "built",
+            "ms": 439.59295799999995,
+            "peakRssBytes": 154206208,
+            "rssBytes": 154320896,
+            "heapUsedBytes": 27380408,
+            "externalBytes": 64653097,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 107021488
+          },
+          {
+            "stage": "adopted",
+            "ms": 966.4684169999999,
+            "peakRssBytes": 167591936,
+            "rssBytes": 167657472,
+            "heapUsedBytes": 41376776,
+            "externalBytes": 64655145,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 119571632
+          }
+        ],
+        "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
+        "typescriptLoader": false,
+        "serverLoaded": true,
+        "passes": {
+          "textCandidates": 1000000,
+          "cloudCandidates": 1000000,
+          "ms": 522.360875
+        }
+      }
+    },
+    {
+      "runtime": "electron",
+      "job": {
+        "kind": "candidates",
+        "entries": 5000000
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "20.18.0",
+          "electron": "31.7.7"
+        },
+        "stages": [
+          {
+            "stage": "loaded",
+            "ms": 209.89712500000002,
+            "peakRssBytes": 109740032,
+            "rssBytes": 109871104,
+            "heapUsedBytes": 33244544,
+            "externalBytes": 2675800,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 63276112
+          },
+          {
+            "stage": "built",
+            "ms": 846.392958,
+            "peakRssBytes": 318750720,
+            "rssBytes": 318767104,
+            "heapUsedBytes": 27026324,
+            "externalBytes": 316855091,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 270812432
+          },
+          {
+            "stage": "adopted",
+            "ms": 3530.442166,
+            "peakRssBytes": 384466944,
+            "rssBytes": 384532480,
+            "heapUsedBytes": 68644548,
+            "externalBytes": 316857140,
+            "arrayBuffersBytes": 0,
+            "peakFootprintBytes": 336299304
+          }
+        ],
+        "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
+        "typescriptLoader": false,
+        "serverLoaded": true,
+        "passes": {
+          "textCandidates": 5000000,
+          "cloudCandidates": 5000000,
+          "ms": 2679.462916
+        }
+      }
+    },
+    {
+      "runtime": "electron",
+      "job": {
+        "kind": "worker-probe"
+      },
+      "result": {
+        "ok": true,
+        "runtime": {
+          "node": "20.18.0",
+          "electron": "31.7.7"
+        },
+        "stages": [],
+        "footprintSource": "no stage was measured",
+        "typescriptLoader": false,
+        "workerVersion": "0.3.0"
+      }
+    }
+  ]
+}

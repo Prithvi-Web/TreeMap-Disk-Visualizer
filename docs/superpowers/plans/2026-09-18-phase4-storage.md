@@ -9,7 +9,7 @@
 | Plan written | 18 Sep 2026 | this file |
 | S1 `tm-store`: the finalized store built in Rust, in the packed store's own layout | **done 24 Sep 2026**, commit `2415d6c`, committed after Phase 3's CI went green (run 36069755180): 41 tests, 89 mutants red, clippy on three targets, rustdoc `-D warnings`. The six-lens review's 29 CONFIRMED findings are all fixed (index mix-ups pinned with walks whose order differs from the store's; cloud × hard-link order; side tables refused unless strictly ascending, then binary-searched; `sparse_terms` so Node sums `sparseBytes` in the ingest's order past 2^53), and a second review of the fix round confirmed 6 more, repaired | `native/treemap-core/crates/tm-store/`; `docs/superpowers/plans/2026-09-24-phase4-s1-review-findings.md` |
 | S2 `PackedScanStore.fromColumns` + the native engine reads the Rust store through views (no ingest copy) | **Node side done 24 Sep 2026**, commit `38469ee`: `PackedScanStore.adoptColumns` (the `fromColumns` above) adopts a finalized tree's columns in place, held to the object-store oracle on 96 random trees; 20 mutants, 19 red, the survivor explained in the code. The rest of S2 is T1–T10 (§S.9); T10 commits S2 | `src/services/scanStore.ts`; `tests/packedStoreAdopt.test.ts`; `tests/fixtures/storeFuzz.ts` |
-| S3–S5 as designed (§S below) | **designed 24 Sep 2026.** T0 (documents only) is written; its gate (§S.9) is the owner's answers to Q1–Q5 and Q7 (§S.11): ~~Q1, Q3 and Q5 wait for the owner~~ Q1 and Q5 wait for the owner (Q3 decided by the owner 25 Sep 2026: the 10M row is met by spill, memory mode up to 5M), and Q2, Q4 and Q7 are engineering decisions awaiting the owner's confirmation. T1–T6, T6b, T6c, T7 and T8 built 25–26 Sep 2026; T9–T23 are not built | §S below |
+| S3–S5 as designed (§S below) | **designed 24 Sep 2026.** T0 (documents only) is written; its gate (§S.9) is the owner's answers to Q1–Q5 and Q7 (§S.11): ~~Q1, Q3 and Q5 wait for the owner~~ Q1 and Q5 wait for the owner (Q3 decided by the owner 25 Sep 2026: the 10M row is met by spill, memory mode up to 5M), and Q2, Q4 and Q7 are engineering decisions awaiting the owner's confirmation. T1–T6, T6b, T6c, T7 and T8 built 25–26 Sep 2026; T9 measured 26 Sep 2026, and its findings add T9b and T9c before T10; T9b–T23 are not built | §S below |
 | S3 spill mode: columns written with `write()` ~~then mapped~~ and read with `pread()` (P4-5a), the free-space and same-volume rules, cleanup | not started: T11–T17 (T17 commits S3); the FullPassRunner is S3b, T18 | |
 | S4 aggregate-only mode: ~~directory rows~~ rows kept by the β rule (P4-7a), running totals, top-K, the notice naming what is off | not started: T12 (the AggregateState, which spill runs too), T19 (commits S4), T20 (Windows large mode) | |
 | S5 the synthetic-source gate: 100M entries from a scripted lister through the walk and the store, peak RSS measured by the harness | not started: T3 (the `SyntheticLister`, moved forward), T21 (bench plumbing), T22 (the gate) | |
@@ -369,15 +369,15 @@ The spill folder is **not** added to `never_descend`, so there is no walker diff
 #### S.3 Memory budget
 
 **Constants.**
-- **B0 = 141 MB:** the bench child's baseline, **measured** as the maximum of the ci20k native runs (120–141 MB, `bench/baselines/enumerate-native-ci20k-darwin-arm64-tierB-budget-eco.json`).
-- **E0**, Electron's main process: **not measured** (T9).
+- **B0 = 141 MB:** the bench child's baseline, **measured** as the maximum of the ci20k native runs (120–141 MB, `bench/baselines/enumerate-native-ci20k-darwin-arm64-tierB-budget-eco.json`). **T9 (26 Sep 2026) measured the server's own baseline, every server module loaded and compiled as it ships: 132 MB** in plain Node 24.16 (`bench/baselines/memory-path/darwin-arm64.json`).
+- **E0**, Electron's main process: ~~**not measured** (T9)~~ **107 MB, measured by T9 (26 Sep 2026)** in the installed app's binary run as Node — a lower bound for the main process, which also runs Chromium's browser side (§S.11 Q16).
 - **Name length L = 18 B:** 13.1–20.9 measured on real trees.
-- **Store row = 46 + L = 64 B:** the S1 review measured 62.2–68.0 B/node.
+- **Store row = 46 + L = 64 B:** the S1 review measured 62.2–68.0 B/node. **T9 measured the memory path's store resident after the seal at 70.7 B a row in plain Node and 72.8 B in Electron** (L = 18).
 - **Folders are 15% of entries** (DESIGN §6, the per-directory line of the Phase 0 layout).
 - **Keyed files κ = 1%** on POSIX; every file on Windows.
 - **Link-key record ≈ 40 B.**
 - **8 workers.**
-- **Transport** (the 250k-node pruned tree and its JSON) = 150 MB. This is DESIGN §7's budget, **not measured**.
+- **Transport** (the 250k-node pruned tree and its JSON) = 150 MB. This is DESIGN §7's budget, **not measured**. **T9 measured it (26 Sep 2026): +680 MB in plain Node and +325–410 MB in Electron**, for an 81–86 MB frame (RISKS R93; T9b).
 - **The gate metric is maxRSS** (bench/lib/rusage.ts:134), with the peak physical footprint reported beside it (rusage.ts:295).
 
 Because every large allocation is an anonymous mapping (P4-11), a stage's memory leaves RSS when it ends. That was **measured**: `munmap` returns memory at once, while libmalloc kept 1 GB of freed blocks for more than 23 s. So a scan's peak is the largest stage.
@@ -418,6 +418,7 @@ Because every large allocation is an anonymous mapping (P4-11), a stage's memory
 - **The 10M "full index" row.** It is met by spill (543 MB with every row on disk), not by memory mode. P4-1's 64 B/node layout alone is 646 MB at 10M (owner question Q3, decided by the owner on 25 Sep 2026: this reading is taken). The memory threshold `T_mem` defaults to 5M.
 - **Electron.** Replace B0 with E0 in every column.
   - Memory mode at 5M also holds one column in transit (≤ 40 MB) during the hand-over, so `E0 + 473 ≤ 700` requires E0 ≤ 227 MB. T9 lowers Electron's `T_mem` by 1M rows for every 64 MB of excess.
+  - **T9 (26 Sep 2026):** E0 is 107 MB run as Node, but the column in transit is the names column (17 B a row, 93 MB at 5M), and the transport alone passes the ceiling in both runtimes (T9's entry; §S.11 Q17).
   - Aggregate's 36 MB worst-case margin shrinks by `E0 − B0`. The knobs are `R_dir` and `R_file` (−19 MB per halving) and the extension overflow cap.
 - **The guarded memory walk** (overflow to aggregate): it stays ≤ 400 by construction of `M_agg` (§S.1.4).
 - **Windows.** The link-key log reaches its 32 MiB run at about 0.8M files. Beyond that it goes to disk, so the resident figures above hold. Windows memory mode at 5M has its own `T_mem` (T9).
@@ -742,14 +743,66 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
     - `nativeEquivalence` unchanged;
     - no main-thread native call copies more than one column (counted).
   - **Green gate:** targeted suites and goldens.
-- [ ] **T9. S2 measurements** (no product code):
+- [x] **T9. S2 measurements** (no product code):
   - B0 and E0;
   - maxRSS and footprint for walk → seal → hand-over → first prune at synthetic 1M, 2M, 3M and 5M, and enum1m, in the bench child and in Electron-as-Node;
   - the Node passes on `-candidates`;
   - worker-thread addon loading in the installed app.
   - These set `T_mem` and `M_agg` per runtime.
   - **Green gate:** recorded with `--record`. If 5M > 700 MB in a runtime, that runtime's `T_mem` is lowered and the reason recorded.
+  - **Measured 26 Sep 2026** (`bench/baselines/memory-path/darwin-arm64.json`, from `npm run bench -- memory-path --runtime=both --sizes=1m,2m,3m,5m --corpus=enum1m --candidates=1m,5m --record`; an 8-core M3 with 16 GB; the harness is commits `7e13a90`, `b961029` and `1e05b05`, and `b614aa6` keeps the record in a folder of its own).
+    - **How.** Each measurement is a fresh process with the server's modules loaded, running the app's code compiled as it ships: `tsc` with the app's settings, because under tsx the server alone loads at 162 MB against 131 MB compiled. It runs in plain Node 24.16 and in the installed app's Electron 31.7.7 run as Node (read-only, with a data folder of its own). The stages:
+      - walked: the walk and the seal;
+      - handed over: `storeTake`;
+      - adopted: `adoptNativeStore` and `sumSizes`;
+      - sent: the first tree, as the SSE stream's `finish` sends it — the prune at `PRUNE_MAX_NODES`, the app's own `sseSend`, and the socket's UTF-8 copy of the frame.
+
+      The first run, before the harness was made faithful (`b961029` → `1e05b05`), is not the record. The table is in DESIGN §7.
+    - **B0 = 132 MB, E0 = 107 MB.** E0 is measured run as Node, so it is a lower bound for the app's main process, which also runs Chromium's browser side (§S.11 Q16).
+    - **The store costs 70.7 B a row in Node and 72.8 B in Electron** (18-byte names), not the 64 B budgeted. The walk's own working memory above the baseline is about 10 MB on these trees. The synthetic lister's listings are small, so W's worst case stays the budget's 36 MB.
+    - **The hand-over.** Plain Node copies nothing (0.2–0.7 ms busy).
+      - Electron copies each column inside `resolve`, on the JavaScript thread: 7.3, 13.6, 22.8 and 32.6 ms at 1M, 2M, 3M and 5M. That is about 6.5 ms a million rows, past §13's 1 ms rule (R92).
+      - It holds one column in transit at the peak: the names, 17 B a row, 93 MB at 5M — not the ≤ 40 MB budgeted.
+    - **Node's passes** (every file a text and a cloud candidate) cost 0.56 µs a candidate in Node and 0.53 µs in Electron: 2.8 s and 2.7 s at 5M. They run on the JavaScript thread, as today's ingest runs them. On real trees only names with a non-ASCII byte and a dot, and files with bytes but no blocks, are candidates.
+    - **Worker threads** load the addon in both runtimes, the installed app's included (§S.5.7's prerequisite).
+    - **The transport breaks every ceiling on its own.** The first tree is 250,000 nodes and 81–86 MB of JSON, about 340 B a node, because every node carries its full path. Sending it costs **+680 MB in plain Node and +325–410 MB in Electron**, against the 150 MB budgeted (§S.3). A scratch breakdown of the same stage (not a recorded baseline) splits it, at 1M, Node / Electron:
+      - the pruned tree's objects: +258 / +96 MB;
+      - the one string `JSON.stringify` builds: +340 / +223 MB;
+      - the socket's UTF-8 copy of it: +84 / +86 MB.
+
+      The peaks at 1M, 2M, 3M and 5M:
+      - plain Node: 890, 979, 1,029 and 1,156 MB — no size meets 700 MB;
+      - Electron: 621, 688, 750 and 878 MB — 2M does, 3M does not.
+    - **The gate, and the decision** (an engineering decision the owner may overrule; §S.11 Q17). 5M passes 700 MB in both runtimes, and the reason is the transport, which does not grow with the scan. Lowering `T_mem` cannot meet the ceiling in plain Node at any size, and would cut Electron's memory mode to 2M for a cost that does not depend on it. So:
+      - `T_mem` stays at the provisional 5M in both runtimes, and this entry is the reason;
+      - two tasks come before T10: **T9b** (the first tree sent from the store in chunks, byte for byte today's) and **T9c** (Electron's hand-over off the JavaScript thread, R92);
+      - after them, T9's harness measures again and sets each runtime's `T_mem`. That is T10's first gate.
+    - **`M_agg`**, by §S.1.4, with B0 and E0 measured and the rest at their budgets (W 36 MB worst, AggregateState 52, frontier 2, link log 4): **154 MB in Node (2.28M rows at 70.7 B) and 179 MB in Electron (2.58M rows at 72.8 B)**. The guard must count the measured bytes a row, not 64. Aggregate's serve stage carries the same transport, so its 400 MB ceiling also waits for T9b (R74).
+- [ ] **T9b. Send the first tree without building it** (added 26 Sep 2026 by T9's measurements; RISKS R93). The SSE `complete` frame and `/api/scan/:id/result`'s tree are written from the store in chunks:
+  - the prune's selection is kept as ids (O(`PRUNE_MAX_NODES`));
+  - each node's JSON goes out in order, into chunks written with the socket's backpressure honoured;
+  - there is no pruned object tree, no whole-frame string and no whole-frame buffer.
+
+  The frame stays byte for byte today's in every mode (`tests/goldenResponses.test.ts` holds it). `sseSend`'s promise carries over: a tree that cannot be sent is refused with the too-large message, never thrown on a timer.
+  - **Tests first:**
+    - the streamed bytes equal `sseSend`'s frame on the golden trees, the edge fixture and a 250,000-node tree;
+    - a socket that stops reading holds at most a bounded number of chunks, counted;
+    - the refusal;
+    - `/result`'s body likewise.
+  - **Mutants:** a node's key order; a separator; the backpressure wait removed.
+  - **Green gate:** targeted tests and goldens; T9's harness shows the sent stage within a stated bound of the adopted stage in both runtimes.
+- [ ] **T9c. Electron's hand-over off the JavaScript thread** (added 26 Sep 2026 by T9's measurements; RISKS R92; §S.1.6). Where external buffers are refused, `storeTake`:
+  - allocates each column's array on the JavaScript thread;
+  - fills it on libuv's pool, through the pointer `napi_get_typedarray_info` gives;
+  - drops the Rust column once it is filled.
+
+  Plain Node keeps the external arrays.
+  - **Tests first**, in the installed binary run as Node, as the `node20` leg runs:
+    - the arrays equal the external hand-over's, column by column;
+    - the bytes copied on the JavaScript thread, counted by the addon, are zero.
+  - **Green gate:** T9's harness in the installed binary records the busy time and the transient (one column).
 - [ ] **T10. Switch production memory mode to the stream path** (`numbering = Blocks`). `ingestColumns`, `take()` and `build()` stay as oracles.
+  - **First (added by T9, 26 Sep 2026):** after T9b and T9c, T9's harness measures again in both runtimes and sets each runtime's `T_mem`, and `nativeMemory.ts`' provisional sizes follow it.
   - **Green gate:** full `npm test` under 4 and 10 busy loops; commit **S2**; the owner pushes; CI green on all four legs before T11.
 - [ ] **T11. The cloud rule table.** The regexes in `cloudFolders.ts` (lines 15-20) become built from `CLOUD_RULES`, with a Rust matcher over the same table.
   - **Tests first:** the old regex against the table over a path corpus (case variants, a trailing `.icloud` against `.icloud` inside a name, Windows separators, U+212A, U+0130, U+017F); the same fixture file through the Rust matcher; the lowercase-to-ASCII code point set pinned in Node 24 and Electron 31.
@@ -886,6 +939,12 @@ Each question's status was recorded on 24 Sep 2026 (T0).
     - **Status: engineering decision, 24 Sep 2026, the owner may overrule.** The developer shape gates, and so does every §S.8 variant.
 15. **Q15 — the storage endpoint.** Is a separate `/api/scan/:id/storage` acceptable, so the `sseComplete` golden stays unchanged?
     - **Status: engineering decision, 24 Sep 2026, the owner may overrule.** A separate `GET /api/scan/:id/storage`, so the `sseComplete` golden stays unchanged (§S.6.5).
+16. **Q16 — E0 in the app itself.** T9 measured E0 in the installed app's binary run as Node (107 MB). Run that way it does not start Chromium's browser side, which the app's main process also runs. May the installed TreeMap be opened once, for about a minute, with a throwaway data folder and nothing of the owner's, so that its main process's memory can be read?
+    - **Status: asked 26 Sep 2026, pending the owner; recommended yes.** Until then, E0 is a lower bound.
+17. **Q17 — T9's gate.** 5M passes 700 MB in both runtimes, because sending the first tree costs +680 MB (Node) and +325–410 MB (Electron) whatever the scan's size (T9's entry). The two ways forward:
+    - keep `T_mem` at 5M in both runtimes, and build T9b (the tree sent from the store, byte for byte today's) and T9c (Electron's hand-over off the JavaScript thread) before T10, measuring again after them;
+    - or lower `T_mem` now: Electron to 2M, while Node has no size that meets 700 MB.
+    - **Status: engineering decision, 26 Sep 2026, the owner may overrule.** Keep 5M, build T9b and T9c, and measure again before T10.
 
 #### S.12 Where each judge's fatal flaw went
 

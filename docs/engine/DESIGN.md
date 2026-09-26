@@ -448,6 +448,58 @@ anonymous mapping (§6).
 * A single folder of more than about 1.2M entries breaks aggregate's worst
   case (RISKS R75).
 
+**Measured 26 September 2026 (Phase 4 T9;
+`bench/baselines/memory-path/darwin-arm64.json`, `npm run bench --
+memory-path`).** The setup:
+
+* **What is measured.** The memory path — walk and seal, hand-over, then
+  adoption with Node's passes — and after it the first tree, sent as the SSE
+  stream sends it.
+* **On what.** Synthetic trees of the developer shape at 1M–5M entries, and
+  the `enum1m` corpus.
+* **How.** Each measurement is a fresh process running the app's code
+  compiled as it ships, with the server's modules loaded, in plain Node 24.16
+  and in the installed app's Electron 31.7.7 run as Node. The machine is an
+  8-core M3 with 16 GB.
+
+Peak resident set (maxRSS, MB of 2^20 bytes):
+
+| | Node 1M | Node 2M | Node 3M | Node 5M | Electron 1M | Electron 2M | Electron 3M | Electron 5M |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| The server loaded (B0, E0) | 132 | 132 | 132 | 132 | 105 | 105 | 107 | 107 |
+| Walked and sealed | 207 | 277 | 351 | 476 | 182 | 254 | 328 | 460 |
+| Handed over | 207 | 278 | 351 | 477 | 209 | 298 | 388 | 553 |
+| Adopted, Node's passes run | 207 | 278 | 352 | 478 | 209 | 298 | 388 | 553 |
+| **The first tree sent** | **890** | **979** | **1,029** | **1,156** | **621** | **688** | **750** | **878** |
+
+What the table says:
+
+* **The baselines.** B0 is **132 MB**: the server's modules, compiled. The
+  same modules loaded through tsx cost 162 MB, which is why the harness
+  compiles. E0 is **107 MB** run as Node. That is a lower bound for the app's
+  main process, which also runs Chromium's browser side (plan §S.11 Q16).
+* **The store** costs **70.7 B a row** resident in Node and **72.8 B** in
+  Electron (the synthetic names are 18 B), against the 64 B budgeted. The
+  walk's own working memory above the baseline is about 10 MB on these trees.
+* **Electron's hand-over** copies each column on the JavaScript thread
+  (RISKS R92): 6.5 ms a million rows, 32.6 ms at 5M. At the peak it holds one
+  column in transit: the names, 17 B a row, 93 MB at 5M, not the 40 MB
+  budgeted. Plain Node copies nothing (under 1 ms).
+* **Sending the first tree sets the peak, in every mode.** The first tree is
+  250,000 nodes and 81–86 MB of JSON, about 340 B a node, because every node
+  carries its full path. Sending it costs **+680 MB in plain Node and
+  +325–410 MB in Electron**, against the 150 MB budgeted above. A scratch
+  breakdown at 1M (Node / Electron) splits that cost three ways:
+  * the pruned tree's objects: +258 / +96 MB;
+  * the one string `JSON.stringify` builds: +340 / +223 MB;
+  * the socket's UTF-8 copy of that string: +84 / +86 MB.
+
+  The cost does not grow with the scan. So no `T_mem` meets 700 MB in plain
+  Node, and Electron meets it only up to 2M (RISKS R93). Plan T9b sends the
+  tree from the store in chunks, byte for byte today's, which removes all
+  three. `T_mem` stays at 5M until T9b and T9c are built and T9 measures
+  again (plan §S.11 Q17).
+
 **On disk,** spill writes 68 B per entry (`nameOff` is a u64 there) and about
 32 B per folder of block table and patch log: 0.73 GB at 10M and 7.3 GB at
 100M on POSIX. On Windows every file's hard-link key goes to disk too (0.8 GB
