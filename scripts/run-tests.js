@@ -18,6 +18,10 @@ const os = require('os');
 const path = require('path');
 
 const repoRoot = path.join(__dirname, '..');
+/** Loaded into every process of a run: it ends a test file that outlives its time limit (see the file). */
+const WATCHDOG = path.join(__dirname, 'testFileWatchdog.cjs');
+// Loading it here watches nothing: this process was not started by a test runner.
+const { ARMED } = require(WATCHDOG);
 
 /**
  * The environment the test run gets. With no TREEMAP_DATA_DIR set, the run
@@ -42,7 +46,11 @@ function testEnvironment(env) {
  * Runs tsx's test runner over `files` with `argv` in front, in the
  * environment `testEnvironment` gives, and returns its exit status; the run's
  * own data folder is removed however the run ends. `spawn` is spawnSync's
- * shape, so a test can stand in for the child.
+ * shape, so a test can stand in for the child. Every process of the run loads
+ * testFileWatchdog.cjs, which ends a file that outlives `--test-timeout` on
+ * the Node versions whose runner does not. A run started inside a watched test
+ * file (a test of this runner) clears that file's mark, so its own files are
+ * watched.
  */
 function runTests({ files, argv, env, spawn }) {
   // Resolve tsx's real entry point and run it under this same Node — spawning
@@ -50,8 +58,9 @@ function runTests({ files, argv, env, spawn }) {
   // script exists to remove.
   const tsxCli = path.join(path.dirname(require.resolve('tsx/package.json')), 'dist', 'cli.mjs');
   const run = testEnvironment(env);
+  delete run.env[ARMED];
   try {
-    const result = spawn(process.execPath, [tsxCli, '--test', ...argv, ...files], {
+    const result = spawn(process.execPath, [tsxCli, '--require', WATCHDOG, '--test', ...argv, ...files], {
       cwd: repoRoot,
       stdio: 'inherit',
       env: run.env,
@@ -75,6 +84,6 @@ function main() {
   process.exit(runTests({ files, argv: process.argv.slice(2), env: process.env, spawn: spawnSync }));
 }
 
-module.exports = { testEnvironment, runTests };
+module.exports = { testEnvironment, runTests, WATCHDOG };
 
 if (require.main === module) main();

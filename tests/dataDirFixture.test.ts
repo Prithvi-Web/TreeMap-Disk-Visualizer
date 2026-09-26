@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { cleanUpDataDir, fileTempDir, isolatedDataDir, removeTempDir } from './fixtures/dataDir';
+import { nestedRunEnv } from './fixtures/nestedRun';
 import { resetBackgroundWrites, trackWrite } from '../src/utils/backgroundWrites';
 isolatedDataDir('treemap-dataDirFixture-data-');
 
@@ -85,9 +86,9 @@ test('a test file leaves no folder behind when it ends: its app data, and a fold
       "});",
     ].join('\n'));
     const tsxCli = path.join(path.dirname(require.resolve('tsx/package.json')), 'dist', 'cli.mjs');
-    // Without NODE_TEST_CONTEXT, which this runner sets: a child that inherits it
-    // reports to this runner instead of running its own file.
-    const { NODE_TEST_CONTEXT: _context, ...env } = process.env;
+    // A run of its own (nestedRunEnv): a child that inherited this runner's
+    // NODE_TEST_CONTEXT would report to this runner instead of running its file.
+    const env = nestedRunEnv();
     const r = spawnSync(process.execPath, [tsxCli, '--test', child], { encoding: 'utf8', timeout: 120_000, env: { ...env, REPORT_FILE: report } });
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const [dir, inTest] = JSON.parse(fs.readFileSync(report, 'utf8')) as [string, string];

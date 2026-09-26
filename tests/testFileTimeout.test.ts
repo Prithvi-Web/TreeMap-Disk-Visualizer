@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileTempDir } from './fixtures/dataDir';
+import { nestedRunEnv } from './fixtures/nestedRun';
 import { HANG_GUARD_MS } from './fixtures/waitFor';
 
 /**
@@ -16,8 +17,12 @@ import { HANG_GUARD_MS } from './fixtures/waitFor';
  * after 120 s on Node 20, reported in 1 s on Node 22. Node's runner prints
  * files in order, so that one file also held back the results of every file
  * after it, and CI's test step had no limit short of GitHub's six hours.
- * `npm test` passes --test-timeout, which the runner enforces per file from
- * the parent process as well as per test inside it.
+ * `npm test` passes --test-timeout, which Node 20's runner (CI's) enforces
+ * per file from the parent process as well as per test inside it. Node 24's
+ * runner gives a file's test no timeout in the parent (runner.js sets it to
+ * null) and only forwards the flag to the file, where a blocked thread cannot
+ * act on it, so there run-tests.js's watchdog (scripts/testFileWatchdog.cjs,
+ * testFileWatchdog.test.ts) ends the file instead.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -52,10 +57,8 @@ test('a file that blocks is ended and named by the runner, and the file after it
   fs.writeFileSync(after, "import { test } from 'node:test';\ntest('runs after the blocked file', () => {});\n");
   let out = '';
   // A runner started from inside a test file skips its files unless it is
-  // told it is a run of its own: this process's NODE_TEST_CONTEXT is not
-  // handed on.
-  const env: NodeJS.ProcessEnv = { ...process.env, TREEMAP_DATA_DIR: dir };
-  delete env.NODE_TEST_CONTEXT;
+  // told it is a run of its own (nestedRunEnv).
+  const env: NodeJS.ProcessEnv = { ...nestedRunEnv(), TREEMAP_DATA_DIR: dir };
   // npm test's own path: run-tests.js, tsx's runner under this Node, the
   // flags passed through; only the output is captured instead of inherited.
   // The limit also covers the file after the blocked one, which has to start
@@ -73,6 +76,18 @@ test('a file that blocks is ended and named by the runner, and the file after it
     },
   });
   assert.equal(status, 1, `the run fails, and says so:\n${out}`);
-  assert.match(out, new RegExp(`not ok \\d+ - [^\\n]*a-blocks\\.test\\.mjs[\\s\\S]*?test timed out after ${limitMs}ms`), 'the blocked file is named, with the limit it met');
+  assert.match(out, /^not ok \d+ - [^\n]*a-blocks\.test\.mjs$/m, 'the blocked file is reported as failed');
+  // Which mechanism ends the file is the running Node's, and each is held to
+  // it where it is known: Node 20 (CI's) ends the file itself, inside the
+  // grace the watchdog leaves it, so no watchdog line may appear; Node 24's
+  // runner never ends a file, so the watchdog must, naming the file and the
+  // limit. Both name the limit the file met. The order of the watchdog's line
+  // and the runner's report in the output is Node's, so it is not relied on.
+  const byRunner = new RegExp(`not ok \\d+ - [^\\n]*a-blocks\\.test\\.mjs[\\s\\S]*?test timed out after ${limitMs}ms`).test(out);
+  const byWatchdog = out.includes(`a-blocks.test.mjs was ended after the ${limitMs} ms per-file limit`);
+  const major = Number(process.versions.node.split('.')[0]);
+  if (major <= 20) assert.ok(byRunner && !byWatchdog, `Node ${process.version} ends the file itself, before the watchdog would:\n${out}`);
+  else if (major >= 24) assert.ok(byWatchdog && !byRunner, `Node ${process.version}'s runner does not end a file, so the watchdog does:\n${out}`);
+  else assert.ok(byRunner !== byWatchdog, `exactly one mechanism ends the file on Node ${process.version}:\n${out}`);
   assert.match(out, /^ok \d+ - runs after the blocked file$/m, 'and the file after it still ran and reported');
 });
