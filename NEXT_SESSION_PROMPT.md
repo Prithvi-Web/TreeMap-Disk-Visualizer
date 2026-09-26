@@ -14,9 +14,21 @@ Copy everything below the line into a fresh session started in
 
 **This block is the live state. Update it after every task.** Everything below the next `---` is the older hand-over and is background. (Rewritten ~10:45 UTC; the earlier, longer version of this block is in git history — `git log -p NEXT_SESSION_PROMPT.md`.)
 
-### LATEST (26 Sep 2026, ~23:15 UTC, session 38ea1b2d) — RESUME HERE
+### LATEST (26 Sep 2026, ~23:50 UTC, session 38ea1b2d) — RESUME HERE
 
-**Newest (26 Sep, ~23:15 UTC): T9b is BUILT and committed, `c577f06`** (RISKS R93 fixed).
+**Newest (26 Sep, ~23:50 UTC): T9c BUILT `8047340` (R92 fixed; native contract 0.4.0) and T10's first step `c910f6a`.**
+- **T9c:** where Electron refuses external buffers, `storeTakeInto` fills arrays JavaScript made, on libuv's pool, with 0 bytes on the JS thread.
+  - New: `externalBuffersAllowed`, `storeShape` and `NativeStore.handOver`; `takeNativeStore` chooses the path, and `runNativeWalk` and the harness use it.
+  - Electron's main thread during the hand-over at 5M: 7.5 ms, from ~33. About 2 ms is the fill itself; the rest is a V8 full GC for the ~320 MB of arrays arriving.
+  - `tests/nativeStoreFill.test.ts` (7; one runs in the installed binary as Node); 9 mutants; gate cargo 550/0, npm 3,222/0 fail both legs.
+- **T10 step 1:** the recorded re-measure. 5M peaks at 533 MB (Node) and 547 MB (Electron), so every size meets 700 MB and `T_mem` = 5M in both runtimes; `nativeMemory.ts`' sizes stand.
+- **The owner asked (mid-turn) what share of the roadmap is done.** Answered: about 45–50%. Phases 0–3 are done; Phase 4 is 13/28 tasks; Phases 5–8 (26 + 24 + 18 + 26 tasks) are planned.
+- **Local `main` adds `b08395f`, `1afc943`, `a19fc7a`, `c577f06`, `ca58723`, `8047340`, `c910f6a` and this handoff. The owner is asked to push; the watcher's base is `6f97bae`.**
+- **T10 next.** The scanner passes `storage: 'memory'`. A tree past the memory ceiling (6.19M rows) must not fall to the legacy walker (a regression against today's native columns path), so plan:
+  - a structured ceiling signal from the addon;
+  - rerun natively on the columns path until T12–T14's conversions exist.
+
+**Earlier (26 Sep, ~23:15 UTC): T9b is BUILT and committed, `c577f06`** (RISKS R93 fixed).
 - `src/services/treeFrame.ts` `sendPrunedTree`:
   - `prunedExpansion` uses `pruneStore`'s own heap;
   - each node is `materializeBare` → `JSON.stringify`, with `children`/`pruned` spliced in;
@@ -57,8 +69,8 @@ Copy everything below the line into a fresh session started in
 **Next, in order:**
 1. Read every CI leg of the owner's next push; fix anything red, test-first.
 2. ~~T9b~~: done, `c577f06`.
-3. **T9c**: Electron's hand-over. JS allocates each column; an AsyncTask fills it through `napi_get_typedarray_info` and unmaps the Rust column; the bytes copied on the JS thread are counted as zero.
-4. T9's harness re-measures and sets `T_mem` per runtime (T10's first step).
+3. ~~T9c~~: done, `8047340`.
+4. ~~T9's harness re-measures~~: done, `c910f6a` (`T_mem` = 5M in both runtimes).
 5. T10: the scanner passes `storage: 'memory'`; full npm test under 4 and 10 busy loops; the golden leg; push; CI green.
 6. T11: commit the parked cloud rule table.
 7. T12: now also position paths and `totalsFinal`.
