@@ -82,6 +82,10 @@ enum Special {
     /// no clock to tell a cancel that reached the listing from one that did
     /// not: the second never returns.
     UntilStopped { each: Duration },
+    /// Sets the gate's `reached`, then beats until (bounded) its `release`
+    /// before it answers: a listing held open for as long as the test needs,
+    /// with no clock.
+    Held(Arc<StatGate>),
 }
 
 /// A scripted tree: every directory's listing (or its refusal), a per-listing
@@ -114,8 +118,9 @@ struct FakeTree {
     stat_gate: Option<Arc<StatGate>>,
 }
 
-/// Lets a test act while the walk is inside a family's read: `stat_dir` sets
-/// `reached`, then waits (bounded) for `release`.
+/// Lets a test act while the walk is inside a family's read or a held
+/// listing ([`Special::Held`]): the fake sets `reached`, then waits (bounded)
+/// for `release`.
 #[derive(Default)]
 struct StatGate {
     reached: AtomicBool,
@@ -211,6 +216,13 @@ impl FakeTree {
                     return Err(Refusal::Unreadable);
                 }
             },
+            Some(Special::Held(gate)) => {
+                gate.reached.store(true, Ordering::SeqCst);
+                let _released = wait_until(SETTLE, || {
+                    buf.beat();
+                    gate.release.load(Ordering::SeqCst)
+                });
+            }
             Some(Special::Panic(_)) | None => {}
         }
         if !self.delay.is_zero() {
@@ -1201,16 +1213,48 @@ fn cancel_returns_within_200ms_while_directories_are_being_listed() -> TestResul
 }
 
 #[test]
-fn pause_stops_the_count_within_200ms_and_resume_continues_without_relisting() -> TestResult {
-    let dirs = 120;
-    let tree = Arc::new(wide_tree(dirs, 10, Duration::from_millis(5)));
-    let handle = start_with(options(Path::new("/fake")), FakePacer::new(2), tree.clone())
-        .map_err(|e| e.to_string())?;
-    thread::sleep(Duration::from_millis(60));
+fn pause_stops_the_count_at_the_next_folder_and_resume_continues_without_relisting() -> TestResult {
+    // `d0`'s listing is held open until the walk is paused, so the walk cannot
+    // end before the pause reaches it however late this thread runs. A pause
+    // reaches each worker at its next folder: the one holding `d0` commits it
+    // and parks at one of its subfolders; the other parks at its next folder,
+    // or — if it had run out of folders meanwhile — at another of `d0`'s
+    // subfolders, one per worker. Counted, not timed: after the pause at most
+    // one listing begins (one the free worker was about to begin), and with
+    // every worker parked nothing moves.
+    let dirs: u32 = 120;
+    let workers: u32 = 2;
+    let gate = Arc::new(StatGate::default());
+    let mut tree = wide_tree(dirs, 10, Duration::from_millis(5));
+    for k in 0..workers {
+        let sub = tree.add_dir("d0", &format!("sub{k}"));
+        tree.add_file(&sub, "s.bin", 1.0);
+    }
+    tree.special("d0", Special::Held(Arc::clone(&gate)));
+    let tree = Arc::new(tree);
+    // A fixed count: the hill-climber, which could step it down while `d0` is
+    // held, is off.
+    let mut opts = options(Path::new("/fake"));
+    opts.max_workers = 2;
+    let handle =
+        start_with(opts, FakePacer::new(workers), tree.clone()).map_err(|e| e.to_string())?;
+    if !wait_until(SETTLE, || gate.reached.load(Ordering::SeqCst)) {
+        return Err(format!("d0's listing did not begin within {SETTLE:?}"));
+    }
+    let calls_before_the_pause = tree.calls();
     handle.pause();
-    thread::sleep(REACT_WITHIN);
+    gate.release.store(true, Ordering::SeqCst);
+    if !wait_until(SETTLE, || handle.counts().paused_workers == workers) {
+        return Err(format!(
+            "{} of {workers} workers parked within {SETTLE:?}",
+            handle.counts().paused_workers
+        ));
+    }
+    let begun = tree.calls() - calls_before_the_pause;
+    assert!(begun <= 1, "{begun} listings began after the pause");
+    // Every worker is parked, so nothing can move however long this waits.
     let first = handle.progress();
-    assert!(!first.done, "paused, not finished");
+    assert!(!first.done, "paused, not finished: d0's subfolders wait");
     thread::sleep(Duration::from_millis(300));
     let second = handle.progress();
     assert_eq!(first.entries, second.entries, "entries stopped advancing");
@@ -1225,10 +1269,14 @@ fn pause_stops_the_count_within_200ms_and_resume_continues_without_relisting() -
     handle.resume();
     wait_done(&handle)?;
     let out = handle.take().map_err(|e| e.to_string())?;
-    assert_eq!(out.stats.entries, u64::from(dirs) + u64::from(dirs) * 10);
+    assert_eq!(
+        out.stats.entries,
+        u64::from(dirs) * 11 + u64::from(workers) * 2,
+        "every folder and file, d0's subfolders and their files included"
+    );
     assert_eq!(
         tree.calls(),
-        u64::from(dirs) + 1,
+        1 + u64::from(dirs) + u64::from(workers),
         "every directory listed exactly once"
     );
     Ok(())
