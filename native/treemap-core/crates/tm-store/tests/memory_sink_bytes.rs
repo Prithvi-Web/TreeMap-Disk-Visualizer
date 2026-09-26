@@ -29,9 +29,14 @@ impl Pacer for OpenPacer {
     }
 }
 
-/// Transparent huge pages can make up to 2 MiB past a written page resident on Linux, so
-/// a column's pages are counted as its rows' only up to this far past them.
-const HUGE_PAGE: usize = 2 * 1024 * 1024;
+/// The kernel's transparent huge page setting, for a failure's message: the sink's mappings
+/// refuse huge pages (Linux), which is what keeps a page resident only where a block wrote.
+fn huge_pages() -> String {
+    std::fs::read_to_string("/sys/kernel/mm/transparent_hugepage/enabled").map_or_else(
+        |_| "this kernel has no transparent huge pages".to_owned(),
+        |setting| format!("transparent huge pages: {}", setting.trim()),
+    )
+}
 
 fn page_size() -> Result<usize, String> {
     // SAFETY: `sysconf` reads a configuration value and touches no memory.
@@ -61,7 +66,7 @@ fn resident_pages(start: *const u8, bytes: usize) -> Result<Vec<bool>, String> {
 }
 
 /// One column's residency: bytes resident, and bytes resident past the room it was
-/// settled with (allowing for a huge page).
+/// settled with.
 struct Residency {
     resident: usize,
     past_room: usize,
@@ -77,7 +82,7 @@ fn residency<T: Zeroable>(column: &Column<T>, reserved: usize) -> Result<Residen
     let bytes = reserved * size_of::<T>();
     let room = column.capacity() * size_of::<T>();
     let pages = resident_pages(start, bytes)?;
-    let allowed = (room.div_ceil(page) * page + HUGE_PAGE).div_ceil(page);
+    let allowed = room.div_ceil(page);
     let resident = pages.iter().filter(|&&r| r).count() * page;
     let past_room = pages.iter().skip(allowed).filter(|&&r| r).count() * page;
     Ok(Residency {
@@ -210,8 +215,10 @@ fn the_sinks_store_is_resident_only_where_its_rows_are() -> TestResult {
             *built as f64 / rows
         );
         assert_eq!(
-            seen.past_room, 0,
-            "{name}: pages past the rows and headroom are resident"
+            seen.past_room,
+            0,
+            "{name}: pages past the rows and headroom are resident ({})",
+            huge_pages()
         );
         sink_total += seen.resident;
         build_total += built;
