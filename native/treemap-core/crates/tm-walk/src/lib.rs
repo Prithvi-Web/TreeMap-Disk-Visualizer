@@ -95,7 +95,8 @@ pub enum Numbering {
     /// orders a whole folder, then reserves `first..first + k` for its `k`
     /// children under one commit lock and hands the rows to every
     /// [`ListingSink`], so invariants I1–I4 ([`invariants`]) hold by
-    /// construction. The queue is the hybrid one ([`WalkOptions::q_max`]).
+    /// construction. The queue is the hybrid one, a deque per worker
+    /// ([`WalkOptions::q_max`]).
     Blocks,
 }
 
@@ -119,16 +120,17 @@ pub struct WalkOptions {
     pub synthetic: Option<SyntheticSpec>,
     /// How the entries are numbered; [`Numbering::Discovery`] by default.
     pub numbering: Numbering,
-    /// Under [`Numbering::Blocks`], the queue hands out the oldest folder
-    /// while fewer than `q_max` folders wait and the newest once `q_max` or
-    /// more do (P4-13): breadth-first while the backlog is small, depth-first
-    /// once it is not. It caps neither the folders waiting — a folder with
-    /// more subfolders than `q_max` queues them all ([`WalkCounts::queue_peak`]
-    /// says how far it went) — nor, with several workers, the listings they
-    /// wait in ([`WalkCounts::ranges_peak`]; with one worker those are at most
-    /// `q_max` plus the depth below the root, less one). What it bounds is
-    /// their cost: a waiting folder is its name and 8 bytes in its listing's
-    /// range ([`WalkCounts::queue_bytes_peak`], T6b). [`Numbering::Discovery`]
+    /// Under [`Numbering::Blocks`], a worker takes the oldest folder of its
+    /// own deque while fewer than `q_max` folders wait in all and the newest
+    /// once `q_max` or more do (P4-13), and steals the oldest folder of
+    /// another worker's deque when its own is empty (T6c): breadth-first while
+    /// the backlog is small, depth-first once it is not. It does not cap the
+    /// folders waiting — a folder with more subfolders than `q_max` queues
+    /// them all ([`WalkCounts::queue_peak`] says how far it went) — but it
+    /// bounds the listings they wait in: at most `q_max + W·(D − 1)` for `W`
+    /// workers and folders `D ≥ 1` levels deep ([`WalkCounts::ranges_peak`]),
+    /// each waiting folder its name and 8 bytes in its listing's range
+    /// ([`WalkCounts::queue_bytes_peak`], T6b). [`Numbering::Discovery`]
     /// ignores it.
     pub q_max: usize,
     /// The id the counter stops at: ids `0..id_ceiling` are handed out and a

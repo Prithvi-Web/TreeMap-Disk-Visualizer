@@ -1,45 +1,60 @@
-//! The shared directory queue: a `Mutex<VecDeque<Range>>` with a `Condvar`
-//! and in-flight accounting, so a worker knows the walk is finished when there
-//! is no folder queued and none being processed. A worker whose index is above
-//! the count it may run parks here without holding a job.
+//! The directory queue: deques of folders to list under one `Mutex`, with a
+//! `Condvar` and in-flight accounting, so a worker knows the walk is finished
+//! when there is no folder queued and none being processed. A worker whose
+//! index is above the count it may run parks here without holding a job.
 //!
 //! **Ranges (T6b; R88).** A listing's subfolders to walk are queued together
 //! as one [`Range`]: the listed folder's path once, and per subfolder its id,
 //! where its name ends and its OS name (the bytes the walk joins onto the
 //! path), packed. A worker is handed a [`DirJob`] built from a range when it
 //! takes that folder, so only the folders in flight hold a path of their own.
+//! A drained range is dropped.
 //!
-//! **Scheduling is T6's, folder for folder** (P4-13). The hybrid rule compares
-//! `lifo_from` with the folders waiting (the ranges' remaining folders,
-//! summed): below it a worker takes the front range's first remaining folder
-//! (first in, first out), from it on the back range's last remaining folder
-//! (last in, first out). The ranges in queue order, each's remaining folders in
-//! order, are exactly T6's queue of folders, so every walk lists its folders as
-//! T6 did, and first-in first-out over ranges is first-in first-out over their
-//! folders. A drained range is dropped.
+//! **One deque per worker (T6c).** Under block numbering each worker owns a
+//! deque of ranges. It pushes its listing's range onto the back of its own
+//! deque, and takes from its own by the hybrid rule (P4-13), which compares
+//! `lifo_from` with the folders waiting in *every* deque: below it, its own
+//! front range's first remaining folder (first in, first out); from it on,
+//! its own back range's last remaining folder (last in, first out). A worker
+//! whose deque is empty steals the first remaining folder of the front — the
+//! oldest — range of another worker's deque: the first, round robin from its
+//! own index, that holds one, whether its owner runs or is parked. The root's
+//! job starts in worker 0's deque. With one worker this is T6's queue, folder
+//! for folder: the ranges in queue order, each's remaining folders in order,
+//! are T6's queue of folders. Under discovery numbering every worker shares
+//! one deque, first in, first out, as it always did.
 //!
 //! **What is bounded, and what is not.** A waiting folder costs its name and 8
 //! bytes (its id and its name's end) instead of a job with a path of its own
 //! (about 200 B each, measured under T6); a range costs [`RANGE_BYTES`] and
 //! its parent's path besides, and keeps all its names until its last folder is
 //! taken. The folders waiting are not bounded by `lifo_from`, exactly as under
-//! T6: a folder with more subfolders than that queues them all. With one
-//! worker the ranges queued are at most `lifo_from` plus the depth below the
-//! root, less one; with several, a schedule where workers stall one after
-//! another on single folders can queue more ranges than any multiple of the
-//! workers and the depth (an exhaustive model of small trees, T6b, reached
-//! `lifo_from − 1 + C(D + W − 1, W)` for depth `D` and `W` workers), so the
-//! queue's bytes are bounded by the folders waiting and their listings'
-//! names, not by the workers alone.
+//! T6: a folder with more subfolders than that queues them all. The *ranges*
+//! queued with one deque per worker are at most `lifo_from + W·(D − 1)` for
+//! `W` workers and folders at most `D ≥ 1` levels below the root, whatever the
+//! schedule. At the last take made while fewer than `lifo_from` folders
+//! waited, at most `lifo_from − 1` ranges were queued (each holds a folder).
+//! Every range pushed since went onto its pusher's own back: the children of
+//! the folder the worker held at that take, of a folder it took since from
+//! its own back range (one level deeper than that range), or of a folder it
+//! stole (onto its deque, then empty). So the ranges pushed since and still
+//! queued form, in each deque, one descent, each a level deeper than the one
+//! before it: at most `D` in one deque — the one holding the root's children,
+//! the only range one level down — and `D − 1` in every other. (A listing
+//! whose queued names pass 4 GiB is queued as several ranges, which count as
+//! one here.) With one worker that is `lifo_from + D − 1`, and it is reached.
+//! With one shared deque, as under T6b, no such bound held: a model of every
+//! schedule of small trees reached `lifo_from − 1 + C(D + W − 1, W)`.
 
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use crate::KIND_DIR;
-use crate::platform::Listing;
-use crate::walk::{child_path, name_is_a_path};
+mod range;
+
+pub use range::RANGE_BYTES;
+pub(crate) use range::{Range, RangeBuilder, queueable};
 
 /// A directory to list: its node id and its path.
 #[derive(Debug)]
@@ -50,245 +65,14 @@ pub struct DirJob {
     pub path: PathBuf,
 }
 
-/// The bytes one queued range takes besides its parent's path and its
-/// folders' ids, name ends and names: the range itself, as the queue holds it.
-pub const RANGE_BYTES: usize = size_of::<Range>();
-
-/// The most name bytes one range packs: its name ends are `u32`. A listing
-/// whose queued names hold more (16 million names of 255 bytes) is queued as
-/// several ranges, pushed together, which schedules exactly as one would.
-const MAX_RANGE_NAME_BYTES: usize = u32::MAX as usize;
-
-/// The most folders one range holds: its cursors are `u32`. Ids are unique
-/// and below `u32::MAX`, so no listing reaches it.
-const MAX_RANGE_FOLDERS: usize = u32::MAX as usize;
-
-/// One listing's subfolders still to walk, or the root alone.
-#[derive(Debug)]
-pub(crate) struct Range {
-    /// The listed folder's path; every subfolder's path is it joined with the
-    /// subfolder's OS name. For a lone range, the one folder's own path.
-    parent: Box<Path>,
-    /// One folder whose path is `parent` itself (the root's job).
-    lone: bool,
-    /// Under block numbering, the id of the listed folder's first child: a
-    /// subfolder's place in its parent's listing is its id minus this.
-    #[expect(
-        dead_code,
-        reason = "kept for T7: a subfolder's position in its parent's listing is id - block_first"
-    )]
-    block_first: Option<u32>,
-    /// Each subfolder's id, in the order they were queued.
-    ids: Box<[u32]>,
-    /// Where each subfolder's name ends in `names`; the first starts at 0.
-    ends: Box<[u32]>,
-    /// The subfolders' OS names, back to back.
-    names: Box<[u8]>,
-    /// The first folder not yet taken.
-    front: u32,
-    /// One past the last folder not yet taken.
-    back: u32,
-}
-
-impl Range {
-    /// The root's job as a range of one.
-    fn lone(job: DirJob) -> Self {
-        Self {
-            parent: job.path.into_boxed_path(),
-            lone: true,
-            block_first: None,
-            ids: Box::new([job.id]),
-            ends: Box::new([0]),
-            names: Box::new([]),
-            front: 0,
-            back: 1,
-        }
-    }
-
-    /// The folders not yet taken.
-    fn remaining(&self) -> usize {
-        usize::try_from(self.back.saturating_sub(self.front)).unwrap_or(usize::MAX)
-    }
-
-    /// The bytes it holds: itself, its parent's path, and its ids, ends and
-    /// names, from their allocations' lengths.
-    fn bytes(&self) -> usize {
-        RANGE_BYTES
-            + self.parent.as_os_str().len()
-            + size_of_val::<[u32]>(&self.ids)
-            + size_of_val::<[u32]>(&self.ends)
-            + self.names.len()
-    }
-
-    /// Folder `i`'s job: its id, and its path joined as the walk always joined it.
-    fn job(&self, i: u32) -> Option<DirJob> {
-        let at = usize::try_from(i).ok()?;
-        let id = *self.ids.get(at)?;
-        if self.lone {
-            return Some(DirJob {
-                id,
-                path: self.parent.to_path_buf(),
-            });
-        }
-        let start = match at.checked_sub(1) {
-            None => 0,
-            Some(before) => usize::try_from(*self.ends.get(before)?).ok()?,
-        };
-        let end = usize::try_from(*self.ends.get(at)?).ok()?;
-        let name = self.names.get(start..end)?;
-        Some(DirJob {
-            id,
-            path: child_path(&self.parent, name),
-        })
-    }
-
-    /// The first folder not yet taken (first in, first out).
-    fn take_first(&mut self) -> Option<DirJob> {
-        if self.front >= self.back {
-            return None;
-        }
-        let job = self.job(self.front);
-        self.front += 1;
-        job
-    }
-
-    /// The last folder not yet taken (last in, first out).
-    fn take_last(&mut self) -> Option<DirJob> {
-        if self.front >= self.back {
-            return None;
-        }
-        self.back -= 1;
-        self.job(self.back)
-    }
-}
-
-/// How many of `listing`'s entries are folders the walk may queue (a name
-/// that is a path never is), and the bytes their names take: what a
-/// [`RangeBuilder`] for it allocates up front.
-pub(crate) fn queueable(listing: &Listing) -> (usize, usize) {
-    listing
-        .entries
-        .iter()
-        .filter(|entry| entry.meta.kind == KIND_DIR && !name_is_a_path(listing.name(entry)))
-        .fold((0, 0), |(folders, bytes), entry| {
-            (folders + 1, bytes + entry.name.len())
-        })
-}
-
-/// Gathers one listing's subfolders, in the order the walk queues them, into
-/// the range (in practice one) the queue takes them in.
-pub(crate) struct RangeBuilder<'p> {
-    parent: &'p Path,
-    block_first: Option<u32>,
-    ids: Vec<u32>,
-    ends: Vec<u32>,
-    names: Vec<u8>,
-    /// Ranges already sealed, in order.
-    sealed: Vec<Range>,
-    /// See [`MAX_RANGE_NAME_BYTES`]; lowered by tests.
-    max_name_bytes: usize,
-}
-
-impl<'p> RangeBuilder<'p> {
-    /// A builder for the subfolders of the folder at `parent`, with room for
-    /// `folders` of them and `name_bytes` of names (see [`queueable`]).
-    pub(crate) fn new(
-        parent: &'p Path,
-        block_first: Option<u32>,
-        folders: usize,
-        name_bytes: usize,
-    ) -> Self {
-        Self::with_limit(
-            parent,
-            block_first,
-            folders,
-            name_bytes,
-            MAX_RANGE_NAME_BYTES,
-        )
-    }
-
-    fn with_limit(
-        parent: &'p Path,
-        block_first: Option<u32>,
-        folders: usize,
-        name_bytes: usize,
-        max_name_bytes: usize,
-    ) -> Self {
-        let folders = folders.min(MAX_RANGE_FOLDERS);
-        Self {
-            parent,
-            block_first,
-            ids: Vec::with_capacity(folders),
-            ends: Vec::with_capacity(folders),
-            names: Vec::with_capacity(name_bytes.min(max_name_bytes)),
-            sealed: Vec::new(),
-            max_name_bytes,
-        }
-    }
-
-    /// Queues folder `id`, named `name` in its parent's listing.
-    pub(crate) fn push(&mut self, id: u32, name: &[u8]) {
-        if name.len() > self.max_name_bytes {
-            // A name no range can pack goes as a range of its own, its path
-            // joined now, in its place in the order.
-            self.seal();
-            self.sealed.push(Range::lone(DirJob {
-                id,
-                path: child_path(self.parent, name),
-            }));
-            return;
-        }
-        if self.ids.len() == MAX_RANGE_FOLDERS
-            || self.names.len() + name.len() > self.max_name_bytes
-        {
-            self.seal();
-        }
-        self.names.extend_from_slice(name);
-        // At most `max_name_bytes`, itself at most `u32::MAX`.
-        self.ends
-            .push(u32::try_from(self.names.len()).unwrap_or(u32::MAX));
-        self.ids.push(id);
-    }
-
-    /// Closes the range being filled, if it holds a folder.
-    fn seal(&mut self) {
-        let ids = std::mem::take(&mut self.ids);
-        let ends = std::mem::take(&mut self.ends);
-        let names = std::mem::take(&mut self.names);
-        if let Some(range) = self.packed(ids, ends, names) {
-            self.sealed.push(range);
-        }
-    }
-
-    fn packed(&self, ids: Vec<u32>, ends: Vec<u32>, names: Vec<u8>) -> Option<Range> {
-        let back = u32::try_from(ids.len()).ok().filter(|&n| n > 0)?;
-        Some(Range {
-            parent: Box::from(self.parent),
-            lone: false,
-            block_first: self.block_first,
-            ids: ids.into_boxed_slice(),
-            ends: ends.into_boxed_slice(),
-            names: names.into_boxed_slice(),
-            front: 0,
-            back,
-        })
-    }
-
-    /// The ranges, in order: none when no subfolder was queued, and in
-    /// practice one (so `sealed` stays empty and allocates nothing).
-    pub(crate) fn finish(mut self) -> impl Iterator<Item = Range> {
-        let ids = std::mem::take(&mut self.ids);
-        let ends = std::mem::take(&mut self.ends);
-        let names = std::mem::take(&mut self.names);
-        let last = self.packed(ids, ends, names);
-        self.sealed.into_iter().chain(last)
-    }
-}
-
 #[derive(Debug)]
 struct State {
-    ranges: VecDeque<Range>,
-    /// Folders waiting: the ranges' remaining folders, summed.
+    /// The ranges queued: one deque per worker under block numbering, one
+    /// shared by every worker under discovery numbering (see the module docs).
+    deques: Box<[VecDeque<Range>]>,
+    /// Ranges queued, in every deque.
+    ranges: usize,
+    /// Folders waiting: the ranges' remaining folders, summed over every deque.
     waiting: usize,
     in_flight: u32,
     peak_in_flight: u32,
@@ -306,49 +90,85 @@ struct State {
 }
 
 impl State {
-    /// Appends `range` and counts it; an empty one is dropped.
-    fn append(&mut self, range: Range) {
+    /// The deque `worker` pushes onto and takes from first: its own, or the
+    /// one every worker shares.
+    fn own(&self, worker: usize) -> usize {
+        worker % self.deques.len().max(1)
+    }
+
+    /// Appends `range` to the back of deque `at` and counts it; an empty one
+    /// is dropped.
+    fn append(&mut self, at: usize, range: Range) {
         let remaining = range.remaining();
         if remaining == 0 {
             return;
         }
+        let Some(deque) = self.deques.get_mut(at) else {
+            return;
+        };
         self.waiting = self.waiting.saturating_add(remaining);
         self.bytes = self.bytes.saturating_add(range.bytes());
-        self.ranges.push_back(range);
+        self.ranges = self.ranges.saturating_add(1);
+        deque.push_back(range);
     }
 
     /// Records the peaks after a push.
     fn note_peaks(&mut self) {
         self.peak_len = self.peak_len.max(self.waiting);
-        self.peak_ranges = self.peak_ranges.max(self.ranges.len());
+        self.peak_ranges = self.peak_ranges.max(self.ranges);
         self.peak_bytes = self.peak_bytes.max(self.bytes);
     }
 
-    /// The front range's first remaining folder, dropping the range once it
-    /// is drained.
-    fn take_front(&mut self) -> Option<DirJob> {
-        let range = self.ranges.front_mut()?;
+    /// A folder for `worker` (T6c): from its own deque by the hybrid rule,
+    /// which reads the folders waiting in every deque; when its own is empty,
+    /// stolen from the next deque, round robin, that holds a range.
+    fn take(&mut self, worker: usize) -> Option<DirJob> {
+        let own = self.own(worker);
+        if self.deques.get(own).is_some_and(|deque| !deque.is_empty()) {
+            return if self.waiting >= self.lifo_from {
+                self.take_back(own)
+            } else {
+                self.take_front(own)
+            };
+        }
+        let victim = self.victim(own)?;
+        self.take_front(victim)
+    }
+
+    /// The first deque after `own`, round robin, that holds a range.
+    fn victim(&self, own: usize) -> Option<usize> {
+        let n = self.deques.len();
+        (1..n)
+            .map(|k| (own + k) % n)
+            .find(|&at| self.deques.get(at).is_some_and(|deque| !deque.is_empty()))
+    }
+
+    /// Deque `at`'s front range's first remaining folder, dropping the range
+    /// once it is drained.
+    fn take_front(&mut self, at: usize) -> Option<DirJob> {
+        let range = self.deques.get_mut(at)?.front_mut()?;
         let job = range.take_first();
         if range.remaining() == 0 {
-            self.drop_drained(VecDeque::pop_front);
+            self.drop_drained(at, VecDeque::pop_front);
         }
         self.taken(job)
     }
 
-    /// The back range's last remaining folder, dropping the range once it is
-    /// drained.
-    fn take_back(&mut self) -> Option<DirJob> {
-        let range = self.ranges.back_mut()?;
+    /// Deque `at`'s back range's last remaining folder, dropping the range
+    /// once it is drained.
+    fn take_back(&mut self, at: usize) -> Option<DirJob> {
+        let range = self.deques.get_mut(at)?.back_mut()?;
         let job = range.take_last();
         if range.remaining() == 0 {
-            self.drop_drained(VecDeque::pop_back);
+            self.drop_drained(at, VecDeque::pop_back);
         }
         self.taken(job)
     }
 
-    fn drop_drained(&mut self, pop: fn(&mut VecDeque<Range>) -> Option<Range>) {
-        if let Some(drained) = pop(&mut self.ranges) {
+    fn drop_drained(&mut self, at: usize, pop: fn(&mut VecDeque<Range>) -> Option<Range>) {
+        if let Some(drained) = self.deques.get_mut(at).and_then(pop) {
             self.bytes = self.bytes.saturating_sub(drained.bytes());
+            self.ranges = self.ranges.saturating_sub(1);
         }
     }
 
@@ -356,6 +176,13 @@ impl State {
         if job.is_some() {
             self.waiting = self.waiting.saturating_sub(1);
         }
+        job
+    }
+
+    /// `job`, handed to a worker: in flight until it is finished.
+    fn handed(&mut self, job: DirJob) -> DirJob {
+        self.in_flight = self.in_flight.saturating_add(1);
+        self.peak_in_flight = self.peak_in_flight.max(self.in_flight);
         job
     }
 }
@@ -372,25 +199,40 @@ pub struct Queue {
 
 impl Default for Queue {
     fn default() -> Self {
-        Self::hybrid(usize::MAX)
+        Self::with_deques(usize::MAX, 1)
     }
 }
 
 impl Queue {
-    /// An empty, open queue, first-in first-out however long it grows: the
-    /// queue of [`crate::Numbering::Discovery`], as it always was.
+    /// An empty, open queue, one deque every worker shares, first-in first-out
+    /// however long it grows: the queue of [`crate::Numbering::Discovery`], as
+    /// it always was.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// An empty, open queue that hands out its oldest folder while fewer than
-    /// `lifo_from` folders wait and its newest once `lifo_from` or more do
-    /// (P4-13): breadth-first while the backlog is small, depth-first once it
-    /// is not, which finishes subtrees instead of widening the frontier.
+    /// An empty, open queue, one deque every worker shares, that hands out its
+    /// oldest folder while fewer than `lifo_from` folders wait and its newest
+    /// once `lifo_from` or more do: T6's queue, kept for the queue's own tests.
+    #[cfg(test)]
     pub fn hybrid(lifo_from: usize) -> Self {
+        Self::with_deques(lifo_from, 1)
+    }
+
+    /// An empty, open queue with a deque for each worker index below
+    /// `workers`, handing out folders by the hybrid rule at `lifo_from`
+    /// (P4-13; T6c): breadth-first while the backlog is small, depth-first
+    /// once it is not, which finishes subtrees instead of widening the
+    /// frontier; see the module docs.
+    pub fn per_worker(lifo_from: usize, workers: usize) -> Self {
+        Self::with_deques(lifo_from, workers)
+    }
+
+    fn with_deques(lifo_from: usize, deques: usize) -> Self {
         Self {
             state: Mutex::new(State {
-                ranges: VecDeque::new(),
+                deques: (0..deques.max(1)).map(|_| VecDeque::new()).collect(),
+                ranges: 0,
                 waiting: 0,
                 in_flight: 0,
                 peak_in_flight: 0,
@@ -409,59 +251,56 @@ impl Queue {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Queues one job: the root's.
+    /// Queues one job: the root's, in worker 0's deque.
     pub fn push(&self, job: DirJob) {
         let mut state = self.lock();
-        state.append(Range::lone(job));
+        state.append(0, Range::lone(job));
         state.note_peaks();
         drop(state);
         self.changed.notify_one();
     }
 
-    /// Queues one listing's ranges (see [`RangeBuilder::finish`]) under one
-    /// lock, so its subfolders wait together as T6 queued them.
-    pub(crate) fn push_ranges(&self, ranges: impl IntoIterator<Item = Range>) {
+    /// Queues one listing's ranges (see [`RangeBuilder::finish`]) onto the
+    /// back of `worker`'s deque under one lock, so its subfolders wait
+    /// together as T6 queued them.
+    pub(crate) fn push_ranges(&self, worker: usize, ranges: impl IntoIterator<Item = Range>) {
         let mut ranges = ranges.into_iter().peekable();
         if ranges.peek().is_none() {
             return;
         }
         let mut state = self.lock();
+        let own = state.own(worker);
         for range in ranges {
-            state.append(range);
+            state.append(own, range);
         }
         state.note_peaks();
         drop(state);
         self.changed.notify_all();
     }
 
-    /// Queues every job in `jobs` (drained) under one lock, each as a range of
-    /// its own: T6's per-folder push, kept for the queue's own tests.
+    /// Queues every job in `jobs` (drained) onto `worker`'s deque under one
+    /// lock, each as a range of its own: T6's per-folder push, kept for the
+    /// queue's own tests.
     #[cfg(test)]
-    pub fn push_all(&self, jobs: &mut Vec<DirJob>) {
-        self.push_ranges(jobs.drain(..).map(Range::lone));
+    pub fn push_all(&self, worker: usize, jobs: &mut Vec<DirJob>) {
+        self.push_ranges(worker, jobs.drain(..).map(Range::lone));
     }
 
-    /// Waits for a job this worker may take. `may_run` is re-read on every
-    /// wake-up, so a worker above the current count parks without a job and
-    /// without blocking anyone. Returns `None` once the walk is finished or the
-    /// queue was closed.
-    pub fn next_job(&self, may_run: &dyn Fn() -> bool) -> Option<DirJob> {
+    /// Waits for a job worker `worker` may take (see the module docs for
+    /// which). `may_run` is re-read on every wake-up, so a worker above the
+    /// current count parks without a job and without blocking anyone; its
+    /// deque is stolen from meanwhile. Returns `None` once the walk is
+    /// finished or the queue was closed.
+    pub fn next_job(&self, worker: usize, may_run: &dyn Fn() -> bool) -> Option<DirJob> {
         let mut state = self.lock();
         loop {
             if state.closed {
                 return None;
             }
-            if may_run() {
-                let job = if state.waiting >= state.lifo_from {
-                    state.take_back()
-                } else {
-                    state.take_front()
-                };
-                if let Some(job) = job {
-                    state.in_flight = state.in_flight.saturating_add(1);
-                    state.peak_in_flight = state.peak_in_flight.max(state.in_flight);
-                    return Some(job);
-                }
+            if may_run()
+                && let Some(job) = state.take(worker)
+            {
+                return Some(state.handed(job));
             }
             let (next, _) = self
                 .changed
@@ -471,12 +310,20 @@ impl Queue {
         }
     }
 
+    /// One take by worker `worker`, without waiting: for the queue's own tests.
+    #[cfg(test)]
+    fn try_take(&self, worker: usize) -> Option<DirJob> {
+        let mut state = self.lock();
+        let job = state.take(worker)?;
+        Some(state.handed(job))
+    }
+
     /// A worker finished a job (its children already pushed). When nothing is
     /// queued and nothing is in flight, the walk is finished and the queue closes.
     pub fn finish_job(&self) {
         let mut state = self.lock();
         state.in_flight = state.in_flight.saturating_sub(1);
-        if state.in_flight == 0 && state.ranges.is_empty() {
+        if state.in_flight == 0 && state.ranges == 0 {
             state.closed = true;
         }
         drop(state);
@@ -530,6 +377,8 @@ impl Queue {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     fn job(id: u32) -> DirJob {
@@ -541,7 +390,7 @@ mod tests {
 
     /// Takes one job and finishes it at once, as a worker that lists nothing would.
     fn take(queue: &Queue) -> Option<u32> {
-        let taken = queue.next_job(&|| true).map(|j| j.id);
+        let taken = queue.next_job(0, &|| true).map(|j| j.id);
         queue.finish_job();
         taken
     }
@@ -549,9 +398,9 @@ mod tests {
     #[test]
     fn below_its_threshold_the_queue_is_first_in_first_out_and_at_it_last_in_first_out() {
         let queue = Queue::hybrid(3);
-        queue.push_all(&mut vec![job(1), job(2)]);
+        queue.push_all(0, &mut vec![job(1), job(2)]);
         assert_eq!(take(&queue), Some(1), "two queued: the oldest");
-        queue.push_all(&mut vec![job(3), job(4)]);
+        queue.push_all(0, &mut vec![job(3), job(4)]);
         assert_eq!(take(&queue), Some(4), "three queued: the newest");
         assert_eq!(take(&queue), Some(2), "two queued again: the oldest");
         assert_eq!(take(&queue), Some(3));
@@ -561,7 +410,7 @@ mod tests {
     #[test]
     fn the_default_queue_is_first_in_first_out_however_long_it_grows() {
         let queue = Queue::new();
-        queue.push_all(&mut (1..=100).map(job).collect());
+        queue.push_all(0, &mut (1..=100).map(job).collect());
         let order: Vec<u32> = (0..100).filter_map(|_| take(&queue)).collect();
         assert_eq!(order, (1..=100).collect::<Vec<u32>>());
         assert_eq!(queue.peak_len(), 100);
@@ -586,7 +435,7 @@ mod tests {
             builder.push(id, name);
         }
         let queue = Queue::new();
-        queue.push_ranges(builder.finish());
+        queue.push_ranges(0, builder.finish());
         assert_eq!(queue.peak_len(), 4);
         assert_eq!(queue.peak_ranges(), 3);
         // Each range: itself, the parent, 8 bytes and a name per folder; the
@@ -598,7 +447,7 @@ mod tests {
         );
         let taken: Vec<(u32, PathBuf)> = (0..4)
             .filter_map(|_| {
-                let job = queue.next_job(&|| true)?;
+                let job = queue.next_job(0, &|| true)?;
                 queue.finish_job();
                 Some((job.id, job.path))
             })
@@ -609,5 +458,133 @@ mod tests {
             .map(|(name, id)| (id, parent.join(name)))
             .collect();
         assert_eq!(taken, expected);
+    }
+
+    // -----------------------------------------------------------------------
+    // One deque per worker (T6c)
+    // -----------------------------------------------------------------------
+
+    /// One listing's range of the folders `ids`, each named after its id.
+    fn range(ids: &[u32]) -> Vec<Range> {
+        let parent = Path::new("/r");
+        let mut builder = RangeBuilder::new(parent, None, ids.len(), 4 * ids.len());
+        for &id in ids {
+            builder.push(id, id.to_string().as_bytes());
+        }
+        builder.finish().collect()
+    }
+
+    /// One take by `worker`, finished at once; `None` when it finds nothing.
+    fn take_as(queue: &Queue, worker: usize) -> Option<u32> {
+        let taken = queue.try_take(worker).map(|j| j.id);
+        if taken.is_some() {
+            queue.finish_job();
+        }
+        taken
+    }
+
+    #[test]
+    fn each_worker_pushes_onto_its_own_deque_and_takes_from_it_first() {
+        let queue = Queue::per_worker(usize::MAX, 3);
+        queue.push_ranges(1, range(&[10, 11]));
+        queue.push_ranges(2, range(&[20, 21]));
+        queue.push_ranges(1, range(&[12]));
+        assert_eq!(
+            take_as(&queue, 2),
+            Some(20),
+            "its own, not the oldest queued"
+        );
+        assert_eq!(take_as(&queue, 1), Some(10));
+        assert_eq!(take_as(&queue, 1), Some(11));
+        assert_eq!(take_as(&queue, 1), Some(12), "its own second range");
+        assert_eq!(take_as(&queue, 2), Some(21));
+        assert_eq!(take_as(&queue, 1), None, "nothing left anywhere");
+    }
+
+    #[test]
+    fn a_worker_whose_deque_is_empty_steals_the_oldest_ranges_first_folder() {
+        // Every folder waits last in, first out (lifo_from 1): the owner takes
+        // its newest, a thief the oldest range's first.
+        let queue = Queue::per_worker(1, 2);
+        queue.push_ranges(1, range(&[1, 2]));
+        queue.push_ranges(1, range(&[3, 4]));
+        assert_eq!(
+            take_as(&queue, 0),
+            Some(1),
+            "stolen: the oldest range's first"
+        );
+        assert_eq!(take_as(&queue, 1), Some(4), "its owner's: the newest");
+        assert_eq!(take_as(&queue, 0), Some(2));
+        assert_eq!(
+            take_as(&queue, 0),
+            Some(3),
+            "the next range, once one drains"
+        );
+        assert_eq!(take_as(&queue, 1), None);
+    }
+
+    #[test]
+    fn the_hybrid_rule_reads_the_folders_waiting_in_every_deque() {
+        let queue = Queue::per_worker(4, 2);
+        queue.push_ranges(0, range(&[1, 2]));
+        queue.push_ranges(1, range(&[3, 4, 5]));
+        // Worker 0's deque holds 2 of the 5 waiting, and 5 reach 4: newest first.
+        assert_eq!(take_as(&queue, 0), Some(2));
+        // 4 wait: still newest first, for worker 1 too.
+        assert_eq!(take_as(&queue, 1), Some(5));
+        // 3 wait: oldest first.
+        assert_eq!(take_as(&queue, 1), Some(3));
+        assert_eq!(take_as(&queue, 0), Some(1));
+    }
+
+    #[test]
+    fn a_thief_looks_round_robin_from_its_own_index() {
+        let queue = Queue::per_worker(usize::MAX, 4);
+        queue.push_ranges(1, range(&[10]));
+        queue.push_ranges(3, range(&[30]));
+        queue.push_ranges(0, range(&[1]));
+        assert_eq!(take_as(&queue, 2), Some(30), "after 2 comes 3");
+        assert_eq!(take_as(&queue, 3), Some(1), "after 3 comes 0");
+        assert_eq!(take_as(&queue, 0), Some(10), "then 1");
+    }
+
+    #[test]
+    fn the_peaks_count_every_deque() {
+        let queue = Queue::per_worker(usize::MAX, 2);
+        queue.push_ranges(0, range(&[1]));
+        queue.push_ranges(1, range(&[2, 3]));
+        assert_eq!(queue.peak_len(), 3);
+        assert_eq!(queue.peak_ranges(), 2);
+        // Each range: itself, "/r", and per folder 8 bytes and its name.
+        assert_eq!(
+            queue.peak_bytes(),
+            2 * RANGE_BYTES + (2 + 8 + 1) + (2 + 16 + 2)
+        );
+    }
+
+    #[test]
+    fn the_queue_closes_once_no_deque_holds_a_folder_and_none_is_in_flight() {
+        let queue = Queue::per_worker(usize::MAX, 2);
+        queue.push(job(0));
+        let root = queue.try_take(1).map(|j| j.id);
+        assert_eq!(root, Some(0), "the root, stolen from worker 0's deque");
+        queue.push_ranges(1, range(&[1]));
+        queue.finish_job();
+        assert!(
+            !queue.wait_closed(Duration::ZERO),
+            "a folder still waits in worker 1's deque"
+        );
+        assert_eq!(take_as(&queue, 0), Some(1));
+        assert!(queue.wait_closed(Duration::ZERO), "nothing waits or runs");
+    }
+
+    #[test]
+    fn with_one_deque_every_worker_shares_it_first_in_first_out() {
+        let queue = Queue::new();
+        queue.push_ranges(5, range(&[1, 2]));
+        queue.push_ranges(3, range(&[3]));
+        assert_eq!(take_as(&queue, 0), Some(1));
+        assert_eq!(take_as(&queue, 7), Some(2));
+        assert_eq!(take_as(&queue, 5), Some(3));
     }
 }

@@ -2285,3 +2285,120 @@ fn listings_read_in_batches_walk_what_whole_listings_walk() -> TestResult {
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// T6c: one deque per worker
+// ---------------------------------------------------------------------------
+
+/// A tree whose every folder at depth `d` holds `fans[d]` subfolders and a
+/// file: the exhaustive model's shapes.
+fn fan_tree(fans: &[u32]) -> Tree {
+    let mut t = Tree::new(true);
+    let mut level = vec![String::new()];
+    for (d, &fan) in fans.iter().enumerate() {
+        let mut next = Vec::new();
+        for parent in &level {
+            t.file(parent, "f.bin", 1.0);
+            for k in 0..fan {
+                next.push(t.dir(parent, &format!("d{d}k{k}")));
+            }
+        }
+        level = next;
+    }
+    t
+}
+
+#[test]
+fn with_several_workers_the_ranges_stay_within_q_max_and_one_descent_per_worker() -> TestResult {
+    // Two of the model's shapes that queued past q_max + W·(D + 1) ranges
+    // with one shared deque, a complete tree in both regimes, a wide one and
+    // a seeded one.
+    let shapes: Vec<(&str, Tree, usize)> = vec![
+        ("fans 3,3,3,1, q 1", fan_tree(&[3, 3, 3, 1]), 1),
+        ("fans 3,3,3,3,1, q 1", fan_tree(&[3, 3, 3, 3, 1]), 1),
+        ("complete, fan 4, depth 6, q 16", complete_tree(4, 6), 16),
+        ("complete, fan 4, depth 6, q 1", complete_tree(4, 6), 1),
+        ("wide then deep, q 16", wide_then_deep(40, 3), 16),
+        ("seeded, q 2", seeded_tree(11), 2),
+    ];
+    for (what, tree, q_max) in shapes {
+        let tree = Arc::new(tree);
+        let depth = folder_depth(&tree);
+        for workers in [2_u32, 8, 64] {
+            let mut opts = options(&tree, Numbering::Blocks, workers);
+            opts.q_max = q_max;
+            let (out, counts) = walk_with(tree.clone(), opts, Vec::new())?;
+            let at = format!("{what}, {workers} worker(s)");
+            check_walk_columns(&out.parent, &out.name_off, &out.names, true)
+                .map_err(|b| format!("{at}: {b}"))?;
+            // At most q_max − 1 ranges at the last first-in first-out take,
+            // then one descent per deque: D ranges in the one holding the
+            // root's children, D − 1 in each other (see queue.rs).
+            let bound = q_max + workers as usize * depth.saturating_sub(1);
+            let ranges = usize::try_from(counts.ranges_peak).unwrap_or(usize::MAX);
+            assert!(
+                ranges <= bound,
+                "{at}: {ranges} ranges queued, past {bound}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A pacer that holds the first worker to finish a folder — the one that
+/// listed the root, so its deque holds the root's subfolders — at its
+/// throttle until the gate opens, as a pause or the governor would hold it.
+struct HoldFirst {
+    workers: u32,
+    held: AtomicBool,
+    gate: Gate,
+}
+
+impl Pacer for HoldFirst {
+    fn on_worker_start(&self) {}
+    fn throttle(&self, _cancelled: &dyn Fn() -> bool) {
+        if !self.held.swap(true, Ordering::SeqCst) {
+            self.gate.pass();
+        }
+    }
+    fn worker_limit(&self) -> u32 {
+        self.workers
+    }
+}
+
+#[test]
+fn a_held_workers_deque_is_emptied_by_the_others() -> TestResult {
+    for workers in [2_u32, 8] {
+        let tree = Arc::new(complete_tree(3, 4));
+        let folders = tree.folders.len();
+        let pacer = Arc::new(HoldFirst {
+            workers,
+            held: AtomicBool::new(false),
+            gate: Gate::default(),
+        });
+        let handle = start_with_sinks(
+            options(&tree, Numbering::Blocks, workers),
+            pacer.clone(),
+            tree.clone(),
+            Vec::new(),
+        )
+        .map_err(|e| e.to_string())?;
+        // Every folder but the root was queued in the held worker's deque,
+        // or below one taken from it: the others steal it all.
+        let emptied = wait_until(|| pacer.gate.reached() && tree.listed().len() == folders);
+        let listed = tree.listed().len();
+        pacer.gate.open();
+        let (out, _) = finish(handle)?;
+        let at = format!("{workers} worker(s)");
+        assert!(
+            emptied,
+            "{at}: {listed} of {folders} folders listed while the worker was held"
+        );
+        assert_eq!(
+            out.stats.dirs_listed,
+            u64::try_from(folders).unwrap_or(u64::MAX),
+            "{at}"
+        );
+    }
+    Ok(())
+}

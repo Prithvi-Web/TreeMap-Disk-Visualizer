@@ -450,8 +450,9 @@ fn commit_in_chunks(
 }
 
 /// Counts a committed listing's entries and queues its child folders,
-/// numbered from `first` in the order they were committed, as one range.
-fn account(shared: &Shared, listing: &Listing, first: u32, job: &DirJob) {
+/// numbered from `first` in the order they were committed, as one range onto
+/// the back of `worker`'s own deque (T6c).
+fn account(shared: &Shared, worker: usize, listing: &Listing, first: u32, job: &DirJob) {
     let (folders, name_bytes) = queueable(listing);
     let mut range = RangeBuilder::new(&job.path, Some(first), folders, name_bytes);
     for (id, entry) in (first..).zip(&listing.entries) {
@@ -476,7 +477,7 @@ fn account(shared: &Shared, listing: &Listing, first: u32, job: &DirJob) {
                 .fetch_add(whole_bytes(meta.size), Ordering::AcqRel);
         }
     }
-    shared.queue.push_ranges(range.finish());
+    shared.queue.push_ranges(worker, range.finish());
 }
 
 /// A listing that failed: the root's ends the walk, as in a discovery walk;
@@ -495,9 +496,11 @@ fn refuse(shared: &Shared, job: &DirJob, why: Refusal) {
     drop(guard);
 }
 
-/// Lists one folder and commits it as one block (see the module docs).
+/// Lists one folder and commits it as one block (see the module docs); its
+/// subfolders go onto `worker`'s own deque.
 pub(crate) fn process_listing(
     shared: &Shared,
+    worker: usize,
     buf: &mut ListBuffer,
     stage: &mut Stage,
     job: &DirJob,
@@ -564,7 +567,7 @@ pub(crate) fn process_listing(
         commit_whole(shared, &buf.listing, stage, job.id)
     };
     if let Some(first) = committed {
-        account(shared, &buf.listing, first, job);
+        account(shared, worker, &buf.listing, first, job);
     }
     if big {
         buf.listing.shrink_to(KEEP_ENTRIES, KEEP_NAME_BYTES);

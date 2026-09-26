@@ -29,8 +29,15 @@ fn take_id_below(next_id: &AtomicU32, ceiling: u32) -> Option<u32> {
 }
 
 /// Lists one directory and records what it holds; its subfolders to walk are
-/// queued together, as one range, once the listing is recorded.
-pub(super) fn process_dir(shared: &Shared, part: &mut Part, buf: &mut ListBuffer, job: &DirJob) {
+/// queued together, as one range, once the listing is recorded (by `worker`,
+/// into the one deque every worker shares under discovery numbering).
+pub(super) fn process_dir(
+    shared: &Shared,
+    worker: usize,
+    part: &mut Part,
+    buf: &mut ListBuffer,
+    job: &DirJob,
+) {
     shared.sample_path(&job.path);
     let path = match shared.lister.list(&job.path, shared.want_atime, buf) {
         Ok(path) => path,
@@ -108,7 +115,7 @@ pub(super) fn process_dir(shared: &Shared, part: &mut Part, buf: &mut ListBuffer
             }
         }
     }
-    shared.queue.push_ranges(range.finish());
+    shared.queue.push_ranges(worker, range.finish());
 }
 
 #[cfg(test)]
@@ -175,7 +182,7 @@ mod tests {
             id: 0,
             path: PathBuf::from("/fake"),
         };
-        process_dir(&shared, &mut part, &mut buf, &job);
+        process_dir(&shared, 0, &mut part, &mut buf, &job);
         assert_eq!(lock(&shared.fault).as_deref(), Some(ID_CEILING_FAULT));
         assert!(shared.is_cancelled());
         // T6b: the listing queues its subfolders itself; nothing was queued.

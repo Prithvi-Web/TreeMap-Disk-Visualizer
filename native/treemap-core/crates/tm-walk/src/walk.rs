@@ -131,10 +131,11 @@ pub struct WalkCounts {
     /// queues them all (T6, R88), and each waits in its listing's range at the
     /// cost of its name and 8 bytes ([`WalkCounts::queue_bytes_peak`]).
     pub queue_peak: u64,
-    /// The most ranges queued at once: one per listing with subfolders still
-    /// to walk (and the root's own job before it is taken). With one worker
-    /// at most `q_max` plus the depth below the root, less one; with more,
-    /// see the queue's module docs.
+    /// The most ranges queued at once, in every worker's deque: one per
+    /// listing with subfolders still to walk (and the root's own job before it
+    /// is taken). Under block numbering at most `q_max + W·(D − 1)` for `W`
+    /// workers and folders `D ≥ 1` levels below the root, whatever the
+    /// schedule (T6c; the queue's module docs give the argument).
     pub ranges_peak: u64,
     /// The most bytes the queued ranges held at once, measured from their
     /// allocations' lengths: [`crate::RANGE_BYTES`] and the parent's path per
@@ -510,7 +511,9 @@ fn worker(shared: &Arc<Shared>, index: u32) -> Part {
     );
     let mut stage = Stage::default();
     let may_run = || index < shared.effective_target();
-    while let Some(job) = shared.queue.next_job(&may_run) {
+    // The worker's deque in the queue (T6c): below `MAX_WORKERS`, so it fits.
+    let me = usize::try_from(index).unwrap_or(0);
+    while let Some(job) = shared.queue.next_job(me, &may_run) {
         if shared.wait_while_paused() {
             shared.queue.finish_job();
             break;
@@ -519,8 +522,8 @@ fn worker(shared: &Arc<Shared>, index: u32) -> Part {
         // still hand the job back, or `in_flight` never reaches zero and the
         // queue never closes: the panic becomes the walk's fault instead.
         let listed = catch_unwind(AssertUnwindSafe(|| match shared.numbering {
-            Numbering::Discovery => process_dir(shared, &mut part, &mut buf, &job),
-            Numbering::Blocks => process_listing(shared, &mut buf, &mut stage, &job),
+            Numbering::Discovery => process_dir(shared, me, &mut part, &mut buf, &job),
+            Numbering::Blocks => process_listing(shared, me, &mut buf, &mut stage, &job),
         }));
         if let Err(payload) = listed {
             shared.record_panic(&*payload);

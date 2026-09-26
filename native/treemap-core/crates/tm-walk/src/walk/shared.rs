@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use tm_governor::{Governor, apply_to_current_thread, profile};
 
-use super::{SAMPLE_INTERVAL, child_path, lock, panic_text, stored_root_name};
+use super::{MAX_WORKERS, SAMPLE_INTERVAL, child_path, lock, panic_text, stored_root_name};
 use crate::blocks::{BigListings, CommitLock, Resident};
 use crate::climb::{START_WORKERS, start_for};
 use crate::output::{Refusal, WalkOutput};
@@ -180,7 +180,9 @@ impl Shared {
                 let collect = Arc::new(CollectSink::default());
                 let mut sinks: Vec<Arc<dyn ListingSink>> = vec![collect.clone()];
                 sinks.extend(extra);
-                (Queue::hybrid(opts.q_max), Some(collect), sinks)
+                // A deque for every worker index the walk can start (T6c).
+                let workers = usize::try_from(MAX_WORKERS).unwrap_or(1);
+                (Queue::per_worker(opts.q_max, workers), Some(collect), sinks)
             }
         };
         let root_name_bytes = u64::try_from(stored_root_name(&opts.root).len()).unwrap_or(0);
