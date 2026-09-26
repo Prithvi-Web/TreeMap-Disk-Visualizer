@@ -751,12 +751,19 @@ fn the_queue_turns_last_in_first_out_once_it_holds_q_max_jobs() -> TestResult {
     let mut opts = options(&tree, Numbering::Blocks, 1);
     opts.q_max = q_max;
     let (out, counts) = walk_with(tree.clone(), opts, Vec::new())?;
+    // Each listed folder as its names under the root joined with '/', whatever
+    // the host's separator: `display()` prints `\` on Windows.
     let listed: Vec<String> = tree
         .listed()
         .iter()
         .map(|(p, _)| {
             p.strip_prefix(&tree.root)
-                .map(|r| r.display().to_string())
+                .map(|r| {
+                    r.components()
+                        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .join("/")
+                })
                 .unwrap_or_default()
         })
         .collect();
