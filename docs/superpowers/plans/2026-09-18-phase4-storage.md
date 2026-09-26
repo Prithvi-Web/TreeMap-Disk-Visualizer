@@ -862,6 +862,11 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
     Electron's 5M peak is 547 MB, from 555.
 - [ ] **T10. Switch production memory mode to the stream path** (`numbering = Blocks`). `ingestColumns`, `take()` and `build()` stay as oracles.
   - **First (added by T9, 26 Sep 2026):** after T9b and T9c, T9's harness measures again in both runtimes and sets each runtime's `T_mem`, and `nativeMemory.ts`' provisional sizes follow it.
+  - **The first step is done (26 Sep 2026).**
+    - **The record:** `bench/baselines/memory-path/darwin-arm64.json`, from `8047340`. It was taken at load 10–11 on 8 cores, so its timings are loaded ones; its memory is not.
+    - **Every size meets 700 MB in both runtimes.** 5M peaks at 533 MB in plain Node, with the first tree sent adding about 45 MB over the store, and at 547 MB in Electron, where the peak is its hand-over's one column in transit.
+    - **So `T_mem` is 5M in both runtimes,** and `nativeMemory.ts`' sizes stand: 6.25M rows reserved, 1 % headroom, 128 name bytes a row.
+    - The store costs 73.1 B a row resident in Node and 74.1 B in Electron.
   - **Green gate:** full `npm test` under 4 and 10 busy loops; commit **S2**; the owner pushes; CI green on all four legs before T11.
 - [ ] **T11. The cloud rule table.** The regexes in `cloudFolders.ts` (lines 15-20) become built from `CLOUD_RULES`, with a Rust matcher over the same table.
   - **Tests first:** the old regex against the table over a path corpus (case variants, a trailing `.icloud` against `.icloud` inside a name, Windows separators, U+212A, U+0130, U+017F); the same fixture file through the Rust matcher; the lowercase-to-ASCII code point set pinned in Node 24 and Electron 31.

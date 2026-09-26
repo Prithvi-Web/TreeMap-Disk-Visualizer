@@ -1,7 +1,7 @@
 {
   "kind": "memory-path",
-  "recordedAt": "2026-09-26T22:10:36.351Z",
-  "label": "t9-s2",
+  "recordedAt": "2026-09-26T23:42:15.751Z",
+  "label": "t10-remeasure",
   "machine": {
     "cpuModel": "Apple M3",
     "cores": 8,
@@ -12,12 +12,12 @@
     "arch": "arm64",
     "osRelease": "27.0.0",
     "node": "v24.16.0",
-    "commit": "1e05b05bfb9eb15c7f869f40094574a4c9d483ba",
+    "commit": "8047340f71a03bf0ae31dc9be40940fbf41c4ece",
     "dirty": false,
     "loadAvg": [
-      4.5068359375,
-      4.10986328125,
-      3.70654296875
+      10.2490234375,
+      11.4423828125,
+      7.587890625
     ],
     "maxVnodes": 251127,
     "tier": "B",
@@ -41,53 +41,53 @@
         "stages": [
           {
             "stage": "loaded",
-            "ms": 512.858041,
-            "peakRssBytes": 137953280,
-            "rssBytes": 138149888,
-            "heapUsedBytes": 41153368,
-            "externalBytes": 3119112,
-            "arrayBuffersBytes": 589472,
-            "peakFootprintBytes": 105875360
+            "ms": 645.193416,
+            "peakRssBytes": 138149888,
+            "rssBytes": 138428416,
+            "heapUsedBytes": 41178544,
+            "externalBytes": 3057475,
+            "arrayBuffersBytes": 527835,
+            "peakFootprintBytes": 105875000
           },
           {
             "stage": "walked",
-            "ms": 836.832125,
-            "peakRssBytes": 216727552,
-            "rssBytes": 216711168,
-            "heapUsedBytes": 37669472,
-            "externalBytes": 3063398,
-            "arrayBuffersBytes": 533718,
-            "peakFootprintBytes": 183732800
+            "ms": 1409.7336659999999,
+            "peakRssBytes": 219480064,
+            "rssBytes": 219447296,
+            "heapUsedBytes": 37805592,
+            "externalBytes": 3063400,
+            "arrayBuffersBytes": 533720,
+            "peakFootprintBytes": 186173584
           },
           {
             "stage": "handed-over",
-            "ms": 842.742166,
-            "peakRssBytes": 217006080,
-            "rssBytes": 217202688,
-            "heapUsedBytes": 37844200,
-            "externalBytes": 73938814,
-            "arrayBuffersBytes": 534060,
-            "peakFootprintBytes": 184191648
+            "ms": 1415.494458,
+            "peakRssBytes": 219791360,
+            "rssBytes": 219824128,
+            "heapUsedBytes": 37980704,
+            "externalBytes": 73938822,
+            "arrayBuffersBytes": 534066,
+            "peakFootprintBytes": 186534128
           },
           {
             "stage": "adopted",
-            "ms": 853.282458,
-            "peakRssBytes": 217251840,
-            "rssBytes": 217251840,
-            "heapUsedBytes": 39104600,
-            "externalBytes": 73941204,
-            "arrayBuffersBytes": 534402,
-            "peakFootprintBytes": 184191648
+            "ms": 1426.428625,
+            "peakRssBytes": 219873280,
+            "rssBytes": 219873280,
+            "heapUsedBytes": 39241824,
+            "externalBytes": 73941216,
+            "arrayBuffersBytes": 534412,
+            "peakFootprintBytes": 186534128
           },
           {
             "stage": "pruned",
-            "ms": 1340.585958,
-            "peakRssBytes": 933511168,
-            "rssBytes": 933543936,
-            "heapUsedBytes": 445906584,
-            "externalBytes": 164377165,
-            "arrayBuffersBytes": 90970363,
-            "peakFootprintBytes": 925817720
+            "ms": 1909.098458,
+            "peakRssBytes": 326893568,
+            "rssBytes": 326942720,
+            "heapUsedBytes": 53673312,
+            "externalBytes": 75977922,
+            "arrayBuffersBytes": 2571119,
+            "peakFootprintBytes": 300741216
           }
         ],
         "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
@@ -98,9 +98,9 @@
           "dirs": 150001,
           "files": 850000
         },
-        "handOverBusyMs": 0.3932920381469671,
-        "frameBytes": 90496040,
-        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-1000000-125"
+        "handOverBusyMs": 0.38962500762943364,
+        "frameBytes": 90746056,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-1000000-134"
       }
     },
     {
@@ -119,53 +119,53 @@
         "stages": [
           {
             "stage": "loaded",
-            "ms": 218.526417,
-            "peakRssBytes": 138395648,
-            "rssBytes": 138592256,
-            "heapUsedBytes": 41143480,
-            "externalBytes": 3119105,
-            "arrayBuffersBytes": 589465,
-            "peakFootprintBytes": 106055200
+            "ms": 207.945209,
+            "peakRssBytes": 126418944,
+            "rssBytes": 126713856,
+            "heapUsedBytes": 45446176,
+            "externalBytes": 3003942,
+            "arrayBuffersBytes": 474302,
+            "peakFootprintBytes": 90074728
           },
           {
             "stage": "walked",
-            "ms": 814.806875,
-            "peakRssBytes": 290848768,
-            "rssBytes": 290848768,
-            "heapUsedBytes": 37726888,
-            "externalBytes": 3063392,
-            "arrayBuffersBytes": 533712,
-            "peakFootprintBytes": 256231640
+            "ms": 1827.318042,
+            "peakRssBytes": 293011456,
+            "rssBytes": 292978688,
+            "heapUsedBytes": 40768896,
+            "externalBytes": 3063393,
+            "arrayBuffersBytes": 533713,
+            "peakFootprintBytes": 248973408
           },
           {
             "stage": "handed-over",
-            "ms": 820.13875,
-            "peakRssBytes": 291160064,
-            "rssBytes": 291340288,
-            "heapUsedBytes": 37900576,
-            "externalBytes": 137938796,
-            "arrayBuffersBytes": 534042,
-            "peakFootprintBytes": 256231640
+            "ms": 1834.357584,
+            "peakRssBytes": 293306368,
+            "rssBytes": 293404672,
+            "heapUsedBytes": 40946064,
+            "externalBytes": 137938803,
+            "arrayBuffersBytes": 534047,
+            "peakFootprintBytes": 248973408
           },
           {
             "stage": "adopted",
-            "ms": 836.279,
-            "peakRssBytes": 291422208,
-            "rssBytes": 291422208,
-            "heapUsedBytes": 39160656,
-            "externalBytes": 137941174,
-            "arrayBuffersBytes": 534372,
-            "peakFootprintBytes": 256231640
+            "ms": 1849.958875,
+            "peakRssBytes": 293765120,
+            "rssBytes": 293765120,
+            "heapUsedBytes": 38755424,
+            "externalBytes": 137940851,
+            "arrayBuffersBytes": 534048,
+            "peakFootprintBytes": 248973408
           },
           {
             "stage": "pruned",
-            "ms": 1284.2905,
-            "peakRssBytes": 1026244608,
-            "rssBytes": 1026277376,
-            "heapUsedBytes": 443616904,
-            "externalBytes": 226842414,
-            "arrayBuffersBytes": 89435612,
-            "peakFootprintBytes": 998710688
+            "ms": 2343.5607499999996,
+            "peakRssBytes": 335511552,
+            "rssBytes": 335527936,
+            "heapUsedBytes": 55781448,
+            "externalBytes": 140140410,
+            "arrayBuffersBytes": 2733607,
+            "peakFootprintBytes": 280775448
           }
         ],
         "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
@@ -176,9 +176,9 @@
           "dirs": 300001,
           "files": 1700000
         },
-        "handOverBusyMs": 0.498041033744812,
-        "frameBytes": 88961296,
-        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-2000000-126"
+        "handOverBusyMs": 0.5579589605331421,
+        "frameBytes": 89211306,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-2000000-134"
       }
     },
     {
@@ -197,53 +197,53 @@
         "stages": [
           {
             "stage": "loaded",
-            "ms": 216.089708,
-            "peakRssBytes": 138248192,
-            "rssBytes": 138444800,
-            "heapUsedBytes": 40967448,
-            "externalBytes": 3124134,
-            "arrayBuffersBytes": 594494,
-            "peakFootprintBytes": 105809320
+            "ms": 209.652834,
+            "peakRssBytes": 126320640,
+            "rssBytes": 126582784,
+            "heapUsedBytes": 45474096,
+            "externalBytes": 3003942,
+            "arrayBuffersBytes": 474302,
+            "peakFootprintBytes": 89697584
           },
           {
             "stage": "walked",
-            "ms": 1123.171708,
-            "peakRssBytes": 368230400,
-            "rssBytes": 368214016,
-            "heapUsedBytes": 41365016,
-            "externalBytes": 3183897,
-            "arrayBuffersBytes": 654217,
-            "peakFootprintBytes": 313689776
+            "ms": 2652.847875,
+            "peakRssBytes": 374030336,
+            "rssBytes": 373997568,
+            "heapUsedBytes": 40930512,
+            "externalBytes": 3063393,
+            "arrayBuffersBytes": 533713,
+            "peakFootprintBytes": 319277032
           },
           {
             "stage": "handed-over",
-            "ms": 1131.13275,
-            "peakRssBytes": 368558080,
-            "rssBytes": 368771072,
-            "heapUsedBytes": 41540920,
-            "externalBytes": 202059303,
-            "arrayBuffersBytes": 654549,
-            "peakFootprintBytes": 314902720
+            "ms": 2661.805209,
+            "peakRssBytes": 374702080,
+            "rssBytes": 374734848,
+            "heapUsedBytes": 37619240,
+            "externalBytes": 201938469,
+            "arrayBuffersBytes": 533714,
+            "peakFootprintBytes": 320145696
           },
           {
             "stage": "adopted",
-            "ms": 1151.755208,
-            "peakRssBytes": 369180672,
-            "rssBytes": 369180672,
-            "heapUsedBytes": 38733128,
-            "externalBytes": 201940847,
-            "arrayBuffersBytes": 534045,
-            "peakFootprintBytes": 314919104
+            "ms": 2681.786,
+            "peakRssBytes": 374800384,
+            "rssBytes": 374800384,
+            "heapUsedBytes": 38887456,
+            "externalBytes": 201940851,
+            "arrayBuffersBytes": 534048,
+            "peakFootprintBytes": 320162080
           },
           {
             "stage": "pruned",
-            "ms": 1587.3717920000001,
-            "peakRssBytes": 1079459840,
-            "rssBytes": 1079492608,
-            "heapUsedBytes": 439040512,
-            "externalBytes": 289838745,
-            "arrayBuffersBytes": 88431943,
-            "peakFootprintBytes": 1049662648
+            "ms": 3241.351334,
+            "peakRssBytes": 426180608,
+            "rssBytes": 426180608,
+            "heapUsedBytes": 49717672,
+            "externalBytes": 204137327,
+            "arrayBuffersBytes": 2730524,
+            "peakFootprintBytes": 372215200
           }
         ],
         "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
@@ -254,9 +254,9 @@
           "dirs": 450001,
           "files": 2550000
         },
-        "handOverBusyMs": 0.6939589977264404,
-        "frameBytes": 87957625,
-        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-3000000-130"
+        "handOverBusyMs": 4.694001012031549,
+        "frameBytes": 88207641,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-3000000-134"
       }
     },
     {
@@ -275,53 +275,53 @@
         "stages": [
           {
             "stage": "loaded",
-            "ms": 217.432416,
-            "peakRssBytes": 138264576,
-            "rssBytes": 138412032,
-            "heapUsedBytes": 41019824,
-            "externalBytes": 3124134,
-            "arrayBuffersBytes": 594494,
-            "peakFootprintBytes": 106121120
+            "ms": 207.780291,
+            "peakRssBytes": 126304256,
+            "rssBytes": 126566400,
+            "heapUsedBytes": 45414416,
+            "externalBytes": 3003942,
+            "arrayBuffersBytes": 474302,
+            "peakFootprintBytes": 89763192
           },
           {
             "stage": "walked",
-            "ms": 1778.4947080000002,
-            "peakRssBytes": 499548160,
-            "rssBytes": 499630080,
-            "heapUsedBytes": 41532984,
-            "externalBytes": 3183896,
-            "arrayBuffersBytes": 654216,
-            "peakFootprintBytes": 442026248
+            "ms": 3744.443666,
+            "peakRssBytes": 511180800,
+            "rssBytes": 511164416,
+            "heapUsedBytes": 41126816,
+            "externalBytes": 3063394,
+            "arrayBuffersBytes": 533714,
+            "peakFootprintBytes": 456247512
           },
           {
             "stage": "handed-over",
-            "ms": 1786.0748330000001,
-            "peakRssBytes": 499957760,
-            "rssBytes": 500170752,
-            "heapUsedBytes": 41708904,
-            "externalBytes": 330059302,
-            "arrayBuffersBytes": 654548,
-            "peakFootprintBytes": 442616168
+            "ms": 3755.237458,
+            "peakRssBytes": 511950848,
+            "rssBytes": 511967232,
+            "heapUsedBytes": 37614032,
+            "externalBytes": 329938469,
+            "arrayBuffersBytes": 533714,
+            "peakFootprintBytes": 457050592
           },
           {
             "stage": "adopted",
-            "ms": 1823.4274580000001,
-            "peakRssBytes": 500760576,
-            "rssBytes": 500760576,
-            "heapUsedBytes": 38718984,
-            "externalBytes": 329940847,
-            "arrayBuffersBytes": 534045,
-            "peakFootprintBytes": 443304704
+            "ms": 3786.58325,
+            "peakRssBytes": 512081920,
+            "rssBytes": 512081920,
+            "heapUsedBytes": 38754240,
+            "externalBytes": 329940851,
+            "arrayBuffersBytes": 534048,
+            "peakFootprintBytes": 457099744
           },
           {
             "stage": "pruned",
-            "ms": 2272.18325,
-            "peakRssBytes": 1211744256,
-            "rssBytes": 1211760640,
-            "heapUsedBytes": 436755856,
-            "externalBytes": 415171894,
-            "arrayBuffersBytes": 85765092,
-            "peakFootprintBytes": 1178720016
+            "ms": 4255.839666,
+            "peakRssBytes": 558923776,
+            "rssBytes": 558923776,
+            "heapUsedBytes": 53738424,
+            "externalBytes": 332311147,
+            "arrayBuffersBytes": 2904344,
+            "peakFootprintBytes": 504466632
           }
         ],
         "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
@@ -332,9 +332,9 @@
           "dirs": 750001,
           "files": 4250000
         },
-        "handOverBusyMs": 0.7141250371932983,
-        "frameBytes": 85290774,
-        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-5000000-132"
+        "handOverBusyMs": 5.611541986465454,
+        "frameBytes": 85540784,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-5000000-135"
       }
     },
     {
@@ -352,53 +352,53 @@
         "stages": [
           {
             "stage": "loaded",
-            "ms": 214.947041,
-            "peakRssBytes": 138297344,
-            "rssBytes": 138510336,
-            "heapUsedBytes": 40975408,
-            "externalBytes": 3124134,
-            "arrayBuffersBytes": 594494,
-            "peakFootprintBytes": 106170152
+            "ms": 212.289916,
+            "peakRssBytes": 138461184,
+            "rssBytes": 138625024,
+            "heapUsedBytes": 40991712,
+            "externalBytes": 3124135,
+            "arrayBuffersBytes": 594495,
+            "peakFootprintBytes": 106088040
           },
           {
             "stage": "walked",
-            "ms": 19589.435041,
-            "peakRssBytes": 199196672,
-            "rssBytes": 199163904,
-            "heapUsedBytes": 44348984,
-            "externalBytes": 3183906,
-            "arrayBuffersBytes": 654226,
-            "peakFootprintBytes": 165824488
+            "ms": 66329.133166,
+            "peakRssBytes": 194035712,
+            "rssBytes": 192954368,
+            "heapUsedBytes": 47074088,
+            "externalBytes": 3063404,
+            "arrayBuffersBytes": 533724,
+            "peakFootprintBytes": 168053048
           },
           {
             "stage": "handed-over",
-            "ms": 19594.362708,
-            "peakRssBytes": 199507968,
-            "rssBytes": 199524352,
-            "heapUsedBytes": 44524696,
-            "externalBytes": 62840534,
-            "arrayBuffersBytes": 654576,
-            "peakFootprintBytes": 166316104
+            "ms": 66338.402625,
+            "peakRssBytes": 194035712,
+            "rssBytes": 193298432,
+            "heapUsedBytes": 47255944,
+            "externalBytes": 62720037,
+            "arrayBuffersBytes": 534078,
+            "peakFootprintBytes": 168429976
           },
           {
             "stage": "adopted",
-            "ms": 19609.109666,
-            "peakRssBytes": 200556544,
-            "rssBytes": 200556544,
-            "heapUsedBytes": 38905848,
-            "externalBytes": 62721903,
-            "arrayBuffersBytes": 533897,
-            "peakFootprintBytes": 167315936
+            "ms": 66358.13900000001,
+            "peakRssBytes": 196952064,
+            "rssBytes": 196968448,
+            "heapUsedBytes": 49762704,
+            "externalBytes": 62722439,
+            "arrayBuffersBytes": 534432,
+            "peakFootprintBytes": 168544664
           },
           {
             "stage": "pruned",
-            "ms": 19803.930458,
-            "peakRssBytes": 586432512,
-            "rssBytes": 586465280,
-            "heapUsedBytes": 265787816,
-            "externalBytes": 123710761,
-            "arrayBuffersBytes": 61522755,
-            "peakFootprintBytes": 568205008
+            "ms": 66690.02916600001,
+            "peakRssBytes": 255180800,
+            "rssBytes": 255180800,
+            "heapUsedBytes": 75335840,
+            "externalBytes": 67442914,
+            "arrayBuffersBytes": 5254908,
+            "peakFootprintBytes": 223285072
           }
         ],
         "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
@@ -409,8 +409,8 @@
           "dirs": 120000,
           "files": 880000
         },
-        "handOverBusyMs": 0.19587504863739014,
-        "frameBytes": 61048429,
+        "handOverBusyMs": 0.491000016212638,
+        "frameBytes": 61048438,
         "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"tree\",\"path\":\"/private/"
       }
     },
@@ -429,33 +429,33 @@
         "stages": [
           {
             "stage": "loaded",
-            "ms": 308.577625,
-            "peakRssBytes": 126222336,
-            "rssBytes": 126500864,
-            "heapUsedBytes": 45977960,
-            "externalBytes": 3003947,
-            "arrayBuffersBytes": 474307,
-            "peakFootprintBytes": 89992328
+            "ms": 479.827958,
+            "peakRssBytes": 137314304,
+            "rssBytes": 137494528,
+            "heapUsedBytes": 40980928,
+            "externalBytes": 3124142,
+            "arrayBuffersBytes": 594502,
+            "peakFootprintBytes": 105449088
           },
           {
             "stage": "built",
-            "ms": 463.09762500000005,
-            "peakRssBytes": 212762624,
-            "rssBytes": 212959232,
-            "heapUsedBytes": 37512016,
-            "externalBytes": 64981238,
-            "arrayBuffersBytes": 62451558,
-            "peakFootprintBytes": 181176560
+            "ms": 629.620333,
+            "peakRssBytes": 212664320,
+            "rssBytes": 212811776,
+            "heapUsedBytes": 70717136,
+            "externalBytes": 65101432,
+            "arrayBuffersBytes": 62571752,
+            "peakFootprintBytes": 180996144
           },
           {
             "stage": "adopted",
-            "ms": 1022.597667,
-            "peakRssBytes": 232259584,
-            "rssBytes": 232275968,
-            "heapUsedBytes": 80719392,
-            "externalBytes": 64983286,
-            "arrayBuffersBytes": 62451558,
-            "peakFootprintBytes": 200723056
+            "ms": 1187.76925,
+            "peakRssBytes": 233603072,
+            "rssBytes": 233603072,
+            "heapUsedBytes": 81227744,
+            "externalBytes": 64983460,
+            "arrayBuffersBytes": 62451732,
+            "peakFootprintBytes": 201951640
           }
         ],
         "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
@@ -464,7 +464,7 @@
         "passes": {
           "textCandidates": 1000000,
           "cloudCandidates": 1000000,
-          "ms": 554.5715829999999
+          "ms": 553.386042
         }
       }
     },
@@ -483,33 +483,33 @@
         "stages": [
           {
             "stage": "loaded",
-            "ms": 212.86525,
-            "peakRssBytes": 137674752,
-            "rssBytes": 137871360,
-            "heapUsedBytes": 40891376,
-            "externalBytes": 3124134,
-            "arrayBuffersBytes": 594494,
-            "peakFootprintBytes": 105891528
+            "ms": 208.55987499999998,
+            "peakRssBytes": 125599744,
+            "rssBytes": 125878272,
+            "heapUsedBytes": 45267120,
+            "externalBytes": 3003942,
+            "arrayBuffersBytes": 474302,
+            "peakFootprintBytes": 89681512
           },
           {
             "stage": "built",
-            "ms": 928.113209,
-            "peakRssBytes": 377323520,
-            "rssBytes": 377323520,
-            "heapUsedBytes": 37884704,
-            "externalBytes": 317183232,
-            "arrayBuffersBytes": 314653552,
-            "peakFootprintBytes": 345671992
+            "ms": 927.6872920000001,
+            "peakRssBytes": 377257984,
+            "rssBytes": 377290752,
+            "heapUsedBytes": 37929984,
+            "externalBytes": 317183233,
+            "arrayBuffersBytes": 314653553,
+            "peakFootprintBytes": 345704832
           },
           {
             "stage": "adopted",
-            "ms": 3778.259,
-            "peakRssBytes": 527319040,
-            "rssBytes": 527351808,
-            "heapUsedBytes": 128138104,
-            "externalBytes": 317185281,
-            "arrayBuffersBytes": 314653553,
-            "peakFootprintBytes": 502690232
+            "ms": 3865.7844170000003,
+            "peakRssBytes": 527613952,
+            "rssBytes": 527646720,
+            "heapUsedBytes": 127731616,
+            "externalBytes": 317185283,
+            "arrayBuffersBytes": 314653555,
+            "peakFootprintBytes": 502935872
           }
         ],
         "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
@@ -518,7 +518,7 @@
         "passes": {
           "textCandidates": 5000000,
           "cloudCandidates": 5000000,
-          "ms": 2845.282625
+          "ms": 2932.954333
         }
       }
     },
@@ -536,7 +536,7 @@
         "stages": [],
         "footprintSource": "no stage was measured",
         "typescriptLoader": false,
-        "workerVersion": "0.3.0"
+        "workerVersion": "0.4.0"
       }
     },
     {
@@ -555,53 +555,53 @@
         "stages": [
           {
             "stage": "loaded",
-            "ms": 218.91979199999997,
-            "peakRssBytes": 110362624,
-            "rssBytes": 110411776,
-            "heapUsedBytes": 33006616,
-            "externalBytes": 2675807,
+            "ms": 246.40391700000004,
+            "peakRssBytes": 112427008,
+            "rssBytes": 112476160,
+            "heapUsedBytes": 29618812,
+            "externalBytes": 2675808,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 62948384
+            "peakFootprintBytes": 65062016
           },
           {
             "stage": "walked",
-            "ms": 609.6106669999999,
-            "peakRssBytes": 190578688,
-            "rssBytes": 188563456,
-            "heapUsedBytes": 28596236,
-            "externalBytes": 2735256,
+            "ms": 1051.0279580000001,
+            "peakRssBytes": 189366272,
+            "rssBytes": 187367424,
+            "heapUsedBytes": 29867140,
+            "externalBytes": 2735586,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 132990272
+            "peakFootprintBytes": 132728248
           },
           {
             "stage": "handed-over",
-            "ms": 622.231458,
-            "peakRssBytes": 219561984,
-            "rssBytes": 198164480,
-            "heapUsedBytes": 28474948,
-            "externalBytes": 73610331,
+            "ms": 1064.576708,
+            "peakRssBytes": 208519168,
+            "rssBytes": 190644224,
+            "heapUsedBytes": 27122368,
+            "externalBytes": 73610334,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 159941952
+            "peakFootprintBytes": 149554568
           },
           {
             "stage": "adopted",
-            "ms": 633.1976669999999,
-            "peakRssBytes": 219561984,
-            "rssBytes": 198524928,
-            "heapUsedBytes": 27591712,
-            "externalBytes": 73612721,
+            "ms": 1075.7301670000002,
+            "peakRssBytes": 208519168,
+            "rssBytes": 190758912,
+            "heapUsedBytes": 27654536,
+            "externalBytes": 73612728,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 159941952
+            "peakFootprintBytes": 149554568
           },
           {
             "stage": "pruned",
-            "ms": 1301.3785,
-            "peakRssBytes": 651018240,
-            "rssBytes": 470106112,
-            "heapUsedBytes": 130935360,
-            "externalBytes": 164049024,
+            "ms": 1618.963917,
+            "peakRssBytes": 208519168,
+            "rssBytes": 194510848,
+            "heapUsedBytes": 36417296,
+            "externalBytes": 74921474,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 591234632
+            "peakFootprintBytes": 149554568
           }
         ],
         "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
@@ -612,9 +612,9 @@
           "dirs": 150001,
           "files": 850000
         },
-        "handOverBusyMs": 7.310582995414734,
-        "frameBytes": 90496040,
-        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-1000000-217"
+        "handOverBusyMs": 7.813833967391929,
+        "frameBytes": 90746056,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-1000000-136"
       }
     },
     {
@@ -633,53 +633,53 @@
         "stages": [
           {
             "stage": "loaded",
-            "ms": 211.606708,
-            "peakRssBytes": 110477312,
-            "rssBytes": 110526464,
-            "heapUsedBytes": 32950524,
-            "externalBytes": 2675800,
+            "ms": 213.48933300000002,
+            "peakRssBytes": 110919680,
+            "rssBytes": 111001600,
+            "heapUsedBytes": 32431856,
+            "externalBytes": 2675801,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 63095912
+            "peakFootprintBytes": 63898680
           },
           {
             "stage": "walked",
-            "ms": 985.797208,
-            "peakRssBytes": 266764288,
-            "rssBytes": 262766592,
-            "heapUsedBytes": 28607020,
-            "externalBytes": 2735251,
+            "ms": 1935.135917,
+            "peakRssBytes": 266977280,
+            "rssBytes": 262963200,
+            "heapUsedBytes": 32796052,
+            "externalBytes": 2735565,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 199263672
+            "peakFootprintBytes": 197559664
           },
           {
             "stage": "handed-over",
-            "ms": 1003.436291,
-            "peakRssBytes": 312786944,
-            "rssBytes": 273612800,
-            "heapUsedBytes": 27098880,
-            "externalBytes": 137610325,
+            "ms": 1968.750458,
+            "peakRssBytes": 304218112,
+            "rssBytes": 268419072,
+            "heapUsedBytes": 27152132,
+            "externalBytes": 137610328,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 242730400
+            "peakFootprintBytes": 232015240
           },
           {
             "stage": "adopted",
-            "ms": 1018.3693329999999,
-            "peakRssBytes": 312786944,
-            "rssBytes": 273743872,
-            "heapUsedBytes": 27631088,
-            "externalBytes": 137612703,
+            "ms": 1988.241792,
+            "peakRssBytes": 304218112,
+            "rssBytes": 268550144,
+            "heapUsedBytes": 27684344,
+            "externalBytes": 137612710,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 242730400
+            "peakFootprintBytes": 232015240
           },
           {
             "stage": "pruned",
-            "ms": 1625.594,
-            "peakRssBytes": 721305600,
-            "rssBytes": 543703040,
-            "heapUsedBytes": 128949876,
-            "externalBytes": 226514273,
+            "ms": 2597.1810419999997,
+            "peakRssBytes": 304218112,
+            "rssBytes": 271843328,
+            "heapUsedBytes": 34675248,
+            "externalBytes": 138628495,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 650348176
+            "peakFootprintBytes": 232015240
           }
         ],
         "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
@@ -690,9 +690,9 @@
           "dirs": 300001,
           "files": 1700000
         },
-        "handOverBusyMs": 13.557708978652954,
-        "frameBytes": 88961296,
-        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-2000000-220"
+        "handOverBusyMs": 12.665917027656633,
+        "frameBytes": 89211306,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-2000000-136"
       }
     },
     {
@@ -711,53 +711,53 @@
         "stages": [
           {
             "stage": "loaded",
-            "ms": 219.40570900000003,
-            "peakRssBytes": 112328704,
-            "rssBytes": 112394240,
-            "heapUsedBytes": 28628336,
-            "externalBytes": 2675800,
+            "ms": 229.290041,
+            "peakRssBytes": 110657536,
+            "rssBytes": 110706688,
+            "heapUsedBytes": 32827916,
+            "externalBytes": 2675801,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 64603216
+            "peakFootprintBytes": 63407184
           },
           {
             "stage": "walked",
-            "ms": 1400.658209,
-            "peakRssBytes": 344227840,
-            "rssBytes": 336822272,
-            "heapUsedBytes": 28919616,
-            "externalBytes": 2735561,
+            "ms": 2350.489041,
+            "peakRssBytes": 349421568,
+            "rssBytes": 341999616,
+            "heapUsedBytes": 28752808,
+            "externalBytes": 2735253,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 266470816
+            "peakFootprintBytes": 266290616
           },
           {
             "stage": "handed-over",
-            "ms": 1427.5715,
-            "peakRssBytes": 406470656,
-            "rssBytes": 349257728,
-            "heapUsedBytes": 27061228,
-            "externalBytes": 201610326,
+            "ms": 2379.041875,
+            "peakRssBytes": 400785408,
+            "rssBytes": 347062272,
+            "heapUsedBytes": 27163812,
+            "externalBytes": 201610328,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 324404688
+            "peakFootprintBytes": 314443264
           },
           {
             "stage": "adopted",
-            "ms": 1448.44275,
-            "peakRssBytes": 406470656,
-            "rssBytes": 349388800,
-            "heapUsedBytes": 27593476,
-            "externalBytes": 201612706,
+            "ms": 2400.28725,
+            "peakRssBytes": 400785408,
+            "rssBytes": 347176960,
+            "heapUsedBytes": 27689472,
+            "externalBytes": 201612710,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 324404688
+            "peakFootprintBytes": 314443264
           },
           {
             "stage": "pruned",
-            "ms": 2032.998667,
-            "peakRssBytes": 786939904,
-            "rssBytes": 611401728,
-            "heapUsedBytes": 124958188,
-            "externalBytes": 289505427,
+            "ms": 2950.6982080000002,
+            "peakRssBytes": 400785408,
+            "rssBytes": 351322112,
+            "heapUsedBytes": 36794724,
+            "externalBytes": 202883031,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 705283776
+            "peakFootprintBytes": 314443264
           }
         ],
         "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
@@ -768,9 +768,9 @@
           "dirs": 450001,
           "files": 2550000
         },
-        "handOverBusyMs": 22.7772079706192,
-        "frameBytes": 87957625,
-        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-3000000-221"
+        "handOverBusyMs": 5.968167043869016,
+        "frameBytes": 88207641,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-3000000-136"
       }
     },
     {
@@ -789,53 +789,53 @@
         "stages": [
           {
             "stage": "loaded",
-            "ms": 215.821708,
-            "peakRssBytes": 111984640,
-            "rssBytes": 112050176,
-            "heapUsedBytes": 28691860,
-            "externalBytes": 2675800,
+            "ms": 213.56975,
+            "peakRssBytes": 110903296,
+            "rssBytes": 110968832,
+            "heapUsedBytes": 32684892,
+            "externalBytes": 2675805,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 64472168
+            "peakFootprintBytes": 63226984
           },
           {
             "stage": "walked",
-            "ms": 2192.842125,
-            "peakRssBytes": 481902592,
-            "rssBytes": 472711168,
-            "heapUsedBytes": 29087440,
-            "externalBytes": 2735562,
+            "ms": 4907.173917,
+            "peakRssBytes": 485785600,
+            "rssBytes": 476659712,
+            "heapUsedBytes": 29203668,
+            "externalBytes": 2735257,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 394692024
+            "peakFootprintBytes": 394511872
           },
           {
             "stage": "handed-over",
-            "ms": 2230.630333,
-            "peakRssBytes": 580124672,
-            "rssBytes": 486916096,
-            "heapUsedBytes": 27107972,
-            "externalBytes": 329610326,
+            "ms": 4957.87325,
+            "peakRssBytes": 573505536,
+            "rssBytes": 483786752,
+            "heapUsedBytes": 27182732,
+            "externalBytes": 329610332,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 488457824
+            "peakFootprintBytes": 478398072
           },
           {
             "stage": "adopted",
-            "ms": 2263.784,
-            "peakRssBytes": 580124672,
-            "rssBytes": 487129088,
-            "heapUsedBytes": 27127360,
-            "externalBytes": 329612540,
+            "ms": 4990.274625,
+            "peakRssBytes": 573505536,
+            "rssBytes": 483917824,
+            "heapUsedBytes": 27714984,
+            "externalBytes": 329612722,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 488457824
+            "peakFootprintBytes": 478398072
           },
           {
             "stage": "pruned",
-            "ms": 2897.47,
-            "peakRssBytes": 920977408,
-            "rssBytes": 750845952,
-            "heapUsedBytes": 121392228,
-            "externalBytes": 414836863,
+            "ms": 5523.510709,
+            "peakRssBytes": 573505536,
+            "rssBytes": 489635840,
+            "heapUsedBytes": 32988980,
+            "externalBytes": 329874279,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 828442400
+            "peakFootprintBytes": 478398072
           }
         ],
         "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
@@ -846,9 +846,9 @@
           "dirs": 750001,
           "files": 4250000
         },
-        "handOverBusyMs": 32.64054191112518,
-        "frameBytes": 85290774,
-        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-5000000-222"
+        "handOverBusyMs": 7.318834090416203,
+        "frameBytes": 85540784,
+        "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"memory-path-5000000-136"
       }
     },
     {
@@ -866,53 +866,53 @@
         "stages": [
           {
             "stage": "loaded",
-            "ms": 213.954,
-            "peakRssBytes": 110215168,
-            "rssBytes": 110297088,
-            "heapUsedBytes": 33685040,
-            "externalBytes": 2675800,
+            "ms": 213.905291,
+            "peakRssBytes": 110411776,
+            "rssBytes": 110460928,
+            "heapUsedBytes": 33468868,
+            "externalBytes": 2675801,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 62948480
+            "peakFootprintBytes": 63194216
           },
           {
             "stage": "walked",
-            "ms": 19900.817458,
-            "peakRssBytes": 171573248,
-            "rssBytes": 169885696,
-            "heapUsedBytes": 30636948,
-            "externalBytes": 2735261,
+            "ms": 70229.017708,
+            "peakRssBytes": 158875648,
+            "rssBytes": 156811264,
+            "heapUsedBytes": 27418436,
+            "externalBytes": 2735263,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 121472392
+            "peakFootprintBytes": 105366896
           },
           {
             "stage": "handed-over",
-            "ms": 19911.701958,
-            "peakRssBytes": 189775872,
-            "rssBytes": 180404224,
-            "heapUsedBytes": 28665468,
-            "externalBytes": 62391539,
+            "ms": 70246.842833,
+            "peakRssBytes": 165543936,
+            "rssBytes": 160169984,
+            "heapUsedBytes": 27177048,
+            "externalBytes": 62391541,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 136775048
+            "peakFootprintBytes": 109954560
           },
           {
             "stage": "adopted",
-            "ms": 19925.638042000002,
-            "peakRssBytes": 189775872,
-            "rssBytes": 180797440,
-            "heapUsedBytes": 27409324,
-            "externalBytes": 62393937,
+            "ms": 70263.012,
+            "peakRssBytes": 165543936,
+            "rssBytes": 160301056,
+            "heapUsedBytes": 27527404,
+            "externalBytes": 62393589,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 136775048
+            "peakFootprintBytes": 109954560
           },
           {
             "stage": "pruned",
-            "ms": 20186.710583,
-            "peakRssBytes": 445153280,
-            "rssBytes": 384761856,
-            "heapUsedBytes": 167656228,
-            "externalBytes": 123382621,
+            "ms": 70616.506625,
+            "peakRssBytes": 181501952,
+            "rssBytes": 181501952,
+            "heapUsedBytes": 30344584,
+            "externalBytes": 63568918,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 391923200
+            "peakFootprintBytes": 127026472
           }
         ],
         "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
@@ -923,8 +923,8 @@
           "dirs": 120000,
           "files": 880000
         },
-        "handOverBusyMs": 7.114874958992004,
-        "frameBytes": 61048429,
+        "handOverBusyMs": 10.147084067342803,
+        "frameBytes": 61048438,
         "frameHead": "data: {\"type\":\"complete\",\"root\":{\"name\":\"tree\",\"path\":\"/private/"
       }
     },
@@ -943,33 +943,33 @@
         "stages": [
           {
             "stage": "loaded",
-            "ms": 303.934583,
-            "peakRssBytes": 111722496,
-            "rssBytes": 111869952,
-            "heapUsedBytes": 29225456,
-            "externalBytes": 2795998,
+            "ms": 465.597916,
+            "peakRssBytes": 109608960,
+            "rssBytes": 109740032,
+            "heapUsedBytes": 32889020,
+            "externalBytes": 2675808,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 64865408
+            "peakFootprintBytes": 62997632
           },
           {
             "stage": "built",
-            "ms": 439.59295799999995,
-            "peakRssBytes": 154206208,
-            "rssBytes": 154320896,
-            "heapUsedBytes": 27380408,
-            "externalBytes": 64653097,
+            "ms": 600.101083,
+            "peakRssBytes": 153763840,
+            "rssBytes": 153829376,
+            "heapUsedBytes": 28840536,
+            "externalBytes": 64653099,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 107021488
+            "peakFootprintBytes": 106775728
           },
           {
             "stage": "adopted",
-            "ms": 966.4684169999999,
-            "peakRssBytes": 167591936,
-            "rssBytes": 167657472,
-            "heapUsedBytes": 41376776,
-            "externalBytes": 64655145,
+            "ms": 1133.382375,
+            "peakRssBytes": 167378944,
+            "rssBytes": 167444480,
+            "heapUsedBytes": 41416628,
+            "externalBytes": 64714885,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 119571632
+            "peakFootprintBytes": 119276720
           }
         ],
         "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
@@ -978,7 +978,7 @@
         "passes": {
           "textCandidates": 1000000,
           "cloudCandidates": 1000000,
-          "ms": 522.360875
+          "ms": 528.589958
         }
       }
     },
@@ -997,33 +997,33 @@
         "stages": [
           {
             "stage": "loaded",
-            "ms": 209.89712500000002,
-            "peakRssBytes": 109740032,
-            "rssBytes": 109871104,
-            "heapUsedBytes": 33244544,
-            "externalBytes": 2675800,
+            "ms": 211.32825,
+            "peakRssBytes": 109608960,
+            "rssBytes": 109740032,
+            "heapUsedBytes": 33252944,
+            "externalBytes": 2675801,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 63276112
+            "peakFootprintBytes": 63145064
           },
           {
             "stage": "built",
-            "ms": 846.392958,
-            "peakRssBytes": 318750720,
-            "rssBytes": 318767104,
-            "heapUsedBytes": 27026324,
-            "externalBytes": 316855091,
+            "ms": 837.362791,
+            "peakRssBytes": 318849024,
+            "rssBytes": 318849024,
+            "heapUsedBytes": 27393688,
+            "externalBytes": 316855092,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 270812432
+            "peakFootprintBytes": 270959912
           },
           {
             "stage": "adopted",
-            "ms": 3530.442166,
-            "peakRssBytes": 384466944,
-            "rssBytes": 384532480,
-            "heapUsedBytes": 68644548,
-            "externalBytes": 316857140,
+            "ms": 3623.729333,
+            "peakRssBytes": 378617856,
+            "rssBytes": 378699776,
+            "heapUsedBytes": 65327140,
+            "externalBytes": 316857141,
             "arrayBuffersBytes": 0,
-            "peakFootprintBytes": 336299304
+            "peakFootprintBytes": 330040640
           }
         ],
         "footprintSource": "proc_pid_rusage(RUSAGE_INFO_V4).ri_lifetime_max_phys_footprint via bench/probes/darwin-rusage.c",
@@ -1032,7 +1032,7 @@
         "passes": {
           "textCandidates": 5000000,
           "cloudCandidates": 5000000,
-          "ms": 2679.462916
+          "ms": 2780.371
         }
       }
     },
@@ -1050,7 +1050,7 @@
         "stages": [],
         "footprintSource": "no stage was measured",
         "typescriptLoader": false,
-        "workerVersion": "0.3.0"
+        "workerVersion": "0.4.0"
       }
     }
   ]
