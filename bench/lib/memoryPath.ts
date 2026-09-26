@@ -67,11 +67,22 @@ export type MemoryPathResult =
     /** Why a stage's footprint is null, or where it came from. */
     footprintSource: string;
     counts?: { scanned: number; dirs: number; files: number };
+    /**
+     * The longest the JavaScript thread was held while `storeTake` ran
+     * (`monitorEventLoopDelay`, 1 ms resolution): where Electron refuses
+     * external buffers, napi-rs copies the columns there (RISKS R92).
+     */
+    handOverBlockMs?: number;
     prunedJsonBytes?: number;
     passes?: { textCandidates: number; cloudCandidates: number; ms: number };
     workerVersion?: string;
   }
   | { ok: false; runtime?: MemoryPathRuntimeInfo; error: string };
+
+/** A `monitorEventLoopDelay` histogram's longest delay in ms: it records nanoseconds, and one with no sample reads 0. */
+export function longestDelayMs(histogram: { max: number }): number {
+  return histogram.max / 1e6;
+}
 
 const WORKER = path.join(__dirname, 'memoryPathWorker.ts');
 
@@ -203,6 +214,7 @@ export function formatMeasurement(m: MemoryPathMeasurement): string {
   const last = m.result.stages[m.result.stages.length - 1];
   const footprint = last?.peakFootprintBytes == null ? '' : ` · footprint ${(last.peakFootprintBytes / MB).toFixed(0)}`;
   const extra = m.result.passes ? ` · passes ${m.result.passes.ms.toFixed(0)} ms`
-    : m.result.workerVersion ? ` · worker loaded ${m.result.workerVersion}` : '';
+    : m.result.workerVersion ? ` · worker loaded ${m.result.workerVersion}`
+      : m.result.handOverBlockMs !== undefined ? ` · hand-over block ${m.result.handOverBlockMs.toFixed(1)} ms` : '';
   return `${head} peak MB: ${stages || '—'}${footprint}${extra}`;
 }

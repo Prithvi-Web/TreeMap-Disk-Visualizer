@@ -10,7 +10,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-benchMemoryPath-data-');
 
 import { skipOrFailOnCi } from './fixtures/ciSkip';
-import { ELECTRON_BINARY, MEMORY_PATH_STAGES, parseSizes, runMemoryPathWorker, type MemoryPathRecord } from '../bench/lib/memoryPath';
+import { ELECTRON_BINARY, MEMORY_PATH_STAGES, longestDelayMs, parseSizes, runMemoryPathWorker, type MemoryPathRecord } from '../bench/lib/memoryPath';
 
 /**
  * Phase 4 T9's harness (no product code): each measurement runs in a fresh
@@ -45,6 +45,13 @@ test('a synthetic walk is measured stage by stage in a process of its own, the p
   assert.equal(result.counts?.scanned, entries + 1, 'every entry and the root');
   assert.equal((result.counts?.dirs ?? 0) + (result.counts?.files ?? 0), entries + 1, 'every row a folder or a file');
   assert.ok((result.prunedJsonBytes ?? 0) > 0, 'the first prune was serialised');
+  const walked = result.stages.find((s) => s.stage === 'walked');
+  const handedOver = result.stages.find((s) => s.stage === 'handed-over');
+  assert.ok(walked && handedOver);
+  const block = result.handOverBlockMs;
+  assert.ok(typeof block === 'number' && Number.isFinite(block) && block >= 0, 'the hand-over\'s longest block of the JavaScript thread is measured');
+  // The block is timed inside the hand-over, and the hand-over between the two stages: 1 ms is the probe's resolution.
+  assert.ok(block <= handedOver.ms - walked.ms + 1, `a ${block} ms block is no longer than the hand-over it was timed in`);
   assert.equal(result.runtime.electron, null, 'plain Node');
   assert.equal(result.runtime.node, process.versions.node);
 });
@@ -92,6 +99,11 @@ function bench(env: NodeJS.ProcessEnv, ...args: string[]): { status: number | nu
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
+test('the hand-over\'s block is read in milliseconds from a histogram that records nanoseconds', () => {
+  assert.equal(longestDelayMs({ max: 2_500_000 }), 2.5);
+  assert.equal(longestDelayMs({ max: 0 }), 0, 'a histogram that took no sample');
+});
+
 test('sizes are whole counts with an optional k or m, and anything else is refused by name', () => {
   assert.deepEqual(parseSizes('1m,2m,500k,5000', 'sizes'), [1_000_000, 2_000_000, 500_000, 5_000]);
   for (const bad of ['1q', '', '1.5m', '-2k', 'm']) {
@@ -123,7 +135,7 @@ test('bench memory-path measures its matrix and writes one result naming every m
     const record = JSON.parse(fs.readFileSync(path.join(out, files[0]), 'utf8')) as MemoryPathRecord;
     assert.deepEqual(record.measurements.map((m) => [m.runtime, m.job.kind]), [['node', 'synthetic'], ['node', 'candidates'], ['node', 'worker-probe']]);
     for (const m of record.measurements) assert.ok(m.result.ok, m.result.ok ? '' : m.result.error);
-    assert.match(r.stdout, /node\s+synthetic 20,000/);
+    assert.match(r.stdout, /node\s+synthetic 20,000 .* · hand-over block \d+\.\d ms/);
   } finally {
     fs.rmSync(out, { recursive: true, force: true });
   }

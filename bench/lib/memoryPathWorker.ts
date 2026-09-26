@@ -12,11 +12,11 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { performance } from 'node:perf_hooks';
+import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 import type * as NativeCore from '../../native/index';
 import { peakFootprint, snapshotUsage } from './rusage';
-import { FIRST_PRUNE_NODES, type MemoryPathJob, type MemoryPathResult, type StageUsage } from './memoryPath';
+import { FIRST_PRUNE_NODES, longestDelayMs, type MemoryPathJob, type MemoryPathResult, type StageUsage } from './memoryPath';
 
 type Job = MemoryPathJob & { module: string; outFile: string };
 
@@ -79,7 +79,10 @@ async function walk(source: Extract<MemoryPathJob, { kind: 'synthetic' | 'disk' 
   const error = core.scanPoll(handle).error;
   if (error) return { ok: false, runtime, error };
   await measure('walked');
+  const delay = monitorEventLoopDelay({ resolution: 1 });
+  delay.enable();
   const taken = await core.storeTake(handle);
+  delay.disable();
   await measure('handed-over');
   const scan = createScanRecord(root);
   adoptNativeStore(scan, store, taken);
@@ -93,6 +96,7 @@ async function walk(source: Extract<MemoryPathJob, { kind: 'synthetic' | 'disk' 
     stages,
     footprintSource,
     counts: { scanned: scan.scanned ?? 0, dirs: scan.dirCount ?? 0, files: scan.fileCount ?? 0 },
+    handOverBlockMs: longestDelayMs(delay),
     prunedJsonBytes: json.length,
   };
 }
@@ -115,16 +119,25 @@ async function candidates(files: number): Promise<MemoryPathResult> {
   const folders = Math.max(1, Math.ceil(files / FILES_PER_FOLDER));
   const n = 1 + folders + files;
   const capacity = n + 1_024;
-  const encoder = new TextEncoder();
-  const names: Uint8Array[] = [encoder.encode('root')];
-  for (let f = 0; f < folders; f++) names.push(encoder.encode(f % 2 === 0 ? `OneDrive ${f}` : `dossier ${f}`));
-  for (let i = 0; i < files; i++) names.push(encoder.encode(`fichier-é${i}.TXT`));
+  // Written straight into one pool: an array per name would hold a few
+  // hundred bytes a name through the measurement, over a gigabyte at 5M.
+  const nameOf = (id: number): string => {
+    if (id === 0) return 'root';
+    const f = id - 1;
+    if (f < folders) return f % 2 === 0 ? `OneDrive ${f}` : `dossier ${f}`;
+    return `fichier-é${f - folders}.TXT`;
+  };
+  let bytes = 0;
+  for (let id = 0; id < n; id++) bytes += Buffer.byteLength(nameOf(id), 'utf8');
+  const pool = new Uint8Array(bytes);
+  const writer = Buffer.from(pool.buffer, pool.byteOffset, pool.byteLength);
   const nameOff = new Uint32Array(capacity + 1);
   let at = 0;
-  names.forEach((bytes, id) => { nameOff[id] = at; at += bytes.length; });
+  for (let id = 0; id < n; id++) {
+    nameOff[id] = at;
+    at += writer.write(nameOf(id), at, 'utf8');
+  }
   for (let id = n; id <= capacity; id++) nameOff[id] = at;
-  const pool = new Uint8Array(at);
-  names.forEach((bytes, id) => pool.set(bytes, nameOff[id]));
   const parent = new Int32Array(capacity);
   const size = new Float64Array(capacity);
   const flags = new Uint16Array(capacity);
