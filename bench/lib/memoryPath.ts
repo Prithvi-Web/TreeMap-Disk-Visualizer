@@ -199,6 +199,16 @@ export interface MemoryPathMeasurement {
   result: MemoryPathResult;
 }
 
+/**
+ * Where `--record` keeps a platform's record: a folder of its own under the
+ * baselines, because every file directly in that folder is a comparable
+ * result that the bench's readers compare (and `tests/benchReport.test.ts`
+ * reads each one as such), and a memory-path record is not one.
+ */
+export function memoryPathBaselinePath(baselinesDir: string, platform: string, arch: string): string {
+  return path.join(baselinesDir, 'memory-path', `${platform}-${arch}.json`);
+}
+
 /** What `memory-path` writes: every measurement, and the machine and tree they were taken on. */
 export interface MemoryPathRecord {
   kind: 'memory-path';

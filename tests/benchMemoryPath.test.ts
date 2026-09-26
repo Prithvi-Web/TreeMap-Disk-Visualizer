@@ -10,7 +10,7 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-benchMemoryPath-data-');
 
 import { skipOrFailOnCi } from './fixtures/ciSkip';
-import { ELECTRON_BINARY, MEMORY_PATH_STAGES, busyWhile, parseSizes, runMemoryPathWorker, type MemoryPathRecord } from '../bench/lib/memoryPath';
+import { ELECTRON_BINARY, MEMORY_PATH_STAGES, busyWhile, memoryPathBaselinePath, parseSizes, runMemoryPathWorker, type MemoryPathRecord } from '../bench/lib/memoryPath';
 
 /**
  * Phase 4 T9's harness (no product code): each measurement runs in a fresh
@@ -117,6 +117,18 @@ test('the hand-over\'s busy time counts, whole, a block inside the callback that
   assert.equal(value, 'settled');
   // 1 ms for the two monotonic clocks' rounding; a slower or busier machine only adds.
   assert.ok(busyMs >= BLOCK_MS - 1, `${busyMs} ms busy across a ${BLOCK_MS} ms block`);
+});
+
+test('a memory-path record is kept in a folder of its own, away from the comparable baselines every reader of the top folder expects', () => {
+  const top = path.join('/repo', 'bench', 'baselines');
+  const file = memoryPathBaselinePath(top, 'darwin', 'arm64');
+  assert.equal(file, path.join(top, 'memory-path', 'darwin-arm64.json'));
+  assert.notEqual(path.dirname(file), top, 'the top folder holds only comparable results (tests/benchReport.test.ts reads every file there)');
+  const committed = path.join(REPO, 'bench', 'baselines');
+  for (const name of fs.readdirSync(committed).filter((f) => f.endsWith('.json'))) {
+    const record = JSON.parse(fs.readFileSync(path.join(committed, name), 'utf8')) as { kind?: unknown };
+    assert.notEqual(record.kind, 'memory-path', `${name} is a memory-path record in the top folder`);
+  }
 });
 
 test('sizes are whole counts with an optional k or m, and anything else is refused by name', () => {

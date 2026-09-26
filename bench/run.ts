@@ -160,8 +160,8 @@ async function memoryPath(p: Parsed): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  fs.mkdirSync(BASELINES_DIR, { recursive: true });
-  const baseline = path.join(BASELINES_DIR, `memory-path-${process.platform}-${process.arch}.json`);
+  const baseline = mp.memoryPathBaselinePath(BASELINES_DIR, process.platform, process.arch);
+  fs.mkdirSync(path.dirname(baseline), { recursive: true });
   fs.writeFileSync(baseline, `${JSON.stringify(record, null, 2)}\n`);
   process.stdout.write(`  baseline: ${path.relative(REPO, baseline)}\n`);
 }
