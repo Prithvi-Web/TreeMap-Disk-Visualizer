@@ -537,7 +537,7 @@ fn a_block_whose_names_pass_the_name_ceiling_faults_the_walk() -> TestResult {
         let outcome = walk(tree.clone(), short, vec![recorder.clone()])?;
         let expected = format!("the walk's names exceeded {} bytes", grouped(total - 1));
         match outcome {
-            Err(WalkError::Internal(text)) if text == expected => {}
+            Err(WalkError::Ceiling(text)) if text == expected => {}
             other => {
                 return Err(format!(
                     "{workers} worker(s): expected {expected:?}, got {:?}",

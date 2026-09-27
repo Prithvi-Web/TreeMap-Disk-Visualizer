@@ -1835,7 +1835,7 @@ fn a_sink_with_less_room_faults_the_walk_at_its_ceilings() -> TestResult {
     let rows = MemorySink::new(&build_opts, 40 + 16, 1 << 20).map_err(|e| e.to_string())?;
     assert_eq!(rows.id_ceiling(), 40);
     match walk_mixed_into(&Arc::new(rows), true)? {
-        Err(WalkError::Internal(text)) if text == "the walk exceeded 39 entries" => {}
+        Err(WalkError::Ceiling(text)) if text == "the walk exceeded 39 entries" => {}
         other => return Err(format!("the row ceiling: {:?}", other.map(|o| o.len()))),
     }
     // Room for 100 bytes of names beside the root's and the headroom's.
@@ -1843,7 +1843,7 @@ fn a_sink_with_less_room_faults_the_walk_at_its_ceilings() -> TestResult {
     let names = MemorySink::new(&build_opts, 10_000, names).map_err(|e| e.to_string())?;
     assert_eq!(names.name_ceiling(), 100);
     match walk_mixed_into(&Arc::new(names), true)? {
-        Err(WalkError::Internal(text)) if text == "the walk's names exceeded 100 bytes" => {}
+        Err(WalkError::Ceiling(text)) if text == "the walk's names exceeded 100 bytes" => {}
         other => return Err(format!("the name ceiling: {:?}", other.map(|o| o.len()))),
     }
     Ok(())

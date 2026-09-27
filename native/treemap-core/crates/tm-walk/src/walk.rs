@@ -54,6 +54,25 @@ pub const MAX_WORKERS: u32 = 64;
 /// How long the driver sleeps between looks at the queue and the climber.
 const DRIVER_SLICE: Duration = Duration::from_millis(25);
 
+/// Why a walk ended itself: the first fault, kept in [`Shared::fault`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Fault {
+    /// Something that cannot be recovered from: a worker's panic, a sink that failed.
+    Internal(String),
+    /// A ceiling the caller set was reached: the ids or the names' bytes.
+    Ceiling(String),
+}
+
+impl Fault {
+    /// The walk's error for this fault.
+    pub(crate) fn into_error(self) -> WalkError {
+        match self {
+            Self::Internal(text) => WalkError::Internal(text),
+            Self::Ceiling(text) => WalkError::Ceiling(text),
+        }
+    }
+}
+
 /// The fault recorded when the id counter reaches its ceiling: ids are `u32`
 /// and the root holds 0, so `u32::MAX - 1` entries is the most a walk can number.
 #[cfg(test)]
@@ -387,7 +406,9 @@ fn run_walk(shared: &Arc<Shared>, root_meta: Meta) -> Result<WalkOutput, WalkErr
             let name = stored_root_name(&shared.root);
             if !to_sinks(shared, |sink| sink.root(&name, &root_meta)) {
                 let fault = lock(&shared.fault).take();
-                return Err(WalkError::Internal(fault.unwrap_or_default()));
+                return Err(
+                    fault.map_or_else(|| WalkError::Internal(String::new()), Fault::into_error)
+                );
             }
         }
     }
@@ -442,8 +463,8 @@ fn run_walk(shared: &Arc<Shared>, root_meta: Meta) -> Result<WalkOutput, WalkErr
         }
     }
     // A fault comes before the cancel check: the cancel was the fault's own.
-    if let Some(text) = lock(&shared.fault).take() {
-        return Err(WalkError::Internal(text));
+    if let Some(fault) = lock(&shared.fault).take() {
+        return Err(fault.into_error());
     }
     if let Some(e) = spawn_failure {
         return Err(e);

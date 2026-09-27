@@ -394,7 +394,7 @@ fn reserve(shared: &Shared, guard: &mut CommitGuard<'_>, k: u32, bytes: u64) -> 
     let (Some(end), Some(held)) = (end, guard.held.as_mut()) else {
         // A wrapped id would overwrite an earlier node's row, so the walk
         // ends here as a fault, as the discovery walk's counter does.
-        shared.record_fault(ceiling_fault(shared.id_ceiling));
+        shared.record_ceiling(ceiling_fault(shared.id_ceiling));
         shared.cancel();
         return None;
     };
@@ -406,7 +406,7 @@ fn reserve(shared: &Shared, guard: &mut CommitGuard<'_>, k: u32, bytes: u64) -> 
         .filter(|&total| total <= lock.name_ceiling);
     if names_after.is_none() {
         // A sink with a fixed name pool would have no room for these names.
-        shared.record_fault(name_ceiling_fault(lock.name_ceiling));
+        shared.record_ceiling(name_ceiling_fault(lock.name_ceiling));
         shared.cancel();
         return None;
     }
@@ -438,7 +438,7 @@ fn deliver(shared: &Shared, block: &Block<'_>, which: Sinks) -> bool {
 fn id_count(shared: &Shared, listing: &Listing) -> Option<u32> {
     let k = u32::try_from(listing.len()).ok();
     if k.is_none() {
-        shared.record_fault(ceiling_fault(shared.id_ceiling));
+        shared.record_ceiling(ceiling_fault(shared.id_ceiling));
         shared.cancel();
     }
     k

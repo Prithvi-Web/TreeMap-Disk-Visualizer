@@ -262,6 +262,14 @@ export interface NativeProgress {
   done: boolean;
   /** How the walk ended other than with an output (the sentence `scanTake()` throws); null while running or when it succeeded. */
   error: string | null;
+  /**
+   * Whether the walk ended at a ceiling its caller set — the ids or the names'
+   * bytes (a memory-mode store's room) — the one ending a caller with more room
+   * elsewhere can walk past (Phase 4 T10); false while running, when it
+   * succeeded, and for every other ending. Every module of contract 0.5.0
+   * on sends it; a caller treats its absence as false.
+   */
+  ceiling?: boolean;
   /** Entries discovered under the root so far (the root not counted). */
   entries: number;
   dirs: number;

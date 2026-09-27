@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use tm_governor::{Governor, apply_to_current_thread, profile};
 
-use super::{MAX_WORKERS, SAMPLE_INTERVAL, child_path, lock, panic_text, stored_root_name};
+use super::{Fault, MAX_WORKERS, SAMPLE_INTERVAL, child_path, lock, panic_text, stored_root_name};
 use crate::blocks::{BigListings, CommitLock, Resident};
 use crate::climb::{START_WORKERS, start_for};
 use crate::output::{Refusal, WalkOutput};
@@ -136,9 +136,9 @@ pub(crate) struct Shared {
     pub(super) current_path: Mutex<Option<String>>,
     pub(crate) root_fast_path: AtomicU8,
     pub(crate) root_refused: AtomicU8,
-    /// The first fault that ended the walk, as the sentence `take()` returns:
-    /// a worker's panic, or the id ceiling. Set once; later faults are dropped.
-    pub(super) fault: Mutex<Option<String>>,
+    /// The first fault that ended the walk, and its sentence `take()` returns:
+    /// a worker's panic, or a ceiling. Set once; later faults are dropped.
+    pub(super) fault: Mutex<Option<Fault>>,
     pub(super) result: Mutex<Option<Result<WalkOutput, WalkError>>>,
     pub(super) numbering: Numbering,
     /// See [`WalkOptions::id_ceiling`].
@@ -236,9 +236,19 @@ impl Shared {
     /// Keeps `text` as the walk's fault unless one was recorded already: the
     /// first fault is the one that ended the walk, the rest are its consequences.
     pub(crate) fn record_fault(&self, text: String) {
+        self.record(Fault::Internal(text));
+    }
+
+    /// Keeps `text` as the walk's fault, as [`Shared::record_fault`] does, of the
+    /// kind a caller can act on: a ceiling it set was reached.
+    pub(crate) fn record_ceiling(&self, text: String) {
+        self.record(Fault::Ceiling(text));
+    }
+
+    fn record(&self, first: Fault) {
         let mut fault = lock(&self.fault);
         if fault.is_none() {
-            *fault = Some(text);
+            *fault = Some(first);
         }
     }
 

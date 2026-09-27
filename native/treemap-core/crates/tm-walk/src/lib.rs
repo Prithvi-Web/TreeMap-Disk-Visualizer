@@ -324,6 +324,11 @@ pub enum WalkError {
     Cancelled,
     /// Something this crate could not recover from; the text says what.
     Internal(String),
+    /// The walk passed a ceiling its caller set: the ids
+    /// ([`WalkOptions::id_ceiling`]) or the names' bytes
+    /// ([`WalkOptions::name_ceiling`]). The text says which. A caller with more
+    /// room elsewhere — the columns path past the memory sink's — can walk again.
+    Ceiling(String),
     /// The options were refused before anything was listed: a synthetic root
     /// outside the app's synthetic temp folder, or a synthetic tree that
     /// cannot be built. The text says which.
@@ -335,9 +340,10 @@ impl fmt::Display for WalkError {
         match self {
             Self::RootNotDirectory => f.write_str("the root is not a directory"),
             Self::RootRefused(why) => write!(f, "the root could not be walked: {why}"),
-            Self::Unsupported(reason) | Self::Internal(reason) | Self::OptionsRefused(reason) => {
-                f.write_str(reason)
-            }
+            Self::Unsupported(reason)
+            | Self::Internal(reason)
+            | Self::Ceiling(reason)
+            | Self::OptionsRefused(reason) => f.write_str(reason),
             Self::Cancelled => f.write_str("the walk was cancelled"),
         }
     }

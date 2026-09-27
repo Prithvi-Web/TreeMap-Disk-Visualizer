@@ -508,6 +508,7 @@ fn walk_error_text(err: &WalkError) -> String {
         WalkError::Unsupported(reason) | WalkError::OptionsRefused(reason) => reason.clone(),
         WalkError::Cancelled => "the native scan was cancelled".to_owned(),
         WalkError::Internal(reason) => format!("the native engine failed: {reason}"),
+        WalkError::Ceiling(reason) => format!("the native engine stopped at its ceiling: {reason}"),
     }
 }
 
@@ -520,8 +521,15 @@ fn walk_error(err: &WalkError) -> Error {
         WalkError::RootRefused(_)
         | WalkError::Unsupported(_)
         | WalkError::Cancelled
-        | WalkError::Internal(_) => failure(text),
+        | WalkError::Internal(_)
+        | WalkError::Ceiling(_) => failure(text),
     }
+}
+
+/// Whether a walk ended at a ceiling its caller set (`WalkError::Ceiling`): the
+/// one ending a caller with more room elsewhere can walk past (Phase 4 T10).
+fn at_ceiling(result: &std::result::Result<WalkOutput, WalkError>) -> bool {
+    matches!(result, Err(WalkError::Ceiling(_)))
 }
 
 /// The walk's stats as JavaScript sees them: camelCase, `cpuSeconds` null where the
@@ -545,10 +553,11 @@ fn stats_json(stats: &WalkStats) -> Value {
 /// listing batches the OS has answered, across every worker: it advances while one
 /// huge directory is still listing, when `entries` cannot, so Node can tell a slow
 /// walk from a wedged one.
-fn progress_json(progress: &Progress, error: Option<&str>) -> Value {
+fn progress_json(progress: &Progress, error: Option<&str>, ceiling: bool) -> Value {
     json!({
         "done": progress.done,
         "error": error,
+        "ceiling": ceiling,
         "entries": progress.entries,
         "dirs": progress.dirs,
         "files": progress.files,
@@ -732,12 +741,13 @@ pub fn scan_poll(handle: u32) -> Result<Value> {
     let slot = slots
         .remove(&handle)
         .ok_or_else(|| unknown_handle(handle))?;
-    let (progress, error) = match slot {
+    let (progress, error, ceiling) = match slot {
         Slot::Running(walk, sink) => {
             let progress = walk.progress();
             if progress.done {
                 let result = walk.take();
                 let error = result.as_ref().err().map(walk_error_text);
+                let ceiling = at_ceiling(&result);
                 slots.insert(
                     handle,
                     Slot::Finished(Box::new(Finished {
@@ -746,21 +756,22 @@ pub fn scan_poll(handle: u32) -> Result<Value> {
                         sink,
                     })),
                 );
-                (progress, error)
+                (progress, error, ceiling)
             } else {
                 slots.insert(handle, Slot::Running(walk, sink));
-                (progress, None)
+                (progress, None, false)
             }
         }
         Slot::Finished(finished) => {
             let progress = finished.progress.clone();
             let error = finished.result.as_ref().err().map(walk_error_text);
+            let ceiling = at_ceiling(&finished.result);
             slots.insert(handle, Slot::Finished(finished));
-            (progress, error)
+            (progress, error, ceiling)
         }
     };
     drop(slots);
-    Ok(progress_json(&progress, error.as_deref()))
+    Ok(progress_json(&progress, error.as_deref(), ceiling))
 }
 
 /// Runs `act` on a walk that is still running; a finished walk has nothing to

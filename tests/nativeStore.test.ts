@@ -169,13 +169,32 @@ test('storeTake rejects a cancelled memory-mode walk with the cancellation, and 
   });
 });
 
-test('a sink too small for the walk fails it with the ceiling\'s sentence', async (t) => {
+test('a sink too small for the walk fails it with the ceiling\'s sentence, and the poll says it was the ceiling', async (t) => {
   const core = loadCore(t);
   if (!core) return;
   const handle = core.scanStart(rootFor(core, 'small'), options({ store: storeOptions({ capRows: 1_000 + HEADROOM }) }));
   await done(core, handle);
-  assert.match(String(core.scanPoll(handle).error), /exceeded/);
+  const poll = core.scanPoll(handle);
+  assert.match(String(poll.error), /exceeded/);
+  assert.equal(poll.ceiling, true, 'a ceiling, which a caller with more room can walk past');
   await assert.rejects(core.storeTake(handle), /exceeded/);
+
+  const whole = core.scanStart(rootFor(core, 'roomy'), options());
+  await done(core, whole);
+  assert.equal(core.scanPoll(whole).ceiling, false, 'a walk that finished');
+  await core.storeTake(whole);
+
+  core.governorPause();
+  try {
+    const cancelled = core.scanStart(rootFor(core, 'cancelled-ceiling'), options());
+    core.scanCancel(cancelled);
+    core.governorResume();
+    await done(core, cancelled);
+    assert.equal(core.scanPoll(cancelled).ceiling, false, 'a walk that was cancelled');
+    await assert.rejects(core.storeTake(cancelled), /cancelled/);
+  } finally {
+    core.governorResume();
+  }
 });
 
 test('storage and store come together, and a scan started without them has no store', async (t) => {

@@ -80,7 +80,7 @@ pub(super) fn process_dir(
         let Some(id) = take_id_below(&shared.next_id, shared.id_ceiling) else {
             // The columns are full: a wrapped id would overwrite an earlier
             // node's, so the walk ends here as a fault.
-            shared.record_fault(ceiling_fault(shared.id_ceiling));
+            shared.record_ceiling(ceiling_fault(shared.id_ceiling));
             shared.cancel();
             return;
         };
@@ -125,7 +125,7 @@ mod tests {
 
     use super::*;
     use crate::platform::{Lister, Meta};
-    use crate::walk::{ID_CEILING_FAULT, Pacer, lock};
+    use crate::walk::{Fault, ID_CEILING_FAULT, Pacer, lock};
     use crate::{FastPath, KIND_FILE, MIN_BUFFER_BYTES, WalkOptions};
 
     /// A pacer that does nothing and allows one worker.
@@ -183,7 +183,10 @@ mod tests {
             path: PathBuf::from("/fake"),
         };
         process_dir(&shared, 0, &mut part, &mut buf, &job);
-        assert_eq!(lock(&shared.fault).as_deref(), Some(ID_CEILING_FAULT));
+        assert!(
+            matches!(lock(&shared.fault).as_ref(), Some(Fault::Ceiling(text)) if text == ID_CEILING_FAULT),
+            "the id ceiling is a fault of its own kind"
+        );
         assert!(shared.is_cancelled());
         // T6b: the listing queues its subfolders itself; nothing was queued.
         assert_eq!(shared.queue.peak_len(), 0);

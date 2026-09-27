@@ -965,7 +965,7 @@ fn a_lowered_id_ceiling_faults_under_both_numberings() -> TestResult {
         let handle =
             start_with_sinks(opts, Arc::new(Workers(2)), tree, sinks).map_err(|e| e.to_string())?;
         match take_within(handle)? {
-            Err(WalkError::Internal(text)) if text == "the walk exceeded 9 entries" => {}
+            Err(WalkError::Ceiling(text)) if text == "the walk exceeded 9 entries" => {}
             other => {
                 return Err(format!(
                     "{numbering:?}: expected the ceiling fault, got {other:?}"
