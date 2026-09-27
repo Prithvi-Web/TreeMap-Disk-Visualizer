@@ -17,8 +17,9 @@
 //!   the full tree's.
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BTreeMap, BinaryHeap, HashMap};
 
+use super::links::Family;
 use super::position::PositionPath;
 
 /// The folder heap's size: `R_dir + 1`, so at most `R_dir` folders are kept by β.
@@ -72,77 +73,111 @@ pub(super) struct Record {
     pub counts: Option<(u64, u64)>,
 }
 
-/// A heap entry, ordered so the top is the smallest value (the latest place at a tie).
-struct Smallest(Record);
-
-impl Ord for Smallest {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other
-            .0
-            .bytes
-            .cmp(&self.0.bytes)
-            .then_with(|| self.0.position.cmp(&other.0.position))
-    }
+/// A held record, and the family whose entry it is.
+struct Entry {
+    record: Record,
+    family: Option<Family>,
 }
 
-impl PartialOrd for Smallest {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for Smallest {
-    fn eq(&self, other: &Self) -> bool {
-        self.cmp(other) == Ordering::Equal
-    }
-}
-
-impl Eq for Smallest {}
-
-/// One β heap: the largest values so far.
+/// One β heap: the largest values so far, smallest first, each under a number of its own so
+/// a family's entry can change hands (T12d).
 struct BetaHeap {
     capacity: usize,
-    heap: BinaryHeap<Smallest>,
+    held: BTreeMap<(u128, u64), Entry>,
+    families: HashMap<Family, (u128, u64)>,
+    next: u64,
 }
 
 impl BetaHeap {
     fn new(capacity: usize) -> Self {
         Self {
             capacity: capacity.max(1),
-            heap: BinaryHeap::new(),
+            held: BTreeMap::new(),
+            families: HashMap::new(),
+            next: 0,
         }
     }
 
     /// Whether a value would be turned away: the heap is full and it is no larger than the
     /// smallest held.
     fn turns_away(&self, bytes: u128) -> bool {
-        self.heap.len() >= self.capacity && self.heap.peek().is_some_and(|min| bytes <= min.0.bytes)
+        self.held.len() >= self.capacity
+            && self
+                .held
+                .first_key_value()
+                .is_some_and(|(&(min, _), _)| bytes <= min)
     }
 
-    /// Takes `record`, unless [`Self::turns_away`] says otherwise.
-    fn offer(&mut self, record: Record) {
+    /// Whether `family` has an entry.
+    fn holds(&self, family: &Family) -> bool {
+        self.families.contains_key(family)
+    }
+
+    /// Takes `record`, unless [`Self::turns_away`] says otherwise; a family's first
+    /// record is its entry.
+    fn offer(&mut self, record: Record, family: Option<Family>) {
         if self.turns_away(record.bytes) {
             return;
         }
-        if self.heap.len() >= self.capacity {
-            self.heap.pop();
+        if self.held.len() >= self.capacity
+            && let Some((_, gone)) = self.held.pop_first()
+            && let Some(family) = gone.family
+        {
+            self.families.remove(&family);
         }
-        self.heap.push(Smallest(record));
+        self.hold(record, family);
+    }
+
+    fn hold(&mut self, record: Record, family: Option<Family>) {
+        let key = (record.bytes, self.next);
+        self.next = self.next.wrapping_add(1);
+        if let Some(family) = family {
+            self.families.insert(family, key);
+        }
+        self.held.insert(key, Entry { record, family });
+    }
+
+    /// Another name of `family`, whose entry is held: the earlier (depth, position) keeps
+    /// the entry and its own bytes, and the other is offered at 0 bytes.
+    fn merge(&mut self, family: Family, member: Record) {
+        let Some(key) = self.families.get(&family).copied() else {
+            return;
+        };
+        let Some(entry) = self.held.get(&key) else {
+            return;
+        };
+        let holder = &entry.record;
+        if (holder.depth, &holder.position) <= (member.depth, &member.position) {
+            self.offer(Record { bytes: 0, ..member }, None);
+            return;
+        }
+        let Some(displaced) = self.held.remove(&key) else {
+            return;
+        };
+        self.families.remove(&family);
+        self.hold(member, Some(family));
+        self.offer(
+            Record {
+                bytes: 0,
+                ..displaced.record
+            },
+            None,
+        );
     }
 
     /// β: the smallest value held, once the heap is full.
     fn threshold(&self) -> Option<u128> {
-        if self.heap.len() < self.capacity {
+        if self.held.len() < self.capacity {
             return None;
         }
-        self.heap.peek().map(|min| min.0.bytes)
+        self.held.first_key_value().map(|(&(min, _), _)| min)
     }
 
     /// Every record above `beta`, or every record when there is none.
     fn above(&self, beta: Option<u128>) -> impl Iterator<Item = &Record> {
-        self.heap
-            .iter()
-            .map(|entry| &entry.0)
+        self.held
+            .values()
+            .map(|entry| &entry.record)
             .filter(move |record| beta.is_none_or(|beta| record.bytes > beta))
     }
 }
@@ -185,7 +220,15 @@ impl Eq for Worst {}
 struct TopList {
     depth: u32,
     top: usize,
+    /// Whether its listing holds more children than it keeps.
+    cut: bool,
     heap: BinaryHeap<Worst>,
+}
+
+/// A closed folder's top children, and whether its listing held more.
+pub(super) struct TopChildren {
+    pub records: Vec<Record>,
+    pub cut: bool,
 }
 
 impl TopList {
@@ -228,7 +271,7 @@ struct Shallow {
     /// Open folders' lists, by the walk's id.
     open: HashMap<u32, TopList>,
     /// Closed folders' lists, by depth, then by the folder's position.
-    closed: Vec<HashMap<PositionPath, Vec<Record>>>,
+    closed: Vec<HashMap<PositionPath, TopChildren>>,
     /// Records held in every list.
     held: usize,
 }
@@ -282,6 +325,7 @@ impl Shallow {
             TopList {
                 depth,
                 top,
+                cut: usize::try_from(len).unwrap_or(usize::MAX) > top,
                 heap: BinaryHeap::with_capacity(adds),
             },
         );
@@ -312,7 +356,7 @@ impl Shallow {
             stays
         });
         if let Some(lists) = self.closed.get_mut(at) {
-            dropped += lists.values().map(Vec::len).sum::<usize>();
+            dropped += lists.values().map(|list| list.records.len()).sum::<usize>();
             lists.clear();
         }
         self.held = self.held.saturating_sub(dropped);
@@ -345,15 +389,31 @@ impl Shallow {
         }
         let lists = self.closed.get_mut(at).ok_or("a depth's lists vanished")?;
         let records = list.heap.into_iter().map(|worst| worst.0.record).collect();
-        lists.insert(position.clone(), records);
+        lists.insert(
+            position.clone(),
+            TopChildren {
+                records,
+                cut: list.cut,
+            },
+        );
         Ok(())
     }
 
     /// Closed folder `position`'s top children, at `depth`.
-    fn list(&self, depth: u32, position: &PositionPath) -> Option<&Vec<Record>> {
+    fn list(&self, depth: u32, position: &PositionPath) -> Option<&TopChildren> {
         let at = usize::try_from(depth).ok()?;
         self.closed.get(at)?.get(position)
     }
+}
+
+/// What a child offered to [`Keep::child`] is.
+#[derive(Clone, Copy)]
+pub(super) enum ChildKind {
+    Folder,
+    /// A file, with its hard-link family when its name is keyed.
+    File {
+        family: Option<Family>,
+    },
 }
 
 /// Everything aggregate keeps of the tree while the walk goes.
@@ -379,14 +439,11 @@ pub(super) struct Held<'a> {
 
 impl Held<'_> {
     /// Closed folder `position`'s top children, if it is at depth D_s or above.
-    pub fn top_children(&self, depth: u32, position: &PositionPath) -> &[Record] {
+    pub fn top_children(&self, depth: u32, position: &PositionPath) -> Option<&TopChildren> {
         if depth > self.shallow_depth {
-            return &[];
+            return None;
         }
-        self.keep
-            .shallow
-            .list(depth, position)
-            .map_or(&[], Vec::as_slice)
+        self.keep.shallow.list(depth, position)
     }
 }
 
@@ -421,25 +478,28 @@ impl Keep {
         parent: u32,
         index: u32,
         bytes: u128,
-        is_folder: bool,
+        kind: ChildKind,
         record: impl FnOnce() -> Record,
     ) {
-        let heap = if is_folder {
-            &mut self.folders
-        } else {
-            &mut self.files
-        };
-        let to_heap = !heap.turns_away(bytes);
         let to_list = self.shallow.wants(parent, index, bytes);
+        let (heap, family) = match kind {
+            ChildKind::Folder => (&mut self.folders, None),
+            // A family of empty files needs no first name: every name holds 0 bytes.
+            ChildKind::File { family } => (&mut self.files, family.filter(|_| bytes > 0)),
+        };
+        let merging = family.filter(|family| heap.holds(family));
+        let to_heap = merging.is_some() || !heap.turns_away(bytes);
         if !to_heap && !to_list {
             return;
         }
         let record = record();
-        if to_heap {
-            heap.offer(record.clone());
-        }
         if to_list {
-            self.shallow.take(parent, index, record);
+            self.shallow.take(parent, index, record.clone());
+        }
+        match merging {
+            Some(family) => heap.merge(family, record),
+            None if to_heap => heap.offer(record, family),
+            None => {}
         }
     }
 

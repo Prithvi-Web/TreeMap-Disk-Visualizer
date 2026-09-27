@@ -26,11 +26,12 @@ mod answers;
 mod buckets;
 mod frontier;
 mod keep;
+mod links;
 mod position;
 mod summary;
 
 pub use answers::{
-    Answers, EXTENSION_LIMIT, Extension, FileAnswer, FolderAnswer, KEEP, TypeAnswer,
+    Answers, EXTENSION_LIMIT, Exactness, Extension, FileAnswer, FolderAnswer, KEEP, TypeAnswer,
 };
 pub use buckets::{SIZE_BUCKET_STARTS, SIZE_BUCKETS, size_bucket};
 pub use keep::{FILE_HEAP, FOLDER_HEAP, KeepLimits, ROOT_TOP, SHALLOW_ROWS, SHALLOW_TOP};
@@ -39,12 +40,13 @@ pub use summary::{FolderRow, Omitted, Summary, SummaryRow};
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use tm_walk::{Block, Finishing, KIND_DIR, ListingSink, Meta, Refusal};
+use tm_walk::{Block, Finishing, KIND_DIR, ListingSink, Meta, Refusal, link_key};
 
 use crate::derive::{decided_here, extension, store_mtime};
 use answers::{File, Folder, Kept};
 use frontier::{Child, Frontier};
-use keep::{Keep, Record};
+use keep::{ChildKind, Keep, Record};
+use links::{LinkLog, LinkRecord};
 
 /// What an aggregate state is made with.
 pub struct AggregateOptions {
@@ -107,6 +109,8 @@ struct Inner {
     keep: Keep,
     /// The root's own record, once it has closed.
     root: Option<Record>,
+    /// Every keyed name, for the seal to settle hard links from.
+    links: LinkLog,
     /// The first broken promise of the walk's, reported by `finish`; nothing more is
     /// counted after it.
     fault: Option<String>,
@@ -118,6 +122,7 @@ struct Parts<'a> {
     kept: &'a mut Kept,
     keep: &'a mut Keep,
     root: &'a mut Option<Record>,
+    links: &'a mut LinkLog,
     observer: Option<&'a dyn CloseObserver>,
 }
 
@@ -131,6 +136,7 @@ impl AggregateState {
                 kept: Kept::new(options.extension_limit),
                 keep: Keep::new(options.keep),
                 root: None,
+                links: LinkLog::default(),
                 fault: None,
             }),
         }
@@ -145,7 +151,8 @@ impl AggregateState {
     /// accepted it. After a broken promise of the walk's, it is what was counted before it,
     /// and `finish` refuses the walk.
     pub fn answers(&self) -> Answers {
-        self.lock().kept.answers()
+        let inner = self.lock();
+        inner.kept.answers(&inner.links.settle())
     }
 
     /// What aggregate kept of the tree, sealed (design §S.6.2). Refused until the walk has
@@ -156,7 +163,9 @@ impl AggregateState {
             return Err(format!("the aggregate state: {fault}"));
         }
         match &inner.root {
-            Some(root) if inner.frontier.len() == 0 => summary::seal(root, &inner.keep.held()),
+            Some(root) if inner.frontier.len() == 0 => {
+                summary::seal(root, &inner.keep.held(), &inner.links.settle())
+            }
             _ => Err(
                 "the aggregate state: the walk has not finished, so there is nothing to seal"
                     .to_owned(),
@@ -183,6 +192,7 @@ impl AggregateState {
             kept,
             keep,
             root,
+            links,
             fault,
         } = &mut *inner;
         if fault.is_some() {
@@ -193,6 +203,7 @@ impl AggregateState {
             kept,
             keep,
             root,
+            links,
             observer: self.observer.as_deref(),
         };
         if let Err(broken) = step(parts) {
@@ -211,6 +222,7 @@ impl Parts<'_> {
             keep,
             root,
             observer,
+            ..
         } = self;
         frontier.ended(folder, &mut |closed: &ClosedFolder<'_>| {
             if let Some(observer) = observer {
@@ -236,7 +248,13 @@ impl Parts<'_> {
                         file_count: closed.files,
                         modified_at: closed.modified_at,
                     });
-                    keep.child(parent, closed.index, closed.bytes, true, record);
+                    keep.child(
+                        parent,
+                        closed.index,
+                        closed.bytes,
+                        ChildKind::Folder,
+                        record,
+                    );
                 }
             }
             Ok(())
@@ -295,6 +313,7 @@ impl ListingSink for AggregateState {
                 frontier,
                 kept,
                 keep,
+                links,
                 ..
             } = &mut parts;
             let separator = frontier.separator();
@@ -322,25 +341,46 @@ impl ListingSink for AggregateState {
                         },
                     )?;
                     let place = frontier.place(block.folder)?;
+                    let depth = place.depth.saturating_add(1);
+                    let extension = extension_of(name);
+                    // A name that may share its file with another: the walk's own rule.
+                    let family = link_key(&row.meta, id).map(|key| (key.dev, key.ino));
+                    if let Some(family) = family {
+                        links.push(LinkRecord {
+                            family,
+                            depth,
+                            position: place.position.child(index),
+                            bytes: size,
+                            extension: extension.clone(),
+                        });
+                    }
                     kept.file(&File {
                         name,
                         parent_path: place.path,
                         separator,
                         parent_position: place.position,
                         index,
+                        depth,
                         size,
-                        extension: extension_of(name),
+                        extension,
                         modified_at,
+                        family,
                     });
                     let bytes = u128::from(size);
-                    keep.child(block.folder, index, bytes, false, || Record {
-                        name: name.into(),
-                        position: place.position.child(index),
-                        depth: place.depth.saturating_add(1),
+                    keep.child(
+                        block.folder,
+                        index,
                         bytes,
-                        modified_at,
-                        counts: None,
-                    });
+                        ChildKind::File { family },
+                        || Record {
+                            name: name.into(),
+                            position: place.position.child(index),
+                            depth,
+                            bytes,
+                            modified_at,
+                            counts: None,
+                        },
+                    );
                 }
             }
             let rows = u64::try_from(block.rows.len()).unwrap_or(u64::MAX);
@@ -365,6 +405,7 @@ impl ListingSink for AggregateState {
         inner.kept.clear();
         inner.keep.clear();
         inner.root = None;
+        inner.links.clear();
         inner.fault = None;
     }
 

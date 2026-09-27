@@ -15,7 +15,7 @@ use common::aggregate::{
 };
 use common::scripted::{Builder, WIDE_ROOT, folder_meta, wide_tree};
 use tm_store::aggregate::{
-    AggregateOptions, AggregateState, EXTENSION_LIMIT, FolderRow, KeepLimits, Omitted,
+    AggregateOptions, AggregateState, EXTENSION_LIMIT, Exactness, FolderRow, KeepLimits, Omitted,
     PositionPath, Summary, SummaryRow,
 };
 use tm_store::derive::store_mtime;
@@ -331,6 +331,7 @@ fn expected(nodes: &[Node], limits: &KeepLimits) -> Result<Summary, String> {
             .map(|beta| u64::try_from(beta).map_err(|e| e.to_string()))
             .transpose()?,
         shallow_depth,
+        shallow_exact: Exactness::Exact,
     })
 }
 

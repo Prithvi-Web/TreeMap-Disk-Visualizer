@@ -73,6 +73,8 @@ impl CloseObserver for Recording {
 pub enum Source {
     Scripted(Arc<ScriptedTree>),
     Synthetic(SyntheticSpec),
+    /// A lister of the test's own, such as one that holds a folder back.
+    Custom(Arc<dyn Lister>),
 }
 
 pub struct Fixture {
@@ -211,6 +213,7 @@ pub fn walk_with(
     opts.never_descend.clone_from(&fixture.never_descend);
     let lister: Arc<dyn Lister> = match &fixture.source {
         Source::Scripted(tree) => Arc::clone(tree) as Arc<dyn Lister>,
+        Source::Custom(lister) => Arc::clone(lister),
         Source::Synthetic(spec) => {
             opts.synthetic = Some(spec.clone());
             lister_for(&opts).map_err(|e| e.to_string())?

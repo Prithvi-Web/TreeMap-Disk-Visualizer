@@ -1045,6 +1045,60 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
         - cross-folder families whose walk-first, breadth-first-first and smallest-path members all differ;
         - a planted large correction flips `exact`;
         - the answers equal the oracle's.
+      - **Designed 27 Sep 2026 (not built).**
+        - **What it must match.** The store keys a name when it is a file with a link count above one, or with none reported (Windows). In a `(dev, ino)` family with two or more names in the scan, the first in breadth-first order keeps its bytes, and every other name is a 0-byte `HardlinkDup`.
+        - **The link log.** Every keyed name appends one record: its family key, depth, position path, listing bytes and extension. It stays resident here; T13 moves it to disk runs past 32 MiB. At the seal it is sorted by (family, depth, position). Each family's first record is its winner, and the rest are its losers.
+        - **Corrections at the seal, all exact:**
+          - the histogram: each loser moves from its size's bucket to bucket 0;
+          - the file types: each loser's bytes leave its extension, and it stays counted;
+          - the summary: each loser's bytes leave every kept ancestor's total. A kept loser's own row becomes 0 bytes. The omitted tallies follow, since they are totals less kept children;
+          - the largest folders: each listed ancestor loses the bytes, and the list is sorted again.
+        - **Online, one entry per family** in the β file heap and the file list. While a family has an entry, a later name merges into it: the earlier (depth, position) keeps the bytes, and the other becomes a 0-byte record. A family never takes two slots.
+        - **Exact or flagged (§S.6.4).** Corrections only lower values, so a list is exact when its last entry, corrected, still ranks strictly above the best entry it ever turned away. Otherwise it carries `exact: false` and the reason.
+        - **Design gap found here.** §S.6.1 says an evicted family can never come back. That holds for the β heap (strict), but not for the file list, which breaks size ties by pre-order. A later name can re-enter on a tie after its family's winner was turned away. So the seal checks every keyed entry in the list against its family's winner from the log. An entry that is not the winner is zeroed and flags the list.
+        - **The shallow keep** ranks children by size. A loser in a top list becomes 0 bytes at the seal, and a list that lost a child that way may be missing one it turned away. That is flagged in the same way.
+        - **Windows refresh** (id-only families re-read at the seal) is T20's. Until then an id-only family keeps its listing sizes, and the oracle takes the listing sizes too, as T12a's does.
+        - **Why the file heap's choice is already the corrected one.** A family enters the β file heap at its first name, with its size s. Every later name either merges into its entry (the earlier name keeps s, the other becomes a 0-byte record) or, once the family was turned away, is turned away too: the heap's smallest value only rises, and every name has size s.
+          - So the heap is offered one s per family and a 0 for every other name, the same multiset a deduplicated tree offers. A bounded heap's final values depend only on that multiset, so β_f is the corrected tree's.
+          - An entry above β_f was never evicted, so it saw every name of its family, and its holder is the true winner.
+        - **The folder heap chooses by the totals counted per name**, since a loser is found only at the seal. So the kept folders are those above β_d of those totals (deterministic, but not a post-correction choice, as §S.6.4 allows), and their reported totals are the corrected ones. Every kept file's parent still holds at least its bytes, so the set stays ancestor-closed.
+        - **The oracle, then,** is the full tree twice: totals per name for the folders' choice and the shallow ranking, and the store's deduplicated totals for every reported value, β_f and the answers. Every answer that says it is exact must equal the store's; a tree built to push a loser to a list's boundary must say it is not.
+      - **Built 27 Sep 2026.**
+        - **`aggregate/links.rs`:** the link log, and its settling at the seal.
+        - **`answers.rs`:**
+          - the file list is an ordered map, so a family's place can change hands;
+          - the folder list keeps the largest total it turned away;
+          - the corrections are applied where the answers are read;
+          - `Exactness` sits on both lists.
+        - **`keep.rs`:** the β file heap is a keyed ordered map, so a family merges into one entry even when its names list different sizes (Windows id-only families, until T20).
+        - **`summary.rs`:** the seal's corrections, and `shallow_exact`.
+        - **Refined while building:**
+          - the folder list is proven when no listed folder changed; without a correction, a tie at its boundary is still decided exactly by post-order;
+          - the file list is also not proven when a first name, replacing a later one, ranks below it after files were turned away. A turned-away file may then outrank it.
+        - **Tests** (`tm-store/tests/aggregate_links.rs`, 6):
+          - the links tree at 1, 4 and 8 workers and `q_max` 2, with small limits and the defaults;
+          - two synthetic trees with linked pairs;
+          - the three trees built to push a list past what it can prove;
+          - one answer and one summary under every schedule.
+        - An answer that says it is not proven is checked to be justified: a later name really reaches the file list's boundary, or the oracle's own reckoning of the folder list agrees.
+        - **Two more tests, for mutants that survived the first run** (8 tests in all):
+          - a tie at the folder list's edge that no correction touched is proven. 2,100 equal folders and no hard link; "flag without the change check" survived until then;
+          - a first name that arrives after its later name still takes the bytes. A lister holds folder `q` until `a/deep/sub` is being listed. That job is queued only once `a/deep`'s block is in, so with two workers the later name always arrives first.
+            - The test says whether the event, not its hang guard, let `q` go.
+            - Its third set of limits keeps `q/y.bin` by β alone.
+        - **A fix those tests found.** The seal's `choose` said "once", but `HashMap::insert` let a later record replace an earlier one. So a file's row could come from its parent's top list rather than the β heap.
+          - The values were the same either way, since every later name is zeroed from the log.
+          - But it hid the β heap's merge: "the β heap keeps the first arrival" survived until the first record stood.
+        - **Mutants: 14, all red on the final code:**
+          - the winner by pre-order instead of breadth-first;
+          - a kept later name not zeroed;
+          - its kept ancestors not corrected;
+          - the folder flag without the change check, and never raised;
+          - the file list's check skipped;
+          - either list or the β heap keeping the first arrival;
+          - the histogram's and the file types' corrections dropped;
+          - the cut flag ignored, and raised on uncut lists;
+          - a displaced name, or a later one, dropped instead of listed at 0 bytes.
     - **T12e. The budget:** peak live bytes counted on a 2M synthetic tree, against §S.3's formula; `cargo mutants` on the module.
 - [ ] **T13. Spill files:** `spill_plan` (3×, file-system type, ledger, read-only portable session), files unlinked at creation or the `ftruncate` fallback (per Q1), the sweep, the confined remover. **24 Sep 2026 (T0):** Q1 is pending the owner (§S.11), so both paths stay designed (§S.5.3); T13 builds the one the owner's answer picks.
   - **Moved here from T7 (26 Sep 2026):** the link-key log's 32 MiB resident cap and its sorted runs on disk, merged k-way, in every tier (§S.6.3; on Windows every file is keyed, 64 B each in memory mode), with T7's test "a forced 64 KiB run size gives the same result as in memory" and its mutant "the link log's resident cap ignored".

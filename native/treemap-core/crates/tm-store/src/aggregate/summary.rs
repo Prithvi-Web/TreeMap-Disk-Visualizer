@@ -6,9 +6,11 @@
 //! construction (a row's ancestors hold at least its bytes), and a top child's parent is
 //! kept before its children are added, so every row's parent is in the summary.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use super::answers::Exactness;
 use super::keep::{Held, Record};
+use super::links::Settled;
 use super::position::PositionPath;
 
 /// What a kept folder left out: everything below it that no kept child of its own holds.
@@ -64,16 +66,25 @@ pub struct Summary {
     pub file_threshold: Option<u64>,
     /// D_s: the deepest depth whose kept folders kept their top children.
     pub shallow_depth: u32,
+    /// Whether the top children kept are proven to be the largest once hard links are
+    /// counted once: a folder's list is ranked by what the walk counted per name, so one
+    /// that turned children away while holding a later name of a hard link is not.
+    pub shallow_exact: Exactness,
 }
 
-/// Adds `record` to the chosen rows, once; a folder is queued at its depth for its top
+/// Adds `record` to the chosen rows unless its row is already chosen (the first record
+/// stands: a β record before a top list's); a folder is queued at its depth for its top
 /// children.
 fn choose<'a>(
     record: &'a Record,
     chosen: &mut HashMap<&'a PositionPath, &'a Record>,
     folders_at: &mut Vec<Vec<&'a Record>>,
 ) -> Result<(), String> {
-    if chosen.insert(&record.position, record).is_some() || record.counts.is_none() {
+    if chosen.contains_key(&record.position) {
+        return Ok(());
+    }
+    chosen.insert(&record.position, record);
+    if record.counts.is_none() {
         return Ok(());
     }
     let at = usize::try_from(record.depth).map_err(|e| e.to_string())?;
@@ -87,8 +98,16 @@ fn choose<'a>(
     Ok(())
 }
 
-/// Seals what was kept into the summary. `root` is the root's own record.
-pub(super) fn seal(root: &Record, kept: &Held<'_>) -> Result<Summary, String> {
+/// Seals what was kept into the summary. `root` is the root's own record; `settled` names
+/// the later names of hard links, whose bytes leave every kept folder above them.
+pub(super) fn seal(
+    root: &Record,
+    kept: &Held<'_>,
+    settled: &Settled<'_>,
+) -> Result<Summary, String> {
+    let later: HashSet<&PositionPath> =
+        settled.losers.iter().map(|loser| &loser.position).collect();
+    let mut shallow_unproven = false;
     let mut chosen: HashMap<&PositionPath, &Record> =
         HashMap::with_capacity(kept.by_beta.len() + 1);
     let mut folders_at: Vec<Vec<&Record>> = Vec::new();
@@ -107,8 +126,19 @@ pub(super) fn seal(root: &Record, kept: &Held<'_>) -> Result<Summary, String> {
             .map(std::mem::take)
             .unwrap_or_default();
         for folder in folders {
-            for child in kept.top_children(depth, &folder.position) {
+            let Some(list) = kept.top_children(depth, &folder.position) else {
+                continue;
+            };
+            for child in &list.records {
                 choose(child, &mut chosen, &mut folders_at)?;
+            }
+            if list.cut
+                && list
+                    .records
+                    .iter()
+                    .any(|child| later.contains(&child.position))
+            {
+                shallow_unproven = true;
             }
         }
         at += 1;
@@ -125,9 +155,31 @@ pub(super) fn seal(root: &Record, kept: &Held<'_>) -> Result<Summary, String> {
         row_of.insert(&record.position, row);
     }
 
+    // A later name of a hard link holds nothing, and every kept folder above it loses its
+    // bytes.
+    let mut bytes: Vec<u128> = records.iter().map(|record| record.bytes).collect();
+    for loser in &settled.losers {
+        if let Some(slot) = row_of
+            .get(&loser.position)
+            .and_then(|&row| bytes.get_mut(usize::try_from(row).ok()?))
+        {
+            *slot = 0;
+        }
+        let mut up = loser.position.parent();
+        while let Some(position) = up {
+            if let Some(slot) = row_of
+                .get(&position)
+                .and_then(|&row| bytes.get_mut(usize::try_from(row).ok()?))
+            {
+                *slot = slot.saturating_sub(u128::from(loser.bytes));
+            }
+            up = position.parent();
+        }
+    }
+
     let mut parents = Vec::with_capacity(records.len());
     let mut sums = vec![Omitted::default(); records.len()];
-    for record in &records {
+    for (record, &own) in records.iter().zip(&bytes) {
         let parent = match record.position.parent() {
             None => None,
             Some(up) => Some(*row_of.get(&up).ok_or_else(|| {
@@ -141,7 +193,7 @@ pub(super) fn seal(root: &Record, kept: &Held<'_>) -> Result<Summary, String> {
             let sum = sums
                 .get_mut(usize::try_from(parent).map_err(|e| e.to_string())?)
                 .ok_or("a parent's tally vanished")?;
-            sum.bytes = sum.bytes.saturating_add(record.bytes);
+            sum.bytes = sum.bytes.saturating_add(own);
             match record.counts {
                 Some((files, folders)) => {
                     sum.files = sum.files.saturating_add(files);
@@ -154,7 +206,7 @@ pub(super) fn seal(root: &Record, kept: &Held<'_>) -> Result<Summary, String> {
     }
 
     let mut rows = Vec::with_capacity(records.len());
-    for ((record, parent), sum) in records.iter().zip(parents).zip(&sums) {
+    for (((record, parent), sum), &own) in records.iter().zip(parents).zip(&sums).zip(&bytes) {
         let folder = match record.counts {
             None => None,
             Some((files, folders)) => {
@@ -171,7 +223,7 @@ pub(super) fn seal(root: &Record, kept: &Held<'_>) -> Result<Summary, String> {
                     omitted: Omitted {
                         files: files.checked_sub(sum.files).ok_or_else(short)?,
                         folders: folders.checked_sub(sum.folders).ok_or_else(short)?,
-                        bytes: record.bytes.checked_sub(sum.bytes).ok_or_else(short)?,
+                        bytes: own.checked_sub(sum.bytes).ok_or_else(short)?,
                     },
                 })
             }
@@ -181,7 +233,7 @@ pub(super) fn seal(root: &Record, kept: &Held<'_>) -> Result<Summary, String> {
             name: record.name.to_vec(),
             position: record.position.clone(),
             depth: record.depth,
-            bytes: record.bytes,
+            bytes: own,
             modified_at: record.modified_at,
             folder,
         });
@@ -196,5 +248,14 @@ pub(super) fn seal(root: &Record, kept: &Held<'_>) -> Result<Summary, String> {
             })
             .transpose()?,
         shallow_depth: kept.shallow_depth,
+        shallow_exact: if shallow_unproven {
+            Exactness::NotProven(
+                "hard links: a folder's top children were ranked counting a later name of a \
+                 hard link, which holds nothing, and the folder had more children than it kept"
+                    .to_owned(),
+            )
+        } else {
+            Exactness::Exact
+        },
     })
 }
