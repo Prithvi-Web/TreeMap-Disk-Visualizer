@@ -20,7 +20,7 @@ import type { Response } from 'express';
 import type * as NativeCore from '../../native/index';
 import type { ScanModule } from '../../src/services/scan/native';
 import { peakFootprint, snapshotUsage } from './rusage';
-import { busyWhile, type MemoryPathJob, type MemoryPathResult, type StageUsage } from './memoryPath';
+import { busyWhile, firstAnswer, type MemoryPathJob, type MemoryPathResult, type StageUsage } from './memoryPath';
 
 type Job = MemoryPathJob & { module: string; outFile: string };
 
@@ -258,10 +258,11 @@ async function workerProbe(): Promise<MemoryPathResult> {
   const code = "const { parentPort, workerData } = require('node:worker_threads'); parentPort.postMessage(require(workerData).version());";
   const worker = new Worker(code, { eval: true, workerData: job.module });
   try {
-    const version = await new Promise<unknown>((resolve, reject) => {
-      worker.once('message', resolve);
-      worker.once('error', reject);
-    });
+    const version = await firstAnswer(worker);
+    // Said before the worker is terminated, so a process that dies there
+    // leaves the harness a trace of how far it got (its no-result reason
+    // carries stderr).
+    process.stderr.write(`the worker thread answered ${String(version)}; terminating it\n`);
     return { ok: true, runtime, stages, footprintSource, typescriptLoader, workerVersion: String(version) };
   } finally {
     await worker.terminate();

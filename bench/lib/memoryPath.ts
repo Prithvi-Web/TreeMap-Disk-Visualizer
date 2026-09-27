@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
+import type { Worker } from 'node:worker_threads';
 import { PROBE_BINARY_ENV, PROBE_FAILURE_ENV, probeHandoff } from './rusage';
 
 /** The stages a walk is measured after, in order. */
@@ -164,13 +165,72 @@ function compiledWorker(): string {
   return compiled;
 }
 
-/** The binary a runtime runs; the Electron runtime is refused, naming where it looked, when the app is not installed there. */
-function executable(runtime: MemoryPathRuntime): string {
-  if (runtime === 'node') return process.execPath;
+/** Where a measurement is started from: this process's own binary, and Electron's version when that binary is Electron. */
+export interface MemoryPathHost {
+  execPath: string;
+  electron: string | undefined;
+}
+
+const THIS_PROCESS: MemoryPathHost = { execPath: process.execPath, electron: process.versions.electron };
+
+/**
+ * The binary a runtime runs. The Node runtime is this process's own binary,
+ * and only while that is plain Node: inside Electron (`npm test` run by the
+ * app's binary as Node) it is the app, and a measurement starts it without
+ * `ELECTRON_RUN_AS_NODE` (the process measured runs with neither), which
+ * would open the app on the owner's own profile — as it did on 27 Sep 2026 —
+ * so that is refused. The Electron runtime is refused, naming where it
+ * looked, when the app is not installed there.
+ */
+export function memoryPathExecutable(runtime: MemoryPathRuntime, host: MemoryPathHost = THIS_PROCESS): string {
+  if (runtime === 'node') {
+    if (host.electron !== undefined) {
+      throw new Error(`the node runtime runs this process's own binary, and here that is Electron ${host.electron} (${host.execPath}): a measurement starts it without ELECTRON_RUN_AS_NODE, which would open the app, so run the harness under plain Node`);
+    }
+    return host.execPath;
+  }
   if (process.platform !== 'darwin' || !fs.existsSync(ELECTRON_BINARY)) {
     throw new Error(`the Electron runtime runs the installed app's binary, and there is none at ${ELECTRON_BINARY}`);
   }
   return ELECTRON_BINARY;
+}
+
+/** How a measuring process ended: its exit code, or the signal that ended it, and what it wrote to stderr. */
+export interface ProcessEnding {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stderr: string;
+}
+
+/** Runs `binary` with `args` and `env`, its stdout ignored, and answers how it ended; rejects only when it could not start. */
+export function runMeasuringProcess(binary: string, args: string[], env: NodeJS.ProcessEnv): Promise<ProcessEnding> {
+  return new Promise((resolve, reject) => {
+    let stderr = '';
+    const child = spawn(binary, args, { env, stdio: ['ignore', 'ignore', 'pipe'] });
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+    child.on('error', reject);
+    child.on('close', (code, signal) => resolve({ code, signal, stderr }));
+  });
+}
+
+/** Why a measurement has no result, from how its process ended, so a crash and a silent exit read differently. */
+export function noResultReason(ending: ProcessEnding): string {
+  const how = ending.signal !== null ? `it was ended by ${ending.signal}` : `it exited with code ${ending.code}`;
+  const stderr = ending.stderr.trim();
+  return `the measuring process wrote no result: ${how}; ${stderr ? `its stderr: ${stderr.slice(-2_000)}` : 'its stderr was empty'}`;
+}
+
+/**
+ * The first message `worker` posts. Rejects with its error, and — with its
+ * exit code — when it exits before it answers, which would otherwise leave
+ * the promise pending and let the process end with nothing said.
+ */
+export function firstAnswer(worker: Worker): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    worker.once('message', resolve);
+    worker.once('error', reject);
+    worker.once('exit', (code) => reject(new Error(`the worker thread exited with code ${code} before it answered`)));
+  });
 }
 
 /**
@@ -179,8 +239,8 @@ function executable(runtime: MemoryPathRuntime): string {
  * its sentence when it failed — and rejects only when the runtime is not
  * there to run.
  */
-export async function runMemoryPathWorker(job: MemoryPathJob & { module: string; runtime: MemoryPathRuntime }): Promise<MemoryPathResult> {
-  const binary = executable(job.runtime);
+export async function runMemoryPathWorker(job: MemoryPathJob & { module: string; runtime: MemoryPathRuntime }, host: MemoryPathHost = THIS_PROCESS): Promise<MemoryPathResult> {
+  const binary = memoryPathExecutable(job.runtime, host);
   const worker = compiledWorker();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'treemap-memory-path-'));
   try {
@@ -195,14 +255,8 @@ export async function runMemoryPathWorker(job: MemoryPathJob & { module: string;
       TREEMAP_DATA_DIR: dataDir,
       ...(job.runtime === 'electron' ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
     };
-    const stderr = await new Promise<string>((resolve, reject) => {
-      let err = '';
-      const child = spawn(binary, [worker, jobFile], { env, stdio: ['ignore', 'ignore', 'pipe'] });
-      child.stderr.on('data', (chunk: Buffer) => { err += chunk.toString(); });
-      child.on('error', reject);
-      child.on('close', () => resolve(err));
-    });
-    if (!fs.existsSync(outFile)) return { ok: false, error: `the measuring process wrote no result: ${stderr.trim().slice(-2_000)}` };
+    const ending = await runMeasuringProcess(binary, [worker, jobFile], env);
+    if (!fs.existsSync(outFile)) return { ok: false, error: noResultReason(ending) };
     return JSON.parse(fs.readFileSync(outFile, 'utf8')) as MemoryPathResult;
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true });

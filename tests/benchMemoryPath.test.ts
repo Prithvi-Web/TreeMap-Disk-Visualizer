@@ -10,7 +10,9 @@ import { isolatedDataDir } from './fixtures/dataDir';
 isolatedDataDir('treemap-benchMemoryPath-data-');
 
 import { skipOrFailOnCi } from './fixtures/ciSkip';
-import { ELECTRON_BINARY, MEMORY_PATH_STAGES, busyWhile, memoryPathBaselinePath, parseSizes, runMemoryPathWorker, workerTsconfig, type MemoryPathRecord } from '../bench/lib/memoryPath';
+import { Worker } from 'node:worker_threads';
+import { HANG_GUARD_MS } from './fixtures/waitFor';
+import { ELECTRON_BINARY, MEMORY_PATH_STAGES, busyWhile, firstAnswer, memoryPathBaselinePath, memoryPathExecutable, noResultReason, parseSizes, runMeasuringProcess, runMemoryPathWorker, workerTsconfig, type MemoryPathRecord } from '../bench/lib/memoryPath';
 
 /**
  * Phase 4 T9's harness (no product code): each measurement runs in a fresh
@@ -79,6 +81,40 @@ test('the worker-thread probe loads the addon inside a worker and reads its vers
   assert.ok(result.ok, result.ok ? '' : result.error);
   const pkg = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')) as { nativeVersion: string };
   assert.equal(result.workerVersion, pkg.nativeVersion);
+});
+
+test('inside Electron the node runtime is refused: this binary is the app, and a measurement runs without ELECTRON_RUN_AS_NODE, which would open it', async () => {
+  // 27 Sep 2026: \`npm test\` run by the installed app's binary as Node reached
+  // this harness, whose node runtime spawned that binary with ELECTRON_RUN_AS_NODE
+  // removed: the app opened, twice, on the owner's own profile. The host here is
+  // a stand-in path, so nothing could open even were the refusal gone.
+  const insideElectron = { execPath: path.join(os.tmpdir(), 'treemap-no-such-electron-app'), electron: '31.7.7' };
+  assert.throws(() => memoryPathExecutable('node', insideElectron), /Electron 31\.7\.7 .*would open the app/);
+  await assert.rejects(runMemoryPathWorker({ kind: 'worker-probe', module: MODULE, runtime: 'node' }, insideElectron), /would open the app/);
+  assert.equal(memoryPathExecutable('node', { execPath: '/opt/node/bin/node', electron: undefined }), '/opt/node/bin/node', 'plain Node runs itself');
+});
+
+test('a measuring process that leaves no result says how it ended: its exit code, and what it wrote to stderr', async () => {
+  // Windows CI, run 36282411813: the worker-thread probe's process wrote no
+  // result and nothing to stderr, and the harness said only that — a crash
+  // and a silent exit read alike. The environment keeps this process's, so
+  // ELECTRON_RUN_AS_NODE rides along wherever it is set.
+  const ending = await runMeasuringProcess(process.execPath, ['-e', "process.stderr.write('the stand-in stopped here'); process.exit(7)"], { ...process.env });
+  assert.deepEqual(ending, { code: 7, signal: null, stderr: 'the stand-in stopped here' });
+  assert.equal(noResultReason(ending), 'the measuring process wrote no result: it exited with code 7; its stderr: the stand-in stopped here');
+  assert.equal(noResultReason({ code: null, signal: 'SIGKILL', stderr: '' }), 'the measuring process wrote no result: it was ended by SIGKILL; its stderr was empty');
+});
+
+test('a worker thread that exits before it answers is reported with its exit code, not waited on forever', async () => {
+  const guard = (answer: Promise<unknown>): Promise<unknown> => Promise.race([
+    answer,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`no answer and no exit within ${HANG_GUARD_MS} ms`)), HANG_GUARD_MS).unref()),
+  ]);
+  const answering = new Worker("require('node:worker_threads').parentPort.postMessage(42)", { eval: true });
+  assert.equal(await guard(firstAnswer(answering)), 42);
+  await answering.terminate();
+  const leaving = new Worker('process.exit(7)', { eval: true });
+  await assert.rejects(guard(firstAnswer(leaving)), /the worker thread exited with code 7 before it answered/);
 });
 
 test('the Electron runtime is the installed app\'s binary run as Node, or refused with where it looked', async (t) => {
