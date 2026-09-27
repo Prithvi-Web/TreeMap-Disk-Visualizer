@@ -106,7 +106,7 @@ strings, `Option` as `null`, shares as fractions of the whole machine (0..1).
 | `scanProbe(root)` | `{ fastPath, reason }`: opens and lists `root` once with this platform's listing (`bulk` on macOS; `unavailable` with the reason on a file, a root that cannot be read, or a platform whose listing is not built yet); never throws |
 | `scanStart(root, opts)` | starts a walk on `tm-walk`'s own threads, governed by the same process-wide governor, and returns a handle; `opts` is `{ neverDescend: string[], wantAtime: boolean, maxWorkers?: number, bufferBytes?: number, synthetic?: SyntheticSource }` (0 or absent lets the hill-climber decide); refuses a root that is not a folder or cannot be read with Node's errno spelling in front (`ENOENT: …`), and a platform without a listing; with `synthetic` it lists a scripted tree instead of the disk (see "The synthetic source" below) |
 | `syntheticTempFolder()` | the app's synthetic temp folder as the walk names it (`TreeMap-synthetic` in Rust's `std::env::temp_dir()`), inside which a `synthetic` root must lie; nothing is created |
-| `scanPoll(handle)` | `{ done, error, entries, dirs, files, bytes, currentPath }` from the walk's atomics — no callback, no `ThreadsafeFunction` (decision P3-1); once done, how the walk ended is in `error` |
+| `scanPoll(handle)` | `{ done, error, ceiling, entries, dirs, files, bytes, heartbeat, currentPath }` from the walk's atomics — no callback, no `ThreadsafeFunction` (decision P3-1); `heartbeat` counts the batches the OS has answered, so it moves through one huge listing while `entries` cannot; once done, how the walk ended is in `error`, and `ceiling` is true when it ended at a ceiling its caller set — the memory store's room (contract 0.5.0) |
 | `scanPause(handle)` / `scanResume(handle)` | stop the workers at their next check (between directories and every 256 entries inside one) and let them go on; nothing is re-listed |
 | `scanCancel(handle)` | ends the walk; `scanTake` then throws the cancellation and frees the handle |
 | `scanTake(handle)` | the columns (`WalkResult` in `native/index.d.ts`): typed arrays created from the Rust vectors without copying, the hard-link and refusal side tables, and the stats; frees the handle; throws in plain English when the walk failed or was cancelled (freeing it too) or when the handle is unknown; a memory-mode scan it frees and throws for, since its rows are in its store |
@@ -196,15 +196,18 @@ and the store at sizes no disk here holds (the 100M-entry gate).
 
 ## The memory mode (Phase 4, T8b)
 
-`scanStart(root, { …, storage: 'memory', store: { … } })` (behind a flag in
-the app until T10) numbers the walk's entries in blocks, keeps no columns of
+`scanStart(root, { …, storage: 'memory', store: { … } })` (every scan the app
+makes since Phase 4 T10) numbers the walk's entries in blocks, keeps no columns of
 the walk's own, and feeds tm-store's `MemorySink`, which writes the finalized
 store's columns while the walk runs and seals them on the walk's own thread
 as it finishes (`ListingSink::finish`: the seal sees a cancel and moves the
 heartbeat). `store` is tm-store's `BuildOptions` — `rootName`,
 `rootMtimeMs`, `blocksAreMeaningful`, `sortChildren`, `containerRules`,
 `headroomRows` — and the sink's room, `capRows` and `nameBytes`: a walk with
-more entries fails with the ceiling's sentence. `storeTake` hands the store
+more entries, or more bytes of names, ends at its ceiling — the ceiling's
+sentence in `error` and `ceiling: true` from `scanPoll` (contract 0.5.0) — and
+the app walks that tree again on the columns path until Phase 4's T12 carries
+such a walk on. `storeTake` hands the store
 over; the sink travels with the scan's slot, so a scan freed any way releases
 its store. The store's ids are the walk's blocks' (`parent[id] < id`, each
 folder's children one range), not breadth-first.
@@ -222,7 +225,14 @@ thread is `tm-governor-tick`, the synthetic workers are `tm-governor-load-N`.
 
 ## Safety and lints
 
-`tm-node` contains no `unsafe`. Every export is `#[napi(catch_unwind)]`, and
+`tm-node`'s `unsafe` is the store's hand-over in `store.rs`, in three places,
+each with its SAFETY note: an anonymous column lent to a typed array
+(`with_external_data`; the mapping moves into the array's finalizer), the
+one-byte probe of whether this runtime takes external buffers
+(`napi_create_external_arraybuffer`; the byte is freed by the finalizer, or at
+once where the buffer is refused), and `storeTakeInto`'s borrows of the arrays
+JavaScript passed in (`as_mut`; nothing else touches them until its promise
+settles). Every export is `#[napi(catch_unwind)]`, and
 the hold's `compute` wraps the governor the same way, because libuv calls it
 through an `extern "C"` boundary that a panic must never cross; a caught panic
 becomes a JavaScript error with its message. The workspace lints deny

@@ -673,9 +673,17 @@ async function settle(mod: ScanModule, handle: number): Promise<void> {
  * Where a native scan's rows go: `'columns'`, the walk's own columns, which
  * `ingestColumns` builds into the store (today's path), or `'memory'`, tm-store's
  * memory sink, whose finished store the scanner's store adopts in place
- * (Phase 4 T8c, `nativeMemory.ts`; behind this until T10).
+ * (Phase 4 T8c, `nativeMemory.ts`; every scan's since T10, `nativeStorageFor`).
  */
 export type NativeStorage = 'columns' | 'memory';
+
+/**
+ * How `module` walks a scan: in memory mode where it offers the memory store
+ * (`storeTake`, every module of contract 0.3.0 on), else on the columns path.
+ */
+export function nativeStorageFor(module: ScanModule): NativeStorage {
+  return typeof module.storeTake === 'function' ? 'memory' : 'columns';
+}
 
 export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath: string, module?: ScanModule, storage: NativeStorage = 'columns'): Promise<void> {
   const mod = module ?? mustScanModule();
@@ -707,6 +715,11 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
   // stalled: it was told to wait. Nor is one the machine had no CPU for: see
   // `stallStep`.
   let lastProgressAt = timing.now();
+  /**
+   * The walk's own sentence when it ended at a ceiling — the memory store's
+   * room for rows or for their names — else null.
+   */
+  let ceiling: string | null = null;
   let lastEntries = -1;
   let lastHeartbeat = -1;
   let stall: StallClock | null = null;
@@ -720,9 +733,15 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
       const paused = isScanPaused(scan.scanId);
       setPaused(paused);
       const progress = mod.scanPoll(handle);
-      scan.scanned = 1 + progress.entries;
+      // A walk again past the memory store's room counts from nothing: the
+      // count the scan shows holds until that walk passes it, so it never
+      // goes back. The ingest sets the tree's own count at the end.
+      scan.scanned = Math.max(scan.scanned, 1 + progress.entries);
       if (progress.currentPath) scan.currentPath = progress.currentPath;
-      if (progress.done) break;
+      if (progress.done) {
+        if (progress.ceiling === true) ceiling = progress.error ?? 'the native engine stopped at its ceiling';
+        break;
+      }
       const now = timing.now();
       const moved = progress.entries !== lastEntries || progress.heartbeat !== lastHeartbeat;
       lastEntries = progress.entries;
@@ -754,6 +773,16 @@ export async function runNativeWalk(scan: ScanResult, store: ScanStore, rootPath
   if (scan.cancelled) {
     await settleOnce();
     return;
+  }
+  if (memory && ceiling !== null) {
+    // The walk ran out of the memory store's room. Its store is freed with
+    // its handle, and `store` — adopted into only after a take — is still the
+    // bare root the scanner made, for the columns path to fill, until T12's
+    // conversions give such a tree a mode of its own.
+    await settleOnce();
+    const again = `${ceiling}, so it walked the tree again on the columns path`;
+    scan.engineReason = scan.engineReason ? `${scan.engineReason}; ${again}` : again;
+    return runNativeWalk(scan, store, rootPath, mod, 'columns');
   }
   if (memory) {
     let taken: NativeStore;

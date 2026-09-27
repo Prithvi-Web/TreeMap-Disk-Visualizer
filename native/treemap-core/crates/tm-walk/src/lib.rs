@@ -88,10 +88,12 @@ pub const NAME_CEILING: u64 = u64::MAX;
 /// How a walk numbers the entries it lists.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Numbering {
-    /// Phase 3's numbering, and the default until T10: one atomic counter
-    /// hands every entry its id as it is discovered, so the ids of one
-    /// listing interleave with other workers' and `build` renumbers
-    /// breadth-first. The queue is first-in first-out, as it always was.
+    /// Phase 3's numbering, and the default: one atomic counter hands every
+    /// entry its id as it is discovered, so the ids of one listing interleave
+    /// with other workers' and `build` renumbers breadth-first. The queue is
+    /// first-in first-out, as it always was. The app's scans walk under
+    /// [`Numbering::Blocks`] since Phase 4 T10 (the memory sink asks for it);
+    /// this stays the default as the columns path's, which is the oracle.
     #[default]
     Discovery,
     /// One contiguous block of ids per listing (P4-1a): a worker lists and

@@ -148,7 +148,7 @@ export interface ScanModule extends NativeModule {
   scanResume(handle: number): void;
   scanCancel(handle: number): void;
   scanTake(handle: number): WalkResult;
-  /** A memory-mode scan's store (native contract 0.3.0; the memory path, behind a flag until T10). */
+  /** A memory-mode scan's store (native contract 0.3.0; the scanner's path since Phase 4 T10). */
   storeTake?(handle: number): Promise<NativeStore>;
   /** Whether this runtime lets an array be the addon's own memory (0.4.0, Phase 4 T9c). */
   externalBuffersAllowed?(): boolean;

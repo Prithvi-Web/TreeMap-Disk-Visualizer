@@ -9,8 +9,8 @@ import type { ScanModule } from './native';
 import type { ScanResult } from '../../models/types';
 
 /**
- * The native engine's memory path (Phase 4, T8c; behind `runNativeWalk`'s
- * `storage` until T10). The walk feeds tm-store's memory sink, which builds
+ * The native engine's memory path (Phase 4, T8c; every native scan's since
+ * T10, `nativeStorageFor`). The walk feeds tm-store's memory sink, which builds
  * the finalized store — `PackedScanStore`'s own columns — while it runs and
  * seals it as it ends; `storeTake` hands it over and the store the scanner
  * made adopts it in place (`adoptColumns`), no row copied. The native build
@@ -36,16 +36,44 @@ const BLOCKS_ARE_MEANINGFUL = platform().blocksAreMeaningful;
 const SORT_CHILDREN = platform().platform !== 'windows';
 
 /**
- * Rows the memory sink reserves, the headroom among them: 1.25 × the 5M rows
- * memory mode is designed for (§S.1.4). Provisional: T9 measures `T_mem` per
- * runtime and sets it. A walk with more entries fails with the ceiling's
- * sentence (T12's conversions are what carry it on).
+ * Rows the memory sink reserves, the headroom among them: 1.25 × `T_mem`, the
+ * 5M rows memory mode takes in both runtimes (T9's measurement, 26 Sep 2026:
+ * 533 MB at 5M in plain Node, 547 MB in Electron, under the 700 MB ceiling).
+ * A walk with more entries, or more bytes of names than `NAME_BYTES_PER_ROW`
+ * a row, ends at its ceiling, and `runNativeWalk` walks it again on the
+ * columns path (T10) until T12's conversions carry it on.
  */
 export const MEMORY_CAP_ROWS = 6_250_000;
-/** Rows kept free after the scan's for the watcher and container expansion: 1 % of the reservation, at least 1,024 (P4-6). */
-export const MEMORY_HEADROOM_ROWS = Math.max(1_024, Math.ceil(MEMORY_CAP_ROWS / 100));
-/** Name bytes the sink reserves: address space, resident only where names are written. */
-export const MEMORY_NAME_BYTES = MEMORY_CAP_ROWS * 128;
+/** Name bytes the sink reserves a row: address space, resident only where names are written (names average 13–21 bytes). */
+const NAME_BYTES_PER_ROW = 128;
+
+/** The memory sink's room: rows reserved, the headroom among them, and name bytes. */
+export interface MemoryRoom {
+  capRows: number;
+  /** Rows kept free after the scan's for the watcher and container expansion: 1 % of the reservation, at least 1,024 (P4-6). */
+  headroomRows: number;
+  nameBytes: number;
+}
+
+/** A test's room: rows reserved and, optionally, name bytes a row. */
+export interface MemoryRoomForTests {
+  capRows: number;
+  nameBytesPerRow?: number;
+}
+
+let roomForTests: MemoryRoomForTests | null = null;
+
+/** The room a memory-mode walk is given (`MEMORY_CAP_ROWS`, or a test's). */
+export function memoryRoom(): MemoryRoom {
+  const capRows = roomForTests?.capRows ?? MEMORY_CAP_ROWS;
+  const nameBytesPerRow = roomForTests?.nameBytesPerRow ?? NAME_BYTES_PER_ROW;
+  return { capRows, headroomRows: Math.max(1_024, Math.ceil(capRows / 100)), nameBytes: capRows * nameBytesPerRow };
+}
+
+/** Tests only: less room, so a small tree can reach a ceiling — its rows' or its names'; null restores the real room. */
+export function setMemoryRoomForTests(room: MemoryRoomForTests | null): void {
+  roomForTests = room;
+}
 
 /**
  * How the memory sink builds `store`'s tree: the scanner's own root, this
@@ -56,6 +84,7 @@ export const MEMORY_NAME_BYTES = MEMORY_CAP_ROWS * 128;
  * sort themselves and Windows keeps as listed, as the ingest does.
  */
 export function memoryStoreOptions(store: PackedScanStore): StoreStartOptions {
+  const room = memoryRoom();
   return {
     rootName: store.name(store.rootId),
     rootMtimeMs: store.modifiedAt(store.rootId),
@@ -67,9 +96,9 @@ export function memoryStoreOptions(store: PackedScanStore): StoreStartOptions {
       folders: rule.folders,
       kind: containerKindId(rule.kind),
     })),
-    headroomRows: MEMORY_HEADROOM_ROWS,
-    capRows: MEMORY_CAP_ROWS,
-    nameBytes: MEMORY_NAME_BYTES,
+    headroomRows: room.headroomRows,
+    capRows: room.capRows,
+    nameBytes: room.nameBytes,
   };
 }
 

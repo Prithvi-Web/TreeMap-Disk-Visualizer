@@ -672,8 +672,10 @@ pub fn scan_start(root: String, opts: Option<Value>) -> Result<u32> {
     let options: StartOptions = serde_json::from_value(raw)
         .map_err(|err| refuse(format!("{START_SHAPE}; got {received}: {err}")))?;
     let synthetic = options.synthetic.as_ref().map(synthetic_spec).transpose()?;
-    // Discovery numbering, the queue and the id ceiling stay at their defaults
-    // until T10 switches this path to block numbering.
+    // The columns path keeps the walk's defaults — discovery numbering, the
+    // queue, the id ceiling: it is the oracle, and the path the scanner walks
+    // a tree past the memory store's room on (Phase 4 T10). `feed_only` sets
+    // the memory path's own below.
     let walk_options = WalkOptions {
         never_descend: options
             .never_descend

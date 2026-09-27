@@ -18,7 +18,7 @@ isolatedDataDir('treemap-native-engine-test-');
 process.env.TREEMAP_NO_GDU = '1';
 
 import type * as NativeCore from '../native/index';
-import type { NativeProbe, NativeProgress, WalkResult, ScanStartOptions } from '../native/index';
+import type { NativeProbe, NativeProgress, NativeStore, NativeStoreArrays, WalkResult, ScanStartOptions } from '../native/index';
 import { loadNative, resetNativeForTests } from '../src/services/scan/native';
 import {
   isScanPaused,
@@ -1731,7 +1731,8 @@ const PAUSED_POLLS = Math.ceil(500 / NATIVE_POLL_MS);
  * unchanged; the pass-through only records what the engine asked of it: the
  * walk's count read the instant a pause was applied, each poll of the handle
  * while it was paused (and the count at paused poll STANDSTILL_FROM_POLL), and
- * the walk's own stats at the take.
+ * the walk's own stats at the take: `scanTake`'s on the columns path, the
+ * store's on the memory path the scanner takes since Phase 4 T10.
  */
 function watchRealModule(real: { core: Core; path: string }) {
   const core = real.core;
@@ -1773,6 +1774,16 @@ function watchRealModule(real: { core: Core; path: string }) {
     const cols = core.scanTake(h);
     seen.stats = cols.stats;
     return cols;
+  };
+  module.storeTake = async (h: number): Promise<NativeStore> => {
+    const store = await core.storeTake(h);
+    seen.stats = store.stats;
+    return store;
+  };
+  module.storeTakeInto = async (h: number, into: NativeStoreArrays): Promise<NativeStore> => {
+    const store = await core.storeTakeInto(h, into);
+    seen.stats = store.stats;
+    return store;
   };
   resetNativeForTests();
   setNativeLoadOptionsForTests({ path: real.path, requireModule: () => module });

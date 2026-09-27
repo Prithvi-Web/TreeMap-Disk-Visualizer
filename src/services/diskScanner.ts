@@ -20,7 +20,7 @@ import { PackedScanStore, ScanStore, Flag, fileNodeToInput, buildStoreFromTree, 
 import { platform } from '../platform';
 import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBatch, whenResumed, workerCap } from './engineBudget';
 import { statToInput } from './scan/nodeInput';
-import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, mftOfferedOn, rootName, runMftWalk, runNativeWalk } from './scan/nativeEngine';
+import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, mftOfferedOn, rootName, runMftWalk, nativeStorageFor, runNativeWalk } from './scan/nativeEngine';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -737,7 +737,7 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
       scan.fallbackReason = mftFallback;
       const store = new PackedScanStore(rootPath, path.sep, statToInput(rootName(rootPath), true, rootStat.size, rootStat.mtimeMs, rootStat.atimeMs));
       try {
-        await runNativeWalk(scan, store, rootPath, native.module);
+        await runNativeWalk(scan, store, rootPath, native.module, nativeStorageFor(native.module));
         if (scan.cancelled) return;
         await rootCheck(scan.rootPath);
         settleComplete(scan, store);

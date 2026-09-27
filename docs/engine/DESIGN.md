@@ -328,6 +328,16 @@ carries a byte guard and converts during the walk, never at the end (P4-4a).
 No legacy engine takes over in spill or aggregate or above `T_mem` (P4-14,
 pending the owner).
 
+**As built through T10 (26 September 2026).** Every native scan walks in
+memory mode (`nativeStorageFor`). There is no projection yet (T12's chooser),
+so every scan starts there, in a sink that reserves 6.25M rows with 1 %
+headroom and 128 name bytes a row (`nativeMemory.ts`). A walk that reaches
+that room ends at its ceiling (`WalkError::Ceiling`; `scanPoll`'s `ceiling`),
+and the scanner walks the tree again on the native columns path, the path
+every native scan took before T10, and says so in `engineReason`. The second
+walk is the cost until T12–T14 give such a tree spill or aggregate (RISKS
+R95).
+
 Spill files cannot outlive the scan (P4-5a). Each is created in
 `<appData>/scan-spill/` and unlinked at once (Linux `O_TMPFILE`; macOS
 `mkstemp`, then `unlink` only if the path's `(dev, ino)` still matches the
