@@ -28,6 +28,7 @@
 //!   reserved ([`MemorySink`], Phase 4 T7a), each row by `build`'s own rules.
 //! * [`column`](mod@column): one column's storage.
 
+pub mod aggregate;
 pub mod build;
 pub mod column;
 pub mod derive;

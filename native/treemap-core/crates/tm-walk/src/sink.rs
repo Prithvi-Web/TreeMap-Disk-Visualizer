@@ -10,7 +10,9 @@
 //! * **Under the lock** (the default, and the collector): the walk makes every
 //!   call but `abort` under its commit lock, so the sink sees one call at a
 //!   time — the blocks in id order, and a refused folder whenever it is
-//!   refused, not in id order (see [`ListingSink::refused`]).
+//!   refused, not in id order (see [`ListingSink::refused`]); a folder the
+//!   walk will not descend into is said so right after the block holding its
+//!   row ([`ListingSink::skipped`]).
 //! * **In place**: the sink takes each whole listing after the commit lock is
 //!   released and before the listing's subfolders are queued, so several
 //!   workers' blocks reach it at once and in no particular order. A big
@@ -103,6 +105,12 @@ pub trait ListingSink: Send + Sync {
     /// come. A sink that needs them in order sorts them, as `CollectSink`'s
     /// merge does.
     fn refused(&self, folder: u32, why: Refusal);
+    /// Folder `folder` will not be listed, because the walk does not descend into
+    /// it (a never-descend path), and it is not refused either. The call comes right
+    /// after the block holding the folder's row, with the block's refusals, under the
+    /// same lock; a sink that folds folders as they close needs it (Phase 4 T12a),
+    /// since nothing else is ever said of such a folder. The default does nothing.
+    fn skipped(&self, _folder: u32) {}
     /// The walk ended without an output: drop what was built. The last call.
     fn abort(&self);
     /// Whether this sink writes each block where its ids say, outside the

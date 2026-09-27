@@ -908,6 +908,63 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
     - a planted large correction flips `exact` to false.
   - **Mutants:** an id tie-break; the ancestor not preferred; corrections skipped; a keyed file counted twice; the flag not set.
   - **Green gate:** cargo test; clippy ×3; `cargo mutants` on the module.
+  - **Designed 27 Sep 2026: five steps, each gated and committed alone, after T11.**
+    - **Where it lives.** AggregateState is a new tm-store module, `aggregate`. It is a `ListingSink` that takes its calls under the commit lock, so it sees one call at a time: blocks in id order, refusals whenever they come.
+    - **T12a. Position paths, the open frontier, and fold-on-close.**
+      - **The walk says which folders it will not list.** A refused folder already has `refused`. A folder the walk will not descend into (a never-descend path) has had no call at all, so a sink could not tell it apart from one still to come. `ListingSink::skipped(folder)`, which does nothing by default, is called right after the block that holds the folder's row.
+      - **What an open folder holds:**
+        - its position path (the child indices from the root, packed as varints) and its depth;
+        - its full path and its own row's facts;
+        - how many of its child folders are still open, plus one while its own listing is outstanding;
+        - its exact totals: u128 bytes, and recursive file and folder counts.
+      - **How folders close.** A block adds its files to its folder and opens its child folders. A block's last chunk ends its folder's listing, and a refusal or a skip ends a folder that has no listing. A folder closes once its listing has ended and every child folder has closed. It is then folded into its parent, which may close in turn; the root closes last.
+      - **Tests:**
+        - every folder closes exactly once;
+        - its totals equal the built store's recursive totals (`build(take())`);
+        - on scripted trees with refusals, never-descend paths, empty folders and big listings in chunks, at 1, 4 and 8 workers;
+        - an abort drops everything.
+      - **Built 27 Sep 2026.**
+        - **tm-walk:** `ListingSink::skipped`. The walk's `deliver` decides it by the name the OS gave, as its queueing does (`may_descend`), and calls it right after the block holding the folder's row, with that block's refusals. 4 mutants red: never skipped; the descended folders skipped; decided by the stored name (a never-descend folder whose name is not UTF-8); skipped before its block.
+        - **tm-store's `aggregate` module:**
+          - `PositionPath`, a 1–5 byte prefix code, so byte order is pre-order and a byte prefix is an ancestor; `post_order` and `breadth_first`;
+          - the frontier;
+          - `AggregateState`, a `ListingSink` under the lock, with an optional `CloseObserver`.
+          - Faults are kept and reported by `finish`, as are folders still open. No outside test can break the walk's promises, so those two refusals are guards.
+        - **The oracle** is the walk's own columns, with each file's bytes as its listing said them: a recording sink in the same walk. The Windows fixture's re-read families hold other sizes in `take()`'s output, and applying that re-read is T12d's.
+        - **Tests** (`tm-store/tests/aggregate.rs`, 6):
+          - position paths against their indices on 20,000 random pairs, and the code's widths;
+          - the closes, on the mixed, POSIX, Windows, wide and chunked trees (folders in every chunk), and a 300-deep chain, at 1, 4 and 8 workers, `q_max` 65,536 and 2;
+          - three synthetic trees;
+          - a root path ending with its separator;
+          - a cancel mid-walk.
+        - **19 mutants red** in the module. One more, masking a 2-byte code's first byte one bit wider, is equivalent: that bit is always 0.
+    - **T12b. The exact answers, before hard links.**
+      - **The answers:**
+        - the top 2,000 files by (size desc, pre-order);
+        - the top 2,000 folders below the root by (total desc, post-order), with recursive file counts;
+        - the extension table: count, u128 bytes, and the first-seen pre-order position;
+        - the 1,024-bucket size histogram.
+      - **Orders** are compared by position path (§S.2). Pre-order is lexicographic, a prefix first. Post-order puts a descendant first, and is otherwise lexicographic.
+      - **The histogram's buckets are JavaScript's** `floor(log2(bytes) × 16)` (`reclaimInputs.ts`). Rust's `log2` may round differently from V8's at a bucket's edge. So a table of each bucket's smallest whole size is written by JavaScript and pinned in Node 24 and Electron 31, as T11 pinned its code points.
+      - **Extensions.** An ASCII name's extension is decided in Rust, by the kernel's rule. A name with a non-ASCII byte and a dot keeps its raw suffix, counted and summed under it, pending Node's lower-casing (§S.6.1).
+      - **The oracle** is the TypeScript collectors (`collectLargestFiles`, `collectLargestFolders`, `collectFileTypes`, `computeSizeDistribution`) over the memory store of the same tree. It comes in two layers:
+        - a Rust port of the collectors over `build(take())`, for many trees fast;
+        - a check of the port against the TypeScript collectors on shared synthetic trees, through a file the TypeScript side writes, as T11's cloud oracle does.
+      - The limits 1..2000 × a grid of `minSize` are answered from the kept lists, which are sorted, so a `minSize` only truncates them.
+    - **T12c. The β heaps, the kept set and the shallow keep** (§S.6.1), and the summary's kept rows, each kept folder with its omitted count and bytes (§S.6.2).
+      - **Tests:**
+        - the kept set equals the β rule and is ancestor-closed;
+        - ties at a boundary are dropped together;
+        - kept totals plus omitted equal the full totals;
+        - 5 runs × workers {1, 4, 8} give identical state.
+    - **T12d. Hard links.**
+      - **Online.** A keyed file enters the file answers as one entry per `(dev, ino)`, holding its least `(depth, position path)` member so far (P4-2a). A member that arrives later but comes earlier takes the bytes, and the one it displaces becomes a 0-byte file, as `HardlinkDup` makes it.
+      - **At the seal.** A folder that closed with a loser's bytes is corrected (§S.6.3), and the Δ check decides `exact` (§S.6.4). The link log stays resident; its disk runs are T13's.
+      - **Tests:**
+        - cross-folder families whose walk-first, breadth-first-first and smallest-path members all differ;
+        - a planted large correction flips `exact`;
+        - the answers equal the oracle's.
+    - **T12e. The budget:** peak live bytes counted on a 2M synthetic tree, against §S.3's formula; `cargo mutants` on the module.
 - [ ] **T13. Spill files:** `spill_plan` (3×, file-system type, ledger, read-only portable session), files unlinked at creation or the `ftruncate` fallback (per Q1), the sweep, the confined remover. **24 Sep 2026 (T0):** Q1 is pending the owner (§S.11), so both paths stay designed (§S.5.3); T13 builds the one the owner's answer picks.
   - **Moved here from T7 (26 Sep 2026):** the link-key log's 32 MiB resident cap and its sorted runs on disk, merged k-way, in every tier (§S.6.3; on Windows every file is keyed, 64 B each in memory mode), with T7's test "a forced 64 KiB run size gives the same result as in memory" and its mutant "the link log's resident cap ignored".
   - **Tests first:**

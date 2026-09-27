@@ -36,6 +36,7 @@
 //! T6.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::Path;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -416,18 +417,37 @@ fn reserve(shared: &Shared, guard: &mut CommitGuard<'_>, k: u32, bytes: u64) -> 
     Some((first, name_base))
 }
 
-/// Hands one staged chunk to the sinks `which` names, then the refusal of each
-/// child folder whose name holds a separator; false when a sink panicked.
-fn deliver(shared: &Shared, block: &Block<'_>, which: Sinks) -> bool {
+/// Hands one staged chunk of `dir`'s `listing` to the sinks `which` names, then
+/// the refusal of each child folder whose name holds a separator and the skip of
+/// each the walk will not descend into, as `account` decides it from the name the
+/// OS gave; false when a sink panicked.
+fn deliver(
+    shared: &Shared,
+    block: &Block<'_>,
+    which: Sinks,
+    dir: &Path,
+    listing: &Listing,
+) -> bool {
     if !to_some_sinks(shared, which, |sink| sink.commit(block)) {
         return false;
     }
     let first = block.first.saturating_add(block.offset);
-    for (id, row) in (first..).zip(block.rows) {
-        if row.meta.kind == KIND_DIR
-            && name_is_a_path(block.name(row))
-            && !to_some_sinks(shared, which, |sink| sink.refused(id, Refusal::Unreadable))
-        {
+    let raw = listing
+        .entries
+        .get(usize::try_from(block.offset).unwrap_or(usize::MAX)..)
+        .unwrap_or(&[]);
+    for ((id, row), entry) in (first..).zip(block.rows).zip(raw) {
+        if row.meta.kind != KIND_DIR {
+            continue;
+        }
+        let told = if name_is_a_path(block.name(row)) {
+            to_some_sinks(shared, which, |sink| sink.refused(id, Refusal::Unreadable))
+        } else if shared.may_descend(dir, listing.name(entry)) {
+            true
+        } else {
+            to_some_sinks(shared, which, |sink| sink.skipped(id))
+        };
+        if !told {
             return false;
         }
     }
@@ -448,7 +468,13 @@ fn id_count(shared: &Shared, listing: &Listing) -> Option<u32> {
 /// the lock, then reserved and handed on under it, then — the lock released —
 /// handed to the sinks that write in place. The first child's id, returned
 /// once every sink has the block, so the caller queues its subfolders after.
-fn commit_whole(shared: &Shared, listing: &Listing, stage: &mut Stage, folder: u32) -> Option<u32> {
+fn commit_whole(
+    shared: &Shared,
+    dir: &Path,
+    listing: &Listing,
+    stage: &mut Stage,
+    folder: u32,
+) -> Option<u32> {
     stage.fill(shared, listing, 0, usize::MAX)?;
     let k = id_count(shared, listing)?;
     let bytes = u64::try_from(stage.names.len()).unwrap_or(u64::MAX);
@@ -465,13 +491,13 @@ fn commit_whole(shared: &Shared, listing: &Listing, stage: &mut Stage, folder: u
         names: &stage.names,
         own_times: listing.own_times.filter(|_| folder != 0),
     };
-    if !deliver(shared, &block, Sinks::UnderLock) {
+    if !deliver(shared, &block, Sinks::UnderLock, dir, listing) {
         return None;
     }
     // The block's ids and name bytes are its own now, so the sinks that write
     // in place take it without the lock, beside other workers' blocks.
     drop(guard);
-    deliver(shared, &block, Sinks::InPlace).then_some(first)
+    deliver(shared, &block, Sinks::InPlace, dir, listing).then_some(first)
 }
 
 /// Commits a big listing: its whole block reserved at once, then staged and
@@ -481,6 +507,7 @@ fn commit_whole(shared: &Shared, listing: &Listing, stage: &mut Stage, folder: u
 /// every sink is aborted.
 fn commit_in_chunks(
     shared: &Shared,
+    dir: &Path,
     listing: &Listing,
     stage: &mut Stage,
     folder: u32,
@@ -510,7 +537,7 @@ fn commit_in_chunks(
             names: &stage.names,
             own_times: listing.own_times.filter(|_| folder != 0 && at == 0),
         };
-        if !deliver(shared, &block, Sinks::All) {
+        if !deliver(shared, &block, Sinks::All, dir, listing) {
             return None;
         }
         at = end;
@@ -632,9 +659,9 @@ pub(crate) fn process_listing(
         .fetch_add(buf.listing.unreadable_entries, Ordering::AcqRel);
     buf.listing.order_as_stored();
     let committed = if big {
-        commit_in_chunks(shared, &buf.listing, stage, job.id)
+        commit_in_chunks(shared, &job.path, &buf.listing, stage, job.id)
     } else {
-        commit_whole(shared, &buf.listing, stage, job.id)
+        commit_whole(shared, &job.path, &buf.listing, stage, job.id)
     };
     if let Some(first) = committed {
         account(shared, worker, &buf.listing, first, job);

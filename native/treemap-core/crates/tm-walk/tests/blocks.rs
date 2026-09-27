@@ -406,6 +406,9 @@ type Matcher = Box<dyn Fn(&Block<'_>) -> bool + Send + Sync>;
 struct Recorder {
     commits: Mutex<Vec<Seen>>,
     refused: Mutex<Vec<(u32, Refusal)>>,
+    /// Each folder the walk said it would not list, with how many commits had come by
+    /// then.
+    skipped: Mutex<Vec<(u32, usize)>>,
     roots: AtomicU64,
     aborts: AtomicU64,
     /// The first commit matching waits at the gate.
@@ -451,6 +454,11 @@ impl ListingSink for Recorder {
 
     fn refused(&self, folder: u32, why: Refusal) {
         lock(&self.refused).push((folder, why));
+    }
+
+    fn skipped(&self, folder: u32) {
+        let commits = lock(&self.commits).len();
+        lock(&self.skipped).push((folder, commits));
     }
 
     fn abort(&self) {
@@ -628,6 +636,59 @@ fn the_test_feature_switches_the_default_numbering() {
         Numbering::Discovery
     };
     assert_eq!(WalkOptions::new("/x").numbering, expected);
+}
+
+/// The id the walk gave `name`, a child of `folder`, from the block that holds its row.
+fn id_in(commits: &[Seen], folder: u32, name: &[u8]) -> Option<(u32, usize)> {
+    commits.iter().enumerate().find_map(|(at, seen)| {
+        if seen.folder != folder {
+            return None;
+        }
+        let row = u32::try_from(seen.names.iter().position(|n| n == name)?).ok()?;
+        Some((seen.first + seen.offset + row, at))
+    })
+}
+
+#[test]
+fn a_folder_the_walk_does_not_descend_is_skipped_once_right_after_its_row_and_never_listed()
+-> TestResult {
+    // A sink that folds folders as they close must know which folder rows will never
+    // be listed: a refused folder has `refused`, and a never-descend folder had no call
+    // at all (T12a).
+    // The second never-descend folder's name is not UTF-8, and the walk decides by
+    // the name the OS gave, not the one it stores (U+FFFD for the invalid byte).
+    for workers in WORKERS {
+        let tree = Arc::new(mixed_tree(true));
+        let mut opts = mixed_options(&tree, Numbering::Blocks, workers);
+        opts.never_descend.push(joined(&tree.root, b"odd\xF8"));
+        let recorder = Arc::new(Recorder::default());
+        walk_with(tree.clone(), opts, vec![recorder.clone()])?;
+        let commits = recorder.commits();
+        let at = format!("{workers} worker(s)");
+        let (never, holder) =
+            id_in(&commits, 0, b"never").ok_or_else(|| format!("{at}: no row for never"))?;
+        let (odd, odd_holder) = id_in(&commits, 0, "odd\u{FFFD}".as_bytes())
+            .ok_or_else(|| format!("{at}: no row for odd"))?;
+        let mut skipped = lock(&recorder.skipped).clone();
+        skipped.sort_unstable();
+        let mut expected = vec![(never, holder + 1), (odd, odd_holder + 1)];
+        expected.sort_unstable();
+        assert_eq!(
+            skipped, expected,
+            "{at}: each skipped once, right after the block holding its row"
+        );
+        for id in [never, odd] {
+            assert!(
+                commits.iter().all(|seen| seen.folder != id),
+                "{at}: {id} never listed"
+            );
+            assert!(
+                lock(&recorder.refused).iter().all(|(r, _)| *r != id),
+                "{at}: {id} not refused either"
+            );
+        }
+    }
+    Ok(())
 }
 
 #[test]
