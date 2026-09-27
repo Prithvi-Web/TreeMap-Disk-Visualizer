@@ -14,9 +14,42 @@ Copy everything below the line into a fresh session started in
 
 **This block is the live state. Update it after every task.** Everything below the next `---` is the older hand-over and is background. (Rewritten ~10:45 UTC; the earlier, longer version of this block is in git history — `git log -p NEXT_SESSION_PROMPT.md`.)
 
-### LATEST (26 Sep 2026, ~23:50 UTC, session 38ea1b2d) — RESUME HERE
+### LATEST (27 Sep 2026, ~01:15 UTC, session 38ea1b2d) — RESUME HERE
 
-**Newest (26 Sep, ~23:50 UTC): T9c BUILT `8047340` (R92 fixed; native contract 0.4.0) and T10's first step `c910f6a`.**
+**Newest (27 Sep, ~01:15 UTC): T10 BUILT — `9f59e5c` (T10a, pushed) and `5945a96` (T10b). S2 is complete. Two fixes on top: `bbb93a8` and `8fc8884`. The owner is asked to push.**
+- **The owner pushed `9f59e5c` (T10a). CI run 36282411813:** macOS, Linux and Linux pt-BR GREEN. Windows: 2 failures in `tests/benchMemoryPath.test.ts`, the worker-thread probe ("the measuring process wrote no result: ", nothing on stderr) and the matrix command that includes it.
+  - That probe ran on Windows for the first time: until `1afc943`, the worker could not compile there.
+  - It passes on macOS and Linux. Its process dies, or exits quietly, before writing its result, and the harness could not say which.
+  - **`bbb93a8` makes it say:** the exit code or signal and stderr (`runMeasuringProcess`, `noResultReason`); a worker that exits unanswered (`firstAnswer`; before, such an exit left the promise pending and the process ended with code 0); and one stderr line between reading the version and terminating the worker.
+  - **Read the next Windows run's message:** it names where the process dies. Fix from that (RISKS R96); T18's full-pass runner loads the addon in a worker too.
+- **INCIDENT (27 Sep, ~00:21–00:30 UTC): I opened the owner's installed app, twice.**
+  - How: a gate leg ran the WHOLE suite under the app's binary as Node (`ELECTRON_RUN_AS_NODE=1`). There, `process.execPath` is the app, and the harness's 'node' runtime spawned it with that variable removed. A packaged app runs its own bundle, window included.
+  - Stopped by killing the processes; nothing else runs from it.
+  - No TreeMap data file changed (newest still 24 Sep). Chromium's state in `~/Library/Application Support/TreeMap` did: `Preferences`, Local/Session Storage, one `blob_storage` folder, GPU/Dawn caches, 33 cache entries.
+  - Reported to the owner, with a recommendation to leave those files; the owner has not answered.
+  - Fixed in `bbb93a8` (`memoryPathExecutable` refuses the 'node' runtime inside Electron). `ci-sim.sh` `LEG=node20` now refuses without `NODE20_FILES`. Memory note `electron-as-node-spawns-open-the-app`.
+  - The full-suite Electron leg was never valid anyway: better-sqlite3 is built for Node 24's ABI.
+- **T10a:** `WalkError::Ceiling`; `scanPoll`'s `ceiling`; native contract 0.5.0; 4 mutants.
+- **T10b:** every native scan walks in memory mode (`nativeStorageFor`). A tree past the store's room (6,187,500 rows, or its names' bytes) is walked again on the native columns path, with the engine's own ceiling sentence in `engineReason`. The count the scan shows never goes back.
+  - Tests: `nativeMemoryDefault` (5); the pause test reads the store's stats. 9 mutants.
+  - The review caught one wrong claim, a computed row count for a tree that meets the names' ceiling first.
+  - The native golden leg now runs through the memory path.
+  - **Decided:** the walk's default numbering stays Discovery (the columns path is the oracle).
+  - **R95 (MEDIUM):** past the room, a tree is walked twice until T12–T14.
+  - `native/README.md`'s "tm-node contains no unsafe" (false since T8b) is corrected.
+- **T10's gate on the T10b candidate:**
+  - default: cargo 550/0, blocks 237/0, npm 3,227 / 3,213 / 0 fail / 14 skipped (the extra skip is the known silent-watch one);
+  - pt-BR: 3,227 / 3,215 / 0 / 12;
+  - 4 busy loops: 3,227 / 3,214 / 0 / 13.
+  - **10 busy loops, first run:** 2 failures in `reclaimScoreProvider` (a fixture scan past the 120 s hang guard). This Mac is on battery, so Auto = Eco, at Background QoS, and my own Rust builds ran meanwhile (load average 141): Eco walks got no CPU (the known starvation in `nativeEngine.test.ts`'s pause-test note).
+  - **A/B** of that test alone under 10 loops on battery: T10a 3 s, T10b 1 s, both pass.
+  - **Rerun, nothing else running:** stopped after 8 min: on battery the whole suite plus ten loops (load average 165) starved every scan-based test — `facts`, `humanScale`, `benchSynthetic`, `benchScanHold`, `reclaimScoreProvider` past their hang guards; T10a and T10b alike by the single-test A/B. **Owed: the 10-loop run on mains power** (Balanced), before T11 is committed.
+- **`8fc8884`:** tm-walk's cancel test raced the clock twice. It now holds `d0`'s listing open until the cancel and counts: at most one listing begins after it (renamed `cancel_while_directories_are_being_listed_stops_every_worker_at_its_next_folder`). The mutant where the cancel reaches no worker — all three of the walk's paths gone: the queue closed by the cancel, the per-folder check, the driver's close — is red with "98 listings began after the cancel". Three live-disk tests still hold wall-clock bounds, without a race against the walk's end; noted, not changed.
+- **Electron spot check of T10b** (`LEG=node20 NODE20_FILES=` the five native-scan files, where every scan now takes `storeTakeInto`): 83 tests, 81 pass, 1 skipped, 1 fail — "plain Node lets an array be the store's own memory", a plain-Node fact false inside Electron by design.
+- **T11 is ported onto T10b** in `$S/wt-t11` (not on main): tm-store `build.rs`/`lib.rs` conflicts resolved, the table's check in `check_options` with a new sink test, and the three option builders written since pass an empty table; docs written there. Commit only after T10's CI is green on all four legs.
+- **Local `main` adds `5945a96`, `bbb93a8`, `8fc8884` and this handoff over `9f59e5c`. The owner is asked to push; re-arm the watcher with base `9f59e5c`.**
+
+**Earlier (26 Sep, ~23:50 UTC): T9c BUILT `8047340` (R92 fixed; native contract 0.4.0) and T10's first step `c910f6a`.**
 - **T9c:** where Electron refuses external buffers, `storeTakeInto` fills arrays JavaScript made, on libuv's pool, with 0 bytes on the JS thread.
   - New: `externalBuffersAllowed`, `storeShape` and `NativeStore.handOver`; `takeNativeStore` chooses the path, and `runNativeWalk` and the harness use it.
   - Electron's main thread during the hand-over at 5M: 7.5 ms, from ~33. About 2 ms is the fill itself; the rest is a V8 full GC for the ~320 MB of arrays arriving.
@@ -71,8 +104,8 @@ Copy everything below the line into a fresh session started in
 2. ~~T9b~~: done, `c577f06`.
 3. ~~T9c~~: done, `8047340`.
 4. ~~T9's harness re-measures~~: done, `c910f6a` (`T_mem` = 5M in both runtimes).
-5. T10: the scanner passes `storage: 'memory'`; full npm test under 4 and 10 busy loops; the golden leg; push; CI green.
-6. T11: commit the parked cloud rule table.
+5. ~~T10~~: done, `9f59e5c` + `5945a96` (S2 complete). Owed: the 10-loop run on mains power, and all four CI legs green on the push of `5945a96`–`8fc8884` (Windows: read the harness's new no-result sentence and fix R96 from it).
+6. T11: ported in `$S/wt-t11`; rebase it onto `main`, gate, and commit once T10's CI is green on all four legs.
 7. T12: now also position paths and `totalsFinal`.
 8. T13: now also the link log's disk runs; it needs Q1.
 9. T14–T23, then Phases 5–8.
