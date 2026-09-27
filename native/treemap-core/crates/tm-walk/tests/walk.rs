@@ -23,7 +23,9 @@ use tm_walk::{
     WalkOptions, WalkOutput, start_with,
 };
 
-/// What the contract allows a cancel or a pause to take.
+/// What the contract allows a cancel or a pause to take: the live-disk tests'
+/// wall-clock bound (macOS's `live` module). The scripted tests count instead.
+#[cfg(target_os = "macos")]
 const REACT_WITHIN: Duration = Duration::from_millis(200);
 /// How long a test waits for a walk to report `done` before giving up.
 const SETTLE: Duration = Duration::from_secs(10);
@@ -1192,23 +1194,49 @@ fn a_root_that_is_not_a_directory_is_refused_at_start() -> TestResult {
 }
 
 #[test]
-fn cancel_returns_within_200ms_while_directories_are_being_listed() -> TestResult {
-    let tree = Arc::new(wide_tree(100, 10, Duration::from_millis(20)));
-    let handle = start_with(options(Path::new("/fake")), FakePacer::new(2), tree)
-        .map_err(|e| e.to_string())?;
-    thread::sleep(Duration::from_millis(50));
-    assert!(
-        !handle.progress().done,
-        "a two-second walk is still running at 50 ms"
-    );
-    let asked = Instant::now();
+fn cancel_while_directories_are_being_listed_stops_every_worker_at_its_next_folder() -> TestResult {
+    // `d0`'s listing is held open until the cancel is asked, so the walk
+    // cannot end first however late this thread runs. (This test once slept
+    // 50 ms and asserted the one-second walk was still running, then timed the
+    // cancel against 200 ms: both raced this thread's scheduling.) Counted,
+    // not timed: a worker sees the cancel at its next folder, so after it at
+    // most one listing begins per worker not holding `d0` — the one it was
+    // about to begin — and the clock is only the hang guard for `take`.
+    let workers: u32 = 2;
+    let gate = Arc::new(StatGate::default());
+    let mut tree = wide_tree(100, 10, Duration::from_millis(20));
+    tree.special("d0", Special::Held(Arc::clone(&gate)));
+    let tree = Arc::new(tree);
+    // A fixed count: the hill-climber is off.
+    let mut opts = options(Path::new("/fake"));
+    opts.max_workers = 2;
+    let handle =
+        start_with(opts, FakePacer::new(workers), tree.clone()).map_err(|e| e.to_string())?;
+    if !wait_until(SETTLE, || gate.reached.load(Ordering::SeqCst)) {
+        return Err(format!("d0's listing did not begin within {SETTLE:?}"));
+    }
+    let calls_before_the_cancel = tree.calls();
     handle.cancel();
-    let result = handle.take();
-    let took = asked.elapsed();
-    assert!(took <= REACT_WITHIN, "cancel took {took:?}");
-    match result {
+    gate.release.store(true, Ordering::SeqCst);
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(handle.take());
+    });
+    let outcome = rx.recv_timeout(SETTLE).map_err(|_| {
+        format!("take() did not return within {SETTLE:?}: the cancel never reached the walk")
+    })?;
+    let begun = tree.calls() - calls_before_the_cancel;
+    assert!(
+        begun < u64::from(workers),
+        "{begun} listings began after the cancel"
+    );
+    match outcome {
         Err(WalkError::Cancelled) => Ok(()),
-        other => Err(format!("expected Cancelled, got {other:?}")),
+        Ok(out) => Err(format!(
+            "the walk completed ({} entries) though it was cancelled",
+            out.stats.entries
+        )),
+        Err(other) => Err(format!("expected Cancelled, got {other:?}")),
     }
 }
 
