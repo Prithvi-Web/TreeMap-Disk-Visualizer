@@ -43,6 +43,14 @@ impl PositionPath {
         Self { bytes }
     }
 
+    /// How this node's child at `index` compares with `other` in pre-order, without making
+    /// the child's path.
+    pub fn compare_child(&self, index: u32, other: &Self) -> Ordering {
+        let (code, len) = code_of(index);
+        let tail = code.get(..len).unwrap_or_default();
+        self.bytes.iter().chain(tail).cmp(other.bytes.iter())
+    }
+
     /// The indices, the root's first.
     pub fn indices(&self) -> Vec<u32> {
         let mut out = Vec::new();
@@ -120,16 +128,22 @@ fn code(first: u8) -> (u8, u8) {
 
 /// Appends `index`'s code.
 fn push_index(bytes: &mut Vec<u8>, index: u32) {
+    let (code, len) = code_of(index);
+    bytes.extend_from_slice(code.get(..len).unwrap_or_default());
+}
+
+/// `index`'s code, and how many of the buffer's bytes it takes.
+fn code_of(index: u32) -> ([u8; 5], usize) {
     let [b0, b1, b2, b3] = index.to_be_bytes();
     if index < 0x80 {
-        bytes.push(b3);
+        ([b3, 0, 0, 0, 0], 1)
     } else if index < 0x4000 {
-        bytes.extend_from_slice(&[0x80 | b2, b3]);
+        ([0x80 | b2, b3, 0, 0, 0], 2)
     } else if index < 0x20_0000 {
-        bytes.extend_from_slice(&[0xC0 | b1, b2, b3]);
+        ([0xC0 | b1, b2, b3, 0, 0], 3)
     } else if index < 0x1000_0000 {
-        bytes.extend_from_slice(&[0xE0 | b0, b1, b2, b3]);
+        ([0xE0 | b0, b1, b2, b3, 0], 4)
     } else {
-        bytes.extend_from_slice(&[0xF0, b0, b1, b2, b3]);
+        ([0xF0, b0, b1, b2, b3], 5)
     }
 }

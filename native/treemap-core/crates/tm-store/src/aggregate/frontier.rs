@@ -13,7 +13,11 @@ struct Open {
     parent: Option<u32>,
     position: PositionPath,
     depth: u32,
+    name: Vec<u8>,
     path: Vec<u8>,
+    /// Its modification time as the store keeps it: its row's, or on Windows what its own
+    /// listing read from the folder itself.
+    modified_at: f64,
     /// Child folders still open, plus one while its own listing is outstanding.
     pending: u32,
     bytes: u128,
@@ -24,8 +28,8 @@ struct Open {
 /// A child a block names, as the frontier counts it.
 #[derive(Clone, Copy)]
 pub(super) enum Child<'a> {
-    /// A folder, opened here and awaiting its own listing.
-    Folder { name: &'a [u8] },
+    /// A folder, opened here and awaiting its own listing, with its row's time.
+    Folder { name: &'a [u8], modified_at: f64 },
     /// Anything else, counted as a file with its bytes.
     File { bytes: u128 },
 }
@@ -45,6 +49,29 @@ impl Frontier {
         }
     }
 
+    /// The separator paths are joined with.
+    pub(super) fn separator(&self) -> u8 {
+        self.separator
+    }
+
+    /// Open folder `folder`'s path and position, for the files its blocks name.
+    pub(super) fn place(&self, folder: u32) -> Result<(&[u8], &PositionPath), String> {
+        self.open
+            .get(&folder)
+            .map(|open| (open.path.as_slice(), &open.position))
+            .ok_or_else(|| format!("a block named folder {folder}, which is not open"))
+    }
+
+    /// Open folder `folder`'s modification time, as its own listing read it (Windows).
+    pub(super) fn own_time(&mut self, folder: u32, modified_at: f64) -> Result<(), String> {
+        let open = self
+            .open
+            .get_mut(&folder)
+            .ok_or_else(|| format!("folder {folder}'s own times came, and it is not open"))?;
+        open.modified_at = modified_at;
+        Ok(())
+    }
+
     /// Folders open now.
     pub(super) fn len(&self) -> usize {
         self.open.len()
@@ -60,7 +87,9 @@ impl Frontier {
             parent: None,
             position: PositionPath::root(),
             depth: 0,
+            name: Vec::new(),
             path: self.root_path.clone(),
+            modified_at: 0.0,
             pending: 1,
             bytes: 0,
             files: 0,
@@ -95,7 +124,7 @@ impl Frontier {
                 parent.files = parent.files.saturating_add(1);
                 None
             }
-            Child::Folder { name } => {
+            Child::Folder { name, modified_at } => {
                 parent.pending = parent
                     .pending
                     .checked_add(1)
@@ -104,7 +133,9 @@ impl Frontier {
                     parent: Some(folder),
                     position: parent.position.child(index),
                     depth: parent.depth.saturating_add(1),
+                    name: name.to_vec(),
                     path: joined(&parent.path, separator, name),
+                    modified_at,
                     pending: 1,
                     bytes: 0,
                     files: 0,
@@ -147,7 +178,9 @@ impl Frontier {
                 .ok_or_else(|| format!("folder {at} vanished as it closed"))?;
             closed(&ClosedFolder {
                 id: at,
+                name: &done.name,
                 path: &done.path,
+                modified_at: done.modified_at,
                 position: &done.position,
                 depth: done.depth,
                 bytes: done.bytes,
@@ -174,7 +207,7 @@ impl Frontier {
 
 /// A child's path as the scan joins it (`joinPath` in `scanStore.ts`): a separator between
 /// the two, unless the parent's path already ends with one.
-fn joined(parent: &[u8], separator: u8, name: &[u8]) -> Vec<u8> {
+pub(super) fn joined(parent: &[u8], separator: u8, name: &[u8]) -> Vec<u8> {
     let mut path = Vec::with_capacity(parent.len() + 1 + name.len());
     path.extend_from_slice(parent);
     if parent.last() != Some(&separator) {

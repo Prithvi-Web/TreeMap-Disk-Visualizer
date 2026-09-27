@@ -44,9 +44,10 @@ export interface SizeDistribution {
  */
 const OCTAVES = 64;
 const PER_OCTAVE = 16;
-const BUCKETS = OCTAVES * PER_OCTAVE;
+/** Exported with `bucketFor` for tm-store's copy of the rule (`tests/sizeBuckets.test.ts`). */
+export const BUCKETS = OCTAVES * PER_OCTAVE;
 
-const bucketFor = (bytes: number): number => {
+export const bucketFor = (bytes: number): number => {
   if (bytes <= 0) return 0;
   const b = Math.floor(Math.log2(bytes) * PER_OCTAVE);
   return b < 0 ? 0 : b >= BUCKETS ? BUCKETS - 1 : b;

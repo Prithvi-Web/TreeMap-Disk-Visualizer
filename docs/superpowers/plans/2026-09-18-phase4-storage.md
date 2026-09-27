@@ -951,6 +951,47 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
         - a Rust port of the collectors over `build(take())`, for many trees fast;
         - a check of the port against the TypeScript collectors on shared synthetic trees, through a file the TypeScript side writes, as T11's cloud oracle does.
       - The limits 1..2000 × a grid of `minSize` are answered from the kept lists, which are sorted, so a `minSize` only truncates them.
+      - **Built 27 Sep 2026.**
+        - **tm-store's `aggregate/answers.rs`:**
+          - each list keeps 2,000 entries in a heap with its worst on top. A file that cannot beat the worst is turned away by comparing positions (`compare_child`), before its path is built;
+          - an extension is `None`, `Known` (decided here, lower-cased) or `Pending` (the raw suffix, left for Node to lower-case);
+          - past 265,535 extensions (the store's dictionary plus its overflow), the file types are refused with the reason and the table is freed. Everything else still answers.
+        - **`aggregate/buckets.rs`** holds 1,023 doubles: the smallest positive double in each bucket from 1 on, as JavaScript finds them. (The design said "smallest whole size"; a double is what a test can check from both sides.) A size's bucket is how many starts it has reached.
+          - `tests/sizeBuckets.test.ts` recomputes the table in the JavaScript running the test (Node 20 on CI, Node 24 here) and holds the Rust table to it.
+          - Electron 31.7.7 gave the same table, bit for bit.
+        - **A folder's time** is its row's, or on Windows what its own listing read from the folder itself, rounded as the store rounds it.
+        - **The oracle, layer (a):** a Rust port of the four collectors over `build(take())` of the same walk (`tests/aggregate_answers.rs`).
+        - **Layer (b):** `tests/fixtures/collectorsOracle.ts` walks three synthetic trees of 1,200 entries natively: folders at 15 % and 33 %, and a third where every file is the same size, so every order is decided by a tie.
+          - The TypeScript collectors answer them at 2,000 and at two short limits, into `tm-store/tests/fixtures/collectors-oracle.tsv` (658 KB). The port must answer the same, line for line.
+          - `tests/collectorsOracle.test.ts` proves the file is what the generator writes today.
+          - It also proves the prefix property against the real collectors, over limits 1, 2, 3, 10, 100, 1,999 and 2,000 × nine minimum sizes from 0 to 10^15: a limit and a minimum only cut the sorted list short.
+        - **Tests** (`tm-store/tests/aggregate_answers.rs`, 9), each tree walked at 1, 4 and 8 workers:
+          - the mixed (with a never-descend folder), deep, chunked and wide trees;
+          - ties at both lists' limits, 300-deep chains with a larger folder ahead of them, and zero-byte files and extensions;
+          - a Windows-style tree whose folders' own times replace their parents' listings;
+          - extensions Node decides: one pending entry per raw suffix;
+          - three synthetic trees of 30,000 entries;
+          - the port against the TypeScript file;
+          - the extension limit: refused one past it, answered exactly at it;
+          - every bucket's start, and the double below it.
+        - **Mutants:** 19 red in the module:
+          - ties kept in the wrong order, in each heap and each sort;
+          - one more kept, in each list;
+          - the extension's first place never moved earlier;
+          - the extension limit off by one;
+          - an extension's bytes dropped;
+          - files not counted;
+          - the histogram off by a byte;
+          - Node's extensions decided here, and ASCII ones not lower-cased;
+          - own times ignored;
+          - the root offered as a folder;
+          - a file's time unrounded;
+          - a bucket's edge made exclusive;
+          - a child's index dropped from the comparison.
+        - Also red: the port replacing on ties, and one digit changed in the oracle file.
+        - **Three TypeScript mutants, red:** one table entry one bit off; the rule rounding up; the top clamp off by one.
+          - The last one survived at first, because no test size reached past the last bucket's start.
+          - The test now asks for 2^64 bytes.
     - **T12c. The β heaps, the kept set and the shallow keep** (§S.6.1), and the summary's kept rows, each kept folder with its omitted count and bytes (§S.6.2).
       - **Tests:**
         - the kept set equals the β rule and is ancestor-closed;

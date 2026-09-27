@@ -12,29 +12,21 @@ mod common;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use common::scripted::{
-    Builder, POSIX_ROOT, ScriptedTree, WIDE_ROOT, WINDOWS_ROOT, folder_meta, posix_tree, wide_tree,
-    windows_tree,
+use common::aggregate::{
+    MIXED_ROOT, OpenPacer, Recording, SEP, WORKERS, Walked, at_of, id_of, joined, lock, mixed_tree,
+    root_bytes, scripted, scripted_fixtures, synthetic_fixtures, walk, walk_named, whole,
 };
-use tm_store::aggregate::{
-    AggregateOptions, AggregateState, CloseObserver, ClosedFolder, PositionPath,
-};
-use tm_walk::walk::{MAX_WORKERS, Pacer};
+use common::scripted::ScriptedTree;
+use tm_store::aggregate::{AggregateOptions, AggregateState, EXTENSION_LIMIT, PositionPath};
 use tm_walk::{
-    Block, DEFAULT_Q_MAX, FastPath, KIND_DIR, Lister, ListingSink, Numbering, Refusal,
-    SyntheticSpec, WalkError, WalkOptions, WalkOutput, lister_for, start_with_sinks,
-    synthetic_temp_folder,
+    DEFAULT_Q_MAX, FastPath, KIND_DIR, Lister, ListingSink, Numbering, Refusal, WalkError,
+    WalkOptions, WalkOutput, start_with_sinks,
 };
 
 type TestResult = Result<(), String>;
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 // ---------------------------------------------------------------------------
 // Position paths
@@ -157,148 +149,6 @@ fn each_boundary_index_takes_its_own_width_and_a_child_extends_its_parent() {
 // Walking into the aggregate state and the collector at once
 // ---------------------------------------------------------------------------
 
-/// A pacer that never waits, and lets the walk run as many workers as it asks for.
-struct OpenPacer;
-
-impl Pacer for OpenPacer {
-    fn on_worker_start(&self) {}
-    fn throttle(&self, _cancelled: &dyn Fn() -> bool) {}
-    fn worker_limit(&self) -> u32 {
-        MAX_WORKERS
-    }
-}
-
-/// A closed folder as the observer saw it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Closed {
-    id: u32,
-    path: Vec<u8>,
-    position: Vec<u32>,
-    depth: u32,
-    bytes: u128,
-    files: u64,
-    folders: u64,
-}
-
-#[derive(Default)]
-struct Recording {
-    closed: Mutex<Vec<Closed>>,
-}
-
-impl CloseObserver for Recording {
-    fn closed(&self, folder: &ClosedFolder<'_>) {
-        lock(&self.closed).push(Closed {
-            id: folder.id,
-            path: folder.path.to_vec(),
-            position: folder.position.indices(),
-            depth: folder.depth,
-            bytes: folder.bytes,
-            files: folder.files,
-            folders: folder.folders,
-        });
-    }
-}
-
-enum Source {
-    Scripted(Arc<ScriptedTree>),
-    Synthetic(SyntheticSpec),
-}
-
-struct Fixture {
-    name: &'static str,
-    root: PathBuf,
-    source: Source,
-    never_descend: Vec<PathBuf>,
-}
-
-const SEP: u8 = b'/';
-
-fn root_bytes(fixture: &Fixture) -> Vec<u8> {
-    fixture.root.to_string_lossy().into_owned().into_bytes()
-}
-
-/// A folder's child's path as the scan joins it (`joinPath` in `scanStore.ts`).
-fn joined(parent: &[u8], name: &[u8]) -> Vec<u8> {
-    let mut path = parent.to_vec();
-    if path.last() != Some(&SEP) {
-        path.push(SEP);
-    }
-    path.extend_from_slice(name);
-    path
-}
-
-/// Each row's size as the walk handed it to its sinks: what its listing said.
-#[derive(Default)]
-struct Listed {
-    by_id: Mutex<HashMap<u32, f64>>,
-}
-
-impl ListingSink for Listed {
-    fn root(&self, _name: &[u8], _meta: &tm_walk::Meta) {}
-
-    fn commit(&self, block: &Block<'_>) {
-        let mut by_id = lock(&self.by_id);
-        for (step, row) in (0u32..).zip(block.rows) {
-            by_id.insert(block.first + block.offset + step, row.meta.size);
-        }
-    }
-
-    fn refused(&self, _folder: u32, _why: Refusal) {}
-
-    fn abort(&self) {}
-}
-
-struct Walked {
-    out: WalkOutput,
-    listed: HashMap<u32, f64>,
-    closed: Vec<Closed>,
-    open_after: usize,
-}
-
-fn walk(fixture: &Fixture, workers: u32, q_max: usize) -> Result<Walked, String> {
-    walk_named(fixture, workers, q_max, root_bytes(fixture))
-}
-
-/// [`walk`], the root's path spelled `root_path`.
-fn walk_named(
-    fixture: &Fixture,
-    workers: u32,
-    q_max: usize,
-    root_path: Vec<u8>,
-) -> Result<Walked, String> {
-    let recording = Arc::new(Recording::default());
-    let state = Arc::new(AggregateState::new(AggregateOptions {
-        root_path,
-        separator: SEP,
-        observer: Some(recording.clone()),
-    }));
-    let mut opts = WalkOptions::new(fixture.root.clone());
-    opts.numbering = Numbering::Blocks;
-    opts.max_workers = usize::try_from(workers).unwrap_or(1);
-    opts.q_max = q_max;
-    opts.never_descend.clone_from(&fixture.never_descend);
-    let lister: Arc<dyn Lister> = match &fixture.source {
-        Source::Scripted(tree) => Arc::clone(tree) as Arc<dyn Lister>,
-        Source::Synthetic(spec) => {
-            opts.synthetic = Some(spec.clone());
-            lister_for(&opts).map_err(|e| e.to_string())?
-        }
-    };
-    let listed = Arc::new(Listed::default());
-    let sinks: Vec<Arc<dyn ListingSink>> = vec![state.clone(), listed.clone()];
-    let handle =
-        start_with_sinks(opts, Arc::new(OpenPacer), lister, sinks).map_err(|e| e.to_string())?;
-    let out = handle.take().map_err(|e| format!("the walk: {e}"))?;
-    let closed = lock(&recording.closed).clone();
-    let listed = lock(&listed.by_id).clone();
-    Ok(Walked {
-        out,
-        listed,
-        closed,
-        open_after: state.open_folders(),
-    })
-}
-
 /// What a folder closes with, from the walk's own columns.
 #[derive(Debug, PartialEq, Eq)]
 struct Expected {
@@ -307,28 +157,6 @@ struct Expected {
     bytes: u128,
     files: u64,
     folders: u64,
-}
-
-fn whole(size: f64) -> u128 {
-    if size.is_finite() && size >= 0.0 {
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "a finite size of no less than zero: the walk's own whole-byte rule"
-        )]
-        let bytes = size as u64;
-        u128::from(bytes)
-    } else {
-        0
-    }
-}
-
-fn id_of(index: usize) -> Result<u32, String> {
-    u32::try_from(index).map_err(|e| e.to_string())
-}
-
-fn at_of(id: u32) -> Result<usize, String> {
-    usize::try_from(id).map_err(|e| e.to_string())
 }
 
 /// Every folder's expectation by id, from `out`: the children of a folder are one range of
@@ -467,130 +295,8 @@ fn check(walked: &Walked, root: &[u8], at: &str) -> TestResult {
 }
 
 // ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
-const MIXED_ROOT: &str = "/t12a/mixed";
-const DEEP_ROOT: &str = "/t12a/deep";
-const CHUNKED_ROOT: &str = "/t12a/chunked";
-
-/// Wide and deep folders, empty ones, refused ones, a name that is a path, a
-/// never-descend folder, names that are not UTF-8.
-fn mixed_tree() -> Result<ScriptedTree, String> {
-    let mut b = Builder::with_root();
-    for d in 0..12_u32 {
-        let rel = b.dir("", format!("d{d:02}").as_bytes())?;
-        for f in 0..(d * 7) {
-            b.file(&rel, format!("f{f:03}.bin").as_bytes(), f64::from(f))?;
-        }
-        let mut deep = rel.clone();
-        for level in 0..(d % 4) {
-            deep = b.dir(&deep, format!("level{level}").as_bytes())?;
-            b.file(&deep, b"leaf.txt", 1.0)?;
-            b.dir(&deep, b"empty-inside")?;
-        }
-    }
-    b.dir("", b"empty")?;
-    b.refused("", b"denied", Refusal::Denied)?;
-    b.refused("", b"gone", Refusal::Vanished)?;
-    b.put_new("", b"sl/ash", folder_meta)?;
-    let never = b.dir("", b"never")?;
-    b.file(&never, b"inside.bin", 3.0)?;
-    let odd = b.dir("", b"odd\xF8")?;
-    b.file(&odd, b"x\xF9.txt", 2.0)?;
-    b.file(&odd, "x\u{1F600}.txt".as_bytes(), 3.0)?;
-    Ok(b.finish(MIXED_ROOT, folder_meta(1), true, FastPath::Bulk))
-}
-
-/// One chain 300 folders deep, a file at every level.
-fn deep_tree() -> Result<ScriptedTree, String> {
-    let mut b = Builder::with_root();
-    let mut at = String::new();
-    for level in 0..300_u32 {
-        at = b.dir(&at, format!("l{level}").as_bytes())?;
-        b.file(&at, b"f.bin", f64::from(level))?;
-    }
-    Ok(b.finish(DEEP_ROOT, folder_meta(1), true, FastPath::Bulk))
-}
-
-/// One folder of 70,000 entries with long names, which the walk hands on in several 4 MiB
-/// chunks: every 997th a folder holding a file, so folders arrive in every chunk and each
-/// one's position counts the rows of the chunks before it.
-fn chunked_tree() -> Result<ScriptedTree, String> {
-    let mut b = Builder::with_root();
-    let wide = b.dir("", b"wide")?;
-    for i in 0..70_000_u32 {
-        let stem = format!("a-rather-long-name-so-a-chunk-holds-fewer-rows-{i:06}");
-        if i % 997 == 0 {
-            let folder = b.dir(&wide, format!("{stem}-d").as_bytes())?;
-            b.file(&folder, b"inside.bin", f64::from(i))?;
-        } else {
-            b.file(&wide, format!("{stem}-f.bin").as_bytes(), f64::from(i % 50))?;
-        }
-    }
-    Ok(b.finish(CHUNKED_ROOT, folder_meta(1), true, FastPath::Bulk))
-}
-
-fn scripted(name: &'static str, root: &str, tree: ScriptedTree) -> Fixture {
-    Fixture {
-        name,
-        root: PathBuf::from(root),
-        source: Source::Scripted(Arc::new(tree)),
-        never_descend: Vec::new(),
-    }
-}
-
-fn scripted_fixtures() -> Result<Vec<Fixture>, String> {
-    let mut mixed = scripted("mixed", MIXED_ROOT, mixed_tree()?);
-    mixed.never_descend = vec![mixed.root.join("never")];
-    let mut posix = scripted("posix", POSIX_ROOT, posix_tree()?);
-    posix.never_descend = vec![posix.root.join("Volumes")];
-    Ok(vec![
-        mixed,
-        posix,
-        scripted("windows", WINDOWS_ROOT, windows_tree()?),
-        scripted("wide (chunks)", WIDE_ROOT, wide_tree()?),
-        scripted(
-            "chunked, folders in every chunk",
-            CHUNKED_ROOT,
-            chunked_tree()?,
-        ),
-        scripted("deep", DEEP_ROOT, deep_tree()?),
-    ])
-}
-
-fn synthetic_fixtures() -> Vec<Fixture> {
-    let developer = |seed| SyntheticSpec::developer(30_000, seed);
-    let synthetic = |name, spec| Fixture {
-        name,
-        root: synthetic_temp_folder().join("t12a"),
-        source: Source::Synthetic(spec),
-        never_descend: Vec::new(),
-    };
-    vec![
-        synthetic("synthetic developer seed 1", developer(1)),
-        synthetic(
-            "synthetic folders 33%",
-            SyntheticSpec {
-                folder_ppm: 330_000,
-                ..developer(2)
-            },
-        ),
-        synthetic(
-            "synthetic folders 1%",
-            SyntheticSpec {
-                folder_ppm: 10_000,
-                ..developer(3)
-            },
-        ),
-    ]
-}
-
-// ---------------------------------------------------------------------------
 // The tests
 // ---------------------------------------------------------------------------
-
-const WORKERS: [u32; 3] = [1, 4, 8];
 
 #[test]
 fn every_folder_closes_once_after_its_children_with_its_subtrees_totals_on_scripted_trees()
@@ -691,6 +397,7 @@ fn a_cancelled_walk_leaves_nothing_open_and_the_root_never_closes() -> TestResul
         root_path: MIXED_ROOT.as_bytes().to_vec(),
         separator: SEP,
         observer: Some(recording.clone()),
+        extension_limit: EXTENSION_LIMIT,
     }));
     let mut opts = WalkOptions::new(MIXED_ROOT);
     opts.numbering = Numbering::Blocks;
