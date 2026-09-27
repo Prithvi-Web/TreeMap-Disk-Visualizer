@@ -75,26 +75,25 @@ pub struct Summary {
 /// Adds `record` to the chosen rows unless its row is already chosen (the first record
 /// stands: a β record before a top list's); a folder is queued at its depth for its top
 /// children.
-fn choose<'a>(
-    record: &'a Record,
-    chosen: &mut HashMap<&'a PositionPath, &'a Record>,
-    folders_at: &mut Vec<Vec<&'a Record>>,
+fn choose(
+    record: Record,
+    chosen: &mut HashMap<PositionPath, Record>,
+    folders_at: &mut Vec<Vec<PositionPath>>,
 ) -> Result<(), String> {
     if chosen.contains_key(&record.position) {
         return Ok(());
     }
-    chosen.insert(&record.position, record);
-    if record.counts.is_none() {
-        return Ok(());
+    if record.counts.is_some() {
+        let at = usize::try_from(record.depth).map_err(|e| e.to_string())?;
+        if folders_at.len() <= at {
+            folders_at.resize_with(at + 1, Vec::new);
+        }
+        folders_at
+            .get_mut(at)
+            .ok_or("a depth's folders vanished")?
+            .push(record.position.clone());
     }
-    let at = usize::try_from(record.depth).map_err(|e| e.to_string())?;
-    if folders_at.len() <= at {
-        folders_at.resize_with(at + 1, Vec::new);
-    }
-    folders_at
-        .get_mut(at)
-        .ok_or("a depth's folders vanished")?
-        .push(record);
+    chosen.insert(record.position.clone(), record);
     Ok(())
 }
 
@@ -102,17 +101,17 @@ fn choose<'a>(
 /// the later names of hard links, whose bytes leave every kept folder above them.
 pub(super) fn seal(
     root: &Record,
-    kept: &Held<'_>,
+    mut kept: Held<'_>,
     settled: &Settled<'_>,
 ) -> Result<Summary, String> {
     let later: HashSet<&PositionPath> =
         settled.losers.iter().map(|loser| &loser.position).collect();
     let mut shallow_unproven = false;
-    let mut chosen: HashMap<&PositionPath, &Record> =
-        HashMap::with_capacity(kept.by_beta.len() + 1);
-    let mut folders_at: Vec<Vec<&Record>> = Vec::new();
-    choose(root, &mut chosen, &mut folders_at)?;
-    for &record in &kept.by_beta {
+    let by_beta = std::mem::take(&mut kept.by_beta);
+    let mut chosen: HashMap<PositionPath, Record> = HashMap::with_capacity(by_beta.len() + 1);
+    let mut folders_at: Vec<Vec<PositionPath>> = Vec::new();
+    choose(root.clone(), &mut chosen, &mut folders_at)?;
+    for record in by_beta {
         choose(record, &mut chosen, &mut folders_at)?;
     }
     let mut at = 0usize;
@@ -126,25 +125,20 @@ pub(super) fn seal(
             .map(std::mem::take)
             .unwrap_or_default();
         for folder in folders {
-            let Some(list) = kept.top_children(depth, &folder.position) else {
+            let Some((children, cut)) = kept.top_children(depth, &folder) else {
                 continue;
             };
-            for child in &list.records {
-                choose(child, &mut chosen, &mut folders_at)?;
-            }
-            if list.cut
-                && list
-                    .records
-                    .iter()
-                    .any(|child| later.contains(&child.position))
-            {
+            if cut && children.iter().any(|child| later.contains(&child.position)) {
                 shallow_unproven = true;
+            }
+            for child in children {
+                choose(child, &mut chosen, &mut folders_at)?;
             }
         }
         at += 1;
     }
 
-    let mut records: Vec<&Record> = chosen.into_values().collect();
+    let mut records: Vec<Record> = chosen.into_values().collect();
     records.sort_by(|a, b| {
         a.depth
             .cmp(&b.depth)

@@ -1100,6 +1100,46 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
           - the cut flag ignored, and raised on uncut lists;
           - a displaced name, or a later one, dropped instead of listed at 0 bytes.
     - **T12e. The budget:** peak live bytes counted on a 2M synthetic tree, against §S.3's formula; `cargo mutants` on the module.
+      - **Designed 27 Sep 2026.**
+        - **What is counted.** Only the state's own allocations. A new test binary installs a global allocator that counts bytes allocated and freed, and the peak of their difference, on a thread only while a thread-local flag is set. A wrapper sink sets the flag around every call into the state (`root`, `commit`, `refused`, `skipped`, `abort`, `finish`).
+          - The state takes its calls under the commit lock, so they never overlap. Everything it holds is allocated and freed inside those calls; the walk's own buffers, on the same threads, are allocated outside them.
+          - So the count is the state's memory, and it is counted, not timed.
+        - **The tree:** `SyntheticSpec::developer(2_000_000, _)`. Its names are 18 bytes, as §S.3's L assumes. About 300,000 folders and 1.7M files fill both β heaps, and 1% of files are linked in pairs.
+        - **The formula**, from §S.3's own figures:
+          - the folder heap: 19 MB for 150,001 records, 127 B each;
+          - the file heap: 19 MB for 200,001, 95 B each;
+          - the shallow keep: 6 MB for 65,536 rows, 92 B each;
+          - the extension table: 8 MB;
+          - the answers: 5 MB;
+          - the open frontier: its peak, which the wrapper samples at every call, at 112 B each;
+          - the link log: its records, at 40 B each.
+        - **Expected to fail first.** Today's records are about 210 B apiece in the heaps: a name and a position in separate allocations, u128 bytes and optional counts on every record, and a B-tree entry each. So T12e is also the slimming:
+          - one allocation per record for its position and name;
+          - file records apart from folder records, without counts;
+          - an indexed binary heap in place of the B-tree, with a family's slot in a side map, only for keyed files.
+        - **`cargo mutants`** needs the tool installed, which downloads it from crates.io. That waits for the owner's word. Until then, the hand-written mutant runs stand for it.
+      - **Built 27 Sep 2026** (all but `cargo mutants`).
+        - **Measured first,** at the sink modes' `q_max` of 4,096 (`AGGREGATE_Q_MAX`, P4-13):
+          - the state peaked at 139 MB against a 59 MB budget;
+          - of that, the folder heap took about 43 MB (287 B a record) and the file heap about 71 MB (355 B);
+          - the shallow keep took 10 MB and everything else 14 MB.
+          - At memory mode's `q_max` of 65,536, some 100,000 folders were open at once and the peak was 158 MB.
+        - **The slimming:**
+          - `Place`: a row's position path and name in one boxed slice;
+          - separate `HeldFile` (no counts, u64 bytes) and `HeldFolder` rows;
+          - `SlotHeap`, a binary heap of slots with each slot's place tracked, and a family's slot in a side map;
+          - rows stored in chunks of 4,096, so the store never copies itself to grow. Doubling had left room for 262,144 rows where 150,001 fit, and each copy held both blocks;
+          - its indexes grow by doubling, but never past the heap's size;
+          - a top list's child keeps its index rather than its position;
+          - rows are made back into `Record`s only at the seal.
+        - **Now:** 51.6 MB at the peak against 59.4 MB, with 9,102 folders open and 17,000 keyed names.
+        - **Tests:**
+          - `tm-store/tests/aggregate_budget.rs` (1): a counting global allocator; a wrapper sink flags every call into the state;
+          - every T12a–T12d test passes unchanged.
+        - **Mutants:**
+          - the budget test: the heap's capacity ignored (183 MB) and the counting flag never set, both red. The T12d layout itself failed it at 139 MB.
+          - "shallow lists kept after D_s leaves" fits the budget's slack. T12c's fan test pins that, and it is red there.
+          - the keep module's nine behaviour mutants, run again on the new storage, are all red; the tie-swap mutant stays equivalent.
 - [ ] **T13. Spill files:** `spill_plan` (3×, file-system type, ledger, read-only portable session), files unlinked at creation or the `ftruncate` fallback (per Q1), the sweep, the confined remover. **24 Sep 2026 (T0):** Q1 is pending the owner (§S.11), so both paths stay designed (§S.5.3); T13 builds the one the owner's answer picks.
   - **Moved here from T7 (26 Sep 2026):** the link-key log's 32 MiB resident cap and its sorted runs on disk, merged k-way, in every tier (§S.6.3; on Windows every file is keyed, 64 B each in memory mode), with T7's test "a forced 64 KiB run size gives the same result as in memory" and its mutant "the link log's resident cap ignored".
   - **Tests first:**

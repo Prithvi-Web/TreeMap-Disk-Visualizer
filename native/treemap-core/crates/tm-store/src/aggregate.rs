@@ -34,7 +34,9 @@ pub use answers::{
     Answers, EXTENSION_LIMIT, Exactness, Extension, FileAnswer, FolderAnswer, KEEP, TypeAnswer,
 };
 pub use buckets::{SIZE_BUCKET_STARTS, SIZE_BUCKETS, size_bucket};
-pub use keep::{FILE_HEAP, FOLDER_HEAP, KeepLimits, ROOT_TOP, SHALLOW_ROWS, SHALLOW_TOP};
+pub use keep::{
+    AGGREGATE_Q_MAX, FILE_HEAP, FOLDER_HEAP, KeepLimits, ROOT_TOP, SHALLOW_ROWS, SHALLOW_TOP,
+};
 pub use position::PositionPath;
 pub use summary::{FolderRow, Omitted, Summary, SummaryRow};
 
@@ -164,7 +166,7 @@ impl AggregateState {
         }
         match &inner.root {
             Some(root) if inner.frontier.len() == 0 => {
-                summary::seal(root, &inner.keep.held(), &inner.links.settle())
+                summary::seal(root, inner.keep.held(), &inner.links.settle())
             }
             _ => Err(
                 "the aggregate state: the walk has not finished, so there is nothing to seal"

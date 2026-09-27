@@ -69,6 +69,13 @@ impl PositionPath {
         out
     }
 
+    /// The path whose packed bytes are `bytes` (as [`Self::as_bytes`] gave them).
+    pub(super) fn from_bytes(bytes: &[u8]) -> Self {
+        Self {
+            bytes: bytes.to_vec(),
+        }
+    }
+
     /// The parent's path; `None` for the root.
     #[must_use]
     pub fn parent(&self) -> Option<Self> {
@@ -85,14 +92,7 @@ impl PositionPath {
 
     /// How many steps from the root: the root's is 0.
     pub fn depth(&self) -> u32 {
-        let mut depth = 0u32;
-        let mut at = 0usize;
-        while let Some(&first) = self.bytes.get(at) {
-            let (more, _) = code(first);
-            at += 1 + usize::from(more);
-            depth += 1;
-        }
-        depth
+        depth_of(&self.bytes)
     }
 
     /// The packed bytes.
@@ -127,6 +127,18 @@ impl PositionPath {
             .cmp(&other.depth())
             .then_with(|| self.bytes.cmp(&other.bytes))
     }
+}
+
+/// How many steps the packed path `bytes` takes from the root.
+pub(super) fn depth_of(bytes: &[u8]) -> u32 {
+    let mut depth = 0u32;
+    let mut at = 0usize;
+    while let Some(&first) = bytes.get(at) {
+        let (more, _) = code(first);
+        at += 1 + usize::from(more);
+        depth += 1;
+    }
+    depth
 }
 
 /// How many bytes follow a code's first byte, and the value bits the first byte holds.
