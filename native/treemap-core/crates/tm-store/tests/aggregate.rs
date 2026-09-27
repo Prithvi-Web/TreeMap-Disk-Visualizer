@@ -20,7 +20,9 @@ use common::aggregate::{
     root_bytes, scripted, scripted_fixtures, synthetic_fixtures, walk, walk_named, whole,
 };
 use common::scripted::ScriptedTree;
-use tm_store::aggregate::{AggregateOptions, AggregateState, EXTENSION_LIMIT, PositionPath};
+use tm_store::aggregate::{
+    AggregateOptions, AggregateState, EXTENSION_LIMIT, KeepLimits, PositionPath,
+};
 use tm_walk::{
     DEFAULT_Q_MAX, FastPath, KIND_DIR, Lister, ListingSink, Numbering, Refusal, WalkError,
     WalkOptions, WalkOutput, start_with_sinks,
@@ -101,6 +103,9 @@ fn a_position_path_orders_as_its_indices_do_in_pre_order_post_order_and_breadth_
         );
         assert_eq!(pa.indices(), a, "round trip of {a:?}");
         assert_eq!(pa.depth(), u32::try_from(a.len()).unwrap_or(u32::MAX));
+        let mut up = a.clone();
+        let parent = up.pop().map(|_| PositionPath::from_indices(&up));
+        assert_eq!(pa.parent(), parent, "the parent of {a:?}");
         // Vec<u32>'s order is pre-order: lexicographic, a prefix first.
         assert_eq!(pa.pre_order(&pb), a.cmp(&b), "pre-order of {a:?} and {b:?}");
         assert_eq!(pa.cmp(&pb), a.cmp(&b), "Ord is pre-order: {a:?} and {b:?}");
@@ -140,9 +145,19 @@ fn each_boundary_index_takes_its_own_width_and_a_child_extends_its_parent() {
             "a child extends {index:#x}"
         );
         assert_eq!(two.indices(), vec![index, index]);
+        assert_eq!(
+            two.parent(),
+            Some(one.clone()),
+            "the parent of {index:#x}'s child"
+        );
     }
     assert!(PositionPath::root().as_bytes().is_empty());
     assert_eq!(PositionPath::root().depth(), 0);
+    assert_eq!(
+        PositionPath::root().parent(),
+        None,
+        "the root has no parent"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -398,6 +413,7 @@ fn a_cancelled_walk_leaves_nothing_open_and_the_root_never_closes() -> TestResul
         separator: SEP,
         observer: Some(recording.clone()),
         extension_limit: EXTENSION_LIMIT,
+        keep: KeepLimits::default(),
     }));
     let mut opts = WalkOptions::new(MIXED_ROOT);
     opts.numbering = Numbering::Blocks;
@@ -435,6 +451,15 @@ fn a_cancelled_walk_leaves_nothing_open_and_the_root_never_closes() -> TestResul
     assert!(
         lock(&recording.closed).iter().all(|c| c.id != 0),
         "the root never closed"
+    );
+    assert_eq!(
+        state.shallow_rows_held(),
+        0,
+        "the abort dropped what the shallow keep held"
+    );
+    assert!(
+        state.summary().is_err(),
+        "a cancelled walk has nothing to seal"
     );
     Ok(())
 }

@@ -11,6 +11,8 @@ use super::position::PositionPath;
 struct Open {
     /// Its parent's id; `None` for the root.
     parent: Option<u32>,
+    /// Its index among its parent's children (the root's is 0).
+    index: u32,
     position: PositionPath,
     depth: u32,
     name: Vec<u8>,
@@ -40,6 +42,13 @@ pub(super) struct Frontier {
     open: HashMap<u32, Open>,
 }
 
+/// Where an open folder is: what the files its blocks name are placed under.
+pub(super) struct Place<'a> {
+    pub path: &'a [u8],
+    pub position: &'a PositionPath,
+    pub depth: u32,
+}
+
 impl Frontier {
     pub(super) fn new(root_path: Vec<u8>, separator: u8) -> Self {
         Self {
@@ -54,11 +63,15 @@ impl Frontier {
         self.separator
     }
 
-    /// Open folder `folder`'s path and position, for the files its blocks name.
-    pub(super) fn place(&self, folder: u32) -> Result<(&[u8], &PositionPath), String> {
+    /// Open folder `folder`'s path, position and depth, for the files its blocks name.
+    pub(super) fn place(&self, folder: u32) -> Result<Place<'_>, String> {
         self.open
             .get(&folder)
-            .map(|open| (open.path.as_slice(), &open.position))
+            .map(|open| Place {
+                path: open.path.as_slice(),
+                position: &open.position,
+                depth: open.depth,
+            })
             .ok_or_else(|| format!("a block named folder {folder}, which is not open"))
     }
 
@@ -81,15 +94,16 @@ impl Frontier {
         self.open.clear();
     }
 
-    /// Opens the root, id 0, awaiting its listing.
-    pub(super) fn open_root(&mut self) -> Result<(), String> {
+    /// Opens the root, id 0, awaiting its listing: its name and time are its own row's.
+    pub(super) fn open_root(&mut self, name: &[u8], modified_at: f64) -> Result<(), String> {
         let root = Open {
             parent: None,
+            index: 0,
             position: PositionPath::root(),
             depth: 0,
-            name: Vec::new(),
+            name: name.to_vec(),
             path: self.root_path.clone(),
-            modified_at: 0.0,
+            modified_at,
             pending: 1,
             bytes: 0,
             files: 0,
@@ -131,6 +145,7 @@ impl Frontier {
                     .ok_or_else(|| format!("folder {folder} has too many open children"))?;
                 Some(Open {
                     parent: Some(folder),
+                    index,
                     position: parent.position.child(index),
                     depth: parent.depth.saturating_add(1),
                     name: name.to_vec(),
@@ -153,11 +168,11 @@ impl Frontier {
 
     /// `folder`'s listing has ended — its block's last chunk, its refusal or its skip. Each
     /// folder that thereby closes is handed to `closed`, then folded into its parent, which
-    /// may close in turn.
+    /// may close in turn. A fault `closed` answers stops the cascade.
     pub(super) fn ended(
         &mut self,
         folder: u32,
-        closed: &mut dyn FnMut(&ClosedFolder<'_>),
+        closed: &mut dyn FnMut(&ClosedFolder<'_>) -> Result<(), String>,
     ) -> Result<(), String> {
         let mut at = folder;
         loop {
@@ -178,6 +193,8 @@ impl Frontier {
                 .ok_or_else(|| format!("folder {at} vanished as it closed"))?;
             closed(&ClosedFolder {
                 id: at,
+                parent: done.parent,
+                index: done.index,
                 name: &done.name,
                 path: &done.path,
                 modified_at: done.modified_at,
@@ -186,7 +203,7 @@ impl Frontier {
                 bytes: done.bytes,
                 files: done.files,
                 folders: done.folders,
-            });
+            })?;
             let Some(parent) = done.parent else {
                 return Ok(());
             };

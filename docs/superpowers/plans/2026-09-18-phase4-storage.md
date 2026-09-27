@@ -998,6 +998,46 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
         - ties at a boundary are dropped together;
         - kept totals plus omitted equal the full totals;
         - 5 runs × workers {1, 4, 8} give identical state.
+      - **Designed 27 Sep 2026.**
+        - **The β heaps.** One holds the largest folder totals below the root (`R_dir + 1` = 150,001), the other the largest file sizes (`R_file + 1` = 200,001). Each record is a row: its name, position path, depth, bytes and time, and a folder's recursive file and folder counts. A file enters at its block, a folder when it closes. A value no larger than a full heap's smallest is turned away before its record is made.
+        - **At the seal.** β_d is the smallest total in the folder heap if it is full, and otherwise there is none (−∞); β_f likewise. Kept: the root; every folder whose total is above β_d; every file whose size is above both. Because the heap's smallest value only rises, every folder above β_d is still in the heap, and the rule never depends on the order things arrived in.
+        - **The shallow keep, corrected in two ways:**
+          - **the root keeps its top 100 children, not 32.** `saveSnapshot`'s `topEntries` reads the root's 100 largest (snapshots.ts:156-161, `MAX_TOP_ENTRIES`); the tree it stores reads 30 per folder (`TREE_SHAPES`), which 32 covers. MCP `scan_path` reads the root's top 10 but breaks ties by `localeCompare`, not child order. It is exact unless more than 90 of the root's children tie at the tenth size, which T19 flags;
+          - **every *kept* folder at depth ≤ D_s** keeps its top children, not every folder. A top-32 child of a folder that is not kept would have no parent in the summary.
+        - **The top children** are chosen by (size desc, then child order), the order `compactTree`'s stable sort gives. Files enter at their block, and child folders when they close.
+        - **D_s** comes from a histogram of rows per depth. Each folder listed at depth d adds min(its top, its listing's length). D_s is the deepest depth whose rows, with every shallower depth's, fit in 65,536; the root's list always fits. D_s only falls, and when it does, the lists at the depth it left are dropped at once. So what is held never passes the cap, and the final D_s is the same whatever order the walk went in.
+        - **The summary** is the kept rows in breadth-first order (depth, then position path), the root first, each with its parent's place. Each kept folder carries `omitted {files, folders, bytes}`: its totals minus its kept children's.
+        - **Limits are options,** so a test can make β bite on a small tree. The defaults are the constants above.
+        - **The oracle** is the full tree of `build(take())`. From it, β, D_s, the kept set and each folder's omitted tally are computed directly: the omitted tally is summed from the children that were not kept, not by subtraction.
+        - **Mutants to see red:**
+          - ≥ in place of > at β;
+          - files held to β_f alone;
+          - the root's top cut to 32;
+          - child order reversed at ties;
+          - D_s's cap off by one;
+          - a list kept after D_s leaves its depth;
+          - only the top chain's folders keep children;
+          - a folder's omitted folders missing itself.
+      - **Built 27 Sep 2026.**
+        - **tm-store's `aggregate/keep.rs`:** the two β heaps; the shallow keep's lists, the rows-per-depth histogram and D_s; `KeepLimits` with the defaults above.
+        - **`aggregate/summary.rs`:** the seal (`AggregateState::summary`). It is refused until the walk has finished, and after a broken promise of the walk's. `shallow_rows_held()` says what the shallow keep holds.
+        - **Also changed:**
+          - `PositionPath::parent`;
+          - a closed folder says its parent and its index;
+          - the root opens with its own name and time.
+        - **Tests** (`tm-store/tests/aggregate_keep.rs`, 9), held to the full tree of `build(take())`:
+          - the mixed, deep, chunked and wide trees and three synthetic trees, at 1, 4 and 8 workers and `q_max` 2, with small limits and the defaults;
+          - ties at β dropped together;
+          - the root's 100 largest;
+          - D_s falling to 2, with the dropped lists no longer held;
+          - a folder kept by β alone keeping its top children;
+          - a listing in chunks keeping the top children its first chunk named;
+          - 5 runs × {1, 4, 8} workers × two `q_max` giving one summary;
+          - a summary refused before the walk.
+        - **Also in `tests/aggregate.rs`:** `parent()` on 20,000 random paths and at every code width; a cancelled walk holds no shallow rows and has nothing to seal.
+        - **Mutants:** 16 red.
+          - One, "a big listing's list made again at every chunk", survived at first: no tree had a chunked folder whose top children β did not also keep. The first-chunk test was added for it.
+          - One is equivalent: a heap that takes a value equal to its smallest. It swaps one record tied at β for another, so neither β nor the kept set changes.
     - **T12d. Hard links.**
       - **Online.** A keyed file enters the file answers as one entry per `(dev, ino)`, holding its least `(depth, position path)` member so far (P4-2a). A member that arrives later but comes earlier takes the bytes, and the one it displaces becomes a 0-byte file, as `HardlinkDup` makes it.
       - **At the seal.** A folder that closed with a loser's bytes is corrected (§S.6.3), and the Δ check decides `exact` (§S.6.4). The link log stays resident; its disk runs are T13's.

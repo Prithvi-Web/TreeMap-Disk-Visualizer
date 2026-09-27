@@ -69,6 +69,20 @@ impl PositionPath {
         out
     }
 
+    /// The parent's path; `None` for the root.
+    #[must_use]
+    pub fn parent(&self) -> Option<Self> {
+        let mut at = 0usize;
+        let mut last = None;
+        while let Some(&first) = self.bytes.get(at) {
+            last = Some(at);
+            let (more, _) = code(first);
+            at += 1 + usize::from(more);
+        }
+        let bytes = self.bytes.get(..last?)?.to_vec();
+        Some(Self { bytes })
+    }
+
     /// How many steps from the root: the root's is 0.
     pub fn depth(&self) -> u32 {
         let mut depth = 0u32;

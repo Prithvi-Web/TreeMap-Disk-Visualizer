@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tm_store::aggregate::{
     AggregateOptions, AggregateState, Answers, CloseObserver, ClosedFolder, EXTENSION_LIMIT,
+    KeepLimits, Summary,
 };
 use tm_walk::walk::{MAX_WORKERS, Pacer};
 use tm_walk::{
@@ -97,14 +98,18 @@ pub fn joined(parent: &[u8], name: &[u8]) -> Vec<u8> {
     path
 }
 
-/// Each row's size as the walk handed it to its sinks: what its listing said.
+/// Each row's size as the walk handed it to its sinks: what its listing said; and the
+/// root's own time.
 #[derive(Default)]
 pub struct Listed {
     pub by_id: Mutex<HashMap<u32, f64>>,
+    pub root_mtime: Mutex<Option<f64>>,
 }
 
 impl ListingSink for Listed {
-    fn root(&self, _name: &[u8], _meta: &tm_walk::Meta) {}
+    fn root(&self, _name: &[u8], meta: &tm_walk::Meta) {
+        *lock(&self.root_mtime) = Some(meta.mtime_ms);
+    }
 
     fn commit(&self, block: &Block<'_>) {
         let mut by_id = lock(&self.by_id);
@@ -121,10 +126,16 @@ impl ListingSink for Listed {
 pub struct Walked {
     pub out: WalkOutput,
     pub listed: HashMap<u32, f64>,
+    /// The root's own time as the walk read it.
+    pub root_mtime: Option<f64>,
     pub closed: Vec<Closed>,
     pub open_after: usize,
     /// What the state answered once the walk was done.
     pub answers: Answers,
+    /// The shallow keep's rows held once the walk was done, before the seal.
+    pub shallow_rows_held: usize,
+    /// What the state kept, sealed.
+    pub summary: Result<Summary, String>,
 }
 
 pub fn walk(fixture: &Fixture, workers: u32, q_max: usize) -> Result<Walked, String> {
@@ -149,12 +160,49 @@ pub fn walk_limited(
     root_path: Vec<u8>,
     extension_limit: usize,
 ) -> Result<Walked, String> {
+    walk_with(
+        fixture,
+        workers,
+        q_max,
+        root_path,
+        extension_limit,
+        KeepLimits::default(),
+    )
+}
+
+/// [`walk`], what is kept bounded by `keep`.
+pub fn walk_kept(
+    fixture: &Fixture,
+    workers: u32,
+    q_max: usize,
+    keep: KeepLimits,
+) -> Result<Walked, String> {
+    walk_with(
+        fixture,
+        workers,
+        q_max,
+        root_bytes(fixture),
+        EXTENSION_LIMIT,
+        keep,
+    )
+}
+
+/// [`walk_limited`], what is kept bounded by `keep`.
+pub fn walk_with(
+    fixture: &Fixture,
+    workers: u32,
+    q_max: usize,
+    root_path: Vec<u8>,
+    extension_limit: usize,
+    keep: KeepLimits,
+) -> Result<Walked, String> {
     let recording = Arc::new(Recording::default());
     let state = Arc::new(AggregateState::new(AggregateOptions {
         root_path,
         separator: SEP,
         observer: Some(recording.clone()),
         extension_limit,
+        keep,
     }));
     let mut opts = WalkOptions::new(fixture.root.clone());
     opts.numbering = Numbering::Blocks;
@@ -174,13 +222,17 @@ pub fn walk_limited(
         start_with_sinks(opts, Arc::new(OpenPacer), lister, sinks).map_err(|e| e.to_string())?;
     let out = handle.take().map_err(|e| format!("the walk: {e}"))?;
     let closed = lock(&recording.closed).clone();
+    let root_mtime = *lock(&listed.root_mtime);
     let listed = lock(&listed.by_id).clone();
     Ok(Walked {
         out,
         listed,
+        root_mtime,
         closed,
         open_after: state.open_folders(),
         answers: state.answers(),
+        shallow_rows_held: state.shallow_rows_held(),
+        summary: state.summary(),
     })
 }
 

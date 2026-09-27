@@ -25,13 +25,17 @@
 mod answers;
 mod buckets;
 mod frontier;
+mod keep;
 mod position;
+mod summary;
 
 pub use answers::{
     Answers, EXTENSION_LIMIT, Extension, FileAnswer, FolderAnswer, KEEP, TypeAnswer,
 };
 pub use buckets::{SIZE_BUCKET_STARTS, SIZE_BUCKETS, size_bucket};
+pub use keep::{FILE_HEAP, FOLDER_HEAP, KeepLimits, ROOT_TOP, SHALLOW_ROWS, SHALLOW_TOP};
 pub use position::PositionPath;
+pub use summary::{FolderRow, Omitted, Summary, SummaryRow};
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -40,6 +44,7 @@ use tm_walk::{Block, Finishing, KIND_DIR, ListingSink, Meta, Refusal};
 use crate::derive::{decided_here, extension, store_mtime};
 use answers::{File, Folder, Kept};
 use frontier::{Child, Frontier};
+use keep::{Keep, Record};
 
 /// What an aggregate state is made with.
 pub struct AggregateOptions {
@@ -52,17 +57,23 @@ pub struct AggregateOptions {
     /// How many distinct extensions the file types hold before they are refused:
     /// [`EXTENSION_LIMIT`].
     pub extension_limit: usize,
+    /// How much of the tree itself is kept: the β heaps and the shallow keep.
+    pub keep: KeepLimits,
 }
 
 /// A folder the moment it closes: everything below it counted.
 pub struct ClosedFolder<'a> {
     /// The walk's id for it.
     pub id: u32,
-    /// Its name as the store keeps it (the root's is empty).
+    /// Its parent's id; `None` for the root.
+    pub parent: Option<u32>,
+    /// Its index among its parent's children (the root's is 0).
+    pub index: u32,
+    /// Its name as the store keeps it.
     pub name: &'a [u8],
     /// Its path, built as the scan builds paths.
     pub path: &'a [u8],
-    /// Its modification time as the store keeps it (the root's is 0 here).
+    /// Its modification time as the store keeps it.
     pub modified_at: f64,
     /// Its place in the tree.
     pub position: &'a PositionPath,
@@ -90,10 +101,24 @@ pub struct AggregateState {
 
 struct Inner {
     frontier: Frontier,
+    /// The answers' lists.
     kept: Kept,
+    /// The β heaps and the shallow keep.
+    keep: Keep,
+    /// The root's own record, once it has closed.
+    root: Option<Record>,
     /// The first broken promise of the walk's, reported by `finish`; nothing more is
     /// counted after it.
     fault: Option<String>,
+}
+
+/// What one step of the walk works on.
+struct Parts<'a> {
+    frontier: &'a mut Frontier,
+    kept: &'a mut Kept,
+    keep: &'a mut Keep,
+    root: &'a mut Option<Record>,
+    observer: Option<&'a dyn CloseObserver>,
 }
 
 impl AggregateState {
@@ -104,6 +129,8 @@ impl AggregateState {
             inner: Mutex::new(Inner {
                 frontier: Frontier::new(options.root_path, options.separator),
                 kept: Kept::new(options.extension_limit),
+                keep: Keep::new(options.keep),
+                root: None,
                 fault: None,
             }),
         }
@@ -121,54 +148,100 @@ impl AggregateState {
         self.lock().kept.answers()
     }
 
+    /// What aggregate kept of the tree, sealed (design §S.6.2). Refused until the walk has
+    /// finished, and after a broken promise of the walk's.
+    pub fn summary(&self) -> Result<Summary, String> {
+        let inner = self.lock();
+        if let Some(fault) = &inner.fault {
+            return Err(format!("the aggregate state: {fault}"));
+        }
+        match &inner.root {
+            Some(root) if inner.frontier.len() == 0 => summary::seal(root, &inner.keep.held()),
+            _ => Err(
+                "the aggregate state: the walk has not finished, so there is nothing to seal"
+                    .to_owned(),
+            ),
+        }
+    }
+
+    /// How many rows the shallow keep holds now: never more than its cap, or the root's own
+    /// list where that is more.
+    pub fn shallow_rows_held(&self) -> usize {
+        self.lock().keep.shallow_rows_held()
+    }
+
     fn lock(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Runs `step` on the frontier and the answers, unless a fault has already stopped the
-    /// counting; its own fault stops it.
-    fn run(
-        &self,
-        step: impl FnOnce(&mut Frontier, &mut Kept, Option<&dyn CloseObserver>) -> Result<(), String>,
-    ) {
+    /// Runs `step` on the state, unless a fault has already stopped the counting; its own
+    /// fault stops it.
+    fn run(&self, step: impl FnOnce(Parts<'_>) -> Result<(), String>) {
         let mut inner = self.lock();
         let Inner {
             frontier,
             kept,
+            keep,
+            root,
             fault,
         } = &mut *inner;
         if fault.is_some() {
             return;
         }
-        if let Err(broken) = step(frontier, kept, self.observer.as_deref()) {
+        let parts = Parts {
+            frontier,
+            kept,
+            keep,
+            root,
+            observer: self.observer.as_deref(),
+        };
+        if let Err(broken) = step(parts) {
             *fault = Some(broken);
         }
     }
 }
 
-/// Ends `folder`'s listing: each folder that closes is shown to the observer, and each
-/// below the root offered to the answers.
-fn end(
-    frontier: &mut Frontier,
-    kept: &mut Kept,
-    observer: Option<&dyn CloseObserver>,
-    folder: u32,
-) -> Result<(), String> {
-    frontier.ended(folder, &mut |closed: &ClosedFolder<'_>| {
-        if let Some(observer) = observer {
-            observer.closed(closed);
-        }
-        if closed.depth > 0 {
-            kept.folder(&Folder {
-                name: closed.name,
-                path: closed.path,
-                position: closed.position,
-                size: closed.bytes,
-                file_count: closed.files,
+impl Parts<'_> {
+    /// Ends `folder`'s listing: each folder that closes is shown to the observer, offered
+    /// below the root to the answers and to what is kept, and the root kept as it closes.
+    fn end(&mut self, folder: u32) -> Result<(), String> {
+        let Self {
+            frontier,
+            kept,
+            keep,
+            root,
+            observer,
+        } = self;
+        frontier.ended(folder, &mut |closed: &ClosedFolder<'_>| {
+            if let Some(observer) = observer {
+                observer.closed(closed);
+            }
+            keep.closed(closed.id, closed.position)?;
+            let record = || Record {
+                name: closed.name.into(),
+                position: closed.position.clone(),
+                depth: closed.depth,
+                bytes: closed.bytes,
                 modified_at: closed.modified_at,
-            });
-        }
-    })
+                counts: Some((closed.files, closed.folders)),
+            };
+            match closed.parent {
+                None => **root = Some(record()),
+                Some(parent) => {
+                    kept.folder(&Folder {
+                        name: closed.name,
+                        path: closed.path,
+                        position: closed.position,
+                        size: closed.bytes,
+                        file_count: closed.files,
+                        modified_at: closed.modified_at,
+                    });
+                    keep.child(parent, closed.index, closed.bytes, true, record);
+                }
+            }
+            Ok(())
+        })
+    }
 }
 
 /// A file's extension as the store decides it: none; lower-case ASCII, decided here; or,
@@ -199,20 +272,31 @@ fn whole_bytes(size: f64) -> u64 {
 }
 
 impl ListingSink for AggregateState {
-    fn root(&self, _name: &[u8], _meta: &Meta) {
-        self.run(|frontier, _, _| frontier.open_root());
+    fn root(&self, name: &[u8], meta: &Meta) {
+        self.run(|parts| parts.frontier.open_root(name, store_mtime(meta.mtime_ms)));
     }
 
     fn commit(&self, block: &Block<'_>) {
-        self.run(|frontier, kept, observer| {
-            // A folder's own times, read from the folder itself (Windows), replace what its
-            // parent's listing said, as the memory store's row takes them.
-            if block.offset == 0
-                && block.folder != 0
-                && let Some(own) = block.own_times
-            {
-                frontier.own_time(block.folder, store_mtime(own.mtime_ms))?;
+        self.run(|mut parts| {
+            if block.offset == 0 {
+                // A folder's own times, read from the folder itself (Windows), replace what
+                // its parent's listing said, as the memory store's row takes them.
+                if block.folder != 0
+                    && let Some(own) = block.own_times
+                {
+                    parts
+                        .frontier
+                        .own_time(block.folder, store_mtime(own.mtime_ms))?;
+                }
+                let depth = parts.frontier.place(block.folder)?.depth;
+                parts.keep.listed(block.folder, depth, block.len)?;
             }
+            let Parts {
+                frontier,
+                kept,
+                keep,
+                ..
+            } = &mut parts;
             let separator = frontier.separator();
             for (step, row) in (0u32..).zip(block.rows) {
                 let index = block
@@ -237,39 +321,50 @@ impl ListingSink for AggregateState {
                             bytes: u128::from(size),
                         },
                     )?;
-                    let (parent_path, parent_position) = frontier.place(block.folder)?;
+                    let place = frontier.place(block.folder)?;
                     kept.file(&File {
                         name,
-                        parent_path,
+                        parent_path: place.path,
                         separator,
-                        parent_position,
+                        parent_position: place.position,
                         index,
                         size,
                         extension: extension_of(name),
                         modified_at,
                     });
+                    let bytes = u128::from(size);
+                    keep.child(block.folder, index, bytes, false, || Record {
+                        name: name.into(),
+                        position: place.position.child(index),
+                        depth: place.depth.saturating_add(1),
+                        bytes,
+                        modified_at,
+                        counts: None,
+                    });
                 }
             }
             let rows = u64::try_from(block.rows.len()).unwrap_or(u64::MAX);
             if u64::from(block.offset).saturating_add(rows) == u64::from(block.len) {
-                end(frontier, kept, observer, block.folder)?;
+                parts.end(block.folder)?;
             }
             Ok(())
         });
     }
 
     fn refused(&self, folder: u32, _why: Refusal) {
-        self.run(|frontier, kept, observer| end(frontier, kept, observer, folder));
+        self.run(|mut parts| parts.end(folder));
     }
 
     fn skipped(&self, folder: u32) {
-        self.run(|frontier, kept, observer| end(frontier, kept, observer, folder));
+        self.run(|mut parts| parts.end(folder));
     }
 
     fn abort(&self) {
         let mut inner = self.lock();
         inner.frontier.clear();
         inner.kept.clear();
+        inner.keep.clear();
+        inner.root = None;
         inner.fault = None;
     }
 
