@@ -96,6 +96,7 @@ fn options(headroom_rows: u32) -> BuildOptions {
         blocks_are_meaningful: true,
         sort_children: true,
         container_rules: Vec::new(),
+        cloud_rules: Vec::new(),
         headroom_rows,
         mode: StoreMode::Memory,
     }

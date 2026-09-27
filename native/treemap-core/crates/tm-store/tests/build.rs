@@ -2,7 +2,7 @@
 //! (`ingestColumns` in `src/services/scan/nativeEngine.ts`, `statToInput`,
 //! `PackedScanStore`'s `writeNode`/`internExt`/`finalize`).
 
-use tm_store::derive::ContainerRule;
+use tm_store::derive::{CloudAnchor, CloudRule, ContainerRule};
 use tm_store::{BuildOptions, EXT_NONE, EXT_OVERFLOW, Store, StoreError, StoreMode, build, flag};
 use tm_walk::{
     DirRefusal, FLAG_DATALESS, FLAG_REFUSED_DIR, FastPath, HardlinkRef, KIND_DIR, KIND_FILE,
@@ -133,6 +133,9 @@ fn options() -> BuildOptions {
         blocks_are_meaningful: true,
         sort_children: true,
         container_rules: typescript_rules(),
+        // Memory mode leaves the cloud rule to Node (P4-3):
+        // `a_memory_build_leaves_the_cloud_rule_to_node_whatever_the_table` below.
+        cloud_rules: Vec::new(),
         headroom_rows: HEADROOM,
         mode: StoreMode::Memory,
     }
@@ -412,6 +415,60 @@ fn the_walk_s_placeholders_are_counted_and_its_guesses_left_to_node() -> TestRes
 }
 
 #[test]
+fn a_memory_build_leaves_the_cloud_rule_to_node_whatever_the_table() -> TestResult {
+    let mut dataless = file(1, "a-dataless.pdf", 500.0);
+    dataless.alloc = 0.0;
+    dataless.flags = FLAG_DATALESS;
+    let mut guess = file(1, "b-guess.pdf", 300.0);
+    guess.alloc = 0.0;
+    let nodes = [
+        dir(0, "r"),
+        dir(0, "OneDrive"),
+        dataless,
+        guess,
+        file(1, "c.pdf", 7.0),
+    ];
+    let walk = || {
+        let mut walk = walk_of(&nodes, &[], &[]);
+        // `walk_of`'s NaN is never equal to itself, and the two stores are compared whole.
+        walk.stats.cpu_seconds = 1.0;
+        walk
+    };
+    let without = build(walk(), &options())?;
+    // Rules every path here matches: in memory mode Node's pass over the candidates decides
+    // (decision P4-3), so the table changes nothing the build makes.
+    let with = build(
+        walk(),
+        &BuildOptions {
+            cloud_rules: vec![
+                CloudRule {
+                    text: "OneDrive".to_owned(),
+                    at: CloudAnchor::Anywhere,
+                    provider: 2,
+                },
+                CloudRule {
+                    text: "pdf".to_owned(),
+                    at: CloudAnchor::End,
+                    provider: 1,
+                },
+            ],
+            ..options()
+        },
+    )?;
+    assert_eq!(with, without);
+    assert!(
+        with.cloud_prov.as_slice().iter().all(|&p| p == 0),
+        "no provider set"
+    );
+    let candidates: Vec<usize> = with.cloud_candidates.iter().map(|&c| c as usize).collect();
+    assert_eq!(
+        candidates,
+        [id_of(&with, "a-dataless.pdf"), id_of(&with, "b-guess.pdf")]
+    );
+    Ok(())
+}
+
+#[test]
 fn a_git_folder_marks_the_folder_it_is_in() -> TestResult {
     let nodes = [
         dir(0, "r"),
@@ -639,6 +696,46 @@ fn what_the_build_cannot_do_as_node_would_is_refused() {
         matches!(refused, Err(StoreError::BadContainerRule { index: 12, .. })),
         "{refused:?}"
     );
+    let good = CloudRule {
+        text: "OneDrive".to_owned(),
+        at: CloudAnchor::Anywhere,
+        provider: 2,
+    };
+    for (bad, why) in [
+        (
+            CloudRule {
+                text: "Caf\u{e9}".to_owned(),
+                ..good.clone()
+            },
+            "outside ASCII the regex would fold what the matcher cannot",
+        ),
+        (
+            CloudRule {
+                provider: 0,
+                ..good.clone()
+            },
+            "0 is no provider",
+        ),
+        (
+            CloudRule {
+                text: String::new(),
+                ..good.clone()
+            },
+            "an empty text matches every path",
+        ),
+    ] {
+        let refused = build(
+            walk_of(&nodes, &[], &[]),
+            &BuildOptions {
+                cloud_rules: vec![good.clone(), bad],
+                ..options()
+            },
+        );
+        assert!(
+            matches!(refused, Err(StoreError::BadCloudRule { index: 1, .. })),
+            "{why}: {refused:?}"
+        );
+    }
 
     let mut short = walk_of(&nodes, &[], &[]);
     short.mtime_ms.pop();

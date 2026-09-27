@@ -1,6 +1,7 @@
 //! The facts the Node ingest derives for each node, as pure functions: the rules of
-//! `statToInput` (`src/services/scan/nodeInput.ts`) and `detectContainerKind`
-//! (`src/utils/containerKind.ts`), each pinned by a test against the values Node gives.
+//! `statToInput` (`src/services/scan/nodeInput.ts`), `detectContainerKind`
+//! (`src/utils/containerKind.ts`) and `cloudProviderFor` (`src/services/cloudFolders.ts`), each
+//! pinned by a test against the values Node gives.
 
 /// JavaScript's `Math.round`: NaN or ±∞ as it is; otherwise the floor, plus one when the
 /// fraction is at least a half, and −0 when that is zero and `x` was negative (an integer,
@@ -117,8 +118,84 @@ fn matches_rule(name: &[u8], rule: &ContainerRule) -> bool {
     if rule.whole_name {
         return name.eq_ignore_ascii_case(text);
     }
-    name.len()
+    ends_with_ignoring_ascii_case(name, text)
+}
+
+fn ends_with_ignoring_ascii_case(bytes: &[u8], text: &[u8]) -> bool {
+    bytes
+        .len()
         .checked_sub(text.len())
-        .and_then(|start| name.get(start..))
+        .and_then(|start| bytes.get(start..))
         .is_some_and(|tail| tail.eq_ignore_ascii_case(text))
+}
+
+/// Where a cloud rule's text must sit in a path (`at` in `CLOUD_RULES`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CloudAnchor {
+    /// Anywhere in the path.
+    Anywhere,
+    /// At its very end: a regex's `$` without the `m` flag, which never matches before a
+    /// final newline.
+    End,
+}
+
+/// One row of `CLOUD_RULES` (`src/services/cloudFolders.ts`), the table `cloudProviderFor`'s
+/// regexes are built from (decision P4-3a), as Node passes it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CloudRule {
+    /// Printable ASCII the path must hold, compared ignoring the case of A–Z and nothing else.
+    pub text: String,
+    /// Where it must sit.
+    pub at: CloudAnchor,
+    /// The provider column's number for the rule's provider (`CLOUD_ID` in `scanStore.ts`,
+    /// 1–3); never 0, which is "none".
+    pub provider: u8,
+}
+
+/// Why a cloud rule cannot be used, or `None` when it can, as `cloudMatchers` refuses it too:
+/// its provider must not be 0, and its text must be printable ASCII, one byte at least.
+/// Outside ASCII the regexes' `i` flag folds letters among themselves (`é` matches `É`), which
+/// a matcher of ASCII case could not follow, and an empty text matches every path.
+pub fn cloud_rule_problem(rule: &CloudRule) -> Option<&'static str> {
+    if rule.provider == 0 {
+        Some("provider 0 means no provider")
+    } else if rule.text.is_empty() {
+        Some("the text is empty")
+    } else if !rule.text.bytes().all(|b| b.is_ascii_graphic() || b == b' ') {
+        Some("the text is not printable ASCII")
+    } else {
+        None
+    }
+}
+
+/// The provider `cloudProviderFor` gives a path, as the provider column's number: the first
+/// rule the path matches names it, and 0 is none.
+///
+/// `path` is the bytes Node's string is decoded from: UTF-8, or not quite (Node turns each
+/// invalid sequence into U+FFFD and never consumes an ASCII byte doing so). The regexes'
+/// `i` flag comes without `u`, and the spec's Canonicalize then never maps a character
+/// outside ASCII onto one inside it: U+212A KELVIN SIGN is not `k`, U+0130 is not `i`, U+017F
+/// is not `s`. A rule's text being ASCII, a match is a run of ASCII characters equal to it
+/// but for the case of A–Z, which the bytes hold as the same run in the same place. So
+/// comparing bytes with [`u8::eq_ignore_ascii_case`], and folding nothing else, gives the
+/// regexes' answer for every path (`tests/cloud.rs` holds it to the oracle Node writes).
+pub fn cloud_provider(path: &[u8], rules: &[CloudRule]) -> u8 {
+    rules
+        .iter()
+        .find(|rule| cloud_rule_matches(path, rule))
+        .map_or(0, |rule| rule.provider)
+}
+
+fn cloud_rule_matches(path: &[u8], rule: &CloudRule) -> bool {
+    let text = rule.text.as_bytes();
+    match rule.at {
+        CloudAnchor::End => ends_with_ignoring_ascii_case(path, text),
+        // `windows` needs a length above 0; an empty text matches as an empty regex does.
+        CloudAnchor::Anywhere => {
+            text.is_empty()
+                || path
+                    .windows(text.len())
+                    .any(|window| window.eq_ignore_ascii_case(text))
+        }
+    }
 }

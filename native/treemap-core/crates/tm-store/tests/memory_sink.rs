@@ -31,8 +31,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use tm_store::{
-    AnonTally, BuildOptions, Counters, EXT_NONE, EXT_OVERFLOW, MemorySink, Store, StoreError,
-    StoreMode, anon_tally, build, flag,
+    AnonTally, BuildOptions, CloudAnchor, CloudRule, ContainerRule, Counters, EXT_NONE,
+    EXT_OVERFLOW, MemorySink, Store, StoreError, StoreMode, anon_tally, build, flag,
 };
 use tm_walk::invariants::check_walk_columns;
 use tm_walk::platform::{ListBuffer, Lister, Meta};
@@ -94,6 +94,7 @@ fn options(root_name: &str, root_mtime_ms: f64, posix: bool, headroom_rows: u32)
         blocks_are_meaningful: posix,
         sort_children: posix,
         container_rules: container_rules(),
+        cloud_rules: Vec::new(),
         headroom_rows,
         mode: StoreMode::Memory,
     }
@@ -1874,4 +1875,54 @@ fn a_sink_the_walk_outgrows_writes_nothing_past_its_room() -> TestResult {
         );
     }
     Ok(())
+}
+
+/// The sink checks its options as `build` does (`check_options`, shared since T7): a
+/// container rule or a cloud rule a build refuses, a sink refuses too, before it reserves
+/// any room — so the walks that are to evaluate the cloud table (T12–T14) never start with
+/// one the regexes would answer differently.
+#[test]
+fn a_sink_refuses_the_rules_a_build_refuses() {
+    let mut containers = container_rules();
+    containers.push(ContainerRule {
+        text: ".ZIP".to_owned(),
+        whole_name: false,
+        folders: false,
+        kind: 1,
+    });
+    let refused = MemorySink::new(
+        &BuildOptions {
+            container_rules: containers,
+            ..options("root", 0.0, true, 1_024)
+        },
+        4_096,
+        1 << 20,
+    )
+    .err();
+    assert!(
+        matches!(refused, Some(StoreError::BadContainerRule { .. })),
+        "{refused:?}"
+    );
+    let good = CloudRule {
+        text: "OneDrive".to_owned(),
+        at: CloudAnchor::Anywhere,
+        provider: 2,
+    };
+    let bad = CloudRule {
+        provider: 0,
+        ..good.clone()
+    };
+    let refused = MemorySink::new(
+        &BuildOptions {
+            cloud_rules: vec![good, bad],
+            ..options("root", 0.0, true, 1_024)
+        },
+        4_096,
+        1 << 20,
+    )
+    .err();
+    assert!(
+        matches!(refused, Some(StoreError::BadCloudRule { index: 1, .. })),
+        "{refused:?}"
+    );
 }

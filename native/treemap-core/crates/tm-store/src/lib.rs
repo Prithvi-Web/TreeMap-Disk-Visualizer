@@ -7,10 +7,13 @@
 //! (`ingestColumns` in `src/services/scan/nativeEngine.ts`) derives, derived the same way,
 //! so Node can adopt the columns as a finished store and emit byte-identical JSON.
 //!
-//! Two rules stay in Node, where their single source of truth lives, as passes over the
-//! nodes the build names: the cloud-provider rule (a path regex,
+//! Two rules stay in Node as passes over the nodes a memory build names: the cloud-provider
+//! rule (`cloudProviderFor`'s regexes, built from the `CLOUD_RULES` table in
 //! `src/services/cloudFolders.ts`) over [`Store::cloud_candidates`], and JavaScript's
-//! `toLowerCase` over [`Store::text_candidates`] (see [`derive::decided_here`]).
+//! `toLowerCase` over [`Store::text_candidates`] (see [`derive::decided_here`]). The cloud
+//! table also reaches Rust ([`BuildOptions::cloud_rules`]), where
+//! [`derive::cloud_provider`] answers as the regexes do, for the storage modes that are to
+//! decide the rule during the walk (decision P4-3a).
 //! Neither list is short on every volume. Where the walk has no allocation size it
 //! records 0 allocated — a Windows volume listed through `FindFirstFileExW` (tm-walk's
 //! fallback, which its sources name for FAT32 and exFAT), and a macOS or Linux entry
@@ -34,7 +37,7 @@ mod row;
 
 pub use build::{BuildOptions, Counters, Store, StoreMode, StoreShape, build};
 pub use column::{AnonTally, Column, ColumnError, Zeroable, anon_tally};
-pub use derive::ContainerRule;
+pub use derive::{CloudAnchor, CloudRule, ContainerRule};
 pub use memory::MemorySink;
 
 /// The store's flag bits: `Flag` in `src/services/scanStore.ts`, bit for bit.
@@ -88,6 +91,16 @@ pub enum StoreError {
     /// A container rule the build cannot apply as `detectContainerKind` would.
     #[error("container rule {index} ({text:?}) cannot be used: {why}")]
     BadContainerRule {
+        /// Its place in the table.
+        index: usize,
+        /// Its text.
+        text: String,
+        /// What is wrong with it.
+        why: &'static str,
+    },
+    /// A cloud rule the matcher cannot answer as `cloudProviderFor`'s regexes would.
+    #[error("cloud rule {index} ({text:?}) cannot be used: {why}")]
+    BadCloudRule {
         /// Its place in the table.
         index: usize,
         /// Its text.

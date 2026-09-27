@@ -108,6 +108,9 @@ pub(crate) fn memory_sink(
                 kind: rule.kind,
             })
             .collect(),
+        // Memory mode leaves the cloud rule to Node's pass over the store's
+        // candidates (decision P4-3); the sink is given no table to evaluate.
+        cloud_rules: Vec::new(),
         headroom_rows: options.headroom_rows,
         mode: StoreMode::Memory,
     };

@@ -5,7 +5,7 @@
 use tm_walk::{DirRefusal, HardlinkRef, Refusal, WalkOutput, WalkStats};
 
 use crate::column::Column;
-use crate::derive::{ContainerRule, rule_problem};
+use crate::derive::{CloudRule, ContainerRule, cloud_rule_problem, rule_problem};
 use crate::finalize::breadth_first;
 use crate::row::{ExtInterner, RowInput, RowRules, ShortfallSum, derive_row};
 use crate::{EXT_NONE, StoreError, flag};
@@ -42,6 +42,11 @@ pub struct BuildOptions {
     pub sort_children: bool,
     /// `detectContainerKind`'s rules, in its order: the first match wins.
     pub container_rules: Vec<ContainerRule>,
+    /// `CLOUD_RULES` (`src/services/cloudFolders.ts`), in its order: the first rule a path
+    /// matches names its provider ([`crate::derive::cloud_provider`]). A memory store leaves
+    /// the rule to Node's pass over [`Store::cloud_candidates`] (decision P4-3), so the build
+    /// only checks the table here; the spill and aggregate walks are to evaluate it (P4-3a).
+    pub cloud_rules: Vec<CloudRule>,
     /// Rows to leave room for after the build (decision P4-6).
     pub headroom_rows: u32,
     /// Where the columns live.
@@ -464,6 +469,15 @@ pub(crate) fn check_options(opts: &BuildOptions) -> Result<(), StoreError> {
     for (index, rule) in opts.container_rules.iter().enumerate() {
         if let Some(why) = rule_problem(rule) {
             return Err(StoreError::BadContainerRule {
+                index,
+                text: rule.text.clone(),
+                why,
+            });
+        }
+    }
+    for (index, rule) in opts.cloud_rules.iter().enumerate() {
+        if let Some(why) = cloud_rule_problem(rule) {
+            return Err(StoreError::BadCloudRule {
                 index,
                 text: rule.text.clone(),
                 why,

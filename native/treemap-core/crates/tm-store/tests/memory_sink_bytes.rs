@@ -103,6 +103,7 @@ fn options() -> BuildOptions {
         blocks_are_meaningful: true,
         sort_children: true,
         container_rules: Vec::new(),
+        cloud_rules: Vec::new(),
         headroom_rows: 1_024,
         mode: StoreMode::Memory,
     }

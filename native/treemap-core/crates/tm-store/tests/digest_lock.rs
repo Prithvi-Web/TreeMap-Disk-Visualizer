@@ -316,6 +316,9 @@ fn options(root_name: &str, root_mtime_ms: f64, posix: bool, headroom_rows: u32)
         blocks_are_meaningful: posix,
         sort_children: posix,
         container_rules: container_rules(),
+        // Memory mode leaves the cloud rule to Node (P4-3), so no table changes a digest here
+        // (build.rs: `a_memory_build_leaves_the_cloud_rule_to_node_whatever_the_table`).
+        cloud_rules: Vec::new(),
         headroom_rows,
         mode: StoreMode::Memory,
     }
