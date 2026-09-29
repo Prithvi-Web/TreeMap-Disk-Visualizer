@@ -40,6 +40,10 @@ import { cancelAllOffloadJobs } from './services/offload';
 import { cancelAllCapsuleJobs, startCapsuleMaintenance, stopCapsuleMaintenance } from './services/timeCapsule';
 import { startScheduler, stopScheduler } from './services/scheduler';
 import { cancelAllEncodeJobs, drainEncodeClients } from './services/compressionAdvisor';
+import { sweepSpillDir, SweepReport } from './services/spillSweep';
+import { appDataDir } from './services/storage';
+import { isEphemeral } from './services/portableMode';
+import { formatBytes } from './utils/formatBytes';
 
 /**
  * Builds the Express app. Kept separate from the listen() call so the same
@@ -169,6 +173,58 @@ export interface RunningServer {
   port: number;
   /** Drains SSE streams, cancels scans, and closes the server. */
   shutdown: () => void;
+  /**
+   * Settles once the boot sweep of the spill folder has run, failed or been skipped; it
+   * never rejects, and nothing waits for it but a test.
+   */
+  spillSweep: Promise<void>;
+}
+
+type BootSweep = (appDataDir: string) => Promise<SweepReport>;
+
+let bootSweepForTests: BootSweep | null = null;
+
+/** Test seam: the sweep the boot runs in place of `sweepSpillDir`; `null` restores it. */
+export function setBootSweepForTests(fn: BootSweep | null): void {
+  bootSweepForTests = fn;
+}
+
+/** How many refusals the boot's one line names; the rest are counted. */
+const REFUSALS_NAMED = 3;
+
+/** A sweep's report as the one line the boot logs. */
+export function describeSweep(report: SweepReport): string {
+  if (report.unreadable !== undefined) return `spill sweep: the folder was not looked into: ${report.unreadable}`;
+  const files = `${report.removed} file${report.removed === 1 ? '' : 's'}`;
+  const named = report.refused.slice(0, REFUSALS_NAMED).map((r) => `${r.name} (${r.reason})`).join('; ');
+  const more = report.refused.length > REFUSALS_NAMED ? ` and ${report.refused.length - REFUSALS_NAMED} more` : '';
+  const refused = report.refused.length === 0 ? '' : `; refused ${named}${more}`;
+  return `spill sweep: removed ${files} (${formatBytes(report.bytes)}), kept ${report.kept}${refused}`;
+}
+
+/**
+ * The boot sweep of TreeMap's spill folder (Phase 4 §S.5.3; T13c built it): removes what a
+ * crash at the one wrong instant left, through the one confined remover, once per start.
+ *
+ * It never holds the start up: it begins on the turn after the server is listening, and
+ * nothing waits for it. Once begun, its work is synchronous file calls per entry
+ * (spillSweep.ts): a handful where the folder is empty or absent, which is every start but
+ * the one after such a crash. It fails nothing: whatever it throws is one line of the log.
+ * And it is skipped in a read-only portable session, whose app-data resolves to a folder
+ * TreeMap promised not to write to (`isEphemeral`, D3). Its report is one line.
+ */
+function bootSpillSweep(): Promise<void> {
+  if (isEphemeral()) {
+    console.log('[treemap] spill sweep skipped: this portable session is read-only, so it removes nothing');
+    return Promise.resolve();
+  }
+  const sweep = bootSweepForTests ?? sweepSpillDir;
+  return new Promise<void>((resolve) => setImmediate(resolve))
+    .then(() => sweep(appDataDir()))
+    .then((report) => console.log(`[treemap] ${describeSweep(report)}`))
+    .catch((err: unknown) => {
+      console.warn(`[treemap] spill sweep failed and was skipped: ${err instanceof Error ? err.message : String(err)}`);
+    });
 }
 
 export interface StartOptions {
@@ -230,7 +286,8 @@ export function startServer(opts: StartOptions): Promise<RunningServer> {
       server.removeListener('error', reject);
       const addr = server.address();
       const port = typeof addr === 'object' && addr ? addr.port : (opts.port ?? 0);
-      resolve({ server, port, shutdown });
+      // Once, at boot, and only once the server is listening: it never holds the start up.
+      resolve({ server, port, shutdown, spillSweep: bootSpillSweep() });
     });
   });
 }

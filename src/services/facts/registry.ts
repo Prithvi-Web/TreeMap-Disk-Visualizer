@@ -1,4 +1,5 @@
 import { FactBatch, FactProvider, FactStats } from './types';
+import { providerRefusal, type StorageMode } from '../storageMode';
 
 /**
  * The fact registry, its batching, and its TTL cache (v4 §4.1).
@@ -13,6 +14,19 @@ import { FactBatch, FactProvider, FactStats } from './types';
  */
 
 const providers = new Map<string, FactProvider<unknown>>();
+
+/**
+ * A scan's storage mode by id, for the availability table's refusal (Phase 4 §S.7).
+ * Installed by `facts/index.ts`, which already wires the fact layer to the scan store, so
+ * this module imports nothing that imports it back (diskScanner imports settings, which
+ * imports this registry). Until one is installed no scan is known, and nothing is refused.
+ */
+type ScanModeLookup = (scanId: string) => { storageMode?: StorageMode } | undefined;
+let scanModeOf: ScanModeLookup = () => undefined;
+
+export function setScanModeLookup(lookup: ScanModeLookup): void {
+  scanModeOf = lookup;
+}
 
 /**
  * Register a provider. Throws on a duplicate id rather than replacing it: two
@@ -296,6 +310,9 @@ export async function computeFacts(
   // work rather than repetition — a caller sending the same path twice must
   // not be able to inflate the coverage figure it is about to show a person.
   const unique = [...new Set(paths)];
+  // The scan's storage mode (Phase 4 §S.7): a provider whose feature is off in it answers
+  // unavailable with the table's sentence, before its cache is read, and the others answer.
+  const scan = scanModeOf(scanId);
 
   const entries = await Promise.all(
     providerIds.map(async (id): Promise<[string, ProviderResult]> => {
@@ -306,6 +323,15 @@ export async function computeFacts(
         return [id, {
           available: false,
           reason: `No fact provider named "${id}" is registered.`,
+          stats: { requested: unique.length, computed: 0, skipped: unique.length, failed: 0 },
+          values: {},
+        }];
+      }
+      const refused = scan ? providerRefusal(id, scan) : null;
+      if (refused !== null) {
+        return [id, {
+          available: false,
+          reason: refused,
           stats: { requested: unique.length, computed: 0, skipped: unique.length, failed: 0 },
           values: {},
         }];

@@ -12,6 +12,7 @@ import { sanitizePath } from '../utils/pathSanitizer';
 import { AppError } from '../middleware/errorHandler';
 import { validateEngineBudget } from '../services/engineBudget';
 import { ScheduleConfig, BudgetEntry } from '../models/types';
+import { storageModeGate } from '../middleware/storageModeGate';
 
 /**
  * settingsRoutes — user settings (ignore list + scheduled scans), smart
@@ -91,7 +92,7 @@ settingsRouter.put('/settings', async (req: Request, res: Response) => {
 });
 
 /** GET /api/cleanup/suggestions?scanId= — smart suggestions for a scan. */
-settingsRouter.get('/cleanup/suggestions', async (req: Request, res: Response) => {
+settingsRouter.get('/cleanup/suggestions', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireScan(req, req.query.scanId);
   if (scan.status === 'running') {
     res.status(202).json({ status: 'running' });
@@ -127,7 +128,7 @@ settingsRouter.get('/cleanup/suggestions', async (req: Request, res: Response) =
 });
 
 /** GET /api/cleanup/browser-profiles?scanId= — per-profile cache breakdown. */
-settingsRouter.get('/cleanup/browser-profiles', (req: Request, res: Response) => {
+settingsRouter.get('/cleanup/browser-profiles', storageModeGate, (req: Request, res: Response) => {
   const scan = requireScan(req, req.query.scanId);
   if (scan.status === 'running') {
     res.status(202).json({ status: 'running' });
@@ -145,7 +146,7 @@ settingsRouter.get('/cleanup/browser-profiles', (req: Request, res: Response) =>
  * state its headline numbers truthfully. The browser holds a pruned tree and
  * can no longer work this out for itself.
  */
-settingsRouter.get('/cleanup/cloud-safe', (req: Request, res: Response) => {
+settingsRouter.get('/cleanup/cloud-safe', storageModeGate, (req: Request, res: Response) => {
   const scan = requireScan(req, req.query.scanId);
   if (scan.status === 'running') {
     res.status(202).json({ status: 'running' });
@@ -192,7 +193,7 @@ function positiveRule(raw: unknown): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-settingsRouter.get('/cleanup/rules', (req: Request, res: Response) => {
+settingsRouter.get('/cleanup/rules', storageModeGate, (req: Request, res: Response) => {
   const scan = requireScan(req, req.query.scanId);
   if (scan.status === 'running') {
     res.status(202).json({ status: 'running' });

@@ -5,6 +5,7 @@
 
 import type { ScanStore } from '../services/scanStore';
 import type { ReclaimWeights } from '../services/reclaimScore';
+import type { StorageMode } from '../services/storageMode';
 
 /** A single file or directory in the scanned tree. */
 export interface FileNode {
@@ -206,6 +207,12 @@ export interface ScanResult {
   deniedEntries?: number;
   /** Individual entries that failed to stat for any other reason. */
   unreadableEntries?: number;
+  /**
+   * Where the scan's rows live (Phase 4, `services/storageMode.ts`): `memory` for every
+   * scan until T16's chooser exists; absent reads as `memory`. Only the availability
+   * table's refusals read it — /stats keeps its own `storageMode: 'memory'` until T23.
+   */
+  storageMode?: StorageMode;
 }
 
 /** One rectangle of the squarified treemap, coordinates in percent (0–100). */

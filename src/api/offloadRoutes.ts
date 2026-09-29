@@ -10,7 +10,7 @@ import {
   getOffloadEntry,
 } from '../services/offload';
 import { openPath } from '../services/cleaner';
-import { guardBodyPaths, requireInsideScanRoot } from '../middleware/pathGuard';
+import { guardBodyPaths, requireInsideScanRoot, assertNotSpillPath } from '../middleware/pathGuard';
 import { idempotency } from '../middleware/idempotency';
 import { getPolicy, assertPathsAllowed, assertBytesCap } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
@@ -18,6 +18,7 @@ import { sanitizePath } from '../utils/pathSanitizer';
 import { sseSend } from '../utils/sse';
 import { AppError } from '../middleware/errorHandler';
 import { FileNode, OffloadJob, OffloadStreamEvent, ScanResult } from '../models/types';
+import { storageModeGate } from '../middleware/storageModeGate';
 
 /**
  * offloadRoutes — copy → verify → trash jobs and the Offloaded index.
@@ -66,7 +67,7 @@ export function drainOffloadClients(): void {
  * having validated everything a real run would — and does nothing.
  * Honors an Idempotency-Key header so a retry can't start a second job.
  */
-offloadRouter.post('/offload', idempotency, guardBodyPaths, requireInsideScanRoot, async (req: Request, res: Response) => {
+offloadRouter.post('/offload', idempotency, guardBodyPaths, requireInsideScanRoot, storageModeGate, async (req: Request, res: Response) => {
   const body = req.body as { scanId?: unknown; paths: string[]; dest?: unknown; dryRun?: unknown };
   const scan = requireScan(req, body.scanId);
   if (scan.status !== 'complete' || (!scan.store && !scan.root)) {
@@ -76,6 +77,7 @@ offloadRouter.post('/offload', idempotency, guardBodyPaths, requireInsideScanRoo
     throw new AppError(400, 'DEST_REQUIRED', 'Pick a destination folder');
   }
   const dest = sanitizePath(body.dest);
+  assertNotSpillPath(dest); // nothing is ever copied into TreeMap's own spill folder (§S.5.3)
   const dryRun = body.dryRun === true;
   const policy = await getPolicy();
   try {

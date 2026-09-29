@@ -1,6 +1,8 @@
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
+import { appDataDir } from '../services/storage';
+import { SPILL_DIR } from '../services/spillSweep';
 
 /**
  * Path validation shared by the pathGuard middleware and the services.
@@ -384,4 +386,44 @@ export function isInside(parent: string, child: string): boolean {
   const rel = path.relative(parent, child);
   if (rel === '') return true;
   return !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+/**
+ * A path as a case-insensitive volume compares it: lower-cased, and on Windows with each
+ * name's trailing dots and spaces dropped as Win32 drops them (`win32Normalize`). Folded on
+ * every platform, so a case-insensitive volume holding app-data on Linux (a FAT or exFAT
+ * portable drive) is covered too; on a case-sensitive volume it also refuses a path that is
+ * the spill folder's only when case is ignored (the folder beside it spelled in another
+ * case, or app-data reached through a folder of its path spelled so).
+ */
+function foldForCompare(p: string): string {
+  return process.platform === 'win32' ? win32Normalize(p) : p.toLowerCase();
+}
+
+/**
+ * Is `p` TreeMap's own spill folder, `<appData>/` + `SPILL_DIR`, or anything under it (Phase 4
+ * §S.5.3)? It holds the working files of very large scans, so no request may name a path
+ * there to trash, open, move or write, and the Empty Folders view never offers it.
+ *
+ * Judged on where the path lives (`canonicalDirOf`: every link in its parents resolved, its
+ * last name as spelled, `..` and repeated or trailing separators gone), on both sides, and
+ * compared as a case-insensitive volume compares names. So another spelling of the folder
+ * is the folder: `x/../`, another case, app-data reached through a link, Windows' trailing
+ * dots and spaces. A link whose own path is elsewhere is not the folder (the scanned-root
+ * rule's reading): trashing it removes the link, never what it leads to, and opening it
+ * follows it as opening any link in a scanned root does.
+ */
+export function isSpillPath(p: string): boolean {
+  if (p.startsWith('cloud://')) return false;
+  const spill = foldForCompare(canonicalDirOf(path.join(appDataDir(), SPILL_DIR)));
+  return isAtOrUnder(spill, foldForCompare(canonicalDirOf(p)));
+}
+
+/**
+ * `child` is `parent` or anywhere under it. Unlike `isInside`, whose `startsWith('..')` reads
+ * a name that merely begins with two dots (`..x`) as outside, only `..` itself leaves.
+ */
+function isAtOrUnder(parent: string, child: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 }

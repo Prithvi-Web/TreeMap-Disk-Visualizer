@@ -18,6 +18,7 @@ import { copyWithHash, hashFile, CopyCancelled } from '../utils/copyVerify';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { meansAbsent } from '../utils/errno';
+import { assertNotSpillPath } from '../middleware/pathGuard';
 
 /**
  * Time Capsule — recovery beyond the OS Trash (B3).
@@ -799,6 +800,9 @@ export async function protectAndTrash(
   requests: ProtectionRequest[],
   context: { runId?: string; policyId?: string; unattended?: boolean } = {},
 ): Promise<ProtectAndTrashResult> {
+  // Nothing in TreeMap's own spill folder is protected or trashed (Phase 4 §S.5.3): refused
+  // before anything is copied, whatever selected it.
+  for (const r of requests) assertNotSpillPath(r.path);
   // Nowhere to keep a copy means nothing gets protected, and the caller must be
   // told before anything is deleted — not after.
   const capsule = capsuleAvailable();

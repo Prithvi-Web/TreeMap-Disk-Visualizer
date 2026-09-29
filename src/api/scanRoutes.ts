@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { formatCount } from '../utils/formatCount';
-import { startScan, getScan, cancelScan, collectLargestFiles, collectFileTypes, scanExpiresAt } from '../services/diskScanner';
+import { startScan, getScan, cancelScan, collectLargestFiles, collectFileTypes, scanExpiresAt, scanIdOf } from '../services/diskScanner';
 import { buildTreemapFromStore } from '../utils/treemap';
 import { pruneTree, PruneResult } from '../utils/pruneTree';
 import { isInside } from '../utils/pathSanitizer';
@@ -17,6 +17,7 @@ import { sseSend as sseWrite } from '../utils/sse';
 import { TREE_MARK, jsonAroundTree, sendPrunedTree } from '../services/treeFrame';
 import { scanBudget } from '../services/engineBudget';
 import { ScanResult, ScanEvent, ScanStats, BudgetStatus } from '../models/types';
+import { storageModeGate } from '../middleware/storageModeGate';
 
 export const scanRouter = Router();
 
@@ -153,7 +154,7 @@ export function activeSseCount(): number {
 
 /** Shared with insightRoutes: resolve a scanId or 404 cleanly. */
 export function requireScan(_req: Request, idSource: unknown): ScanResult {
-  const scan = getScan(String(idSource ?? ''));
+  const scan = getScan(scanIdOf(idSource));
   if (!scan) {
     throw new AppError(404, 'SCAN_NOT_FOUND', 'Unknown or expired scanId');
   }
@@ -496,7 +497,7 @@ scanRouter.get('/scan/:scanId/budget-gauges', async (req: Request, res: Response
  * Downloads the scan as a report: streamed CSV or XLSX of every file/folder,
  * or a pdfmake text summary. Always sent as an attachment.
  */
-scanRouter.get('/scan/:scanId/export', async (req: Request, res: Response) => {
+scanRouter.get('/scan/:scanId/export', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireScan(req, req.params.scanId);
   if (scan.status === 'running') {
     res.status(202).json({ status: 'running' });
@@ -574,7 +575,7 @@ scanRouter.get('/scan/:scanId/treemap', guardQueryPath('root'), (req: Request, r
  * or the filesystem withheld reported in `degraded` prose. The heavy honesty
  * rules live in the service (src/services/calendarAggregate.ts).
  */
-scanRouter.get('/scan/:scanId/calendar', (req: Request, res: Response) => {
+scanRouter.get('/scan/:scanId/calendar', storageModeGate, (req: Request, res: Response) => {
   // A malformed request is refused before the scan's state is consulted — a
   // garbage channel on a still-running scan is a 400, not a 202 that would
   // invite polling a request that can never succeed.

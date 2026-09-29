@@ -18,6 +18,7 @@ import { getCapabilities } from '../platform/capabilities';
 import { MCP_TOOL_NAMES } from '../mcp/server';
 import { capabilitySummary } from './platformRoutes';
 import { SuggestionCategory } from '../models/types';
+import { storageModeGate } from '../middleware/storageModeGate';
 
 /**
  * metaRoutes — self-description for agents: the OpenAPI document and a
@@ -69,7 +70,7 @@ metaRouter.get('/policy', async (_req: Request, res: Response) => {
  * list is deterministically ordered (size desc), so two calls over the same
  * scan return identical payloads.
  */
-metaRouter.get('/agent/summary', async (req: Request, res: Response) => {
+metaRouter.get('/agent/summary', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireScan(req, req.query.scanId);
   if (scan.status === 'running') {
     res.status(202).json({ status: 'running', scanned: scan.scanned, currentPath: scan.currentPath });
@@ -200,6 +201,13 @@ metaRouter.get('/capabilities', async (_req: Request, res: Response) => {
       audit: 'Every destructive request (real, dry-run, refused) is appended to an audit log — GET /api/audit reads it back',
       idempotency:
         'Destructive endpoints honor an Idempotency-Key header: a retried request replays the stored response instead of executing twice',
+      spillFolder:
+        "TreeMap's own spill folder in app-data (the working files of very large scans) is refused by every endpoint and MCP tool " +
+        'that trashes, opens, moves or writes a path: 403 SPILL_PATH, however the path is spelled',
+      storageModes:
+        'A very large scan may be kept in spill or aggregate mode, where some features are off: they answer ' +
+        '409 { error, code: "STORAGE_MODE", mode, feature } (an MCP tool: its error with that code). Every scan is kept in memory ' +
+        'today, where nothing is off; GET /api/openapi.json names the 409 on each endpoint that can give it',
     },
     workflow: [
       'POST /api/scan with { path } → { scanId } (add ?wait=true to block until done)',

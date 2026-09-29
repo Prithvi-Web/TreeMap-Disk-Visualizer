@@ -6,6 +6,7 @@ import { toSql } from '../services/query/toSql';
 import { executeAgainstScan, type SortKey } from '../services/query/execute';
 import { deleteSavedQuery, listSavedQueries, saveQuery } from '../services/query/savedQueries';
 import { translateNlQuery } from '../services/query/nlIntent';
+import { storageModeGate } from '../middleware/storageModeGate';
 
 /**
  * queryRoutes — the query grammar's HTTP surface (v4 §2.2, §2.3).
@@ -127,7 +128,7 @@ queryRouter.get('/query/fields', (_req: Request, res: Response) => {
  * cannot supply comes back with an explicit warning rather than an empty list
  * that reads as "nothing matched" (§2.2).
  */
-queryRouter.post('/query', async (req: Request, res: Response) => {
+queryRouter.post('/query', storageModeGate, async (req: Request, res: Response) => {
   const body = req.body as { scanId?: unknown; q?: unknown; limit?: unknown; offset?: unknown; sort?: unknown };
 
   if (typeof body.q !== 'string') throw new AppError(400, 'QUERY_REQUIRED', 'Request body must include a "q" string');

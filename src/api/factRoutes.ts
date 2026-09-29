@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireScan } from './scanRoutes';
-import { guardBodyPathsMax, requireInsideScanRoot } from '../middleware/pathGuard';
+import { guardBodyPathsMax, requireInsideScanRootToRead } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
 import { computeFacts, factProviderIds } from '../services/facts';
 
@@ -51,7 +51,7 @@ export const MAX_FACT_PATHS = 2000;
 factRouter.post(
   '/facts',
   guardBodyPathsMax(MAX_FACT_PATHS),
-  requireInsideScanRoot,
+  requireInsideScanRootToRead,
   async (req: Request, res: Response) => {
     const body = req.body as { scanId?: unknown; paths: string[]; providers?: unknown };
 

@@ -9,6 +9,7 @@ import { AppError } from '../middleware/errorHandler';
 import { idempotency } from '../middleware/idempotency';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { FileNode, ScanResult } from '../models/types';
+import { storageModeGate } from '../middleware/storageModeGate';
 
 /**
  * cloudRoutes — the ONLY routes that ever talk to the internet, and only to
@@ -125,7 +126,7 @@ cloudRouter.post('/cloud/scan', async (req: Request, res: Response) => {
  * POST /api/cloud/trash { scanId, paths } — deletes map to the provider's
  * own trash, mirroring the local trash-only rule.
  */
-cloudRouter.post('/cloud/trash', idempotency, guardBodyPaths, async (req: Request, res: Response) => {
+cloudRouter.post('/cloud/trash', idempotency, guardBodyPaths, storageModeGate, async (req: Request, res: Response) => {
   const body = req.body as { scanId?: unknown; paths: string[] };
   const scan = requireScan(req, body.scanId);
   if (scan.status !== 'complete' || (!scan.store && !scan.root)) throw new AppError(409, 'SCAN_RUNNING', 'Wait for the scan to finish');

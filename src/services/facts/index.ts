@@ -20,8 +20,8 @@ import { humanScaleProvider } from './humanScaleProvider';
  * no-op rather than a crash.
  */
 
-import { onScanForgotten } from '../diskScanner';
-import { clearFactCache } from './registry';
+import { onScanForgotten, peekScan } from '../diskScanner';
+import { clearFactCache, setScanModeLookup } from './registry';
 
 registerFactProvider(sizeProvider);
 registerFactProvider(lastUsedProvider);
@@ -35,6 +35,10 @@ registerFactProvider(humanScaleProvider);
 // nothing called it, and a rescan left the previous scan's verdicts resident
 // for the rest of their TTL.
 onScanForgotten((scanId) => clearFactCache(scanId));
+
+// A provider whose feature is off in a scan's storage mode is refused (Phase 4 §S.7); the
+// registry learns the mode through this lookup rather than importing the scan store.
+setScanModeLookup(peekScan);
 
 export {
   computeFacts,

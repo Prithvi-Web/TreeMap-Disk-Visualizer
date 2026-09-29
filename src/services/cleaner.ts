@@ -6,6 +6,7 @@ import { AppError } from '../middleware/errorHandler';
 import { describeFsError } from '../utils/errno';
 import { checkOpenHandles, describeConflicts } from './openHandleGuard';
 import { capabilityState } from '../platform/capabilities';
+import { assertNotSpillPath } from '../middleware/pathGuard';
 
 /**
  * Cleaner — moves files to the system trash and opens paths in the OS.
@@ -173,6 +174,9 @@ export function setTrashStepForTests(step: ((p: string) => Promise<void>) | null
  * 10th would leave the user with a half-applied delete they never agreed to.
  */
 export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Promise<CleanResult> {
+  // The backstop behind every entry point's own refusal (Phase 4 §S.5.3): nothing in TreeMap's
+  // own spill folder is ever trashed, whatever asked. The whole batch is refused, before anything.
+  for (const p of paths) assertNotSpillPath(p);
   if (!opts.ignoreOpenHandles) {
     const report = await checkOpenHandles(paths);
     if (report.conflicts.length > 0) {

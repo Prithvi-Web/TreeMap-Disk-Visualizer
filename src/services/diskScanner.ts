@@ -21,6 +21,9 @@ import { platform } from '../platform';
 import { beginScanBudget, forgetScanBudget, isScanPaused, scanBudget, throttleBatch, whenResumed, workerCap } from './engineBudget';
 import { statToInput } from './scan/nodeInput';
 import { FAST_PATH_UNAVAILABLE, MFT_NOT_VERIFIED, decideNative, mftOfferedOn, rootName, runMftWalk, nativeStorageFor, runNativeWalk } from './scan/nativeEngine';
+import { newScanStorageMode } from './storageMode';
+import { SPILL_DIR } from './spillSweep';
+import { isSpillPath } from '../utils/pathSanitizer';
 
 /**
  * DiskScanner — asynchronous recursive directory walker.
@@ -251,6 +254,15 @@ function ensureEvictor(): void {
 }
 
 /**
+ * A scan id as a request carries it: whatever the value, read as `String(value ?? '')`. The
+ * one reading every route uses (`requireScan`) and the storage-mode gate uses, so no spelling
+ * of an id (a JSON array holding it, say) finds a scan in a handler that the gate did not see.
+ */
+export function scanIdOf(value: unknown): string {
+  return String(value ?? '');
+}
+
+/**
  * A scan by id, as a USE: the retention clock restarts (at minute
  * granularity). Every route, fact provider and MCP tool that answers a client
  * about a scan goes through here, which is what keeps results alive under a
@@ -396,6 +408,7 @@ export function createScanRecord(rootPath: string): ScanResult {
     bytesRead: null,
     peakRssBytes: null,
     placeholdersSkipped: 0,
+    storageMode: newScanStorageMode(),
   };
   defineRootAccessor(scan);
   scans.set(scan.scanId, scan);
@@ -627,6 +640,8 @@ export async function startScan(rootPath: string, opts: ScanOptions = {}): Promi
     slackBytes: 0,
     cloudFiles: 0,
     cloudBytes: 0,
+    // Phase 4: the mode the scan is kept in, `memory` until T16's chooser (storageMode.ts).
+    storageMode: newScanStorageMode(),
   };
   defineRootAccessor(scan);
   scans.set(scan.scanId, scan);
@@ -1332,6 +1347,15 @@ function ownsItsContents(name: string): boolean {
 }
 
 /**
+ * TreeMap's own spill folder (`<appData>/` + SPILL_DIR, Phase 4 §S.5.3): owned like a tool's,
+ * so neither it nor anything in it is ever offered for the Trash. Asked by `name` (the node's,
+ * already read) first, so the path check runs only for a folder that carries the name.
+ */
+function isTreeMapSpillFolder(store: ScanStore, id: number, name: string): boolean {
+  return name.toLowerCase() === SPILL_DIR && store.isDir(id) && isSpillPath(store.path(id));
+}
+
+/**
  * Find recursively-empty directories: no files anywhere below (only other
  * empty dirs). With `ignoreJunk`, OS metadata files like .DS_Store don't
  * count as content. Returns only the topmost empty dirs — trashing those
@@ -1369,11 +1393,16 @@ export function collectEmptyFolders(source: TreeSource, ignoreJunk: boolean): Em
   // ids than their parents, so one forward pass settles a parent before any of
   // its children ask about it — no second traversal, no recursion.
   const toolOwned = new Set<number>();
+  // A scan rooted in the spill folder (or below it) owns nothing it could offer.
+  const rootInSpill = isSpillPath(store.path(store.rootId));
   for (const id of ordered) {
     if (id === store.rootId) continue;
-    if (toolOwned.has(store.parent(id)) || ownsItsContents(store.name(id))) {
+    if (rootInSpill || toolOwned.has(store.parent(id))) {
       toolOwned.add(id);
+      continue;
     }
+    const name = store.name(id);
+    if (ownsItsContents(name) || isTreeMapSpillFolder(store, id, name)) toolOwned.add(id);
   }
   /** Reportable = empty, and not something a tool or the OS keeps for itself. */
   const reportable = (id: number): boolean =>

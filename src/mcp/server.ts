@@ -20,7 +20,7 @@ import { prepareOffload, startOffload, getOffloadJob } from '../services/offload
 import { moveToTrash } from '../services/cleaner';
 import { checkOpenHandles, describeConflicts } from '../services/openHandleGuard';
 import { storeOf } from '../services/scanStore';
-import { insideAnyScanRoot } from '../middleware/pathGuard';
+import { insideAnyScanRoot, assertNotSpillPath } from '../middleware/pathGuard';
 import { isVirtualPath } from '../services/containerScanner';
 import { sanitizePath, PathRejectedError } from '../utils/pathSanitizer';
 import { AppError, permissionDeniedMessage } from '../middleware/errorHandler';
@@ -28,6 +28,7 @@ import { formatBytes } from '../utils/formatBytes';
 import { getPolicy, assertScanAllowed, assertPathsAllowed, assertBytesCap, knownSizeOf } from '../services/policy';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { OffloadJob, ScanResult } from '../models/types';
+import { assertToolAvailable } from '../services/storageMode';
 
 /**
  * TreeMap MCP server — the agent-facing face of the disk visualizer.
@@ -158,6 +159,7 @@ function guardDestructivePaths(raw: string[]): string[] {
     if (p.startsWith('cloud://')) {
       throw new AppError(403, 'CLOUD_PATH', `"${p}" lives in a cloud account — use the provider's trash instead`);
     }
+    assertNotSpillPath(p);
     if (!insideAnyScanRoot(p)) {
       throw new AppError(403, 'OUTSIDE_SCAN_ROOT', `"${p}" is outside every scanned root — scan its folder first`);
     }
@@ -521,6 +523,7 @@ export function buildMcpServer(): McpServer {
     async ({ scanId, minSizeBytes, limit, filesPerGroup, waitMs }) =>
       run(async () => {
         const scan = requireCompleteScanMcp(scanId);
+        assertToolAvailable('find_duplicates', [scan], { scanId });
         const job = getDuplicateJob(scan, minSizeBytes);
         const deadline = Date.now() + waitMs;
         while (job.status === 'running' && Date.now() < deadline) {
@@ -584,6 +587,7 @@ export function buildMcpServer(): McpServer {
     async ({ scanId, itemsPerGroup }) =>
       run(async () => {
         const scan = requireCompleteScanMcp(scanId);
+        assertToolAvailable('cleanup_suggestions', [scan], { scanId });
         // A malformed rule pack must say so, not answer "nothing to clean up".
         const catalog = ruleCatalogStatus();
         if (!catalog.ok) {
@@ -669,6 +673,7 @@ export function buildMcpServer(): McpServer {
       run(async () => {
         const scanA = requireCompleteScanMcp(scanIdA);
         const scanB = requireCompleteScanMcp(scanIdB);
+        assertToolAvailable('compare_scans', [scanA, scanB], { scanIdA, scanIdB });
         if (scanA.rootPath !== scanB.rootPath) {
           throw new AppError(400, 'ROOT_MISMATCH', 'Both scans must cover the same root path');
         }
@@ -727,7 +732,9 @@ export function buildMcpServer(): McpServer {
         }
         const scan = requireCompleteScanMcp(scanId);
         const paths = guardDestructivePaths(rawPaths);
+        assertToolAvailable('offload', [scan], { scanId, paths });
         const dest = sanitizePath(rawDest);
+        assertNotSpillPath(dest);
         const policy = await getPolicy();
         const prepared = await (async () => {
           try {

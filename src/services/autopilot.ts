@@ -6,7 +6,8 @@ import {
   AutopilotRunItem,
   CleanupSuggestionGroup,
 } from '../models/types';
-import { readJsonFile, writeJsonFile } from './storage';
+import { appDataDir, readJsonFile, writeJsonFile } from './storage';
+import { SPILL_DIR } from './spillSweep';
 import { collectCleanupSuggestions } from './cleanupRules';
 import { matchCustomRules } from './scanQueries';
 import { parse } from './query/parse';
@@ -17,11 +18,12 @@ import { startScan, getScan } from './diskScanner';
 import { storeOf } from './scanStore';
 import { protectAndTrash, listCapsuleEntriesForRun, startCapsuleRestore } from './timeCapsule';
 import nodePath from 'path';
-import { sanitizePath } from '../utils/pathSanitizer';
+import { isSpillPath, sanitizePath } from '../utils/pathSanitizer';
 import { getPolicy as getAgentPolicy, assertScanAllowed, assertPathsAllowed } from './policy';
 import { suppressedNoteRoots, prepareSuppressed, suppressedRootCovering, noteRootInside } from './notes';
 import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
+import { assertFeatureAvailable } from './storageMode';
 
 /**
  * Autopilot — scheduled cleanup with safety rails (B1).
@@ -425,22 +427,33 @@ function waitForScan(scanId: string): Promise<void> {
 
 /**
  * Scan the policy's folder and resolve its match into candidates, then apply
- * the one filter that binds every match kind: a folder with a suppressing
- * note (v4 §9.5) is excluded from Autopilot matching, and the exclusion is
- * REPORTED, never silent — an unattended deleter must say what it
- * deliberately left alone, or "your rule matched less today" is
- * indistinguishable from a bug.
+ * the filters that bind every match kind: TreeMap's own spill folder (Phase 4
+ * §S.5.3) is never a candidate, and a folder with a suppressing note (v4 §9.5)
+ * is excluded from Autopilot matching. Both exclusions are REPORTED, never
+ * silent — an unattended deleter must say what it deliberately left alone, or
+ * "your rule matched less today" is indistinguishable from a bug.
  */
 async function resolveCandidates(
   policy: AutopilotPolicy,
-): Promise<{ candidates: Candidate[]; noteSkipped: { path: string; reason: string }[] }> {
-  const matched = await matchCandidates(policy);
+): Promise<{ candidates: Candidate[]; leftAlone: { path: string; reason: string }[] }> {
+  // A policy over app-data would otherwise select what a crash left in the
+  // spill folder (and on Windows a running scan's files, which have names).
+  const matched: Candidate[] = [];
+  let inSpill = 0;
+  for (const c of await matchCandidates(policy)) {
+    if (isSpillPath(c.path)) inSpill++;
+    else matched.push(c);
+  }
+  const spillSkipped = inSpill === 0 ? [] : [{
+    path: nodePath.join(appDataDir(), SPILL_DIR),
+    reason: `Left alone — TreeMap's own ${SPILL_DIR} folder holds the working files of very large scans and is never cleaned up automatically (${inSpill} matched item${inSpill === 1 ? '' : 's'}).`,
+  }];
   // FAILS CLOSED: suppressedNoteRoots throws NOTES_UNREADABLE on a corrupt
   // notes.json, and the throw is deliberately not caught here — runPolicy
   // records a failed run and simulate surfaces the error, so an unreadable
   // pause list stops the deleter instead of silently unpausing it.
   const noted = await suppressedNoteRoots();
-  if (noted.length === 0) return { candidates: matched, noteSkipped: [] };
+  if (noted.length === 0) return { candidates: matched, leftAlone: spillSkipped };
   const prepared = prepareSuppressed(noted);
   const candidates: Candidate[] = [];
   // Collapsed to ONE entry per note root with a count (review round 1,
@@ -462,7 +475,7 @@ async function resolveCandidates(
     path: root,
     reason: `Left alone — your note on ${root} pauses automatic cleanup around it (${n} matched item${n === 1 ? '' : 's'}).`,
   }));
-  return { candidates, noteSkipped };
+  return { candidates, leftAlone: [...spillSkipped, ...noteSkipped] };
 }
 
 /** Scan the policy's folder and resolve its match into raw candidates. */
@@ -473,6 +486,9 @@ async function matchCandidates(policy: AutopilotPolicy): Promise<Candidate[]> {
   if (!done || done.status !== 'complete' || (!done.store && !done.root)) {
     throw new AppError(500, 'AUTOPILOT_SCAN_FAILED', `The folder ${policy.path} could not be scanned`);
   }
+  // Every match kind is a pass over the whole tree: refused (409 STORAGE_MODE) when the scan
+  // this run made is kept in a mode where that is off (Phase 4 §S.7).
+  assertFeatureAvailable('autopilot', done);
   const source = storeOf(done);
 
   if (policy.match.kind === 'suggestion') {
@@ -540,7 +556,7 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
   const agentPolicy = await getAgentPolicy();
   assertScanAllowed(agentPolicy, policy.path);
 
-  const { candidates: resolved, noteSkipped } = await resolveCandidates(policy);
+  const { candidates: resolved, leftAlone } = await resolveCandidates(policy);
   const skipped: { path: string; reason: string }[] = [];
   const permitted: Candidate[] = [];
   for (const candidate of resolved) {
@@ -573,7 +589,7 @@ export async function simulatePolicy(policy: AutopilotPolicy): Promise<Simulatio
     items: capped.selected.map(toRunItem),
     bytesMatched,
     bytesWouldDelete: capped.selected.reduce((sum, c) => sum + c.bytes, 0),
-    skipped: [...noteSkipped, ...skipped, ...capped.skipped],
+    skipped: [...leftAlone, ...skipped, ...capped.skipped],
     capBytes: cap,
     ...(wouldBlockReason ? { wouldBlockReason } : {}),
   };
@@ -642,9 +658,9 @@ export async function runPolicy(policy: AutopilotPolicy, opts: RunOptions = {}):
     assertScanAllowed(agentPolicy, policy.path);
     const resolvedRun = await resolveCandidates(policy);
     candidates = resolvedRun.candidates;
-    // Noted-folder skips land in the run record for the same reason the
-    // agent-policy ones below do: visible, never quietly dropped.
-    run.skipped.push(...resolvedRun.noteSkipped);
+    // Noted-folder and spill-folder skips land in the run record for the same
+    // reason the agent-policy ones below do: visible, never quietly dropped.
+    run.skipped.push(...resolvedRun.leftAlone);
 
     // Per candidate rather than all-or-nothing: one protected folder caught by
     // a broad rule should not cancel an otherwise legitimate cleanup, but it

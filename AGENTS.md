@@ -304,6 +304,30 @@ read-what-you-saw) permission to act.
   `/api/files/terminal`, `/api/files/preview`, `/api/offload`, `/api/git/gc`,
   `/api/container/expand`) demand the path lie inside the root of a scan this
   server performed. Outside → `403 { code: "OUTSIDE_SCAN_ROOT" }`.
+- **TreeMap's own spill folder.** `<appData>/scan-spill` holds the working files
+  of very large scans (Phase 4). Every endpoint and MCP tool that takes a path
+  to trash, open, move or write refuses that folder and anything under it with
+  `403 { code: "SPILL_PATH" }` — before the scanned-root rule, so scanning a
+  home folder is no licence there — however the path is spelled (`..`, trailing
+  separators, another case, a link in its parents, Windows' trailing dots and
+  spaces). That covers every route above, `/api/files/open-handles`,
+  `/api/security/relocate` (both ends), the offload destination,
+  `/api/compression/encode` and `/api/system/snapshots/restore` (path and
+  destination). Facts about it still answer, since answering touches nothing;
+  the Empty Folders view never offers it; Autopilot leaves it out of every run
+  and says so in `skipped`; and the Trash pathway itself (`moveToTrash`, the
+  Time Capsule's `protectAndTrash`) refuses it whatever asked. A leftover of a
+  crash is removed by TreeMap itself at the next start, never through the
+  Trash.
+- **Storage modes (Phase 4).** A scan is kept in `memory` (every scan today),
+  `spill` (rows in files on disk) or `aggregate` (a bounded summary, no row for
+  every file). A feature that is off in the mode a scan is kept in answers
+  `409 { error, code: "STORAGE_MODE", mode, feature }` before its handler runs;
+  an MCP tool answers `Error (STORAGE_MODE): …`, and a fact provider that is
+  off answers `available: false` with the same sentence while the others in
+  the request still answer. Which features are off where is one table,
+  `src/services/storageMode.ts`, and `GET /api/openapi.json` names the 409 on
+  every endpoint that can give it. In memory mode nothing is refused.
 - **Path sanitization.** All user-supplied paths are validated: `..` traversal
   is resolved away, null bytes rejected, `~` expanded, and OS-internal
   directories (`/proc`, `/sys`, `C:\Windows\System32`, …) refused outright.

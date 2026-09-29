@@ -4,6 +4,7 @@ import { ensureWatchSession, subscribe } from '../services/watcher';
 import { sseSend } from '../utils/sse';
 import { AppError } from '../middleware/errorHandler';
 import { FileNode, ScanResult, WatchStreamEvent } from '../models/types';
+import { storageModeGate } from '../middleware/storageModeGate';
 
 /**
  * watchRoutes — live disk activity stream (Live mode). Same SSE pattern as
@@ -40,7 +41,7 @@ export function drainWatchClients(): void {
 }
 
 /** GET /api/watch/:scanId — SSE stream of { path, delta, kind } frames. */
-watchRouter.get('/watch/:scanId', async (req: Request, res: Response) => {
+watchRouter.get('/watch/:scanId', storageModeGate, async (req: Request, res: Response) => {
   // Express routes HEAD through GET handlers; a HEAD must not hold a
   // zombie SSE subscription (and its connection) open forever.
   if (req.method === 'HEAD') {

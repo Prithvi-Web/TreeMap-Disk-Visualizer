@@ -21,7 +21,7 @@ import {
   diffSnapshots,
 } from '../services/snapshots';
 import { buildTreemap } from '../utils/treemap';
-import { guardQueryPath, guardBodyPath, guardBodyPaths, requireInsideScanRoot, insideAnyScanRoot } from '../middleware/pathGuard';
+import { guardQueryPath, guardBodyPath, guardBodyPaths, requireInsideScanRoot, insideAnyScanRoot, assertNotSpillPath } from '../middleware/pathGuard';
 import { getAppAttribution } from '../services/appAttribution';
 import { storeOf } from '../services/scanStore';
 import { getForecast } from '../services/forecast';
@@ -50,6 +50,7 @@ import { AppError } from '../middleware/errorHandler';
 import { idempotency } from '../middleware/idempotency';
 import { appendAudit, tokenIdFor } from '../services/audit';
 import { CompareResult, FileNode, ScanResult } from '../models/types';
+import { storageModeGate } from '../middleware/storageModeGate';
 
 /**
  * insightRoutes — analysis endpoints layered on top of completed scans:
@@ -75,7 +76,7 @@ function requireCompleteScan(req: Request, idSource: unknown): ScanResult & { ro
  * First call starts the hashing job; poll until status === 'complete'.
  * 202 + progress while hashing, 200 + groups when done.
  */
-insightRouter.get('/duplicates', (req: Request, res: Response) => {
+insightRouter.get('/duplicates', storageModeGate, (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const minSize = clampInt(req.query.minSize, 1024, 1, Number.MAX_SAFE_INTEGER);
 
@@ -109,7 +110,7 @@ const warmedJobs = new WeakSet<object>();
  * /duplicates: 202 + progress while hashing, 200 + clusters when done.
  * When no image decoder is available, returns 200 with available:false.
  */
-insightRouter.get('/near-duplicates', (req: Request, res: Response) => {
+insightRouter.get('/near-duplicates', storageModeGate, (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const threshold = clampInt(req.query.threshold, 10, 0, 32);
 
@@ -196,7 +197,7 @@ insightRouter.get('/duplicates/detail', async (req: Request, res: Response) => {
  * GET /api/apps?scanId= — per-application storage attribution (Apps tab).
  * Read-only tree walk over the completed scan; cached per scan.
  */
-insightRouter.get('/apps', async (req: Request, res: Response) => {
+insightRouter.get('/apps', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   res.json(await getAppAttribution(scan));
 });
@@ -231,7 +232,7 @@ insightRouter.get('/large-folders', (req: Request, res: Response) => {
 });
 
 /** GET /api/empty-folders?scanId=&ignoreJunk=true */
-insightRouter.get('/empty-folders', (req: Request, res: Response) => {
+insightRouter.get('/empty-folders', storageModeGate, (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const ignoreJunk = String(req.query.ignoreJunk ?? 'true') !== 'false';
   res.json(collectEmptyFolders(storeOf(scan), ignoreJunk));
@@ -271,7 +272,7 @@ insightRouter.get('/missing-gigabytes', async (req: Request, res: Response) => {
 });
 
 /** GET /api/git/repos?scanId= — pack/loose/LFS breakdown of every .git in the scan. */
-insightRouter.get('/git/repos', (req: Request, res: Response) => {
+insightRouter.get('/git/repos', storageModeGate, (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   res.json({ repos: findGitRepos(storeOf(scan)) });
 });
@@ -284,7 +285,7 @@ insightRouter.get('/git/repos', (req: Request, res: Response) => {
  * report itself unavailable exactly like Smart Suggestions rather than
  * answering "no orphans", which would read as good news.
  */
-insightRouter.get('/packages/orphans', async (req: Request, res: Response) => {
+insightRouter.get('/packages/orphans', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const catalog = ruleCatalogStatus();
   if (!catalog.ok) {
@@ -303,7 +304,7 @@ insightRouter.get('/packages/orphans', async (req: Request, res: Response) => {
  * cache, workshop content, Proton prefix and — only where the game keeps it
  * separately — DLC.
  */
-insightRouter.get('/games', (req: Request, res: Response) => {
+insightRouter.get('/games', storageModeGate, (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   res.json({ scanId: scan.scanId, ...scanGameLibraries(storeOf(scan)) });
 });
@@ -319,7 +320,7 @@ insightRouter.get('/games', (req: Request, res: Response) => {
  * its total size only. The §B2 guard runs over every library's parts, so one
  * the owning app holds open says who holds it and offers nothing.
  */
-insightRouter.get('/media', async (req: Request, res: Response) => {
+insightRouter.get('/media', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   res.json({ scanId: scan.scanId, ...(await guardMediaReport(scanMediaLibraries(storeOf(scan)))) });
 });
@@ -331,7 +332,7 @@ insightRouter.get('/media', async (req: Request, res: Response) => {
  * returned. Findings are local to this machine and are deliberately excluded
  * from anything that leaves it.
  */
-insightRouter.get('/security/findings', async (req: Request, res: Response) => {
+insightRouter.get('/security/findings', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const ignore = await getIgnoreMatchers('suggest');
   res.json({ scanId: scan.scanId, patternCount: SECURITY_PATTERNS.length, ...collectSecurityFindings(storeOf(scan), ignore) });
@@ -353,6 +354,7 @@ insightRouter.post('/security/relocate', idempotency, guardBodyPath, requireInsi
     throw new AppError(400, 'DEST_REQUIRED', 'A "to" destination path is required');
   }
   const dest = sanitizePath(to);
+  assertNotSpillPath(dest); // nothing is ever written into TreeMap's own spill folder (§S.5.3)
   // Both ends, not just the source: writing a file into a folder the user never
   // scanned is exactly the surprise the scanned-root rule exists to prevent.
   if (!insideAnyScanRoot(dest)) {
@@ -436,7 +438,7 @@ insightRouter.get('/cost/pricing', (_req: Request, res: Response) => {
  * Shortlisted from the scan first (big video containers only), then probed —
  * so ffprobe runs tens of times, not tens of thousands.
  */
-insightRouter.get('/compression/candidates', async (req: Request, res: Response) => {
+insightRouter.get('/compression/candidates', storageModeGate, async (req: Request, res: Response) => {
   const scan = requireCompleteScan(req, req.query.scanId);
   const tools = mediaTools();
   const availability = await tools.availability();
@@ -477,6 +479,8 @@ insightRouter.get('/compression/candidates', async (req: Request, res: Response)
  */
 insightRouter.post('/compression/encode', idempotency, guardBodyPaths, async (req: Request, res: Response) => {
   const { paths, confirm } = req.body as { paths: string[]; confirm?: boolean };
+  // TreeMap's own spill folder is never re-encoded or trashed (§S.5.3), whatever else is asked.
+  for (const p of paths) assertNotSpillPath(p);
   if (confirm !== true) {
     throw new AppError(400, 'CONFIRM_REQUIRED', 'Pass { confirm: true } — re-encoding is lossy and trashes the original');
   }
@@ -557,7 +561,7 @@ insightRouter.post('/git/gc', idempotency, guardBodyPath, requireInsideScanRoot,
  * (zip/jar/tar/tgz/iso/docker) and graft them into the scan as virtual
  * children. Lazy: first click parses (in a worker), repeats hit the cache.
  */
-insightRouter.post('/container/expand', guardBodyPath, requireInsideScanRoot, async (req: Request, res: Response) => {
+insightRouter.post('/container/expand', guardBodyPath, requireInsideScanRoot, storageModeGate, async (req: Request, res: Response) => {
   const { scanId, path: containerPath } = req.body as { scanId?: unknown; path: string };
   const scan = requireCompleteScan(req, scanId);
   res.json(await expandContainer(scan, containerPath));
@@ -582,7 +586,7 @@ insightRouter.get('/scans', (_req: Request, res: Response) => {
  * GET /api/compare?scanIdA=&scanIdB=
  * Structural diff between two completed scans of the same root path.
  */
-insightRouter.get('/compare', (req: Request, res: Response) => {
+insightRouter.get('/compare', storageModeGate, (req: Request, res: Response) => {
   const scanA = requireCompleteScan(req, req.query.scanIdA);
   const scanB = requireCompleteScan(req, req.query.scanIdB);
   if (scanA.rootPath !== scanB.rootPath) {

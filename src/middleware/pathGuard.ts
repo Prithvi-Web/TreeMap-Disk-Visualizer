@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import { sanitizePath, isInside, canonicalDirOf } from '../utils/pathSanitizer';
+import { sanitizePath, isInside, canonicalDirOf, isSpillPath } from '../utils/pathSanitizer';
+import { SPILL_DIR } from '../services/spillSweep';
 import { allScans } from '../services/diskScanner';
 import { isVirtualPath } from '../services/containerScanner';
 import { AppError } from './errorHandler';
@@ -171,39 +172,82 @@ export function insideAnyScanRoot(p: string): boolean {
   return allScans().some((scan) => isInside(canonicalDirOf(scan.rootPath), where));
 }
 
-/** Reject body paths that fall outside every known scan root. */
-export function requireInsideScanRoot(req: Request, _res: Response, next: NextFunction): void {
+/**
+ * The refusal for a path in TreeMap's own spill folder (`<appData>/` + `SPILL_DIR`, Phase 4
+ * §S.5.3), or null. The folder holds the working files of very large scans; no request that
+ * names a path there may trash, open, move or write it, however the path is spelled
+ * (`isSpillPath`). Refused before the scanned-root rule is asked: a scan of a home folder
+ * covers app-data, and scanning is no licence here.
+ */
+export function spillPathRefusal(p: string): AppError | null {
+  if (!isSpillPath(p)) return null;
+  return new AppError(
+    403,
+    'SPILL_PATH',
+    `"${p}" is in TreeMap's own ${SPILL_DIR} folder, which holds the working files of very large scans. ` +
+      'TreeMap never trashes, opens, moves or writes anything there.',
+  );
+}
+
+/** Throws `spillPathRefusal`'s 403 for a path in the spill folder: for services and the MCP tools. */
+export function assertNotSpillPath(p: string): void {
+  const refusal = spillPathRefusal(p);
+  if (refusal) throw refusal;
+}
+
+/**
+ * The scanned-root rule over a request's `path` / `paths`, in one place: a cloud path, a path
+ * in TreeMap's own spill folder (when `refuseSpill`), a path outside every scanned root, an
+ * entry inside an archive. Answers the first refusal, or null.
+ */
+function scanRootRefusal(req: Request, refuseSpill: boolean): AppError | null {
   const body = req.body as { path?: string; paths?: string[] };
   const candidates = body.paths ?? (body.path !== undefined ? [body.path] : []);
   for (const p of candidates) {
     // Cloud entries never touch this filesystem — their deletes go through
     // POST /api/cloud/trash to the provider's own trash.
     if (p.startsWith('cloud://')) {
-      next(new AppError(403, 'CLOUD_PATH', `"${p}" lives in a cloud account — use the provider's trash instead`));
-      return;
+      return new AppError(403, 'CLOUD_PATH', `"${p}" lives in a cloud account — use the provider's trash instead`);
     }
+    const spill = refuseSpill ? spillPathRefusal(p) : null;
+    if (spill) return spill;
     if (!insideAnyScanRoot(p)) {
-      next(
-        new AppError(
-          403,
-          'OUTSIDE_SCAN_ROOT',
-          `"${p}" is outside every scanned root — scan its folder first`
-        )
+      return new AppError(
+        403,
+        'OUTSIDE_SCAN_ROOT',
+        `"${p}" is outside every scanned root — scan its folder first`
       );
-      return;
     }
     // Entries inside a container exist in its directory listing, not on
     // disk — only the container itself can be trashed or opened.
     if (isVirtualPath(p)) {
-      next(
-        new AppError(
-          403,
-          'VIRTUAL_PATH',
-          `"${p}" is inside an archive — act on the archive itself instead`
-        )
+      return new AppError(
+        403,
+        'VIRTUAL_PATH',
+        `"${p}" is inside an archive — act on the archive itself instead`
       );
-      return;
     }
   }
-  next();
+  return null;
+}
+
+/**
+ * Reject body paths that fall outside every known scan root, and any path in TreeMap's own
+ * spill folder: the guard of every destructive and OS-touching route.
+ */
+export function requireInsideScanRoot(req: Request, _res: Response, next: NextFunction): void {
+  const refusal = scanRootRefusal(req, true);
+  if (refusal) next(refusal);
+  else next();
+}
+
+/**
+ * The same scanned-root rule for a route that only reads (POST /api/facts): a question about
+ * the spill folder is answered like any other, since answering it touches nothing there, and
+ * one such path must not cost a whole batch of 2,000 its answers.
+ */
+export function requireInsideScanRootToRead(req: Request, _res: Response, next: NextFunction): void {
+  const refusal = scanRootRefusal(req, false);
+  if (refusal) next(refusal);
+  else next();
 }

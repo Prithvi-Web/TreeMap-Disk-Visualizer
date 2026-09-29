@@ -8,6 +8,7 @@ import {
   guardQueryPath,
   requireInsideScanRoot,
   insideAnyScanRoot,
+  assertNotSpillPath,
 } from '../middleware/pathGuard';
 import { AppError } from '../middleware/errorHandler';
 import { getOrRenderThumbnail, THUMB_DIM, THUMB_MAX_INPUT } from '../services/thumbnailCache';
@@ -183,6 +184,7 @@ fileRouter.get('/files/preview', guardQueryPath('path'), async (req: Request, re
   if (typeof target !== 'string' || !target) {
     throw new AppError(400, 'PATH_REQUIRED', 'A "path" query parameter is required');
   }
+  assertNotSpillPath(target); // TreeMap's own spill folder is never opened (§S.5.3)
   if (!insideAnyScanRoot(target)) {
     throw new AppError(403, 'OUTSIDE_SCAN_ROOT', 'Preview is only available for files inside a scanned folder');
   }

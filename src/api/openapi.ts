@@ -10,6 +10,8 @@
  * tests/discoverability.test.ts holds sampled endpoints to it.
  */
 
+import { FEATURES, ROUTE_FEATURES, STORAGE_MODES, canBeOff, featuresOf, isOff } from '../services/storageMode';
+
 // Resolved at runtime so the served spec always reports the app's version.
 const { version: APP_VERSION } = require('../../package.json') as { version: string };
 
@@ -88,6 +90,16 @@ const schemas: Json = {
     { error: str('Human-readable message'), code: str('Stable machine-readable code, e.g. OUTSIDE_SCAN_ROOT; BAD_HOST (403) when the Host header does not name this server') },
     ['error', 'code'],
     'Uniform error body returned by every endpoint',
+  ),
+  StorageModeError: obj(
+    {
+      error: str('A sentence naming the feature and the mode, why the feature is off there, and what to do instead'),
+      code: str("'STORAGE_MODE'"),
+      mode: str("The storage mode the scan is kept in: 'spill' or 'aggregate'"),
+      feature: str('The feature refused, by its id in the availability table (src/services/storageMode.ts)'),
+    },
+    ['error', 'code', 'mode', 'feature'],
+    'A feature that is off in the storage mode a very large scan is kept in (Phase 4). Every scan is kept in memory today, where nothing is off.',
   ),
   BudgetGauge: obj(
     {
@@ -3018,6 +3030,30 @@ export const ENDPOINTS: EndpointDescriptor[] = [
 
 /* ------------------------------ document ------------------------------ */
 
+/**
+ * An endpoint's responses with the storage-mode refusal added, read from the availability
+ * table (the one source, P4-15): a route serving a feature that can be off answers 409
+ * `STORAGE_MODE` in the modes where it is. Merged into a 409 the endpoint already documents.
+ */
+function withStorageModeRefusal(ep: EndpointDescriptor): Json {
+  const entry = ROUTE_FEATURES[`${ep.method.toUpperCase()} ${ep.path.replace(/\{(\w+)\}/g, ':$1')}`];
+  const off = entry === undefined ? [] : featuresOf(entry).filter(canBeOff);
+  if (off.length === 0) return ep.responses;
+  const which = off
+    .map((f) => `${FEATURES[f].label} (off in ${STORAGE_MODES.filter((m) => isOff(f, m)).join(' and ')} mode)`)
+    .join('; ');
+  const refusal =
+    `STORAGE_MODE — the scan is kept in a storage mode where the feature asked for is off: ${which}. ` +
+    'The body adds `mode` and `feature`. Every scan is kept in memory today, where nothing is off.';
+  const existing = ep.responses['409'] as { description?: string; content?: Json } | undefined;
+  return {
+    ...ep.responses,
+    '409': existing
+      ? { ...existing, description: `${existing.description ?? ''}; or ${refusal}` }
+      : jsonResponse(refusal, ref('StorageModeError')),
+  };
+}
+
 let cached: Json | null = null;
 
 /** Build (once) the OpenAPI 3 document served at GET /api/openapi.json. */
@@ -3033,7 +3069,7 @@ export function buildOpenApiDocument(): Json {
       ...(ep.destructive ? { description: 'DESTRUCTIVE: mutates the filesystem, OS state, or persisted config.' } : {}),
       ...(ep.parameters ? { parameters: ep.parameters } : {}),
       ...(ep.requestBody ? { requestBody: ep.requestBody } : {}),
-      responses: ep.responses,
+      responses: withStorageModeRefusal(ep),
     };
   }
 
@@ -3049,7 +3085,10 @@ export function buildOpenApiDocument(): Json {
         '{ error, code } JSON. Rate limit: 10 req/s sustained per client (burst 20), 429 when exceeded. ' +
         'Auth is optional: only when the server runs with TREEMAP_TOKEN set do /api requests require ' +
         'Authorization: Bearer <token> (401 { code: "UNAUTHORIZED" } otherwise); the served web UI ' +
-        'authenticates via an automatically-set cookie.',
+        'authenticates via an automatically-set cookie. A feature that is off in the storage mode a very ' +
+        'large scan is kept in answers 409 { error, code: "STORAGE_MODE", mode, feature } (every scan is ' +
+        'kept in memory today, where nothing is off); a path in TreeMap\'s own spill folder in app-data is ' +
+        'refused by every endpoint that takes a path to trash, open, move or write, 403 { code: "SPILL_PATH" }.',
     },
     servers: [{ url: '/' }],
     tags: [
