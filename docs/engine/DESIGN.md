@@ -480,7 +480,8 @@ anonymous mapping (§6).
   with every row kept on disk (543 MB above), and `T_mem` at 5M. **Decided by
   the owner on 25 September 2026: the proposal is taken** (plan §S.11 Q3).
   The 543 MB is a budget until T22 measures it.
-* **Electron** replaces B0 with its own baseline E0, which is not measured.
+* **Electron** replaces B0 with its own baseline E0, ~~which is not measured~~ measured in the app itself on
+  29 September 2026 (199 MB; see "What the table says").
   Memory mode at 5M then needs E0 ≤ 227 MB; T9 lowers Electron's `T_mem` by
   1M rows for every 64 MB above that.
 * A single folder of more than about 1.2M entries breaks aggregate's worst
@@ -516,6 +517,14 @@ What the table says:
   same modules loaded through tsx cost 162 MB, which is why the harness
   compiles. E0 is **107 MB** run as Node. That is a lower bound for the app's
   main process, which also runs Chromium's browser side (plan §S.11 Q16).
+  **Measured in the app itself on 29 September 2026** (Q16; the owner said
+  yes, once): the installed app (the v5.0.1 build), started with a throwaway
+  profile and left idle for 45 s, holds **199 MB** resident in its main
+  process (physical footprint 78 MB, 101 MB at its peak), about 92 MB of
+  Chromium's browser side over the run-as-Node figure. That meets memory
+  mode's E0 ≤ 227 MB with about 23 MB to spare. What the current server code
+  adds over v5.0.1's is not in this figure, so the next installed build is
+  measured again.
 * **The store** costs **70.7 B a row** resident in Node and **72.8 B** in
   Electron (the synthetic names are 18 B), against the 64 B budgeted. The
   walk's own working memory above the baseline is about 10 MB on these trees.
