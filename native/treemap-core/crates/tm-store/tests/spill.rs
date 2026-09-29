@@ -45,8 +45,9 @@ const SPILL_BYTES: u64 = 256 << 20;
 /// The helper's write size.
 const CHUNK: usize = 1 << 20;
 /// How many `sync()` calls the parent makes, at most, before it reads the bytes as not
-/// freed.
-const MAX_SYNCS: u32 = 8;
+/// freed: counted, not timed, and far more than the one the probe needed, because APFS frees
+/// the helper's files one after another in the background.
+const MAX_SYNCS: u32 = 32;
 /// How long a helper may take to say it is ready before it is taken for hung: a guard only,
 /// far past the few seconds 256 MiB takes on a loaded machine.
 const HANG_GUARD: Duration = Duration::from_secs(300);
@@ -193,6 +194,25 @@ fn a_file_in_place_of_the_folder_is_refused_and_left_as_it_was() -> TestResult {
     Ok(())
 }
 
+/// App-data is Node's to make: a spill folder is made in it, never the folder itself.
+#[test]
+fn a_missing_app_data_folder_is_refused_and_not_made() -> TestResult {
+    let scratch = Scratch::new("noappdata")?;
+    let missing = scratch.dir.join("app-data");
+    match SpillDir::open(&missing) {
+        Err(SpillError::Io { call, .. }) => {
+            assert!(
+                call.contains("mkdir") || call.contains("CreateDirectory"),
+                "{call}"
+            );
+        }
+        Err(other) => return Err(format!("refused for another reason: {other}")),
+        Ok(_) => return Err("a spill folder was made without its app-data".to_owned()),
+    }
+    assert!(!missing.exists(), "app-data is not made");
+    Ok(())
+}
+
 /// A link at `at` to the folder `target`: a symbolic link.
 #[cfg(unix)]
 fn plant_folder_link(target: &Path, at: &Path) -> TestResult {
@@ -238,6 +258,18 @@ fn a_name_is_the_pid_the_start_the_scan_and_the_column() -> TestResult {
     assert!(
         !start.is_empty() && start.bytes().all(|b| b.is_ascii_digit()),
         "the start is milliseconds: {start}"
+    );
+    // A time: when this process first named a spill file, in milliseconds since 1970. With the
+    // pid it keeps an earlier process's leftover from taking this process's names, so it must
+    // be no later than now, and past a floor (2020) any set clock is past.
+    let start_ms: u128 = start.parse().map_err(|e| format!("{start}: {e}"))?;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis();
+    assert!(
+        start_ms > 1_600_000_000_000 && start_ms <= now_ms,
+        "the start {start_ms} is not a time in this process's life (now {now_ms})"
     );
     assert_eq!(*rest, format!("{UUID}-nameOff_1"));
     assert_eq!(
@@ -360,6 +392,7 @@ fn bytes_come_back_from_the_offsets_they_were_written_at() -> TestResult {
         .zip(1_u64..)
         .map(|(&len, seed)| pattern(len, seed))
         .collect();
+    assert!(file.is_empty(), "a new spill file holds nothing");
     let mut offsets = Vec::new();
     let mut end = 0_u64;
     for chunk in &chunks {
@@ -368,6 +401,11 @@ fn bytes_come_back_from_the_offsets_they_were_written_at() -> TestResult {
         offsets.push(at);
         end += chunk.len() as u64;
         assert_eq!(file.len(), end, "the length is the bytes appended");
+        assert_eq!(
+            file.is_empty(),
+            end == 0,
+            "empty only until a byte is appended"
+        );
     }
     // Read back in another order than written, each at its own offset.
     for i in [3, 0, 5, 1, 4, 2] {
@@ -472,6 +510,44 @@ fn a_child_process_does_not_inherit_a_spill_file() -> TestResult {
         "the child holds the spill file: {text}"
     );
     drop(file);
+    Ok(())
+}
+
+/// Each file of a scan takes its own column. On POSIX a second file of a name whose first
+/// has already lost it is made; on Windows, where the first keeps its name while it is open,
+/// the second is refused as taken.
+#[test]
+fn a_name_used_twice_while_its_first_file_is_open() -> TestResult {
+    let scratch = Scratch::new("twice")?;
+    let dir = SpillDir::open(&scratch.dir).map_err(|e| e.to_string())?;
+    let name = SpillName::new(UUID, "twice").map_err(|e| e.to_string())?;
+    let first = dir.create(&name).map_err(|e| e.to_string())?;
+    let second = dir.create(&name);
+    #[cfg(unix)]
+    second.map_err(|e| format!("the second file of the name: {e}"))?;
+    #[cfg(windows)]
+    assert!(
+        matches!(second, Err(SpillError::NameTaken { .. })),
+        "the second file of the name is refused while the first is open"
+    );
+    drop(first);
+    Ok(())
+}
+
+/// Windows makes files by path, so the folder is held open, sharing no deletion, for as long
+/// as spill files are made in it: no process can move it and put a junction in its place.
+#[cfg(windows)]
+#[test]
+fn the_folder_cannot_be_moved_while_spill_files_are_made_in_it() -> TestResult {
+    let scratch = Scratch::new("held")?;
+    let dir = SpillDir::open(&scratch.dir).map_err(|e| e.to_string())?;
+    let moved = scratch.dir.join("moved");
+    assert!(
+        std::fs::rename(scratch.spill_dir(), &moved).is_err(),
+        "the folder was moved while it was held"
+    );
+    drop(dir);
+    std::fs::rename(scratch.spill_dir(), &moved).map_err(|e| format!("once let go: {e}"))?;
     Ok(())
 }
 

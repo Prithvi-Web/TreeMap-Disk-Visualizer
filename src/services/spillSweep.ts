@@ -19,12 +19,20 @@ import path from 'node:path';
  * decided on 28 Sep 2026 (plan §S.11 Q1): TreeMap removes files it created itself, only
  * inside `scan-spill`. So `removeSpillFile` is the one place that removes a spill file, and
  * it refuses, saying why:
- * - a `scan-spill` that is a link or not a folder, which it never looks into;
+ * - an app-data folder given as a relative path;
+ * - a `scan-spill` that is a link, not a folder, or leads anywhere but
+ *   `<real app-data>/scan-spill`, and on POSIX one another user owns or can write to;
  * - a path whose real location is not directly inside `scan-spill`;
- * - a name tm-store does not give a spill file;
+ * - a name tm-store does not give: its numbers never start with a 0 (a lone 0 start
+ *   aside), its parts keep tm-store's alphabets and bounds;
  * - a link, which it never follows, and anything else that is not a regular file;
- * - a file replaced since it was checked: the `(dev, ino)` it checked must be the one it
- *   removes.
+ * - a file tm-store could not have left: one with other names (a link count above one) and,
+ *   on POSIX, one another user owns or with permissions beyond the 0600 tm-store gives;
+ * - a file replaced since it was checked. On POSIX the checked file is held open while it
+ *   is compared, so its inode cannot be freed and given to another file (ext4 hands a freed
+ *   number out again at once); on Windows a file's id carries its record's sequence number,
+ *   which changes when the record is reused. The last check and the removal run together,
+ *   with nothing between them that yields to other work.
  *
  * Wiring is T17's: the sweep at boot in `src/server.ts`, `pathGuard` over `scan-spill`, the
  * Empty Folders view skipping it, and the missing-gigabytes line.
@@ -32,6 +40,12 @@ import path from 'node:path';
 
 /** The folder under app-data that holds spill files (tm-store's `SPILL_DIR`). */
 export const SPILL_DIR = 'scan-spill';
+/** The most bytes a scan id takes in a name (tm-store's `SCAN_ID_MAX`). */
+export const SCAN_ID_MAX = 64;
+/** The most bytes a column takes in a name (tm-store's `COLUMN_MAX`). */
+export const COLUMN_MAX = 32;
+/** The permissions tm-store gives a spill file; the umask can only take bits away. */
+const SPILL_FILE_MODE = 0o600n;
 
 /** A spill file's name, as tm-store's `SpillName` writes it. */
 export interface SpillName {
@@ -44,25 +58,27 @@ export interface SpillName {
 }
 
 /**
- * `<pid>-<startMs>-<scanId>-<column>`: the scan id holds ASCII letters, digits, `-` and `_`
- * (at most 64), the column letters, digits and `_` (at most 32), so the last `-` ends the
- * id. The same bounds as tm-store's `SCAN_ID_MAX` and `COLUMN_MAX`, which that crate's tests
- * pin on its side.
+ * `<pid>-<startMs>-<scanId>-<column>` as tm-store formats it: the numbers in decimal with no
+ * leading zero, the scan id ASCII letters, digits, `-` and `_`, the column letters, digits
+ * and `_`, so the last `-` ends the id. The bounds are tm-store's (a test holds them to its
+ * source).
  */
-const SPILL_NAME = /^(\d{1,10})-(\d{1,20})-([A-Za-z0-9_-]{1,64})-([A-Za-z0-9_]{1,32})$/;
+const SPILL_NAME = new RegExp(
+  `^([1-9]\\d{0,9})-(0|[1-9]\\d{0,19})-([A-Za-z0-9_-]{1,${SCAN_ID_MAX}})-([A-Za-z0-9_]{1,${COLUMN_MAX}})$`,
+);
 /** The largest pid a process can have; `process.kill` takes nothing past a 32-bit int. */
 const MAX_PID = 2 ** 31 - 1;
 
 /**
- * `name` read as a spill file's name, or null when tm-store would not have made it. A pid
- * of 0 is no process (and `process.kill(0)` would ask the whole process group), so it does
- * not parse.
+ * `name` read as a spill file's name, or null when tm-store would not have made it. Its pid
+ * is at least 1, because no digit but 1-9 may lead it (`process.kill(0)` would ask the whole
+ * process group), and fits in 31 bits.
  */
 export function parseSpillName(name: string): SpillName | null {
   const match = SPILL_NAME.exec(name);
   if (!match) return null;
   const pid = Number(match[1]);
-  if (!Number.isSafeInteger(pid) || pid < 1 || pid > MAX_PID) return null;
+  if (pid > MAX_PID) return null;
   return { pid, startMs: match[2], scanId: match[3], column: match[4] };
 }
 
@@ -91,8 +107,8 @@ export interface RemoveOutcome {
 
 export interface RemoveSeams {
   /**
-   * Runs between the check and the removal: the tests' seam for what another process could
-   * do in that moment.
+   * Runs between the first check and the last: the tests' seam for what another process
+   * could do in that moment.
    */
   window?: () => void | Promise<void>;
 }
@@ -101,29 +117,84 @@ function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** This process's user, or null where there is none to compare (Windows). */
+function ownUid(): bigint | null {
+  return typeof process.getuid === 'function' ? BigInt(process.getuid()) : null;
+}
+
 /**
- * The spill folder under `appDataDir`, resolved, or why it cannot be used: it must be a
- * folder of its own, not a link to one elsewhere.
+ * The spill folder under `appDataDir`, resolved, or why it cannot be used: an absolute
+ * app-data, a folder of its own at `<real app-data>/scan-spill` (not a link, a junction or
+ * any other reparse point leading elsewhere), and on POSIX this user's and writable by no
+ * one else. `absent` says it does not exist, so nothing was ever spilled there.
  */
-function realSpillDir(appDataDir: string): { dir: string } | { reason: string } {
+function realSpillDir(appDataDir: string): { dir: string } | { reason: string; absent: boolean } {
+  if (!path.isAbsolute(appDataDir)) {
+    return { reason: `the app-data folder ${appDataDir} is not an absolute path`, absent: false };
+  }
   const spillDir = path.join(appDataDir, SPILL_DIR);
+  let stat: fs.BigIntStats;
   try {
     // lstat does not follow a link, so a link here, a junction included, is no directory.
-    const stat = fs.lstatSync(spillDir);
-    if (!stat.isDirectory()) {
-      return { reason: `${spillDir} is not a folder of its own (it is a link, or not a folder), so nothing in it is removed` };
-    }
-    return { dir: fs.realpathSync.native(spillDir) };
+    stat = fs.lstatSync(spillDir, { bigint: true });
   } catch (err) {
-    return { reason: `${spillDir} cannot be read: ${describe(err)}` };
+    const absent = (err as NodeJS.ErrnoException).code === 'ENOENT';
+    return { reason: `${spillDir} cannot be read: ${describe(err)}`, absent };
+  }
+  if (!stat.isDirectory()) {
+    return { reason: `${spillDir} is not a folder of its own (it is a link, or not a folder)`, absent: false };
+  }
+  const uid = ownUid();
+  if (uid !== null && stat.uid !== uid) {
+    return { reason: `${spillDir} belongs to user ${stat.uid}, not to the user TreeMap runs as (${uid})`, absent: false };
+  }
+  if (uid !== null && (stat.mode & 0o022n) !== 0n) {
+    return { reason: `${spillDir} can be written by other users`, absent: false };
+  }
+  try {
+    const dir = fs.realpathSync.native(spillDir);
+    const expected = path.join(fs.realpathSync.native(appDataDir), SPILL_DIR);
+    if (dir !== expected) {
+      return { reason: `${spillDir} leads to ${dir}, not to ${expected}`, absent: false };
+    }
+    return { dir };
+  } catch (err) {
+    return { reason: `${spillDir} cannot be resolved: ${describe(err)}`, absent: false };
   }
 }
 
 /**
+ * Why a regular file in `scan-spill` cannot be one tm-store left, or null: it has another
+ * name, or (POSIX) another user owns it or its permissions go beyond 0600.
+ */
+function notLeftByTreeMap(name: string, stat: fs.BigIntStats): string | null {
+  if (stat.nlink !== 1n) return `${name} has ${stat.nlink} names, and tm-store leaves a file with one`;
+  const uid = ownUid();
+  if (uid === null) return null;
+  if (stat.uid !== uid) return `${name} belongs to user ${stat.uid}, not to the user TreeMap runs as (${uid})`;
+  if ((stat.mode & 0o7777n & ~SPILL_FILE_MODE) !== 0n) {
+    return `${name} has permissions ${(stat.mode & 0o7777n).toString(8)}, beyond the 600 tm-store gives a spill file`;
+  }
+  return null;
+}
+
+/** Whether `now` is the file `checked` described: the same device and id, still a file. */
+function sameFile(checked: fs.BigIntStats, now: fs.BigIntStats): boolean {
+  return now.dev === checked.dev && now.ino === checked.ino && now.isFile();
+}
+
+/**
+ * The checked file, held open without following a link, so its inode stays its own while
+ * it is compared (POSIX); null on Windows, where a reused file record gets a new id anyway.
+ */
+function holdOpen(target: string): number | null {
+  if (process.platform === 'win32') return null;
+  return fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+}
+
+/**
  * Removes `file`, a spill file left in `<appDataDir>/scan-spill`: the one place in the app
- * that removes a spill file. Refuses, with the reason, everything the module docs list. The
- * last check and the removal are a few microseconds apart, and only a process of the same
- * user could replace the file between them (the folder is mode 0700).
+ * that removes a spill file. Refuses, with the reason, everything the module docs list.
  */
 export async function removeSpillFile(appDataDir: string, file: string, seams: RemoveSeams = {}): Promise<RemoveOutcome> {
   const refuse = (reason: string): RemoveOutcome => ({ removed: false, bytes: 0, reason });
@@ -148,29 +219,49 @@ export async function removeSpillFile(appDataDir: string, file: string, seams: R
   }
   if (checked.isSymbolicLink()) return refuse(`${name} is a link, which is never followed or removed here`);
   if (!checked.isFile()) return refuse(`${name} is not a regular file`);
-  await seams.window?.();
-  let now: fs.BigIntStats;
+  const stranger = notLeftByTreeMap(name, checked);
+  if (stranger !== null) return refuse(stranger);
+  let held: number | null;
   try {
-    now = fs.lstatSync(target, { bigint: true });
+    held = holdOpen(target);
   } catch (err) {
-    return refuse(`${name} went away before it could be removed (${describe(err)})`);
-  }
-  if (now.dev !== checked.dev || now.ino !== checked.ino || !now.isFile()) {
-    return refuse(`${name} was replaced after it was checked, so it was left alone`);
+    return refuse(`${name} could not be held open to be checked: ${describe(err)}`);
   }
   try {
-    await fs.promises.unlink(target);
-  } catch (err) {
-    return refuse(`${name} could not be removed: ${describe(err)}`);
+    if (held !== null && !sameFile(checked, fs.fstatSync(held, { bigint: true }))) {
+      return refuse(`${name} was replaced after it was checked, so it was left alone`);
+    }
+    await seams.window?.();
+    // The last check and the removal run together: nothing between them yields.
+    let now: fs.BigIntStats;
+    try {
+      now = fs.lstatSync(target, { bigint: true });
+    } catch (err) {
+      return refuse(`${name} went away before it could be removed (${describe(err)})`);
+    }
+    if (!sameFile(checked, now)) return refuse(`${name} was replaced after it was checked, so it was left alone`);
+    try {
+      fs.unlinkSync(target);
+    } catch (err) {
+      return refuse(`${name} could not be removed: ${describe(err)}`);
+    }
+    return { removed: true, bytes: Number(checked.size) };
+  } finally {
+    if (held !== null) fs.closeSync(held);
   }
-  return { removed: true, bytes: Number(checked.size) };
 }
 
-/** What `sweepSpillDir` did: the files it removed and their bytes, and the entries it kept. */
+/** What `sweepSpillDir` did. */
 export interface SweepReport {
+  /** The files removed, and the bytes they held. */
   removed: number;
   bytes: number;
+  /** The entries left in place: a live owner's, a name tm-store does not give, or refused. */
   kept: number;
+  /** The entries of dead owners that `removeSpillFile` refused, each with its reason. */
+  refused: { name: string; reason: string }[];
+  /** Why the folder was not looked into, when it exists and cannot be used or read. */
+  unreadable?: string;
 }
 
 export interface SweepSeams {
@@ -181,18 +272,22 @@ export interface SweepSeams {
 /**
  * The boot sweep: removes, through `removeSpillFile`, each entry of `<appDataDir>/scan-spill`
  * whose name tm-store gives a spill file and whose `<pid>` is dead, and keeps every other
- * entry. A `scan-spill` that is absent, a link, not a folder or unreadable is not looked
- * into, and the report is all zeros: nothing there was TreeMap's to remove.
+ * entry. An absent `scan-spill` sweeps nothing; one that cannot be used or read is not looked
+ * into, and the report says why.
  */
 export async function sweepSpillDir(appDataDir: string, seams: SweepSeams = {}): Promise<SweepReport> {
   const isAlive = seams.isAlive ?? processIsAlive;
-  const report: SweepReport = { removed: 0, bytes: 0, kept: 0 };
+  const report: SweepReport = { removed: 0, bytes: 0, kept: 0, refused: [] };
   const spill = realSpillDir(appDataDir);
-  if ('reason' in spill) return report;
+  if ('reason' in spill) {
+    if (!spill.absent) report.unreadable = spill.reason;
+    return report;
+  }
   let names: string[];
   try {
     names = fs.readdirSync(spill.dir);
-  } catch {
+  } catch (err) {
+    report.unreadable = `${spill.dir} cannot be listed: ${describe(err)}`;
     return report;
   }
   for (const name of names) {
@@ -207,6 +302,7 @@ export async function sweepSpillDir(appDataDir: string, seams: SweepSeams = {}):
       report.bytes += outcome.bytes;
     } else {
       report.kept++;
+      report.refused.push({ name, reason: outcome.reason ?? 'refused' });
     }
   }
   return report;

@@ -1,8 +1,8 @@
-//! Windows: the folder checked by path, and each file made with `CreateFileW`,
-//! `FILE_FLAG_DELETE_ON_CLOSE` and `FILE_SHARE_DELETE`, through `std::fs::OpenOptions`, so
-//! no `unsafe` is needed. The name lasts while the file is open; Windows removes it with
-//! the last handle, when the process ends too. std's handles are not inheritable, so no
-//! child process can hold one.
+//! Windows: the folder held open and checked through its handle, and each file made in it
+//! with `CreateFileW`, `FILE_FLAG_DELETE_ON_CLOSE` and `FILE_SHARE_DELETE`, all through
+//! `std::fs::OpenOptions`. The name lasts while the file is open; Windows removes it with the
+//! last handle, when the process ends too. std's handles are not inheritable, so no child
+//! process can hold one.
 
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -12,9 +12,10 @@ use std::path::Path;
 use std::ptr;
 
 use windows_sys::Win32::Storage::FileSystem::{
-    DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_DELETE_ON_CLOSE,
-    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, GetDiskFreeSpaceExW, GetDriveTypeW,
-    GetVolumePathNameW,
+    DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_BACKUP_SEMANTICS,
+    FILE_FLAG_DELETE_ON_CLOSE, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+    FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, GetDiskFreeSpaceExW, GetDriveTypeW, GetVolumePathNameW,
 };
 
 use super::SpillError;
@@ -24,19 +25,32 @@ use super::plan::{FileSystem, VolumeFacts, VolumeId};
 /// `GetVolumePathNameW` can return.
 const LONG_PATH_UNITS: usize = 32_768;
 
-/// The folder: Windows makes files by path, so nothing is held.
-pub(super) struct Dir;
+/// The folder, held open for as long as spill files are made in it. Its handle does not share
+/// deletion, so no process can rename the folder, remove it, or put a junction in its place
+/// meanwhile: Windows makes files by path, and the path must keep leading here.
+pub(super) struct Dir {
+    _held: File,
+}
 
-/// `path`, made if absent, and refused if it is a reparse point (a symbolic link, a
-/// junction or anything else that could send its files elsewhere) or not a folder.
+/// `path`, made if absent and held open, and refused if it is a reparse point (a symbolic
+/// link, a junction or anything else that could send its files elsewhere) or not a folder.
+/// The checks read the held handle itself, never the path again.
 pub(super) fn open_dir(path: &Path) -> Result<Dir, SpillError> {
     match fs::create_dir(path) {
         Ok(()) => {}
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
         Err(e) => return Err(SpillError::io(path, "CreateDirectoryW", e)),
     }
-    let meta =
-        fs::symlink_metadata(path).map_err(|e| SpillError::io(path, "GetFileAttributesExW", e))?;
+    // A folder opens only with backup semantics; a reparse point is opened as itself.
+    let held = OpenOptions::new()
+        .access_mode(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|e| SpillError::io(path, "CreateFileW", e))?;
+    let meta = held
+        .metadata()
+        .map_err(|e| SpillError::io(path, "GetFileInformationByHandle", e))?;
     if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return Err(SpillError::refused(
             path,
@@ -46,7 +60,7 @@ pub(super) fn open_dir(path: &Path) -> Result<Dir, SpillError> {
     if !meta.is_dir() {
         return Err(SpillError::refused(path, "it is not a folder"));
     }
-    Ok(Dir)
+    Ok(Dir { _held: held })
 }
 
 /// A new spill file named `name` in `dir_path`, removed by Windows when it closes. Made

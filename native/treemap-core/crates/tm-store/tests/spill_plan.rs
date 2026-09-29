@@ -401,7 +401,7 @@ fn the_ledger_counts_other_spills_until_they_are_released() -> TestResult {
         &one_volume(free),
         &ledger,
     );
-    third
+    let _allowed = third
         .verdict
         .map_err(|r| format!("after the release: {r}"))?;
     Ok(())
@@ -434,6 +434,70 @@ fn the_ledger_holds_every_reservation_until_each_is_dropped() -> TestResult {
     Ok(())
 }
 
+/// The ledger every scan of the process plans against is one ledger: a reservation made
+/// through one call is seen through the next. No other test here uses it.
+#[test]
+fn the_process_ledger_is_one_ledger() -> TestResult {
+    let before = Ledger::process().reserved();
+    let bytes = spill_bytes(1_000_000, Platform::Posix);
+    let plan = spill_plan(
+        &request(1_000_000, Platform::Posix),
+        &one_volume(900 * GB),
+        Ledger::process(),
+    );
+    let held = plan.verdict.map_err(|r| r.to_string())?;
+    assert_eq!(Ledger::process().reserved(), before + bytes.total());
+    drop(held);
+    assert_eq!(Ledger::process().reserved(), before);
+    Ok(())
+}
+
+/// The check and the reservation are one step under the ledger's lock: of many plans made at
+/// once against room for exactly one, exactly one is allowed, round after round.
+#[test]
+fn plans_made_at_once_share_the_room_between_them() {
+    const PLANS: usize = 32;
+    const ROUNDS: usize = 20;
+    let bytes = spill_bytes(10_000_000, Platform::Posix);
+    let free = asks(bytes) + bytes.total() - 1;
+    for round in 0..ROUNDS {
+        let ledger = Ledger::new();
+        let start = std::sync::Barrier::new(PLANS);
+        let allowed = std::thread::scope(|scope| {
+            let plans: Vec<_> = (0..PLANS)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        spill_plan(
+                            &request(10_000_000, Platform::Posix),
+                            &one_volume(free),
+                            &ledger,
+                        )
+                        .verdict
+                    })
+                })
+                .collect();
+            // Every verdict is held until all are in, so no reservation is given back early.
+            let verdicts: Vec<_> = plans
+                .into_iter()
+                .filter_map(|plan| plan.join().ok())
+                .collect();
+            assert_eq!(
+                verdicts.len(),
+                PLANS,
+                "round {round}: a plan's thread failed"
+            );
+            verdicts.iter().filter(|verdict| verdict.is_ok()).count()
+        });
+        assert_eq!(allowed, 1, "round {round}: plans allowed at once");
+        assert_eq!(
+            ledger.reserved(),
+            0,
+            "round {round}: every reservation given back"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------------------
 // The same volume: reported, never a refusal
 
@@ -446,21 +510,21 @@ fn the_same_volume_is_reported_and_never_refuses() -> TestResult {
         &ledger,
     );
     assert_eq!(same.same_volume, Some(true));
-    same.verdict.map_err(|r| r.to_string())?;
+    let _allowed = same.verdict.map_err(|r| r.to_string())?;
 
     let apart = FakeVolumes::default()
         .with(APP_DATA, Ok(local(900 * GB, "disk1")))
         .with(ROOT, Ok(local(900 * GB, "disk2")));
     let plan = spill_plan(&request(1_000, Platform::Posix), &apart, &ledger);
     assert_eq!(plan.same_volume, Some(false));
-    plan.verdict.map_err(|r| r.to_string())?;
+    let _allowed = plan.verdict.map_err(|r| r.to_string())?;
 
     let unknown = FakeVolumes::default()
         .with(APP_DATA, Ok(local(900 * GB, "disk1")))
         .with(ROOT, Err("the root is gone"));
     let plan = spill_plan(&request(1_000, Platform::Posix), &unknown, &ledger);
     assert_eq!(plan.same_volume, None, "unknown, not false");
-    plan.verdict.map_err(|r| r.to_string())?;
+    let _allowed = plan.verdict.map_err(|r| r.to_string())?;
     Ok(())
 }
 
@@ -572,8 +636,36 @@ fn the_os_facts_are_this_machines() -> TestResult {
         &ledger,
     );
     assert_eq!(plan.same_volume, Some(true), "{facts:?}");
-    plan.verdict
+    let _allowed = plan
+        .verdict
         .map_err(|r| format!("a thousand entries on this machine's temp volume: {r}"))?;
+    Ok(())
+}
+
+/// The OS says which file system holds the temp folder, and the rule reads it as local: APFS
+/// on macOS, a magic number on Linux (and `/proc`'s own, 0x9FA0), a fixed drive on Windows.
+#[test]
+fn the_os_names_this_machines_file_systems() -> TestResult {
+    let temp = std::env::temp_dir();
+    let facts = OsVolumes
+        .facts(&temp)
+        .map_err(|e| format!("{}: {e}", temp.display()))?;
+    assert_eq!(facts.file_system.network(), None, "{facts:?}");
+    #[cfg(target_os = "macos")]
+    assert_eq!(facts.file_system, FileSystem::Named("apfs".to_owned()));
+    #[cfg(target_os = "linux")]
+    {
+        assert!(
+            matches!(facts.file_system, FileSystem::Magic(magic) if magic != 0),
+            "{facts:?}"
+        );
+        let proc = OsVolumes
+            .facts(Path::new("/proc"))
+            .map_err(|e| format!("/proc: {e}"))?;
+        assert_eq!(proc.file_system, FileSystem::Magic(0x9FA0));
+    }
+    #[cfg(windows)]
+    assert_eq!(facts.file_system, FileSystem::DriveType(3));
     Ok(())
 }
 

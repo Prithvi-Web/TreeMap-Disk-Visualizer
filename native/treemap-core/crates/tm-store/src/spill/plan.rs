@@ -18,8 +18,10 @@
 //! scans planned at the same time cannot each count the same free space. The check and the
 //! reservation are one step under the ledger's lock.
 //!
-//! Whether app-data and the scanned root are on one volume is reported and never refuses:
-//! spill files have no names, so no walk can count them (§S.5.3).
+//! Whether app-data and the scanned root are on one volume is reported and never refuses. On
+//! POSIX spill files have no names, so no walk can count them (§S.5.3). On Windows a spill
+//! file keeps its name while it is open, so a walk of app-data's volume would list the running
+//! scan's own spill: the walk must be kept out of `scan-spill` there (T17).
 //!
 //! During the walk, after every [`IN_WALK_CHECK_EVERY`] bytes written, the spill sink asks
 //! [`in_walk_check`]: free space must stay at least 2 × the bytes still to write + max(1 GiB,
@@ -383,8 +385,10 @@ impl Ledger {
     }
 }
 
-/// A spill's bytes held on a [`Ledger`], given back when this is dropped.
+/// A spill's bytes held on a [`Ledger`], given back when this is dropped: the spill keeps it
+/// for as long as its files hold bytes.
 #[derive(Debug)]
+#[must_use = "a reservation dropped at once gives its bytes back at once"]
 pub struct Reservation<'a> {
     ledger: &'a Ledger,
     bytes: u64,

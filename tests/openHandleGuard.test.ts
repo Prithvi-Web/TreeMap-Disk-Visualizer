@@ -451,8 +451,12 @@ test('nothing outside Cleaner removes a user file', async () => {
    *    unlink its OWN temporary spill files, only inside `<appData>/scan-spill`.
    *    `removeSpillFile` is the one place that does, for a leftover of a dead
    *    process that tm-store named, and it refuses anything outside that folder,
-   *    any link, anything but a regular file, and a file replaced since it was
-   *    checked (tests/spillSweep.test.ts).
+   *    any link, anything but a regular file, a file tm-store could not have
+   *    left, and a file replaced since it was checked (tests/spillSweep.test.ts,
+   *    which also holds it to one removal). Its removal is a synchronous
+   *    `fs.unlinkSync`, right after its last check, which the pattern below does
+   *    not match (it sees no `…Sync` removal anywhere), so this entry records the
+   *    decision rather than lets anything through.
    */
   const allowed = new Set(['cleaner.ts', 'offload.ts', 'trash.ts', 'compressionAdvisor.ts', 'spillSweep.ts']);
   const offenders: string[] = [];

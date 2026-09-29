@@ -347,7 +347,10 @@ a crash inside the macOS create→unlink window leaves, through one confined
 remover. Having no names, the files cannot be listed by a walk, so a scan
 never counts them, even when app-data is inside the scanned root; `scan-spill`
 is not on the never-descend list, and Missing Gigabytes gains a line for
-their bytes. ~~**24 September 2026, pending the owner (plan §S.11 Q1):** the
+their bytes. **Corrected 28 September 2026 (T13's review): on POSIX only.**
+On Windows a delete-on-close file keeps its name while it is open, so a walk
+of app-data's volume would count a running scan's own spill files there; T17
+keeps the walk out of `scan-spill` on Windows (RISKS R97). ~~**24 September 2026, pending the owner (plan §S.11 Q1):** the
 `unlink` needs the owner's exception to the master prompt's §3.1 ("never an
 `unlink`, ever, anywhere in new code"). That §3.1 is about the user's files
 is an engineering reading, not a decision. If the owner declines, spill uses
@@ -398,11 +401,14 @@ a folder, and on POSIX a folder another user owns) and makes each file in it
 nameless at once: Linux `O_TMPFILE`; macOS an exclusive create from the
 folder's descriptor, then `unlinkat` only when the name's `(dev, ino)` still
 matches the descriptor's, and the file refused unless it then has no name at
-all; Windows `FILE_FLAG_DELETE_ON_CLOSE`. The owner decided on 28 September
+all (not asked on FAT and exFAT, which allow one link per file and on which
+macOS reports one link for an unlinked, open file); Windows
+`FILE_FLAG_DELETE_ON_CLOSE`, the folder held open meanwhile so it cannot be
+moved or replaced by a junction. The owner decided on 28 September
 2026 that this `unlink` is allowed (plan §S.11 Q1). Every descriptor is
 close-on-exec, so no child process keeps a file's bytes after the scan. Bytes
 are appended with positioned writes (`pwrite`) and read with `pread`; nothing
-is mapped. The kill test (`tests/spill.rs`) `SIGKILL`s a process holding 256
+is mapped. The kill test (`crates/tm-store/tests/spill.rs`) `SIGKILL`s a process holding 256
 MiB of spill and finds the folder empty and the bytes back on the volume;
 a process that kept a named file of the same size, killed the same way, is
 seen as not freed. APFS counts an unlinked file's freed blocks lazily (0 MiB

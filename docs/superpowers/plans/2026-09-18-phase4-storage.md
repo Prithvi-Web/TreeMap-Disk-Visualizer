@@ -47,7 +47,7 @@
 
 ## Fixed interfaces
 
-**Superseded in part on 24 Sep 2026 by §S (S3–S5 as designed; not built):** `Column::Mapped` is gone (P4-5a) and `Column::Anon` is added (P4-11); `spill_plan` becomes `spill_plan(projected, mode, platform)` and also refuses a network file system or an app-data that cannot be written (§S.5.4); `sweep_spill_dir` and `storeSweep` give way to the boot sweep in `src/server.ts`, through one confined remover (§S.5.3); `storeRelease` unmaps and closes, and deletes nothing; `storeTake` and `storeColumns` are `AsyncTask`s (§S.1.6); `fromColumns` was built as `PackedScanStore.adoptColumns` (commit `38469ee`), which gains `totalsFinal` (§S.1.6).
+**Superseded in part on 24 Sep 2026 by §S (S3–S5 as designed; not built):** `Column::Mapped` is gone (P4-5a) and `Column::Anon` is added (P4-11); `spill_plan` becomes `spill_plan(projected, mode, platform)` and also refuses a network file system or an app-data that cannot be written (§S.5.4; **built 28 Sep 2026 as `spill_plan(request, volumes, ledger)`**, T13b); `sweep_spill_dir` and `storeSweep` give way to the boot sweep in `src/server.ts`, through one confined remover (§S.5.3); `storeRelease` unmaps and closes, and deletes nothing; `storeTake` and `storeColumns` are `AsyncTask`s (§S.1.6); `fromColumns` was built as `PackedScanStore.adoptColumns` (commit `38469ee`), which gains `totalsFinal` (§S.1.6).
 
 ### `tm-store` (Rust)
 
@@ -485,7 +485,7 @@ The design:
 - After that the kernel frees them when the last descriptor closes, even after a crash or SIGKILL (a kill test proves it). Only a crash inside the macOS `mkstemp`→`unlink` window, or a power loss on Windows, can leave a file.
 - The boot sweep in `src/server.ts` removes files in `scan-spill/` whose `<pid>` is not alive, through one confined remover. The remover refuses any path outside `scan-spill/`, never follows a link, and reports `{removed, bytes, kept}`. ~~Rust deletes nothing.~~ Rust removes nothing but, on macOS (and Linux without `O_TMPFILE`), the name it made a moment before (T13a). **24 Sep 2026 (T0):** this rule departs from the master prompt's §9.3, which asks for "a startup sweep with an age check": it has no age limit, so a leftover file whose `<pid>` a live process has reused is kept until that process exits (DESIGN §6.2).
 - **This needs the owner's exception to §3.1** ("never an `unlink`", master prompt line 74) (Q1). ~~If the owner declines, the fallback uses no `unlink` at all: a fixed pool of named spill files that are reused, whose bytes are freed with `ftruncate(0)` on release, quit and at boot. That meets "never outlive the scan" for the bytes, but a crash then leaves the bytes until the next launch. **24 Sep 2026 (T0):** Q1 is pending the owner (§S.11). Both paths stay designed until the owner answers, and T13 builds the one the answer picks.~~ **Decided by the owner on 28 Sep 2026: yes** (§S.11 Q1). TreeMap may `unlink` its own spill files, only inside `<appData>/scan-spill`, at creation, after the inode check. T13 builds that path; the `ftruncate` fallback is not built.
-- **Same volume.** The files have no names, so a walk cannot list them and the scan's totals can never include them. That holds even when app-data is inside the scanned root, which is the common case for a macOS home-folder scan. So `scan-spill` is **not** added to `never_descend`, and the app-data cache is excluded from the results structurally, as §13 asks.
+- **Same volume.** The files have no names, so a walk cannot list them and the scan's totals can never include them. That holds even when app-data is inside the scanned root, which is the common case for a macOS home-folder scan. So `scan-spill` is **not** added to `never_descend`, and the app-data cache is excluded from the results structurally, as §13 asks. **Corrected 28 Sep 2026 (T13's review): on POSIX only.** On Windows a delete-on-close file keeps its name while it is open, so a walk of the volume holding app-data would list, and count, the running scan's own spill files. T17 keeps the walk out of `<appData>\scan-spill` on Windows (RISKS R97).
   - The directory itself is empty. `pathGuard` and `pathSanitizer` (src/utils/pathSanitizer.ts:46) refuse any destructive request under it, and the Empty Folders view skips it, so it can never be offered for Trash.
   - `missingGigabytes.ts` gains the line "TreeMap's own scan files (open, removed when the scan closes)" with the ledger's bytes, so its lines still add up to the used bytes.
 
@@ -1159,8 +1159,8 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
     - **Names.** `SpillName` is `<pid>-<startMs>-<scanId>-<column>`. The scan id may hold ASCII letters, digits, `-` and `_` (Node's are UUIDs); the column letters, digits and `_`, so the last `-` ends the id. Neither may be empty or longer than 64 and 32 bytes. That refuses every separator, `..`, a NUL and anything a file system could fold. `<startMs>` is when this process first named a spill file.
     - **The file** (`SpillDir::create` → `SpillFile`):
       - Linux: `O_TMPFILE`, falling back to the macOS method on `EOPNOTSUPP` or `EISDIR` (the file system's refusal, or a kernel before 3.11);
-      - macOS: an exclusive create, then `fstat`, then the name's `lstat` from the folder. `unlinkat` runs only when the two `(dev, ino)` match; otherwise the file is refused and its name left alone. After the `unlink` the file must have no name at all (`st_nlink` 0), or it is refused and its other name left alone;
-      - Windows: `CreateFileW` with `FILE_FLAG_DELETE_ON_CLOSE`, `FILE_SHARE_DELETE`, `DELETE` access and `CREATE_NEW`.
+      - macOS: an exclusive create, then `fstat`, then the name's `lstat` from the folder. `unlinkat` runs only when the two `(dev, ino)` match; otherwise the file is refused and its name left alone. After the `unlink` the file must have no name at all (`st_nlink` 0, except where the file system allows one link per file: see the review round), or it is refused and its other name left alone;
+      - Windows: `CreateFileW` with `FILE_FLAG_DELETE_ON_CLOSE`, `FILE_SHARE_DELETE`, `DELETE` access and `CREATE_NEW`; since the review round the folder is held open, sharing no deletion, while files are made in it.
 
       Every descriptor is close-on-exec. Appends are positioned writes at the length reached (`pwrite`; `WriteFile` at an offset), reads are positioned (`pread`; `ReadFile` at an offset), and a read past the length is refused. Nothing is mapped. tm-store takes windows-sys on Windows with `Win32_Storage_FileSystem` alone, a feature tm-walk and tm-mft already enable, so nothing more is compiled.
     - **Departures from §S.5.3, each for a reason:**
@@ -1168,7 +1168,7 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
       - after the `unlink` the file must have no name left (`st_nlink` 0), a check §S.5.3 did not name;
       - appends are positioned writes, not `write()` at the descriptor's offset: a failed append (`ENOSPC`, `EIO`) then leaves the length where it was. On Windows a positioned read moves a synchronous handle's file pointer, so there every read and write must name its offset;
       - on Windows the folder's owner is not checked: that needs its security descriptor, and app-data sits in the user's profile.
-    - **Tests** (`tm-store/tests/spill.rs`, 14; unit tests in `spill/sys_unix.rs`, 8 on macOS and 9 on Linux):
+    - **Tests** (`tm-store/tests/spill.rs`, 14 at the commit and 16 after the review round on macOS and Linux, 13 on Windows; unit tests in `spill/sys_unix.rs`, 8 at the commit and 10 after it on macOS, one more on Linux):
       - the folder: made 0700; an existing 0755 one made 0700; a link in its place refused, and where it leads untouched; a file in its place refused and left as it was; another user's refused (the unit test passes another user to `open_dir_as`);
       - names: the pid, the start, the scan and the column; every part checked (17 refusals, 4 acceptances at the bounds);
       - no name in the folder while a file is open (POSIX); on Windows, a name only while it is open;
@@ -1204,7 +1204,7 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
       - macOS reads `statfs`, not `statvfs`;
       - Windows keys every *file* (85 % of entries), where §S.3's row counted every entry;
       - a reservation counts its spill's whole size until released, so a plan made while another spill is part way through counts that spill's written bytes twice. That errs toward refusing; T14 or T16 may shrink a reservation as its spill writes.
-    - **Tests** (`tm-store/tests/spill_plan.rs`, 12 here, 13 on Linux):
+    - **Tests** (`tm-store/tests/spill_plan.rs`, 12 at the commit and 15 after the review round here, one more on Linux):
       - the rule at 7 entries (the shares round up), at 10M term by term, DESIGN §7's table row by row (6.25M, 10M and 100M on both platforms: the log, the bytes and the ask), and at `u64::MAX` (each term saturates);
       - allowed at exactly 3× + 1 GiB, and refused one byte short with the sentence;
       - a read-only session refused before anything else (a network file system and no free space as well); an unreadable volume refused;
@@ -1226,10 +1226,10 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
       - a file whose `(dev, ino)`, read as `bigint`s, changed between its check and its removal.
 
       It removes at the resolved folder's name, so what it checked is what it removes.
-    - **The owner's exception is recorded where the codebase polices deletes:** `tests/openHandleGuard.test.ts` ("nothing outside Cleaner removes a user file") lists `spillSweep.ts`, naming the owner's decision of 28 Sep 2026. The removal is `fs.promises.unlink`, a call that test sees, so the entry is load-bearing (mutant C16). `tests/securityHygiene.test.ts` polices only the security scanner's own file, so the record is not there.
+    - **The owner's exception is recorded where the codebase polices deletes:** `tests/openHandleGuard.test.ts` ("nothing outside Cleaner removes a user file") lists `spillSweep.ts`, naming the owner's decision of 28 Sep 2026. ~~The removal is `fs.promises.unlink`, a call that test sees, so the entry is load-bearing (mutant C16).~~ Since the review round the removal is `fs.unlinkSync`, which that test's pattern does not see (it sees no `…Sync` removal anywhere), so the entry records the decision rather than gates it. `tests/securityHygiene.test.ts` polices only the security scanner's own file, so the record is not there.
     - **Moved to T17, as its entry already lists:** calling the sweep at boot from `src/server.ts`, `pathGuard` over `scan-spill`, the Empty Folders skip, and the missing-gigabytes line.
-    - **Departure:** both functions are async, because the removal is `fs.promises.unlink`, which the delete police can see. The sweep runs at boot, where that costs nothing.
-    - **Tests** (`tests/spillSweep.test.ts`, 14):
+    - ~~**Departure:** both functions are async, because the removal is `fs.promises.unlink`, which the delete police can see. The sweep runs at boot, where that costs nothing.~~ Both functions stay async (a test seam may await), but since the review round the last check and the removal (`fs.unlinkSync`) run together, with nothing between them that yields.
+    - **Tests** (`tests/spillSweep.test.ts`, 14 at the commit; 27 after the review round, below):
       - names read as tm-store writes them: the bounds, pid 0 and 2^31, 18 refusals;
       - the sweep removes only dead owners' files and counts their bytes, keeping a live pid's and this process's; names that do not parse are kept, whatever their pid;
       - a link planted in `scan-spill` (a junction, which needs no privilege on Windows) is kept, and what it leads to untouched; on POSIX a link to a file too;
@@ -1239,6 +1239,30 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
       - the real liveness check: this process alive, an ended child dead, another user's process alive;
       - one remover: `spillSweep.ts` removes in exactly one place, inside `removeSpillFile`, and no other file in `src/` names `scan-spill`.
     - **Mutants: 16; 15 red, 1 equivalent.** Red: the owner's liveness ignored; the remover taking any name; a link refused only as not a regular file; the entry read through a link; the real location not checked; `(dev, ino)` not compared again; the bytes not counted; pid 0, and pids past 2^31 − 1, read as processes; any error read as a dead process; `scan-spill` read through a link; a missing `scan-spill` thrown; a second removal outside the remover; a folder not refused as not a regular file; the police no longer allowing `spillSweep.ts`. Equivalent: the sweep offering unparsed names to the remover, which refuses them itself (its own check is red, C2).
+  - **Review round, 28 Sep 2026.** ecc:rust-reviewer read T13a–T13b and ecc:typescript-reviewer T13c, both read-only; neither found anything critical or high. Each finding, and what was done:
+    - **Rust M1 (fixed).** Windows checked the folder once, by path, and made files by path, so a junction put in its place later would have sent new files elsewhere. The folder is now held open, sharing no deletion, and checked through that handle. A Windows-only test tries to move it while it is held.
+    - **Rust M2 (the design corrected; T17's).** On Windows a delete-on-close file keeps its name while it is open, so "no walk can count them" holds on POSIX only. §S.5.3's "Same volume", DESIGN §6.1, the crate's docs and RISKS R97 say so now, and T17's entry keeps the walk out of `scan-spill` on Windows.
+    - **Rust M3 (confirmed, fixed).** On FAT32 and exFAT, macOS reports one link for an unlinked, open file. Measured on two disk images, mounted privately under the scratch folder (`-nobrowse`) and detached at once: `st_nlink` 1 after the `unlink`, `_PC_LINK_MAX` 1, the name gone. So every spill onto a FAT or exFAT app-data, a portable drive, was refused as having another name. Where the file system allows one link per file, the count is no longer asked (`still_named`).
+    - **Rust M4 (tests added).** Plans made at once against room for one: 32 threads, 20 rounds, exactly one allowed in each. The OS's own file-system answer: APFS here, `/proc`'s 0x9FA0 on Linux, a fixed drive on Windows.
+    - **Rust lows.** Fixed:
+      - "only if" is now "after a check immediately before": POSIX cannot remove a name only if it still leads to a given file, so a same-user process could swap it in the microseconds between, and a name in the 0700 folder is all it could take;
+      - a failure after the create leaves the name for the boot sweep, and the docs say so;
+      - a name used twice is pinned per platform: POSIX makes the second file, Windows refuses it while the first is open;
+      - the docs no longer say the sweep reads `<startMs>` (it reads the pid);
+      - `statvfs`'s arithmetic is safe on a 32-bit target;
+      - 32 syncs rather than 8; `Reservation` is `#[must_use]`; `create_named` is split (`unname`).
+
+      Not changed, and why: a same-user process can hard-link a Windows spill file while it is open, and nothing short of re-checking the link count would notice; on some Macs `/` and the Data volume may differ in `st_dev`, and the flag only reports; there is no Windows test of handle inheritance, because std's handles are not inheritable.
+    - **TypeScript M1 (fixed).** A name must follow tm-store's formatting exactly: no leading zeros. A file must look like one tm-store left: one link and, on POSIX, this user's with no permission beyond 0600. The folder must be this user's and writable by no one else.
+    - **TypeScript M2 (fixed).** The last check and the removal now run together, synchronously (`fs.unlinkSync`); the async unlink could run long after the check on a busy thread pool. On POSIX the checked file is held open while it is compared, so ext4 cannot hand its inode to another file. The cost is the delete police's entry, above: it records rather than gates, and the module's own test holds the remover to one removal with no `await` between its last check and it.
+    - **TypeScript M3 (fixed).** The sweep's report names each refusal (`refused`) and why a folder was not looked into (`unreadable`).
+    - **TypeScript lows (fixed).** A real-path backstop: `scan-spill` must resolve to `<real app-data>/scan-spill`. An absolute app-data. A liveness test without a spawned child: a pid no process has, and a stubbed `process.kill` for `EPERM` and the rest. Tests for a folder, a link, a deletion and a delete-and-recreate put at the name in the window, and for a `scan-spill` that is a file. The constants tied to tm-store's source.
+    - **Mutants run by hand in the round.**
+      - Rust, 16 (A23 and A23b, A24–A24c, A25, B30, R1, R2, R4, and the two-lock split six times): 13 red. The ledger's check and reservation split across two locks is red when the gap is widened with a yield (3 runs of 3) and survives without one (0 of 3): the gap is nanoseconds and the test cannot force it. One guard held across both steps is what keeps them atomic.
+      - TypeScript, 31 (C1–C16 again, T1–T14, T1b): 27 red. C3, equivalent in the first round, is red now that the report names refusals. C9 survived because the numeric `pid < 1` check had become dead code once the name's rule forbade a leading 0; the check was removed, and the rule's own mutant is red (T1b). C16 survives, because the police cannot see `unlinkSync`. T9 (the real-path backstop) cannot be made to differ on this Mac. T10 (the held file) shows only where ext4 reuses inode numbers, and on Linux through `/proc` in the delete-and-recreate test.
+    - **`cargo mutants` (27.1.0)** over `spill.rs` and `spill/*.rs` but `sys_windows.rs`, with the kill tests skipped (they measure one volume, and the jobs run in parallel).
+      - **The final run:** 203 mutants; 136 caught, 30 unviable, 1 timeout (an endless loop, so caught), 36 missed. Of the misses, 27 are in code this Mac does not compile, which CI's legs run: 10 in the Windows read and write loops, 17 in the Linux paths (`O_TMPFILE` and `statvfs`). The other 9 are equivalent: a `*` against a 1; `|` for `^` on disjoint flags (4); an idempotent `fchmod` (2); an error guard that differs only for errors a 0700 folder cannot give; and `fd <= 0` for `fd < 0`, since fd 0 is stdin.
+      - **The first run, before this round's tests,** missed 44: the same 36, with lines shifted, and eight real gaps, each caught now and each shown red by hand. The gaps: the name's start being a time (2), `is_empty` (3), `Ledger::process`, a failed `mkdir`, and macOS's file-system name.
 - [ ] **T14. SpillSink:** external sort, the patch and block logs, the seal passes, load-back.
   - **Tests first:**
     - the spill columns after the seal equal MemorySink's byte for byte (one worker, the same schedule) and after φ (8 workers);
@@ -1333,6 +1357,7 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
   - `/api/scan/:id/storage`, a real `storageMode`, `disabled[]`;
   - settings and openapi;
   - `pathGuard` over `scan-spill`, and the Empty Folders skip;
+  - **from T13's review (28 Sep 2026):** on Windows, the walk kept out of `<appData>\scan-spill`, where a running scan's spill files have names (§S.5.3's corrected "Same volume"; RISKS R97);
   - the missing-gigabytes line;
   - release on forget, evict and quit, and the boot sweep;
   - the notice;

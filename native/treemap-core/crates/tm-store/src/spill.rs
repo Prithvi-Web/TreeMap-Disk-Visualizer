@@ -9,14 +9,19 @@
 //! * **Linux:** `O_TMPFILE`, so the file never has a name. A file system or a kernel that
 //!   refuses `O_TMPFILE` gets the macOS method.
 //! * **macOS:** the file is made exclusively as `<pid>-<startMs>-<scanId>-<column>`
-//!   ([`SpillName`]), and its name is removed at once, but only if the name still leads to
-//!   the file this process opened: the `(dev, ino)` of the name's `lstat` must equal the
-//!   descriptor's `fstat`. A name that leads elsewhere by then is left alone and the file
-//!   refused ([`SpillError::Replaced`]); a file that still has a name once its own is gone
-//!   is refused too ([`SpillError::OtherName`]).
+//!   ([`SpillName`]), and its name is removed at once, after a check immediately before the
+//!   unlink that the name still leads to the file this process opened: the `(dev, ino)` of
+//!   the name's `lstat` must equal the descriptor's `fstat`. A name that leads elsewhere by
+//!   then is left alone and the file refused ([`SpillError::Replaced`]); a file that still
+//!   has a name once its own is gone is refused too ([`SpillError::OtherName`]). POSIX has no
+//!   call that removes a name only if it leads to a given file, so a process of the same user
+//!   could still swap the name in the microseconds between the check and the unlink; a name
+//!   in this 0700 folder is all that could be lost that way.
 //! * **Windows:** `CreateFileW` with `FILE_FLAG_DELETE_ON_CLOSE` and `FILE_SHARE_DELETE`:
 //!   the name lasts while the file is open, and Windows removes it with the last handle,
-//!   the process's end included.
+//!   the process's end included. The folder is held open meanwhile, sharing no deletion, so
+//!   it cannot be renamed or replaced by a junction. A walk of app-data's volume would list
+//!   the open files there, so the walk must be kept out of `scan-spill` on Windows (T17).
 //!
 //! Only a crash inside the macOS window between the create and the unlink, or a power loss
 //! on Windows, can leave a name behind. The boot sweep (`src/services/spillSweep.ts`)
@@ -137,15 +142,18 @@ impl SpillError {
     }
 }
 
-/// A spill file's name, `<pid>-<startMs>-<scanId>-<column>`: this process's id and the
-/// milliseconds since 1970 when it first named a spill file, which the boot sweep reads to tell a dead process's leftover from a live
-/// scan's file, then the scan and the column. On macOS a file has it only for the moment
-/// between its create and its unlink; on Windows while it is open; on Linux never.
+/// A spill file's name, `<pid>-<startMs>-<scanId>-<column>`: this process's id, which the
+/// boot sweep reads to tell a dead process's leftover from a live scan's file; the
+/// milliseconds since 1970 when this process first named a spill file, which keeps a
+/// leftover of an earlier process with the same pid from taking this process's names; then
+/// the scan and the column. On macOS a file has it only for the moment between its create
+/// and its unlink; on Windows while it is open; on Linux never.
 ///
 /// The scan id may hold ASCII letters, digits, `-` and `_`; the column letters, digits and
 /// `_`, so the last `-` of a name always ends the scan id. Neither may be empty or longer
 /// than [`SCAN_ID_MAX`] and [`COLUMN_MAX`] bytes. So no part can hold a separator (`/`,
-/// `\`, `:`), a `..`, a NUL or anything a file system might fold.
+/// `\`, `:`), a `..`, a NUL or anything outside ASCII; a file system that folds case can
+/// only make two names collide, which is refused as [`SpillError::NameTaken`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpillName {
     scan_id: String,
@@ -243,7 +251,10 @@ impl SpillDir {
 
     /// A new, empty spill file, which has no name (POSIX) or loses it when it closes
     /// (Windows): see the module docs. `name` is used only where a file has one: macOS,
-    /// Linux without `O_TMPFILE`, and Windows.
+    /// Linux without `O_TMPFILE`, and Windows. Give each file of a scan its own column: on
+    /// Windows a name stays taken while its file is open, so a second file of the same name
+    /// is refused as [`SpillError::NameTaken`] there, while on POSIX the first has no name by
+    /// then and the second is made.
     pub fn create(&self, name: &SpillName) -> Result<SpillFile, SpillError> {
         let file = sys::create(&self.dir, &self.path, &name.file_name())?;
         Ok(SpillFile { file, len: 0 })

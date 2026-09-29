@@ -105,10 +105,7 @@ fn tmpfile_refused(errno: Option<i32>) -> bool {
 }
 
 /// The macOS method: `name` made exclusively in `dir` (`O_CREAT | O_EXCL`: nothing that is
-/// already there, a link included, is opened), then — `window` run, which is the tests' seam
-/// for what another process could do in that moment — its `(dev, ino)` compared with the
-/// name's `lstat`, and only when they match the name removed. The file must then have no
-/// name at all.
+/// already there, a link included, is opened), then left with no name by [`unname`].
 pub(super) fn create_named(
     dir: &Dir,
     dir_path: &Path,
@@ -135,42 +132,82 @@ pub(super) fn create_named(
             SpillError::io(&dir_path.join(name), "openat", e)
         }
     })?;
-    let mine = identity(&file).map_err(|e| SpillError::io(&dir_path.join(name), "fstat", e))?;
+    unname(dir, dir_path, name, &c_name, &file, window)?;
+    Ok(file)
+}
+
+/// Removes `name`, which this process has just made for `file`, and makes sure the file then
+/// has no name at all. `window` runs first: the tests' seam for what another process could do
+/// in that moment.
+///
+/// The name's `(dev, ino)` is compared with the open file's immediately before the unlink,
+/// and the name is removed only when they match. POSIX has no call that removes a name only
+/// if it still leads to a given file, so a process of the same user could swap the name in
+/// the microseconds between the two, and a name in this 0700 folder is all it could lose that
+/// way. If a step fails, the name may be left: the boot sweep removes it once this process
+/// has ended.
+fn unname(
+    dir: &Dir,
+    dir_path: &Path,
+    name: &str,
+    c_name: &CStr,
+    file: &File,
+    window: &mut dyn FnMut(),
+) -> Result<(), SpillError> {
+    let path = || dir_path.join(name);
+    let mine = identity(file).map_err(|e| SpillError::io(&path(), "fstat", e))?;
     window();
     let replaced = |why| SpillError::Replaced {
         dir: dir_path.to_owned(),
         name: name.to_owned(),
         why,
     };
-    match identity_at(dir, &c_name) {
+    match identity_at(dir, c_name) {
         Ok(now) if now == mine => {}
         Ok(_) => return Err(replaced("the name leads to another file")),
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             return Err(replaced("the name is gone"));
         }
-        Err(e) => return Err(SpillError::io(&dir_path.join(name), "fstatat", e)),
+        Err(e) => return Err(SpillError::io(&path(), "fstatat", e)),
     }
     // SAFETY: `c_name` is NUL-terminated and outlives the call; the descriptor is the
     // folder's, open while `dir` is borrowed. The name removed is one this process made
     // just above and has just seen still leads to its own file.
     if unsafe { libc::unlinkat(dir.file.as_raw_fd(), c_name.as_ptr(), 0) } != 0 {
         return Err(SpillError::io(
-            &dir_path.join(name),
+            &path(),
             "unlinkat",
             io::Error::last_os_error(),
         ));
     }
     let links = file
         .metadata()
-        .map_err(|e| SpillError::io(&dir_path.join(name), "fstat", e))?
+        .map_err(|e| SpillError::io(&path(), "fstat", e))?
         .nlink();
-    if links != 0 {
+    if still_named(links, link_max(file)) {
         return Err(SpillError::OtherName {
             dir: dir_path.to_owned(),
             name: name.to_owned(),
         });
     }
-    Ok(file)
+    Ok(())
+}
+
+/// The most links a file may have on `file`'s file system (`fpathconf(_PC_LINK_MAX)`), or -1
+/// when it does not say.
+fn link_max(file: &File) -> libc::c_long {
+    // SAFETY: the descriptor is `file`'s, open while it is borrowed; the call reads a limit
+    // and touches no memory.
+    unsafe { libc::fpathconf(file.as_raw_fd(), libc::_PC_LINK_MAX) }
+}
+
+/// Whether a file whose own name was just removed still has another. Its link count says so,
+/// except where the file system allows one link per file (`link_max` 1) and no other name can
+/// exist: FAT and exFAT are such, and on them macOS reports one link for an unlinked, open
+/// file (measured on both, 28 Sep 2026). A file system that does not say (-1) is taken at its
+/// count.
+fn still_named(links: u64, link_max: libc::c_long) -> bool {
+    links != 0 && link_max != 1
 }
 
 /// `openat(dir, name, flags, 0600)`, close-on-exec as `flags` must say.
@@ -277,9 +314,18 @@ fn space(path: &CStr) -> io::Result<(u64, u64, FileSystem)> {
         reason = "f_type holds a 32-bit magic number, read as its bits"
     )]
     let magic = facts.f_type as u64 & 0xFFFF_FFFF;
+    #[allow(
+        clippy::useless_conversion,
+        reason = "the counts and the fragment size are u64 on 64-bit Linux and narrower elsewhere"
+    )]
+    let (free, total, fragment) = (
+        u64::from(vfs.f_bavail),
+        u64::from(vfs.f_blocks),
+        u64::from(vfs.f_frsize),
+    );
     Ok((
-        vfs.f_bavail.saturating_mul(vfs.f_frsize),
-        vfs.f_blocks.saturating_mul(vfs.f_frsize),
+        free.saturating_mul(fragment),
+        total.saturating_mul(fragment),
         FileSystem::Magic(magic),
     ))
 }
@@ -550,6 +596,34 @@ mod tests {
             Ok(_) => return Err("another user's folder was taken".to_owned()),
         }
         open_dir_as(&path, euid).map_err(|e| format!("this user's: {e}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_file_system_without_hard_links_is_not_asked_for_a_count() {
+        assert!(!still_named(0, 32_767), "no link left: no name");
+        assert!(still_named(1, 32_767), "one link left: another name");
+        assert!(still_named(2, 32_767));
+        assert!(
+            !still_named(1, 1),
+            "FAT and exFAT report one link for an unlinked file, and allow no second"
+        );
+        assert!(
+            still_named(1, -1),
+            "a file system that does not say is taken at its count"
+        );
+    }
+
+    #[test]
+    fn this_volume_allows_hard_links() -> TestResult {
+        let scratch = Scratch::new("linkmax")?;
+        let (path, dir) = spill(&scratch)?;
+        let file =
+            create_named(&dir, &path, "1-2-scan-linkmax", &mut || {}).map_err(|e| e.to_string())?;
+        assert!(
+            link_max(&file) > 1,
+            "the temp folder's file system counts links"
+        );
         Ok(())
     }
 
