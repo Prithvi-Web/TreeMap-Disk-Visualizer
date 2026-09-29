@@ -34,6 +34,10 @@
 //! A file's bytes are appended at the end it has reached and read back at their offsets
 //! (`pwrite` and `pread`; `WriteFile` and `ReadFile` at an offset on Windows). Nothing is
 //! ever mapped (decision P4-5a).
+//!
+//! Whether a scan may spill at all, and the disk it holds meanwhile, is [`spill_plan`]'s
+//! and the [`Ledger`]'s (T13b, design §S.5.4): three times the bytes a spill writes plus
+//! 1 GiB free, app-data writable, a local file system; and [`in_walk_check`] while it runs.
 
 use std::fs::File;
 use std::io;
@@ -350,6 +354,16 @@ fn read_exact_at(file: &File, buf: &mut [u8], at: u64) -> io::Result<()> {
     }
     Ok(())
 }
+
+mod plan;
+
+pub use plan::{
+    FOLDER_LOG_BYTES, FOLDER_PERCENT, FREE_MULTIPLE, FREE_RESERVE, FileSystem, IN_WALK_CHECK_EVERY,
+    IN_WALK_FLOOR, IN_WALK_VOLUME_DIVISOR, LINK_LOG_COPIES, LINK_RECORD_BYTES, Ledger, OsVolumes,
+    POSIX_KEYED_PERCENT, Platform, ROW_BYTES, Reservation, SpillBytes, SpillPlan, SpillRefusal,
+    SpillRequest, VolumeFacts, VolumeId, VolumeSource, bytes_text, in_walk_check, spill_bytes,
+    spill_plan,
+};
 
 #[cfg(unix)]
 #[path = "spill/sys_unix.rs"]

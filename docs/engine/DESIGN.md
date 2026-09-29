@@ -549,7 +549,7 @@ libuv's pool. At 5M in Electron:
 - about 5 of those ms are a garbage collection V8 runs for the arrays arriving;
 - the peak is 547 MB, from 555 (RISKS R92).
 
-**On disk,** spill writes 68 B per entry (`nameOff` is a u64 there) and about
+~~**On disk,** spill writes 68 B per entry (`nameOff` is a u64 there) and about
 32 B per folder of block table and patch log: 0.73 GB at 10M and 7.3 GB at
 100M on POSIX. On Windows every file's hard-link key goes to disk too (0.8 GB
 at 10M, 8.0 GB at 100M with one sort copy), about 15 GB in all at 100M. The
@@ -559,7 +559,40 @@ whose own "3× asks" line differs on POSIX; see the note under it). Aggregate
 writes only the key log past its 32 MiB resident run, under the same 3× rule:
 about 0.24 GB at 100M on POSIX and 24 GB on Windows before the reserve; when
 it cannot, the scan is refused and told how many bytes it needs (P4-16). This
-replaces the ~11 GB above.
+replaces the ~11 GB above.~~
+
+**On disk, by the rule (built 28 September 2026, plan T13b; `spill_bytes` in
+`tm_store::spill`, which `spill_plan` asks).** This replaces the paragraph
+struck above, whose figures came from plan §S.3's rounded rows (the T0 check
+under that table records how its "3× asks" line did not follow from them).
+The rule, written once in the code with its derivation:
+
+```
+folders = ⌈15 % of entries⌉             files = entries − folders
+keyed   = ⌈1 % of files⌉ on POSIX,      every file on Windows (no link count)
+bytes   = 68 × entries + 32 × folders + 2 × 40 × keyed
+asks    = 3 × bytes + 1 GiB (1,073,741,824 B)
+```
+
+68 B is a row with an 18 B name and `nameOff` as a u64 on disk; 32 B a
+folder's share of the block table and patch log; 40 B a link-key record,
+counted twice for one sort copy. That is 73.5 B an entry on POSIX and 140.8 B
+on Windows:
+
+| Entries | POSIX writes | POSIX asks | Windows writes | Windows asks |
+| --- | --- | --- | --- | --- |
+| 6.25M (`capRows`, the overflow target, §S.1.1) | 459,250,000 B | 2,451,491,824 B (2.45 GB) | 880,000,000 B | 3,713,741,824 B (3.71 GB) |
+| 10M | 734,800,000 B | 3,278,141,824 B (3.28 GB) | 1,408,000,000 B | 5,297,741,824 B (5.30 GB) |
+| 100M | 7,348,000,000 B | 23,117,741,824 B (23.1 GB) | 14,080,000,000 B | 43,313,741,824 B (43.3 GB) |
+
+Of those bytes the link-key log is 6.8 MB and 68 MB on POSIX (10M, 100M), and
+680 MB and 6.8 GB on Windows, where §S.3's row counted every entry rather
+than every file (0.8 GB and 8.0 GB). The whole log is counted, though up to
+32 MiB of it stays in memory: at most 96 MiB more asked. Aggregate writes only
+that log, under the same 3× rule: 0.20 GB at 100M on POSIX and 20.4 GB on
+Windows before the reserve; when it cannot, the scan is refused and told how
+many bytes it needs (P4-16). The tests pin every figure in this table
+(`tests/spill_plan.rs`).
 
 ## 8. The governor (Phase 2, built first)
 

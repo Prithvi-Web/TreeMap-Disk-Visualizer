@@ -6,15 +6,23 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io;
+use std::os::windows::ffi::OsStrExt;
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
+use std::ptr;
 
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_DELETE_ON_CLOSE,
-    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
+    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, GetDiskFreeSpaceExW, GetDriveTypeW,
+    GetVolumePathNameW,
 };
 
 use super::SpillError;
+use super::plan::{FileSystem, VolumeFacts, VolumeId};
+
+/// The longest path Windows takes, in UTF-16 units with its NUL: the most
+/// `GetVolumePathNameW` can return.
+const LONG_PATH_UNITS: usize = 32_768;
 
 /// The folder: Windows makes files by path, so nothing is held.
 pub(super) struct Dir;
@@ -66,4 +74,50 @@ pub(super) fn create(_dir: &Dir, dir_path: &Path, name: &str) -> Result<File, Sp
                 SpillError::io(&path, "CreateFileW", e)
             }
         })
+}
+
+/// The facts of the volume holding `path`: `GetVolumePathNameW` finds its root (the volume's
+/// id, lower-cased), `GetDiskFreeSpaceExW` its bytes free to this user and its size, and
+/// `GetDriveTypeW` whether it is a network drive.
+pub(super) fn volume_facts(path: &Path) -> io::Result<VolumeFacts> {
+    let wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    if wide.contains(&0) {
+        // Every call would stop reading at the NUL and answer for the path before it.
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the path holds a NUL",
+        ));
+    }
+    let wide: Vec<u16> = wide.into_iter().chain(std::iter::once(0)).collect();
+    let mut root = vec![0_u16; LONG_PATH_UNITS];
+    let room = u32::try_from(root.len()).unwrap_or(u32::MAX);
+    // SAFETY: `wide` is NUL-terminated and outlives the call, which only reads it; the
+    // output pointer and length describe `root`, writable for its whole length.
+    if unsafe { GetVolumePathNameW(wide.as_ptr(), root.as_mut_ptr(), room) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let root: Vec<u16> = root.into_iter().take_while(|&unit| unit != 0).collect();
+    let root_wide: Vec<u16> = root.iter().copied().chain(std::iter::once(0)).collect();
+    let (mut free, mut total) = (0_u64, 0_u64);
+    // SAFETY: `wide` is NUL-terminated and outlives the call; `free` and `total` are live
+    // u64s the call writes; the volume's total free bytes are declined with a null pointer.
+    let answered = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &raw mut free,
+            &raw mut total,
+            ptr::null_mut(),
+        )
+    };
+    if answered == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `root_wide` is NUL-terminated and outlives the call, which only reads it.
+    let drive_type = unsafe { GetDriveTypeW(root_wide.as_ptr()) };
+    Ok(VolumeFacts {
+        free_bytes: free,
+        total_bytes: total,
+        file_system: FileSystem::DriveType(drive_type),
+        volume: VolumeId(String::from_utf16_lossy(&root).to_lowercase()),
+    })
 }

@@ -7,10 +7,12 @@ use std::fs::{DirBuilder, File, OpenOptions, Permissions};
 use std::io;
 use std::mem::MaybeUninit;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 use super::SpillError;
+use super::plan::{FileSystem, VolumeFacts, VolumeId};
 
 /// A spill file's permissions: this user's alone.
 const FILE_MODE: libc::c_uint = 0o600;
@@ -216,6 +218,81 @@ fn identity_at(dir: &Dir, name: &CStr) -> io::Result<(libc::dev_t, libc::ino_t)>
     // SAFETY: the call answered 0, so it filled `stat`.
     let stat = unsafe { stat.assume_init() };
     Ok((stat.st_dev, stat.st_ino))
+}
+
+/// The facts of the volume holding `path`: its free and total bytes and its file system
+/// from `statfs` (macOS) or `statvfs` and `statfs` (Linux), and its device from `stat`.
+pub(super) fn volume_facts(path: &Path) -> io::Result<VolumeFacts> {
+    let c_path = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "the path holds a NUL"))?;
+    let device = std::fs::metadata(path)?.dev();
+    let (free_bytes, total_bytes, file_system) = space(&c_path)?;
+    Ok(VolumeFacts {
+        free_bytes,
+        total_bytes,
+        file_system,
+        volume: VolumeId(device.to_string()),
+    })
+}
+
+/// macOS: `statfs` alone. Its counts are 64-bit where `statvfs`'s are 32 (`fsblkcnt_t` is
+/// an `unsigned int` there), and `f_bsize` is the block size the counts are in.
+#[cfg(target_os = "macos")]
+fn space(path: &CStr) -> io::Result<(u64, u64, FileSystem)> {
+    let facts = statfs(path)?;
+    let block = u64::from(facts.f_bsize);
+    let name: Vec<u8> = facts
+        .f_fstypename
+        .iter()
+        .map(|c| {
+            let [byte] = c.to_ne_bytes();
+            byte
+        })
+        .take_while(|&byte| byte != 0)
+        .collect();
+    Ok((
+        facts.f_bavail.saturating_mul(block),
+        facts.f_blocks.saturating_mul(block),
+        FileSystem::Named(String::from_utf8_lossy(&name).into_owned()),
+    ))
+}
+
+/// Linux: the space from `statvfs` (`f_bavail × f_frsize`), the file system's magic number
+/// from `statfs`.
+#[cfg(not(target_os = "macos"))]
+fn space(path: &CStr) -> io::Result<(u64, u64, FileSystem)> {
+    let mut vfs = MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `path` is NUL-terminated and outlives the call; `vfs` is writable for one
+    // `statvfs`, which the call fills when it answers 0.
+    if unsafe { libc::statvfs(path.as_ptr(), vfs.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the call answered 0, so it filled `vfs`.
+    let vfs = unsafe { vfs.assume_init() };
+    let facts = statfs(path)?;
+    // The magic numbers are 32-bit; on a 32-bit target `f_type` is signed, and the high
+    // ones (CIFS, SMB2) would read negative, so only the low 32 bits are taken.
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "f_type holds a 32-bit magic number, read as its bits"
+    )]
+    let magic = facts.f_type as u64 & 0xFFFF_FFFF;
+    Ok((
+        vfs.f_bavail.saturating_mul(vfs.f_frsize),
+        vfs.f_blocks.saturating_mul(vfs.f_frsize),
+        FileSystem::Magic(magic),
+    ))
+}
+
+fn statfs(path: &CStr) -> io::Result<libc::statfs> {
+    let mut facts = MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: `path` is NUL-terminated and outlives the call; `facts` is writable for one
+    // `statfs`, which the call fills when it answers 0.
+    if unsafe { libc::statfs(path.as_ptr(), facts.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the call answered 0, so it filled `facts`.
+    Ok(unsafe { facts.assume_init() })
 }
 
 #[cfg(test)]
