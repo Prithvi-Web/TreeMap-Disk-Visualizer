@@ -428,70 +428,129 @@ test('our own process reading a file is not reported as a conflict', async () =>
 
 test('nothing outside Cleaner removes a user file', async () => {
   // §9's destructive-path requirement, and the structural reason the guard can
-  // be trusted: if a service could unlink directly, it would bypass both the
-  // Trash guarantee and this check. Only the cleaner's own trash implementation
-  // and offload's rollback of its OWN copies may remove anything.
-  const servicesDir = path.join(__dirname, '..', 'src', 'services');
+  // be trusted: if any code could unlink directly, it would bypass both the
+  // Trash guarantee and this check. Every file under src/ and electron/ is read
+  // — services, platforms, routes and the shell alike — and every removal in
+  // it is found: `fs`/`fsp`/`fs.promises` `unlink`, `rm` and `rmdir`, their
+  // `…Sync` forms, and a bare call of any of them imported by name from `fs`.
+  // (Until 29 Sep 2026 only src/services was read and only the async forms
+  // matched, so the synchronous removals and every platform's went unseen —
+  // found by T13's review.)
+  const repo = path.join(__dirname, '..');
   /**
    * The complete list of files permitted to remove anything, each for a stated
-   * reason. Adding to it should require the same argument these three make.
+   * reason. Adding to it should require the same argument these make.
    *
-   *  - `cleaner.ts` — the Trash pathway itself, and where this guard runs.
-   *  - `offload.ts` — rolls back copies *it just wrote* to the destination;
+   *  - `services/cleaner.ts` — the Trash pathway itself, and where this guard runs.
+   *  - `services/offload.ts` — rolls back copies *it just wrote* to the destination;
    *    it never removes a user original except through cleaner's moveToTrash.
-   *  - `trash.ts`   — Empty Trash. The one place a permanent delete is the
+   *  - `services/trash.ts` — Empty Trash. The one place a permanent delete is the
    *    entire point, it only ever touches the OS trash directory, and it
    *    refuses without an explicit `confirm: true`.
-   *  - `compressionAdvisor.ts` — discards the ENCODE it just wrote when the
+   *  - `services/compressionAdvisor.ts` — discards the ENCODE it just wrote when the
    *    verification fails. Exactly offload's argument: the only path it can
    *    remove is a temp file created moments earlier by the same function, and
    *    the user's original is only ever removed through cleaner's moveToTrash.
-   *  - `spillSweep.ts` — the owner's exception to the master prompt's §3.1,
+   *  - `services/spillSweep.ts` — the owner's exception to the master prompt's §3.1,
    *    decided by the owner on 28 Sep 2026 (Phase 4 plan §S.11 Q1): TreeMap may
    *    unlink its OWN temporary spill files, only inside `<appData>/scan-spill`.
    *    `removeSpillFile` is the one place that does, for a leftover of a dead
    *    process that tm-store named, and it refuses anything outside that folder,
    *    any link, anything but a regular file, a file tm-store could not have
    *    left, and a file replaced since it was checked (tests/spillSweep.test.ts,
-   *    which also holds it to one removal). Its removal is a synchronous
-   *    `fs.unlinkSync`, right after its last check, which the pattern below does
-   *    not match (it sees no `…Sync` removal anywhere), so this entry records the
-   *    decision rather than lets anything through.
+   *    which also holds it to one removal).
    */
-  const allowed = new Set(['cleaner.ts', 'offload.ts', 'trash.ts', 'compressionAdvisor.ts', 'spillSweep.ts']);
+  const allowed = new Set([
+    'src/services/cleaner.ts',
+    'src/services/offload.ts',
+    'src/services/trash.ts',
+    'src/services/compressionAdvisor.ts',
+    'src/services/spillSweep.ts',
+  ]);
+  /**
+   * Single removals elsewhere, each of something TreeMap itself made, named by
+   * `<file>: <call>(<argument>` so a new removal beside one of them still
+   * fails. The argument patterns below (`ownStorage`) cover the rest.
+   */
+  const named: Record<string, string> = {
+    'src/services/scan/nativeEngine.ts: rmSync(file':
+      'the MFT helper’s own output files in the app’s temp folder, once read, or stale by name and age (sweepStaleOutputs)',
+    'src/services/indexEngine.ts: unlinkSync(file + suffix':
+      'the index database and its -wal/-shm sidecars, TreeMap’s own app-data, when their schema is not this build’s',
+    'src/services/portableMode.ts: unlinkSync(probe':
+      'the write probe this function wrote a line earlier to prove the folder writable',
+    'src/platform/macos/snapshotRecover.ts: rm(dir':
+      'the private mkdtemp folder holding its own recovery script',
+    'src/platform/macos/shellIntegration.ts: rm(bundle':
+      'TreeMap’s own Quick Action bundle, at the name it installs, when the person turns the entry off',
+    'src/platform/linux/shellIntegration.ts: rm(nautilus':
+      'TreeMap’s own Files/Nautilus script, at the name it installs, when the person turns the entry off',
+    'src/platform/linux/shellIntegration.ts: rm(dolphin':
+      'TreeMap’s own Dolphin service menu, at the name it installs, when the person turns the entry off',
+    'src/platform/windows/index.ts: rm(linkDir':
+      'the directory link TreeMap made to a shadow copy, removed without recursion: the link, never what it points to',
+    'src/platform/macos/tmutil.ts: rmdir(mountPoint':
+      'its own mkdtemp’d mount point, after unmounting, without recursion: a snapshot that did not come off is never walked into',
+  };
   const offenders: string[] = [];
+  const namedSeen = new Set<string>();
+  const removal = /(?:\bfsp?|\bfs\.promises|\bpromises)\.(unlink|rm|rmdir)(Sync)?\s*\(([^)]*)/g;
+  const fsImport = /import\s*\{([^}]*)\}\s*from\s*['"](?:node:)?fs(?:\/promises)?['"]/g;
+  const removers = new Set(['unlink', 'rm', 'rmdir', 'unlinkSync', 'rmSync', 'rmdirSync']);
+
+  const check = (rel: string, name: string, arg: string): void => {
+    // TreeMap's own scratch and app-data files are not user data: gdu's
+    // JSON output, the SQLite index, staging dirs for verified copies.
+    // Time Capsule (B3) removes things in exactly two situations, both
+    // named so they are visible here rather than argued about in review:
+    //   - its own payloads under app-data (entryDir/payloadRoot/orphan…)
+    //   - paths a restore wrote seconds earlier, when that restore failed
+    //     (…ByThisRestore) — the same rollback-what-I-just-wrote licence
+    //     offload.ts has. A restore never clears a pre-existing file: it
+    //     refuses outright when the original path is occupied.
+    // Deliberately NOT a blanket allow for timeCapsule.ts: a bare delete
+    // of a user's file added there later must still fail this test.
+    const ownStorage =
+      /dbPath|indexPath|tmpPath|tmpDir|tempDir|outFile|staging|\.tmp|CAPSULE|appData|dataDir/i.test(arg) ||
+      /entryDir\(|payloadRoot\(|orphanCapsuleDir|ByThisRestore/.test(arg);
+    if (ownStorage) return;
+    const key = Object.keys(named).find((k) => `${rel}: ${name}(${arg.trim()}`.startsWith(k));
+    if (key) namedSeen.add(key);
+    else offenders.push(`${rel}: ${name}(${arg.slice(0, 60)}`);
+  };
 
   const scan = async (dir: string): Promise<void> => {
     for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) { await scan(full); continue; }
-      if (!entry.name.endsWith('.ts') || allowed.has(entry.name)) continue;
-      const src = (await fsp.readFile(full, 'utf8')).replace(/\/\*[\s\S]*?\*\//g, ' ');
-      // App-data bookkeeping (indexes, manifests, caches) is TreeMap's own
-      // storage, not the user's files — those live under the app-data dir and
-      // are matched by name below rather than being blanket-allowed.
-      for (const m of src.matchAll(/fsp?\.(?:promises\.)?(unlink|rm|rmdir)\s*\(([^)]*)/g)) {
-        const arg = m[2];
-        // TreeMap's own scratch and app-data files are not user data: gdu's
-        // JSON output, the SQLite index, staging dirs for verified copies.
-        // Time Capsule (B3) removes things in exactly two situations, both
-        // named so they are visible here rather than argued about in review:
-        //   - its own payloads under app-data (entryDir/payloadRoot/orphan…)
-        //   - paths a restore wrote seconds earlier, when that restore failed
-        //     (…ByThisRestore) — the same rollback-what-I-just-wrote licence
-        //     offload.ts has. A restore never clears a pre-existing file: it
-        //     refuses outright when the original path is occupied.
-        // Deliberately NOT a blanket allow for timeCapsule.ts: a bare delete
-        // of a user's file added there later must still fail this test.
-        const ownStorage =
-          /dbPath|indexPath|tmpPath|tmpDir|tempDir|outFile|staging|\.tmp|CAPSULE|appData|dataDir/i.test(arg) ||
-          /entryDir\(|payloadRoot\(|orphanCapsuleDir|ByThisRestore/.test(arg);
-        if (!ownStorage) offenders.push(`${entry.name}: ${m[1]}(${arg.slice(0, 60)}`);
+      if (entry.isDirectory()) {
+        if (entry.name !== 'node_modules') await scan(full);
+        continue;
+      }
+      if (!/\.(ts|js|cjs|mjs)$/.test(entry.name)) continue;
+      const rel = path.relative(repo, full).split(path.sep).join('/');
+      if (allowed.has(rel)) continue;
+      const src = (await fsp.readFile(full, 'utf8')).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, ' ');
+      for (const m of src.matchAll(removal)) check(rel, `${m[1]}${m[2] ?? ''}`, m[3] ?? '');
+      // A remover imported by name (`import { unlinkSync as drop } from 'node:fs'`)
+      // is called bare: each local name it was bound to is looked for.
+      for (const imp of src.matchAll(fsImport)) {
+        for (const spec of (imp[1] ?? '').split(',')) {
+          const [imported, local] = spec.trim().split(/\s+as\s+/).map((part) => part.trim());
+          if (!imported || !removers.has(imported)) continue;
+          const bare = new RegExp(`(?<![.\\w])${local ?? imported}\\s*\\(([^)]*)`, 'g');
+          for (const call of src.matchAll(bare)) check(rel, imported, call[1] ?? '');
+        }
       }
     }
   };
-  await scan(servicesDir);
+  await scan(path.join(repo, 'src'));
+  await scan(path.join(repo, 'electron'));
   assert.deepEqual(offenders, [], 'a bare delete outside Cleaner bypasses the Trash and this guard');
+  assert.deepEqual(
+    Object.keys(named).filter((k) => !namedSeen.has(k)),
+    [],
+    'every named removal is still in the code; one that is gone must leave this list too',
+  );
 });
 
 test('a probe that could not cover the whole set says so, and does not read as clear', () => {
