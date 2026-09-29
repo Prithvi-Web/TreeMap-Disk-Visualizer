@@ -15,3 +15,8 @@ tm-walk = { path = "../tm-walk" }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+
+# Spill files (T13a): the constants `CreateFileW` takes. Win32_Storage_FileSystem is
+# already enabled by tm-walk and tm-mft, so nothing more of windows-sys is compiled.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

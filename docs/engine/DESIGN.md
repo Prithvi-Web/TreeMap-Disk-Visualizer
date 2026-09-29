@@ -347,13 +347,18 @@ a crash inside the macOS create→unlink window leaves, through one confined
 remover. Having no names, the files cannot be listed by a walk, so a scan
 never counts them, even when app-data is inside the scanned root; `scan-spill`
 is not on the never-descend list, and Missing Gigabytes gains a line for
-their bytes. **24 September 2026, pending the owner (plan §S.11 Q1):** the
+their bytes. ~~**24 September 2026, pending the owner (plan §S.11 Q1):** the
 `unlink` needs the owner's exception to the master prompt's §3.1 ("never an
 `unlink`, ever, anywhere in new code"). That §3.1 is about the user's files
 is an engineering reading, not a decision. If the owner declines, spill uses
 no `unlink` at all: a fixed pool of named spill files, reused, whose bytes
 are freed with `ftruncate(0)` on release, on quit and at boot, so a crash
-leaves the bytes until the next launch.
+leaves the bytes until the next launch.~~ **Decided by the owner on 28
+September 2026 (plan §S.11 Q1): yes.** The `unlink` is the owner's exception
+to the master prompt's §3.1 ("never an `unlink`, ever, anywhere in new
+code"), confined to TreeMap's own spill files inside `<appData>/scan-spill`:
+at creation, after the inode check, and in the boot sweep. The `ftruncate(0)`
+fallback is not built.
 
 Spill is allowed only when free space is at least 3 × the bytes needed plus
 1 GiB, app-data can be written, and its file system is local (`smbfs`, `nfs`,
@@ -386,6 +391,23 @@ only small arrays it owns. This departs from the master prompt's §9.3, whose
 first bullet backs the columns with memory-mapped files; its aim ("Peak RSS
 stays bounded while the logical index is as large as the disk allows") is
 what the measurement says a mapping does not give.
+
+**Built 28 September 2026 (plan T13a): the spill file.** `tm_store::spill`
+makes `<appData>/scan-spill` mode 0700 (refusing a link, anything that is not
+a folder, and on POSIX a folder another user owns) and makes each file in it
+nameless at once: Linux `O_TMPFILE`; macOS an exclusive create from the
+folder's descriptor, then `unlinkat` only when the name's `(dev, ino)` still
+matches the descriptor's, and the file refused unless it then has no name at
+all; Windows `FILE_FLAG_DELETE_ON_CLOSE`. The owner decided on 28 September
+2026 that this `unlink` is allowed (plan §S.11 Q1). Every descriptor is
+close-on-exec, so no child process keeps a file's bytes after the scan. Bytes
+are appended with positioned writes (`pwrite`) and read with `pread`; nothing
+is mapped. The kill test (`tests/spill.rs`) `SIGKILL`s a process holding 256
+MiB of spill and finds the folder empty and the bytes back on the volume;
+a process that kept a named file of the same size, killed the same way, is
+seen as not freed. APFS counts an unlinked file's freed blocks lazily (0 MiB
+back after the kill, 256 MiB after one `sync()`, measured on this Mac), so the
+test asks with `sync()`, never with a timer.
 
 The boot sweep departs from §9.3 too (P4-5a, plan §S.5.3; not built). §9.3's
 third bullet asks for "a startup sweep with an age check"; the designed sweep

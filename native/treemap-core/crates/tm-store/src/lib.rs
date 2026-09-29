@@ -27,6 +27,8 @@
 //! * [`memory`]: the same store written while the walk runs, at the ids its blocks
 //!   reserved ([`MemorySink`], Phase 4 T7a), each row by `build`'s own rules.
 //! * [`column`](mod@column): one column's storage.
+//! * [`spill`]: the files a large scan's columns go to, made so that they cannot outlive
+//!   the scan (T13).
 
 pub mod aggregate;
 pub mod build;
@@ -36,6 +38,7 @@ pub mod finalize;
 pub mod memory;
 mod row;
 pub mod select;
+pub mod spill;
 
 pub use build::{BuildOptions, Counters, Store, StoreMode, StoreShape, build};
 pub use column::{AnonTally, Column, ColumnError, Zeroable, anon_tally};

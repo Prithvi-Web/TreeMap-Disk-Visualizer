@@ -345,6 +345,7 @@ dependencies = [
  "libc",
  "thiserror",
  "tm-walk",
+ "windows-sys",
 ]
 
 [[package]]
