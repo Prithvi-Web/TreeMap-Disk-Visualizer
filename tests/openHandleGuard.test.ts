@@ -446,8 +446,15 @@ test('nothing outside Cleaner removes a user file', async () => {
    *    verification fails. Exactly offload's argument: the only path it can
    *    remove is a temp file created moments earlier by the same function, and
    *    the user's original is only ever removed through cleaner's moveToTrash.
+   *  - `spillSweep.ts` — the owner's exception to the master prompt's §3.1,
+   *    decided by the owner on 28 Sep 2026 (Phase 4 plan §S.11 Q1): TreeMap may
+   *    unlink its OWN temporary spill files, only inside `<appData>/scan-spill`.
+   *    `removeSpillFile` is the one place that does, for a leftover of a dead
+   *    process that tm-store named, and it refuses anything outside that folder,
+   *    any link, anything but a regular file, and a file replaced since it was
+   *    checked (tests/spillSweep.test.ts).
    */
-  const allowed = new Set(['cleaner.ts', 'offload.ts', 'trash.ts', 'compressionAdvisor.ts']);
+  const allowed = new Set(['cleaner.ts', 'offload.ts', 'trash.ts', 'compressionAdvisor.ts', 'spillSweep.ts']);
   const offenders: string[] = [];
 
   const scan = async (dir: string): Promise<void> => {

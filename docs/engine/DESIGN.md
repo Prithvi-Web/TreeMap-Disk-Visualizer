@@ -409,7 +409,7 @@ seen as not freed. APFS counts an unlinked file's freed blocks lazily (0 MiB
 back after the kill, 256 MiB after one `sync()`, measured on this Mac), so the
 test asks with `sync()`, never with a timer.
 
-The boot sweep departs from §9.3 too (P4-5a, plan §S.5.3; not built). §9.3's
+The boot sweep departs from §9.3 too (P4-5a, plan §S.5.3; ~~not built~~ built 28 September 2026 in plan T13c as `src/services/spillSweep.ts`, with its one confined remover; T17 calls it at boot). §9.3's
 third bullet asks for "a startup sweep with an age check"; the designed sweep
 removes a file in `scan-spill/` when the process named by the `<pid>` in its
 name is not alive, and has no age limit. So a file left by a crash is kept,
