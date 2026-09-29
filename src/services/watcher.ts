@@ -1,4 +1,3 @@
-import fs from 'fs';
 import { promises as fsp } from 'fs';
 import path from 'path';
 import { FileNode, ScanResult, WatchEvent, WatchEventKind, WatchStreamEvent } from '../models/types';
@@ -7,6 +6,7 @@ import { getSettings } from './settings';
 import { appDataDir } from './storage';
 import { isInside } from '../utils/pathSanitizer';
 import { ScanStore, Flag, NodeInput } from './scanStore';
+import { watchPath, type WatchLease } from '../platform/watchRegistry';
 
 /**
  * Watcher — live disk activity for a completed scan (Live mode).
@@ -40,7 +40,7 @@ interface WatchSession {
   scanId: string;
   rootPath: string;
   engine: 'recursive' | 'top-levels';
-  watchers: fs.FSWatcher[];
+  watchers: WatchLease[];
   /** Last known size per touched path (scan tree consulted on first touch). */
   knownSizes: Map<string, number>;
   pending: Map<string, WatchEvent>;
@@ -130,6 +130,12 @@ export function topLevelDirs(root: FileNode, depth: number, cap: number): string
  * a session that attached nothing reported `top-levels` and then sat silent,
  * indistinguishable from a disk where nothing was happening. `session.watchers`
  * is now read by the route and sent to the client, which says so.
+ *
+ * Every watch is a lease from the watch registry, never `fs.watch` directly.
+ * Over a folder the live index already watches, the lease rides the index's
+ * own OS watch, so turning Live mode on and off opens and closes nothing — on
+ * macOS, where every watch in the process shares one stream, a new watch
+ * would interrupt every indexed folder's (watchRegistry.ts).
  */
 function attachWatchers(session: WatchSession): void {
   const handler = (dirBase: string) => (_event: string, filename: string | Buffer | null): void => {
@@ -138,10 +144,14 @@ function attachWatchers(session: WatchSession): void {
     if (rel.includes('\0')) return;
     void onRawEvent(session, path.join(dirBase, rel));
   };
+  const owner = `live:${session.scanId}`;
   try {
-    const w = fs.watch(session.rootPath, { recursive: true, persistent: false }, handler(session.rootPath));
-    w.on('error', () => stopSession(session, 'idle'));
-    session.watchers.push(w);
+    const lease = watchPath(
+      session.rootPath,
+      { recursive: true, owner, onError: () => stopSession(session, 'idle') },
+      handler(session.rootPath),
+    );
+    session.watchers.push(lease);
     session.engine = 'recursive';
     return;
   } catch {
@@ -155,9 +165,8 @@ function attachWatchers(session: WatchSession): void {
     : topLevelDirs(session.root as FileNode, FALLBACK_DEPTH, MAX_FALLBACK_WATCHERS);
   for (const dir of fallbackDirs) {
     try {
-      const w = fs.watch(dir, { persistent: false }, handler(dir));
-      w.on('error', () => { /* dir vanished — its parent will report it */ });
-      session.watchers.push(w);
+      // A folder's watch ending means the folder vanished — its parent reports it.
+      session.watchers.push(watchPath(dir, { recursive: false, owner, onError: () => {} }, handler(dir)));
     } catch {
       /* unwatchable dir (perms/deleted) — skip */
     }
@@ -299,9 +308,7 @@ function stopSession(session: WatchSession, reason: 'idle' | 'shutdown'): void {
   session.stopped = true;
   clearInterval(session.flushTimer);
   clearInterval(session.idleTimer);
-  for (const w of session.watchers) {
-    try { w.close(); } catch { /* already closed */ }
-  }
+  for (const lease of session.watchers) lease.close();
   session.watchers = [];
   emit(session, { type: 'paused', reason });
   session.listeners.clear();

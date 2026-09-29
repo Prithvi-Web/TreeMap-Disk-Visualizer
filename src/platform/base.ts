@@ -31,6 +31,7 @@ import {
   ZombieHandleInfo,
 } from './types';
 import { notifyWatchDelivery } from './types';
+import { watchPath, type WatchLease } from './watchRegistry';
 import { meansGone } from '../utils/errno';
 
 /**
@@ -184,13 +185,17 @@ export abstract class BaseProvider implements PlatformProvider {
    * Telling *created* from *modified* needs to know whether the path existed
    * before, which is the index's knowledge, not the watcher's; the index
    * promotes 'modified' to 'created' when it holds no prior entry.
+   *
+   * The watch comes from the registry, never from `fs.watch` directly: on
+   * macOS every watch in the process shares one stream, and the registry is
+   * what tells the index that stream was interrupted (watchRegistry.ts).
    */
-  subscribeToChanges(root: string, onChange: (e: ChangeEvent) => void): Unsubscribe {
-    let watcher: fs.FSWatcher | null = null;
+  subscribeToChanges(root: string, onChange: (e: ChangeEvent) => void, owner: string): Unsubscribe {
+    let lease: WatchLease;
     let closed = false;
 
     try {
-      watcher = fs.watch(root, { recursive: true, persistent: false }, (_type, filename) => {
+      lease = watchPath(root, { recursive: true, owner }, (_type, filename) => {
         // Counted HERE, at the OS callback, before any of this provider's own
         // logic can drop it. Counting downstream — at the engine's subscriber
         // — would mean a regression in this method (a swallowed event, a
@@ -217,9 +222,9 @@ export abstract class BaseProvider implements PlatformProvider {
             onChange({ path: full, kind: meansGone(err) ? 'deleted' : 'unknown', at: Date.now() }),
           );
       });
-      watcher.on('error', () => {
-        /* the watch is best-effort; a dropped watch surfaces as index staleness */
-      });
+      // No error handler of its own: the registry handles every OS watch's
+      // 'error', and reports the watch as ended — which is what marks a root
+      // stale when its watch dies (indexEngine's `onWatchSetChange`).
     } catch (err) {
       // Watch could not be established at all (permissions, unsupported fs,
       // a descriptor limit). Rethrown rather than swallowed into a no-op
@@ -235,11 +240,7 @@ export abstract class BaseProvider implements PlatformProvider {
 
     return () => {
       closed = true;
-      try {
-        watcher?.close();
-      } catch {
-        /* already closed */
-      }
+      lease.close();
     };
   }
 

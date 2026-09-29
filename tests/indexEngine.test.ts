@@ -38,6 +38,7 @@ import {
   FLAG,
 } from '../src/services/indexEngine';
 import type { FileNode } from '../src/models/types';
+import { awaitWatchLive, silentWatchReason } from './fixtures/watchReady';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const mkTmp = (): Promise<string> => fsp.mkdtemp(path.join(os.tmpdir(), 'tm-index-'));
@@ -103,36 +104,57 @@ const WATCHER_BUDGET_MS = process.env.CI ? 10_000 : 2_000;
  * The distinction is the point. Without it, a platform silence and a real
  * regression in `applyPendingChanges` produce the same message, and the last
  * three sessions of this project were spent on exactly that confusion.
+ *
+ * Counted from `baseline`, the watch's event count once the readiness
+ * handshake (`watchLive`) had proved it could report at all: events before
+ * that say nothing about the change under test.
  */
 function assertLanded(
   elapsedMs: number,
   what: string,
-  ctx: { t: TestContext; dir: string },
+  ctx: { t: TestContext; dir: string; baseline: number },
   budgetMs = WATCHER_BUDGET_MS,
 ): boolean {
   if (elapsedMs === -1) {
-    const delivered = watcherEventCount(ctx.dir);
-    if (delivered === null) {
+    const now = watcherEventCount(ctx.dir);
+    if (now === null) {
       // No watcher is attached at all, which is a different failure from
       // either of the two below and must not be dressed up as one — the
       // earlier version printed "the OS delivered null event(s)".
       assert.fail(`${what} never landed, and no watcher is attached to ${ctx.dir} — the watch was never established or was stopped early.`);
     }
+    const delivered = now - ctx.baseline;
     if (delivered === 0) {
       ctx.t.skip(
-        `the OS watch on ${ctx.dir} delivered no events at all in ${String(WATCH_CEILING_MS)}ms, ` +
-        `so "${what}" could not be observed. fs.watch attached without error and stayed silent — ` +
-        'a platform failure, not an index one. See HANDOFF.md, "a watch that attaches and says nothing".',
+        `the OS watch on ${ctx.dir} reported a rewrite made just before, then delivered no events at all in ` +
+        `${String(WATCH_CEILING_MS)}ms, so "${what}" could not be observed — a platform failure, not an index one. ` +
+        'See HANDOFF.md, "a watch that attaches and says nothing".',
       );
       return false;
     }
     assert.fail(
       `${what} never landed in the index, and this IS a bug here: the OS delivered ` +
-      `${String(delivered)} event(s) for this root and none of them produced the change.`,
+      `${String(delivered)} event(s) for this root after it proved live, and none of them produced the change.`,
     );
   }
   assert.ok(elapsedMs < budgetMs, `${what} took ${String(elapsedMs)}ms, budget is ${String(budgetMs)}ms`);
   return true;
+}
+
+/**
+ * The readiness handshake for a freshly attached watch: rewrite `sentinel` —
+ * a file the index already holds — until the OS reports something for `dir`
+ * (tests/fixtures/watchReady.ts has the measurements). Returns the event
+ * count to measure the real change from, or null having skipped the test
+ * with what was measured, when the watch never said a word.
+ */
+async function watchLive(t: TestContext, dir: string, sentinel: string): Promise<number | null> {
+  const ready = await awaitWatchLive(sentinel, () => watcherEventCount(dir));
+  if (!ready.live) {
+    t.skip(silentWatchReason(dir, ready));
+    return null;
+  }
+  return ready.baseline;
 }
 
 after(() => {
@@ -285,16 +307,21 @@ test('an external create, resize and delete each land within 2 seconds', async (
     await fsp.writeFile(path.join(dir, 'a.bin'), Buffer.alloc(1000));
     const root = await buildIndex(dir, { live: true });
     assert.equal(root.live, true, 'a live watcher is attached after building');
-    const ctx = { t, dir };
+    const baseline = await watchLive(t, dir, path.join(dir, 'a.bin'));
+    if (baseline === null) return;
+    const ctx = { t, dir, baseline };
 
     const target = path.join(dir, 'new.bin');
 
     await fsp.writeFile(target, Buffer.alloc(5000));
     if (!assertLanded(await waitFor(() => getRoot(dir)!.totalSize === 6000), 'an external create', ctx)) return;
 
+    // Each change is triaged on the events that came after it.
+    ctx.baseline = watcherEventCount(dir) ?? ctx.baseline;
     await fsp.writeFile(target, Buffer.alloc(9000));
     if (!assertLanded(await waitFor(() => getRoot(dir)!.totalSize === 10000), 'an external resize', ctx)) return;
 
+    ctx.baseline = watcherEventCount(dir) ?? ctx.baseline;
     await fsp.unlink(target);
     if (!assertLanded(await waitFor(() => getRoot(dir)!.totalSize === 1000), 'an external delete', ctx)) return;
   } finally {
@@ -312,12 +339,14 @@ test('deleting a folder removes its whole subtree from the index', async (t) => 
     await fsp.writeFile(path.join(dir, 'keep.bin'), Buffer.alloc(1000));
     const root = await buildIndex(dir, { live: true });
     assert.equal(root.totalSize, 4000);
+    const baseline = await watchLive(t, dir, path.join(dir, 'keep.bin'));
+    if (baseline === null) return;
 
     await fsp.rm(path.join(dir, 'doomed'), { recursive: true, force: true });
     // Same triage as the acceptance test above: a watch that delivered
     // nothing at all is a platform silence, not a subtree bug, and saying so
     // is worth more than a failure that names the wrong thing.
-    if (!assertLanded(await waitFor(() => getRoot(dir)!.totalSize === 1000), 'the folder deletion', { t, dir })) return;
+    if (!assertLanded(await waitFor(() => getRoot(dir)!.totalSize === 1000), 'the folder deletion', { t, dir, baseline })) return;
 
     const db = openIndex();
     const rootId = getRoot(dir)!.id;
@@ -347,12 +376,14 @@ test('a path containing LIKE wildcards is deleted precisely, not by pattern', as
     assert.equal(root.totalSize, 1600);
 
     assert.equal(startWatcher(dir), true, 'the watcher attached at all');
+    const baseline = await watchLive(t, dir, path.join(dir, '1002xbackup', 'survivor.bin'));
+    if (baseline === null) return;
     await fsp.rm(path.join(dir, '100%_backup'), { recursive: true, force: true });
     // Named for what actually failed. This used to read "the wildcard-named
     // folder was removed", which is a claim about the disk — and the disk had
     // done its part. What can fail here is the watcher noticing, and whether
     // THAT is a bug depends on whether the OS said anything at all.
-    if (!assertLanded(await waitFor(() => getRoot(dir)!.totalSize === 900), 'the wildcard-named folder’s removal', { t, dir })) return;
+    if (!assertLanded(await waitFor(() => getRoot(dir)!.totalSize === 900), 'the wildcard-named folder’s removal', { t, dir, baseline })) return;
 
     const rootId = getRoot(dir)!.id;
     assert.equal(findNodeIdByPath(rootId, dir, path.join(dir, '100%_backup')), null, 'the wildcard-named folder is gone');
@@ -751,7 +782,10 @@ test('a withheld directory is never fetched, only counted past the budget', asyn
     for (let i = 0; i < 400; i++) {
       await fsp.writeFile(path.join(dir, 'fat', `f${i}.bin`), Buffer.alloc(8));
     }
-    await buildIndex(dir);
+    // live: false, as every test here that reads no live change. A watcher
+    // left attached outlives the test: on macOS it is one more watch that
+    // every later attach and close in this file interrupts (watchRegistry.ts).
+    await buildIndex(dir, { live: false });
 
     const Database = (await import('better-sqlite3')).default;
     const proto = Database.prototype as unknown as { prepare: (sql: string) => unknown };
@@ -796,7 +830,7 @@ test('the index carries the seek paths readTree and the allocation report need',
   const dir = await mkTmp();
   try {
     await fsp.writeFile(path.join(dir, 'a.bin'), Buffer.alloc(1024));
-    await buildIndex(dir);
+    await buildIndex(dir, { live: false }); // no watcher to outlive the test — see the one above
     const { openIndex } = await import('../src/services/indexEngine');
     const handle = openIndex();
     const plan = (sql: string, ...params: number[]): string =>

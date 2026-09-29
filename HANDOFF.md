@@ -4028,6 +4028,30 @@ fixtures; the honest no-library path is what runs live.
 
 ## A watch that attaches and says nothing
 
+**Cause found, 28 Sep 2026: the watch was not dead — its one write landed
+before it was live.** On macOS libuv serves every `fs.watch` in a process from
+ONE FSEventStream and rebuilds it "since now" on every attach and close (read
+off the node binary: `uv__cf_loop_cb`). A new watch is deaf until the rebuilt
+stream starts, and other processes' WRITE load widens that window: with four
+processes writing every 2 ms, a write 0 ms after attaching was missed 6 in 100
+(20 ms or more after: 0 in 180); other processes' watch churn alone cost
+nothing. Every missed watch reported the next write. The live tests wrote once,
+5–12 ms after attaching (traced), then waited — hence the skip. They now
+rewrite a file already in the index until the OS reports it
+(`tests/fixtures/watchReady.ts`) before the real change, and count the triage
+from there: with eight processes writing every 1 ms, the three files skipped
+5 times in 8 rounds before (4 rounds had a skip), and 0 times in 14 rounds
+after. The same shared stream is a product bug too, fixed alongside:
+every OS watch now comes from `src/platform/watchRegistry.ts` (a static test
+forbids `fs.watch` anywhere else in the server's process — `src/` and
+`electron/`), and the index marks every OTHER live root `stale`, with a
+`staleReason`, when the set of watches changes on macOS. There a rebuild also
+hands its root's watch over instead of closing it, and Live mode shares the
+index's watch of a folder — so rescans and Live toggles churn nothing. Windows
+and Linux, whose watches are independent, behave as before.
+
+The history below is kept as it was measured.
+
 **macOS `fs.watch(recursive)` can attach without error and then deliver
 nothing at all.** Not a theory — captured from a traced full-suite run on this
 Mac, with a per-callback trace on the raw `fs.watch` handler:

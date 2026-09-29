@@ -603,3 +603,35 @@ test('the disk-full banner states its basis: a folder\'s growth against the volu
   assert.match(els.growthProj.innerHTML, /Movies/, 'an older server without a basis is read as a folder scan — the honest default');
   assert.match(braced('async function labelTrendForecast('), /basis/, 'the Trends footer uses the same basis');
 });
+
+/* ══════════════ the index badge says why an index is stale ══════════════ */
+
+test('a stale index badge gives the server\'s reason, escaped, and keeps the old sentence where there is none', () => {
+  // "It wasn't watching while TreeMap was closed" is one reason of several. On
+  // macOS every watch in the process shares one change stream, so another
+  // folder's watch starting or stopping makes a root stale while it is still
+  // being watched — and the badge must not tell the user the app was closed.
+  const render = braced('function renderIndexBadge(');
+  const escapeHtml = new Function(`'use strict'; ${braced('function escapeHtml(')} return escapeHtml;`)() as (s: string) => string;
+  const badge = (root: Record<string, unknown>): { text: string; stale: boolean } => {
+    const { $, els } = makeDom();
+    const run = new Function('$', 'escapeHtml', `'use strict'; ${render} return renderIndexBadge;`)($, escapeHtml) as (info: unknown) => void;
+    run({ indexed: true, root });
+    return { text: els.indexBadge.innerHTML, stale: els.indexBadge.cls.has('stale') };
+  };
+
+  const why = badge({ state: 'stale', live: true, staleReason: 'Another folder <b>started</b> being watched.' });
+  assert.equal(why.stale, true);
+  assert.match(why.text, /Index may be out of date\. Another folder &lt;b&gt;started&lt;\/b&gt; being watched\. Scan again to refresh it\./, 'the reason is shown, as text');
+  assert.doesNotMatch(why.text, /<b>/, 'never as markup');
+  assert.doesNotMatch(why.text, /while TreeMap was closed/, 'and not the one reason it is not');
+
+  const older = badge({ state: 'stale', live: false });
+  assert.match(older.text, /it wasn’t watching while TreeMap was closed/, 'a server that gives no reason gets the sentence the badge always said');
+  const unwatched = badge({ state: 'ready', live: false, staleReason: 'left over' });
+  assert.equal(unwatched.stale, true, 'a ready index nobody is watching is still amber');
+  assert.doesNotMatch(unwatched.text, /left over/, 'but only a stale root\'s reason is its reason');
+  const live = badge({ state: 'ready', live: true });
+  assert.equal(live.stale, false);
+  assert.match(live.text, /Index live — always current/);
+});

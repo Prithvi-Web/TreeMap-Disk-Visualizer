@@ -14,15 +14,22 @@ function renderIndexBadge(info) {
   const el = $('indexBadge');
   if (!info || !info.indexed || !info.root) { el.hidden = true; return; }
   const stale = info.root.state !== 'ready' || !info.root.live;
+  // A stale root comes with the server's reason, and there is more than one:
+  // on macOS another folder's watch starting or stopping can cost this one a
+  // change while it stays attached. Without a reason — an index that is only
+  // not being watched — the badge says what it always said.
+  const why = info.root.state === 'stale' ? info.root.staleReason : '';
   el.classList.toggle('stale', stale);
   el.innerHTML =
     '<span class="dot"></span><span>' +
     (stale
-      ? 'Index may be out of date — it wasn’t watching while TreeMap was closed. Scan again to refresh it.'
+      ? (why
+        ? 'Index may be out of date. ' + escapeHtml(why) + ' Scan again to refresh it.'
+        : 'Index may be out of date — it wasn’t watching while TreeMap was closed. Scan again to refresh it.')
       : 'Index live — always current') +
     '</span>';
   el.title = stale
-    ? 'TreeMap keeps a saved index of this folder so it opens instantly. It stopped watching for changes at some point, so something may have changed since.'
+    ? 'TreeMap keeps a saved index of this folder so it opens instantly. It may have missed a change at some point, so something may be different now.'
     : 'This folder opens instantly from a saved index that updates itself as files change.';
   el.hidden = false;
 }

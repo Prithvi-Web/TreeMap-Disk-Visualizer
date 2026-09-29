@@ -54,7 +54,13 @@ export interface PlatformProvider {
 
   /* Enumeration and live changes */
   fastEnumerate(root: string, opts?: EnumerateOptions): AsyncIterable<RawEntry>;
-  subscribeToChanges(root: string, onChange: (e: ChangeEvent) => void): Unsubscribe;
+  /**
+   * Watch `root` for changes. `owner` names the subscriber in the watch
+   * registry (watchRegistry.ts), which reports every OS watch this attaches
+   * or closes — on macOS any of them interrupts every other watch in the
+   * process, and the subscriber must be able to tell its own from the rest.
+   */
+  subscribeToChanges(root: string, onChange: (e: ChangeEvent) => void, owner: string): Unsubscribe;
 
   /* Open handles (B2) and zombie handles (B5) */
   getOpenHandles(path: string): Promise<OpenHandleInfo[]>;

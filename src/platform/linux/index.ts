@@ -38,6 +38,7 @@ import type {
 } from '../types';
 import { meansGone } from '../../utils/errno';
 import { notifyWatchDelivery } from '../types';
+import { watchPath, type WatchLease } from '../watchRegistry';
 
 /**
  * Linux platform provider.
@@ -129,15 +130,20 @@ export class LinuxProvider extends BaseProvider {
    * achievable without it. The capability note states the trade honestly: the
    * per-directory approach can exhaust `max_user_watches` on very large trees.
    */
-  override subscribeToChanges(root: string, onChange: (e: ChangeEvent) => void): Unsubscribe {
-    const watchers = new Map<string, fs.FSWatcher>();
+  override subscribeToChanges(root: string, onChange: (e: ChangeEvent) => void, owner: string): Unsubscribe {
+    // Leases from the watch registry, never `fs.watch` directly, for the same
+    // reason as the base provider: every OS watch in the process is the
+    // registry's to report (watchRegistry.ts).
+    const watchers = new Map<string, WatchLease>();
     let closed = false;
 
     const watchDir = (dir: string): void => {
       if (closed || watchers.has(dir)) return;
-      let watcher: fs.FSWatcher;
+      let lease: WatchLease;
       try {
-        watcher = fs.watch(dir, { persistent: false }, (_type, filename) => {
+        // A directory whose watch the system ends has usually just gone; the
+        // next event under its parent re-establishes it if it has not.
+        lease = watchPath(dir, { recursive: false, owner, onError: () => watchers.delete(dir) }, (_type, filename) => {
           // Reported at the OS callback, like the base provider — see
           // `notifyWatchDelivery`. `root`, not `dir`: the consumer keys on the
           // root it subscribed to, not on whichever nested directory fired.
@@ -189,10 +195,7 @@ export class LinuxProvider extends BaseProvider {
         if (dir === root) throw err;
         return; // watch limit reached or permission denied — index staleness covers it
       }
-      watcher.on('error', () => {
-        watchers.delete(dir);
-      });
-      watchers.set(dir, watcher);
+      watchers.set(dir, lease);
     };
 
     const seed = async (dir: string, depth: number): Promise<void> => {
@@ -220,13 +223,7 @@ export class LinuxProvider extends BaseProvider {
 
     return () => {
       closed = true;
-      for (const watcher of watchers.values()) {
-        try {
-          watcher.close();
-        } catch {
-          /* already closed */
-        }
-      }
+      for (const lease of watchers.values()) lease.close();
       watchers.clear();
     };
   }

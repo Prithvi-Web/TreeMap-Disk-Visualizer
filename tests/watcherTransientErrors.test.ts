@@ -31,6 +31,7 @@ process.env.TREEMAP_DATA_DIR = DATA_DIR;
 
 import { buildIndex, getRoot, stopAllWatchers, closeIndex, deleteIndex, MAX_CHANGE_ATTEMPTS, watcherEventCount } from '../src/services/indexEngine';
 import { meansGone, meansAbsent } from '../src/utils/errno';
+import { awaitWatchLive, silentWatchReason } from './fixtures/watchReady';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const mkTmp = (): Promise<string> => fsp.mkdtemp(path.join(os.tmpdir(), 'tm-transient-'));
@@ -103,18 +104,37 @@ function failLstat(match: string, code: string, opts: { forMs?: number } = {}): 
  * Returns false when the OS said nothing, having skipped the test. A count
  * above zero means the watch IS delivering, so any remaining failure is this
  * codebase's and is reported as one.
+ *
+ * Counted from `baseline`: the watch's event count once the readiness
+ * handshake (`watchLive`) had proved it could report at all.
  */
-function watchIsDelivering(t: TestContext, dir: string, what: string): boolean {
-  const delivered = watcherEventCount(dir);
+function watchIsDelivering(t: TestContext, dir: string, what: string, baseline: number): boolean {
+  const delivered = (watcherEventCount(dir) ?? 0) - baseline;
   if (delivered === 0) {
     t.skip(
-      `the OS watch on ${dir} delivered no events at all, so "${what}" could not be observed. ` +
-      'fs.watch attached without error and stayed silent — a platform failure, not an index one. ' +
+      `the OS watch on ${dir} reported a rewrite made just before, then delivered no events at all, so "${what}" ` +
+      'could not be observed — a platform failure, not an index one. ' +
       'See HANDOFF.md, "a watch that attaches and says nothing".',
     );
     return false;
   }
   return true;
+}
+
+/**
+ * The readiness handshake for a freshly attached watch: rewrite `sentinel` —
+ * a file the index already holds, and never one a test injects failures on —
+ * until the OS reports something for `dir` (tests/fixtures/watchReady.ts has
+ * the measurements). Returns the event count to measure the real change from,
+ * or null having skipped the test with what was measured.
+ */
+async function watchLive(t: TestContext, dir: string, sentinel: string): Promise<number | null> {
+  const ready = await awaitWatchLive(sentinel, () => watcherEventCount(dir));
+  if (!ready.live) {
+    t.skip(silentWatchReason(dir, ready));
+    return null;
+  }
+  return ready.baseline;
 }
 
 /** Poll until the predicate holds, returning how long it took, or -1. */
@@ -246,6 +266,8 @@ test('a transient lstat failure does not delete a file that is still on disk', a
     await fsp.writeFile(path.join(dir, 'keep', 'small.bin'), Buffer.alloc(10_000));
     await buildIndex(dir, { live: true });
     assert.equal(getRoot(dir)!.totalSize, 60_000, 'the fixture indexed correctly to begin with');
+    const baseline = await watchLive(t, dir, path.join(dir, 'keep', 'small.bin'));
+    if (baseline === null) return;
 
     injected = failLstat(path.join('keep', 'big.bin'), 'EMFILE');
     t.after(() => { injected?.release(); });
@@ -261,7 +283,7 @@ test('a transient lstat failure does not delete a file that is still on disk', a
     // Wait for the engine to have actually ASKED — a fixed sleep would pass
     // on a slow runner before the watcher had done anything, proving nothing.
     const asked = await waitFor(() => injected!.calls() > 0);
-    if (asked === -1 && !watchIsDelivering(t, dir, 'the change')) return;
+    if (asked === -1 && !watchIsDelivering(t, dir, 'the change', baseline)) return;
     assert.notEqual(asked, -1, 'the watcher noticed the change and tried to stat it');
 
     // Now let it keep failing across several flush intervals. Whatever the
@@ -296,7 +318,7 @@ test('a transient lstat failure does not delete a file that is still on disk', a
     t.after(() => { injected?.release(); });
     await fsp.appendFile(path.join(dir, 'keep', 'big.bin'), Buffer.alloc(7_000, 3));
     const landed = await waitFor(() => getRoot(dir)!.totalSize === 67_000);
-    if (landed === -1 && !watchIsDelivering(t, dir, 'the regrown file')) return;
+    if (landed === -1 && !watchIsDelivering(t, dir, 'the regrown file', baseline)) return;
     assert.notEqual(landed, -1, 'the retry re-read the file once the disk answered, and the index caught up');
   } finally {
     injected?.release();
@@ -309,6 +331,8 @@ test('a transient lstat failure delays a new file into the index, it does not lo
   try {
     await fsp.writeFile(path.join(dir, 'a.bin'), Buffer.alloc(1000));
     await buildIndex(dir, { live: true });
+    const baseline = await watchLive(t, dir, path.join(dir, 'a.bin'));
+    if (baseline === null) return;
 
     // Unreadable for a full second, then readable again — WITHOUT the test
     // choosing the moment. The window matters: `writeFile` completes in
@@ -327,12 +351,12 @@ test('a transient lstat failure delays a new file into the index, it does not lo
     await fsp.writeFile(path.join(dir, 'new.bin'), Buffer.alloc(5000));
 
     const asked = await waitFor(() => injected.calls() > 0);
-    if (asked === -1 && !watchIsDelivering(t, dir, 'the new file')) return;
+    if (asked === -1 && !watchIsDelivering(t, dir, 'the new file', baseline)) return;
     assert.notEqual(asked, -1, 'the watcher noticed the new file and tried to stat it');
     assert.equal(getRoot(dir)!.totalSize, 1000, 'nothing invented while the answer was unavailable');
 
     const took = await waitFor(() => getRoot(dir)!.totalSize === 6000);
-    if (took === -1 && !watchIsDelivering(t, dir, 'the create')) return;
+    if (took === -1 && !watchIsDelivering(t, dir, 'the create', baseline)) return;
     assert.notEqual(took, -1, 'the create landed once the disk answered, rather than never');
   } finally {
     stopWatcherAndClean(dir);
@@ -347,6 +371,8 @@ test('a change that never resolves marks the root stale rather than pretending',
     await fsp.writeFile(path.join(dir, 'a.bin'), Buffer.alloc(1000));
     await buildIndex(dir, { live: true });
     assert.equal(getRoot(dir)!.state, 'ready', 'a freshly built root is ready');
+    const baseline = await watchLive(t, dir, path.join(dir, 'a.bin'));
+    if (baseline === null) return;
 
     // A volume that stays unreadable — not one blip but every attempt.
     const injected = failLstat('stubborn.bin', 'EIO');
@@ -354,8 +380,9 @@ test('a change that never resolves marks the root stale rather than pretending',
     await fsp.writeFile(path.join(dir, 'stubborn.bin'), Buffer.alloc(7000));
 
     const took = await waitFor(() => getRoot(dir)!.state === 'stale');
-    if (took === -1 && !watchIsDelivering(t, dir, 'the unresolvable change')) return;
+    if (took === -1 && !watchIsDelivering(t, dir, 'the unresolvable change', baseline)) return;
     assert.notEqual(took, -1, 'the retries are bounded and the root ends up stale');
+    assert.match(getRoot(dir)!.staleReason ?? '', /could not be read/, 'and says why, in words the UI shows as they are');
     // More than the two a single pass costs — the watcher classifies the
     // event with one `lstat` and `applyPendingChanges` decides with another,
     // so `> 1` was satisfied without any retry at all.
@@ -382,10 +409,12 @@ test('a real deletion is still applied, exactly as before', async (t) => {
     await fsp.writeFile(path.join(dir, 'doomed.bin'), Buffer.alloc(4000));
     await buildIndex(dir, { live: true });
     assert.equal(getRoot(dir)!.totalSize, 5000);
+    const baseline = await watchLive(t, dir, path.join(dir, 'a.bin'));
+    if (baseline === null) return;
 
     await fsp.unlink(path.join(dir, 'doomed.bin'));
     const took = await waitFor(() => getRoot(dir)!.totalSize === 1000);
-    if (took === -1 && !watchIsDelivering(t, dir, 'the deletion')) return;
+    if (took === -1 && !watchIsDelivering(t, dir, 'the deletion', baseline)) return;
     assert.notEqual(took, -1, 'ENOENT still means gone, and the row goes with it');
     assert.equal(getRoot(dir)!.state, 'ready', 'an ordinary deletion does not make a root stale');
   } finally {

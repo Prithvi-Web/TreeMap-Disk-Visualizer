@@ -13,6 +13,7 @@ import { neverDescend } from '../utils/mountBoundaries';
 import { parseQuery, extensionOf, escapeLike } from '../utils/searchQuery';
 import type { ChangeEvent, Unsubscribe } from '../platform/types';
 import { onWatchDelivery } from '../platform/types';
+import { holdWatchesOf, onWatchSetChange, watchesShareOneStream } from '../platform/watchRegistry';
 import type { FileNode } from '../models/types';
 import { meansAbsent, meansGone } from '../utils/errno';
 
@@ -86,8 +87,32 @@ export interface IndexedRoot {
   mechanism: string;
   /** True while a live watcher is attached to this root. */
   live: boolean;
+  /**
+   * Why a 'stale' root may be missing a change, as a sentence the UI shows as
+   * it is. Present only when `state` is 'stale'. A root this process did not
+   * mark stale was already stale when the index was opened — its watcher
+   * ended with the process that built it. (A second TreeMap process opening
+   * the same index marks every root stale the same way; the Electron shell
+   * allows one instance, so that takes a development server beside it.)
+   */
+  staleReason?: string;
   error?: string;
 }
+
+/* Why a root is stale — one sentence per way a root gets there, shown as it is by the UI. */
+const STALE_REASON = {
+  /** Stale when the index was opened: nothing watched it while TreeMap was closed. */
+  notWatchedWhileClosed: 'It wasn’t watched while TreeMap was closed, so a change made then may be missing.',
+  /** Another watch in the process attached or closed on a platform where they share one stream (macOS). */
+  sharedStream:
+    'TreeMap started or stopped watching another folder, which on macOS briefly interrupts every folder it watches — a change made here in that moment may be missing.',
+  /** The system ended this root's own watch. */
+  watchEnded: 'The system stopped reporting changes in this folder, so a change made since then may be missing.',
+  /** A change the filesystem would not answer for, past `MAX_CHANGE_ATTEMPTS`. */
+  unreadableChange: 'A change here could not be read after several tries, so it may be missing.',
+  /** A burst of changes the database would not take. */
+  unwritableChange: 'A change here could not be written to the index, so it may be missing.',
+} as const;
 
 export interface BuildProgress {
   phase: 'enumerating' | 'summing' | 'done' | 'error';
@@ -285,6 +310,8 @@ function discardIncompleteBuilds(): void {
 /** Close the database (graceful shutdown, and between tests). */
 export function closeIndex(): void {
   stopAllWatchers();
+  // Every root is stale on the next open for the reason that open gives.
+  staleReasons.clear();
   if (db) {
     try {
       db.close();
@@ -323,10 +350,36 @@ const BATCH = 5_000;
  * partial tree as usable, and a crash leaves a row that startup discards.
  */
 export async function buildIndex(root: string, opts: BuildOptions = {}): Promise<IndexedRoot> {
+  // A rebuild replaces the rows, so the watcher on the old ones goes and a
+  // new one attaches when the build is done. On macOS the OS watch underneath
+  // is HELD across that rather than closed and reopened: there, closing or
+  // opening any watch interrupts every other watch in the process, which
+  // would leave every other indexed folder stale (see `onWatchSetChange`
+  // below) — and the UI rebuilds a folder's index after every scan of it.
+  // Holding is safe there because FSEvents watches a path, not a folder:
+  // measured, a held watch kept reporting a folder deleted and made again at
+  // the same path (20 of 20). Elsewhere nothing is held and the rebuild
+  // reopens the watch as it always did — which also replaces a watch the
+  // system dropped without a word (inotify does, for a folder deleted and
+  // made again). Changes made during the build still reach no one, exactly
+  // as before: the hold hears nothing.
+  const releaseHold =
+    opts.live !== false && watchers.has(root) && watchesShareOneStream()
+      ? holdWatchesOf(watchOwner(root), `index-rebuild:${root}`)
+      : null;
+  try {
+    return await rebuild(root, opts);
+  } finally {
+    releaseHold?.();
+  }
+}
+
+async function rebuild(root: string, opts: BuildOptions): Promise<IndexedRoot> {
   const handle = openIndex();
   const provider = platform();
 
   stopWatcher(root); // a rebuild invalidates any watcher on the old rows
+  staleReasons.delete(root); // and whatever made the old rows stale
 
   // Replace any previous index for this root atomically.
   handle
@@ -537,16 +590,18 @@ export function getRoot(rootPath: string): IndexedRoot | null {
 
 function toIndexedRoot(row: Record<string, unknown>): IndexedRoot {
   const rootPath = String(row.path);
+  const state = String(row.state) as IndexState;
   return {
     id: Number(row.id),
     path: rootPath,
-    state: String(row.state) as IndexState,
+    state,
     builtAt: row.built_at === null ? null : Number(row.built_at),
     fileCount: Number(row.file_count),
     dirCount: Number(row.dir_count),
     totalSize: Number(row.total_size),
     mechanism: String(row.mechanism),
     live: watchers.has(rootPath),
+    ...(state === 'stale' ? { staleReason: staleReasons.get(rootPath) ?? STALE_REASON.notWatchedWhileClosed } : {}),
     ...(row.error ? { error: String(row.error) } : {}),
   };
 }
@@ -573,11 +628,13 @@ export function deleteIndex(rootPath?: string): number {
 
   if (rootPath === undefined) {
     stopAllWatchers();
+    staleReasons.clear();
     removed = (handle.prepare('SELECT COUNT(*) c FROM roots').get() as { c: number }).c;
     handle.prepare('DELETE FROM nodes').run();
     handle.prepare('DELETE FROM roots').run();
   } else {
     stopWatcher(rootPath);
+    staleReasons.delete(rootPath);
     const row = handle.prepare('SELECT id FROM roots WHERE path = ?').get(rootPath) as { id: number } | undefined;
     if (!row) return 0;
     handle.prepare('DELETE FROM nodes WHERE root_id = ?').run(row.id);
@@ -714,6 +771,19 @@ export function pathOfNode(nodeId: number): string | null {
 
 const watchers = new Map<string, Unsubscribe>();
 
+/** How a root's watcher is named in the watch registry, so its own watches can be told from the rest. */
+function watchOwner(rootPath: string): string {
+  return `index:${rootPath}`;
+}
+
+/**
+ * Why each root this process marked stale is stale — the cause that took it
+ * from 'ready', until a rebuild takes it back. Not stored: a root that is stale
+ * when the index is opened is stale because nothing watched it while TreeMap
+ * was closed, whatever made it stale before.
+ */
+const staleReasons = new Map<string, string>();
+
 /** Changes are applied in bursts: a build writes thousands of events at once. */
 const FLUSH_MS = 400;
 
@@ -816,6 +886,47 @@ onWatchDelivery((root) => {
 });
 
 /**
+ * The process's set of OS watches changed. On macOS that alone can cost a
+ * live root a change while its own watcher stays attached and healthy: every
+ * watch in the process shares one FSEventStream, rebuilt "since now" whenever
+ * any watch attaches or closes, and a change made during the rebuild is
+ * reported to nobody (watchRegistry.ts has the mechanism and the numbers).
+ * There is no sequence number to replay from, so the only honest answer is
+ * the one in the "Drift" note above: every OTHER live root can no longer be
+ * vouched for, and says so.
+ *
+ * A root's own watch attaching or closing is its own lifecycle. Closing is
+ * what `live: false` already reports. Attaching is where its watch begins:
+ * a new watch is not live the instant it attaches, and a change in that
+ * first moment belongs to the same gap every build has between reading a
+ * folder and watching it — not to an interruption of a watch that was
+ * running. The system ENDING its own watch is another matter, on every
+ * platform: nothing will be reported for that root again.
+ *
+ * Nothing is rebuilt automatically. A rebuild is a full walk, and the churn
+ * that remains is rare: on macOS the index hands a root's watch over across
+ * its own rebuilds (`buildIndex`), and Live mode shares the index's watch of
+ * a folder (the registry keeps one OS watch per folder and kind, and on
+ * macOS both watch a folder with one recursive watch), so what is left is a
+ * folder being watched for the first time, or no longer at all. The UI
+ * rebuilds every indexed folder it opens (a scan runs behind every
+ * index-first paint), which is what brings a stale root back.
+ */
+onWatchSetChange((change) => {
+  if (!db) return;
+  for (const rootPath of [...watchers.keys()]) {
+    if (change.owners.includes(watchOwner(rootPath))) {
+      if (change.kind === 'errored' && change.path === rootPath) {
+        markStaleByPath(rootPath, STALE_REASON.watchEnded);
+        stopWatcher(rootPath); // `live` must stop claiming a watch that is gone
+      }
+      continue;
+    }
+    if (watchesShareOneStream()) markStaleByPath(rootPath, STALE_REASON.sharedStream);
+  }
+});
+
+/**
  * Change events delivered for `rootPath` since its watcher attached, or null
  * when no watcher is attached.
  *
@@ -881,7 +992,7 @@ function scheduleFlush(rootPath: string, attempts = 0): void {
         // reporting itself fresh. Marking it here is what makes the claim in
         // that sentence true.
         const root = getRoot(rootPath);
-        if (root) markRootStale(rootPath, root.id, root.builtAt);
+        if (root) markRootStale(rootPath, root.id, root.builtAt, STALE_REASON.unwritableChange);
         console.error(`[treemap] index flush failed for ${rootPath}, root marked stale:`, err);
       }));
     }, delay),
@@ -918,10 +1029,14 @@ function enqueueChange(rootPath: string, change: PendingChange): void {
 export function startWatcher(rootPath: string): boolean {
   if (watchers.has(rootPath)) return true;
   try {
-    const unsubscribe = platform().subscribeToChanges(rootPath, (event) => {
-      if (isOwnState(event.path)) return; // the index must never chase its own writes
-      enqueueChange(rootPath, { path: event.path, kind: event.kind, attempts: 0 });
-    });
+    const unsubscribe = platform().subscribeToChanges(
+      rootPath,
+      (event) => {
+        if (isOwnState(event.path)) return; // the index must never chase its own writes
+        enqueueChange(rootPath, { path: event.path, kind: event.kind, attempts: 0 });
+      },
+      watchOwner(rootPath),
+    );
     // Set only once the watch is established. Setting it before
     // `subscribeToChanges` leaked an entry for every root whose watch failed,
     // because `stopAllWatchers` iterates `watchers`, which never held it.
@@ -958,7 +1073,7 @@ function retryOrMarkStale(rootPath: string, rootId: number, builtAt: number | nu
   // freshly rebuilt index stale, and `AND state = 'ready'` would not stop it
   // because a rebuilt root is exactly that. Matching the build stamp means
   // the row has to be the same row this burst was working on.
-  markRootStale(rootPath, rootId, builtAt);
+  markRootStale(rootPath, rootId, builtAt, STALE_REASON.unreadableChange);
   return false;
 }
 
@@ -972,12 +1087,33 @@ function retryOrMarkStale(rootPath: string, rootId: number, builtAt: number | nu
  * index stale, and `AND state = 'ready'` would not stop it because a rebuilt
  * root is exactly that.
  */
-function markRootStale(_rootPath: string, rootId: number, builtAt: number | null): void {
+function markRootStale(rootPath: string, rootId: number, builtAt: number | null, reason: string): void {
   if (!db || builtAt === null) return;
   try {
-    db.prepare("UPDATE roots SET state = 'stale' WHERE id = ? AND built_at = ? AND state = 'ready'").run(rootId, builtAt);
-  } catch {
-    /* the database went away underneath us; the next open rebuilds anyway */
+    const { changes } = db
+      .prepare("UPDATE roots SET state = 'stale' WHERE id = ? AND built_at = ? AND state = 'ready'")
+      .run(rootId, builtAt);
+    // Only the cause that took it from 'ready' is its reason: a root already
+    // stale keeps the one it has.
+    if (changes > 0) staleReasons.set(rootPath, reason);
+  } catch (err) {
+    // A database that has gone away is marked stale on the next open anyway;
+    // one that refused the write (busy, full) leaves the root saying 'ready',
+    // and that must at least be on record.
+    console.error(`[treemap] could not mark ${rootPath} stale (${reason}):`, err);
+  }
+}
+
+/** `markRootStale` for a root known only by its path — the watch-set listener's case. */
+function markStaleByPath(rootPath: string, reason: string): void {
+  if (!db) return;
+  try {
+    const row = db.prepare('SELECT id, built_at FROM roots WHERE path = ?').get(rootPath) as
+      | { id: number; built_at: number | null }
+      | undefined;
+    if (row) markRootStale(rootPath, row.id, row.built_at, reason);
+  } catch (err) {
+    console.error(`[treemap] could not mark ${rootPath} stale (${reason}):`, err);
   }
 }
 

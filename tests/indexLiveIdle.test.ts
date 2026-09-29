@@ -54,6 +54,7 @@ import {
   watcherEventCount,
   findNodeIdByPath,
 } from '../src/services/indexEngine';
+import { awaitWatchLive, silentWatchReason } from './fixtures/watchReady';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const WATCH_CEILING_MS = process.env.CI ? 30_000 : 15_000;
@@ -67,16 +68,23 @@ async function waitFor(predicate: () => boolean, timeoutMs = WATCH_CEILING_MS): 
   return -1;
 }
 
-/** Same triage as indexEngine.test.ts: a watch that delivered nothing is a platform silence, not an index bug. */
-function landed(elapsed: number, what: string, t: TestContext): boolean {
+/**
+ * Same triage as indexEngine.test.ts: a watch that delivered nothing is a
+ * platform silence, not an index bug. Counted from `from`, the watch's event
+ * count just before the change — earlier events say nothing about this one.
+ */
+function landed(elapsed: number, what: string, t: TestContext, from: number): boolean {
   if (elapsed !== -1) return true;
-  const delivered = watcherEventCount(ROOT);
+  const delivered = (watcherEventCount(ROOT) ?? 0) - from;
   if (delivered === 0) {
-    t.skip(`the OS watch on ${ROOT} delivered no events in ${String(WATCH_CEILING_MS)}ms, so "${what}" could not be observed`);
+    t.skip(`the OS watch on ${ROOT} delivered no events in ${String(WATCH_CEILING_MS)}ms after the change, so "${what}" could not be observed`);
     return false;
   }
-  assert.fail(`${what} never landed; the OS delivered ${String(delivered)} event(s) and none produced it`);
+  assert.fail(`${what} never landed; the OS delivered ${String(delivered)} event(s) after the change and none produced it`);
 }
+
+/** The watch's event count now — where the next change's triage counts from. */
+const eventsSoFar = (): number => watcherEventCount(ROOT) ?? 0;
 
 /** Every SQL text the engine prepares while `fn` runs — the flush's behaviour, as statements. */
 async function statementsDuring(fn: () => Promise<void>): Promise<string[]> {
@@ -123,12 +131,21 @@ test('the live index never reacts to its own writes: nothing inside the app-data
   await fsp.writeFile(path.join(DATA_DIR, 'marker.txt'), Buffer.alloc(10));
   const root = await buildIndex(ROOT, { live: true });
   assert.equal(root.live, true, 'a live watcher is attached');
+  // The readiness handshake (tests/fixtures/watchReady.ts): a write made in
+  // the first moments after a watch attaches can go unreported on a loaded
+  // machine, and the one below would then be waited on for 15 s in vain.
+  const ready = await awaitWatchLive(path.join(ROOT, 'outside.bin'), () => watcherEventCount(ROOT));
+  if (!ready.live) {
+    t.skip(silentWatchReason(ROOT, ready));
+    return;
+  }
 
   // One legitimate external change, so the flush machinery is demonstrably
   // awake — and so the flush that applies it writes the WAL, which is the
   // first turn of the loop this test exists to forbid.
+  const from = eventsSoFar();
   await fsp.writeFile(path.join(ROOT, 'later.bin'), Buffer.alloc(5000));
-  if (!landed(await waitFor(() => getRoot(ROOT)!.totalSize >= 6000), 'an external create', t)) return;
+  if (!landed(await waitFor(() => getRoot(ROOT)!.totalSize >= 6000), 'an external create', t, from)) return;
   // FSEvents may still deliver a coalesced event for the parent directory a
   // moment after the file's own; let that legitimate tail land before the
   // window opens. The loop this forbids runs for ever, so waiting costs it
@@ -159,8 +176,9 @@ test('a watcher flush re-sums the touched ancestors only, never the whole root',
   const before = getRoot(ROOT)!.totalSize;
 
   const sql = await statementsDuring(async () => {
+    const from = eventsSoFar();
     await fsp.writeFile(path.join(ROOT, 'deep', 'er', 'leaf.bin'), Buffer.alloc(7000));
-    if (!landed(await waitFor(() => getRoot(ROOT)!.totalSize === before + 7000), 'a deep external create', t)) return;
+    if (!landed(await waitFor(() => getRoot(ROOT)!.totalSize === before + 7000), 'a deep external create', t, from)) return;
   });
   if (getRoot(ROOT)!.totalSize !== before + 7000) return; // skipped above
 
@@ -176,14 +194,16 @@ test('the root counts stay exact through creates, subtree deletes and a kind cha
   const rootId = getRoot(ROOT)!.id;
   const check = (what: string): void => assert.deepEqual(reported(), truth(rootId), `after ${what}: reported counts must equal a fresh count of the rows`);
 
+  let from = eventsSoFar();
   await fsp.writeFile(path.join(ROOT, 'grove', 'a', 'b', 'one.bin'), Buffer.alloc(100));
   await fsp.writeFile(path.join(ROOT, 'grove', 'two.bin'), Buffer.alloc(200));
-  if (!landed(await waitFor(() => findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'grove', 'a', 'b', 'one.bin')) !== null && findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'grove', 'two.bin')) !== null), 'a nested create', t)) return;
+  if (!landed(await waitFor(() => findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'grove', 'a', 'b', 'one.bin')) !== null && findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'grove', 'two.bin')) !== null), 'a nested create', t, from)) return;
   await sleep(600); // let the burst that carried the last of them settle
   check('creates');
 
+  from = eventsSoFar();
   await fsp.rm(path.join(ROOT, 'grove', 'a'), { recursive: true, force: true });
-  if (!landed(await waitFor(() => findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'grove', 'a')) === null), 'a subtree delete', t)) return;
+  if (!landed(await waitFor(() => findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'grove', 'a')) === null), 'a subtree delete', t, from)) return;
   await sleep(600);
   check('a subtree delete');
 
@@ -199,9 +219,10 @@ test('the root counts stay exact through creates, subtree deletes and a kind cha
     return (openIndex().prepare('SELECT is_dir FROM nodes WHERE id = ?').get(id) as { is_dir: number }).is_dir;
   };
   assert.equal(kindOf(path.join(ROOT, 'grove', 'two.bin')), 0, 'it starts life as a file');
+  from = eventsSoFar();
   await fsp.rm(path.join(ROOT, 'grove', 'two.bin'));
   await fsp.mkdir(path.join(ROOT, 'grove', 'two.bin'));
-  if (!landed(await waitFor(() => kindOf(path.join(ROOT, 'grove', 'two.bin')) === 1), 'a kind change', t)) return;
+  if (!landed(await waitFor(() => kindOf(path.join(ROOT, 'grove', 'two.bin')) === 1), 'a kind change', t, from)) return;
   await sleep(600);
   check('a kind change');
 
@@ -218,8 +239,9 @@ test('the root counts stay exact through creates, subtree deletes and a kind cha
   const gone = db.prepare(`WITH RECURSIVE sub(id) AS (SELECT ? UNION ALL SELECT n.id FROM nodes n JOIN sub ON n.parent_id = sub.id) DELETE FROM nodes WHERE id IN (SELECT id FROM sub) RETURNING is_dir`).all(chainId) as { is_dir: number }[];
   db.prepare('UPDATE roots SET dir_count = dir_count - ?, file_count = file_count - ? WHERE id = ?').run(gone.filter((r) => r.is_dir).length, gone.filter((r) => !r.is_dir).length, rootId);
   check('forgetting the chain');
+  from = eventsSoFar();
   await fsp.writeFile(path.join(ROOT, 'chain', 'b', 'c', 'leaf.bin'), Buffer.alloc(400));
-  if (!landed(await waitFor(() => findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'chain', 'b', 'c', 'leaf.bin')) !== null), 'a leaf under forgotten parents', t)) return;
+  if (!landed(await waitFor(() => findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'chain', 'b', 'c', 'leaf.bin')) !== null), 'a leaf under forgotten parents', t, from)) return;
   await sleep(600);
   assert.ok(findNodeIdByPath(rootId, ROOT, path.join(ROOT, 'chain')) !== null, 'the chain was materialised from disk');
   check('a leaf whose parents the index had to create');
