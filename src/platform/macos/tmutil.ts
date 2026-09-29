@@ -1,7 +1,7 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
 import os from 'os';
-import { runText, CommandUnavailableError } from '../exec';
+import { runText, CommandUnavailableError, reasonOf } from '../exec';
 import type { VolumeSnapshotRef } from '../types';
 
 /**
@@ -115,14 +115,34 @@ export async function mountSnapshot(snapshot: VolumeSnapshotRef): Promise<Mounte
   try {
     await runText('mount_apfs', ['-s', snapshot.id, snapshot.volume, mountPoint], { timeoutMs: 30_000 });
   } catch (err) {
-    await fsp.rm(mountPoint, { recursive: true, force: true }).catch(() => {});
+    // A mount can finish after its command timed out, so this unmounts too.
+    await unmountAndRemove(mountPoint);
     throw err;
   }
-  return {
-    mountPoint,
-    unmount: async () => {
-      await runText('umount', [mountPoint], { timeoutMs: 30_000 }).catch(() => {});
-      await fsp.rm(mountPoint, { recursive: true, force: true }).catch(() => {});
-    },
-  };
+  return { mountPoint, unmount: () => unmountAndRemove(mountPoint) };
+}
+
+/**
+ * Unmount `mountPoint` and remove the folder it was mounted on — with `rmdir`,
+ * never a recursive delete. A snapshot that did not come off (busy, or mounted
+ * after its command timed out) is still in that folder, and a recursive delete
+ * would walk into it: a read-only snapshot refuses every unlink, but nothing
+ * here relies on that. A mount that stays is said, not swallowed, because it
+ * pins the snapshot's storage until it is unmounted or the Mac restarts.
+ */
+export async function unmountAndRemove(mountPoint: string): Promise<void> {
+  let unmountFailure: unknown = null;
+  await runText('umount', [mountPoint], { timeoutMs: 30_000 }).catch((err: unknown) => {
+    unmountFailure = err;
+  });
+  try {
+    await fsp.rmdir(mountPoint);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    const unmount = unmountFailure === null ? '' : `; unmounting it said: ${reasonOf(unmountFailure)}`;
+    console.error(
+      `[treemap] the snapshot folder ${mountPoint} could not be removed (${reasonOf(err)})${unmount} — ` +
+        "a snapshot still mounted there pins the snapshot's storage until it is unmounted or the Mac restarts",
+    );
+  }
 }
