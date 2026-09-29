@@ -35,11 +35,16 @@ pub mod derive;
 pub mod finalize;
 pub mod memory;
 mod row;
+pub mod select;
 
 pub use build::{BuildOptions, Counters, Store, StoreMode, StoreShape, build};
 pub use column::{AnonTally, Column, ColumnError, Zeroable, anon_tally};
 pub use derive::{CloudAnchor, CloudRule, ContainerRule};
 pub use memory::MemorySink;
+pub use select::{
+    PruneSelection, Rect, RowError, RowSource, TreemapCell, TreemapOptions, TreemapSelection,
+    select_prune, select_treemap,
+};
 
 /// The store's flag bits: `Flag` in `src/services/scanStore.ts`, bit for bit.
 pub mod flag {

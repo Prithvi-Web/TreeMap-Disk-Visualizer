@@ -9,9 +9,9 @@
 | Plan written | 18 Sep 2026 | this file |
 | S1 `tm-store`: the finalized store built in Rust, in the packed store's own layout | **done 24 Sep 2026**, commit `2415d6c`, committed after Phase 3's CI went green (run 36069755180): 41 tests, 89 mutants red, clippy on three targets, rustdoc `-D warnings`. The six-lens review's 29 CONFIRMED findings are all fixed (index mix-ups pinned with walks whose order differs from the store's; cloud × hard-link order; side tables refused unless strictly ascending, then binary-searched; `sparse_terms` so Node sums `sparseBytes` in the ingest's order past 2^53), and a second review of the fix round confirmed 6 more, repaired | `native/treemap-core/crates/tm-store/`; `docs/superpowers/plans/2026-09-24-phase4-s1-review-findings.md` |
 | S2 `PackedScanStore.fromColumns` + the native engine reads the Rust store through views (no ingest copy) | **done 27 Sep 2026** with T10 (`9f59e5c`, `5945a96`): every native scan walks through the memory store. The Node side was done 24 Sep 2026, commit `38469ee`: `PackedScanStore.adoptColumns` (the `fromColumns` above) adopts a finalized tree's columns in place, held to the object-store oracle on 96 random trees; 20 mutants, 19 red, the survivor explained in the code. T1–T10 built the rest (§S.9) | `src/services/scanStore.ts`; `tests/packedStoreAdopt.test.ts`; `tests/fixtures/storeFuzz.ts` |
-| S3–S5 as designed (§S below) | **designed 24 Sep 2026.** T0 (documents only) is written; its gate (§S.9) is the owner's answers to Q1–Q5 and Q7 (§S.11): ~~Q1, Q3 and Q5 wait for the owner~~ Q1 and Q5 wait for the owner (Q3 decided by the owner 25 Sep 2026: the 10M row is met by spill, memory mode up to 5M), and Q2, Q4 and Q7 are engineering decisions awaiting the owner's confirmation. T1–T6, T6b, T6c, T7 and T8 built 25–26 Sep 2026; T9 measured 26 Sep 2026, and its findings added T9b and T9c, built 26 Sep 2026 with T10; T11–T23 are not built | §S below |
-| S3 spill mode: columns written with `write()` ~~then mapped~~ and read with `pread()` (P4-5a), the free-space and same-volume rules, cleanup | not started: T11–T17 (T17 commits S3); the FullPassRunner is S3b, T18 | |
-| S4 aggregate-only mode: ~~directory rows~~ rows kept by the β rule (P4-7a), running totals, top-K, the notice naming what is off | not started: T12 (the AggregateState, which spill runs too), T19 (commits S4), T20 (Windows large mode) | |
+| S3–S5 as designed (§S below) | **designed 24 Sep 2026.** T0 (documents only) is written; its gate (§S.9) is the owner's answers to Q1–Q5 and Q7 (§S.11): ~~Q1, Q3 and Q5 wait for the owner~~ Q1 and Q5 wait for the owner (Q3 decided by the owner 25 Sep 2026: the 10M row is met by spill, memory mode up to 5M), and Q2, Q4 and Q7 are engineering decisions awaiting the owner's confirmation. T1–T6, T6b, T6c, T7 and T8 built 25–26 Sep 2026; T9 measured 26 Sep 2026, and its findings added T9b and T9c, built 26 Sep 2026 with T10; T11 and T12a–T12e built 25–27 Sep 2026 (T12e all but its `cargo mutants` run), and T15a (the selection ports) 28 Sep 2026; T13, T14, T15b and T16–T23 are not built | §S below |
+| S3 spill mode: columns written with `write()` ~~then mapped~~ and read with `pread()` (P4-5a), the free-space and same-volume rules, cleanup | in progress: T11 built; T15a (the selection ports, `select_prune` and `select_treemap`) built 28 Sep 2026; T13, T14, T15b, T16 and T17 not built (T17 commits S3); the FullPassRunner is S3b, T18 | `tm-store/src/select.rs`; `tests/fixtures/selectOracle.ts` |
+| S4 aggregate-only mode: ~~directory rows~~ rows kept by the β rule (P4-7a), running totals, top-K, the notice naming what is off | in progress: T12 (the AggregateState, which spill runs too) built as T12a–T12e 27 Sep 2026, all but T12e's `cargo mutants` run; T19 (commits S4) and T20 (Windows large mode) not built | `tm-store/src/aggregate/` |
 | S5 the synthetic-source gate: 100M entries from a scripted lister through the walk and the store, peak RSS measured by the harness | not started: T3 (the `SyntheticLister`, moved forward), T21 (bench plumbing), T22 (the gate) | |
 | S6 docs and API: `storageMode` real, `cacheHitRate` honest, §9.1 amended with the measurement | not started: T23 | |
 | Gate | not run: T22 (§S.8's pass conditions) | 100M synthetic scan inside the ceilings (spill ≤ 1.5 GB, aggregate ≤ 400 MB); 5M real corpus in memory ≤ 700 MB at 10M projected; the treemap, dashboard and largest-files views answer against it; equivalence digests unchanged |
@@ -1166,6 +1166,69 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
     - no reader call runs on the main thread (a sync-call counter).
   - **Mutants:** a heap tie rule changed; an unfinished last folder.
   - **Green gate:** golden forced-spill leg equal.
+  - **Built (T15a) 28 Sep 2026: the selection ports, held to the JavaScript.** The summary, the async readers and the forced-spill golden leg need the SpillSink first; they are T15b.
+    - **Where.** `tm-store/src/select.rs`; `lib.rs` gains only the module and its re-exports.
+      - `select_prune(store, root, max_nodes)` answers `PruneSelection { expanded, rows }`: the folders `pruneStore` expands, in its heap's pop order (`prunedExpansion`'s set, in its order), and the rows it makes nodes of: the root, then each expanded folder's children in child order, every child of the last folder included.
+        - `StoreSizeHeap` is ported rule for rule (`SizeHeap`): a pushed folder climbs while its parent is strictly smaller, and a pop sinks the moved folder toward a strictly larger child, the left one on a tie. `BinaryHeap` is not used: folders of one size pushed in child order come out first, then last back to second, which no order on (size, id) or on push order gives.
+        - `Math.max(1, maxNodes)` is not ported: the root is counted before anything is popped, so 0 and 1 already answer alike.
+      - `select_treemap(store, root, &TreemapOptions { max_depth, min_size, max_nodes })` answers `TreemapSelection { read, rows, cells }`:
+        - `read`: the folders whose children it reads (its `childIds` calls), in queue order;
+        - `rows`: the rows a store must hold to lay out the same map, the root and then each read folder's children that the size filter keeps, in child order;
+        - `cells`: its output, each cell's row, depth, `expanded` and rectangle.
+        - `squarify` is ported operation for operation. Each row's fold is kept as it grows, which is bit for bit the JavaScript's fresh fold over the longer array. `Math.min` and `Math.max` keep their NaN and ±0 answers (`f64::min` does not). So the 0.2 cut and the empty-rectangle skip decide as the JavaScript decides.
+      - A container is a byte from 1 to 7, as `container()` answers a kind only there (`CONTAINER_KINDS[k - 1]`); any other byte is no container to either function.
+    - **The trait, `RowSource`:** `size`, `flags`, `container` and `children` (one `Range<u32>`, in child order), each fallible through an associated `Error`, since a spill reader's reads can fail.
+      - These four are exactly what the two functions read to choose rows. `isExpandableId` reads the folder and child-array bits, the container kind and the child count. The treemap reads the folder bit, the container, the child count and sizes. `children` answers the child count too, because a store's children are one consecutive range (I2).
+      - Names, paths and times are read only to write out what was chosen, so they are not in it. Neither are tombstones or children added after the build: the stores selected from are never edited (Live mode and container expansion are off in the large modes).
+      - The memory `Store` implements it with its own error, `RowError`: `NoRow` for a row a column does not hold (a root past the rows, say), `ChildrenPastRows` for a child range that runs past them. The range is refused when it is read, so a malformed store is refused wherever the JavaScript would count those children, even past the budget.
+      - A folder's children are read once: the heap keeps the range it read when the folder was deferred.
+    - **The oracle:** `tests/fixtures/selectOracle.ts`.
+      - It grows 18 seeded trees (mulberry32, `makeRng`), each breadth-first in `PackedScanStore`'s layout. The trees are full of ties: sizes from a palette holding the cut-offs 1, 4096 and 10240; single-child chains; zero-byte folders; wide folders; files and folders mixed; containers opened and not; and the odd rows no scan makes, on which `isExpandableId` and the treemap's own test read different flags.
+      - Each tree is adopted with `adoptColumns` and summed. The real `pruneStore`, `prunedExpansion` and `buildTreemapFromStore` run through a store whose `childIds` and `bareNode` log their calls, so what is written is recorded, not restated. Each recording is held to what the function returned: `pruneStore` and `prunedExpansion` to each other, and the treemap's reads to its cells (the root, then the expanded cells in order).
+      - The file, `tm-store/tests/fixtures/select-oracle.tsv`, is 200 KB in 3,916 lines. It holds each tree's shape and a digest of it, and each case's lists as a length and an FNV-1a digest. `tests/select.rs` regrows the trees draw for draw, so a generator that drifted is reported as that.
+      - That is how the 320,000-row tree carries maxNodes 250,000 without its rows or its 250,004-row answer in the file. Written out in full, the file would be 3.9 MB.
+      - Cases, 3,898:
+        - prunes at maxNodes 1, 2, 5, 50, 51 and 250,000, from the root, a folder holding about a quarter of its tree, a file, and each kind of odd row (522 in all);
+        - treemaps at maxDepth 1–6 × minSize 0, 1, 4096 and 10240 × maxNodes 1, 7, 50 and 20,000, from the root and that folder, and the odd roots at two settings (3,376 in all);
+        - on the big tree, prunes at 1, 50, 20,000 and 250,000, and treemaps including the UI's own request (maxDepth 4, minSize 4096 then 1, the route's 20,000 cells), which reaches the cap at maxDepth 6 and 8.
+      - Regenerate with `npx tsx tests/fixtures/selectOracle.ts`. `tests/selectOracle.test.ts` fails when the file is stale.
+    - **Tests.**
+      - `tm-store/tests/select.rs` (13):
+        - every oracle case equal, with the count of trees, prunes and treemaps pinned;
+        - the heap's tie order (four and seven equal folders);
+        - the last folder given every child past the budget;
+        - the `nodes < maxNodes` bound at 0, 1, 5 and 6;
+        - the treemap's depth cut, its minSize cut and zero-byte cut, and its cap on cells while taking folders and while emitting;
+        - a rectangle exactly 0.2 wide and one exactly 0.2 tall, not expanded;
+        - a folder without a child array, laid out but never pruned open;
+        - only the container bytes 1–7 open a file;
+        - a size that is not a number, compared as the JavaScript compares it;
+        - a row the store does not hold, refused;
+        - a child range past the rows (or past 32 bits) refused where the JavaScript would read it, and not where it would not (the treemap at a one-cell cap).
+      - A unit test in `select.rs`: `Math.min` and `Math.max` for zeros of either sign, NaN and negative numbers, with Node's answers.
+      - `tests/selectOracle.test.ts` (3): the committed file is today's and under 1 MB; the trees hold every claim the header makes, 35 of them, all checked and all named when broken (each bound decides cases at each of its settings: the `nodes < maxNodes` edge at 2, 5, 50 and 51, the cap at 1, 7, 50 and 20,000, the depth cut at 1–6, a child of exactly the cut-off at 1, 4096 and 10240); and every hand-made tree's answer in `select.rs` is the JavaScript's own.
+    - **Mutants.**
+      - **By hand on `select.rs`: 23, 22 red.**
+        - The plan's two: a heap tie rule changed, four ways (`>=` to `>` in the sift up; `>` to `>=` for either child in the sift down; ties by the smallest id; ties first in, first out), and an unfinished last folder.
+        - One per rule: the `nodes < maxNodes` bound; children pushed in reverse; the child-array rule dropped; any container byte a container; a child range past the rows accepted; the cell cap while taking folders and while emitting; the minSize cut; the zero-byte cut; the maxDepth cut; the 0.2 cut in each direction; a rectangle skipped only when both sides are empty; equal sizes sorted by id; the rows in size order; a `squarify` row grown only on a strict improvement.
+        - The two 0.2 cuts survived at first: no oracle rectangle is exactly 0.2 across. The test with one strip 0.2 wide and one 0.2 tall made them red.
+        - The survivor, a row's fold started from its first area rather than from 0, is equivalent. Every area laid out is positive (or NaN, which makes the sum NaN either way), so `0 + a` is `a`, and the first comparison replaces both ±∞ seeds.
+      - **`cargo mutants` (27.1.0) on `select.rs`, twice.**
+        - Before the review, 196: 173 caught, 12 unviable, 1 timeout (`next *= 1` in `squarify`'s index loop, which then never ends) and 10 missed. Three were gaps and got tests: a child range past the rows beyond the budget, a size that is not a number, and `Math.min` of two negatives. A second pass caught all three.
+        - On the code as committed, 206: 180 caught, 19 unviable and 7 missed, each equivalent:
+          - `&&` for `||` in the job's own rectangle test: every job is the whole map or a cell that passed `> 0.2` both ways;
+          - `>=` for `>` and `<=` for `<` in a row fold's largest and smallest: equal areas are the same number, and none is zero;
+          - `&&` for `||` in `worstRatio`'s guard: a row's sum is never zero or less, and once a side is zero or less every later rectangle is empty whatever the rows;
+          - `>=` for `>` on the side and on the thickness in `squarify` (three): a zero side or thickness leaves every rectangle of its row empty one way, so all are skipped either way.
+      - **On the TypeScript side: 15, all red.**
+        - The JavaScript mutated makes the committed oracle stale, a hand-made tree's answer wrong, or both: the sift-up tie, both `nodes <= maxNodes`, the child-array rule, `depth + 1 <= maxDepth`, `size > minSize`, `r.w >= 0.2`, `r.h >= 0.2`, the cell cap, a rectangle skipped only when both sides are empty, a byte past the container table read as a kind, and a second `childIds` call per folder (which the recording's cross-check refuses).
+        - The fixture mutated breaks the claims or the size check: every tree a lone root (all 35 claims broken), no odd rows or containers, the big tree under 250,000 rows, and the lists written out in full (3.9 MB).
+      - Reviewed by ecc:rust-reviewer and ecc:typescript-reviewer (no critical or high). Fixed from them: container bytes past 7; the store's own error type in place of `StoreError::Malformed`, whose text speaks of the walk; a test label that claimed a read past the cap; the treemap's reads now held to its cells; facts that proved less than they claimed (heap ties that were chain links, zero-byte folders that were empty, caps and cut-offs not checked at each setting); the generator port's unchecked arithmetic.
+    - **T15b still owes:**
+      - the summary: fresh breadth-first ids; the rows of `select_prune(root, 250,000)`, of `select_treemap` at the UI's default request and of the top three levels; each held folder's true child count, a folder the treemap holds only in part (its kept children) included;
+      - `spillLookup`, `spillSelect` and the sync-call counter;
+      - the forced-spill golden leg;
+      - a `RowSource` over the spill files (with T14), which may want a folder's children read in one block rather than row by row.
 - [ ] **T16. The chooser and the conversions.**
   - **Tests first:**
     - the chooser's table (projection × hint × plan × setting × runtime);
