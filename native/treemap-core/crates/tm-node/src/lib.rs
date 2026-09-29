@@ -67,6 +67,8 @@ use tm_walk::{
     WalkStats,
 };
 
+#[cfg(windows)]
+mod pin;
 pub mod store;
 
 /// The budget the governor starts with before the app configures it: Automatic,

@@ -335,6 +335,7 @@ dependencies = [
  "tm-mft",
  "tm-store",
  "tm-walk",
+ "windows-sys",
 ]
 
 [[package]]

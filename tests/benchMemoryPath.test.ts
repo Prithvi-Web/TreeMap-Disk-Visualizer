@@ -81,6 +81,21 @@ test('the worker-thread probe loads the addon inside a worker and reads its vers
   assert.ok(result.ok, result.ok ? '' : result.error);
   const pkg = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')) as { nativeVersion: string };
   assert.equal(result.workerVersion, pkg.nativeVersion);
+  assert.equal(result.mainHeldFirst, false, 'the worker is the addon\'s only holder, the case Windows unmaps when the worker ends (RISKS R96)');
+});
+
+test('the worker-thread probe, with the addon already held by the main thread as the app holds it, loads it in a worker and reads its version', async (t) => {
+  // The full-pass runner's own case (§S.5.7): the app's main thread loads the
+  // addon at startup, and a worker loads it after. Beside the test above it
+  // tells two causes apart on Windows, where a worker's environment unmaps an
+  // addon it was the last to hold: this one passes even without the pin.
+  const module = moduleOrSkip(t);
+  if (!module) return;
+  const result = await runMemoryPathWorker({ kind: 'worker-probe', module, runtime: 'node', mainFirst: true });
+  assert.ok(result.ok, result.ok ? '' : result.error);
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')) as { nativeVersion: string };
+  assert.equal(result.workerVersion, pkg.nativeVersion);
+  assert.equal(result.mainHeldFirst, true, 'the main thread held the addon before the worker loaded it');
 });
 
 test('inside Electron the node runtime is refused: this binary is the app, and a measurement runs without ELECTRON_RUN_AS_NODE, which would open it', async () => {

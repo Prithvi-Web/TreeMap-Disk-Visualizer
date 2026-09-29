@@ -40,8 +40,13 @@ export type MemoryPathJob =
   | { kind: 'disk'; root: string }
   /** Node's passes alone, over a store built in JavaScript where every file is a text and a cloud candidate. */
   | { kind: 'candidates'; entries: number }
-  /** The addon loaded in a worker thread, its version read there. */
-  | { kind: 'worker-probe' };
+  /**
+   * The addon loaded in a worker thread, its version read there. With
+   * `mainFirst` the main thread loads it before the worker does, as the app's
+   * main thread holds it before any worker (§S.5.7); without, the worker is its
+   * only holder (RISKS R96).
+   */
+  | { kind: 'worker-probe'; mainFirst?: boolean };
 
 export interface StageUsage {
   stage: string;
@@ -87,6 +92,8 @@ export type MemoryPathResult =
     frameHead?: string;
     passes?: { textCandidates: number; cloudCandidates: number; ms: number };
     workerVersion?: string;
+    /** Whether the main thread held the addon when the worker started — read from `require.cache`, not from the job. */
+    mainHeldFirst?: boolean;
   }
   | { ok: false; runtime?: MemoryPathRuntimeInfo; error: string };
 

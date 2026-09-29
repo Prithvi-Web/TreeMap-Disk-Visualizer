@@ -1187,6 +1187,7 @@ House rules as in Phases 2–3. Tests count events; nothing times the wall clock
   - `nativeEquivalence` leg (c') in forced spill against the walker.
   - **Green gate:** full `npm test` under busy loops; commit **S3**; the owner pushes; CI on all four legs.
 - [ ] **T18. The FullPassRunner and `NativeScanStore`, worker-only (S3b).**
+  - **R96, root-caused and fixed (28 Sep 2026):** a worker that was the addon's only holder crashed the process on Windows as it ended (an access violation: Node's `Environment` destructor closes every addon the environment loaded, and `FreeLibrary` unmapped the DLL while the teardown still called into it). tm-node now pins itself as it is loaded (`crates/tm-node/src/pin.rs`), so no environment can unmap it. The runner still starts its workers only after the main thread holds the addon, the order the harness's probe also measures (`mainFirst`).
   - **Tests first:**
     - storeFuzz with a `NativeScanStore` producer at a 2-page cache;
     - the numbering battery and each runner consumer's JSON equal memory mode's;

@@ -253,8 +253,17 @@ async function candidates(files: number): Promise<MemoryPathResult> {
   return { ok: true, runtime, stages, footprintSource, typescriptLoader, serverLoaded, passes: { textCandidates: files, cloudCandidates: files, ms } };
 }
 
-/** The addon loaded in a worker thread, as the full-pass runner will load it (§S.5.7), and its version read there. */
-async function workerProbe(): Promise<MemoryPathResult> {
+/**
+ * The addon loaded in a worker thread, as the full-pass runner will load it
+ * (§S.5.7), and its version read there. With `mainFirst` this thread loads it
+ * first, as the app's main thread does; without, the worker is its only
+ * holder — the case in which Windows unmapped the addon when the worker's
+ * environment ended (Node's Environment destructor closes every addon it
+ * loaded) and the process then crashed, until tm-node pinned itself (RISKS R96).
+ */
+async function workerProbe(mainFirst: boolean): Promise<MemoryPathResult> {
+  if (mainFirst) require(job.module);
+  const mainHeldFirst = require.resolve(job.module) in require.cache;
   const code = "const { parentPort, workerData } = require('node:worker_threads'); parentPort.postMessage(require(workerData).version());";
   const worker = new Worker(code, { eval: true, workerData: job.module });
   try {
@@ -263,7 +272,7 @@ async function workerProbe(): Promise<MemoryPathResult> {
     // leaves the harness a trace of how far it got (its no-result reason
     // carries stderr).
     process.stderr.write(`the worker thread answered ${String(version)}; terminating it\n`);
-    return { ok: true, runtime, stages, footprintSource, typescriptLoader, workerVersion: String(version) };
+    return { ok: true, runtime, stages, footprintSource, typescriptLoader, workerVersion: String(version), mainHeldFirst };
   } finally {
     await worker.terminate();
   }
@@ -277,7 +286,7 @@ async function main(): Promise<MemoryPathResult> {
     case 'candidates':
       return candidates(job.entries);
     case 'worker-probe':
-      return workerProbe();
+      return workerProbe(job.mainFirst === true);
   }
 }
 

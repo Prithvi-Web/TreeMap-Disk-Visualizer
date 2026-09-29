@@ -22,5 +22,9 @@ napi-derive = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# The loader call that pins the addon so Node never unmaps it (src/pin.rs; RISKS R96).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }
+
 [build-dependencies]
 napi-build = { workspace = true }

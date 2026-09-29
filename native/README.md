@@ -232,7 +232,13 @@ one-byte probe of whether this runtime takes external buffers
 (`napi_create_external_arraybuffer`; the byte is freed by the finalizer, or at
 once where the buffer is refused), and `storeTakeInto`'s borrows of the arrays
 JavaScript passed in (`as_mut`; nothing else touches them until its promise
-settles). Every export is `#[napi(catch_unwind)]`, and
+settles). On Windows one more: `pin.rs` pins the DLL as it is loaded
+(`GetModuleHandleExW` with `GET_MODULE_HANDLE_EX_FLAG_PIN`), because Node
+closes every addon an environment loaded when the environment is destroyed,
+and where a worker thread was the addon's only holder `FreeLibrary` unmapped it
+while the worker's teardown still called into it: the process died with an
+access violation (RISKS R96). Pinned, the DLL stays mapped until the process
+ends, whichever thread loaded it first. Every export is `#[napi(catch_unwind)]`, and
 the hold's `compute` wraps the governor the same way, because libuv calls it
 through an `extern "C"` boundary that a panic must never cross; a caught panic
 becomes a JavaScript error with its message. The workspace lints deny
