@@ -38,6 +38,7 @@ import {
   resumeScan,
   setClockForTests,
   setNativeLoadOptionsForTests,
+  setThrottleClockForTests,
   shimWorkerCap,
   throttleBatch,
   throttleSleepMs,
@@ -300,53 +301,76 @@ test('the shim’s duty per preset is the documented table, and the throttle sle
   assert.equal(throttleSleepMs(0, 40), 0, 'a zero duty is not a reason to sleep forever');
 });
 
+/**
+ * The throttle's clock, standing in for the real one: `work(ms)` is time
+ * passing between batches, and every rest the throttle asks for is recorded
+ * (and passes on this clock), so the rests are counted, never timed — a busy
+ * machine stretches a real 40 ms sleep, and these tests once read that as the
+ * throttle's doing.
+ */
+function throttleClock(): { rests: number[]; work: (ms: number) => void } {
+  let now = 1_000;
+  const rests: number[] = [];
+  setThrottleClockForTests({
+    now: () => now,
+    sleep: async (ms) => {
+      rests.push(ms);
+      now += ms;
+    },
+  });
+  return { rests, work: (ms) => { now += ms; } };
+}
+
 test('throttleBatch measures from the caller’s previous call: the first call is free, Eco rests three times the work, Turbo never rests, and completion forgets the caller', async () => {
   useShim();
-  applyEngineBudgetSetting({ preset: 'eco', cpuPercent: null });
-  const id = 'throttle-eco';
-  let t0 = performance.now();
-  await throttleBatch(id);
-  assert.ok(performance.now() - t0 < 15, 'nothing measured yet, nothing to rest for');
+  const clock = throttleClock();
+  try {
+    applyEngineBudgetSetting({ preset: 'eco', cpuPercent: null });
+    const id = 'throttle-eco';
+    await throttleBatch(id);
+    assert.deepEqual(clock.rests, [], 'nothing measured yet, nothing to rest for');
 
-  await sleep(40); // the "work"
-  t0 = performance.now();
-  await throttleBatch(id);
-  const rested = performance.now() - t0;
-  assert.ok(rested >= 100 && rested < 400, `eco rested ${rested.toFixed(0)} ms after ~40 ms of work (expected ≈120)`);
+    clock.work(40);
+    await throttleBatch(id);
+    assert.deepEqual(clock.rests, [120], 'eco (duty 0.25) rests three times the 40 ms of work');
+    clock.work(40);
+    await throttleBatch(id);
+    assert.deepEqual(clock.rests, [120, 120], 'the rest itself is not counted as work');
 
-  forgetScanBudget(id);
-  await sleep(40);
-  t0 = performance.now();
-  await throttleBatch(id);
-  assert.ok(performance.now() - t0 < 15, 'a forgotten caller starts afresh');
+    forgetScanBudget(id);
+    clock.work(40);
+    await throttleBatch(id);
+    assert.deepEqual(clock.rests, [120, 120], 'a forgotten caller starts afresh');
 
-  applyEngineBudgetSetting({ preset: 'turbo', cpuPercent: null });
-  const turbo = 'throttle-turbo';
-  await throttleBatch(turbo);
-  await sleep(40);
-  t0 = performance.now();
-  await throttleBatch(turbo);
-  assert.ok(performance.now() - t0 < 15, 'turbo does not sleep');
-
-  applyEngineBudgetSetting({ preset: 'auto', cpuPercent: null });
-  forgetScanBudget(id);
-  forgetScanBudget(turbo);
+    applyEngineBudgetSetting({ preset: 'turbo', cpuPercent: null });
+    const turbo = 'throttle-turbo';
+    await throttleBatch(turbo);
+    clock.work(40);
+    await throttleBatch(turbo);
+    assert.deepEqual(clock.rests, [120, 120], 'turbo does not rest');
+    forgetScanBudget(id);
+    forgetScanBudget(turbo);
+  } finally {
+    applyEngineBudgetSetting({ preset: 'auto', cpuPercent: null });
+    setThrottleClockForTests(null);
+  }
 });
 
 test('with the native governor the duty comes from its snapshot', async () => {
   useFakeNative(fakeSnapshot({ duty: 0.2 }));
-  const id = 'throttle-native';
-  await throttleBatch(id);
-  await sleep(30);
-  const t0 = performance.now();
-  await throttleBatch(id);
-  const rested = performance.now() - t0;
-  assert.ok(rested >= 90 && rested < 400, `duty 0.2 rests four units per unit of work: ${rested.toFixed(0)} ms after ~30 ms`);
-  forgetScanBudget(id);
-  useShim();
+  const clock = throttleClock();
+  try {
+    const id = 'throttle-native';
+    await throttleBatch(id);
+    clock.work(30);
+    await throttleBatch(id);
+    assert.deepEqual(clock.rests, [120], 'duty 0.2 rests four units per unit of work: 120 ms after 30');
+    forgetScanBudget(id);
+  } finally {
+    setThrottleClockForTests(null);
+    useShim();
+  }
 });
-
-/* ───────────────────────── workers and priorities ───────────────────────── */
 
 test('the worker cap follows the preset table on this machine’s cores, and the governor’s own count when it is there', () => {
   assert.equal(shimWorkerCap('eco', 8), 2);

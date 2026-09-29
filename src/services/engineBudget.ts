@@ -476,6 +476,7 @@ export function resetEngineBudgetForTests(): void {
   configureFault = null;
   retryConfigureAt = 0;
   clock = () => Date.now();
+  throttleClock = realThrottleClock;
   setNativeLoadOverrideForTests(null);
 }
 
@@ -526,6 +527,25 @@ function dutyFor(scanId: string): number {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** What the throttle reads the time with and rests by: a monotonic clock and a timer. */
+interface ThrottleClock {
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+}
+
+const realThrottleClock: ThrottleClock = { now: () => performance.now(), sleep };
+let throttleClock: ThrottleClock = realThrottleClock;
+
+/**
+ * Test-only: stand in for the throttle's clock and its rest, so a test can
+ * count the rests the throttle asks for rather than time them (a busy machine
+ * stretches a real sleep); null restores the real ones. The pause poll keeps
+ * the real timer: a stand-in that resolves at once would spin while paused.
+ */
+export function setThrottleClockForTests(c: ThrottleClock | null): void {
+  throttleClock = c ?? realThrottleClock;
+}
+
 /**
  * Called by a walker worker after each batch. Rests in proportion to the
  * work since this worker's previous call came back — the first call is free,
@@ -538,8 +558,8 @@ export async function throttleBatch(scanId: string, worker = 0): Promise<void> {
   const s = stateFor(scanId);
   const prev = s.lastReturnAt.get(worker);
   if (prev !== undefined) {
-    const rest = throttleSleepMs(dutyFor(scanId), performance.now() - prev);
-    if (rest >= 1) await sleep(rest);
+    const rest = throttleSleepMs(dutyFor(scanId), throttleClock.now() - prev);
+    if (rest >= 1) await throttleClock.sleep(rest);
   }
   // The governor pauses its workers under critical heat (and while a caller
   // holds it paused); the walker's workers are its workers too. A forgotten
@@ -548,7 +568,7 @@ export async function throttleBatch(scanId: string, worker = 0): Promise<void> {
     await sleep(PAUSE_POLL_MS);
     if (!states.has(scanId)) return;
   }
-  s.lastReturnAt.set(worker, performance.now());
+  s.lastReturnAt.set(worker, throttleClock.now());
 }
 
 /* ------------------------------ workers and priority ------------------------------ */
