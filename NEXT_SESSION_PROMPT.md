@@ -14,7 +14,30 @@ Copy everything below the line into a fresh session started in
 
 **This block is the live state. Update it after every task.** Everything below the next `---` is the older hand-over and is background. (Rewritten ~10:45 UTC; the earlier, longer version of this block is in git history — `git log -p NEXT_SESSION_PROMPT.md`.)
 
-### LATEST (27 Sep 2026, ~01:15 UTC, session 38ea1b2d) — RESUME HERE
+### LATEST (29 Sep 2026, ~06:40 UTC, session 129272e7) — RESUME HERE
+
+**This session resumed after session 38ea1b2d stopped abruptly (27 Sep ~17:36 UTC, right after T12e's gate went green).** Everything it built was found intact; nothing was lost.
+- **The owner pushed `767d346` (T10 and its fixes). CI run 36524222262:** macOS, Linux and Linux pt-BR GREEN; Windows green but for R96's worker probe, which now said how it died: exit code 3221225477 (0xC0000005, an access violation) after its stderr "the worker thread answered 0.5.0; terminating it".
+- **R96 root-caused and fixed (`9a8d76f`).** Node's `Environment` destructor closes every addon the environment loaded (`binding::DLib::Close`, read off Node 24.16.0's own binary); on Windows that is `FreeLibrary`, which unmapped a DLL the worker alone held while its teardown still called into it. tm-node pins itself as it is loaded (`crates/tm-node/src/pin.rs`, `GetModuleHandleExW` with `GET_MODULE_HANDLE_EX_FLAG_PIN`, from napi-derive's `module_init`). The probe also runs the app's own order (`mainFirst`). **The proof is this push's Windows leg: the worker-only probe must pass** (red without the pin in runs 36282411813 and 36524222262).
+- **The owner answered a third round (28 Sep; memory `treemap-owner-grants`):** Q1 yes (TreeMap may unlink its own spill files inside `<appData>/scan-spill`), cargo-mutants may be installed (v27.1.0 is), Q5/Q6/Q10/Q13 accepted, Q16 yes (open the installed app once, throwaway profile). Pushing stays the owner's: `gh` is signed in here, but the 25 Sep rule "you never push" stands.
+- **This push carries, each commit gated green (committed tree == gated tree; logs in the session scratchpad and `treemap-scratch-tools/session-129272e7/`):**
+  - T11 `4f2a0bd`, T12a `da5dd5c`, T12b `4895dd1`, T12c `e53de2d`, T12d `002f9d7`, T12e `6db8386` — the candidates session 38ea1b2d gated, landed as they were (their parent chain starts at `767d346`). T10's CI (3 legs green, Windows red only on R96's harness probe, which T10 does not touch) is the gate the plan asked for before T11.
+  - `379c0bf` **the live index's FSEvents churn** (the known "watch that attaches and says nothing"): libuv on macOS serves every `fs.watch` from one FSEventStream rebuilt "since now" on every attach and close, so another watch starting or stopping lost events for the rest. `src/platform/watchRegistry.ts` now owns every `fs.watch`; on macOS the other live roots go stale with a reason the badge shows; a rebuild holds its watch and Live mode shares the index's, so ordinary use no longer churns; the three live-watch test files prove a watch live before writing (0 self-skips in 14 stress rounds, 5 in 8 before). 38 mutants.
+  - `9a8d76f` R96 (above).
+  - `327dcf5` the throttle's tests count the rests it asks for (`setThrottleClockForTests`) instead of timing real sleeps — they failed a gate at load 57–112 while the throttle was right.
+  - `d827ffa` **T15a**: `tm-store/src/select.rs`, `select_prune` and `select_treemap`, byte for byte the JavaScript's selections on 3,898 oracle cases (`tests/fixtures/selectOracle.ts` writes `select-oracle.tsv`); notes for T15b in `treemap-scratch-tools/session-129272e7/notes-T15b.md`.
+  - `ba04a2b` T13a (spill files unlinked at creation), `7998b76` T13b (`spill_plan` and the ledger), `4094ea2` T13c (the boot sweep's one confined remover, `src/services/spillSweep.ts`; boot wiring is T17's; SECURITY.md lists `scan-spill`, which the gate caught missing), `776460f` T13's review round (Windows holds scan-spill open; FAT/exFAT spill again; **RISKS R97: on Windows a spill file keeps its name while open, so T17 must keep the walk out of scan-spill**).
+  - `4021e66` a snapshot's mount point is removed with `rmdir`, never recursively (it walked into a snapshot that had not come off), and a mount that stays is said.
+  - `bfce16a` the delete guard ("nothing outside Cleaner removes a user file") reads all of src/ and electron/ and sees `…Sync` and by-name-imported removals; each newly seen removal was read and is a named entry with its reason.
+- **Next, in order:**
+  1. Read every CI leg of this push (`watch-ci.sh`, base `767d346`); the Windows worker probe must pass.
+  2. `cargo mutants` over `tm-store/src/aggregate*` (T12's gate item) is PAUSED at 227/402 (`kill -CONT` its pid, or rerun). 23 survivors so far; triaged in part: `WorstFolder`/`Worst` `eq` and `size_bucket`'s `||` are equivalent; `Kept::clear`, `finish → Ok(())`, the `summary` guard, the zero-byte family rule, `merge`'s rank flag and `folders_answer`'s guards need tests → a T12f commit.
+  3. T13d (the link log's 32 MiB resident cap and disk runs), then T14 (SpillSink), T15b, T16–T23; then Phases 5–8 (ask each phase's open questions at its start).
+  4. Q16: measure E0 in the installed app once (throwaway profile, only while the owner is not using TreeMap).
+  5. Found, not yet done: `rustdoc -D warnings` fails on `tm-store/src/memory.rs:77` (pre-existing); the sweep would keep a Docker PID-1 leftover forever (T17's design); three live-disk tests still hold wall-clock bounds.
+- **Lesson (memory `count-dont-time-ci-tests` family):** never run several `cargo mutants` jobs, agents and a gate at once — at load 112 the governor's hold test and the old throttle test failed a gate the code did not deserve. Gates run alone.
+
+### Earlier: 27 Sep 2026, ~01:15 UTC, session 38ea1b2d
 
 **Newest (27 Sep, ~01:15 UTC): T10 BUILT — `9f59e5c` (T10a, pushed) and `5945a96` (T10b). S2 is complete. Two fixes on top: `bbb93a8` and `8fc8884`. The owner is asked to push.**
 - **The owner pushed `9f59e5c` (T10a). CI run 36282411813:** macOS, Linux and Linux pt-BR GREEN. Windows: 2 failures in `tests/benchMemoryPath.test.ts`, the worker-thread probe ("the measuring process wrote no result: ", nothing on stderr) and the matrix command that includes it.
