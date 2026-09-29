@@ -1,0 +1,53 @@
+# cargo-mutants (a dev tool on the developer's Mac only; never built by CI or shipped).
+#
+# Mutants no input can tell from the code, each with the reason, found by the first run over
+# tm-store's aggregate module (Phase 4 T12f, 29 Sep 2026; plan §S.9, T12). A regex names its
+# mutant without a line number where the name is unique; where the same name recurs in a
+# function, the line and column pick it, and a later edit that moves the line makes the
+# mutant show up again rather than hide another. (27.1.0 applies neither `--re` nor these to
+# "delete field" mutants.)
+exclude_re = [
+    # A `WorstFolder` or a `Worst` lives only in a `BinaryHeap`, which orders by `Ord` and
+    # never calls `==`: `PartialEq` is there because `Ord` requires it.
+    'replace .* in <impl PartialEq for WorstFolder>::eq$',
+    'replace <impl PartialEq for WorstFolder>::eq -> bool with ',
+    'replace .* in <impl PartialEq for Worst>::eq$',
+    'replace <impl PartialEq for Worst>::eq -> bool with ',
+    # Two names of one family never share a position path, so the displaced holder's key
+    # never equals the new one's, and `>=` is `>`.
+    'replace > with >= in Kept::merge$',
+    # NaN, zero and every negative size reach no bucket start (the first is above 1), so
+    # `partition_point` answers 0 as the early return does: the return is a shortcut.
+    'replace \|\| with && in size_bucket$',
+    # `remove_place` is called with place 0 alone, and `<=` differs only when that pop
+    # empties the heap, where sifting place 0 of nothing does nothing.
+    'replace < with <= in SlotHeap<R>::remove_place$',
+    # Every caller swaps two places inside the heap, so the guard's one reachable case is
+    # a == b, and swapping a place with itself changes nothing.
+    'replace \|\| with && in SlotHeap<R>::swap$',
+    # Which of two rows of equal weight sits higher is invisible to β and to every
+    # above-β test while a family's names list one size (plan T12d, "every name has size
+    # s"): a row popped at the heap's least weight is at most the final β. Where a family's
+    # names list different sizes, which tied row is popped can matter, but there the heap
+    # does not follow the oracle either (T12f's finding F1, T20's to settle).
+    'aggregate/keep\.rs:413:70: replace < with <= in SlotHeap<R>::sift_down$',
+    # A folder's children are each offered to its top list once, with distinct indices, so
+    # a tie on the index never happens and `<=` is `<`.
+    'aggregate/keep\.rs:559:42: replace < with <= in TopList::wants$',
+    # An empty file's names hold nothing whichever is first, so while a family's names list
+    # one size, tracking an empty family changes no weight the heap holds; where they list
+    # different sizes, only F1's cases tell the two apart.
+    'replace > with >= in Keep::child$',
+    # `offer` turns the row away itself when the heap turns its weight away, which is when
+    # `to_heap` is false: the guard is a shortcut.
+    'replace match guard to_heap with true in Keep::child$',
+    # `PositionPath::root` is `Self::default()` already.
+    'replace PositionPath::root -> Self with Default::default\(\)$',
+    # A value shifted left by 8 has a zero low byte, so `|` a byte and `^` it agree.
+    'replace \| with \^ in PositionPath::indices$',
+    # Each code's first byte ORs its prefix onto bits the index range keeps zero (b2 < 0x40,
+    # b1 < 0x20, b0 < 0x10), so `|` and `^` agree.
+    'replace \| with \^ in code_of$',
+    # One more pass at `folders_at.len()` finds no folder there and ends the loop.
+    'aggregate/summary\.rs:118:14: replace < with <= in seal$',
+]

@@ -591,6 +591,12 @@ const FILE_EDGE_ROOT: &str = "/t12d/file-edge";
 const TOP_EDGE_ROOT: &str = "/t12d/top-edge";
 const FOLDER_TIE_ROOT: &str = "/t12d/folder-tie";
 const ARRIVAL_ROOT: &str = "/t12d/arrival";
+const EMPTY_EDGE_ROOT: &str = "/t12f/empty-edge";
+const LATE_FIRST_ROOT: &str = "/t12f/late-first";
+const EMPTY_CORRECTION_ROOT: &str = "/t12f/empty-correction";
+const OUTWEIGHS_ROOT: &str = "/t12f/outweighs";
+const FULL_TOP_ROOT: &str = "/t12f/full-top";
+const STALE_SIZE_ROOT: &str = "/t12f/stale-size";
 
 const SMALL: KeepLimits = KeepLimits {
     folder_heap: 5,
@@ -724,6 +730,116 @@ fn arrival_tree() -> Result<common::scripted::ScriptedTree, String> {
     Ok(b.finish(ARRIVAL_ROOT, folder_meta(1), true, FastPath::Bulk))
 }
 
+/// 2,000 empty files in `a`, listed before `b`: the list is full of them when `b/w.bin`, the
+/// first name of an empty file in breadth-first order, is turned away on the tie, and
+/// `a/deep/m.bin`, its later name but earlier in pre-order, then joins the list on the same
+/// tie. An empty file's names hold nothing whichever comes first, so the list is proven.
+fn empty_edge_tree() -> Result<common::scripted::ScriptedTree, String> {
+    let mut b = Builder::with_root();
+    let a = b.dir("", b"a")?;
+    let deep = b.dir(&a, b"deep")?;
+    let family = file_meta(0.0, 0.0, 961, 2);
+    b.put(&deep, b"m.bin", family)?;
+    for f in 0..2_000_u32 {
+        b.file(&a, format!("f{f:04}.bin").as_bytes(), 0.0)?;
+    }
+    let second = b.dir("", b"b")?;
+    b.put(&second, b"w.bin", family)?;
+    Ok(b.finish(EMPTY_EDGE_ROOT, folder_meta(1), true, FastPath::Bulk))
+}
+
+/// `a/deep/x.bin` and `q/y.bin` name one 7,000-byte file. `q` is held until `a/deep/sub` is
+/// being listed, so the later name, `x.bin`, arrives first, after 2,001 one-byte files in `a`
+/// have filled the file list and turned one away. The first name, `y.bin`, then takes the
+/// family's place though it ranks below `x.bin` in pre-order, where a file the list turned
+/// away might outrank it.
+fn late_first_tree() -> Result<common::scripted::ScriptedTree, String> {
+    let mut b = Builder::with_root();
+    let a = b.dir("", b"a")?;
+    let deep = b.dir(&a, b"deep")?;
+    b.dir(&deep, b"sub")?;
+    let family = file_meta(7_000.0, BLOCK * 2.0, 981, 2);
+    b.put(&deep, b"x.bin", family)?;
+    for f in 0..2_001_u32 {
+        b.file(&a, format!("f{f:04}.bin").as_bytes(), 1.0)?;
+    }
+    let q = b.dir("", b"q")?;
+    b.put(&q, b"y.bin", family)?;
+    Ok(b.finish(LATE_FIRST_ROOT, folder_meta(1), true, FastPath::Bulk))
+}
+
+/// 2,100 folders of one 1,000-byte file each, the first two also holding a name each of one
+/// empty file: its later name is corrected by no bytes, so no total changes, and the tie at
+/// the folder list's edge is still decided exactly.
+fn empty_correction_tree() -> Result<common::scripted::ScriptedTree, String> {
+    let mut b = Builder::with_root();
+    let family = file_meta(0.0, 0.0, 951, 2);
+    for f in 0..2_100_u32 {
+        let folder = b.dir("", format!("f{f:04}").as_bytes())?;
+        b.file(&folder, b"one.bin", 1_000.0)?;
+        if f < 2 {
+            b.put(&folder, b"z.bin", family)?;
+        }
+    }
+    Ok(b.finish(EMPTY_CORRECTION_ROOT, folder_meta(1), true, FastPath::Bulk))
+}
+
+/// 2,000 folders of one 2,000-byte file each, the first two also holding a name each of one
+/// 600-byte file, and 100 folders of one 1,000-byte file: the folder list keeps the 2,000
+/// and turns the 100 away. The correction takes `g0001` from 2,600 bytes back to 2,000,
+/// still above every folder turned away, so the changed list is proven.
+fn outweighs_tree() -> Result<common::scripted::ScriptedTree, String> {
+    let mut b = Builder::with_root();
+    let family = file_meta(600.0, BLOCK, 952, 2);
+    for g in 0..2_000_u32 {
+        let folder = b.dir("", format!("g{g:04}").as_bytes())?;
+        b.file(&folder, b"one.bin", 2_000.0)?;
+        if g < 2 {
+            b.put(&folder, b"h.bin", family)?;
+        }
+    }
+    for t in 0..100_u32 {
+        let folder = b.dir("", format!("t{t:03}").as_bytes())?;
+        b.file(&folder, b"one.bin", 1_000.0)?;
+    }
+    Ok(b.finish(OUTWEIGHS_ROOT, folder_meta(1), true, FastPath::Bulk))
+}
+
+/// A folder of exactly three files, the largest a later name of a file whose first name is at
+/// the root: its top 3 hold every child it has, the later name too, so it turned nothing away
+/// that could belong there.
+fn full_top_tree() -> Result<common::scripted::ScriptedTree, String> {
+    let mut b = Builder::with_root();
+    let family = file_meta(9_000.0, BLOCK * 3.0, 971, 2);
+    b.put("", b"first.bin", family)?;
+    let folder = b.dir("", b"folder")?;
+    b.put(&folder, b"later.bin", family)?;
+    b.file(&folder, b"f0.bin", 500.0)?;
+    b.file(&folder, b"f1.bin", 400.0)?;
+    Ok(b.finish(FULL_TOP_ROOT, folder_meta(1), true, FastPath::Bulk))
+}
+
+/// `a/deep/x.bin` and `q/y.bin` name one file, listed at 40 bytes under `x.bin` and at 5
+/// under `y.bin`: a Windows listing can hold a stale size for one name of a file, and until
+/// T20's refresh each name keeps its listing's (plan T12d). `q` is held until `a/deep/sub` is
+/// being listed, so the later name enters a file heap of four first, behind the root's three
+/// files, while the heap still has room: it evicts nothing (had it, the heap would have left
+/// the corrected tree, T12f's finding F1). The first name then takes its entry at 5 bytes,
+/// now the lightest held, which must rise to the heap's top for β_f to be 5.
+fn stale_size_tree() -> Result<common::scripted::ScriptedTree, String> {
+    let mut b = Builder::with_root();
+    let a = b.dir("", b"a")?;
+    let deep = b.dir(&a, b"deep")?;
+    b.dir(&deep, b"sub")?;
+    b.put(&deep, b"x.bin", file_meta(40.0, BLOCK, 982, 2))?;
+    let q = b.dir("", b"q")?;
+    b.put(&q, b"y.bin", file_meta(5.0, BLOCK, 982, 2))?;
+    for (name, size) in [(b"r1.bin", 10.0), (b"r2.bin", 20.0), (b"r3.bin", 30.0)] {
+        b.file("", name, size)?;
+    }
+    Ok(b.finish(STALE_SIZE_ROOT, folder_meta(1), true, FastPath::Bulk))
+}
+
 /// The longest a held listing waits: a hang guard, never the event the test counts on.
 const HOLD_GUARD: Duration = Duration::from_secs(60);
 
@@ -772,6 +888,30 @@ impl Lister for HoldUntil {
         }
         self.tree.list(dir, want_atime, buf)
     }
+}
+
+/// A fixture of `tree` whose lister holds folder `hold` until folder `until` is being listed.
+fn held(
+    name: &'static str,
+    root: &str,
+    tree: common::scripted::ScriptedTree,
+    hold: &'static str,
+    until: &'static str,
+) -> (Arc<HoldUntil>, Fixture) {
+    let lister = Arc::new(HoldUntil {
+        tree: Arc::new(tree),
+        hold,
+        until,
+        released: AtomicBool::new(false),
+        by_event: AtomicBool::new(false),
+    });
+    let fixture = Fixture {
+        name,
+        root: PathBuf::from(root),
+        source: Source::Custom(lister.clone()),
+        never_descend: Vec::new(),
+    };
+    (lister, fixture)
 }
 
 fn synthetic(name: &'static str, spec: SyntheticSpec) -> Fixture {
@@ -991,5 +1131,143 @@ fn the_answers_and_the_summary_are_the_same_whatever_the_schedule() -> TestResul
             }
         }
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// T12f: the gaps `cargo mutants` found
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_hard_link_of_no_bytes_at_the_file_lists_edge_leaves_it_proven() -> TestResult {
+    let fixture = scripted("empty edge", EMPTY_EDGE_ROOT, empty_edge_tree()?);
+    check_fixture(&fixture, KeepLimits::default())?;
+    let walked = walk_kept(&fixture, 1, DEFAULT_Q_MAX, KeepLimits::default())?;
+    assert_eq!(
+        walked.answers.largest_files_exact,
+        Exactness::Exact,
+        "neither name of an empty file holds a family's place: the list is ordered as the \
+         store's is"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_first_name_taking_its_place_from_a_later_name_it_ranks_below_is_not_proven() -> TestResult {
+    let (hold, fixture) = held(
+        "late first",
+        LATE_FIRST_ROOT,
+        late_first_tree()?,
+        "q",
+        "sub",
+    );
+    hold.reset();
+    check_walk(&fixture, 2, DEFAULT_Q_MAX, KeepLimits::default())?;
+    assert!(
+        hold.by_event.load(AtomicOrdering::SeqCst),
+        "q was held until a/deep/sub was being listed, so the later name arrived first"
+    );
+    hold.reset();
+    let walked = walk_kept(&fixture, 2, DEFAULT_Q_MAX, KeepLimits::default())?;
+    assert!(
+        hold.by_event.load(AtomicOrdering::SeqCst),
+        "the later name arrived first"
+    );
+    assert!(
+        matches!(
+            walked.answers.largest_files_exact,
+            Exactness::NotProven(ref why) if why.contains("ranks below")
+        ),
+        "the first name ranks below the later name whose place it took, after the list turned \
+         a file away: {:?}",
+        walked.answers.largest_files_exact
+    );
+    Ok(())
+}
+
+#[test]
+fn a_correction_of_no_bytes_leaves_a_tie_at_the_folder_lists_edge_proven() -> TestResult {
+    let fixture = scripted(
+        "empty correction",
+        EMPTY_CORRECTION_ROOT,
+        empty_correction_tree()?,
+    );
+    check_fixture(&fixture, KeepLimits::default())?;
+    let walked = walk_kept(&fixture, 1, DEFAULT_Q_MAX, KeepLimits::default())?;
+    assert_eq!(
+        walked.answers.largest_folders_exact,
+        Exactness::Exact,
+        "a later name of no bytes changes no folder's total"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_changed_folder_list_whose_last_folder_outweighs_all_it_turned_away_is_proven() -> TestResult {
+    let fixture = scripted("outweighs", OUTWEIGHS_ROOT, outweighs_tree()?);
+    check_fixture(&fixture, KeepLimits::default())?;
+    let walked = walk_kept(&fixture, 1, DEFAULT_Q_MAX, KeepLimits::default())?;
+    assert_eq!(
+        walked.answers.largest_folders_exact,
+        Exactness::Exact,
+        "corrected, the list's last folder still holds 2,000 bytes, above the 1,000 of every \
+         folder it turned away"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_top_list_holding_every_child_is_proven_though_one_is_a_later_name() -> TestResult {
+    let fixture = scripted("full top", FULL_TOP_ROOT, full_top_tree()?);
+    let limits = KeepLimits {
+        folder_heap: 2,
+        file_heap: 2,
+        shallow_rows: 100,
+        shallow_top: 3,
+        root_top: 4,
+    };
+    check_fixture(&fixture, limits)?;
+    let summary = walk_kept(&fixture, 1, DEFAULT_Q_MAX, limits)?.summary?;
+    assert_eq!(
+        summary.shallow_exact,
+        Exactness::Exact,
+        "folder's top 3 hold all three of its children: nothing was turned away"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_first_name_listed_lighter_than_its_later_name_keeps_the_file_heap_in_order() -> TestResult {
+    let (hold, fixture) = held(
+        "stale size",
+        STALE_SIZE_ROOT,
+        stale_size_tree()?,
+        "q",
+        "sub",
+    );
+    let limits = KeepLimits {
+        folder_heap: 10,
+        file_heap: 4,
+        shallow_rows: 100,
+        shallow_top: 3,
+        root_top: 4,
+    };
+    hold.reset();
+    check_walk(&fixture, 2, DEFAULT_Q_MAX, limits)?;
+    assert!(
+        hold.by_event.load(AtomicOrdering::SeqCst),
+        "q was held until a/deep/sub was being listed, so the later name arrived first"
+    );
+    hold.reset();
+    let summary = walk_kept(&fixture, 2, DEFAULT_Q_MAX, limits)?.summary?;
+    assert!(
+        hold.by_event.load(AtomicOrdering::SeqCst),
+        "the later name arrived first"
+    );
+    assert_eq!(
+        summary.file_threshold,
+        Some(5),
+        "β_f is the first name's 5 bytes, the lightest of the four files held"
+    );
     Ok(())
 }

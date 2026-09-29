@@ -16,16 +16,17 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 use common::aggregate::{
-    MIXED_ROOT, OpenPacer, Recording, SEP, WORKERS, Walked, at_of, id_of, joined, lock, mixed_tree,
-    root_bytes, scripted, scripted_fixtures, synthetic_fixtures, walk, walk_named, whole,
+    MIXED_ROOT, OpenPacer, Recording, SEP, WORKERS, Walked, at_of, hand_listing, id_of, joined,
+    lock, mixed_tree, new_state, root_bytes, scripted, scripted_fixtures, synthetic_fixtures, walk,
+    walk_named, whole,
 };
-use common::scripted::ScriptedTree;
+use common::scripted::{BLOCK, ScriptedTree, file_meta, folder_meta};
 use tm_store::aggregate::{
     AggregateOptions, AggregateState, EXTENSION_LIMIT, KeepLimits, PositionPath,
 };
 use tm_walk::{
-    DEFAULT_Q_MAX, FastPath, KIND_DIR, Lister, ListingSink, Numbering, Refusal, WalkError,
-    WalkOptions, WalkOutput, start_with_sinks,
+    Block, DEFAULT_Q_MAX, FastPath, Finishing, KIND_DIR, Lister, ListingSink, Meta, Numbering,
+    Refusal, WalkError, WalkOptions, WalkOutput, start_with_sinks,
 };
 
 type TestResult = Result<(), String>;
@@ -461,5 +462,200 @@ fn a_cancelled_walk_leaves_nothing_open_and_the_root_never_closes() -> TestResul
         state.summary().is_err(),
         "a cancelled walk has nothing to seal"
     );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The sink's own calls, driven without a walk, and a walk that breaks a promise (T12f:
+// the gaps `cargo mutants` found)
+// ---------------------------------------------------------------------------
+
+/// A root holding `a.bin`, `b.txt` and folder `d`, which holds `c.bin`: `a.bin` and `c.bin`
+/// name one 300-byte file, so the link log has a later name to settle.
+fn hand_linked_tree(state: &AggregateState) -> TestResult {
+    let family = file_meta(300.0, BLOCK, 7_000, 2);
+    state.root(b"linked", &folder_meta(1));
+    hand_listing(
+        state,
+        0,
+        1,
+        &[
+            (b"a.bin".as_slice(), family),
+            (b"b.txt".as_slice(), file_meta(20.0, BLOCK, 7_001, 1)),
+            (b"d".as_slice(), folder_meta(2)),
+        ],
+    )?;
+    hand_listing(state, 3, 4, &[(b"c.bin".as_slice(), family)])
+}
+
+#[test]
+fn an_abort_leaves_the_state_answering_as_a_new_one() -> TestResult {
+    let state = new_state(b"/t12f/linked", None, KeepLimits::default());
+    hand_linked_tree(&state)?;
+    assert_eq!(
+        (state.answers().files, state.open_folders()),
+        (3, 0),
+        "every file was counted and the root closed"
+    );
+    assert!(
+        state.summary().is_ok(),
+        "the walk had finished, so the state would seal"
+    );
+    state.abort();
+    assert_eq!(
+        state.answers(),
+        new_state(b"/t12f/linked", None, KeepLimits::default()).answers(),
+        "an abort drops every file, extension, histogram count and hard link that was counted"
+    );
+    let refused = state.summary();
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|why| why.contains("has not finished")),
+        "an aborted walk has nothing to seal: {refused:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_size_that_is_no_finite_count_of_bytes_counts_none_as_the_walk_counts_it() -> TestResult {
+    // The walk's whole-byte rule (tm-walk's `whole_bytes`, which its own byte count uses): a
+    // finite size of no less than zero, its fraction dropped, saturating past u64::MAX; any
+    // other size — NaN, a negative one, either infinity — counts 0. No platform's listing
+    // gives such a size (each reads an integer), but a lister may hand one on.
+    let recording = Arc::new(Recording::default());
+    let state = new_state(
+        b"/t12f/sizes",
+        Some(recording.clone()),
+        KeepLimits::default(),
+    );
+    state.root(b"sizes", &folder_meta(1));
+    let sizes = [
+        (b"infinite".as_slice(), f64::INFINITY, 0),
+        (b"nan", f64::NAN, 0),
+        (b"minus-infinite", f64::NEG_INFINITY, 0),
+        (b"negative", -1.0, 0),
+        (b"fraction", 2.5, 2),
+        (b"past-u64", 1e30, u64::MAX),
+    ];
+    let rows: Vec<(&[u8], Meta)> = sizes
+        .iter()
+        .zip(7_100_u128..)
+        .map(|(&(name, size, _), ino)| (name, file_meta(size, 0.0, ino, 1)))
+        .collect();
+    hand_listing(&state, 0, 1, &rows)?;
+    let answers = state.answers();
+    for (name, size, counted) in sizes {
+        let file = answers
+            .largest_files
+            .iter()
+            .find(|file| file.name == name)
+            .ok_or_else(|| format!("{} was not listed", String::from_utf8_lossy(name)))?;
+        assert_eq!(
+            file.size, counted,
+            "a size of {size} counts {counted} bytes, as the walk counts it"
+        );
+    }
+    let root = lock(&recording.closed)
+        .iter()
+        .find(|closed| closed.id == 0)
+        .map(|closed| closed.bytes);
+    assert_eq!(
+        root,
+        Some(u128::from(u64::MAX) + 2),
+        "the root holds what its files count, and nothing for the sizes that count none"
+    );
+    Ok(())
+}
+
+/// Hands the state every call of a walk, but breaks one of the walk's promises when told
+/// to: every skip forgotten, so a never-descend folder is never ended; or every refusal said
+/// twice, so a folder ends that is no longer open.
+struct Breaking {
+    state: Arc<AggregateState>,
+    forget_skips: bool,
+    refuse_twice: bool,
+}
+
+impl ListingSink for Breaking {
+    fn root(&self, name: &[u8], meta: &Meta) {
+        self.state.root(name, meta);
+    }
+
+    fn commit(&self, block: &Block<'_>) {
+        self.state.commit(block);
+    }
+
+    fn refused(&self, folder: u32, why: Refusal) {
+        self.state.refused(folder, why);
+        if self.refuse_twice {
+            self.state.refused(folder, why);
+        }
+    }
+
+    fn skipped(&self, folder: u32) {
+        if !self.forget_skips {
+            self.state.skipped(folder);
+        }
+    }
+
+    fn abort(&self) {
+        self.state.abort();
+    }
+
+    fn finish(&self, ending: &Finishing<'_>) -> Result<(), String> {
+        self.state.finish(ending)
+    }
+}
+
+#[test]
+fn finish_refuses_a_walk_that_left_a_folder_open_or_broke_a_promise() -> TestResult {
+    // The mixed tree has a never-descend folder, `never`, and two refused ones.
+    let tree: Arc<dyn Lister> = Arc::new(mixed_tree()?);
+    for (forget_skips, refuse_twice, refusal) in [
+        (false, false, None),
+        (
+            true,
+            false,
+            Some("2 folder(s) were still open when the walk finished"),
+        ),
+        (false, true, Some("ended, and it is not open")),
+    ] {
+        let at = format!("skips forgotten {forget_skips}, refusals said twice {refuse_twice}");
+        let sink = Arc::new(Breaking {
+            state: Arc::new(new_state(
+                MIXED_ROOT.as_bytes(),
+                None,
+                KeepLimits::default(),
+            )),
+            forget_skips,
+            refuse_twice,
+        });
+        let mut opts = WalkOptions::new(MIXED_ROOT);
+        opts.numbering = Numbering::Blocks;
+        opts.max_workers = 1;
+        opts.never_descend = vec![std::path::Path::new(MIXED_ROOT).join("never")];
+        let sinks: Vec<Arc<dyn ListingSink>> = vec![sink];
+        let taken = start_with_sinks(opts, Arc::new(OpenPacer), Arc::clone(&tree), sinks)
+            .map_err(|e| e.to_string())?
+            .take();
+        match (refusal, taken) {
+            (None, Ok(_)) => {}
+            (Some(said), Err(WalkError::Internal(why))) => assert!(
+                why.starts_with("the aggregate state: ") && why.contains(said),
+                "{at}: the walk is refused with the state's reason ({said}), not {why:?}"
+            ),
+            (want, got) => {
+                return Err(format!(
+                    "{at}: expected {}, got {:?}",
+                    want.map_or_else(
+                        || "the walk's output".to_owned(),
+                        |said| format!("the state to refuse the walk ({said})")
+                    ),
+                    got.map(|out| out.stats.entries)
+                ));
+            }
+        }
+    }
     Ok(())
 }

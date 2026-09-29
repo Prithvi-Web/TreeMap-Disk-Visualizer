@@ -870,3 +870,36 @@ impl Keep {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! What no answer shows, since only memory can: how a heap's index grows (T12e). Here, as a
+    //! private item's unit test, because `cargo mutants` found nothing held it (T12f).
+
+    use super::room_for_one;
+
+    /// A heap size one past a power of two, where doubling alone would reach almost twice it.
+    const LIMIT: usize = 1_025;
+
+    #[test]
+    fn the_room_made_for_one_more_doubles_as_it_grows_and_never_passes_the_limit() {
+        let mut index: Vec<u32> = Vec::new();
+        let mut rooms: Vec<usize> = Vec::new();
+        for row in 0..LIMIT {
+            room_for_one(&mut index, LIMIT);
+            index.push(u32::try_from(row).unwrap_or(u32::MAX));
+            if rooms.last() != Some(&index.capacity()) {
+                rooms.push(index.capacity());
+            }
+        }
+        assert!(
+            rooms.iter().all(|&room| room <= LIMIT),
+            "the index never holds more room than the heap can fill: {rooms:?}"
+        );
+        assert!(
+            rooms.len() <= 8,
+            "the room doubles from 16, so it grows at most eight times on the way to {LIMIT}, \
+             not once a row: {rooms:?}"
+        );
+    }
+}

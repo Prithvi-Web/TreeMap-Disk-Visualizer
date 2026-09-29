@@ -15,8 +15,8 @@ use tm_store::aggregate::{
 };
 use tm_walk::walk::{MAX_WORKERS, Pacer};
 use tm_walk::{
-    Block, FastPath, Lister, ListingSink, Numbering, Refusal, SyntheticSpec, WalkOptions,
-    WalkOutput, lister_for, start_with_sinks, synthetic_temp_folder,
+    Block, Entry, FastPath, Lister, ListingSink, Meta, Numbering, Refusal, SyntheticSpec,
+    WalkOptions, WalkOutput, lister_for, start_with_sinks, synthetic_temp_folder,
 };
 
 use super::scripted::{
@@ -237,6 +237,54 @@ pub fn walk_with(
         shallow_rows_held: state.shallow_rows_held(),
         summary: state.summary(),
     })
+}
+
+/// A state rooted at `root_path`, keeping what `keep` bounds, showing each folder that closes
+/// to `observer`.
+pub fn new_state(
+    root_path: &[u8],
+    observer: Option<Arc<dyn CloseObserver>>,
+    keep: KeepLimits,
+) -> AggregateState {
+    AggregateState::new(AggregateOptions {
+        root_path: root_path.to_vec(),
+        separator: SEP,
+        observer,
+        extension_limit: EXTENSION_LIMIT,
+        keep,
+    })
+}
+
+/// Hands `sink` folder `folder`'s whole listing in one block, as a walk under the commit
+/// lock hands it: the children `rows` in child order, their ids from `first`. For the
+/// sink's own calls, driven without a walk (T12f).
+pub fn hand_listing(
+    sink: &dyn ListingSink,
+    folder: u32,
+    first: u32,
+    rows: &[(&[u8], Meta)],
+) -> Result<(), String> {
+    let mut names = Vec::new();
+    let mut entries = Vec::with_capacity(rows.len());
+    for &(name, meta) in rows {
+        let start = names.len();
+        names.extend_from_slice(name);
+        entries.push(Entry {
+            name: start..names.len(),
+            meta,
+        });
+    }
+    sink.commit(&Block {
+        folder,
+        first,
+        len: u32::try_from(rows.len()).map_err(|e| e.to_string())?,
+        name_base: 0,
+        offset: 0,
+        rows: &entries,
+        names: &names,
+        own_times: None,
+    });
+    Ok(())
 }
 
 pub fn whole(size: f64) -> u128 {

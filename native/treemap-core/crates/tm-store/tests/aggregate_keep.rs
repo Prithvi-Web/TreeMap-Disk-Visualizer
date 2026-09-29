@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use common::aggregate::{
     CHUNKED_ROOT, DEEP_ROOT, Fixture, MIXED_ROOT, SEP, Source, WORKERS, Walked, chunked_tree,
-    deep_tree, mixed_tree, scripted, walk_kept,
+    deep_tree, hand_listing, mixed_tree, new_state, scripted, walk_kept,
 };
 use common::scripted::{Builder, WIDE_ROOT, folder_meta, wide_tree};
 use tm_store::aggregate::{
@@ -20,7 +20,7 @@ use tm_store::aggregate::{
 };
 use tm_store::derive::store_mtime;
 use tm_store::{BuildOptions, Store, StoreMode, build, flag};
-use tm_walk::{DEFAULT_Q_MAX, FastPath, SyntheticSpec, synthetic_temp_folder};
+use tm_walk::{DEFAULT_Q_MAX, FastPath, ListingSink, SyntheticSpec, synthetic_temp_folder};
 
 type TestResult = Result<(), String>;
 
@@ -463,6 +463,7 @@ const ROOT_TOP_ROOT: &str = "/t12c/root-top";
 const FAN_ROOT: &str = "/t12c/fan";
 const BESIDE_ROOT: &str = "/t12c/beside";
 const FRONT_ROOT: &str = "/t12c/front";
+const LATE_TIE_ROOT: &str = "/t12f/late-tie";
 
 /// Limits that make β and the shallow cap bite on the small scripted trees.
 const SMALL: KeepLimits = KeepLimits {
@@ -566,6 +567,17 @@ fn front_loaded_tree() -> Result<common::scripted::ScriptedTree, String> {
         b.file(&huge, format!("h{i:02}.bin").as_bytes(), 1_000_000.0)?;
     }
     Ok(b.finish(FRONT_ROOT, folder_meta(1), true, FastPath::Bulk))
+}
+
+/// The root's first child, folder `a`, holds 100 bytes, as does its second, the file
+/// `b.bin`. The file enters the root's list with the root's block; `a` only when it closes,
+/// later. With room for one child, the tie goes to child order: `a`.
+fn late_tie_tree() -> Result<common::scripted::ScriptedTree, String> {
+    let mut b = Builder::with_root();
+    let a = b.dir("", b"a")?;
+    b.file(&a, b"x.bin", 100.0)?;
+    b.file("", b"b.bin", 100.0)?;
+    Ok(b.finish(LATE_TIE_ROOT, folder_meta(1), true, FastPath::Bulk))
 }
 
 fn synthetic(name: &'static str, spec: SyntheticSpec) -> Fixture {
@@ -795,4 +807,54 @@ fn a_summary_is_refused_until_the_walk_has_finished() {
             .is_err_and(|why| why.contains("has not finished")),
         "a walk that never ran has nothing to seal: {refused:?}"
     );
+}
+
+#[test]
+fn a_tie_in_a_top_list_goes_to_the_earlier_child_though_it_closes_later() -> TestResult {
+    let fixture = scripted("late tie", LATE_TIE_ROOT, late_tie_tree()?);
+    // Heaps of one: β keeps nothing below the root, so the root's list decides alone.
+    let limits = KeepLimits {
+        folder_heap: 1,
+        file_heap: 1,
+        shallow_rows: 100,
+        shallow_top: 1,
+        root_top: 1,
+    };
+    check_fixture(&fixture, limits)?;
+    let summary = walk_kept(&fixture, 1, DEFAULT_Q_MAX, limits)?.summary?;
+    let kept: Vec<&[u8]> = summary
+        .rows
+        .iter()
+        .skip(1)
+        .map(|row| row.name.as_slice())
+        .collect();
+    assert_eq!(
+        kept,
+        [b"a".as_slice(), b"x.bin".as_slice()],
+        "the root keeps `a`, first in child order at the tie, and `a` keeps its own top child"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_summary_is_refused_while_a_folder_is_open_though_a_root_closed_before() -> TestResult {
+    let state = new_state(b"/t12f/twice", None, KeepLimits::default());
+    state.root(b"twice", &folder_meta(1));
+    hand_listing(&state, 0, 1, &[])?;
+    assert!(
+        state.summary().is_ok(),
+        "the root's listing was empty, so it closed and the state would seal"
+    );
+    // A root named again, a promise no walk breaks but the state's own calls can: its
+    // listing is still to come.
+    state.root(b"twice", &folder_meta(1));
+    assert_eq!(state.open_folders(), 1, "the root named again is open");
+    let refused = state.summary();
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|why| why.contains("has not finished")),
+        "a folder is open, so the walk has not finished, whatever closed before: {refused:?}"
+    );
+    Ok(())
 }
