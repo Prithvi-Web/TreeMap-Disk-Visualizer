@@ -306,22 +306,30 @@ test('a restore refuses, and says why, a record whose original place or manifest
   assert.ok(!fs.existsSync(path.join(process.cwd(), 'cloud:')), 'nothing was written under the working folder');
 });
 
-test('a member past a link the restore makes is refused however its name is spelled, and nothing is written through the link (FG3b)', async () => {
-  // Default APFS and NTFS fold case, and APFS folds Unicode forms: `a` and `A`, `é` and `e` + U+0301,
-  // are one name there. Where the platform's volumes fold names the restore is refused up front; on
-  // every platform the link is made last, so nothing is written through it either way.
-  const FOLDS = process.platform === 'darwin' || process.platform === 'win32';
+test('a member past a link the restore makes is refused early where the volume reads the two names as one, and nothing is written through the link either way (FG3b, FG3c)', async () => {
+  // What the destination's volume reads as one name (FG3c, measured on this Mac's APFS by
+  // tests/volumeNames.test.ts): a Mac volume that folds case folds Unicode forms and case by
+  // Unicode's full case folding — ς and σ, ß, ẞ and ss — but not compatibility forms (ｌｉｂ, lib) nor
+  // dotless ı; an NTFS folder that folds case uses simple upper case only; Linux compares exactly.
+  // Where the names are one, the restore is refused before anything is written; where they are two,
+  // it restores both. Either way the link is made last, so nothing is written through it.
+  const probe = fileTempDir('treemap-capsuleRecords-fold-probe-');
+  fs.writeFileSync(path.join(probe, 'probe'), '');
+  const folds = fs.existsSync(path.join(probe, 'PROBE'));
   const outside = fileTempDir('treemap-capsuleRecords-fold-outside-');
   const escape = 'escaped';
-  // Measured on this Mac's APFS: `ς` and `σ`, and `ß` and `ss`, are one name there too — case folding
-  // that lower case alone does not give.
-  const variants: [string, string, string][] = [
-    ['another case', 'a', 'A'],
-    ['another Unicode form', '\u00e9', 'e\u0301'],
-    ['a final sigma', '\u03b1\u03c2', '\u03b1\u03c3'],
-    ['a sharp s', 'stra\u00dfe', 'strasse'],
+  // [what, the link's name, the folder's name, one name on a folding Mac volume, on a folding NTFS folder]
+  const variants: [string, string, string, boolean, boolean][] = [
+    ['another case', 'a', 'A', true, true],
+    ['another Unicode form', '\u00e9', 'e\u0301', true, false],
+    ['a final sigma', '\u03b1\u03c2', '\u03b1\u03c3', true, true],
+    ['a sharp s', 'stra\u00dfe', 'strasse', true, false],
+    ['a capital sharp s', 'ss', '\u1e9e', true, false],
+    ['a fullwidth name', '\uff4c\uff49\uff42', 'lib', false, false],
+    ['a dotless i', '\u0131', 'I', false, true],
   ];
-  for (const [n, [what, link, spelled]] of variants.entries()) {
+  for (const [n, [what, link, spelled, onMac, onNtfs]] of variants.entries()) {
+    const oneName = folds && (process.platform === 'darwin' ? onMac : process.platform === 'win32' ? onNtfs : false);
     const folder = `fold-${n}`;
     const through = `through-${n}.txt`;
     const entry = capsuleEntry({ kind: 'folder', originalPath: path.join(PLACE, folder) }, {
@@ -332,16 +340,55 @@ test('a member past a link the restore makes is refused however its name is spel
       ],
     }, { [path.join(folder, spelled, through)]: escape });
     const answer = await request('POST', `/api/timecapsule/${entry.id}/restore`);
-    if (FOLDS) {
+    if (oneName) {
       assert.deepEqual([answer.status, answer.body.code], [409, 'CAPSULE_RECORD_INVALID'], `${what}: ${JSON.stringify(answer.body)}`);
       assert.match(answer.body.error, /past a link/, what);
     } else {
-      assert.equal(answer.status, 202, `${what}: ${JSON.stringify(answer.body)}`);
+      assert.equal(answer.status, 202, `${what}: two names here, so it is not refused (${JSON.stringify(answer.body)})`);
       await waitFor(() => getCapsuleJob(answer.body.jobId)?.status !== 'running', `the restore (${what})`);
+      assert.equal(getCapsuleJob(answer.body.jobId)?.status, 'complete', `${what}: both are put back (${getCapsuleJob(answer.body.jobId)?.error})`);
+      assert.equal(fs.readFileSync(path.join(PLACE, folder, spelled, through), 'utf8'), escape, `${what}: the file is in its own folder`);
     }
     assert.ok(!fs.existsSync(path.join(outside, through)), `${what}: nothing was written through the link`);
   }
   assert.deepEqual(fs.readdirSync(outside), [], 'the folder the links lead to holds nothing new');
+});
+
+test('a record naming a link where the restore already put a file of that name fails with a sentence, and leaves nothing behind (FG3c #9)', async () => {
+  const place = path.join(PLACE, 'twice-named');
+  const outside = fileTempDir('treemap-capsuleRecords-twice-outside-');
+  const content = 'a file, and then a link of the same name';
+  const entry = capsuleEntry({ kind: 'folder', originalPath: place }, {
+    name: 'twice-named',
+    members: [
+      { rel: 'dup', kind: 'file', size: content.length, hash: sha256(content) },
+      { rel: 'dup', kind: 'symlink', size: outside.length, hash: sha256(outside), target: outside },
+    ],
+  }, { [path.join('twice-named', 'dup')]: content });
+  const answer = await request('POST', `/api/timecapsule/${entry.id}/restore`);
+  assert.equal(answer.status, 202, JSON.stringify(answer.body));
+  await waitFor(() => getCapsuleJob(answer.body.jobId)?.status !== 'running', 'the restore');
+  const job = getCapsuleJob(answer.body.jobId);
+  assert.equal(job?.status, 'error');
+  assert.match(job?.error ?? '', /capture never records that/, `a sentence, not the bare EEXIST (${job?.error})`);
+  assert.ok(!fs.existsSync(place), 'nothing is left at its place');
+  assert.deepEqual(fs.readdirSync(outside), [], 'and nothing where the link leads');
+});
+
+test('a restore that fails part-way leaves nothing at its place, not even a folder it made on the way, so it can be tried again (FG3c #9)', async () => {
+  const place = path.join(PLACE, 'half-made');
+  const recorded = 'the content capture recorded';
+  const entry = capsuleEntry({ kind: 'folder', originalPath: place }, {
+    name: 'half-made',
+    members: [{ rel: path.join('sub', 'x.txt'), kind: 'file', size: recorded.length, hash: sha256(recorded) }],
+  }, { [path.join('half-made', 'sub', 'x.txt')]: 'not what capture recorded' });
+  for (const attempt of [1, 2]) {
+    const answer = await request('POST', `/api/timecapsule/${entry.id}/restore`);
+    assert.equal(answer.status, 202, `attempt ${attempt}: ${JSON.stringify(answer.body)}`);
+    await waitFor(() => getCapsuleJob(answer.body.jobId)?.status !== 'running', `attempt ${attempt}`);
+    assert.match(getCapsuleJob(answer.body.jobId)?.error ?? '', /no longer matches/, `attempt ${attempt} fails on the copy, not on the place`);
+    assert.ok(!fs.existsSync(place), `attempt ${attempt}: nothing is left at its place`);
+  }
 });
 
 test('the check of a manifest against its links looks each member up by its own folders, never against every link (FG3b)', () => {

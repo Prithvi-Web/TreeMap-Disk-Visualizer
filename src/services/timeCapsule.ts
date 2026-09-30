@@ -19,9 +19,10 @@ import { formatBytes } from '../utils/formatBytes';
 import { AppError } from '../middleware/errorHandler';
 import { meansAbsent } from '../utils/errno';
 import { assertNotSpillPath } from '../middleware/pathGuard';
-import { foldName, isSpillPath, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
+import { isSpillPath, PathRejectedError, sanitizePath } from '../utils/pathSanitizer';
 import { ABSENT, afterReportedFailure, identityOf, UNKNOWN, type Identity } from '../utils/placeIdentity';
 import { collapseBatch, deepestFirst, shallowestFirst } from './capsuleBatch';
+import { restoreNameKeyFor } from '../utils/volumeNames';
 
 /**
  * Time Capsule — recovery beyond the OS Trash (B3).
@@ -1485,31 +1486,25 @@ function isOneName(name: unknown): name is string {
 }
 
 /**
- * A name as the volume a restore writes to compares it: folded where the platform's own volumes
- * fold names, and exact elsewhere. Windows: NTFS's fold (`foldName`). macOS: APFS folds Unicode
- * forms and case by Unicode's case folding, which lower case alone misses — `ς` and `σ`, `ß` and
- * `ss`, are one name on APFS (measured on this Mac, FG3b) — so the compatibility forms are folded,
- * then upper case, then lower. Folding more than a volume does only refuses more.
- */
-function restoreNameKey(name: string): string {
-  if (process.platform === 'win32') return foldName(name);
-  if (process.platform === 'darwin') return name.normalize('NFKC').toUpperCase().toLowerCase();
-  return name;
-}
-
-/**
  * Why a restore will not follow an entry's manifest, as a phrase, or null (FG3). Each file is read
  * from `data/<name>/<rel>` and written to `<original place>/<rel>`, so the name must be one name and
  * each member's path relative, as `path.join` spells it, and made of names — never leading out of
  * the copy or out of the item.
  *
  * Nor past a link the manifest records (FG3, FG3b): capture records a link and never what lies past
- * it. Compared as the volume compares names (`restoreNameKey`), so `A/x` is past a link `a` where
- * `a` and `A` are one name, and linear in the members: each member's own folders are looked up in
- * the set of links (`tally` counts the lookups), never every member against every link — a
- * node_modules capture holds thousands of links among tens of thousands of members.
+ * it. Names are compared with `keyOf`, the way the destination's volume compares them
+ * (`restoreNameKeyFor`, FG3c), so `A/x` is past a link `a` where `a` and `A` are one name — and a
+ * tree the volume holds, `lib` beside `Lib` on a case-sensitive one, is never refused. The check is
+ * the early refusal only: the restore makes links last, so nothing is written through one whatever
+ * the names fold to. Linear in the members: each member's own folders are looked up in the set of
+ * links (`tally` counts the lookups), never every member against every link — a node_modules
+ * capture holds thousands of links among tens of thousands of members.
  */
-export function manifestRefusal(manifest: EntryManifest, tally: { lookups: number } = { lookups: 0 }): string | null {
+export function manifestRefusal(
+  manifest: EntryManifest,
+  tally: { lookups: number } = { lookups: 0 },
+  keyOf: (name: string) => string = (name) => name,
+): string | null {
   if (manifest === null || typeof manifest !== 'object' || !Array.isArray(manifest.members)) return 'it lists no members';
   if (!isOneName(manifest.name)) return 'its name is not one name';
   for (const member of manifest.members as unknown[]) {
@@ -1521,14 +1516,14 @@ export function manifestRefusal(manifest: EntryManifest, tally: { lookups: numbe
   }
   const members = manifest.members as ManifestMember[];
   const links = new Set<string>();
-  for (const m of members) if (m.kind === 'symlink') links.add(m.rel.split(path.sep).map(restoreNameKey).join(path.sep));
+  for (const m of members) if (m.kind === 'symlink') links.add(m.rel.split(path.sep).map(keyOf).join(path.sep));
   if (links.size === 0) return null;
   if (links.has('') && members.some((m) => m.rel !== '')) return 'a member lies past a link it records'; // the item itself is a link
   for (const m of members) {
     const names = m.rel.split(path.sep);
     let folder = '';
     for (let i = 0; i < names.length - 1; i++) {
-      folder = i === 0 ? restoreNameKey(names[0]) : `${folder}${path.sep}${restoreNameKey(names[i])}`;
+      folder = i === 0 ? keyOf(names[0]) : `${folder}${path.sep}${keyOf(names[i])}`;
       tally.lookups++;
       if (links.has(folder)) return 'a member lies past a link it records';
     }
@@ -1704,7 +1699,7 @@ export async function startCapsuleRestore(entryIds: string[]): Promise<TimeCapsu
     if (!manifest) {
       throw new AppError(409, 'MANIFEST_UNREADABLE', `The record of what was captured for “${entry.name}” can’t be read, so it can’t be verified on restore`);
     }
-    const stray = manifestRefusal(manifest);
+    const stray = manifestRefusal(manifest, undefined, await restoreNameKeyFor(path.dirname(entry.originalPath)));
     if (stray) {
       throw new AppError(409, 'CAPSULE_RECORD_INVALID',
         `The record of what was captured for “${entry.name}” is not one TreeMap wrote (${stray}), so nothing was restored.`);
@@ -1792,8 +1787,19 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
   const writtenByThisRestore: string[] = [];
   const dirsCreatedByThisRestore: string[] = [];
 
+  // A folder made on the way to a member (`mkdir -p`) is this restore's too, and goes with it on a
+  // failure (FG3c): left behind, it held the original place, and every retry was refused there.
+  const makeParentOf = async (dest: string): Promise<void> => {
+    const first = await fsp.mkdir(path.dirname(dest), { recursive: true });
+    if (first === undefined) return;
+    for (let at = path.dirname(dest); ; at = path.dirname(at)) {
+      dirsCreatedByThisRestore.push(at);
+      if (at === first || path.dirname(at) === at) break;
+    }
+  };
+
   try {
-    await fsp.mkdir(path.dirname(entry.originalPath), { recursive: true });
+    await makeParentOf(entry.originalPath);
     // The item's own directory comes first, so a folder that held nothing at
     // all still comes back as a folder rather than as nothing.
     if (entry.kind === 'folder') {
@@ -1819,10 +1825,15 @@ async function runRestore(job: TimeCapsuleJob, entry: TimeCapsuleEntry, manifest
 
       const from = path.join(dataRoot, member.rel === '' ? manifest.name : path.join(manifest.name, member.rel));
       const dest = member.rel === '' ? entry.originalPath : path.join(entry.originalPath, member.rel);
-      await fsp.mkdir(path.dirname(dest), { recursive: true });
+      await makeParentOf(dest);
 
       if (member.kind === 'symlink') {
-        await fsp.symlink(member.target ?? '', dest);
+        await fsp.symlink(member.target ?? '', dest).catch((err: NodeJS.ErrnoException) => {
+          // Something this restore made stands at the link's name as the volume reads names: the
+          // record names a member past its own link, which capture never writes (FG3c).
+          if (err.code !== 'EEXIST') throw err;
+          throw new Error(`The record of what was captured for “${entry.name}” names ${member.rel || manifest.name} as a link where this restore already put a file or folder of that name, as this volume reads names — capture never records that, so it was not restored.`);
+        });
         writtenByThisRestore.push(dest);
         continue;
       }
