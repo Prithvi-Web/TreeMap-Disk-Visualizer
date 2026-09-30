@@ -215,26 +215,55 @@ test('the probe checks Desktop, Documents and Downloads under a home-folder scan
   assert.equal(stale.state.scanRefused, null, 'a superseded probe paints nothing');
 });
 
-test('a refused scan is never toasted as a clean success, and the tour refuses the "clean" card', async () => {
-  // finishScan, executed with the index-first stub list plus the two names this round added.
+/**
+ * finishScan out of the built page, executed with the index-first stub list
+ * plus the names later rounds added. `indexBuilds` records the arguments of
+ * every background index build it starts.
+ */
+function finishScanHarness() {
   const src = slice('async function finishScan', 'function renderDiskNotes()');
   const { $, els } = makeDom();
   const toasts: string[] = [];
+  const indexBuilds: unknown[][] = [];
   const noop = () => {};
   const state: Record<string, unknown> = {
     scanId: 's1', treemap: { rootPath: '' }, grid: { path: '', selection: new Set() }, apps: { loadedFor: 'x' },
     view: 'dashboard', live: { wanted: false }, scanStats: null, root: null,
   };
-  const finishScan = new Function(
-    '$', 'state', 'endScanChrome', 'indexTree', 'updateSelectionBar', 'DUP_PAGE', 'icon', 'formatCount', 'formatBytes', 'escapeHtml',
-    'countUp', 'FxNum', 'renderDiskNotes', 'loadWhatsNew', 'loadDriveHealth', 'loadCostEstimate', 'showListsPending', 'emit', 'TOPIC',
-    'switchView', 'toast', 'fxScanDonePulse', 'loadDashboardLists', 'buildIndexInBackground', 'renderGrowthProjection', 'loadBudgets',
-    'refreshTimebar', 'enableLive', 'seedNodes', 'setTimeout', 'fxDonutLoadingSync', 'renderRefusedFolders', 'probeRefusedFolders', 'armScanExpiry', 'formatClock',
-    `'use strict'; ${src} return finishScan;`)(
-    $, state, noop, noop, noop, 100, () => '', (n: number | null) => String(n ?? 0), (n: number) => n + ' B', (s: string) => s,
-    noop, { rollText: noop }, noop, noop, noop, noop, noop, noop, { scan: 'scan' }, noop, (m: string) => toasts.push(m), noop,
-    async () => {}, noop, noop, noop, noop, noop, noop, noop, noop, noop, async () => {}, noop, () => '10:31 PM',
+  const deps: Record<string, unknown> = {
+    $, state, endScanChrome: noop, indexTree: noop, updateSelectionBar: noop, DUP_PAGE: 100, icon: () => '',
+    formatCount: (n: number | null) => String(n ?? 0), formatBytes: (n: number) => n + ' B', escapeHtml: (s: string) => s,
+    countUp: noop, FxNum: { rollText: noop }, renderDiskNotes: noop, loadWhatsNew: noop, loadDriveHealth: noop,
+    loadCostEstimate: noop, showListsPending: noop, emit: noop, TOPIC: { scan: 'scan' }, switchView: noop,
+    toast: (m: string) => toasts.push(m), fxScanDonePulse: noop, loadDashboardLists: async () => {},
+    buildIndexInBackground: (...args: unknown[]) => { indexBuilds.push(args); },
+    renderGrowthProjection: noop, loadBudgets: noop, refreshTimebar: noop, enableLive: noop, seedNodes: noop,
+    setTimeout: noop, fxDonutLoadingSync: noop, renderRefusedFolders: noop, probeRefusedFolders: async () => {},
+    armScanExpiry: noop, formatClock: () => '10:31 PM',
+  };
+  const finishScan = new Function(...Object.keys(deps), `'use strict'; ${src} return finishScan;`)(
+    ...Object.values(deps),
   ) as (root: unknown, ms: number, stats: unknown) => Promise<void>;
+  return { finishScan, els, toasts, state, indexBuilds };
+}
+
+test('finishScan hands the index build the folder and the scan\'s own stats (Track U review of U-1, finding 9)', async () => {
+  // The plan (U-1) decides from the finished scan's count. Dropped, the count
+  // reads as unknown, the plan answers 'none' for every scan, and nothing is
+  // ever indexed again — with no error anywhere.
+  const h = finishScanHarness();
+  const stats = { fileCount: 1200, dirCount: 30, scanned: 1230, engine: 'native' };
+  await h.finishScan({ path: '/Users/x/Projects', size: 5e9 }, 50, stats);
+  assert.equal(h.indexBuilds.length, 1, 'one build is considered per completed scan');
+  assert.equal(h.indexBuilds[0][0], '/Users/x/Projects', 'for the folder the scan read');
+  assert.equal(h.indexBuilds[0][1], stats, 'with the stats that scan finished with');
+  await h.finishScan({ path: '', size: 1 }, 50, stats);
+  assert.equal(h.indexBuilds.length, 1, 'a tree with no folder path starts none');
+});
+
+test('a refused scan is never toasted as a clean success, and the tour refuses the "clean" card', async () => {
+  const { finishScan, els, toasts } = finishScanHarness();
+  const noop = () => {};
   await finishScan({ path: '/Users/x/Documents', size: 0, children: [] }, 50, { fileCount: 0, dirCount: 1, scanned: 1 });
   assert.equal(toasts.length, 0, 'nothing to celebrate about 0 B in 0 files — the refused probe speaks instead');
   assert.match(els.scanAnnounce.textContent, /scan/i, 'the screen reader still hears that the scan finished');
