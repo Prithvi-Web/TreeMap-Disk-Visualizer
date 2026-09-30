@@ -423,16 +423,23 @@ read-what-you-saw) permission to act.
   repository is vetted: git's own parser lists every setting without
   following includes, and anything not on an allow-list of settings that
   cannot start a program — any `include`, `filter`, `diff`/`merge` driver,
-  `alias`, `core.worktree`, a non-boolean `core.fsmonitor`, a partial clone's
-  promisor settings… — refuses it. Where a `.git` file, a `.git` link or a
-  `commondir` points is read by TreeMap itself before git is started: a
-  network share, or a folder outside every scan, refuses the repository and
-  git never runs. `status` never recurses into submodules, and "pushed" is
+  `alias`, a non-boolean `core.fsmonitor`, a partial clone's promisor
+  settings… — refuses it (`core.worktree` passes, since git's own answer
+  must still place the work tree in the folder asked about). Where a `.git`
+  file, a `.git` link or a `commondir` points, where a link at the top of
+  the git folder leads, and the object folders the repository borrows
+  (`objects/info/alternates`, followed as git follows them) are read by
+  TreeMap itself before git is started, each resolved as the system
+  resolves it (links first, then `..`): a network share, a folder outside
+  every scan, or nothing at all refuses the repository and git never runs.
+  A repository another account owns is unknown with that reason (a
+  `safe.directory` exception cannot help: no call reads your git settings).
+  `status` never recurses into submodules, and "pushed" is
   measured only against a remote-tracking upstream.
   `POST /api/git/gc` follows the path to where the repository really is,
   which must be inside a scanned folder, and runs only on a `.git` that is a
-  real folder, with no `commondir` and no link or special file anywhere
-  inside it, vetted, told its git dir (`--git-dir`), and prunes only what
+  real folder, with no `commondir`, no `objects/info/alternates` and no link
+  or special file anywhere inside it, vetted, told its git dir (`--git-dir`), and prunes only what
   has been unreachable for two weeks (`--prune=2.weeks.ago`, git's own
   default); anything else answers `{ ok: false, error, refused: true }` with
   the reason, runs nothing, and is audited as `refused` (a gc git ran and

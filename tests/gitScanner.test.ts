@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import path from 'node:path';
 
 import { fileTempDir, isolatedDataDir } from './fixtures/dataDir';
@@ -264,4 +265,62 @@ test('a gc that git ran and failed is audited as an error, not as refused or don
     setGitGcStepForTests(null);
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+/* ══════════════════ The gc-only checks, each shown to refuse (review #10) ══════════════════ */
+
+test('a special file anywhere inside .git is refused, naming it', { skip: process.platform === 'win32' }, async () => {
+  const { repo } = scannedRepo();
+  const special = path.join(repo, '.git', 'objects', 's');
+  const server = net.createServer();
+  await new Promise<void>((resolve) => server.listen(special, resolve));
+  try {
+    const { result, plans } = await gcWithStandIn(repo);
+    assert.equal(result.ok, false);
+    assert.ok((result.error ?? '').includes(special), result.error);
+    assert.match(result.error ?? '', /link or special file/);
+    assert.deepEqual(plans, []);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('git reporting the repository\'s common data anywhere but its own .git is refused, even inside a scan', async () => {
+  // The vetting accepts a git or common dir elsewhere when a scan covers it; gc does not, since it
+  // would prune that folder for every repository sharing it.
+  const { root, repo } = scannedRepo();
+  const shared = path.join(root, 'shared.git');
+  fs.mkdirSync(shared);
+  const gitDir = fs.realpathSync.native(path.join(repo, '.git'));
+  const rec = recordGit((sub) => {
+    if (sub[0] === 'rev-parse') return { stdout: `${repo}\n${gitDir}\n${shared}\n` };
+    if (sub[0] === 'config') return { stdout: 'file:.git/config\0core.bare\nfalse\0' };
+    return { code: 128, stderr: 'unscripted' };
+  });
+  let outcome;
+  try {
+    outcome = await gcWithStandIn(repo);
+  } finally {
+    rec.restore();
+  }
+  assert.equal(outcome.result.ok, false);
+  assert.equal(outcome.result.refused, true);
+  assert.ok((outcome.result.error ?? '').includes(shared), outcome.result.error);
+  assert.deepEqual(outcome.plans, []);
+  assert.deepEqual(commandsOf(rec.calls), ['rev-parse', 'config'], 'the vetting passed; the gc check refused');
+});
+
+test('a repository that borrows objects from another (objects/info/alternates) is not gc\'d', async () => {
+  // gc repacks only its own objects (`repack -l`) and drops local copies the other repository also
+  // holds, so afterwards more of its history lives only there (FG4c, review #1). The folder named
+  // is a plain one inside the scan: the vetting reads it; gc's own check refuses.
+  const { root, repo } = scannedRepo();
+  const lender = path.join(root, 'lender-objects');
+  fs.mkdirSync(lender);
+  fs.writeFileSync(path.join(repo, '.git', 'objects', 'info', 'alternates'), `${lender}\n`);
+  const { result, plans } = await gcWithStandIn(repo);
+  assert.equal(result.ok, false);
+  assert.equal(result.refused, true);
+  assert.match(result.error ?? '', /borrows objects/);
+  assert.deepEqual(plans, []);
 });

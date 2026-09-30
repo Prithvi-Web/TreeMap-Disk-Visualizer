@@ -12,6 +12,7 @@ import { GIT_HARDENING, gitEnvironment, resetGitSafeForTests, vetRepository } fr
 import { ignoredPaths, readRepoState } from '../src/services/gitRecoverability';
 import { recoverabilityProvider } from '../src/services/facts/recoverabilityProvider';
 import { capabilityState, invalidateCapabilities } from '../src/platform/capabilities';
+import { createScanRecord } from '../src/services/diskScanner';
 import type { GitRecoverability } from '../src/services/recoverabilityTypes';
 import { commandsOf, recordGit, subcommand, type RecordedGit, type ScriptedAnswer } from './fixtures/gitRecorder';
 
@@ -474,4 +475,91 @@ test('a .git file naming a folder inside a scan goes on to git\'s own answer', a
     rec.restore();
   }
   assert.deepEqual(commandsOf(rec.calls), ['rev-parse', 'config']);
+});
+
+/* ══════════════════ Through the provider, against the scans themselves (review #17) ══════════════════ */
+
+/**
+ * The reclaim score's hover path reaches git through the recoverability provider, which judges a
+ * redirect against the scans this server holds (insideAnyScanRoot). These go through it with
+ * real scan records, not a predicate the test writes.
+ */
+test('through the provider, a .git file naming a folder no scan covers leaves git unknown, and git is not started', async () => {
+  const scanned = tmp('treemap-gitrec-prov-');
+  createScanRecord(scanned);
+  const unscanned = tmp('treemap-gitrec-prov-unscanned-');
+  const project = path.join(scanned, 'project');
+  fs.mkdirSync(project);
+  fs.writeFileSync(path.join(project, '.git'), `gitdir: ${unscanned}\n`);
+  const file = path.join(project, 'a.txt');
+  fs.writeFileSync(file, 'a');
+  const rec = scriptedRepo(project, plainListing());
+  try {
+    const batch = await recoverabilityProvider.compute('no-scan', [file], new AbortController().signal);
+    assert.deepEqual(commandsOf(rec.calls).filter((c) => c !== '--version'), [], 'refused before git: not even the vetting ran');
+    const fact = batch.values.get(file);
+    assert.ok(fact, 'the path is answered, with what could not be known');
+    assert.equal(fact.git, null);
+    const gitProblem = fact.unavailable.find((u) => u.signal === 'git');
+    assert.match(gitProblem?.reason ?? '', /outside every folder you scanned/, JSON.stringify(fact.unavailable));
+  } finally {
+    rec.restore();
+  }
+});
+
+test('through the provider, the same redirect into a scanned folder is read', async () => {
+  const scanned = tmp('treemap-gitrec-prov-in-');
+  createScanRecord(scanned);
+  const admin = tmp('treemap-gitrec-prov-admin-');
+  createScanRecord(admin);
+  const project = path.join(scanned, 'project');
+  fs.mkdirSync(project);
+  fs.writeFileSync(path.join(project, '.git'), `gitdir: ${admin}\n`);
+  const file = path.join(project, 'a.txt');
+  fs.writeFileSync(file, 'a');
+  const rec = recordGit((sub) => {
+    if (sub[0] === '--version') return { stdout: 'git version 2.50.1\n' };
+    if (sub[0] === 'config' && sub.includes('--global')) return { code: 1 };
+    if (sub[0] === 'rev-parse' && sub.includes('--show-toplevel')) return { stdout: `${project}\n${admin}\n${admin}\n` };
+    if (sub[0] === 'rev-parse') return { stdout: 'refs/remotes/origin/main\n' };
+    if (sub[0] === 'config') return { stdout: plainListing() };
+    if (sub[0] === 'remote') return { stdout: 'origin\n' };
+    if (sub[0] === 'status') return { stdout: '' };
+    if (sub[0] === 'rev-list') return { stdout: '0\t0\n' };
+    if (sub[0] === 'ls-files') return { stdout: '100644 0123456789012345678901234567890123456789 0\ta.txt\0' };
+    if (sub[0] === 'check-ignore') return { code: 1 };
+    return { code: 128, stderr: `fatal: the recorder was not scripted for ${sub.join(' ')}` };
+  });
+  try {
+    const batch = await recoverabilityProvider.compute('no-scan', [file], new AbortController().signal);
+    const fact = batch.values.get(file);
+    assert.ok(fact?.git, `git answered for a redirect a scan covers: ${JSON.stringify(fact?.unavailable)}`);
+    assert.equal(fact.git.fullyPushed, true);
+  } finally {
+    rec.restore();
+  }
+});
+
+/* ══════════════════ Real git: layouts ordinary commands make are read (review #15, #20) ══════════════════ */
+
+test('a recursive clone and a submodule checkout are read, not refused for the settings git wrote', async () => {
+  const dir = tmp('treemap-gitrec-recursive-');
+  const plain = pushedRepo(dir, 'plain');
+  // `clone --recurse-submodules` writes submodule.active=. whether or not there are submodules.
+  git(dir, ['clone', '-q', '--recurse-submodules', plain, 'recursive']);
+  const recursive = path.join(dir, 'recursive');
+  assert.match(git(recursive, ['config', '--local', '--list']), /^submodule\.active=/m, 'the setting the clone wrote');
+  const clone = await vetRepository(recursive, { insideScannedRoot: (p) => p.startsWith(dir) });
+  assert.equal(clone.ok, true, `a recursive clone: ${JSON.stringify(clone)}`);
+
+  // A submodule's own settings name its work tree (core.worktree), which is the checkout itself.
+  const lib = pushedRepo(dir, 'lib');
+  const sup = pushedRepo(dir, 'super');
+  git(sup, ['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', lib, 'lib']);
+  const checkout = path.join(sup, 'lib');
+  assert.match(git(checkout, ['config', '--local', '--list']), /^core\.worktree=/m, 'the setting the submodule has');
+  const sub = await vetRepository(checkout, { insideScannedRoot: (p) => p.startsWith(dir) });
+  assert.equal(sub.ok, true, `a submodule checkout whose git data a scan covers: ${JSON.stringify(sub)}`);
+  const state = await readRepoState(checkout, { vetted: sub.ok ? sub.repo : undefined });
+  assert.ok('kind' in state, `and it is read: ${JSON.stringify(state)}`);
 });

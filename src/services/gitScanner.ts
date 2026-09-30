@@ -179,6 +179,10 @@ async function gitDirRefusal(repo: string): Promise<string | null> {
   if (!st.isDirectory()) return `${dotGit} is a file pointing at a git folder elsewhere (a linked worktree or a submodule); run git gc in the repository it points to.`;
   const common = await fsp.lstat(path.join(dotGit, 'commondir')).then(() => true, () => false);
   if (common) return `${dotGit} shares its objects with another repository (it has a commondir), so git gc would prune that repository; TreeMap does not run it here.`;
+  // gc repacks only this repository's own objects (`repack -l`) and drops the local copies the
+  // other one also holds, so afterwards more of this history lives only there (FG4c).
+  const borrows = await fsp.lstat(path.join(dotGit, 'objects', 'info', 'alternates')).then(() => true, () => false);
+  if (borrows) return `${dotGit} borrows objects from another repository (objects/info/alternates), and git gc would leave it relying on that repository for more of its history; TreeMap does not run it here.`;
   const link = await firstLinkInside(dotGit);
   if (link === 'limit') return `${dotGit} holds more than ${GC_WALK_LIMIT.toLocaleString('en-US')} entries, too many to check for links; run git gc yourself.`;
   if (link !== null) return `${link} is a link or special file inside .git, which could send git gc to another repository's data; TreeMap does not run it here.`;

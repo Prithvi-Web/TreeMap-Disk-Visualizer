@@ -266,9 +266,26 @@ function shown(text: string): string {
 
 const refused = (reason: string): RepoVetting => ({ ok: false, kind: 'refused', reason });
 
+/**
+ * Git's refusal of a repository another account owns, as git prints it with no language set —
+ * which no call passes. Git for Windows may still answer in Windows' own language; then git's
+ * own first line is the reason, as for any other failure.
+ */
+const DUBIOUS_OWNERSHIP = /detected dubious ownership/i;
+
 /** Where git says the repository at `root` is: its folder, git dir and common dir, resolved. */
 async function whereGitWorks(root: string): Promise<RepoVetting> {
   const where = await runGit(['-C', root, 'rev-parse', '--show-toplevel', '--absolute-git-dir', '--git-common-dir'], { repoRoot: root });
+  if (!where.ok && DUBIOUS_OWNERSHIP.test(where.error)) {
+    // Git's own advice (add a safe.directory exception to the global settings) cannot work here:
+    // no TreeMap call reads those settings, on purpose (FG4c, review #22).
+    return {
+      ok: false,
+      kind: 'error',
+      reason: 'it belongs to another account on this computer, and Git does not read a repository another account owns; '
+        + 'TreeMap does not use your Git settings, so a safe.directory exception there cannot help',
+    };
+  }
   if (!where.ok) return { ok: false, kind: 'error', reason: where.error };
   const [top, gitDirRaw, commonRaw] = where.stdout.split('\n');
   if (!top || !gitDirRaw || !commonRaw) return refused(`Git did not say where the project at ${shown(root)} keeps its data, so TreeMap did not run Git on it.`);
@@ -303,22 +320,135 @@ async function pointerTarget(file: string, prefix: string): Promise<string | nul
   }
 }
 
-/** Why git must not be sent to `raw` (a pointer's text, resolved to `target`), or null. */
-async function pointerTargetRefusal(raw: string, target: string, opts: VetOptions): Promise<string | null> {
-  if (isNetworkPath(raw) || isNetworkPath(target)) {
-    return `Git keeps this project's data on a network share (${shown(raw)}), so TreeMap did not run Git on it.`;
+/** Where a pointer leads, or why git must not be sent there. */
+type Leads = { to: string } | { refusal: string };
+
+/**
+ * Where the pointer text `raw` (a `.git` file's `gitdir:`, a `.git` link, a `commondir`, an
+ * `alternates` line, a link in the git folder), read relative to `base`, leads — resolved as git
+ * and the operating system resolve it: links first, then `..`, by realpath on the text as it is
+ * written. `path.resolve` would drop `..` before a link is followed, and so judge a place git
+ * never goes (FG4c, review #2). A network path is refused before anything is resolved (on
+ * Windows, resolving one contacts the server), and so is a target that is not there — there is
+ * nothing to judge — or one outside every scanned folder.
+ */
+async function pointerLeads(raw: string, base: string, opts: VetOptions): Promise<Leads> {
+  const network = { refusal: `Git keeps this project's data on a network share (${shown(raw)}), so TreeMap did not run Git on it.` };
+  if (isNetworkPath(raw)) return network;
+  const target = await real(path.isAbsolute(raw) ? raw : `${base}${path.sep}${raw}`);
+  if (target === null) return { refusal: `Git would be sent to ${shown(raw)}, which is not there, so TreeMap did not run Git on it.` };
+  if (isNetworkPath(target)) return network;
+  if (!opts.insideScannedRoot?.(target)) {
+    return { refusal: `Git keeps this project's data at ${shown(target)}, outside every folder you scanned, so TreeMap did not run Git on it.` };
   }
-  const resolved = (await real(target)) ?? target;
-  if (!isNetworkPath(resolved) && opts.insideScannedRoot?.(resolved)) return null;
-  return `Git keeps this project's data at ${shown(resolved)}, outside every folder you scanned, so TreeMap did not run Git on it.`;
+  return { to: target };
+}
+
+/** How many levels of borrowed object folders git follows (its own limit, `alternates` in a borrowed folder included). */
+const ALTERNATES_DEPTH = 5;
+/** An `alternates` file longer than this is not read, and the repository is refused. */
+const ALTERNATES_LIMIT = 64 * 1024;
+/** A git folder with more top-level entries than this is not looked through, and the repository is refused. */
+const TOP_LEVEL_LIMIT = 10_000;
+
+/** A whole small file, opened without following a link or waiting on a pipe; null when it is not a plain file or is too long. */
+async function smallFile(file: string, limit: number): Promise<string | null> {
+  const handle = await fsp.open(file, POINTER_OPEN_FLAGS);
+  try {
+    const st = await handle.stat();
+    if (!st.isFile() || st.size > limit) return null;
+    const buf = Buffer.alloc(st.size);
+    const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
+    return buf.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    await handle.close();
+  }
+}
+
+const C_ESCAPES: Readonly<Record<string, number>> = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, '\\': 92, '"': 34 };
+
+/**
+ * A line git reads as C-quoted (`"…"`, as `unquote_c_style` does): its text, or null when it is
+ * not quoted that way — then git reads the line as it is. `trailing` is set when text follows the
+ * closing quote, which git would read as a second entry.
+ */
+function unquoteC(line: string): { text: string; trailing: boolean } | null {
+  const bytes: number[] = [];
+  let i = 1;
+  while (i < line.length) {
+    const c = line[i];
+    if (c === '"') return { text: Buffer.from(bytes).toString('utf8'), trailing: i + 1 < line.length };
+    if (c !== '\\') {
+      bytes.push(...Buffer.from(c, 'utf8'));
+      i += 1;
+      continue;
+    }
+    const next = line[i + 1] ?? '';
+    if (next in C_ESCAPES) {
+      bytes.push(C_ESCAPES[next]);
+      i += 2;
+    } else if (/^[0-3][0-7][0-7]$/.test(line.slice(i + 1, i + 4))) {
+      bytes.push(parseInt(line.slice(i + 1, i + 4), 8));
+      i += 4;
+    } else {
+      return null;
+    }
+  }
+  return null;
 }
 
 /**
- * Where `.git` at `root` points, read by TreeMap itself before git is started (FG4): a `.git`
- * link, a `.git` file (`gitdir: …`) and a `commondir` file (in `.git`, or in the folder a `.git`
- * file names — one level, as git follows it) can send git anywhere — a folder no scan covers, a
- * network share (on Windows, one that is sent the user's credentials), a pipe that never
- * answers. Each target must be a local path inside a scanned folder, or git is not run at all.
+ * Why git must not read the object folders `objects` borrows (its `info/alternates`, and theirs in
+ * turn, as git follows them), or null (FG4c, review #1). Git reads them during the first
+ * `rev-parse`, before any setting is vetted; a line naming a folder outside every scan or a
+ * network share refuses the repository, as a `.git` pointer does. Lines are git's: `#` starts a
+ * comment, a blank line is skipped, a relative one is read from the objects folder.
+ */
+async function alternatesRefusal(objects: string, opts: VetOptions, depth: number, seen: Set<string>): Promise<string | null> {
+  if (seen.has(objects)) return null;
+  seen.add(objects);
+  const file = path.join(objects, 'info', 'alternates');
+  if (!(await fsp.lstat(file).catch(() => null))) return null;
+  if (depth >= ALTERNATES_DEPTH) return `${shown(file)} borrows objects more than ${String(ALTERNATES_DEPTH)} folders deep, so TreeMap did not run Git on it.`;
+  const text = await smallFile(file, ALTERNATES_LIMIT);
+  if (text === null) return `${shown(file)} is not a plain file TreeMap can read whole, so TreeMap did not run Git on it.`;
+  for (const line of text.split('\n')) {
+    if (line === '' || line.startsWith('#')) continue;
+    const quoted = line.startsWith('"') ? unquoteC(line) : null;
+    if (quoted?.trailing) return `${shown(file)} holds a line TreeMap cannot read as Git does, so TreeMap did not run Git on it.`;
+    const leads = await pointerLeads(quoted ? quoted.text : line, objects, opts);
+    if ('refusal' in leads) return leads.refusal;
+    const deeper = await alternatesRefusal(leads.to, opts, depth + 1, seen);
+    if (deeper) return deeper;
+  }
+  return null;
+}
+
+/**
+ * Why git must not be sent where a link at the top of the git folder `dir` leads (a linked
+ * `objects`, `refs`, `config`, `HEAD`…), or null: git follows each while it starts, before any
+ * setting is vetted (FG4c). A link deeper inside is not looked for here (RISKS R115).
+ */
+async function topLevelLinkRefusal(dir: string, opts: VetOptions): Promise<string | null> {
+  let count = 0;
+  for await (const entry of await fsp.opendir(dir)) {
+    if (++count > TOP_LEVEL_LIMIT) return `${shown(dir)} holds too many entries to check, so TreeMap did not run Git on it.`;
+    if (!entry.isSymbolicLink()) continue;
+    const link = path.join(dir, entry.name);
+    const leads = await pointerLeads(await fsp.readlink(link), dir, opts);
+    if ('refusal' in leads) return leads.refusal;
+  }
+  return null;
+}
+
+/**
+ * Where `.git` at `root` points, read by TreeMap itself before git is started (FG4, FG4c): a
+ * `.git` link, a `.git` file (`gitdir: …`) and a `commondir` file (in `.git`, or in the folder a
+ * `.git` file names — one level, as git follows it), a link at the top of either git folder, and
+ * the object folders either borrows (`objects/info/alternates`) can send git anywhere — a folder
+ * no scan covers, a network share (on Windows, one that is sent the user's credentials), a pipe
+ * that never answers. Each target must be a local path inside a scanned folder, or git is not
+ * run at all.
  */
 async function pointerRefusal(root: string, opts: VetOptions): Promise<string | null> {
   const dotGit = path.join(root, '.git');
@@ -328,18 +458,28 @@ async function pointerRefusal(root: string, opts: VetOptions): Promise<string | 
   if (st.isSymbolicLink() || st.isFile()) {
     const raw = st.isSymbolicLink() ? await fsp.readlink(dotGit) : await pointerTarget(dotGit, 'gitdir:');
     if (raw === null || raw === '') return `${shown(dotGit)} is a file that does not name a git folder, so TreeMap did not run Git on it.`;
-    const why = await pointerTargetRefusal(raw, path.resolve(root, raw), opts);
-    if (why) return why;
-    gitDir = path.resolve(root, raw);
+    const leads = await pointerLeads(raw, root, opts);
+    if ('refusal' in leads) return leads.refusal;
+    gitDir = leads.to;
   } else if (!st.isDirectory()) {
     return `${shown(dotGit)} is not a file or folder, so TreeMap did not run Git on it.`;
   }
+  let commonDir = gitDir;
   const common = path.join(gitDir, 'commondir');
   const cst = await fsp.lstat(common).catch(() => null);
-  if (!cst) return null;
-  const raw = cst.isFile() ? await pointerTarget(common, '') : null;
-  if (raw === null || raw === '') return `${shown(common)} does not name a git folder, so TreeMap did not run Git on it.`;
-  return pointerTargetRefusal(raw, path.resolve(gitDir, raw), opts);
+  if (cst) {
+    const raw = cst.isFile() ? await pointerTarget(common, '') : null;
+    if (raw === null || raw === '') return `${shown(common)} does not name a git folder, so TreeMap did not run Git on it.`;
+    const leads = await pointerLeads(raw, gitDir, opts);
+    if ('refusal' in leads) return leads.refusal;
+    commonDir = leads.to;
+  }
+  const seen = new Set<string>();
+  for (const dir of new Set([gitDir, commonDir])) {
+    const why = (await topLevelLinkRefusal(dir, opts)) ?? (await alternatesRefusal(path.join(dir, 'objects'), opts, 0, seen));
+    if (why) return why;
+  }
+  return null;
 }
 
 /**
@@ -435,12 +575,29 @@ const ALLOWED_KEYS: ReadonlySet<string> = new Set([
   'push.default', 'push.autosetupremote', 'push.followtags', 'pull.rebase', 'pull.ff', 'merge.ff',
   'rebase.autosquash', 'rebase.autostash', 'fetch.prune', 'fetch.prunetags', 'fetch.recursesubmodules', 'submodule.recurse',
   'gc.auto', 'gc.autodetach', 'maintenance.auto', 'maintenance.strategy', 'lfs.repositoryformatversion', 'color.ui',
+  // `git clone --recurse-submodules` writes the flat form, submodules or not (FG4c, review #15).
+  'submodule.active',
+  // Every submodule checkout has one. It moves the work tree, which cannot start a program, and
+  // whereGitWorks refuses a repository whose work tree git places anywhere but the folder asked
+  // about — asked before the settings are listed (FG4c, review #20).
+  'core.worktree',
+  // Written into a repository's own settings by ordinary tools and read by no command that starts
+  // a program: a fork's push remote, branch set-up, shared-repository permissions, the signing
+  // format (TreeMap never signs or verifies; gpg.*.program stays refused), conflict display and
+  // rerere, rename detection, the untracked-files default (every status passes its own), git-lfs's
+  // URL (its filters stay refused) (FG4c, review #21).
+  'remote.pushdefault', 'branch.autosetupmerge', 'branch.autosetuprebase', 'core.sharedrepository', 'gpg.format',
+  'merge.conflictstyle', 'rerere.enabled', 'rerere.autoupdate', 'diff.renames', 'status.showuntrackedfiles', 'lfs.url',
 ]);
+
+/** Sections whose every flat key is a message switch, and nothing else: `advice.detachedHead`… */
+const MESSAGE_SECTIONS: ReadonlySet<string> = new Set(['advice']);
 
 /** Settings under a name of their own (a remote, a branch, a submodule): the keys allowed per section. */
 const ALLOWED_NAMED: Readonly<Record<string, ReadonlySet<string> | 'any'>> = {
+  // gh-resolved: which remote `gh repo set-default` (and a fork's `gh repo clone`) chose; git ignores it.
   remote: new Set(['url', 'pushurl', 'fetch', 'push', 'tagopt', 'prune', 'prunetags', 'mirror', 'skipdefaultupdate',
-    'skipfetchall', 'followremotehead']),
+    'skipfetchall', 'followremotehead', 'gh-resolved']),
   // Git reads remote, pushremote, merge, mergeoptions, rebase and description here; editors add
   // their own (VS Code's vscode-merge-base). None of them starts anything.
   branch: 'any',
@@ -463,7 +620,7 @@ export function configKeyRefusal(key: string, value: string | null): string | nu
   if (first === last) {
     const flat = `${section}.${name}`;
     if (flat === 'core.fsmonitor') return value === null || GIT_BOOLEAN.test(value) ? null : 'can start a program';
-    return ALLOWED_KEYS.has(flat) ? null : notSafe;
+    return ALLOWED_KEYS.has(flat) || MESSAGE_SECTIONS.has(section) ? null : notSafe;
   }
   const allowed = ALLOWED_NAMED[section];
   if (allowed === 'any') return null;

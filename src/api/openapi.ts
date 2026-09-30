@@ -1688,7 +1688,7 @@ export const ENDPOINTS: EndpointDescriptor[] = [
   {
     method: 'post',
     path: '/api/git/gc',
-    summary: "Run git gc --aggressive --prune=2.weeks.ago in a scanned repository (requires confirm: true); refused, with the reason, when its .git is a file or link, shares objects (commondir), holds a link, or its settings could start a program",
+    summary: "Run git gc --aggressive --prune=2.weeks.ago in a scanned repository (requires confirm: true); refused, with the reason, when its .git is a file or link, shares objects (commondir) or borrows them (objects/info/alternates), holds a link or special file, or its settings could start a program",
     tag: 'insights',
     destructive: true,
     parameters: [idempotencyHeader],

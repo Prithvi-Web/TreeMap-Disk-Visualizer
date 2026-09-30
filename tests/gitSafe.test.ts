@@ -193,7 +193,7 @@ test('the -z listing is read record by record, a key without a value included', 
   assert.equal(parseConfigList('file:.git/config\0core.bare\nfalse\0file:.git/config\0'), null, 'an origin without its record is not read');
 });
 
-test('settings git init, clone, husky, VS Code and submodules write are allowed', () => {
+test('settings git init, clone (a recursive one too), husky, VS Code, gh and submodules write are allowed', () => {
   const allowed: [string, string | null][] = [
     ['core.repositoryformatversion', '0'], ['core.filemode', 'true'], ['core.bare', 'false'], ['core.logallrefupdates', 'true'],
     ['core.ignorecase', 'true'], ['core.precomposeunicode', 'true'], ['core.symlinks', 'false'], ['core.autocrlf', 'input'],
@@ -203,6 +203,17 @@ test('settings git init, clone, husky, VS Code and submodules write are allowed'
     ['user.name', 'Someone'], ['user.email', 'someone@example.invalid'], ['user.signingkey', 'ABC'], ['commit.gpgsign', 'true'],
     ['submodule.lib.url', '../lib'], ['submodule.lib.active', 'true'], ['submodule.lib.update', 'rebase'],
     ['lfs.repositoryformatversion', '0'], ['pull.rebase', 'true'], ['init.defaultbranch', 'main'],
+    // `git clone --recurse-submodules` writes the flat form, with or without submodules (review #15, #12).
+    ['submodule.active', '.'],
+    // Every submodule checkout's own settings: its work tree, which git's answer must still place in
+    // the folder itself (vetRepository's toplevel check; review #20).
+    ['core.worktree', '../../../lib'],
+    // Written by ordinary tools into a repository's own settings, and read by no command that starts
+    // a program (review #21): gh's default remote, a fork's push remote, the rest inert switches.
+    ['remote.upstream.gh-resolved', 'base'], ['remote.pushdefault', 'origin'], ['branch.autosetupmerge', 'true'],
+    ['branch.autosetuprebase', 'always'], ['core.sharedrepository', 'group'], ['gpg.format', 'ssh'], ['merge.conflictstyle', 'zdiff3'],
+    ['rerere.enabled', 'true'], ['rerere.autoupdate', 'true'], ['diff.renames', 'copies'], ['status.showuntrackedfiles', 'all'],
+    ['lfs.url', 'https://example.invalid/lfs'], ['advice.detachedhead', 'false'], ['advice.statushints', 'false'],
     // Set on the command line by every call, which wins over the repository's own value.
     ['core.hookspath', '.husky/_'], ['core.untrackedcache', 'true'], ['core.fsmonitor', 'true'], ['core.fsmonitor', 'false'],
     // git prints section and key in lower case; a caller may not.
@@ -213,13 +224,16 @@ test('settings git init, clone, husky, VS Code and submodules write are allowed'
   }
 });
 
-test('anything that can start a program, read another file or move the work tree is refused', () => {
+test('anything that can start a program or read another file is refused', () => {
   const refused: [string, string | null][] = [
     ['core.fsmonitor', 'some-program'], ['core.fsmonitor', './watch'], ['filter.x.clean', 'prog %f'], ['filter.x.smudge', 'prog'],
     ['filter.x.process', 'prog'], ['filter.x.required', 'true'], ['filter.lfs.process', 'git-lfs filter-process'],
     ['diff.external', 'prog'], ['diff.x.textconv', 'prog'], ['diff.x.command', 'prog'], ['merge.x.driver', 'prog'],
     ['core.sshcommand', 'prog'], ['core.editor', 'prog'], ['core.pager', 'prog'], ['core.askpass', 'prog'], ['core.gitproxy', 'prog'],
-    ['core.alternaterefscommand', 'prog'], ['core.worktree', '/elsewhere'], ['core.attributesfile', '/elsewhere'],
+    ['core.alternaterefscommand', 'prog'], ['core.attributesfile', '/elsewhere'],
+    // Near names of the inert ones allowed above: only those exact keys are.
+    ['remote.origin.gh-resolved.x', 'y'], ['submodule.active.x', 'y'], ['gpg.x509.program', 'prog'], ['gpg.ssh.allowedsignersfile', '/x'],
+    ['remote.origin.gh-command', 'prog'], ['merge.tool', 'prog'], ['mergetool.x.cmd', 'prog'], ['difftool.x.cmd', 'prog'],
     ['include.path', '/elsewhere/config'], ['includeif.gitdir:/x/.path', '/elsewhere/config'], ['includeIf.onbranch:main.path', 'x'],
     ['credential.helper', 'prog'], ['credential.https://example.invalid.helper', 'prog'], ['gpg.program', 'prog'],
     ['gpg.ssh.program', 'prog'], ['alias.st', '!prog'], ['sequence.editor', 'prog'], ['pager.log', 'prog'],
@@ -324,15 +338,53 @@ test('git data kept elsewhere is refused unless a scan covers where it is', asyn
 
   const common = await vet(root, listing(), { common: gitDir }, () => false);
   assert.equal(!common.result.ok && common.result.kind, 'refused', 'a commondir pointing outside every scan');
+
+  // The git dir alone elsewhere, its common dir the repository's own (review #18): each is judged.
+  const gitDirOnly = await vet(root, listing(), { gitDir }, (p) => p.startsWith(root));
+  assert.equal(!gitDirOnly.result.ok && gitDirOnly.result.kind, 'refused', `a git dir outside every scan: ${JSON.stringify(gitDirOnly.result)}`);
+  assert.ok((!gitDirOnly.result.ok ? gitDirOnly.result.reason : '').includes(gitDir));
+});
+
+test('a work tree kept elsewhere (core.worktree) is refused by where git says the project is', async () => {
+  // core.worktree cannot start a program, so the setting itself passes (every submodule checkout
+  // has one, review #20); what it could do — make git read another folder as this project — is
+  // what the toplevel check refuses, and rev-parse runs before the settings are listed at all.
+  const root = fakeRepo();
+  const elsewhere = tmp('treemap-gitsafe-worktree-');
+  const moved = await vet(root, listing(['core.worktree', elsewhere]), { top: elsewhere });
+  assert.equal(!moved.result.ok && moved.result.kind, 'refused', JSON.stringify(moved.result));
+  assert.match(!moved.result.ok ? moved.result.reason : '', /as this project's folder/);
+  const own = await vet(root, listing(['core.worktree', root]));
+  assert.equal(own.result.ok, true, `a work tree that is the folder itself: ${JSON.stringify(own.result)}`);
 });
 
 test('git failing to answer is an error for that repository, not a refusal', async () => {
   const root = fakeRepo();
-  const rec = recordGit(() => ({ code: 128, stderr: "fatal: detected dubious ownership in repository at 'x'\n" }));
+  const rec = recordGit(() => ({ code: 128, stderr: 'fatal: not a git repository (or any of the parent directories): .git\n' }));
   try {
     const result = await vetRepository(root);
-    assert.deepEqual(result, { ok: false, kind: 'error', reason: "fatal: detected dubious ownership in repository at 'x'" });
+    assert.deepEqual(result, { ok: false, kind: 'error', reason: 'fatal: not a git repository (or any of the parent directories): .git' });
     assert.deepEqual(commandsOf(rec.calls), ['rev-parse']);
+  } finally {
+    rec.restore();
+  }
+});
+
+test('a repository another account owns says so, and why a safe.directory exception cannot help', async () => {
+  // Git refuses a repository owned by another account unless the user's own settings list it
+  // under safe.directory — settings no TreeMap call reads (review #22). Git's hint to add one
+  // would mislead here, so it is not passed on.
+  const root = fakeRepo();
+  const stderr = `fatal: detected dubious ownership in repository at '${root}'\nTo add an exception for this directory, call:\n\n\tgit config --global --add safe.directory ${root}\n`;
+  const rec = recordGit(() => ({ code: 128, stderr }));
+  try {
+    const result = await vetRepository(root);
+    assert.equal(!result.ok && result.kind, 'error', 'git could not answer: an error for that repository');
+    const reason = !result.ok ? result.reason : '';
+    assert.match(reason, /another account/);
+    assert.match(reason, /safe\.directory/);
+    assert.match(reason, /does not use your Git settings/);
+    assert.doesNotMatch(reason, /git config --global/, 'no advice that cannot work');
   } finally {
     rec.restore();
   }
@@ -400,4 +452,49 @@ test('an excludes file that cannot be worked out passes nothing, and is tried ag
     rec.restore();
     resetGitSafeForTests();
   }
+});
+
+/* ══════════════════ gitSafe is the only place git starts (review #14) ══════════════════ */
+
+/**
+ * A call that starts git by name: a child_process call (`spawn`, `execFile`, `fork`…, and `exec`
+ * with shell text that begins with git), a wrapper that runs a command by name (`run…`,
+ * `exec…`, `spawn…`), or `commandExists('git')` — the probe FG4 replaced. Read on the source as
+ * written, comments included: a comment that reads like one is reworded rather than let through.
+ */
+const STARTS_GIT = /\b(?:spawn\w*|exec\w*|fork|run\w*|commandExists)\s*\(\s*(['"`])\s*git(?:\.exe)?(?:\1|\s)/g;
+
+function sourcesUnder(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return sourcesUnder(full);
+    return /\.ts$/.test(entry.name) ? [full] : [];
+  });
+}
+
+test('the scan for a git start finds each way one is written, and nothing else', () => {
+  const found = (text: string): number => [...text.matchAll(STARTS_GIT)].length;
+  for (const start of ["spawn('git', args)", 'cp.spawnSync("git", [])', "execFile('git', ['status'])", 'execFileSync(`git`, [])',
+    "exec('git status')", "execSync(' git gc')", "fork('git')", "runJson('git', ['x'])", "commandExists('git', ['--version'])",
+    "execFile('git.exe', [])"]) {
+    assert.equal(found(start), 1, `seen: ${start}`);
+  }
+  for (const other of ["runGit(['--version'])", "unavailable('git')", "path.join(root, '.git')", "spawn('gitk')", "exec('digit')",
+    "capabilityState('gitStatus')", "execFile('/usr/bin/cat', ['git'])"]) {
+    assert.equal(found(other), 0, `not a git start: ${other}`);
+  }
+});
+
+test('gitSafe.ts is the only place in src/ that starts git, so every call is hardened and vetted', () => {
+  const src = path.join(__dirname, '..', 'src');
+  const gitSafe = path.join(src, 'services', 'gitSafe.ts');
+  assert.equal([...fs.readFileSync(gitSafe, 'utf8').matchAll(STARTS_GIT)].length, 1, 'gitSafe starts git in exactly one place (realSpawn)');
+  const elsewhere = sourcesUnder(src).filter((file) => file !== gitSafe).flatMap((file) => {
+    const text = fs.readFileSync(file, 'utf8');
+    return [...text.matchAll(STARTS_GIT)].map((m) => {
+      const line = text.slice(0, m.index).split('\n').length;
+      return `${path.relative(src, file).split(path.sep).join('/')}:${String(line)}: ${m[0]}`;
+    });
+  });
+  assert.deepEqual(elsewhere, [], 'git is started only through gitSafe (runGit / runGitInvocation), never by name elsewhere');
 });
